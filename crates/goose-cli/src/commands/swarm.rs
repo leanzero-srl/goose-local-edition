@@ -49,12 +49,12 @@ use goose_swarm::{
     JudgeInput, JudgeOutcome, JudgeRequest, LocalCompletionKind, NullSink,
     PhysicalAdmissionControl, PhysicalExecutionAuthority, PhysicalFleetSnapshot,
     PillarAttemptCheckpoint, PillarCheckpointStore, PillarImplementationTaskCoverage,
-    PillarReportDraft, PillarResumeDecision, PreReviewOutput, PreReviewRequest, PreReviewer,
-    ProviderLifecycle, ProviderLifecycleDispatcher, ProviderLifecycleStartError,
-    ProviderNudgeDelivery, ProviderRequestKey, ProviderRequestReceipt, ProviderTerminalKind,
-    ProviderTerminalReceipt, ReplanAuthorityFact, ReplanAuthorityReceipt, ReplanContext, Replanner,
-    ResearchClaimDraft, ResearchPillar, ResearchPillarOpening, RunReport, Scheduler,
-    SchedulerCheckpointStore, SchedulerCompletedTaskEvidence, SemanticActivityPublisher,
+    PillarOpeningCheckpointReceipt, PillarReportDraft, PillarResumeDecision, PreReviewOutput,
+    PreReviewRequest, PreReviewer, ProviderLifecycle, ProviderLifecycleDispatcher,
+    ProviderLifecycleStartError, ProviderNudgeDelivery, ProviderRequestKey, ProviderRequestReceipt,
+    ProviderTerminalKind, ProviderTerminalReceipt, ReplanAuthorityFact, ReplanAuthorityReceipt,
+    ReplanContext, Replanner, ResearchClaimDraft, ResearchPillar, ResearchPillarOpening, RunReport,
+    Scheduler, SchedulerCheckpointStore, SchedulerCompletedTaskEvidence, SemanticActivityPublisher,
     SourceRevisionKind, SwarmEvent, TaskDispatcher, TaskRunOutput, TaskSpec, TaskVersion,
     ToolCallRecord, Verdict, VerifiedPhysicalIdentity, WorkOpportunity, WorkRole,
 };
@@ -13304,6 +13304,26 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
     }
 
     #[test]
+    fn provider_parse_or_schema_cycles_regenerate_once_then_park_without_replay() {
+        assert_eq!(
+            full_pillar_opening_cycle_continuation(false, false, 0),
+            PillarOpeningCycleContinuation::RegenerateAfterPark
+        );
+        assert_eq!(
+            full_pillar_opening_cycle_continuation(false, false, 1),
+            PillarOpeningCycleContinuation::ParkUntilRecovery
+        );
+        assert_eq!(
+            focused_pillar_opening_cycle_continuation(0),
+            PillarOpeningCycleContinuation::RegenerateAfterPark
+        );
+        assert_eq!(
+            focused_pillar_opening_cycle_continuation(1),
+            PillarOpeningCycleContinuation::ParkUntilRecovery
+        );
+    }
+
+    #[test]
     fn live_144_of_197_omission_reports_all_53_ids_and_repairs_without_fallback() {
         const FROZEN_SPEC: &str = include_str!("../../../../evals/swarm-bench/spec-build-sb7.md");
         const LIVE_MISSING_IDS: [&str; 53] = [
@@ -19912,6 +19932,45 @@ struct ResearchPhysicalLane {
     verified_physical: bool,
 }
 
+#[derive(Debug, Eq, PartialEq)]
+enum PillarLaneOutputProofError {
+    Missing {
+        expected_physical_host: String,
+    },
+    AuthenticatedConflict {
+        expected_physical_host: String,
+        observed_physical_host: String,
+    },
+}
+
+impl PillarLaneOutputProofError {
+    fn is_authenticated_conflict(&self) -> bool {
+        matches!(self, Self::AuthenticatedConflict { .. })
+    }
+}
+
+impl std::fmt::Display for PillarLaneOutputProofError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Missing {
+                expected_physical_host,
+            } => write!(
+                formatter,
+                "pillar output carried no authenticated proof for assigned physical host `{expected_physical_host}`"
+            ),
+            Self::AuthenticatedConflict {
+                expected_physical_host,
+                observed_physical_host,
+            } => write!(
+                formatter,
+                "pillar output authenticated physical host `{observed_physical_host}` while assigned `{expected_physical_host}`"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for PillarLaneOutputProofError {}
+
 #[derive(Clone, Debug)]
 struct ResearchAuthorityDecisionSources {
     models: Vec<String>,
@@ -24933,6 +24992,11 @@ tokio::task_local! {
     static PRE_SCHEDULER_TEST_RESULT_ERROR: Arc<std::sync::atomic::AtomicBool>;
 }
 
+#[cfg(test)]
+tokio::task_local! {
+    static PRE_SCHEDULER_TEST_HOST_PROOF_OVERRIDES: Arc<Mutex<std::collections::VecDeque<Option<String>>>>;
+}
+
 struct PreSchedulerSemanticRuntime {
     control: PhysicalAdmissionControl,
     snapshot: PhysicalFleetSnapshot,
@@ -26237,6 +26301,7 @@ impl GooseAgentDispatcher {
         user_text: String,
         response: Option<Response>,
         extensions: &[ExtensionConfig],
+        max_turns: u32,
         idle_secs: u64,
         activity_key: Option<&str>,
     ) -> Result<RunAgentOut> {
@@ -26246,7 +26311,7 @@ impl GooseAgentDispatcher {
             system_prompt,
             user_text,
             response,
-            Some(UNBOUNDED_AGENT_TURNS),
+            Some(max_turns),
             extensions,
             AgentToolSurface::ResponseOnly,
             idle_secs,
@@ -26269,16 +26334,20 @@ impl GooseAgentDispatcher {
     fn validate_pillar_lane_output(
         lane: &ResearchPhysicalLane,
         output: &RunAgentOut,
-    ) -> Result<()> {
-        if lane.verified_physical
-            && output.physical_host_id.as_deref() != Some(lane.physical_host_id.as_str())
-        {
-            bail!(
-                "pillar output was not proven on assigned physical host `{}`",
-                lane.physical_host_id
-            );
+    ) -> std::result::Result<(), PillarLaneOutputProofError> {
+        if !lane.verified_physical {
+            return Ok(());
         }
-        Ok(())
+        match output.physical_host_id.as_deref() {
+            Some(observed) if observed == lane.physical_host_id => Ok(()),
+            Some(observed) => Err(PillarLaneOutputProofError::AuthenticatedConflict {
+                expected_physical_host: lane.physical_host_id.clone(),
+                observed_physical_host: observed.to_string(),
+            }),
+            None => Err(PillarLaneOutputProofError::Missing {
+                expected_physical_host: lane.physical_host_id.clone(),
+            }),
+        }
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -26649,6 +26718,14 @@ impl GooseAgentDispatcher {
             cancellation_guard.disarm();
             if let Ok(output) = &mut result {
                 output.physical_host_id = Some(admitted_physical_host_id);
+                #[cfg(test)]
+                if let Some(override_proof) = PRE_SCHEDULER_TEST_HOST_PROOF_OVERRIDES
+                    .try_with(|overrides| overrides.lock().unwrap().pop_front())
+                    .ok()
+                    .flatten()
+                {
+                    output.physical_host_id = override_proof;
+                }
             }
             return result;
         }
@@ -26658,7 +26735,7 @@ impl GooseAgentDispatcher {
         let response_schema_failover_source = (tool_surface == AgentToolSurface::ResponseOnly)
             .then(|| ACTIVE_PRE_SCHEDULER_SOURCE.try_with(Clone::clone).ok())
             .flatten()
-            .filter(pre_scheduler_recurrence_failover_eligible);
+            .filter(pre_scheduler_response_schema_failover_eligible);
         let response_schema_fingerprint = response_schema_failover_source
             .as_ref()
             .and(response.as_ref())
@@ -30466,6 +30543,7 @@ impl GooseAgentDispatcher {
                     json_schema: Some(pillar_report_schema()),
                 }),
                 &research_extensions,
+                UNBOUNDED_AGENT_TURNS,
                 self.planner_timeout_secs,
                 Some(&activity_key),
             )
@@ -30539,21 +30617,33 @@ impl GooseAgentDispatcher {
             &frozen_requirement_ids,
             minimum_pillars,
         )?;
+        let checkpoint_accepted_lanes = lanes
+            .iter()
+            .map(|lane| (lane.model_id.clone(), lane.physical_host_id.clone()))
+            .collect::<Vec<_>>();
         let frozen_spec_digest = pillar_frozen_spec_digest(user_prompt);
         let restored_opening = PillarCheckpointStore::load_opening(
             &self.working_dir,
             &frozen_spec_digest,
             &authored_requirements,
+            &opening_schema_digest,
+            minimum_pillars,
+            &checkpoint_accepted_lanes,
         )?;
         let mut provider_calls = 0usize;
-        let opening = if let Some(opening) = restored_opening {
+        let (opening, opening_receipt) = if let Some((opening, opening_receipt)) = restored_opening
+        {
             validate_pillar_opening_against(&opening, &authored_requirements)?;
             self.events.write_value(serde_json::json!({
                 "event": "pillar_opening_restored",
                 "pillars": opening.pillars.len(),
                 "provider_call_started": false,
+                "accepted_model": &opening_receipt.accepted_model_id,
+                "accepted_physical_host": &opening_receipt.accepted_physical_host,
+                "accepted_attempt": opening_receipt.accepted_attempt,
+                "compiler_receipt_digest": &opening_receipt.compiler_receipt_digest,
             }));
-            opening
+            (opening, opening_receipt)
         } else {
             let mut opener_lanes = vec![planner_lane.clone()];
             opener_lanes.extend(
@@ -30583,6 +30673,7 @@ impl GooseAgentDispatcher {
             let mut full_cycle_repair = None::<FocusedPillarAssignmentRepair>;
             let mut focused_repair = None::<FocusedPillarAssignmentRepair>;
             let mut focused_cycle_errors = Vec::<String>::new();
+            let mut regeneration_cycles = 0usize;
             loop {
                 attempt = attempt.saturating_add(1);
                 let lane = &opener_lanes[(attempt - 1) % opener_lanes.len()];
@@ -30625,6 +30716,7 @@ impl GooseAgentDispatcher {
                             "frozen_authored_requirements": requirements,
                             "minimum_semantic_pillars": minimum_pillars,
                             "maximum_semantic_pillars": null,
+                            "semantic_regeneration_cycle": regeneration_cycles,
                             "required_integration_owner": planner_model,
                             "correction": correction_feedback.as_ref().map(|diagnostics| serde_json::json!({
                                 "rejected_attempt": attempt - 1,
@@ -30655,6 +30747,7 @@ impl GooseAgentDispatcher {
                             json_schema: Some(response_schema),
                         }),
                         &[],
+                        PILLAR_OPENING_MAX_AGENT_TURNS,
                         self.planner_timeout_secs,
                         Some("pillar-opening-authority"),
                     )
@@ -30662,9 +30755,8 @@ impl GooseAgentDispatcher {
                 let mut diagnostic_fingerprint = None::<String>;
                 let mut repair_after_rejection = None::<FocusedPillarAssignmentRepair>;
                 let candidate = match result {
-                    Ok(output) => {
-                        Self::validate_pillar_lane_output(lane, &output)?;
-                        (|| {
+                    Ok(output) => match Self::validate_pillar_lane_output(lane, &output) {
+                        Ok(()) => (|| {
                             let raw = output
                                 .final_output
                                 .filter(|value| !value.trim().is_empty())
@@ -30672,6 +30764,11 @@ impl GooseAgentDispatcher {
                                 .ok_or_else(|| {
                                     anyhow!("pillar opener returned no typed opening")
                                 })?;
+                            let mut raw_outputs = repair_state
+                                .as_ref()
+                                .map(|repair| repair.raw_outputs.clone())
+                                .unwrap_or_default();
+                            raw_outputs.push(raw.clone());
                             let draft = if let Some(repair) = &repair_state {
                                 let repair_draft: PillarAssignmentRepairDraft =
                                     serde_json::from_str(strip_code_fences(&raw).trim()).map_err(
@@ -30701,31 +30798,64 @@ impl GooseAgentDispatcher {
                                     &draft,
                                     minimum_pillars,
                                 )?;
+                                if let Some(repair) = &mut repair_after_rejection {
+                                    repair.raw_outputs = raw_outputs.clone();
+                                }
                             }
-                            compile_pillar_opening_draft(
+                            let opening = compile_pillar_opening_draft(
                                 &requirements,
                                 draft,
                                 planner_model,
                                 minimum_pillars,
-                            )
-                        })()
-                    }
+                            )?;
+                            Ok(AcceptedPillarOpeningCandidate {
+                                opening,
+                                raw_outputs,
+                            })
+                        })(),
+                        Err(error) if error.is_authenticated_conflict() => {
+                            self.events.write_value(serde_json::json!({
+                                "event": "pillar_opening_integrity_failure",
+                                "logical_authority": "pillar-opening-authority",
+                                "attempt": attempt,
+                                "model": lane.model_id,
+                                "assigned_physical_host_id": lane.physical_host_id,
+                                "reason": error.to_string(),
+                                "terminal": true,
+                            }));
+                            return Err(anyhow::Error::new(error));
+                        }
+                        Err(error) => Err(anyhow::Error::new(error)),
+                    },
                     Err(error) => Err(error),
                 };
                 match candidate {
-                    Ok(opening) => {
+                    Ok(accepted) => {
+                        let accepted_attempt = u32::try_from(attempt)
+                            .map_err(|_| anyhow!("pillar opening attempt ordinal overflowed"))?;
+                        let opening_receipt = PillarOpeningCheckpointReceipt::new(
+                            opening_schema_digest.clone(),
+                            minimum_pillars,
+                            lane.model_id.clone(),
+                            lane.physical_host_id.clone(),
+                            accepted_attempt,
+                            &accepted.raw_outputs,
+                            &accepted.opening,
+                        )?;
                         self.events.write_value(serde_json::json!({
                             "event": "pillar_opening_completed",
                             "logical_authority": "pillar-opening-authority",
                             "attempts": attempt,
                             "model": lane.model_id,
                             "physical_host_id": lane.physical_host_id,
-                            "pillars": opening.pillars.len(),
-                            "requirements": opening.requirements.len(),
+                            "pillars": accepted.opening.pillars.len(),
+                            "requirements": accepted.opening.requirements.len(),
                             "strategy": strategy,
                             "schema_compatibility_gate": "passed-by-complete-runtime-output",
+                            "raw_output_digests": &opening_receipt.raw_output_digests,
+                            "compiler_receipt_digest": &opening_receipt.compiler_receipt_digest,
                         }));
-                        break opening;
+                        break (accepted.opening, opening_receipt);
                     }
                     Err(error) => {
                         correction_feedback = Some(error.to_string());
@@ -30754,14 +30884,62 @@ impl GooseAgentDispatcher {
                                 focused_repair = Some(next_repair);
                             }
                             if focused_cycle_errors.len() == opener_lanes.len() {
+                                let continuation =
+                                    focused_pillar_opening_cycle_continuation(regeneration_cycles);
                                 self.events.write_value(serde_json::json!({
                                     "event": "pillar_opening_focused_repair_cycle_completed",
                                     "logical_authority": "pillar-opening-authority",
                                     "attempts": attempt,
-                                    "continuation": "restart-full-semantic-opening-with-focused-repair-diagnostics",
+                                    "continuation": match continuation {
+                                        PillarOpeningCycleContinuation::RegenerateAfterPark => "park-then-regenerate-semantic-catalog",
+                                        PillarOpeningCycleContinuation::ParkUntilRecovery => "park-until-external-recovery-or-cancellation",
+                                        PillarOpeningCycleContinuation::FocusedAssignmentRepair => unreachable!(),
+                                    },
                                 }));
-                                focused_repair = None;
-                                focused_cycle_errors.clear();
+                                match continuation {
+                                    PillarOpeningCycleContinuation::RegenerateAfterPark => {
+                                        self.events.write_value(serde_json::json!({
+                                            "event": "pillar_opening_strategy_transitioned",
+                                            "logical_authority": "pillar-opening-authority",
+                                            "from": "focused-assignment-repair",
+                                            "to": "parked-recovery-boundary",
+                                            "attempts": attempt,
+                                            "reason": "all-authenticated-lanes-rejected-the-focused-repair",
+                                            "deterministic_semantic_fallback": false,
+                                        }));
+                                        focused_repair = None;
+                                        focused_cycle_errors.clear();
+                                        full_cycle_fingerprints.clear();
+                                        full_cycle_repair = None;
+                                        wait_at_pillar_opening_recovery_boundary().await;
+                                        regeneration_cycles = regeneration_cycles.saturating_add(1);
+                                        self.events.write_value(serde_json::json!({
+                                            "event": "pillar_opening_strategy_transitioned",
+                                            "logical_authority": "pillar-opening-authority",
+                                            "from": "parked-recovery-boundary",
+                                            "to": "full-semantic-regeneration",
+                                            "regeneration_cycle": regeneration_cycles,
+                                            "deterministic_semantic_fallback": false,
+                                        }));
+                                    }
+                                    PillarOpeningCycleContinuation::ParkUntilRecovery => {
+                                        self.events.write_value(serde_json::json!({
+                                            "event": "pillar_opening_recovery_parked",
+                                            "logical_authority": "pillar-opening-authority",
+                                            "from": "focused-assignment-repair",
+                                            "attempts": attempt,
+                                            "provider_calls": provider_calls,
+                                            "reason": "bounded-semantic-recovery-strategies-exhausted",
+                                            "continuation": "await-external-recovery-or-cancellation-without-provider-replay",
+                                            "terminal": false,
+                                        }));
+                                        std::future::pending::<()>().await;
+                                        unreachable!("parked pillar opening resumed without a recovery signal");
+                                    }
+                                    PillarOpeningCycleContinuation::FocusedAssignmentRepair => {
+                                        unreachable!()
+                                    }
+                                }
                             }
                         } else {
                             full_cycle_fingerprints.push(diagnostic_fingerprint.clone());
@@ -30777,8 +30955,21 @@ impl GooseAgentDispatcher {
                                             .iter()
                                             .all(|fingerprint| fingerprint.as_ref() == Some(first))
                                     });
-                                if unchanged {
-                                    if let Some(repair) = full_cycle_repair.take() {
+                                let repair = if unchanged {
+                                    full_cycle_repair.take()
+                                } else {
+                                    None
+                                };
+                                let continuation = full_pillar_opening_cycle_continuation(
+                                    unchanged,
+                                    repair.is_some(),
+                                    regeneration_cycles,
+                                );
+                                match continuation {
+                                    PillarOpeningCycleContinuation::FocusedAssignmentRepair => {
+                                        let repair = repair.expect(
+                                            "focused continuation lost its model-authored repair state",
+                                        );
                                         self.events.write_value(serde_json::json!({
                                             "event": "pillar_opening_strategy_transitioned",
                                             "logical_authority": "pillar-opening-authority",
@@ -30793,16 +30984,52 @@ impl GooseAgentDispatcher {
                                         }));
                                         focused_repair = Some(repair);
                                     }
+                                    PillarOpeningCycleContinuation::RegenerateAfterPark => {
+                                        self.events.write_value(serde_json::json!({
+                                            "event": "pillar_opening_strategy_transitioned",
+                                            "logical_authority": "pillar-opening-authority",
+                                            "from": "full-semantic-opening",
+                                            "to": "parked-recovery-boundary",
+                                            "attempts": attempt,
+                                            "reason": "full-lane-rotation-produced-no-stable-focused-repair",
+                                            "deterministic_semantic_fallback": false,
+                                        }));
+                                        full_cycle_fingerprints.clear();
+                                        wait_at_pillar_opening_recovery_boundary().await;
+                                        regeneration_cycles = regeneration_cycles.saturating_add(1);
+                                        self.events.write_value(serde_json::json!({
+                                            "event": "pillar_opening_strategy_transitioned",
+                                            "logical_authority": "pillar-opening-authority",
+                                            "from": "parked-recovery-boundary",
+                                            "to": "full-semantic-regeneration",
+                                            "regeneration_cycle": regeneration_cycles,
+                                            "deterministic_semantic_fallback": false,
+                                        }));
+                                    }
+                                    PillarOpeningCycleContinuation::ParkUntilRecovery => {
+                                        self.events.write_value(serde_json::json!({
+                                            "event": "pillar_opening_recovery_parked",
+                                            "logical_authority": "pillar-opening-authority",
+                                            "from": "full-semantic-opening",
+                                            "attempts": attempt,
+                                            "provider_calls": provider_calls,
+                                            "reason": "bounded-semantic-recovery-strategies-exhausted",
+                                            "continuation": "await-external-recovery-or-cancellation-without-provider-replay",
+                                            "terminal": false,
+                                        }));
+                                        std::future::pending::<()>().await;
+                                        unreachable!("parked pillar opening resumed without a recovery signal");
+                                    }
                                 }
                                 self.events.write_value(serde_json::json!({
                                     "event": "pillar_opening_correction_cycle_completed",
                                     "logical_authority": "pillar-opening-authority",
                                     "attempts": attempt,
                                     "unchanged_aggregate_diagnostics": unchanged,
-                                    "continuation": if focused_repair.is_some() {
-                                        "focused-model-owned-assignment-repair"
-                                    } else {
-                                        "rotate-all-authenticated-lanes-again-with-latest-compiler-feedback"
+                                    "continuation": match continuation {
+                                        PillarOpeningCycleContinuation::FocusedAssignmentRepair => "focused-model-owned-assignment-repair",
+                                        PillarOpeningCycleContinuation::RegenerateAfterPark => "full-semantic-regeneration-after-park",
+                                        PillarOpeningCycleContinuation::ParkUntilRecovery => "park-until-external-recovery-or-cancellation",
                                     },
                                 }));
                                 full_cycle_fingerprints.clear();
@@ -30818,6 +31045,7 @@ impl GooseAgentDispatcher {
             &self.working_dir,
             frozen_spec_digest,
             &opening,
+            &opening_receipt,
         )?);
         self.events.write_value(serde_json::json!({
             "event": "pillar_research_started",
@@ -31112,6 +31340,7 @@ impl GooseAgentDispatcher {
                     json_schema: Some(pillar_plan_schema()),
                 }),
                 &[],
+                UNBOUNDED_AGENT_TURNS,
                 self.planner_timeout_secs,
                 Some("pillar-synthesis-plan"),
             )
@@ -42999,6 +43228,10 @@ fn pre_scheduler_recurrence_failover_eligible(source: &PreSchedulerSourceContext
     source.label.starts_with("research-target-")
 }
 
+fn pre_scheduler_response_schema_failover_eligible(source: &PreSchedulerSourceContext) -> bool {
+    pre_scheduler_recurrence_failover_eligible(source) || source.label == "pillar-opening-authority"
+}
+
 fn bind_recurrence_to_provider_request(
     current: Option<ProviderRequestKey>,
     tracked: &mut Option<ProviderRequestKey>,
@@ -51302,7 +51535,10 @@ fn validate_pillar_opening_schema_gate(
     {
         bail!("pillar opening schema gate changed the semantic slice floor or added a cap");
     }
-    Ok(content_sha256(&serde_json::to_string(schema)?))
+    Ok(format!(
+        "sha256:{}",
+        content_sha256(&serde_json::to_string(schema)?)
+    ))
 }
 
 fn pillar_assignment_repair_schema(
@@ -51707,6 +51943,46 @@ fn pillar_authored_requirements(requirements: &[RequirementRecord]) -> Vec<Autho
 }
 
 const MINIMUM_REQUIREMENTS_PER_MANDATED_SEMANTIC_SLICE: usize = 4;
+const MAX_PILLAR_OPENING_REGENERATION_CYCLES: usize = 1;
+const PILLAR_OPENING_MAX_AGENT_TURNS: u32 = 4;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum PillarOpeningCycleContinuation {
+    FocusedAssignmentRepair,
+    RegenerateAfterPark,
+    ParkUntilRecovery,
+}
+
+fn full_pillar_opening_cycle_continuation(
+    unchanged_assignment_diagnostics: bool,
+    has_focused_repair: bool,
+    regeneration_cycles: usize,
+) -> PillarOpeningCycleContinuation {
+    if unchanged_assignment_diagnostics && has_focused_repair {
+        PillarOpeningCycleContinuation::FocusedAssignmentRepair
+    } else if regeneration_cycles < MAX_PILLAR_OPENING_REGENERATION_CYCLES {
+        PillarOpeningCycleContinuation::RegenerateAfterPark
+    } else {
+        PillarOpeningCycleContinuation::ParkUntilRecovery
+    }
+}
+
+fn focused_pillar_opening_cycle_continuation(
+    regeneration_cycles: usize,
+) -> PillarOpeningCycleContinuation {
+    if regeneration_cycles < MAX_PILLAR_OPENING_REGENERATION_CYCLES {
+        PillarOpeningCycleContinuation::RegenerateAfterPark
+    } else {
+        PillarOpeningCycleContinuation::ParkUntilRecovery
+    }
+}
+
+async fn wait_at_pillar_opening_recovery_boundary() {
+    #[cfg(test)]
+    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    #[cfg(not(test))]
+    tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+}
 
 fn minimum_semantic_pillars(requirement_count: usize, lane_count: usize) -> usize {
     if requirement_count == 0 {
@@ -51784,6 +52060,12 @@ struct FocusedPillarAssignmentRepair {
     preserved_draft: PillarOpeningDraft,
     unresolved_requirement_ids: Vec<String>,
     diagnostics_json: String,
+    raw_outputs: Vec<String>,
+}
+
+struct AcceptedPillarOpeningCandidate {
+    opening: ResearchPillarOpening,
+    raw_outputs: Vec<String>,
 }
 
 fn pillar_assignment_diagnostics(
@@ -51903,6 +52185,7 @@ fn focused_pillar_assignment_repair(
         preserved_draft,
         unresolved_requirement_ids,
         diagnostics_json: serde_json::to_string(&diagnostics)?,
+        raw_outputs: Vec::new(),
     }))
 }
 
@@ -64186,10 +64469,182 @@ mod pre_scheduler_semantic_runtime_tests {
         user: String,
     }
 
+    const CAPTURED_LIVE_LEDGERD_REQUIREMENT_IDS: &[&str] = &[
+        // The live fixture substituted its docs/base/key values before normalization; the checked-in
+        // frozen seed keeps placeholders, so this semantically identical first requirement has its seed ID.
+        "REQ-a61c184c6e859f5d",
+        "REQ-274c46f6a4eba166",
+        "REQ-70d5710edcd0fda7",
+        "REQ-c022a9ac8cac2fda",
+        "REQ-b7d75e572cefec2c",
+        "REQ-e58e8e9cc202a62c",
+        "REQ-8a7ea399382336af",
+        "REQ-c0571ec32456ce97",
+        "REQ-fb8d7abd26ebbce9",
+        "REQ-8348b5e18345b109",
+        "REQ-3e6859ba83e327a5",
+        "REQ-a76d313dfcca3a36",
+        "REQ-54bfc5e8a4bd606f",
+        "REQ-8c04ae5ed09ec3ea",
+        "REQ-affd25a7180ede3c",
+        "REQ-8817ee0a5a4c5972",
+        "REQ-edaac9260715e5c1",
+        "REQ-bd1993de91e7ad87",
+        "REQ-d76b65b1b897e179",
+        "REQ-46c7cb2ae89a2260",
+        "REQ-8d17950b1fb9d6b6",
+        "REQ-54cd99607335bd45",
+        "REQ-3807002832d0d8d3",
+        "REQ-975b6f1480d0bf4b",
+        "REQ-2f6714a315000e9f",
+        "REQ-d6dc07092a5345f7",
+        "REQ-9b96e7b395082237",
+        "REQ-2e6dcf22ae887a65",
+        "REQ-4f0629a01d95f937",
+        "REQ-375ef5be9c18d03a",
+        "REQ-00c33309c618432a",
+        "REQ-380434e951e906ba",
+        "REQ-454b0fe90ca698d1",
+        "REQ-7e25ff8cfc4abe9f",
+        "REQ-297f86df1166a0ab",
+        "REQ-3229c2b27d21ca4e",
+        "REQ-9a3ad49fc3c593e3",
+        "REQ-9fd5f0e24005da6d",
+        "REQ-2c8ef32ff4e4eb6e",
+        "REQ-91225a3a746cad2f",
+        "REQ-c3d16df93e53649e",
+        "REQ-e8a3b7aa61615ff0",
+        "REQ-396ac20621ae5aab",
+        "REQ-59cd2453fd07e940",
+        "REQ-1bef5a1990cd7c3f",
+        "REQ-39f4c4ffc76cc3c8",
+        "REQ-63e4ecc64622d121",
+        "REQ-6a374c4720a8d4f5",
+        "REQ-1de9432d4d737484",
+        "REQ-0acb9d8dea7c4cf3",
+        "REQ-70e2c5bd95ec728f",
+        "REQ-eb8b404bdc0e9828",
+        "REQ-9ea68690308bd39a",
+        "REQ-fda4b65412e0b022",
+        "REQ-d05b028a013497fc",
+        "REQ-fc8a9e55fda9339a",
+    ];
+    const CAPTURED_LIVE_APPROVAL_REQUIREMENT_IDS: &[&str] = &[
+        "REQ-5df598ff3c636ed1",
+        "REQ-edf0a6e693a1c12d",
+        "REQ-a362c45a7bac109f",
+        "REQ-f6eae321c368bcf6",
+        "REQ-a676e3297f4d40eb",
+        "REQ-1c375db75cd6dd2a",
+        "REQ-d7d5b4f738c2ac76",
+        "REQ-670917e39810b3ad",
+        "REQ-80aa28d34396945f",
+        "REQ-3e906a12cf25ec6c",
+        "REQ-8d6b51ac254135ec",
+        "REQ-1c3a2bf2c52aba49",
+    ];
+    const CAPTURED_LIVE_FRONTEND_REQUIREMENT_IDS: &[&str] = &[
+        "REQ-e7acdb12da639f40",
+        "REQ-c6697fb6f89576df",
+        "REQ-e98e438c2c377fd5",
+        "REQ-5165c5101e8749af",
+        "REQ-3e0376d1dcb4c5c9",
+        "REQ-083690389e7706b9",
+        "REQ-b4b40f5229576204",
+        "REQ-50f67a7183b93532",
+        "REQ-cedbb6585e05f310",
+        "REQ-33871dc2feee4cda",
+        "REQ-5ef6583280928fed",
+        "REQ-f7c425b486f8e930",
+        "REQ-64c6d74918a79201",
+        "REQ-95df6e6c69fac312",
+        "REQ-8becbccc5b22d1ae",
+        "REQ-f38f43a755fc3b89",
+        "REQ-04cd2e0be552740a",
+        "REQ-3670b39247db470d",
+        "REQ-58f4fbbd1b627a43",
+        "REQ-8115ccbfb93bfe31",
+        "REQ-ff198df8c55b8f5d",
+        "REQ-30ed1e791a4b8507",
+        "REQ-7f29ea42d682a981",
+        "REQ-d66be801e012e5c4",
+        "REQ-1bb36cff31705376",
+        "REQ-24915acbe4b1e23a",
+        "REQ-81df4325c55b1e82",
+        "REQ-1c5ed221e931047d",
+        "REQ-1154a3de48aaddb0",
+        "REQ-27a6d9c46b5dc4cc",
+        "REQ-51066cb23cb5086c",
+        "REQ-fdff8748c77b5399",
+        "REQ-789af692d75bd889",
+        "REQ-d77a867961364ae4",
+        "REQ-b88b21b2f15de853",
+        "REQ-e2f61122460bb774",
+        "REQ-139e5a3584a79f6f",
+        "REQ-4a9288d5700835fa",
+        "REQ-c613e8531aad2139",
+        "REQ-9bc05b75e1805a4e",
+        "REQ-043d381b361570a4",
+        "REQ-7ce4f74aa18afc78",
+        "REQ-9f3ad8e4ac67d40c",
+        "REQ-1b0624e84869d694",
+        "REQ-60ad6458698980bb",
+        "REQ-2a084493d60def1d",
+        "REQ-5ff106891341f09e",
+        "REQ-636593a63a49ed2f",
+        "REQ-e65be18f5c5cc664",
+        "REQ-ff43c7d3958f5576",
+        "REQ-840ce454f352949b",
+        "REQ-97469f4be36bb0ea",
+        "REQ-bb01e449da3618e6",
+        "REQ-bb8684f44d15cd66",
+        "REQ-4ae3f8feac7ead07",
+        "REQ-c05d638a647916ed",
+        "REQ-75f736dae6644282",
+        "REQ-93df299052cc9917",
+        "REQ-0cb0cdfb07b41a9d",
+        "REQ-54d27b74a21fbdf1",
+        "REQ-dca8e6d86669dbd0",
+        "REQ-bd6151b755c330bb",
+        "REQ-e72ec443f67bd19e",
+        "REQ-bbde381a1682f04e",
+        "REQ-c35cfba8bfb10d5f",
+        "REQ-b2384bf3707c89a4",
+        "REQ-1d5524ba464b2955",
+        "REQ-b762eb36f6c7c81a",
+        "REQ-6c48f3ad0ffdc917",
+        "REQ-d34c16511828d2fa",
+        "REQ-54277cd571e8dbae",
+        "REQ-1d49e5317d835397",
+        "REQ-79e8a822ec7837dd",
+        "REQ-846f7d7de9de01df",
+        "REQ-707c2897bb7fcce1",
+        "REQ-5a4d3c284081c72f",
+    ];
+
+    fn captured_live_valid_assignments() -> BTreeMap<String, String> {
+        [
+            ("ledgerd-core", CAPTURED_LIVE_LEDGERD_REQUIREMENT_IDS),
+            ("approval-notifier", CAPTURED_LIVE_APPROVAL_REQUIREMENT_IDS),
+            ("frontend-console", CAPTURED_LIVE_FRONTEND_REQUIREMENT_IDS),
+        ]
+        .into_iter()
+        .flat_map(|(pillar_id, requirement_ids)| {
+            requirement_ids
+                .iter()
+                .map(move |requirement_id| ((*requirement_id).to_string(), pillar_id.to_string()))
+        })
+        .collect()
+    }
+
     #[derive(Default)]
     struct PillarReplayProvider {
         calls: Mutex<Vec<PillarReplayProviderCall>>,
         rejected_openings_remaining: AtomicUsize,
+        duplicate_catalog_openings_remaining: AtomicUsize,
+        captured_live_openings_remaining: AtomicUsize,
+        opening_provider_failures_remaining: AtomicUsize,
+        opening_schema_failures_remaining: AtomicUsize,
     }
 
     impl PillarReplayProvider {
@@ -64218,8 +64673,62 @@ mod pre_scheduler_semantic_runtime_tests {
                 .store(count, AtomicOrdering::SeqCst);
         }
 
+        fn duplicate_catalog_openings(&self, count: usize) {
+            self.duplicate_catalog_openings_remaining
+                .store(count, AtomicOrdering::SeqCst);
+        }
+
+        fn replay_captured_live_opening(&self) {
+            self.captured_live_openings_remaining
+                .store(1, AtomicOrdering::SeqCst);
+        }
+
+        fn fail_opening_provider_calls(&self, count: usize) {
+            self.opening_provider_failures_remaining
+                .store(count, AtomicOrdering::SeqCst);
+        }
+
+        fn fail_opening_schema_calls(&self, count: usize) {
+            self.opening_schema_failures_remaining
+                .store(count, AtomicOrdering::SeqCst);
+        }
+
+        fn consume_opening_provider_failure(&self, system: &str) -> bool {
+            system.contains("sole opening architect")
+                && self
+                    .opening_provider_failures_remaining
+                    .fetch_update(
+                        AtomicOrdering::SeqCst,
+                        AtomicOrdering::SeqCst,
+                        |remaining| remaining.checked_sub(1),
+                    )
+                    .is_ok()
+        }
+
         fn scripted_output(&self, system: &str, user: &str) -> (&'static str, serde_json::Value) {
             if system.contains("sole opening architect") {
+                let schema_failure = self
+                    .opening_schema_failures_remaining
+                    .fetch_update(
+                        AtomicOrdering::SeqCst,
+                        AtomicOrdering::SeqCst,
+                        |remaining| remaining.checked_sub(1),
+                    )
+                    .is_ok();
+                if schema_failure {
+                    return ("opening_schema_failure", Self::schema_invalid_opening(user));
+                }
+                let captured_live = self
+                    .captured_live_openings_remaining
+                    .fetch_update(
+                        AtomicOrdering::SeqCst,
+                        AtomicOrdering::SeqCst,
+                        |remaining| remaining.checked_sub(1),
+                    )
+                    .is_ok();
+                if captured_live {
+                    return ("opening", Self::captured_live_opening_output(user));
+                }
                 let reject = self
                     .rejected_openings_remaining
                     .fetch_update(
@@ -64228,7 +64737,18 @@ mod pre_scheduler_semantic_runtime_tests {
                         |remaining| remaining.checked_sub(1),
                     )
                     .is_ok();
-                ("opening", Self::opening_output(user, reject))
+                let duplicate_catalog = self
+                    .duplicate_catalog_openings_remaining
+                    .fetch_update(
+                        AtomicOrdering::SeqCst,
+                        AtomicOrdering::SeqCst,
+                        |remaining| remaining.checked_sub(1),
+                    )
+                    .is_ok();
+                (
+                    "opening",
+                    Self::opening_output(user, reject, duplicate_catalog),
+                )
             } else if system.contains("focused semantic assignment repair stage") {
                 ("opening_repair", Self::opening_repair_output(user))
             } else if system.contains("one non-overlapping research and implementation-spec pillar")
@@ -64252,7 +64772,103 @@ mod pre_scheduler_semantic_runtime_tests {
             });
         }
 
-        fn opening_output(user: &str, reject_assignment: bool) -> serde_json::Value {
+        fn captured_live_opening_output(user: &str) -> serde_json::Value {
+            let request: serde_json::Value = serde_json::from_str(user)
+                .expect("captured live opener request must remain typed JSON");
+            let requirements = request["frozen_authored_requirements"]
+                .as_array()
+                .expect("captured live opener lost authored requirements");
+            assert_eq!(requirements.len(), 197);
+            let requirement_ids = requirements
+                .iter()
+                .map(|requirement| requirement["id"].as_str().unwrap().to_string())
+                .collect::<BTreeSet<_>>();
+            let valid_assignments = captured_live_valid_assignments();
+            assert_eq!(valid_assignments.len(), 144);
+            let unknown_captured_ids = valid_assignments
+                .keys()
+                .filter(|requirement_id| !requirement_ids.contains(*requirement_id))
+                .collect::<Vec<_>>();
+            let uncaptured_frozen_ids = requirement_ids
+                .iter()
+                .filter(|requirement_id| !valid_assignments.contains_key(*requirement_id))
+                .collect::<Vec<_>>();
+            assert!(
+                unknown_captured_ids.is_empty(),
+                "captured opener IDs left the frozen inventory: {unknown_captured_ids:?}; uncaptured frozen IDs: {uncaptured_frozen_ids:?}"
+            );
+            let assignment_by_requirement = requirement_ids
+                .iter()
+                .map(|requirement_id| {
+                    (
+                        requirement_id.clone(),
+                        serde_json::json!(valid_assignments
+                            .get(requirement_id)
+                            .map(String::as_str)
+                            .unwrap_or("captured-unresolved-owner")),
+                    )
+                })
+                .collect::<serde_json::Map<_, _>>();
+            let planner = request["required_integration_owner"]
+                .as_str()
+                .expect("captured live opener lost integration owner");
+            serde_json::json!({
+                "pillars": [
+                    {
+                        "id": "ledgerd-core",
+                        "title": "Ledger Service: Vendor Sync, Payments API, Event Ledger",
+                        "objective": "Implement ledgerd vendor synchronization, payments APIs, its append-only ledger, webhooks, and static hosting boundary",
+                        "research_questions": ["How does ledgerd preserve vendor, event-ledger, and read-path invariants through retries and restarts?"],
+                        "acceptance_criteria": ["ledgerd boots, synchronizes, serves reads, and preserves its durable invariants"],
+                        "exclusions": ["Approval/notifier workflow", "Frontend console implementation"]
+                    },
+                    {
+                        "id": "approval-notifier",
+                        "title": "Approval Workflow, Outbox Relay, and Notifier Service",
+                        "objective": "Implement maker/checker workflow, durable outbox relay, and idempotent notifier materialization",
+                        "research_questions": ["How do approval, outbox, and notifier state remain exactly-once across crashes?"],
+                        "acceptance_criteria": ["Approval and notification effects survive crashes without duplication"],
+                        "exclusions": ["Vendor synchronization", "Frontend console implementation"]
+                    },
+                    {
+                        "id": "frontend-console",
+                        "title": "Operations Console: Payments Table, 3D Field Visualization, and Workflow UI",
+                        "objective": "Implement the offline operations console, data table, WebGL field, notifications, and drafts workflow UI",
+                        "research_questions": ["How does the console meet its interaction, rendering, and latency contracts without external code?"],
+                        "acceptance_criteria": ["The console satisfies all table, visualization, notification, and workflow interactions"],
+                        "exclusions": ["Ledger service implementation", "Approval and notifier backend implementation"]
+                    }
+                ],
+                "assignment_by_requirement": assignment_by_requirement,
+                "integration_contract": {
+                    "owner": planner,
+                    "integration_required": true,
+                    "objective": "Verify ledgerd, notifierd, and the frontend cooperate as one crash-resilient runnable system",
+                    "interface_invariants": ["Cross-service communication remains HTTP-only and each service owns only its database"],
+                    "acceptance_criteria": ["The complete system passes the graded crash, consistency, latency, and frontend scenarios"]
+                }
+            })
+        }
+
+        fn schema_invalid_opening(user: &str) -> serde_json::Value {
+            let mut opening = Self::opening_output(user, false, false);
+            let assignment = opening["assignment_by_requirement"]
+                .as_object_mut()
+                .expect("scripted schema failure lost its assignment object");
+            let omitted = assignment
+                .keys()
+                .next()
+                .cloned()
+                .expect("scripted schema failure had no key to omit");
+            assignment.remove(&omitted);
+            opening
+        }
+
+        fn opening_output(
+            user: &str,
+            reject_assignment: bool,
+            duplicate_catalog: bool,
+        ) -> serde_json::Value {
             let request: serde_json::Value = serde_json::from_str(user)
                 .expect("pillar replay opening request must remain typed JSON");
             let requirements = request["frozen_authored_requirements"]
@@ -64280,7 +64896,7 @@ mod pre_scheduler_semantic_runtime_tests {
             let mut cursor = 0usize;
             let total_weight = (1..=slice_count).sum::<usize>();
             let mut assignment_by_requirement = serde_json::Map::new();
-            let pillars = (0..slice_count)
+            let mut pillars = (0..slice_count)
                 .map(|index| {
                     let size = if index + 1 == slice_count {
                         requirement_ids.len() - cursor
@@ -64308,6 +64924,9 @@ mod pre_scheduler_semantic_runtime_tests {
                 })
                 .collect::<Vec<_>>();
             assert_eq!(cursor, requirement_ids.len());
+            if duplicate_catalog {
+                pillars[1]["id"] = serde_json::json!("pillar-01");
+            }
             if reject_assignment {
                 let (_, owner) = assignment_by_requirement
                     .iter_mut()
@@ -64532,7 +65151,7 @@ mod pre_scheduler_semantic_runtime_tests {
             &self,
             _error: &ProviderError,
         ) -> SingleAttemptFailureProvenance {
-            SingleAttemptFailureProvenance::Unresolved
+            SingleAttemptFailureProvenance::TerminalResponse
         }
 
         async fn stream(
@@ -64547,6 +65166,12 @@ mod pre_scheduler_semantic_runtime_tests {
                 "pillar replay unexpectedly left the response-only tool boundary"
             );
             let user = Self::last_user_text(messages);
+            if self.consume_opening_provider_failure(system) {
+                self.record_call(&model_config.model_name, "opening_provider_failure", user);
+                return Err(ProviderError::ExecutionError(
+                    "scripted terminal opener provider failure".to_string(),
+                ));
+            }
             let (phase, output) = self.scripted_output(system, &user);
             self.record_call(&model_config.model_name, phase, user);
             let arguments = output
@@ -64576,6 +65201,12 @@ mod pre_scheduler_semantic_runtime_tests {
                 "pillar replay unexpectedly left the response-only tool boundary"
             );
             let user = Self::last_user_text(messages);
+            if self.consume_opening_provider_failure(system) {
+                self.record_call(&model_config.model_name, "opening_provider_failure", user);
+                return Err(ProviderError::ExecutionError(
+                    "scripted terminal opener provider failure".to_string(),
+                ));
+            }
             let (phase, output) = self.scripted_output(system, &user);
             self.record_call(&model_config.model_name, phase, user);
             Ok(ResearchCorrectionRuntimeProvider::finished_final_output(
@@ -65536,6 +66167,362 @@ mod pre_scheduler_semantic_runtime_tests {
             .await
             .unwrap()
             .unwrap();
+    }
+
+    #[tokio::test]
+    async fn missing_opener_host_proof_rotates_to_the_next_authenticated_lane() {
+        const PLANNER_MODEL: &str = "opener-proof-planner";
+        const WORKER_B: &str = "opener-proof-worker-b";
+        const WORKER_C: &str = "opener-proof-worker-c";
+        const FROZEN_SPEC: &str = include_str!("../../../../evals/swarm-bench/spec-build-sb7.md");
+        let lanes = [
+            ("opener-proof-lane-a", PLANNER_MODEL, "proof-host-a"),
+            ("opener-proof-lane-b", WORKER_B, "proof-host-b"),
+            ("opener-proof-lane-c", WORKER_C, "proof-host-c"),
+        ];
+        let harness = pillar_replay_runtime_harness(&lanes).await;
+        let proof_overrides = Arc::new(Mutex::new(VecDeque::from([None])));
+        let outcome = PRE_SCHEDULER_TEST_HOST_PROOF_OVERRIDES
+            .scope(
+                proof_overrides,
+                harness.dispatcher.research_by_pillars(
+                    FROZEN_SPEC,
+                    Arc::new(Vec::new()),
+                    vec![
+                        ("device-a".to_string(), PLANNER_MODEL.to_string()),
+                        ("device-b".to_string(), WORKER_B.to_string()),
+                        ("device-c".to_string(), WORKER_C.to_string()),
+                    ],
+                    PLANNER_MODEL,
+                ),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(outcome.opening.pillars.len(), 6);
+        let opening_calls = harness
+            .provider
+            .calls()
+            .into_iter()
+            .filter(|call| call.phase == "opening")
+            .collect::<Vec<_>>();
+        assert_eq!(opening_calls.len(), 2);
+        assert_eq!(opening_calls[0].model, PLANNER_MODEL);
+        assert_eq!(opening_calls[1].model, WORKER_B);
+        let events = harness.sink.values();
+        assert!(events.iter().any(|event| {
+            event["event"] == "pillar_opening_candidate_rejected"
+                && event["reason"]
+                    .as_str()
+                    .is_some_and(|reason| reason.contains("carried no authenticated proof"))
+                && event["next_model"] == WORKER_B
+        }));
+        assert!(!events
+            .iter()
+            .any(|event| event["event"] == "pillar_opening_integrity_failure"));
+    }
+
+    #[tokio::test]
+    async fn conflicting_authenticated_opener_host_proof_fails_closed_without_rotation() {
+        const PLANNER_MODEL: &str = "opener-conflict-planner";
+        const WORKER_B: &str = "opener-conflict-worker-b";
+        const WORKER_C: &str = "opener-conflict-worker-c";
+        const FROZEN_SPEC: &str = include_str!("../../../../evals/swarm-bench/spec-build-sb7.md");
+        let lanes = [
+            ("opener-conflict-lane-a", PLANNER_MODEL, "conflict-host-a"),
+            ("opener-conflict-lane-b", WORKER_B, "conflict-host-b"),
+            ("opener-conflict-lane-c", WORKER_C, "conflict-host-c"),
+        ];
+        let harness = pillar_replay_runtime_harness(&lanes).await;
+        let proof_overrides = Arc::new(Mutex::new(VecDeque::from([Some(
+            "authenticated-conflicting-host".to_string(),
+        )])));
+        let error = PRE_SCHEDULER_TEST_HOST_PROOF_OVERRIDES
+            .scope(
+                proof_overrides,
+                harness.dispatcher.research_by_pillars(
+                    FROZEN_SPEC,
+                    Arc::new(Vec::new()),
+                    vec![
+                        ("device-a".to_string(), PLANNER_MODEL.to_string()),
+                        ("device-b".to_string(), WORKER_B.to_string()),
+                        ("device-c".to_string(), WORKER_C.to_string()),
+                    ],
+                    PLANNER_MODEL,
+                ),
+            )
+            .await
+            .unwrap_err()
+            .to_string();
+
+        assert!(error.contains("authenticated physical host"));
+        assert!(error.contains("authenticated-conflicting-host"));
+        assert_eq!(
+            harness
+                .provider
+                .calls()
+                .iter()
+                .filter(|call| call.phase == "opening")
+                .count(),
+            1
+        );
+        let events = harness.sink.values();
+        assert!(events.iter().any(|event| {
+            event["event"] == "pillar_opening_integrity_failure" && event["terminal"] == true
+        }));
+        assert!(!events
+            .iter()
+            .any(|event| event["event"] == "pillar_opening_candidate_rejected"));
+    }
+
+    #[tokio::test]
+    async fn nonrepairable_opening_cycles_park_after_one_distinct_regeneration() {
+        const MODEL: &str = "opener-bounded-recovery-model";
+        const HOST: &str = "opener-bounded-recovery-host";
+        const FROZEN_SPEC: &str = include_str!("../../../../evals/swarm-bench/spec-build-sb7.md");
+        let lanes = [("opener-bounded-recovery-lane", MODEL, HOST)];
+        let harness = pillar_replay_runtime_harness(&lanes).await;
+        harness.provider.duplicate_catalog_openings(2);
+        let dispatcher = harness.dispatcher.clone();
+        let run = tokio::spawn(async move {
+            dispatcher
+                .research_by_pillars(
+                    FROZEN_SPEC,
+                    Arc::new(Vec::new()),
+                    vec![("device".to_string(), MODEL.to_string())],
+                    MODEL,
+                )
+                .await
+        });
+
+        let parked = harness
+            .sink
+            .wait_for("pillar_opening_recovery_parked")
+            .await;
+        assert_eq!(parked["terminal"], false);
+        assert_eq!(parked["provider_calls"], 2);
+        assert_eq!(
+            harness
+                .provider
+                .calls()
+                .iter()
+                .filter(|call| call.phase == "opening")
+                .count(),
+            2
+        );
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        assert!(
+            !run.is_finished(),
+            "bounded recovery terminalized instead of parking"
+        );
+        assert_eq!(
+            harness
+                .provider
+                .calls()
+                .iter()
+                .filter(|call| call.phase == "opening")
+                .count(),
+            2,
+            "parked recovery kept replaying the rejected strategy"
+        );
+        let events = harness.sink.values();
+        assert!(events.iter().any(|event| {
+            event["event"] == "pillar_opening_strategy_transitioned"
+                && event["from"] == "full-semantic-opening"
+                && event["to"] == "parked-recovery-boundary"
+        }));
+        assert!(events.iter().any(|event| {
+            event["event"] == "pillar_opening_strategy_transitioned"
+                && event["from"] == "parked-recovery-boundary"
+                && event["to"] == "full-semantic-regeneration"
+        }));
+        run.abort();
+        let _ = run.await;
+    }
+
+    #[tokio::test]
+    async fn provider_failures_cross_recovery_boundary_then_park_without_replay() {
+        const MODEL: &str = "opener-provider-recovery-model";
+        const HOST: &str = "opener-provider-recovery-host";
+        const FROZEN_SPEC: &str = include_str!("../../../../evals/swarm-bench/spec-build-sb7.md");
+        let lanes = [("opener-provider-recovery-lane", MODEL, HOST)];
+        let harness = pillar_replay_runtime_harness(&lanes).await;
+        harness.provider.fail_opening_provider_calls(2);
+        let dispatcher = harness.dispatcher.clone();
+        let run = tokio::spawn(async move {
+            dispatcher
+                .research_by_pillars(
+                    FROZEN_SPEC,
+                    Arc::new(Vec::new()),
+                    vec![("device".to_string(), MODEL.to_string())],
+                    MODEL,
+                )
+                .await
+        });
+
+        let parked = harness
+            .sink
+            .wait_for("pillar_opening_recovery_parked")
+            .await;
+        assert_eq!(parked["provider_calls"], 2);
+        assert_eq!(
+            harness
+                .provider
+                .calls()
+                .iter()
+                .filter(|call| call.phase == "opening_provider_failure")
+                .count(),
+            2
+        );
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        assert!(!run.is_finished());
+        assert_eq!(harness.provider.calls().len(), 2);
+        run.abort();
+        let _ = run.await;
+    }
+
+    #[tokio::test]
+    async fn schema_failures_are_bounded_inside_each_lane_before_recovery_parks() {
+        const MODEL: &str = "opener-schema-recovery-model";
+        const HOST: &str = "opener-schema-recovery-host";
+        const FROZEN_SPEC: &str = include_str!("../../../../evals/swarm-bench/spec-build-sb7.md");
+        let lanes = [("opener-schema-recovery-lane", MODEL, HOST)];
+        let harness = pillar_replay_runtime_harness(&lanes).await;
+        harness.provider.fail_opening_schema_calls(100);
+        let dispatcher = harness.dispatcher.clone();
+        let run = tokio::spawn(async move {
+            dispatcher
+                .research_by_pillars(
+                    FROZEN_SPEC,
+                    Arc::new(Vec::new()),
+                    vec![("device".to_string(), MODEL.to_string())],
+                    MODEL,
+                )
+                .await
+        });
+
+        let parked = harness
+            .sink
+            .wait_for("pillar_opening_recovery_parked")
+            .await;
+        assert_eq!(parked["provider_calls"], 2);
+        let schema_calls = harness
+            .provider
+            .calls()
+            .iter()
+            .filter(|call| call.phase == "opening_schema_failure")
+            .count();
+        assert_eq!(
+            schema_calls,
+            (MAX_PILLAR_OPENING_REGENERATION_CYCLES + 1) * 2,
+            "each bounded semantic strategy must stop after two corroborating schema failures"
+        );
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        assert!(!run.is_finished());
+        assert_eq!(harness.provider.calls().len(), schema_calls);
+        run.abort();
+        let _ = run.await;
+    }
+
+    #[tokio::test]
+    async fn captured_live_144_of_197_opening_repairs_53_keys_without_changing_topology() {
+        const MODEL: &str = "captured-live-opener-model";
+        const HOST: &str = "captured-live-opener-host";
+        const FROZEN_SPEC: &str = include_str!("../../../../evals/swarm-bench/spec-build-sb7.md");
+        let lanes = [("captured-live-opener-lane", MODEL, HOST)];
+        let harness = pillar_replay_runtime_harness(&lanes).await;
+        harness.provider.replay_captured_live_opening();
+        let outcome = harness
+            .dispatcher
+            .research_by_pillars(
+                FROZEN_SPEC,
+                Arc::new(Vec::new()),
+                vec![("device".to_string(), MODEL.to_string())],
+                MODEL,
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(outcome.opening.pillars.len(), 3);
+        assert_eq!(outcome.opening.requirements.len(), 197);
+        assert_eq!(outcome.provider_calls, 5);
+        let expected_assignments = captured_live_valid_assignments();
+        assert_eq!(expected_assignments.len(), 144);
+        for (requirement_id, expected_pillar_id) in &expected_assignments {
+            let actual_pillar = outcome
+                .opening
+                .pillars
+                .iter()
+                .find(|pillar| pillar.requirement_ids.contains(requirement_id))
+                .map(|pillar| pillar.id.as_str());
+            assert_eq!(actual_pillar, Some(expected_pillar_id.as_str()));
+        }
+
+        let calls = harness.provider.calls();
+        assert_eq!(
+            calls.iter().filter(|call| call.phase == "opening").count(),
+            1
+        );
+        let repair_call = calls
+            .iter()
+            .find(|call| call.phase == "opening_repair")
+            .expect("captured omission never reached focused production repair");
+        let repair_request: serde_json::Value = serde_json::from_str(&repair_call.user).unwrap();
+        let preserved_pillars = repair_request["preserved_semantic_pillars"]
+            .as_array()
+            .unwrap();
+        assert_eq!(
+            preserved_pillars
+                .iter()
+                .map(|pillar| pillar["id"].as_str().unwrap())
+                .collect::<Vec<_>>(),
+            ["ledgerd-core", "approval-notifier", "frontend-console"]
+        );
+        let preserved_assignments = repair_request["preserved_valid_assignment_by_requirement"]
+            .as_object()
+            .unwrap();
+        assert_eq!(preserved_assignments.len(), 144);
+        for (requirement_id, pillar_id) in &expected_assignments {
+            assert_eq!(
+                preserved_assignments[requirement_id].as_str(),
+                Some(pillar_id.as_str())
+            );
+        }
+        assert_eq!(
+            repair_request["unresolved_requirements"]
+                .as_array()
+                .unwrap()
+                .len(),
+            53
+        );
+        assert_eq!(
+            serde_json::to_value(&outcome.opening.integration_contract).unwrap(),
+            repair_request["preserved_integration_contract"]
+        );
+
+        let events = harness.sink.values();
+        let transition = events
+            .iter()
+            .find(|event| event["event"] == "pillar_opening_strategy_transitioned")
+            .unwrap();
+        assert_eq!(transition["preserved_pillars"], 3);
+        assert_eq!(transition["preserved_assignments"], 144);
+        assert_eq!(
+            transition["unresolved_requirement_ids"]
+                .as_array()
+                .unwrap()
+                .len(),
+            53
+        );
+        let completed = events
+            .iter()
+            .find(|event| event["event"] == "pillar_opening_completed")
+            .unwrap();
+        assert_eq!(completed["strategy"], "focused-assignment-repair");
+        assert_eq!(completed["raw_output_digests"].as_array().unwrap().len(), 2);
+        assert!(!events
+            .iter()
+            .any(|event| event["deterministic_semantic_fallback"] == true));
     }
 
     #[tokio::test]
