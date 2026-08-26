@@ -26,6 +26,7 @@ F924_MEASURED_REPEAT_SHARE = 0.4033
 DEFAULT_RECURRENCE_SHARE = 0.30
 DEFAULT_REPEATED_WINDOWS = 1024
 FINAL_OUTPUT_TOOL = "recipe__final_output"
+RECURRENCE_SOURCE = "full-stream-reasoning-recurrence-meter"
 
 
 def utc_now() -> str:
@@ -325,7 +326,7 @@ class RecurrenceGate:
         evidence = {
             "activity_path": sample.path,
             "model": sample.model,
-            "source": "full-stream-reasoning-recurrence-meter",
+            "source": RECURRENCE_SOURCE,
             "tail_reasoning_used": False,
             "window_chars": sample.recurrence_window_chars,
             "observed_windows": sample.observed_windows,
@@ -815,10 +816,16 @@ def capture_incident(
     evidence: Dict[str, Any],
     event_log: pathlib.Path,
     engine_console: pathlib.Path,
+    classification: str = "incident",
 ) -> pathlib.Path:
+    if classification not in ("incident", "finding"):
+        raise ValueError(
+            "unsupported monitor evidence classification: {}".format(classification)
+        )
     stamp = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%S.%fZ")
     safe_reason = "".join(character if character.isalnum() else "-" for character in reason)
-    incident_dir = monitor_dir / "incidents" / (stamp + "-" + safe_reason[:64])
+    collection = "incidents" if classification == "incident" else "findings"
+    incident_dir = monitor_dir / collection / (stamp + "-" + safe_reason[:64])
     incident_dir.mkdir(parents=True, exist_ok=False)
 
     activity_proofs = []
@@ -862,6 +869,7 @@ def capture_incident(
 
     incident = {
         "captured_at": utc_now(),
+        "classification": classification,
         "reason": reason,
         "evidence": evidence,
         "run_dir": str(run_dir),
@@ -878,7 +886,7 @@ def capture_incident(
         "activity_files": activity_proofs,
         "heartbeats": heartbeat_proofs,
     }
-    write_json(incident_dir / "incident.json", incident)
+    write_json(incident_dir / (classification + ".json"), incident)
 
     manifest_lines = []
     for path in sorted(incident_dir.rglob("*")):
@@ -899,6 +907,25 @@ def capture_incident(
     finally:
         os.close(directory_fd)
     return incident_dir
+
+
+def observational_finding_key(
+    incident: Dict[str, Any], stop_on_incident: bool
+) -> Optional[str]:
+    if stop_on_incident:
+        return None
+    evidence = incident.get("evidence")
+    if not isinstance(evidence, dict) or evidence.get("source") != RECURRENCE_SOURCE:
+        return None
+    identity = {
+        "reason": str(incident.get("reason", "")),
+        "source": evidence.get("source"),
+        "activity_path": evidence.get("activity_path"),
+        "model": evidence.get("model"),
+    }
+    return hashlib.sha256(
+        json.dumps(identity, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
 
 
 class DurableLog:
@@ -1057,7 +1084,7 @@ def watch(args: argparse.Namespace) -> int:
         binary=str(binary),
         binary_sha256=actual_sha256,
         event_log=str(event_log),
-        recurrence_source="full-stream-reasoning-recurrence-meter",
+        recurrence_source=RECURRENCE_SOURCE,
         recurrence_share=args.recurrence_share,
         repeated_windows=args.repeated_windows,
         confirmations=args.confirmations,
@@ -1065,6 +1092,7 @@ def watch(args: argparse.Namespace) -> int:
     )
 
     last_lms_at = 0.0
+    captured_finding_keys = set()
     try:
         while True:
             incident: Optional[Dict[str, Any]] = None
@@ -1128,26 +1156,61 @@ def watch(args: argparse.Namespace) -> int:
             if incident is not None:
                 reason = str(incident.get("reason", "monitor incident"))
                 evidence = incident.get("evidence", incident)
-                durable.emit("incident_detected", reason=reason, evidence=evidence)
-                incident_dir = capture_incident(
-                    run_dir,
-                    monitor_dir,
-                    pid,
-                    launch_identity,
-                    binary,
-                    actual_sha256,
-                    reason,
-                    evidence,
-                    event_log,
-                    engine_console,
+                finding_key = observational_finding_key(
+                    incident, args.stop_on_incident
                 )
-                durable.emit("incident_captured", incident_dir=str(incident_dir))
-                if args.stop_on_incident:
-                    signalled = stop_after_capture(pid, launch_identity, incident_dir)
-                    durable.emit(
-                        "stop_after_capture", incident_dir=str(incident_dir), signalled=signalled
+                if finding_key is not None:
+                    if finding_key not in captured_finding_keys:
+                        durable.emit(
+                            "finding_detected",
+                            finding_key=finding_key,
+                            reason=reason,
+                            evidence=evidence,
+                        )
+                        finding_dir = capture_incident(
+                            run_dir,
+                            monitor_dir,
+                            pid,
+                            launch_identity,
+                            binary,
+                            actual_sha256,
+                            reason,
+                            evidence,
+                            event_log,
+                            engine_console,
+                            classification="finding",
+                        )
+                        captured_finding_keys.add(finding_key)
+                        durable.emit(
+                            "finding_captured",
+                            finding_key=finding_key,
+                            finding_dir=str(finding_dir),
+                        )
+                else:
+                    durable.emit("incident_detected", reason=reason, evidence=evidence)
+                    incident_dir = capture_incident(
+                        run_dir,
+                        monitor_dir,
+                        pid,
+                        launch_identity,
+                        binary,
+                        actual_sha256,
+                        reason,
+                        evidence,
+                        event_log,
+                        engine_console,
                     )
-                return 20
+                    durable.emit("incident_captured", incident_dir=str(incident_dir))
+                    if args.stop_on_incident:
+                        signalled = stop_after_capture(
+                            pid, launch_identity, incident_dir
+                        )
+                        durable.emit(
+                            "stop_after_capture",
+                            incident_dir=str(incident_dir),
+                            signalled=signalled,
+                        )
+                    return 20
 
             identity = process_identity(pid)
             if identity is None:
