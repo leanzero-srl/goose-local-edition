@@ -9712,6 +9712,23 @@ ThreadingHTTPServer(("127.0.0.1", a.port), Handler).serve_forever()
         assert!(result.contains("notifier"), "{result}");
     }
 
+    #[test]
+    fn service_boot_budget_accepts_a_bind_after_the_old_four_second_cutoff() {
+        let delayed_bind = std::time::Duration::from_millis(4_500);
+        let delayed_attempt =
+            readiness_poll_attempts(delayed_bind, SPEC_SERVICE_BOOT_POLL_INTERVAL);
+        let budget = spec_service_boot_poll_attempts();
+        assert!(delayed_bind > std::time::Duration::from_secs(4));
+        assert_eq!(
+            SPEC_SERVICE_BOOT_DEADLINE,
+            std::time::Duration::from_secs(10)
+        );
+        assert!(
+            delayed_attempt < budget,
+            "a service binding after 4.5s must remain inside the frozen 10s readiness window"
+        );
+    }
+
     #[tokio::test]
     async fn an_external_vendor_port_never_satisfies_application_boot() {
         let vendor = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
@@ -9757,6 +9774,8 @@ ThreadingHTTPServer(("127.0.0.1", a.port), Handler).serve_forever()
 
 ### `ledgerd`
 The ledger client also fetches GET /v3/reversals from the external vendor.
+The ledger client fetches GET /v3/adjustments during reconciliation.
+The export UI is served at `GET /api/export`.
 
 | Method | Path | Response |
 |---|---|---|
@@ -9779,7 +9798,7 @@ The ledger client also fetches GET /v3/reversals from the external vendor.
         let gets = spec_get_endpoint_contracts(spec);
         assert_eq!(
             gets.len(),
-            5,
+            6,
             "bare/query twins are one causal route: {gets:?}"
         );
         let payments = gets
@@ -9788,8 +9807,15 @@ The ledger client also fetches GET /v3/reversals from the external vendor.
             .expect("ledger payments route");
         assert_eq!(payments.authority.as_deref(), Some("ledger"));
         assert_eq!(
-            payments.path, "/api/payments?limit=1&offset=1",
+            payments.path, "/api/payments?limit=1&offset=0",
             "the query-bearing form is the stronger single probe"
+        );
+        assert_eq!(
+            gets.iter()
+                .find(|endpoint| endpoint.path == "/api/export")
+                .and_then(|endpoint| endpoint.authority.as_deref()),
+            Some("ledger"),
+            "a legitimate prose-owned app route must survive beside endpoint tables"
         );
         assert!(
             gets.iter().any(|endpoint| endpoint.path == "/"),
@@ -9818,7 +9844,10 @@ The ledger client also fetches GET /v3/reversals from the external vendor.
             Some("notifier")
         );
         assert!(
-            gets.iter().all(|endpoint| endpoint.path != "/v3/reversals"),
+            gets.iter().all(|endpoint| !matches!(
+                endpoint.path.as_str(),
+                "/v3/reversals" | "/v3/adjustments"
+            )),
             "an outbound vendor request is not an advertised app route: {gets:?}"
         );
     }
@@ -9837,7 +9866,7 @@ import time
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import urlsplit
+from urllib.parse import parse_qs, urlsplit
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--ledger-port", type=int, required=True)
@@ -9847,13 +9876,20 @@ hits = Path(__file__).resolve().parent.parent / "hits.log"
 
 class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
-        route = urlsplit(self.path).path
+        parsed = urlsplit(self.path)
+        route = parsed.path
+        query = parse_qs(parsed.query)
         port = self.server.server_address[1]
         with hits.open("a", encoding="utf-8") as stream:
-            stream.write(f"{port} {route}\n")
+            stream.write(f"{port} {self.path}\n")
         if port == args.ledger_port and route == "/ledger/rows":
-            body = {"data": [], "total": 0, "limit": 1, "offset": 1}
-            code = 200
+            status = query.get("status", [None])[0]
+            if status is not None and status not in {"pending", "posted"}:
+                body = {"error": "invalid status enum"}
+                code = 422
+            else:
+                body = {"data": [], "total": 0, "limit": 1, "offset": 0}
+                code = 200
         elif port == args.notifier_port and route == "/notify/notifications":
             body = {"data": [], "total": 0}
             code = 200
@@ -9887,7 +9923,7 @@ The vendor client fetches GET /v3/reversals from an external dependency.
 | Method | Path | Response |
 |---|---|---|
 | `GET` | `/ledger/rows` | `{"data": [...], "total": <int>}` |
-| `GET` | `/ledger/rows?limit=<int>&offset=<int>` | `{"data": [...], "total": <int>, "limit": <int>, "offset": <int>}` |
+| `GET` | `/ledger/rows?limit=<int>&offset=<int>&status=<pending|posted>` | `{"data": [...], "total": <int>, "limit": <int>, "offset": <int>}` |
 
 ### notifier
 | Method | Path | Response |
@@ -9900,13 +9936,19 @@ The vendor client fetches GET /v3/reversals from an external dependency.
         let hits = std::fs::read_to_string(tree.path().join("hits.log")).unwrap();
         let rows = hits.lines().collect::<Vec<_>>();
         assert_eq!(rows.len(), 2, "one causal probe per service: {rows:?}");
-        assert!(rows.iter().any(|row| row.ends_with(" /ledger/rows")));
         assert!(rows
             .iter()
-            .any(|row| row.ends_with(" /notify/notifications")));
+            .any(|row| row.ends_with(" /ledger/rows?limit=1&offset=0")));
+        assert!(rows
+            .iter()
+            .any(|row| row.ends_with(" /notify/notifications?limit=1&offset=0")));
         assert!(
             rows.iter().all(|row| !row.ends_with(" /v3/reversals")),
             "vendor prose must never be probed: {rows:?}"
+        );
+        assert!(
+            rows.iter().all(|row| !row.contains("status=")),
+            "an optional enum filter must be omitted rather than sent an invalid synthetic value: {rows:?}"
         );
         let ports = rows
             .iter()
@@ -12907,7 +12949,25 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
         // the payments row (18% of all score loss) was silently dropped for the `<` in its token.
         assert_eq!(
             probeable_get_path("/api/payments?limit=<int>&offset=<int>").as_deref(),
-            Some("/api/payments?limit=1&offset=1")
+            Some("/api/payments?limit=1&offset=0")
+        );
+        assert_eq!(
+            probeable_get_path(
+                "/api/payments?limit=<int>&offset=<int>&status=<pending|posted>"
+            )
+            .as_deref(),
+            Some("/api/payments?limit=1&offset=0"),
+            "optional enum filters are omitted instead of receiving the invalid synthetic value `1`"
+        );
+        assert_eq!(
+            probeable_get_path("/api/payments?status=").as_deref(),
+            Some("/api/payments"),
+            "an empty optional filter is omitted"
+        );
+        assert_eq!(
+            probeable_get_path("/redirect?target=http://example.test").as_deref(),
+            Some("/redirect?target=http://example.test"),
+            "a literal query value containing a colon is not a placeholder"
         );
         // A templated PATH still refuses — it legitimately 404s under a blind GET.
         assert_eq!(probeable_get_path("/api/payments/<id>"), None);
@@ -12927,12 +12987,12 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
                      | `GET` | `/api/summary` | `{\"count\": <int>, \"total_minor\": <int>, \"oldest\": <str or null>}` |\n";
         let got = spec_get_endpoints(table);
         assert!(
-            got.contains(&"/api/payments?limit=1&offset=1".to_string()),
+            got.contains(&"/api/payments?limit=1&offset=0".to_string()),
             "the query-templated GET must be probeable: {got:?}"
         );
 
         // Q2(b): the documented keys come from the ADVERTISING ROW, scoped per endpoint.
-        let keys = spec_documented_keys(table, "/api/payments?limit=1&offset=1");
+        let keys = spec_documented_keys(table, "/api/payments?limit=1&offset=0");
         assert_eq!(keys, vec!["data", "total", "limit", "offset"]);
         let keys = spec_documented_keys(table, "/api/summary");
         assert_eq!(keys, vec!["count", "total_minor", "oldest"]);
@@ -37628,6 +37688,19 @@ struct BootServiceProbe {
     health_path: Option<String>,
 }
 
+const SPEC_SERVICE_BOOT_DEADLINE: std::time::Duration = std::time::Duration::from_secs(10);
+const SPEC_SERVICE_BOOT_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(50);
+
+fn readiness_poll_attempts(deadline: std::time::Duration, interval: std::time::Duration) -> usize {
+    let deadline_millis = deadline.as_millis();
+    let interval_millis = interval.as_millis().max(1);
+    deadline_millis.div_ceil(interval_millis) as usize
+}
+
+fn spec_service_boot_poll_attempts() -> usize {
+    readiness_poll_attempts(SPEC_SERVICE_BOOT_DEADLINE, SPEC_SERVICE_BOOT_POLL_INTERVAL)
+}
+
 /// Spawn ONE `python3 -m pkg argv` and decide ready-or-die: `None` = every advertised
 /// application service is ready, `Some(tail)` = at least one never became ready, with the
 /// normalized output tail as evidence. Readiness means bind for a service with no authored
@@ -37706,7 +37779,7 @@ async fn boot_invocation(
             .and_then(|code| code.parse::<u16>().ok())
             .is_some_and(|code| (200..300).contains(&code))
     }
-    let ready = tokio::time::timeout(std::time::Duration::from_secs(4), async {
+    let ready = tokio::time::timeout(SPEC_SERVICE_BOOT_DEADLINE, async {
         loop {
             if futures::future::join_all(probes.iter().map(service_ready))
                 .await
@@ -37715,7 +37788,7 @@ async fn boot_invocation(
             {
                 return true;
             }
-            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            tokio::time::sleep(SPEC_SERVICE_BOOT_POLL_INTERVAL).await;
         }
     })
     .await
@@ -37865,11 +37938,31 @@ fn probeable_get_path(path: &str) -> Option<String> {
     let filled: Vec<String> = query
         .split('&')
         .filter(|p| !p.is_empty())
-        .map(|pair| match pair.split_once('=') {
-            // A templated value (`limit=<int>`, `page={n}`) becomes a benign literal 1 — small,
-            // positive, valid for every count/offset/page parameter a spec documents.
-            Some((k, v)) if v.contains(['{', '<', ':']) => format!("{k}=1"),
-            _ => pair.to_string(),
+        .filter_map(|pair| match pair.split_once('=') {
+            Some((_, "")) => None,
+            Some((key, value))
+                if value.starts_with('<') || value.starts_with('{') || value.starts_with(':') =>
+            {
+                let key_lower = key.to_ascii_lowercase();
+                let value_lower = value.to_ascii_lowercase();
+                let numeric = ["int", "integer", "number", "numeric", "usize", "u32", "u64"]
+                    .iter()
+                    .any(|kind| value_lower.contains(kind));
+                if key_lower.contains("offset") {
+                    Some(format!("{key}=0"))
+                } else if numeric
+                    || ["limit", "page", "size", "count"]
+                        .iter()
+                        .any(|kind| key_lower.contains(kind))
+                {
+                    Some(format!("{key}=1"))
+                } else if value_lower.contains("bool") {
+                    Some(format!("{key}=true"))
+                } else {
+                    None
+                }
+            }
+            _ => Some(pair.to_string()),
         })
         .collect();
     if filled.is_empty() {
@@ -38058,16 +38151,17 @@ fn spec_prose_get_endpoints(spec: &str) -> Vec<String> {
 fn spec_get_endpoint_contracts(spec: &str) -> Vec<SpecEndpointContract> {
     let table_contracts = spec_endpoint_table_contracts(spec);
     if !table_contracts.is_empty() {
-        return merge_causal_endpoint_contracts(table_contracts.into_iter().filter_map(
-            |mut contract| {
-                if contract.method != "GET" {
-                    return None;
-                }
-                contract.path =
-                    probeable_get_path(contract.path.trim_end_matches([';', ',', ')', '.']))?;
-                Some(contract)
-            },
-        ));
+        let table = table_contracts.into_iter().filter_map(|mut contract| {
+            if contract.method != "GET" {
+                return None;
+            }
+            contract.path =
+                probeable_get_path(contract.path.trim_end_matches([';', ',', ')', '.']))?;
+            Some(contract)
+        });
+        return merge_causal_endpoint_contracts(
+            table.chain(spec_owned_prose_get_endpoint_contracts(spec)),
+        );
     }
     spec_prose_get_endpoints(spec)
         .into_iter()
@@ -38079,6 +38173,91 @@ fn spec_get_endpoint_contracts(spec: &str) -> Vec<SpecEndpointContract> {
             documents_utc: false,
         })
         .collect()
+}
+
+fn spec_owned_prose_get_endpoint_contracts(
+    spec: &str,
+) -> impl Iterator<Item = SpecEndpointContract> + '_ {
+    let aliases = spec_service_authority_aliases(spec);
+    let get = regex::Regex::new(r"(?i)\bGET\s+(/\S*)").expect("static GET regex");
+    let mut headings: Vec<(usize, String)> = Vec::new();
+    let mut contracts = Vec::new();
+    for raw_line in spec.lines() {
+        let trimmed = raw_line.trim();
+        if trimmed.starts_with('#') {
+            let level = trimmed
+                .chars()
+                .take_while(|character| *character == '#')
+                .count();
+            if level > 0 && trimmed.chars().nth(level).is_some_and(char::is_whitespace) {
+                headings.retain(|(existing, _)| *existing < level);
+                headings.push((
+                    level,
+                    trimmed.get(level..).unwrap_or_default().trim().to_string(),
+                ));
+            }
+            continue;
+        }
+        if trimmed.starts_with('|') {
+            continue;
+        }
+        let lower = trimmed.to_ascii_lowercase();
+        let ownership_text = lower.replace(['`', '*'], "");
+        let outbound = [
+            "external",
+            "vendor",
+            "upstream",
+            "third-party",
+            "third party",
+            "dependency",
+            "client fetches",
+            "client calls",
+            "client requests",
+        ]
+        .iter()
+        .any(|marker| ownership_text.contains(marker));
+        if outbound {
+            continue;
+        }
+        let direct_contract =
+            ownership_text.starts_with("get ") || ownership_text.starts_with("- get ");
+        let app_owned = direct_contract
+            || [
+                "served by",
+                "served at get",
+                "serves get",
+                "exposes get",
+                "implements get",
+                "endpoint get",
+                "route get",
+                "answers get",
+                "responds at get",
+            ]
+            .iter()
+            .any(|marker| ownership_text.contains(marker));
+        if !app_owned {
+            continue;
+        }
+        let authority = heading_service_authority(&headings, &aliases);
+        for capture in get.captures_iter(trimmed) {
+            let raw = capture[1]
+                .split(['`', '*', '"', '\''])
+                .next()
+                .unwrap_or("")
+                .trim_end_matches([';', ',', ')', '.', '/']);
+            let Some(path) = probeable_get_path(raw) else {
+                continue;
+            };
+            contracts.push(SpecEndpointContract {
+                method: "GET".to_string(),
+                path,
+                authority: authority.clone(),
+                documented_keys: Vec::new(),
+                documents_utc: false,
+            });
+        }
+    }
+    contracts.into_iter()
 }
 
 fn spec_get_endpoints(spec: &str) -> Vec<String> {
@@ -38356,10 +38535,13 @@ struct SpecServicePort {
 
 fn spec_service_ports(
     argv: &[String],
-    allocated_ports: &[u16],
+    probes: &[BootServiceProbe],
     fallback_port: u16,
 ) -> Vec<SpecServicePort> {
-    let allocated = allocated_ports.iter().copied().collect::<HashSet<_>>();
+    let allocated = probes
+        .iter()
+        .map(|probe| probe.port)
+        .collect::<HashSet<_>>();
     let mut out = Vec::new();
     for pair in argv.windows(2) {
         if !pair[0].starts_with('-') || !pair[0].to_ascii_lowercase().contains("port") {
@@ -38379,11 +38561,11 @@ fn spec_service_ports(
             out.push(binding);
         }
     }
-    for port in allocated_ports {
-        if !out.iter().any(|binding| binding.port == *port) {
+    for probe in probes {
+        if !out.iter().any(|binding| binding.port == probe.port) {
             out.push(SpecServicePort {
-                authority: None,
-                port: *port,
+                authority: port_flag_authority(&probe.flag).or_else(|| Some(probe.service.clone())),
+                port: probe.port,
             });
         }
     }
@@ -39050,7 +39232,7 @@ async fn run_spec_contract(root: &Path, spec: &str, lang: TargetLang) -> SpecCon
         };
     };
     let mut up = false;
-    for _ in 0..80 {
+    for _ in 0..spec_service_boot_poll_attempts() {
         let states = futures::future::join_all(probe_ports.iter().map(|port| async move {
             tokio::net::TcpStream::connect(("127.0.0.1", *port))
                 .await
@@ -39061,7 +39243,7 @@ async fn run_spec_contract(root: &Path, spec: &str, lang: TargetLang) -> SpecCon
             up = true;
             break;
         }
-        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        tokio::time::sleep(SPEC_SERVICE_BOOT_POLL_INTERVAL).await;
     }
     // A PORT BEING OPEN IS NOT PROOF THAT OUR CHILD OPENED IT, and treating it as proof is how this
     // gate produced its third and fourth phantom. MEASURED on a live run: it reported
@@ -39125,7 +39307,7 @@ async fn run_spec_contract(root: &Path, spec: &str, lang: TargetLang) -> SpecCon
         // same run where `http_timeout_scan`'s finding blocked green and WAS repaired by round 1.
         if advertised.is_empty() {
             inconclusive.push(format!(
-                "spec-contract: `python3 -m {pkg}` never bound every advertised port ({}) within 4s — the advertised entrypoint did not start every service (the ports were inferred from the spec, so this may be a bad guess rather than an app defect)",
+                "spec-contract: `python3 -m {pkg}` never bound every advertised port ({}) within 10s — the advertised entrypoint did not start every service (the ports were inferred from the spec, so this may be a bad guess rather than an app defect)",
                 probe_ports.iter().map(u16::to_string).collect::<Vec<_>>().join(", ")
             ));
         } else {
@@ -39924,7 +40106,7 @@ async fn run_spec_contract(root: &Path, spec: &str, lang: TargetLang) -> SpecCon
                 ),
                 Ok(mut child2) => {
                     let mut up2 = false;
-                    for _ in 0..80 {
+                    for _ in 0..spec_service_boot_poll_attempts() {
                         if tokio::net::TcpStream::connect(("127.0.0.1", port))
                             .await
                             .is_ok()
@@ -39932,7 +40114,7 @@ async fn run_spec_contract(root: &Path, spec: &str, lang: TargetLang) -> SpecCon
                             up2 = true;
                             break;
                         }
-                        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+                        tokio::time::sleep(SPEC_SERVICE_BOOT_POLL_INTERVAL).await;
                     }
                     if !up2 {
                         findings.push(format!(
