@@ -17,7 +17,7 @@ use std::time::Duration;
 
 use crate::base::{
     expose_current_provider_http_request, lifecycle_supervised_stream_active,
-    provider_http_exposure_active, ProviderHttpProtocol,
+    provider_http_exposure_active, uncapped_local_stream_active, ProviderHttpProtocol,
 };
 
 const DEFAULT_PROVIDER_TIMEOUT_SECS: u64 = 600;
@@ -416,12 +416,12 @@ impl ApiClient {
         Ok(())
     }
 
-    /// Enables a connect-bounded client for lifecycle-supervised local streams.
+    /// Enables a connect-bounded client for supervised local streams.
     ///
-    /// Goose owns the complete quiet budget and exact cancellation proof for these calls. A lower
-    /// transport read timeout would preempt that engine authority and leave an exposed provider
-    /// request without a proven terminal. The ordinary client remains unchanged and is still used
-    /// unless the request is inside a lifecycle-supervised stream scope.
+    /// Goose owns semantic completion and exact cancellation authority for these calls. A lower
+    /// transport read timeout would preempt that authority and leave an exposed provider request
+    /// without a proven terminal. The ordinary client remains unchanged and is still used unless
+    /// the request is inside a lifecycle-supervised or explicitly uncapped local scope.
     pub fn with_lifecycle_supervised_stream_transport(mut self) -> Result<Self> {
         let mut client_builder = apply_lifecycle_supervised_stream_timeout(Client::builder())
             .default_headers(self.default_headers.clone());
@@ -569,9 +569,10 @@ impl<'a> ApiRequestBuilder<'a> {
     }
 
     pub async fn response_post(self, payload: &Value) -> Result<Response> {
-        let lifecycle_supervised = lifecycle_supervised_stream_active();
+        let connect_only_stream =
+            lifecycle_supervised_stream_active() || uncapped_local_stream_active();
         let request = self
-            .send_request(lifecycle_supervised, |url, client| client.post(url))
+            .send_request(connect_only_stream, |url, client| client.post(url))
             .await?;
         let request = request.json(payload);
         if provider_http_exposure_active() {
@@ -614,7 +615,7 @@ impl<'a> ApiRequestBuilder<'a> {
 
     async fn send_request<F>(
         &self,
-        lifecycle_supervised: bool,
+        connect_only_stream: bool,
         request_builder: F,
     ) -> Result<reqwest::RequestBuilder>
     where
@@ -622,13 +623,13 @@ impl<'a> ApiRequestBuilder<'a> {
     {
         let url = self.client.build_url(self.path)?;
         let headers = self.headers.clone();
-        let request_client = if lifecycle_supervised {
+        let request_client = if connect_only_stream {
             self.client
                 .lifecycle_supervised_stream_client
                 .as_ref()
                 .ok_or_else(|| {
                     anyhow::anyhow!(
-                        "lifecycle-supervised stream transport is unavailable for this provider"
+                        "connect-only stream transport is unavailable for this uncapped or lifecycle-supervised local provider request"
                     )
                 })?
         } else {
@@ -801,7 +802,7 @@ mod tests {
     use super::*;
     use crate::base::{
         scope_lifecycle_supervised_stream, scope_provider_http_exposure,
-        ProviderHttpExposureBoundary,
+        scope_uncapped_local_stream, ProviderHttpExposureBoundary,
     };
     use std::io::{Read, Write};
     use std::net::TcpListener;
@@ -810,10 +811,10 @@ mod tests {
     use wiremock::matchers::{method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
-    // Preserve the production ordering (600s transport < a valid 900s+ engine budget) without a
-    // ten-minute test: the 150ms silence must outlive transport but remain engine-owned.
+    // Scale the production defect down: the silent interval outlives the ordinary transport read
+    // timeout. The outer deadline only prevents a broken regression test from hanging forever.
     const SCALED_TRANSPORT_READ_TIMEOUT: Duration = Duration::from_millis(40);
-    const SCALED_ENGINE_QUIET_BUDGET: Duration = Duration::from_secs(2);
+    const SCALED_TEST_DEADLINE: Duration = Duration::from_secs(2);
     const SCALED_IN_BUDGET_GAP: Duration = Duration::from_millis(150);
 
     #[derive(Clone, Copy)]
@@ -932,13 +933,27 @@ mod tests {
 
         assert!(error
             .to_string()
-            .contains("lifecycle-supervised stream transport is unavailable"));
+            .contains("connect-only stream transport is unavailable"));
+    }
+
+    #[tokio::test]
+    async fn uncapped_local_stream_fails_closed_without_a_dedicated_transport() {
+        let client = short_timeout_client("http://127.0.0.1:1".to_string());
+        let error = scope_uncapped_local_stream(
+            client.response_post("v1/chat/completions", &serde_json::json!({})),
+        )
+        .await
+        .unwrap_err();
+
+        let detail = error.to_string();
+        assert!(detail.contains("connect-only stream transport is unavailable"));
+        assert!(detail.contains("uncapped or lifecycle-supervised"));
     }
 
     #[tokio::test]
     async fn lifecycle_supervised_local_stream_survives_prefill_and_midstream_gaps() {
         assert!(SCALED_TRANSPORT_READ_TIMEOUT < SCALED_IN_BUDGET_GAP);
-        assert!(SCALED_IN_BUDGET_GAP < SCALED_ENGINE_QUIET_BUDGET);
+        assert!(SCALED_IN_BUDGET_GAP < SCALED_TEST_DEADLINE);
 
         for mode in [DelayedResponse::Prefill, DelayedResponse::MidStream] {
             let (host, server) = delayed_response_server(mode);
@@ -948,17 +963,48 @@ mod tests {
                 .with_header("x-regression-rebuild", "true")
                 .unwrap();
             let response = tokio::time::timeout(
-                SCALED_ENGINE_QUIET_BUDGET,
+                SCALED_TEST_DEADLINE,
                 scope_lifecycle_supervised_stream(
                     client.response_post("v1/chat/completions", &serde_json::json!({})),
                 ),
             )
             .await
-            .expect("the engine quiet budget still owns this silent interval")
+            .expect("the connect-only request must survive the silent interval")
             .unwrap();
-            let body = tokio::time::timeout(SCALED_ENGINE_QUIET_BUDGET, response.bytes())
+            let body = tokio::time::timeout(SCALED_TEST_DEADLINE, response.bytes())
                 .await
-                .expect("the engine quiet budget still owns this stream gap")
+                .expect("the connect-only response must survive the stream gap")
+                .unwrap();
+
+            assert_eq!(body.as_ref(), b"firstsecond");
+            server.join().unwrap();
+        }
+    }
+
+    #[tokio::test]
+    async fn uncapped_local_stream_selects_connect_only_transport_for_prefill_and_stream_gaps() {
+        assert!(SCALED_TRANSPORT_READ_TIMEOUT < SCALED_IN_BUDGET_GAP);
+        assert!(SCALED_IN_BUDGET_GAP < SCALED_TEST_DEADLINE);
+
+        for mode in [DelayedResponse::Prefill, DelayedResponse::MidStream] {
+            let (host, server) = delayed_response_server(mode);
+            let client = short_timeout_client(host)
+                .with_lifecycle_supervised_stream_transport()
+                .unwrap()
+                .with_header("x-regression-rebuild", "true")
+                .unwrap();
+            let response = tokio::time::timeout(
+                SCALED_TEST_DEADLINE,
+                scope_uncapped_local_stream(
+                    client.response_post("v1/chat/completions", &serde_json::json!({})),
+                ),
+            )
+            .await
+            .expect("the uncapped local generation must own this silent interval")
+            .unwrap();
+            let body = tokio::time::timeout(SCALED_TEST_DEADLINE, response.bytes())
+                .await
+                .expect("the uncapped local generation must own this stream gap")
                 .unwrap();
 
             assert_eq!(body.as_ref(), b"firstsecond");

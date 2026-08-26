@@ -10,8 +10,10 @@ use async_trait::async_trait;
 use base64::Engine;
 use goose::conversation::message::{Message, MessageContent};
 use goose::providers::base::{
-    collect_stream, Provider, SingleAttemptFailureProvenance, SingleAttemptStreamOutcome,
+    collect_stream, scope_lifecycle_supervised_stream, Provider, SingleAttemptFailureProvenance,
+    SingleAttemptStreamOutcome,
 };
+use goose_provider_types::formats::openai::UNCAPPED_LOCAL_GENERATION_KEY;
 use goose_swarm::{
     AdmittedSemanticObservationRequest, AdmittedSemanticObservationReviewer,
     AdmittedSemanticReviewError, ArtifactExcerptSnapshot, EventSink, PhysicalFleetSnapshot,
@@ -1267,6 +1269,10 @@ impl GooseAdmittedSemanticObservationReviewer {
     ) -> Result<goose_provider_types::model::ModelConfig, String> {
         let mut response_params = self.request_params.clone();
         response_params.insert(
+            UNCAPPED_LOCAL_GENERATION_KEY.to_string(),
+            serde_json::Value::Bool(true),
+        );
+        response_params.insert(
             "response_format".to_string(),
             serde_json::json!({
                 "type": "json_schema",
@@ -1312,26 +1318,29 @@ impl AdmittedSemanticObservationReviewer for GooseAdmittedSemanticObservationRev
             .map_err(AdmittedSemanticReviewError::unresolved)?;
         let messages = [Message::user().with_text(request.observation.user_prompt.clone())];
         let provider_request_id = request.provider_request_id.clone();
-        let result = goose::session_context::with_session_id(provider_request_id, async {
-            let single_attempt = route
-                .provider
-                .stream_once_with_terminal_proof(
-                    &model_config,
-                    &request.observation.system_prompt,
-                    &messages,
-                    &[],
-                )
-                .await
-                .map_err(SemanticProviderCallError::BeforeStream)?;
-            let terminal = single_attempt.terminal;
-            match collect_stream(single_attempt.stream).await {
-                Ok(message) => Ok((message, terminal.outcome())),
-                Err(error) => Err(SemanticProviderCallError::DuringStream(
-                    error,
-                    terminal.outcome(),
-                )),
-            }
-        })
+        let result = goose::session_context::with_session_id(
+            provider_request_id,
+            scope_lifecycle_supervised_stream(async {
+                let single_attempt = route
+                    .provider
+                    .stream_once_with_terminal_proof(
+                        &model_config,
+                        &request.observation.system_prompt,
+                        &messages,
+                        &[],
+                    )
+                    .await
+                    .map_err(SemanticProviderCallError::BeforeStream)?;
+                let terminal = single_attempt.terminal;
+                match collect_stream(single_attempt.stream).await {
+                    Ok(message) => Ok((message, terminal.outcome())),
+                    Err(error) => Err(SemanticProviderCallError::DuringStream(
+                        error,
+                        terminal.outcome(),
+                    )),
+                }
+            }),
+        )
         .await;
         let (message, _) = match result {
             Ok((message, SingleAttemptStreamOutcome::Finished)) => message,
@@ -1386,7 +1395,12 @@ impl AdmittedSemanticObservationReviewer for GooseAdmittedSemanticObservationRev
                 )));
             }
         };
-        Ok(strict_text_response(&message.content).unwrap_or_else(|_| "{}".to_string()))
+        strict_json_response(&message.content).map_err(|error| {
+            AdmittedSemanticReviewError::local_failure_after_terminal(
+                error,
+                goose_swarm::ProviderTerminalKind::Finished,
+            )
+        })
     }
 }
 
@@ -1444,6 +1458,17 @@ fn strict_text_response(content: &[MessageContent]) -> Result<String, String> {
     Ok(text)
 }
 
+fn strict_json_response(content: &[MessageContent]) -> Result<String, String> {
+    let text = strict_text_response(content)?;
+    let trimmed = text.trim();
+    let value: serde_json::Value = serde_json::from_str(trimmed)
+        .map_err(|error| format!("semantic reviewer returned invalid JSON body: {error}"))?;
+    if !value.is_object() {
+        return Err("semantic reviewer JSON body is not an object".to_string());
+    }
+    Ok(trimmed.to_string())
+}
+
 fn unpoison<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex
         .lock()
@@ -1499,10 +1524,12 @@ mod tests {
         request_params: Option<HashMap<String, serde_json::Value>>,
         tools: usize,
         session_id: Option<String>,
+        lifecycle_supervised: bool,
     }
 
     struct MockProvider {
         reply: String,
+        thinking_only: bool,
         transport_identity: Option<String>,
         stream_calls: AtomicUsize,
         stream_once_calls: AtomicUsize,
@@ -1533,6 +1560,7 @@ mod tests {
         fn new(reply: String) -> Self {
             Self {
                 reply,
+                thinking_only: false,
                 transport_identity: Some(VERIFIED_TRANSPORT.to_string()),
                 stream_calls: AtomicUsize::new(0),
                 stream_once_calls: AtomicUsize::new(0),
@@ -1543,6 +1571,11 @@ mod tests {
 
         fn with_transport(mut self, transport_identity: Option<&str>) -> Self {
             self.transport_identity = transport_identity.map(str::to_string);
+            self
+        }
+
+        fn with_thinking_only(mut self) -> Self {
+            self.thinking_only = true;
             self
         }
     }
@@ -1591,9 +1624,15 @@ mod tests {
                 request_params: model_config.request_params.clone(),
                 tools: tools.len(),
                 session_id: goose::session_context::current_session_id(),
+                lifecycle_supervised: goose::providers::base::lifecycle_supervised_stream_active(),
             });
+            let reply = if self.thinking_only {
+                Message::assistant().with_thinking(self.reply.clone(), "mock-signature")
+            } else {
+                Message::assistant().with_text(self.reply.clone())
+            };
             Ok(stream_from_single_message(
-                Message::assistant().with_text(self.reply.clone()),
+                reply,
                 ProviderUsage::new("mock".to_string(), Usage::default()),
             ))
         }
@@ -2346,6 +2385,16 @@ mod tests {
             calls[0].session_id.as_deref(),
             Some(permitted_provider_request_id.as_str())
         );
+        assert!(calls[0].lifecycle_supervised);
+        assert_eq!(
+            calls[0]
+                .request_params
+                .as_ref()
+                .unwrap()
+                .get(UNCAPPED_LOCAL_GENERATION_KEY),
+            Some(&serde_json::Value::Bool(true))
+        );
+        assert!(!goose::providers::base::lifecycle_supervised_stream_active());
         let response_format = &calls[0].request_params.as_ref().unwrap()["response_format"];
         assert_eq!(response_format["type"], "json_schema");
         assert_eq!(response_format["json_schema"]["strict"], true);
@@ -2354,6 +2403,101 @@ mod tests {
         assert_eq!(sink.count("broker_work_local_completed"), 1);
         assert_eq!(sink.count("broker_admission_released"), 1);
         assert_eq!(sink.count("broker_provider_not_started"), 0);
+    }
+
+    #[tokio::test]
+    async fn admitted_adapter_reports_non_text_reply_as_reviewer_failure_after_terminal() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(root.path().join("src")).unwrap();
+        std::fs::write(root.path().join("src/api.rs"), "pub fn api() {}\n").unwrap();
+        let capture_request = capture_request();
+        write_activity(root.path(), capture_request.task_id(), active_digest());
+        let producer = GooseSemanticObservationSnapshotProducer::new(root.path()).unwrap();
+        let capture = producer.capture(capture_request).await.unwrap().unwrap();
+        let provider = Arc::new(
+            MockProvider::new("reasoning without a JSON response".to_string()).with_thinking_only(),
+        );
+        let judge_lane = lane("judge-lane");
+        let mut worker_lane = lane("worker-lane");
+        worker_lane.model_id = "worker-model".to_string();
+        let fleet =
+            PhysicalFleetSnapshot::new("fleet-v1", vec![judge_lane.clone(), worker_lane]).unwrap();
+        let route =
+            GooseSemanticProviderRoute::bind("lmstudio", provider.clone(), judge_lane).unwrap();
+        let reviewer = Arc::new(
+            GooseAdmittedSemanticObservationReviewer::new(
+                fleet.clone(),
+                vec![route],
+                Some(0.2),
+                HashMap::new(),
+            )
+            .unwrap(),
+        );
+        let sink = Arc::new(RecordingSink::default());
+        let control = PhysicalAdmissionControl::new("semantic-cli", fleet, sink.clone()).unwrap();
+        let plane = BrokeredSemanticObservationPlane::new(control, sink.clone()).unwrap();
+        let submission = plane
+            .submit_if_idle(
+                capture.into_snapshot(),
+                SemanticObservationAdmissionPolicy {
+                    task_rank: 7,
+                    eligible_logical_device_ids: vec!["judge-lane".to_string()],
+                    preferred_model_id: Some("judge-model".to_string()),
+                    excluded_logical_device_id: Some("worker-lane".to_string()),
+                },
+                reviewer,
+            )
+            .await
+            .unwrap()
+            .unwrap();
+        let handle = match submission {
+            SemanticObservationAdmissionSubmission::Started(handle) => handle,
+            SemanticObservationAdmissionSubmission::Rejected(_) => panic!("review was rejected"),
+        };
+        let receipt = handle.wait().await.unwrap();
+
+        assert_eq!(provider.stream_once_calls.load(Ordering::SeqCst), 1);
+        assert_eq!(
+            receipt.local_completion(),
+            goose_swarm::LocalCompletionKind::Error
+        );
+        assert_eq!(
+            receipt.reviewer_provider_terminal(),
+            Some(goose_swarm::ProviderTerminalKind::Finished)
+        );
+        assert_eq!(
+            receipt
+                .observation()
+                .decision
+                .failure()
+                .map(|failure| &failure.kind),
+            Some(&goose_swarm::SemanticProtocolFailureKind::ReviewerFailed)
+        );
+        let detail = &receipt
+            .observation()
+            .decision
+            .failure()
+            .expect("reviewer failure evidence must be visible")
+            .detail;
+        assert!(detail.contains("no text JSON body"), "{detail}");
+        assert_eq!(sink.count("broker_provider_terminal_observed"), 1);
+        assert_eq!(sink.count("broker_work_local_completed"), 1);
+        assert_eq!(sink.count("broker_admission_released"), 1);
+    }
+
+    #[test]
+    fn strict_json_response_rejects_empty_non_object_and_malformed_bodies() {
+        assert!(strict_json_response(&[]).unwrap_err().contains("no text"));
+        assert!(
+            strict_json_response(&Message::assistant().with_text("[]").content)
+                .unwrap_err()
+                .contains("not an object")
+        );
+        assert!(
+            strict_json_response(&Message::assistant().with_text("{not-json}").content)
+                .unwrap_err()
+                .contains("invalid JSON")
+        );
     }
 
     #[tokio::test]

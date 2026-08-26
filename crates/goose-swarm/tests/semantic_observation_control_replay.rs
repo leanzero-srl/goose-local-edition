@@ -993,7 +993,8 @@ async fn definitive_provider_failure_records_failed_terminal_and_releases_admiss
 }
 
 #[tokio::test]
-async fn unresolved_provider_failure_holds_claim_but_owned_panic_terminals_exactly() {
+async fn unresolved_provider_failure_quarantines_exact_admission_but_owned_panic_terminals_exactly()
+{
     for (scope, panic, unresolved) in [
         ("semantic-provider-unresolved", false, true),
         ("semantic-provider-panic", true, false),
@@ -1028,6 +1029,7 @@ async fn unresolved_provider_failure_holds_claim_but_owned_panic_terminals_exact
             ));
             assert_eq!(event_count(&sink, "broker_provider_terminal_observed"), 0);
             assert_eq!(event_count(&sink, "broker_admission_released"), 0);
+            assert_eq!(event_count(&sink, "broker_admission_quarantined"), 1);
             assert_eq!(control.occupancy().await, (0, 1));
         } else {
             let receipt = handle.wait().await.unwrap();

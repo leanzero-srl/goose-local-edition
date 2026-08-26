@@ -2041,6 +2041,7 @@ async fn exhausted_task_becomes_typed_unavailable_and_independent_work_continues
     #[derive(Default)]
     struct ContinuationProbe {
         seen: Mutex<Vec<(String, Option<String>)>>,
+        root: std::path::PathBuf,
     }
 
     #[async_trait]
@@ -2056,7 +2057,8 @@ async fn exhausted_task_becomes_typed_unavailable_and_independent_work_continues
                 ))
             } else {
                 for file in &req.owned_files {
-                    if let Some(parent) = std::path::Path::new(file).parent() {
+                    let file = self.root.join(file);
+                    if let Some(parent) = file.parent() {
                         std::fs::create_dir_all(parent).unwrap();
                     }
                     std::fs::write(file, format!("completed {}", req.task_id)).unwrap();
@@ -2066,32 +2068,40 @@ async fn exhausted_task_becomes_typed_unavailable_and_independent_work_continues
         }
     }
 
-    let missing_file = "target/test-unavailable/missing-capability.rs".to_string();
-    let _ = std::fs::remove_file(&missing_file);
+    let checkpoint_root = tempfile::Builder::new()
+        .prefix("typed-unavailable-")
+        .tempdir_in(".")
+        .unwrap();
+    let missing_file = "missing-capability.rs".to_string();
     let dag = Dag::from_specs(vec![
         spec("missing-capability", &[], &[&missing_file]),
         spec(
             "dependent-capability",
             &["missing-capability"],
-            &["target/test-unavailable/dependent-capability.rs"],
+            &["dependent-capability.rs"],
         ),
         spec(
             "final-ruler-input",
             &["dependent-capability"],
-            &["target/test-unavailable/final-ruler-input.rs"],
+            &["final-ruler-input.rs"],
         ),
         spec(
             "independent-capability",
             &[],
-            &["target/test-unavailable/independent-capability.rs"],
+            &["independent-capability.rs"],
         ),
     ])
     .unwrap();
-    let dispatcher = Arc::new(ContinuationProbe::default());
+    let dispatcher = Arc::new(ContinuationProbe {
+        seen: Mutex::new(Vec::new()),
+        root: checkpoint_root.path().to_path_buf(),
+    });
     let sink = Arc::new(RecordingEventSink::default());
     let report = Scheduler::new(vec![dev("a", "m-a", 1), dev("b", "m-b", 1)], 1)
         .with_sink(sink.clone())
         .with_unavailable_continuation()
+        .with_checkpoint_root(checkpoint_root.path())
+        .unwrap()
         .run(dag, dispatcher.clone(), String::new())
         .await
         .unwrap();
@@ -2174,22 +2184,24 @@ async fn integrity_terminal_still_fails_closed_with_unavailable_continuation_ena
         }
     }
 
+    let checkpoint_root = tempfile::Builder::new()
+        .prefix("terminal-unavailable-")
+        .tempdir_in(".")
+        .unwrap();
     let dag = Dag::from_specs(vec![
-        spec(
-            "authority-corrupt",
-            &[],
-            &["target/test-unavailable/authority-corrupt.rs"],
-        ),
+        spec("authority-corrupt", &[], &["authority-corrupt.rs"]),
         spec(
             "would-write-descendant",
             &["authority-corrupt"],
-            &["target/test-unavailable/would-write-descendant.rs"],
+            &["would-write-descendant.rs"],
         ),
     ])
     .unwrap();
     let dispatcher = Arc::new(AuthorityMismatchProbe::default());
     let report = Scheduler::new(vec![dev("a", "m-a", 1)], 1)
         .with_unavailable_continuation()
+        .with_checkpoint_root(checkpoint_root.path())
+        .unwrap()
         .run(dag, dispatcher.clone(), String::new())
         .await
         .unwrap();
@@ -2225,24 +2237,26 @@ async fn non_regular_owned_artifact_still_fails_closed_during_unavailable_contin
         }
     }
 
-    let non_regular = std::path::PathBuf::from("target/test-unavailable/nonregular/artifact.py");
-    let _ = std::fs::remove_file(&non_regular);
-    let _ = std::fs::remove_dir_all(&non_regular);
-    std::fs::create_dir_all(non_regular.parent().unwrap()).unwrap();
-    std::fs::create_dir(&non_regular).unwrap();
-    let non_regular = non_regular.display().to_string();
+    let checkpoint_root = tempfile::Builder::new()
+        .prefix("nonregular-unavailable-")
+        .tempdir_in(".")
+        .unwrap();
+    let non_regular = "artifact.py".to_string();
+    std::fs::create_dir(checkpoint_root.path().join(&non_regular)).unwrap();
     let dag = Dag::from_specs(vec![
         spec("corrupt-artifact", &[], &[&non_regular]),
         spec(
             "would-write-descendant",
             &["corrupt-artifact"],
-            &["target/test-unavailable/would-write-after-corruption.rs"],
+            &["would-write-after-corruption.rs"],
         ),
     ])
     .unwrap();
     let dispatcher = Arc::new(ExhaustedProbe::default());
     let error = Scheduler::new(vec![dev("a", "m-a", 1)], 1)
         .with_unavailable_continuation()
+        .with_checkpoint_root(checkpoint_root.path())
+        .unwrap()
         .run(dag, dispatcher.clone(), String::new())
         .await
         .unwrap_err();

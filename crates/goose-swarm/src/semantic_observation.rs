@@ -948,8 +948,8 @@ impl SemanticObservationPlane {
         self.events.write_value(serde_json::json!({
             "event": "semantic_observation_requested",
             "task_id": task_id,
-            "run_id": snapshot.authority_scope().run_id,
-            "phase_lineage_id": snapshot.authority_scope().phase_lineage_id,
+            "run_id": snapshot.authority_scope().run_id.clone(),
+            "phase_lineage_id": snapshot.authority_scope().phase_lineage_id.clone(),
             "phase_epoch": snapshot.phase_epoch(),
             "attempt": snapshot.attempt(),
             "source_revision": snapshot.source_revision(),
@@ -1009,11 +1009,22 @@ impl SemanticObservationPlane {
                 decision,
                 stale,
             };
+            let retryable_protocol_failure = !receipt.stale && receipt.decision.failure().is_some();
             {
                 let mut state = lock_state(&state);
-                state
-                    .completed_by_task
-                    .insert(task_authority_for_task.clone(), receipt.clone());
+                if retryable_protocol_failure {
+                    if state
+                        .completed_by_task
+                        .get(&task_authority_for_task)
+                        .is_some_and(|completed| completed.snapshot_hash == snapshot_hash_for_task)
+                    {
+                        state.completed_by_task.remove(&task_authority_for_task);
+                    }
+                } else {
+                    state
+                        .completed_by_task
+                        .insert(task_authority_for_task.clone(), receipt.clone());
+                }
                 if state
                     .in_flight
                     .get(&task_authority_for_task)
@@ -1024,6 +1035,21 @@ impl SemanticObservationPlane {
             }
             guard.disarm();
             let _ = sender.send(receipt.clone());
+            if retryable_protocol_failure {
+                events.write_value(serde_json::json!({
+                    "event": "semantic_observation_retryable",
+                    "task_id": receipt.task_id.clone(),
+                    "run_id": receipt.authority_scope.run_id.clone(),
+                    "phase_lineage_id": receipt.authority_scope.phase_lineage_id.clone(),
+                    "phase_epoch": receipt.phase_epoch,
+                    "attempt": receipt.attempt,
+                    "source_revision": receipt.source_revision,
+                    "snapshot_hash": receipt.snapshot_hash.clone(),
+                    "reason": "reviewer_protocol_failure",
+                    "protocol_failure": receipt.decision.failure().map(|failure| &failure.kind),
+                    "authority": "observation_only",
+                }));
+            }
             events.write_value(serde_json::json!({
                 "event": "semantic_observation_completed",
                 "task_id": receipt.task_id,
@@ -1054,6 +1080,51 @@ impl SemanticObservationPlane {
         snapshot: &SealedSemanticObservationSnapshot,
     ) -> std::result::Result<(), SemanticObservationRejection> {
         register_current(&mut lock_state(&self.state), snapshot)
+    }
+
+    pub(crate) fn rearm_completed(
+        &self,
+        snapshot: &SealedSemanticObservationSnapshot,
+        reason: &str,
+    ) -> Result<(), String> {
+        let task_authority = SemanticTaskAuthority::from_snapshot(snapshot);
+        let mut state = lock_state(&self.state);
+        let current = state
+            .current
+            .get(&task_authority)
+            .ok_or_else(|| "semantic retry has no current source authority".to_string())?;
+        if current.snapshot_hash != snapshot.snapshot_hash()
+            || current.phase_epoch != snapshot.phase_epoch()
+            || current.attempt != snapshot.attempt()
+            || current.source_revision != snapshot.source_revision()
+        {
+            return Err("semantic retry source is no longer current".to_string());
+        }
+        if state.in_flight.contains_key(&task_authority) {
+            return Err("semantic retry source still has an in-flight review".to_string());
+        }
+        match state.completed_by_task.get(&task_authority) {
+            Some(receipt) if receipt.snapshot_hash == snapshot.snapshot_hash() => {}
+            Some(_) => {
+                return Err("semantic retry would remove a different completed review".to_string())
+            }
+            None => return Err("semantic retry has no completed review to rearm".to_string()),
+        }
+        state.completed_by_task.remove(&task_authority);
+        drop(state);
+        self.events.write_value(serde_json::json!({
+            "event": "semantic_observation_retryable",
+            "task_id": snapshot.task_id(),
+            "run_id": snapshot.authority_scope().run_id,
+            "phase_lineage_id": snapshot.authority_scope().phase_lineage_id,
+            "phase_epoch": snapshot.phase_epoch(),
+            "attempt": snapshot.attempt(),
+            "source_revision": snapshot.source_revision(),
+            "snapshot_hash": snapshot.snapshot_hash(),
+            "reason": reason,
+            "authority": "observation_only",
+        }));
+        Ok(())
     }
 
     #[cfg(test)]
@@ -1625,11 +1696,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn reviewer_panic_becomes_an_abstention_and_releases_one_flight_state() {
+    async fn reviewer_failure_releases_the_exact_snapshot_for_a_semantic_retry() {
         let plane = SemanticObservationPlane::without_events();
         let reviewer = Arc::new(PanickingReviewer);
         let first = draft(7, "first").seal().unwrap();
-        let handle = match plane.submit(first, reviewer.clone()) {
+        let handle = match plane.submit(first.clone(), reviewer) {
             SemanticObservationSubmission::Started(handle) => handle,
             SemanticObservationSubmission::Rejected(reason) => {
                 panic!("unexpected rejection: {reason:?}")
@@ -1641,10 +1712,17 @@ mod tests {
             receipt.decision.failure().map(|failure| &failure.kind),
             Some(&SemanticProtocolFailureKind::ReviewerFailed)
         );
+        let retry = match plane.submit(first, Arc::new(ContinueReviewer)) {
+            SemanticObservationSubmission::Started(handle) => handle,
+            SemanticObservationSubmission::Rejected(reason) => {
+                panic!("retryable snapshot was rejected: {reason:?}")
+            }
+        };
+        retry.wait().await.unwrap();
 
         let next = draft(8, "next").seal().unwrap();
         assert!(matches!(
-            plane.submit(next, reviewer),
+            plane.submit(next, Arc::new(ContinueReviewer)),
             SemanticObservationSubmission::Started(_)
         ));
     }

@@ -1589,21 +1589,32 @@ pub fn create_request_with_options(
         }
     }
 
-    // Only emit max_tokens / max_completion_tokens when the user (via
-    // GOOSE_MAX_TOKENS) or a canonical model record has supplied a value.
+    let uncapped_local_generation = matches!(
+        model_config
+            .request_params
+            .as_ref()
+            .and_then(|params| params.get(UNCAPPED_LOCAL_GENERATION_KEY)),
+        Some(Value::Bool(true))
+    );
+
+    // An uncapped local generation must not inherit an output-volume stop from either global config
+    // or the canonical registry. Ordinary requests emit max_tokens / max_completion_tokens when the
+    // user (via GOOSE_MAX_TOKENS) or a canonical model record has supplied a value.
     // For unknown models on OpenAI-compatible endpoints (e.g. llama_swap,
     // lmstudio) sending the historic 4096 default truncates non-trivial
     // responses; omitting the field lets the server use its own max.
-    if let Some(max_tokens) = model_config.max_tokens {
-        let key = if is_reasoning_model {
-            "max_completion_tokens"
-        } else {
-            "max_tokens"
-        };
-        payload
-            .as_object_mut()
-            .unwrap()
-            .insert(key.to_string(), json!(max_tokens));
+    if !uncapped_local_generation {
+        if let Some(max_tokens) = model_config.max_tokens {
+            let key = if is_reasoning_model {
+                "max_completion_tokens"
+            } else {
+                "max_tokens"
+            };
+            payload
+                .as_object_mut()
+                .unwrap()
+                .insert(key.to_string(), json!(max_tokens));
+        }
     }
 
     if for_streaming {
@@ -1631,6 +1642,14 @@ pub fn create_request_with_options(
     if let Some(params) = &model_config.request_params {
         if let Some(obj) = payload.as_object_mut() {
             for (key, value) in params {
+                if key == UNCAPPED_LOCAL_GENERATION_KEY {
+                    continue;
+                }
+                if uncapped_local_generation
+                    && matches!(key.as_str(), "max_tokens" | "max_completion_tokens")
+                {
+                    continue;
+                }
                 if key == PREFILL_ASSISTANT_KEY {
                     prefill = value.as_str().map(str::to_string);
                 } else if key == FORCE_TOOL_UNTIL_ACT_KEY {
@@ -1699,6 +1718,11 @@ pub const PREFILL_ASSISTANT_KEY: &str = "__goose_prefill_assistant";
 /// Applied as `tool_choice` only while no assistant turn in the conversation carries `tool_calls`,
 /// so it releases itself the moment the worker acts. See the block in `create_request_with_options`.
 pub const FORCE_TOOL_UNTIL_ACT_KEY: &str = "__goose_force_tool_until_act";
+
+/// Internal request-param marker for a semantically supervised local generation. The formatter
+/// consumes this marker and never sends it to the OpenAI-compatible endpoint.
+#[doc(hidden)]
+pub const UNCAPPED_LOCAL_GENERATION_KEY: &str = "__goose_uncapped_local_generation";
 
 /// Extract an explicit reasoning-effort suffix from a model name.
 ///
@@ -2661,6 +2685,84 @@ mod tests {
             !obj.contains_key("max_completion_tokens"),
             "max_completion_tokens should be omitted when model_config.max_tokens is None"
         );
+        Ok(())
+    }
+
+    #[test]
+    fn test_uncapped_local_generation_omits_model_config_max_tokens() -> anyhow::Result<()> {
+        let params = std::collections::HashMap::from([(
+            UNCAPPED_LOCAL_GENERATION_KEY.to_string(),
+            json!(true),
+        )]);
+        let model_config = test_model_config("glm-4.7")
+            .with_max_tokens(Some(4096))
+            .with_merged_request_params(params);
+
+        let request = create_request(
+            &model_config,
+            "system",
+            &[],
+            &[],
+            &ImageFormat::OpenAi,
+            false,
+        )?;
+        let obj = request.as_object().unwrap();
+
+        assert!(!obj.contains_key("max_tokens"));
+        assert!(!obj.contains_key("max_completion_tokens"));
+        assert!(!obj.contains_key(UNCAPPED_LOCAL_GENERATION_KEY));
+        Ok(())
+    }
+
+    #[test]
+    fn test_uncapped_local_generation_ignores_request_param_token_limits() -> anyhow::Result<()> {
+        let params = std::collections::HashMap::from([
+            (UNCAPPED_LOCAL_GENERATION_KEY.to_string(), json!(true)),
+            ("max_tokens".to_string(), json!(1)),
+            ("max_completion_tokens".to_string(), json!(2)),
+            ("provider_custom".to_string(), json!("preserved")),
+        ]);
+        let model_config = test_model_config("glm-4.7").with_merged_request_params(params);
+
+        let request = create_request(
+            &model_config,
+            "system",
+            &[],
+            &[],
+            &ImageFormat::OpenAi,
+            false,
+        )?;
+        let obj = request.as_object().unwrap();
+
+        assert!(!obj.contains_key("max_tokens"));
+        assert!(!obj.contains_key("max_completion_tokens"));
+        assert!(!obj.contains_key(UNCAPPED_LOCAL_GENERATION_KEY));
+        assert_eq!(obj.get("provider_custom"), Some(&json!("preserved")));
+        Ok(())
+    }
+
+    #[test]
+    fn test_false_uncapped_marker_preserves_ordinary_token_limit_behavior() -> anyhow::Result<()> {
+        let params = std::collections::HashMap::from([
+            (UNCAPPED_LOCAL_GENERATION_KEY.to_string(), json!(false)),
+            ("max_tokens".to_string(), json!(1)),
+        ]);
+        let model_config = test_model_config("glm-4.7")
+            .with_max_tokens(Some(4096))
+            .with_merged_request_params(params);
+
+        let request = create_request(
+            &model_config,
+            "system",
+            &[],
+            &[],
+            &ImageFormat::OpenAi,
+            false,
+        )?;
+        let obj = request.as_object().unwrap();
+
+        assert_eq!(obj.get("max_tokens"), Some(&json!(1)));
+        assert!(!obj.contains_key(UNCAPPED_LOCAL_GENERATION_KEY));
         Ok(())
     }
 

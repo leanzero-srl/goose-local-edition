@@ -59,15 +59,14 @@ pub use judge::{
     JudgeOutcome, JudgeRequest, PreReviewOutput, PreReviewRequest, PreReviewer, Verdict,
 };
 pub use pillar::{
-    authored_requirements_require_integration, compile_pillar_report,
-    compile_pillar_report_with_sources, diagnose_pillar_ownership, evidence_source_digest,
-    render_synthesis_input, validate_pillar_integration_task_ownership, validate_pillar_opening,
-    validate_pillar_opening_against, AuthoredRequirement, CompiledPillarReport,
-    CompiledResearchClaim, Confidence, EvidenceClass, EvidenceSourceAuthority,
-    EvidenceSourceSection, IntegrationContract, PillarDomainError,
+    compile_pillar_report, compile_pillar_report_with_sources, diagnose_pillar_ownership,
+    evidence_source_digest, render_synthesis_input, validate_pillar_integration_task_ownership,
+    validate_pillar_opening, validate_pillar_opening_against, AuthoredRequirement,
+    CompiledPillarReport, CompiledResearchClaim, Confidence, EvidenceClass,
+    EvidenceSourceAuthority, EvidenceSourceSection, IntegrationContract, PillarDomainError,
     PillarImplementationTaskCoverage, PillarOwnershipDiagnostics, PillarReportDraft,
-    PillarRequirementOwners, PillarRequirementReference, ProvenanceMatch, ResearchClaimDraft,
-    ResearchPillar, ResearchPillarOpening,
+    PillarRequirementOwners, PillarRequirementReference, ProvenanceMatch, RenderedSynthesisInput,
+    ResearchClaimDraft, ResearchPillar, ResearchPillarOpening, SynthesisCapacityError,
 };
 pub use pillar_checkpoint::{
     pillar_frozen_spec_digest, pillar_requirement_digest, PillarAttemptCheckpoint,

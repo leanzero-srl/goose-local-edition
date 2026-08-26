@@ -578,6 +578,7 @@ impl ProviderLifecycleDispatcher for LifecycleMock {
 
 struct PhysicalDegradedDispatcher {
     calls: Mutex<Vec<String>>,
+    root: std::path::PathBuf,
 }
 
 #[async_trait]
@@ -603,7 +604,7 @@ impl ProviderLifecycleDispatcher for PhysicalDegradedDispatcher {
             ));
         }
         for file in &req.owned_files {
-            let path = std::path::Path::new(file);
+            let path = self.root.join(file);
             if let Some(parent) = path.parent() {
                 std::fs::create_dir_all(parent).unwrap();
             }
@@ -615,6 +616,10 @@ impl ProviderLifecycleDispatcher for PhysicalDegradedDispatcher {
 
 #[tokio::test]
 async fn physical_exhaustion_continues_through_a_deep_provisional_chain() {
+    let checkpoint_root = tempfile::Builder::new()
+        .prefix("physical-degraded-checkpoint-")
+        .tempdir_in(".")
+        .unwrap();
     let sink = Arc::new(RecordingSink::default());
     let control = control(
         "physical-degraded-chain",
@@ -631,11 +636,11 @@ async fn physical_exhaustion_continues_through_a_deep_provisional_chain() {
         spec("independent", &[]),
     ];
     for task in &mut tasks {
-        task.owned_files = vec![format!("target/physical-degraded/{}.txt", task.id)];
-        let _ = std::fs::remove_file(&task.owned_files[0]);
+        task.owned_files = vec![format!("{}.txt", task.id)];
     }
     let dispatcher = Arc::new(PhysicalDegradedDispatcher {
         calls: Mutex::new(Vec::new()),
+        root: checkpoint_root.path().to_path_buf(),
     });
     let report = Scheduler::new(
         vec![
@@ -646,6 +651,8 @@ async fn physical_exhaustion_continues_through_a_deep_provisional_chain() {
     )
     .with_sink(sink)
     .with_unavailable_continuation()
+    .with_checkpoint_root(checkpoint_root.path())
+    .unwrap()
     .run_with_physical_admission(
         Dag::from_specs(tasks).unwrap(),
         dispatcher.clone(),

@@ -876,6 +876,7 @@ pub(crate) fn apply_uncapped_effective_values(
     }
     for name in [
         "planner_timeout_secs",
+        "worker_timeout_secs",
         "scout_budget_secs",
         "complete_cap_secs",
         "draft_timeout_secs",
@@ -892,6 +893,8 @@ pub(crate) fn apply_uncapped_effective_values(
         values.insert(name.into(), Value::from(0));
     }
     values.insert("straggler_stop_degrade".into(), Value::Bool(false));
+    values.insert("straggler_stop".into(), Value::Bool(false));
+    values.insert("repeat_break".into(), Value::Bool(false));
     values.insert("split".into(), Value::Bool(false));
     values.insert("worker_max_turns".into(), Value::from(worker_max_turns));
     values.insert(
@@ -1370,21 +1373,28 @@ mod tests {
     #[test]
     fn uncapped_echo_reports_execution_values_not_persisted_caps() {
         let mut values = serialized_config_controls(&SwarmConfig::default());
-        apply_uncapped_effective_values(&mut values, true, 604_800, 100_000);
+        apply_uncapped_effective_values(&mut values, true, 0, u32::MAX);
         assert_eq!(values["uncapped"], true);
         assert_eq!(values["sink_cap_secs"], 0);
         assert_eq!(values["progress_watchdog_secs"], 0);
         assert_eq!(values["spiral_break_chars"], 0);
         assert_eq!(values["spiral_thinking_chars"], 0);
         assert_eq!(values["straggler_stop_degrade"], false);
+        assert_eq!(values["straggler_stop"], false);
+        assert_eq!(values["repeat_break"], false);
         assert_eq!(values["split"], false);
-        assert_eq!(values["planner_timeout_secs"], 604_800);
-        assert_eq!(values["scout_budget_secs"], 604_800);
-        assert_eq!(values["complete_cap_secs"], 604_800);
-        assert_eq!(values["draft_timeout_secs"], 604_800);
-        assert_eq!(values["clarity_probe_secs"], 604_800);
-        assert_eq!(values["worker_max_turns"], 100_000);
-        assert_eq!(values["sink_max_turns"], 100_000);
+        for name in [
+            "planner_timeout_secs",
+            "worker_timeout_secs",
+            "scout_budget_secs",
+            "complete_cap_secs",
+            "draft_timeout_secs",
+            "clarity_probe_secs",
+        ] {
+            assert_eq!(values[name], 0, "{name} still reports a generation cap");
+        }
+        assert_eq!(values["worker_max_turns"], u32::MAX);
+        assert_eq!(values["sink_max_turns"], u32::MAX);
     }
 
     #[test]

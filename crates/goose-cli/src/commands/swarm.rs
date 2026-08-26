@@ -33,7 +33,7 @@ use goose::config::permission::PermissionManager;
 use goose::config::{Config, GooseMode};
 use goose::context_mgmt::{local_context_cap, DEFAULT_COMPACTION_THRESHOLD};
 use goose::conversation::message::{Message, MessageContent};
-use goose::providers::base::Provider;
+use goose::providers::base::{scope_uncapped_local_stream, Provider};
 use goose::recipe::Response;
 use goose::session::session_manager::SessionType;
 use goose::session::SessionManager;
@@ -146,6 +146,55 @@ fn default_best_of_n_skeletons() -> usize {
 
 fn bounded_ordinary_dispatch_error(detail: String) -> DispatchError {
     DispatchError::Transient(detail)
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+enum CompleteRepairDispatchFailureKind {
+    Timeout,
+    Transient,
+    ContentRetry,
+    Unavailable,
+    Terminal,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+struct CompleteRepairDispatchFailure {
+    kind: CompleteRepairDispatchFailureKind,
+    detail: String,
+}
+
+fn classify_complete_repair_error(error: &DispatchError) -> CompleteRepairDispatchFailure {
+    let (kind, detail) = match error {
+        DispatchError::Transient(detail) => (CompleteRepairDispatchFailureKind::Transient, detail),
+        DispatchError::ContentRetry(detail) => {
+            (CompleteRepairDispatchFailureKind::ContentRetry, detail)
+        }
+        DispatchError::Unavailable(detail) => {
+            (CompleteRepairDispatchFailureKind::Unavailable, detail)
+        }
+        DispatchError::Terminal(detail) => (CompleteRepairDispatchFailureKind::Terminal, detail),
+    };
+    CompleteRepairDispatchFailure {
+        kind,
+        detail: elide_middle(detail, 240, 720),
+    }
+}
+
+fn complete_repair_dispatch_failure<T>(
+    result: &std::result::Result<
+        std::result::Result<T, DispatchError>,
+        tokio::time::error::Elapsed,
+    >,
+) -> Option<CompleteRepairDispatchFailure> {
+    match result {
+        Ok(Ok(_)) => None,
+        Ok(Err(error)) => Some(classify_complete_repair_error(error)),
+        Err(error) => Some(CompleteRepairDispatchFailure {
+            kind: CompleteRepairDispatchFailureKind::Timeout,
+            detail: error.to_string(),
+        }),
+    }
 }
 
 /// Imposed sampling parameters for the local models — the lever for steadying weak models (lower
@@ -3718,12 +3767,10 @@ fn tails_recur(a: &std::collections::HashSet<u64>, b: &std::collections::HashSet
     inter * 2 >= a.len().min(b.len())
 }
 
-/// GOOSE_SWARM_UNCAPPED (Mihai 2026-08-21: "remove all caps … let it run and only stop if the
-/// judge identifies loops or other issues"): every WALL-CLOCK and VOLUME cap in the run path is
-/// neutralized — a slow local model must never lose work to a threshold. What stays armed: the
-/// omni-judge (reads the reasoning, stops REAL loops), repeat-break (identical tool calls), and
-/// the pure-idle failsafes that fire only on a dead stream (zero token/tool activity). The
-/// harness expresses the regime as `--timeout 0`, which sets this and sends no run deadline.
+/// GOOSE_SWARM_UNCAPPED: local model generation has no elapsed-time, silence, volume, or turn
+/// authority. Slow local inference is allowed to finish; only a semantic judge may redirect a
+/// recurrent reasoning tail. Provider terminals, explicit operator cancellation, strict response
+/// schemas, and artifact validation remain facts rather than generation caps.
 fn uncapped() -> bool {
     // Env wins in BOTH directions (the harness pins the regime per run); the config field is the
     // DESKTOP's route — it cannot set env, and parity with headless runs is mandatory (Mihai).
@@ -3733,15 +3780,28 @@ fn uncapped() -> bool {
     }
 }
 
-/// A week, in seconds: the stand-in for "no cap" at sites whose arithmetic needs a finite
-/// Duration (deadline sums, headroom division). Far beyond any run; never a real bound.
-const UNCAPPED_SECS: u64 = 604_800;
-
 /// `SessionConfig::max_turns = None` means "use the global default", not unlimited. Authority compilers use
 /// this sentinel so a hidden global GOOSE_MAX_TURNS cannot truncate required plan input. It is operationally
 /// unbounded (one compiler session cannot execute 4.29 billion agent turns), without changing core semantics
 /// for other callers that deliberately rely on `None`.
 const UNBOUNDED_AGENT_TURNS: u32 = u32::MAX;
+
+fn local_generation_is_semantically_supervised(_uncapped: bool, is_cloud_model: bool) -> bool {
+    !is_cloud_model
+}
+
+async fn await_with_optional_timeout<F>(
+    future: F,
+    timeout: Option<std::time::Duration>,
+) -> std::result::Result<F::Output, tokio::time::error::Elapsed>
+where
+    F: std::future::Future,
+{
+    match timeout {
+        Some(timeout) => tokio::time::timeout(timeout, future).await,
+        None => Ok(future.await),
+    }
+}
 
 fn is_semantic_research_activity(key: &str) -> bool {
     key.starts_with("research-pod-")
@@ -3751,11 +3811,7 @@ fn is_semantic_research_activity(key: &str) -> bool {
 }
 
 fn planner_wall(planner_timeout_secs: u64) -> u64 {
-    if uncapped() {
-        UNCAPPED_SECS
-    } else {
-        planner_timeout_secs.max(90)
-    }
+    planner_timeout_secs.max(90)
 }
 
 /// #135 global spiral-break: env GOOSE_SWARM_SPIRAL_BREAK_CHARS wins, else config, else 0 (OFF).
@@ -3775,9 +3831,6 @@ fn spiral_break_chars_resolved(env: Option<String>, cfg: Option<usize>) -> usize
 }
 
 fn spiral_break_chars(cfg: Option<usize>) -> usize {
-    if uncapped() {
-        return 0;
-    }
     spiral_break_chars_resolved(std::env::var("GOOSE_SWARM_SPIRAL_BREAK_CHARS").ok(), cfg)
 }
 
@@ -5777,6 +5830,27 @@ mod tests {
     use std::time::Duration;
 
     #[test]
+    fn every_local_generation_uses_semantic_supervision_instead_of_timers() {
+        let resolve = |uncapped, is_cloud_model, configured_secs| {
+            (!local_generation_is_semantically_supervised(uncapped, is_cloud_model))
+                .then_some(Duration::from_secs(configured_secs))
+        };
+
+        for configured_secs in [1, 420, 900] {
+            assert_eq!(resolve(true, false, configured_secs), None);
+            assert_eq!(
+                resolve(true, true, configured_secs),
+                Some(Duration::from_secs(configured_secs))
+            );
+            assert_eq!(resolve(false, false, configured_secs), None);
+            assert_eq!(
+                resolve(false, true, configured_secs),
+                Some(Duration::from_secs(configured_secs))
+            );
+        }
+    }
+
+    #[test]
     fn answers_win_floor_keeps_answered_plan_only_when_gated_and_non_structural() {
         use PostAnswerAction::*;
         // #129 nf-hexohm: gate ON, ask_replan the SOLE trigger, rescored 85 >= floor 85 -> keep (legacy shipped 52).
@@ -6271,7 +6345,7 @@ mod tests {
     }
 
     #[test]
-    fn focused_retry_resolution_clears_stale_primary_uncertainty() {
+    fn supported_retry_cannot_discharge_prior_unresolved_uncertainty() {
         let report = |ordinal: u8,
                       confidence: Confidence,
                       class: EvidenceClass,
@@ -6316,14 +6390,81 @@ mod tests {
         );
 
         let merged = merge_pillar_attempt_reports(vec![primary, retry]).unwrap();
-        assert_eq!(merged.effective_confidence, Confidence::High);
-        assert!(merged.unresolved_uncertainties.is_empty());
-        assert_eq!(merged.claims.len(), 1);
+        assert_eq!(merged.effective_confidence, Confidence::Low);
         assert_eq!(
-            merged.claims[0].statement,
-            "REQ-a is resolved through the exact RequirementA boundary"
+            merged.unresolved_uncertainties,
+            ["REQ-a owner boundary remains unknown"]
         );
-        assert_eq!(merged.claims[0].effective_class, EvidenceClass::Supported);
+        assert_eq!(merged.claims.len(), 2);
+        assert!(merged.claims.iter().any(|claim| {
+            claim.statement == "REQ-a is resolved through the exact RequirementA boundary"
+                && claim.effective_class == EvidenceClass::Supported
+        }));
+        assert!(merged.claims.iter().any(|claim| {
+            claim.statement == "REQ-a owner boundary was initially unknown"
+                && claim.effective_class == EvidenceClass::Unresolved
+        }));
+    }
+
+    #[test]
+    fn proven_retry_cannot_erase_a_distinct_prior_uncertainty() {
+        let attempt = |ordinal: u8,
+                       confidence: Confidence,
+                       class: EvidenceClass,
+                       statement: &str,
+                       uncertainties: Vec<&str>| PillarAttemptCheckpoint {
+            pillar_id: "pillar-a".to_string(),
+            attempt_ordinal: ordinal,
+            model_id: format!("model-{ordinal}"),
+            physical_host: format!("host-{ordinal}"),
+            status: PillarAttemptStatus::ModelReport,
+            report: CompiledPillarReport {
+                pillar_id: "pillar-a".to_string(),
+                reported_confidence: confidence,
+                effective_confidence: confidence,
+                claims: vec![goose_swarm::CompiledResearchClaim {
+                    requirement_id: "REQ-a".to_string(),
+                    statement: statement.to_string(),
+                    reported_class: class,
+                    effective_class: class,
+                    provenance: goose_swarm::ProvenanceMatch::NotClaimed,
+                }],
+                missing_requirement_ids: Vec::new(),
+                unresolved_uncertainties: uncertainties.into_iter().map(str::to_string).collect(),
+                acceptance_tests: vec!["exercise requirement A".to_string()],
+                interfaces: vec!["RequirementA".to_string()],
+                exclusions: vec!["sibling ownership".to_string()],
+            },
+        };
+        let primary = attempt(
+            1,
+            Confidence::Low,
+            EvidenceClass::Unresolved,
+            "REQ-a cancellation semantics remain unknown",
+            vec!["REQ-a cancellation semantics remain unknown"],
+        );
+        let retry = attempt(
+            2,
+            Confidence::High,
+            EvidenceClass::Proven,
+            "REQ-a request encoding is proven by engine evidence",
+            Vec::new(),
+        );
+
+        let merged = merge_pillar_attempt_reports(vec![primary, retry]).unwrap();
+        assert_eq!(merged.effective_confidence, Confidence::Low);
+        assert_eq!(
+            merged.unresolved_uncertainties,
+            ["REQ-a cancellation semantics remain unknown"]
+        );
+        assert!(merged
+            .claims
+            .iter()
+            .any(|claim| claim.effective_class == EvidenceClass::Unresolved));
+        assert!(merged
+            .claims
+            .iter()
+            .any(|claim| claim.effective_class == EvidenceClass::Proven));
     }
 
     #[test]
@@ -12623,7 +12764,7 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
     }
 
     #[test]
-    fn pre_scheduler_recurrence_requires_distant_evidence_but_no_share_cap() {
+    fn pre_scheduler_semantic_tail_requires_distant_evidence_not_recurrence() {
         let without_distant_sample = ReasoningRecurrenceSnapshot {
             window_chars: 48,
             observed_windows: 10,
@@ -12631,18 +12772,18 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
             repeat_share: 0.9,
             earlier_reasoning: String::new(),
         };
-        assert!(!recurrence_warrants_semantic_review(
-            &without_distant_sample
-        ));
+        assert!(!semantic_tail_warrants_review(&without_distant_sample));
 
-        let measured_recurrence = ReasoningRecurrenceSnapshot {
+        let advancing_tail_without_recurrence = ReasoningRecurrenceSnapshot {
             window_chars: 48,
             observed_windows: 10_000,
-            repeated_windows: 1,
-            repeat_share: 0.0001,
-            earlier_reasoning: "a distant matching reasoning sample".to_string(),
+            repeated_windows: 0,
+            repeat_share: 0.0,
+            earlier_reasoning: "a distant reasoning sample for semantic comparison".to_string(),
         };
-        assert!(recurrence_warrants_semantic_review(&measured_recurrence));
+        assert!(semantic_tail_warrants_review(
+            &advancing_tail_without_recurrence
+        ));
     }
 
     #[test]
@@ -12718,7 +12859,7 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
         let mut recent = repeated;
         let first_turn = meter.snapshot();
         assert!(
-            recurrence_warrants_semantic_review(&first_turn),
+            semantic_tail_warrants_review(&first_turn),
             "first-turn fixture must contain distant recurrence evidence: {first_turn:?}"
         );
 
@@ -12731,7 +12872,7 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
 
         assert_eq!(tracked, Some(second));
         assert!(recent.is_empty());
-        assert!(!recurrence_warrants_semantic_review(&meter.snapshot()));
+        assert!(!semantic_tail_warrants_review(&meter.snapshot()));
     }
 
     #[test]
@@ -12956,10 +13097,8 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
             Some("/api/payments?limit=1&offset=0")
         );
         assert_eq!(
-            probeable_get_path(
-                "/api/payments?limit=<int>&offset=<int>&status=<pending|posted>"
-            )
-            .as_deref(),
+            probeable_get_path("/api/payments?limit=<int>&offset=<int>&status=<pending|posted>")
+                .as_deref(),
             Some("/api/payments?limit=1&offset=0"),
             "optional enum filters are omitted instead of receiving the invalid synthetic value `1`"
         );
@@ -14107,7 +14246,39 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
         assert!(schema
             .pointer("/properties/semantic_domains/maxItems")
             .is_none());
-        assert!(schema.pointer("/properties/pillars").is_some());
+        assert!(schema.pointer("/properties/pillars").is_none());
+        assert_eq!(
+            schema["required"],
+            serde_json::json!([
+                "semantic_domains",
+                "domain_assignment_by_requirement",
+                "research_slices",
+                "slice_assignment_by_requirement",
+                "integration_contract"
+            ])
+        );
+    }
+
+    #[test]
+    fn opener_rejects_legacy_pillars_instead_of_semantically_substituting_them() {
+        let legacy = serde_json::json!({
+            "pillars": [{
+                "id": "legacy",
+                "title": "Legacy",
+                "objective": "Old whole-node partition",
+                "requirement_ids": ["REQ-ui"],
+                "dependencies": [],
+                "research_questions": ["What exists?"],
+                "acceptance_criteria": ["It works"],
+                "exclusions": []
+            }],
+            "integration_contract": semantic_integration_contract(false)
+        })
+        .to_string();
+        assert!(parse_pillar_opening_draft(&legacy)
+            .unwrap_err()
+            .to_string()
+            .contains("not valid current typed JSON"));
     }
 
     #[test]
@@ -14291,17 +14462,30 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
             "mac".to_string(),
         ];
         let repair = capability_repair_specs(&build, true, &models).unwrap();
-        assert_eq!(repair.len(), 3);
-        let roots = &repair[..];
-        assert!(roots.iter().all(|spec| spec.deps.is_empty()));
+        assert_eq!(repair.len(), 4);
+        let (integration_root, producer_roots) = repair.split_last().unwrap();
+        assert!(producer_roots.iter().all(|spec| spec.deps.is_empty()));
         assert_eq!(
-            roots
+            integration_root.deps,
+            producer_roots
+                .iter()
+                .map(|spec| spec.id.clone())
+                .collect::<Vec<_>>()
+        );
+        assert!(integration_root
+            .owned_files
+            .contains(&"src/main.rs".to_string()));
+        assert!(integration_root
+            .owned_files
+            .contains(&"tests/e2e.rs".to_string()));
+        assert_eq!(
+            producer_roots
                 .iter()
                 .map(|spec| spec.preferred_model.as_deref().unwrap())
                 .collect::<Vec<_>>(),
             vec!["local", "workhorse", "mac"]
         );
-        let a_root = roots
+        let a_root = producer_roots
             .iter()
             .find(|spec| spec.owned_files.contains(&"src/a.rs".to_string()))
             .unwrap();
@@ -14419,6 +14603,7 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
             verified: true,
             remaining_findings: 0,
             shipped: "current".to_string(),
+            terminal_emitted: std::sync::atomic::AtomicBool::new(false),
         };
         let mut capability = CapabilityRecoveryReceipt {
             obligation_task_id: "verify-only".to_string(),
@@ -14494,6 +14679,127 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
                 ("verify", "verified output", 2)
             ]
         );
+    }
+
+    #[test]
+    fn capability_repair_completion_requires_exact_complete_evidence_for_every_spec() {
+        let specs = vec![
+            capability_task("repair::capability::01", &["src/lib.rs"], &[]),
+            capability_task(
+                "repair::capability::02",
+                &["src/main.rs"],
+                &["repair::capability::01"],
+            ),
+        ];
+        let outcome = |task_id: &str,
+                       completion: Option<TaskCompletionDisposition>,
+                       output: Option<&str>| goose_swarm::TaskOutcome {
+            task_id: task_id.to_string(),
+            status: "done".to_string(),
+            salvaged: false,
+            completion,
+            unavailable: None,
+            device: Some("local".to_string()),
+            model: Some("qwen".to_string()),
+            attempts: 1,
+            attempt_history: Vec::new(),
+            elapsed_ms: Some(1),
+            session_id: None,
+            tool_calls: Vec::new(),
+            output: output.map(str::to_string),
+            owns_nothing: false,
+        };
+        let report = |tasks| RunReport {
+            done: specs.iter().map(|spec| spec.id.clone()).collect(),
+            salvaged: Vec::new(),
+            provisional: Vec::new(),
+            failed: Vec::new(),
+            unavailable: Vec::new(),
+            bonus: Vec::new(),
+            planned_files: specs
+                .iter()
+                .flat_map(|spec| spec.owned_files.iter().cloned())
+                .collect(),
+            results: HashMap::new(),
+            context_json: serde_json::Value::Null,
+            dispatched_per_device: HashMap::new(),
+            tasks,
+            per_device: HashMap::new(),
+        };
+
+        let missing_complete = report(vec![
+            outcome(
+                "repair::capability::01",
+                Some(TaskCompletionDisposition::Complete),
+                Some("producer accepted"),
+            ),
+            outcome("repair::capability::02", None, Some("integration accepted")),
+        ]);
+        assert!(
+            completed_capability_repair_evidence(&specs, &missing_complete)
+                .unwrap_err()
+                .to_string()
+                .contains("lacks an exact Complete receipt")
+        );
+
+        let missing_output = report(vec![
+            outcome(
+                "repair::capability::01",
+                Some(TaskCompletionDisposition::Complete),
+                Some("producer accepted"),
+            ),
+            outcome(
+                "repair::capability::02",
+                Some(TaskCompletionDisposition::Complete),
+                Some("  "),
+            ),
+        ]);
+        assert!(
+            completed_capability_repair_evidence(&specs, &missing_output)
+                .unwrap_err()
+                .to_string()
+                .contains("lacks non-empty acceptance evidence")
+        );
+
+        let complete = report(vec![
+            outcome(
+                "repair::capability::01",
+                Some(TaskCompletionDisposition::Complete),
+                Some("producer accepted"),
+            ),
+            outcome(
+                "repair::capability::02",
+                Some(TaskCompletionDisposition::Complete),
+                Some("integration accepted"),
+            ),
+        ]);
+        assert_eq!(
+            completed_capability_repair_evidence(&specs, &complete)
+                .unwrap()
+                .len(),
+            specs.len()
+        );
+    }
+
+    #[test]
+    fn capability_repair_scheduler_failure_stays_an_explicit_obligation() {
+        let specs = vec![
+            capability_task("repair::capability::01", &["src/lib.rs"], &[]),
+            capability_task(
+                "repair::capability::02",
+                &["src/main.rs"],
+                &["repair::capability::01"],
+            ),
+        ];
+        let findings = capability_repair_failure_findings(&specs, "scheduler failed");
+        assert_eq!(findings.len(), specs.len());
+        for spec in &specs {
+            assert!(findings.iter().any(|finding| {
+                finding.contains(&spec.id)
+                    && finding.contains("scheduler failed")
+                    && finding.contains("without exact Complete evidence")
+            }));
+        }
     }
 
     #[test]
@@ -18248,7 +18554,7 @@ commands, the two database files, the `web/` files and `DECISIONS.md` are the co
     fn complete_cap_fits_its_own_rounds() {
         // The geometry this guards exists only in the CAPPED regime: under GOOSE_SWARM_UNCAPPED
         // (env or the operator's config.yaml — which this test host may genuinely have on) both
-        // sides read UNCAPPED_SECS-scale values and the read site substitutes cap_requested
+        // sides read the uncapped profile's disabled (zero) values and the read site substitutes cap_requested
         // itself, so the invariant is vacuous there. Skip rather than pin env: tests run in
         // parallel and env mutation races every other uncapped() reader.
         if uncapped() {
@@ -18462,19 +18768,35 @@ commands, the two database files, the `web/` files and `DECISIONS.md` are the co
         }];
 
         assert_eq!(
-            hard_failed_tasks(&failed, &unavailable, &[]),
+            hard_failed_tasks(&failed, &unavailable, &[], &[]),
             vec!["authority-corrupt".to_string()],
             "typed unavailable work must reach capability repair, while integrity failures remain hard"
         );
         assert_eq!(
-            unresolved_core_failures(&failed, &[], &unavailable, &[], false),
+            unresolved_core_failures(&failed, &[], &unavailable, &[], &[], false),
             failed,
             "without verified final evidence the unavailable task still fails the run"
         );
         assert_eq!(
-            unresolved_core_failures(&failed, &[], &unavailable, &[], true),
+            unresolved_core_failures(&failed, &[], &unavailable, &[], &[], true),
             vec!["authority-corrupt".to_string()],
             "a verified final ruler can recover unavailable work but never authority corruption"
+        );
+
+        let salvaged_failed = vec!["salvaged-module".to_string()];
+        let salvaged = vec!["salvaged-module".to_string()];
+        assert!(
+            hard_failed_tasks(&salvaged_failed, &[], &[], &salvaged).is_empty(),
+            "an engine-receipted salvage must reach capability repair instead of bypassing it as a hard failure"
+        );
+        assert_eq!(
+            unresolved_core_failures(&salvaged_failed, &[], &[], &[], &salvaged, false,),
+            salvaged_failed,
+            "salvage remains non-green until the final ruler binds its repair receipt"
+        );
+        assert!(
+            unresolved_core_failures(&salvaged_failed, &[], &[], &[], &salvaged, true,).is_empty(),
+            "a verified final ruler may clear an explicitly salvaged obligation"
         );
 
         let repair = capability_repair_plan(
@@ -18513,6 +18835,7 @@ commands, the two database files, the `web/` files and `DECISIONS.md` are the co
             verified: true,
             remaining_findings: 0,
             shipped: "current".to_string(),
+            terminal_emitted: std::sync::atomic::AtomicBool::new(false),
         };
         assert!(
             bind_final_recovery_receipts(&sealed, 1, &[]).is_err(),
@@ -18595,12 +18918,19 @@ commands, the two database files, the `web/` files and `DECISIONS.md` are the co
         let mut bonus_unavailable = unavailable.clone();
         bonus_unavailable[0].task_id = "bonus-unavailable".to_string();
         assert_eq!(
-            hard_failed_tasks(&bonus_failed, &bonus_unavailable, &[]),
+            hard_failed_tasks(&bonus_failed, &bonus_unavailable, &[], &[]),
             vec!["bonus-terminal-integrity".to_string()],
             "bonus identity cannot exempt a terminal authority/integrity failure"
         );
         assert_eq!(
-            unresolved_core_failures(&bonus_failed, &bonus_failed, &bonus_unavailable, &[], false,),
+            unresolved_core_failures(
+                &bonus_failed,
+                &bonus_failed,
+                &bonus_unavailable,
+                &[],
+                &[],
+                false,
+            ),
             vec!["bonus-terminal-integrity".to_string()]
         );
         assert_eq!(
@@ -18609,6 +18939,7 @@ commands, the two database files, the `web/` files and `DECISIONS.md` are the co
                 &bonus_failed,
                 &bonus_failed,
                 &bonus_unavailable,
+                &[],
                 &[],
                 true,
             ),
@@ -19053,13 +19384,21 @@ subprocess.Popen(
             "the hermetic scratch sequence and dynamic ports cannot mint a new causal defect"
         );
         let mut feedback = AuthoritativeRepairFeedback::default();
-        assert_eq!(
+        assert!(matches!(
             feedback.classify(&[no_bind_seq_1.to_string()]),
-            AuthoritativeRepairDisposition::Continue { cycle: 1 }
-        );
+            AuthoritativeRepairDisposition::Continue {
+                cycle: 1,
+                repeated: false,
+                prior_cycle: None,
+            }
+        ));
         assert!(matches!(
             feedback.classify(&[no_bind_seq_12.to_string()]),
-            AuthoritativeRepairDisposition::Incomplete(_)
+            AuthoritativeRepairDisposition::Continue {
+                cycle: 2,
+                repeated: true,
+                ..
+            }
         ));
     }
 
@@ -19157,10 +19496,14 @@ subprocess.Popen(
             .map(|finding| finding.as_str().unwrap().to_string())
             .collect::<Vec<_>>();
         let mut feedback = AuthoritativeRepairFeedback::default();
-        assert_eq!(
+        assert!(matches!(
             feedback.classify(&authoritative),
-            AuthoritativeRepairDisposition::Continue { cycle: 1 }
-        );
+            AuthoritativeRepairDisposition::Continue {
+                cycle: 1,
+                repeated: false,
+                prior_cycle: None,
+            }
+        ));
         let now = std::time::Instant::now();
         let mut deadline = Some(now);
         assert_eq!(
@@ -19172,11 +19515,16 @@ subprocess.Popen(
         feedback.note_ruler(&authoritative);
         feedback.note_repair_dispatch();
         feedback.note_ruler(&authoritative);
-        let AuthoritativeRepairDisposition::Incomplete(evidence) =
-            feedback.classify(&authoritative)
+        let AuthoritativeRepairDisposition::Continue {
+            cycle,
+            repeated,
+            prior_cycle: Some(evidence),
+        } = feedback.classify(&authoritative)
         else {
-            panic!("unchanged authoritative findings reopened an unbounded repair cycle");
+            panic!("unchanged authoritative findings did not request a semantic alternative");
         };
+        assert_eq!(cycle, 2);
+        assert!(repeated);
         assert_eq!(
             evidence,
             AuthoritativeRepairCycleEvidence {
@@ -19189,11 +19537,14 @@ subprocess.Popen(
         );
 
         let improved = authoritative.into_iter().skip(1).collect::<Vec<_>>();
-        assert_eq!(
+        assert!(matches!(
             feedback.classify(&improved),
-            AuthoritativeRepairDisposition::Continue { cycle: 2 },
-            "a genuinely changed cause set gets one new bounded feedback cycle"
-        );
+            AuthoritativeRepairDisposition::Continue {
+                cycle: 3,
+                repeated: false,
+                prior_cycle: None,
+            }
+        ));
 
         let no_bind = fixture["volatile_no_bind_findings"]
             .as_array()
@@ -19211,21 +19562,29 @@ subprocess.Popen(
             "V21's dynamic ports and scratch sequence must remain one service no-bind cause"
         );
         let mut volatile_feedback = AuthoritativeRepairFeedback::default();
-        assert_eq!(
+        assert!(matches!(
             volatile_feedback.classify(std::slice::from_ref(&no_bind[0])),
-            AuthoritativeRepairDisposition::Continue { cycle: 1 }
-        );
+            AuthoritativeRepairDisposition::Continue {
+                cycle: 1,
+                repeated: false,
+                prior_cycle: None,
+            }
+        ));
         volatile_feedback.note_ruler(std::slice::from_ref(&no_bind[1]));
         volatile_feedback.note_repair_dispatch();
         volatile_feedback.note_ruler(std::slice::from_ref(&no_bind[2]));
         assert!(matches!(
             volatile_feedback.classify(std::slice::from_ref(&no_bind[2])),
-            AuthoritativeRepairDisposition::Incomplete(AuthoritativeRepairCycleEvidence {
-                feedback_applied: true,
-                repair_dispatched: true,
-                post_dispatch_rulers: 1,
-                ..
-            })
+            AuthoritativeRepairDisposition::Continue {
+                cycle: 2,
+                repeated: true,
+                prior_cycle: Some(AuthoritativeRepairCycleEvidence {
+                    feedback_applied: true,
+                    repair_dispatched: true,
+                    post_dispatch_rulers: 1,
+                    ..
+                }),
+            }
         ));
     }
 
@@ -20882,6 +21241,7 @@ struct RunAgentOut {
     tool_calls: Vec<ToolCallRecord>,
     source_receipts: Vec<ResearchSourceReceipt>,
     physical_host_id: Option<String>,
+    post_terminal_activity_evidence_failure: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -21344,11 +21704,18 @@ enum PillarLaneOutputProofError {
         expected_physical_host: String,
         observed_physical_host: String,
     },
+    PostTerminalActivityEvidence {
+        expected_physical_host: String,
+        diagnostic: String,
+    },
 }
 
 impl PillarLaneOutputProofError {
-    fn is_authenticated_conflict(&self) -> bool {
-        matches!(self, Self::AuthenticatedConflict { .. })
+    fn is_terminal_integrity_failure(&self) -> bool {
+        matches!(
+            self,
+            Self::AuthenticatedConflict { .. } | Self::PostTerminalActivityEvidence { .. }
+        )
     }
 }
 
@@ -21367,6 +21734,13 @@ impl std::fmt::Display for PillarLaneOutputProofError {
             } => write!(
                 formatter,
                 "pillar output authenticated physical host `{observed_physical_host}` while assigned `{expected_physical_host}`"
+            ),
+            Self::PostTerminalActivityEvidence {
+                expected_physical_host,
+                diagnostic,
+            } => write!(
+                formatter,
+                "pillar output on authenticated physical host `{expected_physical_host}` reached provider terminal but its semantic activity evidence could not be sealed: {diagnostic}"
             ),
         }
     }
@@ -21430,26 +21804,6 @@ struct PillarOpeningDraft {
     integration_contract: IntegrationContract,
 }
 
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct LegacyPillarDefinitionDraft {
-    id: String,
-    title: String,
-    objective: String,
-    requirement_ids: Vec<String>,
-    dependencies: Vec<String>,
-    research_questions: Vec<String>,
-    acceptance_criteria: Vec<String>,
-    exclusions: Vec<String>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct LegacyPillarOpeningDraft {
-    pillars: Vec<LegacyPillarDefinitionDraft>,
-    integration_contract: IntegrationContract,
-}
-
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 enum PillarUncertaintyRouteKind {
@@ -21496,6 +21850,25 @@ struct PillarPlanDegradedTransition {
     unproven_partial_output_quarantined: bool,
 }
 
+#[derive(Debug)]
+struct PillarPlanSemanticExhausted {
+    stage: &'static str,
+    diagnostic: String,
+    planner_lane_invocations: usize,
+}
+
+impl std::fmt::Display for PillarPlanSemanticExhausted {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            formatter,
+            "model-authored synthesis plan failed at {} after {} authenticated planner lane invocation(s): {}",
+            self.stage, self.planner_lane_invocations, self.diagnostic
+        )
+    }
+}
+
+impl std::error::Error for PillarPlanSemanticExhausted {}
+
 #[derive(Clone, Debug)]
 struct PillarResearchOutcome {
     opening: ResearchPillarOpening,
@@ -21503,6 +21876,7 @@ struct PillarResearchOutcome {
     lanes: Vec<ResearchPhysicalLane>,
     synthesis: String,
     verified_facts: String,
+    omitted_requirement_ids: Vec<String>,
     worker_context: String,
     provider_calls: usize,
     retries: usize,
@@ -21525,6 +21899,7 @@ struct PillarOpeningUnavailableContinuation {
     resume_stage: String,
     cause: PillarOpeningUnavailableCause,
     quarantined_physical_hosts: Vec<String>,
+    semantic_cycle_advanced: bool,
 }
 
 #[derive(Debug)]
@@ -21552,6 +21927,235 @@ impl std::fmt::Display for PillarOpeningRoutesQuarantined {
 
 impl std::error::Error for PillarOpeningRoutesQuarantined {}
 
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+struct PillarOpeningSemanticAttemptEvidence {
+    diagnostic_fingerprint: String,
+    candidate_fingerprint: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+struct PillarOpeningSemanticCycleFingerprint {
+    diagnostic_fingerprint: String,
+    candidate_fingerprint: String,
+    distinct_physical_hosts: usize,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+struct PillarSemanticAlternativeDirective {
+    diagnosis: String,
+    next_strategy: String,
+    preserve: Vec<String>,
+    avoid: Vec<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+struct PillarOpeningSemanticCheckpointEvidence {
+    schema_version: u32,
+    stage: String,
+    previous_cycle: Option<PillarOpeningSemanticCycleFingerprint>,
+    current_by_physical_host: BTreeMap<String, PillarOpeningSemanticAttemptEvidence>,
+    current_cycle_has_transient_failure: bool,
+    strategy_directive: Option<PillarSemanticAlternativeDirective>,
+}
+
+impl PillarOpeningSemanticCheckpointEvidence {
+    const REASON_PREFIX: &'static str = "pillar-opening-semantic-evidence-v2:";
+
+    fn new(stage: &str) -> Self {
+        Self {
+            schema_version: 2,
+            stage: stage.to_string(),
+            previous_cycle: None,
+            current_by_physical_host: BTreeMap::new(),
+            current_cycle_has_transient_failure: false,
+            strategy_directive: None,
+        }
+    }
+
+    fn from_reason(reason: &str, stage: &str) -> Option<Self> {
+        let encoded = reason.strip_prefix(Self::REASON_PREFIX)?;
+        let evidence = serde_json::from_str::<Self>(encoded).ok()?;
+        (evidence.schema_version == 2 && evidence.stage == stage).then_some(evidence)
+    }
+
+    fn reason(&self) -> String {
+        format!(
+            "{}{}",
+            Self::REASON_PREFIX,
+            serde_json::to_string(self)
+                .expect("pillar opening semantic evidence always serializes")
+        )
+    }
+
+    fn reason_or(&self, fallback: &str) -> String {
+        if self.previous_cycle.is_some()
+            || !self.current_by_physical_host.is_empty()
+            || self.current_cycle_has_transient_failure
+            || self.strategy_directive.is_some()
+        {
+            self.reason()
+        } else {
+            fallback.to_string()
+        }
+    }
+
+    fn observe_semantic_failure(
+        &mut self,
+        physical_host: &str,
+        diagnostic: &str,
+        candidate: Option<&str>,
+    ) {
+        self.current_by_physical_host.insert(
+            physical_host.to_string(),
+            PillarOpeningSemanticAttemptEvidence {
+                diagnostic_fingerprint: normalized_pillar_opening_diagnostic_fingerprint(
+                    diagnostic,
+                ),
+                candidate_fingerprint: normalized_pillar_opening_candidate_fingerprint(candidate),
+            },
+        );
+    }
+
+    fn observe_transient_failure(&mut self) {
+        self.current_cycle_has_transient_failure = true;
+    }
+
+    fn apply_strategy_directive(&mut self, directive: PillarSemanticAlternativeDirective) {
+        self.strategy_directive = Some(directive);
+    }
+
+    fn settle_cycle(
+        &mut self,
+        all_physical_hosts: &HashSet<String>,
+    ) -> Option<(PillarOpeningSemanticCycleFingerprint, bool)> {
+        if self.current_cycle_has_transient_failure
+            || self.current_by_physical_host.len() != all_physical_hosts.len()
+            || !all_physical_hosts
+                .iter()
+                .all(|host| self.current_by_physical_host.contains_key(host))
+        {
+            self.current_by_physical_host.clear();
+            self.current_cycle_has_transient_failure = false;
+            return None;
+        }
+        let current = self.current_cycle_fingerprint();
+        let repeated = self.previous_cycle.as_ref() == Some(&current);
+        self.previous_cycle = Some(current.clone());
+        self.current_by_physical_host.clear();
+        self.current_cycle_has_transient_failure = false;
+        Some((current, repeated))
+    }
+
+    fn current_cycle_fingerprint(&self) -> PillarOpeningSemanticCycleFingerprint {
+        let mut diagnostics = self
+            .current_by_physical_host
+            .values()
+            .map(|evidence| evidence.diagnostic_fingerprint.clone())
+            .collect::<Vec<_>>();
+        diagnostics.sort();
+        let mut candidates = self
+            .current_by_physical_host
+            .values()
+            .map(|evidence| evidence.candidate_fingerprint.clone())
+            .collect::<Vec<_>>();
+        candidates.sort();
+        PillarOpeningSemanticCycleFingerprint {
+            diagnostic_fingerprint: domain_sha256(
+                b"goose.swarm.pillar_opening.semantic_cycle.diagnostic.v1\0",
+                serde_json::to_string(&diagnostics)
+                    .expect("diagnostic fingerprints always serialize")
+                    .as_bytes(),
+            ),
+            candidate_fingerprint: domain_sha256(
+                b"goose.swarm.pillar_opening.semantic_cycle.candidate.v1\0",
+                serde_json::to_string(&candidates)
+                    .expect("candidate fingerprints always serialize")
+                    .as_bytes(),
+            ),
+            distinct_physical_hosts: self.current_by_physical_host.len(),
+        }
+    }
+}
+
+fn normalized_pillar_opening_diagnostic_fingerprint(diagnostic: &str) -> String {
+    let normalized = diagnostic
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_lowercase();
+    domain_sha256(
+        b"goose.swarm.pillar_opening.normalized_diagnostic.v1\0",
+        normalized.trim().as_bytes(),
+    )
+}
+
+fn normalized_pillar_opening_candidate_fingerprint(candidate: Option<&str>) -> String {
+    fn append_canonical(value: &serde_json::Value, canonical: &mut String) {
+        match value {
+            serde_json::Value::Null => canonical.push_str("null"),
+            serde_json::Value::Bool(value) => {
+                canonical.push_str(if *value { "true" } else { "false" })
+            }
+            serde_json::Value::Number(number) => canonical.push_str(&number.to_string()),
+            serde_json::Value::String(value) => canonical
+                .push_str(&serde_json::to_string(value).expect("JSON strings always serialize")),
+            serde_json::Value::Array(values) => {
+                canonical.push('[');
+                for value in values {
+                    append_canonical(value, canonical);
+                    canonical.push(',');
+                }
+                canonical.push(']');
+            }
+            serde_json::Value::Object(values) => {
+                canonical.push('{');
+                let mut keys = values.keys().collect::<Vec<_>>();
+                keys.sort();
+                for key in keys {
+                    canonical.push_str(
+                        &serde_json::to_string(key).expect("JSON object keys always serialize"),
+                    );
+                    canonical.push(':');
+                    append_canonical(&values[key], canonical);
+                    canonical.push(',');
+                }
+                canonical.push('}');
+            }
+        }
+    }
+
+    let normalized = match candidate.map(str::trim) {
+        None => "absent".to_string(),
+        Some("") => "empty".to_string(),
+        Some(candidate) => {
+            match serde_json::from_str::<serde_json::Value>(strip_code_fences(candidate).trim()) {
+                Ok(value) => {
+                    let mut canonical = "json:".to_string();
+                    append_canonical(&value, &mut canonical);
+                    canonical
+                }
+                Err(_) => {
+                    format!(
+                        "invalid-json:{}",
+                        candidate.split_whitespace().collect::<Vec<_>>().join(" ")
+                    )
+                }
+            }
+        }
+    };
+    domain_sha256(
+        b"goose.swarm.pillar_opening.normalized_candidate.v1\0",
+        normalized.as_bytes(),
+    )
+}
+
+fn is_terminal_pillar_opening_schema_failure(error: &anyhow::Error) -> bool {
+    error
+        .to_string()
+        .contains("response-only final_output schema validation repeated")
+}
+
 fn pillar_opening_unavailable_cause(
     all_physical_hosts: &HashSet<String>,
     quarantined_physical_hosts: &HashSet<String>,
@@ -21566,11 +22170,6 @@ fn pillar_opening_unavailable_cause(
 enum PillarResearchAttemptOutcome {
     Ready(PillarResearchOutcome),
     Unavailable(PillarOpeningUnavailableContinuation),
-}
-
-fn pillar_route_recovery_backoff(continuation_round: usize) -> std::time::Duration {
-    let shift = continuation_round.saturating_sub(1).min(4) as u32;
-    std::time::Duration::from_millis(250_u64.saturating_mul(1_u64 << shift))
 }
 
 #[cfg(test)]
@@ -21681,14 +22280,6 @@ fn merge_pillar_attempt_reports(
         exclusions.extend(attempt.report.exclusions.iter().cloned());
     }
 
-    for claims in claims_by_requirement.values_mut() {
-        if claims
-            .iter()
-            .any(|claim| claim.effective_class != EvidenceClass::Unresolved)
-        {
-            claims.retain(|claim| claim.effective_class != EvidenceClass::Unresolved);
-        }
-    }
     let mut claims = claims_by_requirement
         .into_values()
         .flatten()
@@ -21707,24 +22298,8 @@ fn merge_pillar_attempt_reports(
         .into_iter()
         .filter(|requirement_id| !covered.contains(requirement_id))
         .collect::<Vec<_>>();
-    let unresolved_requirement_ids = claims
-        .iter()
-        .filter(|claim| claim.effective_class == EvidenceClass::Unresolved)
-        .map(|claim| claim.requirement_id.clone())
-        .chain(missing_requirement_ids.iter().cloned())
-        .collect::<HashSet<_>>();
     let mut unresolved_uncertainties = attempts
         .iter()
-        .filter(|attempt| {
-            attempt.report.claims.iter().any(|claim| {
-                unresolved_requirement_ids.contains(claim.requirement_id.as_str())
-                    && claim.effective_class == EvidenceClass::Unresolved
-            }) || attempt
-                .report
-                .missing_requirement_ids
-                .iter()
-                .any(|requirement_id| unresolved_requirement_ids.contains(requirement_id.as_str()))
-        })
         .flat_map(|attempt| attempt.report.unresolved_uncertainties.iter().cloned())
         .collect::<Vec<_>>();
     for values in [
@@ -21760,7 +22335,15 @@ fn merge_pillar_attempt_reports(
     })
 }
 
-fn render_verified_pillar_facts(reports: &[CompiledPillarReport], max_chars: usize) -> String {
+struct RenderedVerifiedPillarFacts {
+    text: String,
+    omitted_requirement_ids: Vec<String>,
+}
+
+fn render_verified_pillar_facts(
+    reports: &[CompiledPillarReport],
+    max_chars: usize,
+) -> Result<RenderedVerifiedPillarFacts> {
     let mut facts = reports
         .iter()
         .flat_map(|report| {
@@ -21795,37 +22378,71 @@ fn render_verified_pillar_facts(reports: &[CompiledPillarReport], max_chars: usi
         .iter()
         .map(String::len)
         .sum::<usize>()
+        .saturating_add(
+            facts
+                .iter()
+                .map(|(_, _, statement)| verified_fact_omission_marker(statement).len())
+                .sum::<usize>(),
+        )
         .saturating_add(prefixes.len().saturating_sub(1));
     if minimum_chars > max_chars {
-        return format!(
-            "VERIFIED_FACT_CAPACITY_ERROR facts={} minimum_chars={minimum_chars} available_chars={max_chars}",
+        bail!(
+            "verified pillar facts need {minimum_chars} characters for {} fact identities and omission markers, but only {max_chars} are available",
             facts.len()
-        )
-        .chars()
-        .take(max_chars)
-        .collect();
+        );
     }
     let mut remaining = max_chars - minimum_chars;
     let mut remaining_facts = facts.len();
-    facts
+    let mut omitted_requirement_ids = Vec::new();
+    let text = facts
         .into_iter()
         .zip(prefixes)
-        .map(|((_, _, statement), prefix)| {
-            let allowance = if remaining_facts == 0 {
+        .map(|((_, requirement_id, statement), prefix)| {
+            let marker = verified_fact_omission_marker(&statement);
+            let extra = if remaining_facts == 0 {
                 0
             } else {
                 remaining / remaining_facts
             };
-            let excerpt = statement
-                .chars()
-                .take(allowance.min(2_048))
-                .collect::<String>();
-            remaining = remaining.saturating_sub(excerpt.chars().count());
+            let allowance = marker.len().saturating_add(extra).min(2_048);
+            let excerpt = bounded_verified_fact(&statement, allowance);
+            if excerpt.len() < statement.len() {
+                omitted_requirement_ids.push(requirement_id.to_string());
+            }
+            remaining = remaining.saturating_sub(excerpt.len().saturating_sub(marker.len()));
             remaining_facts = remaining_facts.saturating_sub(1);
             format!("{prefix}{excerpt}")
         })
         .collect::<Vec<_>>()
-        .join("\n")
+        .join("\n");
+    omitted_requirement_ids.sort();
+    omitted_requirement_ids.dedup();
+    Ok(RenderedVerifiedPillarFacts {
+        text,
+        omitted_requirement_ids,
+    })
+}
+
+fn verified_fact_omission_marker(statement: &str) -> String {
+    format!("[excerpt omitted=true original_bytes={}]", statement.len())
+}
+
+fn bounded_verified_fact(statement: &str, max_bytes: usize) -> String {
+    if statement.len() <= max_bytes {
+        return statement.to_string();
+    }
+    let marker = verified_fact_omission_marker(statement);
+    if max_bytes <= marker.len() {
+        return marker;
+    }
+    let mut end = max_bytes - marker.len() - 1;
+    while !statement.is_char_boundary(end) {
+        end -= 1;
+    }
+    let excerpt = statement
+        .get(..end)
+        .expect("end was moved to a verified UTF-8 character boundary");
+    format!("{excerpt} {marker}")
 }
 
 fn pillar_planner_integrity_failure(error: &anyhow::Error) -> bool {
@@ -25300,11 +25917,7 @@ fn draft_timeout_secs() -> u64 {
 /// The draft wall with GOOSE_SWARM_UNCAPPED applied: a slow deep draft is legitimate work, and
 /// killing it is how both qwen3.8 r0 attempts lost their whole draft pool to the solo fallback.
 fn draft_timeout_eff() -> u64 {
-    if uncapped() {
-        UNCAPPED_SECS
-    } else {
-        draft_timeout_secs()
-    }
+    draft_timeout_secs()
 }
 
 /// The pure precedence, split out so it is testable (the wrapper reads env + config).
@@ -25321,9 +25934,6 @@ fn draft_timeout_resolved(env: Option<String>, cfg: Option<u64>) -> u64 {
 /// Never BELOW the worker budget: the sink strictly dominates a worker's job, so a smaller cap could only
 /// ever cut it off sooner — there is no configuration in which that is what someone meant.
 fn sink_max_turns(worker_default: u32) -> u32 {
-    if uncapped() {
-        return worker_default.max(100_000);
-    }
     sink_max_turns_resolved(
         std::env::var("GOOSE_SWARM_SINK_MAX_TURNS").ok(),
         load_config().sink_max_turns,
@@ -25349,9 +25959,6 @@ fn sink_max_turns_resolved(env: Option<String>, cfg: Option<u32>, worker_default
 /// without ever being handed to the model. It is a suspect, not a proven cause: `clarity_fail` now records
 /// whether it was actually a timeout, so raising this can be judged on evidence rather than on my hunch.
 fn clarity_probe_secs() -> u64 {
-    if uncapped() {
-        return UNCAPPED_SECS;
-    }
     let cfg = load_config().clarity_probe_secs;
     std::env::var("GOOSE_SWARM_CLARITY_PROBE_SECS")
         .ok()
@@ -26588,9 +27195,10 @@ impl AgentProviderNudgeChannel {
         let wake_cancelled = cancelled.clone();
         tokio::spawn(async move {
             if let Some(guidance) = receiver.recv().await {
-                agent
-                    .steer(&session_id, Message::user().with_text(guidance))
-                    .await;
+                scope_uncapped_local_stream(
+                    agent.steer(&session_id, Message::user().with_text(guidance)),
+                )
+                .await;
                 let _ = wake_cancelled.send(true);
             }
         });
@@ -26766,6 +27374,7 @@ struct PreSchedulerSourceContext {
 enum PreSchedulerRecurrenceReviewOutcome {
     Complete,
     StructuredProgressChanged,
+    ReviewerUnavailable,
 }
 
 type PreSchedulerRecurrenceReview = Shared<BoxFuture<'static, PreSchedulerRecurrenceReviewOutcome>>;
@@ -26856,6 +27465,11 @@ impl PreSchedulerSemanticRuntime {
     fn source_role(label: &str) -> WorkRole {
         if label.starts_with("research-") || label.starts_with("scout-") {
             WorkRole::ResearchEvidence
+        } else if label.starts_with("complete-fix")
+            || label.starts_with("boot-repair")
+            || label.starts_with("smoke-fix")
+        {
+            WorkRole::Repair
         } else {
             WorkRole::PlanningAuthority
         }
@@ -27037,9 +27651,11 @@ impl PreSchedulerSemanticRuntime {
             "judge_admission_id": admitted.receipt().admission_id,
             "judge_device": admitted.receipt().logical_device_id,
             "judge_physical_host": admitted.receipt().physical_host_id,
+            "semantic_tail_trigger": "distant_reasoning_tail_available",
             "recurrence_observed_windows": recurrence.observed_windows,
             "recurrence_repeated_windows": recurrence.repeated_windows,
             "recurrence_repeat_share": recurrence.repeat_share,
+            "deterministic_repeat_required": false,
             "physical_idle_admission": true,
             "payload_logged": false,
         }));
@@ -27060,9 +27676,9 @@ impl PreSchedulerSemanticRuntime {
                 if !captured_source.is_live() {
                     judge_cancellation.request();
                 }
-                let system = "You are supervising one live local-model call. Decide only whether its reasoning is semantically looping: the same analysis recurs without new information. Deep but advancing reasoning is OK. Reply exactly VERDICT|CONFIDENCE|hint where VERDICT is OK or LOOPING and CONFIDENCE is HIGH or LOW. Never request termination; a HIGH LOOPING verdict may only redirect the same session.".to_string();
+                let system = "You are supervising one live local-model call. Compare its earlier and recent reasoning and decide whether it is still making meaningful semantic progress. Deep, slow, repetitive-looking but advancing reasoning is OK. LOOPING means it is revisiting the same analysis without adding evidence, resolving a decision, or taking the next concrete step. Reply exactly VERDICT|CONFIDENCE|hint where VERDICT is OK or LOOPING and CONFIDENCE is HIGH or LOW. Never request termination; a HIGH LOOPING verdict may only redirect the same session.".to_string();
                 let user = format!(
-                    "Measured recurrence: {} repeated of {} retained {}-character windows ({:.4}).\n\nEarlier reasoning sample:\n{}\n\nRecent reasoning sample:\n{}",
+                    "The recurrence measurement is context only, not the verdict: {} repeated of {} retained {}-character windows ({:.4}). Judge semantic progress by reading both samples.\n\nEarlier reasoning sample:\n{}\n\nRecent reasoning sample:\n{}",
                     recurrence.repeated_windows,
                     recurrence.observed_windows,
                     recurrence.window_chars,
@@ -27125,7 +27741,7 @@ impl PreSchedulerSemanticRuntime {
                         "nudge_delivered": false,
                         "payload_logged": false,
                     }));
-                    let _ = done.send(PreSchedulerRecurrenceReviewOutcome::Complete);
+                    let _ = done.send(PreSchedulerRecurrenceReviewOutcome::ReviewerUnavailable);
                     return;
                 }
                 if source_request_closed_before_judge {
@@ -27167,7 +27783,7 @@ impl PreSchedulerSemanticRuntime {
                             "nudge_delivered": false,
                             "payload_logged": false,
                         }));
-                        let _ = done.send(PreSchedulerRecurrenceReviewOutcome::Complete);
+                        let _ = done.send(PreSchedulerRecurrenceReviewOutcome::ReviewerUnavailable);
                         return;
                     }
                 };
@@ -27190,7 +27806,7 @@ impl PreSchedulerSemanticRuntime {
                             "nudge_delivered": false,
                             "payload_logged": false,
                         }));
-                        let _ = done.send(PreSchedulerRecurrenceReviewOutcome::Complete);
+                        let _ = done.send(PreSchedulerRecurrenceReviewOutcome::ReviewerUnavailable);
                         return;
                     }
                 };
@@ -27231,7 +27847,7 @@ impl PreSchedulerSemanticRuntime {
                     direction.chars().take(400).collect::<String>()
                 };
                 let guidance = format!(
-                    "SUPERVISOR NOTE: an independently admitted judge found your latest reasoning semantically recurrent. {direction}. Continue the SAME task and preserve valid work already completed."
+                    "SUPERVISOR NOTE: an independently admitted judge found that your latest reasoning is no longer making meaningful semantic progress. {direction}. Continue the SAME task and preserve valid work already completed."
                 );
                 let safety = StructuredOutputNudgeSafetyGate::new(
                     progress.clone(),
@@ -27282,7 +27898,7 @@ impl PreSchedulerSemanticRuntime {
                         if structured_progress_changed {
                             PreSchedulerRecurrenceReviewOutcome::StructuredProgressChanged
                         } else {
-                            PreSchedulerRecurrenceReviewOutcome::Complete
+                            PreSchedulerRecurrenceReviewOutcome::ReviewerUnavailable
                         }
                     }
                 };
@@ -27293,7 +27909,7 @@ impl PreSchedulerSemanticRuntime {
             async move {
                 receiver
                     .await
-                    .unwrap_or(PreSchedulerRecurrenceReviewOutcome::Complete)
+                    .unwrap_or(PreSchedulerRecurrenceReviewOutcome::ReviewerUnavailable)
             }
             .boxed()
             .shared(),
@@ -27514,6 +28130,21 @@ impl GooseAgentDispatcher {
         Ok(p)
     }
 
+    fn local_generation_is_semantically_supervised(&self, model_id: &str) -> bool {
+        local_generation_is_semantically_supervised(
+            uncapped(),
+            self.cloud_models.contains_key(model_id),
+        )
+    }
+
+    fn generation_timeout(
+        &self,
+        model_id: &str,
+        configured: std::time::Duration,
+    ) -> Option<std::time::Duration> {
+        (!self.local_generation_is_semantically_supervised(model_id)).then_some(configured)
+    }
+
     fn semantic_observation_request_params(&self) -> HashMap<String, serde_json::Value> {
         let mut params: HashMap<String, serde_json::Value> = load_config()
             .lm_extra_body
@@ -27628,6 +28259,30 @@ impl GooseAgentDispatcher {
 
     fn set_physical_auxiliary_control(&self, control: Option<PhysicalAdmissionControl>) {
         *self.physical_auxiliary_control.lock().unwrap() = control;
+    }
+
+    async fn run_complete_repair(
+        &self,
+        pillar_flow_on: bool,
+        req: DispatchRequest,
+    ) -> Result<TaskRunOutput, DispatchError> {
+        if !pillar_flow_on {
+            return TaskDispatcher::run(self, req).await;
+        }
+        if provider_lifecycle_active() {
+            return Err(DispatchError::Terminal(
+                "pillar COMPLETE repair unexpectedly inherited another provider lifecycle".into(),
+            ));
+        }
+        let has_physical_control = self.physical_auxiliary_control.lock().unwrap().is_some();
+        let has_semantic_runtime = self.pre_scheduler_semantic.lock().unwrap().is_some();
+        if !has_physical_control || !has_semantic_runtime {
+            return Err(DispatchError::Terminal(
+                "pillar COMPLETE repair requires the verified physical broker and semantic observation runtime"
+                    .into(),
+            ));
+        }
+        TaskDispatcher::run(self, req).await
     }
 
     /// Build the isolated SHADOW workspace for a speculative twin: a cp -r of the real tree (heavy dirs
@@ -28079,8 +28734,7 @@ impl GooseAgentDispatcher {
         user_text: String,
         timeout: std::time::Duration,
     ) -> Option<Overview> {
-        tokio::time::timeout(
-            timeout,
+        await_with_optional_timeout(
             self.run_response_only_agent(
                 &self.planner_model,
                 system_prompt,
@@ -28091,6 +28745,7 @@ impl GooseAgentDispatcher {
                 self.planner_timeout_secs,
                 None,
             ),
+            self.generation_timeout(&self.planner_model, timeout),
         )
         .await
         .ok()
@@ -28112,14 +28767,14 @@ impl GooseAgentDispatcher {
         PRE_SCHEDULER_REQUIRED_HOST
             .scope(
                 physical_host_id.to_string(),
-                self.run_response_only_agent(
+                Box::pin(self.run_response_only_agent(
                     model_id,
                     system_prompt,
                     user_text,
                     response,
                     idle_secs,
                     activity_key,
-                ),
+                )),
             )
             .await
     }
@@ -28136,7 +28791,7 @@ impl GooseAgentDispatcher {
         idle_secs: u64,
         activity_key: Option<&str>,
     ) -> Result<RunAgentOut> {
-        let run = self.run_agent_in(
+        let run = Box::pin(self.run_agent_in(
             self.working_dir.clone(),
             &lane.model_id,
             system_prompt,
@@ -28152,7 +28807,7 @@ impl GooseAgentDispatcher {
             None,
             None,
             None,
-        );
+        ));
         if lane.verified_physical {
             PRE_SCHEDULER_REQUIRED_HOST
                 .scope(lane.physical_host_id.clone(), run)
@@ -28168,13 +28823,13 @@ impl GooseAgentDispatcher {
         system_prompt: String,
         user_text: String,
     ) -> Result<RunAgentOut> {
-        let run = self.run_agent_in(
+        let run = Box::pin(self.run_agent_in(
             self.working_dir.clone(),
             &lane.model_id,
             system_prompt,
             user_text,
             Some(Response {
-                json_schema: Some(pillar_plan_capture_schema()),
+                json_schema: Some(pillar_plan_schema()),
             }),
             Some(1),
             &[],
@@ -28186,7 +28841,7 @@ impl GooseAgentDispatcher {
             None,
             None,
             None,
-        );
+        ));
         if lane.verified_physical {
             PRE_SCHEDULER_REQUIRED_HOST
                 .scope(lane.physical_host_id.clone(), run)
@@ -28202,6 +28857,12 @@ impl GooseAgentDispatcher {
     ) -> std::result::Result<(), PillarLaneOutputProofError> {
         if !lane.verified_physical {
             return Ok(());
+        }
+        if let Some(diagnostic) = &output.post_terminal_activity_evidence_failure {
+            return Err(PillarLaneOutputProofError::PostTerminalActivityEvidence {
+                expected_physical_host: lane.physical_host_id.clone(),
+                diagnostic: diagnostic.clone(),
+            });
         }
         match output.physical_host_id.as_deref() {
             Some(observed) if observed == lane.physical_host_id => Ok(()),
@@ -28611,6 +29272,10 @@ impl GooseAgentDispatcher {
                     &serde_json::to_vec(schema).expect("a response schema always serializes"),
                 )
             });
+        let semantic_local_generation = local_generation_is_semantically_supervised(
+            uncapped(),
+            self.cloud_models.contains_key(model_id),
+        );
         let agent_config = AgentConfig::new(
             self.session_manager.clone(),
             self.permission_manager.clone(),
@@ -28638,6 +29303,9 @@ impl GooseAgentDispatcher {
             cloud_registry_name(self.provider_name(model_id)),
             model_id,
         )?;
+        if let Some(params) = model_config.request_params.as_mut() {
+            params.remove(goose_provider_types::formats::openai::UNCAPPED_LOCAL_GENERATION_KEY);
+        }
         if !self.cloud_models.contains_key(model_id) {
             if let Some(loaded_limit) = self.local_context_limits.get(model_id).copied() {
                 let configured_limit = model_config.context_limit;
@@ -28712,6 +29380,13 @@ impl GooseAgentDispatcher {
                 );
             }
         }
+        extra.remove(goose_provider_types::formats::openai::UNCAPPED_LOCAL_GENERATION_KEY);
+        if semantic_local_generation {
+            extra.insert(
+                goose_provider_types::formats::openai::UNCAPPED_LOCAL_GENERATION_KEY.to_string(),
+                serde_json::json!(true),
+            );
+        }
         if !extra.is_empty() {
             model_config = model_config.with_merged_request_params(extra);
         }
@@ -28776,7 +29451,11 @@ impl GooseAgentDispatcher {
         let session_config = SessionConfig {
             id: session_id.clone(),
             schedule_id: None,
-            max_turns,
+            max_turns: if semantic_local_generation {
+                Some(UNBOUNDED_AGENT_TURNS)
+            } else {
+                max_turns
+            },
             retry_config: None,
         };
 
@@ -28852,10 +29531,13 @@ impl GooseAgentDispatcher {
             )?;
         }
 
-        let mut stream = agent
-            .reply(user_message, session_config.clone(), None)
-            .await
-            .map_err(|e| anyhow!("agent.reply: {e}"))?;
+        let initial_reply = agent.reply(user_message, session_config.clone(), None);
+        let mut stream = if semantic_local_generation {
+            scope_uncapped_local_stream(initial_reply).await
+        } else {
+            initial_reply.await
+        }
+        .map_err(|e| anyhow!("agent.reply: {e}"))?;
 
         let mut texts: Vec<String> = Vec::new();
         // A REASONING model (Qwen3.6 via LM Studio) streams its deliberation as MessageContent::Thinking,
@@ -28883,10 +29565,12 @@ impl GooseAgentDispatcher {
         // and finding a real bug), whereas a malformed call is pure waste.
         let mut malformed: usize = 0;
         let mut activity_failure: Option<String> = None;
-        // IDLE-based watchdog: kill the task only if NO agent event arrives for `idle_secs` (a genuinely
-        // stalled stream), NOT on total wall-clock — a slow-but-progressing local model emits an event
-        // every turn and must be allowed to finish. idle_secs == 0 disables the watchdog.
-        let idle = (idle_secs > 0).then(|| std::time::Duration::from_secs(idle_secs));
+        // A local provider may buffer the entire post-reasoning structured payload. V24 proved that
+        // client-visible silence is not model inactivity: LM Studio kept generating until this watchdog
+        // disconnected it at exactly 900 seconds. In the uncapped local profile there is therefore no
+        // silence deadline. Cloud and ordinary capped sessions retain their configured policy.
+        let idle = (!semantic_local_generation && idle_secs > 0)
+            .then(|| std::time::Duration::from_secs(idle_secs));
         // PREFILL-AWARE FIRST-TOKEN BUDGET (F905 third catch, r9): prefill streams NOTHING, so a
         // large prompt on a contended node is indistinguishable from a dead stream to this
         // watchdog — r9's completed calls measured 164s TTFT at 14k prompt tokens while the
@@ -28915,39 +29599,40 @@ impl GooseAgentDispatcher {
         // ceiling is what `sink_capped` must report. The base is a fixed env/config value any reader
         // already has; the effective one is computed per run from the tree and is the only number that
         // says what this sink was actually cut off at.
-        let sink_cap_plan = if activity_key == Some("integrate-verify") {
-            // ENV > CONFIG at the read site, like every other lever — a SECOND, independent path to the
-            // same value, not a repair.
-            //
-            // ⚠️ CORRECTION, recorded because the claim went out in a commit message before it was
-            // checked: I added this believing the read was env-ONLY and therefore that a desktop run had
-            // no sink ceiling at all. THAT WAS FALSE. `run_swarm` already bridges the config value into
-            // `GOOSE_SWARM_SINK_CAP_SECS` when the env is unset, and that bridge's own comment says it is
-            // "the ONLY thing that carries the baked ceiling to a desktop run". The ceiling was always
-            // there. What this line actually buys is that the read no longer DEPENDS on the bridge having
-            // run first — an ordering coupling worth removing on its own, and nothing more than that.
-            std::env::var("GOOSE_SWARM_SINK_CAP_SECS")
-                .ok()
-                .and_then(|v| v.parse::<u64>().ok())
-                .or(Some(load_config().sink_cap_secs))
-                .filter(|&s| s > 0)
-                .map(|base| {
-                    // The base is the budget for a reference-sized tree; the join's real work tracks the tree
-                    // the fleet actually built, which is on disk now (every module it depends on is done).
-                    let ref_bytes = std::env::var("GOOSE_SWARM_SINK_CAP_REF_BYTES")
-                        .ok()
-                        .and_then(|v| v.parse::<u64>().ok())
-                        .unwrap_or_else(|| load_config().sink_cap_ref_bytes);
-                    let bytes = self.sink_tree_bytes(&work_dir);
-                    let secs = scaled_sink_cap(base, bytes, ref_bytes);
-                    if secs != base {
-                        eprintln!("  sink ceiling {base}s -> {secs}s for a {bytes}-byte tree");
-                    }
-                    (base, secs, bytes)
-                })
-        } else {
-            None
-        };
+        let sink_cap_plan =
+            if activity_key == Some("integrate-verify") && !semantic_local_generation {
+                // ENV > CONFIG at the read site, like every other lever — a SECOND, independent path to the
+                // same value, not a repair.
+                //
+                // ⚠️ CORRECTION, recorded because the claim went out in a commit message before it was
+                // checked: I added this believing the read was env-ONLY and therefore that a desktop run had
+                // no sink ceiling at all. THAT WAS FALSE. `run_swarm` already bridges the config value into
+                // `GOOSE_SWARM_SINK_CAP_SECS` when the env is unset, and that bridge's own comment says it is
+                // "the ONLY thing that carries the baked ceiling to a desktop run". The ceiling was always
+                // there. What this line actually buys is that the read no longer DEPENDS on the bridge having
+                // run first — an ordering coupling worth removing on its own, and nothing more than that.
+                std::env::var("GOOSE_SWARM_SINK_CAP_SECS")
+                    .ok()
+                    .and_then(|v| v.parse::<u64>().ok())
+                    .or(Some(load_config().sink_cap_secs))
+                    .filter(|&s| s > 0)
+                    .map(|base| {
+                        // The base is the budget for a reference-sized tree; the join's real work tracks the tree
+                        // the fleet actually built, which is on disk now (every module it depends on is done).
+                        let ref_bytes = std::env::var("GOOSE_SWARM_SINK_CAP_REF_BYTES")
+                            .ok()
+                            .and_then(|v| v.parse::<u64>().ok())
+                            .unwrap_or_else(|| load_config().sink_cap_ref_bytes);
+                        let bytes = self.sink_tree_bytes(&work_dir);
+                        let secs = scaled_sink_cap(base, bytes, ref_bytes);
+                        if secs != base {
+                            eprintln!("  sink ceiling {base}s -> {secs}s for a {bytes}-byte tree");
+                        }
+                        (base, secs, bytes)
+                    })
+            } else {
+                None
+            };
         // THE BUDGET IS ONLY REPORTED WHEN IT IS EXCEEDED, SO THE FORMULA CAN NEVER BE AUDITED.
         //
         // `tree_bytes` / `cap_secs` / `cap_base_secs` ride `sink_capped`, which fires ONLY on a sink that
@@ -29003,7 +29688,8 @@ impl GooseAgentDispatcher {
         // turn and resets it, so a legitimate long build survives while a thinking-only spiral is cut. 0 = OFF
         // (byte-identical). Gated OFF for the integrate-verify SINK and authority-bearing response compilers:
         // neither has a safe re-route/continuation path.
-        let thinking_only_budget = if activity_key == Some("integrate-verify")
+        let thinking_only_budget = if semantic_local_generation
+            || activity_key == Some("integrate-verify")
             || authority_compiler
             || semantic_saturation_call
             || pre_scheduler_semantic_call
@@ -29024,22 +29710,26 @@ impl GooseAgentDispatcher {
         // they have no retry path — cutting one loses the whole planning round. The integrate-verify SINK is
         // exempt for the same reason the thinking watchdog exempts it (it owns no deliverable and is bounded by
         // its own wall-clock cap). OFF => these stay untouched and nothing below runs => byte-identical.
-        let repeat_break_on = (self.repeat_break || semantic_saturation_call)
+        let repeat_break_on = !semantic_local_generation
+            && (self.repeat_break || semantic_saturation_call)
             && activity_key.is_some()
             && activity_key != Some("integrate-verify")
             && !authority_compiler
             && !pre_scheduler_semantic_call;
         // #135 GLOBAL SPIRAL BREAK. Authority-bearing response compilers are exempt: detail no longer has a
         // one-line fallback, and silently dropping a contract result is not equivalent to finishing it.
-        let spiral_budget =
-            if authority_compiler || semantic_saturation_call || pre_scheduler_semantic_call {
-                0
-            } else {
-                spiral_budget_for(
-                    activity_key,
-                    spiral_break_chars(load_config().spiral_break_chars),
-                )
-            };
+        let spiral_budget = if semantic_local_generation
+            || authority_compiler
+            || semantic_saturation_call
+            || pre_scheduler_semantic_call
+        {
+            0
+        } else {
+            spiral_budget_for(
+                activity_key,
+                spiral_break_chars(load_config().spiral_break_chars),
+            )
+        };
         // #135 OMNI-JUDGE: armed for calls with an activity key that have a safe continuation path. It is
         // deliberately not synchronous supervision for authority compilers until provider-terminal
         // cancellation and same-session continuation are proven end to end.
@@ -29056,7 +29746,8 @@ impl GooseAgentDispatcher {
         // content is a slow-starting call misread twice, not a loop — see the abort site.
         let mut omni_looping_streak: u32 = 0;
         let mut omni_prev_looping_tail: Option<std::collections::HashSet<u64>> = None;
-        // F790-1: in-session redirects issued for this task (bounded by JUDGE_NUDGE_MAX).
+        // F790-1: in-session redirects issued for this task. Ordinary sessions retain the historic
+        // bound; semantically supervised uncapped local work keeps accepting semantic redirects.
         let mut nudges_used: u32 = 0;
         let mut repeat_hash: Option<u64> = None;
         let mut repeat_run: usize = 0usize;
@@ -29096,6 +29787,20 @@ impl GooseAgentDispatcher {
                             "structured_output_chunks": progress.structured_output_chunks,
                             "structured_output_bytes": progress.structured_output_bytes,
                             "structured_output_active": progress.structured_output_active,
+                            "semantic_evidence_preserved": true,
+                            "deterministic_stop": false,
+                            "payload_logged": false,
+                        }));
+                    }
+                    PreSchedulerRecurrenceWake::Review(
+                        PreSchedulerRecurrenceReviewOutcome::ReviewerUnavailable,
+                    ) => {
+                        *review = None;
+                        *next_check = tokio::time::Instant::now();
+                        self.events.write_value(serde_json::json!({
+                            "event": "pre_scheduler_semantic_review_rearmed",
+                            "task_id": activity_key,
+                            "reason": "reviewer_unavailable",
                             "semantic_evidence_preserved": true,
                             "deterministic_stop": false,
                             "payload_logged": false,
@@ -29176,9 +29881,9 @@ impl GooseAgentDispatcher {
                 // Box::pin: this is `run_agent_in` calling `run_agent_in`, i.e. async recursion (E0733).
                 // The probe is advisory and receives the relevant reasoning inline. It must remain
                 // response-only even when its parent call is a scheduler-owned response-only auxiliary.
-                let probe = tokio::time::timeout(
-                    std::time::Duration::from_secs(45),
+                let probe = await_with_optional_timeout(
                     Box::pin(self.run_omni_judge_probe(&pm, sys, user)),
+                    self.generation_timeout(&pm, std::time::Duration::from_secs(45)),
                 )
                 .await;
                 if let Ok(Ok(Some(o))) = probe {
@@ -29239,9 +29944,13 @@ impl GooseAgentDispatcher {
                         // re-dispatch loses the session, and the measured misread-kill class
                         // makes that expensive on healthy-but-slow calls). Per-call judge state
                         // resets so the redirected call is watched fresh; the abort stays as the
-                        // backstop once JUDGE_NUDGE_MAX redirects are spent.
-                        if judge_nudge_on() && nudges_used < JUDGE_NUDGE_MAX {
-                            nudges_used += 1;
+                        // backstop once JUDGE_NUDGE_MAX redirects are spent. Uncapped local work
+                        // deliberately has no redirect-count terminal: a semantic LOOPING verdict
+                        // changes direction but never becomes a deterministic attempt cap.
+                        if judge_nudge_on()
+                            && (semantic_local_generation || nudges_used < JUDGE_NUDGE_MAX)
+                        {
+                            nudges_used = nudges_used.saturating_add(1);
                             let direction = omni_hint.clone().unwrap_or_else(|| {
                                 "stop restating your plan; take the next concrete action on your \
                                  owned files now"
@@ -29255,8 +29964,13 @@ impl GooseAgentDispatcher {
                                 "thinking_chars": thinking_chars,
                                 "hint": direction,
                             }));
+                            let nudge_budget = if semantic_local_generation {
+                                "unbounded".to_string()
+                            } else {
+                                JUDGE_NUDGE_MAX.to_string()
+                            };
                             eprintln!(
-                                "  {} omni-judge (look {omni_looks}): looping after {thinking_chars} reasoning chars — nudging with direction instead of stopping (nudge {nudges_used}/{JUDGE_NUDGE_MAX})",
+                                "  {} omni-judge (look {omni_looks}): looping after {thinking_chars} reasoning chars — nudging with direction instead of stopping (nudge {nudges_used}/{nudge_budget})",
                                 style("→").yellow()
                             );
                             let nudge_text = format!(
@@ -29264,14 +29978,17 @@ impl GooseAgentDispatcher {
                                  stretch of reasoning is repeating without new information. {direction}\n\
                                  Continue the SAME task; do not restart work you have already done."
                             );
-                            stream = agent
-                                .reply(
-                                    Message::user().with_text(nudge_text),
-                                    session_config.clone(),
-                                    None,
-                                )
-                                .await
-                                .map_err(|e| anyhow!("agent.reply (judge nudge): {e}"))?;
+                            let redirected = agent.reply(
+                                Message::user().with_text(nudge_text),
+                                session_config.clone(),
+                                None,
+                            );
+                            stream = if semantic_local_generation {
+                                scope_uncapped_local_stream(redirected).await
+                            } else {
+                                redirected.await
+                            }
+                            .map_err(|e| anyhow!("agent.reply (judge nudge): {e}"))?;
                             thinking_chars = 0;
                             last_thinking.clear();
                             reasoning_recurrence.reset();
@@ -29403,13 +30120,20 @@ impl GooseAgentDispatcher {
             });
             let mut quiet_deadline =
                 quiet_budget.map(|budget| tokio::time::Instant::now() + budget);
-            let mut next_agent_event = Box::pin(stream.next());
+            let next_agent_event = stream.next();
+            let mut next_agent_event = Box::pin(async {
+                if semantic_local_generation {
+                    scope_uncapped_local_stream(next_agent_event).await
+                } else {
+                    next_agent_event.await
+                }
+            });
             let (next_event, timed_out) = loop {
                 if pre_scheduler_review.is_none()
                     && tokio::time::Instant::now() >= next_pre_scheduler_review_check
                 {
                     let recurrence = reasoning_recurrence.snapshot();
-                    if recurrence_warrants_semantic_review(&recurrence) {
+                    if semantic_tail_warrants_review(&recurrence) {
                         if let Ok(source) = ACTIVE_PRE_SCHEDULER_SOURCE.try_with(Clone::clone) {
                             if let Some(evidence_request) = recurrence_provider_request.clone() {
                                 match source
@@ -29426,7 +30150,8 @@ impl GooseAgentDispatcher {
                                     Ok(Some(review)) => pre_scheduler_review = Some(review),
                                     Ok(None) => {
                                         let progress = provider_stream_progress.snapshot();
-                                        if pre_scheduler_recurrence_failover_eligible(&source)
+                                        if !semantic_local_generation
+                                            && pre_scheduler_recurrence_failover_eligible(&source)
                                             && pre_scheduler_recurrence_failover.observe(
                                                 recurrence_provider_request.as_ref(),
                                                 &recurrence,
@@ -29542,7 +30267,7 @@ impl GooseAgentDispatcher {
 
                 let review = pre_scheduler_review.clone();
                 let recurrence_waiting_for_route = pre_scheduler_review.is_none()
-                    && recurrence_warrants_semantic_review(&reasoning_recurrence.snapshot());
+                    && semantic_tail_warrants_review(&reasoning_recurrence.snapshot());
                 let retry_at = recurrence_waiting_for_route
                     .then_some(next_pre_scheduler_review_check)
                     .filter(|deadline| *deadline > tokio::time::Instant::now());
@@ -30152,12 +30877,6 @@ impl GooseAgentDispatcher {
                 activity_failure = Some(error.to_string());
             }
         }
-        if let Some(error) = activity_failure {
-            return Err(anyhow!(
-                "physical semantic activity evidence failed after draining the agent stream: {error}"
-            ));
-        }
-
         // Stream delivers incremental Text chunks; concatenate to reconstruct the message text.
         source_receipts.sort_by(|left, right| {
             left.source_id
@@ -30173,6 +30892,7 @@ impl GooseAgentDispatcher {
             tool_calls,
             source_receipts,
             physical_host_id: None,
+            post_terminal_activity_evidence_failure: activity_failure,
         })
     }
 
@@ -30353,7 +31073,7 @@ impl GooseAgentDispatcher {
         let output = PRE_SCHEDULER_REQUIRED_HOST
             .scope(
                 lane.physical_host_id.clone(),
-                self.run_agent_in(
+                Box::pin(self.run_agent_in(
                     self.working_dir.clone(),
                     &lane.model_id,
                     system,
@@ -30371,12 +31091,18 @@ impl GooseAgentDispatcher {
                     None,
                     None,
                     None,
-                ),
+                )),
             )
             .await?;
         if output.physical_host_id.as_deref() != Some(lane.physical_host_id.as_str()) {
             bail!(
                 "evidence worker was not proven on assigned physical host `{}`",
+                lane.physical_host_id
+            );
+        }
+        if let Some(error) = &output.post_terminal_activity_evidence_failure {
+            bail!(
+                "evidence worker on authenticated physical host `{}` reached provider terminal but could not seal semantic activity evidence: {error}",
                 lane.physical_host_id
             );
         }
@@ -32418,7 +33144,6 @@ impl GooseAgentDispatcher {
         let raw = output
             .final_output
             .filter(|value| !value.trim().is_empty())
-            .or_else(|| (!output.text.trim().is_empty()).then_some(output.text))
             .ok_or_else(|| anyhow!("pillar owner returned no typed report"))?;
         let draft: PillarReportDraft = serde_json::from_str(strip_code_fences(&raw).trim())
             .map_err(|error| anyhow!("pillar owner report was not valid typed JSON: {error}"))?;
@@ -32449,6 +33174,100 @@ impl GooseAgentDispatcher {
             status: PillarAttemptStatus::ModelReport,
             report,
         })
+    }
+
+    async fn request_pillar_semantic_alternative(
+        self: &Arc<Self>,
+        lanes: &[ResearchPhysicalLane],
+        stage: &str,
+        diagnostic: &str,
+        cycle_fingerprint: Option<&PillarOpeningSemanticCycleFingerprint>,
+        prior_strategy: Option<&PillarSemanticAlternativeDirective>,
+        rejected_candidate: Option<&str>,
+    ) -> Result<(Option<PillarSemanticAlternativeDirective>, usize)> {
+        let system = "You are the recovery judge for a continuing logical software-building authority. \
+            Completed attempts on distinct physical hosts have repeated the same semantic failure. Do not \
+            author the opening, do not draft a plan, and do not waive the strict compiler. Diagnose why the \
+            attempted strategy keeps reproducing the failure and prescribe one materially different next \
+            strategy that the owning model can execute while preserving valid semantics. Name what must be \
+            preserved and what pattern must be avoided. Return only the typed directive.";
+        let payload = serde_json::to_string_pretty(&serde_json::json!({
+            "stage": stage,
+            "compiler_or_schema_diagnostic": diagnostic,
+            "corroborated_cycle_fingerprint": cycle_fingerprint,
+            "prior_judge_strategy": prior_strategy,
+            "most_recent_rejected_candidate": rejected_candidate,
+        }))?;
+        let mut provider_calls = 0usize;
+        for lane in lanes {
+            provider_calls = provider_calls.saturating_add(1);
+            self.events.write_value(serde_json::json!({
+                "event": "pillar_semantic_alternative_judge_started",
+                "stage": stage,
+                "model": lane.model_id,
+                "physical_host_id": lane.physical_host_id,
+                "authority": "recovery-judge-not-planner",
+            }));
+            let result = self
+                .run_pillar_agent_on_lane(
+                    lane,
+                    system.to_string(),
+                    payload.clone(),
+                    Some(Response {
+                        json_schema: Some(pillar_semantic_alternative_schema()),
+                    }),
+                    &[],
+                    UNBOUNDED_AGENT_TURNS,
+                    self.planner_timeout_secs,
+                    Some("pillar-semantic-alternative-judge"),
+                )
+                .await;
+            let output = match result {
+                Ok(output) => output,
+                Err(error) => {
+                    self.events.write_value(serde_json::json!({
+                        "event": "pillar_semantic_alternative_judge_unavailable",
+                        "stage": stage,
+                        "model": lane.model_id,
+                        "physical_host_id": lane.physical_host_id,
+                        "reason": elide_middle(&error.to_string(), 160, 640),
+                        "terminal": false,
+                    }));
+                    continue;
+                }
+            };
+            if let Err(error) = Self::validate_pillar_lane_output(lane, &output) {
+                if error.is_terminal_integrity_failure() {
+                    return Err(error.into());
+                }
+                continue;
+            }
+            let Some(raw) = output.final_output.filter(|raw| !raw.trim().is_empty()) else {
+                continue;
+            };
+            let directive = match serde_json::from_str::<PillarSemanticAlternativeDirective>(
+                strip_code_fences(&raw).trim(),
+            ) {
+                Ok(directive)
+                    if !directive.diagnosis.trim().is_empty()
+                        && !directive.next_strategy.trim().is_empty() =>
+                {
+                    directive
+                }
+                _ => continue,
+            };
+            self.events.write_value(serde_json::json!({
+                "event": "pillar_semantic_alternative_judge_completed",
+                "stage": stage,
+                "model": lane.model_id,
+                "physical_host_id": lane.physical_host_id,
+                "strategy_sha256": content_sha256(&serde_json::to_string(&directive)?),
+                "authority": "recovery-judge-not-planner",
+                "terminal": false,
+            }));
+            return Ok((Some(directive), provider_calls));
+        }
+        Ok((None, provider_calls))
     }
 
     async fn open_pillar_research_authority(
@@ -32575,6 +33394,10 @@ impl GooseAgentDispatcher {
         let mut full_attempts = Vec::<PillarOpeningRawOutputCheckpoint>::new();
         let mut candidate = None::<PillarOpeningPartialCheckpoint>;
         let mut repair_attempts = Vec::<PillarOpeningRawOutputCheckpoint>::new();
+        let restored_unavailable_reason = match &restored_stage {
+            Some(PillarOpeningCheckpointStage::Unavailable { reason, .. }) => Some(reason.clone()),
+            _ => None,
+        };
         match restored_stage {
             Some(PillarOpeningCheckpointStage::FullCandidate {
                 candidate: restored,
@@ -32650,6 +33473,12 @@ impl GooseAgentDispatcher {
         }
 
         if candidate.is_none() {
+            let mut semantic_evidence = restored_unavailable_reason
+                .as_deref()
+                .and_then(|reason| {
+                    PillarOpeningSemanticCheckpointEvidence::from_reason(reason, "full_candidate")
+                })
+                .unwrap_or_else(|| PillarOpeningSemanticCheckpointEvidence::new("full_candidate"));
             let mut last_reason =
                 "no authenticated semantic opener candidate was produced".to_string();
             let start_lane = usize::try_from(total_attempts)? % opener_lanes.len();
@@ -32665,7 +33494,9 @@ impl GooseAgentDispatcher {
                     "minimum_research_slices": minimum_research_slices,
                     "maximum_research_slices": null,
                     "required_integration_owner": planner_model,
-                    "instruction": "Author semantic domains and nested research slices directly; both frozen-key assignment maps must be exact",
+                    "previous_compiler_diagnostic": last_reason,
+                    "semantic_judge_strategy": semantic_evidence.strategy_directive.as_ref(),
+                    "instruction": "Author semantic domains and nested research slices directly; both frozen-key assignment maps must be exact. If a previous compiler diagnostic is present, correct its cause with a materially revised semantic decomposition rather than repeating the rejected shape.",
                 }))?;
                 self.events.write_value(serde_json::json!({
                     "event": "pillar_opening_attempt_started",
@@ -32696,15 +33527,32 @@ impl GooseAgentDispatcher {
                         ) {
                             quarantined_opener_physical_hosts.insert(lane.physical_host_id.clone());
                         }
+                        if is_terminal_pillar_opening_schema_failure(&error) {
+                            semantic_evidence.observe_semantic_failure(
+                                &lane.physical_host_id,
+                                &error.to_string(),
+                                None,
+                            );
+                        } else {
+                            semantic_evidence.observe_transient_failure();
+                        }
                         last_reason = error.to_string();
                         None
                     }
                     Ok(output) => match Self::validate_pillar_lane_output(lane, &output) {
-                        Ok(()) => output
-                            .final_output
-                            .filter(|value| !value.trim().is_empty())
-                            .or_else(|| (!output.text.trim().is_empty()).then_some(output.text)),
-                        Err(error) if error.is_authenticated_conflict() => {
+                        Ok(()) => {
+                            let raw = output.final_output.filter(|value| !value.trim().is_empty());
+                            if raw.is_none() {
+                                last_reason = "pillar opener returned no typed output".to_string();
+                                semantic_evidence.observe_semantic_failure(
+                                    &lane.physical_host_id,
+                                    &last_reason,
+                                    None,
+                                );
+                            }
+                            raw
+                        }
+                        Err(error) if error.is_terminal_integrity_failure() => {
                             self.events.write_value(serde_json::json!({
                                 "event": "pillar_opening_integrity_failure",
                                 "attempt": total_attempts,
@@ -32716,6 +33564,7 @@ impl GooseAgentDispatcher {
                             return Err(anyhow::Error::new(error));
                         }
                         Err(error) => {
+                            semantic_evidence.observe_transient_failure();
                             last_reason = error.to_string();
                             None
                         }
@@ -32823,6 +33672,11 @@ impl GooseAgentDispatcher {
                         }
                         Err(error) => {
                             last_reason = error.to_string();
+                            semantic_evidence.observe_semantic_failure(
+                                &lane.physical_host_id,
+                                &last_reason,
+                                Some(&raw),
+                            );
                             full_attempts.push(raw_checkpoint);
                         }
                     }
@@ -32849,11 +33703,65 @@ impl GooseAgentDispatcher {
                         full_attempts: full_attempts.clone(),
                         repair_attempts: Vec::new(),
                         attempts: total_attempts,
-                        reason: last_reason.clone(),
+                        reason: semantic_evidence.reason_or(&last_reason),
                     },
                 )?;
             }
             if candidate.is_none() {
+                let settled_cycle = semantic_evidence.settle_cycle(&all_opener_physical_hosts);
+                let semantic_cycle_advanced = settled_cycle.is_some();
+                if let Some((cycle_fingerprint, true)) = settled_cycle.as_ref() {
+                    self.events.write_value(serde_json::json!({
+                        "event": "pillar_opening_semantic_alternative_requested",
+                        "stage": semantic_evidence.stage.clone(),
+                        "attempts": total_attempts,
+                        "provider_calls": total_attempts,
+                        "corroborated_distinct_hosts": all_opener_physical_hosts.len(),
+                        "terminal": false,
+                        "next": "admitted-recovery-judge-then-model-owned-semantic-retry",
+                        "deterministic_semantic_fallback": false,
+                        "payload_logged": false,
+                    }));
+                    let eligible_judge_lanes = opener_lanes
+                        .iter()
+                        .filter(|lane| {
+                            !quarantined_opener_physical_hosts.contains(&lane.physical_host_id)
+                        })
+                        .cloned()
+                        .collect::<Vec<_>>();
+                    let prior_strategy = semantic_evidence.strategy_directive.clone();
+                    let rejected_candidate = full_attempts
+                        .last()
+                        .map(|attempt| attempt.raw_output.as_str());
+                    let (directive, judge_calls) =
+                        Box::pin(self.request_pillar_semantic_alternative(
+                            &eligible_judge_lanes,
+                            "pillar-opening-full-candidate",
+                            &last_reason,
+                            Some(cycle_fingerprint),
+                            prior_strategy.as_ref(),
+                            rejected_candidate,
+                        ))
+                        .await?;
+                    provider_calls = provider_calls.saturating_add(judge_calls);
+                    if let Some(directive) = directive {
+                        semantic_evidence.apply_strategy_directive(directive);
+                    }
+                }
+                let durable_reason = semantic_evidence.reason_or(&last_reason);
+                PillarOpeningStageStore::persist(
+                    &self.working_dir,
+                    &frozen_spec_digest,
+                    authored_requirements,
+                    PillarOpeningCheckpointStage::Unavailable {
+                        binding: binding.clone(),
+                        candidate: None,
+                        full_attempts: full_attempts.clone(),
+                        repair_attempts: Vec::new(),
+                        attempts: total_attempts,
+                        reason: durable_reason.clone(),
+                    },
+                )?;
                 let cause = pillar_opening_unavailable_cause(
                     &all_opener_physical_hosts,
                     &quarantined_opener_physical_hosts,
@@ -32868,8 +33776,9 @@ impl GooseAgentDispatcher {
                         attempts: usize::try_from(total_attempts)?,
                         provider_calls,
                         preserved_candidate: false,
+                        semantic_cycle_advanced,
                         correction_fingerprint: None,
-                        reason: last_reason,
+                        reason: durable_reason,
                         resume_stage: "full_candidate".to_string(),
                         cause,
                         quarantined_physical_hosts,
@@ -32884,14 +33793,24 @@ impl GooseAgentDispatcher {
             requirements,
             minimum_research_slices,
         )?;
+        let mut semantic_evidence = restored_unavailable_reason
+            .as_deref()
+            .and_then(|reason| {
+                PillarOpeningSemanticCheckpointEvidence::from_reason(reason, "focused_repair")
+            })
+            .unwrap_or_else(|| PillarOpeningSemanticCheckpointEvidence::new("focused_repair"));
+        let mut last_reason = "focused semantic repair produced no acceptable output".to_string();
         PillarOpeningStageStore::persist(
             &self.working_dir,
             &frozen_spec_digest,
             authored_requirements,
-            PillarOpeningCheckpointStage::FocusedRepair {
-                candidate: candidate.clone(),
+            PillarOpeningCheckpointStage::Unavailable {
+                binding: binding.clone(),
+                candidate: Some(candidate.clone()),
+                full_attempts: Vec::new(),
                 repair_attempts: repair_attempts.clone(),
                 attempts: total_attempts,
+                reason: semantic_evidence.reason_or(&last_reason),
             },
         )?;
         let domain_ids = repair
@@ -32907,7 +33826,6 @@ impl GooseAgentDispatcher {
             minimum_research_slices,
         );
         let start_lane = repair_attempts.len() % opener_lanes.len();
-        let mut last_reason = "focused semantic repair produced no acceptable output".to_string();
         for lane_offset in 0..opener_lanes.len() {
             total_attempts = total_attempts
                 .checked_add(1)
@@ -32932,6 +33850,8 @@ impl GooseAgentDispatcher {
                 "all_frozen_authored_requirements": requirements,
                 "minimum_research_slices": minimum_research_slices,
                 "compiler_diagnostics": repair.diagnostics_json,
+                "previous_repair_diagnostic": last_reason,
+                "semantic_judge_strategy": semantic_evidence.strategy_directive.as_ref(),
                 "correction_fingerprint": candidate.correction_fingerprint,
             }))?;
             self.events.write_value(serde_json::json!({
@@ -32964,15 +33884,33 @@ impl GooseAgentDispatcher {
                     ) {
                         quarantined_opener_physical_hosts.insert(lane.physical_host_id.clone());
                     }
+                    if is_terminal_pillar_opening_schema_failure(&error) {
+                        semantic_evidence.observe_semantic_failure(
+                            &lane.physical_host_id,
+                            &error.to_string(),
+                            None,
+                        );
+                    } else {
+                        semantic_evidence.observe_transient_failure();
+                    }
                     last_reason = error.to_string();
                     None
                 }
                 Ok(output) => match Self::validate_pillar_lane_output(lane, &output) {
-                    Ok(()) => output
-                        .final_output
-                        .filter(|value| !value.trim().is_empty())
-                        .or_else(|| (!output.text.trim().is_empty()).then_some(output.text)),
-                    Err(error) if error.is_authenticated_conflict() => {
+                    Ok(()) => {
+                        let raw = output.final_output.filter(|value| !value.trim().is_empty());
+                        if raw.is_none() {
+                            last_reason =
+                                "focused pillar repair returned no typed output".to_string();
+                            semantic_evidence.observe_semantic_failure(
+                                &lane.physical_host_id,
+                                &last_reason,
+                                None,
+                            );
+                        }
+                        raw
+                    }
+                    Err(error) if error.is_terminal_integrity_failure() => {
                         self.events.write_value(serde_json::json!({
                             "event": "pillar_opening_integrity_failure",
                             "attempt": total_attempts,
@@ -32982,6 +33920,7 @@ impl GooseAgentDispatcher {
                         return Err(anyhow::Error::new(error));
                     }
                     Err(error) => {
+                        semantic_evidence.observe_transient_failure();
                         last_reason = error.to_string();
                         None
                     }
@@ -32995,6 +33934,19 @@ impl GooseAgentDispatcher {
                     raw.clone(),
                 )?;
                 repair_attempts.push(raw_checkpoint);
+                PillarOpeningStageStore::persist(
+                    &self.working_dir,
+                    &frozen_spec_digest,
+                    authored_requirements,
+                    PillarOpeningCheckpointStage::Unavailable {
+                        binding: binding.clone(),
+                        candidate: Some(candidate.clone()),
+                        full_attempts: Vec::new(),
+                        repair_attempts: repair_attempts.clone(),
+                        attempts: total_attempts,
+                        reason: semantic_evidence.reason_or(&last_reason),
+                    },
+                )?;
                 PillarOpeningStageStore::persist(
                     &self.working_dir,
                     &frozen_spec_digest,
@@ -33073,17 +34025,27 @@ impl GooseAgentDispatcher {
                             provider_calls,
                         });
                     }
-                    Err(error) => last_reason = error.to_string(),
+                    Err(error) => {
+                        last_reason = error.to_string();
+                        semantic_evidence.observe_semantic_failure(
+                            &lane.physical_host_id,
+                            &last_reason,
+                            Some(&raw),
+                        );
+                    }
                 }
             } else {
                 PillarOpeningStageStore::persist(
                     &self.working_dir,
                     &frozen_spec_digest,
                     authored_requirements,
-                    PillarOpeningCheckpointStage::FocusedRepair {
-                        candidate: candidate.clone(),
+                    PillarOpeningCheckpointStage::Unavailable {
+                        binding: binding.clone(),
+                        candidate: Some(candidate.clone()),
+                        full_attempts: Vec::new(),
                         repair_attempts: repair_attempts.clone(),
                         attempts: total_attempts,
+                        reason: semantic_evidence.reason_or(&last_reason),
                     },
                 )?;
             }
@@ -33098,7 +34060,58 @@ impl GooseAgentDispatcher {
                 "preserved_correction_fingerprint": candidate.correction_fingerprint,
                 "deterministic_semantic_fallback": false,
             }));
+            PillarOpeningStageStore::persist(
+                &self.working_dir,
+                &frozen_spec_digest,
+                authored_requirements,
+                PillarOpeningCheckpointStage::Unavailable {
+                    binding: binding.clone(),
+                    candidate: Some(candidate.clone()),
+                    full_attempts: Vec::new(),
+                    repair_attempts: repair_attempts.clone(),
+                    attempts: total_attempts,
+                    reason: semantic_evidence.reason_or(&last_reason),
+                },
+            )?;
         }
+        let settled_cycle = semantic_evidence.settle_cycle(&all_opener_physical_hosts);
+        let semantic_cycle_advanced = settled_cycle.is_some();
+        if let Some((cycle_fingerprint, true)) = settled_cycle.as_ref() {
+            self.events.write_value(serde_json::json!({
+                "event": "pillar_opening_semantic_alternative_requested",
+                "stage": semantic_evidence.stage.clone(),
+                "attempts": total_attempts,
+                "provider_calls": total_attempts,
+                "corroborated_distinct_hosts": all_opener_physical_hosts.len(),
+                "terminal": false,
+                "next": "admitted-recovery-judge-then-model-owned-focused-repair",
+                "deterministic_semantic_fallback": false,
+                "payload_logged": false,
+            }));
+            let eligible_judge_lanes = opener_lanes
+                .iter()
+                .filter(|lane| !quarantined_opener_physical_hosts.contains(&lane.physical_host_id))
+                .cloned()
+                .collect::<Vec<_>>();
+            let prior_strategy = semantic_evidence.strategy_directive.clone();
+            let rejected_candidate = repair_attempts
+                .last()
+                .map(|attempt| attempt.raw_output.as_str());
+            let (directive, judge_calls) = Box::pin(self.request_pillar_semantic_alternative(
+                &eligible_judge_lanes,
+                "pillar-opening-focused-repair",
+                &last_reason,
+                Some(cycle_fingerprint),
+                prior_strategy.as_ref(),
+                rejected_candidate,
+            ))
+            .await?;
+            provider_calls = provider_calls.saturating_add(judge_calls);
+            if let Some(directive) = directive {
+                semantic_evidence.apply_strategy_directive(directive);
+            }
+        }
+        let durable_reason = semantic_evidence.reason_or(&last_reason);
         PillarOpeningStageStore::persist(
             &self.working_dir,
             &frozen_spec_digest,
@@ -33109,7 +34122,7 @@ impl GooseAgentDispatcher {
                 full_attempts: Vec::new(),
                 repair_attempts,
                 attempts: total_attempts,
-                reason: last_reason.clone(),
+                reason: durable_reason.clone(),
             },
         )?;
         let cause = pillar_opening_unavailable_cause(
@@ -33125,8 +34138,9 @@ impl GooseAgentDispatcher {
                 attempts: usize::try_from(total_attempts)?,
                 provider_calls,
                 preserved_candidate: true,
+                semantic_cycle_advanced,
                 correction_fingerprint: Some(candidate.correction_fingerprint),
-                reason: last_reason,
+                reason: durable_reason,
                 resume_stage: "focused_repair".to_string(),
                 cause,
                 quarantined_physical_hosts,
@@ -33179,6 +34193,7 @@ impl GooseAgentDispatcher {
                         "attempts": continuation.attempts,
                         "provider_calls": continuation.provider_calls,
                         "preserved_candidate": continuation.preserved_candidate,
+                        "semantic_cycle_advanced": continuation.semantic_cycle_advanced,
                         "correction_fingerprint": continuation.correction_fingerprint,
                         "reason": continuation.reason,
                         "resume_stage": continuation.resume_stage,
@@ -33258,6 +34273,21 @@ impl GooseAgentDispatcher {
             let attempt = match result {
                 Ok(attempt) => attempt,
                 Err(error) => {
+                    if matches!(
+                        error.downcast_ref::<PillarLaneOutputProofError>(),
+                        Some(proof) if proof.is_terminal_integrity_failure()
+                    ) {
+                        self.events.write_value(serde_json::json!({
+                            "event": "pillar_owner_integrity_failure",
+                            "pillar_id": pillar.id,
+                            "attempt_ordinal": 1,
+                            "model": lane.model_id,
+                            "physical_host_id": lane.physical_host_id,
+                            "reason": error.to_string(),
+                            "terminal": true,
+                        }));
+                        return Err(error);
+                    }
                     self.events.write_value(serde_json::json!({
                         "event": "pillar_owner_attempt_degraded",
                         "pillar_id": pillar.id,
@@ -33304,15 +34334,7 @@ impl GooseAgentDispatcher {
                 .filter(|lane| lane.physical_host_id != primary.physical_host)
                 .map(|lane| lane.token.clone())
                 .collect::<Vec<_>>();
-            let eligible = if distinct.is_empty() {
-                lanes
-                    .iter()
-                    .map(|lane| lane.token.clone())
-                    .collect::<Vec<_>>()
-            } else {
-                distinct
-            };
-            if eligible.is_empty() {
+            if distinct.is_empty() {
                 checkpoint.persist_attempt(PillarAttemptCheckpoint {
                     pillar_id: pillar.id.clone(),
                     attempt_ordinal: 2,
@@ -33323,6 +34345,7 @@ impl GooseAgentDispatcher {
                 })?;
                 continue;
             }
+            let eligible = distinct;
             let dispatcher = self.clone();
             let scheduler = scheduler.clone();
             let opening = opening.clone();
@@ -33359,6 +34382,21 @@ impl GooseAgentDispatcher {
             let attempt = match result {
                 Ok(attempt) => attempt,
                 Err(error) => {
+                    if matches!(
+                        error.downcast_ref::<PillarLaneOutputProofError>(),
+                        Some(proof) if proof.is_terminal_integrity_failure()
+                    ) {
+                        self.events.write_value(serde_json::json!({
+                            "event": "pillar_owner_integrity_failure",
+                            "pillar_id": pillar.id,
+                            "attempt_ordinal": 2,
+                            "model": lane.model_id,
+                            "physical_host_id": lane.physical_host_id,
+                            "reason": error.to_string(),
+                            "terminal": true,
+                        }));
+                        return Err(error);
+                    }
                     self.events.write_value(serde_json::json!({
                         "event": "pillar_owner_attempt_degraded",
                         "pillar_id": pillar.id,
@@ -33394,12 +34432,18 @@ impl GooseAgentDispatcher {
                     .ok_or_else(|| anyhow!("pillar {:?} has no completed attempt", pillar.id))
             })
             .collect::<Result<Vec<_>>>()?;
-        let synthesis = render_synthesis_input(&reports, 64_000);
-        let verified_facts = render_verified_pillar_facts(&reports, 32_000);
+        let synthesis = render_synthesis_input(&reports, 64_000)
+            .map_err(|error| anyhow!("pillar synthesis capacity failed closed: {error}"))?;
+        let verified_facts = render_verified_pillar_facts(&reports, 32_000)?;
+        let mut omitted_requirement_ids = synthesis.omitted_requirement_ids.clone();
+        omitted_requirement_ids.extend(verified_facts.omitted_requirement_ids.iter().cloned());
+        omitted_requirement_ids.sort();
+        omitted_requirement_ids.dedup();
         let worker_context = format!(
-            "SHARED PILLAR INTEGRATION CONTRACT\n{}\n\n{}",
+            "SHARED PILLAR INTEGRATION CONTRACT\n{}\n\nEXCERPTED REQUIREMENT IDS (the digest is authoritative; excerpt text is incomplete and must remain unresolved until the checkpoint is consulted):\n{}\n\n{}",
             serde_json::to_string_pretty(&opening.integration_contract)?,
-            synthesis
+            serde_json::to_string(&omitted_requirement_ids)?,
+            synthesis.text,
         );
         self.events.write_value(serde_json::json!({
             "event": "pillar_research_completed",
@@ -33408,16 +34452,18 @@ impl GooseAgentDispatcher {
             "low_confidence": reports.iter().filter(|report| report.effective_confidence == Confidence::Low).count(),
             "provider_calls": provider_calls,
             "focused_retries": retries,
-            "synthesis_chars": synthesis.chars().count(),
-            "verified_fact_chars": verified_facts.chars().count(),
+            "synthesis_chars": synthesis.text.chars().count(),
+            "verified_fact_chars": verified_facts.text.chars().count(),
+            "excerpted_requirement_ids": &omitted_requirement_ids,
             "completion": "one-compiled-report-per-pillar-with-explicit-unavailable-attempt-status",
         }));
         Ok(PillarResearchAttemptOutcome::Ready(PillarResearchOutcome {
             opening: Arc::unwrap_or_clone(opening),
             reports,
             lanes,
-            synthesis,
-            verified_facts,
+            synthesis: synthesis.text,
+            verified_facts: verified_facts.text,
+            omitted_requirement_ids,
             worker_context,
             provider_calls,
             retries,
@@ -33473,6 +34519,7 @@ impl GooseAgentDispatcher {
                             "carried_provider_calls": carried_provider_calls,
                             "total_provider_calls": total_provider_calls,
                             "preserved_candidate": continuation.preserved_candidate,
+                            "semantic_cycle_advanced": continuation.semantic_cycle_advanced,
                             "correction_fingerprint": continuation.correction_fingerprint,
                             "reason": continuation.reason,
                             "resume_stage": continuation.resume_stage,
@@ -33492,25 +34539,26 @@ impl GooseAgentDispatcher {
                     continuation_rounds = continuation_rounds.saturating_add(1);
                     carried_provider_calls =
                         carried_provider_calls.saturating_add(continuation.provider_calls);
-                    let retry_delay = pillar_route_recovery_backoff(continuation_rounds);
                     self.events.write_value(serde_json::json!({
-                        "event": "pillar_flow_unavailable_continuation",
-                        "continuation_round": continuation_rounds,
+                        "event": "pillar_flow_semantic_continuation",
+                        "continuation_rounds": continuation_rounds,
                         "attempts": continuation.attempts,
                         "provider_calls": continuation.provider_calls,
                         "carried_provider_calls": carried_provider_calls,
                         "preserved_candidate": continuation.preserved_candidate,
+                        "semantic_cycle_advanced": continuation.semantic_cycle_advanced,
                         "correction_fingerprint": continuation.correction_fingerprint,
                         "reason": continuation.reason,
                         "resume_stage": continuation.resume_stage,
                         "typed_cause": continuation.cause,
                         "quarantined_physical_hosts": continuation.quarantined_physical_hosts,
                         "terminal": false,
-                        "continuation": "retry-in-this-process-from-durable-opener-stage",
-                        "retry_delay_ms": retry_delay.as_millis(),
+                        "checkpoint_preserved": true,
+                        "continuation": "model-owned-semantic-retry-from-durable-opener-stage",
+                        "timer_or_polling": false,
                         "deterministic_semantic_fallback": false,
                     }));
-                    tokio::time::sleep(retry_delay).await;
+                    continue;
                 }
             }
         }
@@ -33537,18 +34585,18 @@ impl GooseAgentDispatcher {
             .collect::<Vec<_>>();
         let mut seen = HashSet::new();
         allowed_runtime_models.retain(|model| seen.insert(model.clone()));
-        let system = "You are the sole logical synthesis planner. Convert the frozen authored requirements and disjoint pillar reports into one immediately executable build DAG. There is no peer plan review and no model correction round. The strongest authenticated lane receives this request first; only a provider-unavailable attempt may replay the identical logical request once on each remaining distinct authenticated route. The first terminal model output is final: the engine compiles it exactly once and quarantines invalid output rather than asking a model to reinterpret it. task_specs is the exact implementation contract for every canonical task: name its exclusive module boundary, concrete implementation steps, producer/consumer interfaces, edge cases, executable acceptance evidence, and explicit exclusions. Assign each file to exactly one task. Independent modules must have no artificial dependency so other nodes can write them in parallel without overlap. Honor integration_contract.integration_required: add one hook-up task only when true; when false, keep independent deliverables independent. Low-confidence facts never block the build: attach exactly one alternative, isolation, or degraded_fallback route to the task implementing each unresolved requirement, with critical paths choosing an implementable safe alternative or isolation. Schedule noncritical low-confidence work after resolved foundations wherever dependency truth permits; never invent a dependency that is not consumed. Evidence IDs must be empty because receipt authority is conveyed through the compiled pillar reports, not invented plan citations. Use only allowed model IDs. Return one complete typed plan.";
+        let system = "You are the sole logical synthesis planner. Convert the frozen authored requirements and disjoint pillar reports into one immediately executable build DAG. There is no peer plan review. The strongest authenticated lane receives this request first. If that route is unavailable or lacks authenticated host proof, the same logical planning role may fail over to a distinct authenticated route. If a terminal plan is rejected by the strict compiler, the next route receives that exact draft and diagnostic for a focused correction: preserve its valid semantic decomposition and change only what the compiler proves invalid; do not independently re-plan the product. The first compiler-accepted model plan is final. task_specs is the exact implementation contract for every canonical task: name its exclusive module boundary, concrete implementation steps, producer/consumer interfaces, edge cases, executable acceptance evidence, and explicit exclusions. Assign each file to exactly one task. Independent modules must have no artificial dependency so other nodes can write them in parallel without overlap. Honor integration_contract.integration_required: add one hook-up task only when true; when false, keep independent deliverables independent. Low-confidence facts never block the build: attach exactly one alternative, isolation, or degraded_fallback route to the task implementing each unresolved requirement, with critical paths choosing an implementable safe alternative or isolation. Schedule noncritical low-confidence work after resolved foundations wherever dependency truth permits; never invent a dependency that is not consumed. Evidence IDs must be empty because receipt authority is conveyed through the compiled pillar reports, not invented plan citations. Use only allowed model IDs. Return one complete typed plan.";
+        let mut unresolved_requirement_ids =
+            pillar_unresolved_requirement_ids(&outcome.opening, &outcome.reports);
+        unresolved_requirement_ids.extend(outcome.omitted_requirement_ids.iter().cloned());
         let base_payload = serde_json::json!({
             "authored_prompt": user_prompt,
             "frozen_requirements": outcome.opening.requirements,
             "disjoint_pillars": outcome.opening.pillars,
             "integration_contract": outcome.opening.integration_contract,
             "bounded_pillar_synthesis": outcome.synthesis,
-            "engine_verified_facts_only": outcome.verified_facts,
-            "unresolved_requirement_ids": pillar_unresolved_requirement_ids(
-                &outcome.opening,
-                &outcome.reports,
-            ),
+            "unresolved_requirement_ids": unresolved_requirement_ids,
+            "excerpted_requirement_ids": outcome.omitted_requirement_ids,
             "allowed_runtime_models": allowed_runtime_models,
             "required_typed_plan_schema": pillar_plan_schema(),
         });
@@ -33580,79 +34628,124 @@ impl GooseAgentDispatcher {
             "fallback_authority": false,
             "model_correction_rounds": 0,
         }));
-        let user = serde_json::to_string_pretty(&base_payload)?;
-        let mut degraded = None;
         let mut lane_invocations = 0usize;
-        for (index, lane) in ordered_lanes.iter().enumerate() {
+        let mut continuation_cycles = 1usize;
+        let mut focused_correction_invocations = 0usize;
+        let mut cycle_all_requests_unproven = true;
+        let mut focused_correction: Option<serde_json::Value> = None;
+        let mut semantic_strategy: Option<PillarSemanticAlternativeDirective> = None;
+        let mut semantic_strategy_judge_invocations = 0usize;
+        let mut previous_cycle_fingerprint: Option<String> = None;
+        let mut current_cycle_evidence = Vec::<serde_json::Value>::new();
+        let degraded = loop {
+            let index = lane_invocations % ordered_lanes.len();
+            let lane = &ordered_lanes[index];
             lane_invocations = lane_invocations.saturating_add(1);
+            focused_correction_invocations = focused_correction_invocations
+                .saturating_add(usize::from(focused_correction.is_some()));
+            let user_payload = if focused_correction.is_some() || semantic_strategy.is_some() {
+                serde_json::json!({
+                    "planning_context": base_payload.clone(),
+                    "focused_compiler_correction": focused_correction.as_ref(),
+                    "semantic_judge_strategy": semantic_strategy.as_ref(),
+                })
+            } else {
+                base_payload.clone()
+            };
+            let user = serde_json::to_string_pretty(&user_payload)?;
             self.events.write_value(serde_json::json!({
                 "event": "pillar_synthesis_plan_attempt_started",
                 "attempt": lane_invocations,
-                "continuation_cycle": 1,
+                "continuation_cycle": continuation_cycles,
                 "candidate_lanes": ordered_lanes.len(),
                 "model": lane.model_id,
                 "physical_host_id": lane.physical_host_id,
                 "verified_physical": lane.verified_physical,
                 "logical_planner_authorities": 1,
                 "input_chars": user.chars().count(),
+                "focused_compiler_correction": focused_correction.is_some(),
             }));
             let transition = match self
                 .run_pillar_planner_attempt_on_lane(lane, system.to_string(), user.clone())
                 .await
             {
                 Ok(output) => {
-                    Self::validate_pillar_lane_output(lane, &output)?;
-                    let raw = output
-                        .final_output
-                        .filter(|value| !value.trim().is_empty())
-                        .or_else(|| (!output.text.trim().is_empty()).then_some(output.text));
-                    match raw {
-                        Some(raw) => match compile_pillar_plan(
-                            &raw,
-                            &outcome.opening,
-                            &outcome.reports,
-                            &allowed_runtime_models,
-                            user_prompt,
-                        ) {
-                            Ok((plan_json, dag, routes)) => {
-                                self.events.write_value(serde_json::json!({
+                    if let Err(error) = Self::validate_pillar_lane_output(lane, &output) {
+                        if error.is_terminal_integrity_failure() {
+                            self.events.write_value(serde_json::json!({
+                                "event": "pillar_synthesis_plan_integrity_failure",
+                                "attempt": lane_invocations,
+                                "continuation_cycle": continuation_cycles,
+                                "model": lane.model_id,
+                                "physical_host_id": lane.physical_host_id,
+                                "logical_planner_authorities": 1,
+                                "diagnostic": error.to_string(),
+                                "fallback_authority": false,
+                            }));
+                            return Err(error.into());
+                        }
+                        PillarPlanDegradedTransition {
+                            stage: "authenticated-host-proof",
+                            diagnostic: error.to_string(),
+                            semantic_score: 0,
+                            unproven_partial_output_quarantined: true,
+                        }
+                    } else {
+                        let raw = output.final_output.filter(|value| !value.trim().is_empty());
+                        match raw {
+                            Some(raw) => match compile_pillar_plan(
+                                &raw,
+                                &outcome.opening,
+                                &outcome.reports,
+                                &allowed_runtime_models,
+                                user_prompt,
+                            ) {
+                                Ok((plan_json, dag, routes)) => {
+                                    self.events.write_value(serde_json::json!({
                                     "event": "pillar_synthesis_plan_completed",
                                     "logical_planner_authorities": 1,
                                     "planner_lane_invocations": lane_invocations,
                                     "provider_route_failovers": lane_invocations.saturating_sub(1),
-                                    "continuation_cycles": 1,
+                                    "continuation_cycles": continuation_cycles,
                                     "peer_plan_verification_calls": 0,
-                                    "model_correction_rounds": 0,
+                                    "model_correction_rounds": focused_correction_invocations,
+                                    "semantic_strategy_judge_invocations": semantic_strategy_judge_invocations,
                                     "fallback_authority": false,
                                     "engine_compiled_alternative": false,
                                     "tasks": dag.tasks.len(),
                                     "uncertainty_routes": routes.len(),
                                     "next_phase": "immediate-build-dispatch",
                                 }));
-                                return Ok((plan_json, dag));
-                            }
-                            Err(error) => {
-                                let diagnostic = error.to_string();
-                                let stage = if diagnostic.contains("pillar plan was malformed JSON")
-                                {
-                                    "json"
-                                } else {
-                                    "compiler"
-                                };
-                                PillarPlanDegradedTransition {
-                                    stage,
-                                    diagnostic,
-                                    semantic_score: pillar_plan_semantic_score(&raw),
-                                    unproven_partial_output_quarantined: false,
+                                    return Ok((plan_json, dag));
                                 }
-                            }
-                        },
-                        None => PillarPlanDegradedTransition {
-                            stage: "typed-output",
-                            diagnostic: "planner returned no typed plan".to_string(),
-                            semantic_score: 0,
-                            unproven_partial_output_quarantined: false,
-                        },
+                                Err(error) => {
+                                    let diagnostic = error.to_string();
+                                    focused_correction = Some(serde_json::json!({
+                                        "rejected_plan": raw,
+                                        "compiler_diagnostic": diagnostic,
+                                        "instruction": "Preserve every valid task responsibility, file owner, interface, dependency, and fallback from the rejected plan. Correct only the compiler-proven defect and return the complete corrected typed plan.",
+                                    }));
+                                    let stage =
+                                        if diagnostic.contains("pillar plan was malformed JSON") {
+                                            "json"
+                                        } else {
+                                            "compiler"
+                                        };
+                                    PillarPlanDegradedTransition {
+                                        stage,
+                                        diagnostic,
+                                        semantic_score: pillar_plan_semantic_score(&raw),
+                                        unproven_partial_output_quarantined: false,
+                                    }
+                                }
+                            },
+                            None => PillarPlanDegradedTransition {
+                                stage: "typed-output",
+                                diagnostic: "planner returned no typed plan".to_string(),
+                                semantic_score: 0,
+                                unproven_partial_output_quarantined: false,
+                            },
+                        }
                     }
                 }
                 Err(error) => {
@@ -33660,7 +34753,7 @@ impl GooseAgentDispatcher {
                         self.events.write_value(serde_json::json!({
                             "event": "pillar_synthesis_plan_integrity_failure",
                             "attempt": lane_invocations,
-                            "continuation_cycle": 1,
+                            "continuation_cycle": continuation_cycles,
                             "model": lane.model_id,
                             "physical_host_id": lane.physical_host_id,
                             "logical_planner_authorities": 1,
@@ -33678,31 +34771,27 @@ impl GooseAgentDispatcher {
                             Some(ProviderLifecycleStartError::UnprovenProviderRequest(_))
                         ),
                     };
-                    if index + 1 < ordered_lanes.len() {
-                        self.events.write_value(serde_json::json!({
-                            "event": "pillar_synthesis_plan_attempt_rejected",
-                            "attempt": lane_invocations,
-                            "continuation_cycle": 1,
-                            "model": lane.model_id,
-                            "physical_host_id": lane.physical_host_id,
-                            "stage": transition.stage,
-                            "diagnostic": transition.diagnostic.as_str(),
-                            "diagnostic_sha256": content_sha256(&transition.diagnostic),
-                            "candidate_semantic_score": transition.semantic_score,
-                            "unproven_partial_output_quarantined": transition.unproven_partial_output_quarantined,
-                            "next_distinct_lane": ordered_lanes.get(index + 1).map(|next| next.physical_host_id.as_str()),
-                            "model_correction_rounds": 0,
-                        }));
-                        continue;
-                    }
                     transition
                 }
             };
 
+            let request_unproven =
+                transition.stage == "provider" && transition.unproven_partial_output_quarantined;
+            cycle_all_requests_unproven &= request_unproven;
+            current_cycle_evidence.push(serde_json::json!({
+                "stage": transition.stage,
+                "diagnostic_fingerprint": normalized_pillar_opening_diagnostic_fingerprint(
+                    &transition.diagnostic
+                ),
+                "semantic_score": transition.semantic_score,
+                "provider_request_unproven": request_unproven,
+            }));
+            let next_index = (index + 1) % ordered_lanes.len();
+
             self.events.write_value(serde_json::json!({
                 "event": "pillar_synthesis_plan_attempt_rejected",
                 "attempt": lane_invocations,
-                "continuation_cycle": 1,
+                "continuation_cycle": continuation_cycles,
                 "model": lane.model_id,
                 "physical_host_id": lane.physical_host_id,
                 "stage": transition.stage,
@@ -33710,58 +34799,82 @@ impl GooseAgentDispatcher {
                 "diagnostic_sha256": content_sha256(&transition.diagnostic),
                 "candidate_semantic_score": transition.semantic_score,
                 "unproven_partial_output_quarantined": transition.unproven_partial_output_quarantined,
-                "next_distinct_lane": null,
-                "model_correction_rounds": 0,
+                "next_distinct_lane": ordered_lanes.get(next_index).map(|next| next.physical_host_id.as_str()),
+                "model_correction_rounds": focused_correction_invocations,
             }));
-            degraded = Some(transition);
-            break;
-        }
-        let degraded = degraded.unwrap_or_else(|| PillarPlanDegradedTransition {
-            stage: "provider",
-            diagnostic: format!(
-                "all {lane_invocations} distinct authenticated planner routes were unavailable"
-            ),
-            semantic_score: 0,
-            unproven_partial_output_quarantined: false,
-        });
-        let (plan_json, dag, routes) = compile_pillar_evidence_plan(
-            user_prompt,
-            &outcome.opening,
-            &outcome.reports,
-            planner_model,
-            &allowed_runtime_models,
-        )?;
+            if index + 1 < ordered_lanes.len() {
+                continue;
+            }
+            if cycle_all_requests_unproven {
+                break transition;
+            }
+            let cycle_fingerprint = domain_sha256(
+                b"goose.swarm.pillar_plan.semantic_cycle.v1\0",
+                serde_json::to_string(&current_cycle_evidence)?.as_bytes(),
+            );
+            let repeated_cycle = previous_cycle_fingerprint.as_ref() == Some(&cycle_fingerprint);
+            if repeated_cycle {
+                let rejected_candidate = focused_correction
+                    .as_ref()
+                    .and_then(|correction| correction.get("rejected_plan"))
+                    .and_then(serde_json::Value::as_str);
+                let (directive, judge_calls) = Box::pin(self.request_pillar_semantic_alternative(
+                    &ordered_lanes,
+                    "pillar-synthesis-plan",
+                    &transition.diagnostic,
+                    None,
+                    semantic_strategy.as_ref(),
+                    rejected_candidate,
+                ))
+                .await?;
+                semantic_strategy_judge_invocations =
+                    semantic_strategy_judge_invocations.saturating_add(judge_calls);
+                if let Some(directive) = directive {
+                    semantic_strategy = Some(directive);
+                }
+            }
+            previous_cycle_fingerprint = Some(cycle_fingerprint.clone());
+            current_cycle_evidence.clear();
+            self.events.write_value(serde_json::json!({
+                "event": "pillar_synthesis_plan_semantic_continuation",
+                "completed_cycle": continuation_cycles,
+                "planner_lane_invocations": lane_invocations,
+                "focused_compiler_correction": focused_correction.is_some(),
+                "last_stage": transition.stage,
+                "last_diagnostic_sha256": content_sha256(&transition.diagnostic),
+                "next_distinct_lane": ordered_lanes[next_index].physical_host_id,
+                "peer_plan_verification_calls": 0,
+                "repeated_cycle": repeated_cycle,
+                "cycle_fingerprint": cycle_fingerprint,
+                "semantic_strategy_judge_invocations": semantic_strategy_judge_invocations,
+                "terminal": false,
+                "timer_or_count_cap": false,
+            }));
+            continuation_cycles = continuation_cycles.saturating_add(1);
+            cycle_all_requests_unproven = true;
+        };
         self.events.write_value(serde_json::json!({
-            "event": "pillar_synthesis_plan_degraded",
+            "event": "pillar_synthesis_plan_terminal_failure",
             "reason": degraded.diagnostic.as_str(),
             "reason_sha256": content_sha256(&degraded.diagnostic),
             "stage": degraded.stage,
-            "transition": "engine-compiled-plan-from-frozen-authored-requirements-and-pillar-evidence",
-            "engine_compiled_alternative": true,
+            "transition": "none-model-authored-plan-required",
+            "engine_compiled_alternative": false,
             "model_output_accepted": false,
-            "model_correction_rounds": 0,
+            "model_correction_rounds": focused_correction_invocations,
+            "semantic_strategy_judge_invocations": semantic_strategy_judge_invocations,
             "planner_lane_invocations": lane_invocations,
             "provider_route_failovers": lane_invocations.saturating_sub(1),
             "fallback_authority": false,
-            "tasks": dag.tasks.len(),
-            "uncertainty_routes": routes.len(),
-            "next_phase": "immediate-build-dispatch",
+            "terminal_cause": "every distinct route retains an unproven provider request; retry would violate exact lifecycle authority",
+            "next_phase": null,
+            "terminal": true,
         }));
-        self.events.write_value(serde_json::json!({
-            "event": "pillar_synthesis_plan_completed",
-            "logical_planner_authorities": 1,
-            "planner_lane_invocations": lane_invocations,
-            "provider_route_failovers": lane_invocations.saturating_sub(1),
-            "continuation_cycles": 1,
-            "peer_plan_verification_calls": 0,
-            "model_correction_rounds": 0,
-            "fallback_authority": false,
-            "engine_compiled_alternative": true,
-            "tasks": dag.tasks.len(),
-            "uncertainty_routes": routes.len(),
-            "next_phase": "immediate-build-dispatch",
-        }));
-        Ok((plan_json, dag))
+        Err(anyhow::Error::new(PillarPlanSemanticExhausted {
+            stage: degraded.stage,
+            diagnostic: degraded.diagnostic,
+            planner_lane_invocations: lane_invocations,
+        }))
     }
 
     async fn research_to_saturation(
@@ -34855,7 +35968,7 @@ impl GooseAgentDispatcher {
             // otherwise re-read it per draft.
             let draft_timeout = draft_timeout_eff();
             // #135 straggler-stop: OFF -> the classic await-all path below runs unchanged.
-            let straggler_stop = self.straggler_stop;
+            let straggler_stop = self.straggler_stop && !uncapped();
             let straggler_grace = self.straggler_grace_secs;
             async move {
                 // One spawnable draft future per slot. Extracted so the OFF (await-all) and ON (JoinSet +
@@ -34881,8 +35994,11 @@ impl GooseAgentDispatcher {
                         // draft is dropped; best-of-N (and the solo-planner fallback) then take over. This is
                         // the HARD backstop; #135's straggler grace is the SOFTER, earlier stop once a quorum
                         // of valid drafts is already in.
-                        tokio::time::timeout(
+                        let timeout = me.generation_timeout(
+                            &model,
                             std::time::Duration::from_secs(draft_timeout),
+                        );
+                        await_with_optional_timeout(
                             me.run_agent_timed_at(
                                 &model,
                                 sys,
@@ -34895,6 +36011,7 @@ impl GooseAgentDispatcher {
                                 dt,
                                 Some(&akey),
                             ),
+                            timeout,
                         )
                         .await
                         .ok()
@@ -38299,6 +39416,21 @@ fn parse_run_overview_output(final_output: Option<&str>) -> Option<Overview> {
     final_output.and_then(|output| serde_json::from_str(output).ok())
 }
 
+async fn maybe_generate_legacy_run_overview<T, F>(
+    pillar_flow_on: bool,
+    overview_on: bool,
+    generation: F,
+) -> Option<T>
+where
+    F: std::future::Future<Output = T>,
+{
+    if pillar_flow_on || !overview_on {
+        None
+    } else {
+        Some(generation.await)
+    }
+}
+
 /// Deterministic backstop for the summary agent: a value/next line that asserts the program WORKS / is tested
 /// / verified is an over-claim (verification is the engine's separate, honest job) — drop it. Word-level match
 /// so "network" never trips "work". This is defense-in-depth on top of the prompt + the hedged UI.
@@ -40007,6 +41139,7 @@ fn spec_python_invocations(spec: &str) -> Vec<String> {
         .collect()
 }
 
+#[cfg(test)]
 fn nested_python_package_boot_files(spec: &str) -> Vec<String> {
     let invocations = spec_python_invocations(spec);
     let package_invocations = invocations
@@ -46027,10 +47160,8 @@ fn omni_judge_says_looping(reply: &str) -> bool {
     matches!(out.verdict, Verdict::Looping | Verdict::OverReading) && out.confidence >= 0.8
 }
 
-fn recurrence_warrants_semantic_review(snapshot: &ReasoningRecurrenceSnapshot) -> bool {
-    snapshot.observed_windows > 0
-        && snapshot.repeated_windows > 0
-        && !snapshot.earlier_reasoning.trim().is_empty()
+fn semantic_tail_warrants_review(snapshot: &ReasoningRecurrenceSnapshot) -> bool {
+    snapshot.observed_windows > 0 && !snapshot.earlier_reasoning.trim().is_empty()
 }
 
 #[derive(Default)]
@@ -46064,7 +47195,7 @@ impl PreSchedulerRecurrenceFailoverGate {
         }
         let repeated_windows_grew = recurrence.repeated_windows > self.previous_repeated_windows;
         self.previous_repeated_windows = recurrence.repeated_windows;
-        let qualifies = recurrence_warrants_semantic_review(recurrence)
+        let qualifies = semantic_tail_warrants_review(recurrence)
             && recurrence.repeat_share >= PRE_SCHEDULER_RECURRENCE_FAILOVER_MIN_SHARE
             && recurrence.repeated_windows
                 >= PRE_SCHEDULER_RECURRENCE_FAILOVER_MIN_REPEATED_WINDOWS;
@@ -46201,9 +47332,12 @@ impl GooseAgentDispatcher {
             goal = req.goal,
             desc = req.description,
         );
-        let text = tokio::time::timeout(
-            std::time::Duration::from_secs(planner_wall(self.planner_timeout_secs)),
+        let text = await_with_optional_timeout(
             self.run_read_only_agent(&req.judge_model_id, system, user, None, 2, 0, None),
+            self.generation_timeout(
+                &req.judge_model_id,
+                std::time::Duration::from_secs(planner_wall(self.planner_timeout_secs)),
+            ),
         )
         .await
         .ok()
@@ -46275,9 +47409,9 @@ impl GooseAgentDispatcher {
         // Timeout vs no-final_output vs unparseable JSON demand OPPOSITE fixes (a longer budget vs molding the
         // prompt vs a schema retry), and until the reason is recorded, any fix is a guess. `self.clarity_fail`
         // is read by the caller, which owns the sink.
-        let out = match tokio::time::timeout(
-            std::time::Duration::from_secs(clarity_probe_secs()),
+        let out = match await_with_optional_timeout(
             self.run_agent(model, system, user, response, 4, &[], 0, None),
+            self.generation_timeout(model, std::time::Duration::from_secs(clarity_probe_secs())),
         )
         .await
         {
@@ -47224,9 +48358,12 @@ impl Judge for GooseAgentDispatcher {
                 return JudgeOutcome::ok();
             }
         }
-        match tokio::time::timeout(
-            std::time::Duration::from_secs(planner_wall(self.planner_timeout_secs)),
+        match await_with_optional_timeout(
             self.run_read_only_agent(&req.judge_model_id, system, user, None, 2, 0, None),
+            self.generation_timeout(
+                &req.judge_model_id,
+                std::time::Duration::from_secs(planner_wall(self.planner_timeout_secs)),
+            ),
         )
         .await
         {
@@ -47324,9 +48461,12 @@ impl PreReviewer for GooseAgentDispatcher {
         let user = format!(
             "GOAL of the run: {goal}\n\nCURRENT RUN STATE:\n{run_state}\n\nOPERATOR QUESTION:\n{question}\n\nYour answer:"
         );
-        let reply = tokio::time::timeout(
-            std::time::Duration::from_secs(planner_wall(self.planner_timeout_secs)),
+        let reply = await_with_optional_timeout(
             self.run_read_only_agent(model_id, system, user, None, 1, 0, None),
+            self.generation_timeout(
+                model_id,
+                std::time::Duration::from_secs(planner_wall(self.planner_timeout_secs)),
+            ),
         )
         .await
         .ok()
@@ -47464,9 +48604,12 @@ impl PreReviewer for GooseAgentDispatcher {
             desc = req.description,
             files = files_block,
         );
-        let text = tokio::time::timeout(
-            std::time::Duration::from_secs(planner_wall(self.planner_timeout_secs)),
+        let text = await_with_optional_timeout(
             self.run_read_only_agent(&req.reviewer_model_id, system, user, None, 2, 0, None),
+            self.generation_timeout(
+                &req.reviewer_model_id,
+                std::time::Duration::from_secs(planner_wall(self.planner_timeout_secs)),
+            ),
         )
         .await
         .ok()
@@ -47597,9 +48740,12 @@ impl PreReviewer for GooseAgentDispatcher {
             "GOAL: {goal}\n{contracts}\nYour pytest file (one fenced block):",
             contracts = frozen_interfaces_block(bundle)
         );
-        let reply = tokio::time::timeout(
-            std::time::Duration::from_secs(planner_wall(self.planner_timeout_secs)),
+        let reply = await_with_optional_timeout(
             self.run_read_only_agent(model_id, system, user, None, 2, 0, None),
+            self.generation_timeout(
+                model_id,
+                std::time::Duration::from_secs(planner_wall(self.planner_timeout_secs)),
+            ),
         )
         .await
         .ok()
@@ -50858,7 +52004,7 @@ fn capability_repair_specs(
             .collect::<HashSet<_>>();
         ordered.retain(|spec| !integration_ids.contains(spec.id.as_str()));
     }
-    let mut repair_groups = capability_components(ordered)
+    let repair_groups = capability_components(ordered)
         .into_iter()
         .filter(|component| {
             component
@@ -50866,13 +52012,11 @@ fn capability_repair_specs(
                 .any(|capability| !capability.owned_files.is_empty())
         })
         .collect::<Vec<_>>();
-    if integration_bundle
+    let integration_group = integration_bundle
         .iter()
         .any(|capability| !capability.owned_files.is_empty())
-    {
-        repair_groups.push(integration_bundle);
-    }
-    if repair_groups.is_empty() {
+        .then_some(integration_bundle);
+    if repair_groups.is_empty() && integration_group.is_none() {
         return Ok(Vec::new());
     }
 
@@ -50916,6 +52060,27 @@ fn capability_repair_specs(
             preferred_model: Some(fleet_models[index % fleet_models.len()].clone()),
             owned_files,
             deps: Vec::new(),
+            subsplit: Vec::new(),
+            replan_authority: None,
+        });
+    }
+
+    if let Some(capabilities) = integration_group {
+        let mut owned_files = capabilities
+            .iter()
+            .flat_map(|spec| spec.owned_files.iter().cloned())
+            .collect::<Vec<_>>();
+        owned_files.sort();
+        owned_files.dedup();
+        let task_id = format!("repair::capability::{:02}", repairs.len() + 1);
+        let deps = repairs.iter().map(|repair| repair.id.clone()).collect();
+        repairs.push(TaskSpec {
+            id: task_id,
+            description: capability_repair_description(&capabilities, &owned_files),
+            difficulty: goose_swarm::Difficulty::Hard,
+            preferred_model: Some(fleet_models[repairs.len() % fleet_models.len()].clone()),
+            owned_files,
+            deps,
             subsplit: Vec::new(),
             replan_authority: None,
         });
@@ -51055,24 +52220,184 @@ fn completed_checkpoint_evidence(
         .collect()
 }
 
+fn completed_capability_repair_evidence(
+    specs: &[TaskSpec],
+    report: &RunReport,
+) -> Result<Vec<SchedulerCompletedTaskEvidence>> {
+    if !report.unavailable.is_empty() || !report.provisional.is_empty() {
+        bail!(
+            "capability repair retained unavailable {:?} or provisional {:?} obligations",
+            report
+                .unavailable
+                .iter()
+                .map(|evidence| evidence.task_id.as_str())
+                .collect::<Vec<_>>(),
+            report.provisional
+        );
+    }
+    let outcomes = report
+        .tasks
+        .iter()
+        .map(|outcome| (outcome.task_id.as_str(), outcome))
+        .collect::<HashMap<_, _>>();
+    for spec in specs {
+        let outcome = outcomes
+            .get(spec.id.as_str())
+            .copied()
+            .ok_or_else(|| anyhow!("capability repair {:?} has no terminal outcome", spec.id))?;
+        if outcome.completion != Some(TaskCompletionDisposition::Complete) {
+            bail!(
+                "capability repair {:?} lacks an exact Complete receipt",
+                spec.id
+            );
+        }
+        if outcome
+            .output
+            .as_deref()
+            .is_none_or(|output| output.trim().is_empty())
+        {
+            bail!(
+                "capability repair {:?} lacks non-empty acceptance evidence",
+                spec.id
+            );
+        }
+    }
+    let evidence = completed_checkpoint_evidence(specs, report)?;
+    if evidence.len() != specs.len() {
+        bail!("capability repair evidence did not cover every frozen repair specification");
+    }
+    Ok(evidence)
+}
+
+fn completed_checkpoint_evidence_with_recovery(
+    specs: &[TaskSpec],
+    report: &RunReport,
+    recovery: &[CapabilityRecoveryReceipt],
+    repair_evidence: &[SchedulerCompletedTaskEvidence],
+) -> Result<Vec<SchedulerCompletedTaskEvidence>> {
+    if recovery.is_empty() {
+        return completed_checkpoint_evidence(specs, report);
+    }
+    let expected = specs
+        .iter()
+        .map(|spec| spec.id.as_str())
+        .collect::<BTreeSet<_>>();
+    let actual = report
+        .tasks
+        .iter()
+        .map(|outcome| outcome.task_id.as_str())
+        .collect::<BTreeSet<_>>();
+    if actual != expected || report.tasks.len() != expected.len() {
+        bail!("scheduler report task set diverged from the frozen build DAG");
+    }
+    let outcomes = report
+        .tasks
+        .iter()
+        .map(|outcome| (outcome.task_id.as_str(), outcome))
+        .collect::<HashMap<_, _>>();
+    let recovery_by_obligation = recovery
+        .iter()
+        .map(|receipt| (receipt.obligation_task_id.as_str(), receipt))
+        .collect::<HashMap<_, _>>();
+    if recovery_by_obligation.len() != recovery.len()
+        || !recovery_by_obligation
+            .keys()
+            .all(|task_id| expected.contains(task_id))
+    {
+        bail!("recovery receipts do not form a unique subset of the frozen build DAG");
+    }
+    let repair_by_id = repair_evidence
+        .iter()
+        .map(|evidence| (evidence.task_id.as_str(), evidence))
+        .collect::<HashMap<_, _>>();
+    let mut ordered = specs.iter().collect::<Vec<_>>();
+    ordered.sort_by(|left, right| left.id.cmp(&right.id));
+    ordered
+        .into_iter()
+        .map(|spec| {
+            let outcome = outcomes[spec.id.as_str()];
+            if outcome.status == "done"
+                && !outcome.salvaged
+                && outcome.completion == Some(TaskCompletionDisposition::Complete)
+                && outcome.attempts > 0
+            {
+                return Ok(SchedulerCompletedTaskEvidence {
+                    task_id: spec.id.clone(),
+                    output: outcome.output.clone().ok_or_else(|| {
+                        anyhow!("task {:?} lost its full checkpoint output", spec.id)
+                    })?,
+                    attempts: outcome.attempts,
+                });
+            }
+            let receipt = recovery_by_obligation
+                .get(spec.id.as_str())
+                .ok_or_else(|| {
+                    anyhow!(
+                        "task {:?} is not exact Complete and has no validated recovery receipt",
+                        spec.id
+                    )
+                })?;
+            let repair = repair_by_id
+                .get(receipt.repair_task_id.as_str())
+                .ok_or_else(|| {
+                    anyhow!(
+                        "recovery for {:?} lost full output from repair owner {:?}",
+                        spec.id,
+                        receipt.repair_task_id
+                    )
+                })?;
+            if repair.output.trim().is_empty() || repair.attempts == 0 {
+                bail!(
+                    "recovery for {:?} has no complete repair output or attempt evidence",
+                    spec.id
+                );
+            }
+            Ok(SchedulerCompletedTaskEvidence {
+                task_id: spec.id.clone(),
+                output: repair.output.clone(),
+                attempts: outcome.attempts.saturating_add(repair.attempts).max(1),
+            })
+        })
+        .collect()
+}
+
+fn capability_repair_failure_findings(specs: &[TaskSpec], reason: &str) -> Vec<String> {
+    if specs.is_empty() {
+        return vec![format!(
+            "capability repair obligation `repair-plan` failed without an alternative owner: {reason}"
+        )];
+    }
+    specs
+        .iter()
+        .map(|spec| {
+            format!(
+                "capability repair obligation `{}` failed without exact Complete evidence or an alternative owner: {reason}",
+                spec.id
+            )
+        })
+        .collect()
+}
+
 fn reseal_scheduler_checkpoint_stage(
     checkpoint_store: &SchedulerCheckpointStore,
     specs: &[TaskSpec],
     evidence: &[SchedulerCompletedTaskEvidence],
     stage: &'static str,
     sink: &dyn EventSink,
-) -> Option<goose_swarm::SchedulerDagResealReceipt> {
+) -> Result<goose_swarm::SchedulerDagResealReceipt> {
     match checkpoint_store.reseal_completed_dag(specs, evidence) {
-        Ok(receipt) => Some(receipt),
-        Err(_) => {
+        Ok(receipt) => Ok(receipt),
+        Err(error) => {
             sink.write_value(serde_json::json!({
                 "event": "scheduler_checkpoint_reseal_unavailable",
                 "stage": stage,
-                "status": "unavailable",
+                "status": "final-incomplete",
                 "reason": "checkpoint_durability_reseal_failed",
                 "resume_claim_disabled": true,
             }));
-            None
+            Err(anyhow!(
+                "{stage} checkpoint durability reseal failed: {error}"
+            ))
         }
     }
 }
@@ -51089,42 +52414,40 @@ where
     F: FnOnce() -> Result<Vec<SchedulerCompletedTaskEvidence>>,
 {
     if let Some((repair_specs, repair_evidence)) = capability_repair {
-        if let Some(receipt) = reseal_scheduler_checkpoint_stage(
+        let receipt = reseal_scheduler_checkpoint_stage(
             checkpoint_store,
             repair_specs,
             repair_evidence,
             "capability-repair",
             sink,
-        ) {
-            sink.write_value(serde_json::json!({
-                "event": "scheduler_capability_repair_checkpoints_resealed",
-                "tasks": receipt.tasks,
-                "first_sequence": receipt.first_sequence,
-                "next_sequence": receipt.next_sequence,
-                "tree_hash": tree_hash,
-                "artifact_bytes": "exact-final-authoritative-tree",
-                "restore_order": "after-main-build",
-            }));
-        }
+        )?;
+        sink.write_value(serde_json::json!({
+            "event": "scheduler_capability_repair_checkpoints_resealed",
+            "tasks": receipt.tasks,
+            "first_sequence": receipt.first_sequence,
+            "next_sequence": receipt.next_sequence,
+            "tree_hash": tree_hash,
+            "artifact_bytes": "exact-final-authoritative-tree",
+            "restore_order": "after-main-build",
+        }));
     }
 
     let main_evidence = main_evidence()?;
-    if let Some(receipt) = reseal_scheduler_checkpoint_stage(
+    let receipt = reseal_scheduler_checkpoint_stage(
         checkpoint_store,
         main_specs,
         &main_evidence,
         "main-build",
         sink,
-    ) {
-        sink.write_value(serde_json::json!({
-            "event": "scheduler_checkpoints_resealed",
-            "tasks": receipt.tasks,
-            "first_sequence": receipt.first_sequence,
-            "next_sequence": receipt.next_sequence,
-            "tree_hash": tree_hash,
-            "restore_without_repeat": true,
-        }));
-    }
+    )?;
+    sink.write_value(serde_json::json!({
+        "event": "scheduler_checkpoints_resealed",
+        "tasks": receipt.tasks,
+        "first_sequence": receipt.first_sequence,
+        "next_sequence": receipt.next_sequence,
+        "tree_hash": tree_hash,
+        "restore_without_repeat": true,
+    }));
     Ok(())
 }
 
@@ -51140,6 +52463,20 @@ fn smoke_fix_description(findings: &[String], lang: TargetLang) -> String {
         findings.join("\n"),
         fix_evidence_pointers(findings)
     )
+}
+
+fn semantic_smoke_fix_description(
+    findings: &[String],
+    lang: TargetLang,
+    semantic_cycle: Option<(u32, bool)>,
+) -> String {
+    let mut description = smoke_fix_description(findings, lang);
+    if let Some((cycle, true)) = semantic_cycle {
+        description.push_str(&format!(
+            "\n\nSEMANTIC ALTERNATIVE CYCLE {cycle}: these normalized authoritative findings survived a complete prior repair cycle. Do not repeat the previous diagnosis or edit pattern. Re-read the current code and test evidence, state a materially different root-cause hypothesis internally, and prove that hypothesis against the live checks before finishing."
+        ));
+    }
+    description
 }
 
 /// NAME THE FILES THE FINDING'S EVIDENCE LIVES IN. A finding states one half of a defect — "5 failed"
@@ -51302,6 +52639,10 @@ fn complete_phase_selected(pillar_flow_on: bool, configured_complete: bool) -> b
     pillar_flow_on || configured_complete
 }
 
+fn sink_review_selected(pillar_flow_on: bool, configured_sink_review: bool) -> bool {
+    !pillar_flow_on && configured_sink_review
+}
+
 fn idle_judge_enabled() -> bool {
     default_on_environment_gate("GOOSE_SWARM_JUDGE")
 }
@@ -51422,13 +52763,14 @@ fn completion_blocking_failed(
     owns_nothing: &[String],
     unavailable: &[TaskUnavailableEvidence],
     provisional: &[String],
+    salvaged: &[String],
     pillar_flow: bool,
 ) -> Vec<String> {
     if pillar_flow {
         // A pillar-flow bonus or fileless task is still fatal when it carries no typed degraded
         // evidence. Only Unavailable/provisional work may continue to capability repair; authority,
         // integrity, journal, and ownership failures must remain visible to the final ruler.
-        hard_failed_tasks(failed, unavailable, provisional)
+        hard_failed_tasks(failed, unavailable, provisional, salvaged)
     } else {
         green_blocking_failed(failed, bonus, owns_nothing)
     }
@@ -51445,12 +52787,14 @@ fn hard_failed_tasks(
     failed: &[String],
     unavailable: &[TaskUnavailableEvidence],
     provisional: &[String],
+    salvaged: &[String],
 ) -> Vec<String> {
     let unavailable = typed_unavailable_ids(unavailable);
     failed
         .iter()
         .filter(|task_id| !unavailable.contains(task_id.as_str()))
         .filter(|task_id| !provisional.contains(*task_id))
+        .filter(|task_id| !salvaged.contains(*task_id))
         .cloned()
         .collect()
 }
@@ -51460,14 +52804,16 @@ fn unresolved_core_failures(
     bonus: &[String],
     unavailable: &[TaskUnavailableEvidence],
     provisional: &[String],
+    salvaged: &[String],
     final_ruler_recovered_unavailable: bool,
 ) -> Vec<String> {
     let unavailable = typed_unavailable_ids(unavailable);
     failed
         .iter()
         .filter(|task_id| {
-            let ordinary_degraded =
-                unavailable.contains(task_id.as_str()) || provisional.contains(*task_id);
+            let ordinary_degraded = unavailable.contains(task_id.as_str())
+                || provisional.contains(*task_id)
+                || salvaged.contains(*task_id);
             !ordinary_degraded || (!bonus.contains(*task_id) && !final_ruler_recovered_unavailable)
         })
         .cloned()
@@ -51542,7 +52888,6 @@ fn capability_recovery_receipts(
                 .completion
                 .as_ref()
                 .and_then(TaskCompletionDisposition::provisional_receipt)
-                .filter(|receipt| !receipt.unavailable_ancestors().is_empty())
                 .map(|receipt| (outcome.task_id.as_str(), receipt))
         })
         .collect::<HashMap<_, _>>();
@@ -53843,6 +55188,11 @@ impl GooseAgentDispatcher {
         }
         match outcome {
             Ok(out) => {
+                if let Some(error) = &out.post_terminal_activity_evidence_failure {
+                    return Err(DispatchError::Terminal(format!(
+                        "provider-terminal task output could not seal its authenticated semantic activity evidence: {error}"
+                    )));
+                }
                 // #121 mid-stream body drop: a fleet node can drop the HTTP response body mid-generation.
                 // The provider surfaces it as NetworkError("Stream decode error: …") which the agent reply
                 // loop yields as assistant TEXT ("… Please resend your message to try again.") and BREAKs —
@@ -53980,11 +55330,18 @@ impl GooseAgentDispatcher {
                     req.device_id,
                     secs
                 );
-                let output = if out.text.trim().is_empty() {
-                    format!("(task {} completed)", req.task_id)
-                } else {
-                    out.text
-                };
+                let output = out
+                    .final_output
+                    .as_deref()
+                    .filter(|output| !output.trim().is_empty())
+                    .or_else(|| (!out.text.trim().is_empty()).then_some(out.text.as_str()))
+                    .map(str::to_string)
+                    .ok_or_else(|| {
+                        DispatchError::ContentRetry(format!(
+                            "Task {} produced no completion evidence. Preserve the files already written, verify them, and return a concrete non-empty completion summary.",
+                            req.task_id
+                        ))
+                    })?;
                 // OWNED-FILE FENCE (#131): snapshot this file-owning task's authoritative bytes so a later
                 // non-owner clobber can be detected + reverted before the sink. OFF/speculative/sink/no-files
                 // => no capture, byte-identical.
@@ -54222,26 +55579,16 @@ impl TaskDispatcher for GooseAgentDispatcher {
         let user = format!(
             "GOAL: {goal}{pillars_block}\n\nREVIEW DIMENSION ({dim_id}): {dim_brief}\n\nFiles produced:\n{files_block}\nYour one-line review:"
         );
-        let text = tokio::time::timeout(
-            // IDLE-FILL MUST STAY CHEAP. This borrowed the 900s PLANNER budget, and the tail
-            // reviewer is dispatched into every free slot on every scheduler tick — so one
-            // unbounded review can hold a whole node for a quarter of an hour. MEASURED live
-            // (run 6, the first run where this mechanism emitted an event at all): the
-            // `correctness` dimension hit the 900s ceiling TWICE, 30 node-minutes, zero findings
-            // both times — its brief asks for a wrong constant/unit/sign anywhere in the tree,
-            // an unbounded search the model simply reasons at until it is cut off. Meanwhile the
-            // reviews that DID find defects returned in 74s and 156s. A review that has not
-            // reached a conclusion in four minutes is not about to; the node is worth more back
-            // in the pool. Env-overridable for the arm that measures whether the cap costs
-            // anything.
-            std::time::Duration::from_secs(
-                std::env::var("GOOSE_SWARM_TAIL_REVIEW_SECS")
-                    .ok()
-                    .and_then(|v| v.trim().parse::<u64>().ok())
-                    .filter(|n| *n >= 30)
-                    .unwrap_or(240),
-            ),
+        let configured_timeout = std::time::Duration::from_secs(
+            std::env::var("GOOSE_SWARM_TAIL_REVIEW_SECS")
+                .ok()
+                .and_then(|v| v.trim().parse::<u64>().ok())
+                .filter(|n| *n >= 30)
+                .unwrap_or(240),
+        );
+        let text = await_with_optional_timeout(
             self.run_read_only_agent(model_id, system, user, None, 2, 0, None),
+            self.generation_timeout(model_id, configured_timeout),
         )
         .await
         .ok()
@@ -54322,9 +55669,12 @@ impl TaskDispatcher for GooseAgentDispatcher {
         );
         // Sink-review verification can run after COMPLETE has sealed the tree. It already receives the
         // relevant source inline, so exposing developer tools here is both unnecessary and terminally unsafe.
-        let text = tokio::time::timeout(
-            std::time::Duration::from_secs(planner_wall(self.planner_timeout_secs)),
+        let text = await_with_optional_timeout(
             self.run_read_only_agent(model_id, system, user, None, 2, 0, None),
+            self.generation_timeout(
+                model_id,
+                std::time::Duration::from_secs(planner_wall(self.planner_timeout_secs)),
+            ),
         )
         .await
         .ok()
@@ -54666,6 +56016,20 @@ fn plan_schema() -> serde_json::Value {
     })
 }
 
+fn pillar_semantic_alternative_schema() -> serde_json::Value {
+    serde_json::json!({
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["diagnosis", "next_strategy", "preserve", "avoid"],
+        "properties": {
+            "diagnosis": {"type": "string"},
+            "next_strategy": {"type": "string"},
+            "preserve": {"type": "array", "items": {"type": "string"}},
+            "avoid": {"type": "array", "items": {"type": "string"}}
+        }
+    })
+}
+
 fn pillar_definition_schema() -> serde_json::Value {
     serde_json::json!({
         "type": "object",
@@ -54721,25 +56085,14 @@ fn pillar_opening_schema(
         .expect("pillar definition schema keeps a required list")
         .insert(1, serde_json::json!("parent_domain_id"));
     research_slice_schema["properties"]["parent_domain_id"] = serde_json::json!({"type": "string"});
-    let mut legacy_domain_schema = pillar_definition_schema();
-    legacy_domain_schema["required"]
-        .as_array_mut()
-        .expect("pillar definition schema keeps a required list")
-        .extend([
-            serde_json::json!("requirement_ids"),
-            serde_json::json!("dependencies"),
-        ]);
-    legacy_domain_schema["properties"]["requirement_ids"] = serde_json::json!({
-        "type": "array",
-        "uniqueItems": true,
-        "items": {"type": "string", "enum": requirement_ids}
-    });
-    legacy_domain_schema["properties"]["dependencies"] =
-        serde_json::json!({"type": "array", "items": {"type": "string"}});
     let integration_contract = pillar_integration_contract_schema(integration_owner);
     serde_json::json!({
         "type": "object",
         "additionalProperties": false,
+        "required": [
+            "semantic_domains", "domain_assignment_by_requirement",
+            "research_slices", "slice_assignment_by_requirement", "integration_contract"
+        ],
         "properties": {
             "semantic_domains": {
                 "type": "array",
@@ -54761,31 +56114,8 @@ fn pillar_opening_schema(
                 "additionalProperties": false,
                 "properties": slice_assignment_properties
             },
-            "pillars": {
-                "type": "array",
-                "minItems": 1,
-                "items": legacy_domain_schema
-            },
             "integration_contract": integration_contract
-        },
-        "oneOf": [
-            {
-                "required": [
-                    "semantic_domains", "domain_assignment_by_requirement",
-                    "research_slices", "slice_assignment_by_requirement", "integration_contract"
-                ],
-                "not": {"required": ["pillars"]}
-            },
-            {
-                "required": ["pillars", "integration_contract"],
-                "not": {"anyOf": [
-                    {"required": ["semantic_domains"]},
-                    {"required": ["domain_assignment_by_requirement"]},
-                    {"required": ["research_slices"]},
-                    {"required": ["slice_assignment_by_requirement"]}
-                ]}
-            }
-        ]
+        }
     })
 }
 
@@ -54824,13 +56154,10 @@ fn validate_pillar_opening_schema_gate(
     }
     let semantic_domains = &schema["properties"]["semantic_domains"];
     let research_slices = &schema["properties"]["research_slices"];
-    let legacy_domains = &schema["properties"]["pillars"];
     if semantic_domains["minItems"].as_u64() != Some(1)
         || semantic_domains.get("maxItems").is_some()
         || research_slices["minItems"].as_u64() != Some(minimum_research_slices as u64)
         || research_slices.get("maxItems").is_some()
-        || legacy_domains["minItems"].as_u64() != Some(1)
-        || legacy_domains.get("maxItems").is_some()
     {
         bail!("pillar opening schema gate changed its domain or nested-slice bounds");
     }
@@ -54995,18 +56322,6 @@ fn pillar_plan_schema() -> serde_json::Value {
             "canonical_plan": plan_schema()
         }
     })
-}
-
-fn pillar_plan_capture_schema() -> serde_json::Value {
-    let mut schema = pillar_plan_schema();
-    schema["required"] = serde_json::json!([]);
-    schema["additionalProperties"] = serde_json::Value::Bool(true);
-    if let Some(properties) = schema["properties"].as_object_mut() {
-        for property_schema in properties.values_mut() {
-            *property_schema = serde_json::json!({});
-        }
-    }
-    schema
 }
 
 fn planning_audit_schema() -> serde_json::Value {
@@ -55692,52 +57007,8 @@ fn pillar_assignment_diagnostics(
 fn parse_pillar_opening_draft(raw: &str) -> Result<PillarOpeningDraft> {
     let unfenced = strip_code_fences(raw);
     let raw = unfenced.trim();
-    if let Ok(draft) = serde_json::from_str::<PillarOpeningDraft>(raw) {
-        return Ok(draft);
-    }
-    let legacy: LegacyPillarOpeningDraft = serde_json::from_str(raw).map_err(|error| {
-        anyhow!("pillar opening was not valid current or legacy typed JSON: {error}")
-    })?;
-    let mut duplicate_requirement_ids = BTreeSet::new();
-    let mut domain_assignment_by_requirement = BTreeMap::new();
-    let semantic_domains = legacy
-        .pillars
-        .into_iter()
-        .map(|domain| {
-            if !domain.dependencies.is_empty() {
-                duplicate_requirement_ids.insert(format!("dependency:{}", domain.id));
-            }
-            for requirement_id in domain.requirement_ids {
-                if domain_assignment_by_requirement
-                    .insert(requirement_id.clone(), domain.id.clone())
-                    .is_some()
-                {
-                    duplicate_requirement_ids.insert(requirement_id);
-                }
-            }
-            PillarDefinitionDraft {
-                id: domain.id,
-                title: domain.title,
-                objective: domain.objective,
-                research_questions: domain.research_questions,
-                acceptance_criteria: domain.acceptance_criteria,
-                exclusions: domain.exclusions,
-            }
-        })
-        .collect::<Vec<_>>();
-    if !duplicate_requirement_ids.is_empty() {
-        bail!(
-            "legacy semantic domain catalog carried overlap or dependencies: {}",
-            serde_json::to_string(&duplicate_requirement_ids)?
-        );
-    }
-    Ok(PillarOpeningDraft {
-        semantic_domains,
-        domain_assignment_by_requirement,
-        research_slices: Vec::new(),
-        slice_assignment_by_requirement: BTreeMap::new(),
-        integration_contract: legacy.integration_contract,
-    })
+    serde_json::from_str::<PillarOpeningDraft>(raw)
+        .map_err(|error| anyhow!("pillar opening was not valid current typed JSON: {error}"))
 }
 
 fn pillar_correction_fingerprint(repair: &FocusedPillarAssignmentRepair) -> Result<String> {
@@ -56665,17 +57936,25 @@ fn compile_pillar_plan(
     let requirements = opening
         .requirements
         .iter()
-        .map(|requirement| RequirementRecord {
-            id: requirement.id.clone(),
-            section: opening
+        .map(|requirement| {
+            let section = opening
                 .pillars
                 .iter()
                 .find(|pillar| pillar.requirement_ids.contains(&requirement.id))
                 .map(|pillar| pillar.title.clone())
-                .unwrap_or_else(|| "Authored specification".to_string()),
-            quote: requirement.text.clone(),
+                .ok_or_else(|| {
+                    anyhow!(
+                        "pillar plan compiler found no semantic owner for requirement `{}`",
+                        requirement.id
+                    )
+                })?;
+            Ok(RequirementRecord {
+                id: requirement.id.clone(),
+                section,
+                quote: requirement.text.clone(),
+            })
         })
-        .collect::<Vec<_>>();
+        .collect::<Result<Vec<_>>>()?;
     let candidate = serde_json::to_string(&draft.canonical_plan)?;
     let canonical_raw = serde_json::to_string(&serde_json::json!({
         "selected_candidate": 0,
@@ -56696,6 +57975,7 @@ fn compile_pillar_plan(
     Ok((compiled.plan_json, dag, draft.uncertainty_routes))
 }
 
+#[cfg(test)]
 fn compile_pillar_evidence_plan(
     user_prompt: &str,
     opening: &ResearchPillarOpening,
@@ -58496,7 +59776,9 @@ fn validate_canonical_authoritative_plan(
         .get("canonical_plan_authority")
         .and_then(|authority| authority.get("integration_required"))
         .and_then(serde_json::Value::as_bool)
-        .unwrap_or(true);
+        .ok_or_else(|| {
+            anyhow!("canonical plan authority omitted its typed integration_required policy")
+        })?;
     validate_canonical_skeleton_structure_with_policy(&specs, integration_required)?;
     if !skeleton_uses_allowed_models(&specs, allowed_runtime_models) {
         bail!("canonical authoritative plan used a model outside the resolved runtime roster");
@@ -60047,11 +61329,14 @@ fn normalized_repair_findings(findings: &[String]) -> Vec<String> {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum AuthoritativeRepairDisposition {
-    Continue { cycle: u32 },
-    Incomplete(AuthoritativeRepairCycleEvidence),
+    Continue {
+        cycle: u32,
+        repeated: bool,
+        prior_cycle: Option<AuthoritativeRepairCycleEvidence>,
+    },
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
 struct AuthoritativeRepairCycleEvidence {
     cycle: u32,
     feedback_applied: bool,
@@ -60062,7 +61347,6 @@ struct AuthoritativeRepairCycleEvidence {
 
 #[derive(Debug)]
 struct PendingAuthoritativeRepairCycle {
-    signature: Vec<String>,
     evidence: AuthoritativeRepairCycleEvidence,
 }
 
@@ -60076,29 +61360,19 @@ struct AuthoritativeRepairFeedback {
 impl AuthoritativeRepairFeedback {
     fn classify(&mut self, findings: &[String]) -> AuthoritativeRepairDisposition {
         let signature = normalized_repair_findings(findings);
-        if self.seen.insert(signature.clone()) {
-            self.next_cycle = self.next_cycle.saturating_add(1);
-            self.pending = Some(PendingAuthoritativeRepairCycle {
-                signature,
-                evidence: AuthoritativeRepairCycleEvidence {
-                    cycle: self.next_cycle,
-                    ..AuthoritativeRepairCycleEvidence::default()
-                },
-            });
-            AuthoritativeRepairDisposition::Continue {
+        let repeated = !self.seen.insert(signature.clone());
+        let prior_cycle = self.pending.take().map(|pending| pending.evidence);
+        self.next_cycle = self.next_cycle.saturating_add(1);
+        self.pending = Some(PendingAuthoritativeRepairCycle {
+            evidence: AuthoritativeRepairCycleEvidence {
                 cycle: self.next_cycle,
-            }
-        } else {
-            let evidence = self
-                .pending
-                .take()
-                .filter(|pending| pending.signature == signature)
-                .map(|pending| pending.evidence)
-                .unwrap_or(AuthoritativeRepairCycleEvidence {
-                    cycle: self.next_cycle,
-                    ..AuthoritativeRepairCycleEvidence::default()
-                });
-            AuthoritativeRepairDisposition::Incomplete(evidence)
+                ..AuthoritativeRepairCycleEvidence::default()
+            },
+        });
+        AuthoritativeRepairDisposition::Continue {
+            cycle: self.next_cycle,
+            repeated,
+            prior_cycle,
         }
     }
 
@@ -60108,14 +61382,10 @@ impl AuthoritativeRepairFeedback {
         }
     }
 
-    fn note_ruler(&mut self, findings: &[String]) {
-        let signature = normalized_repair_findings(findings);
+    fn note_ruler(&mut self, _findings: &[String]) {
         let Some(pending) = self.pending.as_mut() else {
             return;
         };
-        if pending.signature != signature {
-            return;
-        }
         if !pending.evidence.feedback_applied {
             pending.evidence.feedback_applied = true;
         } else if pending.evidence.repair_dispatched {
@@ -60727,9 +61997,6 @@ fn fix_cap_secs() -> u64 {
     // cap with the ETag findings unchanged — indicts the shape of the repair (one monolithic
     // twin per model), not the constant: the S1 shard design and the G-batch progress-shaped cap
     // (rounds-without-mutation) are the fixes with evidence behind them.
-    if uncapped() {
-        return UNCAPPED_SECS;
-    }
     std::env::var("GOOSE_SWARM_FIX_CAP_SECS")
         .ok()
         .and_then(|v| v.parse::<u64>().ok())
@@ -61415,25 +62682,6 @@ struct RepairTreeRuling {
     remaining_findings: usize,
 }
 
-fn emit_authoritative_repair_unavailable(
-    sink: &dyn EventSink,
-    ruling: &RepairTreeRuling,
-    evidence: AuthoritativeRepairCycleEvidence,
-) {
-    sink.write_value(serde_json::json!({
-        "event": "authoritative_repair_unavailable",
-        "status": "degraded",
-        "cycle": evidence.cycle,
-        "findings": ruling.remaining_findings,
-        "tree_hash": ruling.tree_hash,
-        "feedback_applied": evidence.feedback_applied,
-        "repair_dispatched": evidence.repair_dispatched,
-        "post_dispatch_rulers": evidence.post_dispatch_rulers,
-        "budget_refreshed": evidence.budget_refreshed,
-        "reason": "the same normalized authoritative finding set survived a full feedback cycle",
-    }));
-}
-
 struct OpenRepairTree {
     root: PathBuf,
     epoch: u64,
@@ -61578,7 +62826,7 @@ impl OpenRepairTree {
                 ruling.verified,
             );
         }
-        self.seal_with_status(shipped, false, "repair_tree_sealed", sink)
+        self.seal_with_status(shipped, false, false, "repair_tree_sealed", sink)
     }
 
     fn seal_incomplete(
@@ -61594,6 +62842,7 @@ impl OpenRepairTree {
         self.seal_with_status(
             shipped,
             force_unverified,
+            true,
             "repair_tree_incomplete_sealed",
             sink,
         )
@@ -61603,6 +62852,7 @@ impl OpenRepairTree {
         self,
         shipped: String,
         force_unverified: bool,
+        force_incomplete: bool,
         event: &str,
         sink: &dyn EventSink,
     ) -> Result<SealedCompleteTree> {
@@ -61620,10 +62870,11 @@ impl OpenRepairTree {
             epoch: ruling.epoch,
             tree_hash: ruling.tree_hash,
             entries: current.entries,
-            passed: ruling.passed,
-            verified: ruling.verified && !force_unverified,
+            passed: ruling.passed && !force_incomplete,
+            verified: ruling.verified && !force_unverified && !force_incomplete,
             remaining_findings: ruling.remaining_findings,
             shipped,
+            terminal_emitted: std::sync::atomic::AtomicBool::new(false),
         };
         sink.write_value(serde_json::json!({
             "event": event,
@@ -61647,6 +62898,7 @@ struct SealedCompleteTree {
     verified: bool,
     remaining_findings: usize,
     shipped: String,
+    terminal_emitted: std::sync::atomic::AtomicBool,
 }
 
 impl SealedCompleteTree {
@@ -61655,24 +62907,95 @@ impl SealedCompleteTree {
         sink: &dyn EventSink,
         mut run_finished: serde_json::Value,
     ) -> Result<()> {
-        let current = repair_tree_snapshot(&self.root)?;
+        let current = repair_tree_snapshot(&self.root);
+        if self
+            .terminal_emitted
+            .swap(true, std::sync::atomic::Ordering::AcqRel)
+        {
+            bail!("terminal events were already emitted for this sealed tree");
+        }
+        let current = match current {
+            Ok(current) => current,
+            Err(error) => {
+                if let Some(object) = run_finished.as_object_mut() {
+                    object.insert("success".to_string(), serde_json::json!(false));
+                    object.insert(
+                        "terminal_stage".to_string(),
+                        serde_json::json!("post-seal-snapshot"),
+                    );
+                    object.insert(
+                        "complete_tree_hash".to_string(),
+                        serde_json::json!(self.tree_hash),
+                    );
+                }
+                sink.write_value(serde_json::json!({
+                    "event": "complete_result",
+                    "passed": false,
+                    "verified": false,
+                    "remaining_findings": self.remaining_findings.saturating_add(1),
+                    "shipped": self.shipped,
+                    "tree_hash": self.tree_hash,
+                    "tree_epoch": self.epoch,
+                    "run_success": false,
+                    "terminal_stage": "post-seal-snapshot",
+                    "error": error.to_string(),
+                }));
+                sink.write_value(run_finished);
+                return Err(error);
+            }
+        };
         if current.sha256 != self.tree_hash {
+            let changed_files = changed_repair_files(
+                &RepairTreeSnapshot {
+                    sha256: self.tree_hash.clone(),
+                    entries: self.entries.clone(),
+                },
+                &current,
+            );
             sink.write_value(serde_json::json!({
                 "event": "post_seal_mutation",
                 "epoch": self.epoch,
                 "sealed_tree_hash": self.tree_hash,
                 "current_tree_hash": current.sha256,
-                "changed_files": changed_repair_files(
-                    &RepairTreeSnapshot { sha256: self.tree_hash.clone(), entries: self.entries.clone() },
-                    &current,
-                ),
+                "changed_files": changed_files,
             }));
+            if let Some(object) = run_finished.as_object_mut() {
+                object.insert("success".to_string(), serde_json::json!(false));
+                object.insert(
+                    "terminal_stage".to_string(),
+                    serde_json::json!("post-seal-integrity"),
+                );
+                object.insert(
+                    "complete_tree_hash".to_string(),
+                    serde_json::json!(self.tree_hash),
+                );
+                object.insert(
+                    "current_tree_hash".to_string(),
+                    serde_json::json!(current.sha256),
+                );
+            }
+            sink.write_value(serde_json::json!({
+                "event": "complete_result",
+                "passed": false,
+                "verified": false,
+                "remaining_findings": self.remaining_findings.saturating_add(1),
+                "shipped": self.shipped,
+                "tree_hash": self.tree_hash,
+                "tree_epoch": self.epoch,
+                "run_success": false,
+                "terminal_stage": "post-seal-integrity",
+            }));
+            sink.write_value(run_finished);
             bail!(
                 "application tree changed after COMPLETE sealed it (sealed {}, current {})",
                 self.tree_hash,
                 current.sha256
             );
         }
+        let run_success = run_finished
+            .get("success")
+            .and_then(serde_json::Value::as_bool)
+            .ok_or_else(|| anyhow!("run_finished is missing its effective success verdict"))?;
         if let Some(object) = run_finished.as_object_mut() {
             object.insert(
                 "complete_tree_hash".to_string(),
@@ -61685,12 +63008,13 @@ impl SealedCompleteTree {
         }
         sink.write_value(serde_json::json!({
             "event": "complete_result",
-            "passed": self.passed,
+            "passed": self.passed && run_success,
             "verified": self.verified,
             "remaining_findings": self.remaining_findings,
             "shipped": self.shipped,
             "tree_hash": self.tree_hash,
             "tree_epoch": self.epoch,
+            "run_success": run_success,
         }));
         sink.write_value(run_finished);
         Ok(())
@@ -61711,6 +63035,83 @@ fn emit_run_terminal_events(
     } else {
         sink.write_value(run_finished);
         Ok(())
+    }
+}
+
+struct PillarRunTerminalGuard {
+    sink: Arc<dyn EventSink>,
+    stage: &'static str,
+    armed: bool,
+}
+
+impl PillarRunTerminalGuard {
+    fn new(enabled: bool, sink: Arc<dyn EventSink>) -> Self {
+        Self {
+            sink,
+            stage: "prebuild-setup",
+            armed: enabled,
+        }
+    }
+
+    fn enter(&mut self, stage: &'static str) {
+        self.stage = stage;
+    }
+
+    fn fail(&mut self, stage: &'static str, error: &anyhow::Error) {
+        if !self.armed {
+            return;
+        }
+        self.stage = stage;
+        let diagnostic = error.to_string();
+        let diagnostic_sha256 = content_sha256(&diagnostic);
+        self.sink.write_value(serde_json::json!({
+            "event": "run_terminal_failure",
+            "terminal_stage": stage,
+            "reason": "phase returned an error; diagnostic retained only by digest",
+            "reason_sha256": diagnostic_sha256,
+            "continuation": "none-untrusted-phase-output-cannot-advance",
+            "terminal": true,
+        }));
+        self.sink.write_value(serde_json::json!({
+            "event": "run_finished",
+            "success": false,
+            "terminal_stage": stage,
+            "reason_sha256": diagnostic_sha256,
+            "complete_failed": true,
+        }));
+        self.armed = false;
+    }
+
+    fn disarm(&mut self) {
+        self.armed = false;
+    }
+}
+
+impl Drop for PillarRunTerminalGuard {
+    fn drop(&mut self) {
+        if !self.armed {
+            return;
+        }
+        let diagnostic = format!(
+            "pillar run left stage `{}` without recording a terminal outcome",
+            self.stage
+        );
+        let diagnostic_sha256 = content_sha256(&diagnostic);
+        self.sink.write_value(serde_json::json!({
+            "event": "run_terminal_failure",
+            "terminal_stage": self.stage,
+            "reason": diagnostic,
+            "reason_sha256": diagnostic_sha256,
+            "continuation": "none-unhandled-phase-exit",
+            "terminal": true,
+        }));
+        self.sink.write_value(serde_json::json!({
+            "event": "run_finished",
+            "success": false,
+            "terminal_stage": self.stage,
+            "reason_sha256": diagnostic_sha256,
+            "complete_failed": true,
+        }));
     }
 }
 
@@ -61825,6 +63226,8 @@ async fn run_post_build_ast_review(
     let Some((device_id, model_id)) = fix_target else {
         return Ok(demote_survivors);
     };
+    let generation_timeout =
+        dispatcher.generation_timeout(&model_id, std::time::Duration::from_secs(fix_cap_secs));
     eprintln!("AST review: dispatching ONE corrective wire-fix attempt ...");
     let candidate = match repair_tree.as_mut() {
         Some(tree) => Some(tree.begin_candidate("wire-fix")?),
@@ -61849,11 +63252,7 @@ async fn run_post_build_ast_review(
         replan_authority: None,
         activity_publisher: None,
     };
-    let _ = tokio::time::timeout(
-        std::time::Duration::from_secs(fix_cap_secs),
-        dispatcher.run(request),
-    )
-    .await;
+    let _ = await_with_optional_timeout(dispatcher.run(request), generation_timeout).await;
     if let Some(candidate) = candidate {
         repair_tree
             .expect("repair tree existed when candidate opened")
@@ -62027,7 +63426,10 @@ mod repair_tree_seal_tests {
         expected_changed.sort();
         assert_eq!(changed_repair_files(&before, &after), expected_changed);
         assert!(sealed
-            .emit_final_events(&sink, serde_json::json!({ "event": "run_finished" }))
+            .emit_final_events(
+                &sink,
+                serde_json::json!({ "event": "run_finished", "success": true }),
+            )
             .is_err());
     }
 
@@ -62093,12 +63495,12 @@ mod repair_tree_seal_tests {
             sealed_snapshot,
             "engine-owned terminal evidence must not mutate the sealed application tree"
         );
-        sealed
-            .emit_final_events(&sink, serde_json::json!({ "event": "run_finished" }))
-            .unwrap();
         std::fs::write(dir.path().join("app.txt"), "v3\n").unwrap();
         assert!(sealed
-            .emit_final_events(&sink, serde_json::json!({ "event": "run_finished" }))
+            .emit_final_events(
+                &sink,
+                serde_json::json!({ "event": "run_finished", "success": true }),
+            )
             .is_err());
 
         let events = sink.names();
@@ -62117,17 +63519,19 @@ mod repair_tree_seal_tests {
             events
                 .iter()
                 .position(|event| event == "repair_tree_sealed")
+                < events
+                    .iter()
+                    .position(|event| event == "post_seal_mutation")
+        );
+        assert!(
+            events
+                .iter()
+                .position(|event| event == "post_seal_mutation")
                 < events.iter().position(|event| event == "complete_result")
         );
         assert!(
             events.iter().position(|event| event == "complete_result")
                 < events.iter().position(|event| event == "run_finished")
-        );
-        assert!(
-            events.iter().position(|event| event == "run_finished")
-                < events
-                    .iter()
-                    .position(|event| event == "post_seal_mutation")
         );
         assert_eq!(
             events
@@ -62135,7 +63539,7 @@ mod repair_tree_seal_tests {
                 .filter(|event| *event == "complete_result")
                 .count(),
             1,
-            "post-seal drift must not emit a second result: {events:?}"
+            "post-seal drift must emit exactly one explicit failed result: {events:?}"
         );
         assert_eq!(
             events
@@ -62143,8 +63547,19 @@ mod repair_tree_seal_tests {
                 .filter(|event| *event == "run_finished")
                 .count(),
             1,
-            "post-seal drift must not emit a second run report: {events:?}"
+            "post-seal drift must emit exactly one explicit failed run report: {events:?}"
         );
+        let values = sink.values();
+        assert!(values.iter().any(|event| {
+            event["event"] == "complete_result"
+                && event["passed"] == false
+                && event["verified"] == false
+        }));
+        assert!(values.iter().any(|event| {
+            event["event"] == "run_finished"
+                && event["success"] == false
+                && event["terminal_stage"] == "post-seal-integrity"
+        }));
     }
 
     #[test]
@@ -62206,7 +63621,7 @@ mod repair_tree_seal_tests {
         );
         std::fs::remove_file(&wal).unwrap();
         std::fs::write(&wal, "injected replacement\n").unwrap();
-        reseal_authoritative_scheduler_checkpoints(
+        let reseal_error = reseal_authoritative_scheduler_checkpoints(
             &store,
             Some((
                 std::slice::from_ref(&capability_spec),
@@ -62217,17 +63632,24 @@ mod repair_tree_seal_tests {
             "authoritative-tree-hash",
             &sink,
         )
-        .unwrap();
+        .unwrap_err();
+        assert!(reseal_error
+            .to_string()
+            .contains("checkpoint durability reseal failed"));
 
         let sealed = tree
-            .seal("authoritative tree".to_string(), false, &sink)
+            .seal_incomplete(
+                "verified tree lacks exact scheduler checkpoint evidence".to_string(),
+                true,
+                &sink,
+            )
             .unwrap();
         let overview_event = run_overview_event(None, "other", false, None, 1);
         emit_run_terminal_events(
             &sink,
             Some(overview_event),
             Some(&sealed),
-            serde_json::json!({ "event": "run_finished" }),
+            serde_json::json!({ "event": "run_finished", "success": false }),
         )
         .unwrap();
 
@@ -62241,11 +63663,11 @@ mod repair_tree_seal_tests {
                 .iter()
                 .map(|event| event["stage"].as_str().unwrap())
                 .collect::<Vec<_>>(),
-            ["capability-repair", "main-build"],
-            "main reseal was not attempted after capability reseal failed"
+            ["capability-repair"],
+            "a failed prerequisite reseal must stop before claiming later checkpoint durability"
         );
         for event in unavailable {
-            assert_eq!(event["status"], "unavailable");
+            assert_eq!(event["status"], "final-incomplete");
             assert_eq!(event["reason"], "checkpoint_durability_reseal_failed");
             assert_eq!(event["resume_claim_disabled"], true);
             assert!(!event
@@ -62254,8 +63676,8 @@ mod repair_tree_seal_tests {
         }
         assert!(values.iter().any(|event| {
             event["event"] == "complete_result"
-                && event["passed"] == true
-                && event["verified"] == true
+                && event["passed"] == false
+                && event["verified"] == false
         }));
         assert!(values
             .iter()
@@ -62274,7 +63696,7 @@ mod repair_tree_seal_tests {
             .filter(|event| {
                 [
                     "scheduler_checkpoint_reseal_unavailable",
-                    "repair_tree_sealed",
+                    "repair_tree_incomplete_sealed",
                     "run_overview",
                     "complete_result",
                     "run_finished",
@@ -62286,8 +63708,7 @@ mod repair_tree_seal_tests {
             terminal,
             [
                 "scheduler_checkpoint_reseal_unavailable",
-                "scheduler_checkpoint_reseal_unavailable",
-                "repair_tree_sealed",
+                "repair_tree_incomplete_sealed",
                 "run_overview",
                 "complete_result",
                 "run_finished",
@@ -62342,7 +63763,35 @@ mod repair_tree_seal_tests {
     }
 
     #[test]
-    fn recorded_authoritative_feedback_terminalizes_explicitly_incomplete() {
+    fn green_tree_forced_incomplete_by_checkpoint_evidence_never_passes() {
+        let dir = tempfile::TempDir::new().unwrap();
+        std::fs::write(dir.path().join("app.txt"), "green bytes\n").unwrap();
+        let sink = CaptureSink::default();
+        let mut tree = OpenRepairTree::open(dir.path(), &sink).unwrap();
+        tree.record_ruling(&synthetic_ruler(&[]), "authoritative", &sink)
+            .unwrap();
+
+        let sealed = tree
+            .seal_incomplete(
+                "verified tree lacks exact scheduler checkpoint evidence".to_string(),
+                true,
+                &sink,
+            )
+            .unwrap();
+
+        assert!(!sealed.passed);
+        assert!(!sealed.verified);
+        let event = sink
+            .values()
+            .into_iter()
+            .find(|event| event["event"] == "repair_tree_incomplete_sealed")
+            .unwrap();
+        assert_eq!(event["passed"], false);
+        assert_eq!(event["verified"], false);
+    }
+
+    #[test]
+    fn recorded_authoritative_feedback_requests_semantic_alternative_without_sealing() {
         let fixture: serde_json::Value = serde_json::from_str(include_str!(
             "../../../../evals/swarm-bench/fixtures/qwen38-v21-r5-final-repair-feedback.json"
         ))
@@ -62354,67 +63803,68 @@ mod repair_tree_seal_tests {
             .map(|finding| finding.as_str().unwrap().to_string())
             .collect::<Vec<_>>();
         let mut feedback = AuthoritativeRepairFeedback::default();
-        assert_eq!(
+        assert!(matches!(
             feedback.classify(&findings),
-            AuthoritativeRepairDisposition::Continue { cycle: 1 }
-        );
+            AuthoritativeRepairDisposition::Continue {
+                cycle: 1,
+                repeated: false,
+                prior_cycle: None,
+            }
+        ));
         feedback.note_budget_refreshed();
         feedback.note_ruler(&findings);
         feedback.note_repair_dispatch();
         feedback.note_ruler(&findings);
-        let AuthoritativeRepairDisposition::Incomplete(evidence) = feedback.classify(&findings)
+        let AuthoritativeRepairDisposition::Continue {
+            cycle,
+            repeated,
+            prior_cycle: Some(evidence),
+        } = feedback.classify(&findings)
         else {
-            panic!("the repeated recorded authority reopened instead of degrading");
+            panic!("the repeated recorded authority did not request a semantic alternative");
         };
+        assert_eq!(cycle, 2);
+        assert!(repeated);
+        assert!(evidence.feedback_applied);
+        assert!(evidence.repair_dispatched);
+        assert_eq!(evidence.post_dispatch_rulers, 1);
+        assert!(evidence.budget_refreshed);
+    }
 
+    #[test]
+    fn green_ruler_cannot_emit_green_terminal_events_for_a_failed_run() {
         let dir = tempfile::TempDir::new().unwrap();
-        std::fs::write(dir.path().join("app.txt"), "still incomplete\n").unwrap();
+        std::fs::write(dir.path().join("app.txt"), "runnable\n").unwrap();
         let sink = CaptureSink::default();
         let mut tree = OpenRepairTree::open(dir.path(), &sink).unwrap();
-        let ruling = tree
-            .record_ruling_values(false, true, findings.len(), "post-repair-floor", &sink)
+        tree.record_ruling_values(true, true, 0, "authoritative", &sink)
             .unwrap();
-        emit_authoritative_repair_unavailable(&sink, &ruling, evidence);
         let sealed = tree
-            .seal_incomplete("incomplete evidence tree".to_string(), false, &sink)
+            .seal("runnable but incomplete run".to_string(), false, &sink)
             .unwrap();
+
         emit_run_terminal_events(
             &sink,
             None,
             Some(&sealed),
-            serde_json::json!({ "event": "run_finished" }),
+            serde_json::json!({
+                "event": "run_finished",
+                "success": false,
+                "unresolved_core_failures": ["missing-core-task"],
+            }),
         )
         .unwrap();
 
-        assert_eq!(
-            sink.names(),
-            [
-                "repair_tree_opened",
-                "repair_tree_ruled",
-                "authoritative_repair_unavailable",
-                "repair_tree_incomplete_sealed",
-                "complete_result",
-                "run_finished",
-            ]
-        );
         let values = sink.values();
-        assert!(values.iter().any(|event| {
-            event["event"] == "authoritative_repair_unavailable"
-                && event["status"] == "degraded"
-                && event["feedback_applied"] == true
-                && event["repair_dispatched"] == true
-                && event["post_dispatch_rulers"] == 1
-                && event["budget_refreshed"] == true
-        }));
         assert!(values.iter().any(|event| {
             event["event"] == "complete_result"
                 && event["passed"] == false
                 && event["verified"] == true
-                && event["remaining_findings"] == findings.len()
+                && event["run_success"] == false
         }));
-        assert!(!values
+        assert!(values
             .iter()
-            .any(|event| event["event"] == "repair_tree_sealed"));
+            .any(|event| { event["event"] == "run_finished" && event["success"] == false }));
     }
 
     #[test]
@@ -63002,13 +64452,8 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
         std::env::set_var("GOOSE_SWARM_SINK_CAP_SECS", cfg.sink_cap_secs.to_string());
     }
     if uncapped() {
-        // GOOSE_SWARM_UNCAPPED wins over both config and an explicit env: the sink runs until
-        // done, the thinking-only timer never fires. Idle failsafes and the judge stay armed.
-        std::env::set_var("GOOSE_SWARM_SINK_CAP_SECS", "0");
-        std::env::set_var("GOOSE_SWARM_PROGRESS_WATCHDOG_SECS", "0");
-        std::env::set_var("GOOSE_SWARM_STRAGGLER_STOP_DEGRADE", "0");
         eprintln!(
-            "  swarm: UNCAPPED — no wall/volume caps this run; only the judge, repeat-break and dead-stream failsafes can stop a call"
+            "  swarm: SEMANTICALLY SUPERVISED — local generations have no elapsed, silence, volume, or turn stop; the judge redirects semantic loops"
         );
     }
     // Same bridge for SINK IDLE-FILL, and it is the FIRST one this lever has ever had.
@@ -63080,11 +64525,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
     // out of the spawn dir. The breadcrumb is written in the dir the desktop passed us, so it is always
     // where the panel is looking, and it is rewritten at the START of every run.
     publish_current_run(&spawn_dir, &working_dir, &run_id);
-    let worker_max_turns = if uncapped() {
-        100_000
-    } else {
-        opts.max_turns.unwrap_or(cfg.worker_max_turns)
-    };
+    let worker_max_turns = opts.max_turns.unwrap_or(cfg.worker_max_turns);
     // M5: a fresh run must NOT inherit stale .swarm/prereview findings from a previous run in this working
     // dir — they would be injected into THIS run's integrate-verify and describe code that no longer exists.
     let _ = std::fs::remove_dir_all(working_dir.join(".swarm").join("prereview"));
@@ -63516,6 +64957,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
         broker_enforcement_requested,
         default_on_environment_gate("GOOSE_SWARM_PILLAR_FLOW"),
     );
+    let mut pillar_terminal_guard = PillarRunTerminalGuard::new(pillar_flow_on, sink.clone());
     let legacy_judge_requested = !pillar_flow_on && idle_judge_enabled();
     let legacy_prereview_requested = !pillar_flow_on && prereview_enabled();
     let judge_on = legacy_auxiliary_control_enabled(
@@ -63579,6 +65021,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
     // engine has established no ability to research, and routing an open decision to a research round it
     // never configured would be the same guess-laundering by another door.
     if pillar_flow_on {
+        pillar_terminal_guard.enter("pillar-research");
         let research_exts: Arc<Vec<ExtensionConfig>> = Arc::new(build_research_exts(
             swarm_gate_cfg("GOOSE_SWARM_RESEARCH_TOOLS", cfg.research_tools),
         ));
@@ -63599,19 +65042,30 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             "PILLAR OPENING + RESEARCH",
             "one opener defines an exact cover; one owner researches each non-overlapping pillar",
         );
-        let outcome = dispatcher
+        let outcome = match dispatcher
             .research_by_pillars_until_ready(
                 &raw_user_spec,
                 research_exts,
                 worker_devices,
                 &cfg.planner_model,
             )
-            .await?;
+            .await
+        {
+            Ok(outcome) => outcome,
+            Err(error) => {
+                pillar_terminal_guard.fail("pillar-research", &error);
+                return Err(error);
+            }
+        };
         if !research_findings.trim().is_empty() {
             research_findings.push_str("\n\n");
         }
         research_findings.push_str(&outcome.synthesis);
-        doc_facts = outcome.verified_facts.clone();
+        doc_facts = format!(
+            "EXCERPTED REQUIREMENT IDS (the following Proven fact text is incomplete for these IDs; preserve them as unresolved unless the checkpoint supplies the full claim):\n{}\n\n{}",
+            serde_json::to_string(&outcome.omitted_requirement_ids)?,
+            outcome.verified_facts,
+        );
         fix_pillars_block = outcome.worker_context.clone();
         dispatcher.set_pillars(fix_pillars_block.clone());
         sink.write_value(serde_json::json!({
@@ -63849,7 +65303,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
     // Retain the serialized/CLI value in telemetry for compatibility, but never let it multiply full-plan
     // authors. `parallel_plan` proves the effective topology is one skeleton regardless of this value.
     let best_of_n = opts.best_of_n.unwrap_or(cfg.best_of_n_skeletons).max(1);
-    let cwd_for_ask = std::env::current_dir().unwrap_or_default();
+    let cwd_for_ask = working_dir.clone();
     // The planning pod includes the spec-clarity authority; force it when a floor is set so the gate is never
     // silently inert (the solo planner returns no confidence).
     let use_parallel = cfg.parallel_planning || ask_floor.is_some();
@@ -64122,7 +65576,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             "max_replans": load_config().max_replans,
             "max_research_questions": load_config().max_research_questions,
             "best_of_n_skeletons": best_of_n,
-            "scout_budget_secs": if uncapped() { UNCAPPED_SECS } else { cfg.scout_budget_secs },
+            "scout_budget_secs": if uncapped() { 0 } else { cfg.scout_budget_secs },
             "scout_max_lookups": load_config().scout_max_lookups,
             "sink_cap_secs": std::env::var("GOOSE_SWARM_SINK_CAP_SECS")
                 .ok()
@@ -64169,7 +65623,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             "repeat_penalty": swarm_repeat_penalty_resolved(cfg.repeat_penalty),
             "uncapped": uncapped(),
             "complete_cap_secs": if uncapped() {
-                UNCAPPED_SECS
+                0
             } else {
                 std::env::var("GOOSE_SWARM_COMPLETE_CAP_SECS")
                     .ok()
@@ -64186,7 +65640,16 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
         for (k, v) in src {
             dst.insert(k.clone(), v.clone());
         }
-        apply_uncapped_effective_values(dst, uncapped(), UNCAPPED_SECS, worker_max_turns);
+        apply_uncapped_effective_values(
+            dst,
+            uncapped(),
+            0,
+            if uncapped() {
+                UNBOUNDED_AGENT_TURNS
+            } else {
+                worker_max_turns
+            },
+        );
     }
     sink.write_value(levers_event);
 
@@ -64358,6 +65821,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             .map_err(|e| anyhow!("the resumed plan will not parse: {e}"))?;
         (r.plan_json, dag, PlanConf::default(), false)
     } else if pillar_flow_on {
+        pillar_terminal_guard.enter("pillar-planning");
         let outcome = pillar_research_outcome
             .as_ref()
             .ok_or_else(|| anyhow!("pillar research completed without a resumable outcome"))?;
@@ -64365,9 +65829,16 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             "ONE SYNTHESIS PLAN",
             "the strongest node writes the final exact task DAG; no model verification round follows",
         );
-        let (plan_json, dag) = dispatcher
+        let (plan_json, dag) = match dispatcher
             .plan_from_pillars(&raw_user_spec, outcome, &cfg.planner_model)
-            .await?;
+            .await
+        {
+            Ok(plan) => plan,
+            Err(error) => {
+                pillar_terminal_guard.fail("pillar-planning", &error);
+                return Err(error);
+            }
+        };
         (plan_json, dag, PlanConf::default(), false)
     } else {
         // Labeled so ASK-AWAY's inner ask loop can `continue 'plan_loop` to force a re-plan on a structural
@@ -65258,7 +66729,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
         if pillars.pillars.is_empty() {
             eprintln!("  pillars: none distilled — skipping injection");
         } else {
-            let dir = std::env::current_dir().unwrap_or_default().join(".swarm");
+            let dir = working_dir.join(".swarm");
             let _ = std::fs::create_dir_all(&dir);
             let _ = std::fs::write(
                 dir.join("pillars.json"),
@@ -65497,6 +66968,9 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
         .map(|node| node.spec.clone())
         .collect::<Vec<_>>();
     build_specs.sort_by(|left, right| left.id.cmp(&right.id));
+    if pillar_flow_on {
+        pillar_terminal_guard.enter("scheduler-setup");
+    }
     let pillar_integration_required = if pillar_flow_on {
         serde_json::from_str::<serde_json::Value>(&plan_json)?
             .get("canonical_plan_authority")
@@ -65507,7 +66981,12 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
         false
     };
     dispatcher.validate_replan_authority_matches_final_dag(&dag)?;
-    let mut scheduler = Scheduler::new(devices, cfg.max_attempts)
+    let scheduler_attempt_authority = if pillar_flow_on {
+        u32::MAX
+    } else {
+        cfg.max_attempts
+    };
+    let mut scheduler = Scheduler::new(devices, scheduler_attempt_authority)
         .with_sink(sink.clone())
         // DOC-PREFETCH (Phase 1, Move 2): hand the grounded facts to every worker. Empty when off =>
         // byte-identical (matches the `with_doc_facts` default).
@@ -65581,7 +67060,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
         scheduler = scheduler.with_semantic_observation(Arc::new(producer), Arc::new(reviewer));
         sink.write_value(serde_json::json!({
             "event": "physical_semantic_control_active",
-            "authority": "observation_only",
+            "authority": "semantic_tail_review_and_exact_session_nudge",
             "verified_route_count": physical_snapshot_devices.len(),
             "legacy_judge_substituted": legacy_judge_requested,
             "legacy_prereview_substituted": legacy_prereview_requested,
@@ -65592,7 +67071,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             "activity_ui_mirror": "best_effort_atomic",
         }));
         eprintln!(
-            "physical semantic supervision: observation-only reviews use verified idle routes"
+            "physical semantic supervision: verified idle routes review live tails and can nudge the exact session"
         );
     } else {
         // Borrowed machines excluded by MAX_NODES remain read-only supervision devices in the
@@ -65668,7 +67147,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
     ) = if swarm_gate_cfg("GOOSE_SWARM_REVIEW", load_config().review) {
         // Snapshot the demote-eligible MODULES too, on the same principle: a module that was already dead
         // before this run started is not this run's doing and must never retract its verified claim.
-        let snap_root = std::env::current_dir().unwrap_or_default();
+        let snap_root = working_dir.clone();
         let r = run_ast_review(&snap_root, &app_scope_py(&snap_root, &smoke_all_files)).await;
         (
             r.findings.into_iter().collect(),
@@ -65683,10 +67162,13 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
     // Planning ends here (skeleton draft + verbalized confidence + any ASK/re-plan + detailing are all
     // behind us); the scheduler.run below IS the execute phase (workers + judge + integrate-verify).
     if let Some(control) = pre_scheduler_control.as_ref() {
-        // A naturally slow semantic review must not become a new phase wall. Execute inherits the
-        // same broker, so it can use every genuinely free lane while the admitted review drains and
-        // still cannot oversubscribe the host carrying that review.
-        dispatcher.set_pre_scheduler_semantic(None);
+        // Keep the brokered semantic runtime available for post-scheduler pillar repairs. Main
+        // scheduler calls already carry a provider lifecycle and therefore bypass this direct-call
+        // adapter; retaining it cannot double-admit execute work. Legacy flows preserve their old
+        // post-scheduler direct-call behavior.
+        if !pillar_flow_on {
+            dispatcher.set_pre_scheduler_semantic(None);
+        }
         let (pending, active) = control.occupancy().await;
         sink.write_value(serde_json::json!({
             "event": "pre_scheduler_physical_supervision_handoff",
@@ -65696,7 +67178,10 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
         }));
     }
     let t_plan = std::time::Instant::now();
-    let report = if broker_enforcement_requested {
+    if pillar_flow_on {
+        pillar_terminal_guard.enter("execute");
+    }
+    let report_result = if broker_enforcement_requested {
         let control = pre_scheduler_control
             .clone()
             .expect("physical pre-scheduler control was preflighted");
@@ -65713,7 +67198,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                 final_binding_spec.clone(),
                 user_decisions.clone(),
             )
-            .await?
+            .await
     } else {
         scheduler
             .run_with_decisions(
@@ -65724,8 +67209,35 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                 // reaches a worker.
                 user_decisions.clone(),
             )
-            .await?
+            .await
     };
+    let report = match report_result {
+        Ok(report) => report,
+        Err(error) => {
+            pillar_terminal_guard.disarm();
+            let diagnostic = error.to_string();
+            let diagnostic_sha256 = content_sha256(&diagnostic);
+            sink.write_value(serde_json::json!({
+                "event": "run_terminal_failure",
+                "terminal_stage": "execute",
+                "reason": elide_middle(&diagnostic, 160, 640),
+                "reason_sha256": diagnostic_sha256,
+                "continuation": "none-untrustworthy-scheduler-report-cannot-enter-repair",
+                "terminal": true,
+            }));
+            sink.write_value(serde_json::json!({
+                "event": "run_finished",
+                "success": false,
+                "terminal_stage": "execute",
+                "reason_sha256": diagnostic_sha256,
+                "complete_failed": true,
+            }));
+            return Err(error);
+        }
+    };
+    if pillar_flow_on {
+        pillar_terminal_guard.enter("repair-and-complete");
+    }
     // F857b (speed hunt 2026-08-16): the pre-run snapshot cannot know files that replan/split added
     // mid-run, so every post-run scope (orphan check, complete-phase instruments, fix all_files) was
     // structurally blind to them — ~17 node-min of replan-added tests flagged as orphans and excluded
@@ -65750,11 +67262,26 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
         .iter()
         .map(|evidence| evidence.task_id.clone())
         .chain(report.provisional.iter().cloned())
+        .chain(report.salvaged.iter().cloned())
         .collect::<HashSet<_>>();
     let mut capability_recovery = Vec::<CapabilityRecoveryReceipt>::new();
+    let mut capability_repair_failed_obligations = Vec::<String>::new();
 
-    let hard_failed = hard_failed_tasks(&report.failed, &report.unavailable, &report.provisional);
-    if pillar_flow_on && hard_failed.is_empty() {
+    let hard_failed = hard_failed_tasks(
+        &report.failed,
+        &report.unavailable,
+        &report.provisional,
+        &report.salvaged,
+    );
+    if pillar_flow_on {
+        if !hard_failed.is_empty() && !degraded_task_ids.is_empty() {
+            sink.write_value(serde_json::json!({
+                "event": "capability_repair_continues_with_unrelated_hard_failures",
+                "hard_failed_task_ids": &hard_failed,
+                "degraded_task_ids": &degraded_task_ids,
+                "policy": "repair every independently recoverable obligation; hard integrity evidence remains final-green-blocking",
+            }));
+        }
         match capability_repair_plan(
             &build_specs,
             pillar_integration_required,
@@ -65780,109 +67307,232 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                     "tasks": repair_tasks,
                     "build_capabilities": build_specs.len(),
                     "integration_required": pillar_integration_required,
-                    "topology": "disjoint-capability-roots-after-main-dag-conditional-integration",
+                    "topology": "parallel-disjoint-producer-roots-then-conditional-integration-root",
                     "whole_product_ruler": "runs-once-after-wave",
                 }));
-                let repair_dag = Dag::from_specs(repair_plan.specs.clone())
-                    .map_err(|error| anyhow!("capability repair DAG was invalid: {error}"))?;
-                let repair_scheduler = Scheduler::new(fix_devices.clone(), 1)
-                    .with_sink(sink.clone())
-                    .with_doc_facts(doc_facts.clone())
-                    .with_pause_file(working_dir.join(".swarm").join("pause"))
-                    .with_checkpoint_store(
-                        scheduler_checkpoint_store
+                let repair_setup: Result<_> = (|| {
+                    let repair_dag = Dag::from_specs(repair_plan.specs.clone())
+                        .map_err(|error| anyhow!("capability repair DAG was invalid: {error}"))?;
+                    let mut repair_scheduler = Scheduler::new(fix_devices.clone(), u32::MAX)
+                        .with_sink(sink.clone())
+                        .with_doc_facts(doc_facts.clone())
+                        .with_pause_file(working_dir.join(".swarm").join("pause"))
+                        .with_checkpoint_store(
+                            scheduler_checkpoint_store
+                                .as_ref()
+                                .ok_or_else(|| {
+                                    anyhow!(
+                                        "pillar capability repair has no scheduler checkpoint store"
+                                    )
+                                })?
+                                .clone(),
+                        )
+                        .with_degrade_on_stall();
+                    let physical_control = if broker_enforcement_requested {
+                        let snapshot = physical_snapshot
                             .as_ref()
-                            .expect("pillar flow armed a scheduler checkpoint store")
-                            .clone(),
-                    )
-                    .with_degrade_on_stall();
-                let repair_result = if broker_enforcement_requested {
-                    repair_scheduler
-                        .run_with_physical_admission(
-                            repair_dag,
-                            smoke_fix_dispatcher.clone() as Arc<dyn ProviderLifecycleDispatcher>,
-                            pre_scheduler_control
-                                .clone()
-                                .expect("physical pre-scheduler control was preflighted"),
-                            PhysicalExecutionAuthority::new(
-                                AuthorityScope::new(run_id.clone(), "capability-repair"),
-                                0,
-                                WorkRole::Repair,
-                            ),
-                            final_binding_spec.clone(),
-                            user_decisions.clone(),
+                            .map_err(|error| {
+                                anyhow!(
+                                    "pillar capability repair has no verified physical fleet snapshot: {error}"
+                                )
+                            })?
+                            .clone();
+                        let routes = snapshot
+                            .lanes
+                            .iter()
+                            .cloned()
+                            .map(|lane| {
+                                GooseSemanticProviderRoute::bind(
+                                    "lmstudio",
+                                    smoke_fix_dispatcher.provider.clone(),
+                                    lane,
+                                )
+                            })
+                            .collect::<std::result::Result<Vec<_>, _>>()
+                            .map_err(anyhow::Error::msg)?;
+                        let producer =
+                            GooseSemanticObservationSnapshotProducer::new_with_activity_health(
+                                &working_dir,
+                                smoke_fix_dispatcher.activity_sink_health.clone(),
+                            )
+                            .map_err(anyhow::Error::msg)?;
+                        let reviewer = GooseAdmittedSemanticObservationReviewer::new(
+                            snapshot,
+                            routes,
+                            smoke_fix_dispatcher.sampling.temperature,
+                            smoke_fix_dispatcher.semantic_observation_request_params(),
                         )
-                        .await
-                } else {
-                    repair_scheduler
-                        .run_with_decisions(
-                            repair_dag,
-                            smoke_fix_dispatcher.clone() as Arc<dyn TaskDispatcher>,
-                            final_binding_spec.clone(),
-                            user_decisions.clone(),
-                        )
-                        .await
+                        .map_err(anyhow::Error::msg)?;
+                        repair_scheduler = repair_scheduler
+                            .with_semantic_observation(Arc::new(producer), Arc::new(reviewer));
+                        sink.write_value(serde_json::json!({
+                            "event": "capability_repair_semantic_control_active",
+                            "authority": "semantic_tail_review_and_exact_session_nudge",
+                            "verified_route_count": physical_snapshot_devices.len(),
+                        }));
+                        Some(pre_scheduler_control.clone().ok_or_else(|| {
+                            anyhow!("pillar capability repair has no physical admission control")
+                        })?)
+                    } else {
+                        None
+                    };
+                    Ok((repair_dag, repair_scheduler, physical_control))
+                })();
+                let repair_result = match repair_setup {
+                    Ok((repair_dag, repair_scheduler, Some(control))) => {
+                        repair_scheduler
+                            .run_with_physical_admission(
+                                repair_dag,
+                                smoke_fix_dispatcher.clone()
+                                    as Arc<dyn ProviderLifecycleDispatcher>,
+                                control,
+                                PhysicalExecutionAuthority::new(
+                                    AuthorityScope::new(run_id.clone(), "capability-repair"),
+                                    0,
+                                    WorkRole::Repair,
+                                ),
+                                final_binding_spec.clone(),
+                                user_decisions.clone(),
+                            )
+                            .await
+                    }
+                    Ok((repair_dag, repair_scheduler, None)) => {
+                        repair_scheduler
+                            .run_with_decisions(
+                                repair_dag,
+                                smoke_fix_dispatcher.clone() as Arc<dyn TaskDispatcher>,
+                                final_binding_spec.clone(),
+                                user_decisions.clone(),
+                            )
+                            .await
+                    }
+                    Err(error) => Err(error),
                 };
                 match repair_result {
                     Ok(repair_report) => {
-                        match completed_checkpoint_evidence(&checkpoint_specs, &repair_report) {
-                            Ok(evidence) => {
-                                capability_repair_checkpoint_reseal =
-                                    Some((checkpoint_specs, evidence));
-                            }
-                            Err(error) => sink.write_value(serde_json::json!({
-                                "event": "capability_repair_checkpoint_reseal_unavailable",
-                                "reason": error.to_string(),
-                                "status": "nonfatal",
-                            })),
-                        }
-                        match capability_recovery_receipts(
-                            &std::env::current_dir().unwrap_or_default(),
-                            &build_specs,
-                            &report,
-                            &repair_plan,
+                        match completed_capability_repair_evidence(
+                            &checkpoint_specs,
                             &repair_report,
                         ) {
-                            Ok(receipts) => capability_recovery = receipts,
-                            Err(error) => sink.write_value(serde_json::json!({
-                                "event": "capability_recovery_receipt_rejected",
-                                "reason": error.to_string(),
-                                "status": "fail_closed",
-                            })),
+                            Ok(evidence) => match capability_recovery_receipts(
+                                &working_dir,
+                                &build_specs,
+                                &report,
+                                &repair_plan,
+                                &repair_report,
+                            ) {
+                                Ok(receipts) if receipts.len() == degraded_task_ids.len() => {
+                                    capability_repair_checkpoint_reseal =
+                                        Some((checkpoint_specs.clone(), evidence));
+                                    capability_recovery = receipts;
+                                    sink.write_value(serde_json::json!({
+                                        "event": "capability_repair_completed",
+                                        "planned_files": repair_report.planned_files,
+                                        "task_count": checkpoint_specs.len(),
+                                        "receipt_count": capability_recovery.len(),
+                                        "status": "exact-complete-and-receipts-validated",
+                                        "next": "deterministic-whole-product-ruler",
+                                    }));
+                                }
+                                Ok(receipts) => {
+                                    let reason = format!(
+                                        "capability repair produced {} validated recovery receipts for {} degraded obligations",
+                                        receipts.len(),
+                                        degraded_task_ids.len()
+                                    );
+                                    capability_repair_failed_obligations.extend(
+                                        capability_repair_failure_findings(
+                                            &checkpoint_specs,
+                                            &reason,
+                                        ),
+                                    );
+                                    sink.write_value(serde_json::json!({
+                                        "event": "capability_recovery_receipt_rejected",
+                                        "reason": reason,
+                                        "status": "final-incomplete",
+                                        "accounting": "complete-ruler-blocking-finding",
+                                    }));
+                                }
+                                Err(error) => {
+                                    let reason = error.to_string();
+                                    capability_repair_failed_obligations.extend(
+                                        capability_repair_failure_findings(
+                                            &checkpoint_specs,
+                                            &reason,
+                                        ),
+                                    );
+                                    sink.write_value(serde_json::json!({
+                                        "event": "capability_recovery_receipt_rejected",
+                                        "reason": reason,
+                                        "status": "final-incomplete",
+                                        "accounting": "complete-ruler-blocking-finding",
+                                    }));
+                                }
+                            },
+                            Err(error) => {
+                                let reason = error.to_string();
+                                capability_repair_failed_obligations.extend(
+                                    capability_repair_failure_findings(&checkpoint_specs, &reason),
+                                );
+                                sink.write_value(serde_json::json!({
+                                    "event": "capability_repair_obligation_failed",
+                                    "failed_repair_task_ids": checkpoint_specs
+                                        .iter()
+                                        .map(|spec| spec.id.as_str())
+                                        .collect::<Vec<_>>(),
+                                    "reason": reason,
+                                    "status": "final-incomplete",
+                                    "accounting": "complete-ruler-blocking-finding",
+                                }));
+                            }
                         }
+                    }
+                    Err(error) => {
+                        let reason = error.to_string();
+                        capability_repair_failed_obligations.extend(
+                            capability_repair_failure_findings(&repair_plan.specs, &reason),
+                        );
                         sink.write_value(serde_json::json!({
-                            "event": "capability_repair_completed",
-                            "planned_files": repair_report.planned_files,
-                            "status": "drained",
-                            "next": "deterministic-whole-product-ruler",
+                            "event": "capability_repair_obligation_failed",
+                            "failed_repair_task_ids": repair_plan
+                                .specs
+                                .iter()
+                                .map(|spec| spec.id.as_str())
+                                .collect::<Vec<_>>(),
+                            "reason": reason,
+                            "status": "final-incomplete",
+                            "accounting": "complete-ruler-blocking-finding",
                         }));
                     }
-                    Err(error) => sink.write_value(serde_json::json!({
-                        "event": "capability_repair_degraded",
-                        "error": error.to_string(),
-                        "status": "nonfatal",
-                        "next": "deterministic-whole-product-ruler",
-                    })),
                 }
             }
-            Ok(_) => sink.write_value(serde_json::json!({
+            Ok(_) if degraded_task_ids.is_empty() => sink.write_value(serde_json::json!({
                 "event": "capability_repair_skipped",
                 "reason": "no meaningful capability groups",
             })),
-            Err(error) => sink.write_value(serde_json::json!({
-                "event": "capability_repair_degraded",
-                "error": error.to_string(),
-                "status": "nonfatal",
-                "next": "deterministic-whole-product-ruler",
-            })),
+            Ok(_) => {
+                let reason = "degraded build obligations have no capability repair owner";
+                capability_repair_failed_obligations
+                    .extend(capability_repair_failure_findings(&[], reason));
+                sink.write_value(serde_json::json!({
+                    "event": "capability_repair_obligation_failed",
+                    "reason": reason,
+                    "status": "final-incomplete",
+                    "accounting": "complete-ruler-blocking-finding",
+                }));
+            }
+            Err(error) => {
+                let reason = error.to_string();
+                capability_repair_failed_obligations
+                    .extend(capability_repair_failure_findings(&[], &reason));
+                sink.write_value(serde_json::json!({
+                    "event": "capability_repair_obligation_failed",
+                    "reason": reason,
+                    "status": "final-incomplete",
+                    "accounting": "complete-ruler-blocking-finding",
+                }));
+            }
         }
-    } else if pillar_flow_on {
-        sink.write_value(serde_json::json!({
-            "event": "capability_repair_skipped",
-            "reason": "main build has fail-closed authority/integrity tasks; deterministic ruler retains the evidence",
-            "failed_tasks": hard_failed.len(),
-            "failed_task_ids": hard_failed,
-        }));
     }
 
     // GOOSE_SWARM_COMPLETE: push to REAL completion. VERIFY the built app by RUNNING it (reuse the smoke
@@ -65902,13 +67552,17 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
     // just that workers reported "done"). Only this licenses the overview's confident (non-hedged) layout.
     let mut ov_verified = false;
     if complete_on {
-        let rounds = complete_rounds();
+        let rounds = if pillar_flow_on {
+            u32::MAX
+        } else {
+            complete_rounds()
+        };
         let cap_requested = std::env::var("GOOSE_SWARM_COMPLETE_CAP_SECS")
             .ok()
             .and_then(|v| v.parse::<u64>().ok())
             .unwrap_or_else(|| load_config().complete_cap_secs);
-        let cap_requested = if uncapped() {
-            UNCAPPED_SECS
+        let cap_requested = if pillar_flow_on || uncapped() {
+            0
         } else {
             cap_requested
         };
@@ -65917,10 +67571,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
         // static value reinstates the exact "later rounds unreachable" defect the lift exists to
         // prevent (adversarial-review finding). One value, one helper, engine-side — never a
         // regime-file patch.
-        let fix_cap_eff = fix_cap_secs_scaled(
-            &std::env::current_dir().unwrap_or_default(),
-            &smoke_all_files,
-        );
+        let fix_cap_eff = fix_cap_secs_scaled(&working_dir, &smoke_all_files);
         let cap_secs = complete_cap_fitting_rounds(
             cap_requested,
             rounds as u64,
@@ -65950,8 +67601,9 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
         // one fix-cap BEFORE it — the last round the headroom governor admits then finishes,
         // and the floor/restore/overview tail runs INSIDE the wall. Reuses fix_cap_eff; no
         // new constants. Unset (every non-harness run) = byte-identical.
-        let harness_deadline = std::env::var("GOOSE_SWARM_RUN_DEADLINE_UNIX_MS")
-            .ok()
+        let harness_deadline = (!pillar_flow_on && !uncapped())
+            .then(|| std::env::var("GOOSE_SWARM_RUN_DEADLINE_UNIX_MS").ok())
+            .flatten()
             .and_then(|v| v.parse::<i64>().ok())
             .and_then(|ms| {
                 let now_ms = std::time::SystemTime::now()
@@ -65988,7 +67640,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
         // the already-shipped smoke_rust/smoke_typescript oracles. Python-majority plans still detect
         // Python => the main path is byte-identical.
         let complete_lang = detect_language(&final_binding_spec, &smoke_all_files);
-        let cwd = std::env::current_dir().unwrap_or_default();
+        let cwd = working_dir.clone();
         phase_banner(
             "COMPLETE",
             "verify the app by RUNNING it, fix-until-green (bounded), and refuse to ship a red app",
@@ -66025,7 +67677,9 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             }));
         }
         let mut authoritative_feedback = AuthoritativeRepairFeedback::default();
+        let mut authoritative_semantic_cycle = None;
         let sealed = 'authoritative_repair: loop {
+            let semantic_repair_context = authoritative_semantic_cycle;
             let mut last_findings: Vec<String> = Vec::new();
             // F835 SHIP-BEST-VERIFIED, never ship-last-edited. The serial fix path writes straight
             // into the real tree (its own event admits findings ROSE in 3 of 13 archived rounds),
@@ -66053,7 +67707,11 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             let mut last_verify_established;
             // Stall early-exit budget (GOOSE_SWARM_COMPLETE_STALL_ROUNDS; 0 = opt out of the
             // one-flat-round stop).
-            let stall_cap = complete_stall_rounds();
+            let stall_cap = if pillar_flow_on {
+                0
+            } else {
+                complete_stall_rounds()
+            };
             // F907: which mechanism the previous fix round used and whether it PROMOTED — a
             // promoted round whose finding count held flat is new information for the OTHER
             // mechanism, and the stall exit used to fire before that arm ever saw the improved
@@ -66099,12 +67757,13 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                 &owns_nothing,
                 &report.unavailable,
                 &report.provisional,
+                &report.salvaged,
                 pillar_flow_on,
             )
             .into_iter()
             .filter(|task_id| !unavailable_ids.contains(task_id.as_str()))
             .collect::<Vec<_>>();
-            let failed_task_findings: Vec<String> = if !failed_planned.is_empty()
+            let mut failed_task_findings: Vec<String> = if !failed_planned.is_empty()
                 && (pillar_flow_on
                     || delivery_on
                     || swarm_gate_cfg(
@@ -66138,6 +67797,16 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                 "failed": failed_planned,
                 "detail": "failed planned tasks are blocking the green claim and driving the fix loop",
             }));
+            }
+            if !capability_repair_failed_obligations.is_empty() {
+                failed_task_findings.extend(capability_repair_failed_obligations.iter().cloned());
+                failed_task_findings.sort();
+                failed_task_findings.dedup();
+                sink.write_value(serde_json::json!({
+                    "event": "complete_failed_capability_repairs",
+                    "findings": &capability_repair_failed_obligations,
+                    "detail": "repair scheduler or receipt failure remains an explicit incomplete obligation",
+                }));
             }
             if !report.unavailable.is_empty() {
                 sink.write_value(serde_json::json!({
@@ -66293,12 +67962,12 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                     // correct code: it only narrows a CLAIM to what the evidence supports.
                     if verdict.ran && !verdict.inconclusive.is_empty() {
                         eprintln!(
-                        "  {} NOT verified — {} check(s) never produced a verdict: {}. Nothing was red, but \
+                            "  {} NOT verified — {} check(s) never produced a verdict: {}. Nothing was red, but \
                          nothing was established either.",
-                        style("!").yellow().bold(),
-                        verdict.inconclusive.len(),
-                        verdict.inconclusive.join("; ")
-                    );
+                            style("!").yellow().bold(),
+                            verdict.inconclusive.len(),
+                            verdict.inconclusive.join("; ")
+                        );
                     }
                     if verdict.ran {
                         eprintln!(
@@ -66379,11 +68048,11 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                     eprintln!(
                         "{}",
                         style(format!(
-                        "complete: fix round made no progress ({} -> {} finding(s)) — stopping \
+                            "complete: fix round made no progress ({} -> {} finding(s)) — stopping \
                          instead of buying another wave",
-                        last_findings.len(),
-                        verdict.findings.len()
-                    ))
+                            last_findings.len(),
+                            verdict.findings.len()
+                        ))
                         .yellow()
                     );
                     break;
@@ -66423,11 +68092,11 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                         break;
                     }
                     eprintln!(
-                    "complete: findings still falling ({} -> {}) with budget in hand — extending \
+                        "complete: findings still falling ({} -> {}) with budget in hand — extending \
                      past the {rounds}-round floor",
-                    prev_count.unwrap_or(0),
-                    verdict.findings.len()
-                );
+                        prev_count.unwrap_or(0),
+                        verdict.findings.len()
+                    );
                 }
                 if cap_deadline.is_some_and(|dl| std::time::Instant::now() >= dl) {
                     eprintln!("complete: wall-clock cap reached — stopping the fix loop");
@@ -66457,6 +68126,10 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                 // the same state at 2-6 minutes for a guaranteed stall exit. Break instead; the
                 // round-opening verdict stays the accurate final word on this tree.
                 let mut fix_converged = false;
+                let mut repair_dispatch_failed = false;
+                // The previous value has already informed the semantic strategy switch above. From
+                // this point it records only whether THIS graded wave changed the real tree.
+                last_round_promoted = false;
                 // FIX. Default: ONE serial fix on a single node (v1). GOOSE_SWARM_COMPLETE_PARALLEL: fan one fix
                 // per failing FILE across the fleet's models — each agent writes only its own file (shadow
                 // isolation), so two agents can never touch the same file; same-file findings collapse into one
@@ -66489,16 +68162,20 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                     let attempts: Vec<(usize, String)> =
                         fleet_models.iter().cloned().enumerate().collect();
                     eprintln!(
-                    "complete: fix round {round} — racing {} independent attempt(s) at {baseline} finding(s); \
+                        "complete: fix round {round} — racing {} independent attempt(s) at {baseline} finding(s); \
                      a twin lands only if its re-verify beats {baseline}",
-                    attempts.len()
-                );
+                        attempts.len()
+                    );
                     let me = smoke_fix_dispatcher.clone();
                     let all_files = smoke_all_files.clone();
                     let dev = dev_id.clone();
                     let decisions = user_decisions.clone();
                     let facts = doc_facts.clone();
-                    let desc = smoke_fix_description(&verdict.findings, complete_lang);
+                    let desc = semantic_smoke_fix_description(
+                        &verdict.findings,
+                        complete_lang,
+                        semantic_repair_context,
+                    );
                     let wave_prompt = final_binding_spec.clone();
                     let wave_cwd = cwd.clone();
                     // F862: the ruler flags the round graded with — the twins grade with the same.
@@ -66506,6 +68183,9 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                     let wave_missing_gate = missing_deliverable_gate;
                     let wave_baseline_grade = baseline_grade.clone();
                     let sink_r = sink.clone();
+                    let allow_wave_early_close = !fleet_models
+                        .iter()
+                        .any(|model| me.local_generation_is_semantically_supervised(model));
                     // F846 EARLY-CLOSE (NEXT-BIG rank 2). MEASURED on the first green product-regime
                     // run: both waves' winners re-verified 5-7.5 minutes before the wave closed, while
                     // capped losers burned 2,400 twin-seconds converting nothing. FIRST-PAST-THE-POST:
@@ -66584,16 +68264,23 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                                 task_id.clone(),
                                 progress.clone(),
                             );
-                            let ran = tokio::select! {
-                                r = tokio::time::timeout(
+                            let generation = await_with_optional_timeout(
+                                me.run(req),
+                                me.generation_timeout(
+                                    &model,
                                     std::time::Duration::from_secs(fix_cap_eff),
-                                    me.run(req),
-                                ) => Some(r),
-                                // A sibling twin already landed a strictly-better tree; stop
-                                // generating. The shadow still gets GRADED below — a cancelled
-                                // twin's partial tree has historically gone red-to-green and the
-                                // minimum-pick must be able to see it.
-                                _ = wave_cancel.cancelled() => None,
+                                ),
+                            );
+                            let ran = if allow_wave_early_close {
+                                tokio::select! {
+                                    r = generation => Some(r),
+                                    // Capped/cloud repair waves may retain first-better early close.
+                                    // A semantically supervised local generation is never dropped by
+                                    // a sibling's grade; every local twin reaches a provider terminal.
+                                    _ = wave_cancel.cancelled() => None,
+                                }
+                            } else {
+                                Some(generation.await)
                             };
                             sampler.abort();
                             {
@@ -66665,7 +68352,8 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                             // fully-established gate (ran, zero inconclusive legs) strictly under
                             // baseline. A blinded gate (port collision voiding the pytest leg)
                             // can still WIN via the minimum-pick, but it cannot cancel anyone.
-                            if !cancelled
+                            if allow_wave_early_close
+                                && !cancelled
                                 && gate_established
                                 && grade.frontier.preserves(&wave_baseline_grade.frontier)
                             {
@@ -66949,11 +68637,11 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                     let (groups, unassigned) =
                         group_findings_by_file(&verdict.findings, &smoke_all_files);
                     eprintln!(
-                    "complete: fix round {round} — {} file-group(s) fanned across {} model(s), {} unassigned",
-                    groups.len(),
-                    fleet_models.len(),
-                    unassigned.len()
-                );
+                        "complete: fix round {round} — {} file-group(s) fanned across {} model(s), {} unassigned",
+                        groups.len(),
+                        fleet_models.len(),
+                        unassigned.len()
+                    );
                     if !groups.is_empty() {
                         let baseline = verdict.findings.len();
                         let taken: std::collections::HashSet<String> =
@@ -66995,9 +68683,10 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                                     let started = std::time::Instant::now();
                                     let req = DispatchRequest {
                                         task_id: task_id.clone(),
-                                        description: smoke_fix_description(
+                                        description: semantic_smoke_fix_description(
                                             &g.findings,
                                             complete_lang,
+                                            semantic_repair_context,
                                         ),
                                         device_id: dev,
                                         model_id: model.clone(),
@@ -67036,12 +68725,21 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                                         task_id.clone(),
                                         progress.clone(),
                                     );
-                                    let ran = tokio::time::timeout(
-                                        std::time::Duration::from_secs(fix_cap_eff),
-                                        me.run(req),
-                                    )
-                                    .await;
+                                    let ran = if pillar_flow_on {
+                                        Ok(me.run_complete_repair(true, req).await)
+                                    } else {
+                                        await_with_optional_timeout(
+                                            me.run_complete_repair(false, req),
+                                            me.generation_timeout(
+                                                &model,
+                                                std::time::Duration::from_secs(fix_cap_eff),
+                                            ),
+                                        )
+                                        .await
+                                    };
                                     sampler.abort();
+                                    let dispatch_failure = complete_repair_dispatch_failure(&ran);
+                                    let dispatch_failed = dispatch_failure.is_some();
                                     {
                                         let st = progress.lock().unwrap().clone();
                                         sink_r.write_value(serde_json::json!({
@@ -67095,11 +68793,12 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                                         "task_id": task_id,
                                         "secs": started.elapsed().as_secs(),
                                         "agent_ok": matches!(ran, Ok(Ok(_))),
+                                        "dispatch_failure": dispatch_failure,
                                         "verified_findings": verified,
                                         "baseline_findings": baseline,
                                         "promoted": promoted,
                                     }));
-                                    promoted
+                                    (promoted, dispatch_failed)
                                 }
                             })
                             .await;
@@ -67107,9 +68806,12 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                             "event": "complete_fix_wave",
                             "round": round,
                             "shards": summaries.len(),
-                            "promoted": summaries.iter().filter(|p| **p).count(),
+                            "promoted": summaries.iter().filter(|(p, _)| *p).count(),
+                            "dispatch_failures": summaries.iter().filter(|(_, failed)| *failed).count(),
                             "unassigned": unassigned.len(),
                         }));
+                        last_round_promoted = summaries.iter().any(|(promoted, _)| *promoted);
+                        repair_dispatch_failed |= summaries.iter().any(|(_, failed)| *failed);
                     }
                     // A finding that names no file still gets one shot after the partitioned wave —
                     // S1 increment 3: as a JOIN TWIN under the same shadow-and-gate discipline, not
@@ -67125,7 +68827,14 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                     // consistent, but a SUBSET of the ruler that opened the round, so a cross-file
                     // finding visible only to the composite categories could neither hold the twin
                     // accountable nor be repaired by it. One ruler here too.
-                    let post_wave_gate = if unassigned.is_empty() {
+                    let cross_file_findings = if !unassigned.is_empty() {
+                        unassigned.clone()
+                    } else if pillar_flow_on && !last_round_promoted {
+                        verdict.findings.clone()
+                    } else {
+                        Vec::new()
+                    };
+                    let post_wave_gate = if cross_file_findings.is_empty() {
                         None
                     } else {
                         Some(
@@ -67150,11 +68859,20 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                             "event": "complete_fix_dispatched",
                             "round": round, "shard": "(cross-file)", "model": model_id.as_str(),
                             "task_id": task_id, "baseline_findings": post_wave,
+                            "alternative": if unassigned.is_empty() {
+                                "atomic-whole-tree-repair-after-independent-shards-could-not-prove-progress"
+                            } else {
+                                "unassigned-cross-file-findings"
+                            },
                         }));
                         let started = std::time::Instant::now();
                         let req = DispatchRequest {
                             task_id: task_id.clone(),
-                            description: smoke_fix_description(&unassigned, complete_lang),
+                            description: semantic_smoke_fix_description(
+                                &cross_file_findings,
+                                complete_lang,
+                                semantic_repair_context,
+                            ),
                             device_id: dev_id,
                             model_id: model_id.clone(),
                             context_slice: String::new(),
@@ -67178,11 +68896,20 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                             replan_authority: None,
                             activity_publisher: None,
                         };
-                        let ran = tokio::time::timeout(
-                            std::time::Duration::from_secs(fix_cap_eff),
-                            smoke_fix_dispatcher.run(req),
-                        )
-                        .await;
+                        let ran = if pillar_flow_on {
+                            Ok(smoke_fix_dispatcher.run_complete_repair(true, req).await)
+                        } else {
+                            await_with_optional_timeout(
+                                smoke_fix_dispatcher.run_complete_repair(false, req),
+                                smoke_fix_dispatcher.generation_timeout(
+                                    &model_id,
+                                    std::time::Duration::from_secs(fix_cap_eff),
+                                ),
+                            )
+                            .await
+                        };
+                        let dispatch_failure = complete_repair_dispatch_failure(&ran);
+                        repair_dispatch_failed |= dispatch_failure.is_some();
                         // GRADE THE TREE, NOT THE AGENT'S EXIT — third application of the one rule,
                         // now on the composed preview with the round's full ruler (F883/F862).
                         let (grade, join_changed) = smoke_fix_dispatcher
@@ -67197,30 +68924,44 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                             )
                             .await;
                         let promoted = join_changed
-                            && repair_grade_promotes(&grade, &post_wave_grade, &unassigned);
+                            && repair_grade_promotes(
+                                &grade,
+                                &post_wave_grade,
+                                &cross_file_findings,
+                            );
                         let verified = grade.count();
                         if promoted {
                             smoke_fix_dispatcher.promote_speculative(&task_id).await;
                         } else {
                             smoke_fix_dispatcher.discard_speculative(&task_id).await;
                         }
+                        last_round_promoted |= promoted;
                         sink.write_value(serde_json::json!({
                             "event": "complete_fix_completed",
                             "round": round, "shard": "(cross-file)", "model": model_id.as_str(),
                             "task_id": task_id,
                             "secs": started.elapsed().as_secs(),
                             "agent_ok": matches!(ran, Ok(Ok(_))),
+                            "dispatch_failure": dispatch_failure,
                             "verified_findings": verified,
                             "baseline_findings": post_wave,
                             "promoted": promoted,
                         }));
+                    }
+                    last_round_was_shard = true;
+                    if pillar_flow_on && !last_round_promoted && !repair_dispatch_failed {
+                        fix_converged = true;
                     }
                 } else {
                     eprintln!("complete: fix round {round} against the distilled failure ...");
                     let fix_model_id = model_id.clone();
                     let fix_req = DispatchRequest {
                         task_id: "complete-fix".to_string(),
-                        description: smoke_fix_description(&verdict.findings, complete_lang),
+                        description: semantic_smoke_fix_description(
+                            &verdict.findings,
+                            complete_lang,
+                            semantic_repair_context,
+                        ),
                         device_id: dev_id,
                         model_id,
                         context_slice: String::new(),
@@ -67264,11 +69005,21 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                         "path": "serial",
                     }));
                     let fix_started = std::time::Instant::now();
-                    let fix_out = tokio::time::timeout(
-                        std::time::Duration::from_secs(fix_cap_eff),
-                        smoke_fix_dispatcher.run(fix_req),
-                    )
-                    .await;
+                    let fix_out = if pillar_flow_on {
+                        Ok(smoke_fix_dispatcher
+                            .run_complete_repair(true, fix_req)
+                            .await)
+                    } else {
+                        await_with_optional_timeout(
+                            smoke_fix_dispatcher.run_complete_repair(false, fix_req),
+                            smoke_fix_dispatcher.generation_timeout(
+                                &fix_model_id,
+                                std::time::Duration::from_secs(fix_cap_eff),
+                            ),
+                        )
+                        .await
+                    };
+                    let dispatch_failure = complete_repair_dispatch_failure(&fix_out);
                     sink.write_value(serde_json::json!({
                         "event": "complete_fix_completed",
                         "round": round,
@@ -67281,6 +69032,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                         // than implying a grade that was never computed.
                         "verified_findings": serde_json::Value::Null,
                         "agent_ok": matches!(fix_out, Ok(Ok(_))),
+                        "dispatch_failure": dispatch_failure,
                         "baseline_findings": verdict.findings.len(),
                         "path": "serial",
                     }));
@@ -67359,9 +69111,9 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                             }));
                             if restored {
                                 shipped_desc = format!(
-                                "restored round {best_round} snapshot ({best_count} established \
+                                    "restored round {best_round} snapshot ({best_count} established \
                                  finding(s))"
-                            );
+                                );
                             }
                             eprintln!(
                                 "{}",
@@ -67391,14 +69143,23 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             // the tree that SHIPS). Past the completion deadline the budget drops to one attempt:
             // the floor is the point, but not three fix-caps past the wall.
             if matches!(complete_lang, TargetLang::Python) {
-                let boot_budget: u32 =
-                    if cap_deadline.is_some_and(|dl| std::time::Instant::now() >= dl) {
-                        1
-                    } else {
-                        3
-                    };
                 let mut prev_err: Option<String> = None;
                 let mut attempts = 0u32;
+                let mut attempts_in_trace_cycle = 0usize;
+                let mut boot_targets = smoke_fix_target
+                    .iter()
+                    .cloned()
+                    .chain(fix_target_candidates.iter().cloned())
+                    .collect::<Vec<_>>();
+                let mut seen_boot_targets = HashSet::new();
+                boot_targets.retain(|target| seen_boot_targets.insert(target.clone()));
+                let boot_budget = if pillar_flow_on {
+                    u32::try_from(boot_targets.len().max(1)).unwrap_or(u32::MAX)
+                } else if cap_deadline.is_some_and(|dl| std::time::Instant::now() >= dl) {
+                    1
+                } else {
+                    3
+                };
                 loop {
                     let Some(probe) = boot_probe(&cwd, &final_binding_spec).await else {
                         break; // spec advertises no bootable entry — the floor does not apply
@@ -67418,7 +69179,10 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                         }
                         break;
                     };
-                    if attempts >= boot_budget || prev_err.as_deref() == Some(err_tail.as_str()) {
+                    if !pillar_flow_on
+                        && (attempts >= boot_budget
+                            || prev_err.as_deref() == Some(err_tail.as_str()))
+                    {
                         sink.write_value(serde_json::json!({
                         "event": "boot_repair_exhausted",
                         "attempts": attempts,
@@ -67429,20 +69193,42 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                     }));
                         break;
                     }
+                    if pillar_flow_on && attempts >= boot_budget {
+                        sink.write_value(serde_json::json!({
+                            "event": "boot_repair_cycle_complete",
+                            "attempts": attempts,
+                            "distinct_targets": boot_targets.len(),
+                            "boot_error_sha256": content_sha256(&err_tail),
+                            "outcome": "all admitted causal routes failed to promote a bootable tree",
+                            "next": "authoritative ruler requests an idle-admitted semantic strategy or persists a resumable wait",
+                            "terminal_basis": serde_json::Value::Null,
+                        }));
+                        break;
+                    }
+                    let boot_target = if pillar_flow_on {
+                        boot_targets.get(attempts_in_trace_cycle).cloned()
+                    } else {
+                        smoke_fix_target.clone()
+                    };
                     attempts += 1;
+                    attempts_in_trace_cycle = attempts_in_trace_cycle.saturating_add(1);
                     sink.write_value(serde_json::json!({
                         "event": "boot_repair_attempt",
                         "attempt": attempts,
                         "boot_error": elide_middle(&err_tail, 150, 650),
                     }));
                     prev_err = Some(err_tail.clone());
-                    if let Some((dev_id, model_id)) = smoke_fix_target.clone() {
+                    if let Some((dev_id, model_id)) = boot_target {
+                        let generation_timeout = smoke_fix_dispatcher.generation_timeout(
+                            &model_id,
+                            std::time::Duration::from_secs(fix_cap_eff),
+                        );
                         let candidate =
                             repair_tree.begin_candidate(format!("boot-repair-{attempts}"))?;
                         let boot_req = DispatchRequest {
-                        task_id: format!("boot-repair-{attempts}"),
-                        description: format!(
-                            "THE APP DOES NOT START. The documented invocation was spawned and \
+                            task_id: format!("boot-repair-{attempts}"),
+                            description: format!(
+                                "THE APP DOES NOT START. The documented invocation was spawned and \
                              never bound its port. This is the ONLY thing to fix — do not add \
                              features, do not refactor. The boot output ends with:\n\n{err_tail}\n\n\
                              Fix the crash at its source (usually __main__.py or the server \
@@ -67454,30 +69240,49 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                              http.client.HTTPConnection given a full URL instead of host:port. \
                              When done, verify by running the documented invocation yourself and \
                              confirming the port answers.{}",
-                            bind_first_hint(&err_tail)
-                        ),
-                        device_id: dev_id,
-                        model_id,
-                        context_slice: String::new(),
-                        dependency_files: Vec::new(),
-                        attempt: 0,
-                        owned_files: vec![],
-                        all_files: smoke_all_files.clone(),
-                        prior_hint: None,
-                        subsplit: Vec::new(),
-                        speculative: false,
-                        user_decisions: user_decisions.clone(),
-                        doc_facts: doc_facts.clone(),
-                        neighborhood: Vec::new(),
-                        replan_authority: None,
-                        activity_publisher: None,
-                    };
-                        let _ = tokio::time::timeout(
-                            std::time::Duration::from_secs(fix_cap_eff),
-                            smoke_fix_dispatcher.run(boot_req),
-                        )
-                        .await;
-                        repair_tree.finish_candidate(candidate, sink.as_ref())?;
+                                bind_first_hint(&err_tail)
+                            ),
+                            device_id: dev_id,
+                            model_id: model_id.clone(),
+                            context_slice: String::new(),
+                            dependency_files: Vec::new(),
+                            attempt: 0,
+                            owned_files: vec![],
+                            all_files: smoke_all_files.clone(),
+                            prior_hint: None,
+                            subsplit: Vec::new(),
+                            speculative: false,
+                            user_decisions: user_decisions.clone(),
+                            doc_facts: doc_facts.clone(),
+                            neighborhood: Vec::new(),
+                            replan_authority: None,
+                            activity_publisher: None,
+                        };
+                        authoritative_feedback.note_repair_dispatch();
+                        let ran = if pillar_flow_on {
+                            Ok(smoke_fix_dispatcher
+                                .run_complete_repair(true, boot_req)
+                                .await)
+                        } else {
+                            await_with_optional_timeout(
+                                smoke_fix_dispatcher.run_complete_repair(false, boot_req),
+                                generation_timeout,
+                            )
+                            .await
+                        };
+                        if let Some(dispatch_failure) = complete_repair_dispatch_failure(&ran) {
+                            sink.write_value(serde_json::json!({
+                                "event": "boot_repair_dispatch_failed",
+                                "attempt": attempts,
+                                "model": model_id,
+                                "dispatch_failure": dispatch_failure,
+                                "next_distinct_target": pillar_flow_on
+                                    && attempts_in_trace_cycle < boot_targets.len(),
+                                "content_failure_is_nonfatal": true,
+                            }));
+                        }
+                        let promoted = repair_tree.finish_candidate(candidate, sink.as_ref())?;
+                        let _ = promoted;
                     } else {
                         break;
                     }
@@ -67569,43 +69374,90 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                     "tree_hash": ruling.tree_hash,
                 }));
             }
-            if pillar_flow_on && ruling.passed && ruling.verified && report.failed.is_empty() {
-                let checkpoint_store = scheduler_checkpoint_store
+            let checkpoint_evidence_failure = if pillar_flow_on && ruling.passed && ruling.verified
+            {
+                let repair_evidence = capability_repair_checkpoint_reseal
                     .as_ref()
-                    .expect("pillar flow armed a scheduler checkpoint store");
-                reseal_authoritative_scheduler_checkpoints(
-                    checkpoint_store,
-                    capability_repair_checkpoint_reseal
-                        .as_ref()
-                        .map(|(specs, evidence)| (specs.as_slice(), evidence.as_slice())),
-                    &build_specs,
-                    || completed_checkpoint_evidence(&build_specs, &report),
-                    &ruling.tree_hash,
-                    sink.as_ref(),
-                )?;
+                    .map(|(_, evidence)| evidence.as_slice())
+                    .unwrap_or(&[]);
+                let checkpoint_reseal = scheduler_checkpoint_store
+                    .as_ref()
+                    .ok_or_else(|| anyhow!("pillar flow has no scheduler checkpoint store"))
+                    .and_then(|checkpoint_store| {
+                        reseal_authoritative_scheduler_checkpoints(
+                            checkpoint_store,
+                            capability_repair_checkpoint_reseal
+                                .as_ref()
+                                .map(|(specs, evidence)| (specs.as_slice(), evidence.as_slice())),
+                            &build_specs,
+                            || {
+                                completed_checkpoint_evidence_with_recovery(
+                                    &build_specs,
+                                    &report,
+                                    &capability_recovery,
+                                    repair_evidence,
+                                )
+                            },
+                            &ruling.tree_hash,
+                            sink.as_ref(),
+                        )
+                    });
+                match checkpoint_reseal {
+                    Ok(()) => None,
+                    Err(error) => {
+                        let reason = format!(
+                            "verified tree could not bind exact scheduler checkpoint evidence: {error}"
+                        );
+                        sink.write_value(serde_json::json!({
+                            "event": "scheduler_checkpoint_evidence_rejected",
+                            "reason": reason,
+                            "tree_hash": ruling.tree_hash,
+                            "status": "final-incomplete",
+                            "resume_claim_disabled": true,
+                            "accounting": "complete-seal-blocking-obligation",
+                        }));
+                        Some(reason)
+                    }
+                }
             } else if pillar_flow_on {
                 sink.write_value(serde_json::json!({
-                "event": "scheduler_checkpoint_reseal_skipped",
-                "reason": if !ruling.passed || !ruling.verified {
-                    "the post-repair tree lacks a verified green ruler receipt"
-                } else {
-                    "the main build report contains failed tasks and cannot supply exact completed evidence"
-                },
-                "failed_task_ids": &report.failed,
-                "ruler_passed": ruling.passed,
-                "ruler_verified": ruling.verified,
-            }));
-            }
+                    "event": "scheduler_checkpoint_reseal_skipped",
+                    "reason": "the post-repair tree lacks a verified green ruler receipt",
+                    "failed_task_ids": &report.failed,
+                    "ruler_passed": ruling.passed,
+                    "ruler_verified": ruling.verified,
+                }));
+                None
+            } else {
+                None
+            };
             if !ruling.passed || !ruling.verified || force_unverified {
                 match authoritative_feedback.classify(&authoritative.verdict.findings) {
-                    AuthoritativeRepairDisposition::Continue { cycle } => {
+                    AuthoritativeRepairDisposition::Continue {
+                        cycle,
+                        repeated,
+                        prior_cycle,
+                    } => {
+                        authoritative_semantic_cycle = Some((cycle, repeated));
                         sink.write_value(serde_json::json!({
                             "event": "authoritative_repair_continued",
                             "cycle": cycle,
+                            "repeated_finding_signature": repeated,
+                            "prior_cycle_evidence": prior_cycle.map(|evidence| serde_json::json!({
+                                "cycle": evidence.cycle,
+                                "feedback_applied": evidence.feedback_applied,
+                                "repair_dispatched": evidence.repair_dispatched,
+                                "post_dispatch_rulers": evidence.post_dispatch_rulers,
+                                "budget_refreshed": evidence.budget_refreshed,
+                            })),
                             "from_round": authoritative_round,
                             "findings": ruling.remaining_findings,
                             "tree_hash": ruling.tree_hash,
-                            "detail": "the final ruler found unresolved defects after a late writer; its exact findings return to the ordinary repair loop before any tree can seal",
+                            "detail": if repeated {
+                                "the same authoritative defects survived a complete repair cycle; the semantically supervised repair agents receive an explicit materially-different diagnosis request and the run continues"
+                            } else {
+                                "the final ruler found unresolved defects after a late writer; its exact findings return to the repair loop before any tree can seal"
+                            },
                         }));
                         if let Some(harness_clamped) = refresh_authoritative_repair_budget(
                             &mut cap_deadline,
@@ -67623,17 +69475,20 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                         }
                         continue 'authoritative_repair;
                     }
-                    AuthoritativeRepairDisposition::Incomplete(evidence) => {
-                        emit_authoritative_repair_unavailable(sink.as_ref(), &ruling, evidence);
-                    }
                 }
             }
-            let sealed = if ruling.passed && ruling.verified && !force_unverified {
+            let checkpoint_evidence_failed = checkpoint_evidence_failure.is_some();
+            let sealed = if ruling.passed
+                && ruling.verified
+                && !force_unverified
+                && !checkpoint_evidence_failed
+            {
                 repair_tree.seal(shipped_desc, false, sink.as_ref())?
             } else {
                 repair_tree.seal_incomplete(
-                    "incomplete evidence tree".to_string(),
-                    force_unverified,
+                    checkpoint_evidence_failure
+                        .unwrap_or_else(|| "incomplete evidence tree".to_string()),
+                    force_unverified || checkpoint_evidence_failed,
                     sink.as_ref(),
                 )?
             };
@@ -67757,7 +69612,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
     let smoke_on = swarm_gate_cfg("GOOSE_SWARM_SMOKE", load_config().smoke);
     if smoke_on && !complete_on {
         let smoke_lang = detect_language(&final_binding_spec, &smoke_all_files);
-        let smoke = run_smoke_gate(&std::env::current_dir().unwrap_or_default(), smoke_lang).await;
+        let smoke = run_smoke_gate(&working_dir, smoke_lang).await;
         let smoke_value = serde_json::to_value(&smoke).unwrap_or(serde_json::Value::Null);
         sink.write_value(serde_json::json!({
             "event": "smoke",
@@ -67783,6 +69638,9 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             // Bounded to a single attempt (no loop) — the traceback IS the worker's instruction.
             if let Some((dev_id, model_id)) = smoke_fix_target.clone() {
                 eprintln!("smoke gate: dispatching ONE corrective fix attempt ...");
+                let fix_cap = fix_cap_secs_scaled(&working_dir, &smoke_all_files);
+                let generation_timeout = smoke_fix_dispatcher
+                    .generation_timeout(&model_id, std::time::Duration::from_secs(fix_cap));
                 let fix_req = DispatchRequest {
                     task_id: "smoke-fix".to_string(),
                     description: smoke_fix_description(&smoke.findings, smoke_lang),
@@ -67805,16 +69663,12 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                     replan_authority: None,
                     activity_publisher: None,
                 };
-                let _ = tokio::time::timeout(
-                    std::time::Duration::from_secs(fix_cap_secs_scaled(
-                        &std::env::current_dir().unwrap_or_default(),
-                        &smoke_all_files,
-                    )),
+                let _ = await_with_optional_timeout(
                     smoke_fix_dispatcher.run(fix_req),
+                    generation_timeout,
                 )
                 .await;
-                let after =
-                    run_smoke_gate(&std::env::current_dir().unwrap_or_default(), smoke_lang).await;
+                let after = run_smoke_gate(&working_dir, smoke_lang).await;
                 let after_value = serde_json::to_value(&after).unwrap_or(serde_json::Value::Null);
                 sink.write_value(serde_json::json!({
                     "event": "smoke_after_fix",
@@ -67842,7 +69696,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
     // after) is the throughput win; the re-gate keeps delivered quality unchanged. Advisory (drives no fix).
     // Same resolver the scheduler's producer uses — the two used to disagree, and the run
     // advertised a lever whose queue nothing ever filled.
-    let sink_review_on = goose_swarm::sink_review_enabled();
+    let sink_review_on = sink_review_selected(pillar_flow_on, goose_swarm::sink_review_enabled());
     if sink_review_on && !fleet_models.is_empty() {
         let prewarmed = smoke_fix_dispatcher.drain_sink_review();
         if !prewarmed.is_empty() {
@@ -67894,7 +69748,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
     // COMPLETE owns this writer while its tree is open. The standalone path remains for runs
     // that did not request COMPLETE and therefore have no authoritative completion seal.
     if review_on && !complete_on {
-        let root = std::env::current_dir().unwrap_or_default();
+        let root = working_dir.clone();
         let _ = run_post_build_ast_review(
             &root,
             &final_binding_spec,
@@ -67937,15 +69791,18 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
     // A human-readable close-out (Mihai: other tools give "no overview"). Sections: WHAT WAS BUILT (a GROUNDED
     // summary agent — reads real code excerpts, FORBIDDEN from any works/tested/verified claim + scrubbed),
     // HOW TO RUN IT (the entry stamped in RUST, never the model), WHAT'S NEXT. VERIFICATION is engine-only
-    // (the desktop re-derives it from phaseTodo). MUST run BEFORE `run_finished` + the final stdout report:
-    // the desktop provider kill_on_drop-kills the CLI the instant it reads the final stdout output, which
-    // would kill this ~30-120s summary call mid-flight (the bug that shipped in v1.41.37 — it never emitted).
+    // (the desktop re-derives it from phaseTodo). Legacy runs generate it before `run_finished` because the
+    // desktop provider kill_on_drop-kills the CLI as soon as it reads final stdout. Pillar flow skips the
+    // optional model summary entirely: a response-only tail cannot sit between a sealed tree and terminal.
     // Skipped (generated:false) on a RED build so a confident summary never over-sells a broken app; a
     // STOPPED run dies mid-build and never reaches here, so the UI still never shows a triumphant overview.
     // Gate = DEFAULT ON, env can force off. (NOT swarm_gate(..,true) — that only activates under the assured
     // profile, which the desktop provider doesn't set, so the overview silently never ran there.)
-    let overview_event = if swarm_gate_cfg("GOOSE_SWARM_OVERVIEW", true) {
-        let ov_root = std::env::current_dir().unwrap_or_default();
+    let overview_event = maybe_generate_legacy_run_overview(
+        pillar_flow_on,
+        swarm_gate_cfg("GOOSE_SWARM_OVERVIEW", true),
+        async {
+        let ov_root = working_dir.clone();
         let rel_files = existing_files_manifest(&ov_root);
         let ov_lang = detect_language(&final_binding_spec, &rel_files);
         let lang_tag = match ov_lang {
@@ -67985,16 +69842,16 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                 .generate_run_overview(system, user)
                 .await
         };
-        Some(run_overview_event(
+        run_overview_event(
             run_cmd,
             lang_tag,
             run_cmd_verified,
             parsed,
             rel_files.len(),
-        ))
-    } else {
-        None
-    };
+        )
+        },
+    )
+    .await;
 
     let mut phases_value = serde_json::json!({
         "research_min": (research_m * 10.0).round() / 10.0,
@@ -68058,11 +69915,24 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             "task_count": degraded_task_ids.len(),
         }));
     }
+    let core_failed = unresolved_core_failures(
+        &report.failed,
+        &report.bonus,
+        &report.unavailable,
+        &report.provisional,
+        &report.salvaged,
+        final_ruler_recovered_unavailable,
+    );
+    let run_success = !(complete_on && complete_failed) && core_failed.is_empty();
     let run_finished = serde_json::json!({
         "event": "run_finished",
         "report": report_value,
         "phases": phases_value,
+        "success": run_success,
+        "unresolved_core_failures": &core_failed,
+        "complete_failed": complete_on && complete_failed,
     });
+    pillar_terminal_guard.disarm();
     emit_run_terminal_events(
         sink.as_ref(),
         overview_event,
@@ -68088,13 +69958,6 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             total_m
         );
         println!("done   ({}): {}", report.done.len(), report.done.join(", "));
-        let core_failed = unresolved_core_failures(
-            &report.failed,
-            &report.bonus,
-            &report.unavailable,
-            &report.provisional,
-            final_ruler_recovered_unavailable,
-        );
         let bonus_failed: Vec<&String> = report
             .failed
             .iter()
@@ -68191,14 +70054,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
 
     // Run success is judged on the CORE plan only — a failed opportunistic/replanner (bonus) task
     // must not fail an otherwise-complete run.
-    let core_failed = unresolved_core_failures(
-        &report.failed,
-        &report.bonus,
-        &report.unavailable,
-        &report.provisional,
-        final_ruler_recovered_unavailable,
-    )
-    .len();
+    let core_failed = core_failed.len();
     // GOOSE_SWARM_COMPLETE: a still-red app (verify-by-running never went green within the fix budget) must
     // NOT report success, even if every planned subtask "completed" — this is the never-ship-broken gate.
     // When the flag is off, `complete_on && complete_failed` is false and the exit path is byte-identical.
@@ -68223,9 +70079,9 @@ mod pre_scheduler_semantic_runtime_tests {
     use super::*;
     use futures::stream;
     use goose::providers::base::{
-        record_current_provider_stream_chunk, MessageStream, ProviderStreamChunkKind,
-        ProviderUsage, SingleAttemptFailureProvenance, SingleAttemptStream,
-        SingleAttemptTerminalProof, Usage,
+        record_current_provider_stream_chunk, uncapped_local_stream_active, MessageStream,
+        ProviderStreamChunkKind, ProviderUsage, SingleAttemptFailureProvenance,
+        SingleAttemptStream, SingleAttemptTerminalProof, Usage,
     };
     use goose_provider_types::errors::ProviderError;
     use goose_provider_types::model::ModelConfig;
@@ -68337,6 +70193,7 @@ mod pre_scheduler_semantic_runtime_tests {
     #[derive(Clone, Copy)]
     enum RuntimeProviderMode {
         Silent,
+        QuietGapThenFinished,
         BuildWatchdogThenFinished,
         QuietWatchdogAfterArtifactWrite,
         QuietWatchdogWithoutArtifact,
@@ -68352,6 +70209,8 @@ mod pre_scheduler_semantic_runtime_tests {
     struct RuntimeScriptedProvider {
         mode: RuntimeProviderMode,
         source_calls: AtomicUsize,
+        direct_stream_calls: AtomicUsize,
+        uncapped_local_scoped_stream_calls: AtomicUsize,
         source_turn_user_texts: Mutex<Vec<Vec<String>>>,
         build_calls: AtomicUsize,
         judge_calls: AtomicUsize,
@@ -68370,6 +70229,8 @@ mod pre_scheduler_semantic_runtime_tests {
             Self {
                 mode,
                 source_calls: AtomicUsize::new(0),
+                direct_stream_calls: AtomicUsize::new(0),
+                uncapped_local_scoped_stream_calls: AtomicUsize::new(0),
                 source_turn_user_texts: Mutex::new(Vec::new()),
                 build_calls: AtomicUsize::new(0),
                 judge_calls: AtomicUsize::new(0),
@@ -68415,6 +70276,33 @@ mod pre_scheduler_semantic_runtime_tests {
                 ),
                 SingleAttemptTerminalProof::default(),
             )
+        }
+
+        fn quiet_gap_then_finished() -> SingleAttemptStream {
+            let (terminal, reporter) = SingleAttemptTerminalProof::channel();
+            let output = async_stream::stream! {
+                goose_provider_types::base::record_current_provider_stream_chunk(
+                    408,
+                    ProviderStreamChunkKind::StructuredOutput,
+                );
+                yield Ok((
+                    Some(Message::assistant().with_thinking(
+                        "decoded opener prefix before the quiet generation interval",
+                        "quiet-gap-prefix",
+                    )),
+                    None,
+                ));
+                tokio::time::sleep(Duration::from_millis(1_250)).await;
+                goose_provider_types::base::complete_current_provider_structured_output();
+                reporter.mark_finished();
+                yield Ok((
+                    Some(Message::assistant().with_text(
+                        "local generation completed after the quiet interval",
+                    )),
+                    Some(ProviderUsage::new(SOURCE_MODEL.to_string(), Usage::default())),
+                ));
+            };
+            SingleAttemptStream::new(Box::pin(output), terminal)
         }
 
         fn thinking_until_dropped() -> SingleAttemptStream {
@@ -69235,6 +71123,18 @@ mod pre_scheduler_semantic_runtime_tests {
                 } else {
                     ("opening_repair", Self::opening_repair_output(user))
                 }
+            } else if system
+                .contains("recovery judge for a continuing logical software-building authority")
+            {
+                (
+                    "semantic_alternative",
+                    serde_json::json!({
+                        "diagnosis": "the prior strategy preserved the same rejected semantic shape",
+                        "next_strategy": "isolate the compiler-proven invalid boundary and reconstruct that boundary from authored meaning before restoring the exact assignment map",
+                        "preserve": ["accepted requirement meanings", "valid non-overlapping ownership"],
+                        "avoid": ["replaying the previous catalog or plan with cosmetic edits"]
+                    }),
+                )
             } else if system.contains("one non-overlapping research and implementation-spec pillar")
             {
                 ("owner", Self::report_output(user))
@@ -69818,9 +71718,20 @@ mod pre_scheduler_semantic_runtime_tests {
             &self,
             _model_config: &ModelConfig,
             _system: &str,
-            _messages: &[Message],
+            messages: &[Message],
             _tools: &[Tool],
         ) -> Result<MessageStream, ProviderError> {
+            if matches!(self.mode, RuntimeProviderMode::QuietGapThenFinished) {
+                self.record_source_turn_user_texts(messages);
+                self.source_calls.fetch_add(1, AtomicOrdering::SeqCst);
+                self.direct_stream_calls
+                    .fetch_add(1, AtomicOrdering::SeqCst);
+                if uncapped_local_stream_active() {
+                    self.uncapped_local_scoped_stream_calls
+                        .fetch_add(1, AtomicOrdering::SeqCst);
+                }
+                return Ok(Self::quiet_gap_then_finished().stream);
+            }
             Err(ProviderError::ExecutionError(
                 "runtime harness must use terminal-proven single-attempt streaming".to_string(),
             ))
@@ -69920,6 +71831,7 @@ mod pre_scheduler_semantic_runtime_tests {
                     unreachable!("quiet watchdog modes return before source routing")
                 }
                 RuntimeProviderMode::Silent => Ok(Self::pending()),
+                RuntimeProviderMode::QuietGapThenFinished => Ok(Self::quiet_gap_then_finished()),
                 RuntimeProviderMode::NetworkFailure => Err(ProviderError::NetworkError(
                     "runtime test unresolved transport loss".to_string(),
                 )),
@@ -70693,7 +72605,7 @@ mod pre_scheduler_semantic_runtime_tests {
     }
 
     #[tokio::test]
-    async fn unavailable_opener_resumes_in_process_then_plans_once_and_dispatches_build() {
+    async fn transiently_unavailable_opener_continues_without_timer_or_polling() {
         const PLANNER_MODEL: &str = "same-process-planner";
         const WORKER_B: &str = "same-process-worker-b";
         const WORKER_C: &str = "same-process-worker-c";
@@ -70706,9 +72618,9 @@ mod pre_scheduler_semantic_runtime_tests {
         let harness = pillar_replay_runtime_harness(&lanes).await;
         harness.provider.fail_opening_provider_calls(lanes.len());
 
-        let outcome = harness
-            .dispatcher
-            .research_by_pillars_until_ready(
+        let outcome = tokio::time::timeout(
+            Duration::from_secs(5),
+            harness.dispatcher.research_by_pillars_until_ready(
                 &frozen_spec,
                 Arc::new(Vec::new()),
                 vec![
@@ -70717,114 +72629,32 @@ mod pre_scheduler_semantic_runtime_tests {
                     ("device-c".to_string(), WORKER_C.to_string()),
                 ],
                 PLANNER_MODEL,
-            )
-            .await
-            .expect("same-process opener continuation did not reach research");
-
+            ),
+        )
+        .await
+        .expect("transiently unavailable opener did not resume")
+        .expect("transiently unavailable opener terminalized instead of retrying semantically");
         assert_eq!(outcome.opening.requirements.len(), 197);
-        assert_eq!(outcome.opening.pillars.len(), 6);
-        assert_eq!(outcome.provider_calls, 11);
-        let calls_before_plan = harness.provider.calls();
+        let calls = harness.provider.calls();
         assert_eq!(
-            calls_before_plan
+            calls
                 .iter()
                 .filter(|call| call.phase == "opening_provider_failure")
                 .count(),
             lanes.len(),
-            "the unavailable pass must rotate every authenticated opener route exactly once"
-        );
-        assert_eq!(
-            calls_before_plan
-                .iter()
-                .filter(|call| call.phase == "opening")
-                .count(),
-            1,
-            "checkpoint resume repeated the successful semantic opener"
+            "the transient pass must rotate every authenticated opener route exactly once"
         );
         let events = harness.sink.values();
-        assert_eq!(
-            events
-                .iter()
-                .filter(|event| event["event"] == "pillar_flow_unavailable_continuation")
-                .count(),
-            1
-        );
         assert!(events.iter().any(|event| {
-            event["event"] == "pillar_flow_unavailable_continuation"
+            event["event"] == "pillar_flow_semantic_continuation"
                 && event["terminal"] == false
-                && event["preserved_candidate"] == false
-                && event["continuation"] == "retry-in-this-process-from-durable-opener-stage"
-                && event["retry_delay_ms"] == 250
+                && event["checkpoint_preserved"] == true
+                && event["timer_or_polling"] == false
                 && event["deterministic_semantic_fallback"] == false
         }));
-        assert!(events.iter().any(|event| {
-            event["event"] == "pillar_flow_continuation_resumed"
-                && event["continuation_rounds"] == 1
-                && event["carried_provider_calls"] == lanes.len()
-                && event["total_provider_calls"] == 11
-        }));
-        assert!(!calls_before_plan.iter().any(|call| call.phase == "planner"));
-
-        let (_plan_json, dag) = harness
-            .dispatcher
-            .plan_from_pillars(&frozen_spec, &outcome, PLANNER_MODEL)
-            .await
-            .expect("resumed research did not reach the synthesis planner");
-        assert_eq!(
-            harness
-                .provider
-                .calls()
-                .iter()
-                .filter(|call| call.phase == "planner")
-                .count(),
-            1
-        );
-
-        let build_dispatcher = Arc::new(RuntimeBuildDispatchProbe {
-            starts: AtomicUsize::new(0),
-        });
-        let report = Scheduler::new(
-            vec![
-                DeviceCfg {
-                    id: "same-process-build-a".to_string(),
-                    model_id: PLANNER_MODEL.to_string(),
-                    weight: 1,
-                    enabled: true,
-                    speed_weight: 1,
-                    supervision: false,
-                },
-                DeviceCfg {
-                    id: "same-process-build-b".to_string(),
-                    model_id: WORKER_B.to_string(),
-                    weight: 1,
-                    enabled: true,
-                    speed_weight: 1,
-                    supervision: false,
-                },
-                DeviceCfg {
-                    id: "same-process-build-c".to_string(),
-                    model_id: WORKER_C.to_string(),
-                    weight: 1,
-                    enabled: true,
-                    speed_weight: 1,
-                    supervision: false,
-                },
-            ],
-            1,
-        )
-        .run(
-            dag,
-            build_dispatcher.clone() as Arc<dyn TaskDispatcher>,
-            frozen_spec,
-        )
-        .await
-        .expect("same-process continuation never reached real Scheduler dispatch");
-        assert_eq!(build_dispatcher.starts.load(AtomicOrdering::SeqCst), 7);
-        assert_eq!(report.done.len(), 7);
-        assert!(report.failed.is_empty());
         tokio::time::timeout(Duration::from_secs(5), harness.control.wait_until_drained())
             .await
-            .expect("same-process replay did not drain provider lifecycle")
+            .expect("unavailable opener did not drain provider lifecycle")
             .unwrap();
         assert_eq!(harness.control.occupancy().await, (0, 0));
     }
@@ -70887,10 +72717,10 @@ mod pre_scheduler_semantic_runtime_tests {
         assert_eq!(
             events
                 .iter()
-                .filter(|event| event["event"] == "pillar_flow_unavailable_continuation")
+                .filter(|event| event["event"] == "pillar_flow_semantic_continuation")
                 .count(),
-            1,
-            "the initial provider outcome remains a recoverable checkpoint continuation"
+            0,
+            "quarantined routes must terminalize without semantic replay"
         );
         let terminal_events = events
             .iter()
@@ -70919,18 +72749,6 @@ mod pre_scheduler_semantic_runtime_tests {
             .expect("quarantined opener routes blocked phase drain")
             .unwrap();
         assert_eq!(harness.control.occupancy().await, (0, 3));
-    }
-
-    #[test]
-    fn unavailable_opener_route_recovery_backoff_grows_then_caps() {
-        assert_eq!(pillar_route_recovery_backoff(1), Duration::from_millis(250));
-        assert_eq!(pillar_route_recovery_backoff(2), Duration::from_millis(500));
-        assert_eq!(pillar_route_recovery_backoff(5), Duration::from_secs(4));
-        assert_eq!(pillar_route_recovery_backoff(6), Duration::from_secs(4));
-        assert_eq!(
-            pillar_route_recovery_backoff(usize::MAX),
-            Duration::from_secs(4)
-        );
     }
 
     fn synthesis_authority_runtime_fixture(
@@ -70980,14 +72798,15 @@ mod pre_scheduler_semantic_runtime_tests {
             interfaces: vec!["run_core(input) -> output".to_string()],
             exclusions: vec!["Application composition".to_string()],
         }];
-        let synthesis = render_synthesis_input(&reports, 64_000);
-        let worker_context = synthesis.clone();
+        let synthesis = render_synthesis_input(&reports, 64_000).unwrap();
+        let worker_context = synthesis.text.clone();
         let outcome = PillarResearchOutcome {
             opening,
             reports,
             lanes,
-            synthesis,
+            synthesis: synthesis.text,
             verified_facts: String::new(),
+            omitted_requirement_ids: synthesis.omitted_requirement_ids,
             worker_context,
             provider_calls: 0,
             retries: 0,
@@ -71144,7 +72963,7 @@ mod pre_scheduler_semantic_runtime_tests {
     }
 
     #[tokio::test]
-    async fn repeated_invalid_plans_cannot_create_model_correction_rounds() {
+    async fn strict_planner_tool_schema_allows_one_session_to_correct_before_build() {
         const MODEL_A: &str = "semantic-continuation-model-a";
         const MODEL_B: &str = "semantic-continuation-model-b";
         const HOST_A: &str = "semantic-continuation-host-a";
@@ -71164,30 +72983,11 @@ mod pre_scheduler_semantic_runtime_tests {
             .collect::<Vec<_>>();
         let (binding_spec, outcome, valid_plan) =
             synthesis_authority_runtime_fixture(MODEL_A, MODEL_B, fixture_lanes);
-        let rejected_semantic_plan = serde_json::json!({
-            "semantic_note": "preserve this model-authored module responsibility",
-            "canonical_plan": {
-                "subtasks": [{
-                    "id": "build-core",
-                    "description": "Keep this model-authored responsibility unchanged"
-                }]
-            }
-        });
         let harness = research_correction_runtime_harness(
             &lanes,
             HashMap::from([
-                (
-                    MODEL_A.to_string(),
-                    vec![
-                        rejected_semantic_plan.clone(),
-                        rejected_semantic_plan.clone(),
-                        valid_plan,
-                    ],
-                ),
-                (
-                    MODEL_B.to_string(),
-                    vec![rejected_semantic_plan.clone(), rejected_semantic_plan],
-                ),
+                (MODEL_A.to_string(), vec![serde_json::json!({}), valid_plan]),
+                (MODEL_B.to_string(), Vec::new()),
             ]),
         )
         .await;
@@ -71199,24 +72999,12 @@ mod pre_scheduler_semantic_runtime_tests {
                 .plan_from_pillars(&binding_spec, &outcome, MODEL_A),
         )
         .await
-        .expect("recurring compiler diagnostics left planning in a loop")
-        .expect("the frozen pillar evidence did not compile an alternative");
+        .expect("schema correction left the sole planner session in a loop")
+        .expect("the sole planner session did not correct its typed output");
         assert_eq!(
             dag.tasks.keys().cloned().collect::<Vec<_>>(),
-            ["pillar-build-01"]
+            ["build-core"]
         );
-        let worker_contract = &dag.tasks["pillar-build-01"].spec.description;
-        for exact_pillar_evidence in [
-            "src/core.rs owns the complete isolated core behavior",
-            "run_core(input) -> output",
-            "cargo test core_contract",
-            "Application composition",
-        ] {
-            assert!(
-                worker_contract.contains(exact_pillar_evidence),
-                "evidence compiler produced a generic placeholder instead of `{exact_pillar_evidence}`: {worker_contract}"
-            );
-        }
         let build_dispatcher = Arc::new(RuntimeBuildDispatchProbe {
             starts: AtomicUsize::new(0),
         });
@@ -71239,47 +73027,41 @@ mod pre_scheduler_semantic_runtime_tests {
         .await
         .expect("the bounded compiler transition did not reach real Scheduler dispatch");
         assert_eq!(build_dispatcher.starts.load(AtomicOrdering::SeqCst), 1);
-        assert_eq!(build_report.done, vec!["pillar-build-01"]);
+        assert_eq!(build_report.done, vec!["build-core"]);
         assert_eq!(
             harness.provider.call_count(MODEL_A),
-            1,
-            "the strongest planner received a model correction round"
+            2,
+            "the same logical planner session did not receive one schema correction turn"
         );
         assert_eq!(
             harness.provider.call_count(MODEL_B),
             0,
-            "a second model was asked to verify or repair the plan"
+            "a second model was asked to verify or repair a correctable typed plan"
         );
         assert_eq!(
             harness.provider.user_inputs(MODEL_A).len(),
-            1,
-            "the repeated invalid outputs queued for the strongest model were consumed"
+            2,
+            "the strict tool boundary did not keep correction inside the same session"
         );
-        assert!(!harness.provider.user_inputs(MODEL_A)[0].contains("planner_correction"));
 
         let events = harness.sink.values();
         assert!(!events.iter().any(|event| {
             event["event"] == "pillar_synthesis_plan_semantic_continuation"
                 || event["event"] == "pillar_synthesis_plan_route_recovery_waiting"
         }));
-        let degraded = events
-            .iter()
-            .find(|event| event["event"] == "pillar_synthesis_plan_degraded")
-            .expect("the compiler rejection was not disclosed as degraded planning");
-        assert_eq!(degraded["stage"], "compiler");
-        assert_eq!(degraded["model_correction_rounds"], 0);
-        assert_eq!(degraded["next_phase"], "immediate-build-dispatch");
         let completed = events
             .iter()
             .find(|event| event["event"] == "pillar_synthesis_plan_completed")
-            .expect("the bounded evidence compilation did not terminalize planning");
+            .expect("the corrected model-authored plan did not terminalize planning");
         assert_eq!(completed["planner_lane_invocations"], 1);
-        assert_eq!(completed["engine_compiled_alternative"], true);
+        assert_eq!(completed["engine_compiled_alternative"], false);
+        assert!(!harness.sink.has("pillar_synthesis_plan_degraded"));
+        assert!(!harness.sink.has("pillar_synthesis_plan_terminal_failure"));
         assert_eq!(harness.control.occupancy().await, (0, 0));
     }
 
     #[tokio::test]
-    async fn compiler_rejected_model_semantics_are_quarantined_from_the_evidence_plan() {
+    async fn compiler_rejected_model_semantics_fail_over_without_engine_authored_substitution() {
         const MODEL_A: &str = "semantic-preservation-model-a";
         const MODEL_B: &str = "semantic-preservation-model-b";
         const MODEL_C: &str = "semantic-preservation-model-c";
@@ -71327,18 +73109,18 @@ mod pre_scheduler_semantic_runtime_tests {
         )
         .await
         .expect("compiler rejection left planning in a model correction loop")
-        .expect("compiler rejection stopped the evidence-compiled transition");
+        .expect("a distinct authenticated planner lane did not author the replacement plan");
         assert_eq!(
             dag.tasks.keys().cloned().collect::<Vec<_>>(),
-            ["pillar-build-01"]
+            ["build-core"]
         );
         assert_eq!(harness.provider.call_count(MODEL_A), 1);
-        assert_eq!(harness.provider.call_count(MODEL_B), 0);
+        assert_eq!(
+            harness.provider.call_count(MODEL_B),
+            2,
+            "the next authenticated lane did not receive its in-session schema correction"
+        );
         assert_eq!(harness.provider.call_count(MODEL_C), 0);
-        assert!(!dag.tasks["pillar-build-01"]
-            .spec
-            .description
-            .contains("preserve this exact model-authored semantic responsibility"));
         let compiler_rejection = harness
             .sink
             .values()
@@ -71351,7 +73133,10 @@ mod pre_scheduler_semantic_runtime_tests {
         assert!(compiler_rejection["candidate_semantic_score"]
             .as_u64()
             .is_some_and(|score| score > 0));
-        assert!(harness.sink.has("pillar_synthesis_plan_degraded"));
+        assert_eq!(compiler_rejection["next_distinct_lane"], HOST_B);
+        assert!(!harness.sink.has("pillar_synthesis_plan_terminal_failure"));
+        assert!(!harness.sink.has("pillar_synthesis_plan_degraded"));
+        assert!(harness.sink.has("pillar_synthesis_plan_completed"));
         assert_eq!(harness.control.occupancy().await, (0, 0));
     }
 
@@ -71386,19 +73171,20 @@ mod pre_scheduler_semantic_runtime_tests {
         .await;
         harness.provider.drop_next_stream_unproven(MODEL_A);
         harness.provider.drop_next_stream_unproven(MODEL_B);
-        let (_, dag) = tokio::time::timeout(
+        let result = tokio::time::timeout(
             Duration::from_secs(5),
             harness
                 .dispatcher
                 .plan_from_pillars(&binding_spec, &outcome, MODEL_A),
         )
         .await
-        .expect("planner route unavailability left planning asleep forever")
-        .expect("frozen pillar evidence could not produce the typed degraded transition");
-        assert_eq!(
-            dag.tasks.keys().cloned().collect::<Vec<_>>(),
-            ["pillar-build-01"]
-        );
+        .expect("planner route unavailability left planning asleep forever");
+        let error = result.expect_err("unavailable routes silently created an engine plan");
+        let exhausted = error
+            .downcast_ref::<PillarPlanSemanticExhausted>()
+            .expect("route exhaustion was flattened into an untyped failure");
+        assert_eq!(exhausted.stage, "provider");
+        assert_eq!(exhausted.planner_lane_invocations, 2);
         assert_eq!(harness.provider.call_count(MODEL_A), 1);
         assert_eq!(
             harness.provider.call_count(MODEL_B),
@@ -71410,13 +73196,14 @@ mod pre_scheduler_semantic_runtime_tests {
             event["event"] == "pillar_synthesis_plan_route_recovery_waiting"
                 || event["event"] == "pillar_synthesis_plan_semantic_continuation"
         }));
-        let degraded = events
+        let terminal = events
             .iter()
-            .find(|event| event["event"] == "pillar_synthesis_plan_degraded")
-            .expect("provider unavailability was not truthfully disclosed");
-        assert_eq!(degraded["stage"], "provider");
-        assert_eq!(degraded["next_phase"], "immediate-build-dispatch");
-        assert!(harness.sink.has("pillar_synthesis_plan_completed"));
+            .find(|event| event["event"] == "pillar_synthesis_plan_terminal_failure")
+            .expect("provider route exhaustion was not truthfully disclosed");
+        assert_eq!(terminal["stage"], "provider");
+        assert_eq!(terminal["terminal"], true);
+        assert!(!harness.sink.has("pillar_synthesis_plan_degraded"));
+        assert!(!harness.sink.has("pillar_synthesis_plan_completed"));
         tokio::time::timeout(Duration::from_secs(5), harness.control.wait_until_drained())
             .await
             .expect("the unavailable planner lane did not drain into quarantine")
@@ -71612,6 +73399,64 @@ mod pre_scheduler_semantic_runtime_tests {
             .any(|event| event["event"] == "pillar_opening_candidate_rejected"));
     }
 
+    #[tokio::test]
+    async fn conflicting_authenticated_owner_host_proof_fails_closed_without_degrading() {
+        const PLANNER_MODEL: &str = "owner-conflict-planner";
+        const WORKER_B: &str = "owner-conflict-worker-b";
+        const WORKER_C: &str = "owner-conflict-worker-c";
+        const HOST_A: &str = "owner-conflict-host-a";
+        const HOST_B: &str = "owner-conflict-host-b";
+        const HOST_C: &str = "owner-conflict-host-c";
+        const FROZEN_SPEC: &str = include_str!("../../../../evals/swarm-bench/spec-build-sb7.md");
+        let lanes = [
+            ("owner-conflict-lane-a", PLANNER_MODEL, HOST_A),
+            ("owner-conflict-lane-b", WORKER_B, HOST_B),
+            ("owner-conflict-lane-c", WORKER_C, HOST_C),
+        ];
+        let harness = pillar_replay_runtime_harness(&lanes).await;
+        let proof_overrides = Arc::new(Mutex::new(VecDeque::from([
+            Some(HOST_A.to_string()),
+            Some("authenticated-conflicting-owner-host".to_string()),
+        ])));
+        let error = PRE_SCHEDULER_TEST_HOST_PROOF_OVERRIDES
+            .scope(
+                proof_overrides,
+                harness.dispatcher.research_by_pillars(
+                    FROZEN_SPEC,
+                    Arc::new(Vec::new()),
+                    vec![
+                        ("device-a".to_string(), PLANNER_MODEL.to_string()),
+                        ("device-b".to_string(), WORKER_B.to_string()),
+                        ("device-c".to_string(), WORKER_C.to_string()),
+                    ],
+                    PLANNER_MODEL,
+                ),
+            )
+            .await
+            .unwrap_err()
+            .to_string();
+
+        assert!(error.contains("authenticated physical host"));
+        assert!(error.contains("authenticated-conflicting-owner-host"));
+        let events = harness.sink.values();
+        assert!(events.iter().any(|event| {
+            event["event"] == "pillar_owner_integrity_failure" && event["terminal"] == true
+        }));
+        assert!(!events.iter().any(|event| {
+            event["event"] == "pillar_owner_attempt_degraded"
+                && event["reason"]
+                    .as_str()
+                    .is_some_and(|reason| reason.contains("authenticated-conflicting-owner-host"))
+        }));
+        assert!(!events
+            .iter()
+            .any(|event| event["event"] == "pillar_research_completed"));
+        tokio::time::timeout(Duration::from_secs(5), harness.control.wait_until_drained())
+            .await
+            .expect("owner integrity failure left admitted provider work undrained")
+            .unwrap();
+    }
+
     async fn run_single_lane_opener(
         harness: &PillarReplayRuntimeHarness,
         spec: &str,
@@ -71713,6 +73558,246 @@ mod pre_scheduler_semantic_runtime_tests {
         assert!((1..=PILLAR_OPENING_MAX_AGENT_TURNS as usize).contains(&schema_calls));
     }
 
+    #[test]
+    fn opener_exhaustion_fingerprint_tracks_semantic_values_not_only_json_shape() {
+        let first = r#"{"domain_assignment_by_requirement":{"REQ-a":"domain-a"},"research_slices":[{"id":"slice-a"}]}"#;
+        let changed = r#"{"domain_assignment_by_requirement":{"REQ-a":"domain-b"},"research_slices":[{"id":"slice-b"}]}"#;
+        assert_ne!(
+            normalized_pillar_opening_candidate_fingerprint(Some(first)),
+            normalized_pillar_opening_candidate_fingerprint(Some(changed)),
+        );
+        assert_ne!(
+            normalized_pillar_opening_diagnostic_fingerprint(
+                "missing assignment for `REQ-a` at domain 1"
+            ),
+            normalized_pillar_opening_diagnostic_fingerprint(
+                "missing assignment for `REQ-b` at domain 2"
+            ),
+        );
+    }
+
+    #[tokio::test]
+    async fn semantic_alternative_directive_passes_the_exact_final_output_schema() {
+        let mut tool = goose::agents::final_output_tool::FinalOutputTool::new(Response {
+            json_schema: Some(pillar_semantic_alternative_schema()),
+        });
+        let arguments = object!({
+            "diagnosis": "the same semantic shape recurred",
+            "next_strategy": "reconstruct only the rejected boundary",
+            "preserve": ["valid ownership"],
+            "avoid": ["cosmetic replay"]
+        });
+        let result = tool
+            .execute_tool_call(
+                CallToolRequestParams::new(FINAL_OUTPUT_TOOL).with_arguments(arguments),
+            )
+            .await;
+        if tool.final_output.is_none() {
+            panic!(
+                "semantic alternative schema rejected its typed fixture: {:?}",
+                result.result.await
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn persistent_malformed_opening_requests_semantic_alternatives_without_terminalizing() {
+        const PLANNER_MODEL: &str = "persistent-opening-planner";
+        const WORKER_B: &str = "persistent-opening-worker-b";
+        const WORKER_C: &str = "persistent-opening-worker-c";
+        const FROZEN_SPEC: &str = include_str!("../../../../evals/swarm-bench/spec-build-sb7.md");
+        let lanes = [
+            (
+                "persistent-opening-lane-a",
+                PLANNER_MODEL,
+                "persistent-host-a",
+            ),
+            ("persistent-opening-lane-b", WORKER_B, "persistent-host-b"),
+            ("persistent-opening-lane-c", WORKER_C, "persistent-host-c"),
+        ];
+        let harness = pillar_replay_runtime_harness(&lanes).await;
+        harness.provider.fail_opening_schema_calls(100);
+
+        for _ in 0..2 {
+            let result = harness
+                .dispatcher
+                .research_by_pillars(
+                    FROZEN_SPEC,
+                    Arc::new(Vec::new()),
+                    vec![
+                        ("device-a".to_string(), PLANNER_MODEL.to_string()),
+                        ("device-b".to_string(), WORKER_B.to_string()),
+                        ("device-c".to_string(), WORKER_C.to_string()),
+                    ],
+                    PLANNER_MODEL,
+                )
+                .await
+                .expect("persistent opener schema failure became a terminal engine error");
+            assert!(matches!(
+                result,
+                PillarResearchAttemptOutcome::Unavailable(_)
+            ));
+        }
+
+        let events = harness.sink.values();
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| event["event"] == "pillar_opening_attempt_started")
+                .count(),
+            6,
+            "each semantic cycle must rotate all distinct hosts"
+        );
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| {
+                    event["event"] == "pillar_opening_semantic_alternative_requested"
+                })
+                .count(),
+            1
+        );
+        assert_eq!(
+            harness
+                .provider
+                .calls()
+                .iter()
+                .filter(|call| call.phase == "semantic_alternative")
+                .count(),
+            1,
+            "an unchanged all-host cycle must summon the admitted recovery judge"
+        );
+        assert!(events.iter().any(|event| {
+            event["event"] == "pillar_semantic_alternative_judge_completed"
+                && event["stage"] == "pillar-opening-full-candidate"
+        }));
+        tokio::time::timeout(Duration::from_secs(5), harness.control.wait_until_drained())
+            .await
+            .expect("persistent opener schema failure left provider work undrained")
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn persistent_focused_opening_repair_requests_alternative_without_terminalizing() {
+        const PLANNER_MODEL: &str = "persistent-repair-planner";
+        const WORKER_B: &str = "persistent-repair-worker-b";
+        const WORKER_C: &str = "persistent-repair-worker-c";
+        const FROZEN_SPEC: &str = include_str!("../../../../evals/swarm-bench/spec-build-sb7.md");
+        let lanes = [
+            (
+                "persistent-repair-lane-a",
+                PLANNER_MODEL,
+                "persistent-repair-host-a",
+            ),
+            (
+                "persistent-repair-lane-b",
+                WORKER_B,
+                "persistent-repair-host-b",
+            ),
+            (
+                "persistent-repair-lane-c",
+                WORKER_C,
+                "persistent-repair-host-c",
+            ),
+        ];
+        let harness = pillar_replay_runtime_harness(&lanes).await;
+        harness.provider.reject_next_opening();
+        harness.provider.fail_opening_repairs(100);
+
+        for _ in 0..2 {
+            let result = harness
+                .dispatcher
+                .research_by_pillars(
+                    FROZEN_SPEC,
+                    Arc::new(Vec::new()),
+                    vec![
+                        ("device-a".to_string(), PLANNER_MODEL.to_string()),
+                        ("device-b".to_string(), WORKER_B.to_string()),
+                        ("device-c".to_string(), WORKER_C.to_string()),
+                    ],
+                    PLANNER_MODEL,
+                )
+                .await
+                .expect("persistent focused repair became a terminal engine error");
+            assert!(matches!(
+                result,
+                PillarResearchAttemptOutcome::Unavailable(_)
+            ));
+        }
+        assert_eq!(
+            harness
+                .sink
+                .values()
+                .iter()
+                .filter(|event| {
+                    event["event"] == "pillar_opening_semantic_alternative_requested"
+                })
+                .count(),
+            1
+        );
+        assert_eq!(
+            harness
+                .provider
+                .calls()
+                .iter()
+                .filter(|call| call.phase == "semantic_alternative")
+                .count(),
+            1,
+            "an unchanged focused-repair cycle must summon the admitted recovery judge"
+        );
+        tokio::time::timeout(Duration::from_secs(5), harness.control.wait_until_drained())
+            .await
+            .expect("persistent focused opener repair left provider work undrained")
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn changed_opener_semantic_diagnostic_starts_a_new_corroboration_cycle() {
+        const MODEL: &str = "changed-opening-diagnostic-model";
+        const HOST: &str = "changed-opening-diagnostic-host";
+        const FROZEN_SPEC: &str = include_str!("../../../../evals/swarm-bench/spec-build-sb7.md");
+        let harness =
+            pillar_replay_runtime_harness(&[("changed-opening-diagnostic-lane", MODEL, HOST)])
+                .await;
+        harness.provider.duplicate_catalog_openings(1);
+
+        assert!(matches!(
+            run_single_lane_opener(&harness, FROZEN_SPEC, MODEL).await,
+            PillarResearchAttemptOutcome::Unavailable(_)
+        ));
+        harness.provider.fail_opening_schema_calls(10);
+        let second = harness
+            .dispatcher
+            .research_by_pillars(
+                FROZEN_SPEC,
+                Arc::new(Vec::new()),
+                vec![("device".to_string(), MODEL.to_string())],
+                MODEL,
+            )
+            .await
+            .expect("changed semantic diagnostic was treated as unchanged exhaustion");
+        assert!(matches!(
+            second,
+            PillarResearchAttemptOutcome::Unavailable(_)
+        ));
+        assert!(!harness
+            .sink
+            .has("pillar_opening_semantic_alternative_requested"));
+        assert_eq!(
+            harness
+                .sink
+                .values()
+                .iter()
+                .filter(|event| event["event"] == "pillar_opening_attempt_started")
+                .count(),
+            2
+        );
+        tokio::time::timeout(Duration::from_secs(5), harness.control.wait_until_drained())
+            .await
+            .expect("changed opener diagnostic left provider work undrained")
+            .unwrap();
+    }
+
     #[tokio::test]
     async fn literal_recorded_144_of_197_domains_repair_53_ids_into_model_owned_nested_slices() {
         const MODEL: &str = "workhorse-qwen3.8-27b-brainwaves-mxfp8-mlx";
@@ -71722,11 +73807,11 @@ mod pre_scheduler_semantic_runtime_tests {
         let captured_assignments = captured_live_valid_assignments();
         assert_eq!(requirements.len(), 197);
         assert_eq!(captured_assignments.len(), 144);
-        assert!(captured_assignments
-            .keys()
-            .all(|requirement_id| requirements
+        assert!(captured_assignments.keys().all(|requirement_id| {
+            requirements
                 .iter()
-                .any(|requirement| &requirement.id == requirement_id)));
+                .any(|requirement| &requirement.id == requirement_id)
+        }));
 
         let requirement_ids = requirements
             .iter()
@@ -74323,7 +76408,7 @@ mod pre_scheduler_semantic_runtime_tests {
             sink.as_ref(),
             Some(run_overview_event(None, "python", true, overview, 1)),
             Some(&sealed),
-            serde_json::json!({ "event": "run_finished" }),
+            serde_json::json!({ "event": "run_finished", "success": true }),
         )
         .unwrap();
 
@@ -74517,7 +76602,7 @@ mod pre_scheduler_semantic_runtime_tests {
             sink.as_ref(),
             None,
             Some(&sealed),
-            serde_json::json!({ "event": "run_finished" }),
+            serde_json::json!({ "event": "run_finished", "success": true }),
         )
         .unwrap();
 
@@ -74659,7 +76744,7 @@ mod pre_scheduler_semantic_runtime_tests {
             sink.as_ref(),
             None,
             Some(&sealed),
-            serde_json::json!({ "event": "run_finished" }),
+            serde_json::json!({ "event": "run_finished", "success": true }),
         )
         .unwrap();
 
@@ -74686,6 +76771,95 @@ mod pre_scheduler_semantic_runtime_tests {
                 .count(),
             1
         );
+    }
+
+    #[tokio::test]
+    async fn pillar_flow_does_not_poll_optional_overview_before_terminal() {
+        let sink = RuntimeRecordingSink::default();
+        let overview_calls = AtomicUsize::new(0);
+        let overview_event = maybe_generate_legacy_run_overview(true, true, async {
+            overview_calls.fetch_add(1, AtomicOrdering::SeqCst);
+            serde_json::json!({ "event": "run_overview", "generated": true })
+        })
+        .await;
+
+        assert!(overview_event.is_none());
+        assert_eq!(overview_calls.load(AtomicOrdering::SeqCst), 0);
+        emit_run_terminal_events(
+            &sink,
+            overview_event,
+            None,
+            serde_json::json!({ "event": "run_finished", "success": true }),
+        )
+        .unwrap();
+        assert_eq!(
+            sink.values()
+                .iter()
+                .filter(|event| event["event"] == "run_finished")
+                .count(),
+            1
+        );
+        assert!(!sink.has("run_overview"));
+
+        let legacy_event = maybe_generate_legacy_run_overview(false, true, async {
+            overview_calls.fetch_add(1, AtomicOrdering::SeqCst);
+            serde_json::json!({ "event": "run_overview", "generated": true })
+        })
+        .await;
+        assert!(legacy_event.is_some());
+        assert_eq!(overview_calls.load(AtomicOrdering::SeqCst), 1);
+    }
+
+    #[test]
+    fn pillar_flow_disables_the_direct_sink_review_tail() {
+        assert!(!sink_review_selected(true, true));
+        assert!(!sink_review_selected(true, false));
+        assert!(sink_review_selected(false, true));
+        assert!(!sink_review_selected(false, false));
+    }
+
+    #[test]
+    fn complete_repair_sources_hold_repair_authority() {
+        for label in [
+            "complete-fix::src/app.py",
+            "complete-fix::cross-file",
+            "boot-repair-1",
+            "smoke-fix",
+        ] {
+            assert_eq!(
+                PreSchedulerSemanticRuntime::source_role(label),
+                WorkRole::Repair,
+                "{label} was admitted with the wrong physical work role"
+            );
+        }
+        assert_eq!(
+            PreSchedulerSemanticRuntime::source_role("planner-call"),
+            WorkRole::PlanningAuthority
+        );
+    }
+
+    #[test]
+    fn complete_repair_dispatch_errors_keep_their_typed_failure_class() {
+        for (error, expected) in [
+            (
+                DispatchError::Transient("transport dropped".to_string()),
+                CompleteRepairDispatchFailureKind::Transient,
+            ),
+            (
+                DispatchError::ContentRetry("invalid patch".to_string()),
+                CompleteRepairDispatchFailureKind::ContentRetry,
+            ),
+            (
+                DispatchError::Unavailable("physical route unavailable".to_string()),
+                CompleteRepairDispatchFailureKind::Unavailable,
+            ),
+            (
+                DispatchError::Terminal("lifecycle proof missing".to_string()),
+                CompleteRepairDispatchFailureKind::Terminal,
+            ),
+        ] {
+            assert_eq!(classify_complete_repair_error(&error).kind, expected);
+        }
     }
 
     #[tokio::test]
@@ -74800,7 +76974,152 @@ mod pre_scheduler_semantic_runtime_tests {
     }
 
     #[tokio::test]
+    async fn pillar_complete_repair_is_physically_admitted_and_terminalized() {
+        let _env = env_lock::lock_env([("GOOSE_SWARM_UNCAPPED", Some("1"))]);
+        let harness = runtime_harness(RuntimeProviderMode::QuietGapThenFinished).await;
+        harness
+            .dispatcher
+            .set_physical_auxiliary_control(Some(harness.control.clone()));
+        let request = DispatchRequest {
+            task_id: "complete-fix::runtime.py".to_string(),
+            description: "Repair the isolated runtime fixture.".to_string(),
+            device_id: SOURCE_DEVICE.to_string(),
+            model_id: SOURCE_MODEL.to_string(),
+            context_slice: String::new(),
+            dependency_files: Vec::new(),
+            attempt: 0,
+            owned_files: Vec::new(),
+            all_files: Vec::new(),
+            prior_hint: None,
+            subsplit: Vec::new(),
+            speculative: false,
+            user_decisions: String::new(),
+            doc_facts: String::new(),
+            neighborhood: Vec::new(),
+            replan_authority: None,
+            activity_publisher: None,
+        };
+
+        let output = harness
+            .dispatcher
+            .run_complete_repair(true, request)
+            .await
+            .expect("pillar COMPLETE repair did not finish through the physical broker");
+        assert!(output.output.contains("completed after the quiet interval"));
+        tokio::time::timeout(Duration::from_secs(5), harness.control.wait_until_drained())
+            .await
+            .expect("pillar COMPLETE repair lifecycle did not drain")
+            .unwrap();
+        let events = harness.sink.values();
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| event["event"] == "broker_provider_request_permitted")
+                .count(),
+            1
+        );
+        assert_eq!(released_completion_for(&events, SOURCE_MODEL), ["success"]);
+    }
+
+    #[tokio::test]
+    async fn production_uncapped_local_source_survives_quiet_gap_and_finishes_once() {
+        let _env = env_lock::lock_env([
+            ("GOOSE_SWARM_UNCAPPED", Some("1")),
+            ("GOOSE_SWARM_PROGRESS_WATCHDOG_SECS", Some("0")),
+        ]);
+        let harness = runtime_harness(RuntimeProviderMode::QuietGapThenFinished).await;
+        let started = tokio::time::Instant::now();
+        let output = tokio::time::timeout(
+            Duration::from_secs(4),
+            run_source(
+                harness.dispatcher.clone(),
+                1,
+                AgentToolSurface::ResponseOnly,
+            ),
+        )
+        .await
+        .expect("uncapped local source did not finish after its quiet interval")
+        .expect("uncapped local source was cancelled by the configured idle watchdog");
+
+        assert!(started.elapsed() > Duration::from_secs(1));
+        assert!(output
+            .text
+            .contains("local generation completed after the quiet interval"));
+        assert_eq!(
+            harness.provider.source_calls.load(AtomicOrdering::SeqCst),
+            1,
+            "the quiet local generation was retried"
+        );
+        let events = harness.sink.values();
+        let terminal_kinds = events
+            .iter()
+            .filter(|event| {
+                event["event"] == "broker_provider_terminal_observed"
+                    && event["admission"]["model_id"] == SOURCE_MODEL
+            })
+            .filter_map(|event| event["receipt"]["kind"].as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(terminal_kinds, ["finished"]);
+        assert_eq!(released_completion_for(&events, SOURCE_MODEL), ["success"]);
+        assert!(events.iter().any(|event| {
+            event["event"] == "provider_stream_progress"
+                && event["model"] == SOURCE_MODEL
+                && event["structured_output_bytes"] == 408
+        }));
+        assert_eq!(harness.control.occupancy().await, (0, 0));
+    }
+
+    #[tokio::test]
+    async fn production_uncapped_direct_local_call_scopes_transport_and_survives_quiet_gap() {
+        let _env = env_lock::lock_env([
+            ("GOOSE_SWARM_UNCAPPED", Some("1")),
+            ("GOOSE_SWARM_PROGRESS_WATCHDOG_SECS", Some("0")),
+        ]);
+        let harness = runtime_harness(RuntimeProviderMode::QuietGapThenFinished).await;
+        harness.dispatcher.set_pre_scheduler_semantic(None);
+
+        let started = tokio::time::Instant::now();
+        let output = tokio::time::timeout(
+            Duration::from_secs(4),
+            run_source(
+                harness.dispatcher.clone(),
+                1,
+                AgentToolSurface::ResponseOnly,
+            ),
+        )
+        .await
+        .expect("uncapped direct local call did not finish after its quiet interval")
+        .expect("uncapped direct local call was cancelled by the configured idle watchdog");
+
+        assert!(started.elapsed() > Duration::from_secs(1));
+        assert!(output
+            .text
+            .contains("local generation completed after the quiet interval"));
+        assert_eq!(
+            harness
+                .provider
+                .direct_stream_calls
+                .load(AtomicOrdering::SeqCst),
+            1,
+            "the direct local generation was retried"
+        );
+        assert_eq!(
+            harness
+                .provider
+                .uncapped_local_scoped_stream_calls
+                .load(AtomicOrdering::SeqCst),
+            1,
+            "the direct local provider stream was created outside the uncapped-local connect-only scope"
+        );
+        assert_eq!(harness.control.occupancy().await, (0, 0));
+    }
+
+    #[tokio::test]
     async fn production_source_watchdog_cancels_reconciles_and_releases() {
+        let _env = env_lock::lock_env([
+            ("GOOSE_SWARM_UNCAPPED", Some("0")),
+            ("GOOSE_SWARM_PROGRESS_WATCHDOG_SECS", Some("0")),
+        ]);
         let harness = runtime_harness(RuntimeProviderMode::Silent).await;
         let error = match run_source(
             harness.dispatcher.clone(),
