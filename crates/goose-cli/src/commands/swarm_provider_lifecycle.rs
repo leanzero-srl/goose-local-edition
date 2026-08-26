@@ -7,7 +7,8 @@ use goose::providers::base::{
     SingleAttemptFailureProvenance, SingleAttemptStream, SingleAttemptStreamOutcome,
 };
 use goose_provider_types::base::{
-    scope_provider_stream_progress, ProviderStreamChunkKind, ProviderStreamProgressSink,
+    scope_lifecycle_supervised_stream, scope_provider_stream_progress, ProviderStreamChunkKind,
+    ProviderStreamProgressSink,
 };
 use goose_provider_types::errors::ProviderError;
 use goose_provider_types::model::ModelConfig;
@@ -1197,21 +1198,25 @@ impl Provider for LifecycleProvider {
             tokio::select! {
                 biased;
                 _ = delivery.cancelled() => None,
-                result = terminal.scope_http(self.inner.stream_once_with_terminal_proof(
-                    model_config,
-                    system,
-                    messages,
-                    tools,
+                result = terminal.scope_http(scope_lifecycle_supervised_stream(
+                    self.inner.stream_once_with_terminal_proof(
+                        model_config,
+                        system,
+                        messages,
+                        tools,
+                    )
                 )) => Some(result),
             }
         } else {
             Some(
                 terminal
-                    .scope_http(self.inner.stream_once_with_terminal_proof(
-                        model_config,
-                        system,
-                        messages,
-                        tools,
+                    .scope_http(scope_lifecycle_supervised_stream(
+                        self.inner.stream_once_with_terminal_proof(
+                            model_config,
+                            system,
+                            messages,
+                            tools,
+                        ),
                     ))
                     .await,
             )
@@ -1425,11 +1430,15 @@ mod tests {
     use goose::providers::base::{ProviderUsage, Usage};
     use goose_swarm::{
         AuthorityScope, EventSink, HostCapacityEvidence, LocalCompletionKind, NullSink,
-        PhysicalAdmissionControl, PhysicalFleetSnapshot, ProviderRequestReceipt, ProviderStartKey,
-        ProviderStartLookupError, ProviderTerminalReceipt, SourceRevisionKind, SwarmEvent,
-        TaskVersion, VerifiedPhysicalIdentity, WorkOpportunity, WorkRole,
+        PhysicalAdmissionControl, PhysicalFleetSnapshot, ProviderLifecycleJournal,
+        ProviderRequestReceipt, ProviderStartKey, ProviderStartLookupError,
+        ProviderTerminalReceipt, SourceRevisionKind, SwarmEvent, TaskVersion,
+        VerifiedPhysicalIdentity, WorkOpportunity, WorkRole,
     };
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
     use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::thread::JoinHandle;
     use std::time::Duration;
 
     const TRANSPORT_A: &str =
@@ -1487,6 +1496,59 @@ mod tests {
     }
 
     struct ProgressOnlyProvider;
+
+    #[derive(Default)]
+    struct AcceptingLifecycleJournal {
+        starts: AtomicUsize,
+        terminals: AtomicUsize,
+    }
+
+    impl ProviderLifecycleJournal for AcceptingLifecycleJournal {
+        fn provider_request_started(
+            &self,
+            _receipt: &ProviderRequestReceipt,
+        ) -> std::result::Result<(), String> {
+            self.starts.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        }
+
+        fn provider_terminal(
+            &self,
+            _receipt: &ProviderTerminalReceipt,
+        ) -> std::result::Result<(), String> {
+            self.terminals.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        }
+    }
+
+    fn delayed_openai_body_server(gap: Duration) -> (String, JoinHandle<()>) {
+        let first = r#"data: {"model":"model-a","choices":[{"delta":{"content":"first"},"index":0,"finish_reason":null}]}
+
+"#;
+        let second = r#"data: {"model":"model-a","choices":[{"delta":{},"index":0,"finish_reason":"stop"}]}
+
+"#;
+        let content_length = first.len() + second.len();
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = std::thread::spawn(move || {
+            let (mut socket, _) = listener.accept().unwrap();
+            let mut request = [0_u8; 8192];
+            let _ = socket.read(&mut request);
+            let headers = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: {content_length}\r\nConnection: close\r\n\r\n"
+            );
+            if socket.write_all(headers.as_bytes()).is_err()
+                || socket.write_all(first.as_bytes()).is_err()
+                || socket.flush().is_err()
+            {
+                return;
+            }
+            std::thread::sleep(gap);
+            let _ = socket.write_all(second.as_bytes());
+        });
+        (format!("http://{address}"), server)
+    }
 
     #[derive(Default)]
     struct TestNudgeDelivery {
@@ -1958,6 +2020,61 @@ mod tests {
         (control, work)
     }
 
+    async fn admitted_for_lmstudio(
+        provider: &dyn Provider,
+        journal: Arc<dyn ProviderLifecycleJournal>,
+    ) -> (PhysicalAdmissionControl, goose_swarm::AdmittedWork) {
+        let model_id = "model-a";
+        let transport = provider
+            .transport_identity(model_id)
+            .expect("loopback LM Studio provider exposes its sealed transport identity");
+        let identity = VerifiedPhysicalIdentity {
+            host_id: "host-a".to_string(),
+            model_instance_id: "instance-a".to_string(),
+            provider_transport_id: transport,
+            advertised_instance_capacity: 1,
+            capacity_evidence: HostCapacityEvidence::ProbeSingleStream {
+                probe_epoch: "probe-a".to_string(),
+            },
+            route_evidence_id: "route-a".to_string(),
+        };
+        let snapshot = PhysicalFleetSnapshot::new(
+            "lifecycle-http-scope-snapshot",
+            vec![identity.into_lane("device-a".to_string(), model_id.to_string(), 1)],
+        )
+        .unwrap();
+        let control = PhysicalAdmissionControl::new_with_journal(
+            "lifecycle-http-scope",
+            snapshot,
+            Arc::new(NullSink),
+            journal,
+        )
+        .unwrap();
+        let source = TaskVersion {
+            authority_scope: AuthorityScope::new("pre-scheduler", "pillar-opening-authority"),
+            phase_epoch: 0,
+            task_id: "opening-attempt-a".to_string(),
+            attempt: 0,
+            revision: 1,
+            kind: SourceRevisionKind::TaskAttempt,
+        };
+        control.set_source_revision(source.clone()).await.unwrap();
+        let work = control
+            .admit(WorkOpportunity {
+                work_id: "opening-attempt-a".to_string(),
+                role: WorkRole::PlanningAuthority,
+                priority: WorkRole::PlanningAuthority.priority(),
+                task_rank: 0,
+                source,
+                eligible_logical_device_ids: vec!["device-a".to_string()],
+                preferred_model_id: Some(model_id.to_string()),
+                excluded_logical_device_id: None,
+            })
+            .await
+            .unwrap();
+        (control, work)
+    }
+
     async fn admitted_pre_scheduler_pair() -> (
         PhysicalAdmissionControl,
         goose_swarm::AdmittedWork,
@@ -2074,6 +2191,96 @@ mod tests {
             )
         })
         .await
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn lifecycle_supervised_loopback_stream_survives_body_gap_without_provider_leases() {
+        const ORDINARY_READ_TIMEOUT_SECS: u64 = 1;
+        const BODY_GAP: Duration = Duration::from_millis(1500);
+        assert!(BODY_GAP > Duration::from_secs(ORDINARY_READ_TIMEOUT_SECS));
+
+        let (supervised_endpoint, supervised_server) = delayed_openai_body_server(BODY_GAP);
+        let (ordinary_endpoint, ordinary_server) = delayed_openai_body_server(BODY_GAP);
+        let ordinary_read_timeout = ORDINARY_READ_TIMEOUT_SECS.to_string();
+        let env = env_lock::lock_env([
+            (
+                "GOOSE_PROVIDER_READ_TIMEOUT_SECS",
+                Some(ordinary_read_timeout.as_str()),
+            ),
+            ("LMSTUDIO_API_KEY", None),
+        ]);
+        let supervised_inner: Arc<dyn Provider> = Arc::new(
+            goose::providers::openai_def::from_loopback_lmstudio_endpoint(
+                &supervised_endpoint,
+                None,
+            )
+            .unwrap()
+            .unwrap(),
+        );
+        let ordinary_inner =
+            goose::providers::openai_def::from_loopback_lmstudio_endpoint(&ordinary_endpoint, None)
+                .unwrap()
+                .unwrap();
+        drop(env);
+
+        let journal = Arc::new(AcceptingLifecycleJournal::default());
+        let (control, work) =
+            admitted_for_lmstudio(supervised_inner.as_ref(), journal.clone()).await;
+        let supervised = scope_provider_lifecycle(work.lifecycle(), async move {
+            bind_current_provider_lifecycle(supervised_inner, None, None)
+        })
+        .await;
+        let mut supervised_stream = supervised
+            .stream(
+                &ModelConfig::new("model-a"),
+                "system",
+                &[Message::user().with_text("request")],
+                &[],
+            )
+            .await
+            .unwrap();
+        let mut supervised_items = 0;
+        tokio::time::timeout(Duration::from_secs(4), async {
+            while let Some(item) = supervised_stream.next().await {
+                item.unwrap();
+                supervised_items += 1;
+            }
+        })
+        .await
+        .expect("lifecycle-supervised stream must outlive the ordinary read timeout");
+        assert!(supervised_items > 0);
+        assert_eq!(journal.starts.load(Ordering::SeqCst), 1);
+        assert_eq!(journal.terminals.load(Ordering::SeqCst), 1);
+        work.complete_local(LocalCompletionKind::Success)
+            .await
+            .unwrap();
+        assert_eq!(control.occupancy().await, (0, 0));
+
+        let ordinary_attempt = ordinary_inner
+            .stream_once_with_terminal_proof(
+                &ModelConfig::new("model-a"),
+                "system",
+                &[Message::user().with_text("request")],
+                &[],
+            )
+            .await
+            .unwrap();
+        let ordinary_terminal = ordinary_attempt.terminal;
+        let mut ordinary_stream = ordinary_attempt.stream;
+        assert!(ordinary_stream.next().await.unwrap().is_ok());
+        let ordinary_error = tokio::time::timeout(Duration::from_secs(3), ordinary_stream.next())
+            .await
+            .expect("ordinary read timeout must terminate the silent body interval")
+            .expect("ordinary stream must report the transport error")
+            .unwrap_err();
+        assert!(matches!(ordinary_error, ProviderError::NetworkError(_)));
+        assert_eq!(
+            ordinary_terminal.outcome(),
+            SingleAttemptStreamOutcome::Pending
+        );
+
+        supervised_server.join().unwrap();
+        ordinary_server.join().unwrap();
     }
 
     #[tokio::test]

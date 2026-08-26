@@ -482,6 +482,10 @@ tokio::task_local! {
     static ACTIVE_PROVIDER_HTTP_EXPOSURE: Arc<dyn ProviderHttpExposureBoundary>;
 }
 
+tokio::task_local! {
+    static ACTIVE_LIFECYCLE_SUPERVISED_STREAM: ();
+}
+
 pub async fn scope_provider_http_exposure<F>(
     boundary: Arc<dyn ProviderHttpExposureBoundary>,
     future: F,
@@ -503,6 +507,17 @@ pub fn expose_current_provider_http_request(
 
 pub fn provider_http_exposure_active() -> bool {
     ACTIVE_PROVIDER_HTTP_EXPOSURE.try_with(|_| ()).is_ok()
+}
+
+pub async fn scope_lifecycle_supervised_stream<F>(future: F) -> F::Output
+where
+    F: Future,
+{
+    ACTIVE_LIFECYCLE_SUPERVISED_STREAM.scope((), future).await
+}
+
+pub fn lifecycle_supervised_stream_active() -> bool {
+    ACTIVE_LIFECYCLE_SUPERVISED_STREAM.try_with(|_| ()).is_ok()
 }
 
 #[derive(Clone, Debug, Default)]

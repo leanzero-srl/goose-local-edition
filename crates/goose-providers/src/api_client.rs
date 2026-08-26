@@ -16,7 +16,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use crate::base::{
-    expose_current_provider_http_request, provider_http_exposure_active, ProviderHttpProtocol,
+    expose_current_provider_http_request, lifecycle_supervised_stream_active,
+    provider_http_exposure_active, ProviderHttpProtocol,
 };
 
 const DEFAULT_PROVIDER_TIMEOUT_SECS: u64 = 600;
@@ -420,7 +421,7 @@ impl ApiClient {
     /// Goose owns the complete quiet budget and exact cancellation proof for these calls. A lower
     /// transport read timeout would preempt that engine authority and leave an exposed provider
     /// request without a proven terminal. The ordinary client remains unchanged and is still used
-    /// unless the request is inside a provider-lifecycle HTTP exposure scope.
+    /// unless the request is inside a lifecycle-supervised stream scope.
     pub fn with_lifecycle_supervised_stream_transport(mut self) -> Result<Self> {
         let mut client_builder = apply_lifecycle_supervised_stream_timeout(Client::builder())
             .default_headers(self.default_headers.clone());
@@ -568,12 +569,12 @@ impl<'a> ApiRequestBuilder<'a> {
     }
 
     pub async fn response_post(self, payload: &Value) -> Result<Response> {
-        let lifecycle_supervised = provider_http_exposure_active();
+        let lifecycle_supervised = lifecycle_supervised_stream_active();
         let request = self
             .send_request(lifecycle_supervised, |url, client| client.post(url))
             .await?;
         let request = request.json(payload);
-        if lifecycle_supervised {
+        if provider_http_exposure_active() {
             let protocol = ProviderHttpProtocol::from_openai_path(self.path).ok_or_else(|| {
                 anyhow::anyhow!(
                     "provider HTTP exposure refuses unrecognized POST path `{}`",
@@ -625,7 +626,11 @@ impl<'a> ApiRequestBuilder<'a> {
             self.client
                 .lifecycle_supervised_stream_client
                 .as_ref()
-                .unwrap_or(&self.client.client)
+                .ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "lifecycle-supervised stream transport is unavailable for this provider"
+                    )
+                })?
         } else {
             &self.client.client
         };
@@ -794,7 +799,10 @@ ShGoCNbfNS+COlPMRAujyDlATZcLs9p4tA==
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::base::{scope_provider_http_exposure, ProviderHttpExposureBoundary};
+    use crate::base::{
+        scope_lifecycle_supervised_stream, scope_provider_http_exposure,
+        ProviderHttpExposureBoundary,
+    };
     use std::io::{Read, Write};
     use std::net::TcpListener;
     use std::sync::Mutex;
@@ -914,6 +922,20 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn lifecycle_supervision_fails_closed_without_a_dedicated_transport() {
+        let client = short_timeout_client("http://127.0.0.1:1".to_string());
+        let error = scope_lifecycle_supervised_stream(
+            client.response_post("v1/chat/completions", &serde_json::json!({})),
+        )
+        .await
+        .unwrap_err();
+
+        assert!(error
+            .to_string()
+            .contains("lifecycle-supervised stream transport is unavailable"));
+    }
+
+    #[tokio::test]
     async fn lifecycle_supervised_local_stream_survives_prefill_and_midstream_gaps() {
         assert!(SCALED_TRANSPORT_READ_TIMEOUT < SCALED_IN_BUDGET_GAP);
         assert!(SCALED_IN_BUDGET_GAP < SCALED_ENGINE_QUIET_BUDGET);
@@ -927,8 +949,7 @@ mod tests {
                 .unwrap();
             let response = tokio::time::timeout(
                 SCALED_ENGINE_QUIET_BUDGET,
-                scope_provider_http_exposure(
-                    accepting_exposure(),
+                scope_lifecycle_supervised_stream(
                     client.response_post("v1/chat/completions", &serde_json::json!({})),
                 ),
             )
