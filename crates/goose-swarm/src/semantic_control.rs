@@ -1256,6 +1256,7 @@ pub enum SemanticObservationAdmissionStage {
     RevalidateSource,
     PhysicalAdmission,
     ProviderNotStarted,
+    Quarantine,
     LocalCompletion,
 }
 
@@ -1858,7 +1859,7 @@ async fn finalize_admitted_observation(
     let observation = match observation.wait().await {
         Ok(observation) => observation,
         Err(_) => {
-            close_after_observer_loss(&admitted, &proof).await?;
+            close_after_observer_loss(admitted, &proof).await?;
             return Err(
                 SemanticObservationAdmissionError::ObserverCompletionClosed { snapshot_hash },
             );
@@ -1901,12 +1902,14 @@ async fn finalize_admitted_observation(
             (LocalCompletionKind::Error, None, None)
         }
         ProviderLifecycleProof::Unresolved(reason) => {
+            let admission_id = admitted.receipt().admission_id.clone();
+            quarantine_unresolved_observation(admitted, reason.clone()).await?;
             return Err(
                 SemanticObservationAdmissionError::ProviderLifecycleUnresolved {
-                    admission_id: admitted.receipt().admission_id.clone(),
+                    admission_id,
                     reason,
                 },
-            )
+            );
         }
         ProviderLifecycleProof::Consumed => {
             return Err(
@@ -1941,7 +1944,7 @@ async fn finalize_admitted_observation(
 }
 
 async fn close_after_observer_loss(
-    admitted: &AdmittedWork,
+    admitted: AdmittedWork,
     proof: &Arc<Mutex<ProviderLifecycleProof>>,
 ) -> std::result::Result<(), SemanticObservationAdmissionError> {
     let lifecycle_proof = take_lifecycle_proof(proof);
@@ -1957,12 +1960,14 @@ async fn close_after_observer_loss(
                 })?;
         }
         ProviderLifecycleProof::Unresolved(reason) => {
+            let admission_id = admitted.receipt().admission_id.clone();
+            quarantine_unresolved_observation(admitted, reason.clone()).await?;
             return Err(
                 SemanticObservationAdmissionError::ProviderLifecycleUnresolved {
-                    admission_id: admitted.receipt().admission_id.clone(),
+                    admission_id,
                     reason,
                 },
-            )
+            );
         }
         ProviderLifecycleProof::ProviderNotStarted
         | ProviderLifecycleProof::TerminalObserved { .. } => {}
@@ -1980,6 +1985,20 @@ async fn close_after_observer_loss(
         .await
         .map_err(|error| SemanticObservationAdmissionError::Broker {
             stage: SemanticObservationAdmissionStage::LocalCompletion,
+            error,
+        })
+}
+
+async fn quarantine_unresolved_observation(
+    admitted: AdmittedWork,
+    reason: String,
+) -> std::result::Result<(), SemanticObservationAdmissionError> {
+    admitted
+        .quarantine_unproven(reason)
+        .await
+        .map(drop)
+        .map_err(|error| SemanticObservationAdmissionError::Broker {
+            stage: SemanticObservationAdmissionStage::Quarantine,
             error,
         })
 }

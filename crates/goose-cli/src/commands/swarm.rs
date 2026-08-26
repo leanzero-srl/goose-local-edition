@@ -18,7 +18,7 @@ use super::swarm_provider_lifecycle::{
 use super::swarm_semantic::{
     activity_digest_key, ActivitySinkHealth, GooseAdmittedSemanticObservationReviewer,
     GooseSemanticObservationSnapshotProducer, GooseSemanticProviderRoute, ReasoningRecurrenceMeter,
-    ReasoningRecurrenceSnapshot,
+    ReasoningRecurrenceSnapshot, SemanticReviewerLiveness,
 };
 use anyhow::{anyhow, bail, Result};
 use async_trait::async_trait;
@@ -59501,6 +59501,10 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             routes,
             dispatcher.sampling.temperature,
             dispatcher.semantic_observation_request_params(),
+            SemanticReviewerLiveness::from_secs(
+                pre_scheduler_judge_no_progress_secs(dispatcher.planner_timeout_secs),
+                planner_wall(dispatcher.planner_timeout_secs),
+            ),
         )
         .map_err(anyhow::Error::msg)?;
         scheduler = scheduler.with_semantic_observation(Arc::new(producer), Arc::new(reviewer));

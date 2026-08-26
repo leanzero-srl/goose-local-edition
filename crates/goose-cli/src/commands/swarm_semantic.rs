@@ -8,9 +8,11 @@ use super::swarm_provider_lifecycle::ProviderStreamProgressSnapshot;
 
 use async_trait::async_trait;
 use base64::Engine;
+use futures::StreamExt;
 use goose::conversation::message::{Message, MessageContent};
 use goose::providers::base::{
-    collect_stream, Provider, SingleAttemptFailureProvenance, SingleAttemptStreamOutcome,
+    collect_stream, MessageStream, Provider, SingleAttemptFailureProvenance,
+    SingleAttemptStreamOutcome,
 };
 use goose_swarm::{
     AdmittedSemanticObservationRequest, AdmittedSemanticObservationReviewer,
@@ -23,9 +25,11 @@ use goose_swarm::{
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, HashMap, VecDeque};
+use std::future::Future;
 use std::path::{Component, Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
+use std::time::Duration;
 use tokio::sync::Mutex as AsyncMutex;
 
 use goose_provider_types::errors::ProviderError;
@@ -1146,19 +1150,136 @@ pub struct GooseAdmittedSemanticObservationReviewer {
     routes: BTreeMap<String, GooseSemanticProviderRoute>,
     temperature: Option<f32>,
     request_params: HashMap<String, serde_json::Value>,
+    liveness: SemanticReviewerLiveness,
 }
 
 enum SemanticProviderCallError {
     BeforeStream(ProviderError),
+    BeforeStreamTimeout(String),
     DuringStream(ProviderError, SingleAttemptStreamOutcome),
 }
 
+#[derive(Clone, Copy, Debug)]
+pub(super) struct SemanticReviewerLiveness {
+    inactivity: Option<Duration>,
+    total: Option<Duration>,
+}
+
+impl SemanticReviewerLiveness {
+    pub(super) fn from_secs(inactivity_secs: u64, total_secs: u64) -> Self {
+        Self::from_durations(
+            (inactivity_secs > 0).then(|| Duration::from_secs(inactivity_secs)),
+            (total_secs > 0).then(|| Duration::from_secs(total_secs)),
+        )
+    }
+
+    fn from_durations(inactivity: Option<Duration>, total: Option<Duration>) -> Self {
+        Self { inactivity, total }
+    }
+
+    fn total_deadline(self) -> Option<tokio::time::Instant> {
+        self.total.map(|total| tokio::time::Instant::now() + total)
+    }
+
+    fn next_deadline(
+        self,
+        total_deadline: Option<tokio::time::Instant>,
+    ) -> Option<(tokio::time::Instant, SemanticReviewerTimeout)> {
+        let inactivity = self.inactivity.map(|duration| {
+            (
+                tokio::time::Instant::now() + duration,
+                SemanticReviewerTimeout::Inactivity(duration),
+            )
+        });
+        let total = total_deadline
+            .zip(self.total)
+            .map(|(deadline, duration)| (deadline, SemanticReviewerTimeout::Total(duration)));
+        match (inactivity, total) {
+            (Some(inactivity), Some(total)) => Some(if total.0 <= inactivity.0 {
+                total
+            } else {
+                inactivity
+            }),
+            (Some(inactivity), None) => Some(inactivity),
+            (None, Some(total)) => Some(total),
+            (None, None) => None,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+enum SemanticReviewerTimeout {
+    Inactivity(Duration),
+    Total(Duration),
+}
+
+impl SemanticReviewerTimeout {
+    fn detail(self) -> String {
+        match self {
+            Self::Inactivity(duration) => format!(
+                "semantic reviewer provider stream made no progress for {} ms",
+                duration.as_millis()
+            ),
+            Self::Total(duration) => format!(
+                "semantic reviewer exceeded its total duration of {} ms",
+                duration.as_millis()
+            ),
+        }
+    }
+}
+
+async fn wait_for_semantic_provider<F>(
+    future: F,
+    liveness: SemanticReviewerLiveness,
+    total_deadline: Option<tokio::time::Instant>,
+) -> Result<F::Output, String>
+where
+    F: Future,
+{
+    let Some((deadline, timeout)) = liveness.next_deadline(total_deadline) else {
+        return Ok(future.await);
+    };
+    tokio::pin!(future);
+    tokio::select! {
+        biased;
+        _ = tokio::time::sleep_until(deadline) => Err(timeout.detail()),
+        output = &mut future => Ok(output),
+    }
+}
+
+fn bound_semantic_provider_stream(
+    mut stream: MessageStream,
+    liveness: SemanticReviewerLiveness,
+    total_deadline: Option<tokio::time::Instant>,
+) -> MessageStream {
+    Box::pin(async_stream::stream! {
+        loop {
+            let next = match liveness.next_deadline(total_deadline) {
+                Some((deadline, timeout)) => tokio::select! {
+                    biased;
+                    _ = tokio::time::sleep_until(deadline) => {
+                        yield Err(ProviderError::ExecutionError(timeout.detail()));
+                        return;
+                    }
+                    item = stream.next() => item,
+                },
+                None => stream.next().await,
+            };
+            let Some(item) = next else {
+                return;
+            };
+            yield item;
+        }
+    })
+}
+
 impl GooseAdmittedSemanticObservationReviewer {
-    pub fn new(
+    pub(super) fn new(
         fleet_snapshot: PhysicalFleetSnapshot,
         routes: Vec<GooseSemanticProviderRoute>,
         temperature: Option<f32>,
         request_params: HashMap<String, serde_json::Value>,
+        liveness: SemanticReviewerLiveness,
     ) -> Result<Self, String> {
         let mut by_logical_device = BTreeMap::new();
         for route in routes {
@@ -1193,6 +1314,7 @@ impl GooseAdmittedSemanticObservationReviewer {
             routes: by_logical_device,
             temperature,
             request_params,
+            liveness,
         })
     }
 
@@ -1312,19 +1434,26 @@ impl AdmittedSemanticObservationReviewer for GooseAdmittedSemanticObservationRev
             .map_err(AdmittedSemanticReviewError::unresolved)?;
         let messages = [Message::user().with_text(request.observation.user_prompt.clone())];
         let provider_request_id = request.provider_request_id.clone();
+        let liveness = self.liveness;
+        let total_deadline = liveness.total_deadline();
         let result = goose::session_context::with_session_id(provider_request_id, async {
-            let single_attempt = route
-                .provider
-                .stream_once_with_terminal_proof(
+            let single_attempt = wait_for_semantic_provider(
+                route.provider.stream_once_with_terminal_proof(
                     &model_config,
                     &request.observation.system_prompt,
                     &messages,
                     &[],
-                )
-                .await
-                .map_err(SemanticProviderCallError::BeforeStream)?;
+                ),
+                liveness,
+                total_deadline,
+            )
+            .await
+            .map_err(SemanticProviderCallError::BeforeStreamTimeout)?
+            .map_err(SemanticProviderCallError::BeforeStream)?;
             let terminal = single_attempt.terminal;
-            match collect_stream(single_attempt.stream).await {
+            let stream =
+                bound_semantic_provider_stream(single_attempt.stream, liveness, total_deadline);
+            match collect_stream(stream).await {
                 Ok(message) => Ok((message, terminal.outcome())),
                 Err(error) => Err(SemanticProviderCallError::DuringStream(
                     error,
@@ -1375,6 +1504,9 @@ impl AdmittedSemanticObservationReviewer for GooseAdmittedSemanticObservationRev
                     ),
                     goose_swarm::ProviderTerminalKind::Failed,
                 ));
+            }
+            Err(SemanticProviderCallError::BeforeStreamTimeout(detail)) => {
+                return Err(AdmittedSemanticReviewError::unresolved(detail));
             }
             Err(SemanticProviderCallError::BeforeStream(error))
             | Err(SemanticProviderCallError::DuringStream(
@@ -1457,9 +1589,14 @@ mod tests {
     use goose_provider_types::errors::ProviderError;
     use goose_provider_types::model::ModelConfig;
     use goose_swarm::{
-        AcceptanceCriterionSnapshot, AuthorityScope, BrokeredSemanticObservationPlane, EventSink,
-        HostCapacityEvidence, PhysicalAdmissionControl, SemanticObservationAdmissionPolicy,
-        SemanticObservationAdmissionSubmission, SwarmEvent,
+        AcceptanceCriterionSnapshot, AdmissionReceipt, AuthorityScope,
+        BrokeredSemanticObservationPlane, Dag, DeviceCfg, Difficulty, DispatchError,
+        DispatchRequest, EventSink, HostCapacityEvidence, PhysicalAdmissionControl,
+        PhysicalExecutionAuthority, ProviderLifecycle, ProviderLifecycleDispatcher,
+        ProviderTerminalKind, Scheduler, SemanticObservationAdmissionPolicy,
+        SemanticObservationAdmissionSubmission, SemanticObservationCapture,
+        SemanticObservationSnapshotProducer, SemanticTraceSnapshot, SwarmEvent, TaskRunOutput,
+        TaskSpec,
     };
     use rmcp::model::Tool;
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -1480,6 +1617,10 @@ mod tests {
                 .iter()
                 .filter(|value| value["event"] == event)
                 .count()
+        }
+
+        fn values(&self) -> Vec<serde_json::Value> {
+            unpoison(&self.events).clone()
         }
     }
 
@@ -1622,6 +1763,219 @@ mod tests {
             Err(ProviderError::ExecutionError(
                 "adapter must bypass Provider::complete overrides".to_string(),
             ))
+        }
+    }
+
+    #[derive(Clone, Copy, Debug)]
+    enum UnresolvedSemanticStream {
+        DecodeErrorAfterChunk,
+        SilentOpen,
+        ActiveOpen,
+    }
+
+    struct UnresolvedSemanticProvider {
+        mode: UnresolvedSemanticStream,
+        called: AtomicBool,
+        changed: tokio::sync::Notify,
+    }
+
+    impl UnresolvedSemanticProvider {
+        fn new(mode: UnresolvedSemanticStream) -> Self {
+            Self {
+                mode,
+                called: AtomicBool::new(false),
+                changed: tokio::sync::Notify::new(),
+            }
+        }
+
+        async fn wait_until_called(&self) {
+            loop {
+                let changed = self.changed.notified();
+                if self.called.load(Ordering::SeqCst) {
+                    return;
+                }
+                changed.await;
+            }
+        }
+    }
+
+    #[async_trait]
+    impl Provider for UnresolvedSemanticProvider {
+        fn get_name(&self) -> &str {
+            "lmstudio"
+        }
+
+        fn transport_identity(&self, _model_name: &str) -> Option<String> {
+            Some(VERIFIED_TRANSPORT.to_string())
+        }
+
+        fn supports_single_attempt_streaming(&self) -> bool {
+            true
+        }
+
+        fn supports_terminal_proven_single_attempt_streaming(&self) -> bool {
+            true
+        }
+
+        async fn stream(
+            &self,
+            _model_config: &ModelConfig,
+            _system: &str,
+            _messages: &[Message],
+            _tools: &[Tool],
+        ) -> Result<MessageStream, ProviderError> {
+            Err(ProviderError::ExecutionError(
+                "semantic regression must use the single-attempt boundary".to_string(),
+            ))
+        }
+
+        async fn stream_once_with_terminal_proof(
+            &self,
+            _model_config: &ModelConfig,
+            _system: &str,
+            _messages: &[Message],
+            _tools: &[Tool],
+        ) -> Result<goose::providers::base::SingleAttemptStream, ProviderError> {
+            goose::providers::base::expose_current_provider_http_request(
+                goose::providers::base::ProviderHttpProtocol::OpenAiChatCompletions,
+                VERIFIED_TRANSPORT,
+            )
+            .map_err(ProviderError::ExecutionError)?;
+            self.called.store(true, Ordering::SeqCst);
+            self.changed.notify_waiters();
+            let stream: MessageStream = match self.mode {
+                UnresolvedSemanticStream::DecodeErrorAfterChunk => {
+                    Box::pin(futures::stream::iter(vec![
+                        Ok((Some(Message::assistant().with_text("{")), None)),
+                        Err(ProviderError::ExecutionError(
+                            "injected semantic stream decode failure".to_string(),
+                        )),
+                    ]))
+                }
+                UnresolvedSemanticStream::SilentOpen => Box::pin(async_stream::stream! {
+                    yield Ok((Some(Message::assistant().with_text("{")), None));
+                    std::future::pending::<()>().await;
+                }),
+                UnresolvedSemanticStream::ActiveOpen => Box::pin(async_stream::stream! {
+                    loop {
+                        yield Ok((Some(Message::assistant().with_text(" ")), None));
+                        tokio::time::sleep(Duration::from_millis(1)).await;
+                    }
+                }),
+            };
+            Ok(goose::providers::base::SingleAttemptStream::new(
+                stream,
+                goose::providers::base::SingleAttemptTerminalProof::default(),
+            ))
+        }
+    }
+
+    struct SchedulerSnapshotProducer;
+
+    #[async_trait]
+    impl SemanticObservationSnapshotProducer for SchedulerSnapshotProducer {
+        async fn capture(
+            &self,
+            request: SemanticObservationCaptureRequest,
+        ) -> Result<Option<SemanticObservationCapture>, String> {
+            let measurement = TraceStateMeasurement {
+                measurement_hash: format!(
+                    "measurement:{}:{}",
+                    request.task_id(),
+                    request.attempt()
+                ),
+                tool_calls: 1,
+                failed_tool_calls: 0,
+                malformed_tool_calls: 0,
+                pending_tool_calls: 0,
+                thinking_chars: 128,
+                recurrence_window_chars: 48,
+                recurrence_observed_windows: 10,
+                recurrence_repeated_windows: 0,
+                recurrence_repeat_share: 0.0,
+                provider_stream_revision: 1,
+                provider_stream_chunks: 1,
+                provider_stream_bytes: 16,
+                provider_structured_output_chunks: 0,
+                provider_structured_output_bytes: 0,
+                provider_last_progress_elapsed_ms: 1,
+                provider_structured_output_active: false,
+                artifact_version: "artifact-v1".to_string(),
+            };
+            let summons = SemanticObservationSummonsSignal::TraceStateAdvanced {
+                source_id: format!("trace:{}:{}", request.task_id(), request.attempt()),
+                measurement,
+                provenance: "production semantic observer regression".to_string(),
+            };
+            let snapshot = SemanticObservationSnapshotDraft {
+                schema_version: SEMANTIC_OBSERVATION_SNAPSHOT_SCHEMA,
+                authority_scope: request
+                    .activity_publisher()
+                    .source()
+                    .authority_scope
+                    .clone(),
+                phase_epoch: request.activity_publisher().source().phase_epoch,
+                task_id: request.task_id().to_string(),
+                attempt: request.attempt(),
+                source_revision: 1,
+                contract_version: request.contract_version().to_string(),
+                artifact_version: "artifact-v1".to_string(),
+                goal: request.goal().to_string(),
+                task_contract: request.task_contract().to_string(),
+                acceptance_oracle: request.acceptance_oracle().to_vec(),
+                dependency_contract_versions: request.dependency_contract_versions().clone(),
+                sibling_contract_versions: request.sibling_contract_versions().clone(),
+                allowed_finding_routes: request.allowed_finding_routes().to_vec(),
+                artifacts: Vec::new(),
+                trace: SemanticTraceSnapshot {
+                    sequence: 1,
+                    recent_reasoning: "the build is still live".to_string(),
+                    recent_actions: vec!["retained one build result".to_string()],
+                    prior_intervention: None,
+                    response_to_prior_intervention: None,
+                },
+                neutral_signals: vec![summons.neutral_signal()],
+            }
+            .seal()
+            .map_err(|error| error.to_string())?;
+            Ok(Some(SemanticObservationCapture::new(snapshot, summons)?))
+        }
+    }
+
+    struct RetainedBuildDispatcher {
+        reviewer_provider: Arc<UnresolvedSemanticProvider>,
+    }
+
+    #[async_trait]
+    impl ProviderLifecycleDispatcher for RetainedBuildDispatcher {
+        async fn run_admitted(
+            &self,
+            _request: DispatchRequest,
+            _admission: AdmissionReceipt,
+            lifecycle: ProviderLifecycle,
+        ) -> Result<TaskRunOutput, DispatchError> {
+            let started = lifecycle
+                .start_provider_request()
+                .await
+                .map_err(|error| DispatchError::Terminal(error.to_string()))?;
+            started
+                .publish_for_scheduler()
+                .map_err(|error| DispatchError::Terminal(error.to_string()))?;
+            started
+                .scope_http(async {
+                    goose::providers::base::expose_current_provider_http_request(
+                        goose::providers::base::ProviderHttpProtocol::OpenAiChatCompletions,
+                        VERIFIED_TRANSPORT,
+                    )
+                })
+                .await
+                .map_err(DispatchError::Terminal)?;
+            self.reviewer_provider.wait_until_called().await;
+            started
+                .provider_terminal(ProviderTerminalKind::Finished)
+                .await
+                .map_err(|error| DispatchError::Terminal(error.to_string()))?;
+            Ok(TaskRunOutput::from("retained-build-result".to_string()))
         }
     }
 
@@ -2300,6 +2654,10 @@ mod tests {
                 vec![route],
                 Some(0.2),
                 HashMap::from([("top_p".to_string(), serde_json::json!(0.8))]),
+                SemanticReviewerLiveness::from_durations(
+                    Some(Duration::from_secs(1)),
+                    Some(Duration::from_secs(2)),
+                ),
             )
             .unwrap(),
         );
@@ -2356,6 +2714,161 @@ mod tests {
         assert_eq!(sink.count("broker_provider_not_started"), 0);
     }
 
+    async fn assert_unresolved_semantic_stream_is_quarantined(mode: UnresolvedSemanticStream) {
+        let sink = Arc::new(RecordingSink::default());
+        let mut lane_a = lane("semantic-lane-a");
+        lane_a.model_id = "semantic-model-a".to_string();
+        let mut lane_b = lane("semantic-lane-b");
+        lane_b.model_id = "semantic-model-b".to_string();
+        let fleet = PhysicalFleetSnapshot::new(
+            format!("semantic-unresolved-{mode:?}"),
+            vec![lane_a.clone(), lane_b.clone()],
+        )
+        .unwrap();
+        let provider = Arc::new(UnresolvedSemanticProvider::new(mode));
+        let routes = vec![lane_a.clone(), lane_b.clone()]
+            .into_iter()
+            .map(|lane| GooseSemanticProviderRoute::bind("lmstudio", provider.clone(), lane))
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        let reviewer = Arc::new(
+            GooseAdmittedSemanticObservationReviewer::new(
+                fleet.clone(),
+                routes,
+                None,
+                HashMap::new(),
+                SemanticReviewerLiveness::from_durations(
+                    Some(Duration::from_millis(25)),
+                    Some(Duration::from_millis(75)),
+                ),
+            )
+            .unwrap(),
+        );
+        let control = PhysicalAdmissionControl::new(
+            format!("semantic-unresolved-{mode:?}"),
+            fleet,
+            sink.clone(),
+        )
+        .unwrap();
+        let dispatcher = Arc::new(RetainedBuildDispatcher {
+            reviewer_provider: provider,
+        });
+        let dag = Dag::from_specs(vec![TaskSpec {
+            id: "retained-build".to_string(),
+            description: "produce the retained build result".to_string(),
+            difficulty: Difficulty::Easy,
+            preferred_model: None,
+            owned_files: vec!["retained.txt".to_string()],
+            deps: Vec::new(),
+            subsplit: Vec::new(),
+            replan_authority: None,
+        }])
+        .unwrap();
+        let devices = vec![
+            DeviceCfg {
+                id: lane_a.logical_device_id,
+                model_id: lane_a.model_id,
+                weight: 1,
+                enabled: true,
+                speed_weight: 1,
+                supervision: false,
+            },
+            DeviceCfg {
+                id: lane_b.logical_device_id,
+                model_id: lane_b.model_id,
+                weight: 1,
+                enabled: true,
+                speed_weight: 1,
+                supervision: false,
+            },
+        ];
+        let report = tokio::time::timeout(
+            Duration::from_secs(2),
+            Scheduler::new(devices, 1)
+                .with_sink(sink.clone())
+                .with_semantic_observation(Arc::new(SchedulerSnapshotProducer), reviewer)
+                .run_with_physical_admission(
+                    dag,
+                    dispatcher,
+                    control.clone(),
+                    PhysicalExecutionAuthority::new(
+                        AuthorityScope::new("semantic-unresolved", "execute"),
+                        0,
+                        WorkRole::Build,
+                    ),
+                    "retain the exact build result".to_string(),
+                    String::new(),
+                ),
+        )
+        .await
+        .unwrap_or_else(|_| panic!("{mode:?} semantic stream blocked scheduler return"))
+        .unwrap();
+
+        assert_eq!(report.done, vec!["retained-build".to_string()]);
+        assert!(report.failed.is_empty());
+        assert_eq!(
+            report.results.get("retained-build").map(String::as_str),
+            Some("retained-build-result")
+        );
+        tokio::time::timeout(Duration::from_millis(100), control.wait_until_drained())
+            .await
+            .unwrap_or_else(|_| panic!("{mode:?} semantic quarantine blocked broker drain"))
+            .unwrap();
+
+        let events = sink.values();
+        let semantic_provider_start = events
+            .iter()
+            .find(|event| {
+                event["event"] == "broker_provider_request_permitted"
+                    && event["admission"]["role"] == "semantic_judge_observation"
+            })
+            .expect("semantic provider start was not admitted");
+        let semantic_admission_id = semantic_provider_start["admission"]["admission_id"]
+            .as_str()
+            .unwrap();
+        let quarantine = events
+            .iter()
+            .find(|event| event["event"] == "broker_admission_quarantined")
+            .expect("unresolved semantic admission was not quarantined");
+        assert_eq!(
+            quarantine["receipt"]["admission"]["admission_id"],
+            semantic_admission_id
+        );
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| {
+                    event["event"] == "broker_provider_terminal_observed"
+                        && event["admission"]["role"] == "semantic_judge_observation"
+                })
+                .count(),
+            0
+        );
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| {
+                    event["event"] == "broker_admission_released"
+                        && event["receipt"]["admission"]["role"] == "semantic_judge_observation"
+                })
+                .count(),
+            0
+        );
+        assert_eq!(sink.count("broker_drain_pending"), 0);
+        assert_eq!(control.occupancy().await, (0, 1));
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn production_unresolved_semantic_streams_are_bounded_and_quarantined() {
+        for mode in [
+            UnresolvedSemanticStream::DecodeErrorAfterChunk,
+            UnresolvedSemanticStream::SilentOpen,
+            UnresolvedSemanticStream::ActiveOpen,
+        ] {
+            assert_unresolved_semantic_stream_is_quarantined(mode).await;
+        }
+    }
+
     #[tokio::test]
     async fn mismatched_provider_route_fails_before_stream_and_records_not_started() {
         let root = tempfile::tempdir().unwrap();
@@ -2381,6 +2894,10 @@ mod tests {
                 ],
                 None,
                 HashMap::new(),
+                SemanticReviewerLiveness::from_durations(
+                    Some(Duration::from_secs(1)),
+                    Some(Duration::from_secs(2)),
+                ),
             )
             .unwrap(),
         );
