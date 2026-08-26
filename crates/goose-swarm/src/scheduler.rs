@@ -48,6 +48,7 @@ use crate::semantic_runtime::{
     SemanticObservationSnapshotProducer, SemanticTraceRevision,
 };
 use anyhow::{bail, Result};
+use futures::FutureExt;
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 use std::cmp::Ordering;
@@ -704,10 +705,10 @@ struct DeviceRt {
 /// Releases ONE idle-job slot when an idle-job task ends — INCLUDING on panic, so a panicking judge or
 /// pre-reviewer can never leak a slot and starve future idle work. Always decrements `idle_jobs`; for a
 /// judge job it also clears `judge_running` so a panicked judge does not wedge the single-judge invariant.
-/// Drop is synchronous, so it spawns a tiny task to update the count under the async State lock (only if a
-/// runtime is still current — during shutdown the count no longer matters).
+/// Drop is synchronous, so it sends the release back to the scheduler loop. The loop applies releases before
+/// scheduling more work and after its structured task drain; no detached cleanup future can cross shutdown.
 struct IdleSlotGuard {
-    state: Arc<Mutex<State>>,
+    release: mpsc::UnboundedSender<IdleSlotRelease>,
     is_judge: bool,
     /// The device index this idle-job CLAIMED (bumped in_flight on), so a worker dispatch + the next idle-job
     /// see it as busy and never stack a 2nd call on the same node (the "+1 QUEUED on one node, another idle"
@@ -720,47 +721,100 @@ struct IdleSlotGuard {
     notify: Option<Arc<Notify>>,
 }
 
+struct IdleSlotRelease {
+    is_judge: bool,
+    claimed_device: Option<usize>,
+}
+
+async fn run_dispatch_catching_panic(
+    dispatcher: Arc<dyn TaskDispatcher>,
+    request: DispatchRequest,
+) -> Result<TaskRunOutput, DispatchError> {
+    match std::panic::AssertUnwindSafe(dispatcher.run(request))
+        .catch_unwind()
+        .await
+    {
+        Ok(result) => result,
+        Err(_) => Err(DispatchError::Terminal(
+            "dispatcher task panicked".to_string(),
+        )),
+    }
+}
+
 impl Drop for IdleSlotGuard {
     fn drop(&mut self) {
-        if let Ok(handle) = tokio::runtime::Handle::try_current() {
-            let st = self.state.clone();
-            let is_judge = self.is_judge;
-            let claimed = self.claimed_device;
-            let notify = self.notify.clone();
-            handle.spawn(async move {
-                {
-                    let mut s = st.lock().await;
-                    s.idle_jobs = s.idle_jobs.saturating_sub(1);
-                    if is_judge {
-                        s.judge_running = false;
-                    }
-                    if let Some(dev) = claimed {
-                        if s.devices[dev].in_flight > 0 {
-                            s.devices[dev].in_flight -= 1;
-                        }
-                    }
-                }
-                // F779/F778: wake the loop ONLY when this release actually freed a DEVICE — a
-                // device-less idle job frees nothing dispatchable, so notifying just re-wakes the
-                // loop into an immediate re-pick of the same task: the measured ~40/sec
-                // judge_observed/skipped spin. Intervention has its own explicit notify; the 15s
-                // tick still fires the device-less judge, just not at CPU speed.
-                //
-                // F893: and never notify for a JUDGE release even WITH a claimed device — the
-                // claimed-device variant of the same spin. Measured live (fleet sb-6 run, fix
-                // round): idle fleet -> judge claims a device -> the dedup skip returns in
-                // microseconds (no LLM call) -> this release notified -> immediate re-pick of the
-                // same unchanged task, 333 observe/skip/verdict cycles in five minutes. The judge
-                // job's own `intervened` notify covers the one case where waking the loop buys
-                // anything; everything else re-evaluates on the tick.
-                if claimed.is_some() && !is_judge {
-                    if let Some(n) = notify {
-                        n.notify_one();
-                    }
-                }
-            });
+        let _ = self.release.send(IdleSlotRelease {
+            is_judge: self.is_judge,
+            claimed_device: self.claimed_device,
+        });
+        // F779/F778: wake the loop ONLY when this release actually freed a DEVICE — a
+        // device-less idle job frees nothing dispatchable, so notifying just re-wakes the
+        // loop into an immediate re-pick of the same task: the measured ~40/sec
+        // judge_observed/skipped spin. Intervention has its own explicit notify; the 15s
+        // tick still fires the device-less judge, just not at CPU speed.
+        //
+        // F893: and never notify for a JUDGE release even WITH a claimed device — the
+        // claimed-device variant of the same spin. Measured live (fleet sb-6 run, fix
+        // round): idle fleet -> judge claims a device -> the dedup skip returns in
+        // microseconds (no LLM call) -> this release notified -> immediate re-pick of the
+        // same unchanged task, 333 observe/skip/verdict cycles in five minutes. The judge
+        // job's own `intervened` notify covers the one case where waking the loop buys
+        // anything; everything else re-evaluates on the tick.
+        if self.claimed_device.is_some() && !self.is_judge {
+            if let Some(notify) = &self.notify {
+                notify.notify_one();
+            }
         }
     }
+}
+
+async fn apply_idle_slot_releases(
+    state: &Arc<Mutex<State>>,
+    releases: &mut mpsc::UnboundedReceiver<IdleSlotRelease>,
+) {
+    let mut pending = Vec::new();
+    while let Ok(release) = releases.try_recv() {
+        pending.push(release);
+    }
+    if pending.is_empty() {
+        return;
+    }
+    let mut state = state.lock().await;
+    for release in pending {
+        state.idle_jobs = state.idle_jobs.saturating_sub(1);
+        if release.is_judge {
+            state.judge_running = false;
+        }
+        if let Some(device) = release.claimed_device {
+            if state.devices[device].in_flight > 0 {
+                state.devices[device].in_flight -= 1;
+            }
+        }
+    }
+}
+
+async fn drain_scheduler_tasks_until(
+    tasks: &mut tokio::task::JoinSet<()>,
+    deadline: Option<std::time::Instant>,
+) -> bool {
+    if let Some(deadline) = deadline {
+        let deadline = tokio::time::Instant::from_std(deadline);
+        loop {
+            if tasks.is_empty() {
+                return false;
+            }
+            tokio::select! {
+                _ = tokio::time::sleep_until(deadline) => {
+                    tasks.abort_all();
+                    while tasks.join_next().await.is_some() {}
+                    return true;
+                }
+                _ = tasks.join_next() => {}
+            }
+        }
+    }
+    while tasks.join_next().await.is_some() {}
+    false
 }
 
 /// determinism. `BinaryHeap` is a max-heap, so `Ord` returns Greater for higher priority.
@@ -2104,6 +2158,9 @@ impl State {
                 self.held_files.remove(&f);
             }
         }
+        // The primary has ended this attempt on every result path, not only on success. A twin from the
+        // superseded attempt can no longer win and must be cancelled before retry/failure can advance the DAG.
+        self.cancel_speculation(tid);
 
         let elapsed_ms = self
             .attempt_started_at
@@ -2280,20 +2337,6 @@ impl State {
                             self.relax_dependents(tid);
                         }
                     }
-                }
-                // SPECULATIVE abort-loser: this PRIMARY won -> abort + release any twin still racing this
-                // task. (When the TWIN won, resolve_speculation cleared `speculating` BEFORE calling
-                // complete(), so this is a no-op there.) Off by default -> the maps are empty -> no-op.
-                if self.speculating.remove(tid) {
-                    if let Some(h) = self.spec_abort.remove(tid) {
-                        h.abort();
-                    }
-                    if let Some(dev) = self.spec_device.remove(tid) {
-                        if self.devices[dev].in_flight > 0 {
-                            self.devices[dev].in_flight -= 1;
-                        }
-                    }
-                    self.spec_started_at.remove(tid);
                 }
             }
             Err(e @ (DispatchError::Transient(_) | DispatchError::ContentRetry(_))) => {
@@ -2896,6 +2939,21 @@ impl State {
         Some((req, dev))
     }
 
+    /// Cancel a speculative attempt that can no longer win and release its independent device claim.
+    /// Idempotent because completion, judge intervention, and split paths can converge on the same cleanup.
+    fn cancel_speculation(&mut self, tid: &str) {
+        self.speculating.remove(tid);
+        if let Some(handle) = self.spec_abort.remove(tid) {
+            handle.abort();
+        }
+        if let Some(device) = self.spec_device.remove(tid) {
+            if self.devices[device].in_flight > 0 {
+                self.devices[device].in_flight -= 1;
+            }
+        }
+        self.spec_started_at.remove(tid);
+    }
+
     /// Resolve a SPECULATIVE twin's completion. Releases the twin's OWN device + clears its spec_* maps
     /// (idempotent with the primary-win abort path). Then FIRST-WINS: if the task is no longer Claimed the
     /// PRIMARY already won -> the twin lost, nothing more to do. Otherwise the twin WON: on Ok, abort the
@@ -2978,7 +3036,13 @@ impl State {
             .dag
             .tasks
             .get(tid)
-            .map(|n| n.attempts == attempt && n.state == TaskState::Claimed)
+            .map(|n| {
+                n.attempts == attempt
+                    && n.state == TaskState::Claimed
+                    // A claimed task is not cancellable until its dispatch future has published the
+                    // handle. Before that point every verdict is observation-only.
+                    && self.abort_handles.contains_key(tid)
+            })
             .unwrap_or(false);
         let interv = self.interventions.get(tid).copied().unwrap_or(0);
         // Captured ONCE, up front, because every branch below removes `attempt_started_at` before it
@@ -3020,6 +3084,7 @@ impl State {
             if let Some(h) = self.abort_handles.remove(tid) {
                 h.abort();
             }
+            self.cancel_speculation(tid);
             if let Some(dev) = self.claimed_device.remove(tid) {
                 if self.devices[dev].in_flight > 0 {
                     self.devices[dev].in_flight -= 1;
@@ -3192,6 +3257,7 @@ impl State {
             if let Some(h) = self.abort_handles.remove(tid) {
                 h.abort();
             }
+            self.cancel_speculation(tid);
             if let Some(dev) = self.claimed_device.remove(tid) {
                 if self.devices[dev].in_flight > 0 {
                     self.devices[dev].in_flight -= 1;
@@ -3302,6 +3368,7 @@ impl State {
         if let Some(h) = self.abort_handles.remove(tid) {
             h.abort();
         }
+        self.cancel_speculation(tid);
         let released_dev = self.claimed_device.remove(tid);
         let released_dev_id = released_dev.map(|i| self.devices[i].cfg.id.clone());
         if let Some(dev) = released_dev {
@@ -3440,6 +3507,7 @@ impl State {
         if let Some(h) = self.abort_handles.remove(tid) {
             h.abort();
         }
+        self.cancel_speculation(tid);
         if let Some(dev) = self.claimed_device.remove(tid) {
             if self.devices[dev].in_flight > 0 {
                 self.devices[dev].in_flight -= 1;
@@ -4045,6 +4113,7 @@ impl Scheduler {
                 },
                 goal,
                 user_decisions,
+                None,
             )
             .await;
         // Local task completion cannot make a run terminal while a correlated provider terminal is
@@ -4072,6 +4141,32 @@ impl Scheduler {
             SchedulerDispatcher::Legacy(dispatcher),
             goal,
             user_decisions,
+            None,
+        )
+        .await
+    }
+
+    /// Run a legacy DAG within an absolute wall deadline. The deadline is enforced inside the
+    /// scheduler so expiry aborts and joins every scheduler-owned future before returning.
+    pub async fn run_with_decisions_until(
+        &self,
+        dag: Dag,
+        dispatcher: Arc<dyn TaskDispatcher>,
+        goal: String,
+        user_decisions: String,
+        deadline: std::time::Instant,
+    ) -> Result<RunReport> {
+        if self.semantic_observation.is_some() {
+            bail!(
+                "semantic observation requires physical admission and exact provider lifecycle receipts"
+            );
+        }
+        self.run_internal(
+            dag,
+            SchedulerDispatcher::Legacy(dispatcher),
+            goal,
+            user_decisions,
+            Some(deadline),
         )
         .await
     }
@@ -4082,6 +4177,7 @@ impl Scheduler {
         dispatcher: SchedulerDispatcher,
         goal: String,
         user_decisions: String,
+        deadline: Option<std::time::Instant>,
     ) -> Result<RunReport> {
         if !self.devices.iter().any(|d| d.enabled && !d.supervision) {
             bail!("no enabled BUILD devices in the pool");
@@ -4233,10 +4329,20 @@ impl Scheduler {
         let mut semantic_captures_in_flight = HashSet::new();
         let mut semantic_last_consumed: HashMap<TaskId, SemanticTraceRevision> = HashMap::new();
         let mut semantic_last_summoned: HashMap<TaskId, SemanticTraceRevision> = HashMap::new();
+        let mut scheduler_tasks = tokio::task::JoinSet::<()>::new();
+        let (idle_release_tx, mut idle_release_rx) = mpsc::unbounded_channel();
         // Edge-detect pause transitions so run_paused/run_unpaused is emitted once per transition, not per tick.
         let mut was_paused = false;
 
         loop {
+            while scheduler_tasks.try_join_next().is_some() {}
+            apply_idle_slot_releases(&state, &mut idle_release_rx).await;
+            if deadline.is_some_and(|deadline| std::time::Instant::now() >= deadline) {
+                scheduler_tasks.abort_all();
+                while scheduler_tasks.join_next().await.is_some() {}
+                apply_idle_slot_releases(&state, &mut idle_release_rx).await;
+                bail!("scheduler deadline elapsed after all scheduler tasks were drained");
+            }
             while let Ok(result) = semantic_completion_rx.try_recv() {
                 semantic_captures_in_flight.remove(&result.task_id);
                 if let Some(revision) = result.revision {
@@ -4281,8 +4387,11 @@ impl Scheduler {
                 let attempt = a.request.attempt;
                 let request = a.request;
                 let done_id = task_id.clone();
-                let jh = tokio::spawn(async move {
-                    let res = dispatcher.run(request).await;
+                // Publish the abort handle before the future can reconcile against State. This closes the
+                // spawn-to-registration window where a judge could cancel an unregistered writer.
+                let mut scheduler_state = state.lock().await;
+                let abort_handle = scheduler_tasks.spawn(async move {
+                    let res = run_dispatch_catching_panic(dispatcher, request).await;
                     {
                         let mut s = task_state.lock().await;
                         s.complete(&done_id, attempt, res);
@@ -4292,17 +4401,21 @@ impl Scheduler {
                 // Register the abort handle when a judge OR speculation is on, so the loser can be killed.
                 // Neither -> the map stays empty and the default path is byte-identical to before.
                 if self.judge.is_some() || self.speculation_enabled {
-                    state
-                        .lock()
-                        .await
-                        .abort_handles
-                        .insert(task_id, jh.abort_handle());
+                    scheduler_state.abort_handles.insert(task_id, abort_handle);
                 }
             }
 
-            {
+            let stuck_remaining = {
                 let s = state.lock().await;
                 if s.all_terminal() && semantic_captures_in_flight.is_empty() {
+                    drop(s);
+                    let deadline_elapsed =
+                        drain_scheduler_tasks_until(&mut scheduler_tasks, deadline).await;
+                    apply_idle_slot_releases(&state, &mut idle_release_rx).await;
+                    if deadline_elapsed {
+                        bail!("scheduler deadline elapsed after all scheduler tasks were drained");
+                    }
+                    let s = state.lock().await;
                     return Ok(s.build_report());
                 }
                 if !paused
@@ -4334,10 +4447,18 @@ impl Scheduler {
                         .filter(|n| !n.state.is_terminal())
                         .count();
                     s.sink.emit(&SwarmEvent::SchedulerStuck { remaining });
-                    bail!(
-                        "scheduler stuck: {remaining} task(s) cannot proceed (blocked by failed deps or file holds)"
-                    );
+                    Some(remaining)
+                } else {
+                    None
                 }
+            };
+            if let Some(remaining) = stuck_remaining {
+                scheduler_tasks.abort_all();
+                while scheduler_tasks.join_next().await.is_some() {}
+                apply_idle_slot_releases(&state, &mut idle_release_rx).await;
+                bail!(
+                    "scheduler stuck: {remaining} task(s) cannot proceed (blocked by failed deps or file holds)"
+                );
             }
             if let Some(runtime) = semantic_runtime.as_ref().filter(|_| !paused) {
                 let available_provider_slots = runtime.available_provider_slots().await;
@@ -4363,21 +4484,22 @@ impl Scheduler {
                     let last_summoned = semantic_last_summoned.get(&task_id).cloned();
                     let completion = semantic_completion_tx.clone();
                     let semantic_notify = notify.clone();
-                    tokio::spawn(async move {
+                    scheduler_tasks.spawn(async move {
                         let attempt = scheduled.request.attempt;
-                        let observed = tokio::spawn(async move {
-                            observation_runtime
-                                .observe(scheduled, last_consumed, last_summoned)
-                                .await
-                        })
+                        let observed = std::panic::AssertUnwindSafe(observation_runtime.observe(
+                            scheduled,
+                            last_consumed,
+                            last_summoned,
+                        ))
+                        .catch_unwind()
                         .await;
                         let result = match observed {
                             Ok(result) => result,
-                            Err(error) => {
+                            Err(_) => {
                                 panic_runtime.capture_failed(
                                     &task_id,
                                     attempt,
-                                    format!("snapshot producer task ended unexpectedly: {error}"),
+                                    "snapshot producer task panicked".to_string(),
                                 );
                                 SemanticObservationAttemptResult {
                                     task_id,
@@ -4439,7 +4561,8 @@ impl Scheduler {
                         .unwrap_or_default();
                     let mut s = state.lock().await;
                     if s.all_terminal() {
-                        return Ok(s.build_report());
+                        drop(s);
+                        continue;
                     }
                     if specs.is_empty() {
                         let dag = s.dag_specs_snapshot();
@@ -4554,7 +4677,8 @@ impl Scheduler {
                     let st = state.clone();
                     let nt = notify.clone();
                     let cfg = self.judge_cfg;
-                    tokio::spawn(async move {
+                    let release = idle_release_tx.clone();
+                    scheduler_tasks.spawn(async move {
                         // The IdleSlotGuard is the SOLE releaser of the idle_jobs slot AND the claimed device
                         // slot — decrement-ONCE on BOTH normal and panic exit. A counter must not be
                         // double-decremented the way the old idempotent bool harmlessly could (that
@@ -4562,7 +4686,7 @@ impl Scheduler {
                         // path so the next tick can re-judge immediately; the guard also clears it as the
                         // panic backstop.
                         let _slot = IdleSlotGuard {
-                            state: st.clone(),
+                            release,
                             is_judge: true,
                             claimed_device,
                             notify: Some(nt.clone()),
@@ -4606,12 +4730,12 @@ impl Scheduler {
                     };
                     if let Some((model_id, brief, claimed_device)) = pick {
                         let pr = pr.clone();
-                        let st = state.clone();
                         let nt = notify.clone();
                         let goal = { state.lock().await.goal.clone() };
-                        tokio::spawn(async move {
+                        let release = idle_release_tx.clone();
+                        scheduler_tasks.spawn(async move {
                             let _slot = IdleSlotGuard {
-                                state: st.clone(),
+                                release,
                                 is_judge: false,
                                 claimed_device: Some(claimed_device),
                                 notify: Some(nt),
@@ -4651,13 +4775,14 @@ impl Scheduler {
                     let pr = pr.clone();
                     let st = state.clone();
                     let nt = notify.clone();
-                    tokio::spawn(async move {
+                    let release = idle_release_tx.clone();
+                    scheduler_tasks.spawn(async move {
                         // The IdleSlotGuard is the SOLE releaser of this idle_jobs slot AND the claimed device
                         // slot — decrement-ONCE on both normal and panic exit (is_judge=false leaves
                         // judge_running untouched). Do NOT also decrement explicitly here: that double-counts
                         // the slot and oversubscribes.
                         let _slot = IdleSlotGuard {
-                            state: st.clone(),
+                            release,
                             is_judge: false,
                             claimed_device: Some(claimed_device),
                             notify: Some(nt),
@@ -4705,11 +4830,11 @@ impl Scheduler {
                         break;
                     };
                     let pr = pr.clone();
-                    let st = state.clone();
                     let nt = notify.clone();
-                    tokio::spawn(async move {
+                    let release = idle_release_tx.clone();
+                    scheduler_tasks.spawn(async move {
                         let _slot = IdleSlotGuard {
-                            state: st.clone(),
+                            release,
                             is_judge: false,
                             claimed_device: Some(claimed_device),
                             notify: Some(nt),
@@ -4742,11 +4867,11 @@ impl Scheduler {
                         break;
                     };
                     let pr = pr.clone();
-                    let st = state.clone();
                     let nt = notify.clone();
-                    tokio::spawn(async move {
+                    let release = idle_release_tx.clone();
+                    scheduler_tasks.spawn(async move {
                         let _slot = IdleSlotGuard {
-                            state: st.clone(),
+                            release,
                             is_judge: false,
                             claimed_device: Some(claimed_device),
                             notify: Some(nt),
@@ -4774,12 +4899,12 @@ impl Scheduler {
                 };
                 if let Some((model_id, seq, claimed_device)) = pick {
                     let pr = pr.clone();
-                    let st = state.clone();
                     let nt = notify.clone();
                     let goal = { state.lock().await.goal.clone() };
-                    tokio::spawn(async move {
+                    let release = idle_release_tx.clone();
+                    scheduler_tasks.spawn(async move {
                         let _slot = IdleSlotGuard {
-                            state: st,
+                            release,
                             is_judge: false,
                             claimed_device: Some(claimed_device),
                             notify: Some(nt),
@@ -4807,22 +4932,31 @@ impl Scheduler {
                         s.pick_speculation_target()
                     }
                 };
-                if let Some((req, _dev)) = target {
+                if let Some((req, dev)) = target {
                     let dispatcher = dispatcher.clone();
                     let task_state = state.clone();
                     let notify = notify.clone();
                     let attempt = req.attempt;
                     let tid = req.task_id.clone();
                     let tid_spawn = tid.clone();
-                    let jh = tokio::spawn(async move {
-                        let res = dispatcher.run(req).await;
+                    // As for primaries, make cancellation discoverable before the twin can reconcile.
+                    let mut scheduler_state = state.lock().await;
+                    let still_claimed = scheduler_state.dag.tasks.get(&tid).is_some_and(|node| {
+                        node.state == TaskState::Claimed && node.attempts == attempt
+                    }) && scheduler_state.speculating.contains(&tid)
+                        && scheduler_state.spec_device.get(&tid) == Some(&dev);
+                    if !still_claimed {
+                        continue;
+                    }
+                    let abort_handle = scheduler_tasks.spawn(async move {
+                        let res = run_dispatch_catching_panic(dispatcher, req).await;
                         {
                             let mut s = task_state.lock().await;
                             s.resolve_speculation(&tid_spawn, attempt, res);
                         }
                         notify.notify_one();
                     });
-                    state.lock().await.spec_abort.insert(tid, jh.abort_handle());
+                    scheduler_state.spec_abort.insert(tid, abort_handle);
                 }
             }
             // Wake on a completion, or — when a judge is attached — at least every 15s, so it can
@@ -4850,6 +4984,11 @@ impl Scheduler {
             } else {
                 std::time::Duration::from_secs(86_400)
             };
+            let tick = deadline
+                .map(|deadline| {
+                    tick.min(deadline.saturating_duration_since(std::time::Instant::now()))
+                })
+                .unwrap_or(tick);
             let _ = tokio::time::timeout(tick, notify.notified()).await;
         }
     }

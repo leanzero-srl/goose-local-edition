@@ -484,6 +484,31 @@ async fn file_overlap_serializes() {
 }
 
 #[tokio::test]
+async fn dispatcher_panic_is_reconciled_as_terminal_failure() {
+    struct PanickingDispatcher;
+
+    #[async_trait]
+    impl TaskDispatcher for PanickingDispatcher {
+        async fn run(&self, _request: DispatchRequest) -> Result<TaskRunOutput, DispatchError> {
+            panic!("intentional dispatcher panic")
+        }
+    }
+
+    let dag = Dag::from_specs(vec![spec("panics", &[], &["owned.rs"])]).unwrap();
+    let scheduler = Scheduler::new(vec![dev("d1", "m-1", 1)], 1);
+    let report = tokio::time::timeout(
+        Duration::from_secs(1),
+        scheduler.run(dag, Arc::new(PanickingDispatcher), String::new()),
+    )
+    .await
+    .expect("a dispatcher panic left the scheduler hung")
+    .unwrap();
+
+    assert_eq!(report.failed, ["panics"]);
+    assert!(report.done.is_empty());
+}
+
+#[tokio::test]
 async fn terminal_failure_fails_descendants_without_deadlock() {
     // a (terminal fail) -> b -> c (both FILE-LESS: verification-shaped, so they RELAX THROUGH
     // the failure and still run — the wall-time hunt's rule: a verifier that writes nothing is
@@ -1943,6 +1968,71 @@ async fn speculation_primary_wins_aborts_twin_no_leak() {
     assert!(
         saw.load(Ordering::SeqCst),
         "a twin was spawned (then lost the race + was aborted)"
+    );
+}
+
+struct TerminalPrimaryWithBlockingTwin {
+    twin_started: Arc<tokio::sync::Notify>,
+    twin_release: Arc<tokio::sync::Notify>,
+    twin_cancelled: Arc<AtomicUsize>,
+    late_write: std::path::PathBuf,
+}
+
+#[async_trait]
+impl TaskDispatcher for TerminalPrimaryWithBlockingTwin {
+    async fn run(&self, req: DispatchRequest) -> Result<TaskRunOutput, DispatchError> {
+        if !req.speculative {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            return Err(DispatchError::Terminal("primary failed".to_string()));
+        }
+        struct Cancelled(Arc<AtomicUsize>);
+        impl Drop for Cancelled {
+            fn drop(&mut self) {
+                self.0.fetch_add(1, Ordering::SeqCst);
+            }
+        }
+        let _cancelled = Cancelled(self.twin_cancelled.clone());
+        self.twin_started.notify_one();
+        self.twin_release.notified().await;
+        std::fs::write(&self.late_write, "late speculative write").unwrap();
+        Ok("stale twin".to_string().into())
+    }
+}
+
+#[tokio::test]
+async fn terminal_primary_cancels_stale_twin_before_scheduler_returns() {
+    let root = tempfile::tempdir().unwrap();
+    let late_write = root.path().join("late-twin.txt");
+    let twin_started = Arc::new(tokio::sync::Notify::new());
+    let twin_release = Arc::new(tokio::sync::Notify::new());
+    let twin_cancelled = Arc::new(AtomicUsize::new(0));
+    let dispatcher = Arc::new(TerminalPrimaryWithBlockingTwin {
+        twin_started: twin_started.clone(),
+        twin_release: twin_release.clone(),
+        twin_cancelled: twin_cancelled.clone(),
+        late_write: late_write.clone(),
+    });
+    let dag = Dag::from_specs(vec![spec("terminal", &[], &["terminal.py"])]).unwrap();
+    let scheduler =
+        Scheduler::new(vec![dev("a", "m-a", 1), dev("b", "m-b", 1)], 1).with_speculation();
+    let run = tokio::spawn(async move { scheduler.run(dag, dispatcher, String::new()).await });
+
+    tokio::time::timeout(Duration::from_secs(2), twin_started.notified())
+        .await
+        .expect("speculative twin did not start");
+    let report = tokio::time::timeout(Duration::from_secs(2), run)
+        .await
+        .expect("stale speculative twin blocked terminal drain")
+        .unwrap()
+        .unwrap();
+    assert_eq!(report.failed, ["terminal"]);
+    assert_eq!(twin_cancelled.load(Ordering::SeqCst), 1);
+
+    twin_release.notify_one();
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    assert!(
+        !late_write.exists(),
+        "cancelled speculative work wrote after scheduler return"
     );
 }
 
