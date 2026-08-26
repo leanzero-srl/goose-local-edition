@@ -48,6 +48,7 @@ SEED_RE = re.compile(r"^[0-9a-f]{16}$")
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 GIT_COMMIT_RE = re.compile(r"^[0-9a-f]{40}$")
 RUN_ID_RE = re.compile(r"^swarm-\d{8}-\d{9}$")
+# BEGIN TERMINAL_CLOSURE_RUN_BINDING
 V19_GENERATION = "v21-r4"
 V19_LIVE_ROOT = pathlib.Path(
     "/Users/mihaiperdum/goose-builds/local-sb7-engine-v21-r4"
@@ -103,6 +104,23 @@ V19_PUBLISHER_PATH = (
     V19_STATE_DIR / "closure-instrument" / "seed-fleet-brainwaves-sb70.mjs"
 )
 V19_USAGE_POLICY_PATH = V19_STATE_DIR / "closure-instrument" / "usage_impairment.py"
+V19_BOUND_LAUNCH_SHA256 = "ebc79bd7ccf2ee119242226ab2e1421ae8dff4252af8f097b8e2b278c3e097ff"
+V19_BOUND_RUN_ID = "swarm-20260826-013036983"
+V19_BOUND_PROCESSES = {
+    "harness": {
+        "pid": 75049,
+        "identity_sha256": "f3a1d41309176154b47bfd5a351701c90da156d3494e6bf350d9f6c1bcd1eca1",
+    },
+    "goose": {
+        "pid": 75054,
+        "identity_sha256": "93d4f8a0570710a0c15ce50f7f279e4a12af2cf32624f497e2a28fb8e7bd975e",
+    },
+    "monitor": {
+        "pid": 75045,
+        "identity_sha256": "06bcba6ce61f86cbf082823a2aa6ce5f3ab470ac063b041fee812057bb4c7b99",
+    },
+}
+# END TERMINAL_CLOSURE_RUN_BINDING
 SENSITIVE_NAME_RE = re.compile(r"(?:token|secret|authorization|api[_-]?key|password)", re.I)
 SENSITIVE_TEXT_PATTERNS = (
     re.compile(r"(authorization\s*[:=]\s*)(?:bearer\s+)?[^\s,;]+", re.I),
@@ -1528,7 +1546,7 @@ def validate_v19_config(config: dict[str, Any], *, allow_unarmed: bool) -> None:
         raise ClosureError("v19 instrument manifest hash changed")
     if publication.get("target_document_id") != V19_TARGET_DOCUMENT_ID:
         raise ClosureError("v19 publication target changed")
-    if set(publication.get("protected_document_ids") or []) != set(
+    if publication.get("protected_document_ids") != sorted(
         V19_PROTECTED_DOCUMENT_IDS
     ):
         raise ClosureError("v19 protected publication identities changed")
@@ -1577,6 +1595,8 @@ def validate_v19_config(config: dict[str, Any], *, allow_unarmed: bool) -> None:
         return
     if not RUN_ID_RE.fullmatch(str(expected.get("run_id", ""))):
         raise ClosureError("armed v19 closure run_id is malformed")
+    if expected.get("run_id") != V19_BOUND_RUN_ID:
+        raise ClosureError("armed v19 closure run_id differs from its frozen successor binding")
     if not SEED_RE.fullmatch(str(expected.get("fixture_seed", ""))):
         raise ClosureError("armed v19 closure fixture_seed must be exact 16-hex")
     if any(not SHA256_RE.fullmatch(str(expected.get(field, ""))) for field in dynamic_hashes):
@@ -1625,6 +1645,8 @@ def validate_v19_config(config: dict[str, Any], *, allow_unarmed: bool) -> None:
         raise ClosureError("armed v19 binding template hash is malformed")
     if binding.get("launch_sha256") != expected["launch_sha256"]:
         raise ClosureError("armed v19 binding launch hash differs")
+    if binding.get("launch_sha256") != V19_BOUND_LAUNCH_SHA256:
+        raise ClosureError("armed v19 binding launch hash differs from its frozen successor binding")
     if binding.get("instrument_manifest_sha256") != expected[
         "instrument_manifest_sha256"
     ]:
@@ -1680,10 +1702,7 @@ def validate_config(config: dict[str, Any], *, allow_unarmed: bool = False) -> N
     protected = publication["protected_document_ids"]
     if target != "brun-fleet-qwen38-brainwaves-sb70":
         raise ClosureError("publication target is not the dedicated Brainwaves document")
-    if target in protected or set(protected) != {
-        "brun-fleet-qwen38-sb70",
-        "brun-fleet-qwen-sb70",
-    }:
+    if target in protected or protected != sorted(V19_PROTECTED_DOCUMENT_IDS):
         raise ClosureError("protected benchmark document set changed")
     if config["expected"]["vendor_port"] != 18970:
         raise ClosureError("advertised/scoring port must remain 18970")
@@ -2001,6 +2020,8 @@ def v19_binding_evidence(
     launch_sha256 = sha256_bytes(launch_payload)
     manifest_sha256 = sha256_bytes(manifest_payload)
     expected = config["expected"]
+    if launch_sha256 != V19_BOUND_LAUNCH_SHA256:
+        raise ClosureError("v19 launch receipt differs from its frozen successor binding")
     if launch.get("schema_version") != SCHEMA_VERSION:
         raise ClosureError("v19 launch receipt schema changed")
     if manifest_sha256 != expected["instrument_manifest_sha256"]:
@@ -2038,7 +2059,7 @@ def v19_binding_evidence(
         "publish_from_run_build_auto_score": False,
         "entrant": expected["entrant"],
         "publication_document_id": V19_TARGET_DOCUMENT_ID,
-        "protected_document_ids": list(config["publication"]["protected_document_ids"]),
+        "protected_document_ids": sorted(V19_PROTECTED_DOCUMENT_IDS),
     }:
         raise ClosureError("v19 instrument publication policy changed")
     instrument_files = manifest.get("files")
@@ -2099,6 +2120,7 @@ def v19_binding_evidence(
         len(run_models) != 3
         or run_models != models
         or not isinstance(launch_started, dict)
+        or launch_started.get("run_id") != V19_BOUND_RUN_ID
         or launch_started.get("run_id") != run_started["run_id"]
         or sorted(launch_started.get("pool_models") or []) != models
         or launch_started.get("planner_model") != fleet.get("planner_model")
@@ -2107,7 +2129,15 @@ def v19_binding_evidence(
         raise ClosureError("v19 launch/run_started/fleet identity differs")
     for role in ("harness", "goose", "monitor"):
         receipt = launch.get(role)
-        if not isinstance(receipt, dict) or not validate_authenticated_process(role, receipt):
+        expected_receipt = V19_BOUND_PROCESSES.get(role)
+        if (
+            not isinstance(receipt, dict)
+            or not isinstance(expected_receipt, dict)
+            or receipt.get("pid") != expected_receipt.get("pid")
+            or receipt.get("identity_sha256")
+            != expected_receipt.get("identity_sha256")
+            or not validate_authenticated_process(role, receipt)
+        ):
             raise ClosureError(f"v19 {role} is not live at the binding boundary")
 
     trace_path = V19_LIVE_ROOT / f"trace-{expected['entrant']}-r0.jsonl"
@@ -2345,9 +2375,9 @@ class TerminalClosure:
         policy = manifest.get("sb7_policy") or {}
         if policy.get("publication_document_id") != self.config["publication"]["target_document_id"]:
             raise ClosureError("instrument publication identity changed")
-        if set(policy.get("protected_document_ids") or []) != set(
-            self.config["publication"]["protected_document_ids"]
-        ):
+        if policy.get("protected_document_ids") != self.config["publication"][
+            "protected_document_ids"
+        ]:
             raise ClosureError("instrument protected-document set changed")
         if (
             policy.get("publish_from_run_build_auto_score") is not False
@@ -3342,9 +3372,9 @@ class TerminalClosure:
     def validate_publication_receipt(self, receipt: dict[str, Any]) -> dict[str, Any]:
         if receipt.get("target_document_id") != self.config["publication"]["target_document_id"]:
             raise ClosureError("publisher wrote the wrong target receipt")
-        if set(receipt.get("protected_document_ids") or []) != set(
-            self.config["publication"]["protected_document_ids"]
-        ):
+        if receipt.get("protected_document_ids") != self.config["publication"][
+            "protected_document_ids"
+        ]:
             raise ClosureError("publisher protected-document receipt differs")
         if receipt.get("protected_before_sha256") != receipt.get("protected_after_sha256"):
             raise ClosureError("protected document receipts changed")
