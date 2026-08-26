@@ -1591,12 +1591,12 @@ mod tests {
     use goose_swarm::{
         AcceptanceCriterionSnapshot, AdmissionReceipt, AuthorityScope,
         BrokeredSemanticObservationPlane, Dag, DeviceCfg, Difficulty, DispatchError,
-        DispatchRequest, EventSink, HostCapacityEvidence, PhysicalAdmissionControl,
-        PhysicalExecutionAuthority, ProviderLifecycle, ProviderLifecycleDispatcher,
-        ProviderTerminalKind, Scheduler, SemanticObservationAdmissionPolicy,
-        SemanticObservationAdmissionSubmission, SemanticObservationCapture,
-        SemanticObservationSnapshotProducer, SemanticTraceSnapshot, SwarmEvent, TaskRunOutput,
-        TaskSpec,
+        DispatchRequest, EventSink, HostCapacityEvidence, LocalCompletionKind,
+        PhysicalAdmissionControl, PhysicalExecutionAuthority, ProviderLifecycle,
+        ProviderLifecycleDispatcher, ProviderTerminalKind, Scheduler,
+        SemanticObservationAdmissionPolicy, SemanticObservationAdmissionSubmission,
+        SemanticObservationCapture, SemanticObservationSnapshotProducer, SemanticTraceSnapshot,
+        SwarmEvent, TaskRunOutput, TaskSpec, TaskVersion, WorkOpportunity,
     };
     use rmcp::model::Tool;
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -1773,6 +1773,12 @@ mod tests {
         ActiveOpen,
     }
 
+    #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+    enum SemanticRegressionTopology {
+        DistinctHosts,
+        SourceHostSibling,
+    }
+
     struct UnresolvedSemanticProvider {
         mode: UnresolvedSemanticStream,
         called: AtomicBool,
@@ -1945,6 +1951,7 @@ mod tests {
     struct RetainedBuildDispatcher {
         reviewer_provider: Arc<UnresolvedSemanticProvider>,
         completion_delay: Duration,
+        request_second_provider_turn: bool,
     }
 
     #[async_trait]
@@ -1972,11 +1979,34 @@ mod tests {
                 .await
                 .map_err(DispatchError::Terminal)?;
             self.reviewer_provider.wait_until_called().await;
-            tokio::time::sleep(self.completion_delay).await;
-            started
-                .provider_terminal(ProviderTerminalKind::Finished)
+            if self.request_second_provider_turn {
+                started
+                    .provider_terminal(ProviderTerminalKind::Finished)
+                    .await
+                    .map_err(|error| DispatchError::Terminal(error.to_string()))?;
+                tokio::time::sleep(self.completion_delay).await;
+                let next = lifecycle
+                    .start_provider_request()
+                    .await
+                    .map_err(|error| DispatchError::Terminal(error.to_string()))?;
+                next.scope_http(async {
+                    goose::providers::base::expose_current_provider_http_request(
+                        goose::providers::base::ProviderHttpProtocol::OpenAiChatCompletions,
+                        VERIFIED_TRANSPORT,
+                    )
+                })
                 .await
-                .map_err(|error| DispatchError::Terminal(error.to_string()))?;
+                .map_err(DispatchError::Terminal)?;
+                next.provider_terminal(ProviderTerminalKind::Finished)
+                    .await
+                    .map_err(|error| DispatchError::Terminal(error.to_string()))?;
+            } else {
+                tokio::time::sleep(self.completion_delay).await;
+                started
+                    .provider_terminal(ProviderTerminalKind::Finished)
+                    .await
+                    .map_err(|error| DispatchError::Terminal(error.to_string()))?;
+            }
             Ok(TaskRunOutput::from("retained-build-result".to_string()))
         }
     }
@@ -2721,20 +2751,60 @@ mod tests {
         liveness: SemanticReviewerLiveness,
         completion_delay: Duration,
         return_bound: Duration,
+        topology: SemanticRegressionTopology,
     ) {
         let sink = Arc::new(RecordingSink::default());
-        let mut lane_a = lane("semantic-lane-a");
-        lane_a.model_id = "semantic-model-a".to_string();
-        let mut lane_b = lane("semantic-lane-b");
-        lane_b.model_id = "semantic-model-b".to_string();
+        let (lanes, preferred_build_model, blocker_lane_id) = match topology {
+            SemanticRegressionTopology::DistinctHosts => {
+                let mut lane_a = lane("semantic-lane-a");
+                lane_a.model_id = "semantic-model-a".to_string();
+                let mut lane_b = lane("semantic-lane-b");
+                lane_b.model_id = "semantic-model-b".to_string();
+                (vec![lane_a, lane_b], None, None)
+            }
+            SemanticRegressionTopology::SourceHostSibling => {
+                let source_capacity = HostCapacityEvidence::MeasuredProfile {
+                    profile_hash: "semantic-source-host-capacity".to_string(),
+                    profile_key: "runtime:model:context:semantic-source".to_string(),
+                    max_concurrent: 2,
+                };
+                let alternate_capacity = HostCapacityEvidence::MeasuredProfile {
+                    profile_hash: "semantic-alternate-host-capacity".to_string(),
+                    profile_key: "runtime:model:context:semantic-alternate".to_string(),
+                    max_concurrent: 2,
+                };
+                let mut source = lane("semantic-source-lane");
+                source.model_id = "semantic-source-model".to_string();
+                source.host_id = "semantic-source-host".to_string();
+                source.capacity_evidence = source_capacity.clone();
+                let mut sibling = lane("semantic-source-sibling");
+                sibling.model_id = "semantic-source-sibling-model".to_string();
+                sibling.host_id = source.host_id.clone();
+                sibling.capacity_evidence = source_capacity;
+                let mut blocker = lane("semantic-alternate-blocker");
+                blocker.model_id = "semantic-alternate-blocker-model".to_string();
+                blocker.host_id = "semantic-alternate-host".to_string();
+                blocker.capacity_evidence = alternate_capacity.clone();
+                let mut observer = lane("semantic-alternate-observer");
+                observer.model_id = "semantic-alternate-observer-model".to_string();
+                observer.host_id = blocker.host_id.clone();
+                observer.capacity_evidence = alternate_capacity;
+                (
+                    vec![source.clone(), sibling, blocker.clone(), observer],
+                    Some(source.model_id),
+                    Some(blocker.logical_device_id),
+                )
+            }
+        };
         let fleet = PhysicalFleetSnapshot::new(
-            format!("semantic-unresolved-{mode:?}"),
-            vec![lane_a.clone(), lane_b.clone()],
+            format!("semantic-unresolved-{mode:?}-{topology:?}"),
+            lanes.clone(),
         )
         .unwrap();
         let provider = Arc::new(UnresolvedSemanticProvider::new(mode));
-        let routes = vec![lane_a.clone(), lane_b.clone()]
-            .into_iter()
+        let routes = lanes
+            .iter()
+            .cloned()
             .map(|lane| GooseSemanticProviderRoute::bind("lmstudio", provider.clone(), lane))
             .collect::<Result<Vec<_>, _>>()
             .unwrap();
@@ -2749,44 +2819,77 @@ mod tests {
             .unwrap(),
         );
         let control = PhysicalAdmissionControl::new(
-            format!("semantic-unresolved-{mode:?}"),
+            format!("semantic-unresolved-{mode:?}-{topology:?}"),
             fleet,
             sink.clone(),
         )
         .unwrap();
+        let blocker_cleanup = if let Some(blocker_lane_id) = blocker_lane_id {
+            let source = TaskVersion {
+                authority_scope: AuthorityScope::new("semantic-unresolved", "alternate-blocker"),
+                phase_epoch: 0,
+                task_id: "alternate-host-blocker".to_string(),
+                attempt: 0,
+                revision: 1,
+                kind: SourceRevisionKind::TaskAttempt,
+            };
+            control.set_source_revision(source.clone()).await.unwrap();
+            let blocker = control
+                .admit(WorkOpportunity {
+                    work_id: "alternate-host-blocker".to_string(),
+                    role: WorkRole::Build,
+                    priority: WorkRole::Build.priority(),
+                    task_rank: 0,
+                    source,
+                    eligible_logical_device_ids: vec![blocker_lane_id],
+                    preferred_model_id: None,
+                    excluded_logical_device_id: None,
+                })
+                .await
+                .unwrap();
+            let blocker_started = blocker.lifecycle().start_provider_request().await.unwrap();
+            let provider = provider.clone();
+            Some(tokio::spawn(async move {
+                provider.wait_until_called().await;
+                blocker_started
+                    .provider_terminal(ProviderTerminalKind::Finished)
+                    .await
+                    .unwrap();
+                blocker
+                    .complete_local(LocalCompletionKind::Success)
+                    .await
+                    .unwrap();
+            }))
+        } else {
+            None
+        };
         let dispatcher = Arc::new(RetainedBuildDispatcher {
             reviewer_provider: provider,
             completion_delay,
+            request_second_provider_turn: topology == SemanticRegressionTopology::SourceHostSibling,
         });
         let dag = Dag::from_specs(vec![TaskSpec {
             id: "retained-build".to_string(),
             description: "produce the retained build result".to_string(),
             difficulty: Difficulty::Easy,
-            preferred_model: None,
+            preferred_model: preferred_build_model,
             owned_files: vec!["retained.txt".to_string()],
             deps: Vec::new(),
             subsplit: Vec::new(),
             replan_authority: None,
         }])
         .unwrap();
-        let devices = vec![
-            DeviceCfg {
-                id: lane_a.logical_device_id,
-                model_id: lane_a.model_id,
+        let devices = lanes
+            .into_iter()
+            .map(|lane| DeviceCfg {
+                id: lane.logical_device_id,
+                model_id: lane.model_id,
                 weight: 1,
                 enabled: true,
                 speed_weight: 1,
                 supervision: false,
-            },
-            DeviceCfg {
-                id: lane_b.logical_device_id,
-                model_id: lane_b.model_id,
-                weight: 1,
-                enabled: true,
-                speed_weight: 1,
-                supervision: false,
-            },
-        ];
+            })
+            .collect();
         let report = tokio::time::timeout(
             return_bound,
             Scheduler::new(devices, 1)
@@ -2808,6 +2911,9 @@ mod tests {
         .await
         .unwrap_or_else(|_| panic!("{mode:?} semantic stream blocked scheduler return"))
         .unwrap();
+        if let Some(blocker_cleanup) = blocker_cleanup {
+            blocker_cleanup.await.unwrap();
+        }
 
         assert_eq!(report.done, vec!["retained-build".to_string()]);
         assert!(report.failed.is_empty());
@@ -2848,7 +2954,7 @@ mod tests {
                 "active chunks must reach the independent total budget: {quarantine}"
             );
         }
-        if !completion_delay.is_zero() {
+        if !completion_delay.is_zero() && topology == SemanticRegressionTopology::DistinctHosts {
             let build_terminal_index = events
                 .iter()
                 .position(|event| {
@@ -2859,6 +2965,38 @@ mod tests {
             assert!(
                 quarantine_index < build_terminal_index,
                 "auxiliary observer budget must not cap the still-running build"
+            );
+        }
+        if topology == SemanticRegressionTopology::SourceHostSibling {
+            assert_eq!(
+                semantic_provider_start["admission"]["physical_host_id"], "semantic-alternate-host",
+                "observer must not run on any logical lane of the source host"
+            );
+            assert_eq!(
+                quarantine["receipt"]["admission"]["physical_host_id"],
+                "semantic-alternate-host"
+            );
+            let retained_build_starts = events
+                .iter()
+                .enumerate()
+                .filter(|(_, event)| {
+                    event["event"] == "broker_provider_request_permitted"
+                        && event["admission"]["role"] == "build"
+                        && event["admission"]["source"]["task_id"] == "retained-build"
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(retained_build_starts.len(), 2);
+            assert_eq!(
+                retained_build_starts[0].1["admission"]["physical_host_id"],
+                "semantic-source-host"
+            );
+            assert_eq!(
+                retained_build_starts[1].1["admission"]["physical_host_id"],
+                "semantic-source-host"
+            );
+            assert!(
+                quarantine_index < retained_build_starts[1].0,
+                "source worker did not obtain its next provider turn after observer timeout"
             );
         }
         assert_eq!(
@@ -2900,6 +3038,7 @@ mod tests {
                 ),
                 Duration::ZERO,
                 Duration::from_secs(2),
+                SemanticRegressionTopology::DistinctHosts,
             )
             .await;
         }
@@ -2919,6 +3058,21 @@ mod tests {
             super::super::swarm::semantic_observer_liveness(1),
             Duration::from_millis(1_500),
             Duration::from_secs(4),
+            SemanticRegressionTopology::DistinctHosts,
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn production_observer_timeout_cannot_quarantine_the_source_hosts_sibling_lane() {
+        let _env = env_lock::lock_env([("GOOSE_SWARM_UNCAPPED", Some("1"))]);
+
+        assert_unresolved_semantic_stream_is_quarantined(
+            UnresolvedSemanticStream::ActiveOpen,
+            super::super::swarm::semantic_observer_liveness(1),
+            Duration::from_millis(1_500),
+            Duration::from_secs(4),
+            SemanticRegressionTopology::SourceHostSibling,
         )
         .await;
     }

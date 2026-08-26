@@ -1033,7 +1033,10 @@ impl SchedulerSemanticObservationRuntime {
             .verified_lanes()
             .await
             .into_iter()
-            .filter(|lane| lane.logical_device_id != request.running_logical_device_id)
+            .filter(|lane| {
+                lane.host_id != request.activity_publisher().physical_host_id()
+                    && lane.logical_device_id != request.running_logical_device_id
+            })
             .map(|lane| lane.logical_device_id)
             .collect();
         eligible_logical_device_ids.sort();
