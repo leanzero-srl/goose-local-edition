@@ -3042,16 +3042,30 @@ trait BackendProcessingProbe: Send + Sync {
 
 struct LmsBackendProcessingProbe;
 
+async fn run_lms_ps_with_timeout(
+    executable: &str,
+    timeout: std::time::Duration,
+) -> Option<std::process::Output> {
+    if timeout.is_zero() {
+        return None;
+    }
+    let mut command = tokio::process::Command::new(executable);
+    command
+        .arg("ps")
+        .stdin(std::process::Stdio::null())
+        .kill_on_drop(true);
+    tokio::time::timeout(timeout, command.output())
+        .await
+        .ok()?
+        .ok()
+}
+
 #[async_trait]
 impl BackendProcessingProbe for LmsBackendProcessingProbe {
     async fn state(&self, route: &AuthenticatedBackendRoute) -> BackendProcessingState {
         let lms = resolve_lms();
-        let output = tokio::time::timeout(
-            std::time::Duration::from_secs(5),
-            tokio::task::spawn_blocking(move || ProcCommand::new(lms).arg("ps").output()),
-        )
-        .await;
-        let Ok(Ok(Ok(output))) = output else {
+        let Some(output) = run_lms_ps_with_timeout(&lms, std::time::Duration::from_secs(5)).await
+        else {
             return BackendProcessingState::Unavailable;
         };
         if !output.status.success() {
@@ -18520,6 +18534,48 @@ commands, the two database files, the `web/` files and `DECISIONS.md` are the co
         );
     }
 
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn timed_out_lms_probe_kills_the_cli_process() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp = tempfile::tempdir().unwrap();
+        let script = temp.path().join("wedged-lms");
+        let pid_file = temp.path().join("pid");
+        std::fs::write(
+            &script,
+            format!(
+                "#!/bin/sh\nprintf '%s' \"$$\" > '{}'\nexec sleep 60\n",
+                pid_file.display()
+            ),
+        )
+        .unwrap();
+        let mut permissions = std::fs::metadata(&script).unwrap().permissions();
+        permissions.set_mode(0o755);
+        std::fs::set_permissions(&script, permissions).unwrap();
+
+        let output = run_lms_ps_with_timeout(
+            script.to_str().unwrap(),
+            std::time::Duration::from_millis(500),
+        )
+        .await;
+        assert!(output.is_none());
+        let pid = std::fs::read_to_string(&pid_file).unwrap();
+
+        for _ in 0..100 {
+            let alive = ProcCommand::new("kill")
+                .args(["-0", pid.trim()])
+                .stderr(std::process::Stdio::null())
+                .status()
+                .is_ok_and(|status| status.success());
+            if !alive {
+                return;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        panic!("timed-out lms probe process {pid} was not killed and reaped");
+    }
+
     #[test]
     fn structured_generation_budget_is_finite_and_independent() {
         let idle = std::time::Duration::from_secs(420);
@@ -27405,7 +27461,20 @@ impl GooseAgentDispatcher {
                 if let Some(structured_deadline) = structured_budget_remaining {
                     let route_before = authenticated_backend_route(model_id);
                     let state = match route_before.as_ref() {
-                        Some(route) => self.backend_processing_probe.state(route).await,
+                        Some(route) => {
+                            let remaining = structured_deadline
+                                .saturating_duration_since(tokio::time::Instant::now());
+                            if remaining.is_zero() {
+                                BackendProcessingState::Unavailable
+                            } else {
+                                tokio::time::timeout(
+                                    remaining.min(std::time::Duration::from_secs(5)),
+                                    self.backend_processing_probe.state(route),
+                                )
+                                .await
+                                .unwrap_or(BackendProcessingState::Unavailable)
+                            }
+                        }
                         None => BackendProcessingState::Unavailable,
                     };
                     let route_still_authenticated = route_before.as_ref().is_some_and(|route| {
@@ -62359,6 +62428,7 @@ mod pre_scheduler_semantic_runtime_tests {
         BufferedStructuredIdleThenFinished,
         BufferedStructuredRouteLostThenFinished,
         BufferedStructuredForeverThenFinished,
+        BufferedStructuredProbeHangsThenFinished,
         NetworkFailure,
         RecurrentSourceSilentJudge,
         CloseCapturedTurn,
@@ -63220,6 +63290,7 @@ mod pre_scheduler_semantic_runtime_tests {
                     | RuntimeProviderMode::BufferedStructuredIdleThenFinished
                     | RuntimeProviderMode::BufferedStructuredRouteLostThenFinished
                     | RuntimeProviderMode::BufferedStructuredForeverThenFinished
+                    | RuntimeProviderMode::BufferedStructuredProbeHangsThenFinished
             ) {
                 let build_call = self.build_calls.fetch_add(1, AtomicOrdering::SeqCst);
                 return match (self.mode, build_call) {
@@ -63235,7 +63306,8 @@ mod pre_scheduler_semantic_runtime_tests {
                     (
                         RuntimeProviderMode::BufferedStructuredIdleThenFinished
                         | RuntimeProviderMode::BufferedStructuredRouteLostThenFinished
-                        | RuntimeProviderMode::BufferedStructuredForeverThenFinished,
+                        | RuntimeProviderMode::BufferedStructuredForeverThenFinished
+                        | RuntimeProviderMode::BufferedStructuredProbeHangsThenFinished,
                         0,
                     ) => Ok(Self::buffered_structured_then_pending(387)),
                     _ => Ok(Self::finished_text(
@@ -63284,7 +63356,8 @@ mod pre_scheduler_semantic_runtime_tests {
                 RuntimeProviderMode::BufferedStructuredThenFinished
                 | RuntimeProviderMode::BufferedStructuredIdleThenFinished
                 | RuntimeProviderMode::BufferedStructuredRouteLostThenFinished
-                | RuntimeProviderMode::BufferedStructuredForeverThenFinished => {
+                | RuntimeProviderMode::BufferedStructuredForeverThenFinished
+                | RuntimeProviderMode::BufferedStructuredProbeHangsThenFinished => {
                     unreachable!("buffered build modes return before source routing")
                 }
                 RuntimeProviderMode::Silent => Ok(Self::pending()),
@@ -63346,6 +63419,9 @@ mod pre_scheduler_semantic_runtime_tests {
                 RuntimeProviderMode::BufferedStructuredThenFinished
                 | RuntimeProviderMode::BufferedStructuredForeverThenFinished => {
                     BackendProcessingState::Processing
+                }
+                RuntimeProviderMode::BufferedStructuredProbeHangsThenFinished => {
+                    std::future::pending::<BackendProcessingState>().await
                 }
                 RuntimeProviderMode::BufferedStructuredRouteLostThenFinished => {
                     BackendProcessingState::RouteLost
@@ -66266,6 +66342,49 @@ mod pre_scheduler_semantic_runtime_tests {
         )
         .await
         .expect("bounded buffered retry did not drain")
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn production_hung_status_probe_cannot_overrun_structured_generation_deadline() {
+        let _env = env_lock::lock_env([
+            ("GOOSE_SWARM_PROGRESS_WATCHDOG_SECS", Some("0")),
+            ("GOOSE_SWARM_UNCAPPED", Some("0")),
+        ]);
+        let harness =
+            runtime_harness(RuntimeProviderMode::BufferedStructuredProbeHangsThenFinished).await;
+        let started = tokio::time::Instant::now();
+        let report = run_runtime_build(&harness, "bounded-status-probe-build").await;
+
+        assert_eq!(report.done, ["bounded-status-probe-build"]);
+        assert_eq!(harness.provider.build_calls.load(AtomicOrdering::SeqCst), 2);
+        assert!(
+            started.elapsed() < Duration::from_secs(4),
+            "a status probe outlived the two-second structured generation deadline"
+        );
+        let events = harness.sink.values();
+        assert!(events.iter().any(|event| {
+            event["event"] == "structured_generation_quiet_decision"
+                && event["backend_state"] == "unavailable"
+                && event["structured_budget_remaining_ms"] == 0
+                && event["quiet_extended"] == false
+        }));
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| {
+                    event["event"] == "broker_provider_terminal_observed"
+                        && event["receipt"]["kind"] == "cancelled"
+                })
+                .count(),
+            1
+        );
+        tokio::time::timeout(
+            Duration::from_millis(100),
+            harness.control.wait_until_drained(),
+        )
+        .await
+        .expect("hung status probe retry did not drain")
         .unwrap();
     }
 
