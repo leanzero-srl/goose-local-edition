@@ -14892,7 +14892,7 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
     }
 
     #[test]
-    fn fallback_plan_preserves_owner_resolved_interfaces_and_acceptance_evidence() {
+    fn evidence_compiled_plan_preserves_owner_resolved_interfaces_and_acceptance_evidence() {
         let opening = pillar_plan_test_opening(false);
         let report =
             compile_pillar_report_with_sources(
@@ -14920,7 +14920,7 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
                 },
             )
             .unwrap();
-        let (_, dag, routes) = fallback_pillar_plan(
+        let (_, dag, routes) = compile_pillar_evidence_plan(
             "Implement the core behavior in Rust",
             &opening,
             &[report],
@@ -14937,14 +14937,14 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
         ] {
             assert!(
                 description.contains(exact_owner_contract),
-                "fallback worker contract lost `{exact_owner_contract}`: {description}"
+                "evidence-compiled worker contract lost `{exact_owner_contract}`: {description}"
             );
         }
         assert!(!description.contains("Which exact interface owns the behavior?"));
     }
 
     #[tokio::test]
-    async fn pillar_fallback_freezes_sb7_package_entries_and_dispatches_build() {
+    async fn pillar_evidence_compiler_freezes_sb7_package_entries_and_dispatches_build() {
         let spec = "Build one Python application. `python -m app` boots both services; \
                     `python -m app.ledgerd` and `python -m app.notifierd` boot them alone.";
         let requirements = vec![
@@ -14999,11 +14999,11 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
             "mac".to_string(),
         ];
         let (plan_json, dag, _) =
-            fallback_pillar_plan(spec, &opening, &[], "workhorse", &models).unwrap();
+            compile_pillar_evidence_plan(spec, &opening, &[], "workhorse", &models).unwrap();
         assert_eq!(
             dag.tasks.len(),
             4,
-            "fallback invented an extra planning task"
+            "evidence compiler invented an extra planning task"
         );
         let integration = &dag.tasks["integrate-application"].spec;
         assert_eq!(integration.deps.len(), 3);
@@ -21450,6 +21450,13 @@ struct PillarPlanDraft {
     task_specs: Vec<PillarPlanTaskSpecDraft>,
     uncertainty_routes: Vec<PillarUncertaintyRoute>,
     canonical_plan: serde_json::Value,
+}
+
+struct PillarPlanDegradedTransition {
+    stage: &'static str,
+    diagnostic: String,
+    semantic_score: usize,
+    unproven_partial_output_quarantined: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -33374,7 +33381,7 @@ impl GooseAgentDispatcher {
             .collect::<Vec<_>>();
         let mut seen = HashSet::new();
         allowed_runtime_models.retain(|model| seen.insert(model.clone()));
-        let system = "You are the sole logical synthesis planner. Convert the frozen authored requirements and disjoint pillar reports into one immediately executable build DAG. There is no peer plan review or deterministic substitute. A distinct authenticated lane may continue this same logical authority after an unavailable provider attempt or focused compiler rejection; when correction history is present, preserve every valid semantic decision and repair only the supplied diagnostics. task_specs is the exact implementation contract for every canonical task: name its exclusive module boundary, concrete implementation steps, producer/consumer interfaces, edge cases, executable acceptance evidence, and explicit exclusions. Assign each file to exactly one task. Independent modules must have no artificial dependency so other nodes can write them in parallel without overlap. Honor integration_contract.integration_required: add one hook-up task only when true; when false, keep independent deliverables independent. Low-confidence facts never block the build: attach exactly one alternative, isolation, or degraded_fallback route to the task implementing each unresolved requirement, with critical paths choosing an implementable safe alternative or isolation. Schedule noncritical low-confidence work after resolved foundations wherever dependency truth permits; never invent a dependency that is not consumed. Evidence IDs must be empty because receipt authority is conveyed through the compiled pillar reports, not invented plan citations. Use only allowed model IDs. Return a complete replacement typed plan.";
+        let system = "You are the sole logical synthesis planner. Convert the frozen authored requirements and disjoint pillar reports into one immediately executable build DAG. There is no peer plan review and no model correction round. The strongest authenticated lane receives this request first; only a provider-unavailable attempt may replay the identical logical request once on each remaining distinct authenticated route. The first terminal model output is final: the engine compiles it exactly once and quarantines invalid output rather than asking a model to reinterpret it. task_specs is the exact implementation contract for every canonical task: name its exclusive module boundary, concrete implementation steps, producer/consumer interfaces, edge cases, executable acceptance evidence, and explicit exclusions. Assign each file to exactly one task. Independent modules must have no artificial dependency so other nodes can write them in parallel without overlap. Honor integration_contract.integration_required: add one hook-up task only when true; when false, keep independent deliverables independent. Low-confidence facts never block the build: attach exactly one alternative, isolation, or degraded_fallback route to the task implementing each unresolved requirement, with critical paths choosing an implementable safe alternative or isolation. Schedule noncritical low-confidence work after resolved foundations wherever dependency truth permits; never invent a dependency that is not consumed. Evidence IDs must be empty because receipt authority is conveyed through the compiled pillar reports, not invented plan citations. Use only allowed model IDs. Return one complete typed plan.";
         let base_payload = serde_json::json!({
             "authored_prompt": user_prompt,
             "frozen_requirements": outcome.opening.requirements,
@@ -33415,265 +33422,190 @@ impl GooseAgentDispatcher {
             "candidate_lanes": ordered_lanes.len(),
             "peer_plan_verification_calls": 0,
             "fallback_authority": false,
+            "model_correction_rounds": 0,
         }));
-        let mut recent_attempt_history = Vec::new();
-        let mut diagnostics = Vec::new();
-        let mut preserved_semantic_attempt = None;
-        let mut preserved_semantic_quality = (0u8, 0usize);
-        let mut diagnostic_recurrence = HashMap::<String, usize>::new();
-        let mut continuation_strategy =
-            "Produce the complete typed plan from the frozen semantic ledger.".to_string();
-        let mut cycle = 0usize;
+        let user = serde_json::to_string_pretty(&base_payload)?;
+        let mut degraded = None;
         let mut lane_invocations = 0usize;
-        let mut unavailable_cycles = 0u32;
-        loop {
-            cycle = cycle.saturating_add(1);
-            let mut unavailable_attempts = 0usize;
-            let mut cycle_compiler_diagnostics = Vec::new();
-            for (index, lane) in ordered_lanes.iter().enumerate() {
-                lane_invocations = lane_invocations.saturating_add(1);
-                let attempt = lane_invocations;
-                let mut payload = base_payload.clone();
-                if !recent_attempt_history.is_empty() {
-                    payload["planner_correction"] = serde_json::json!({
-                        "preserved_semantic_attempt": preserved_semantic_attempt,
-                        "recent_attempt_history": recent_attempt_history,
-                        "focused_compiler_diagnostics": diagnostics,
-                        "continuation_cycle": cycle,
-                        "continuation_strategy": continuation_strategy,
-                        "instruction": "Continue the same sole logical planner authority. Preserve valid semantic decisions; return a complete replacement that fixes every exact diagnostic. Do not review, vote on, or generically replace the prior plan.",
-                    });
+        for (index, lane) in ordered_lanes.iter().enumerate() {
+            lane_invocations = lane_invocations.saturating_add(1);
+            self.events.write_value(serde_json::json!({
+                "event": "pillar_synthesis_plan_attempt_started",
+                "attempt": lane_invocations,
+                "continuation_cycle": 1,
+                "candidate_lanes": ordered_lanes.len(),
+                "model": lane.model_id,
+                "physical_host_id": lane.physical_host_id,
+                "verified_physical": lane.verified_physical,
+                "logical_planner_authorities": 1,
+                "input_chars": user.chars().count(),
+            }));
+            let transition = match self
+                .run_pillar_planner_attempt_on_lane(lane, system.to_string(), user.clone())
+                .await
+            {
+                Ok(output) => {
+                    Self::validate_pillar_lane_output(lane, &output)?;
+                    let raw = output
+                        .final_output
+                        .filter(|value| !value.trim().is_empty())
+                        .or_else(|| (!output.text.trim().is_empty()).then_some(output.text));
+                    match raw {
+                        Some(raw) => match compile_pillar_plan(
+                            &raw,
+                            &outcome.opening,
+                            &outcome.reports,
+                            &allowed_runtime_models,
+                            user_prompt,
+                        ) {
+                            Ok((plan_json, dag, routes)) => {
+                                self.events.write_value(serde_json::json!({
+                                    "event": "pillar_synthesis_plan_completed",
+                                    "logical_planner_authorities": 1,
+                                    "planner_lane_invocations": lane_invocations,
+                                    "provider_route_failovers": lane_invocations.saturating_sub(1),
+                                    "continuation_cycles": 1,
+                                    "peer_plan_verification_calls": 0,
+                                    "model_correction_rounds": 0,
+                                    "fallback_authority": false,
+                                    "engine_compiled_alternative": false,
+                                    "tasks": dag.tasks.len(),
+                                    "uncertainty_routes": routes.len(),
+                                    "next_phase": "immediate-build-dispatch",
+                                }));
+                                return Ok((plan_json, dag));
+                            }
+                            Err(error) => {
+                                let diagnostic = error.to_string();
+                                let stage = if diagnostic.contains("pillar plan was malformed JSON")
+                                {
+                                    "json"
+                                } else {
+                                    "compiler"
+                                };
+                                PillarPlanDegradedTransition {
+                                    stage,
+                                    diagnostic,
+                                    semantic_score: pillar_plan_semantic_score(&raw),
+                                    unproven_partial_output_quarantined: false,
+                                }
+                            }
+                        },
+                        None => PillarPlanDegradedTransition {
+                            stage: "typed-output",
+                            diagnostic: "planner returned no typed plan".to_string(),
+                            semantic_score: 0,
+                            unproven_partial_output_quarantined: false,
+                        },
+                    }
                 }
-                let user = serde_json::to_string_pretty(&payload)?;
-                self.events.write_value(serde_json::json!({
-                    "event": "pillar_synthesis_plan_attempt_started",
-                    "attempt": attempt,
-                    "continuation_cycle": cycle,
-                    "candidate_lanes": ordered_lanes.len(),
-                    "model": lane.model_id,
-                    "physical_host_id": lane.physical_host_id,
-                    "verified_physical": lane.verified_physical,
-                    "logical_planner_authorities": 1,
-                    "input_chars": user.chars().count(),
-                }));
-
-                let output = match self
-                    .run_pillar_planner_attempt_on_lane(lane, system.to_string(), user)
-                    .await
-                {
-                    Ok(output) => output,
-                    Err(error) => {
-                        if pillar_planner_integrity_failure(&error) {
-                            self.events.write_value(serde_json::json!({
-                                "event": "pillar_synthesis_plan_integrity_failure",
-                                "attempt": attempt,
-                                "continuation_cycle": cycle,
-                                "model": lane.model_id,
-                                "physical_host_id": lane.physical_host_id,
-                                "logical_planner_authorities": 1,
-                                "diagnostic": error.to_string(),
-                                "fallback_authority": false,
-                            }));
-                            return Err(error);
-                        }
-                        let unproven_partial_output_quarantined = matches!(
+                Err(error) => {
+                    if pillar_planner_integrity_failure(&error) {
+                        self.events.write_value(serde_json::json!({
+                            "event": "pillar_synthesis_plan_integrity_failure",
+                            "attempt": lane_invocations,
+                            "continuation_cycle": 1,
+                            "model": lane.model_id,
+                            "physical_host_id": lane.physical_host_id,
+                            "logical_planner_authorities": 1,
+                            "diagnostic": error.to_string(),
+                            "fallback_authority": false,
+                        }));
+                        return Err(error);
+                    }
+                    let transition = PillarPlanDegradedTransition {
+                        stage: "provider",
+                        diagnostic: format!("provider attempt unavailable: {error}"),
+                        semantic_score: 0,
+                        unproven_partial_output_quarantined: matches!(
                             error.downcast_ref::<ProviderLifecycleStartError>(),
                             Some(ProviderLifecycleStartError::UnprovenProviderRequest(_))
-                        );
-                        unavailable_attempts = unavailable_attempts.saturating_add(1);
-                        let diagnostic = format!("provider attempt unavailable: {error}");
-                        let semantic_attempt_preserved = preserved_semantic_attempt.is_some();
-                        diagnostics.push(diagnostic.clone());
-                        recent_attempt_history.push(serde_json::json!({
-                            "attempt": attempt,
-                            "model": lane.model_id,
-                            "physical_host_id": lane.physical_host_id,
-                            "status": "unavailable",
-                            "accepted_terminal_output": null,
-                            "diagnostic": diagnostic,
-                        }));
+                        ),
+                    };
+                    if index + 1 < ordered_lanes.len() {
                         self.events.write_value(serde_json::json!({
                             "event": "pillar_synthesis_plan_attempt_rejected",
-                            "attempt": attempt,
-                            "continuation_cycle": cycle,
+                            "attempt": lane_invocations,
+                            "continuation_cycle": 1,
                             "model": lane.model_id,
                             "physical_host_id": lane.physical_host_id,
-                            "stage": "provider",
-                            "diagnostic": diagnostics.last(),
-                            "semantic_attempt_preserved": semantic_attempt_preserved,
-                            "unproven_partial_output_quarantined": unproven_partial_output_quarantined,
-                            "next_distinct_lane": ordered_lanes.get(index.saturating_add(1)).map(|next| next.physical_host_id.as_str()),
+                            "stage": transition.stage,
+                            "diagnostic": transition.diagnostic.as_str(),
+                            "diagnostic_sha256": content_sha256(&transition.diagnostic),
+                            "candidate_semantic_score": transition.semantic_score,
+                            "unproven_partial_output_quarantined": transition.unproven_partial_output_quarantined,
+                            "next_distinct_lane": ordered_lanes.get(index + 1).map(|next| next.physical_host_id.as_str()),
+                            "model_correction_rounds": 0,
                         }));
                         continue;
                     }
-                };
-                Self::validate_pillar_lane_output(lane, &output)?;
-                let raw = output
-                    .final_output
-                    .filter(|value| !value.trim().is_empty())
-                    .or_else(|| (!output.text.trim().is_empty()).then_some(output.text));
-                let Some(raw) = raw else {
-                    let diagnostic = "planner returned no typed plan".to_string();
-                    let semantic_attempt_preserved = preserved_semantic_attempt.is_some();
-                    diagnostics.push(diagnostic.clone());
-                    cycle_compiler_diagnostics.push(diagnostic.clone());
-                    recent_attempt_history.push(serde_json::json!({
-                        "attempt": attempt,
-                        "model": lane.model_id,
-                        "physical_host_id": lane.physical_host_id,
-                        "status": "empty_terminal_output",
-                        "accepted_terminal_output": null,
-                        "diagnostic": diagnostic,
-                    }));
-                    self.events.write_value(serde_json::json!({
-                        "event": "pillar_synthesis_plan_attempt_rejected",
-                        "attempt": attempt,
-                        "continuation_cycle": cycle,
-                        "model": lane.model_id,
-                        "physical_host_id": lane.physical_host_id,
-                        "stage": "typed-output",
-                        "diagnostic": diagnostics.last(),
-                        "semantic_attempt_preserved": semantic_attempt_preserved,
-                        "next_distinct_lane": ordered_lanes.get(index.saturating_add(1)).map(|next| next.physical_host_id.as_str()),
-                    }));
-                    continue;
-                };
-                match compile_pillar_plan(
-                    &raw,
-                    &outcome.opening,
-                    &outcome.reports,
-                    &allowed_runtime_models,
-                    user_prompt,
-                ) {
-                    Ok((plan_json, dag, routes)) => {
-                        self.events.write_value(serde_json::json!({
-                            "event": "pillar_synthesis_plan_completed",
-                            "logical_planner_authorities": 1,
-                            "planner_lane_invocations": lane_invocations,
-                            "continuation_cycles": cycle,
-                            "peer_plan_verification_calls": 0,
-                            "fallback_authority": false,
-                            "tasks": dag.tasks.len(),
-                            "uncertainty_routes": routes.len(),
-                            "next_phase": "immediate-build-dispatch",
-                        }));
-                        return Ok((plan_json, dag));
-                    }
-                    Err(error) => {
-                        let diagnostic = error.to_string();
-                        let stage = if diagnostic.contains("pillar plan was malformed JSON") {
-                            "json"
-                        } else {
-                            "compiler"
-                        };
-                        diagnostics.push(diagnostic.clone());
-                        cycle_compiler_diagnostics.push(diagnostic.clone());
-                        let semantic_tier = if stage == "json" {
-                            0
-                        } else if diagnostic.contains("planner_correction[typed_plan_schema]") {
-                            1
-                        } else {
-                            2
-                        };
-                        let semantic_score = pillar_plan_semantic_score(&raw);
-                        let candidate_semantic_quality = (semantic_tier, semantic_score);
-                        if semantic_score > 0
-                            && candidate_semantic_quality >= preserved_semantic_quality
-                        {
-                            preserved_semantic_quality = candidate_semantic_quality;
-                            preserved_semantic_attempt = Some(serde_json::json!({
-                                "attempt": attempt,
-                                "model": lane.model_id,
-                                "physical_host_id": lane.physical_host_id,
-                                "semantic_plan": raw.clone(),
-                                "diagnostic": diagnostic,
-                                "semantic_tier": semantic_tier,
-                                "semantic_score": semantic_score,
-                            }));
-                        }
-                        let malformed_terminal_output = (stage == "json").then(|| raw.clone());
-                        recent_attempt_history.push(serde_json::json!({
-                            "attempt": attempt,
-                            "model": lane.model_id,
-                            "physical_host_id": lane.physical_host_id,
-                            "status": "compiler_rejected",
-                            "diagnostic": diagnostic,
-                            "malformed_terminal_output": malformed_terminal_output,
-                        }));
-                        self.events.write_value(serde_json::json!({
-                            "event": "pillar_synthesis_plan_attempt_rejected",
-                            "attempt": attempt,
-                            "continuation_cycle": cycle,
-                            "model": lane.model_id,
-                            "physical_host_id": lane.physical_host_id,
-                            "stage": stage,
-                            "diagnostic": diagnostics.last(),
-                            "semantic_attempt_preserved": preserved_semantic_attempt.is_some(),
-                            "candidate_semantic_score": semantic_score,
-                            "preserved_semantic_score": preserved_semantic_quality.1,
-                            "malformed_terminal_output_preserved": stage == "json",
-                            "next_distinct_lane": ordered_lanes.get(index.saturating_add(1)).map(|next| next.physical_host_id.as_str()),
-                        }));
-                    }
+                    transition
                 }
-            }
+            };
 
-            if recent_attempt_history.len() > ordered_lanes.len().saturating_mul(2).max(4) {
-                let keep = ordered_lanes.len().saturating_mul(2).max(4);
-                recent_attempt_history.drain(..recent_attempt_history.len() - keep);
-            }
-            if diagnostics.len() > 12 {
-                diagnostics.drain(..diagnostics.len() - 12);
-            }
-            if unavailable_attempts == ordered_lanes.len() {
-                unavailable_cycles = unavailable_cycles.saturating_add(1);
-                let backoff_secs = 1u64
-                    .checked_shl(unavailable_cycles.saturating_sub(1).min(5))
-                    .unwrap_or(30)
-                    .min(30);
-                continuation_strategy = format!(
-                    "All authenticated routes were unavailable. On route recovery, resume the preserved semantic attempt and exact diagnostics; recovery cycle {unavailable_cycles}."
-                );
-                self.events.write_value(serde_json::json!({
-                    "event": "pillar_synthesis_plan_route_recovery_waiting",
-                    "logical_planner_authorities": 1,
-                    "continuation_cycle": cycle,
-                    "planner_lane_invocations": lane_invocations,
-                    "backoff_secs": backoff_secs,
-                    "semantic_attempt_preserved": preserved_semantic_attempt.is_some(),
-                    "fallback_authority": false,
-                    "next_phase": "planner-route-recovery",
-                }));
-                tokio::time::sleep(std::time::Duration::from_secs(backoff_secs)).await;
-            } else {
-                unavailable_cycles = 0;
-                cycle_compiler_diagnostics.sort();
-                cycle_compiler_diagnostics.dedup();
-                let signature = content_sha256(&cycle_compiler_diagnostics.join("\n"));
-                let recurrence = diagnostic_recurrence.entry(signature.clone()).or_default();
-                *recurrence = recurrence.saturating_add(1);
-                continuation_strategy = match *recurrence {
-                    1 => "Apply the focused compiler diagnostics to the preserved semantic plan without changing its valid task responsibilities.".to_string(),
-                    2 => "The same diagnostic recurred: rebuild the typed task_coverage and task_specs envelope from the preserved semantic responsibilities, then reattach the unchanged canonical task meanings.".to_string(),
-                    _ => format!(
-                        "Diagnostic signature {signature} recurred {recurrence} times: trace every frozen requirement, advertised entry, task id, dependency, and uncertainty route exactly once before emitting a fresh typed envelope around the preserved semantic decisions."
-                    ),
-                };
-                self.events.write_value(serde_json::json!({
-                    "event": "pillar_synthesis_plan_semantic_continuation",
-                    "logical_planner_authorities": 1,
-                    "continuation_cycle": cycle,
-                    "planner_lane_invocations": lane_invocations,
-                    "diagnostic_signature": signature,
-                    "unchanged_diagnostic_recurrence": recurrence,
-                    "strategy": continuation_strategy,
-                    "semantic_attempt_preserved": preserved_semantic_attempt.is_some(),
-                    "fallback_authority": false,
-                    "next_phase": "focused-semantic-planner-repair",
-                }));
-            }
-            ordered_lanes.rotate_left(1);
+            self.events.write_value(serde_json::json!({
+                "event": "pillar_synthesis_plan_attempt_rejected",
+                "attempt": lane_invocations,
+                "continuation_cycle": 1,
+                "model": lane.model_id,
+                "physical_host_id": lane.physical_host_id,
+                "stage": transition.stage,
+                "diagnostic": transition.diagnostic.as_str(),
+                "diagnostic_sha256": content_sha256(&transition.diagnostic),
+                "candidate_semantic_score": transition.semantic_score,
+                "unproven_partial_output_quarantined": transition.unproven_partial_output_quarantined,
+                "next_distinct_lane": null,
+                "model_correction_rounds": 0,
+            }));
+            degraded = Some(transition);
+            break;
         }
+        let degraded = degraded.unwrap_or_else(|| PillarPlanDegradedTransition {
+            stage: "provider",
+            diagnostic: format!(
+                "all {lane_invocations} distinct authenticated planner routes were unavailable"
+            ),
+            semantic_score: 0,
+            unproven_partial_output_quarantined: false,
+        });
+        let (plan_json, dag, routes) = compile_pillar_evidence_plan(
+            user_prompt,
+            &outcome.opening,
+            &outcome.reports,
+            planner_model,
+            &allowed_runtime_models,
+        )?;
+        self.events.write_value(serde_json::json!({
+            "event": "pillar_synthesis_plan_degraded",
+            "reason": degraded.diagnostic.as_str(),
+            "reason_sha256": content_sha256(&degraded.diagnostic),
+            "stage": degraded.stage,
+            "transition": "engine-compiled-plan-from-frozen-authored-requirements-and-pillar-evidence",
+            "engine_compiled_alternative": true,
+            "model_output_accepted": false,
+            "model_correction_rounds": 0,
+            "planner_lane_invocations": lane_invocations,
+            "provider_route_failovers": lane_invocations.saturating_sub(1),
+            "fallback_authority": false,
+            "tasks": dag.tasks.len(),
+            "uncertainty_routes": routes.len(),
+            "next_phase": "immediate-build-dispatch",
+        }));
+        self.events.write_value(serde_json::json!({
+            "event": "pillar_synthesis_plan_completed",
+            "logical_planner_authorities": 1,
+            "planner_lane_invocations": lane_invocations,
+            "provider_route_failovers": lane_invocations.saturating_sub(1),
+            "continuation_cycles": 1,
+            "peer_plan_verification_calls": 0,
+            "model_correction_rounds": 0,
+            "fallback_authority": false,
+            "engine_compiled_alternative": true,
+            "tasks": dag.tasks.len(),
+            "uncertainty_routes": routes.len(),
+            "next_phase": "immediate-build-dispatch",
+        }));
+        Ok((plan_json, dag))
     }
 
     async fn research_to_saturation(
@@ -39919,7 +39851,6 @@ fn spec_python_invocations(spec: &str) -> Vec<String> {
         .collect()
 }
 
-#[cfg(test)]
 fn nested_python_package_boot_files(spec: &str) -> Vec<String> {
     let invocations = spec_python_invocations(spec);
     let package_invocations = invocations
@@ -56609,8 +56540,7 @@ fn compile_pillar_plan(
     Ok((compiled.plan_json, dag, draft.uncertainty_routes))
 }
 
-#[cfg(test)]
-fn fallback_pillar_plan(
+fn compile_pillar_evidence_plan(
     user_prompt: &str,
     opening: &ResearchPillarOpening,
     reports: &[CompiledPillarReport],
@@ -70832,7 +70762,7 @@ mod pre_scheduler_semantic_runtime_tests {
     }
 
     #[tokio::test]
-    async fn r5_410_byte_unproven_planner_reroutes_without_fallback_or_early_build_dispatch() {
+    async fn unproven_planner_output_uses_one_finite_distinct_route_then_dispatches_build() {
         const MODEL_A: &str = "r5-synthesis-model-a";
         const MODEL_B: &str = "r5-synthesis-model-b";
         const HOST_A: &str = "r5-synthesis-host-a";
@@ -70869,65 +70799,44 @@ mod pre_scheduler_semantic_runtime_tests {
         )
         .await;
         harness.provider.drop_next_stream_unproven(MODEL_A);
-        harness.provider.block_next_call(MODEL_B);
         let build_dispatcher = Arc::new(RuntimeBuildDispatchProbe {
             starts: AtomicUsize::new(0),
         });
-
-        let run = tokio::spawn({
-            let dispatcher = harness.dispatcher.clone();
-            let build_dispatcher = build_dispatcher.clone();
-            let binding_spec = binding_spec.clone();
-            async move {
-                let (_, dag) = dispatcher
-                    .plan_from_pillars(&binding_spec, &outcome, MODEL_A)
-                    .await?;
-                assert_eq!(
-                    build_dispatcher.starts.load(AtomicOrdering::SeqCst),
-                    0,
-                    "a typed plan had not yet entered Scheduler dispatch"
-                );
-                Scheduler::new(
-                    vec![DeviceCfg {
-                        id: "r5-synthesis-build-node".to_string(),
-                        model_id: MODEL_B.to_string(),
-                        weight: 1,
-                        enabled: true,
-                        speed_weight: 1,
-                        supervision: false,
-                    }],
-                    1,
-                )
-                .run(
-                    dag,
-                    build_dispatcher as Arc<dyn TaskDispatcher>,
-                    binding_spec,
-                )
-                .await
-            }
-        });
-        tokio::time::timeout(
+        let (_, dag) = tokio::time::timeout(
             Duration::from_secs(5),
-            harness.provider.wait_for_blocked_call(),
+            harness
+                .dispatcher
+                .plan_from_pillars(&binding_spec, &outcome, MODEL_A),
         )
         .await
-        .expect("the healthy planner lane was not admitted after the unproven drop");
-        assert_eq!(
-            build_dispatcher.starts.load(AtomicOrdering::SeqCst),
-            0,
-            "build dispatch began before a typed plan was accepted"
-        );
-        assert!(!harness.sink.has("pillar_synthesis_plan_completed"));
-        harness.provider.release_blocked_call();
-        let report = tokio::time::timeout(Duration::from_secs(8), run)
-            .await
-            .expect("the rerouted planner did not finish")
-            .unwrap()
-            .expect("the rerouted typed plan did not reach build dispatch");
+        .expect("the unproven planner attempt left planning parked")
+        .expect("the finite distinct-route continuation did not produce a plan");
+        let report = Scheduler::new(
+            vec![DeviceCfg {
+                id: "r5-synthesis-build-node".to_string(),
+                model_id: MODEL_B.to_string(),
+                weight: 1,
+                enabled: true,
+                speed_weight: 1,
+                supervision: false,
+            }],
+            1,
+        )
+        .run(
+            dag,
+            build_dispatcher.clone() as Arc<dyn TaskDispatcher>,
+            binding_spec,
+        )
+        .await
+        .expect("the evidence-compiled plan did not reach build dispatch");
         assert_eq!(build_dispatcher.starts.load(AtomicOrdering::SeqCst), 1);
         assert_eq!(report.done, vec!["build-core"]);
         assert_eq!(harness.provider.call_count(MODEL_A), 1);
-        assert_eq!(harness.provider.call_count(MODEL_B), 1);
+        assert_eq!(
+            harness.provider.call_count(MODEL_B),
+            1,
+            "the one finite distinct provider route was not used"
+        );
         assert_eq!(
             harness
                 .provider
@@ -70936,10 +70845,6 @@ mod pre_scheduler_semantic_runtime_tests {
             0,
             "the 410-byte unproven stream was polled after its network drop"
         );
-        let correction_input = harness.provider.user_inputs(MODEL_B);
-        assert_eq!(correction_input.len(), 1);
-        assert!(correction_input[0].contains("planner_correction"));
-        assert!(correction_input[0].contains("provider attempt unavailable"));
 
         let events = harness.sink.values();
         let rejected = events
@@ -70948,7 +70853,6 @@ mod pre_scheduler_semantic_runtime_tests {
             .expect("the unproven planner attempt was not retained as a rejection");
         assert_eq!(rejected["physical_host_id"], HOST_A);
         assert_eq!(rejected["stage"], "provider");
-        assert_eq!(rejected["semantic_attempt_preserved"], false);
         assert_eq!(rejected["unproven_partial_output_quarantined"], true);
         assert_eq!(rejected["next_distinct_lane"], HOST_B);
         let completed = events
@@ -70957,11 +70861,13 @@ mod pre_scheduler_semantic_runtime_tests {
             .expect("the accepted typed plan did not terminalize the sole authority");
         assert_eq!(completed["logical_planner_authorities"], 1);
         assert_eq!(completed["planner_lane_invocations"], 2);
+        assert_eq!(completed["provider_route_failovers"], 1);
+        assert_eq!(completed["model_correction_rounds"], 0);
+        assert_eq!(completed["engine_compiled_alternative"], false);
         assert_eq!(completed["fallback_authority"], false);
         let serialized_events = serde_json::to_string(&events).unwrap();
-        assert!(!serialized_events.contains("deterministic-disjoint-pillar-build-plan"));
         assert!(!serialized_events.contains("pillar_synthesis_plan_degraded"));
-        assert!(!serialized_events.contains("pillar-build-01"));
+        assert!(!serialized_events.contains("pillar_synthesis_plan_route_recovery_waiting"));
         assert!(events.iter().any(|event| {
             event["event"] == "provider_stream_progress" && event["structured_output_bytes"] == 410
         }));
@@ -70973,7 +70879,7 @@ mod pre_scheduler_semantic_runtime_tests {
     }
 
     #[tokio::test]
-    async fn repeated_planner_diagnostic_changes_semantic_repair_strategy_without_fallback() {
+    async fn repeated_invalid_plans_cannot_create_model_correction_rounds() {
         const MODEL_A: &str = "semantic-continuation-model-a";
         const MODEL_B: &str = "semantic-continuation-model-b";
         const HOST_A: &str = "semantic-continuation-host-a";
@@ -71022,45 +70928,93 @@ mod pre_scheduler_semantic_runtime_tests {
         .await;
 
         let (_, dag) = tokio::time::timeout(
-            Duration::from_secs(8),
+            Duration::from_secs(5),
             harness
                 .dispatcher
                 .plan_from_pillars(&binding_spec, &outcome, MODEL_A),
         )
         .await
-        .expect("the focused semantic continuation did not converge")
-        .expect("ordinary compiler diagnostics stopped the run");
+        .expect("recurring compiler diagnostics left planning in a loop")
+        .expect("the frozen pillar evidence did not compile an alternative");
         assert_eq!(
             dag.tasks.keys().cloned().collect::<Vec<_>>(),
-            ["build-core"]
+            ["pillar-build-01"]
         );
-        assert_eq!(harness.provider.call_count(MODEL_A), 3);
-        assert_eq!(harness.provider.call_count(MODEL_B), 2);
-        let model_b_inputs = harness.provider.user_inputs(MODEL_B);
-        assert!(model_b_inputs[0].contains("preserved_semantic_attempt"));
-        assert!(model_b_inputs[0].contains("preserve this model-authored module responsibility"));
+        let worker_contract = &dag.tasks["pillar-build-01"].spec.description;
+        for exact_pillar_evidence in [
+            "src/core.rs owns the complete isolated core behavior",
+            "run_core(input) -> output",
+            "cargo test core_contract",
+            "Application composition",
+        ] {
+            assert!(
+                worker_contract.contains(exact_pillar_evidence),
+                "evidence compiler produced a generic placeholder instead of `{exact_pillar_evidence}`: {worker_contract}"
+            );
+        }
+        let build_dispatcher = Arc::new(RuntimeBuildDispatchProbe {
+            starts: AtomicUsize::new(0),
+        });
+        let build_report = Scheduler::new(
+            vec![DeviceCfg {
+                id: "bounded-planning-build-node".to_string(),
+                model_id: MODEL_B.to_string(),
+                weight: 1,
+                enabled: true,
+                speed_weight: 1,
+                supervision: false,
+            }],
+            1,
+        )
+        .run(
+            dag,
+            build_dispatcher.clone() as Arc<dyn TaskDispatcher>,
+            binding_spec.clone(),
+        )
+        .await
+        .expect("the bounded compiler transition did not reach real Scheduler dispatch");
+        assert_eq!(build_dispatcher.starts.load(AtomicOrdering::SeqCst), 1);
+        assert_eq!(build_report.done, vec!["pillar-build-01"]);
+        assert_eq!(
+            harness.provider.call_count(MODEL_A),
+            1,
+            "the strongest planner received a model correction round"
+        );
+        assert_eq!(
+            harness.provider.call_count(MODEL_B),
+            0,
+            "a second model was asked to verify or repair the plan"
+        );
+        assert_eq!(
+            harness.provider.user_inputs(MODEL_A).len(),
+            1,
+            "the repeated invalid outputs queued for the strongest model were consumed"
+        );
+        assert!(!harness.provider.user_inputs(MODEL_A)[0].contains("planner_correction"));
 
         let events = harness.sink.values();
-        let continuations = events
+        assert!(!events.iter().any(|event| {
+            event["event"] == "pillar_synthesis_plan_semantic_continuation"
+                || event["event"] == "pillar_synthesis_plan_route_recovery_waiting"
+        }));
+        let degraded = events
             .iter()
-            .filter(|event| event["event"] == "pillar_synthesis_plan_semantic_continuation")
-            .collect::<Vec<_>>();
-        assert_eq!(continuations.len(), 2);
-        assert_eq!(continuations[0]["unchanged_diagnostic_recurrence"], 1);
-        assert_eq!(continuations[1]["unchanged_diagnostic_recurrence"], 2);
-        assert!(continuations[1]["strategy"]
-            .as_str()
-            .unwrap()
-            .contains("rebuild the typed task_coverage and task_specs envelope"));
-        let serialized_events = serde_json::to_string(&events).unwrap();
-        assert!(!serialized_events.contains("pillar_synthesis_plan_authority_exhausted"));
-        assert!(!serialized_events.contains("pillar_synthesis_plan_degraded"));
-        assert!(!serialized_events.contains("deterministic-disjoint-pillar-build-plan"));
+            .find(|event| event["event"] == "pillar_synthesis_plan_degraded")
+            .expect("the compiler rejection was not disclosed as degraded planning");
+        assert_eq!(degraded["stage"], "compiler");
+        assert_eq!(degraded["model_correction_rounds"], 0);
+        assert_eq!(degraded["next_phase"], "immediate-build-dispatch");
+        let completed = events
+            .iter()
+            .find(|event| event["event"] == "pillar_synthesis_plan_completed")
+            .expect("the bounded evidence compilation did not terminalize planning");
+        assert_eq!(completed["planner_lane_invocations"], 1);
+        assert_eq!(completed["engine_compiled_alternative"], true);
         assert_eq!(harness.control.occupancy().await, (0, 0));
     }
 
     #[tokio::test]
-    async fn empty_or_malformed_json_does_not_replace_the_last_substantive_semantic_plan() {
+    async fn compiler_rejected_model_semantics_are_quarantined_from_the_evidence_plan() {
         const MODEL_A: &str = "semantic-preservation-model-a";
         const MODEL_B: &str = "semantic-preservation-model-b";
         const MODEL_C: &str = "semantic-preservation-model-c";
@@ -71101,61 +71055,43 @@ mod pre_scheduler_semantic_runtime_tests {
             .queue_finished_text(MODEL_C, "{malformed planner output");
 
         let (_, dag) = tokio::time::timeout(
-            Duration::from_secs(8),
+            Duration::from_secs(5),
             harness
                 .dispatcher
                 .plan_from_pillars(&binding_spec, &outcome, MODEL_A),
         )
         .await
-        .expect("semantic continuation did not recover after malformed JSON")
-        .expect("malformed JSON stopped the sole logical planner authority");
+        .expect("compiler rejection left planning in a model correction loop")
+        .expect("compiler rejection stopped the evidence-compiled transition");
         assert_eq!(
             dag.tasks.keys().cloned().collect::<Vec<_>>(),
-            ["build-core"]
+            ["pillar-build-01"]
         );
         assert_eq!(harness.provider.call_count(MODEL_A), 1);
-        assert_eq!(harness.provider.call_count(MODEL_B), 2);
-        assert_eq!(harness.provider.call_count(MODEL_C), 1);
-        let model_b_inputs = harness.provider.user_inputs(MODEL_B);
-        assert_eq!(model_b_inputs.len(), 2);
-        for input in &model_b_inputs {
-            assert!(input.contains("preserve this exact model-authored semantic responsibility"));
-        }
-        assert!(model_b_inputs[1].contains("malformed planner output"));
-        let model_c_inputs = harness.provider.user_inputs(MODEL_C);
-        assert_eq!(model_c_inputs.len(), 1);
-        assert!(model_c_inputs[0]
+        assert_eq!(harness.provider.call_count(MODEL_B), 0);
+        assert_eq!(harness.provider.call_count(MODEL_C), 0);
+        assert!(!dag.tasks["pillar-build-01"]
+            .spec
+            .description
             .contains("preserve this exact model-authored semantic responsibility"));
-        let schema_empty_rejection = harness
+        let compiler_rejection = harness
             .sink
             .values()
             .into_iter()
             .find(|event| {
                 event["event"] == "pillar_synthesis_plan_attempt_rejected"
                     && event["stage"] == "compiler"
-                    && event["candidate_semantic_score"] == 0
             })
-            .expect("schema-empty JSON was not retained as a focused rejection");
-        assert!(schema_empty_rejection["preserved_semantic_score"]
+            .expect("the invalid typed output was not retained as a rejection");
+        assert!(compiler_rejection["candidate_semantic_score"]
             .as_u64()
             .is_some_and(|score| score > 0));
-        assert_eq!(schema_empty_rejection["semantic_attempt_preserved"], true);
-        let json_rejection = harness
-            .sink
-            .values()
-            .into_iter()
-            .find(|event| {
-                event["event"] == "pillar_synthesis_plan_attempt_rejected"
-                    && event["stage"] == "json"
-            })
-            .expect("malformed JSON was not retained as a focused rejection");
-        assert_eq!(json_rejection["semantic_attempt_preserved"], true);
-        assert_eq!(json_rejection["malformed_terminal_output_preserved"], true);
+        assert!(harness.sink.has("pillar_synthesis_plan_degraded"));
         assert_eq!(harness.control.occupancy().await, (0, 0));
     }
 
     #[tokio::test]
-    async fn all_unavailable_planner_lanes_park_for_route_recovery_instead_of_stopping() {
+    async fn unavailable_planner_exhausts_distinct_routes_once_without_sleeping() {
         const MODEL_A: &str = "route-recovery-model-a";
         const MODEL_B: &str = "route-recovery-model-b";
         const HOST_A: &str = "route-recovery-host-a";
@@ -71185,36 +71121,40 @@ mod pre_scheduler_semantic_runtime_tests {
         .await;
         harness.provider.drop_next_stream_unproven(MODEL_A);
         harness.provider.drop_next_stream_unproven(MODEL_B);
-        let planner = tokio::spawn({
-            let dispatcher = harness.dispatcher.clone();
-            async move {
-                dispatcher
-                    .plan_from_pillars(&binding_spec, &outcome, MODEL_A)
-                    .await
-            }
-        });
-        let waiting = harness
-            .sink
-            .wait_for("pillar_synthesis_plan_route_recovery_waiting")
-            .await;
-        assert_eq!(waiting["logical_planner_authorities"], 1);
-        assert_eq!(waiting["fallback_authority"], false);
-        assert_eq!(waiting["next_phase"], "planner-route-recovery");
-        assert!(
-            !planner.is_finished(),
-            "route recovery was reduced to a stop"
+        let (_, dag) = tokio::time::timeout(
+            Duration::from_secs(5),
+            harness
+                .dispatcher
+                .plan_from_pillars(&binding_spec, &outcome, MODEL_A),
+        )
+        .await
+        .expect("planner route unavailability left planning asleep forever")
+        .expect("frozen pillar evidence could not produce the typed degraded transition");
+        assert_eq!(
+            dag.tasks.keys().cloned().collect::<Vec<_>>(),
+            ["pillar-build-01"]
         );
-        assert!(!harness.sink.has("pillar_synthesis_plan_completed"));
-        assert!(!harness
-            .sink
-            .values()
+        assert_eq!(harness.provider.call_count(MODEL_A), 1);
+        assert_eq!(
+            harness.provider.call_count(MODEL_B),
+            1,
+            "the finite distinct provider route was not exhausted exactly once"
+        );
+        let events = harness.sink.values();
+        assert!(!events.iter().any(|event| {
+            event["event"] == "pillar_synthesis_plan_route_recovery_waiting"
+                || event["event"] == "pillar_synthesis_plan_semantic_continuation"
+        }));
+        let degraded = events
             .iter()
-            .any(|event| event["event"] == "pillar_synthesis_plan_authority_exhausted"));
-        planner.abort();
-        let _ = planner.await;
+            .find(|event| event["event"] == "pillar_synthesis_plan_degraded")
+            .expect("provider unavailability was not truthfully disclosed");
+        assert_eq!(degraded["stage"], "provider");
+        assert_eq!(degraded["next_phase"], "immediate-build-dispatch");
+        assert!(harness.sink.has("pillar_synthesis_plan_completed"));
         tokio::time::timeout(Duration::from_secs(5), harness.control.wait_until_drained())
             .await
-            .expect("the parked unavailable planner lanes did not drain into quarantine")
+            .expect("the unavailable planner lane did not drain into quarantine")
             .unwrap();
         assert_eq!(harness.control.occupancy().await, (0, 2));
     }
