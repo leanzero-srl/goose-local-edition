@@ -1508,6 +1508,23 @@ def validate_raw_sb7_terminal_payload(
     )
 
 
+def validate_raw_agent_terminal(agent: Any) -> None:
+    """Require a completed raw Goose terminal without requiring build success."""
+
+    if not isinstance(agent, Mapping):
+        raise ClosureError("raw auto-verdict lacks completed Goose process evidence")
+    exit_code = agent.get("exit")
+    if (
+        not isinstance(exit_code, int)
+        or isinstance(exit_code, bool)
+        or exit_code < 0
+        or exit_code > 255
+        or agent.get("timed_out") is not False
+        or not finite_number(agent.get("secs"), 0)
+    ):
+        raise ClosureError("raw auto-verdict lacks a completed Goose process terminal")
+
+
 def load_config(path: pathlib.Path) -> dict[str, Any]:
     config = read_json(path.resolve())
     if config.get("schema_version") != SCHEMA_VERSION:
@@ -2543,13 +2560,8 @@ class TerminalClosure:
             or auto_verdict.get("vendor_port") != self.config["expected"]["vendor_port"]
         ):
             raise ClosureError("raw auto-verdict run identity differs")
-        agent = auto_verdict.get("agent") or {}
-        if (
-            agent.get("exit") != 0
-            or agent.get("timed_out") is not False
-            or not finite_number(agent.get("secs"), 0)
-        ):
-            raise ClosureError("Goose did not reach a natural successful process terminal")
+        agent = auto_verdict.get("agent")
+        validate_raw_agent_terminal(agent)
         observed_pool = sorted(auto_verdict.get("actual_pool") or [])
         expected_pool = sorted(self.config["expected"]["models"])
         if observed_pool != expected_pool or auto_verdict.get("actual_nodes") != 3:
@@ -2572,6 +2584,8 @@ class TerminalClosure:
                 "exit_code": agent["exit"],
                 "timed_out": agent["timed_out"],
                 "observed_exited_at": goose_exit["observed_exited_at"],
+                "successful": agent["exit"] == 0,
+                "terminal_failure_preserved": agent["exit"] != 0,
             },
             "monitor_exit": {
                 "pid": launch["monitor"]["pid"],

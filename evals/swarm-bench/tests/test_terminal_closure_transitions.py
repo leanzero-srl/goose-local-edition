@@ -239,6 +239,23 @@ class TerminalTransitionTests(unittest.TestCase):
 
 
 class RawAndHermeticScorePolicyTests(unittest.TestCase):
+    def test_nonzero_raw_agent_exit_is_terminal_evidence_not_build_success(self) -> None:
+        closure.validate_raw_agent_terminal(
+            {"exit": 1, "timed_out": False, "secs": 9096.1}
+        )
+
+    def test_timeout_or_signal_cannot_authenticate_raw_terminal(self) -> None:
+        invalid = (
+            {"exit": 0, "timed_out": True, "secs": 10.0},
+            {"exit": -9, "timed_out": False, "secs": 10.0},
+        )
+        for agent in invalid:
+            with self.subTest(agent=agent):
+                with self.assertRaisesRegex(
+                    closure.ClosureError, "completed Goose process terminal"
+                ):
+                    closure.validate_raw_agent_terminal(agent)
+
     def test_degraded_raw_can_continue_into_clean_hermetic_scoring(self) -> None:
         raw = score_payload()
         raw["probe_unavailable"] = ["t_labels_culling"]
