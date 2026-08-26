@@ -25685,6 +25685,31 @@ impl GooseAgentDispatcher {
         .await
     }
 
+    async fn generate_run_overview(
+        &self,
+        system_prompt: String,
+        user_text: String,
+    ) -> Option<Overview> {
+        tokio::time::timeout(
+            std::time::Duration::from_secs(120),
+            self.run_response_only_agent(
+                &self.planner_model,
+                system_prompt,
+                user_text,
+                Some(Response {
+                    json_schema: Some(run_overview_schema()),
+                }),
+                self.planner_timeout_secs,
+                None,
+            ),
+        )
+        .await
+        .ok()
+        .and_then(|result| result.ok())
+        .and_then(|output| output.final_output)
+        .and_then(|final_output| serde_json::from_str::<Overview>(&final_output).ok())
+    }
+
     #[allow(clippy::too_many_arguments)]
     async fn run_response_only_agent_on_physical_host(
         &self,
@@ -61777,26 +61802,9 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                 rel_files.join("\n"),
                 excerpts
             );
-            let resp = Some(Response {
-                json_schema: Some(run_overview_schema()),
-            });
-            let res = tokio::time::timeout(
-                std::time::Duration::from_secs(120),
-                smoke_fix_dispatcher.run_agent_timed(
-                    &smoke_fix_dispatcher.planner_model,
-                    system,
-                    user,
-                    resp,
-                    4,
-                    &[],
-                ),
-            )
-            .await;
-            let parsed = res
-                .ok()
-                .and_then(|r| r.ok())
-                .and_then(|o| o.final_output)
-                .and_then(|fo| serde_json::from_str::<Overview>(&fo).ok());
+            let parsed = smoke_fix_dispatcher
+                .generate_run_overview(system, user)
+                .await;
             match parsed {
                 Some(mut ov) => {
                     scrub_overclaim(&mut ov.features);
@@ -62275,6 +62283,114 @@ mod pre_scheduler_semantic_runtime_tests {
                 ));
             };
             SingleAttemptStream::new(Box::pin(output), terminal)
+        }
+    }
+
+    struct OverviewAdversarialProvider {
+        target: PathBuf,
+        calls: AtomicUsize,
+        tool_surfaces: Mutex<Vec<Vec<String>>>,
+    }
+
+    impl OverviewAdversarialProvider {
+        fn new(target: PathBuf) -> Self {
+            Self {
+                target,
+                calls: AtomicUsize::new(0),
+                tool_surfaces: Mutex::new(Vec::new()),
+            }
+        }
+
+        fn tool_surfaces(&self) -> Vec<Vec<String>> {
+            self.tool_surfaces.lock().unwrap().clone()
+        }
+
+        fn next_message(&self, tools: &[Tool]) -> Message {
+            self.tool_surfaces
+                .lock()
+                .unwrap()
+                .push(tools.iter().map(|tool| tool.name.to_string()).collect());
+            match self.calls.fetch_add(1, AtomicOrdering::SeqCst) {
+                0 => {
+                    let request = CallToolRequestParams::new("developer__text_editor")
+                        .with_arguments(object!({
+                            "command": "write",
+                            "path": self.target.display().to_string(),
+                            "file_text": "overview mutated the application\n",
+                        }));
+                    Message::assistant()
+                        .with_tool_request("overview-adversarial-write", Ok(request))
+                }
+                1 => {
+                    let request =
+                        CallToolRequestParams::new(FINAL_OUTPUT_TOOL).with_arguments(object!({
+                            "features": ["Summarizes the produced application"],
+                            "engage": "Ask goose to run the program for you.",
+                            "next": ["Add another capability"],
+                        }));
+                    Message::assistant()
+                        .with_tool_request("overview-typed-final-output", Ok(request))
+                }
+                call => panic!("unexpected overview provider call {call}"),
+            }
+        }
+
+        fn finished_stream(&self, model: &str, tools: &[Tool]) -> MessageStream {
+            let message = self.next_message(tools);
+            let usage = ProviderUsage::new(model.to_string(), Usage::default());
+            Box::pin(stream::once(
+                async move { Ok((Some(message), Some(usage))) },
+            ))
+        }
+
+        fn finished_attempt(&self, model: &str, tools: &[Tool]) -> SingleAttemptStream {
+            let message = self.next_message(tools);
+            let usage = ProviderUsage::new(model.to_string(), Usage::default());
+            SingleAttemptStream::finished(Box::pin(stream::once(async move {
+                Ok((Some(message), Some(usage)))
+            })))
+        }
+    }
+
+    #[async_trait]
+    impl Provider for OverviewAdversarialProvider {
+        fn get_name(&self) -> &str {
+            "overview-adversarial"
+        }
+
+        fn supports_single_attempt_streaming(&self) -> bool {
+            true
+        }
+
+        fn supports_terminal_proven_single_attempt_streaming(&self) -> bool {
+            true
+        }
+
+        fn single_attempt_failure_provenance(
+            &self,
+            _error: &ProviderError,
+        ) -> SingleAttemptFailureProvenance {
+            SingleAttemptFailureProvenance::Unresolved
+        }
+
+        async fn stream(
+            &self,
+            model_config: &ModelConfig,
+            _system: &str,
+            _messages: &[Message],
+            tools: &[Tool],
+        ) -> Result<MessageStream, ProviderError> {
+            Ok(self.finished_stream(&model_config.model_name, tools))
+        }
+
+        async fn stream_once_with_terminal_proof(
+            &self,
+            model_config: &ModelConfig,
+            _system: &str,
+            _messages: &[Message],
+            tools: &[Tool],
+        ) -> Result<SingleAttemptStream, ProviderError> {
+            Ok(self.finished_attempt(&model_config.model_name, tools))
         }
     }
 
@@ -65716,6 +65832,67 @@ mod pre_scheduler_semantic_runtime_tests {
                     .map(str::to_string)
             })
             .collect()
+    }
+
+    #[tokio::test]
+    async fn overview_write_request_has_no_developer_surface_and_cannot_mutate_the_tree() {
+        let working_dir = tempfile::tempdir().unwrap();
+        let target = working_dir.path().join("app.py");
+        std::fs::write(&target, "original application\n").unwrap();
+        let sink = Arc::new(RuntimeRecordingSink::default());
+        let provider = Arc::new(OverviewAdversarialProvider::new(target.clone()));
+        let mut dispatcher = GooseAgentDispatcher::new(
+            working_dir.path().to_path_buf(),
+            sink,
+            0,
+            4,
+            Vec::new(),
+            HashMap::new(),
+            HashMap::new(),
+            SOURCE_MODEL.to_string(),
+            1,
+            1,
+            false,
+            SamplingParams::default(),
+            false,
+            false,
+            None,
+            false,
+            false,
+            false,
+        )
+        .await
+        .unwrap();
+        dispatcher.provider = provider.clone();
+        dispatcher.activity_sink_health.activate().unwrap();
+
+        let overview = dispatcher
+            .generate_run_overview(
+                "Return a grounded overview through final_output.".to_string(),
+                "The application source is supplied in this prompt.".to_string(),
+            )
+            .await
+            .expect("typed overview disappeared after the rejected write request");
+
+        assert_eq!(
+            std::fs::read_to_string(target).unwrap(),
+            "original application\n"
+        );
+        assert_eq!(overview.features, ["Summarizes the produced application"]);
+        assert_eq!(overview.engage, "Ask goose to run the program for you.");
+        assert_eq!(overview.next, ["Add another capability"]);
+        let surfaces = provider.tool_surfaces();
+        assert_eq!(surfaces.len(), 2, "unexpected provider turns: {surfaces:?}");
+        for surface in surfaces {
+            assert!(
+                surface.iter().any(|tool| tool == FINAL_OUTPUT_TOOL),
+                "typed final_output was unavailable: {surface:?}"
+            );
+            assert!(
+                surface.iter().all(|tool| !tool.starts_with("developer__")),
+                "overview exposed a developer tool: {surface:?}"
+            );
+        }
     }
 
     #[tokio::test]
