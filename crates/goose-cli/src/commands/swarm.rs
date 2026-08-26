@@ -3740,7 +3740,7 @@ fn is_semantic_research_activity(key: &str) -> bool {
         || key.starts_with("research-authority-")
 }
 
-fn planner_wall(planner_timeout_secs: u64) -> u64 {
+pub(super) fn planner_wall(planner_timeout_secs: u64) -> u64 {
     if uncapped() {
         UNCAPPED_SECS
     } else {
@@ -11994,6 +11994,8 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
     fn pre_scheduler_source_and_judge_keep_existing_no_progress_watchdogs() {
         assert_eq!(pre_scheduler_source_no_progress_secs(420), 420);
         assert_eq!(pre_scheduler_judge_no_progress_secs(900), 900);
+        assert_eq!(semantic_observer_total_secs(900), 900);
+        assert_eq!(semantic_observer_total_secs(0), 900);
     }
 
     /// The JOIN must never be handed the canonical spec AND a second copy of an engine-authored
@@ -24252,6 +24254,23 @@ pub(super) fn pre_scheduler_source_no_progress_secs(caller_idle_secs: u64) -> u6
 
 pub(super) fn pre_scheduler_judge_no_progress_secs(planner_idle_secs: u64) -> u64 {
     planner_idle_secs
+}
+
+/// Semantic observation is auxiliary: uncapped build work must not turn its total budget into the
+/// week-long planner sentinel. Zero disables only the inactivity timer; the total stays bounded by
+/// the normal observer default.
+fn semantic_observer_total_secs(observer_no_progress_secs: u64) -> u64 {
+    if observer_no_progress_secs == 0 {
+        default_planner_timeout_secs()
+    } else {
+        observer_no_progress_secs
+    }
+}
+
+pub(super) fn semantic_observer_liveness(planner_idle_secs: u64) -> SemanticReviewerLiveness {
+    let inactivity_secs = pre_scheduler_judge_no_progress_secs(planner_idle_secs);
+    let total_secs = semantic_observer_total_secs(inactivity_secs);
+    SemanticReviewerLiveness::from_secs(inactivity_secs, total_secs)
 }
 
 struct AgentProviderNudgeFactory {
@@ -59501,10 +59520,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             routes,
             dispatcher.sampling.temperature,
             dispatcher.semantic_observation_request_params(),
-            SemanticReviewerLiveness::from_secs(
-                pre_scheduler_judge_no_progress_secs(dispatcher.planner_timeout_secs),
-                planner_wall(dispatcher.planner_timeout_secs),
-            ),
+            semantic_observer_liveness(dispatcher.planner_timeout_secs),
         )
         .map_err(anyhow::Error::msg)?;
         scheduler = scheduler.with_semantic_observation(Arc::new(producer), Arc::new(reviewer));
