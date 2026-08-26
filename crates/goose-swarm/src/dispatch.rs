@@ -142,7 +142,8 @@ pub struct DispatchRequest {
 }
 
 /// Outcome of a failed dispatch. `Transient` is re-dispatched (and steered to a different device);
-/// `Terminal` fails the task and its descendants.
+/// `Unavailable` is ordinary task/provider exhaustion that an opted-in caller may carry into its
+/// repair path, while `Terminal` is reserved for fail-closed authority or integrity failures.
 #[derive(Clone, Debug)]
 pub enum DispatchError {
     /// Recoverable — e.g. LM Studio "Model is unloaded". Re-dispatch within the attempt budget.
@@ -151,7 +152,9 @@ pub enum DispatchError {
     /// like `Transient`, but the error is threaded into the retry's `prior_hint` so the fix is guided
     /// rather than a blind re-roll. Scoped to content — infra transients never carry a hint.
     ContentRetry(String),
-    /// Unrecoverable for this task.
+    /// The task cannot complete, but no engine authority or integrity invariant was violated.
+    Unavailable(String),
+    /// Fail-closed authority or integrity failure.
     Terminal(String),
 }
 
@@ -160,6 +163,7 @@ impl std::fmt::Display for DispatchError {
         match self {
             DispatchError::Transient(m) => write!(f, "transient: {m}"),
             DispatchError::ContentRetry(m) => write!(f, "content-retry: {m}"),
+            DispatchError::Unavailable(m) => write!(f, "unavailable: {m}"),
             DispatchError::Terminal(m) => write!(f, "terminal: {m}"),
         }
     }

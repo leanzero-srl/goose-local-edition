@@ -55,8 +55,9 @@ use goose_swarm::{
     ProviderTerminalKind, ProviderTerminalReceipt, ReplanAuthorityFact, ReplanAuthorityReceipt,
     ReplanContext, Replanner, ResearchClaimDraft, ResearchPillar, ResearchPillarOpening, RunReport,
     Scheduler, SchedulerCheckpointStore, SchedulerCompletedTaskEvidence, SemanticActivityPublisher,
-    SourceRevisionKind, SwarmEvent, TaskDispatcher, TaskRunOutput, TaskSpec, TaskVersion,
-    ToolCallRecord, Verdict, VerifiedPhysicalIdentity, WorkOpportunity, WorkRole,
+    SourceRevisionKind, SwarmEvent, TaskDispatcher, TaskRunOutput, TaskSpec,
+    TaskUnavailableEvidence, TaskVersion, ToolCallRecord, Verdict, VerifiedPhysicalIdentity,
+    WorkOpportunity, WorkRole,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -13407,6 +13408,7 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
                 status: "done".to_string(),
                 salvaged: false,
                 completion: None,
+                unavailable: None,
                 device: Some("local".to_string()),
                 model: Some("qwen".to_string()),
                 attempts,
@@ -13422,6 +13424,7 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
             done: vec!["build".to_string(), "verify".to_string()],
             salvaged: Vec::new(),
             failed: Vec::new(),
+            unavailable: Vec::new(),
             bonus: Vec::new(),
             planned_files: vec!["src/lib.rs".to_string()],
             results: HashMap::new(),
@@ -17159,6 +17162,68 @@ commands, the two database files, the `web/` files and `DECISIONS.md` are the co
                 "kanban-db".to_string()
             ]
         );
+    }
+
+    #[test]
+    fn typed_unavailable_is_recoverable_only_after_a_verified_final_ruler() {
+        let failed = vec![
+            "missing-module".to_string(),
+            "authority-corrupt".to_string(),
+        ];
+        let unavailable = vec![TaskUnavailableEvidence {
+            task_id: "missing-module".to_string(),
+            kind: goose_swarm::TaskUnavailableKind::AttemptsExhausted,
+            attempt: 1,
+            detail: "model omitted the module".to_string(),
+            required_files: vec!["src/missing.py".to_string()],
+            missing_files: vec!["src/missing.py".to_string()],
+            continued_dependents: vec!["integration".to_string()],
+        }];
+
+        assert_eq!(
+            hard_failed_tasks(&failed, &[], &unavailable),
+            vec!["authority-corrupt".to_string()],
+            "typed unavailable work must reach capability repair, while integrity failures remain hard"
+        );
+        assert_eq!(
+            unresolved_core_failures(&failed, &[], &unavailable, false),
+            failed,
+            "without verified final evidence the unavailable task still fails the run"
+        );
+        assert_eq!(
+            unresolved_core_failures(&failed, &[], &unavailable, true),
+            vec!["authority-corrupt".to_string()],
+            "a verified final ruler can recover unavailable work but never authority corruption"
+        );
+
+        let build = vec![
+            capability_task("missing-module", &["src/missing.py"], &[]),
+            capability_task("integration", &["src/main.py"], &["missing-module"]),
+        ];
+        let repair = capability_repair_specs(&build, true, &["local".to_string()]).unwrap();
+        assert!(repair
+            .iter()
+            .any(|task| task.owned_files.contains(&"src/missing.py".to_string())));
+
+        let root = tempfile::tempdir().unwrap();
+        assert!(!unavailable_obligations_recovered(
+            root.path(),
+            &unavailable
+        ));
+        assert_eq!(
+            missing_source_deliverables_for(
+                root.path(),
+                TargetLang::Python,
+                &["src/missing.py".to_string()],
+                true,
+            )
+            .len(),
+            1,
+            "the existing final ruler must retain the exact unavailable artifact"
+        );
+        std::fs::create_dir_all(root.path().join("src")).unwrap();
+        std::fs::write(root.path().join("src/missing.py"), "VALUE = 1\n").unwrap();
+        assert!(unavailable_obligations_recovered(root.path(), &unavailable));
     }
 
     /// `swarm_gate_cfg_bundle` inserts config.yaml BETWEEN env and the assured/default fallback, so a lever
@@ -47723,6 +47788,59 @@ fn green_blocking_failed(
         .collect()
 }
 
+fn typed_unavailable_ids(unavailable: &[TaskUnavailableEvidence]) -> HashSet<&str> {
+    unavailable
+        .iter()
+        .map(|evidence| evidence.task_id.as_str())
+        .collect()
+}
+
+fn hard_failed_tasks(
+    failed: &[String],
+    bonus: &[String],
+    unavailable: &[TaskUnavailableEvidence],
+) -> Vec<String> {
+    let unavailable = typed_unavailable_ids(unavailable);
+    failed
+        .iter()
+        .filter(|task_id| !bonus.contains(*task_id))
+        .filter(|task_id| !unavailable.contains(task_id.as_str()))
+        .cloned()
+        .collect()
+}
+
+fn unresolved_core_failures(
+    failed: &[String],
+    bonus: &[String],
+    unavailable: &[TaskUnavailableEvidence],
+    final_ruler_recovered_unavailable: bool,
+) -> Vec<String> {
+    let unavailable = typed_unavailable_ids(unavailable);
+    failed
+        .iter()
+        .filter(|task_id| !bonus.contains(*task_id))
+        .filter(|task_id| {
+            !final_ruler_recovered_unavailable || !unavailable.contains(task_id.as_str())
+        })
+        .cloned()
+        .collect()
+}
+
+fn unavailable_obligations_recovered(root: &Path, unavailable: &[TaskUnavailableEvidence]) -> bool {
+    unavailable
+        .iter()
+        .flat_map(|evidence| evidence.required_files.iter())
+        .all(|file| {
+            std::fs::symlink_metadata(root.join(file)).is_ok_and(|metadata| {
+                metadata.is_file()
+                    && !metadata.file_type().is_symlink()
+                    && (metadata.len() > 0
+                        || file.ends_with("__init__.py")
+                        || file.ends_with("py.typed"))
+            })
+        })
+}
+
 /// Pure precedence logic for `swarm_gate` (no env I/O so it is unit-testable without env races).
 fn resolve_gate(explicit: Option<String>, assured: bool, in_assured_bundle: bool) -> bool {
     resolve_control_precedence(
@@ -60081,6 +60199,9 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
         // DOC-PREFETCH (Phase 1, Move 2): hand the grounded facts to every worker. Empty when off =>
         // byte-identical (matches the `with_doc_facts` default).
         .with_doc_facts(doc_facts.clone());
+    if pillar_flow_on {
+        scheduler = scheduler.with_unavailable_continuation();
+    }
     let scheduler_compiled_plan_digest =
         pillar_flow_on.then(|| format!("sha256:{}", content_sha256(&plan_json)));
     let scheduler_checkpoint_store = if pillar_flow_on {
@@ -60312,7 +60433,8 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
         Vec<SchedulerCompletedTaskEvidence>,
     )> = None;
 
-    if pillar_flow_on && report.failed.is_empty() {
+    let hard_failed = hard_failed_tasks(&report.failed, &report.bonus, &report.unavailable);
+    if pillar_flow_on && hard_failed.is_empty() {
         match capability_repair_specs(&build_specs, pillar_integration_required, &fleet_models) {
             Ok(repair_specs) if !repair_specs.is_empty() => {
                 let checkpoint_specs = repair_specs.clone();
@@ -60417,9 +60539,9 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
     } else if pillar_flow_on {
         sink.write_value(serde_json::json!({
             "event": "capability_repair_skipped",
-            "reason": "main build has failed tasks; deterministic ruler and proven-finding repair own recovery",
-            "failed_tasks": report.failed.len(),
-            "failed_task_ids": &report.failed,
+            "reason": "main build has fail-closed authority/integrity tasks; deterministic ruler retains the evidence",
+            "failed_tasks": hard_failed.len(),
+            "failed_task_ids": hard_failed,
         }));
     }
 
@@ -60627,7 +60749,11 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             .filter(|o| o.owns_nothing)
             .map(|o| o.task_id.clone())
             .collect();
-        let failed_planned = green_blocking_failed(&report.failed, &report.bonus, &owns_nothing);
+        let unavailable_ids = typed_unavailable_ids(&report.unavailable);
+        let failed_planned = green_blocking_failed(&report.failed, &report.bonus, &owns_nothing)
+            .into_iter()
+            .filter(|task_id| !unavailable_ids.contains(task_id.as_str()))
+            .collect::<Vec<_>>();
         let failed_task_findings: Vec<String> = if !failed_planned.is_empty()
             && (pillar_flow_on
                 || delivery_on
@@ -60659,6 +60785,13 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                 "event": "complete_failed_tasks",
                 "failed": failed_planned,
                 "detail": "failed planned tasks are blocking the green claim and driving the fix loop",
+            }));
+        }
+        if !report.unavailable.is_empty() {
+            sink.write_value(serde_json::json!({
+                "event": "complete_unavailable_tasks",
+                "tasks": &report.unavailable,
+                "detail": "typed unavailable obligations remain in the planned-file scope and are owned by capability repair plus the live whole-product ruler",
             }));
         }
         // Missing deliverables are re-statted by the canonical ruler on every tree. A frozen pre-loop
@@ -62468,6 +62601,11 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
         sealed_complete.as_ref(),
         run_finished,
     )?;
+    let final_ruler_recovered_unavailable = sealed_complete.as_ref().is_some_and(|sealed| {
+        sealed.passed
+            && sealed.verified
+            && unavailable_obligations_recovered(&sealed.root, &report.unavailable)
+    });
 
     if json {
         println!(
@@ -62487,11 +62625,12 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             total_m
         );
         println!("done   ({}): {}", report.done.len(), report.done.join(", "));
-        let core_failed: Vec<&String> = report
-            .failed
-            .iter()
-            .filter(|id| !report.bonus.contains(*id))
-            .collect();
+        let core_failed = unresolved_core_failures(
+            &report.failed,
+            &report.bonus,
+            &report.unavailable,
+            final_ruler_recovered_unavailable,
+        );
         let bonus_failed: Vec<&String> = report
             .failed
             .iter()
@@ -62502,9 +62641,18 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                 "{} ({}): {}",
                 style("FAILED").red().bold(),
                 core_failed.len(),
-                core_failed
+                core_failed.join(", ")
+            );
+        }
+        if final_ruler_recovered_unavailable && !report.unavailable.is_empty() {
+            println!(
+                "{} ({}): {}",
+                style("unavailable repaired and verified").green(),
+                report.unavailable.len(),
+                report
+                    .unavailable
                     .iter()
-                    .map(|s| s.as_str())
+                    .map(|evidence| evidence.task_id.as_str())
                     .collect::<Vec<_>>()
                     .join(", ")
             );
@@ -62579,11 +62727,13 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
 
     // Run success is judged on the CORE plan only — a failed opportunistic/replanner (bonus) task
     // must not fail an otherwise-complete run.
-    let core_failed = report
-        .failed
-        .iter()
-        .filter(|id| !report.bonus.contains(*id))
-        .count();
+    let core_failed = unresolved_core_failures(
+        &report.failed,
+        &report.bonus,
+        &report.unavailable,
+        final_ruler_recovered_unavailable,
+    )
+    .len();
     // GOOSE_SWARM_COMPLETE: a still-red app (verify-by-running never went green within the fix budget) must
     // NOT report success, even if every planned subtask "completed" — this is the never-ship-broken gate.
     // When the flag is off, `complete_on && complete_failed` is false and the exit path is byte-identical.

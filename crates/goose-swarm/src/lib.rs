@@ -96,7 +96,7 @@ pub use scheduler::{
     tail_review_enabled, testgen_enabled, AttemptRecord, DeviceCfg, DeviceSummary, RunReport,
     Scheduler, SchedulerCheckpointError, SchedulerCheckpointReceipt, SchedulerCheckpointStore,
     SchedulerCompletedTaskEvidence, SchedulerDagResealReceipt, SchedulerRestoreSummary,
-    TaskOutcome,
+    TaskOutcome, TaskUnavailableEvidence, TaskUnavailableKind,
 };
 pub use semantic_control::{
     semantic_observation_task_version, AdmittedSemanticObservationHandle,
