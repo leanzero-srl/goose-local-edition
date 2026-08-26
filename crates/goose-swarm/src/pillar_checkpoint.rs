@@ -44,6 +44,94 @@ pub struct PillarCheckpointReceipt {
     pub reused: bool,
 }
 
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct PillarOpeningCheckpointReceipt {
+    pub response_schema_digest: String,
+    pub minimum_semantic_pillars: usize,
+    pub accepted_model_id: String,
+    pub accepted_physical_host: String,
+    pub accepted_attempt: u32,
+    pub raw_output_digests: Vec<String>,
+    pub compiler_receipt_digest: String,
+}
+
+#[derive(Serialize)]
+struct PillarOpeningCompilerReceiptMaterial<'a> {
+    response_schema_digest: &'a str,
+    minimum_semantic_pillars: usize,
+    accepted_model_id: &'a str,
+    accepted_physical_host: &'a str,
+    accepted_attempt: u32,
+    raw_output_digests: &'a [String],
+    opening: &'a ResearchPillarOpening,
+}
+
+impl PillarOpeningCheckpointReceipt {
+    pub fn new(
+        response_schema_digest: impl Into<String>,
+        minimum_semantic_pillars: usize,
+        accepted_model_id: impl Into<String>,
+        accepted_physical_host: impl Into<String>,
+        accepted_attempt: u32,
+        raw_outputs: &[String],
+        opening: &ResearchPillarOpening,
+    ) -> Result<Self, PillarCheckpointError> {
+        let mut receipt = Self {
+            response_schema_digest: response_schema_digest.into(),
+            minimum_semantic_pillars,
+            accepted_model_id: accepted_model_id.into(),
+            accepted_physical_host: accepted_physical_host.into(),
+            accepted_attempt,
+            raw_output_digests: raw_outputs
+                .iter()
+                .map(|output| sha256_digest(output.as_bytes()))
+                .collect(),
+            compiler_receipt_digest: String::new(),
+        };
+        receipt.compiler_receipt_digest = receipt.expected_compiler_receipt_digest(opening)?;
+        receipt.validate(opening)?;
+        Ok(receipt)
+    }
+
+    fn expected_compiler_receipt_digest(
+        &self,
+        opening: &ResearchPillarOpening,
+    ) -> Result<String, PillarCheckpointError> {
+        hash_serializable(&PillarOpeningCompilerReceiptMaterial {
+            response_schema_digest: &self.response_schema_digest,
+            minimum_semantic_pillars: self.minimum_semantic_pillars,
+            accepted_model_id: &self.accepted_model_id,
+            accepted_physical_host: &self.accepted_physical_host,
+            accepted_attempt: self.accepted_attempt,
+            raw_output_digests: &self.raw_output_digests,
+            opening,
+        })
+    }
+
+    fn validate(&self, opening: &ResearchPillarOpening) -> Result<(), PillarCheckpointError> {
+        if !canonical_digest(&self.response_schema_digest)
+            || self.minimum_semantic_pillars == 0
+            || opening.pillars.len() < self.minimum_semantic_pillars
+            || self.accepted_model_id.trim().is_empty()
+            || self.accepted_physical_host.trim().is_empty()
+            || self.accepted_attempt == 0
+            || self.raw_output_digests.is_empty()
+            || self
+                .raw_output_digests
+                .iter()
+                .any(|digest| !canonical_digest(digest))
+            || !canonical_digest(&self.compiler_receipt_digest)
+            || self.expected_compiler_receipt_digest(opening)? != self.compiler_receipt_digest
+        {
+            return Err(PillarCheckpointError::new(
+                "pillar opening checkpoint receipt binding is invalid",
+            ));
+        }
+        Ok(())
+    }
+}
+
 #[derive(Debug)]
 pub struct PillarCheckpointError {
     detail: String,
@@ -78,6 +166,7 @@ struct CheckpointMaterial {
     frozen_spec_digest: String,
     requirement_digest: String,
     opening: ResearchPillarOpening,
+    opening_receipt: PillarOpeningCheckpointReceipt,
     attempts: BTreeMap<String, Vec<PillarAttemptCheckpoint>>,
 }
 
@@ -104,7 +193,13 @@ impl PillarCheckpointStore {
         working_root: impl AsRef<Path>,
         frozen_spec_digest: impl Into<String>,
         authored_requirements: &[crate::pillar::AuthoredRequirement],
-    ) -> Result<Option<ResearchPillarOpening>, PillarCheckpointError> {
+        response_schema_digest: &str,
+        minimum_semantic_pillars: usize,
+        accepted_lanes: &[(String, String)],
+    ) -> Result<
+        Option<(ResearchPillarOpening, PillarOpeningCheckpointReceipt)>,
+        PillarCheckpointError,
+    > {
         let working_root = std::fs::canonicalize(working_root.as_ref()).map_err(|error| {
             PillarCheckpointError::io("cannot canonicalize pillar checkpoint root", error)
         })?;
@@ -139,22 +234,33 @@ impl PillarCheckpointStore {
             || record.material.frozen_spec_digest != frozen_spec_digest
             || record.material.requirement_digest != requirement_digest
             || record.material.opening.requirements != authored_requirements
+            || record.material.opening_receipt.response_schema_digest != response_schema_digest
+            || record.material.opening_receipt.minimum_semantic_pillars != minimum_semantic_pillars
+            || !accepted_lanes.iter().any(|(model_id, physical_host)| {
+                model_id == &record.material.opening_receipt.accepted_model_id
+                    && physical_host == &record.material.opening_receipt.accepted_physical_host
+            })
         {
             return Err(PillarCheckpointError::new(
-                "pillar checkpoint is incompatible with this root or frozen specification",
+                "pillar checkpoint is incompatible with this root, frozen specification, schema, slice floor, or accepted lane",
             ));
         }
-        Ok(Some(record.material.opening))
+        Ok(Some((
+            record.material.opening,
+            record.material.opening_receipt,
+        )))
     }
 
     pub fn open(
         working_root: impl AsRef<Path>,
         frozen_spec_digest: impl Into<String>,
         opening: &ResearchPillarOpening,
+        opening_receipt: &PillarOpeningCheckpointReceipt,
     ) -> Result<Self, PillarCheckpointError> {
         validate_pillar_opening(opening).map_err(|error| {
             PillarCheckpointError::new(format!("cannot checkpoint invalid pillar opening: {error}"))
         })?;
+        opening_receipt.validate(opening)?;
         let working_root = std::fs::canonicalize(working_root.as_ref()).map_err(|error| {
             PillarCheckpointError::io("cannot canonicalize pillar checkpoint root", error)
         })?;
@@ -210,9 +316,10 @@ impl PillarCheckpointStore {
                     || record.material.frozen_spec_digest != frozen_spec_digest
                     || record.material.requirement_digest != requirement_digest
                     || record.material.opening != *opening
+                    || record.material.opening_receipt != *opening_receipt
                 {
                     return Err(PillarCheckpointError::new(
-                        "pillar checkpoint is incompatible with this root, frozen specification, or opening",
+                        "pillar checkpoint is incompatible with this root, frozen specification, opening, or opening receipt",
                     ));
                 }
                 record
@@ -225,6 +332,7 @@ impl PillarCheckpointStore {
                     frozen_spec_digest,
                     requirement_digest,
                     opening: opening.clone(),
+                    opening_receipt: opening_receipt.clone(),
                     attempts: BTreeMap::new(),
                 };
                 let record = seal_record(material)?;
@@ -407,6 +515,10 @@ fn validate_record(record: &CheckpointRecord) -> Result<(), PillarCheckpointErro
     validate_pillar_opening(&record.material.opening).map_err(|error| {
         PillarCheckpointError::new(format!("pillar checkpoint opening is invalid: {error}"))
     })?;
+    record
+        .material
+        .opening_receipt
+        .validate(&record.material.opening)?;
     if pillar_requirement_digest(&record.material.opening.requirements)?
         != record.material.requirement_digest
     {
@@ -795,6 +907,45 @@ mod tests {
         }
     }
 
+    fn opening_receipt(opening: &ResearchPillarOpening) -> PillarOpeningCheckpointReceipt {
+        PillarOpeningCheckpointReceipt::new(
+            pillar_frozen_spec_digest("opening schema"),
+            2,
+            "opening-model",
+            "opening-host",
+            1,
+            &["model-authored opening".to_string()],
+            opening,
+        )
+        .unwrap()
+    }
+
+    fn open_store(
+        root: &Path,
+        digest: &str,
+        opening: &ResearchPillarOpening,
+    ) -> Result<PillarCheckpointStore, PillarCheckpointError> {
+        PillarCheckpointStore::open(root, digest, opening, &opening_receipt(opening))
+    }
+
+    fn load_test_opening(
+        root: &Path,
+        digest: &str,
+        opening: &ResearchPillarOpening,
+    ) -> Result<
+        Option<(ResearchPillarOpening, PillarOpeningCheckpointReceipt)>,
+        PillarCheckpointError,
+    > {
+        PillarCheckpointStore::load_opening(
+            root,
+            digest,
+            &opening.requirements,
+            &pillar_frozen_spec_digest("opening schema"),
+            2,
+            &[("opening-model".to_string(), "opening-host".to_string())],
+        )
+    }
+
     fn pillar(id: &str, requirement_id: &str) -> ResearchPillar {
         ResearchPillar {
             id: id.to_string(),
@@ -853,14 +1004,14 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let opening = opening();
         let digest = pillar_frozen_spec_digest("frozen spec");
-        let store = PillarCheckpointStore::open(root.path(), &digest, &opening).unwrap();
+        let store = open_store(root.path(), &digest, &opening).unwrap();
         let saved = attempt("ui", "req-ui", 1, Confidence::High);
         let receipt = store.persist_attempt(saved.clone()).unwrap();
         assert_eq!(receipt.revision, 1);
         assert!(!receipt.reused);
         drop(store);
 
-        let reopened = PillarCheckpointStore::open(root.path(), &digest, &opening).unwrap();
+        let reopened = open_store(root.path(), &digest, &opening).unwrap();
         assert_eq!(reopened.completed_attempts("ui").unwrap(), vec![saved]);
         assert_eq!(
             reopened.resume_decision("ui").unwrap(),
@@ -874,7 +1025,7 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let opening = opening();
         let digest = pillar_frozen_spec_digest("frozen spec");
-        let store = PillarCheckpointStore::open(root.path(), &digest, &opening).unwrap();
+        let store = open_store(root.path(), &digest, &opening).unwrap();
         let state_path = store.state_path.clone();
         drop(store);
 
@@ -886,13 +1037,13 @@ mod tests {
             .join(&digest["sha256:".len()..]);
         std::fs::create_dir_all(&copied_directory).unwrap();
         std::fs::copy(&state_path, copied_directory.join(STATE_FILE)).unwrap();
-        assert!(PillarCheckpointStore::open(different_root.path(), &digest, &opening).is_err());
+        assert!(open_store(different_root.path(), &digest, &opening).is_err());
 
         let mut changed_opening = opening.clone();
         changed_opening.requirements[0]
             .text
             .push_str(" with animation");
-        assert!(PillarCheckpointStore::open(root.path(), &digest, &changed_opening).is_err());
+        assert!(open_store(root.path(), &digest, &changed_opening).is_err());
 
         let mut bytes = std::fs::read(&state_path).unwrap();
         let revision = bytes
@@ -901,7 +1052,7 @@ mod tests {
             .unwrap();
         bytes[revision + b"\"revision\":".len()] = b'9';
         std::fs::write(&state_path, bytes).unwrap();
-        assert!(PillarCheckpointStore::open(root.path(), &digest, &opening).is_err());
+        assert!(open_store(root.path(), &digest, &opening).is_err());
     }
 
     #[test]
@@ -914,12 +1065,12 @@ mod tests {
         let mut attempt_b = attempt("ui", "req-ui", 1, Confidence::High);
         attempt_b.report.claims[0].statement = "Spec B finding".to_string();
 
-        let store_a = PillarCheckpointStore::open(root.path(), &digest_a, &opening).unwrap();
+        let store_a = open_store(root.path(), &digest_a, &opening).unwrap();
         store_a.persist_attempt(attempt_a.clone()).unwrap();
         let state_a = store_a.state_path.clone();
         drop(store_a);
 
-        let store_b = PillarCheckpointStore::open(root.path(), &digest_b, &opening).unwrap();
+        let store_b = open_store(root.path(), &digest_b, &opening).unwrap();
         store_b.persist_attempt(attempt_b.clone()).unwrap();
         let state_b = store_b.state_path.clone();
         assert_ne!(state_a, state_b);
@@ -927,15 +1078,12 @@ mod tests {
         drop(store_b);
 
         assert_eq!(
-            PillarCheckpointStore::load_opening(
-                root.path(),
-                digest_a.clone(),
-                &opening.requirements,
-            )
-            .unwrap(),
-            Some(opening.clone())
+            load_test_opening(root.path(), &digest_a, &opening)
+                .unwrap()
+                .map(|(opening, _)| opening),
+            Some(opening.clone()),
         );
-        let resumed_a = PillarCheckpointStore::open(root.path(), &digest_a, &opening).unwrap();
+        let resumed_a = open_store(root.path(), &digest_a, &opening).unwrap();
         assert_eq!(resumed_a.completed_attempts("ui").unwrap(), vec![attempt_a]);
         assert_eq!(
             resumed_a.resume_decision("ui").unwrap(),
@@ -947,9 +1095,8 @@ mod tests {
     fn primary_high_is_complete_and_never_requests_a_retry() {
         let root = tempfile::tempdir().unwrap();
         let opening = opening();
-        let store =
-            PillarCheckpointStore::open(root.path(), pillar_frozen_spec_digest("spec"), &opening)
-                .unwrap();
+        let digest = pillar_frozen_spec_digest("spec");
+        let store = open_store(root.path(), &digest, &opening).unwrap();
         store
             .persist_attempt(attempt("ui", "req-ui", 1, Confidence::High))
             .unwrap();
@@ -964,13 +1111,13 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let opening = opening();
         let digest = pillar_frozen_spec_digest("spec");
-        let store = PillarCheckpointStore::open(root.path(), &digest, &opening).unwrap();
+        let store = open_store(root.path(), &digest, &opening).unwrap();
         store
             .persist_attempt(attempt("ui", "req-ui", 1, Confidence::Low))
             .unwrap();
         drop(store);
 
-        let reopened = PillarCheckpointStore::open(root.path(), &digest, &opening).unwrap();
+        let reopened = open_store(root.path(), &digest, &opening).unwrap();
         assert_eq!(reopened.next_attempt_ordinal("ui").unwrap(), Some(2));
         reopened
             .persist_attempt(attempt("ui", "req-ui", 2, Confidence::High))
@@ -986,10 +1133,8 @@ mod tests {
     fn concurrent_pillars_share_one_mutex_safe_store() {
         let root = tempfile::tempdir().unwrap();
         let opening = opening();
-        let store = Arc::new(
-            PillarCheckpointStore::open(root.path(), pillar_frozen_spec_digest("spec"), &opening)
-                .unwrap(),
-        );
+        let digest = pillar_frozen_spec_digest("spec");
+        let store = Arc::new(open_store(root.path(), &digest, &opening).unwrap());
         let ui = {
             let store = store.clone();
             std::thread::spawn(move || {
@@ -1017,19 +1162,64 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let opening = opening();
         let digest = pillar_frozen_spec_digest("frozen spec");
-        assert!(PillarCheckpointStore::load_opening(
-            root.path(),
-            digest.clone(),
-            &opening.requirements,
-        )
-        .unwrap()
-        .is_none());
-        drop(PillarCheckpointStore::open(root.path(), digest.clone(), &opening).unwrap());
+        assert!(load_test_opening(root.path(), &digest, &opening)
+            .unwrap()
+            .is_none());
+        drop(open_store(root.path(), &digest, &opening).unwrap());
         assert_eq!(
-            PillarCheckpointStore::load_opening(root.path(), digest, &opening.requirements,)
-                .unwrap(),
-            Some(opening)
+            load_test_opening(root.path(), &digest, &opening).unwrap(),
+            Some((opening.clone(), opening_receipt(&opening)))
         );
+    }
+
+    #[test]
+    fn opening_restore_requires_the_bound_schema_floor_lane_and_compiler_receipt() {
+        let root = tempfile::tempdir().unwrap();
+        let opening = opening();
+        let digest = pillar_frozen_spec_digest("frozen spec");
+        drop(open_store(root.path(), &digest, &opening).unwrap());
+
+        let (_, receipt) = load_test_opening(root.path(), &digest, &opening)
+            .unwrap()
+            .unwrap();
+        assert_eq!(receipt.minimum_semantic_pillars, 2);
+        assert_eq!(receipt.accepted_model_id, "opening-model");
+        assert_eq!(receipt.accepted_physical_host, "opening-host");
+        assert_eq!(receipt.accepted_attempt, 1);
+        assert_eq!(receipt.raw_output_digests.len(), 1);
+        assert!(canonical_digest(&receipt.compiler_receipt_digest));
+
+        let schema_mismatch = PillarCheckpointStore::load_opening(
+            root.path(),
+            &digest,
+            &opening.requirements,
+            &pillar_frozen_spec_digest("different schema"),
+            2,
+            &[("opening-model".to_string(), "opening-host".to_string())],
+        );
+        assert!(schema_mismatch.is_err());
+        let floor_mismatch = PillarCheckpointStore::load_opening(
+            root.path(),
+            &digest,
+            &opening.requirements,
+            &pillar_frozen_spec_digest("opening schema"),
+            1,
+            &[("opening-model".to_string(), "opening-host".to_string())],
+        );
+        assert!(floor_mismatch.is_err());
+        let lane_mismatch = PillarCheckpointStore::load_opening(
+            root.path(),
+            &digest,
+            &opening.requirements,
+            &pillar_frozen_spec_digest("opening schema"),
+            2,
+            &[("other-model".to_string(), "other-host".to_string())],
+        );
+        assert!(lane_mismatch.is_err());
+
+        let mut tampered = receipt;
+        tampered.accepted_attempt = 2;
+        assert!(tampered.validate(&opening).is_err());
     }
 
     #[test]
@@ -1049,10 +1239,8 @@ mod tests {
         )
         .unwrap();
 
-        assert!(
-            PillarCheckpointStore::load_opening(root.path(), digest, &opening.requirements,)
-                .unwrap()
-                .is_none()
-        );
+        assert!(load_test_opening(root.path(), &digest, &opening)
+            .unwrap()
+            .is_none());
     }
 }
