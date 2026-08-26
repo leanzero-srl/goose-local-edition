@@ -1725,9 +1725,14 @@ def validate_config(config: dict[str, Any], *, allow_unarmed: bool = False) -> N
         if not re.fullmatch(r"[0-9a-f]{64}", str(config["publisher"].get(field, ""))):
             raise ClosureError(f"publisher.{field} must be a frozen SHA-256")
     usage_policy = config["usage_policy"]
+    allowed_usage_policy_paths = {
+        V19_USAGE_POLICY_PATH.resolve(),
+        (V19_STATE_DIR / "closure-instrument" / "usage_impairment.py").resolve(),
+    }
     if (
         not isinstance(usage_policy, dict)
-        or usage_policy.get("path") != str(V19_USAGE_POLICY_PATH)
+        or pathlib.Path(str(usage_policy.get("path", ""))).resolve()
+        not in allowed_usage_policy_paths
         or usage_policy.get("sha256") != V19_USAGE_POLICY_SHA256
     ):
         raise ClosureError("configured immutable usage policy changed")

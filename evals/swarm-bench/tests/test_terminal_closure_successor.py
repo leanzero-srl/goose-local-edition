@@ -5,6 +5,7 @@ import json
 import pathlib
 import tempfile
 import unittest
+from unittest import mock
 
 
 ROOT = pathlib.Path(__file__).parents[1]
@@ -13,6 +14,20 @@ SPEC = importlib.util.spec_from_file_location("terminal_closure_successor", MODU
 assert SPEC and SPEC.loader
 successor = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(successor)
+
+
+class ApprovedAnchorTests(unittest.TestCase):
+    def test_checked_in_controller_matches_approved_anchor(self) -> None:
+        self.assertEqual(
+            successor.sha256_file(ROOT / "terminal_closure.py"),
+            successor.APPROVED_CONTROLLER_SOURCE_SHA256,
+        )
+        self.assertEqual(
+            successor.APPROVED_PREDECESSOR_CONFIG_SHA256_BY_GENERATION,
+            {
+                "v21-r5": "0bfa5e8d13708919d69c1cdd26f52baa77b2f47da0ef7a41818477bec3fe3e04"
+            },
+        )
 
 
 class SuccessorBindingTests(unittest.TestCase):
@@ -86,7 +101,10 @@ class SuccessorBindingTests(unittest.TestCase):
 
         self.publisher = self.root / "publisher.mjs"
         self.publisher.write_text("export const guarded = true;\n", encoding="utf-8")
-        self.usage_policy = ROOT / "usage_impairment.py"
+        self.publisher.chmod(0o400)
+        self.usage_policy = self.root / "usage_impairment.py"
+        self.usage_policy.write_bytes((ROOT / "usage_impairment.py").read_bytes())
+        self.usage_policy.chmod(0o400)
         self.base_config_path = self.root / "stopped-r4-config.json"
         self.base_config = self._base_config()
         self.base_config_path.write_text(
@@ -95,6 +113,20 @@ class SuccessorBindingTests(unittest.TestCase):
         )
         self.base_config_path.chmod(0o600)
         self.base_config_mode = self.base_config_path.stat().st_mode & 0o777
+        predecessor_anchor = mock.patch.object(
+            successor,
+            "APPROVED_PREDECESSOR_CONFIG_SHA256_BY_GENERATION",
+            {"v21-r5": successor.sha256_file(self.base_config_path)},
+        )
+        controller_anchor = mock.patch.object(
+            successor,
+            "APPROVED_CONTROLLER_SOURCE_SHA256",
+            successor.sha256_file(ROOT / "terminal_closure.py"),
+        )
+        predecessor_anchor.start()
+        controller_anchor.start()
+        self.addCleanup(predecessor_anchor.stop)
+        self.addCleanup(controller_anchor.stop)
 
     def tearDown(self) -> None:
         self.temporary.cleanup()
@@ -219,6 +251,52 @@ class SuccessorBindingTests(unittest.TestCase):
         )
         exact = generated.load_config(pathlib.Path(receipt["template"]))
         generated.validate_config(exact, allow_unarmed=True)
+        self.assertFalse((self.state_dir / "closure-instrument").exists())
+        self.assertEqual(
+            pathlib.Path(exact["publisher"]["path"]).parent.resolve(),
+            (self.state_dir / "bootstrap").resolve(),
+        )
+        frozen = json.loads(json.dumps(exact))
+        instrument = self.state_dir / "closure-instrument"
+        frozen["publisher"]["path"] = str(
+            instrument / "seed-fleet-brainwaves-sb70.mjs"
+        )
+        frozen["usage_policy"]["path"] = str(instrument / "usage_impairment.py")
+        generated.materialize_closure_instrument_snapshot(
+            self.state_dir,
+            {
+                "terminal_closure.py": {
+                    "path": receipt["controller"],
+                    "sha256": receipt["controller_sha256"],
+                    "mode": 0o500,
+                },
+                "seed-fleet-brainwaves-sb70.mjs": {
+                    "path": exact["publisher"]["path"],
+                    "sha256": exact["publisher"]["sha256"],
+                    "mode": 0o500,
+                },
+                "usage_impairment.py": {
+                    "path": exact["usage_policy"]["path"],
+                    "sha256": exact["usage_policy"]["sha256"],
+                    "mode": 0o400,
+                },
+            },
+            frozen,
+        )
+        self.assertEqual(
+            {path.name for path in instrument.iterdir()},
+            {
+                "terminal_closure.py",
+                "seed-fleet-brainwaves-sb70.mjs",
+                "usage_impairment.py",
+                "config.json",
+                "manifest.json",
+            },
+        )
+        self.assertEqual(
+            pathlib.Path(receipt["binding_receipt"]).parent.resolve(),
+            self.state_dir.resolve(),
+        )
         self.assertEqual(
             exact["publication"],
             {
@@ -308,6 +386,67 @@ class SuccessorBindingTests(unittest.TestCase):
             successor.SuccessorBindingError, "append-only successor output changed"
         ):
             successor.generate_successor(**kwargs)
+
+    def test_unapproved_predecessor_and_controller_are_rejected(self) -> None:
+        kwargs = {
+            "generation": "v21-r5",
+            "live_root": self.live_root,
+            "state_dir": self.state_dir,
+            "base_config_path": self.base_config_path,
+            "controller_source": ROOT / "terminal_closure.py",
+        }
+        with mock.patch.object(
+            successor,
+            "APPROVED_PREDECESSOR_CONFIG_SHA256_BY_GENERATION",
+            {"v21-r5": "0" * 64},
+        ):
+            with self.assertRaisesRegex(
+                successor.SuccessorBindingError, "predecessor closure config"
+            ):
+                successor.generate_successor(**kwargs)
+        with mock.patch.object(
+            successor, "APPROVED_CONTROLLER_SOURCE_SHA256", "0" * 64
+        ):
+            with self.assertRaisesRegex(
+                successor.SuccessorBindingError, "approved controller"
+            ):
+                successor.generate_successor(**kwargs)
+        self.assertFalse(self.state_dir.exists())
+
+    def test_exclusive_commit_does_not_replace_existing_destination(self) -> None:
+        source = self.root / "staged"
+        target = self.root / "claimed"
+        source.mkdir()
+        target.mkdir()
+        sentinel = target / "sentinel"
+        sentinel.write_text("preserve\n", encoding="utf-8")
+        with self.assertRaisesRegex(
+            successor.SuccessorBindingError, "destination already exists"
+        ):
+            successor.rename_directory_create_only(source, target)
+        self.assertTrue(source.is_dir())
+        self.assertEqual(sentinel.read_text(encoding="utf-8"), "preserve\n")
+
+    def test_changed_evidence_is_rejected_before_destination_commit(self) -> None:
+        first = successor.successor_evidence(
+            "v21-r5", self.live_root, self.state_dir
+        )
+        changed = json.loads(json.dumps(first))
+        changed["run_id"] = "swarm-20260826-987654321"
+        with mock.patch.object(
+            successor, "successor_evidence", side_effect=[first, changed]
+        ):
+            with self.assertRaisesRegex(
+                successor.SuccessorBindingError, "evidence changed before"
+            ):
+                successor.generate_successor(
+                    generation="v21-r5",
+                    live_root=self.live_root,
+                    state_dir=self.state_dir,
+                    base_config_path=self.base_config_path,
+                    controller_source=ROOT / "terminal_closure.py",
+                )
+        self.assertFalse(self.state_dir.exists())
 
 
 if __name__ == "__main__":
