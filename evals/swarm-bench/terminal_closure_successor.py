@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Create the append-only terminal-closure source/config pair for one live V23 run."""
+"""Create the append-only terminal-closure source/config pair for one live V24 run."""
 
 from __future__ import annotations
 
@@ -26,23 +26,25 @@ END_MARKER = "# END TERMINAL_CLOSURE_RUN_BINDING"
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 COMMIT_RE = re.compile(r"^[0-9a-f]{40}$")
 RUN_ID_RE = re.compile(r"^swarm-\d{8}-\d{9}$")
-GENERATION = "v23"
-LIVE_ROOT_LEAF = "local-sb7-engine-v23"
-STATE_DIR_LEAF = "local-sb7-engine-v23-terminal-closure"
-TARGET_DOCUMENT_ID = "brun-fleet-qwen38-brainwaves-v23-sb70"
-PREDECESSOR_TARGET_DOCUMENT_ID = "brun-fleet-qwen38-brainwaves-v22-sb70"
-PUBLICATION_PROVENANCE_MARKER = "Brainwaves v23"
-PREDECESSOR_PUBLICATION_PROVENANCE_MARKER = "Brainwaves v22"
-PUBLISHER_SOURCE_PROVENANCE_MARKER = "Brainwaves v22"
-PUBLISHER_FILENAME = "seed-fleet-brainwaves-v23-sb70.mjs"
+GENERATION = "v24"
+LIVE_ROOT_LEAF = "local-sb7-engine-v24"
+STATE_DIR_LEAF = "local-sb7-engine-v24-terminal-closure"
+TARGET_DOCUMENT_ID = "brun-fleet-qwen38-brainwaves-v24-sb70"
+PREDECESSOR_TARGET_DOCUMENT_ID = "brun-fleet-qwen38-brainwaves-v23-sb70"
+PUBLICATION_PROVENANCE_MARKER = "Brainwaves v24"
+PREDECESSOR_PUBLICATION_PROVENANCE_MARKER = "Brainwaves v23"
+PUBLISHER_SOURCE_PROVENANCE_MARKER = "Brainwaves v23"
+PUBLISHER_FILENAME = "seed-fleet-brainwaves-v24-sb70.mjs"
 PROTECTED_DOCUMENT_ID_ORDER = (
     PREDECESSOR_TARGET_DOCUMENT_ID,
+    "brun-fleet-qwen38-brainwaves-v22-sb70",
     "brun-fleet-qwen38-brainwaves-sb70",
     "brun-fleet-qwen38-sb70",
     "brun-fleet-qwen-sb70",
 )
 PROTECTED_DOCUMENT_IDS = frozenset(PROTECTED_DOCUMENT_ID_ORDER)
 PREDECESSOR_PROTECTED_DOCUMENT_ID_ORDER = (
+    "brun-fleet-qwen38-brainwaves-v22-sb70",
     "brun-fleet-qwen38-brainwaves-sb70",
     "brun-fleet-qwen38-sb70",
     "brun-fleet-qwen-sb70",
@@ -65,7 +67,7 @@ EXPECTED_QUANTIZATION_SHA256 = (
 EXPECTED_PLANNER_MODEL = "workhorse-qwen3.8-27b-brainwaves-mxfp8-mlx"
 EXPECTED_ENTRANT = "swarm-3node-qwen38-brainwaves"
 APPROVED_PREDECESSOR_CONFIG_SHA256_BY_GENERATION = {
-    "v23": "43c32a2dd175e903af4dae3aa957fe4d491d4bddba9f70c7b2286f289fe49281",
+    "v24": "405678e0ab35d2859de41f82d0d968af266b84708af47dc3c745e33de93719ad",
 }
 APPROVED_CONTROLLER_SOURCE_SHA256 = (
     "f404b88cb191386dc350c2579880509fa19fc55f1ec7275a6cf5fc95c2e54f3e"
@@ -150,9 +152,10 @@ def render_publisher(source: bytes) -> bytes:
         (
             f"export const TARGET_DOCUMENT_ID = '{PREDECESSOR_TARGET_DOCUMENT_ID}';",
             "export const PROTECTED_DOCUMENT_IDS = Object.freeze([",
-            "  'brun-fleet-qwen38-brainwaves-sb70',",
-            "  'brun-fleet-qwen38-sb70',",
-            "  'brun-fleet-qwen-sb70',",
+            *[
+                f"  '{document_id}',"
+                for document_id in PREDECESSOR_PROTECTED_DOCUMENT_ID_ORDER
+            ],
             "]);",
         )
     )
@@ -173,33 +176,27 @@ def render_publisher(source: bytes) -> bytes:
     )
     text = replace_exact_once(
         text,
-        "The scorer hash differs from Brainwaves v21 only for the authorized notifier reachability classifier repair; all 91 check definitions and weights are unchanged.",
-        "The scorer hash differs from the pre-repair scorer only for the authorized notifier reachability classifier repair; all 91 check definitions and weights are unchanged.",
-        "authorized scorer-change disclosure",
-    )
-    text = replace_exact_once(
-        text,
-        "if (!runHtml.includes(PUBLIC_PROVENANCE_MARKER)) failures.push('run page lacks exact publication provenance');\n"
-        "  for (const staleMarker of ['Brainwaves v17', 'Brainwaves v18', 'Brainwaves v19', 'Brainwaves v20', 'Brainwaves v21']) {\n"
-        "    if (runHtml.includes(staleMarker)) failures.push(`run page contains stale provenance ${staleMarker}`);\n"
-        "  }",
         "if (!runHtml.includes(PUBLIC_PROVENANCE_MARKER)) failures.push('run page lacks exact publication provenance');\n"
         "  for (const staleMarker of ['Brainwaves v17', 'Brainwaves v18', 'Brainwaves v19', 'Brainwaves v20', 'Brainwaves v21', 'Brainwaves v22']) {\n"
         "    if (runHtml.includes(staleMarker)) failures.push(`run page contains stale provenance ${staleMarker}`);\n"
         "  }",
+        "if (!runHtml.includes(PUBLIC_PROVENANCE_MARKER)) failures.push('run page lacks exact publication provenance');\n"
+        "  for (const staleMarker of ['Brainwaves v17', 'Brainwaves v18', 'Brainwaves v19', 'Brainwaves v20', 'Brainwaves v21', 'Brainwaves v22', 'Brainwaves v23']) {\n"
+        "    if (runHtml.includes(staleMarker)) failures.push(`run page contains stale provenance ${staleMarker}`);\n"
+        "  }",
         "rendered provenance verification",
     )
-    required_v22_guards = (
+    required_v23_guards = (
         "invariant(state.target_absent_before === true, 'publisher state lacks target-absence proof');",
         "'target-absence positive control did not resolve the exact protected set'",
         "target_absent_before: state.target_absent_before === true,",
         "protected_positive_control_ids: state.protected_before.map((row) => row._id),",
         "The scorer hash differs from the pre-repair scorer only for the authorized notifier reachability classifier repair",
     )
-    for guard in required_v22_guards:
+    for guard in required_v23_guards:
         if text.count(guard) != 1:
             raise SuccessorBindingError(
-                "guarded publisher V22 create-only/scorer anchor is not unique"
+                "guarded publisher V23 create-only/scorer anchor is not unique"
             )
     return text.encode("utf-8")
 
@@ -653,7 +650,7 @@ def successor_evidence(
     state_dir: pathlib.Path,
 ) -> dict[str, Any]:
     if generation != GENERATION:
-        raise SuccessorBindingError("successor generation must be exact v23")
+        raise SuccessorBindingError("successor generation must be exact v24")
     if live_root.is_symlink() or not live_root.is_dir():
         raise SuccessorBindingError("successor live root is missing or linked")
     live_root = live_root.resolve()
