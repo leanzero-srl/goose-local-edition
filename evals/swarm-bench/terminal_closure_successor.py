@@ -58,6 +58,9 @@ APPROVED_TERMINAL_PREDECESSOR_CONFIG_SHA256_BY_GENERATION = {
 APPROVED_CONTROLLER_SOURCE_SHA256 = (
     "e0e97cf532d816bd11ea10ee62bce06635ce2d5ed949dcd0ada2aea5a0f5b41d"
 )
+APPROVED_USAGE_POLICY_SOURCE_SHA256 = (
+    "8363461152fa30c6b48c97e142e06d8eca1fc61b1a9c639b5b7abd27a2cb9d2c"
+)
 
 
 class SuccessorBindingError(RuntimeError):
@@ -930,20 +933,37 @@ def generate_successor(
     publisher_source = require_regular(
         pathlib.Path(base_config["publisher"]["path"]), read_only=True
     )
-    usage_policy_source = require_regular(
+    base_usage_policy_source = require_regular(
         pathlib.Path(base_config["usage_policy"]["path"]), read_only=True
     )
     publisher_payload = read_stable_bytes(publisher_source, read_only=True)
-    usage_policy_payload = read_stable_bytes(usage_policy_source, read_only=True)
+    base_usage_policy_payload = read_stable_bytes(
+        base_usage_policy_source, read_only=True
+    )
     if sha256_bytes(publisher_payload) != base_config["publisher"]["sha256"]:
         raise SuccessorBindingError("base guarded publisher hash changed")
-    if sha256_bytes(usage_policy_payload) != base_config["usage_policy"]["sha256"]:
+    if (
+        sha256_bytes(base_usage_policy_payload)
+        != base_config["usage_policy"]["sha256"]
+    ):
         raise SuccessorBindingError("base usage policy hash changed")
 
-    rendered = render_controller(controller_source_payload, evidence, base_config)
+    usage_policy_source = require_regular(
+        controller_source.with_name("usage_impairment.py")
+    )
+    usage_policy_payload = read_stable_bytes(usage_policy_source)
+    usage_policy_sha256 = sha256_bytes(usage_policy_payload)
+    if usage_policy_sha256 != APPROVED_USAGE_POLICY_SOURCE_SHA256:
+        raise SuccessorBindingError("successor usage policy is not approved")
+    successor_base_config = json.loads(json.dumps(base_config))
+    successor_base_config["usage_policy"]["sha256"] = usage_policy_sha256
+
+    rendered = render_controller(
+        controller_source_payload, evidence, successor_base_config
+    )
     controller_sha256 = sha256_bytes(rendered)
     template = successor_template(
-        base_config,
+        successor_base_config,
         evidence,
         controller_sha256,
         publisher_path,
@@ -1007,7 +1027,8 @@ def generate_successor(
                 )
             immutable_sources = (
                 (publisher_source, publisher_payload, True),
-                (usage_policy_source, usage_policy_payload, True),
+                (base_usage_policy_source, base_usage_policy_payload, True),
+                (usage_policy_source, usage_policy_payload, False),
             )
             if any(
                 read_stable_bytes(path, read_only=read_only) != payload
@@ -1063,6 +1084,7 @@ def generate_successor(
         "base_config_unchanged": True,
         "predecessor_config_sha256": protected_before,
         "source_controller_sha256": evidence["source_controller_sha256"],
+        "source_usage_policy_sha256": usage_policy_sha256,
     }
     if armed_payload is not None:
         receipt["config"] = str(config_path)

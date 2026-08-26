@@ -14,6 +14,14 @@ assert SPEC and SPEC.loader
 closure = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(closure)
 
+USAGE_MODULE_PATH = pathlib.Path(__file__).parents[1] / "usage_impairment.py"
+USAGE_SPEC = importlib.util.spec_from_file_location(
+    "usage_impairment_under_test", USAGE_MODULE_PATH
+)
+assert USAGE_SPEC and USAGE_SPEC.loader
+usage = importlib.util.module_from_spec(USAGE_SPEC)
+USAGE_SPEC.loader.exec_module(usage)
+
 RUN_ID = "swarm-20260826-123456789"
 FIXTURE_SEED = "0123456789abcdef"
 
@@ -279,6 +287,58 @@ class RawAndHermeticScorePolicyTests(unittest.TestCase):
             closure.validate_sb7_score_payload(
                 hermetic, score_contract(), FIXTURE_SEED
             )
+
+
+class UsageQuarantineReasonTests(unittest.TestCase):
+    def quarantine(self, reason: str) -> dict[str, object]:
+        admission = {
+            "admission_id": "admission-15",
+            "physical_host_id": "Local",
+            "model_instance_id": "mihai-model",
+        }
+        return {
+            "event": "broker_admission_quarantined",
+            "run_id": RUN_ID,
+            "receipt": {
+                "reason": reason,
+                "admission": admission,
+                "unresolved": {
+                    "admission": dict(admission),
+                    "provider_requests_started": 1,
+                    "provider_requests_terminal": 0,
+                    "provider_request_pending": False,
+                    "provider_turn_permit_held": True,
+                    "provider_starts_closed": True,
+                    "local_completion": "error",
+                },
+            },
+        }
+
+    def test_exact_dispatcher_wrapper_preserves_unproven_request_identity(self) -> None:
+        request_id = "engine-provider-request:" + "a" * 32
+        reason = (
+            "provider dispatcher failed (content-retry: owned file missing) "
+            "without terminal proof: outstanding provider request `"
+            f"{request_id}` has no proven cancelled terminal"
+        )
+        identity = usage._quarantine_identity(self.quarantine(reason), RUN_ID)
+        self.assertEqual(identity["provider_request_id"], request_id)
+
+    def test_unrelated_or_loosely_similar_reason_remains_rejected(self) -> None:
+        request_id = "engine-provider-request:" + "b" * 32
+        reasons = (
+            f"dispatcher failed: outstanding provider request `{request_id}` has no proven cancelled terminal",
+            f"provider dispatcher failed (content-retry) without proof: outstanding provider request `{request_id}` has no proven cancelled terminal",
+            "provider dispatcher failed (content-retry\nforged) without terminal proof: "
+            f"outstanding provider request `{request_id}` has no proven cancelled terminal",
+        )
+        for reason in reasons:
+            with self.subTest(reason=reason):
+                with self.assertRaisesRegex(
+                    usage.UsageEvidenceError,
+                    "quarantine reason is not exact unproven-terminal evidence",
+                ):
+                    usage._quarantine_identity(self.quarantine(reason), RUN_ID)
 
 
 class MonitorIncidentPolicyTests(unittest.TestCase):
