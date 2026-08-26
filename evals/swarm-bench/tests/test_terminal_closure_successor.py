@@ -51,20 +51,88 @@ class SuccessorBindingTests(unittest.TestCase):
 
         self.candidate_commit = "1" * 40
         self.candidate_tree = "2" * 40
+        self.candidate_branch = "codex/swarm-v21-pillar-flow"
+        self.candidate_remote_ref = f"origin/{self.candidate_branch}"
+        self.wrapper_sha256 = "a" * 64
+        instrument_files = {
+            "evals/swarm-bench/bench/run_build_local_v20.py": "3" * 64,
+            "evals/swarm-bench/bench/score_sb7.py": "4" * 64,
+        }
         manifest = {
-            "schema_version": 1,
+            "schema_version": 2,
+            "prepared_at": "2026-08-26T05:24:32.251777+00:00",
+            "candidate_branch": self.candidate_branch,
+            "candidate_remote_ref": self.candidate_remote_ref,
             "candidate_commit": self.candidate_commit,
             "candidate_tree": self.candidate_tree,
-            "binary": {"path": "/frozen/instrument/goose", "sha256": "3" * 64},
+            "candidate_clean": True,
+            "binary": {
+                "path": str(self.binary),
+                "sha256": successor.sha256_file(self.binary),
+                "size_bytes": self.binary.stat().st_size,
+                "source_commit": self.candidate_commit,
+                "source_tree": self.candidate_tree,
+            },
+            "instrument_provenance": {
+                "candidate_archive": {
+                    "commit": self.candidate_commit,
+                    "tree": self.candidate_tree,
+                    "scope": [
+                        "evals/swarm-bench",
+                        "scripts/monitor_swarm_run.py",
+                    ],
+                    "file_count": 1,
+                    "inventory_sha256": "b" * 64,
+                },
+                "inherited_overlay": {
+                    "source_run": str(
+                        self.root / "local-sb7-engine-v21-r4"
+                    ),
+                    "source_manifest_sha256": "c" * 64,
+                    "files": {
+                        "evals/swarm-bench/bench/run_build_local_v20.py": "3"
+                        * 64
+                    },
+                },
+                "total_file_count": 2,
+                "tracked_only_archive": True,
+                "python_cache_debris_forbidden": True,
+                "symlinks_forbidden": True,
+            },
+            "files": instrument_files,
+            "wrapper_sha256": self.wrapper_sha256,
+            "runtime_policy": {
+                "child_environment": "fixed-explicit-allowlist",
+                "deferred_live_fleet_seal": True,
+                "exact_context_length_by_role": successor.EXACT_CONTEXT_BY_ROLE,
+                "lm_studio_cli_path": str(self.root / "lms"),
+                "lm_studio_cli_sha256": "d" * 64,
+                "minimum_context_length": min(
+                    successor.EXACT_CONTEXT_BY_ROLE.values()
+                ),
+                "monitor_policy": "observation-only",
+            },
             "sb7_policy": {
                 "spec_and_scorer_unchanged_from_v6": True,
                 "website_surface": "stable-sb7",
                 "publish_from_run_build_auto_score": False,
                 "entrant": "swarm-3node-qwen38-brainwaves",
                 "publication_document_id": successor.TARGET_DOCUMENT_ID,
-                "protected_document_ids": sorted(successor.PROTECTED_DOCUMENT_IDS),
+                "protected_document_ids": list(
+                    successor.PROTECTED_DOCUMENT_ID_ORDER
+                ),
             },
-            "files": {"evals/swarm-bench/bench/score_sb7.py": "4" * 64},
+            "publisher_closure": {
+                "binding": "deferred-until-authenticated-run-started-and-fixture-seed",
+                "protected_publication_untouched_during_freeze": True,
+                "publish_from_run_build_auto_score": False,
+                "publisher_present_in_main_instrument": False,
+            },
+            "privacy": {
+                "environment_values_persisted": False,
+                "raw_argv_persisted": False,
+                "secret_fields_persisted": False,
+            },
         }
         self.manifest_path = self.live_root / "instrument-manifest.json"
         self.manifest_path.write_text(
@@ -76,6 +144,9 @@ class SuccessorBindingTests(unittest.TestCase):
             "candidate": {
                 "commit": self.candidate_commit,
                 "tree": self.candidate_tree,
+                "path": str(self.root / "candidate"),
+                "remote_commit": self.candidate_commit,
+                "remote_ref": self.candidate_remote_ref,
             },
             "binary": {
                 "path": str(self.binary),
@@ -86,6 +157,7 @@ class SuccessorBindingTests(unittest.TestCase):
             "vendor_port": 18970,
             "launch_controller_sha256": successor.sha256_file(self.launcher),
             "instrument_manifest_sha256": successor.sha256_file(self.manifest_path),
+            "wrapper_sha256": self.wrapper_sha256,
             "run_started_identity": {
                 "run_id": "swarm-20260826-123456789",
                 "working_dir": str(self.run_dir),
@@ -174,7 +246,9 @@ class SuccessorBindingTests(unittest.TestCase):
             },
             "publication": {
                 "target_document_id": successor.TARGET_DOCUMENT_ID,
-                "protected_document_ids": sorted(successor.PROTECTED_DOCUMENT_IDS),
+                "protected_document_ids": list(
+                    successor.PROTECTED_DOCUMENT_ID_ORDER
+                ),
                 "provenance_marker": "Brainwaves v21",
             },
             "publisher": {
@@ -214,6 +288,20 @@ class SuccessorBindingTests(unittest.TestCase):
             },
         }
 
+    def _rewrite_manifest(self, manifest: dict[str, object]) -> None:
+        self.manifest_path.chmod(0o600)
+        self.manifest_path.write_text(
+            json.dumps(manifest, sort_keys=True) + "\n", encoding="utf-8"
+        )
+        self.manifest_path.chmod(0o400)
+        launch = json.loads(self.launch_path.read_text(encoding="utf-8"))
+        launch["instrument_manifest_sha256"] = successor.sha256_file(
+            self.manifest_path
+        )
+        self.launch_path.write_text(
+            json.dumps(launch, sort_keys=True) + "\n", encoding="utf-8"
+        )
+
     def test_stale_r4_rejected_exact_successor_accepted_without_mutating_protected_config(
         self,
     ) -> None:
@@ -232,7 +320,7 @@ class SuccessorBindingTests(unittest.TestCase):
         self.assertTrue(receipt["base_config_unchanged"])
         self.assertEqual(
             receipt["protected_document_ids"],
-            sorted(successor.PROTECTED_DOCUMENT_IDS),
+            list(successor.PROTECTED_DOCUMENT_ID_ORDER),
         )
 
         generated = successor.load_generated_module(pathlib.Path(receipt["controller"]))
@@ -241,6 +329,7 @@ class SuccessorBindingTests(unittest.TestCase):
             successor.sha256_file(self.launch_path),
         )
         self.assertEqual(generated.V19_BOUND_RUN_ID, "swarm-20260826-123456789")
+        self.assertEqual(generated.V19_INSTRUMENT_MANIFEST_SCHEMA_VERSION, 2)
         self.assertEqual(
             generated.V19_BOUND_PROCESSES,
             {
@@ -301,7 +390,9 @@ class SuccessorBindingTests(unittest.TestCase):
             exact["publication"],
             {
                 "target_document_id": successor.TARGET_DOCUMENT_ID,
-                "protected_document_ids": sorted(successor.PROTECTED_DOCUMENT_IDS),
+                "protected_document_ids": list(
+                    successor.PROTECTED_DOCUMENT_ID_ORDER
+                ),
                 "provenance_marker": "Brainwaves v21",
             },
         )
@@ -334,7 +425,7 @@ class SuccessorBindingTests(unittest.TestCase):
         self.assertEqual(binding["target_document_id"], successor.TARGET_DOCUMENT_ID)
         self.assertEqual(
             binding["protected_document_ids"],
-            sorted(successor.PROTECTED_DOCUMENT_IDS),
+            list(successor.PROTECTED_DOCUMENT_ID_ORDER),
         )
         self.assertEqual(
             binding["predecessor_config_sha256"], successor.sha256_bytes(base_before)
@@ -348,6 +439,102 @@ class SuccessorBindingTests(unittest.TestCase):
         )
         with self.assertRaisesRegex(generated.ClosureError, "protected"):
             generated.validate_config(exact, allow_unarmed=True)
+
+    def test_schema_two_manifest_rejects_stale_or_tampered_contracts(self) -> None:
+        original = json.loads(self.manifest_path.read_text(encoding="utf-8"))
+        mutations = {
+            "stale schema": lambda value: value.__setitem__("schema_version", 1),
+            "extra field": lambda value: value.__setitem__("unexpected", True),
+            "binary source": lambda value: value["binary"].__setitem__(
+                "source_tree", "f" * 40
+            ),
+            "binary commit": lambda value: value["binary"].__setitem__(
+                "source_commit", "f" * 40
+            ),
+            "binary size": lambda value: value["binary"].__setitem__(
+                "size_bytes", value["binary"]["size_bytes"] + 1
+            ),
+            "archive count": lambda value: value["instrument_provenance"][
+                "candidate_archive"
+            ].__setitem__("file_count", 2),
+            "total count": lambda value: value["instrument_provenance"].__setitem__(
+                "total_file_count", 3
+            ),
+            "archive flag": lambda value: value["instrument_provenance"].__setitem__(
+                "tracked_only_archive", False
+            ),
+            "overlay digest": lambda value: value["instrument_provenance"][
+                "inherited_overlay"
+            ]["files"].__setitem__(
+                "evals/swarm-bench/bench/run_build_local_v20.py", "e" * 64
+            ),
+            "protected order": lambda value: value["sb7_policy"].__setitem__(
+                "protected_document_ids",
+                list(reversed(successor.PROTECTED_DOCUMENT_ID_ORDER)),
+            ),
+            "privacy": lambda value: value["privacy"].__setitem__(
+                "raw_argv_persisted", True
+            ),
+            "wrapper": lambda value: value.__setitem__("wrapper_sha256", "f" * 64),
+        }
+        for identity, mutate in mutations.items():
+            with self.subTest(identity=identity):
+                changed = json.loads(json.dumps(original))
+                mutate(changed)
+                self._rewrite_manifest(changed)
+                with self.assertRaises(successor.SuccessorBindingError):
+                    successor.successor_evidence(
+                        "v21-r5", self.live_root, self.state_dir
+                    )
+                self.assertFalse(self.state_dir.exists())
+        self._rewrite_manifest(original)
+
+    def test_oversized_release_binary_streams_with_a_cap_and_rejects_tamper(
+        self,
+    ) -> None:
+        oversized_bytes = 64 * 1024 * 1024 + 1
+        self.binary.chmod(0o600)
+        with self.binary.open("r+b") as handle:
+            handle.truncate(oversized_bytes)
+        self.binary.chmod(0o500)
+
+        digest, size = successor.stable_file_sha256(self.binary, read_only=True)
+        self.assertEqual(size, oversized_bytes)
+        with self.assertRaisesRegex(
+            successor.SuccessorBindingError, "size bound"
+        ):
+            successor.stable_file_sha256(
+                self.binary,
+                read_only=True,
+                maximum_bytes=64 * 1024 * 1024,
+            )
+
+        launch = json.loads(self.launch_path.read_text(encoding="utf-8"))
+        launch["binary"]["sha256"] = digest
+        self.launch_path.write_text(
+            json.dumps(launch, sort_keys=True) + "\n", encoding="utf-8"
+        )
+        manifest = json.loads(self.manifest_path.read_text(encoding="utf-8"))
+        manifest["binary"]["sha256"] = digest
+        manifest["binary"]["size_bytes"] = size
+        self._rewrite_manifest(manifest)
+
+        evidence = successor.successor_evidence(
+            "v21-r5", self.live_root, self.state_dir
+        )
+        self.assertEqual(evidence["binary_sha256"], digest)
+        self.assertFalse(self.state_dir.exists())
+
+        self.binary.chmod(0o600)
+        with self.binary.open("ab") as handle:
+            handle.write(b"tamper")
+        self.binary.chmod(0o500)
+        with self.assertRaisesRegex(
+            successor.SuccessorBindingError, "binary path/hash/mode"
+        ):
+            successor.successor_evidence(
+                "v21-r5", self.live_root, self.state_dir
+            )
 
     def test_generation_is_append_only_and_rejects_different_successor_bytes(self) -> None:
         kwargs = {
