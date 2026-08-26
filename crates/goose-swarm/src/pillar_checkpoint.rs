@@ -12,8 +12,8 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, MutexGuard};
 
-const SCHEMA_VERSION: u32 = 1;
-const CHECKPOINT_DIRECTORY: &str = "pillar-checkpoint-v1";
+const SCHEMA_VERSION: u32 = 2;
+const CHECKPOINT_DIRECTORY: &str = "pillar-checkpoint-v2";
 const STATE_FILE: &str = "state.json";
 const LOCK_FILE: &str = "control.lock";
 static TEMP_SEQUENCE: AtomicU64 = AtomicU64::new(0);
@@ -1029,6 +1029,30 @@ mod tests {
             PillarCheckpointStore::load_opening(root.path(), digest, &opening.requirements,)
                 .unwrap(),
             Some(opening)
+        );
+    }
+
+    #[test]
+    fn legacy_v1_opening_namespace_is_not_reused() {
+        let root = tempfile::tempdir().unwrap();
+        let opening = opening();
+        let digest = pillar_frozen_spec_digest("frozen spec");
+        let legacy_generation = root
+            .path()
+            .join(".swarm")
+            .join("pillar-checkpoint-v1")
+            .join(&digest["sha256:".len()..]);
+        std::fs::create_dir_all(&legacy_generation).unwrap();
+        std::fs::write(
+            legacy_generation.join(STATE_FILE),
+            b"legacy opening must never be decoded",
+        )
+        .unwrap();
+
+        assert!(
+            PillarCheckpointStore::load_opening(root.path(), digest, &opening.requirements,)
+                .unwrap()
+                .is_none()
         );
     }
 }

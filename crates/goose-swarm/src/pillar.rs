@@ -44,67 +44,6 @@ fn integration_required_default() -> bool {
     true
 }
 
-pub fn authored_requirements_require_integration(requirements: &[AuthoredRequirement]) -> bool {
-    let authored = requirements
-        .iter()
-        .map(|requirement| requirement.text.to_ascii_lowercase())
-        .collect::<Vec<_>>()
-        .join("\n");
-    let explicitly_integrated = authored.split(['\n', '.', ';']).any(|clause| {
-        let action = clause
-            .split(|character: char| !character.is_ascii_alphabetic())
-            .any(|word| {
-                word.starts_with("compos")
-                    || word.starts_with("integrat")
-                    || word.starts_with("hook")
-            });
-        let one_product = [
-            "into one app",
-            "into one application",
-            "into one product",
-            "into a single app",
-            "into a single application",
-            "into a single product",
-            "as one app",
-            "as one application",
-            "as one product",
-            "as a single app",
-            "as a single application",
-            "as a single product",
-        ]
-        .iter()
-        .any(|signal| clause.contains(signal));
-        let negated = [
-            "do not compose",
-            "must not compose",
-            "do not integrate",
-            "must not integrate",
-            "do not hook",
-            "must not hook",
-            "no integration required",
-            "without integration",
-            "without composing",
-            "without integrating",
-            "without hooking",
-        ]
-        .iter()
-        .any(|signal| clause.contains(signal));
-        action && one_product && !negated
-    });
-    let explicitly_independent = [
-        "independent deliverables",
-        "independent outputs",
-        "standalone deliverables",
-        "do not integrate",
-        "must not integrate",
-        "no integration required",
-        "without integration",
-    ]
-    .iter()
-    .any(|signal| authored.contains(signal));
-    explicitly_integrated || !explicitly_independent
-}
-
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct ResearchPillarOpening {
     pub requirements: Vec<AuthoredRequirement>,
@@ -251,6 +190,112 @@ impl fmt::Display for PillarDomainError {
 
 impl std::error::Error for PillarDomainError {}
 
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct PillarRequirementReference {
+    pub pillar_id: String,
+    pub requirement_id: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct PillarRequirementOwners {
+    pub requirement_id: String,
+    pub pillar_ids: Vec<String>,
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize)]
+pub struct PillarOwnershipDiagnostics {
+    pub missing_requirement_ids: Vec<String>,
+    pub unknown_requirement_references: Vec<PillarRequirementReference>,
+    pub duplicate_requirement_references: Vec<PillarRequirementReference>,
+    pub overlapping_requirement_owners: Vec<PillarRequirementOwners>,
+}
+
+impl PillarOwnershipDiagnostics {
+    pub fn is_exact_cover(&self) -> bool {
+        self.missing_requirement_ids.is_empty()
+            && self.unknown_requirement_references.is_empty()
+            && self.duplicate_requirement_references.is_empty()
+            && self.overlapping_requirement_owners.is_empty()
+    }
+}
+
+pub fn diagnose_pillar_ownership(
+    requirements: &[AuthoredRequirement],
+    pillars: &[ResearchPillar],
+) -> PillarOwnershipDiagnostics {
+    let known_requirement_ids = requirements
+        .iter()
+        .map(|requirement| requirement.id.as_str())
+        .collect::<BTreeSet<_>>();
+    let mut ownership = BTreeMap::<&str, Vec<&str>>::new();
+    let mut diagnostics = PillarOwnershipDiagnostics::default();
+
+    for pillar in pillars {
+        let mut local = BTreeSet::new();
+        for requirement_id in &pillar.requirement_ids {
+            if !known_requirement_ids.contains(requirement_id.as_str()) {
+                diagnostics
+                    .unknown_requirement_references
+                    .push(PillarRequirementReference {
+                        pillar_id: pillar.id.clone(),
+                        requirement_id: requirement_id.clone(),
+                    });
+            }
+            if !local.insert(requirement_id.as_str()) {
+                diagnostics
+                    .duplicate_requirement_references
+                    .push(PillarRequirementReference {
+                        pillar_id: pillar.id.clone(),
+                        requirement_id: requirement_id.clone(),
+                    });
+                continue;
+            }
+            if known_requirement_ids.contains(requirement_id.as_str()) {
+                ownership
+                    .entry(requirement_id)
+                    .or_default()
+                    .push(&pillar.id);
+            }
+        }
+    }
+
+    for requirement in requirements {
+        match ownership.get(requirement.id.as_str()) {
+            None => diagnostics
+                .missing_requirement_ids
+                .push(requirement.id.clone()),
+            Some(owners) if owners.len() > 1 => {
+                diagnostics
+                    .overlapping_requirement_owners
+                    .push(PillarRequirementOwners {
+                        requirement_id: requirement.id.clone(),
+                        pillar_ids: owners.iter().map(|owner| (*owner).to_string()).collect(),
+                    })
+            }
+            Some(_) => {}
+        }
+    }
+    diagnostics
+}
+
+fn ownership_diagnostics_error(diagnostics: PillarOwnershipDiagnostics) -> PillarDomainError {
+    let code = match (
+        diagnostics.missing_requirement_ids.is_empty(),
+        diagnostics.unknown_requirement_references.is_empty(),
+        diagnostics.duplicate_requirement_references.is_empty(),
+        diagnostics.overlapping_requirement_owners.is_empty(),
+    ) {
+        (false, true, true, true) => "requirement_unowned",
+        (true, false, true, true) => "pillar_requirement_unknown",
+        (true, true, false, true) => "pillar_requirement_duplicate",
+        (true, true, true, false) => "requirement_overlap",
+        _ => "pillar_ownership_invalid",
+    };
+    let message = serde_json::to_string(&diagnostics)
+        .unwrap_or_else(|_| "pillar ownership diagnostics could not be encoded".to_string());
+    PillarDomainError::new(code, message)
+}
+
 pub fn validate_pillar_opening(opening: &ResearchPillarOpening) -> Result<(), PillarDomainError> {
     if opening.requirements.is_empty() {
         return Err(PillarDomainError::new(
@@ -299,33 +344,9 @@ pub fn validate_pillar_opening(opening: &ResearchPillarOpening) -> Result<(), Pi
         }
     }
 
-    let mut ownership = BTreeMap::<&str, Vec<&str>>::new();
     for pillar in &opening.pillars {
-        let mut local = BTreeSet::new();
         for requirement_id in &pillar.requirement_ids {
             require_text("pillar requirement id", requirement_id)?;
-            if !requirement_ids.contains(requirement_id) {
-                return Err(PillarDomainError::new(
-                    "pillar_requirement_unknown",
-                    format!(
-                        "pillar {:?} refers to unknown requirement {:?}",
-                        pillar.id, requirement_id
-                    ),
-                ));
-            }
-            if !local.insert(requirement_id.as_str()) {
-                return Err(PillarDomainError::new(
-                    "pillar_requirement_duplicate",
-                    format!(
-                        "pillar {:?} repeats requirement {:?}",
-                        pillar.id, requirement_id
-                    ),
-                ));
-            }
-            ownership
-                .entry(requirement_id)
-                .or_default()
-                .push(&pillar.id);
         }
 
         for dependency in &pillar.dependencies {
@@ -348,29 +369,9 @@ pub fn validate_pillar_opening(opening: &ResearchPillarOpening) -> Result<(), Pi
         }
     }
 
-    for requirement_id in &requirement_ids {
-        match ownership.get(requirement_id.as_str()) {
-            None => {
-                return Err(PillarDomainError::new(
-                    "requirement_unowned",
-                    format!("requirement {requirement_id:?} has no pillar owner"),
-                ));
-            }
-            Some(owners) if owners.len() > 1 => {
-                return Err(PillarDomainError::new(
-                    "requirement_overlap",
-                    format!(
-                        "requirement {requirement_id:?} is owned by pillars {}",
-                        owners
-                            .iter()
-                            .map(|owner| format!("{owner:?}"))
-                            .collect::<Vec<_>>()
-                            .join(", ")
-                    ),
-                ));
-            }
-            Some(_) => {}
-        }
+    let ownership_diagnostics = diagnose_pillar_ownership(&opening.requirements, &opening.pillars);
+    if !ownership_diagnostics.is_exact_cover() {
+        return Err(ownership_diagnostics_error(ownership_diagnostics));
     }
 
     validate_acyclic_dependencies(&opening.pillars)?;
@@ -498,73 +499,6 @@ pub fn evidence_source_digest(text: &str) -> String {
         let _ = write!(&mut encoded, "{byte:02x}");
     }
     encoded
-}
-
-pub fn authored_section_fallback(
-    authored_spec: &str,
-    integration_owner: &str,
-) -> Result<ResearchPillarOpening, PillarDomainError> {
-    require_text("authored specification", authored_spec)?;
-    require_text("integration contract owner", integration_owner)?;
-
-    let sections = authored_sections(authored_spec);
-    if sections.is_empty() {
-        return Err(PillarDomainError::new(
-            "authored_sections_empty",
-            "the authored specification contains no meaningful sections",
-        ));
-    }
-
-    let requirements = sections
-        .iter()
-        .enumerate()
-        .map(|(index, section)| AuthoredRequirement {
-            id: format!("requirement-{:03}", index + 1),
-            text: section.clone(),
-            critical: false,
-        })
-        .collect::<Vec<_>>();
-    let pillars = requirements
-        .iter()
-        .enumerate()
-        .map(|(index, requirement)| ResearchPillar {
-            id: format!("pillar-{:03}", index + 1),
-            title: first_line(&requirement.text),
-            objective: format!("Specify and implement {}", requirement.text),
-            requirement_ids: vec![requirement.id.clone()],
-            dependencies: Vec::new(),
-            research_questions: vec![format!(
-                "What exact behavior and constraints satisfy {}?",
-                requirement.id
-            )],
-            acceptance_criteria: vec![format!(
-                "The delivered behavior demonstrably satisfies {}",
-                requirement.id
-            )],
-            exclusions: vec!["Work owned by every other pillar".to_string()],
-        })
-        .collect::<Vec<_>>();
-    let integration_required =
-        pillars.len() > 1 && authored_requirements_require_integration(&requirements);
-    let opening = ResearchPillarOpening {
-        requirements,
-        pillars,
-        integration_contract: IntegrationContract {
-            owner: integration_owner.trim().to_string(),
-            integration_required,
-            objective: "Integrate pillar outputs without transferring their exclusive ownership"
-                .to_string(),
-            interface_invariants: vec![
-                "Shared interfaces have one integration owner".to_string(),
-                "Pillar-owned implementation remains disjoint".to_string(),
-            ],
-            acceptance_criteria: vec![
-                "All pillar outputs compose into one runnable result".to_string()
-            ],
-        },
-    };
-    validate_pillar_opening(&opening)?;
-    Ok(opening)
 }
 
 pub fn compile_pillar_report(
@@ -1001,66 +935,6 @@ fn validate_acyclic_dependencies(pillars: &[ResearchPillar]) -> Result<(), Pilla
     Ok(())
 }
 
-fn authored_sections(spec: &str) -> Vec<String> {
-    let mut sections = Vec::new();
-    let mut paragraph = Vec::new();
-    let flush = |paragraph: &mut Vec<String>, sections: &mut Vec<String>| {
-        if !paragraph.is_empty() {
-            sections.push(canonical_whitespace(&paragraph.join(" ")));
-            paragraph.clear();
-        }
-    };
-
-    for raw_line in spec.lines() {
-        let line = raw_line.trim();
-        if line.is_empty() {
-            flush(&mut paragraph, &mut sections);
-            continue;
-        }
-        if is_list_item(line) {
-            flush(&mut paragraph, &mut sections);
-            sections.push(canonical_whitespace(strip_list_marker(line)));
-        } else {
-            paragraph.push(line.to_string());
-        }
-    }
-    flush(&mut paragraph, &mut sections);
-    sections.retain(|section| !section.is_empty());
-    sections
-}
-
-fn is_list_item(line: &str) -> bool {
-    if line.starts_with("- ") || line.starts_with("* ") || line.starts_with("+ ") {
-        return true;
-    }
-    let digit_count = line.chars().take_while(|ch| ch.is_ascii_digit()).count();
-    digit_count > 0 && line[digit_count..].starts_with(". ")
-}
-
-fn strip_list_marker(line: &str) -> &str {
-    if line.starts_with("- ") || line.starts_with("* ") || line.starts_with("+ ") {
-        return &line[2..];
-    }
-    let digit_count = line.chars().take_while(|ch| ch.is_ascii_digit()).count();
-    if digit_count > 0 && line[digit_count..].starts_with(". ") {
-        &line[digit_count + 2..]
-    } else {
-        line
-    }
-}
-
-fn first_line(text: &str) -> String {
-    const MAX_TITLE_CHARS: usize = 80;
-    let canonical = canonical_whitespace(text);
-    let mut chars = canonical.chars();
-    let title = chars.by_ref().take(MAX_TITLE_CHARS).collect::<String>();
-    if chars.next().is_some() {
-        format!("{title}…")
-    } else {
-        title
-    }
-}
-
 fn canonical_whitespace(text: &str) -> String {
     text.split_whitespace().collect::<Vec<_>>().join(" ")
 }
@@ -1224,10 +1098,10 @@ mod tests {
 
         let mut omitted = opening();
         omitted.pillars[1].requirement_ids = vec!["req-ui".to_string()];
-        assert_eq!(
-            validate_pillar_opening(&omitted).unwrap_err().code,
-            "requirement_unowned"
-        );
+        let diagnostics = validate_pillar_opening(&omitted).unwrap_err();
+        assert_eq!(diagnostics.code, "pillar_ownership_invalid");
+        assert!(diagnostics.message.contains("req-api"));
+        assert!(diagnostics.message.contains("req-ui"));
         omitted.pillars[1].requirement_ids.clear();
         assert_eq!(
             validate_pillar_opening(&omitted).unwrap_err().code,
@@ -1242,32 +1116,6 @@ mod tests {
             validate_pillar_opening(&strictly_omitted).unwrap_err().code,
             "requirement_unowned"
         );
-    }
-
-    #[test]
-    fn authored_section_fallback_preserves_paragraphs_and_list_items_once() {
-        let fallback = authored_section_fallback(
-            "Build a runnable service.\n\n- Persist transitions\n- Render status\n\nKeep errors visible.",
-            "integrator",
-        )
-        .unwrap();
-
-        assert_eq!(fallback.requirements.len(), 4);
-        assert_eq!(fallback.pillars.len(), 4);
-        assert_eq!(fallback.integration_contract.owner, "integrator");
-        assert_eq!(
-            fallback
-                .pillars
-                .iter()
-                .flat_map(|pillar| pillar.requirement_ids.iter())
-                .collect::<Vec<_>>(),
-            fallback
-                .requirements
-                .iter()
-                .map(|requirement| &requirement.id)
-                .collect::<Vec<_>>()
-        );
-        validate_pillar_opening(&fallback).unwrap();
     }
 
     #[test]
@@ -1605,61 +1453,5 @@ mod tests {
                 .code,
             "pillar_integration_task_not_strongest_terminal"
         );
-    }
-
-    #[test]
-    fn fallback_integration_is_disabled_only_by_explicit_independence() {
-        let ordinary_product = vec![AuthoredRequirement {
-            id: "req-cli".to_string(),
-            text: "Build a CLI with import and export commands".to_string(),
-            critical: false,
-        }];
-        assert!(authored_requirements_require_integration(&ordinary_product));
-
-        let independent = vec![AuthoredRequirement {
-            id: "req-assets".to_string(),
-            text: "Produce separate deliverables with no integration required".to_string(),
-            critical: false,
-        }];
-        assert!(!authored_requirements_require_integration(&independent));
-
-        for text in [
-            "Produce independent deliverables, then hook them into one application",
-            "Keep standalone deliverables while composing them into one product",
-            "Create independent outputs and integrate them into a single app",
-        ] {
-            assert!(
-                authored_requirements_require_integration(&[AuthoredRequirement {
-                    id: "req-contradictory".to_string(),
-                    text: text.to_string(),
-                    critical: false,
-                }]),
-                "explicit one-product integration must override independence wording: {text}"
-            );
-        }
-
-        assert!(!authored_requirements_require_integration(&[
-            AuthoredRequirement {
-                id: "req-negative".to_string(),
-                text: "Do not integrate these independent deliverables into one application"
-                    .to_string(),
-                critical: false,
-            },
-        ]));
-
-        for text in [
-            "Generate standalone outputs for every supported format",
-            "Write separate artifacts for the client and server packages",
-            "Create separate deliverables, then hook them into one application",
-        ] {
-            assert!(
-                authored_requirements_require_integration(&[AuthoredRequirement {
-                    id: "req-ambiguous".to_string(),
-                    text: text.to_string(),
-                    critical: false,
-                }]),
-                "ambiguous wording must not veto integration: {text}"
-            );
-        }
     }
 }

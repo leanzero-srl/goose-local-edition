@@ -39,14 +39,14 @@ use goose::session::session_manager::SessionType;
 use goose::session::SessionManager;
 use goose_swarm::scheduler::split_inherit_spec_enabled;
 use goose_swarm::{
-    authored_requirements_require_integration, compile_pillar_report_with_sources,
-    deterministic_verdict, evidence_source_digest, excluded_from_repair_tree, is_split_candidate,
-    pillar_frozen_spec_digest, render_synthesis_input, validate_pillar_integration_task_ownership,
-    validate_pillar_opening, validate_pillar_opening_against, AdmissionReceipt, AdmittedWork,
-    AuthoredRequirement, AuthorityScope, ChildSpec, CompiledPillarReport, CompletedProviderRequest,
-    Confidence, Dag, DeviceCfg, DispatchError, DispatchRequest, EventSink, EvidenceClass,
-    EvidenceSourceAuthority, EvidenceSourceSection, HostCapacityEvidence, IntegrationContract,
-    Judge, JudgeConfig, JudgeInput, JudgeOutcome, JudgeRequest, LocalCompletionKind, NullSink,
+    compile_pillar_report_with_sources, deterministic_verdict, evidence_source_digest,
+    excluded_from_repair_tree, is_split_candidate, pillar_frozen_spec_digest,
+    render_synthesis_input, validate_pillar_integration_task_ownership, validate_pillar_opening,
+    validate_pillar_opening_against, AdmissionReceipt, AdmittedWork, AuthoredRequirement,
+    AuthorityScope, ChildSpec, CompiledPillarReport, CompletedProviderRequest, Confidence, Dag,
+    DeviceCfg, DispatchError, DispatchRequest, EventSink, EvidenceClass, EvidenceSourceAuthority,
+    EvidenceSourceSection, HostCapacityEvidence, IntegrationContract, Judge, JudgeConfig,
+    JudgeInput, JudgeOutcome, JudgeRequest, LocalCompletionKind, NullSink,
     PhysicalAdmissionControl, PhysicalExecutionAuthority, PhysicalFleetSnapshot,
     PillarAttemptCheckpoint, PillarCheckpointStore, PillarImplementationTaskCoverage,
     PillarReportDraft, PillarResumeDecision, PreReviewOutput, PreReviewRequest, PreReviewer,
@@ -13171,27 +13171,27 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
     fn two_pillar_opening_draft(integration_required: bool) -> PillarOpeningDraft {
         PillarOpeningDraft {
             pillars: vec![
-                ResearchPillar {
+                PillarDefinitionDraft {
                     id: "frontend".to_string(),
                     title: "Frontend".to_string(),
                     objective: "Implement the user interface".to_string(),
-                    requirement_ids: vec!["REQ-ui".to_string()],
-                    dependencies: Vec::new(),
                     research_questions: vec!["Which UI boundary owns the interaction?".to_string()],
                     acceptance_criteria: vec!["The interaction is executable".to_string()],
                     exclusions: vec!["Do not implement persistence".to_string()],
                 },
-                ResearchPillar {
+                PillarDefinitionDraft {
                     id: "storage".to_string(),
                     title: "Storage".to_string(),
                     objective: "Implement persistence".to_string(),
-                    requirement_ids: vec!["REQ-store".to_string()],
-                    dependencies: Vec::new(),
                     research_questions: vec!["Which storage boundary owns persistence?".to_string()],
                     acceptance_criteria: vec!["Persistence has an executable test".to_string()],
                     exclusions: vec!["Do not implement the UI".to_string()],
                 },
             ],
+            assignment_by_requirement: BTreeMap::from([
+                ("REQ-ui".to_string(), "frontend".to_string()),
+                ("REQ-store".to_string(), "storage".to_string()),
+            ]),
             integration_contract: IntegrationContract {
                 owner: "model-claim".to_string(),
                 integration_required,
@@ -13202,8 +13202,37 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
         }
     }
 
+    fn semantic_pillar_definitions(count: usize) -> Vec<PillarDefinitionDraft> {
+        (0..count)
+            .map(|index| PillarDefinitionDraft {
+                id: format!("semantic-{:02}", index + 1),
+                title: format!("Semantic responsibility {}", index + 1),
+                objective: format!("Resolve semantic responsibility {}", index + 1),
+                research_questions: vec![format!(
+                    "Which exact boundary owns semantic responsibility {}?",
+                    index + 1
+                )],
+                acceptance_criteria: vec![format!(
+                    "Semantic responsibility {} has executable evidence",
+                    index + 1
+                )],
+                exclusions: vec!["Do not own sibling semantic responsibilities".to_string()],
+            })
+            .collect()
+    }
+
+    fn semantic_integration_contract() -> IntegrationContract {
+        IntegrationContract {
+            owner: "model-claim".to_string(),
+            integration_required: true,
+            objective: "Connect every proven semantic responsibility".to_string(),
+            interface_invariants: vec!["Each responsibility exposes one interface".to_string()],
+            acceptance_criteria: vec!["The integrated result is runnable".to_string()],
+        }
+    }
+
     #[test]
-    fn authored_single_product_intent_forces_conditional_integration() {
+    fn model_integration_topology_is_preserved_for_single_product_intent() {
         let requirements = vec![
             RequirementRecord {
                 id: "REQ-ui".to_string(),
@@ -13220,15 +13249,15 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
             &requirements,
             two_pillar_opening_draft(false),
             "strongest-model",
-            3,
+            2,
         )
         .unwrap();
-        assert!(opening.integration_contract.integration_required);
+        assert!(!opening.integration_contract.integration_required);
         assert_eq!(opening.integration_contract.owner, "strongest-model");
     }
 
     #[test]
-    fn explicit_independent_deliverables_do_not_gain_an_integrator() {
+    fn model_integration_topology_is_preserved_for_independent_deliverables() {
         let requirements = vec![
             RequirementRecord {
                 id: "REQ-ui".to_string(),
@@ -13245,10 +13274,293 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
             &requirements,
             two_pillar_opening_draft(true),
             "strongest-model",
-            3,
+            2,
         )
         .unwrap();
-        assert!(!opening.integration_contract.integration_required);
+        assert!(opening.integration_contract.integration_required);
+    }
+
+    #[test]
+    fn large_ledger_schema_requires_two_waves_of_exact_keys_without_a_slice_cap() {
+        const FROZEN_SPEC: &str = include_str!("../../../../evals/swarm-bench/spec-build-sb7.md");
+        let requirements = normalized_requirement_inventory(FROZEN_SPEC);
+        let requirement_ids = requirements
+            .iter()
+            .map(|requirement| requirement.id.clone())
+            .collect::<Vec<_>>();
+        let minimum_pillars = minimum_semantic_pillars(requirements.len(), 3);
+        assert_eq!(requirements.len(), 197);
+        assert_eq!(minimum_pillars, 6);
+        assert_eq!(minimum_semantic_pillars(requirements.len(), 1), 2);
+        assert_eq!(minimum_semantic_pillars(7, 3), 1);
+
+        let schema = pillar_opening_schema(&requirement_ids, minimum_pillars);
+        validate_pillar_opening_schema_gate(&schema, &requirement_ids, minimum_pillars).unwrap();
+        let assignment = &schema["properties"]["assignment_by_requirement"];
+        assert_eq!(assignment["required"].as_array().unwrap().len(), 197);
+        assert_eq!(assignment["properties"].as_object().unwrap().len(), 197);
+        assert_eq!(schema["properties"]["pillars"]["minItems"], 6);
+        assert!(schema["properties"]["pillars"].get("maxItems").is_none());
+    }
+
+    #[test]
+    fn live_144_of_197_omission_reports_all_53_ids_and_repairs_without_fallback() {
+        const FROZEN_SPEC: &str = include_str!("../../../../evals/swarm-bench/spec-build-sb7.md");
+        const LIVE_MISSING_IDS: [&str; 53] = [
+            "REQ-3800cafda8b16bc6",
+            "REQ-e2ace75fb16a1508",
+            "REQ-7846239614cfb420",
+            "REQ-8518e2c0efd2c515",
+            "REQ-75696f45d5808cd2",
+            "REQ-704911534bee30c1",
+            "REQ-322dff49c32d6a05",
+            "REQ-5f1d90879154f928",
+            "REQ-3cac3b1c726bb546",
+            "REQ-87dbbab7d29fe4cf",
+            "REQ-fd080a9ba87717d5",
+            "REQ-4a08162d2e6f9c26",
+            "REQ-13678011f2c72f0a",
+            "REQ-0f8187224d4185b1",
+            "REQ-e29ab9b4e8a70a1c",
+            "REQ-c5acafb2f7f31579",
+            "REQ-1af04262af7cc321",
+            "REQ-eb19cbf7e5329f65",
+            "REQ-4036b6c5aafba453",
+            "REQ-b5b59caff5434ca1",
+            "REQ-21ba58bf0b751dd1",
+            "REQ-f1c69f4a52eea63a",
+            "REQ-c12f237663a59774",
+            "REQ-96bd6e9fc1f7fc94",
+            "REQ-163a54ebffeb08e1",
+            "REQ-a0963cd0d043d27f",
+            "REQ-a0f1ea8a1fc7294f",
+            "REQ-0368045e4b61c5cc",
+            "REQ-f3a6eefeb6325c1e",
+            "REQ-4ec12add57949629",
+            "REQ-585849fedff2731c",
+            "REQ-627aa5d4237ac5ac",
+            "REQ-e7bccb7994983119",
+            "REQ-2710938e6d7a324c",
+            "REQ-34f480a828ab9d50",
+            "REQ-3307d77c2b542b35",
+            "REQ-246cd0aba56060bc",
+            "REQ-a577b766a8697bab",
+            "REQ-ee4cc8c224814a92",
+            "REQ-de887d2208699168",
+            "REQ-7374b577edbfcaf6",
+            "REQ-2d2599d8058b9a39",
+            "REQ-778a1f6ec6a929a0",
+            "REQ-9595b13ffc3e00f1",
+            "REQ-461a5230b09fceca",
+            "REQ-974da407e8855222",
+            "REQ-14264f2d74c521b9",
+            "REQ-5bca0a951a33faf1",
+            "REQ-25bade4f26c4fa89",
+            "REQ-fc0d18f32300be6d",
+            "REQ-db1e41c966720a1b",
+            "REQ-3b5081328be6856b",
+            "REQ-597afb7a50f12ce5",
+        ];
+        let requirements = normalized_requirement_inventory(FROZEN_SPEC);
+        let missing = LIVE_MISSING_IDS.into_iter().collect::<BTreeSet<_>>();
+        let frozen_ids = requirements
+            .iter()
+            .map(|requirement| requirement.id.as_str())
+            .collect::<BTreeSet<_>>();
+        assert_eq!(requirements.len(), 197);
+        assert_eq!(missing.len(), 53);
+        assert!(missing.is_subset(&frozen_ids));
+
+        let mut assignment_by_requirement = BTreeMap::new();
+        for (index, requirement) in requirements.iter().enumerate() {
+            if !missing.contains(requirement.id.as_str()) {
+                assignment_by_requirement.insert(
+                    requirement.id.clone(),
+                    format!("semantic-{:02}", index % 6 + 1),
+                );
+            }
+        }
+        assert_eq!(assignment_by_requirement.len(), 144);
+        let incomplete_draft = PillarOpeningDraft {
+            pillars: semantic_pillar_definitions(6),
+            assignment_by_requirement: assignment_by_requirement.clone(),
+            integration_contract: semantic_integration_contract(),
+        };
+        let focused_repair = focused_pillar_assignment_repair(&requirements, &incomplete_draft, 6)
+            .unwrap()
+            .unwrap();
+        assert_eq!(focused_repair.preserved_draft.pillars.len(), 6);
+        assert_eq!(
+            focused_repair
+                .preserved_draft
+                .assignment_by_requirement
+                .len(),
+            144
+        );
+        assert_eq!(focused_repair.unresolved_requirement_ids.len(), 53);
+        let repair_schema = pillar_assignment_repair_schema(
+            &focused_repair.unresolved_requirement_ids,
+            &focused_repair
+                .preserved_draft
+                .pillars
+                .iter()
+                .map(|pillar| pillar.id.clone())
+                .collect::<Vec<_>>(),
+        );
+        assert_eq!(
+            repair_schema["properties"]["assignment_by_requirement"]["properties"]
+                .as_object()
+                .unwrap()
+                .len(),
+            53
+        );
+        let rejected =
+            compile_pillar_opening_draft(&requirements, incomplete_draft, "strongest-model", 6)
+                .unwrap_err()
+                .to_string();
+        let (_, encoded_body) = rejected.split_once('{').unwrap();
+        let encoded_diagnostics = format!("{{{encoded_body}");
+        let diagnostics: serde_json::Value = serde_json::from_str(&encoded_diagnostics).unwrap();
+        assert_eq!(diagnostics["frozen_requirement_count"], 197);
+        assert_eq!(diagnostics["provided_assignment_count"], 144);
+        let diagnosed_missing = diagnostics["missing_requirement_ids"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|value| value.as_str().unwrap())
+            .collect::<BTreeSet<_>>();
+        assert_eq!(diagnosed_missing, missing);
+
+        for (index, requirement) in requirements.iter().enumerate() {
+            assignment_by_requirement
+                .entry(requirement.id.clone())
+                .or_insert_with(|| format!("semantic-{:02}", index % 6 + 1));
+        }
+        let repaired = compile_pillar_opening_draft(
+            &requirements,
+            PillarOpeningDraft {
+                pillars: semantic_pillar_definitions(6),
+                assignment_by_requirement: assignment_by_requirement.clone(),
+                integration_contract: semantic_integration_contract(),
+            },
+            "strongest-model",
+            6,
+        )
+        .unwrap();
+        assert_eq!(repaired.pillars.len(), 6);
+        for pillar in &repaired.pillars {
+            let expected = requirements
+                .iter()
+                .filter(|requirement| assignment_by_requirement[&requirement.id] == pillar.id)
+                .map(|requirement| requirement.id.clone())
+                .collect::<Vec<_>>();
+            assert_eq!(pillar.requirement_ids, expected);
+        }
+    }
+
+    #[test]
+    fn focused_repair_cannot_rewrite_preserved_assignments_or_invent_owners() {
+        let requirements = vec![
+            RequirementRecord {
+                id: "REQ-preserved".to_string(),
+                section: "Preserved".to_string(),
+                quote: "Keep the model-owned semantic assignment".to_string(),
+            },
+            RequirementRecord {
+                id: "REQ-unresolved".to_string(),
+                section: "Unresolved".to_string(),
+                quote: "Repair this semantic assignment".to_string(),
+            },
+        ];
+        let incomplete = PillarOpeningDraft {
+            pillars: semantic_pillar_definitions(2),
+            assignment_by_requirement: BTreeMap::from([(
+                "REQ-preserved".to_string(),
+                "semantic-01".to_string(),
+            )]),
+            integration_contract: semantic_integration_contract(),
+        };
+        let repair = focused_pillar_assignment_repair(&requirements, &incomplete, 2)
+            .unwrap()
+            .unwrap();
+
+        let overwrite = merge_focused_pillar_assignment_repair(
+            &repair,
+            PillarAssignmentRepairDraft {
+                assignment_by_requirement: BTreeMap::from([
+                    ("REQ-preserved".to_string(), "semantic-02".to_string()),
+                    ("REQ-unresolved".to_string(), "semantic-02".to_string()),
+                ]),
+            },
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(overwrite.contains("unexpected_requirement_ids"));
+        assert!(overwrite.contains("REQ-preserved"));
+        assert_eq!(
+            repair.preserved_draft.assignment_by_requirement["REQ-preserved"],
+            "semantic-01"
+        );
+
+        let invented_owner = merge_focused_pillar_assignment_repair(
+            &repair,
+            PillarAssignmentRepairDraft {
+                assignment_by_requirement: BTreeMap::from([(
+                    "REQ-unresolved".to_string(),
+                    "semantic-invented".to_string(),
+                )]),
+            },
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(invented_owner.contains("invented semantic owners"));
+        assert!(invented_owner.contains("semantic-invented"));
+    }
+
+    #[test]
+    fn semantic_scope_queue_runs_larger_slices_first_without_rebucketing() {
+        let requirements = (0..8)
+            .map(|index| RequirementRecord {
+                id: format!("REQ-{index}"),
+                section: "Fixture".to_string(),
+                quote: format!("Requirement {index}"),
+            })
+            .collect::<Vec<_>>();
+        let owners = [
+            "semantic-01",
+            "semantic-02",
+            "semantic-02",
+            "semantic-02",
+            "semantic-02",
+            "semantic-03",
+            "semantic-03",
+            "semantic-03",
+        ];
+        let assignment_by_requirement = requirements
+            .iter()
+            .zip(owners)
+            .map(|(requirement, owner)| (requirement.id.clone(), owner.to_string()))
+            .collect::<BTreeMap<_, _>>();
+        let opening = compile_pillar_opening_draft(
+            &requirements,
+            PillarOpeningDraft {
+                pillars: semantic_pillar_definitions(3),
+                assignment_by_requirement,
+                integration_contract: semantic_integration_contract(),
+            },
+            "strongest-model",
+            1,
+        )
+        .unwrap();
+        let queued = pillars_by_descending_semantic_scope(&opening);
+        assert_eq!(
+            queued
+                .iter()
+                .map(|(_, pillar)| (pillar.id.as_str(), pillar.requirement_ids.len()))
+                .collect::<Vec<_>>(),
+            [("semantic-02", 4), ("semantic-03", 3), ("semantic-01", 1)]
+        );
+        assert_eq!(opening.pillars[0].requirement_ids, ["REQ-0"]);
     }
 
     fn pillar_task_spec(task_id: &str) -> PillarPlanTaskSpecDraft {
@@ -19625,8 +19937,20 @@ struct ResearchSaturationOutcome {
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
+struct PillarDefinitionDraft {
+    id: String,
+    title: String,
+    objective: String,
+    research_questions: Vec<String>,
+    acceptance_criteria: Vec<String>,
+    exclusions: Vec<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 struct PillarOpeningDraft {
-    pillars: Vec<ResearchPillar>,
+    pillars: Vec<PillarDefinitionDraft>,
+    assignment_by_requirement: BTreeMap<String, String>,
     integration_contract: IntegrationContract,
 }
 
@@ -30204,7 +30528,17 @@ impl GooseAgentDispatcher {
                     "configured strongest planner `{planner_model}` has no available pillar lane"
                 )
             })?;
-        let max_pillars = lanes.len().min(requirements.len()).max(1);
+        let minimum_pillars = minimum_semantic_pillars(requirements.len(), lanes.len());
+        let frozen_requirement_ids = requirements
+            .iter()
+            .map(|requirement| requirement.id.clone())
+            .collect::<Vec<_>>();
+        let opening_schema = pillar_opening_schema(&frozen_requirement_ids, minimum_pillars);
+        let opening_schema_digest = validate_pillar_opening_schema_gate(
+            &opening_schema,
+            &frozen_requirement_ids,
+            minimum_pillars,
+        )?;
         let frozen_spec_digest = pillar_frozen_spec_digest(user_prompt);
         let restored_opening = PillarCheckpointStore::load_opening(
             &self.working_dir,
@@ -30221,58 +30555,261 @@ impl GooseAgentDispatcher {
             }));
             opening
         } else {
-            provider_calls = provider_calls.saturating_add(1);
+            let mut opener_lanes = vec![planner_lane.clone()];
+            opener_lanes.extend(
+                lanes
+                    .iter()
+                    .filter(|lane| lane.token != planner_lane.token)
+                    .cloned(),
+            );
             self.events.write_value(serde_json::json!({
                 "event": "pillar_opening_started",
                 "model": planner_lane.model_id,
                 "physical_host_id": planner_lane.physical_host_id,
                 "requirements": requirements.len(),
-                "max_pillars": max_pillars,
-                "topology": "one-opener-exact-disjoint-cover",
+                "minimum_pillars": minimum_pillars,
+                "maximum_pillars": null,
+                "available_lanes": opener_lanes.len(),
+                "minimum_waves": if minimum_pillars > lanes.len() { 2 } else { 1 },
+                "schema_digest": opening_schema_digest,
+                "schema_compatibility_gate": "research-remains-blocked-until-one-authenticated-lane-returns-the-complete-exact-key-object",
+                "topology": "one-logical-opener-authority-with-host-correction-and-failover",
             }));
-            let system = "You are the sole opening architect. Map the frozen authored requirement ledger into a small exact cover of non-overlapping implementation pillars. Every requirement ID must appear in exactly one pillar, dependencies must be empty because research runs independently, and pillar scopes must be mutually exclusive. Give each pillar concrete atomic research questions, an implementation-spec objective, executable acceptance criteria, and explicit exclusions that prevent sibling overlap. Do not plan files or build tasks yet. The integration contract names only genuinely shared interfaces and end-to-end acceptance. Set integration_required true only when the pillar outputs must actually be hooked into one runnable product; set it false for genuinely independent deliverables that need no shared hook-up task. Return the typed opening immediately; there is no peer verification round.";
-            let user = serde_json::to_string_pretty(&serde_json::json!({
-                "frozen_authored_prompt": user_prompt,
-                "frozen_authored_requirements": authored_requirements,
-                "maximum_pillars": max_pillars,
-                "required_integration_owner": planner_model,
-            }))?;
-            let result = self
-                .run_pillar_agent_on_lane(
-                    &planner_lane,
-                    system.to_string(),
-                    user,
-                    Some(Response {
-                        json_schema: Some(pillar_opening_schema()),
-                    }),
-                    &[],
-                    self.planner_timeout_secs,
-                    Some("pillar-opening-authority"),
-                )
-                .await
-                .and_then(|output| {
-                    Self::validate_pillar_lane_output(&planner_lane, &output)?;
-                    let raw = output
-                        .final_output
-                        .filter(|value| !value.trim().is_empty())
-                        .or_else(|| (!output.text.trim().is_empty()).then_some(output.text))
-                        .ok_or_else(|| anyhow!("pillar opener returned no typed opening"))?;
-                    let draft: PillarOpeningDraft =
-                        serde_json::from_str(strip_code_fences(&raw).trim()).map_err(|error| {
-                            anyhow!("pillar opening was not valid typed JSON: {error}")
-                        })?;
-                    compile_pillar_opening_draft(&requirements, draft, planner_model, max_pillars)
-                });
-            match result {
-                Ok(opening) => opening,
-                Err(error) => {
-                    self.events.write_value(serde_json::json!({
-                        "event": "pillar_opening_degraded",
-                        "reason": error.to_string(),
-                        "fallback": "deterministic-authored-section-cover",
-                        "additional_provider_call": false,
-                    }));
-                    fallback_pillar_opening(&requirements, planner_model, max_pillars)?
+            let full_system = "You are the sole opening architect for one continuing logical authority. Produce a semantic decomposition of the complete frozen authored requirement ledger. Define coherent, mutually exclusive implementation-responsibility pillars based on meaning and interfaces, never source-section order, equal-sized buckets, or arbitrary requirement counts. A large ledger must produce enough independently researchable pillars for at least the supplied minimum number; there is no maximum, but do not create micro-pillars merely to increase the count. Return semantic pillar definitions separately from assignment_by_requirement. assignment_by_requirement must contain every exact frozen requirement ID as a key exactly once and map it to one defined pillar ID. The engine reconstructs each pillar's ordered requirement list from this map and rejects omissions, unknown keys, unknown owners, empty pillars, and duplicate pillar IDs. Research pillars have no dependencies because they run independently. Give each pillar concrete atomic research questions, an implementation-spec objective, executable acceptance criteria, and explicit exclusions that prevent sibling overlap. Do not plan files or build tasks yet. The integration contract names only genuinely shared interfaces and end-to-end acceptance. Set integration_required true only when the pillar outputs must actually be hooked into one runnable product; set it false for genuinely independent deliverables that need no shared hook-up task. A compiler rejection is correction feedback for this same authority: return one complete replacement object rather than a patch. Call final_output once only after the complete exact-key object is ready.";
+            let repair_system = "You are the focused semantic assignment repair stage of the same opening authority. The prior model-authored semantic pillar catalog, integration topology, and already-valid requirement assignments are frozen for this repair. Assign only the supplied unresolved requirement IDs to the most semantically coherent existing pillar IDs. Use each requirement's authored text, the preserved pillar objectives, questions, criteria, and exclusions; never use source-section order, equal buckets, counts, or a deterministic grouping rule. Return exactly one assignment_by_requirement entry for every unresolved ID and no other keys. The engine merges only these model-owned repairs into the preserved model-owned assignments and then revalidates the complete exact cover. Call final_output once with the typed repair.";
+            let mut correction_feedback: Option<String> = None;
+            let mut attempt = 0usize;
+            let mut full_cycle_fingerprints = Vec::<Option<String>>::new();
+            let mut full_cycle_repair = None::<FocusedPillarAssignmentRepair>;
+            let mut focused_repair = None::<FocusedPillarAssignmentRepair>;
+            let mut focused_cycle_errors = Vec::<String>::new();
+            loop {
+                attempt = attempt.saturating_add(1);
+                let lane = &opener_lanes[(attempt - 1) % opener_lanes.len()];
+                let repair_state = focused_repair.clone();
+                let (strategy, system, user, response_schema) = if let Some(repair) = &repair_state
+                {
+                    let unresolved_requirements = requirements
+                        .iter()
+                        .filter(|requirement| {
+                            repair.unresolved_requirement_ids.contains(&requirement.id)
+                        })
+                        .collect::<Vec<_>>();
+                    let pillar_ids = repair
+                        .preserved_draft
+                        .pillars
+                        .iter()
+                        .map(|pillar| pillar.id.clone())
+                        .collect::<Vec<_>>();
+                    (
+                        "focused-assignment-repair",
+                        repair_system,
+                        serde_json::to_string_pretty(&serde_json::json!({
+                            "preserved_semantic_pillars": repair.preserved_draft.pillars,
+                            "preserved_integration_contract": repair.preserved_draft.integration_contract,
+                            "preserved_valid_assignment_by_requirement": repair.preserved_draft.assignment_by_requirement,
+                            "unresolved_requirements": unresolved_requirements,
+                            "compiler_diagnostics": repair.diagnostics_json,
+                        }))?,
+                        pillar_assignment_repair_schema(
+                            &repair.unresolved_requirement_ids,
+                            &pillar_ids,
+                        ),
+                    )
+                } else {
+                    (
+                        "full-semantic-opening",
+                        full_system,
+                        serde_json::to_string_pretty(&serde_json::json!({
+                            "frozen_authored_prompt": user_prompt,
+                            "frozen_authored_requirements": requirements,
+                            "minimum_semantic_pillars": minimum_pillars,
+                            "maximum_semantic_pillars": null,
+                            "required_integration_owner": planner_model,
+                            "correction": correction_feedback.as_ref().map(|diagnostics| serde_json::json!({
+                                "rejected_attempt": attempt - 1,
+                                "compiler_diagnostics": diagnostics,
+                                "instruction": "Return one complete semantic replacement with all exact assignment keys; do not patch the prior object"
+                            })),
+                        }))?,
+                        opening_schema.clone(),
+                    )
+                };
+                provider_calls = provider_calls.saturating_add(1);
+                self.events.write_value(serde_json::json!({
+                    "event": "pillar_opening_attempt_started",
+                    "logical_authority": "pillar-opening-authority",
+                    "attempt": attempt,
+                    "correction_cycle": (attempt - 1) / opener_lanes.len(),
+                    "model": lane.model_id,
+                    "physical_host_id": lane.physical_host_id,
+                    "has_compiler_feedback": correction_feedback.is_some(),
+                    "strategy": strategy,
+                }));
+                let result = self
+                    .run_pillar_agent_on_lane(
+                        lane,
+                        system.to_string(),
+                        user,
+                        Some(Response {
+                            json_schema: Some(response_schema),
+                        }),
+                        &[],
+                        self.planner_timeout_secs,
+                        Some("pillar-opening-authority"),
+                    )
+                    .await;
+                let mut diagnostic_fingerprint = None::<String>;
+                let mut repair_after_rejection = None::<FocusedPillarAssignmentRepair>;
+                let candidate = match result {
+                    Ok(output) => {
+                        Self::validate_pillar_lane_output(lane, &output)?;
+                        (|| {
+                            let raw = output
+                                .final_output
+                                .filter(|value| !value.trim().is_empty())
+                                .or_else(|| (!output.text.trim().is_empty()).then_some(output.text))
+                                .ok_or_else(|| {
+                                    anyhow!("pillar opener returned no typed opening")
+                                })?;
+                            let draft = if let Some(repair) = &repair_state {
+                                let repair_draft: PillarAssignmentRepairDraft =
+                                    serde_json::from_str(strip_code_fences(&raw).trim()).map_err(
+                                        |error| {
+                                            anyhow!(
+                                                "focused pillar assignment repair was not valid typed JSON: {error}"
+                                            )
+                                        },
+                                    )?;
+                                merge_focused_pillar_assignment_repair(repair, repair_draft)?
+                            } else {
+                                serde_json::from_str(strip_code_fences(&raw).trim()).map_err(
+                                    |error| {
+                                        anyhow!("pillar opening was not valid typed JSON: {error}")
+                                    },
+                                )?
+                            };
+                            let diagnostics = pillar_assignment_diagnostics(
+                                &requirements,
+                                &draft,
+                                minimum_pillars,
+                            );
+                            if !diagnostics.is_valid() {
+                                diagnostic_fingerprint = Some(serde_json::to_string(&diagnostics)?);
+                                repair_after_rejection = focused_pillar_assignment_repair(
+                                    &requirements,
+                                    &draft,
+                                    minimum_pillars,
+                                )?;
+                            }
+                            compile_pillar_opening_draft(
+                                &requirements,
+                                draft,
+                                planner_model,
+                                minimum_pillars,
+                            )
+                        })()
+                    }
+                    Err(error) => Err(error),
+                };
+                match candidate {
+                    Ok(opening) => {
+                        self.events.write_value(serde_json::json!({
+                            "event": "pillar_opening_completed",
+                            "logical_authority": "pillar-opening-authority",
+                            "attempts": attempt,
+                            "model": lane.model_id,
+                            "physical_host_id": lane.physical_host_id,
+                            "pillars": opening.pillars.len(),
+                            "requirements": opening.requirements.len(),
+                            "strategy": strategy,
+                            "schema_compatibility_gate": "passed-by-complete-runtime-output",
+                        }));
+                        break opening;
+                    }
+                    Err(error) => {
+                        correction_feedback = Some(error.to_string());
+                        let next_lane = &opener_lanes[attempt % opener_lanes.len()];
+                        self.events.write_value(serde_json::json!({
+                            "event": "pillar_opening_candidate_rejected",
+                            "logical_authority": "pillar-opening-authority",
+                            "attempt": attempt,
+                            "model": lane.model_id,
+                            "physical_host_id": lane.physical_host_id,
+                            "reason": error.to_string(),
+                            "next_model": next_lane.model_id,
+                            "next_physical_host_id": next_lane.physical_host_id,
+                            "strategy": strategy,
+                            "next_action": if repair_state.is_some() {
+                                "same-authority-focused-assignment-repair-on-next-authenticated-lane"
+                            } else {
+                                "same-authority-semantic-correction-on-next-authenticated-lane"
+                            },
+                            "deterministic_semantic_fallback": false,
+                        }));
+
+                        if repair_state.is_some() {
+                            focused_cycle_errors.push(error.to_string());
+                            if let Some(next_repair) = repair_after_rejection {
+                                focused_repair = Some(next_repair);
+                            }
+                            if focused_cycle_errors.len() == opener_lanes.len() {
+                                self.events.write_value(serde_json::json!({
+                                    "event": "pillar_opening_focused_repair_cycle_completed",
+                                    "logical_authority": "pillar-opening-authority",
+                                    "attempts": attempt,
+                                    "continuation": "restart-full-semantic-opening-with-focused-repair-diagnostics",
+                                }));
+                                focused_repair = None;
+                                focused_cycle_errors.clear();
+                            }
+                        } else {
+                            full_cycle_fingerprints.push(diagnostic_fingerprint.clone());
+                            if let Some(repair) = repair_after_rejection {
+                                full_cycle_repair = Some(repair);
+                            }
+                            if full_cycle_fingerprints.len() == opener_lanes.len() {
+                                let unchanged = full_cycle_fingerprints
+                                    .first()
+                                    .and_then(Option::as_ref)
+                                    .is_some_and(|first| {
+                                        full_cycle_fingerprints
+                                            .iter()
+                                            .all(|fingerprint| fingerprint.as_ref() == Some(first))
+                                    });
+                                if unchanged {
+                                    if let Some(repair) = full_cycle_repair.take() {
+                                        self.events.write_value(serde_json::json!({
+                                            "event": "pillar_opening_strategy_transitioned",
+                                            "logical_authority": "pillar-opening-authority",
+                                            "from": "full-semantic-opening",
+                                            "to": "focused-assignment-repair",
+                                            "attempts": attempt,
+                                            "preserved_pillars": repair.preserved_draft.pillars.len(),
+                                            "preserved_assignments": repair.preserved_draft.assignment_by_requirement.len(),
+                                            "unresolved_requirement_ids": repair.unresolved_requirement_ids,
+                                            "reason": "unchanged-aggregate-diagnostics-across-one-full-lane-rotation",
+                                            "deterministic_semantic_fallback": false,
+                                        }));
+                                        focused_repair = Some(repair);
+                                    }
+                                }
+                                self.events.write_value(serde_json::json!({
+                                    "event": "pillar_opening_correction_cycle_completed",
+                                    "logical_authority": "pillar-opening-authority",
+                                    "attempts": attempt,
+                                    "unchanged_aggregate_diagnostics": unchanged,
+                                    "continuation": if focused_repair.is_some() {
+                                        "focused-model-owned-assignment-repair"
+                                    } else {
+                                        "rotate-all-authenticated-lanes-again-with-latest-compiler-feedback"
+                                    },
+                                }));
+                                full_cycle_fingerprints.clear();
+                                full_cycle_repair = None;
+                            }
+                        }
+                    }
                 }
             }
         };
@@ -30302,7 +30839,7 @@ impl GooseAgentDispatcher {
             .collect::<Vec<_>>();
         let opening = Arc::new(opening);
         let primary_calls = futures::stream::FuturesUnordered::new();
-        for (index, pillar) in opening.pillars.iter().cloned().enumerate() {
+        for (authored_index, pillar) in pillars_by_descending_semantic_scope(&opening) {
             if checkpoint.resume_decision(&pillar.id)? != PillarResumeDecision::RunPrimary {
                 continue;
             }
@@ -30316,7 +30853,7 @@ impl GooseAgentDispatcher {
                     .acquire(
                         tokens,
                         pillar.requirement_ids.len(),
-                        index,
+                        authored_index,
                         pillar.id.clone(),
                     )
                     .await?;
@@ -30371,7 +30908,7 @@ impl GooseAgentDispatcher {
 
         let retry_calls = futures::stream::FuturesUnordered::new();
         let mut retries = 0usize;
-        for (index, pillar) in opening.pillars.iter().cloned().enumerate() {
+        for (authored_index, pillar) in pillars_by_descending_semantic_scope(&opening) {
             if checkpoint.resume_decision(&pillar.id)? != PillarResumeDecision::RunFocusedRetry {
                 continue;
             }
@@ -30413,7 +30950,7 @@ impl GooseAgentDispatcher {
                     .acquire(
                         eligible,
                         pillar.requirement_ids.len(),
-                        index,
+                        authored_index,
                         format!("{}-focused-retry", pillar.id),
                     )
                     .await?;
@@ -50665,32 +51202,46 @@ fn plan_schema() -> serde_json::Value {
     })
 }
 
-fn pillar_opening_schema() -> serde_json::Value {
+fn pillar_opening_schema(requirement_ids: &[String], minimum_pillars: usize) -> serde_json::Value {
+    let assignment_properties = requirement_ids
+        .iter()
+        .map(|requirement_id| {
+            (
+                requirement_id.clone(),
+                serde_json::json!({"type": "string"}),
+            )
+        })
+        .collect::<serde_json::Map<_, _>>();
     serde_json::json!({
         "type": "object",
         "additionalProperties": false,
-        "required": ["pillars", "integration_contract"],
+        "required": ["pillars", "assignment_by_requirement", "integration_contract"],
         "properties": {
             "pillars": {
                 "type": "array",
+                "minItems": minimum_pillars,
                 "items": {
                     "type": "object",
                     "additionalProperties": false,
                     "required": [
-                        "id", "title", "objective", "requirement_ids", "dependencies",
+                        "id", "title", "objective",
                         "research_questions", "acceptance_criteria", "exclusions"
                     ],
                     "properties": {
                         "id": {"type": "string"},
                         "title": {"type": "string"},
                         "objective": {"type": "string"},
-                        "requirement_ids": {"type": "array", "items": {"type": "string"}},
-                        "dependencies": {"type": "array", "items": {"type": "string"}},
                         "research_questions": {"type": "array", "items": {"type": "string"}},
                         "acceptance_criteria": {"type": "array", "items": {"type": "string"}},
                         "exclusions": {"type": "array", "items": {"type": "string"}}
                     }
                 }
+            },
+            "assignment_by_requirement": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": requirement_ids,
+                "properties": assignment_properties
             },
             "integration_contract": {
                 "type": "object",
@@ -50703,6 +51254,80 @@ fn pillar_opening_schema() -> serde_json::Value {
                     "interface_invariants": {"type": "array", "items": {"type": "string"}},
                     "acceptance_criteria": {"type": "array", "items": {"type": "string"}}
                 }
+            }
+        }
+    })
+}
+
+fn validate_pillar_opening_schema_gate(
+    schema: &serde_json::Value,
+    requirement_ids: &[String],
+    minimum_pillars: usize,
+) -> Result<String> {
+    let expected = requirement_ids
+        .iter()
+        .map(String::as_str)
+        .collect::<BTreeSet<_>>();
+    if expected.len() != requirement_ids.len() {
+        bail!("pillar opening schema gate received duplicate frozen requirement IDs");
+    }
+    let assignment = schema
+        .pointer("/properties/assignment_by_requirement")
+        .ok_or_else(|| anyhow!("pillar opening schema gate lost assignment_by_requirement"))?;
+    let required = assignment["required"]
+        .as_array()
+        .ok_or_else(|| anyhow!("pillar opening schema gate lost its exact required key list"))?
+        .iter()
+        .map(|value| {
+            value
+                .as_str()
+                .ok_or_else(|| anyhow!("pillar opening schema required a non-string key"))
+        })
+        .collect::<Result<BTreeSet<_>>>()?;
+    let properties = assignment["properties"]
+        .as_object()
+        .ok_or_else(|| anyhow!("pillar opening schema gate lost its exact key properties"))?
+        .keys()
+        .map(String::as_str)
+        .collect::<BTreeSet<_>>();
+    if required != expected
+        || properties != expected
+        || assignment["additionalProperties"] != serde_json::Value::Bool(false)
+    {
+        bail!("pillar opening schema gate is not the exact frozen requirement key set");
+    }
+    let pillars = &schema["properties"]["pillars"];
+    if pillars["minItems"].as_u64() != Some(minimum_pillars as u64)
+        || pillars.get("maxItems").is_some()
+    {
+        bail!("pillar opening schema gate changed the semantic slice floor or added a cap");
+    }
+    Ok(content_sha256(&serde_json::to_string(schema)?))
+}
+
+fn pillar_assignment_repair_schema(
+    unresolved_requirement_ids: &[String],
+    pillar_ids: &[String],
+) -> serde_json::Value {
+    let assignment_properties = unresolved_requirement_ids
+        .iter()
+        .map(|requirement_id| {
+            (
+                requirement_id.clone(),
+                serde_json::json!({"type": "string", "enum": pillar_ids}),
+            )
+        })
+        .collect::<serde_json::Map<_, _>>();
+    serde_json::json!({
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["assignment_by_requirement"],
+        "properties": {
+            "assignment_by_requirement": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": unresolved_requirement_ids,
+                "properties": assignment_properties
             }
         }
     })
@@ -51081,121 +51706,317 @@ fn pillar_authored_requirements(requirements: &[RequirementRecord]) -> Vec<Autho
         .collect()
 }
 
-fn compile_pillar_opening_draft(
-    requirements: &[RequirementRecord],
-    mut draft: PillarOpeningDraft,
-    integration_owner: &str,
-    max_pillars: usize,
-) -> Result<ResearchPillarOpening> {
-    if draft.pillars.len() > max_pillars {
-        bail!(
-            "pillar opener produced {} pillars, above the bounded maximum {max_pillars}",
-            draft.pillars.len()
-        );
+const MINIMUM_REQUIREMENTS_PER_MANDATED_SEMANTIC_SLICE: usize = 4;
+
+fn minimum_semantic_pillars(requirement_count: usize, lane_count: usize) -> usize {
+    if requirement_count == 0 {
+        return 0;
     }
-    if draft
-        .pillars
-        .iter()
-        .any(|pillar| !pillar.dependencies.is_empty())
+    let lane_count = lane_count.max(1).min(requirement_count);
+    let two_waves = lane_count.saturating_mul(2).min(requirement_count);
+    if requirement_count
+        >= two_waves.saturating_mul(MINIMUM_REQUIREMENTS_PER_MANDATED_SEMANTIC_SLICE)
     {
-        bail!("research pillars must be independent; dependencies belong in the build plan");
+        two_waves
+    } else {
+        1
     }
-    let authored_requirements = pillar_authored_requirements(requirements);
-    draft.integration_contract.owner = integration_owner.to_string();
-    draft.integration_contract.integration_required = draft.pillars.len() > 1
-        && authored_requirements_require_integration(&authored_requirements);
-    let opening = ResearchPillarOpening {
-        requirements: authored_requirements,
-        pillars: draft.pillars,
-        integration_contract: draft.integration_contract,
-    };
-    validate_pillar_opening(&opening)?;
-    Ok(opening)
 }
 
-fn fallback_pillar_opening(
-    requirements: &[RequirementRecord],
-    integration_owner: &str,
-    max_pillars: usize,
-) -> Result<ResearchPillarOpening> {
-    if requirements.is_empty() {
-        bail!("the authored specification produced no requirements");
-    }
-    let max_pillars = max_pillars.max(1);
-    let mut sections = Vec::<(String, Vec<String>)>::new();
-    let mut section_index = HashMap::<String, usize>::new();
-    for requirement in requirements {
-        let section = if requirement.section.trim().is_empty() {
-            "Authored specification".to_string()
-        } else {
-            requirement.section.clone()
-        };
-        let index = *section_index.entry(section.clone()).or_insert_with(|| {
-            sections.push((section, Vec::new()));
-            sections.len() - 1
-        });
-        sections[index].1.push(requirement.id.clone());
-    }
-    let bucket_count = sections.len().min(max_pillars).max(1);
-    let mut buckets = vec![Vec::<(String, Vec<String>)>::new(); bucket_count];
-    let section_count = sections.len();
-    for (index, section) in sections.into_iter().enumerate() {
-        let bucket = index.saturating_mul(bucket_count) / section_count;
-        buckets[bucket.min(bucket_count - 1)].push(section);
-    }
-    let pillars = buckets
-        .into_iter()
+fn pillars_by_descending_semantic_scope(
+    opening: &ResearchPillarOpening,
+) -> Vec<(usize, ResearchPillar)> {
+    let mut pillars = opening
+        .pillars
+        .iter()
+        .cloned()
         .enumerate()
-        .map(|(index, sections)| {
-            let titles = sections
+        .collect::<Vec<_>>();
+    pillars.sort_by(|(left_index, left), (right_index, right)| {
+        right
+            .requirement_ids
+            .len()
+            .cmp(&left.requirement_ids.len())
+            .then_with(|| left_index.cmp(right_index))
+    });
+    pillars
+}
+
+#[derive(Clone, Debug, Serialize)]
+struct PillarAssignmentTargetDiagnostic {
+    requirement_id: String,
+    pillar_id: String,
+}
+
+#[derive(Clone, Debug, Serialize)]
+struct PillarAssignmentDiagnostics {
+    frozen_requirement_count: usize,
+    provided_assignment_count: usize,
+    semantic_pillar_count: usize,
+    minimum_semantic_pillars: usize,
+    below_minimum_semantic_pillars: bool,
+    missing_requirement_ids: Vec<String>,
+    unknown_requirement_ids: Vec<String>,
+    duplicate_pillar_ids: Vec<String>,
+    assignments_to_unknown_pillars: Vec<PillarAssignmentTargetDiagnostic>,
+    pillars_without_assignments: Vec<String>,
+}
+
+impl PillarAssignmentDiagnostics {
+    fn is_valid(&self) -> bool {
+        !self.below_minimum_semantic_pillars
+            && self.missing_requirement_ids.is_empty()
+            && self.unknown_requirement_ids.is_empty()
+            && self.duplicate_pillar_ids.is_empty()
+            && self.assignments_to_unknown_pillars.is_empty()
+            && self.pillars_without_assignments.is_empty()
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct PillarAssignmentRepairDraft {
+    assignment_by_requirement: BTreeMap<String, String>,
+}
+
+#[derive(Clone, Debug)]
+struct FocusedPillarAssignmentRepair {
+    preserved_draft: PillarOpeningDraft,
+    unresolved_requirement_ids: Vec<String>,
+    diagnostics_json: String,
+}
+
+fn pillar_assignment_diagnostics(
+    requirements: &[RequirementRecord],
+    draft: &PillarOpeningDraft,
+    minimum_pillars: usize,
+) -> PillarAssignmentDiagnostics {
+    let frozen_requirement_ids = requirements
+        .iter()
+        .map(|requirement| requirement.id.as_str())
+        .collect::<BTreeSet<_>>();
+    let mut pillar_ids = BTreeSet::new();
+    let mut duplicate_pillar_ids = Vec::new();
+    for pillar in &draft.pillars {
+        if !pillar_ids.insert(pillar.id.as_str()) {
+            duplicate_pillar_ids.push(pillar.id.clone());
+        }
+    }
+    let missing_requirement_ids = requirements
+        .iter()
+        .filter(|requirement| {
+            !draft
+                .assignment_by_requirement
+                .contains_key(&requirement.id)
+        })
+        .map(|requirement| requirement.id.clone())
+        .collect::<Vec<_>>();
+    let unknown_requirement_ids = draft
+        .assignment_by_requirement
+        .keys()
+        .filter(|requirement_id| !frozen_requirement_ids.contains(requirement_id.as_str()))
+        .cloned()
+        .collect::<Vec<_>>();
+    let assignments_to_unknown_pillars = draft
+        .assignment_by_requirement
+        .iter()
+        .filter(|(_, pillar_id)| !pillar_ids.contains(pillar_id.as_str()))
+        .map(
+            |(requirement_id, pillar_id)| PillarAssignmentTargetDiagnostic {
+                requirement_id: requirement_id.clone(),
+                pillar_id: pillar_id.clone(),
+            },
+        )
+        .collect::<Vec<_>>();
+    let assigned_pillar_ids = draft
+        .assignment_by_requirement
+        .values()
+        .map(String::as_str)
+        .collect::<BTreeSet<_>>();
+    let pillars_without_assignments = draft
+        .pillars
+        .iter()
+        .filter(|pillar| !assigned_pillar_ids.contains(pillar.id.as_str()))
+        .map(|pillar| pillar.id.clone())
+        .collect::<Vec<_>>();
+    PillarAssignmentDiagnostics {
+        frozen_requirement_count: requirements.len(),
+        provided_assignment_count: draft.assignment_by_requirement.len(),
+        semantic_pillar_count: draft.pillars.len(),
+        minimum_semantic_pillars: minimum_pillars,
+        below_minimum_semantic_pillars: draft.pillars.len() < minimum_pillars,
+        missing_requirement_ids,
+        unknown_requirement_ids,
+        duplicate_pillar_ids,
+        assignments_to_unknown_pillars,
+        pillars_without_assignments,
+    }
+}
+
+fn focused_pillar_assignment_repair(
+    requirements: &[RequirementRecord],
+    draft: &PillarOpeningDraft,
+    minimum_pillars: usize,
+) -> Result<Option<FocusedPillarAssignmentRepair>> {
+    let diagnostics = pillar_assignment_diagnostics(requirements, draft, minimum_pillars);
+    if diagnostics.below_minimum_semantic_pillars || !diagnostics.duplicate_pillar_ids.is_empty() {
+        return Ok(None);
+    }
+    let frozen_requirement_ids = requirements
+        .iter()
+        .map(|requirement| requirement.id.as_str())
+        .collect::<BTreeSet<_>>();
+    let pillar_ids = draft
+        .pillars
+        .iter()
+        .map(|pillar| pillar.id.as_str())
+        .collect::<BTreeSet<_>>();
+    let mut unresolved = diagnostics
+        .missing_requirement_ids
+        .iter()
+        .map(String::as_str)
+        .chain(
+            diagnostics
+                .assignments_to_unknown_pillars
                 .iter()
-                .map(|(title, _)| title.clone())
-                .collect::<Vec<_>>();
-            let requirement_ids = sections
-                .into_iter()
-                .flat_map(|(_, ids)| ids)
-                .collect::<Vec<_>>();
-            ResearchPillar {
-                id: format!("pillar-{:02}", index + 1),
-                title: titles.join(" + "),
-                objective: format!(
-                    "Resolve the exact authored behavior and implementation boundary for {}",
-                    requirement_ids.join(", ")
-                ),
-                requirement_ids,
-                dependencies: Vec::new(),
-                research_questions: vec![
-                    "Which authored constraints are already binding, which external facts need proof, and what precise interface follows?".to_string(),
-                ],
-                acceptance_criteria: vec![
-                    "Every owned requirement has an explicit evidence class, implementation boundary, and executable acceptance test".to_string(),
-                ],
-                exclusions: vec![
-                    "Requirements owned by every other pillar".to_string(),
-                ],
-            }
+                .map(|assignment| assignment.requirement_id.as_str()),
+        )
+        .filter(|requirement_id| frozen_requirement_ids.contains(*requirement_id))
+        .collect::<BTreeSet<_>>();
+    if unresolved.is_empty() {
+        return Ok(None);
+    }
+    let unresolved_requirement_ids = requirements
+        .iter()
+        .filter(|requirement| unresolved.remove(requirement.id.as_str()))
+        .map(|requirement| requirement.id.clone())
+        .collect::<Vec<_>>();
+    let mut preserved_draft = draft.clone();
+    preserved_draft
+        .assignment_by_requirement
+        .retain(|requirement_id, pillar_id| {
+            frozen_requirement_ids.contains(requirement_id.as_str())
+                && pillar_ids.contains(pillar_id.as_str())
+                && !unresolved_requirement_ids.contains(requirement_id)
+        });
+    Ok(Some(FocusedPillarAssignmentRepair {
+        preserved_draft,
+        unresolved_requirement_ids,
+        diagnostics_json: serde_json::to_string(&diagnostics)?,
+    }))
+}
+
+fn merge_focused_pillar_assignment_repair(
+    repair: &FocusedPillarAssignmentRepair,
+    repair_draft: PillarAssignmentRepairDraft,
+) -> Result<PillarOpeningDraft> {
+    let expected_requirement_ids = repair
+        .unresolved_requirement_ids
+        .iter()
+        .map(String::as_str)
+        .collect::<BTreeSet<_>>();
+    let provided_requirement_ids = repair_draft
+        .assignment_by_requirement
+        .keys()
+        .map(String::as_str)
+        .collect::<BTreeSet<_>>();
+    if provided_requirement_ids != expected_requirement_ids {
+        let missing_requirement_ids = expected_requirement_ids
+            .difference(&provided_requirement_ids)
+            .copied()
+            .collect::<Vec<_>>();
+        let unexpected_requirement_ids = provided_requirement_ids
+            .difference(&expected_requirement_ids)
+            .copied()
+            .collect::<Vec<_>>();
+        bail!(
+            "focused pillar assignment repair changed its exact key authority: {}",
+            serde_json::to_string(&serde_json::json!({
+                "missing_requirement_ids": missing_requirement_ids,
+                "unexpected_requirement_ids": unexpected_requirement_ids,
+            }))?
+        );
+    }
+    let allowed_pillar_ids = repair
+        .preserved_draft
+        .pillars
+        .iter()
+        .map(|pillar| pillar.id.as_str())
+        .collect::<BTreeSet<_>>();
+    let assignments_to_unknown_pillars = repair_draft
+        .assignment_by_requirement
+        .iter()
+        .filter(|(_, pillar_id)| !allowed_pillar_ids.contains(pillar_id.as_str()))
+        .map(
+            |(requirement_id, pillar_id)| PillarAssignmentTargetDiagnostic {
+                requirement_id: requirement_id.clone(),
+                pillar_id: pillar_id.clone(),
+            },
+        )
+        .collect::<Vec<_>>();
+    if !assignments_to_unknown_pillars.is_empty() {
+        bail!(
+            "focused pillar assignment repair invented semantic owners: {}",
+            serde_json::to_string(&assignments_to_unknown_pillars)?
+        );
+    }
+    let mut merged = repair.preserved_draft.clone();
+    merged
+        .assignment_by_requirement
+        .extend(repair_draft.assignment_by_requirement);
+    Ok(merged)
+}
+
+fn compile_pillar_opening_draft(
+    requirements: &[RequirementRecord],
+    draft: PillarOpeningDraft,
+    integration_owner: &str,
+    minimum_pillars: usize,
+) -> Result<ResearchPillarOpening> {
+    let diagnostics = pillar_assignment_diagnostics(requirements, &draft, minimum_pillars);
+    if !diagnostics.is_valid() {
+        bail!(
+            "pillar assignment did not form the frozen exact cover: {}",
+            serde_json::to_string(&diagnostics)?
+        );
+    }
+    let PillarOpeningDraft {
+        pillars: pillar_definitions,
+        assignment_by_requirement,
+        mut integration_contract,
+    } = draft;
+
+    let mut requirement_ids_by_pillar = BTreeMap::<String, Vec<String>>::new();
+    for requirement in requirements {
+        let pillar_id = assignment_by_requirement
+            .get(&requirement.id)
+            .expect("validated exact assignment lost a frozen requirement");
+        requirement_ids_by_pillar
+            .entry(pillar_id.clone())
+            .or_default()
+            .push(requirement.id.clone());
+    }
+    let pillars = pillar_definitions
+        .into_iter()
+        .map(|pillar| ResearchPillar {
+            requirement_ids: requirement_ids_by_pillar
+                .remove(&pillar.id)
+                .expect("validated semantic pillar lost its assignments"),
+            id: pillar.id,
+            title: pillar.title,
+            objective: pillar.objective,
+            dependencies: Vec::new(),
+            research_questions: pillar.research_questions,
+            acceptance_criteria: pillar.acceptance_criteria,
+            exclusions: pillar.exclusions,
         })
         .collect::<Vec<_>>();
     let authored_requirements = pillar_authored_requirements(requirements);
-    let integration_required =
-        pillars.len() > 1 && authored_requirements_require_integration(&authored_requirements);
+    integration_contract.owner = integration_owner.to_string();
     let opening = ResearchPillarOpening {
         requirements: authored_requirements,
         pillars,
-        integration_contract: IntegrationContract {
-            owner: integration_owner.to_string(),
-            integration_required,
-            objective: "Compose only the shared interfaces that the pillar outputs prove are necessary"
-                .to_string(),
-            interface_invariants: vec![
-                "Every implementation file has one owner".to_string(),
-                "Cross-pillar dependencies use explicit producer and consumer contracts".to_string(),
-            ],
-            acceptance_criteria: vec![
-                "The integrated result starts successfully and every authored acceptance path is exercised"
-                    .to_string(),
-            ],
-        },
+        integration_contract,
     };
     validate_pillar_opening(&opening)?;
     Ok(opening)
@@ -63368,6 +64189,7 @@ mod pre_scheduler_semantic_runtime_tests {
     #[derive(Default)]
     struct PillarReplayProvider {
         calls: Mutex<Vec<PillarReplayProviderCall>>,
+        rejected_openings_remaining: AtomicUsize,
     }
 
     impl PillarReplayProvider {
@@ -63387,9 +64209,28 @@ mod pre_scheduler_semantic_runtime_tests {
                 .expect("pillar replay provider call had no user text")
         }
 
-        fn scripted_output(system: &str, user: &str) -> (&'static str, serde_json::Value) {
+        fn reject_next_opening(&self) {
+            self.reject_openings(1);
+        }
+
+        fn reject_openings(&self, count: usize) {
+            self.rejected_openings_remaining
+                .store(count, AtomicOrdering::SeqCst);
+        }
+
+        fn scripted_output(&self, system: &str, user: &str) -> (&'static str, serde_json::Value) {
             if system.contains("sole opening architect") {
-                ("opening", Self::opening_output(user))
+                let reject = self
+                    .rejected_openings_remaining
+                    .fetch_update(
+                        AtomicOrdering::SeqCst,
+                        AtomicOrdering::SeqCst,
+                        |remaining| remaining.checked_sub(1),
+                    )
+                    .is_ok();
+                ("opening", Self::opening_output(user, reject))
+            } else if system.contains("focused semantic assignment repair stage") {
+                ("opening_repair", Self::opening_repair_output(user))
             } else if system.contains("one non-overlapping research and implementation-spec pillar")
             {
                 ("owner", Self::report_output(user))
@@ -63411,7 +64252,7 @@ mod pre_scheduler_semantic_runtime_tests {
             });
         }
 
-        fn opening_output(user: &str) -> serde_json::Value {
+        fn opening_output(user: &str, reject_assignment: bool) -> serde_json::Value {
             let request: serde_json::Value = serde_json::from_str(user)
                 .expect("pillar replay opening request must remain typed JSON");
             let requirements = request["frozen_authored_requirements"]
@@ -63430,35 +64271,84 @@ mod pre_scheduler_semantic_runtime_tests {
             let planner = request["required_integration_owner"]
                 .as_str()
                 .expect("pillar replay opening lost integration owner");
+            let minimum_slice_count = request["minimum_semantic_pillars"]
+                .as_u64()
+                .expect("pillar replay opening lost semantic slice floor")
+                as usize;
+            assert!(minimum_slice_count >= 2);
+            let slice_count = minimum_slice_count.max(3);
             let mut cursor = 0usize;
-            let pillars = (0..3)
+            let total_weight = (1..=slice_count).sum::<usize>();
+            let mut assignment_by_requirement = serde_json::Map::new();
+            let pillars = (0..slice_count)
                 .map(|index| {
-                    let size = requirement_ids.len() / 3
-                        + usize::from(index < requirement_ids.len() % 3);
+                    let size = if index + 1 == slice_count {
+                        requirement_ids.len() - cursor
+                    } else {
+                        (requirement_ids.len() * (slice_count - index) / total_weight).max(1)
+                    };
                     let owned = requirement_ids[cursor..cursor + size].to_vec();
                     cursor += size;
+                    let pillar_id = format!("pillar-{:02}", index + 1);
+                    assignment_by_requirement.extend(
+                        owned
+                            .into_iter()
+                            .map(|requirement_id| {
+                                (requirement_id, serde_json::json!(pillar_id.clone()))
+                            }),
+                    );
                     serde_json::json!({
-                        "id": format!("pillar-{:02}", index + 1),
-                        "title": format!("Exclusive capability {}", index + 1),
-                        "objective": format!("Resolve only capability {} without sibling scope", index + 1),
-                        "requirement_ids": owned,
-                        "dependencies": [],
+                        "id": pillar_id,
+                        "title": format!("Exclusive semantic responsibility {}", index + 1),
+                        "objective": format!("Resolve only semantic responsibility {} without sibling scope", index + 1),
                         "research_questions": [format!("Which exact implementation boundary satisfies capability {}?", index + 1)],
                         "acceptance_criteria": [format!("Capability {} has executable acceptance evidence", index + 1)],
-                        "exclusions": [format!("All requirements assigned to the other two capabilities, excluding pillar-{:02}", index + 1)],
+                        "exclusions": [format!("All requirements assigned to sibling responsibilities, excluding pillar-{:02}", index + 1)],
                     })
                 })
                 .collect::<Vec<_>>();
             assert_eq!(cursor, requirement_ids.len());
+            if reject_assignment {
+                let (_, owner) = assignment_by_requirement
+                    .iter_mut()
+                    .next()
+                    .expect("pillar replay opening had no assignment to reject");
+                *owner = serde_json::json!("undefined-semantic-pillar");
+            }
             serde_json::json!({
                 "pillars": pillars,
+                "assignment_by_requirement": assignment_by_requirement,
                 "integration_contract": {
                     "owner": planner,
                     "integration_required": true,
-                    "objective": "Hook the three independently produced capabilities into one runnable application",
+                    "objective": "Hook every independently produced capability into one runnable application",
                     "interface_invariants": ["Each capability owns one disjoint module and exposes one explicit interface"],
                     "acceptance_criteria": ["The integrated application starts and reaches every capability"]
                 }
+            })
+        }
+
+        fn opening_repair_output(user: &str) -> serde_json::Value {
+            let request: serde_json::Value = serde_json::from_str(user)
+                .expect("pillar replay focused repair request must remain typed JSON");
+            let pillar_id = request["preserved_semantic_pillars"]
+                .as_array()
+                .and_then(|pillars| pillars.first())
+                .and_then(|pillar| pillar["id"].as_str())
+                .expect("pillar replay focused repair lost its preserved pillar catalog");
+            let assignment_by_requirement = request["unresolved_requirements"]
+                .as_array()
+                .expect("pillar replay focused repair lost unresolved requirements")
+                .iter()
+                .map(|requirement| {
+                    (
+                        requirement["id"].as_str().unwrap().to_string(),
+                        serde_json::json!(pillar_id),
+                    )
+                })
+                .collect::<serde_json::Map<_, _>>();
+            serde_json::json!({
+                "assignment_by_requirement": assignment_by_requirement,
             })
         }
 
@@ -63574,7 +64464,7 @@ mod pre_scheduler_semantic_runtime_tests {
             }
             subtasks.push(serde_json::json!({
                 "id": "integrate-app",
-                "description": "Hook the three completed capabilities into one runnable entry point",
+                "description": "Hook every completed capability into one runnable entry point",
                 "difficulty": "hard",
                 "model": models[0],
                 "depends_on": build_ids,
@@ -63594,7 +64484,7 @@ mod pre_scheduler_semantic_runtime_tests {
                 "concrete_steps": ["Import each capability module", "Expose one runnable entry point"],
                 "interfaces": ["Consume every capability export after its producer task completes"],
                 "edge_cases": ["Fail clearly when a required capability cannot initialize"],
-                "acceptance_evidence": ["Start the integrated application and exercise all three capability paths"],
+                "acceptance_evidence": ["Start the integrated application and exercise every capability path"],
                 "exclusions": ["Do not duplicate capability-owned behavior"]
             }));
             let uncertainty_routes = unresolved_ids
@@ -63657,7 +64547,7 @@ mod pre_scheduler_semantic_runtime_tests {
                 "pillar replay unexpectedly left the response-only tool boundary"
             );
             let user = Self::last_user_text(messages);
-            let (phase, output) = Self::scripted_output(system, &user);
+            let (phase, output) = self.scripted_output(system, &user);
             self.record_call(&model_config.model_name, phase, user);
             let arguments = output
                 .as_object()
@@ -63686,7 +64576,7 @@ mod pre_scheduler_semantic_runtime_tests {
                 "pillar replay unexpectedly left the response-only tool boundary"
             );
             let user = Self::last_user_text(messages);
-            let (phase, output) = Self::scripted_output(system, &user);
+            let (phase, output) = self.scripted_output(system, &user);
             self.record_call(&model_config.model_name, phase, user);
             Ok(ResearchCorrectionRuntimeProvider::finished_final_output(
                 &model_config.model_name,
@@ -64317,7 +65207,7 @@ mod pre_scheduler_semantic_runtime_tests {
     }
 
     #[tokio::test]
-    async fn brokerless_one_lane_runs_one_real_low_confidence_retry() {
+    async fn brokerless_one_lane_runs_multiple_waves_and_one_real_low_confidence_retry() {
         const MODEL: &str = "single-logical-model";
         const FROZEN_SPEC: &str = include_str!("../../../../evals/swarm-bench/spec-build-sb7.md");
         let harness = pillar_logical_replay_harness(MODEL).await;
@@ -64331,12 +65221,12 @@ mod pre_scheduler_semantic_runtime_tests {
             )
             .await
             .unwrap();
-        assert_eq!(outcome.opening.pillars.len(), 1);
-        assert_eq!(outcome.reports.len(), 1);
+        assert_eq!(outcome.opening.pillars.len(), 3);
+        assert_eq!(outcome.reports.len(), 3);
         assert_eq!(outcome.retries, 1);
-        assert_eq!(outcome.provider_calls, 3);
-        assert_eq!(outcome.reports[0].effective_confidence, Confidence::Low);
-        assert!(!outcome.reports[0].unresolved_uncertainties.is_empty());
+        assert_eq!(outcome.provider_calls, 5);
+        assert_eq!(outcome.reports[2].effective_confidence, Confidence::Low);
+        assert!(!outcome.reports[2].unresolved_uncertainties.is_empty());
         let calls = harness.provider.calls();
         let owner_calls = calls
             .iter()
@@ -64344,7 +65234,7 @@ mod pre_scheduler_semantic_runtime_tests {
             .collect::<Vec<_>>();
         assert_eq!(
             owner_calls.len(),
-            2,
+            4,
             "calls={calls:?}; events={:?}",
             harness.sink.values()
         );
@@ -64395,7 +65285,7 @@ mod pre_scheduler_semantic_runtime_tests {
             .expect("frozen V20 fixture did not finish the production pillar research path");
 
         assert_eq!(outcome.opening.requirements.len(), 197);
-        assert_eq!(outcome.opening.pillars.len(), 3);
+        assert_eq!(outcome.opening.pillars.len(), 6);
         let exact_cover = outcome
             .opening
             .pillars
@@ -64409,8 +65299,8 @@ mod pre_scheduler_semantic_runtime_tests {
             "the opener overlapped authored requirements between pillars"
         );
         assert_eq!(
-            outcome.provider_calls, 5,
-            "one opener plus four owner calls"
+            outcome.provider_calls, 8,
+            "one opener plus seven owner calls"
         );
         assert_eq!(outcome.retries, 1);
         assert!(outcome.synthesis.chars().count() <= 32_000);
@@ -64426,7 +65316,7 @@ mod pre_scheduler_semantic_runtime_tests {
                 .iter()
                 .filter(|event| event["attempt_ordinal"] == 1)
                 .count(),
-            3
+            6
         );
         let retries = owner_starts
             .iter()
@@ -64455,7 +65345,7 @@ mod pre_scheduler_semantic_runtime_tests {
             calls.iter().filter(|call| call.phase == "opening").count(),
             1
         );
-        assert_eq!(calls.iter().filter(|call| call.phase == "owner").count(), 4);
+        assert_eq!(calls.iter().filter(|call| call.phase == "owner").count(), 7);
         assert_eq!(
             calls.iter().filter(|call| call.phase == "planner").count(),
             1
@@ -64579,14 +65469,145 @@ mod pre_scheduler_semantic_runtime_tests {
         )
         .await
         .expect("frozen V20 pillar replay never reached real Scheduler build dispatch");
-        assert_eq!(build_dispatcher.starts.load(AtomicOrdering::SeqCst), 4);
-        assert_eq!(report.done.len(), 4);
+        assert_eq!(build_dispatcher.starts.load(AtomicOrdering::SeqCst), 7);
+        assert_eq!(report.done.len(), 7);
         assert!(report.failed.is_empty());
         tokio::time::timeout(Duration::from_secs(5), harness.control.wait_until_drained())
             .await
             .expect("frozen V20 replay did not drain provider lifecycle")
             .unwrap();
         assert_eq!(harness.control.occupancy().await, (0, 0));
+    }
+
+    #[tokio::test]
+    async fn rejected_semantic_opening_corrects_on_next_authenticated_lane_without_fallback() {
+        const PLANNER_MODEL: &str = "opener-correction-planner";
+        const WORKER_B: &str = "opener-correction-worker-b";
+        const WORKER_C: &str = "opener-correction-worker-c";
+        const FROZEN_SPEC: &str = include_str!("../../../../evals/swarm-bench/spec-build-sb7.md");
+        let lanes = [
+            ("opener-correction-lane-a", PLANNER_MODEL, "host-a"),
+            ("opener-correction-lane-b", WORKER_B, "host-b"),
+            ("opener-correction-lane-c", WORKER_C, "host-c"),
+        ];
+        let harness = pillar_replay_runtime_harness(&lanes).await;
+        harness.provider.reject_next_opening();
+        let outcome = harness
+            .dispatcher
+            .research_by_pillars(
+                FROZEN_SPEC,
+                Arc::new(Vec::new()),
+                vec![
+                    ("device-a".to_string(), PLANNER_MODEL.to_string()),
+                    ("device-b".to_string(), WORKER_B.to_string()),
+                    ("device-c".to_string(), WORKER_C.to_string()),
+                ],
+                PLANNER_MODEL,
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(outcome.opening.pillars.len(), 6);
+        assert_eq!(outcome.provider_calls, 9);
+        let calls = harness.provider.calls();
+        let opening_calls = calls
+            .iter()
+            .filter(|call| call.phase == "opening")
+            .collect::<Vec<_>>();
+        assert_eq!(opening_calls.len(), 2);
+        assert_eq!(opening_calls[0].model, PLANNER_MODEL);
+        assert_eq!(opening_calls[1].model, WORKER_B);
+        assert!(opening_calls[1].user.contains("undefined-semantic-pillar"));
+        let events = harness.sink.values();
+        assert!(events.iter().any(|event| {
+            event["event"] == "pillar_opening_candidate_rejected"
+                && event["deterministic_semantic_fallback"] == false
+                && event["next_model"] == WORKER_B
+        }));
+        assert!(!events
+            .iter()
+            .any(|event| event["event"] == "pillar_opening_degraded"));
+        assert!(events.iter().any(|event| {
+            event["event"] == "pillar_opening_completed"
+                && event["attempts"] == 2
+                && event["model"] == WORKER_B
+        }));
+        tokio::time::timeout(Duration::from_secs(5), harness.control.wait_until_drained())
+            .await
+            .unwrap()
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn unchanged_full_rotation_transitions_to_focused_model_owned_assignment_repair() {
+        const PLANNER_MODEL: &str = "opener-transition-planner";
+        const WORKER_B: &str = "opener-transition-worker-b";
+        const WORKER_C: &str = "opener-transition-worker-c";
+        const FROZEN_SPEC: &str = include_str!("../../../../evals/swarm-bench/spec-build-sb7.md");
+        let lanes = [
+            (
+                "opener-transition-lane-a",
+                PLANNER_MODEL,
+                "transition-host-a",
+            ),
+            ("opener-transition-lane-b", WORKER_B, "transition-host-b"),
+            ("opener-transition-lane-c", WORKER_C, "transition-host-c"),
+        ];
+        let harness = pillar_replay_runtime_harness(&lanes).await;
+        harness.provider.reject_openings(3);
+        let outcome = harness
+            .dispatcher
+            .research_by_pillars(
+                FROZEN_SPEC,
+                Arc::new(Vec::new()),
+                vec![
+                    ("device-a".to_string(), PLANNER_MODEL.to_string()),
+                    ("device-b".to_string(), WORKER_B.to_string()),
+                    ("device-c".to_string(), WORKER_C.to_string()),
+                ],
+                PLANNER_MODEL,
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(outcome.opening.pillars.len(), 6);
+        assert_eq!(outcome.provider_calls, 11);
+        let calls = harness.provider.calls();
+        assert_eq!(
+            calls.iter().filter(|call| call.phase == "opening").count(),
+            3
+        );
+        let repairs = calls
+            .iter()
+            .filter(|call| call.phase == "opening_repair")
+            .collect::<Vec<_>>();
+        assert_eq!(repairs.len(), 1);
+        assert!(repairs[0]
+            .user
+            .contains("preserved_valid_assignment_by_requirement"));
+        let events = harness.sink.values();
+        let transition = events
+            .iter()
+            .find(|event| event["event"] == "pillar_opening_strategy_transitioned")
+            .expect("unchanged diagnostics never changed opening strategy");
+        assert_eq!(transition["from"], "full-semantic-opening");
+        assert_eq!(transition["to"], "focused-assignment-repair");
+        assert_eq!(transition["preserved_pillars"], 6);
+        assert_eq!(transition["preserved_assignments"], 196);
+        assert_eq!(
+            transition["unresolved_requirement_ids"]
+                .as_array()
+                .unwrap()
+                .len(),
+            1
+        );
+        assert!(!events
+            .iter()
+            .any(|event| event["event"] == "pillar_opening_degraded"));
+        tokio::time::timeout(Duration::from_secs(5), harness.control.wait_until_drained())
+            .await
+            .unwrap()
+            .unwrap();
     }
 
     fn requirement_binding_runtime_fixture(
