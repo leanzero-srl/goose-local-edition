@@ -12,8 +12,8 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, MutexGuard};
 
-const SCHEMA_VERSION: u32 = 1;
-const CHECKPOINT_DIRECTORY: &str = "pillar-checkpoint-v1";
+const SCHEMA_VERSION: u32 = 2;
+const CHECKPOINT_DIRECTORY: &str = "pillar-checkpoint-v2";
 const STATE_FILE: &str = "state.json";
 const LOCK_FILE: &str = "control.lock";
 static TEMP_SEQUENCE: AtomicU64 = AtomicU64::new(0);
@@ -25,7 +25,15 @@ pub struct PillarAttemptCheckpoint {
     pub attempt_ordinal: u8,
     pub model_id: String,
     pub physical_host: String,
+    pub status: PillarAttemptStatus,
     pub report: CompiledPillarReport,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PillarAttemptStatus {
+    ModelReport,
+    Unavailable,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -527,6 +535,13 @@ fn validate_attempt(
             "pillar report effective confidence is inconsistent with its evidence",
         ));
     }
+    if attempt.status == PillarAttemptStatus::Unavailable
+        && attempt.report.effective_confidence != Confidence::Low
+    {
+        return Err(PillarCheckpointError::new(
+            "an unavailable pillar attempt cannot checkpoint a high-confidence report",
+        ));
+    }
     Ok(())
 }
 
@@ -834,6 +849,7 @@ mod tests {
             attempt_ordinal: ordinal,
             model_id: format!("model-{pillar_id}"),
             physical_host: format!("host-{pillar_id}"),
+            status: PillarAttemptStatus::ModelReport,
             report: CompiledPillarReport {
                 pillar_id: pillar_id.to_string(),
                 reported_confidence: confidence,
@@ -858,6 +874,13 @@ mod tests {
         let receipt = store.persist_attempt(saved.clone()).unwrap();
         assert_eq!(receipt.revision, 1);
         assert!(!receipt.reused);
+        let persisted = std::fs::read_to_string(&store.state_path).unwrap();
+        assert!(store
+            .state_path
+            .to_string_lossy()
+            .contains("pillar-checkpoint-v2"));
+        assert!(persisted.contains("\"schema_version\":2"));
+        assert!(persisted.contains("\"status\":\"model_report\""));
         drop(store);
 
         let reopened = PillarCheckpointStore::open(root.path(), &digest, &opening).unwrap();
@@ -979,6 +1002,31 @@ mod tests {
         assert_eq!(
             reopened.resume_decision("ui").unwrap(),
             PillarResumeDecision::ReuseFocusedRetry
+        );
+    }
+
+    #[test]
+    fn unavailable_owner_attempt_is_durable_and_still_requests_one_focused_retry() {
+        let root = tempfile::tempdir().unwrap();
+        let opening = opening();
+        let digest = pillar_frozen_spec_digest("unavailable owner spec");
+        let store = PillarCheckpointStore::open(root.path(), &digest, &opening).unwrap();
+        let mut unavailable = attempt("ui", "req-ui", 1, Confidence::Low);
+        unavailable.status = PillarAttemptStatus::Unavailable;
+        store.persist_attempt(unavailable.clone()).unwrap();
+        let state_path = store.state_path.clone();
+        drop(store);
+
+        let persisted = std::fs::read_to_string(state_path).unwrap();
+        assert!(persisted.contains("\"status\":\"unavailable\""));
+        let reopened = PillarCheckpointStore::open(root.path(), &digest, &opening).unwrap();
+        assert_eq!(
+            reopened.completed_attempts("ui").unwrap(),
+            vec![unavailable]
+        );
+        assert_eq!(
+            reopened.resume_decision("ui").unwrap(),
+            PillarResumeDecision::RunFocusedRetry
         );
     }
 
