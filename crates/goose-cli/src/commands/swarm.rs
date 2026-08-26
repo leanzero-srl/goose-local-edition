@@ -5503,6 +5503,7 @@ fn apply_canonical_fan_e2e(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::Duration;
 
     #[test]
     fn answers_win_floor_keeps_answered_plan_only_when_gated_and_non_structural() {
@@ -17384,6 +17385,96 @@ commands, the two database files, the `web/` files and `DECISIONS.md` are the co
         assert!(extract_generated_tests("```\ndef test_y():\n    assert True\n```").is_some());
     }
 
+    #[tokio::test]
+    async fn generated_tests_are_staged_until_collection_succeeds() {
+        let root = tempfile::tempdir().unwrap();
+        let rel = land_generated_tests(root.path(), "def test_generated():\n    assert True\n", 0)
+            .await
+            .unwrap();
+        assert_eq!(rel, "tests/generated/test_gen_0.py");
+        assert!(root.path().join(&rel).exists());
+        assert!(!root
+            .path()
+            .join("tests/generated/_test_gen_0_staged.py")
+            .exists());
+
+        assert!(land_generated_tests(root.path(), "def test_broken(:\n", 1)
+            .await
+            .is_err());
+        assert!(!root.path().join("tests/generated/test_gen_1.py").exists());
+        assert!(!root
+            .path()
+            .join("tests/generated/_test_gen_1_staged.py")
+            .exists());
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn cancelling_owned_command_reaps_descendants_before_returning() {
+        let root = tempfile::tempdir().unwrap();
+        let started = root.path().join("started");
+        let delayed_write = root.path().join("post-cancel-write");
+        let script = r#"
+import pathlib, subprocess, sys, time
+child = "import pathlib,sys,time;time.sleep(0.4);pathlib.Path(sys.argv[1]).write_text('late')"
+subprocess.Popen([sys.executable, "-c", child, sys.argv[2]])
+pathlib.Path(sys.argv[1]).write_text("started")
+time.sleep(30)
+"#;
+        let mut command = tokio::process::Command::new("python3");
+        command.args([
+            "-c",
+            script,
+            started.to_str().unwrap(),
+            delayed_write.to_str().unwrap(),
+        ]);
+        let run = tokio::spawn(owned_command_output(command, Duration::from_secs(30)));
+
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while !started.exists() {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("subprocess did not spawn its delayed writer");
+        run.abort();
+        assert!(run.await.unwrap_err().is_cancelled());
+        tokio::time::sleep(Duration::from_millis(700)).await;
+        assert!(
+            !delayed_write.exists(),
+            "a cancelled scheduler-owned subprocess descendant survived its drained future"
+        );
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn successful_owned_command_kills_stdio_detached_descendants() {
+        let root = tempfile::tempdir().unwrap();
+        let delayed_write = root.path().join("post-success-write");
+        let script = r#"
+import subprocess, sys
+child = "import pathlib,sys,time;time.sleep(0.4);pathlib.Path(sys.argv[1]).write_text('late')"
+subprocess.Popen(
+    [sys.executable, "-c", child, sys.argv[1]],
+    stdin=subprocess.DEVNULL,
+    stdout=subprocess.DEVNULL,
+    stderr=subprocess.DEVNULL,
+)
+"#;
+        let mut command = tokio::process::Command::new("python3");
+        command.args(["-c", script, delayed_write.to_str().unwrap()]);
+        let output = owned_command_output(command, Duration::from_secs(5))
+            .await
+            .expect("successful leader did not return");
+        assert!(output.status.success());
+
+        tokio::time::sleep(Duration::from_millis(700)).await;
+        assert!(
+            !delayed_write.exists(),
+            "a successful scheduler-owned subprocess left a delayed writer behind"
+        );
+    }
+
     #[test]
     fn a_fix_shard_promotes_only_a_verified_strictly_better_tree() {
         // S1 increment 2: the per-shard promote rule is pick_repair_winner's, per shard.
@@ -25711,6 +25802,16 @@ impl GooseAgentDispatcher {
         .await
     }
 
+    async fn run_omni_judge_probe(
+        &self,
+        model_id: &str,
+        system_prompt: String,
+        user_text: String,
+    ) -> Result<RunAgentOut> {
+        self.run_read_only_agent(model_id, system_prompt, user_text, None, 1, 0, None)
+            .await
+    }
+
     async fn generate_run_overview(
         &self,
         system_prompt: String,
@@ -26776,10 +26877,12 @@ impl GooseAgentDispatcher {
                     }
                 );
                 let pm = self.planner_model.clone();
-                // Box::pin: this is `run_agent` calling `run_agent`, i.e. async recursion (E0733).
+                // Box::pin: this is `run_agent_in` calling `run_agent_in`, i.e. async recursion (E0733).
+                // The probe is advisory and receives the relevant reasoning inline. It must remain
+                // response-only even when its parent call is a scheduler-owned response-only auxiliary.
                 let probe = tokio::time::timeout(
                     std::time::Duration::from_secs(45),
-                    Box::pin(self.run_agent(&pm, sys, user, None, 1, &[], 0, None)),
+                    Box::pin(self.run_omni_judge_probe(&pm, sys, user)),
                 )
                 .await;
                 if let Ok(Ok(o)) = probe {
@@ -42424,7 +42527,7 @@ impl GooseAgentDispatcher {
         );
         let text = tokio::time::timeout(
             std::time::Duration::from_secs(planner_wall(self.planner_timeout_secs)),
-            self.run_agent(&req.judge_model_id, system, user, None, 2, &[], 0, None),
+            self.run_read_only_agent(&req.judge_model_id, system, user, None, 2, 0, None),
         )
         .await
         .ok()
@@ -43447,7 +43550,7 @@ impl Judge for GooseAgentDispatcher {
         }
         match tokio::time::timeout(
             std::time::Duration::from_secs(planner_wall(self.planner_timeout_secs)),
-            self.run_agent(&req.judge_model_id, system, user, None, 2, &[], 0, None),
+            self.run_read_only_agent(&req.judge_model_id, system, user, None, 2, 0, None),
         )
         .await
         {
@@ -43547,7 +43650,7 @@ impl PreReviewer for GooseAgentDispatcher {
         );
         let reply = tokio::time::timeout(
             std::time::Duration::from_secs(planner_wall(self.planner_timeout_secs)),
-            self.run_agent(model_id, system, user, None, 1, &[], 0, None),
+            self.run_read_only_agent(model_id, system, user, None, 1, 0, None),
         )
         .await
         .ok()
@@ -43687,7 +43790,7 @@ impl PreReviewer for GooseAgentDispatcher {
         );
         let text = tokio::time::timeout(
             std::time::Duration::from_secs(planner_wall(self.planner_timeout_secs)),
-            self.run_agent(&req.reviewer_model_id, system, user, None, 2, &[], 0, None),
+            self.run_read_only_agent(&req.reviewer_model_id, system, user, None, 2, 0, None),
         )
         .await
         .ok()
@@ -43731,7 +43834,7 @@ impl PreReviewer for GooseAgentDispatcher {
 
     async fn idle_dimension_review(&self, model_id: &str, goal: &str, dim_index: usize) {
         // Read-only whole-tree review along ONE rotating dimension, on an idle node while the sink runs.
-        // Reuses review_dimension (empty extensions => physically cannot write, so it never races the sink).
+        // Reuses review_dimension's enforced AgentToolSurface::ResponseOnly, so it never races the sink.
         // Any finding is accumulated for run_swarm to drain + re-verify against the FINAL tree after the sink
         // (fail-closed => a stale/torn-read finding is refuted and dropped).
         let cwd = std::env::current_dir().unwrap_or_else(|_| self.working_dir.clone());
@@ -43820,7 +43923,7 @@ impl PreReviewer for GooseAgentDispatcher {
         );
         let reply = tokio::time::timeout(
             std::time::Duration::from_secs(planner_wall(self.planner_timeout_secs)),
-            self.run_agent(model_id, system, user, None, 2, &[], 0, None),
+            self.run_read_only_agent(model_id, system, user, None, 2, 0, None),
         )
         .await
         .ok()
@@ -47972,21 +48075,86 @@ fn digest_failed_calls_block(digest: &Option<serde_json::Value>) -> Option<Strin
     }
 }
 
+#[cfg(unix)]
+struct OwnedProcessGroup {
+    leader: libc::pid_t,
+}
+
+#[cfg(unix)]
+impl OwnedProcessGroup {
+    fn new(leader: u32) -> Result<Self, String> {
+        let leader = libc::pid_t::try_from(leader)
+            .map_err(|_| format!("child process id {leader} does not fit pid_t"))?;
+        Ok(Self { leader })
+    }
+}
+
+#[cfg(unix)]
+impl Drop for OwnedProcessGroup {
+    fn drop(&mut self) {
+        // Always kill the group, including after the leader exited successfully: imported test code can
+        // spawn a stdio-detached delayed writer and let pytest return 0 while that descendant stays live.
+        unsafe {
+            libc::kill(-self.leader, libc::SIGKILL);
+        }
+        loop {
+            let mut status = 0;
+            let waited = unsafe { libc::waitpid(self.leader, &mut status, 0) };
+            if waited == self.leader {
+                break;
+            }
+            if waited == -1 && std::io::Error::last_os_error().raw_os_error() == Some(libc::EINTR) {
+                continue;
+            }
+            break;
+        }
+    }
+}
+
+/// Run a subprocess owned by this future. On Unix, cancelling or completing the future kills every
+/// ordinary process-group descendant and reaps the direct child, so scheduler task draining is also an
+/// OS-process boundary rather than merely a Rust-future boundary. Other platforms retain Tokio's direct-
+/// child kill-on-drop guarantee.
+async fn owned_command_output(
+    mut command: tokio::process::Command,
+    timeout: std::time::Duration,
+) -> Result<std::process::Output, String> {
+    command
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
+    #[cfg(unix)]
+    command.process_group(0);
+    #[cfg(not(unix))]
+    command.kill_on_drop(true);
+
+    let child = command.spawn().map_err(|error| error.to_string())?;
+    #[cfg(unix)]
+    let _process_group = OwnedProcessGroup::new(
+        child
+            .id()
+            .ok_or_else(|| "spawned child has no process id".to_string())?,
+    )?;
+    let result = tokio::time::timeout(timeout, child.wait_with_output()).await;
+    match result {
+        Ok(Ok(output)) => Ok(output),
+        Ok(Err(error)) => Err(error.to_string()),
+        Err(_) => Err(format!("process timed out after {}s", timeout.as_secs())),
+    }
+}
+
 /// F790-2: import health via `pytest --collect-only -q` on the probe root. A collect failure
 /// means the tree cannot even be imported — the strongest cheap "broken" fact a supervisor can
 /// cite, and invisible to per-file syntax checks (it catches cross-file import breakage). 20s
 /// cap; None = healthy, not installed, or timed out (a missing instrument is never evidence).
 async fn collect_only_import_health(root: &std::path::Path) -> Option<String> {
-    let out = tokio::time::timeout(
-        std::time::Duration::from_secs(20),
-        tokio::process::Command::new("python3")
-            .args(["-m", "pytest", "--collect-only", "-q"])
-            .current_dir(root)
-            .output(),
-    )
-    .await
-    .ok()?
-    .ok()?;
+    let mut command = tokio::process::Command::new("python3");
+    command
+        .args(["-m", "pytest", "--collect-only", "-q"])
+        .current_dir(root);
+    let out = owned_command_output(command, std::time::Duration::from_secs(20))
+        .await
+        .ok()?;
     if out.status.success() {
         return None;
     }
@@ -49963,8 +50131,8 @@ impl TaskDispatcher for GooseAgentDispatcher {
         files: &[String],
     ) -> Option<String> {
         // Mirrors pre_review's read-only shape: read the produced files as text, hand them to ONE model with
-        // NO tools (&[] extensions => it physically cannot write), get back one advisory line. Because it is
-        // read-only, N of these run concurrently over the same tree with no shadow + no write-race.
+        // AgentToolSurface::ResponseOnly, and get back one advisory line. Because it is read-only, N of these
+        // run concurrently over the same tree with no shadow + no write-race.
         let cwd = std::env::current_dir().unwrap_or_else(|_| self.working_dir.clone());
         let mut files_block = String::new();
         for f in files {
@@ -50027,7 +50195,7 @@ impl TaskDispatcher for GooseAgentDispatcher {
                     .filter(|n| *n >= 30)
                     .unwrap_or(240),
             ),
-            self.run_agent(model_id, system, user, None, 2, &[], 0, None),
+            self.run_read_only_agent(model_id, system, user, None, 2, 0, None),
         )
         .await
         .ok()
@@ -54975,19 +55143,42 @@ async fn land_generated_tests(
     body: &str,
     seq: usize,
 ) -> Result<String, String> {
+    struct RemoveFileOnDrop {
+        path: PathBuf,
+        armed: bool,
+    }
+
+    impl Drop for RemoveFileOnDrop {
+        fn drop(&mut self) {
+            if self.armed {
+                let _ = std::fs::remove_file(&self.path);
+            }
+        }
+    }
+
+    const COLLECT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
     let rel = format!("tests/generated/test_gen_{seq}.py");
     let abs = root.join(&rel);
-    if let Some(dir) = abs.parent() {
-        std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
-    }
-    std::fs::write(&abs, body).map_err(|e| e.to_string())?;
-    let collect = tokio::process::Command::new("python3")
-        .args(["-m", "pytest", "--collect-only", "-q", &rel])
-        .current_dir(root)
-        .output()
-        .await;
-    let ok = collect.as_ref().is_ok_and(|o| o.status.success());
+    let staged_rel = format!("tests/generated/_test_gen_{seq}_staged.py");
+    let staged = root.join(&staged_rel);
+    std::fs::create_dir_all(staged.parent().unwrap()).map_err(|e| e.to_string())?;
+    std::fs::write(&staged, body).map_err(|e| e.to_string())?;
+    let mut cleanup = RemoveFileOnDrop {
+        path: staged.clone(),
+        armed: true,
+    };
+    let mut command = tokio::process::Command::new("python3");
+    command
+        .args(["-m", "pytest", "--collect-only", "-q", &staged_rel])
+        .current_dir(root);
+    let collect = owned_command_output(command, COLLECT_TIMEOUT).await;
+    let ok = collect.as_ref().is_ok_and(|output| output.status.success());
     if ok {
+        if let Some(dir) = abs.parent() {
+            std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+        }
+        std::fs::rename(&staged, &abs).map_err(|e| e.to_string())?;
+        cleanup.armed = false;
         Ok(rel)
     } else {
         let why = match &collect {
@@ -55000,9 +55191,8 @@ async fn land_generated_tests(
                     .unwrap_or("collection failed")
                     .to_string()
             }
-            Err(e) => e.to_string(),
+            Err(error) => error.clone(),
         };
-        let _ = std::fs::remove_file(&abs);
         Err(why)
     }
 }
@@ -55819,7 +56009,9 @@ fn excluded_from_repair_tree(rel: &Path) -> bool {
     // generated assets, and unplanned files.
     const ENGINE_EVIDENCE: &[&str] = &[
         ".swarm",
+        ".swarm-monitor",
         "run.jsonl",
+        "engine-console.log",
         "bench-shots",
         "heartbeat",
         "graded.db",
@@ -56414,7 +56606,15 @@ mod repair_tree_seal_tests {
 
         std::fs::create_dir_all(dir.path().join(".swarm")).unwrap();
         std::fs::write(dir.path().join(".swarm/run.jsonl"), "evidence\n").unwrap();
+        std::fs::create_dir_all(dir.path().join(".swarm-monitor")).unwrap();
+        std::fs::write(
+            dir.path().join(".swarm-monitor/status.json"),
+            "{\"status\":\"running\"}\n",
+        )
+        .unwrap();
+        std::fs::write(dir.path().join(".swarm-monitor/watch.jsonl"), "watch\n").unwrap();
         std::fs::write(dir.path().join("run.jsonl"), "evidence\n").unwrap();
+        std::fs::write(dir.path().join("engine-console.log"), "console\n").unwrap();
         std::fs::write(dir.path().join("heartbeat"), "alive\n").unwrap();
         let evidence_only = repair_tree_snapshot(dir.path()).unwrap();
         assert_eq!(before, evidence_only);
@@ -56479,6 +56679,28 @@ mod repair_tree_seal_tests {
         tree.record_ruling(&synthetic_ruler(&[]), "authoritative", &sink)
             .unwrap();
         let sealed = tree.seal("final tree".to_string(), false, &sink).unwrap();
+        let sealed_snapshot = repair_tree_snapshot(dir.path()).unwrap();
+        std::fs::create_dir_all(dir.path().join(".swarm-monitor")).unwrap();
+        std::fs::write(
+            dir.path().join(".swarm-monitor/status.json"),
+            "{\"status\":\"monitor_completed\"}\n",
+        )
+        .unwrap();
+        std::fs::write(
+            dir.path().join(".swarm-monitor/watch.jsonl"),
+            "monitor_completed\n",
+        )
+        .unwrap();
+        std::fs::write(
+            dir.path().join("engine-console.log"),
+            "post-seal terminal output\n",
+        )
+        .unwrap();
+        assert_eq!(
+            repair_tree_snapshot(dir.path()).unwrap(),
+            sealed_snapshot,
+            "engine-owned terminal evidence must not mutate the sealed application tree"
+        );
         sealed
             .emit_final_events(&sink, serde_json::json!({ "event": "run_finished" }))
             .unwrap();
@@ -61018,24 +61240,26 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                                 // DAG has no wall bound of its own — the judge's splits keep
                                 // adding tasks INSIDE the round, so the round head that would
                                 // enforce the cap never arrives. The scheduler run now lives
-                                // inside the cap's remaining window: on expiry the run future is
-                                // dropped (kill_on_drop reaps the workers), promoted shards are
-                                // already landed, unpromoted shadows are discarded, and the loop
-                                // proceeds to the honest re-verify exactly as a cap at the round
-                                // head would have.
-                                let fix_sched_run = fix_run.run_with_decisions(
-                                    fix_dag,
-                                    fresh.clone() as Arc<dyn TaskDispatcher>,
-                                    final_binding_spec.clone(),
-                                    user_decisions.clone(),
-                                );
+                                // inside the cap's remaining window. The deadline is enforced INSIDE
+                                // Scheduler so expiry aborts and joins every worker and auxiliary before
+                                // this caller proceeds to the authoritative re-verify and seal.
                                 let report = match cap_deadline {
                                     Some(dl) => {
-                                        let remaining =
-                                            dl.saturating_duration_since(std::time::Instant::now());
-                                        match tokio::time::timeout(remaining, fix_sched_run).await {
-                                            Ok(r) => r,
-                                            Err(_) => {
+                                        match fix_run
+                                            .run_with_decisions_until(
+                                                fix_dag,
+                                                fresh.clone() as Arc<dyn TaskDispatcher>,
+                                                final_binding_spec.clone(),
+                                                user_decisions.clone(),
+                                                dl,
+                                            )
+                                            .await
+                                        {
+                                            Err(error)
+                                                if error
+                                                    .to_string()
+                                                    .contains("scheduler deadline elapsed") =>
+                                            {
                                                 sink.write_value(serde_json::json!({
                                                     "event": "fix_sched_wall_cut",
                                                     "round": round,
@@ -61048,9 +61272,19 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                                                     "fix round cut by the completion wall cap"
                                                 ))
                                             }
+                                            result => result,
                                         }
                                     }
-                                    None => fix_sched_run.await,
+                                    None => {
+                                        fix_run
+                                            .run_with_decisions(
+                                                fix_dag,
+                                                fresh.clone() as Arc<dyn TaskDispatcher>,
+                                                final_binding_spec.clone(),
+                                                user_decisions.clone(),
+                                            )
+                                            .await
+                                    }
                                 };
                                 fresh.end_fix_round();
                                 // The fix run's review findings have no consumer yet — drained to
@@ -63526,6 +63760,66 @@ mod pre_scheduler_semantic_runtime_tests {
         async fn run(&self, request: DispatchRequest) -> Result<TaskRunOutput, DispatchError> {
             self.starts.fetch_add(1, AtomicOrdering::SeqCst);
             Ok(format!("built:{}", request.task_id).into())
+        }
+    }
+
+    struct AuxiliaryDrainDispatcher {
+        slow_release: Arc<Notify>,
+    }
+
+    #[async_trait]
+    impl TaskDispatcher for AuxiliaryDrainDispatcher {
+        async fn run(&self, request: DispatchRequest) -> Result<TaskRunOutput, DispatchError> {
+            if request.task_id == "slow" {
+                self.slow_release.notified().await;
+            }
+            Ok(format!("built:{}", request.task_id).into())
+        }
+    }
+
+    struct BlockingTestgen {
+        started: Arc<Notify>,
+        release: Arc<Notify>,
+        generated_path: PathBuf,
+        cancelled: Arc<AtomicUsize>,
+    }
+
+    struct TestgenCancellationGuard {
+        cancelled: Arc<AtomicUsize>,
+        completed: bool,
+    }
+
+    impl Drop for TestgenCancellationGuard {
+        fn drop(&mut self) {
+            if !self.completed {
+                self.cancelled.fetch_add(1, AtomicOrdering::SeqCst);
+            }
+        }
+    }
+
+    #[async_trait]
+    impl PreReviewer for BlockingTestgen {
+        async fn pre_review(&self, _request: PreReviewRequest) -> PreReviewOutput {
+            PreReviewOutput {
+                had_findings: false,
+                summary: String::new(),
+            }
+        }
+
+        async fn generate_tests(&self, _model_id: &str, _goal: &str, _seq: u32) {
+            let mut cancellation = TestgenCancellationGuard {
+                cancelled: self.cancelled.clone(),
+                completed: false,
+            };
+            self.started.notify_one();
+            self.release.notified().await;
+            std::fs::create_dir_all(self.generated_path.parent().unwrap()).unwrap();
+            std::fs::write(
+                &self.generated_path,
+                "def test_generated_before_seal():\n    assert True\n",
+            )
+            .unwrap();
+            cancellation.completed = true;
         }
     }
 
@@ -66294,6 +66588,77 @@ mod pre_scheduler_semantic_runtime_tests {
                 .await
         );
 
+        let tail_review_provider = Arc::new(OverviewAdversarialProvider::write_then_text(
+            target.clone(),
+            "OK|",
+        ));
+        let tail_review_dispatcher = overview_test_dispatcher(
+            working_dir.path().to_path_buf(),
+            sink.clone(),
+            tail_review_provider.clone(),
+        )
+        .await;
+        assert_eq!(
+            tail_review_dispatcher
+                .review_dimension(
+                    SOURCE_MODEL,
+                    "correctness",
+                    "check the supplied fixture",
+                    "Preserve the fixture",
+                    &[target.display().to_string()],
+                )
+                .await,
+            None
+        );
+
+        let split_provider = Arc::new(OverviewAdversarialProvider::write_then_text(
+            target.clone(),
+            r#"[{"id":"part-a","files":["app.py"],"depends_on":[]},{"id":"part-b","files":["other.py"],"depends_on":[]}]"#,
+        ));
+        let split_dispatcher = overview_test_dispatcher(
+            working_dir.path().to_path_buf(),
+            sink.clone(),
+            split_provider.clone(),
+        )
+        .await;
+        let split = split_dispatcher
+            .propose_split(&JudgeRequest {
+                task_id: "large-task".to_string(),
+                description: "partition the two modules".to_string(),
+                owned_files: vec!["app.py".to_string(), "other.py".to_string()],
+                elapsed_secs: 600,
+                judge_model_id: SOURCE_MODEL.to_string(),
+                goal: "preserve the application".to_string(),
+                done: Vec::new(),
+                remaining: Vec::new(),
+                failed: Vec::new(),
+                split_count: 0,
+                attempt: 0,
+            })
+            .await
+            .expect("response-only split proposal disappeared");
+        assert_eq!(split.len(), 2);
+
+        let omni_provider = Arc::new(OverviewAdversarialProvider::write_then_text(
+            target.clone(),
+            "OK|HIGH|reasoning advanced",
+        ));
+        let omni_dispatcher = overview_test_dispatcher(
+            working_dir.path().to_path_buf(),
+            sink.clone(),
+            omni_provider.clone(),
+        )
+        .await;
+        let omni = omni_dispatcher
+            .run_omni_judge_probe(
+                SOURCE_MODEL,
+                "Inspect the supplied reasoning.".to_string(),
+                "The call is still advancing.".to_string(),
+            )
+            .await
+            .unwrap();
+        assert!(omni.text.contains("maximum number of actions"));
+
         let overview_provider = Arc::new(OverviewAdversarialProvider::write_then_typed(
             target.clone(),
         ));
@@ -66325,6 +66690,8 @@ mod pre_scheduler_semantic_runtime_tests {
         for surfaces in [
             persona_provider.tool_surfaces(),
             verify_provider.tool_surfaces(),
+            tail_review_provider.tool_surfaces(),
+            split_provider.tool_surfaces(),
         ] {
             assert_eq!(
                 surfaces,
@@ -66332,6 +66699,11 @@ mod pre_scheduler_semantic_runtime_tests {
                 "post-seal prose call exposed a tool surface"
             );
         }
+        assert_eq!(
+            omni_provider.tool_surfaces(),
+            vec![Vec::<String>::new()],
+            "the one-turn omni probe exposed a tool surface"
+        );
         assert_eq!(
             overview_provider.tool_surfaces(),
             vec![
@@ -66369,10 +66741,7 @@ mod pre_scheduler_semantic_runtime_tests {
             .find(|event| event["event"] == "run_finished")
             .unwrap();
         assert_eq!(complete_result["tree_hash"], sealed_snapshot.sha256);
-        assert_eq!(
-            run_finished["complete_tree_hash"],
-            sealed_snapshot.sha256
-        );
+        assert_eq!(run_finished["complete_tree_hash"], sealed_snapshot.sha256);
         let terminal = values
             .iter()
             .filter_map(|event| event["event"].as_str())
@@ -66394,6 +66763,283 @@ mod pre_scheduler_semantic_runtime_tests {
                 "complete_result",
                 "run_finished",
             ]
+        );
+    }
+
+    #[tokio::test]
+    async fn scheduler_drains_writing_testgen_before_seal_and_terminal_events() {
+        let _env = env_lock::lock_env([
+            ("GOOSE_SWARM_SINK_REVIEW", Some("0")),
+            ("GOOSE_SWARM_TAIL_REVIEW", Some("0")),
+            ("GOOSE_SWARM_TESTGEN", Some("1")),
+        ]);
+        let working_dir = tempfile::tempdir().unwrap();
+        std::fs::write(working_dir.path().join("app.py"), "original application\n").unwrap();
+        let generated_path = working_dir
+            .path()
+            .join("tests")
+            .join("generated")
+            .join("test_gen_0.py");
+        let sink = Arc::new(RuntimeRecordingSink::default());
+        let slow_release = Arc::new(Notify::new());
+        let testgen_started = Arc::new(Notify::new());
+        let testgen_release = Arc::new(Notify::new());
+        let testgen_cancelled = Arc::new(AtomicUsize::new(0));
+        let dispatcher = Arc::new(AuxiliaryDrainDispatcher {
+            slow_release: slow_release.clone(),
+        });
+        let pre_reviewer = Arc::new(BlockingTestgen {
+            started: testgen_started.clone(),
+            release: testgen_release.clone(),
+            generated_path: generated_path.clone(),
+            cancelled: testgen_cancelled.clone(),
+        });
+        let dag = Dag::from_specs(vec![
+            TaskSpec {
+                id: "done".to_string(),
+                description: "finish immediately".to_string(),
+                difficulty: goose_swarm::Difficulty::Easy,
+                preferred_model: None,
+                owned_files: Vec::new(),
+                deps: Vec::new(),
+                subsplit: Vec::new(),
+                replan_authority: None,
+            },
+            TaskSpec {
+                id: "slow".to_string(),
+                description: "hold the DAG open while test generation starts".to_string(),
+                difficulty: goose_swarm::Difficulty::Easy,
+                preferred_model: None,
+                owned_files: Vec::new(),
+                deps: Vec::new(),
+                subsplit: Vec::new(),
+                replan_authority: None,
+            },
+        ])
+        .unwrap();
+        let devices = (0..2)
+            .map(|index| DeviceCfg {
+                id: format!("aux-device-{index}"),
+                model_id: format!("aux-model-{index}"),
+                weight: 1,
+                enabled: true,
+                speed_weight: 1,
+                supervision: false,
+            })
+            .collect();
+        let scheduler = Scheduler::new(devices, 1)
+            .with_sink(sink.clone())
+            .with_pre_reviewer(pre_reviewer);
+        let mut run = tokio::spawn(async move {
+            scheduler
+                .run(dag, dispatcher, "exercise the auxiliary drain".to_string())
+                .await
+        });
+
+        tokio::time::timeout(Duration::from_secs(2), testgen_started.notified())
+            .await
+            .expect("test generation did not start before the DAG became terminal");
+        slow_release.notify_one();
+        assert!(
+            tokio::time::timeout(Duration::from_millis(100), &mut run)
+                .await
+                .is_err(),
+            "the scheduler reported completion while writing test generation was still live"
+        );
+        assert!(
+            !generated_path.exists(),
+            "the blocked test generator wrote before its release"
+        );
+
+        testgen_release.notify_one();
+        let report = tokio::time::timeout(Duration::from_secs(2), run)
+            .await
+            .expect("scheduler did not finish after test generation drained")
+            .expect("scheduler task panicked")
+            .expect("scheduler failed");
+        assert_eq!(report.done.len(), 2);
+        assert!(generated_path.exists(), "test generation never landed");
+        assert_eq!(testgen_cancelled.load(AtomicOrdering::SeqCst), 0);
+
+        let mut tree = OpenRepairTree::open(working_dir.path(), sink.as_ref()).unwrap();
+        tree.record_ruling_values(true, true, 0, "authoritative", sink.as_ref())
+            .unwrap();
+        let sealed = tree
+            .seal("authoritative tree".to_string(), false, sink.as_ref())
+            .unwrap();
+        let sealed_snapshot = repair_tree_snapshot(working_dir.path()).unwrap();
+        emit_run_terminal_events(
+            sink.as_ref(),
+            None,
+            Some(&sealed),
+            serde_json::json!({ "event": "run_finished" }),
+        )
+        .unwrap();
+
+        assert_eq!(
+            repair_tree_snapshot(working_dir.path()).unwrap(),
+            sealed_snapshot
+        );
+        let values = sink.values();
+        assert!(!values
+            .iter()
+            .any(|event| event["event"] == "post_seal_mutation"));
+        assert_eq!(
+            values
+                .iter()
+                .filter(|event| event["event"] == "complete_result")
+                .count(),
+            1
+        );
+        assert_eq!(
+            values
+                .iter()
+                .filter(|event| event["event"] == "run_finished")
+                .count(),
+            1
+        );
+        let complete_result = values
+            .iter()
+            .find(|event| event["event"] == "complete_result")
+            .unwrap();
+        let run_finished = values
+            .iter()
+            .find(|event| event["event"] == "run_finished")
+            .unwrap();
+        assert_eq!(complete_result["tree_hash"], sealed_snapshot.sha256);
+        assert_eq!(run_finished["complete_tree_hash"], sealed_snapshot.sha256);
+    }
+
+    #[tokio::test]
+    async fn scheduler_deadline_cancels_and_drains_testgen_before_seal() {
+        let _env = env_lock::lock_env([
+            ("GOOSE_SWARM_SINK_REVIEW", Some("0")),
+            ("GOOSE_SWARM_TAIL_REVIEW", Some("0")),
+            ("GOOSE_SWARM_TESTGEN", Some("1")),
+        ]);
+        let working_dir = tempfile::tempdir().unwrap();
+        std::fs::write(working_dir.path().join("app.py"), "original application\n").unwrap();
+        let generated_path = working_dir
+            .path()
+            .join("tests")
+            .join("generated")
+            .join("test_gen_0.py");
+        let sink = Arc::new(RuntimeRecordingSink::default());
+        let slow_release = Arc::new(Notify::new());
+        let testgen_started = Arc::new(Notify::new());
+        let testgen_release = Arc::new(Notify::new());
+        let testgen_cancelled = Arc::new(AtomicUsize::new(0));
+        let dispatcher = Arc::new(AuxiliaryDrainDispatcher {
+            slow_release: slow_release.clone(),
+        });
+        let pre_reviewer = Arc::new(BlockingTestgen {
+            started: testgen_started.clone(),
+            release: testgen_release.clone(),
+            generated_path: generated_path.clone(),
+            cancelled: testgen_cancelled.clone(),
+        });
+        let dag = Dag::from_specs(vec![
+            TaskSpec {
+                id: "done".to_string(),
+                description: "finish immediately".to_string(),
+                difficulty: goose_swarm::Difficulty::Easy,
+                preferred_model: None,
+                owned_files: Vec::new(),
+                deps: Vec::new(),
+                subsplit: Vec::new(),
+                replan_authority: None,
+            },
+            TaskSpec {
+                id: "slow".to_string(),
+                description: "remain live until the scheduler deadline".to_string(),
+                difficulty: goose_swarm::Difficulty::Easy,
+                preferred_model: None,
+                owned_files: Vec::new(),
+                deps: Vec::new(),
+                subsplit: Vec::new(),
+                replan_authority: None,
+            },
+        ])
+        .unwrap();
+        let devices = (0..2)
+            .map(|index| DeviceCfg {
+                id: format!("deadline-device-{index}"),
+                model_id: format!("deadline-model-{index}"),
+                weight: 1,
+                enabled: true,
+                speed_weight: 1,
+                supervision: false,
+            })
+            .collect();
+        let scheduler = Scheduler::new(devices, 1)
+            .with_sink(sink.clone())
+            .with_pre_reviewer(pre_reviewer);
+        let deadline = std::time::Instant::now() + Duration::from_secs(1);
+        let run = tokio::spawn(async move {
+            scheduler
+                .run_with_decisions_until(
+                    dag,
+                    dispatcher,
+                    "exercise deadline shutdown".to_string(),
+                    String::new(),
+                    deadline,
+                )
+                .await
+        });
+
+        tokio::time::timeout(Duration::from_secs(2), testgen_started.notified())
+            .await
+            .expect("test generation did not start before the scheduler deadline");
+        let error = tokio::time::timeout(Duration::from_secs(2), run)
+            .await
+            .expect("deadline did not stop the scheduler")
+            .expect("scheduler task panicked")
+            .expect_err("deadline unexpectedly returned a completed report");
+        assert!(error.to_string().contains("scheduler deadline elapsed"));
+        assert_eq!(testgen_cancelled.load(AtomicOrdering::SeqCst), 1);
+        assert!(!generated_path.exists());
+
+        let mut tree = OpenRepairTree::open(working_dir.path(), sink.as_ref()).unwrap();
+        tree.record_ruling_values(true, true, 0, "authoritative", sink.as_ref())
+            .unwrap();
+        let sealed = tree
+            .seal("authoritative tree".to_string(), false, sink.as_ref())
+            .unwrap();
+        let sealed_snapshot = repair_tree_snapshot(working_dir.path()).unwrap();
+
+        slow_release.notify_one();
+        testgen_release.notify_one();
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        emit_run_terminal_events(
+            sink.as_ref(),
+            None,
+            Some(&sealed),
+            serde_json::json!({ "event": "run_finished" }),
+        )
+        .unwrap();
+
+        assert_eq!(
+            repair_tree_snapshot(working_dir.path()).unwrap(),
+            sealed_snapshot
+        );
+        assert!(!generated_path.exists());
+        let values = sink.values();
+        assert!(!values
+            .iter()
+            .any(|event| event["event"] == "post_seal_mutation"));
+        assert_eq!(
+            values
+                .iter()
+                .filter(|event| event["event"] == "complete_result")
+                .count(),
+            1
+        );
+        assert_eq!(
+            values
+                .iter()
+                .filter(|event| event["event"] == "run_finished")
+                .count(),
+            1
         );
     }
 
