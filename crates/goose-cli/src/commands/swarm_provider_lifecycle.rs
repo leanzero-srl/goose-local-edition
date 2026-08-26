@@ -2629,7 +2629,8 @@ mod tests {
 
     #[tokio::test]
     async fn dropped_stream_reconciles_cancelled_terminal_before_admission_release() {
-        let (control, work) = admitted().await;
+        let sink = Arc::new(RecordingSink::default());
+        let (control, work) = admitted_with_sink(sink.clone()).await;
         let lifecycle = work.lifecycle();
         let provider = wrapped_for(Behavior::Pending, lifecycle.clone()).await;
         let output = provider
@@ -2648,6 +2649,9 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(control.occupancy().await, (0, 0));
+        assert_eq!(sink.count("broker_provider_request_permitted"), 1);
+        assert_eq!(sink.count("broker_provider_terminal_observed"), 1);
+        assert_eq!(sink.count("broker_admission_released"), 1);
     }
 
     #[tokio::test]
