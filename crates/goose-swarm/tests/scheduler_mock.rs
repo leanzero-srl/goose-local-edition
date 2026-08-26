@@ -2036,6 +2036,210 @@ async fn terminal_primary_cancels_stale_twin_before_scheduler_returns() {
     );
 }
 
+#[tokio::test]
+async fn exhausted_task_becomes_typed_unavailable_and_independent_work_continues() {
+    #[derive(Default)]
+    struct ContinuationProbe {
+        seen: Mutex<Vec<(String, Option<String>)>>,
+    }
+
+    #[async_trait]
+    impl TaskDispatcher for ContinuationProbe {
+        async fn run(&self, req: DispatchRequest) -> Result<TaskRunOutput, DispatchError> {
+            self.seen
+                .lock()
+                .unwrap()
+                .push((req.task_id.clone(), req.prior_hint.clone()));
+            if req.task_id == "missing-capability" {
+                Err(DispatchError::ContentRetry(
+                    "model omitted the required capability artifact".to_string(),
+                ))
+            } else {
+                Ok(format!("completed {}", req.task_id).into())
+            }
+        }
+    }
+
+    let missing_root = tempfile::tempdir().unwrap();
+    let missing_file = missing_root
+        .path()
+        .join("missing-capability.rs")
+        .display()
+        .to_string();
+    let dag = Dag::from_specs(vec![
+        spec("missing-capability", &[], &[&missing_file]),
+        spec(
+            "dependent-capability",
+            &["missing-capability"],
+            &["target/test-unavailable/dependent-capability.rs"],
+        ),
+        spec(
+            "final-ruler-input",
+            &["dependent-capability"],
+            &["target/test-unavailable/final-ruler-input.rs"],
+        ),
+        spec(
+            "independent-capability",
+            &[],
+            &["target/test-unavailable/independent-capability.rs"],
+        ),
+    ])
+    .unwrap();
+    let dispatcher = Arc::new(ContinuationProbe::default());
+    let sink = Arc::new(RecordingEventSink::default());
+    let report = Scheduler::new(vec![dev("a", "m-a", 1), dev("b", "m-b", 1)], 1)
+        .with_sink(sink.clone())
+        .with_unavailable_continuation()
+        .run(dag, dispatcher.clone(), String::new())
+        .await
+        .unwrap();
+
+    assert_eq!(report.failed, vec!["missing-capability".to_string()]);
+    assert!(report.done.contains(&"independent-capability".to_string()));
+    assert!(report.done.contains(&"dependent-capability".to_string()));
+    assert!(report.done.contains(&"final-ruler-input".to_string()));
+    assert_eq!(report.unavailable.len(), 1);
+    let unavailable = &report.unavailable[0];
+    assert_eq!(unavailable.task_id, "missing-capability");
+    assert_eq!(unavailable.required_files, vec![missing_file.clone()]);
+    assert_eq!(unavailable.missing_files, vec![missing_file.clone()]);
+    assert_eq!(
+        unavailable.continued_dependents,
+        vec!["dependent-capability".to_string()]
+    );
+    assert!(report.planned_files.contains(&missing_file));
+
+    let seen = dispatcher.seen.lock().unwrap();
+    let dependent_hint = seen
+        .iter()
+        .find(|(task_id, _)| task_id == "dependent-capability")
+        .and_then(|(_, hint)| hint.as_deref())
+        .expect("the dependent must receive explicit unavailable evidence");
+    assert!(dependent_hint.contains("UNAVAILABLE"));
+    assert!(dependent_hint.contains("Do not pretend"));
+    assert!(sink.events.lock().unwrap().iter().any(|event| {
+        event.get("event").and_then(serde_json::Value::as_str) == Some("task_unavailable")
+    }));
+}
+
+#[tokio::test]
+async fn integrity_terminal_still_fails_closed_with_unavailable_continuation_enabled() {
+    #[derive(Default)]
+    struct AuthorityMismatchProbe {
+        seen: Mutex<Vec<String>>,
+    }
+
+    #[async_trait]
+    impl TaskDispatcher for AuthorityMismatchProbe {
+        async fn run(&self, req: DispatchRequest) -> Result<TaskRunOutput, DispatchError> {
+            self.seen.lock().unwrap().push(req.task_id.clone());
+            if req.task_id == "authority-corrupt" {
+                Err(DispatchError::Terminal(
+                    "physical admission source does not match task authority".to_string(),
+                ))
+            } else {
+                Ok("must not run".to_string().into())
+            }
+        }
+    }
+
+    let dag = Dag::from_specs(vec![
+        spec(
+            "authority-corrupt",
+            &[],
+            &["target/test-unavailable/authority-corrupt.rs"],
+        ),
+        spec(
+            "would-write-descendant",
+            &["authority-corrupt"],
+            &["target/test-unavailable/would-write-descendant.rs"],
+        ),
+    ])
+    .unwrap();
+    let dispatcher = Arc::new(AuthorityMismatchProbe::default());
+    let report = Scheduler::new(vec![dev("a", "m-a", 1)], 1)
+        .with_unavailable_continuation()
+        .run(dag, dispatcher.clone(), String::new())
+        .await
+        .unwrap();
+
+    assert!(report.unavailable.is_empty());
+    assert_eq!(
+        report.failed,
+        vec![
+            "authority-corrupt".to_string(),
+            "would-write-descendant".to_string()
+        ]
+    );
+    assert_eq!(
+        dispatcher.seen.lock().unwrap().as_slice(),
+        &["authority-corrupt".to_string()]
+    );
+}
+
+#[tokio::test]
+async fn non_regular_owned_artifact_still_fails_closed_during_unavailable_continuation() {
+    #[derive(Default)]
+    struct ExhaustedProbe {
+        seen: Mutex<Vec<String>>,
+    }
+
+    #[async_trait]
+    impl TaskDispatcher for ExhaustedProbe {
+        async fn run(&self, req: DispatchRequest) -> Result<TaskRunOutput, DispatchError> {
+            self.seen.lock().unwrap().push(req.task_id.clone());
+            Err(DispatchError::ContentRetry(
+                "ordinary model output exhaustion".to_string(),
+            ))
+        }
+    }
+
+    let root = tempfile::tempdir().unwrap();
+    let non_regular = root.path().join("artifact.py");
+    std::fs::create_dir(&non_regular).unwrap();
+    let non_regular = non_regular.display().to_string();
+    let dag = Dag::from_specs(vec![
+        spec("corrupt-artifact", &[], &[&non_regular]),
+        spec(
+            "would-write-descendant",
+            &["corrupt-artifact"],
+            &["target/test-unavailable/would-write-after-corruption.rs"],
+        ),
+    ])
+    .unwrap();
+    let dispatcher = Arc::new(ExhaustedProbe::default());
+    let report = Scheduler::new(vec![dev("a", "m-a", 1)], 1)
+        .with_unavailable_continuation()
+        .run(dag, dispatcher.clone(), String::new())
+        .await
+        .unwrap();
+
+    assert!(report.unavailable.is_empty());
+    assert_eq!(
+        report.failed,
+        vec![
+            "corrupt-artifact".to_string(),
+            "would-write-descendant".to_string()
+        ]
+    );
+    assert_eq!(
+        dispatcher.seen.lock().unwrap().as_slice(),
+        &["corrupt-artifact".to_string()]
+    );
+    let outcome = report
+        .tasks
+        .iter()
+        .find(|outcome| outcome.task_id == "corrupt-artifact")
+        .unwrap();
+    assert_eq!(outcome.status, "failed");
+    assert_eq!(outcome.attempt_history[0].outcome, "integrity_failed");
+    assert!(outcome.attempt_history[0]
+        .error
+        .as_deref()
+        .unwrap()
+        .contains("not a regular file"));
+}
+
 /// Records what EVERY worker was actually handed. This is the test that the user-decisions bug needed and
 /// did not have.
 struct DecisionSpy {

@@ -58,6 +58,12 @@ pub enum SwarmEvent {
         error: Option<String>,
         tool_calls: Vec<ToolCallRecord>,
     },
+    /// An ordinary model/provider attempt exhausted without proving its artifacts. This is not a
+    /// completion receipt and not an integrity failure: downstream work may continue against the
+    /// remaining tree while the existing repair/final ruler owns the named obligation.
+    TaskUnavailable {
+        evidence: crate::scheduler::TaskUnavailableEvidence,
+    },
     TaskCheckpointPersisted {
         task_id: String,
         sequence: u64,
