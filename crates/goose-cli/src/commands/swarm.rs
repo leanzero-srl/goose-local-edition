@@ -51,10 +51,10 @@ use goose_swarm::{
     PillarAttemptCheckpoint, PillarCheckpointStore, PillarImplementationTaskCoverage,
     PillarReportDraft, PillarResumeDecision, PreReviewOutput, PreReviewRequest, PreReviewer,
     ProviderLifecycle, ProviderLifecycleDispatcher, ProviderLifecycleStartError,
-    ProviderNudgeDelivery, ProviderRequestKey, ProviderRequestReceipt, ProviderTerminalKind,
-    ProviderTerminalReceipt, ReplanAuthorityFact, ReplanAuthorityReceipt, ReplanContext, Replanner,
-    ResearchClaimDraft, ResearchPillar, ResearchPillarOpening, RunReport, Scheduler,
-    SchedulerCheckpointStore, SchedulerCompletedTaskEvidence, SemanticActivityPublisher,
+    ProviderNudgeDelivery, ProviderNudgeSafetySnapshot, ProviderRequestKey, ProviderRequestReceipt,
+    ProviderTerminalKind, ProviderTerminalReceipt, ReplanAuthorityFact, ReplanAuthorityReceipt,
+    ReplanContext, Replanner, ResearchClaimDraft, ResearchPillar, ResearchPillarOpening, RunReport,
+    Scheduler, SchedulerCheckpointStore, SchedulerCompletedTaskEvidence, SemanticActivityPublisher,
     SourceRevisionKind, SwarmEvent, TaskDispatcher, TaskRunOutput, TaskSpec, TaskVersion,
     ToolCallRecord, Verdict, VerifiedPhysicalIdentity, WorkOpportunity, WorkRole,
 };
@@ -24378,6 +24378,7 @@ struct AgentProviderNudgeFactory {
     agent: Arc<Agent>,
     session_id: String,
     external_cancellation: Option<PreSchedulerCallCancellation>,
+    progress: Arc<ProviderStreamProgressMeter>,
 }
 
 impl ProviderNudgeDeliveryFactory for AgentProviderNudgeFactory {
@@ -24386,6 +24387,7 @@ impl ProviderNudgeDeliveryFactory for AgentProviderNudgeFactory {
             self.agent.clone(),
             self.session_id.clone(),
             self.external_cancellation.clone(),
+            self.progress.clone(),
         ))
     }
 }
@@ -24404,6 +24406,7 @@ struct AgentProviderNudgeChannel {
     confirmed_terminal:
         tokio::sync::watch::Sender<Option<std::result::Result<ProviderTerminalReceipt, String>>>,
     external_cancellation: Option<PreSchedulerCallCancellation>,
+    progress: Arc<ProviderStreamProgressMeter>,
     state: Mutex<AgentProviderNudgeState>,
 }
 
@@ -24412,6 +24415,7 @@ impl AgentProviderNudgeChannel {
         agent: Arc<Agent>,
         session_id: String,
         external_cancellation: Option<PreSchedulerCallCancellation>,
+        progress: Arc<ProviderStreamProgressMeter>,
     ) -> Self {
         let (sender, mut receiver) = tokio::sync::mpsc::unbounded_channel::<String>();
         let (cancelled, _) = tokio::sync::watch::channel(false);
@@ -24430,6 +24434,7 @@ impl AgentProviderNudgeChannel {
             cancelled,
             confirmed_terminal,
             external_cancellation,
+            progress,
             state: Mutex::new(AgentProviderNudgeState::default()),
         }
     }
@@ -24449,6 +24454,15 @@ impl ProviderNudgeDelivery for AgentProviderNudgeChannel {
                 Ok(())
             }
         }
+    }
+
+    fn reserve_at_capture(
+        &self,
+        capture: ProviderNudgeSafetySnapshot,
+        reserve: &mut dyn FnMut() -> std::result::Result<(), String>,
+    ) -> std::result::Result<(), String> {
+        self.progress
+            .reserve_progress_stable_nudge(capture.into(), reserve)
     }
 
     fn try_enqueue(&self, guidance: String) -> std::result::Result<(), String> {
@@ -26449,6 +26463,7 @@ impl GooseAgentDispatcher {
         if !extra.is_empty() {
             model_config = model_config.with_merged_request_params(extra);
         }
+        let provider_stream_progress = Arc::new(ProviderStreamProgressMeter::new());
         let nudge_factory: Arc<dyn ProviderNudgeDeliveryFactory> =
             Arc::new(AgentProviderNudgeFactory {
                 agent: agent.clone(),
@@ -26456,8 +26471,8 @@ impl GooseAgentDispatcher {
                 external_cancellation: ACTIVE_PRE_SCHEDULER_CANCELLATION
                     .try_with(Clone::clone)
                     .ok(),
+                progress: provider_stream_progress.clone(),
             });
-        let provider_stream_progress = Arc::new(ProviderStreamProgressMeter::new());
         let provider = bind_current_provider_lifecycle(
             self.provider_for(model_id).await?,
             Some(nudge_factory),

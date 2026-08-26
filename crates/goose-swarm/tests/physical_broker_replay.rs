@@ -26,6 +26,14 @@ fn lane(device: &str, model: &str, host: &str, instance: &str) -> VerifiedPhysic
     }
 }
 
+fn probe_lane(device: &str, model: &str, host: &str, instance: &str) -> VerifiedPhysicalLane {
+    let mut lane = lane(device, model, host, instance);
+    lane.capacity_evidence = HostCapacityEvidence::ProbeSingleStream {
+        probe_epoch: format!("probe:{host}"),
+    };
+    lane
+}
+
 fn snapshot(id: &str, lanes: Vec<VerifiedPhysicalLane>) -> PhysicalFleetSnapshot {
     PhysicalFleetSnapshot::new(id, lanes).unwrap()
 }
@@ -49,6 +57,20 @@ fn artifact(task: &str, attempt: u32, revision: u64) -> TaskVersion {
         attempt,
         revision,
         kind: SourceRevisionKind::Artifact {
+            snapshot_hash: format!("sha256:{task}:{attempt}:{revision}"),
+        },
+    }
+}
+
+fn trace(task: &str, attempt: u32, revision: u64) -> TaskVersion {
+    TaskVersion {
+        authority_scope: AuthorityScope::new("broker-replay", "main"),
+        phase_epoch: 0,
+        task_id: task.to_string(),
+        attempt,
+        revision,
+        kind: SourceRevisionKind::Trace {
+            trace_sequence: revision,
             snapshot_hash: format!("sha256:{task}:{attempt}:{revision}"),
         },
     }
@@ -755,6 +777,179 @@ fn provider_reacquisition_uses_its_task_work_id_for_equal_rank_tiebreaking() {
             panic!("task-id ordering was replaced by admission-id ordering: {receipt:?}")
         }
     }
+}
+
+#[test]
+fn existing_core_session_continuation_beats_r5_queued_build_inversion() {
+    let mut broker = PhysicalBroker::new(
+        "r5-continuation-inversion",
+        snapshot(
+            "r5-continuation-inversion",
+            vec![lane("lane-a", "model-a", "host-a", "instance-a")],
+        ),
+    )
+    .unwrap();
+    let existing_source = attempt("build-03", 0, 1);
+    broker.set_source_revision(existing_source.clone()).unwrap();
+    broker
+        .enqueue(work(
+            "build-03",
+            WorkRole::Build,
+            WorkPriority::Implementation,
+            existing_source,
+        ))
+        .unwrap();
+    let existing = admit_next(&mut broker);
+    let first = provider_start(&existing, 0);
+    broker.request_provider_turn(first.clone()).unwrap();
+    broker
+        .observe_provider_terminal(provider_terminal(&first, ProviderTerminalKind::Finished))
+        .unwrap();
+    let continuation = provider_start(&existing, 1);
+    assert!(matches!(
+        broker.request_provider_turn(continuation.clone()).unwrap(),
+        ProviderRequestDisposition::Queued(_)
+    ));
+
+    let queued_source = attempt("build-01", 0, 1);
+    broker.set_source_revision(queued_source.clone()).unwrap();
+    broker
+        .enqueue(work(
+            "build-01",
+            WorkRole::Build,
+            WorkPriority::Implementation,
+            queued_source,
+        ))
+        .unwrap();
+
+    assert!(matches!(
+        broker.grant_next(),
+        Some(BrokerGrant::ProviderRequest { admission, receipt })
+            if admission.work_id == "build-03" && receipt == continuation
+    ));
+}
+
+#[test]
+fn queued_core_build_beats_unstarted_repair_alternative() {
+    let mut broker = PhysicalBroker::new(
+        "core-before-repair",
+        snapshot(
+            "core-before-repair",
+            vec![
+                lane("lane-a", "model-a", "host-a", "instance-a"),
+                lane("lane-b", "model-b", "host-b", "instance-b"),
+            ],
+        ),
+    )
+    .unwrap();
+    let repair_source = attempt("repair", 1, 2);
+    broker.set_source_revision(repair_source.clone()).unwrap();
+    broker
+        .enqueue(work(
+            "repair-alternative",
+            WorkRole::Repair,
+            WorkPriority::CriticalPath,
+            repair_source,
+        ))
+        .unwrap();
+    let build_source = attempt("build", 0, 1);
+    broker.set_source_revision(build_source.clone()).unwrap();
+    broker
+        .enqueue(work(
+            "core-build",
+            WorkRole::Build,
+            WorkPriority::Implementation,
+            build_source,
+        ))
+        .unwrap();
+
+    assert_eq!(admit_next(&mut broker).work_id, "core-build");
+}
+
+#[test]
+fn idle_judge_never_steals_a_route_from_queued_core_work() {
+    let mut broker = PhysicalBroker::new(
+        "core-before-judge",
+        snapshot(
+            "core-before-judge",
+            vec![lane("lane-a", "model-a", "host-a", "instance-a")],
+        ),
+    )
+    .unwrap();
+    let judge_source = trace("observed", 0, 1);
+    broker.set_source_revision(judge_source.clone()).unwrap();
+    let mut judge = work(
+        "semantic-judge",
+        WorkRole::SemanticJudgeObservation,
+        WorkPriority::AuxiliaryEvidence,
+        judge_source,
+    );
+    judge.task_rank = u64::MAX;
+    broker.enqueue(judge).unwrap();
+    let build_source = attempt("core", 0, 1);
+    broker.set_source_revision(build_source.clone()).unwrap();
+    broker
+        .enqueue(work(
+            "core-build",
+            WorkRole::Build,
+            WorkPriority::Implementation,
+            build_source,
+        ))
+        .unwrap();
+
+    assert_eq!(admit_next(&mut broker).work_id, "core-build");
+}
+
+#[test]
+fn probe_single_stream_keeps_one_parked_session_and_resumes_it_before_fresh_work() {
+    let mut broker = PhysicalBroker::new(
+        "probe-parked-session",
+        snapshot(
+            "probe-parked-session",
+            vec![probe_lane("lane-a", "model-a", "host-a", "instance-a")],
+        ),
+    )
+    .unwrap();
+    let parked_source = attempt("parked", 0, 1);
+    broker.set_source_revision(parked_source.clone()).unwrap();
+    broker
+        .enqueue(work(
+            "parked",
+            WorkRole::Build,
+            WorkPriority::Implementation,
+            parked_source,
+        ))
+        .unwrap();
+    let parked = admit_next(&mut broker);
+    let first = provider_start(&parked, 0);
+    broker.request_provider_turn(first.clone()).unwrap();
+    broker
+        .observe_provider_terminal(provider_terminal(&first, ProviderTerminalKind::Finished))
+        .unwrap();
+
+    let fresh_source = attempt("fresh", 0, 1);
+    broker.set_source_revision(fresh_source.clone()).unwrap();
+    broker
+        .enqueue(work(
+            "fresh",
+            WorkRole::Build,
+            WorkPriority::Implementation,
+            fresh_source,
+        ))
+        .unwrap();
+    assert!(broker.grant_next().is_none());
+    assert_eq!(broker.active_len(), 1);
+
+    let continuation = provider_start(&parked, 1);
+    assert!(matches!(
+        broker.request_provider_turn(continuation.clone()).unwrap(),
+        ProviderRequestDisposition::Queued(_)
+    ));
+    assert!(matches!(
+        broker.grant_next(),
+        Some(BrokerGrant::ProviderRequest { receipt, .. }) if receipt == continuation
+    ));
+    assert_eq!(broker.active_len(), 1);
 }
 
 #[test]
