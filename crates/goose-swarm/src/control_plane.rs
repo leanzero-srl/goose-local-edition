@@ -2426,17 +2426,6 @@ impl ProviderLifecycle {
         Arc::ptr_eq(&self.control.inner, &other.control.inner)
     }
 
-    fn has_unproven_live_request(&self) -> bool {
-        matches!(
-            self.outstanding
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner())
-                .as_ref(),
-            Some(OutstandingProviderRequest::Recoverable(request))
-                if request.pending_terminal.is_none()
-        )
-    }
-
     /// Capture the exact provider turn that was live when semantic evidence was observed.
     pub fn capture_live_provider_request(
         &self,
@@ -3029,19 +3018,31 @@ impl TaskDispatcher for BrokeredTaskDispatcher {
             .inner
             .run_admitted(req, admitted.receipt().clone(), admitted.lifecycle())
             .await;
-        if let Err(error) = &result {
-            if admitted.lifecycle().has_unproven_live_request() {
-                let reason = error.to_string();
-                admitted
-                    .quarantine_unproven(reason)
-                    .await
-                    .map_err(|quarantine_error| {
-                        DispatchError::Terminal(format!(
-                            "physical lifecycle could not quarantine an unproven provider request after {error}: {quarantine_error}"
-                        ))
-                    })?;
-                return result;
-            }
+        if let Err(reconciliation_error) =
+            admitted.lifecycle().reconcile_cancelled_after_drop().await
+        {
+            let reason = match &result {
+                Ok(_) => format!(
+                    "provider dispatcher returned success without terminal proof: {reconciliation_error}"
+                ),
+                Err(error) => format!(
+                    "provider dispatcher failed ({error}) without terminal proof: {reconciliation_error}"
+                ),
+            };
+            admitted
+                .quarantine_unproven(reason)
+                .await
+                .map_err(|quarantine_error| {
+                    DispatchError::Terminal(format!(
+                        "physical lifecycle could not quarantine an unproven provider request after {reconciliation_error}: {quarantine_error}"
+                    ))
+                })?;
+            return match result {
+                Ok(_) => Err(DispatchError::Transient(format!(
+                    "physical provider request has no proven terminal: {reconciliation_error}"
+                ))),
+                Err(error) => Err(error),
+            };
         }
         self.control
             .close_provider_starts(&admitted.receipt().admission_id)
@@ -3074,7 +3075,7 @@ mod provider_start_registry_tests {
     use crate::broker::{
         AuthorityScope, SourceRevisionKind, VerifiedPhysicalIdentity, WorkOpportunity, WorkRole,
     };
-    use crate::event::NullSink;
+    use crate::event::{EventSink, NullSink, SwarmEvent};
     use std::sync::atomic::{AtomicBool, AtomicUsize};
 
     fn request_authority(admission_id: &str) -> Arc<ProviderRequestAuthority> {
@@ -3198,7 +3199,36 @@ mod provider_start_registry_tests {
         }
     }
 
+    #[derive(Default)]
+    struct LifecycleEventCounts {
+        cancelled_terminals: AtomicUsize,
+        finished_terminals: AtomicUsize,
+    }
+
+    impl EventSink for LifecycleEventCounts {
+        fn emit(&self, event: &SwarmEvent) {
+            if let SwarmEvent::BrokerProviderTerminalObserved { receipt, .. } = event {
+                match receipt.kind {
+                    ProviderTerminalKind::Cancelled => {
+                        self.cancelled_terminals.fetch_add(1, Ordering::SeqCst);
+                    }
+                    ProviderTerminalKind::Finished => {
+                        self.finished_terminals.fetch_add(1, Ordering::SeqCst);
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+
     fn nudge_control(same_host: bool) -> PhysicalAdmissionControl {
+        nudge_control_with_sink(same_host, Arc::new(NullSink))
+    }
+
+    fn nudge_control_with_sink(
+        same_host: bool,
+        sink: Arc<dyn EventSink>,
+    ) -> PhysicalAdmissionControl {
         let host_capacity = if same_host {
             HostCapacityEvidence::MeasuredProfile {
                 profile_hash: "same-host-capacity".to_string(),
@@ -3233,7 +3263,7 @@ mod provider_start_registry_tests {
         }
         .into_lane("judge-device".to_string(), "judge-model".to_string(), 1);
         let snapshot = PhysicalFleetSnapshot::new("nudge-fleet", vec![source, judge]).unwrap();
-        PhysicalAdmissionControl::new("nudge-test", snapshot, Arc::new(NullSink)).unwrap()
+        PhysicalAdmissionControl::new("nudge-test", snapshot, sink).unwrap()
     }
 
     async fn admit_role(
@@ -3349,6 +3379,60 @@ mod provider_start_registry_tests {
         }
     }
 
+    #[derive(Default)]
+    struct CancelFirstProviderBody {
+        calls: AtomicUsize,
+    }
+
+    #[async_trait]
+    impl ProviderLifecycleDispatcher for CancelFirstProviderBody {
+        async fn run_admitted(
+            &self,
+            _req: DispatchRequest,
+            _admission: AdmissionReceipt,
+            lifecycle: ProviderLifecycle,
+        ) -> Result<TaskRunOutput, DispatchError> {
+            let mut request = lifecycle
+                .start_provider_request()
+                .await
+                .map_err(|error| DispatchError::Terminal(error.to_string()))?;
+            if self.calls.fetch_add(1, Ordering::SeqCst) == 0 {
+                request.arm_cancelled_reconciliation_on_drop();
+                drop(request);
+                return Err(DispatchError::Transient(
+                    "provider stream crossed the progress watchdog".to_string(),
+                ));
+            }
+            request
+                .provider_terminal(ProviderTerminalKind::Finished)
+                .await
+                .map_err(|error| DispatchError::Terminal(error.to_string()))?;
+            Ok("completed after watchdog retry".to_string().into())
+        }
+    }
+
+    struct CancelEveryProviderBody;
+
+    #[async_trait]
+    impl ProviderLifecycleDispatcher for CancelEveryProviderBody {
+        async fn run_admitted(
+            &self,
+            _req: DispatchRequest,
+            _admission: AdmissionReceipt,
+            lifecycle: ProviderLifecycle,
+        ) -> Result<TaskRunOutput, DispatchError> {
+            let mut request = lifecycle
+                .start_provider_request()
+                .await
+                .map_err(|error| DispatchError::Terminal(error.to_string()))?;
+            request.arm_cancelled_reconciliation_on_drop();
+            drop(request);
+            Err(DispatchError::Transient(
+                "provider stream crossed the progress watchdog".to_string(),
+            ))
+        }
+    }
+
     fn dispatch_request(attempt: u32) -> DispatchRequest {
         DispatchRequest {
             task_id: "truncated-body-build".to_string(),
@@ -3388,6 +3472,84 @@ mod provider_start_registry_tests {
         });
         let dispatcher = BrokeredTaskDispatcher::new(control.clone(), inner.clone(), authority);
         (control, inner, dispatcher)
+    }
+
+    fn dispatch_authority() -> Arc<DispatchAuthority> {
+        Arc::new(DispatchAuthority {
+            eligible_logical_device_ids: vec![
+                "source-device".to_string(),
+                "judge-device".to_string(),
+            ],
+        })
+    }
+
+    #[tokio::test]
+    async fn brokered_watchdog_drop_reconciles_once_drains_and_retries() {
+        let events = Arc::new(LifecycleEventCounts::default());
+        let control = nudge_control_with_sink(false, events.clone());
+        let inner = Arc::new(CancelFirstProviderBody::default());
+        let dispatcher =
+            BrokeredTaskDispatcher::new(control.clone(), inner.clone(), dispatch_authority());
+
+        let first = dispatch_request(0);
+        dispatcher.prepare(&first).await;
+        let first_error =
+            tokio::time::timeout(std::time::Duration::from_millis(100), dispatcher.run(first))
+                .await
+                .expect("watchdog cancellation did not reconcile and drain")
+                .unwrap_err();
+        assert!(matches!(
+            first_error,
+            DispatchError::Transient(ref detail)
+                if detail == "provider stream crossed the progress watchdog"
+        ));
+        assert_eq!(events.cancelled_terminals.load(Ordering::SeqCst), 1);
+        assert_eq!(events.finished_terminals.load(Ordering::SeqCst), 0);
+        assert_eq!(control.occupancy().await, (0, 0));
+        control.wait_until_drained().await.unwrap();
+
+        let retry = dispatch_request(1);
+        dispatcher.prepare(&retry).await;
+        tokio::time::timeout(std::time::Duration::from_millis(100), dispatcher.run(retry))
+            .await
+            .expect("watchdog retry did not finish")
+            .unwrap();
+        assert_eq!(inner.calls.load(Ordering::SeqCst), 2);
+        assert_eq!(events.cancelled_terminals.load(Ordering::SeqCst), 1);
+        assert_eq!(events.finished_terminals.load(Ordering::SeqCst), 1);
+        assert_eq!(control.occupancy().await, (0, 0));
+        control.wait_until_drained().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn concurrent_brokered_watchdog_drops_both_reconcile_and_drain() {
+        let events = Arc::new(LifecycleEventCounts::default());
+        let control = nudge_control_with_sink(false, events.clone());
+        let dispatcher = BrokeredTaskDispatcher::new(
+            control.clone(),
+            Arc::new(CancelEveryProviderBody),
+            dispatch_authority(),
+        );
+        let first = dispatch_request(0);
+        let mut second = dispatch_request(0);
+        second.task_id = "concurrent-watchdog-build".to_string();
+        second.owned_files = vec!["src/second.rs".to_string()];
+        second.all_files = second.owned_files.clone();
+        dispatcher.prepare(&first).await;
+        dispatcher.prepare(&second).await;
+
+        let (first_result, second_result) =
+            tokio::time::timeout(std::time::Duration::from_millis(100), async {
+                tokio::join!(dispatcher.run(first), dispatcher.run(second))
+            })
+            .await
+            .expect("concurrent watchdog cancellations did not reconcile and drain");
+        assert!(matches!(first_result, Err(DispatchError::Transient(_))));
+        assert!(matches!(second_result, Err(DispatchError::Transient(_))));
+        assert_eq!(events.cancelled_terminals.load(Ordering::SeqCst), 2);
+        assert_eq!(events.finished_terminals.load(Ordering::SeqCst), 0);
+        assert_eq!(control.occupancy().await, (0, 0));
+        control.wait_until_drained().await.unwrap();
     }
 
     #[tokio::test]
