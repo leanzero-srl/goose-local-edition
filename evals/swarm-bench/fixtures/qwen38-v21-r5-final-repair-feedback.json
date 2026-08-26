@@ -1,0 +1,48 @@
+{
+  "source": {
+    "run_id": "swarm-20260826-053253324",
+    "run_log_sha256": "13e0977a6b91f60c1b20d22fef1ff8e5604a505ce6f830d57b62c3c1311fd7c9"
+  },
+  "discarded_candidate": {
+    "seq": 723,
+    "baseline_findings": 2,
+    "candidate_findings": 9,
+    "passing_tests": 21,
+    "assigned_causes_resolved": true,
+    "promoted": false
+  },
+  "late_writer": {
+    "seq": 797,
+    "cause": "boot-repair-1",
+    "changed_files": [
+      "app/__init__.py",
+      "app/__main__.py",
+      "app/ledgerd/__init__.py",
+      "app/ledgerd/__main__.py",
+      "app/notifierd/__init__.py",
+      "app/notifierd/__main__.py"
+    ]
+  },
+  "authoritative_findings": {
+    "seq": 803,
+    "count": 10,
+    "findings": [
+      "the app ships NO executable tests (`pytest -q` collected 0)",
+      "GET /v3/reversals returned 404",
+      "GET /api/payments missing limit and offset",
+      "GET / returned 404",
+      "GET /api/payments with filters missing limit and offset",
+      "GET /api/outbox/status missing delivered, last_delivered_seq, notifier",
+      "GET /api/drafts?state= returned 404",
+      "GET /health returned 404",
+      "GET /notify/processed?after=1 returned 404",
+      "GET /notify/notifications?limit=&offset= returned 404"
+    ]
+  },
+  "incorrect_terminal": {
+    "seq": 807,
+    "passed": false,
+    "remaining_findings": 10,
+    "shipped": "final tree"
+  }
+}
