@@ -97,16 +97,20 @@ pub enum TaskState {
     Claimed,
     Done,
     Salvaged,
+    Unavailable,
     Failed,
 }
 
 impl TaskState {
     pub fn is_terminal(self) -> bool {
-        matches!(self, Self::Done | Self::Salvaged | Self::Failed)
+        matches!(
+            self,
+            Self::Done | Self::Salvaged | Self::Unavailable | Self::Failed
+        )
     }
 
     pub fn releases_dependents(self) -> bool {
-        matches!(self, Self::Done | Self::Salvaged)
+        matches!(self, Self::Done | Self::Salvaged | Self::Unavailable)
     }
 }
 
