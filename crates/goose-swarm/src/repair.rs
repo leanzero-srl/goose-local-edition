@@ -1298,17 +1298,17 @@ fn set_mode(path: &Path, mode: u32) -> Result<()> {
     Ok(())
 }
 
-fn excluded_from_repair_tree(relative: &Path) -> bool {
-    const ENGINE_EVIDENCE: &[&str] = &[
-        ".swarm",
-        "run.jsonl",
-        "bench-shots",
-        "heartbeat",
-        "graded.db",
-    ];
-    relative.components().any(|component| {
-        matches!(component, Component::Normal(name) if ENGINE_EVIDENCE.contains(&name.to_string_lossy().as_ref()))
-    })
+pub fn excluded_from_repair_tree(relative: &Path) -> bool {
+    const ENGINE_EVIDENCE_SUBTREES: &[&str] = &[".swarm", ".swarm-monitor", "bench-shots"];
+    const ENGINE_EVIDENCE_FILES: &[&str] =
+        &["run.jsonl", "engine-console.log", "heartbeat", "graded.db"];
+
+    ENGINE_EVIDENCE_SUBTREES
+        .iter()
+        .any(|entry| relative.starts_with(entry))
+        || ENGINE_EVIDENCE_FILES
+            .iter()
+            .any(|entry| relative == Path::new(entry))
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -2742,6 +2742,62 @@ mod tests {
 
     async fn accept(request: &SemanticReviewRequest) -> Result<AdmittedSemanticObservationHandle> {
         brokered_review(request, SemanticTestVerdict::Accept).await
+    }
+
+    #[test]
+    fn repair_snapshot_excludes_only_root_engine_evidence() {
+        let root = tempfile::TempDir::new().unwrap();
+        write_file(root.path(), "src/lib.rs", b"pub fn value() -> u8 { 1 }\n");
+        let before = repair_tree_snapshot(root.path()).unwrap();
+
+        for (path, bytes) in [
+            (".swarm/run.jsonl", b"swarm evidence\n".as_slice()),
+            (
+                ".swarm-monitor/watch.jsonl",
+                b"monitor evidence\n".as_slice(),
+            ),
+            ("run.jsonl", b"run evidence\n".as_slice()),
+            ("engine-console.log", b"console evidence\n".as_slice()),
+            ("bench-shots/shot.png", b"screenshot evidence\n".as_slice()),
+            ("heartbeat", b"heartbeat evidence\n".as_slice()),
+            ("graded.db", b"grade evidence\n".as_slice()),
+        ] {
+            write_file(root.path(), path, bytes);
+        }
+
+        assert_eq!(repair_tree_snapshot(root.path()).unwrap(), before);
+    }
+
+    #[test]
+    fn nested_engine_evidence_names_remain_repair_tree_bytes() {
+        let root = tempfile::TempDir::new().unwrap();
+        let nested_paths = [
+            "app/.swarm/data.json",
+            "app/.swarm-monitor/watch.jsonl",
+            "app/run.jsonl",
+            "app/engine-console.log",
+            "app/bench-shots/shot.png",
+            "src/heartbeat/state.json",
+            "app/graded.db",
+        ];
+        for path in nested_paths {
+            write_file(root.path(), path, b"v1\n");
+        }
+        let before = repair_tree_snapshot(root.path()).unwrap();
+
+        for path in nested_paths {
+            write_file(root.path(), path, b"v2\n");
+        }
+        let after = repair_tree_snapshot(root.path()).unwrap();
+
+        assert_ne!(before.hash(), after.hash());
+        for path in nested_paths {
+            assert_ne!(
+                before.entries().get(path),
+                after.entries().get(path),
+                "{path}"
+            );
+        }
     }
 
     #[test]

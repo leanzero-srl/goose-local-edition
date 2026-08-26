@@ -82,12 +82,13 @@ pub use provider_lease::{
     RunScopedProviderLeaseAuthority, SealedProviderLeaseAuthority, VerifiedProviderProtocolRoute,
 };
 pub use repair::{
-    repair_tree_snapshot, ArtifactEvidence, CandidateDelta, DefectId, DefectKind, DefectLedger,
-    DefectObservation, EvidenceRef, FileMutation, FindingProvenance, GateId, ImpactEvidence,
-    ImpactFact, MechanicalSeverity, PromotionDecision, ProvisionalTaskReceipt,
-    RepairCandidatePatch, RepairEpoch, RepairTransaction, RepairTreeSnapshot, RequiredVerification,
-    RequirementId, RulerIdentity, RulerLegId, SalvageReason, SemanticAcceptanceReceipt,
-    SemanticReviewRequest, SubjectRef, TaskCompletionDisposition,
+    excluded_from_repair_tree, repair_tree_snapshot, ArtifactEvidence, CandidateDelta, DefectId,
+    DefectKind, DefectLedger, DefectObservation, EvidenceRef, FileMutation, FindingProvenance,
+    GateId, ImpactEvidence, ImpactFact, MechanicalSeverity, PromotionDecision,
+    ProvisionalTaskReceipt, RepairCandidatePatch, RepairEpoch, RepairTransaction,
+    RepairTreeSnapshot, RequiredVerification, RequirementId, RulerIdentity, RulerLegId,
+    SalvageReason, SemanticAcceptanceReceipt, SemanticReviewRequest, SubjectRef,
+    TaskCompletionDisposition,
 };
 pub use replan::{ReplanContext, Replanner};
 pub use scheduler::{
