@@ -25665,13 +25665,39 @@ impl GooseAgentDispatcher {
         idle_secs: u64,
         activity_key: Option<&str>,
     ) -> Result<RunAgentOut> {
+        self.run_read_only_agent(
+            model_id,
+            system_prompt,
+            user_text,
+            response,
+            UNBOUNDED_AGENT_TURNS,
+            idle_secs,
+            activity_key,
+        )
+        .await
+    }
+
+    /// A bounded generation with no filesystem, shell, or extension tools. Unlike the authority compiler
+    /// path above, advisory prose calls retain their existing turn ceiling while sharing the same enforced
+    /// response-only surface.
+    #[allow(clippy::too_many_arguments)]
+    async fn run_read_only_agent(
+        &self,
+        model_id: &str,
+        system_prompt: String,
+        user_text: String,
+        response: Option<Response>,
+        max_turns: u32,
+        idle_secs: u64,
+        activity_key: Option<&str>,
+    ) -> Result<RunAgentOut> {
         self.run_agent_in(
             self.working_dir.clone(),
             model_id,
             system_prompt,
             user_text,
             response,
-            Some(UNBOUNDED_AGENT_TURNS),
+            Some(max_turns),
             &[],
             AgentToolSurface::ResponseOnly,
             idle_secs,
@@ -45824,8 +45850,19 @@ async fn reflect_on_success(
          (these are the mistakes this stack invites):\n{lessons}{prior_block}\n\nWrite the skill.",
         snap.files.join("\n")
     );
+    // COMPLETE calls this after sealing the authoritative application tree. A prompt is not a write fence:
+    // the enforced response-only surface is what keeps a hallucinated editor/shell call from invalidating
+    // the seal and suppressing complete_result/run_finished.
     match dispatcher
-        .run_agent_timed(model, system, user, None, 4, &[])
+        .run_read_only_agent(
+            model,
+            system,
+            user,
+            None,
+            4,
+            dispatcher.planner_timeout_secs,
+            None,
+        )
         .await
     {
         Ok(o) => o.text.trim().to_string(),
@@ -50069,9 +50106,11 @@ impl TaskDispatcher for GooseAgentDispatcher {
         let user = format!(
             "GOAL: {goal}\n\nFINDING TO VERIFY: {finding}\n\nFiles produced:\n{files_block}\nYour one-line verdict:"
         );
+        // Sink-review verification can run after COMPLETE has sealed the tree. It already receives the
+        // relevant source inline, so exposing developer tools here is both unnecessary and terminally unsafe.
         let text = tokio::time::timeout(
             std::time::Duration::from_secs(planner_wall(self.planner_timeout_secs)),
-            self.run_agent(model_id, system, user, None, 2, &[], 0, None),
+            self.run_read_only_agent(model_id, system, user, None, 2, 0, None),
         )
         .await
         .ok()
@@ -62524,6 +62563,7 @@ mod pre_scheduler_semantic_runtime_tests {
     #[derive(Clone, Copy)]
     enum OverviewProviderMode {
         WriteThenTyped,
+        WriteThenText(&'static str),
         Pending,
     }
 
@@ -62553,6 +62593,15 @@ mod pre_scheduler_semantic_runtime_tests {
             }
         }
 
+        fn write_then_text(target: PathBuf, text: &'static str) -> Self {
+            Self {
+                mode: OverviewProviderMode::WriteThenText(text),
+                target: Some(target),
+                calls: AtomicUsize::new(0),
+                tool_surfaces: Mutex::new(Vec::new()),
+            }
+        }
+
         fn tool_surfaces(&self) -> Vec<Vec<String>> {
             self.tool_surfaces.lock().unwrap().clone()
         }
@@ -62576,16 +62625,24 @@ mod pre_scheduler_semantic_runtime_tests {
                     Message::assistant()
                         .with_tool_request("overview-adversarial-write", Ok(request))
                 }
-                1 => {
-                    let request =
-                        CallToolRequestParams::new(FINAL_OUTPUT_TOOL).with_arguments(object!({
-                            "features": ["Summarizes the produced application"],
-                            "engage": "Ask goose to run the program for you.",
-                            "next": ["Add another capability"],
-                        }));
-                    Message::assistant()
-                        .with_tool_request("overview-typed-final-output", Ok(request))
-                }
+                1 => match self.mode {
+                    OverviewProviderMode::WriteThenTyped => {
+                        let request =
+                            CallToolRequestParams::new(FINAL_OUTPUT_TOOL).with_arguments(object!({
+                                "features": ["Summarizes the produced application"],
+                                "engage": "Ask goose to run the program for you.",
+                                "next": ["Add another capability"],
+                            }));
+                        Message::assistant()
+                            .with_tool_request("overview-typed-final-output", Ok(request))
+                    }
+                    OverviewProviderMode::WriteThenText(text) => {
+                        Message::assistant().with_text(text)
+                    }
+                    OverviewProviderMode::Pending => {
+                        panic!("pending provider cannot produce a message")
+                    }
+                },
                 call => panic!("unexpected overview provider call {call}"),
             }
         }
@@ -62593,7 +62650,7 @@ mod pre_scheduler_semantic_runtime_tests {
         fn finished_stream(&self, model: &str, tools: &[Tool]) -> MessageStream {
             self.record_tool_surface(tools);
             match self.mode {
-                OverviewProviderMode::WriteThenTyped => {
+                OverviewProviderMode::WriteThenTyped | OverviewProviderMode::WriteThenText(_) => {
                     let message = self.next_message();
                     let usage = ProviderUsage::new(model.to_string(), Usage::default());
                     Box::pin(stream::once(
@@ -62607,7 +62664,7 @@ mod pre_scheduler_semantic_runtime_tests {
         fn finished_attempt(&self, model: &str, tools: &[Tool]) -> SingleAttemptStream {
             self.record_tool_surface(tools);
             match self.mode {
-                OverviewProviderMode::WriteThenTyped => {
+                OverviewProviderMode::WriteThenTyped | OverviewProviderMode::WriteThenText(_) => {
                     let message = self.next_message();
                     let usage = ProviderUsage::new(model.to_string(), Usage::default());
                     SingleAttemptStream::finished(Box::pin(stream::once(async move {
@@ -66173,6 +66230,171 @@ mod pre_scheduler_semantic_runtime_tests {
                 "overview must expose only typed final_output"
             );
         }
+    }
+
+    #[tokio::test]
+    async fn post_seal_model_tail_is_response_only_and_cannot_suppress_terminal_events() {
+        let working_dir = tempfile::tempdir().unwrap();
+        let target = working_dir.path().join("app.py");
+        std::fs::write(&target, "original application\n").unwrap();
+        let sink = Arc::new(RuntimeRecordingSink::default());
+        let mut tree = OpenRepairTree::open(working_dir.path(), sink.as_ref()).unwrap();
+        tree.record_ruling_values(true, true, 0, "authoritative", sink.as_ref())
+            .unwrap();
+        let sealed = tree
+            .seal("authoritative tree".to_string(), false, sink.as_ref())
+            .unwrap();
+        let sealed_snapshot = repair_tree_snapshot(working_dir.path()).unwrap();
+
+        let persona_provider = Arc::new(OverviewAdversarialProvider::write_then_text(
+            target.clone(),
+            "- Keep the verified module layout.",
+        ));
+        let persona_dispatcher = Arc::new(
+            overview_test_dispatcher(
+                working_dir.path().to_path_buf(),
+                sink.clone(),
+                persona_provider.clone(),
+            )
+            .await,
+        );
+        let reflection = reflect_on_success(
+            &persona_dispatcher,
+            SOURCE_MODEL,
+            "python",
+            &PersonaSnapshot {
+                stack_key: Some("python".to_string()),
+                files: vec!["app.py".to_string()],
+                shape: vec![("build-app".to_string(), vec!["app.py".to_string()])],
+                judge_lessons: Vec::new(),
+            },
+            "",
+        )
+        .await;
+        assert_eq!(reflection, "- Keep the verified module layout.");
+
+        let verify_provider = Arc::new(OverviewAdversarialProvider::write_then_text(
+            target.clone(),
+            "CONFIRM|HIGH",
+        ));
+        let verify_dispatcher = overview_test_dispatcher(
+            working_dir.path().to_path_buf(),
+            sink.clone(),
+            verify_provider.clone(),
+        )
+        .await;
+        assert!(
+            verify_dispatcher
+                .verify_finding(
+                    SOURCE_MODEL,
+                    "app.py contains the supplied original fixture",
+                    "Preserve the fixture",
+                    &[target.display().to_string()],
+                )
+                .await
+        );
+
+        let overview_provider = Arc::new(OverviewAdversarialProvider::write_then_typed(
+            target.clone(),
+        ));
+        let overview_dispatcher = overview_test_dispatcher(
+            working_dir.path().to_path_buf(),
+            sink.clone(),
+            overview_provider.clone(),
+        )
+        .await;
+        let overview = overview_dispatcher
+            .generate_run_overview(
+                "Return a grounded overview through final_output.".to_string(),
+                "The application source is supplied in this prompt.".to_string(),
+            )
+            .await;
+        emit_run_terminal_events(
+            sink.as_ref(),
+            Some(run_overview_event(None, "python", true, overview, 1)),
+            Some(&sealed),
+            serde_json::json!({ "event": "run_finished" }),
+        )
+        .unwrap();
+
+        assert_eq!(
+            repair_tree_snapshot(working_dir.path()).unwrap(),
+            sealed_snapshot,
+            "a post-seal response-only call changed application bytes"
+        );
+        for surfaces in [
+            persona_provider.tool_surfaces(),
+            verify_provider.tool_surfaces(),
+        ] {
+            assert_eq!(
+                surfaces,
+                vec![Vec::<String>::new(), Vec::<String>::new()],
+                "post-seal prose call exposed a tool surface"
+            );
+        }
+        assert_eq!(
+            overview_provider.tool_surfaces(),
+            vec![
+                vec![FINAL_OUTPUT_TOOL.to_string()],
+                vec![FINAL_OUTPUT_TOOL.to_string()]
+            ]
+        );
+
+        let values = sink.values();
+        assert!(!values
+            .iter()
+            .any(|event| event["event"] == "post_seal_mutation"));
+        assert_eq!(
+            values
+                .iter()
+                .filter(|event| event["event"] == "complete_result")
+                .count(),
+            1,
+            "post-seal model work suppressed or duplicated complete_result"
+        );
+        assert_eq!(
+            values
+                .iter()
+                .filter(|event| event["event"] == "run_finished")
+                .count(),
+            1,
+            "post-seal model work suppressed or duplicated run_finished"
+        );
+        let complete_result = values
+            .iter()
+            .find(|event| event["event"] == "complete_result")
+            .unwrap();
+        let run_finished = values
+            .iter()
+            .find(|event| event["event"] == "run_finished")
+            .unwrap();
+        assert_eq!(complete_result["tree_hash"], sealed_snapshot.sha256);
+        assert_eq!(
+            run_finished["complete_tree_hash"],
+            sealed_snapshot.sha256
+        );
+        let terminal = values
+            .iter()
+            .filter_map(|event| event["event"].as_str())
+            .filter(|event| {
+                [
+                    "repair_tree_sealed",
+                    "run_overview",
+                    "complete_result",
+                    "run_finished",
+                ]
+                .contains(event)
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            terminal,
+            [
+                "repair_tree_sealed",
+                "run_overview",
+                "complete_result",
+                "run_finished",
+            ]
+        );
     }
 
     #[tokio::test]
