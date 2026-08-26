@@ -27,6 +27,8 @@ SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 COMMIT_RE = re.compile(r"^[0-9a-f]{40}$")
 RUN_ID_RE = re.compile(r"^swarm-\d{8}-\d{9}$")
 GENERATION = "v22"
+LIVE_ROOT_LEAF = "local-sb7-engine-v22-r1"
+STATE_DIR_LEAF = "local-sb7-engine-v22-r1-terminal-closure"
 TARGET_DOCUMENT_ID = "brun-fleet-qwen38-brainwaves-v22-sb70"
 PREDECESSOR_TARGET_DOCUMENT_ID = "brun-fleet-qwen38-brainwaves-sb70"
 PUBLICATION_PROVENANCE_MARKER = "Brainwaves v22"
@@ -690,8 +692,10 @@ def successor_evidence(
         raise SuccessorBindingError("successor live root is missing or linked")
     live_root = live_root.resolve()
     state_dir = state_dir.resolve()
-    if live_root.name != f"local-sb7-engine-{generation}":
+    if live_root.name != LIVE_ROOT_LEAF:
         raise SuccessorBindingError("successor live root does not match its generation")
+    if state_dir.name != STATE_DIR_LEAF:
+        raise SuccessorBindingError("successor closure state does not match the exact live root")
     if state_dir == live_root or path_is_within(state_dir, live_root):
         raise SuccessorBindingError("successor closure state must be outside the live run")
 

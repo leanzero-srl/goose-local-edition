@@ -34,9 +34,9 @@ class SuccessorBindingTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temporary = tempfile.TemporaryDirectory()
         self.root = pathlib.Path(self.temporary.name)
-        self.live_root = self.root / "local-sb7-engine-v22"
+        self.live_root = self.root / successor.LIVE_ROOT_LEAF
         self.run_dir = self.live_root / "swarm-3node-qwen38-brainwaves-r0"
-        self.state_dir = self.root / "local-sb7-engine-v22-terminal-closure"
+        self.state_dir = self.root / successor.STATE_DIR_LEAF
         self.live_root.mkdir()
         self.run_dir.mkdir()
 
@@ -611,6 +611,22 @@ class SuccessorBindingTests(unittest.TestCase):
         ):
             successor.successor_evidence("v22", self.live_root, self.state_dir)
         self.assertFalse(self.state_dir.exists())
+
+    def test_successor_accepts_only_the_exact_r1_root_and_state_leaves(self) -> None:
+        stale_root = self.root / "local-sb7-engine-v22"
+        stale_root.mkdir()
+        with self.assertRaisesRegex(
+            successor.SuccessorBindingError, "live root does not match"
+        ):
+            successor.successor_evidence("v22", stale_root, self.state_dir)
+
+        wrong_state = self.root / "local-sb7-engine-v22-terminal-closure"
+        with self.assertRaisesRegex(
+            successor.SuccessorBindingError, "closure state does not match"
+        ):
+            successor.successor_evidence("v22", self.live_root, wrong_state)
+        self.assertFalse(self.state_dir.exists())
+        self.assertFalse(wrong_state.exists())
 
     def test_oversized_release_binary_streams_with_a_cap_and_rejects_tamper(
         self,
