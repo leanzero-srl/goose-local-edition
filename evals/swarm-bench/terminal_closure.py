@@ -65,9 +65,11 @@ V19_LAUNCHER = V19_LIVE_ROOT / "launch_local_v21_r4.py"
 V19_LAUNCHER_SHA256 = "548587275a4a49ca32cc66549abbb4d51b77cfdbce84ae8a53cd4dcdbec8ec44"
 V19_FLEET_SEAL = V19_LIVE_ROOT / "fleet-seal.json"
 V19_TARGET_DOCUMENT_ID = "brun-fleet-qwen38-brainwaves-sb70"
-V19_PROTECTED_DOCUMENT_IDS = frozenset(
-    {"brun-fleet-qwen38-sb70", "brun-fleet-qwen-sb70"}
+V19_PROTECTED_DOCUMENT_ID_ORDER = (
+    "brun-fleet-qwen38-sb70",
+    "brun-fleet-qwen-sb70",
 )
+V19_PROTECTED_DOCUMENT_IDS = frozenset(V19_PROTECTED_DOCUMENT_ID_ORDER)
 V19_EXACT_MODEL_ALIASES = frozenset(
     {
         "gabee-qwen3.8-27b-brainwaves-mxfp8-mlx",
@@ -91,6 +93,7 @@ V19_BINARY_SHA256 = "833d3e37c5432266b58b6cd93d763911abbfc653c82e5d4d077fb6b2dd6
 V19_INSTRUMENT_MANIFEST_SHA256 = (
     "26a476d64112d4c4664084da3e3cb7286973a649a9492bf68db2141f0dc26f13"
 )
+V19_INSTRUMENT_MANIFEST_SCHEMA_VERSION = 1
 V19_INSTRUMENT_RECORDED_BINARY = {
     "path": "/Users/mihaiperdum/goose-builds/local-sb7-engine-v21-r2/bin/goose-fb9c8dec683",
     "sha256": "fb9c8dec683ec5a6ab5b8ce9a51623b0267c3cb70e2162d56ebb423032b0472a",
@@ -1546,8 +1549,8 @@ def validate_v19_config(config: dict[str, Any], *, allow_unarmed: bool) -> None:
         raise ClosureError("v19 instrument manifest hash changed")
     if publication.get("target_document_id") != V19_TARGET_DOCUMENT_ID:
         raise ClosureError("v19 publication target changed")
-    if publication.get("protected_document_ids") != sorted(
-        V19_PROTECTED_DOCUMENT_IDS
+    if publication.get("protected_document_ids") != list(
+        V19_PROTECTED_DOCUMENT_ID_ORDER
     ):
         raise ClosureError("v19 protected publication identities changed")
     if publication.get("provenance_marker") != V19_PUBLISHER_MARKER:
@@ -1702,7 +1705,7 @@ def validate_config(config: dict[str, Any], *, allow_unarmed: bool = False) -> N
     protected = publication["protected_document_ids"]
     if target != "brun-fleet-qwen38-brainwaves-sb70":
         raise ClosureError("publication target is not the dedicated Brainwaves document")
-    if target in protected or protected != sorted(V19_PROTECTED_DOCUMENT_IDS):
+    if target in protected or protected != list(V19_PROTECTED_DOCUMENT_ID_ORDER):
         raise ClosureError("protected benchmark document set changed")
     if config["expected"]["vendor_port"] != 18970:
         raise ClosureError("advertised/scoring port must remain 18970")
@@ -2051,7 +2054,7 @@ def v19_binding_evidence(
         raise ClosureError("v19 launch static identity differs")
     verify_immutable_file(V19_BINARY, V19_BINARY_SHA256)
     if (
-        manifest.get("schema_version") != SCHEMA_VERSION
+        manifest.get("schema_version") != V19_INSTRUMENT_MANIFEST_SCHEMA_VERSION
         or manifest.get("candidate_commit") != V19_CANDIDATE_COMMIT
         or manifest.get("candidate_tree") != V19_CANDIDATE_TREE
         or manifest.get("binary") != V19_INSTRUMENT_RECORDED_BINARY
@@ -2064,7 +2067,7 @@ def v19_binding_evidence(
         "publish_from_run_build_auto_score": False,
         "entrant": expected["entrant"],
         "publication_document_id": V19_TARGET_DOCUMENT_ID,
-        "protected_document_ids": sorted(V19_PROTECTED_DOCUMENT_IDS),
+        "protected_document_ids": list(V19_PROTECTED_DOCUMENT_ID_ORDER),
     }:
         raise ClosureError("v19 instrument publication policy changed")
     instrument_files = manifest.get("files")

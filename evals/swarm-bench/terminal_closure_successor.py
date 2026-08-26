@@ -20,6 +20,7 @@ from typing import Any, Mapping, Sequence
 
 
 SCHEMA_VERSION = 1
+SUCCESSOR_INSTRUMENT_MANIFEST_SCHEMA_VERSION = 2
 START_MARKER = "# BEGIN TERMINAL_CLOSURE_RUN_BINDING"
 END_MARKER = "# END TERMINAL_CLOSURE_RUN_BINDING"
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
@@ -27,9 +28,11 @@ COMMIT_RE = re.compile(r"^[0-9a-f]{40}$")
 RUN_ID_RE = re.compile(r"^swarm-\d{8}-\d{9}$")
 GENERATION_RE = re.compile(r"^v21-r(?:[5-9]|[1-9]\d+)$")
 TARGET_DOCUMENT_ID = "brun-fleet-qwen38-brainwaves-sb70"
-PROTECTED_DOCUMENT_IDS = frozenset(
-    {"brun-fleet-qwen38-sb70", "brun-fleet-qwen-sb70"}
+PROTECTED_DOCUMENT_ID_ORDER = (
+    "brun-fleet-qwen38-sb70",
+    "brun-fleet-qwen-sb70",
 )
+PROTECTED_DOCUMENT_IDS = frozenset(PROTECTED_DOCUMENT_ID_ORDER)
 EXACT_MODEL_ALIASES = frozenset(
     {
         "gabee-qwen3.8-27b-brainwaves-mxfp8-mlx",
@@ -50,7 +53,7 @@ APPROVED_PREDECESSOR_CONFIG_SHA256_BY_GENERATION = {
     "v21-r5": "0bfa5e8d13708919d69c1cdd26f52baa77b2f47da0ef7a41818477bec3fe3e04",
 }
 APPROVED_CONTROLLER_SOURCE_SHA256 = (
-    "a3c8bde115bed931b67c6aacf22f23dba26a4c5d5056cc043628edf019de0b20"
+    "5a895119f13b4c1ab5c65c0504241077dac41bf36fa121dc8249e0f02bd4e965"
 )
 
 
@@ -72,6 +75,62 @@ def sha256_file(path: pathlib.Path) -> str:
         for block in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(block)
     return digest.hexdigest()
+
+
+def stable_file_sha256(
+    path: pathlib.Path,
+    *,
+    read_only: bool = False,
+    maximum_bytes: int = 512 * 1024 * 1024,
+) -> tuple[str, int]:
+    require_regular(path, read_only=read_only)
+    descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+    try:
+        before = os.fstat(descriptor)
+        if not stat.S_ISREG(before.st_mode):
+            raise SuccessorBindingError(f"binding input is not regular: {path}")
+        if read_only and stat.S_IMODE(before.st_mode) & 0o222:
+            raise SuccessorBindingError(f"binding input is writable: {path}")
+        if before.st_size > maximum_bytes:
+            raise SuccessorBindingError(f"binding input exceeds its size bound: {path}")
+        digest = hashlib.sha256()
+        size = 0
+        while True:
+            block = os.read(descriptor, 1024 * 1024)
+            if not block:
+                break
+            digest.update(block)
+            size += len(block)
+            if size > maximum_bytes:
+                raise SuccessorBindingError(
+                    f"binding input exceeds its size bound: {path}"
+                )
+        after_descriptor = os.fstat(descriptor)
+        after_path = path.lstat()
+    finally:
+        os.close(descriptor)
+    identity = (
+        before.st_dev,
+        before.st_ino,
+        before.st_mode,
+        before.st_size,
+        before.st_mtime_ns,
+    )
+    if identity != (
+        after_descriptor.st_dev,
+        after_descriptor.st_ino,
+        after_descriptor.st_mode,
+        after_descriptor.st_size,
+        after_descriptor.st_mtime_ns,
+    ) or identity != (
+        after_path.st_dev,
+        after_path.st_ino,
+        after_path.st_mode,
+        after_path.st_size,
+        after_path.st_mtime_ns,
+    ):
+        raise SuccessorBindingError(f"binding input changed while read: {path}")
+    return digest.hexdigest(), size
 
 
 def decode_json(payload: bytes, path: pathlib.Path) -> dict[str, Any]:
@@ -227,6 +286,221 @@ def normalized_process_receipts(launch: Mapping[str, Any]) -> dict[str, dict[str
     return receipts
 
 
+def validated_manifest_files(value: Any, *, identity: str) -> dict[str, str]:
+    if not isinstance(value, dict) or not value:
+        raise SuccessorBindingError(f"{identity} lacks its exact file inventory")
+    for relative, digest in value.items():
+        if not isinstance(relative, str) or not relative or "\\" in relative:
+            raise SuccessorBindingError(f"{identity} contains an invalid path/hash")
+        relative_path = pathlib.PurePosixPath(relative)
+        if (
+            relative_path.is_absolute()
+            or relative_path.as_posix() != relative
+            or relative_path == pathlib.PurePosixPath(".")
+            or ".." in relative_path.parts
+            or not SHA256_RE.fullmatch(str(digest))
+        ):
+            raise SuccessorBindingError(f"{identity} contains an invalid path/hash")
+    return value
+
+
+def validate_successor_instrument_manifest(
+    manifest: Mapping[str, Any],
+    launch: Mapping[str, Any],
+    *,
+    binary_size: int,
+) -> None:
+    expected_top_level = {
+        "schema_version",
+        "prepared_at",
+        "candidate_branch",
+        "candidate_remote_ref",
+        "candidate_commit",
+        "candidate_tree",
+        "candidate_clean",
+        "binary",
+        "instrument_provenance",
+        "files",
+        "wrapper_sha256",
+        "runtime_policy",
+        "sb7_policy",
+        "publisher_closure",
+        "privacy",
+    }
+    if (
+        manifest.get("schema_version")
+        != SUCCESSOR_INSTRUMENT_MANIFEST_SCHEMA_VERSION
+        or set(manifest) != expected_top_level
+    ):
+        raise SuccessorBindingError(
+            "successor instrument manifest schema-2 contract changed"
+        )
+
+    candidate = launch["candidate"]
+    launch_binary = launch["binary"]
+    branch = manifest.get("candidate_branch")
+    remote_ref = manifest.get("candidate_remote_ref")
+    if (
+        not isinstance(manifest.get("prepared_at"), str)
+        or not manifest["prepared_at"]
+        or not isinstance(branch, str)
+        or not branch
+        or not isinstance(remote_ref, str)
+        or remote_ref != candidate.get("remote_ref")
+        or not remote_ref.endswith(f"/{branch}")
+        or candidate.get("remote_commit") != candidate["commit"]
+        or manifest.get("candidate_commit") != candidate["commit"]
+        or manifest.get("candidate_tree") != candidate["tree"]
+        or manifest.get("candidate_clean") is not True
+    ):
+        raise SuccessorBindingError(
+            "successor instrument manifest candidate identity differs"
+        )
+
+    recorded_binary = manifest.get("binary")
+    if (
+        not isinstance(recorded_binary, dict)
+        or set(recorded_binary)
+        != {"path", "sha256", "size_bytes", "source_commit", "source_tree"}
+        or recorded_binary.get("path") != launch_binary["path"]
+        or recorded_binary.get("sha256") != launch_binary["sha256"]
+        or not isinstance(recorded_binary.get("size_bytes"), int)
+        or isinstance(recorded_binary.get("size_bytes"), bool)
+        or recorded_binary.get("size_bytes") != binary_size
+        or recorded_binary.get("source_commit") != candidate["commit"]
+        or recorded_binary.get("source_tree") != candidate["tree"]
+    ):
+        raise SuccessorBindingError(
+            "successor instrument manifest binary identity differs"
+        )
+
+    files = validated_manifest_files(
+        manifest.get("files"), identity="successor instrument manifest"
+    )
+    provenance = manifest.get("instrument_provenance")
+    if not isinstance(provenance, dict) or set(provenance) != {
+        "candidate_archive",
+        "inherited_overlay",
+        "total_file_count",
+        "tracked_only_archive",
+        "python_cache_debris_forbidden",
+        "symlinks_forbidden",
+    }:
+        raise SuccessorBindingError(
+            "successor instrument manifest provenance contract changed"
+        )
+    archive = provenance.get("candidate_archive")
+    overlay = provenance.get("inherited_overlay")
+    if (
+        not isinstance(archive, dict)
+        or set(archive)
+        != {"commit", "tree", "scope", "file_count", "inventory_sha256"}
+        or archive.get("commit") != candidate["commit"]
+        or archive.get("tree") != candidate["tree"]
+        or archive.get("scope")
+        != ["evals/swarm-bench", "scripts/monitor_swarm_run.py"]
+        or not isinstance(archive.get("file_count"), int)
+        or isinstance(archive.get("file_count"), bool)
+        or archive["file_count"] <= 0
+        or not SHA256_RE.fullmatch(str(archive.get("inventory_sha256", "")))
+        or not isinstance(overlay, dict)
+        or set(overlay) != {"source_run", "source_manifest_sha256", "files"}
+        or not pathlib.Path(str(overlay.get("source_run", ""))).is_absolute()
+        or not SHA256_RE.fullmatch(str(overlay.get("source_manifest_sha256", "")))
+    ):
+        raise SuccessorBindingError(
+            "successor instrument manifest provenance identity differs"
+        )
+    overlay_files = validated_manifest_files(
+        overlay.get("files"), identity="successor inherited overlay"
+    )
+    archive_files = set(files) - set(overlay_files)
+    if (
+        any(files.get(relative) != digest for relative, digest in overlay_files.items())
+        or archive.get("file_count") != len(archive_files)
+        or provenance.get("total_file_count") != len(files)
+        or provenance.get("total_file_count")
+        != archive.get("file_count") + len(overlay_files)
+        or provenance.get("tracked_only_archive") is not True
+        or provenance.get("python_cache_debris_forbidden") is not True
+        or provenance.get("symlinks_forbidden") is not True
+        or any(
+            relative != "scripts/monitor_swarm_run.py"
+            and not relative.startswith("evals/swarm-bench/")
+            for relative in archive_files
+        )
+    ):
+        raise SuccessorBindingError(
+            "successor instrument manifest provenance inventory differs"
+        )
+
+    runtime_policy = manifest.get("runtime_policy")
+    if not isinstance(runtime_policy, dict) or set(runtime_policy) != {
+        "child_environment",
+        "deferred_live_fleet_seal",
+        "exact_context_length_by_role",
+        "lm_studio_cli_path",
+        "lm_studio_cli_sha256",
+        "minimum_context_length",
+        "monitor_policy",
+    } or (
+        runtime_policy.get("child_environment") != "fixed-explicit-allowlist"
+        or runtime_policy.get("deferred_live_fleet_seal") is not True
+        or runtime_policy.get("exact_context_length_by_role")
+        != EXACT_CONTEXT_BY_ROLE
+        or not pathlib.Path(
+            str(runtime_policy.get("lm_studio_cli_path", ""))
+        ).is_absolute()
+        or not SHA256_RE.fullmatch(
+            str(runtime_policy.get("lm_studio_cli_sha256", ""))
+        )
+        or runtime_policy.get("minimum_context_length")
+        != min(EXACT_CONTEXT_BY_ROLE.values())
+        or runtime_policy.get("monitor_policy") != "observation-only"
+    ):
+        raise SuccessorBindingError(
+            "successor instrument manifest runtime policy changed"
+        )
+
+    entrant = launch.get("entrant")
+    if manifest.get("sb7_policy") != {
+        "spec_and_scorer_unchanged_from_v6": True,
+        "website_surface": "stable-sb7",
+        "publish_from_run_build_auto_score": False,
+        "entrant": entrant,
+        "publication_document_id": TARGET_DOCUMENT_ID,
+        "protected_document_ids": list(PROTECTED_DOCUMENT_ID_ORDER),
+    }:
+        raise SuccessorBindingError(
+            "successor publication/protected-document policy changed"
+        )
+    if manifest.get("publisher_closure") != {
+        "binding": "deferred-until-authenticated-run-started-and-fixture-seed",
+        "protected_publication_untouched_during_freeze": True,
+        "publish_from_run_build_auto_score": False,
+        "publisher_present_in_main_instrument": False,
+    }:
+        raise SuccessorBindingError(
+            "successor instrument manifest publisher closure changed"
+        )
+    if manifest.get("privacy") != {
+        "environment_values_persisted": False,
+        "raw_argv_persisted": False,
+        "secret_fields_persisted": False,
+    }:
+        raise SuccessorBindingError(
+            "successor instrument manifest privacy contract changed"
+        )
+    wrapper_sha256 = manifest.get("wrapper_sha256")
+    if (
+        not SHA256_RE.fullmatch(str(wrapper_sha256))
+        or wrapper_sha256 != launch.get("wrapper_sha256")
+    ):
+        raise SuccessorBindingError(
+            "successor instrument manifest wrapper identity differs"
+        )
+
+
 def find_launch_controller(live_root: pathlib.Path, expected_sha256: str) -> pathlib.Path:
     matches = [
         path.resolve()
@@ -266,22 +540,6 @@ def successor_evidence(
     manifest = decode_json(manifest_payload, manifest_path)
     if launch.get("schema_version") != SCHEMA_VERSION:
         raise SuccessorBindingError("successor launch schema changed")
-    if manifest.get("schema_version") != SCHEMA_VERSION:
-        raise SuccessorBindingError("successor instrument manifest schema changed")
-
-    publication_id = launch.get("publication_document_id")
-    policy = manifest.get("sb7_policy")
-    if (
-        publication_id != TARGET_DOCUMENT_ID
-        or not isinstance(policy, dict)
-        or policy.get("publication_document_id") != TARGET_DOCUMENT_ID
-        or policy.get("protected_document_ids") != sorted(PROTECTED_DOCUMENT_IDS)
-        or policy.get("publish_from_run_build_auto_score") is not False
-        or policy.get("website_surface") != "stable-sb7"
-        or policy.get("spec_and_scorer_unchanged_from_v6") is not True
-    ):
-        raise SuccessorBindingError("successor publication/protected-document policy changed")
-
     candidate = launch.get("candidate")
     binary = launch.get("binary")
     started = launch.get("run_started_identity")
@@ -291,15 +549,12 @@ def successor_evidence(
         or not COMMIT_RE.fullmatch(str(candidate.get("tree", "")))
         or not isinstance(binary, dict)
         or not SHA256_RE.fullmatch(str(binary.get("sha256", "")))
+        or launch.get("publication_document_id") != TARGET_DOCUMENT_ID
         or not isinstance(started, dict)
         or not RUN_ID_RE.fullmatch(str(started.get("run_id", "")))
     ):
         raise SuccessorBindingError("successor launch source/run identity is malformed")
-    if (
-        manifest.get("candidate_commit") != candidate["commit"]
-        or manifest.get("candidate_tree") != candidate["tree"]
-        or launch.get("instrument_manifest_sha256") != sha256_bytes(manifest_payload)
-    ):
+    if launch.get("instrument_manifest_sha256") != sha256_bytes(manifest_payload):
         raise SuccessorBindingError("successor launch/manifest source identity differs")
 
     run_dir = pathlib.Path(str(started.get("working_dir", "")))
@@ -314,10 +569,16 @@ def successor_evidence(
         not binary_path.is_absolute()
         or not path_is_within(binary_path, live_root)
         or require_regular(binary_path, read_only=True) != binary_path.resolve()
-        or sha256_bytes(read_stable_bytes(binary_path, read_only=True))
-        != binary["sha256"]
     ):
         raise SuccessorBindingError("successor binary path/hash/mode differs")
+    binary_sha256, binary_size = stable_file_sha256(binary_path, read_only=True)
+    if binary_sha256 != binary["sha256"]:
+        raise SuccessorBindingError("successor binary path/hash/mode differs")
+    validate_successor_instrument_manifest(
+        manifest,
+        launch,
+        binary_size=binary_size,
+    )
     launcher_sha256 = launch.get("launch_controller_sha256")
     if not SHA256_RE.fullmatch(str(launcher_sha256)):
         raise SuccessorBindingError("successor launch controller hash is malformed")
@@ -338,6 +599,7 @@ def successor_evidence(
         "launch_controller_sha256": launcher_sha256,
         "instrument_manifest_path": str(manifest_path),
         "instrument_manifest_sha256": sha256_bytes(manifest_payload),
+        "instrument_manifest_schema_version": manifest["schema_version"],
         "instrument_recorded_binary": manifest.get("binary"),
         "fleet_seal_path": str(fleet_seal),
         "candidate_commit": candidate["commit"],
@@ -347,7 +609,7 @@ def successor_evidence(
         "run_id": started["run_id"],
         "processes": normalized_process_receipts(launch),
         "target_document_id": TARGET_DOCUMENT_ID,
-        "protected_document_ids": sorted(PROTECTED_DOCUMENT_IDS),
+        "protected_document_ids": list(PROTECTED_DOCUMENT_ID_ORDER),
     }
 
 
@@ -361,7 +623,7 @@ def binding_block(evidence: Mapping[str, Any], base_config: Mapping[str, Any]) -
         or not isinstance(publication, dict)
         or publication.get("target_document_id") != TARGET_DOCUMENT_ID
         or publication.get("protected_document_ids")
-        != sorted(PROTECTED_DOCUMENT_IDS)
+        != list(PROTECTED_DOCUMENT_ID_ORDER)
     ):
         raise SuccessorBindingError("base closure publication contract is not protected")
     required_hashes = (
@@ -388,7 +650,10 @@ def binding_block(evidence: Mapping[str, Any], base_config: Mapping[str, Any]) -
         f"V19_LAUNCHER_SHA256 = {evidence['launch_controller_sha256']!r}",
         f"V19_FLEET_SEAL = pathlib.Path({str(evidence['fleet_seal_path'])!r})",
         f"V19_TARGET_DOCUMENT_ID = {TARGET_DOCUMENT_ID!r}",
-        f"V19_PROTECTED_DOCUMENT_IDS = frozenset({sorted(PROTECTED_DOCUMENT_IDS)!r})",
+        "V19_PROTECTED_DOCUMENT_ID_ORDER = "
+        f"{PROTECTED_DOCUMENT_ID_ORDER!r}",
+        "V19_PROTECTED_DOCUMENT_IDS = "
+        "frozenset(V19_PROTECTED_DOCUMENT_ID_ORDER)",
         f"V19_EXACT_MODEL_ALIASES = frozenset({sorted(EXACT_MODEL_ALIASES)!r})",
         f"V19_EXACT_CONTEXT_BY_ROLE = {EXACT_CONTEXT_BY_ROLE!r}",
         f"V19_EXPECTED_ARTIFACT_PATH_SHA256 = {EXPECTED_ARTIFACT_PATH_SHA256!r}",
@@ -400,6 +665,8 @@ def binding_block(evidence: Mapping[str, Any], base_config: Mapping[str, Any]) -
         f"V19_BINARY = pathlib.Path({str(evidence['binary_path'])!r})",
         f"V19_BINARY_SHA256 = {evidence['binary_sha256']!r}",
         f"V19_INSTRUMENT_MANIFEST_SHA256 = {evidence['instrument_manifest_sha256']!r}",
+        "V19_INSTRUMENT_MANIFEST_SCHEMA_VERSION = "
+        f"{evidence['instrument_manifest_schema_version']!r}",
         f"V19_INSTRUMENT_RECORDED_BINARY = {recorded_binary!r}",
         f"V19_PUBLISHER_COMMIT = {publisher.get('git_commit')!r}",
         f"V19_PUBLISHER_SHA256 = {publisher.get('sha256')!r}",
@@ -647,7 +914,7 @@ def generate_successor(
         "binding_receipt_sha256": sha256_file(state_dir / "successor-binding.json"),
         "run_id": evidence["run_id"],
         "target_document_id": TARGET_DOCUMENT_ID,
-        "protected_document_ids": sorted(PROTECTED_DOCUMENT_IDS),
+        "protected_document_ids": list(PROTECTED_DOCUMENT_ID_ORDER),
         "base_config_unchanged": True,
         "predecessor_config_sha256": protected_before,
         "source_controller_sha256": evidence["source_controller_sha256"],
