@@ -6,9 +6,10 @@ use goose_swarm::{
     Difficulty, DispatchError, DispatchRequest, EventSink, GlobalProviderLeaseAuthority,
     HostCapacityEvidence, PhysicalAdmissionControl, PhysicalExecutionAuthority,
     PhysicalFleetSnapshot, ProviderLeaseWaitPolicy, ProviderLifecycle, ProviderLifecycleDispatcher,
-    ProviderLifecycleJournal, ProviderNudgeDelivery, ProviderRequestReceipt, ProviderTerminalKind,
-    ProviderTerminalReceipt, RunScopedProviderLeaseAuthority, Scheduler,
-    SealedProviderLeaseAuthority, SemanticObservationCapture, SemanticObservationCaptureRequest,
+    ProviderLifecycleJournal, ProviderNudgeDelivery, ProviderNudgeSafetySnapshot,
+    ProviderRequestReceipt, ProviderTerminalKind, ProviderTerminalReceipt,
+    RunScopedProviderLeaseAuthority, Scheduler, SealedProviderLeaseAuthority,
+    SemanticObservationCapture, SemanticObservationCaptureRequest,
     SemanticObservationSnapshotDraft, SemanticObservationSnapshotProducer,
     SemanticObservationSummonsSignal, SemanticTraceSnapshot, SwarmEvent, TaskRunOutput, TaskSpec,
     TraceStateMeasurement, VerifiedPhysicalLane, VerifiedProviderProtocolRoute, WorkRole,
@@ -61,6 +62,19 @@ impl RecordingSink {
                     && event["admission"]["role"] == "build"
             })
             .filter_map(|event| event["receipt"]["kind"].as_str().map(str::to_string))
+            .collect()
+    }
+
+    fn capture_failure_reasons(&self, task_id: &str) -> Vec<String> {
+        self.events
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|event| {
+                event["event"] == "semantic_observation_capture_failed"
+                    && event["task_id"] == task_id
+            })
+            .filter_map(|event| event["reason"].as_str().map(str::to_string))
             .collect()
     }
 }
@@ -272,6 +286,8 @@ impl SemanticObservationSnapshotProducer for FixedSnapshotProducer {
 struct NudgeObserver {
     calls: AtomicUsize,
     called: Notify,
+    release: Notify,
+    hold_review: bool,
     eligible_routes: Option<Vec<String>>,
 }
 
@@ -280,14 +296,32 @@ impl NudgeObserver {
         Self {
             calls: AtomicUsize::new(0),
             called: Notify::new(),
+            release: Notify::new(),
+            hold_review: false,
             eligible_routes: None,
         }
+    }
+
+    fn held() -> Self {
+        Self {
+            calls: AtomicUsize::new(0),
+            called: Notify::new(),
+            release: Notify::new(),
+            hold_review: true,
+            eligible_routes: None,
+        }
+    }
+
+    fn release_review(&self) {
+        self.release.notify_one();
     }
 
     fn bound_to(eligible_routes: Vec<String>) -> Self {
         Self {
             calls: AtomicUsize::new(0),
             called: Notify::new(),
+            release: Notify::new(),
+            hold_review: false,
             eligible_routes: Some(eligible_routes),
         }
     }
@@ -310,6 +344,9 @@ impl AdmittedSemanticObservationReviewer for NudgeObserver {
         .map_err(AdmittedSemanticReviewError::unresolved)?;
         self.calls.fetch_add(1, Ordering::SeqCst);
         self.called.notify_waiters();
+        if self.hold_review {
+            self.release.notified().await;
+        }
         Ok(serde_json::json!({
             "protocol": SEMANTIC_OBSERVATION_PROTOCOL,
             "snapshot_hash": request.observation.snapshot.snapshot_hash(),
@@ -344,6 +381,7 @@ struct ReplayNudgeState {
 
 struct ReplayNudgeDelivery {
     state: Mutex<ReplayNudgeState>,
+    progress: Mutex<ProviderNudgeSafetySnapshot>,
     cancelled: tokio::sync::watch::Sender<bool>,
     confirmed: tokio::sync::watch::Sender<Option<Result<ProviderTerminalReceipt, String>>>,
 }
@@ -354,6 +392,7 @@ impl ReplayNudgeDelivery {
         let (confirmed, _) = tokio::sync::watch::channel(None);
         Self {
             state: Mutex::new(ReplayNudgeState::default()),
+            progress: Mutex::new(ProviderNudgeSafetySnapshot::default()),
             cancelled,
             confirmed,
         }
@@ -371,6 +410,20 @@ impl ReplayNudgeDelivery {
         self.state.lock().unwrap().order.push("cancel".to_string());
     }
 
+    fn record_resume(&self) {
+        self.state.lock().unwrap().order.push("resume".to_string());
+    }
+
+    fn advance_structured_output(&self) {
+        let mut progress = self.progress.lock().unwrap();
+        progress.provider_stream_revision += 1;
+        progress.provider_stream_chunks += 1;
+        progress.provider_stream_bytes += 64;
+        progress.provider_structured_output_chunks += 1;
+        progress.provider_structured_output_bytes += 64;
+        progress.provider_structured_output_active = true;
+    }
+
     async fn wait_for_guidance(&self) {
         tokio::time::timeout(Duration::from_secs(2), async {
             while self.state.lock().unwrap().guidance.is_empty() {
@@ -379,6 +432,16 @@ impl ReplayNudgeDelivery {
         })
         .await
         .expect("semantic nudge was not enqueued");
+    }
+
+    async fn wait_for_bound_request(&self) {
+        tokio::time::timeout(Duration::from_secs(2), async {
+            while self.state.lock().unwrap().bound.is_none() {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("provider nudge delivery was not bound to a request");
     }
 
     fn release_cancel(&self) {
@@ -400,6 +463,22 @@ impl ProviderNudgeDelivery for ReplayNudgeDelivery {
                 Ok(())
             }
         }
+    }
+
+    fn reserve_at_capture(
+        &self,
+        capture: ProviderNudgeSafetySnapshot,
+        reserve: &mut dyn FnMut() -> Result<(), String>,
+    ) -> Result<(), String> {
+        let progress = self.progress.lock().unwrap();
+        if progress.provider_structured_output_chunks != capture.provider_structured_output_chunks
+            || progress.provider_structured_output_bytes != capture.provider_structured_output_bytes
+            || progress.provider_structured_output_active
+                != capture.provider_structured_output_active
+        {
+            return Err("provider structured output changed after semantic capture".to_string());
+        }
+        reserve()
     }
 
     fn try_enqueue(&self, guidance: String) -> Result<(), String> {
@@ -439,12 +518,13 @@ impl ProviderNudgeDelivery for ReplayNudgeDelivery {
         &self,
         completed: CompletedProviderRequest,
     ) -> Result<(), String> {
-        let state = self.state.lock().unwrap();
+        let mut state = self.state.lock().unwrap();
         let result = match state.bound.as_ref() {
             Some(request)
                 if completed.request() == request
                     && completed.terminal().kind == ProviderTerminalKind::Cancelled =>
             {
+                state.order.push("terminal".to_string());
                 Ok(completed.terminal().clone())
             }
             _ => Err("cancel terminal does not match bound request".to_string()),
@@ -533,6 +613,7 @@ impl ProviderLifecycleDispatcher for GapDispatcher {
             self.nudge_delivery
                 .confirm_cancelled_terminal(completed)
                 .map_err(DispatchError::Terminal)?;
+            self.nudge_delivery.record_resume();
             let resumed = lifecycle
                 .start_provider_request()
                 .await
@@ -559,6 +640,91 @@ impl ProviderLifecycleDispatcher for GapDispatcher {
         }
         started
             .provider_terminal(terminal_kind)
+            .await
+            .map_err(|error| DispatchError::Terminal(error.to_string()))?;
+        Ok(format!("completed:{}", request.task_id).into())
+    }
+}
+
+struct TerminalGapDispatcher {
+    first_terminal: AtomicUsize,
+    second_started: AtomicUsize,
+    continue_session: Notify,
+    release_second: Notify,
+}
+
+impl TerminalGapDispatcher {
+    fn new() -> Self {
+        Self {
+            first_terminal: AtomicUsize::new(0),
+            second_started: AtomicUsize::new(0),
+            continue_session: Notify::new(),
+            release_second: Notify::new(),
+        }
+    }
+
+    async fn wait_for(counter: &AtomicUsize, label: &str) {
+        tokio::time::timeout(Duration::from_secs(2), async {
+            while counter.load(Ordering::SeqCst) == 0 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap_or_else(|_| panic!("{label} was not observed"));
+    }
+}
+
+#[async_trait]
+impl ProviderLifecycleDispatcher for TerminalGapDispatcher {
+    async fn run_admitted(
+        &self,
+        request: DispatchRequest,
+        _admission: AdmissionReceipt,
+        lifecycle: ProviderLifecycle,
+    ) -> Result<TaskRunOutput, DispatchError> {
+        let first = lifecycle
+            .start_provider_request()
+            .await
+            .map_err(|error| DispatchError::Terminal(error.to_string()))?;
+        first
+            .publish_for_scheduler()
+            .map_err(|error| DispatchError::Terminal(error.to_string()))?;
+        first
+            .scope_http(async {
+                expose_current_provider_http_request(
+                    ProviderHttpProtocol::OpenAiChatCompletions,
+                    VERIFIED_TRANSPORT,
+                )
+            })
+            .await
+            .map_err(DispatchError::Terminal)?;
+        first
+            .provider_terminal(ProviderTerminalKind::Finished)
+            .await
+            .map_err(|error| DispatchError::Terminal(error.to_string()))?;
+        self.first_terminal.store(1, Ordering::SeqCst);
+
+        self.continue_session.notified().await;
+        let second = lifecycle
+            .start_provider_request()
+            .await
+            .map_err(|error| DispatchError::Terminal(error.to_string()))?;
+        second
+            .publish_for_scheduler()
+            .map_err(|error| DispatchError::Terminal(error.to_string()))?;
+        second
+            .scope_http(async {
+                expose_current_provider_http_request(
+                    ProviderHttpProtocol::OpenAiChatCompletions,
+                    VERIFIED_TRANSPORT,
+                )
+            })
+            .await
+            .map_err(DispatchError::Terminal)?;
+        self.second_started.store(1, Ordering::SeqCst);
+        self.release_second.notified().await;
+        second
+            .provider_terminal(ProviderTerminalKind::Finished)
             .await
             .map_err(|error| DispatchError::Terminal(error.to_string()))?;
         Ok(format!("completed:{}", request.task_id).into())
@@ -629,8 +795,9 @@ async fn scheduler_delivers_one_nudge_before_cancel_and_rejects_replayed_trace_r
         .expect("idle semantic observer did not run");
     wait_for_semantic_release(&sink).await;
     dispatcher.nudge_delivery.wait_for_guidance().await;
-    producer.wait_for_calls(2).await;
     dispatcher.nudge_delivery.release_cancel();
+    dispatcher.resumed_delivery.wait_for_bound_request().await;
+    producer.wait_for_calls(2).await;
     dispatcher.release_long.notify_one();
 
     let report = tokio::time::timeout(Duration::from_secs(2), run)
@@ -648,12 +815,172 @@ async fn scheduler_delivers_one_nudge_before_cancel_and_rejects_replayed_trace_r
         dispatcher.nudge_delivery.guidance(),
         vec!["re-check the exact acceptance criterion".to_string()]
     );
-    assert_eq!(dispatcher.nudge_delivery.order(), vec!["steer", "cancel"]);
+    assert_eq!(
+        dispatcher.nudge_delivery.order(),
+        vec!["steer", "cancel", "terminal", "resume"]
+    );
+    assert!(dispatcher
+        .nudge_delivery
+        .try_enqueue("second nudge".to_string())
+        .is_err());
     assert!(dispatcher.resumed_delivery.guidance().is_empty());
     assert_eq!(
         sink.worker_terminal_kinds("a-long"),
         vec!["cancelled", "finished"]
     );
+    assert_eq!(control.occupancy().await, (0, 0));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn scheduler_vetoes_nudge_when_structured_output_advances_after_capture() {
+    let authority = tempfile::tempdir().unwrap();
+    let sink = Arc::new(RecordingSink::default());
+    let event_sink: Arc<dyn EventSink> = sink.clone();
+    let control = control(
+        "semantic-scheduler-structured-veto",
+        vec![
+            lane("lane-a", "model-a", "host-a", 1),
+            lane("lane-b", "model-b", "host-b", 1),
+        ],
+        event_sink,
+        authority.path(),
+    );
+    let producer = Arc::new(FixedSnapshotProducer::new());
+    let observer = Arc::new(NudgeObserver::held());
+    let dispatcher = Arc::new(GapDispatcher::new());
+    let run = tokio::spawn({
+        let sink = sink.clone();
+        let control = control.clone();
+        let producer = producer.clone();
+        let observer = observer.clone();
+        let dispatcher = dispatcher.clone();
+        async move {
+            Scheduler::new(
+                vec![device("lane-a", "model-a"), device("lane-b", "model-b")],
+                2,
+            )
+            .with_sink(sink)
+            .with_semantic_observation(producer, observer)
+            .run_with_physical_admission(
+                Dag::from_specs(vec![task("a-long")]).unwrap(),
+                dispatcher,
+                control,
+                execution(),
+                "Build the structured-output safety fixture".to_string(),
+                String::new(),
+            )
+            .await
+        }
+    });
+
+    tokio::time::timeout(Duration::from_secs(2), observer.called.notified())
+        .await
+        .expect("idle semantic observer did not run");
+    dispatcher.nudge_delivery.advance_structured_output();
+    observer.release_review();
+    tokio::time::timeout(Duration::from_secs(2), async {
+        while sink.count("semantic_observation_capture_failed") == 0 {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("structured-output safety rejection was not emitted");
+    dispatcher.release_long.notify_one();
+
+    let report = tokio::time::timeout(Duration::from_secs(2), run)
+        .await
+        .expect("physical run did not finish")
+        .unwrap()
+        .unwrap();
+    assert_eq!(report.done, vec!["a-long".to_string()]);
+    assert!(report.failed.is_empty());
+    assert!(dispatcher.nudge_delivery.guidance().is_empty());
+    assert!(dispatcher.nudge_delivery.order().is_empty());
+    assert_eq!(
+        sink.worker_terminal_kinds("a-long"),
+        vec!["finished".to_string()]
+    );
+    assert_eq!(observer.calls.load(Ordering::SeqCst), 1);
+    assert_eq!(control.occupancy().await, (0, 0));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn terminal_source_start_is_retired_once_and_next_turn_rebinds_without_blocking_task() {
+    let authority = tempfile::tempdir().unwrap();
+    let sink = Arc::new(RecordingSink::default());
+    let event_sink: Arc<dyn EventSink> = sink.clone();
+    let control = control(
+        "semantic-scheduler-source-rebind",
+        vec![
+            lane("lane-a", "model-a", "host-a", 1),
+            lane("lane-b", "model-b", "host-b", 1),
+        ],
+        event_sink,
+        authority.path(),
+    );
+    let producer = Arc::new(FixedSnapshotProducer::new());
+    let observer = Arc::new(NudgeObserver::bound_to(Vec::new()));
+    let dispatcher = Arc::new(TerminalGapDispatcher::new());
+    let run = tokio::spawn({
+        let sink = sink.clone();
+        let control = control.clone();
+        let producer = producer.clone();
+        let observer = observer.clone();
+        let dispatcher = dispatcher.clone();
+        async move {
+            Scheduler::new(
+                vec![device("lane-a", "model-a"), device("lane-b", "model-b")],
+                2,
+            )
+            .with_sink(sink)
+            .with_semantic_observation(producer, observer)
+            .run_with_physical_admission(
+                Dag::from_specs(vec![task("a-long")]).unwrap(),
+                dispatcher,
+                control,
+                execution(),
+                "Build the provider-start rebind fixture".to_string(),
+                String::new(),
+            )
+            .await
+        }
+    });
+
+    TerminalGapDispatcher::wait_for(&dispatcher.first_terminal, "first provider terminal").await;
+    tokio::time::timeout(Duration::from_secs(2), async {
+        loop {
+            if sink
+                .capture_failure_reasons("a-long")
+                .iter()
+                .any(|reason| reason.contains("no longer live"))
+            {
+                return;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("terminal source start was not retired");
+    let failures_after_retirement = sink.capture_failure_reasons("a-long").len();
+    let captures_before_rebind = producer.calls.load(Ordering::SeqCst);
+
+    dispatcher.continue_session.notify_one();
+    TerminalGapDispatcher::wait_for(&dispatcher.second_started, "second provider start").await;
+    producer.wait_for_calls(captures_before_rebind + 1).await;
+    assert_eq!(
+        sink.capture_failure_reasons("a-long").len(),
+        failures_after_retirement,
+        "the retired provider request must not be polled again before a new request binds"
+    );
+    dispatcher.release_second.notify_one();
+
+    let report = tokio::time::timeout(Duration::from_secs(2), run)
+        .await
+        .expect("task did not complete independently of observation retirement")
+        .unwrap()
+        .unwrap();
+    assert_eq!(report.done, vec!["a-long".to_string()]);
+    assert!(report.failed.is_empty());
     assert_eq!(control.occupancy().await, (0, 0));
 }
 

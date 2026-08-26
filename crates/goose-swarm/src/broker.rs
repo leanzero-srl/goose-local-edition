@@ -953,6 +953,7 @@ struct QueuedWork {
 struct QueuedProviderRequest {
     receipt: ProviderRequestReceipt,
     work_id: String,
+    role: WorkRole,
     priority: WorkPriority,
     task_rank: u64,
     sequence: u64,
@@ -1231,10 +1232,12 @@ impl PhysicalBroker {
         let grant_work = match (&selected_work, &selected_provider) {
             (Some((work_id, queued, _)), Some((_admission_id, provider))) => {
                 compare_queue_values(
+                    queue_class_for_work(queued.opportunity.role),
                     queued.opportunity.priority,
                     queued.opportunity.task_rank,
                     queued.sequence,
                     work_id,
+                    queue_class_for_provider_continuation(provider.role),
                     provider.priority,
                     provider.task_rank,
                     provider.sequence,
@@ -1337,6 +1340,16 @@ impl PhysicalBroker {
             .enumerate()
             .filter(|(_, lane)| {
                 if self.quarantined_hosts.contains_key(&lane.host_id) {
+                    return false;
+                }
+                if matches!(
+                    &lane.capacity_evidence,
+                    HostCapacityEvidence::ProbeSingleStream { .. }
+                ) && self
+                    .active
+                    .values()
+                    .any(|active| active.receipt.physical_host_id == lane.host_id)
+                {
                     return false;
                 }
                 if !opportunity.eligible_logical_device_ids.is_empty()
@@ -1465,6 +1478,7 @@ impl PhysicalBroker {
             QueuedProviderRequest {
                 receipt,
                 work_id: active.receipt.work_id.clone(),
+                role: active.receipt.role,
                 priority: queued.priority,
                 task_rank: queued.task_rank,
                 sequence: self.queue_sequence,
@@ -2143,10 +2157,12 @@ fn validate_opportunity(opportunity: &WorkOpportunity) -> Result<(), BrokerError
 
 fn compare_queued(left: &QueuedWork, right: &QueuedWork) -> Ordering {
     compare_queue_values(
+        queue_class_for_work(left.opportunity.role),
         left.opportunity.priority,
         left.opportunity.task_rank,
         left.sequence,
         &left.opportunity.work_id,
+        queue_class_for_work(right.opportunity.role),
         right.opportunity.priority,
         right.opportunity.task_rank,
         right.sequence,
@@ -2159,10 +2175,12 @@ fn compare_provider_queued(
     right: &QueuedProviderRequest,
 ) -> Ordering {
     compare_queue_values(
+        queue_class_for_provider_continuation(left.role),
         left.priority,
         left.task_rank,
         left.sequence,
         &left.work_id,
+        queue_class_for_provider_continuation(right.role),
         right.priority,
         right.task_rank,
         right.sequence,
@@ -2170,19 +2188,51 @@ fn compare_provider_queued(
     )
 }
 
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+enum BrokerQueueClass {
+    Auxiliary,
+    RepairAlternative,
+    CoreBuild,
+    CoreContinuation,
+}
+
+fn queue_class_for_work(role: WorkRole) -> BrokerQueueClass {
+    match role {
+        WorkRole::Build | WorkRole::ResearchEvidence | WorkRole::PlanningAuthority => {
+            BrokerQueueClass::CoreBuild
+        }
+        WorkRole::Repair => BrokerQueueClass::RepairAlternative,
+        WorkRole::RuntimeAcceptanceReview
+        | WorkRole::CompletedArtifactReview
+        | WorkRole::SemanticJudgeObservation
+        | WorkRole::ContractReview
+        | WorkRole::AcceptanceOracle => BrokerQueueClass::Auxiliary,
+    }
+}
+
+fn queue_class_for_provider_continuation(role: WorkRole) -> BrokerQueueClass {
+    match role {
+        WorkRole::Build | WorkRole::Repair => BrokerQueueClass::CoreContinuation,
+        _ => queue_class_for_work(role),
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn compare_queue_values(
+    left_class: BrokerQueueClass,
     left_priority: WorkPriority,
     left_rank: u64,
     left_sequence: u64,
     left_id: &str,
+    right_class: BrokerQueueClass,
     right_priority: WorkPriority,
     right_rank: u64,
     right_sequence: u64,
     right_id: &str,
 ) -> Ordering {
-    left_priority
-        .cmp(&right_priority)
+    left_class
+        .cmp(&right_class)
+        .then_with(|| left_priority.cmp(&right_priority))
         .then_with(|| left_rank.cmp(&right_rank))
         .then_with(|| right_id.cmp(left_id))
         .then_with(|| right_sequence.cmp(&left_sequence))

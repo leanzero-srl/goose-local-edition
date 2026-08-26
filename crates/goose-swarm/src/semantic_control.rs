@@ -9,7 +9,8 @@ use crate::broker::{
 };
 use crate::control_plane::{
     AdmittedWork, CompletedAdmission, CompletedProviderRequest, ExposedProviderRequestWitness,
-    PhysicalAdmissionControl, ProviderLifecycle, ProviderLifecycleTransitionError,
+    LiveProviderRequestSession, PhysicalAdmissionControl, ProviderLifecycle,
+    ProviderLifecycleTransitionError, ProviderNudgeDelivery, ProviderNudgeSafetySnapshot,
     ProviderStartSession, StartedProviderRequest,
 };
 use crate::event::EventSink;
@@ -412,6 +413,7 @@ enum SemanticNudgeAuthorityError {
     CapabilityUnknown,
     CapabilityAlreadySpent,
     DeliveryUnavailableAfterSpend,
+    CancellationTerminalUnproven,
     InvalidEvidence(SemanticNudgeEligibilityError),
     InvalidCapture(String),
 }
@@ -455,6 +457,10 @@ impl fmt::Display for SemanticNudgeAuthorityError {
             Self::DeliveryUnavailableAfterSpend => write!(
                 formatter,
                 "provider-pinned semantic nudge delivery is unavailable; capability was not spent"
+            ),
+            Self::CancellationTerminalUnproven => write!(
+                formatter,
+                "semantic nudge reserved cancellation but the exact source terminal was not proven"
             ),
             Self::InvalidEvidence(error) => error.fmt(formatter),
             Self::InvalidCapture(detail) => write!(formatter, "invalid semantic capture: {detail}"),
@@ -776,6 +782,7 @@ impl SemanticNudgeAuthority {
         Ok(eligibility)
     }
 
+    #[cfg(test)]
     fn redeem_record(
         &self,
         eligibility: &SemanticJudgeNudgeEligibility,
@@ -783,11 +790,40 @@ impl SemanticNudgeAuthority {
         self.redeem_record_with_pin_hook(eligibility, || {})
     }
 
+    #[cfg(test)]
     fn redeem_record_with_pin_hook(
         &self,
         eligibility: &SemanticJudgeNudgeEligibility,
         on_pinned_spend: impl FnOnce(),
     ) -> Result<(), SemanticNudgeAuthorityError> {
+        self.redeem_record_inner(eligibility, None, on_pinned_spend)
+            .map(drop)
+    }
+
+    fn redeem_record_at_capture(
+        &self,
+        eligibility: &SemanticJudgeNudgeEligibility,
+        capture: ProviderNudgeSafetySnapshot,
+    ) -> Result<ReservedSemanticNudge, SemanticNudgeAuthorityError> {
+        let provider_session = eligibility
+            .boundary
+            .source_provider_session()
+            .provider_session();
+        let delivery = self
+            .redeem_record_inner(eligibility, Some(capture), || {})?
+            .expect("capture-bound semantic redemption returns its reserved delivery");
+        Ok(ReservedSemanticNudge {
+            provider_session,
+            delivery,
+        })
+    }
+
+    fn redeem_record_inner(
+        &self,
+        eligibility: &SemanticJudgeNudgeEligibility,
+        capture: Option<ProviderNudgeSafetySnapshot>,
+        on_pinned_spend: impl FnOnce(),
+    ) -> Result<Option<Arc<dyn ProviderNudgeDelivery>>, SemanticNudgeAuthorityError> {
         let provider_session = eligibility
             .boundary
             .source_provider_session()
@@ -851,15 +887,44 @@ impl SemanticNudgeAuthority {
                 .state = SemanticCapabilityState::Invalidated;
             return Err(SemanticNudgeAuthorityError::CaptureNotCurrent);
         }
-        provider_session
-            .try_enqueue_nudge(eligibility.guidance.clone(), on_pinned_spend)
-            .map_err(|_| SemanticNudgeAuthorityError::DeliveryUnavailableAfterSpend)?;
+        let delivery = match capture {
+            Some(capture) => Some(
+                provider_session
+                    .try_enqueue_nudge_at_capture(
+                        eligibility.guidance.clone(),
+                        capture,
+                        on_pinned_spend,
+                    )
+                    .map_err(|_| SemanticNudgeAuthorityError::DeliveryUnavailableAfterSpend)?,
+            ),
+            None => {
+                provider_session
+                    .try_enqueue_nudge(eligibility.guidance.clone(), on_pinned_spend)
+                    .map_err(|_| SemanticNudgeAuthorityError::DeliveryUnavailableAfterSpend)?;
+                None
+            }
+        };
         ledger
             .capabilities
             .get_mut(&eligibility.evidence_receipt_hash)
             .expect("semantic capability remains registered")
             .state = SemanticCapabilityState::SpentDelivered;
-        Ok(())
+        Ok(delivery)
+    }
+}
+
+struct ReservedSemanticNudge {
+    provider_session: Arc<LiveProviderRequestSession>,
+    delivery: Arc<dyn ProviderNudgeDelivery>,
+}
+
+impl ReservedSemanticNudge {
+    async fn confirm(self) -> Result<(), SemanticNudgeAuthorityError> {
+        self.provider_session
+            .confirm_reserved_nudge_terminal(self.delivery)
+            .await
+            .map(drop)
+            .map_err(|_| SemanticNudgeAuthorityError::CancellationTerminalUnproven)
     }
 }
 
@@ -1392,7 +1457,7 @@ impl BrokeredSemanticObservationPlane {
             .map_err(|error| error.to_string())
     }
 
-    pub(crate) fn redeem_scheduler_nudge(
+    pub(crate) async fn redeem_scheduler_nudge(
         &self,
         capture: SemanticObservationCapture,
         request: &SemanticObservationCaptureRequest,
@@ -1400,6 +1465,7 @@ impl BrokeredSemanticObservationPlane {
         provider_start: ProviderStartSession,
         receipt: AdmittedSemanticObservationReceipt,
     ) -> Result<bool, String> {
+        let progress_at_capture = capture.provider_nudge_safety_snapshot();
         let permit = self
             .mint_semantic_nudge_capture_permit_from_provider_start(
                 task_evidence,
@@ -1416,7 +1482,11 @@ impl BrokeredSemanticObservationPlane {
         else {
             return Ok(false);
         };
-        self.redeem_existing_judge_nudge(&eligibility)
+        self.nudge_authority
+            .redeem_record_at_capture(&eligibility, progress_at_capture)
+            .map_err(|error| error.to_string())?
+            .confirm()
+            .await
             .map_err(|error| error.to_string())?;
         Ok(true)
     }
@@ -1444,6 +1514,7 @@ impl BrokeredSemanticObservationPlane {
     }
 
     /// Atomically consume a capability after checking current trace and source-session state.
+    #[cfg(test)]
     fn redeem_existing_judge_nudge(
         &self,
         eligibility: &SemanticJudgeNudgeEligibility,

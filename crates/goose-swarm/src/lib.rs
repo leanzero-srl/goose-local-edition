@@ -42,8 +42,8 @@ pub use control_plane::{
     PhysicalAdmissionControl, ProviderLifecycle, ProviderLifecycleDispatcher,
     ProviderLifecycleJournal, ProviderLifecycleOperationError, ProviderLifecycleStartError,
     ProviderLifecycleTransitionError, ProviderNudgeDelivery, ProviderNudgeDeliveryReceipt,
-    ProviderNudgeSafetyGate, ProviderStartKey, ProviderStartLookupError, ProviderStartRegistry,
-    ProviderStartSession, StartedProviderRequest,
+    ProviderNudgeSafetyGate, ProviderNudgeSafetySnapshot, ProviderStartKey,
+    ProviderStartLookupError, ProviderStartRegistry, ProviderStartSession, StartedProviderRequest,
 };
 pub use dag::{
     expand_subsplits, extract_subsplit, fill_fan_enabled, specs_from_plan_json, Dag, Difficulty,

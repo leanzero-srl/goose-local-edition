@@ -142,6 +142,18 @@ impl std::error::Error for ProviderStartLookupError {}
 #[async_trait]
 pub trait ProviderNudgeDelivery: Send + Sync {
     fn bind_request(&self, request: &ProviderRequestReceipt) -> Result<(), String>;
+
+    /// Atomically compare the semantic capture's provider-stream evidence with the live stream and
+    /// reserve one nudge while the same progress lock remains held. Implementations that cannot
+    /// prove this correspondence fail closed.
+    fn reserve_at_capture(
+        &self,
+        _capture: ProviderNudgeSafetySnapshot,
+        _reserve: &mut dyn FnMut() -> Result<(), String>,
+    ) -> Result<(), String> {
+        Err("provider nudge delivery has no stream-safety authority".to_string())
+    }
+
     fn try_enqueue(&self, guidance: String) -> Result<(), String>;
     fn natural_terminal_allowed(&self) -> bool;
     fn cancellation_terminal_confirmation_required(&self) -> bool;
@@ -155,6 +167,22 @@ pub trait ProviderNudgeDelivery: Send + Sync {
     async fn confirmed_cancelled_terminal(&self) -> Result<ProviderTerminalReceipt, String>;
 }
 
+/// Provider-stream fields sealed into the semantic capture that authorizes a nudge.
+///
+/// The full stream revision is retained as provenance. Nudge safety specifically requires the
+/// structured-output fields to remain unchanged through reservation; ordinary reasoning progress
+/// may continue while the independent judge runs.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct ProviderNudgeSafetySnapshot {
+    pub provider_stream_revision: u64,
+    pub provider_stream_chunks: u64,
+    pub provider_stream_bytes: u64,
+    pub provider_structured_output_chunks: u64,
+    pub provider_structured_output_bytes: u64,
+    pub provider_last_progress_elapsed_ms: u64,
+    pub provider_structured_output_active: bool,
+}
+
 /// Serializes a semantic nudge's final safety check with its delivery reservation.
 ///
 /// Implementations hold the same authority lock used by the changing safety signal while they
@@ -166,16 +194,19 @@ pub trait ProviderNudgeSafetyGate: Send + Sync {
 
 struct ProviderStartRegistryEntry {
     key: ProviderStartKey,
+    provider_request: ProviderRequestKey,
     request: Weak<ProviderRequestAuthority>,
 }
 
 /// Engine-owned channel from a lifecycle-wrapped provider call to its physical scheduler.
 ///
-/// Entries retain only a weak reference to opaque request authority. They cannot keep a dropped or
-/// terminal request alive, and no receipt is serialized or copied into the registry.
+/// Entries retain only a weak reference to opaque request authority plus the non-authoritative
+/// request key needed to retire one terminal observation binding. They cannot keep a dropped or
+/// terminal request alive, and no receipt is serialized into the registry.
 #[derive(Clone, Default)]
 pub struct ProviderStartRegistry {
     entries: Arc<StdMutex<HashMap<String, ProviderStartRegistryEntry>>>,
+    changed: Arc<Notify>,
 }
 
 impl ProviderStartRegistry {
@@ -202,9 +233,15 @@ impl ProviderStartRegistry {
             key.admission_id.clone(),
             ProviderStartRegistryEntry {
                 key,
+                provider_request: request.receipt.key.clone(),
                 request: Arc::downgrade(request),
             },
         );
+        *request
+            .provider_start_changed
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(self.changed.clone());
+        self.changed.notify_one();
         Ok(())
     }
 
@@ -249,6 +286,42 @@ impl ProviderStartRegistry {
             key: published_key,
             request,
         })
+    }
+
+    /// Return the exact request key most recently published for this task/admission binding even
+    /// after that request terminalizes. The key carries no live-use authority; it only lets the
+    /// scheduler suppress repeated capture attempts until a different request is published.
+    pub(crate) fn current_request_key(
+        &self,
+        key: &ProviderStartKey,
+    ) -> Result<Option<ProviderRequestKey>, ProviderStartLookupError> {
+        let entries = self
+            .entries
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let Some(entry) = entries.get(&key.admission_id) else {
+            return Ok(None);
+        };
+        if entry.key.task_id != key.task_id {
+            return Err(ProviderStartLookupError::TaskMismatch {
+                admission_id: key.admission_id.clone(),
+                expected_task_id: key.task_id.clone(),
+                actual_task_id: entry.key.task_id.clone(),
+            });
+        }
+        if entry.key.attempt != key.attempt {
+            return Err(ProviderStartLookupError::StaleAttempt {
+                admission_id: key.admission_id.clone(),
+                task_id: key.task_id.clone(),
+                expected_attempt: key.attempt,
+                actual_attempt: entry.key.attempt,
+            });
+        }
+        Ok(Some(entry.provider_request.clone()))
+    }
+
+    pub(crate) async fn changed(&self) {
+        self.changed.notified().await;
     }
 }
 
@@ -1533,6 +1606,7 @@ struct ProviderRequestAuthority {
     closed: Notify,
     boundary: StdMutex<Option<ProviderLeaseHttpBoundary>>,
     nudge_delivery: StdMutex<Option<Arc<dyn ProviderNudgeDelivery>>>,
+    provider_start_changed: StdMutex<Option<Arc<Notify>>>,
 }
 
 impl ProviderRequestAuthority {
@@ -1543,6 +1617,7 @@ impl ProviderRequestAuthority {
             closed: Notify::new(),
             boundary: StdMutex::new(None),
             nudge_delivery: StdMutex::new(None),
+            provider_start_changed: StdMutex::new(None),
         })
     }
 
@@ -1558,6 +1633,7 @@ impl ProviderRequestAuthority {
             closed: Notify::new(),
             boundary: StdMutex::new(None),
             nudge_delivery: StdMutex::new(nudge_delivery),
+            provider_start_changed: StdMutex::new(None),
         })
     }
 
@@ -1591,6 +1667,14 @@ impl ProviderRequestAuthority {
         };
         if changed {
             self.closed.notify_waiters();
+            if let Some(registry_changed) = self
+                .provider_start_changed
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .as_ref()
+            {
+                registry_changed.notify_one();
+            }
         }
     }
 
@@ -1859,6 +1943,56 @@ impl LiveProviderRequestSession {
         Ok(())
     }
 
+    pub(crate) fn try_enqueue_nudge_at_capture(
+        &self,
+        guidance: String,
+        capture: ProviderNudgeSafetySnapshot,
+        on_pinned_enqueue: impl FnOnce(),
+    ) -> Result<Arc<dyn ProviderNudgeDelivery>, String> {
+        let _pin = self.try_pin().map_err(|error| error.to_string())?;
+        let delivery = self
+            .request
+            .nudge_delivery
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone()
+            .ok_or_else(|| "provider request has no dispatcher-owned nudge delivery".to_string())?;
+        let mut guidance = Some(guidance);
+        let mut on_pinned_enqueue = Some(on_pinned_enqueue);
+        delivery.reserve_at_capture(capture, &mut || {
+            let guidance = guidance.take().ok_or_else(|| {
+                "provider nudge reservation was invoked more than once".to_string()
+            })?;
+            delivery.try_enqueue(guidance)?;
+            on_pinned_enqueue
+                .take()
+                .expect("provider nudge reservation invokes its hook once")();
+            Ok(())
+        })?;
+        Ok(delivery)
+    }
+
+    pub(crate) async fn confirm_reserved_nudge_terminal(
+        &self,
+        delivery: Arc<dyn ProviderNudgeDelivery>,
+    ) -> Result<ProviderTerminalReceipt, String> {
+        delivery.cancelled().await;
+        let terminal = delivery.confirmed_cancelled_terminal().await?;
+        let expected = &self.request.receipt;
+        if terminal.kind != ProviderTerminalKind::Cancelled
+            || terminal.admission_id != expected.admission_id
+            || terminal.key != expected.key
+            || terminal.physical_host_id != expected.physical_host_id
+            || terminal.model_instance_id != expected.model_instance_id
+        {
+            return Err(
+                "nudge delivery returned a cancellation terminal for a different provider request"
+                    .to_string(),
+            );
+        }
+        Ok(terminal)
+    }
+
     async fn enqueue_nudge_and_wait(
         &self,
         guidance: String,
@@ -1889,21 +2023,7 @@ impl LiveProviderRequestSession {
             })?;
             delivery.try_enqueue(guidance)
         })?;
-        delivery.cancelled().await;
-        let terminal = delivery.confirmed_cancelled_terminal().await?;
-        let expected = &self.request.receipt;
-        if terminal.kind != ProviderTerminalKind::Cancelled
-            || terminal.admission_id != expected.admission_id
-            || terminal.key != expected.key
-            || terminal.physical_host_id != expected.physical_host_id
-            || terminal.model_instance_id != expected.model_instance_id
-        {
-            return Err(
-                "nudge delivery returned a cancellation terminal for a different provider request"
-                    .to_string(),
-            );
-        }
-        Ok(terminal)
+        self.confirm_reserved_nudge_terminal(delivery).await
     }
 }
 
