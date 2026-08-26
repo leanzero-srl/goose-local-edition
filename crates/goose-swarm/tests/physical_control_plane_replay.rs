@@ -552,6 +552,94 @@ impl ProviderLifecycleDispatcher for LifecycleMock {
     }
 }
 
+struct PhysicalDegradedDispatcher {
+    calls: Mutex<Vec<String>>,
+}
+
+#[async_trait]
+impl ProviderLifecycleDispatcher for PhysicalDegradedDispatcher {
+    async fn run_admitted(
+        &self,
+        req: DispatchRequest,
+        _admission: AdmissionReceipt,
+        lifecycle: ProviderLifecycle,
+    ) -> Result<TaskRunOutput, DispatchError> {
+        self.calls.lock().unwrap().push(req.task_id.clone());
+        let key = lifecycle
+            .provider_request_started(format!("provider:{}", req.task_id))
+            .await
+            .unwrap();
+        lifecycle
+            .provider_terminal(key, ProviderTerminalKind::Finished)
+            .await
+            .unwrap();
+        if req.task_id == "missing" {
+            return Err(DispatchError::ContentRetry(
+                "ordinary model response omitted its task".to_string(),
+            ));
+        }
+        for file in &req.owned_files {
+            let path = std::path::Path::new(file);
+            if let Some(parent) = path.parent() {
+                std::fs::create_dir_all(parent).unwrap();
+            }
+            std::fs::write(path, format!("{} output", req.task_id)).unwrap();
+        }
+        Ok(format!("output:{}", req.task_id).into())
+    }
+}
+
+#[tokio::test]
+async fn physical_exhaustion_continues_through_a_deep_provisional_chain() {
+    let sink = Arc::new(RecordingSink::default());
+    let control = control(
+        "physical-degraded-chain",
+        vec![
+            lane("lane-a", "model-a", "host-a", "instance-a", 1),
+            lane("lane-b", "model-b", "host-b", "instance-b", 1),
+        ],
+        sink.clone(),
+    );
+    let mut tasks = vec![
+        spec("missing", &[]),
+        spec("dependent", &["missing"]),
+        spec("deep", &["dependent"]),
+        spec("independent", &[]),
+    ];
+    for task in &mut tasks {
+        task.owned_files = vec![format!("target/physical-degraded/{}.txt", task.id)];
+        let _ = std::fs::remove_file(&task.owned_files[0]);
+    }
+    let dispatcher = Arc::new(PhysicalDegradedDispatcher {
+        calls: Mutex::new(Vec::new()),
+    });
+    let report = Scheduler::new(
+        vec![
+            device("lane-a", "model-a", 1),
+            device("lane-b", "model-b", 1),
+        ],
+        1,
+    )
+    .with_sink(sink)
+    .with_unavailable_continuation()
+    .run_with_physical_admission(
+        Dag::from_specs(tasks).unwrap(),
+        dispatcher.clone(),
+        control.clone(),
+        execution(WorkRole::Build),
+        String::new(),
+        String::new(),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(report.unavailable.len(), 1);
+    assert_eq!(report.provisional, vec!["deep", "dependent"]);
+    assert_eq!(report.done, vec!["independent"]);
+    assert_eq!(dispatcher.calls.lock().unwrap().len(), 4);
+    assert_eq!(control.occupancy().await, (0, 0));
+}
+
 #[tokio::test]
 async fn scheduled_dag_and_provider_calls_are_identical_on_one_physical_host() {
     let sink = Arc::new(RecordingSink::default());
