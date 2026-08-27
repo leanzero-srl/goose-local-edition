@@ -2219,7 +2219,7 @@ fn show_pool(cfg: &SwarmConfig) {
         cfg.planner_weight
     );
     println!(
-        "  limits     worker-max-turns {}   max-attempts {}   context-cap {}",
+        "  limits worker-max-turns {}   max-attempts {}   context-cap {}",
         style(cfg.worker_max_turns).cyan(),
         style(cfg.max_attempts).cyan(),
         match cfg.context_cap {
@@ -2288,7 +2288,7 @@ fn show_pool(cfg: &SwarmConfig) {
         style(cfg.planner_timeout_secs).cyan()
     );
     println!(
-        "  models     load {}",
+        "  models load {}",
         if cfg.allow_model_load {
             style("ON (swarm may lms-load / pre-warm)").green().bold()
         } else {
@@ -3602,43 +3602,18 @@ fn tails_recur(a: &std::collections::HashSet<u64>, b: &std::collections::HashSet
 /// discussing modules named in the plan, concluded it was a build worker falling behind, and nudged it
 /// three times to "Write wordfreq/core.py implementing count_words(text)". The review must not write code
 /// at all. A supervisor that does not know what it is supervising does not help — it derails.
-/// The calls that must not write code — the SAME set `call_objective` already describes, made
-/// load-bearing instead of advisory.
-///
-/// A prompt saying "Do NOT write the implementation" is a request. Withholding the write tools is a
-/// rule. MEASURED on two consecutive runs of the same spec: the frontend slice owner wrote
-/// `vendorsync/web/app.js`, then next run `vendorsync/web/index.html` — implementation files created
-/// during RESEARCH, before any plan existed, against no spec, owned by no task. An unowned file is
-/// invisible to `smoke_all_files` (which comes from the DAG), so the missing-deliverable check and the
-/// repair fan's file attribution both look straight past it, and the BUILD task that later owns that
-/// path starts against a stranger's half-finished guess instead of a clean tree.
-///
-/// NOT hermetic, and saying so matters: these calls keep `shell`, because research that cannot look
-/// anything up is not research, and `shell` can always write with a redirect. This removes the obvious
-/// path and the model's default reach, not the possibility. `research_wrote_files` below is what
-/// catches the rest.
-fn is_read_only_call(activity_key: Option<&str>) -> bool {
-    matches!(
-        activity_key,
-        Some("open")
-            | Some("open-resplit")
-            | Some("synthesis")
-            | Some("review")
-            | Some("proxy-answer")
-            | Some("rate")
-    ) || activity_key.is_some_and(|k| k.starts_with("slice-") || k.starts_with("test-"))
-}
-
 fn call_objective(activity_key: Option<&str>) -> &'static str {
     match activity_key {
         Some("open") | Some("open-resplit") => {
             "split the request into balanced semantic slices. It must NOT write code, plan files, or tasks."
         }
         Some("synthesis") => {
-            "wire already-researched slices into a task DAG — ids, files and dependencies only. It must              NOT write code and must NOT restate the specifications."
+            "wire already-researched slices into a task DAG — ids, files and dependencies only. It \
+             must NOT write code and must NOT restate the specifications."
         }
         Some("review") => {
-            "read the original request against the plan and return a small structural PATCH. It must NOT              write code, and must NOT rewrite any task's specification."
+            "read the original request against the plan and return a small structural PATCH. It must \
+             NOT write code, and must NOT rewrite any task's specification."
         }
         Some("proxy-answer") => "answer the open decisions from the request. It must NOT write code.",
         Some("rate") => "rate each defect CRITICAL or MINOR. It must NOT write code.",
@@ -3648,7 +3623,7 @@ fn call_objective(activity_key: Option<&str>) -> &'static str {
              disk, and it has no file tools: never direct it to create or edit one. It must NOT write \
              the implementation."
         }
-        Some(k) if k.starts_with("test-") => {
+        Some(k) if k.starts_with("apptest-") => {
             "exercise the BUILT app from one angle and report the defects it observes, with the files \
              each touches. It must NOT fix anything and must not edit a single file — a call reporting \
              bugs without writing code is doing this job exactly right."
@@ -3657,7 +3632,8 @@ fn call_objective(activity_key: Option<&str>) -> &'static str {
             "emit a signature-only stub for one module. It must NOT implement anything."
         }
         Some("integrate-verify") => {
-            "assemble the produced modules, run the tests, boot the app and exercise the commands the              request advertises."
+            "assemble the produced modules, run the tests, boot the app and exercise the commands the \
+             request advertises."
         }
         // A dispatched build worker: the only kind that SHOULD be writing files.
         _ => "implement its assigned module — write the files it owns, then verify them.",
@@ -6266,7 +6242,7 @@ mod tests {
         assert!(is_stub_content("")); // empty
                                       // Real code is not a stub.
         assert!(!is_stub_content(
-            "func add(a: Int, b: Int) -> Int {\n    return a + b\n}\nlet x = add(1, 2)"
+            "func add(a: Int, b: Int) -> Int {\n return a + b\n}\nlet x = add(1, 2)"
         ));
     }
 
@@ -7041,14 +7017,14 @@ mod tests {
         // APP CODE with a real no-timeout defect — MUST still be flagged.
         std::fs::write(
             pkg.join("bad.py"),
-            "import http.client\ndef a(h):\n    return http.client.HTTPConnection(h)\n",
+            "import http.client\ndef a(h):\n return http.client.HTTPConnection(h)\n",
         )
         .unwrap();
         // THE SWARM'S OWN TEST FILE, same defect. 28 of 60 real findings named exactly this shape,
         // and the scorer never grades it. MUST be absent.
         std::fs::write(
             tests.join("test_api.py"),
-            "import http.client\ndef t(h):\n    return http.client.HTTPConnection(h)\n",
+            "import http.client\ndef t(h):\n return http.client.HTTPConnection(h)\n",
         )
         .unwrap();
 
@@ -7359,7 +7335,7 @@ mod tests {
         std::fs::create_dir_all(&pkg).unwrap();
         std::fs::write(pkg.join("__init__.py"), "").unwrap();
         std::fs::write(pkg.join("__main__.py"), "from pkg import cli\ncli.main()\n").unwrap();
-        std::fs::write(pkg.join("cli.py"), "def main():\n    return 0\n").unwrap();
+        std::fs::write(pkg.join("cli.py"), "def main():\n return 0\n").unwrap();
         std::fs::write(pkg.join("orphan.py"), "x = 1\n").unwrap();
         // Scoped to the plan's own files. The assertions below are UNCHANGED, so they double as proof
         // that scoping did not BLIND the check — the genuine orphan must still be flagged.
@@ -7410,7 +7386,7 @@ mod tests {
         .unwrap();
         std::fs::write(
             pkg.join("api.py"),
-            "CONST = 1\ndef make():\n    return CONST\n",
+            "CONST = 1\ndef make():\n return CONST\n",
         )
         .unwrap();
         // ...and a module NOTHING names, anywhere. The fix must not blind the check.
@@ -8791,32 +8767,78 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
     }
 
     #[test]
-    /// The read-only taxonomy must stay in step with what `call_objective` TELLS the judge each call is
-    /// for. A call described as "must NOT write code" may not be handed write tools, and a call that
-    /// builds something must be. Two consecutive runs wrote implementation during RESEARCH because the
-    /// prompt asked nicely and nothing enforced it.
-    fn calls_told_not_to_write_code_do_not_get_write_tools() {
-        for k in [
-            "open",
-            "open-resplit",
-            "synthesis",
-            "review",
-            "proxy-answer",
-            "rate",
-            "slice-frontend-js",
-            "test-primary-journey",
-        ] {
-            assert!(is_read_only_call(Some(k)), "{k} must not be able to write");
+    /// No prompt text may carry a run of spaces from a flattened source literal.
+    ///
+    /// A multi-line Rust string with no `\` continuation keeps the SOURCE INDENTATION in the value, and
+    /// rustfmt then joins the lines — so `"It must\n             NOT write code"` becomes
+    /// `"It must              NOT write code"` and that is what the model reads. Found in
+    /// call_objective's review/synthesis/integrate-verify entries and in 41 other literals in this
+    /// file, four of them worker-facing repair findings. Cosmetic per instance, but it is the prompt,
+    /// and nothing was checking it.
+    fn no_prompt_string_carries_flattened_source_indentation() {
+        let keys = [
+            None,
+            Some("open"),
+            Some("open-resplit"),
+            Some("synthesis"),
+            Some("review"),
+            Some("proxy-answer"),
+            Some("rate"),
+            Some("slice-store"),
+            Some("apptest-primary-journey"),
+            Some("contract-store"),
+            Some("integrate-verify"),
+        ];
+        for k in keys {
+            let o = call_objective(k);
             assert!(
-                !call_objective(Some(k)).contains("implement its assigned module"),
-                "{k} is described as a building call yet is denied write tools"
+                !o.contains("  "),
+                "call_objective({k:?}) carries a run of spaces from a source literal: {o:?}"
             );
         }
-        for k in ["contract-store", "integrate-verify", "ledger", "web"] {
-            assert!(!is_read_only_call(Some(k)), "{k} builds and needs write");
+        assert!(
+            !BRIEF_CONTRACT
+                .lines()
+                .any(|l| l.trim_start().contains("  ")),
+            "BRIEF_CONTRACT carries a run of spaces from a source literal"
+        );
+    }
+
+    #[test]
+    /// `call_objective` is what the judge is told a call is for, and the judge redirects against it.
+    /// So an engine-owned key must never be a name a MODEL could pick for its own build task — this is
+    /// not hypothetical: `test-core`, `test-wal` and `test-core-eval` all appear in this file's own plan
+    /// fixtures, and a live run produced `test-store-core` and `test-store-edge-cases`. While the TEST
+    /// fan used `test-<angle>`, those real build tasks — whose entire job is writing test files — were
+    /// being described to the judge as calls that "must NOT fix anything and must not edit a single
+    /// file".
+    fn engine_owned_activity_keys_cannot_collide_with_a_model_chosen_task_id() {
+        // The shapes a model actually emits for a test task, from the fixtures in this file.
+        for model_task in [
+            "test-core",
+            "test-wal",
+            "test-core-eval",
+            "test-store-core",
+            "test-store-edge-cases",
+        ] {
+            assert_eq!(
+                call_objective(Some(model_task)),
+                call_objective(Some("some-ordinary-module")),
+                "{model_task} is a MODEL's build task and must be described as one"
+            );
         }
-        // The judge itself carries no activity key and must keep today's tools.
-        assert!(!is_read_only_call(None));
+        // The engine's own read-and-decide calls are described as not writing code.
+        for engine_key in ["open", "synthesis", "review", "proxy-answer", "rate"] {
+            assert!(
+                call_objective(Some(engine_key)).contains("NOT write code"),
+                "{engine_key} should be described as a call that does not write code"
+            );
+        }
+        // The TEST fan's own key is unmistakable, and is described as observing rather than fixing.
+        assert!(call_objective(Some("apptest-primary-journey")).contains("must NOT fix anything"));
+        // A slice owner gives its specification as a REPLY — the judge must not send it at a file it
+        // has no tool to create.
+        assert!(call_objective(Some("slice-frontend-js")).contains("AS ITS REPLY"));
     }
 
     #[test]
@@ -8940,7 +8962,7 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
         assert_eq!(
             real.len(),
             3,
-            "the planner repeats as a worker: 4 entries, 3 models. A cap on len() would still fan out 4 and              hand slot 3 a model that is already generating."
+            "the planner repeats as a worker: 4 entries, 3 models. A cap on len() would still fan out 4 and hand slot 3 a model that is already generating."
         );
         // order is preserved: the planner drafts first
         assert_eq!(real[0], "workhorse-qwopus3.6-27b-coder-mlx");
@@ -10343,12 +10365,12 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
     /// deterministically, not by asking more firmly.
     #[test]
     fn a_fenced_stub_is_unwrapped_into_parseable_source() {
-        let fenced = "```python\nclass Store:\n    def get(self, k: str) -> str: ...\n```";
+        let fenced = "```python\nclass Store:\n def get(self, k: str) -> str: ...\n```";
         let out = strip_code_fences(fenced);
         assert!(!out.contains("```"));
         assert!(out.contains("class Store:"));
         // Unfenced source is returned byte-identical — this can only repair, never mangle.
-        let plain = "class Store:\n    def get(self, k: str) -> str: ...\n";
+        let plain = "class Store:\n def get(self, k: str) -> str: ...\n";
         assert_eq!(strip_code_fences(plain), plain);
         // A stray UNPAIRED fence still yields usable source rather than nothing.
         let stray = "```\nclass A: ...";
@@ -10387,7 +10409,7 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
         );
         assert_eq!(sanitize_generated_source("a\u{00a0}= 1"), "a = 1");
         // Ordinary ASCII source is returned byte-identical — this can only ever repair, never mangle.
-        let clean = "def f(p: Path) -> None:\n    p.mkdir(parents=True)\n";
+        let clean = "def f(p: Path) -> None:\n p.mkdir(parents=True)\n";
         assert_eq!(sanitize_generated_source(clean), clean);
     }
 
@@ -10457,7 +10479,7 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
         // Folded in from parse_subcommands, the SECOND parser of this same input, now deleted. It read
         // the identical argparse block with no prose guard, so the smoke gate and spec_contract could
         // disagree about what an app advertises while both were "reading the help".
-        let multi = "usage: unitconv [-h] {convert,units} ...\n\npositional arguments:\n  {convert,units}\n    convert  convert a value\n    units    list units\n";
+        let multi = "usage: unitconv [-h] {convert,units} ...\n\npositional arguments:\n  {convert,units}\n convert  convert a value\n units list units\n";
         assert_eq!(advertised_subcommands(multi), vec!["convert", "units"]);
         assert!(advertised_subcommands("usage: tool [-h] FILE\n").is_empty());
         assert_eq!(
@@ -11387,19 +11409,19 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
         assert!(!has_run_script(&pkg4));
         // a real stack frame (`at ... :line`) vs help prose ("at least one of") that also starts with "at ".
         assert!(has_stack_frame(
-            "RangeError: bad\n    at tokenize (/x/dist/tok.js:5:11)"
+            "RangeError: bad\n at tokenize (/x/dist/tok.js:5:11)"
         ));
         assert!(!has_stack_frame(
-            "Usage:\n    at least one of --foo/--bar is required"
+            "Usage:\n at least one of --foo/--bar is required"
         ));
         // crash = NONZERO exit AND a stack frame. A clean exit (success=true) is never a crash, even with a
         // stack-looking line; a clean nonzero rejection with no frame is not a crash either.
         assert!(looks_like_runtime_crash(
-            "RangeError: Invalid array length\n    at tokenize (/x/dist/tok.js:5:11)",
+            "RangeError: Invalid array length\n at tokenize (/x/dist/tok.js:5:11)",
             false
         ));
         assert!(!looks_like_runtime_crash(
-            "RangeError: Invalid array length\n    at tokenize (/x/dist/tok.js:5:11)",
+            "RangeError: Invalid array length\n at tokenize (/x/dist/tok.js:5:11)",
             true // exited 0 -> not a crash
         ));
         assert!(!looks_like_runtime_crash(
@@ -12171,7 +12193,7 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
 
     #[test]
     fn extract_file_prefers_source_over_test_and_none_when_absent() {
-        let f = "tests/test_cli.py:9: in test_add\n    from spendlog.cli import main\n\
+        let f = "tests/test_cli.py:9: in test_add\n from spendlog.cli import main\n\
                  spendlog/cli.py:3: in <module>\n    import missing\nE   ModuleNotFoundError"
             .to_string();
         assert_eq!(
@@ -12217,7 +12239,7 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
 
     #[test]
     fn skeleton_comes_from_the_contract_and_fails_loudly_when_unfilled() {
-        let bundle = "### module: client\ndef fetch(url: str) -> dict: ...\n\n\nclass Pager:\n    def next_page(self) -> list: ...\n\n### module: store\ndef save(row: dict) -> None: ...\n\n### missing module: broken\n# CONTRACT UNAVAILABLE\n";
+        let bundle = "### module: client\ndef fetch(url: str) -> dict: ...\n\n\nclass Pager:\n def next_page(self) -> list: ...\n\n### module: store\ndef save(row: dict) -> None: ...\n\n### missing module: broken\n# CONTRACT UNAVAILABLE\n";
         // Section lookup: the right module, header stripped; a D1-dropped module yields None.
         let stub = module_stub(bundle, "client").unwrap();
         assert!(stub.contains("def fetch") && stub.contains("class Pager"));
@@ -12280,21 +12302,21 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
     #[test]
     fn splice_fills_owned_slots_and_refuses_every_foreign_touch() {
         // S3's 5-way plan (S3-DESIGN.md), one composed skeleton, all directions.
-        let skeleton = "import json\n\n\ndef alpha():\n    raise NotImplementedError\n\n\ndef beta():\n    raise NotImplementedError\n\n\ndef gamma():\n    return 3\n";
+        let skeleton = "import json\n\n\ndef alpha():\n raise NotImplementedError\n\n\ndef beta():\n raise NotImplementedError\n\n\ndef gamma():\n return 3\n";
         // (1) Two fillers, disjoint slots: each edited ONLY its own body.
-        let fill_a = "import json\n\n\ndef alpha():\n    return {\"a\": 1}\n\n\ndef beta():\n    raise NotImplementedError\n\n\ndef gamma():\n    return 3\n";
-        let fill_b = "import json\n\n\ndef alpha():\n    raise NotImplementedError\n\n\ndef beta():\n    return json.dumps([2])\n\n\ndef gamma():\n    return 3\n";
+        let fill_a = "import json\n\n\ndef alpha():\n return {\"a\": 1}\n\n\ndef beta():\n raise NotImplementedError\n\n\ndef gamma():\n return 3\n";
+        let fill_b = "import json\n\n\ndef alpha():\n raise NotImplementedError\n\n\ndef beta():\n return json.dumps([2])\n\n\ndef gamma():\n return 3\n";
         let (after_a, _) = splice_functions(skeleton, skeleton, fill_a, &["alpha".into()]).unwrap();
         assert!(after_a.contains("return {\"a\": 1}"));
-        assert!(after_a.contains("def beta():\n    raise NotImplementedError"));
+        assert!(after_a.contains("def beta():\n raise NotImplementedError"));
         let (done, _) = splice_functions(&after_a, skeleton, fill_b, &["beta".into()]).unwrap();
         assert!(done.contains("return {\"a\": 1}") && done.contains("json.dumps([2])"));
-        assert!(done.contains("def gamma():\n    return 3"));
+        assert!(done.contains("def gamma():\n return 3"));
         // (2) POLICY CHANGE (F809, measured on the first live join — 2 of 5 fills were
         // whole-file rewrites and the fatal fence landed NOTHING): a filler that also edited a
         // sibling's body now contributes ITS OWN slot only — the sibling edit is IGNORED by
         // construction (only owned spans are copied), and the fact is reported.
-        let overreach = "import json\n\n\ndef alpha():\n    return {\"a\": 1}\n\n\ndef beta():\n    return \"sneaky\"\n\n\ndef gamma():\n    return 3\n";
+        let overreach = "import json\n\n\ndef alpha():\n return {\"a\": 1}\n\n\ndef beta():\n return \"sneaky\"\n\n\ndef gamma():\n return 3\n";
         let (soft, foreign) =
             splice_functions(skeleton, skeleton, overreach, &["alpha".into()]).unwrap();
         assert!(foreign, "the foreign edit is recorded");
@@ -12304,7 +12326,7 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
             "the sibling edit NEVER reaches the file"
         );
         // (3) A filler that deleted its own slot.
-        let deleted = "import json\n\n\ndef beta():\n    raise NotImplementedError\n\n\ndef gamma():\n    return 3\n";
+        let deleted = "import json\n\n\ndef beta():\n raise NotImplementedError\n\n\ndef gamma():\n return 3\n";
         assert!(matches!(
             splice_functions(skeleton, skeleton, deleted, &["alpha".into()]),
             Err(SpliceRefusal::SlotMissingInShadow(_))
@@ -12314,12 +12336,12 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
             Err(SpliceRefusal::SlotMissingInSkeleton(_))
         ));
         // (4) Import ADD merges once and lands above the defs; import CONFLICT refuses.
-        let with_import = "import json\nimport hashlib\n\n\ndef alpha():\n    return hashlib.sha256(b\"x\").hexdigest()\n\n\ndef beta():\n    raise NotImplementedError\n\n\ndef gamma():\n    return 3\n";
+        let with_import = "import json\nimport hashlib\n\n\ndef alpha():\n return hashlib.sha256(b\"x\").hexdigest()\n\n\ndef beta():\n raise NotImplementedError\n\n\ndef gamma():\n return 3\n";
         let (merged, _) =
             splice_functions(skeleton, skeleton, with_import, &["alpha".into()]).unwrap();
         assert_eq!(merged.matches("import hashlib").count(), 1);
         assert!(merged.find("import hashlib").unwrap() < merged.find("def alpha").unwrap());
-        let conflict = "import json as j\n\n\ndef alpha():\n    return j.dumps(1)\n\n\ndef beta():\n    raise NotImplementedError\n\n\ndef gamma():\n    return 3\n";
+        let conflict = "import json as j\n\n\ndef alpha():\n return j.dumps(1)\n\n\ndef beta():\n raise NotImplementedError\n\n\ndef gamma():\n return 3\n";
         assert!(matches!(
             splice_functions(skeleton, skeleton, conflict, &["alpha".into()]),
             Err(SpliceRefusal::ImportConflict(_))
@@ -12334,7 +12356,7 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
     #[test]
     fn generated_tests_come_from_the_largest_fence_and_must_contain_a_test() {
         // The deliverable block wins over a small illustrative fence.
-        let reply = "Here is an example:\n```python\nx = 1\n```\nAnd the tests:\n```python\nimport pytest\n\ndef test_cursor_pagination():\n    assert paginate([], None) == []\n\ndef test_total_is_documented():\n    assert total({}) == 0\n```\nDone.";
+        let reply = "Here is an example:\n```python\nx = 1\n```\nAnd the tests:\n```python\nimport pytest\n\ndef test_cursor_pagination():\n assert paginate([], None) == []\n\ndef test_total_is_documented():\n assert total({}) == 0\n```\nDone.";
         let got = extract_generated_tests(reply).unwrap();
         assert!(got.starts_with("import pytest"));
         assert!(got.contains("def test_total_is_documented"));
@@ -12356,7 +12378,7 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
             Some("def test_x(): pass")
         );
         // Untagged fences count too — the 27B frequently omits the language tag.
-        assert!(extract_generated_tests("```\ndef test_y():\n    assert True\n```").is_some());
+        assert!(extract_generated_tests("```\ndef test_y():\n assert True\n```").is_some());
     }
 
     #[test]
@@ -12487,13 +12509,13 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
     #[test]
     fn generated_tests_extract_fenced_or_bare_but_never_garbage() {
         // Fenced: unchanged behavior.
-        let fenced = "here you go\n```python\nimport pytest\n\ndef test_a():\n    assert 1\n```";
+        let fenced = "here you go\n```python\nimport pytest\n\ndef test_a():\n assert 1\n```";
         assert!(extract_generated_tests(fenced)
             .unwrap()
             .starts_with("import pytest"));
         // F804-batch: a BARE reply (the measured 0/3 class) lands via the fallback — reasoning
         // preamble stripped to the first import/def line.
-        let bare = "I'll write the tests now. They cover the happy path.\n\nimport pytest\n\ndef test_b():\n    assert 2";
+        let bare = "I'll write the tests now. They cover the happy path.\n\nimport pytest\n\ndef test_b():\n assert 2";
         let got = extract_generated_tests(bare).unwrap();
         assert!(got.starts_with("import pytest") && got.contains("def test_b"));
         // No test function anywhere: nothing to land.
@@ -12823,13 +12845,11 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
     #[test]
     fn group_findings_by_file_partitions_dedups_and_serializes() {
         let findings = vec![
-            "tests/test_a.py:5: in test_x\n    assert foo() == 1\nE   AssertionError".to_string(),
-            "spendlog/cli.py:12: in cmd_add\n    raise ValueError\nE   ValueError: boom"
-                .to_string(),
-            "spendlog/cli.py:40: in cmd_budget\n    x\nE   KeyError".to_string(), // SAME file
-            "spendlog/cli.py:12: in cmd_add\n    raise ValueError\nE   ValueError: boom"
-                .to_string(), // dup
-            "no python3 -m spendlog entry point found".to_string(),               // unassigned
+            "tests/test_a.py:5: in test_x\n assert foo() == 1\nE   AssertionError".to_string(),
+            "spendlog/cli.py:12: in cmd_add\n raise ValueError\nE   ValueError: boom".to_string(),
+            "spendlog/cli.py:40: in cmd_budget\n x\nE   KeyError".to_string(), // SAME file
+            "spendlog/cli.py:12: in cmd_add\n raise ValueError\nE   ValueError: boom".to_string(), // dup
+            "no python3 -m spendlog entry point found".to_string(), // unassigned
         ];
         let (groups, unassigned) = group_findings_by_file(&findings, &[]);
         let cli = groups
@@ -12898,7 +12918,7 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
         // escape: a stdlib path sends a fix shard to repair CPython, and an absolute path keys the
         // file-group differently from the rest of the engine and breaks the shadow tree's
         // promote-by-relative-path. Latent until F41 made the fan fire.
-        let tb = "`pytest -q` failed:\n    File \"/opt/homebrew/Cellar/python@3.14/lib/python3.14/threading.py\", line 1024, in run\n    File \"/Users/x/runs/unit/vendorsync/meridian.py\", line 40, in serve";
+        let tb = "`pytest -q` failed:\n File \"/opt/homebrew/Cellar/python@3.14/lib/python3.14/threading.py\", line 1024, in run\n File \"/Users/x/runs/unit/vendorsync/meridian.py\", line 40, in serve";
         assert_eq!(
             extract_file_from_finding(tb, &files).as_deref(),
             Some("vendorsync/meridian.py"),
@@ -12955,11 +12975,11 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
     #[test]
     fn review_file_excerpt_keeps_small_whole_and_large_tail() {
         // A small file (< 6000 chars) is shown WHOLE.
-        let small = "import argparse\n\ndef main():\n    pass\n";
+        let small = "import argparse\n\ndef main():\n pass\n";
         assert_eq!(review_file_excerpt(small), small);
         // A large file keeps its TAIL (the argparse dispatch the old head-truncation hid).
         let big = format!(
-            "# top of file\n{}\ndef main():\n    args = p.parse_args()\n    DISPATCH_TAIL_MARKER(args)\n",
+            "# top of file\n{}\ndef main():\n args = p.parse_args()\n DISPATCH_TAIL_MARKER(args)\n",
             "x = 1  # filler line\n".repeat(500)
         );
         let ex = review_file_excerpt(&big);
@@ -16005,6 +16025,12 @@ impl GooseAgentDispatcher {
         // panel can surface the PLAN phase's live generation (architect drafts) as lanes — the reasoning that
         // was previously invisible. None keeps the old behavior (no digest for planner calls).
         activity_key: Option<&str>,
+        // This call must not create or edit a file. Declared BY THE CALLER, never guessed from the
+        // activity key: `test-`, `review` and friends are names a MODEL picks for its own build tasks
+        // (test-core, test-wal, test-core-eval are all in this file's own plan fixtures, and this run
+        // produced test-store-core and test-store-edge-cases), and stripping write from a task whose
+        // whole job is writing tests would collapse the test tier silently.
+        read_only: bool,
     ) -> Result<RunAgentOut> {
         self.run_agent_in(
             self.working_dir.clone(),
@@ -16020,6 +16046,7 @@ impl GooseAgentDispatcher {
             None, // planner-side calls are never forced to a tool
             temp_override,
             None, // planner-side calls own no files
+            read_only,
         )
         .await
     }
@@ -16052,6 +16079,7 @@ impl GooseAgentDispatcher {
             None, // planner-side calls are never forced to a tool
             None,
             None, // generic path: no owned-file repair target
+            false,
         )
         .await
     }
@@ -16103,6 +16131,8 @@ impl GooseAgentDispatcher {
         // missing/empty `path`, the single most common weak-model malformation. The hook was built
         // FOR the swarm and had zero callers; None (every planner-side call) is byte-identical.
         single_owned_file: Option<String>,
+        // See `run_agent_timed_at`. A call that must not write does not get the tools to.
+        read_only: bool,
     ) -> Result<RunAgentOut> {
         // Captured before the strings move into the message/session below — feeds the
         // prefill-aware first-token budget at the watchdog site.
@@ -16197,8 +16227,8 @@ impl GooseAgentDispatcher {
                     // recovers from via `cat`). The whitelist hides it from the menu AND rejects it if the
                     // model hallucinates it.
                     // A call whose job is to READ and DECIDE does not get the tools to write.
-                    // See `is_read_only_call`.
-                    available_tools: if is_read_only_call(activity_key) {
+                    // Declared by the caller — see `run_agent_timed_at`.
+                    available_tools: if read_only {
                         vec!["shell".to_string(), "tree".to_string()]
                     } else {
                         vec![
@@ -16594,9 +16624,9 @@ impl GooseAgentDispatcher {
                 // thing that is impossible. MEASURED live: the judge read a slice owner's objective
                 // ("write that module's SPECIFICATION") as an instruction to create a file and told it
                 // to "Write vendorsync/web/SPEC.md". These calls have no `write` or `edit` tool by
-                // design (`is_read_only_call`), so once that landed the node would have had nowhere to
+                // design (the caller passes read_only), so once that landed the node had nowhere to
                 // go. The judge has to be told what the call can actually do.
-                if is_read_only_call(activity_key) {
+                if read_only {
                     sys.push_str(
                         "\n\nThis call has NO write or edit tool — by design, because its job is to read \
                          and decide, not to build. Its answer IS its deliverable. NEXT must therefore be \
@@ -17715,7 +17745,8 @@ impl GooseAgentDispatcher {
                         &exts,
                         None,
                         Some(scout_key.as_str()),
-                    ),
+                false,
+            ),
                 )
                 .await
                 {
@@ -18299,6 +18330,7 @@ impl GooseAgentDispatcher {
                                 &[],
                                 dt,
                                 Some(&akey),
+                                false,
                             ),
                         )
                         .await
@@ -19661,6 +19693,7 @@ impl GooseAgentDispatcher {
                 &[],
                 None,
                 Some("plandraft-solo"),
+                false,
             )
             .await?;
         let plan = out
@@ -22769,7 +22802,7 @@ async fn run_spec_contract(root: &Path, spec: &str, lang: TargetLang) -> SpecCon
     if up && !port_was_free_before_spawn {
         let _ = child.kill().await;
         inconclusive.push(format!(
-            "spec-contract: port {port} was ALREADY BOUND before `python3 -m {pkg}` started, so the              server answering there is NOT this app — probing it would blame the app for another              process's responses. Most likely the spec's first port literal belongs to an external              dependency (a documented vendor/API base URL) rather than to the app."
+            "spec-contract: port {port} was ALREADY BOUND before `python3 -m {pkg}` started, so the server answering there is NOT this app — probing it would blame the app for another process's responses. Most likely the spec's first port literal belongs to an external dependency (a documented vendor/API base URL) rather than to the app."
         ));
         return SpecContractResult {
             findings,
@@ -23250,7 +23283,7 @@ async fn run_spec_contract(root: &Path, spec: &str, lang: TargetLang) -> SpecCon
             let all_dark = dark.len() == gets.len();
             if !child_alive {
                 inconclusive.push(format!(
-                    "spec-contract: the app process EXITED during the advertised sync, so the                      populated re-probe of {} could prove nothing about its read paths",
+                    "spec-contract: the app process EXITED during the advertised sync, so the populated re-probe of {} could prove nothing about its read paths",
                     dark.join(", ")
                 ));
             } else if all_dark {
@@ -23258,13 +23291,13 @@ async fn run_spec_contract(root: &Path, spec: &str, lang: TargetLang) -> SpecCon
                 // stories about N endpoints. Reported as one finding so the fix round sees one
                 // defect instead of a cascade of that defect's symptoms.
                 findings.push(format!(
-                    "EVERY advertised read ({}) answered while the app was EMPTY and then returned                      NOTHING AT ALL once it held rows — one sync in between, same process. The whole                      server is stuck or dead, not one endpoint: on a single-threaded server an                      unhandled exception or a loop that never terminates inside the sync leaves every                      later request queued behind it forever. Find the loop or the exception in the                      SYNC path first; the read endpoints themselves are almost certainly fine.                      Reproduce with a sync FIRST, then any GET.",
+                    "EVERY advertised read ({}) answered while the app was EMPTY and then returned NOTHING AT ALL once it held rows — one sync in between, same process. The whole server is stuck or dead, not one endpoint: on a single-threaded server an unhandled exception or a loop that never terminates inside the sync leaves every later request queued behind it forever. Find the loop or the exception in the SYNC path first; the read endpoints themselves are almost certainly fine. Reproduce with a sync FIRST, then any GET.",
                     dark.join(", ")
                 ));
             } else {
                 for path in &dark {
                     findings.push(format!(
-                        "GET {path} answered while the app was EMPTY and returns NOTHING AT ALL once                          it holds rows — same process, same endpoint, one sync in between, and its                          sibling endpoints still answer. That pair rules out both a slow endpoint and                          a dead server, and points at the code path that reads STORED rows: an                          unhandled exception there kills the connection (a browser shows                          ERR_EMPTY_RESPONSE). Check that every field the response builder reads is one                          the query actually SELECTs. Reproduce with a sync FIRST, then GET {path} — an                          empty app hides this entirely."
+                        "GET {path} answered while the app was EMPTY and returns NOTHING AT ALL once it holds rows — same process, same endpoint, one sync in between, and its sibling endpoints still answer. That pair rules out both a slow endpoint and a dead server, and points at the code path that reads STORED rows: an unhandled exception there kills the connection (a browser shows ERR_EMPTY_RESPONSE). Check that every field the response builder reads is one the query actually SELECTs. Reproduce with a sync FIRST, then GET {path} — an empty app hides this entirely."
                     ));
                 }
             }
@@ -24458,6 +24491,7 @@ impl GooseAgentDispatcher {
                 &[],
                 None,
                 Some("open"),
+                true,
             )
             .await?;
         let raw = out.final_output.clone().unwrap_or_else(|| out.text.clone());
@@ -24574,8 +24608,9 @@ impl GooseAgentDispatcher {
                             planner_side_turns(),
                             &[],
                             None,
-                            Some(&format!("test-{key}")),
-                        )
+                            Some(&format!("apptest-{key}")),
+                true,
+            )
                         .await
                     {
                         Ok(o) => o.text,
@@ -24641,6 +24676,7 @@ impl GooseAgentDispatcher {
                 &[],
                 None,
                 Some("rate"),
+                true,
             )
             .await
         {
@@ -24706,6 +24742,7 @@ impl GooseAgentDispatcher {
                 &[],
                 None,
                 Some("proxy-answer"),
+                true,
             )
             .await?;
         // One answer per question, in order. A model that returns prose still yields usable lines, and a
@@ -24777,6 +24814,7 @@ impl GooseAgentDispatcher {
                 &[],
                 None,
                 Some("open-resplit"),
+                true,
             )
             .await?;
         let raw = out.final_output.clone().unwrap_or_else(|| out.text.clone());
@@ -24848,7 +24886,8 @@ impl GooseAgentDispatcher {
                         &exts,
                         None,
                         Some(&key),
-                    )
+                true,
+            )
                     .await;
                 let brief = match res {
                     Ok(o) if !o.text.trim().is_empty() => o.text,
@@ -25106,6 +25145,7 @@ impl GooseAgentDispatcher {
                 &[],
                 None,
                 Some("synthesis"),
+                true,
             )
             .await?;
         let raw = out.final_output.clone().unwrap_or_else(|| out.text.clone());
@@ -25250,6 +25290,7 @@ impl GooseAgentDispatcher {
                 &[],
                 None,
                 Some("review"),
+                true,
             )
             .await?;
         let raw = out.final_output.clone().unwrap_or_else(|| out.text.clone());
@@ -25566,7 +25607,7 @@ async fn run_linear_plan(
     sink.write_value(serde_json::json!({"event": "phase", "phase": "research"}));
     let t_research = std::time::Instant::now();
     // What the tree looked like before anyone researched it. RESEARCH produces BRIEFS, not files, so
-    // every path that appears during it is by definition unplanned — see `is_read_only_call`. The tool
+    // every path that appears during it is by definition unplanned. The tool
     // whitelist removes the obvious way to create one; this is how we find out whether that was enough,
     // instead of discovering it a third time by reading a run tree by hand.
     let tree_before_research: std::collections::HashSet<String> =
@@ -32084,6 +32125,7 @@ impl GooseAgentDispatcher {
                 // K5: exactly one owned file -> core repairs a write/edit call whose `path` the
                 // weak model omitted, instead of the tool erroring and burning a turn.
                 (req.owned_files.len() == 1).then(|| req.owned_files[0].clone()),
+                false,
             )
             .await;
         let secs = started.elapsed().as_secs_f64();
@@ -37089,7 +37131,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                 }));
                 if !benchmark() {
                     eprintln!(
-                        "  {} {question}\n    answer in .swarm/{key}-answer.json ({{\"answer\":\"yes\"}}) within {}s, or goose decides",
+                        "  {} {question}\n answer in .swarm/{key}-answer.json ({{\"answer\":\"yes\"}}) within {}s, or goose decides",
                         style("?").cyan().bold(),
                         proxy_answer_after_secs()
                     );
@@ -37216,7 +37258,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                         "round": round,
                         "from": if to_race { "shards" } else { "race" },
                         "to": if to_race { "race" } else { "shards" },
-                        "detail": "the round PROMOTED a verified fix but the finding count held                                    flat — the other mechanism gets one round on the improved                                    tree before the stall exit ends the phase",
+                        "detail": "the round PROMOTED a verified fix but the finding count held flat — the other mechanism gets one round on the improved tree before the stall exit ends the phase",
                     }));
                 }
             }
