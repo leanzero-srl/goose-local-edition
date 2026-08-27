@@ -280,47 +280,6 @@ pub struct SwarmConfig {
     /// backstop. See default_scout_max_lookups.
     #[serde(default = "default_scout_max_lookups")]
     pub scout_max_lookups: u32,
-    /// Wall-clock cap (seconds) for the heavy `integrate-verify` SINK worker only: on expiry it is finalized
-    /// as DONE (not failed/re-routed) and the deterministic smoke gate backstops.
-    ///
-    /// DEFAULT 1800 (30 min), raised from 0/OFF on measured evidence. The historical objection to a default
-    /// — "a cap truncates the run's ONLY golden-value pass" — no longer holds under fan_e2e: the golden
-    /// checks now run in the verify-e2e SHARDS, in parallel, BEFORE the join, so the join is an
-    /// assemble+repair+store-probe step and not the sole verifier. The cap can therefore ONLY ever bite a
-    /// LOOPING join, never a healthy one: MEASURED join durations cluster at 311s / 477s / 1252s / 1591s for
-    /// healthy runs and 4326s (72 min) for the one that looped — re-running the same four test blocks five
-    /// times over, all passing (h1-e2e-4, verified from its activity log). 1800 sits comfortably above every
-    /// healthy join and below the loop, so cutting a >30-min join loses nothing: every check already ran.
-    /// Finalizing as DONE cannot cause a spurious RED; the smoke gate (command + bad-input + corrupt-store
-    /// probes) is the correctness backstop. `GOOSE_SWARM_SINK_CAP_SECS` still overrides; 0 disables.
-    #[serde(default = "default_sink_cap_secs")]
-    pub sink_cap_secs: u64,
-    /// The tree size (bytes of the plan's declared owned files) `sink_cap_secs` is the budget FOR. The effective
-    /// sink ceiling scales linearly with the tree actually on disk when the sink is dispatched, clamped to
-    /// [1x, 2x]. 0 = OFF (byte-identical: the ceiling is `sink_cap_secs` whatever was built).
-    /// `GOOSE_SWARM_SINK_CAP_REF_BYTES` overrides.
-    ///
-    /// WHY THIS EXISTS. The paragraph above claims the cap "can ONLY ever bite a LOOPING join, never a healthy
-    /// one". MEASURED, that is false once a run has more to integrate: a 3-node run and a 1-node run on the
-    /// SAME spec and binary faced declared trees of 43328 B and 27103 B, and the 3-node join was terminated at
-    /// exactly 1800s while actively repairing — 10 shell + 9 write + 1 edit calls, 56 messages continuous over
-    /// 1705s, zero final output. It then scored 0.00 on the tier-A `sync_shape` whole-program check that the
-    /// 1-node run passed.
-    ///
-    /// ⚠ WHY THE TREES DIFFERED IS *NOT* "THE FLEET BUILT MORE" — measured and refuted. The two runs' NON-TEST
-    /// sources are 27087 B and 27103 B, identical to 0.06%. The whole gap is TEST files: the 1-node run's three
-    /// test tasks each finished without ever calling `write`, tripped `missing_deliverable_gate`, and failed.
-    /// So the join's budget must track what a run ACTUALLY PRODUCED, which is exactly why this is sized from
-    /// the tree on disk at dispatch and not from the plan, the fan, or the device count — none of which
-    /// distinguishes a run whose tests exist from one whose tests do not.
-    ///
-    /// The 311-1591s healthy band that justified 1800 was measured on smaller trees, so it never covered this
-    /// case. ⚠ RESHAPING the budget instead (progress-shaped, like `progress_watchdog_secs`) does NOT work and
-    /// was rejected on this same evidence: the pathological join re-ran four test blocks five times, and a loop
-    /// emits tool calls, so no progress rule can separate repair from loop. The ceiling had to scale, not change
-    /// shape — hence a bounded multiplier rather than an extension.
-    #[serde(default = "default_sink_cap_ref_bytes")]
-    pub sink_cap_ref_bytes: u64,
     /// PROGRESS WATCHDOG (seconds): the max continuous wall-time a NON-sink worker may spend WITHOUT a productive
     /// event (a real tool call/result, final_output, or non-empty non-thinking text) before it is cut as a
     /// thinking-only spiral. Bounds the "streams reasoning tokens forever, resets the idle watchdog, makes zero
@@ -1197,49 +1156,6 @@ fn default_progress_watchdog_secs() -> u64 {
     900 // 15 min of CONTINUOUS thinking-only; a real tool call resets it. See the field doc.
 }
 
-fn default_sink_cap_secs() -> u64 {
-    // 1800s (30 min). Under fan_e2e the shards do the golden-value pass, so this bounds only a LOOPING join
-    // — healthy joins cluster well under it (311-1591s measured); the one loop ran 4326s. See the field doc.
-    1800
-}
-
-fn default_sink_cap_ref_bytes() -> u64 {
-    // The largest tree measured whose join finished comfortably inside the base budget: baseline-n1-r0's
-    // declared owned files totalled 27103 B and its integrate-verify completed in 229s. Rounded up so that
-    // tree — and anything smaller — keeps the base budget exactly.
-    30_000
-}
-
-/// The sink's ceiling for a run whose declared owned files total `tree_bytes`. See `sink_cap_ref_bytes`.
-///
-/// MEASURED (baseline-n3-r0 vs baseline-n1-r0, same spec, same binary): the 3-node run's declared tree was
-/// 43328 B against the 1-node run's 27103. The join must build and RUN the whole app, so its work tracks the
-/// assembled tree; a fixed ceiling therefore truncates it more surely the more a run produced. r0's join was
-/// terminated at exactly 1800s having made 10 shell + 9 write + 1 edit calls, with 56 messages spread
-/// continuously over 1705s and NO final output: cut mid-repair, not looping. That run then scored 0.00 on the
-/// tier-A whole-program `sync_shape` check the 1-node run passed.
-///
-/// ⚠ THE GAP IS TESTS, NOT A BIGGER APP. The two runs' non-test sources are 27087 B and 27103 B — equal to
-/// 0.06%. The 1-node run simply never wrote its three test files (each task finished without calling `write`
-/// and failed the missing-deliverable gate), so its join had 16241 B less to build and run.
-///
-/// ⚠ SIZE, NOT FAN WIDTH. The obvious input — how many modules the plan splits into — was measured and does
-/// NOT track this: the 3-node plan declared SEVEN file-owning tasks against the 1-node plan's EIGHT. Scaling
-/// on fan width would have handed the 1-node run the larger budget, i.e. exactly backwards. Only the bytes
-/// actually on disk distinguish a run whose deliverables exist from one whose tasks failed to write them.
-///
-/// The clamp is the load-bearing part. Extending without a bound would let the pathological join — measured
-/// re-running the same four test blocks five times over, 4326s — run forever, because a LOOP emits tool calls
-/// and so looks productive to any progress-shaped rule. 2x holds the largest tree at 3600s, still below that
-/// loop, so the loop is cut and the repair is not.
-fn scaled_sink_cap(base_secs: u64, tree_bytes: u64, ref_bytes: u64) -> u64 {
-    if base_secs == 0 || ref_bytes == 0 || tree_bytes == 0 {
-        return base_secs;
-    }
-    let scale = (tree_bytes as f64 / ref_bytes as f64).clamp(1.0, 2.0);
-    (base_secs as f64 * scale).round() as u64
-}
-
 impl Default for SwarmConfig {
     fn default() -> Self {
         Self {
@@ -1293,8 +1209,6 @@ impl Default for SwarmConfig {
             repeat_penalty: None,
             max_tool_response_chars: None,
             scout_budget_secs: default_scout_budget_secs(),
-            sink_cap_secs: default_sink_cap_secs(),
-            sink_cap_ref_bytes: default_sink_cap_ref_bytes(),
             progress_watchdog_secs: 900,
             sink_lean_prefill: Some(true),
             sink_review: None,
@@ -10682,16 +10596,6 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
         // pinning the literal here made a correctness fix look like a parity regression. The value is
         // now guarded where it belongs — `complete_cap_fits_its_own_rounds` ties it to fix_cap_secs and
         // complete_rounds — so this asserts the property and defers the number.
-        // The sink's budget has to be BAKED *and* READ. It was baked at 1800 while the code using it
-        // read `GOOSE_SWARM_SINK_CAP_SECS` from the environment only — no config fallback — so every run
-        // without that var had NO cap on the join. The desktop is precisely that run: LaunchServices
-        // hands the app its own environment, so a desktop launch cannot set it. `worker_timeout` does not
-        // cover the gap, because it is a NO-PROGRESS window and a looping join produces output the whole
-        // time. Assert the property, not the number, exactly as `complete_cap_secs` does above.
-        assert!(
-            d.sink_cap_secs > 0,
-            "0/absent means an UNBOUNDED join on any surface that cannot set env"
-        );
         assert!(
             d.complete_cap_secs > 0,
             "0/absent means an UNBOUNDED fix loop"
@@ -10720,8 +10624,6 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
         );
         assert!(cfg.verify_commands);
         assert!(cfg.fan_e2e);
-        assert_eq!(cfg.sink_cap_secs, 1800);
-        assert_eq!(cfg.sink_cap_ref_bytes, 30_000);
         assert_eq!(cfg.progress_watchdog_secs, 900);
         // And a key that IS set is honoured.
         assert!(cfg.persona);
@@ -10760,53 +10662,6 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
             !conv.contains("about"),
             "converge must stay a single anchor: {conv}"
         );
-    }
-
-    /// The sink ceiling scales with the TREE, and — the half that actually protects the run — STOPS scaling
-    /// before it reaches the one join measured to loop.
-    #[test]
-    fn the_sink_ceiling_scales_with_tree_size_but_never_past_the_measured_loop() {
-        const REF: u64 = 30_000;
-        // The two matched cells this was built from, at their real declared-tree sizes. The 1-node tree
-        // finished its join in 229s and must be left EXACTLY alone; the 3-node tree is the one whose join
-        // was cut mid-repair at 1800s.
-        assert_eq!(
-            scaled_sink_cap(1800, 27_103, REF),
-            1800,
-            "n1 tree unchanged"
-        );
-        assert_eq!(
-            scaled_sink_cap(1800, 43_328, REF),
-            2600,
-            "n3 tree gets more"
-        );
-
-        // ⚠ THE REGRESSION THAT NEARLY SHIPPED. Keyed on plan FAN WIDTH the n3 run (7 file-owning tasks)
-        // would have scored BELOW the n1 run (8), handing the smaller job the bigger budget. Size ranks them
-        // the right way round, and that ordering is the whole point of the change.
-        assert!(
-            scaled_sink_cap(1800, 43_328, REF) > scaled_sink_cap(1800, 27_103, REF),
-            "the run that BUILT MORE must get the larger ceiling"
-        );
-
-        // THE BOUND. A tree can be arbitrarily large; the ceiling may not follow it past the 4326s join that
-        // re-ran the same four test blocks five times. Without this clamp a loop outlives every budget,
-        // because a loop makes tool calls and so defeats any progress-shaped rule.
-        for big in [60_000u64, 500_000, 50_000_000] {
-            let got = scaled_sink_cap(1800, big, REF);
-            assert_eq!(got, 3600, "clamped at 2x for a {big}-byte tree");
-            assert!(got < 4326, "must still cut the measured loop");
-        }
-
-        // OFF in every direction must be byte-identical, not merely small. An unmeasurable tree (nothing
-        // frozen, or nothing written) reads 0 bytes and must keep the base rather than collapse it.
-        assert_eq!(scaled_sink_cap(1800, 99_999, 0), 1800, "ref 0 disables it");
-        assert_eq!(
-            scaled_sink_cap(1800, 0, REF),
-            1800,
-            "0 bytes keeps the base"
-        );
-        assert_eq!(scaled_sink_cap(0, 99_999, REF), 0, "cap 0 stays OFF");
     }
 
     /// load_config MERGES the config over the struct Default, so the baked golden formula survives an
@@ -16379,79 +16234,19 @@ impl GooseAgentDispatcher {
         // blocking fs::write + JSON serializes per task × N nodes. Refresh at most ~2.5x/s; a guaranteed final
         // write after the loop keeps the terminal state exact. Every consumer polls slower (judge 15s, panel ≤10Hz).
         let mut last_digest_at: Option<tokio::time::Instant> = None;
-        // Optional graceful wall-clock cap for the heavy `integrate-verify` SINK worker. A healthy sink
-        // can legitimately run ~1400s; a pathological one blows past the run budget with no way for the
-        // scheduler to finalize it — the judge's repeated "ok" verdict is a no-op and the watchdog is
-        // idle-based, so a still-emitting sink never trips it. GOOSE_SWARM_SINK_CAP_SECS>0 finalizes the
-        // sink as DONE on expiry (NOT an error/re-route) so the run terminates cleanly and the
-        // deterministic smoke gate backstops correctness. Unset/0 = OFF ⇒ byte-identical default path;
-        // only the sink task is ever affected.
-        // (base, effective, tree_bytes) — kept, not collapsed into the deadline, because the EFFECTIVE
-        // ceiling is what `sink_capped` must report. The base is a fixed env/config value any reader
-        // already has; the effective one is computed per run from the tree and is the only number that
-        // says what this sink was actually cut off at.
-        let sink_cap_plan = if activity_key == Some("integrate-verify") {
-            // ENV > CONFIG at the read site, like every other lever — a SECOND, independent path to the
-            // same value, not a repair.
-            //
-            // ⚠️ CORRECTION, recorded because the claim went out in a commit message before it was
-            // checked: I added this believing the read was env-ONLY and therefore that a desktop run had
-            // no sink ceiling at all. THAT WAS FALSE. `run_swarm` already bridges the config value into
-            // `GOOSE_SWARM_SINK_CAP_SECS` when the env is unset, and that bridge's own comment says it is
-            // "the ONLY thing that carries the baked ceiling to a desktop run". The ceiling was always
-            // there. What this line actually buys is that the read no longer DEPENDS on the bridge having
-            // run first — an ordering coupling worth removing on its own, and nothing more than that.
-            std::env::var("GOOSE_SWARM_SINK_CAP_SECS")
-                .ok()
-                .and_then(|v| v.parse::<u64>().ok())
-                .or(Some(load_config().sink_cap_secs))
-                .filter(|&s| s > 0)
-                .map(|base| {
-                    // The base is the budget for a reference-sized tree; the join's real work tracks the tree
-                    // the fleet actually built, which is on disk now (every module it depends on is done).
-                    let ref_bytes = std::env::var("GOOSE_SWARM_SINK_CAP_REF_BYTES")
-                        .ok()
-                        .and_then(|v| v.parse::<u64>().ok())
-                        .unwrap_or_else(|| load_config().sink_cap_ref_bytes);
-                    let bytes = self.sink_tree_bytes(&work_dir);
-                    let secs = scaled_sink_cap(base, bytes, ref_bytes);
-                    if secs != base {
-                        eprintln!("  sink ceiling {base}s -> {secs}s for a {bytes}-byte tree");
-                    }
-                    (base, secs, bytes)
-                })
-        } else {
-            None
-        };
-        // THE BUDGET IS ONLY REPORTED WHEN IT IS EXCEEDED, SO THE FORMULA CAN NEVER BE AUDITED.
+        // REMOVED: the sink wall-clock cap (sink_cap_secs, sink_cap_ref_bytes, scaled_sink_cap,
+        // GOOSE_SWARM_SINK_CAP_SECS, sink_plan and sink_capped).
         //
-        // `tree_bytes` / `cap_secs` / `cap_base_secs` ride `sink_capped`, which fires ONLY on a sink that
-        // ran out of time. Every sink that finished comfortably reports nothing, so there is no way to
-        // ask the one question that decides whether `scaled_sink_cap` scales the right quantity: does
-        // tree size predict how long the join takes?
+        // Section 8 listed it for deletion and it survived the purge, unguarded, because `uncapped()`
+        // was removed at the same time. So the LONGEST call in the run was still being cut by a
+        // stopwatch — and the code's own note records what that costs: "integrate-verify ran exactly
+        // 1800s, its cap to the second, made 23 shell calls and 2 edits, and was recorded status=done."
+        // A truncated sink and a finished one were written into the log identically, and that row is
+        // where this project reads every verdict from.
         //
-        // MEASURED, and it is why this event exists: 2 of 5 archived cells ran the sink to EXACTLY their
-        // cap (3371s at 56188 bytes; 2700s at 45001) — truncated, then finalized as done so the run can
-        // terminate. The obvious explanation is "bigger tree, more work", and it is WRONG:
-        // baseline-n3-r2 has the LARGEST built tree of any cell (92400 bytes / 12 py files on disk) and
-        // finished its sink in 1656s without capping. Tree size did not predict duration in the only
-        // comparison available — and that comparison had to be made against files counted from OUTSIDE
-        // the engine, because the engine's own `tree_bytes` is unrecoverable for an uncapped run.
-        //
-        // Emitted for every sink, capped or not, so the ratio can be regressed against actual duration
-        // instead of guessed. Cheap: the bytes were already computed to build the deadline.
-        if let Some((base, secs, bytes)) = sink_cap_plan {
-            self.events.write_value(serde_json::json!({
-                "event": "sink_plan",
-                "task_id": "integrate-verify",
-                "cap_secs": secs,
-                "cap_base_secs": base,
-                "tree_bytes": bytes,
-                "scale": if base > 0 { secs as f64 / base as f64 } else { 0.0 },
-            }));
-        }
-        let sink_deadline = sink_cap_plan
-            .map(|(_, secs, _)| tokio::time::Instant::now() + std::time::Duration::from_secs(secs));
+        // The sink now ends the way every other call ends: it finishes, the judge cancels a corroborated
+        // loop, or the socket dies.
+
         // REMOVED: the PROGRESS WATCHDOG (GOOSE_SWARM_PROGRESS_WATCHDOG_SECS, 900s) and the
         // last-productive-event clock it ran on.
         //
@@ -16461,13 +16256,21 @@ impl GooseAgentDispatcher {
         // was THINKING. That is the one thing this engine must never cut on a clock. Reading the reasoning
         // tells a deep call from a stuck one; a stopwatch never could, and that is the judge's job now.
 
-        // #136 REPEAT BREAKER. Armed ONLY for dispatched WORKER tasks: `activity_key` is Some for a task lane,
-        // and the planner-side calls (architect/scout/detailer/contract drafts) must never be armed because
-        // they have no retry path — cutting one loses the whole planning round. The integrate-verify SINK is
-        // exempt for the same reason the thinking watchdog exempts it (it owns no deliverable and is bounded by
-        // its own wall-clock cap). OFF => these stay untouched and nothing below runs => byte-identical.
-        let repeat_break_on =
-            self.repeat_break && activity_key.is_some() && activity_key != Some("integrate-verify");
+        // #136 REPEAT DETECTOR. It no longer breaks anything — it SUMMONS THE JUDGE and hands over what
+        // it measured. So the old reasons for exempting things from it are all reasons not to KILL, and
+        // none of them survive.
+        //
+        // The integrate-verify SINK was exempt "because it is bounded by its own wall-clock cap". That cap
+        // is deleted (section 8), and the exemption outlived its own justification — with the consequence
+        // measured on this very run: the sink ran the same command EIGHT times, failing every time with
+        // "Address already in use" on port 9876, and the omni-judge looked at it ZERO times. The repeat
+        // detector is the mechanism that summons the judge to a repeating call, and it was the one call in
+        // the run it could not see. The scheduler-side judge did eventually diagnose it perfectly ("stop
+        // retrying the same port — pick a fresh random high port"), but that path only stores its hint for
+        // the NEXT dispatch, so the running call never heard it.
+        //
+        // Planner-side calls are armed too, for the same reason: being summoned is not being cut.
+        let repeat_break_on = self.repeat_break && activity_key.is_some();
         // REMOVED: the global spiral break, and with it spiral_budget_for's per-kind multipliers.
         //
         // It was a CHAR COUNT deciding whether a call was stuck, and its own tuning table is the argument
@@ -16551,9 +16354,17 @@ impl GooseAgentDispatcher {
             // Repeat evidence summons the judge IMMEDIATELY and bypasses the readiness floor: a call
             // stuck re-running one command may have emitted almost no reasoning at all, which is exactly
             // the case the char floor would hide.
+            // A call that ACTS rather than narrates clears the readiness floor on its actions instead.
+            //
+            // The floor exists because a call cannot be assessed from an empty tail. But integrate-verify
+            // measured 1,046 reasoning characters against 22 tool calls and 6 errors on this run — far
+            // below the 2,000-char floor and yet the most assessable call in the run, because what it had
+            // produced was a repeating command and its identical result. Judging by reasoning volume alone
+            // makes the engine blindest to exactly the calls that are doing things.
+            let acted_enough_to_judge = call_records.len() >= 6;
             if omni_judge_on
                 && (repeat_evidence.is_some()
-                    || (thinking_chars >= OMNI_JUDGE_MIN_CHARS
+                    || ((thinking_chars >= OMNI_JUDGE_MIN_CHARS || acted_enough_to_judge)
                         && (recur.recurring()
                             || grew_without_acting
                             || tokio::time::Instant::now() >= omni_next_look)))
@@ -17006,45 +16817,6 @@ impl GooseAgentDispatcher {
             // on reasoning tokens. Checked at the top so a continuously-thinking task is caught promptly (each
             // streamed Thinking token drives an iteration here).
 
-            // HARD wall-clock ceiling: finalize the moment the sink deadline passes, regardless of whether
-            // the sink is still emitting. The wait/timeout path below only reaches the deadline check on an
-            // event GAP (the `Err(_)` arm), so a CONTINUOUSLY-active integrate-verify (steady tokens/tools)
-            // can otherwise run well past the deadline before a gap lets the cap fire. Checking here at the
-            // top makes GOOSE_SWARM_SINK_CAP_SECS a true ceiling. No-op when unset (sink_deadline == None).
-            if sink_deadline.is_some_and(|dl| tokio::time::Instant::now() >= dl) {
-                eprintln!(
-                    "↳ integrate-verify hit the sink wall-clock cap — finalizing as done (smoke gate backstops)"
-                );
-                // A TRUNCATED SINK AND A FINISHED ONE MUST NOT LOOK ALIKE. Finalizing as `done` is the
-                // right SCHEDULER behaviour — the app files exist and the deterministic gate backstops
-                // correctness — but until now the only record of the truncation was this eprintln on
-                // stderr. The structured log showed `task_completed status=done` and nothing else, so
-                // every instrument reading the run treated a sink cut off mid-work as one that had
-                // finished its job.
-                //
-                // MEASURED: integrate-verify ran exactly 1800s — its cap to the second — made 23 shell
-                // calls and 2 edits, and was recorded `status=done`. That row is where this project
-                // reads every verdict from. PATTERN 4, in the one place it costs the most.
-                self.events.write_value(serde_json::json!({
-                    "event": "sink_capped",
-                    "task_id": "integrate-verify",
-                    // THE EFFECTIVE CEILING, not the base. It reported the raw env var, which since the
-                    // tree-scaling landed is no longer the number the sink was cut off at — the ceiling
-                    // is `scaled_sink_cap(base, tree_bytes, ref)` and runs up to 2x base. So the one
-                    // event that exists to record the truncation named a threshold the run never used,
-                    // and the scaling itself was unreadable from a log: every capped sink said "1800"
-                    // whatever it actually got. All three are emitted because the interesting quantity
-                    // is the RATIO — a cap that did not scale and a cap that scaled to its 2x clamp are
-                    // different failures and were indistinguishable.
-                    "cap_secs": sink_cap_plan.map(|(_, secs, _)| secs),
-                    "cap_base_secs": sink_cap_plan.map(|(base, _, _)| base),
-                    "tree_bytes": sink_cap_plan.map(|(_, _, bytes)| bytes),
-                    "detail": "the sink was CUT OFF at its wall-clock cap, not finished — it is \
-                               finalized as done so the run can terminate, and the deterministic smoke \
-                               gate is what actually backstops correctness here",
-                }));
-                break;
-            }
             // Wait at most the quiet budget, but no later than the sink cap (when set) so the cap
             // fires promptly. Before the FIRST event the budget carries the prefill grace — a big
             // prompt legitimately streams nothing while the backend prefills it.
@@ -17064,12 +16836,7 @@ impl GooseAgentDispatcher {
             // local model's first token can arrive long after the request, and the idle watchdog is a
             // DEAD-SOCKET detector, not a pace limit.
             let quiet_budget = idle + prefill_grace;
-            let wait = match sink_deadline {
-                Some(dl) => {
-                    quiet_budget.min(dl.saturating_duration_since(tokio::time::Instant::now()))
-                }
-                None => quiet_budget,
-            };
+            let wait = quiet_budget;
             let ev = match tokio::time::timeout(wait, stream.next()).await {
                 Ok(Some(ev)) => {
                     first_event_seen = true;
@@ -17077,33 +16844,6 @@ impl GooseAgentDispatcher {
                 }
                 Ok(None) => break,
                 Err(_) => {
-                    // Distinguish the sink wall-clock cap from a genuine idle stall: on the cap, finalize
-                    // as DONE (the app files are already built; the sink owns no deliverables) instead of
-                    // re-routing, so the run can terminate; otherwise re-route as before.
-                    if sink_deadline.is_some_and(|dl| tokio::time::Instant::now() >= dl) {
-                        eprintln!(
-                            "↳ integrate-verify hit the sink wall-clock cap — finalizing as done (smoke gate backstops)"
-                        );
-                        // SECOND cap site, same event. The cap can fire either at the top of the loop
-                        // (a continuously-active sink) or here on an event gap, and instrumenting only
-                        // one of them would make the truncation visible on some runs and invisible on
-                        // others — which is worse than never recording it, because the gap would read
-                        // as "this sink finished normally".
-                        self.events.write_value(serde_json::json!({
-                            "event": "sink_capped",
-                            "task_id": "integrate-verify",
-                            // Same three fields as the top-of-loop site, for the same reason. The two
-                            // sites must stay field-identical or a reader has to know WHICH branch fired
-                            // before it can parse the row — which is exactly the asymmetry the comment
-                            // above this emit was added to prevent.
-                            "cap_secs": sink_cap_plan.map(|(_, secs, _)| secs),
-                            "cap_base_secs": sink_cap_plan.map(|(base, _, _)| base),
-                            "tree_bytes": sink_cap_plan.map(|(_, _, bytes)| bytes),
-                            "detail": "the sink was CUT OFF at its wall-clock cap on an event gap, not \
-                                       finished — finalized as done so the run can terminate",
-                        }));
-                        break;
-                    }
                     return Err(anyhow!(
                         "agent stalled — no progress for {}s (no token/tool activity{})",
                         quiet_budget.as_secs(),
@@ -34195,16 +33935,8 @@ async fn one_ruler_grade(
 /// reachable (MEASURED: three twins died at the flat 1200 on a 64KB tree — 1230/1314/1320s,
 /// the winner's first write at 900s — while the sink beside them scaled 1800→3600).
 fn fix_cap_secs_scaled(root: &std::path::Path, files: &[String]) -> u64 {
-    let ref_bytes = std::env::var("GOOSE_SWARM_SINK_CAP_REF_BYTES")
-        .ok()
-        .and_then(|v| v.parse::<u64>().ok())
-        .unwrap_or_else(|| load_config().sink_cap_ref_bytes);
-    let bytes: u64 = files
-        .iter()
-        .filter_map(|f| std::fs::metadata(root.join(f)).ok())
-        .map(|m| m.len())
-        .sum();
-    scaled_sink_cap(fix_cap_secs(), bytes, ref_bytes)
+    let _ = (root, files);
+    fix_cap_secs()
 }
 
 /// Name a MALFORMED tool call for the digest. There is no parsed call to read a name from — the name may
@@ -34611,16 +34343,6 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
     if std::env::var("GOOSE_MAX_TOOL_RESPONSE_SIZE").is_err() {
         let tcap = cfg.max_tool_response_chars.unwrap_or(30000);
         std::env::set_var("GOOSE_MAX_TOOL_RESPONSE_SIZE", tcap.to_string());
-    }
-    // Bridge the sink-cap tunable to the env var the read site uses (`sink_deadline` in run_agent_in). Env wins;
-    // else the config value, which the golden bake made **1800, not 0** — so the default path is ON, and the
-    // sink HAS a ceiling on a config-only run. This comment used to say "default 0 = OFF … byte-identical",
-    // which was true before the bake and has been false since: the `.filter(|&s| s > 0)` OFF path is now only
-    // reachable by setting it to 0 explicitly. It matters here more than anywhere else, because this bridge is
-    // the ONLY thing that carries the baked ceiling to a desktop run (levers reach the engine via config, never
-    // via env) — read as written, it said the shipping default had no sink ceiling at all.
-    if std::env::var("GOOSE_SWARM_SINK_CAP_SECS").is_err() {
-        std::env::set_var("GOOSE_SWARM_SINK_CAP_SECS", cfg.sink_cap_secs.to_string());
     }
     // NO CAPS. Unconditional now — this is the only regime. The sink runs until done, the thinking-only
     // timer never fires, and a straggler is never degraded. What can still stop a call: the judge (which
@@ -35494,7 +35216,9 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             "best_of_n_skeletons": load_config().best_of_n_skeletons,
             "scout_budget_secs": load_config().scout_budget_secs,
             "scout_max_lookups": load_config().scout_max_lookups,
-            "sink_cap_secs": load_config().sink_cap_secs,
+            // The sink has no ceiling at all now (section 8). Reported as the uncapped marker so a
+            // reader of levers_resolved sees the regime rather than an absent key.
+            "sink_cap_secs": UNCAPPED_SECS,
             // A lever nobody can see resolve is a lever nobody can keep: this budget decides whether a
             // worker gets a real spec or the architect's one-liner, so the run must say what it was.
             "detail_budget_secs": UNCAPPED_SECS,
