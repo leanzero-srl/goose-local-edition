@@ -100,7 +100,20 @@ def invoke(entrant: str, workdir: Path, port: int, env: Dict[str, str], timeout:
     # --timeout 0 = UNCAPPED (Mihai 2026-08-21): no wall deadline, no subprocess kill, and the
     # engine's GOOSE_SWARM_UNCAPPED switch removes every wall/volume cap — the run stops only
     # when it finishes, when the judge/repeat-break sees a REAL loop, or when a stream goes dead.
-    env = {**env, "GOOSE_SWARM_TELEMETRY_FILE": str(tpath)}
+    # NEVER let an unattended run block on a GUI dialog.
+    #
+    # MEASURED (swarm-3node-r0, 2026-08-27): the engine sat for 75m55s between pool_resolved and
+    # levers_resolved with ZERO model calls, waiting on a macOS keychain prompt nobody was there to
+    # answer. goose builds with the system-keyring feature, every keychain ACL binds to the code
+    # identity, and every rebuild of an ad-hoc-signed binary is a NEW code identity - so a fresh build
+    # re-prompts, and a benchmark is by definition the run with nobody watching it. Seventy-six minutes
+    # vanished from the wall-clock and the run log recorded nothing at all in the gap.
+    #
+    # Safe here because the bench never reads a secret from the keychain in the first place: cloud
+    # credentials come from ~/.config/agent-board/bedrock.env via load_env() above, and the local
+    # entrants talk to LM Studio, which needs no key. Secrets fall back to ~/.config/goose/secrets.yaml
+    # (base.rs:99-101), which this path does not use either.
+    env = {**env, "GOOSE_SWARM_TELEMETRY_FILE": str(tpath), "GOOSE_DISABLE_KEYRING": "1"}
     if timeout and timeout > 0:
         env["GOOSE_SWARM_RUN_DEADLINE_UNIX_MS"] = str(int((time.time() + timeout) * 1000))
     else:
