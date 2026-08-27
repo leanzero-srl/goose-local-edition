@@ -29,8 +29,9 @@
 GOOSE_SWARM_DOC_FETCH
 doc_fetched
 
-# retarget_discarded: record what a confidence redraft throws away (F36)
-retarget_discarded
+# F36 (retarget_discarded) is RETIRED, not dropped: the linear engine deleted the redraft ladder,
+# so there is no discarded plan to record. The literal still greps out of swarm.rs, in code nothing
+# calls — which is exactly why this file is checked against the BINARY and not the source.
 
 # failed_task_finding: a failed task whose deliverable is on disk points at the code under test (F37).
 # The fn name is not in the binary; this literal is, and it sits after the {points_at} interpolation.
@@ -51,17 +52,17 @@ speculated
 # F44: the two halves of sink_review now read ONE resolver
 GOOSE_SWARM_SINK_REVIEW
 
-# F49: the detail budget is derived from worker_timeout_secs like its sibling, and successful
-# detail durations are now recorded so the ceiling can be sized from data instead of judgement.
-detail_completed
+# F49 (detail_completed) is RETIRED: the detail fan it timed no longer exists — each slice's owner
+# writes the full spec in RESEARCH and the engine splices it in verbatim.
 
 # F57: the judge's semantic review ran 4.3% of the time; the early return skipped exactly the
 # worker that needed it. It now sees reasoning volume and is asked about a thinking-only worker.
 reasoning emitted
 
-# F58: the architect's brief must STAND ALONE, because the detail fan that was supposed to replace
-# it failed 27 of 27 times on timeout.
-STAND ALONE
+# F58 (STAND ALONE) is RETIRED with the architect's brief: BRIEF_CONTRACT now makes standing alone
+# the contract itself ("Another engineer, on another machine, with no access to you and no other
+# context, must be able to build it from this alone"), and that sentence is the marker below.
+Write the MODULE SPECIFICATION for your slice
 
 # F60: research_completed now carries what research PRODUCED, not just how many lenses returned.
 grounded
@@ -105,9 +106,9 @@ has an EMPTY BODY
 # which asserts /api/health and /api/summary are extracted FROM A MARKDOWN TABLE and that no backtick
 # or `sync` fragment leaks. That asserts the behaviour, which is stronger than asserting presence.
 
-# F72: research DOES report /v1 in full; the loss is the detailer, whose verbatim rule covered
-# filenames but not external literals like API paths.
-CARRY THROUGH EVERY EXTERNAL LITERAL
+# F72 (CARRY THROUGH EVERY EXTERNAL LITERAL) is RETIRED: it was the DETAILER's verbatim rule, and
+# there is no detailer. The slice owner writes the spec and `splice_briefs` copies it into the task
+# description byte for byte, so nothing re-states an external literal for it to lose.
 
 # F76: the repair tail emitted NO task_dispatched at all, so 13-26% of every run had no occupancy
 # number and no change to it could ever be judged. These are the tail's first dispatch events.
@@ -138,12 +139,11 @@ fetched_external
 # it and review_file_excerpt, so the two cannot drift apart the way the --help parsers did (F79).
 middle elided
 
-# F85: the skeleton draft fan is the longest SILENT window in a run — 12 minutes with no event, inside
-# a planning prefix phases.py already reports as having no occupancy number. It is also where planning
-# answers goal one, since best_of_n is sized to the fleet.
-skeleton_drafts
-# and the remainder that made the row self-checking — requested == returned + dead + straggler_aborted
-straggler_aborted
+# F85 (skeleton_drafts / straggler_aborted) is RETIRED with the draft fan. The silent planning window
+# it lit up is now covered by first-class boundaries instead — one `phase` event per planning step,
+# plus the opener's own cut — so the replacement markers are those.
+slices_opened
+review_findings
 
 # F87 — THE BIGGEST ONE. Half of every prompt sent to the fleet was goose's global+project hints:
 # Mihai's imported claude-code CLAUDE.md (Jira test tenants, Mac Studio rsync, UI design rules, how to
@@ -152,10 +152,10 @@ straggler_aborted
 GOOSE_SWARM_INHERIT_HINTS
 CONTEXT_FILE_NAMES
 
-# F101: the architect grouped a server module with an HTML asset, and an entry point with a README —
-# the chokepoints the judge then had to split. The prompt asked for several files of ONE concern; it
-# did not say they must be the same KIND.
-SAME KIND
+# F101 (SAME KIND) is RETIRED with the architect prompt it patched. The opener cuts by MEANING and
+# by interface now, and the rule that replaces it — slices must be comparable in size, and the fleet
+# size must not change the cut — is the marker below.
+HOW MANY MACHINES EXIST IS IRRELEVANT
 
 # F104: spec_contract probed the VENDOR MOCK and blamed the app. An open port is not proof that OUR
 # child opened it — the port's state is now read BEFORE the spawn, and an already-bound port is
@@ -221,12 +221,10 @@ characters of reasoning instead
 # which asserts the kill is suppressed on GROWTH, still fires on a FLAT count, and still fires on a
 # first look. That asserts behaviour, which is stronger than asserting presence.
 
-# F149: `research_tools` is emitted every run as {"available":[],"can_look_things_up":false}, yet the
-# `libraries` scout was told to "Use the context7 tools ... and web-search" and EVERY scout was told
-# to "spend them on LOOKING THINGS UP". With nothing attached, a 27B's only move is to invent the API
-# from memory — and those signatures become frozen contracts. Now it is told the truth and asked to
-# CALIBRATE instead.
-UNVERIFIED rather than guessing a plausible-looking name
+# F149 (UNVERIFIED rather than guessing a plausible-looking name) is RETIRED with the four fixed scout
+# lenses. The instruction survives in the slice owner's own prompt, which tells it to say what it
+# assumed rather than invent a citation, and that sentence is the marker below.
+say what you assumed and why, rather than inventing a citation
 
 # F153: the sink's FIRST instruction was "Confirm EVERY file listed above actually exists on disk" —
 # an explicit order to spend turns on ls/cat over a 13-20 file manifest already pasted above it. F152
@@ -263,3 +261,18 @@ __goose_force_tool_until_act
 #     llm_request payload carrying top_k/top_p/min_p.
 #   * build_sha is verified by `strings` finding the actual commit sha, which is stronger than any
 #     marker: it proves WHICH build, not merely that a feature is present.
+
+# --- 2026-08-27: the linear-engine boundary ------------------------------------------------------
+#
+# EIGHT MARKERS ABOVE WERE RETIRED IN ONE PASS, and the reason is worth keeping: the
+# OPEN -> ASK -> RESEARCH -> SYNTHESIS -> REVIEW rewrite deleted the plan vote, the redraft ladder,
+# the detail fan and the four fixed scout lenses. Every one of those markers still greps out of
+# swarm.rs — the old functions are still in the file, they are simply unreachable — so the rule at
+# the top of this file ("prove it is a literal") would have passed all eight while `strings` on the
+# built binary reads ZERO for each. Unreachable code is never codegen'd, so its literals never reach
+# .rodata.
+#
+# A NINTH RULE, then: VERIFY A MARKER AGAINST THE BINARY, NOT THE SOURCE. `grep -c '"MARKER"'
+# swarm.rs` proves the string is written down; only `strings $GOOSE_BIN | grep -F -- MARKER` proves
+# it is SHIPPED. The two disagree exactly when a mechanism has been deleted and its code left behind,
+# which is the case this boundary is.

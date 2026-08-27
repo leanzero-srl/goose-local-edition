@@ -167,7 +167,10 @@ type ElectronAPI = {
     /** Where the run actually lives — differs from workingDir when the engine redirected the build. */
     dir: string;
     mtime: number;
+    /** Epoch ms of the stamp INSIDE .swarm/heartbeat (its mtime only if that stamp will not parse). */
     heartbeat: number | null;
+    /** The heartbeat file reads `EXITED:` — the engine tore itself down rather than being hard-killed. */
+    heartbeatExited: boolean;
     events: Array<Record<string, unknown>>;
     activity: Record<string, unknown>;
     /** Per-digest file mtimes (ms), keyed like `activity` — the per-node realtime signal. */

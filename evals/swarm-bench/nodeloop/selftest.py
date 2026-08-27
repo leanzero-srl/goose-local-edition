@@ -23,6 +23,7 @@ Usage:
 """
 from __future__ import annotations
 
+import datetime as dt
 import json
 import pathlib
 import re
@@ -49,21 +50,25 @@ SELFTEST_VERSION = "st-2"   # st-2: check 4 tests the tasks REPORTED unfinished,
 #          exactly the confusion that hid the last one.
 EVENT_FIELDS: dict[str, list[str]] = {
     "run_started": ["pool"],
+    "phase": ["phase"],
     "plan_loaded": ["tasks"],
     "plan_loaded.tasks[]": ["id", "deps", "description", "files"],
     "task_dispatched": ["task_id", "device", "owned_files", "attempt"],
-    "detail_fallback": ["task_id", "reason", "brief_chars"],
+    "slices_opened": ["count", "weights", "slices"],
+    "research_completed": ["slices", "brief_chars"],
+    "review_findings": ["round", "new", "findings", "patch_touches"],
+    "defects_rated": ["round", "critical", "minor"],
     "complete_verify": ["round", "ran", "findings"],
     "pool_resolved": ["worker_count", "planner_pushed"],
-    "retarget_discarded": ["round", "tasks"],
 }
 
 # Every event name the harness filters on or counts. Each must be a name the engine can actually emit.
 HARNESS_EVENT_NAMES = [
-    "run_started", "plan_loaded", "task_dispatched", "task_completed", "detail_fallback",
-    "contracts", "research_completed", "confidence_retarget", "run_finished", "complete_verify",
-    "pool_resolved", "retarget_discarded", "judge_verdict", "pre_review", "sink_review",
-    "replanned", "speculated", "task_split",
+    "run_started", "phase", "plan_loaded", "task_dispatched", "task_completed",
+    "contracts", "pillars", "slices_opened", "clarify_proxy_armed", "clarify_proxy_answered",
+    "research_completed", "review_findings", "plan_patched", "defects_rated", "sink_id_pinned",
+    "run_finished", "complete_verify", "pool_resolved", "judge_verdict", "pre_review",
+    "sink_review", "replanned", "speculated", "task_split",
 ]
 
 ENGINE_SRC = pathlib.Path.home() / "Projects/goose/crates"
@@ -85,6 +90,48 @@ def engine_event_names() -> set[str]:
     return names
 
 
+GOOSE_BIN = pathlib.Path.home() / "Projects/goose/target/release/goose"
+
+
+def dead_in_binary(names: list[str]) -> list[str]:
+    """Which of these event names are in the source but NOT in the built binary — i.e. dead code."""
+    if not GOOSE_BIN.is_file():
+        return []
+    try:
+        out = subprocess.run(["strings", str(GOOSE_BIN)], capture_output=True, text=True, timeout=180)
+    except (OSError, subprocess.SubprocessError):
+        return []
+    if out.returncode != 0:
+        return []
+    hay = out.stdout
+    # A CONTROL, because an empty haystack would report EVERY name dead and read as a total harness
+    # failure. `task_dispatched` is the most common event in any run; if it is missing the instrument
+    # is broken, not the engine.
+    if "task_dispatched" not in hay:
+        return ["`strings` found no task_dispatched in the release binary — the dead-code check is "
+                "BLIND and none of its zeros mean anything"]
+    dead = sorted(n for n in names if n not in hay)
+    if dead:
+        return [f"event name(s) {dead} exist in the engine SOURCE but not in the built binary — they "
+                f"sit in code nothing calls, so they can never appear in a log again"]
+    return []
+
+
+def _started_after(rows: list[dict], build_mtime: float) -> bool:
+    """Was this run produced by the CURRENT binary? Decided from its own `run_started`, not its path."""
+    for r in rows:
+        if r.get("event") != "run_started":
+            continue
+        ts = r.get("ts")
+        if not ts:
+            return False
+        try:
+            return dt.datetime.fromisoformat(str(ts).replace("Z", "+00:00")).timestamp() >= build_mtime
+        except (TypeError, ValueError):
+            return False
+    return False
+
+
 def field_contract() -> list[str]:
     """Assert the harness's field and event names against the engine, not against its own habits."""
     fails: list[str] = []
@@ -100,8 +147,25 @@ def field_contract() -> list[str]:
             fails.append(f"the harness references event name(s) the engine never emits: {unknown} "
                          f"— a missing key reads exactly like a mechanism that did not fire")
 
+    # 1b. THE SOURCE CHECK ALONE IS NOT ENOUGH, and the linear-engine rewrite is how that was found.
+    # `confidence_retarget`, `plan_convergence`, `skeleton_drafts`, `retarget_discarded` and
+    # `detail_completed` all still grep out of swarm.rs as `"event": "..."` literals — in functions
+    # nothing calls any more. The source check passed on every one of them while not a single one can
+    # ever appear in a log again, because unreachable code is never codegen'd and the literal never
+    # reaches .rodata. `strings` on the built binary is the instrument that separates the two, and it
+    # is the same one probe.py uses. Absent binary => the check does not run, and says so.
+    fails.extend(dead_in_binary(HARNESS_EVENT_NAMES))
+
     # 2. FIELDS vs a real FINISHED run. Never the newest file: an in-flight run has not reached the
     #    phases these events live in, so its absent events are a clock, not a defect.
+    #
+    #    AND NEVER A RUN FROM AN OLDER BINARY. This check pooled across engine builds and the
+    #    linear-engine rewrite made that visible: the newest finished run on disk was written by the
+    #    pre-rewrite engine, whose `research_completed` carries {findings, grounded, lenses_returned}.
+    #    Asserting the current field list against it fails FOREVER, on a harness that is correct — the
+    #    same vintage trap landcheck.py already guards with `started_after_build`, missing here.
+    #    An event cannot carry a field that did not exist when its binary was compiled.
+    build_mtime = GOOSE_BIN.stat().st_mtime if GOOSE_BIN.is_file() else None
     chosen = None
     events: list[dict] = []
     for path in sorted((HERE.parent / "runs").glob("nodeloop*/*/run.jsonl"), reverse=True):
@@ -111,10 +175,16 @@ def field_contract() -> list[str]:
                 rows.append(json.loads(line))
             except json.JSONDecodeError:
                 continue
-        if any(r.get("event") == "run_finished" for r in rows):
-            chosen, events = path, rows
-            break
+        if not any(r.get("event") == "run_finished" for r in rows):
+            continue
+        if build_mtime is not None and not _started_after(rows, build_mtime):
+            continue
+        chosen, events = path, rows
+        break
     if chosen is None:
+        # No run on the CURRENT binary yet. Nothing can be attributed, and reporting that as a pass
+        # would be the vacuous truth this whole file exists to refuse — but it is not a failure
+        # either, so it returns whatever the name checks above already found.
         return fails
 
     seen: dict[str, set] = {}
@@ -155,6 +225,7 @@ def run_invariants(unit: pathlib.Path) -> list[str]:
     fails: list[str] = []
     o = occupancy.analyse(unit)
     a = dispatch_audit.audit(unit)
+    ev_all = occupancy.read_events(unit)
 
     n = o.get("pool_size") or 0
     wall = o.get("wall_secs") or 0
@@ -220,15 +291,28 @@ def run_invariants(unit: pathlib.Path) -> list[str]:
         fails.append(f"tasks {phantom} completed yet own a span running to the end of the run — "
                      f"the dispatch/completion pairing is inventing busy time")
 
-    # 5. CROSS-INSTRUMENT. dispatch_audit infers shipped one-liners from the final plan; the engine
-    #    emits detail_fallback per failed call. They legitimately DIFFER (a retarget redraft repairs
-    #    a failure), but shipped can never EXCEED the number of calls that failed.
+    # 5. CROSS-INSTRUMENT. dispatch_audit infers shipped one-liners from the final plan; RESEARCH
+    #    reports how long each slice owner's spec was. `splice_briefs` writes that spec into its
+    #    task's `description` VERBATIM, so a slice whose brief is at least ONE_LINER_MAX_CHARS long
+    #    CANNOT produce a one-liner task — its description fails the length half of the shape rule by
+    #    construction. That is the ceiling: shipped one-liners can never exceed the tasks NOT covered
+    #    by a long brief. It replaces the old detail_fallback pairing, which counted failed calls in
+    #    an engine that no longer makes them.
+    #
+    #    A COUNT OF NON-EMPTY BRIEFS WOULD NOT WORK, and it is worth saying why: RESEARCH substitutes
+    #    a `PURPOSE:` line for a dead owner rather than nothing at all, so brief_chars is never zero
+    #    and "did every slice return something" is vacuously true on every run.
     shipped = a.get("shipped_one_liners")
-    events = a.get("detail_fallback_events")
-    if shipped is not None and events:
-        if shipped > events:
-            fails.append(f"shipped one-liners {shipped} exceeds detail_fallback events {events} — a "
-                         f"worker got a brief no failed call can account for")
+    planned = a.get("planned_tasks")
+    rc = next((e for e in ev_all if e.get("event") == "research_completed"), None)
+    if shipped is not None and planned and rc:
+        long_briefs = len([c for c in (rc.get("brief_chars") or [])
+                           if (c or 0) >= dispatch_audit.ONE_LINER_MAX_CHARS])
+        ceiling = planned - long_briefs
+        if shipped > ceiling >= 0:
+            fails.append(f"shipped one-liners {shipped} exceeds the ceiling of {ceiling} "
+                         f"({planned} planned tasks less {long_briefs} slice(s) whose spec is too "
+                         f"long to be one) — a worker got a brief no lost slice accounts for")
 
     # 6. The pool the engine built must match what the unit asked for, or the row is not evidence.
     res = unit / "nodeloop-result.json"

@@ -49,10 +49,6 @@ def _count(ev, name):
     return sum(1 for e in ev if e.get("event") == name)
 
 
-def _plan(ev):
-    return next((e for e in ev if e.get("event") == "plan_loaded"), None)
-
-
 def arm_kind_prompt(ev):
     n = _count(ev, "task_dispatched")
     if not n:
@@ -77,32 +73,6 @@ def arm_kind_prompt(ev):
                               "ran, so the arm has nothing to improve against it")
     return "OK", (f"{n} dispatches, rules_delivered present, and {test_disp} test-author dispatch(es) "
                   f"— the kind F124 measured at 60% retry is present to be improved")
-
-
-def arm_retarget_off(ev):
-    """STOCHASTIC precondition — and getting this wrong once is why this docstring exists.
-
-    F119 reported BLOCKED from a single baseline (`plan_confidence 100 >= ask_floor 85`) and I wrote
-    it up as "the ladder never runs". Then a live 1-node unit came in at **confidence 36** with the
-    redraft firing twice. Surveying all 14 archived runs: confidence ranges 36-100 at EVERY node count
-    (1 node: 100/100/36; 3 nodes: 54-100), and `conf < floor` holds in **4 of 14 ≈ 29%**.
-
-    So the precondition is neither absent nor reliable — it is a COIN FLIP, and a one-baseline check
-    reported a distribution as a constant. That is the difference between "this arm cannot work" and
-    "this arm needs a baseline that satisfies it", which are different actions.
-    """
-    pl = _plan(ev)
-    if not pl:
-        return "UNKNOWN", "no plan_loaded"
-    conf, floor = pl.get("plan_confidence"), pl.get("ask_floor")
-    if conf is None or floor is None:
-        return "UNKNOWN", "plan_loaded lacks confidence/floor"
-    if conf >= floor:
-        return "UNSUITABLE", (f"plan_confidence {conf} >= ask_floor {floor} on THIS baseline, so the "
-                              f"ladder does not run here. Measured across the archive the "
-                              f"precondition holds ~29% of runs (conf 36-100 at every node count), so "
-                              f"the arm is not dead — it needs a LOW-CONFIDENCE baseline to pair with")
-    return "OK", f"plan_confidence {conf} < ask_floor {floor}: the ladder fires"
 
 
 def arm_doc_prefetch(ev):
@@ -156,18 +126,6 @@ def arm_sink_review(ev, run=None):
                            "idle-fill has no window")
     return "OK", (f"the sink held a node alone for {sink_solo:.0f}s with the other nodes idle — "
                   f"that is the window idle-fill exists for")
-
-
-def arm_detail_budget(ev):
-    # Raising the detail ceiling only matters if a detail call is being CUT by it.
-    secs = [e.get("secs") for e in ev if e.get("event") == "detail_completed" and e.get("secs")]
-    budget = next((e.get("budget_secs") for e in ev if e.get("event") == "detail_completed"), None)
-    if not secs:
-        return "UNKNOWN", "no detail_completed events"
-    if budget and max(secs) < budget * 0.8:
-        return "BLOCKED", (f"slowest detail {max(secs):.0f}s vs budget {budget}s — nothing is near the "
-                           f"ceiling, so raising it changes nothing")
-    return "OK", f"slowest detail {max(secs):.0f}s against budget {budget}s"
 
 
 def arm_e2e_oracle(ev):
@@ -287,54 +245,21 @@ def arm_doc_fetch(ev):
     return "OK", f"the spec names {len(urls)} fetchable doc URL(s), e.g. {urls[0]}"
 
 
-def arm_diverse_plan(ev):
-    """The one arm whose precondition the ENGINE now answers directly, so nothing has to be inferred.
-
-    F438: the redraft ladder is the 3-node tax. Every `confidence_retarget` in the archive carries
-    `binding_signal: "agreement"`, and it cost 786/821/1657s on the 3-node cells against ZERO on the
-    1-node cell — because 3 nodes draft 3 skeletons where 1 node drafts 2, and `plan_agreement` is
-    max-min spread plus mean pairwise Jaccard, both of which (per `best_subset_agreement`'s own doc)
-    "only worsen (or hold) as the pool grows". `diverse_plan` ENFORCE replaces that score with
-    `structural_convergence`, which ignores count spread.
-
-    `plan_convergence.would_skip_ladder` is the engine's OWN counterfactual, computed from the same
-    predicate the enforce branch uses (`diverse_plan_would_skip`), and emitted whether or not the
-    lever is on. So this probe reads a fact instead of estimating one — the failure mode that made
-    `retarget_off` a null experiment twice.
-
-    UNKNOWN, never OK, on a baseline older than the event: the conservative rule this file states up
-    front. A pre-086981caf run simply cannot answer, and "absent" must never read as "false".
-    """
-    pcs = [e for e in ev if e.get("event") == "plan_convergence"]
-    if not pcs:
-        return "UNKNOWN", ("no plan_convergence event — baseline predates 086981caf, so the "
-                           "counterfactual is UNRECORDED, not false")
-    pc = pcs[0]
-    ladder = _count(ev, "confidence_retarget")
-    if not ladder:
-        return "BLOCKED", (f"agreement {pc.get('agreement_conf')} cleared the floor on the first "
-                           f"draft — no ladder ran, so there is nothing for ENFORCE to skip")
-    if not pc.get("would_skip_ladder"):
-        return "BLOCKED", (f"struct_conv {pc.get('struct_conv')} does not clear struct_stop "
-                           f"{pc.get('struct_stop')} while beating agreement "
-                           f"{pc.get('agreement_conf')} — ENFORCE would change NOTHING on this "
-                           f"baseline, so the arm is inert by construction")
-    return "OK", (f"ladder ran {ladder}x and would_skip_ladder is true (struct_conv "
-                  f"{pc.get('struct_conv')} vs agreement {pc.get('agreement_conf')}) — ENFORCE has "
-                  f"something real to remove, and prefix wall-clock reads the change")
-
-
+# THREE ARMS ARE GONE, AND THE PROBES WITH THEM. `diverse_plan`, `retarget_off` and `detail_budget`
+# each gated a lever that no longer exists: the OPEN -> ASK -> RESEARCH -> SYNTHESIS -> REVIEW rewrite
+# deleted the multi-draft plan vote (and `plan_convergence`), the redraft ladder (and
+# `confidence_retarget`) and the detail fan (and `detail_completed`). Their probes read those events,
+# so against any run of the current engine all three would have reported UNKNOWN forever — and UNKNOWN
+# in this file means "the precondition could not be decided", which reads as a probe that needs fixing
+# rather than an arm that no longer exists. Deleted rather than left to say the wrong thing quietly.
 ARMS = {
-    "diverse_plan": arm_diverse_plan,
     "kind_prompt": arm_kind_prompt,
     "doc_prefetch": arm_doc_prefetch,
     "spec_repair": arm_spec_repair,
-    "detail_budget": arm_detail_budget,
     "complete_parallel": arm_complete_parallel,
     "e2e_oracle": arm_e2e_oracle,
     "e2e_oracle_off": arm_e2e_oracle_off,
     "spec_sized_plan": arm_spec_sized_plan,
-    "retarget_off": arm_retarget_off,
     "sink_review": arm_sink_review,
     "doc_fetch": arm_doc_fetch,
     "spiral_thinking": arm_spiral_thinking,
@@ -345,10 +270,10 @@ def queued_reps() -> dict:
     """How many units the sweep will actually SPEND on each arm.
 
     Without this the summary line claimed every BLOCKED arm "would spend a fleet unit and answer
-    nothing" — and `detail_budget` is parked at `reps: 0` in sweep.py, so it will spend nothing at
-    all. Charging a parked arm is the same defect this script exists to catch, one level up: a
-    verdict that cannot separate "blocked and queued" from "blocked and already parked", which are
-    different actions (fix it now vs leave it alone).
+    nothing" — while an arm parked at `reps: 0` in sweep.py will spend nothing at all. Charging a
+    parked arm is the same defect this script exists to catch, one level up: a verdict that cannot
+    separate "blocked and queued" from "blocked and already parked", which are different actions
+    (fix it now vs leave it alone).
 
     Parsed rather than imported: sweep.py is the LIVE supervisor's module and importing it here
     would run its top level while it is mid-run.

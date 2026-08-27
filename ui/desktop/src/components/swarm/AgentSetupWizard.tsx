@@ -9,6 +9,7 @@ import RecipeWizard from './RecipeWizard';
 import RecipeChatWizard from './RecipeChatWizard';
 import { getInitialWorkingDir } from '../../utils/workingDir';
 import type { setViewType } from '../../hooks/useNavigation';
+import { CHIP_RADIUS, SWARM_STATUS } from './formationVisualState';
 
 /**
  * Goose Local Edition — the Agent persona setup wizard. The autonomous Agent runs a LOOP built from a
@@ -23,7 +24,7 @@ import type { setViewType } from '../../hooks/useNavigation';
  * Sharp full-border modal (no left rail, no faded tints, solid azure), matching the Local Edition look.
  */
 
-const AZURE = '#2e8bff';
+const AZURE = SWARM_STATUS.action;
 
 export function AgentSetupWizard({
   isOpen,
@@ -110,7 +111,7 @@ export function AgentSetupWizard({
         <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/50 p-4">
         <div
           className="bg-background-primary border border-border-primary shadow-lg w-[540px] max-h-[85vh] flex flex-col"
-          style={{ borderRadius: 3 }}
+          style={{ borderRadius: CHIP_RADIUS }}
           data-testid="agent-setup-wizard"
         >
           <div className="flex items-center justify-between px-4 py-3 border-b border-border-primary">
@@ -138,7 +139,7 @@ export function AgentSetupWizard({
             </p>
 
             {/* Recipe + Loop */}
-            <div className="border border-border-primary" style={{ borderRadius: 3 }}>
+            <div className="border border-border-primary" style={{ borderRadius: CHIP_RADIUS }}>
               <div className="px-3 py-1.5 text-xs font-semibold bg-background-secondary border-b border-border-primary flex items-center gap-1.5">
                 <Repeat className="h-3.5 w-3.5" /> Loop &amp; recipe
               </div>
@@ -146,7 +147,7 @@ export function AgentSetupWizard({
                 <button
                   onClick={() => setRecipeChatOpen(true)}
                   className="w-full flex items-center justify-between px-3 py-2 text-xs font-medium text-white transition-opacity hover:opacity-90"
-                  style={{ backgroundColor: AZURE, borderRadius: 3 }}
+                  style={{ backgroundColor: AZURE, borderRadius: CHIP_RADIUS }}
                 >
                   <span className="flex items-center gap-2">
                     <Sparkles className="h-4 w-4" /> Build a recipe with the fleet (chat)
@@ -156,7 +157,7 @@ export function AgentSetupWizard({
                 <button
                   onClick={() => setRecipeWizardOpen(true)}
                   className="w-full flex items-center justify-between px-3 py-2 text-xs border border-border-primary text-text-primary hover:border-text-secondary transition-colors"
-                  style={{ borderRadius: 3 }}
+                  style={{ borderRadius: CHIP_RADIUS }}
                 >
                   <span className="flex items-center gap-2">
                     <Wand2 className="h-4 w-4" /> …or draft one by hand
@@ -166,7 +167,7 @@ export function AgentSetupWizard({
                 <button
                   onClick={() => setLoopModalOpen(true)}
                   className="w-full flex items-center justify-between px-3 py-2 text-xs border border-border-primary text-text-primary hover:border-text-secondary transition-colors"
-                  style={{ borderRadius: 3 }}
+                  style={{ borderRadius: CHIP_RADIUS }}
                 >
                   <span className="flex items-center gap-2">
                     <Repeat className="h-4 w-4" /> Create a loop (recipe + schedule + iterations)
@@ -175,14 +176,14 @@ export function AgentSetupWizard({
                 </button>
 
                 {createdLoopId && (
-                  <div className="flex items-center justify-between px-3 py-2 border" style={{ borderColor: '#2ecc71', borderRadius: 3 }}>
+                  <div className="flex items-center justify-between px-3 py-2 border" style={{ borderColor: SWARM_STATUS.done, borderRadius: CHIP_RADIUS }}>
                     <span className="text-xs text-text-primary truncate">
                       Loop <span className="font-mono">{createdLoopId}</span> ready
                     </span>
                     <button
                       onClick={() => runNow(createdLoopId)}
                       className="flex items-center gap-1 text-xs font-semibold px-2 py-1 text-white"
-                      style={{ backgroundColor: '#2ecc71', borderRadius: 3 }}
+                      style={{ backgroundColor: SWARM_STATUS.done, borderRadius: CHIP_RADIUS }}
                     >
                       <Play className="h-3.5 w-3.5" /> Run agent now
                     </button>
@@ -211,7 +212,7 @@ export function AgentSetupWizard({
             </div>
 
             {/* Skills */}
-            <div className="border border-border-primary" style={{ borderRadius: 3 }}>
+            <div className="border border-border-primary" style={{ borderRadius: CHIP_RADIUS }}>
               <div className="px-3 py-1.5 text-xs font-semibold bg-background-secondary border-b border-border-primary flex items-center gap-1.5">
                 <Sparkles className="h-3.5 w-3.5" /> Skills
               </div>
@@ -228,7 +229,7 @@ export function AgentSetupWizard({
                 <button
                   onClick={goToSkills}
                   className="shrink-0 flex items-center gap-1 text-xs border border-border-primary px-2 py-1 text-text-primary hover:border-text-secondary transition-colors"
-                  style={{ borderRadius: 3 }}
+                  style={{ borderRadius: CHIP_RADIUS }}
                 >
                   Manage <ArrowRight className="h-3.5 w-3.5" />
                 </button>
@@ -236,7 +237,7 @@ export function AgentSetupWizard({
             </div>
 
             {error && (
-              <div className="text-xs px-3 py-2 border" style={{ color: '#ff3b30', borderColor: '#ff3b30', borderRadius: 3 }}>
+              <div className="text-xs px-3 py-2 border" style={{ color: SWARM_STATUS.error, borderColor: SWARM_STATUS.error, borderRadius: CHIP_RADIUS }}>
                 {error}
               </div>
             )}
@@ -246,7 +247,7 @@ export function AgentSetupWizard({
             <button
               onClick={onClose}
               className="text-xs px-3 py-1.5 border border-border-primary text-text-primary hover:border-text-secondary transition-colors"
-              style={{ borderRadius: 3 }}
+              style={{ borderRadius: CHIP_RADIUS }}
             >
               Done
             </button>

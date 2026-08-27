@@ -108,7 +108,7 @@ if len(builds) > 1:
     print(f"!! MIXED ENGINE BUILDS {builds} — rows across a rebuild measure different engines")
     print("   and are NOT comparable. Re-baseline rather than averaging across the boundary.\n")
 print(f"{'arm':<18}{'nodes':>5}{'n':>3}  {'score mean':>10} {'spread':>8}  "
-      f"{'fallbacks':>9} {'kind-mm%':>9} {'wall min':>9}  void")
+      f"{'1-liners':>9} {'kind-mm%':>9} {'wall min':>9}  void")
 for (arm, nodes), rs in sorted(rows.items(), key=lambda kv: (kv[0][0], kv[0][1] or 0)):
     ok = [r for r in rs if not r.get('timed_out') and not r.get('aborted')
           and not r.get('abandoned') and not r.get('void')
@@ -126,7 +126,8 @@ for (arm, nodes), rs in sorted(rows.items(), key=lambda kv: (kv[0][0], kv[0][1] 
           f"{(sum(wl)/len(wl)/60 if wl else 0):>9.0f}  "
           f"{sum(1 for r in rs if r.get('void'))}")
 print()
-print("fallbacks = tasks whose spec never got past the architect's one-liner (swarm.rs:12353).")
+print("1-liners = tasks whose description is a bare one-line brief: either their slice owner returned")
+print("           no spec, or the synthesis splice matched no slice for that task.")
 print("void = the engine did not build the pool the unit asked for; those are excluded, never averaged.")
 print("A score delta below the replicate spread is not a result; read the mechanism columns.")
 PY
@@ -326,7 +327,7 @@ PREFLIGHT
     if [ "$#" -eq 0 ]; then
       echo "refusing: name at least one MARKER that must be present in the rebuilt binary,"
       echo "  or list them in ./MARKERS (one per line)."
-      echo "  e.g. ./loop.sh boundary GOOSE_SWARM_DETAIL_BUDGET_SECS detail_fallback"
+      echo "  e.g. ./loop.sh boundary GOOSE_SWARM_SINK_SHARD slices_opened"
       exit 2
     fi
     GOOSE_BIN="$HOME/Projects/goose/target/release/goose"

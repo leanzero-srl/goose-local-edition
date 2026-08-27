@@ -82,10 +82,6 @@ NEW = {
 # grace (check = no straggler_aborted with round elapsed < 3x45s), K5 single-owned-file repair
 # (check = the no-path write/edit error class vanishes for single-file workers), K7 tool_choice
 # guard + F756 fix-cap 3000 (check = twins run past 1320s; agent_ok true appears).
-# Deliberately NOT probed: `clamped`. It is a real new field, but the bare word is common enough in
-# a 236 MB binary that a match would not attribute to this edit — and a probe that cannot attribute
-# is a probe that manufactures confidence. The two C5(A) fields above are distinctive and cover it.
-#
 # Deliberately NOT probed: `inconclusive_reasons` (C6 step 1). The baseline run found it ALREADY
 # PRESENT — it has shipped on the `spec_contract` event since before this batch (swarm.rs:26503), and
 # C6 deliberately REUSES the name on `complete_verify` (:26570) so both events read the same shape.
@@ -102,8 +98,6 @@ POSITIVE_CONTROLS = {
     # GRADUATED from NEW after the 2026-08-12 08:52 rebuild (watched flipping absent -> present):
     "skeleton written:": "S3 fill fan — landed 2026-08-12",
     "created file(s) from the winning twin": "F766 promote fix — landed 2026-08-12",
-    # GRADUATED from NEW after the 2026-08-12 02:16 rebuild (watched flipping absent -> present):
-    "END your spec with ONE line": "S3i2 producer — landed 2026-08-12",
     # "subsplit" was here 2026-08-12 02:11-02:15 and is REMOVED: the binary's one occurrence
     # is the mangled SYMBOL extract_subsplit (which does prove compilation), invisible to this
     # probe's `strings` haystack — a control verified with a different instrument (bytes.count)
@@ -121,23 +115,39 @@ POSITIVE_CONTROLS = {
     "GOOSE_SWARM_SINK_SHARD": "S1i1 — landed 2026-08-11",
     # GRADUATED from NEW after the 2026-08-11 17:49 rebuild (watched flipping absent -> present):
     "probed_post": "F751 — landed 2026-08-11",
-    "straggler_deferred": "B5 — landed 2026-08-11",
     # GRADUATED after the 2026-08-11 20:36 rebuild (watched flipping):
     "CONTRACT UNAVAILABLE": "D1 — landed 2026-08-11",
     "NONE ON DISK YET": "D3 — landed 2026-08-11",
     "GOOSE_COMPACT_KEEP_TAIL": "K4 — landed 2026-08-11",
-    "would_skip_ladder": "the pre-existing shadow diagnostic",
-    "plan_convergence": "emitted every planning phase",
     "task_dispatched": "the most common event in any run log",
-    # GRADUATED from NEW after the 2026-08-09 15:15 rebuild, where all six were watched flipping
-    # absent -> present. They now earn their keep as controls: if any of them ever reads ABSENT the
-    # build is not the one I think it is, and nothing below may be interpreted.
+    # THE LINEAR-ENGINE CONTROLS. The eight literals that used to sit here — would_skip_ladder,
+    # would_skip_ladder_prelift, plan_convergence, requested_best_of_n, distinct_draft_models,
+    # straggler_deferred, "END your spec with ONE line", "The spec names these documents" — belonged
+    # to the plan vote, the redraft ladder, the detail fan and the C7 prompt, all of which the
+    # OPEN -> ASK -> RESEARCH -> SYNTHESIS -> REVIEW rewrite deleted. Several still grep in swarm.rs
+    # inside code nothing calls any more, and that is exactly the trap this probe's own dead-code rule
+    # names: unreachable code is never codegen'd, so the literal never reaches .rodata. Every one of
+    # them reads ZERO in the 2026-08-27 15:18 binary, which would have tripped the BLIND gate on every
+    # run and buried the one line that matters.
+    # Each replacement below was verified with `strings target/release/goose | grep -F` — the probe's
+    # OWN instrument, per the THIRD PROBE RULE — not by grepping the source, which is what would have
+    # kept the dead ones.
+    "slices_opened": "the OPEN phase always emits it — one per run, count=1 in the 15:18 binary",
+    "clarify_proxy_armed": "the ASK phase's arming event",
+    "review_findings": "REVIEW emits one per round, and REVIEW always runs at least once",
+    "defects_rated": "the CRITICAL/MINOR rating that replaced all-or-nothing",
+    "sink_id_pinned": "SYNTHESIS pins the sink id on every plan it wires",
+    # Two prompt fragments, because event names alone would leave the probe blind to a rewrite that
+    # kept the event schema and gutted the instructions. Both are long, live-path, and single-piece
+    # (neither straddles a format! interpolation, which would split them across .rodata entries).
+    "HOW MANY MACHINES EXIST IS IRRELEVANT": "the opener's fleet-independence rule",
+    "Write the MODULE SPECIFICATION for your slice": "BRIEF_CONTRACT, spliced into every slice owner",
+    # GRADUATED from NEW after the 2026-08-09 15:15 rebuild, where six were watched flipping absent
+    # -> present; four of the six died with the ladder and the detail fan (see above) and only these
+    # two survive. They earn their keep as controls: if either ever reads ABSENT the build is not the
+    # one I think it is, and nothing below may be interpreted.
     "skipped_tests": "F711/C1 — landed 2026-08-09",
-    "would_skip_ladder_prelift": "F707 — landed 2026-08-09",
     "description_chars": "C12(b) — landed 2026-08-09",
-    "requested_best_of_n": "C5(A) — landed 2026-08-09",
-    "distinct_draft_models": "C5(A) — landed 2026-08-09",
-    "The spec names these documents": "C7 — landed 2026-08-09",
     # GRADUATED 2026-08-10. All three read PRESENT in the 08:44 binary while still sitting in NEW —
     # the exact stale-pending state the NEW docstring warns about, caught only by reading the probe
     # instead of trusting the set. That reading also settled a live question: the `probe_post` ARM

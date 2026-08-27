@@ -152,7 +152,8 @@ def main() -> int:
     print(f"=== BOUNDARY PRE-FLIGHT — {len(markers)} marker(s) against {len(sources)} .rs files ===")
     print("does the rebuild already carry every fix, and is every marker findable in the binary?\n")
 
-    bad = []
+    binary_mtime = binary.stat().st_mtime if binary.is_file() else None
+    bad, suspect = [], []
     for m in markers:
         hits = {"literal": [], "comment": [], "identifier": []}
         for p, t in texts.items():
@@ -163,6 +164,27 @@ def main() -> int:
         if hits["literal"]:
             where = hits["literal"][0]
             extra = f" (+{len(hits['literal']) - 1} more)" if len(hits["literal"]) > 1 else ""
+            # THE FIFTH CLASS, and the one the linear-engine rewrite invented. A marker can be a
+            # perfectly real string literal in a function NOTHING CALLS — the OPEN/ASK/RESEARCH
+            # rewrite left the plan vote, the redraft ladder and the detail fan in swarm.rs, dead.
+            # Unreachable code is never codegen'd, so the literal never reaches .rodata and `strings`
+            # reads ZERO on a correct build. Eight of this file's markers were in exactly that state
+            # and every one of them passed as LITERAL.
+            #
+            # ABSENCE ALONE STILL PROVES NOTHING (the module docstring's rule): the build may simply
+            # predate the fix. What separates the two is the SOURCE FILE'S OWN mtime — if the compiler
+            # had already seen this line when it produced this binary, and the literal is not in the
+            # binary, then the line is not reachable. Reported, never fatal, because an mtime is
+            # evidence and not proof.
+            if m not in in_binary and binary_mtime is not None:
+                src_mtime = max((p2.stat().st_mtime for p2 in texts
+                                 if any(str(p2.relative_to(CRATES)) in h for h in hits["literal"])),
+                                default=None)
+                if src_mtime is not None and src_mtime < binary_mtime:
+                    suspect.append((m, where))
+                    print(f"  LITERAL  {m[:44]:<46} {where}{extra}  <-- NOT in the built binary "
+                          f"though its source predates the build: DEAD CODE?")
+                    continue
             print(f"  LITERAL  {m[:44]:<46} {where}{extra}")
             continue
         # Only now consider a compile-time derive, so a real literal always wins the verdict.
@@ -186,6 +208,13 @@ def main() -> int:
             print(f"  ABSENT   {m[:44]:<46} not in crates/ at all")
 
     print()
+    if suspect:
+        print(f"{len(suspect)} marker(s) are real literals the LAST BUILD DID NOT SHIP, on source "
+              f"older than that build. The likely cause is a deleted mechanism whose code was left "
+              f"behind; the boundary WILL refuse them. Confirm the call path or retire the marker:")
+        for m, where in suspect:
+            print(f"  · {m!r} ({where})")
+        print()
     if bad:
         print(f"{len(bad)} marker(s) would FAIL the boundary. Fix them NOW, with the fleet still up:")
         for m, why, where in bad:
@@ -201,8 +230,11 @@ def main() -> int:
                 print(f"  · {m!r} is nowhere in crates/. The fix is missing, reverted, or the marker "
                       f"is a typo. Do NOT rebuild until you know which.")
         return 1
-    print("every marker is a real string literal — the boundary will not refuse the rebuild for a "
-          "phantom. That is the cheap half; it does not promise the fixes WORK.")
+    if suspect:
+        return 1
+    print("every marker is a real string literal AND the last build shipped it — the boundary will "
+          "not refuse the rebuild for a phantom or for a dead literal. That is the cheap half; it "
+          "does not promise the fixes WORK.")
     return 0
 
 

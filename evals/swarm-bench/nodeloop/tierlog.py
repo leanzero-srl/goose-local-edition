@@ -34,8 +34,8 @@ def archive_eventlog(cell_dir: Path, cell: str, finished_at: str, dest=None) -> 
     """Copy the run's event log somewhere the next same-named run cannot delete it.
 
     RESCUING FIELDS DOES NOT SCALE, AND THE FIELD-BY-FIELD VERSION ABOVE ONLY LOOKS SUFFICIENT UNTIL
-    YOU COUNT THE READERS. NINETEEN instruments in this directory open `run.jsonl` — armcheck,
-    bonusclass, curve, dispatch_audit, failures, goal, goalstate, occupancy, phases, planshape,
+    YOU COUNT THE READERS. EIGHTEEN instruments in this directory open `run.jsonl` — armcheck,
+    bonusclass, curve, dispatch_audit, failures, goal, goalstate, occupancy, phases,
     prefix, reaudit, review, selftest, shardshare, suffixcost, sweep, tierlog, verdicts. Every one of
     them is silently answering its question over NINE cells while `loop.log` records 171 completed
     runs, because `run.jsonl` is overwritten per cell NAME. Each new question I think of would need
@@ -87,12 +87,23 @@ def plan_signal(run_log: Path) -> dict:
     ABSENT IS `None`, NEVER 0. A cell whose `run.jsonl` is already gone must be distinguishable from
     a cell that genuinely never laddered, or the overwrite silently manufactures evidence for the
     cheaper answer — L340 in the data model rather than in a sentence.
+
+    THE LADDER COLUMNS STAY, on a build that has no ladder, because this function's whole job is
+    reading ARCHIVED logs and half the archive predates the linear engine. `backfill` gates its write
+    on re-deriving `ladder` from those logs and matching what the row already carries; dropping the
+    counter would fail that gate on every historical row and refuse every repair. What is added
+    instead is `engine`, so a zero can never be mistaken for a mechanism that stopped firing, plus
+    the linear engine's own equivalents: REVIEW rounds, plan patches, and the opener's cut.
     """
-    out = {"ladder": None, "retarget_discarded": None, "draft_rounds": None, "conv1": None}
+    out = {"ladder": None, "retarget_discarded": None, "draft_rounds": None, "conv1": None,
+           "engine": None, "review_rounds": None, "plan_patches": None, "slices": None}
     if not run_log.is_file():
         return out
     lad = disc = rounds = 0
+    reviews = patches = 0
     conv1 = None
+    slices = None
+    linear = False
     try:
         text = run_log.read_text(errors="replace")
     except OSError:
@@ -104,6 +115,18 @@ def plan_signal(run_log: Path) -> dict:
             disc += 1
         elif '"skeleton_drafts"' in line:
             rounds += 1
+        elif '"review_findings"' in line:
+            reviews += 1
+        elif '"plan_patched"' in line:
+            patches += 1
+        elif '"event": "phase"' in line or '"event":"phase"' in line:
+            linear = True
+        elif '"slices_opened"' in line and slices is None:
+            try:
+                e = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            slices = {k: e.get(k) for k in ("count", "weights", "secs")}
         elif '"plan_convergence"' in line and conv1 is None:
             try:
                 e = json.loads(line)
@@ -112,7 +135,14 @@ def plan_signal(run_log: Path) -> dict:
             conv1 = {k: e.get(k) for k in
                      ("drafts", "agreement_conf", "agreement_best2", "pool_penalty",
                       "struct_conv", "struct_stop", "enforced", "would_skip_ladder")}
-    return {"ladder": lad, "retarget_discarded": disc, "draft_rounds": rounds, "conv1": conv1}
+    return {"ladder": lad, "retarget_discarded": disc, "draft_rounds": rounds, "conv1": conv1,
+            # WHICH ENGINE WROTE THIS LOG, decided from the log itself. Without it the ladder columns
+            # go quietly to 0 on every linear-engine run and a later analysis pooling old rows with
+            # new ones reads a pile of honest zeros as "the ladder stopped firing" — the pooling
+            # error this campaign keeps paying for, one field away from being unavoidable. A `phase`
+            # event exists only on the linear engine, so it is the marker.
+            "engine": "linear" if linear else "ladder",
+            "review_rounds": reviews, "plan_patches": patches, "slices": slices}
 
 
 def existing_keys(path=LOG) -> set:
@@ -421,6 +451,9 @@ def self_test() -> int:
             fails.append(f"ladder counts wrong: {r['ladder']}/{r['retarget_discarded']}/{r['draft_rounds']}")
         if (r["conv1"] or {}).get("pool_penalty") != 19:
             fails.append(f"kept the LAST plan_convergence, not round one: {r.get('conv1')}")
+        if r.get("engine") != "ladder":
+            fails.append(f"a ladder-era log must be marked engine=ladder, got {r.get('engine')}")
+
         # THE ARCHIVE: byte-identical, and a RE-RUN of the same cell must add a file, never replace.
         arch = ev / (r.get("eventlog") or "__missing__")
         if not arch.is_file():
@@ -436,6 +469,34 @@ def self_test() -> int:
             fails.append(f"a re-run did not ADD an archive: {before} -> {after}")
         if arch.read_bytes() == (cell / "run.jsonl").read_bytes():
             fails.append("the earlier archive was overwritten — the mechanism reintroduced the bug it undoes")
+
+    # AND THE OTHER VINTAGE. A linear-engine log has no ladder to count, and the honest zeros that
+    # produces must be LABELLED — otherwise a later analysis pools them with ladder-era rows and reads
+    # "the ladder stopped firing" off a mechanism that was deleted. Placed after the archive checks
+    # rather than inside them: it rewrites `cell/run.jsonl`, and running it earlier would hand those
+    # checks a different log than the one they harvested.
+    (cell / "run.jsonl").write_text("\n".join([
+        json.dumps({"event": "phase", "phase": "open"}),
+        json.dumps({"event": "slices_opened", "count": 3, "weights": [3, 2, 2], "secs": 41}),
+        json.dumps({"event": "phase", "phase": "research"}),
+        json.dumps({"event": "review_findings", "round": 1, "new": 2, "patch_touches": 2}),
+        json.dumps({"event": "plan_patched", "round": 1, "replace": 2, "add": 0, "remove": 0}),
+        json.dumps({"event": "review_findings", "round": 2, "new": 0, "patch_touches": 0}),
+    ]))
+    write(0.8, "2026-08-08T14:00:00")
+    lin = harvest(d, log, ev)
+    if len(lin) != 1:
+        fails.append("the linear-engine run was not recorded")
+    else:
+        lr = lin[0]
+        if lr.get("engine") != "linear":
+            fails.append(f"a `phase` event must mark the log as engine=linear, got {lr.get('engine')}")
+        if lr.get("review_rounds") != 2 or lr.get("plan_patches") != 1:
+            fails.append(f"review loop miscounted: {lr.get('review_rounds')}/{lr.get('plan_patches')}")
+        if (lr.get("slices") or {}).get("weights") != [3, 2, 2]:
+            fails.append(f"the opener's cut was not rescued: {lr.get('slices')}")
+        if lr.get("ladder") != 0 or lr.get("conv1") is not None:
+            fails.append("a linear log must report ladder 0 and no convergence, not None/garbage")
 
     for f in fails:
         print(f"  FAIL {f}")

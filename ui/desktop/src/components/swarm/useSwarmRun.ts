@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import type { FormationEvidence, RunPhase } from './formationVisualState';
 
 /**
  * Reads the LIVE swarm run for a working directory (via the `read-swarm-run` IPC) and folds its event
@@ -244,7 +245,19 @@ export interface SwarmRunTotals {
 // a built task is 'unverified' (the worker's loop returned + passed a syntax gate; the app was NOT run), and
 // only Verify's complete_result.passed&&verified earns a green 'done'. Advisory items (LLM reviewers) are
 // info, never checks. See the phase-todo design workflow (2026-07-15).
-export type PhaseKey = 'research' | 'plan' | 'contracts' | 'build' | 'verify' | 'done';
+// The engine's pipeline, one key per phase it actually runs: OPEN (balanced semantic slices) -> ASK ->
+// RESEARCH (one slice per node, each owner writes that module's spec) -> SYNTHESIS (wire the slices into a
+// task DAG) -> REVIEW (structural patches until it asks for no change) -> BUILD -> INTEGRATE -> REPAIR.
+// ASK has no phase of its own: it is a pause inside OPEN, and the clarify card is where it is legible.
+export type PhaseKey =
+  | 'open'
+  | 'research'
+  | 'synthesis'
+  | 'review'
+  | 'build'
+  | 'integrate'
+  | 'repair'
+  | 'done';
 export type TodoState =
   | 'pending'
   | 'running'
@@ -377,6 +390,40 @@ export interface RunOverview {
   next: string[];
 }
 
+/** The OPEN phase's cut of the request, plus what RESEARCH produced from it. `weights` are the opener's own
+ *  effort estimates (a lopsided cut is the shape that leaves a node idle), `briefChars` the size of the spec
+ *  each slice owner wrote back. */
+export interface SliceFan {
+  ids: string[];
+  weights: number[];
+  openSecs: number | null;
+  briefChars: number[];
+  researchSecs: number | null;
+}
+
+/** The clarify PROXY: a question is always answered, by the user or — after a wait, or instantly on an
+ *  unattended run — by goose itself from the spec. Both halves are surfaced so a run that answered its own
+ *  questions never looks like a run the user steered. */
+export interface ClarifyProxy {
+  armed: { mode: 'immediate' | 'after_wait'; waitSecs: number; questions: number } | null;
+  answered: { questions: string[]; answers: string[] } | null;
+  /** The proxy call itself failed; the engine unblocked the run with a conventional default. */
+  failed: string | null;
+}
+
+/** One REVIEW round: what it found, how much of that was a repeat, and what its patch actually touched.
+ *  `patchTouches` is the honest measure — findings without a patch are commentary, and the engine settles
+ *  the loop on exactly that distinction. */
+export interface ReviewRound {
+  round: number;
+  fresh: number;
+  repeated: number;
+  findings: string[];
+  patchTouches: number;
+  patch: { replace: number; add: number; remove: number } | null;
+  rejected: string | null;
+}
+
 export interface SwarmRunState {
   present: boolean;
   runId: string | null;
@@ -393,6 +440,12 @@ export interface SwarmRunState {
   scoutLanes: TurnLane[];
   contractLanes: TurnLane[];
   detailLanes: TurnLane[];
+  /** RESEARCH per-slice lanes (slice-<id>) — one per node, each owner writing its module's spec. Without
+   *  these the RESEARCH phase renders empty lanes while the whole fleet is generating. */
+  sliceLanes: TurnLane[];
+  /** The single-node planning calls that own no slice: open / open-resplit / synthesis / review /
+   *  proxy-answer / rate. Each writes its own digest, so the node running one reads WORKING, not idle. */
+  planningLanes: TurnLane[];
   /** Verify REPAIR-WAVE twin lanes (complete_fix_dispatched/…completed) — the fix work runs OUTSIDE the
    *  task_dispatched lifecycle, so without these a node grinding a 10-18 min fix twin read "idle". */
   fixLanes: TurnLane[];
@@ -425,8 +478,31 @@ export interface SwarmRunState {
   plan: PlanTask[];
   /** End-to-end smoke-test result, once the run reaches verification. */
   smoke: SmokeResult | null;
-  /** Friendly current-phase label (Planning research / Building / Verifying / Done…). */
+  /** Friendly current-phase label (Opening / Researching / Building / Repairing / Done…). */
   phase: string;
+  /** The ENGINE's own phase key — from its `phase` event and the task lifecycle, never from parsing the
+   *  label above. null before the first phase event, and while the run is held. The ribbon renders no
+   *  active step for null rather than inventing one. */
+  runPhase: RunPhase | null;
+  /** Which phases the engine actually emitted, so the ribbon can mark an un-run stage skipped instead of
+   *  back-filling a green check for work that never happened. */
+  runPhasesObserved: FormationEvidence;
+  /** The OPEN cut + what RESEARCH wrote back from it. */
+  slices: SliceFan | null;
+  /** Who is answering the clarifying questions — the user, or goose from the spec (see ClarifyProxy). */
+  proxy: ClarifyProxy;
+  /** The REVIEW rounds, with what each patch actually touched. */
+  reviewRounds: ReviewRound[];
+  /** The plan's join was renamed to the engine's canonical sink id — worth saying once, because every sink
+   *  check downstream matches on that id. */
+  sinkRenamedFrom: string | null;
+  /** Synthesis did not return and the engine fell back to one task per slice: flatter, more serial, but
+   *  every module still specified and owned. */
+  synthesisFallback: { error: string; tasks: number } | null;
+  /** KNOWN ACTIVE BUGS — the MINOR defects the engine shipped green with (complete_result.known_active_bugs,
+   *  and defects_rated.minors while the run is still going). These are NOT failures: the run passed, and
+   *  these are what is imperfect about what it passed with. Rendered as their own list, never as errors. */
+  knownActiveBugs: string[];
   /** Cross-draft-agreement plan confidence (0-100) — how sure the planner was about the decomposition.
    *  null before planning finishes / when not computed. Updates live as the swarm retargets to raise it. */
   planConfidence: number | null;
@@ -459,10 +535,14 @@ export interface SwarmRunState {
     answerPath: string;
   } | null;
   mtime: number | null;
-  /** Epoch ms of the engine's last liveness heartbeat (touched every ~5s while running), or null for a run
+  /** Epoch ms of the stamp INSIDE .swarm/heartbeat (rewritten every ~5s while running), or null for a run
    *  with no heartbeat file. Lets the panel detect a killed engine in seconds without false "stopped" during
    *  a legitimately long tool call (which leaves task files quiet but keeps the heartbeat ticking). */
   heartbeat: number | null;
+  /** The heartbeat file reads `EXITED:<rfc3339>` — the guard's Drop ran, so the engine returned early and
+   *  tore itself down. A FROZEN timestamp with no sentinel is the other death: a hard kill, where Drop never
+   *  ran. The two demand opposite fixes, which is why the file's CONTENT is read and not just its mtime. */
+  heartbeatExited: boolean;
   /** True while the user has REQUESTED a pause (the .swarm/pause sentinel exists) — the optimistic "Pausing…"
    *  signal. A request is not a fact: it flips the moment the button is clicked, before the engine reacts. */
   pauseRequested: boolean;
@@ -481,6 +561,8 @@ const EMPTY: SwarmRunState = {
   scoutLanes: [],
   contractLanes: [],
   detailLanes: [],
+  sliceLanes: [],
+  planningLanes: [],
   fixLanes: [],
   pool: [],
   supervision: [],
@@ -495,6 +577,14 @@ const EMPTY: SwarmRunState = {
   plan: [],
   smoke: null,
   phase: '',
+  runPhase: null,
+  runPhasesObserved: {},
+  slices: null,
+  proxy: { armed: null, answered: null, failed: null },
+  reviewRounds: [],
+  sinkRenamedFrom: null,
+  synthesisFallback: null,
+  knownActiveBugs: [],
   planConfidence: null,
   confidence: null,
   askFloor: null,
@@ -506,6 +596,7 @@ const EMPTY: SwarmRunState = {
   clarify: null,
   mtime: null,
   heartbeat: null,
+  heartbeatExited: false,
   pauseRequested: false,
   held: false,
   loading: true,
@@ -708,6 +799,75 @@ function judgeTone(verdict: string): ActivityTone {
   return verdict === 'ok' || verdict === '' ? 'good' : 'warn';
 }
 
+/** The engine's phase key for each `{"event":"phase","phase":"…"}` value. `ask` is deliberately absent: it
+ *  is a pause INSIDE Open, and the clarify card — not a ribbon step — is where a pending question belongs. */
+const ENGINE_PHASE: Record<string, RunPhase> = {
+  open: 'open',
+  ask: 'open',
+  research: 'research',
+  synthesis: 'synthesize',
+  review: 'review',
+};
+
+/**
+ * The run's CURRENT phase, from the engine's own events — never from parsing a human label.
+ *
+ * The previous ribbon regex-matched the friendly `phase` string and returned Build for anything it did not
+ * recognise, so a Paused run rendered "Build active" while every node was deliberately idle. The engine now
+ * emits a first-class `phase` event for the four planning stages; BUILD onward has no phase event, so those
+ * come from the task lifecycle, which is equally deterministic. Last write wins, so the answer always
+ * reflects the newest thing the engine actually did.
+ *
+ * `observed` records which phases were seen at all, so the ribbon can mark a stage SKIPPED instead of
+ * back-filling a check for work that never ran (Integrate and Repair are both conditional).
+ *
+ * Pure + exported so the mapping is unit-testable against verbatim event streams.
+ */
+export function foldRunPhase(events: Array<Record<string, unknown>>): {
+  phase: RunPhase | null;
+  observed: FormationEvidence;
+} {
+  let phase: RunPhase | null = null;
+  const observed: FormationEvidence = {};
+  const enter = (next: RunPhase) => {
+    phase = next;
+    observed[next] = true;
+  };
+  for (const e of events) {
+    const type = String(e['event'] ?? '');
+    switch (type) {
+      case 'phase': {
+        const next = ENGINE_PHASE[str(e['phase'])];
+        if (next) enter(next);
+        break;
+      }
+      case 'plan_loaded':
+        enter('build');
+        break;
+      case 'task_dispatched':
+        enter(str(e['task_id']) === 'integrate-verify' ? 'integrate' : 'build');
+        break;
+      case 'complete_verify':
+        // The verify itself is integration work; only findings turn the run into a repair.
+        enter((num(e['findings']) ?? 0) > 0 ? 'repair' : 'integrate');
+        break;
+      case 'defects_rated':
+      case 'complete_fix_dispatched':
+      case 'complete_fix_completed':
+      case 'complete_fix_wave':
+      case 'spec_repair_wave':
+        enter('repair');
+        break;
+      case 'run_finished':
+        enter('done');
+        break;
+      default:
+        break;
+    }
+  }
+  return { phase, observed };
+}
+
 /** Turn the run event stream into TWO timelines — a compact headline feed (phases only) and a VERBOSE feed
  *  (every dispatch, judge verdict + hint, pre-review, completion, smoke) — plus the run header meta, the
  *  planned task graph, and the smoke result. All of this is already in the event stream; nothing is dropped
@@ -727,10 +887,28 @@ function buildActivity(events: Array<Record<string, unknown>>): {
   summary: RunSummary | null;
   startedAt: number | null;
   overview: RunOverview | null;
+  slices: SliceFan | null;
+  proxy: ClarifyProxy;
+  reviewRounds: ReviewRound[];
+  sinkRenamedFrom: string | null;
+  synthesisFallback: { error: string; tasks: number } | null;
+  knownActiveBugs: string[];
 } {
   const feed: ActivityItem[] = [];
   const vfeed: ActivityItem[] = [];
   let phase = 'Starting…';
+  // Accumulated separately and assembled at the end: OPEN writes the cut, RESEARCH writes the spec sizes,
+  // and the two events are minutes apart.
+  let sliceIds: string[] = [];
+  let sliceWeights: number[] = [];
+  let sliceOpenSecs: number | null = null;
+  let sliceBriefChars: number[] = [];
+  let sliceResearchSecs: number | null = null;
+  const proxy: ClarifyProxy = { armed: null, answered: null, failed: null };
+  const reviewRounds: ReviewRound[] = [];
+  let sinkRenamedFrom: string | null = null;
+  let synthesisFallback: { error: string; tasks: number } | null = null;
+  let knownActiveBugs: string[] = [];
   let finished = false;
   let cseq = 0;
   let vseq = 0;
@@ -797,6 +975,231 @@ function buildActivity(events: Array<Record<string, unknown>>): {
         phase = 'Starting';
         break;
       }
+      case 'phase': {
+        // The engine's own stage banner. It names the phase; the events below say what happened INSIDE it,
+        // so the banner alone is deliberately terse and only sets the header label.
+        const label: Record<string, string> = {
+          open: 'Opening',
+          ask: 'Asking you',
+          research: 'Researching',
+          synthesis: 'Synthesizing',
+          review: 'Reviewing the plan',
+        };
+        const p = str(e['phase']);
+        if (label[p]) phase = label[p];
+        break;
+      }
+      case 'slices_opened': {
+        sliceIds = arr(e['slices']).map(String);
+        sliceWeights = arr(e['weights']).map((w) => num(w) ?? 1);
+        sliceOpenSecs = num(e['secs']);
+        const ids = sliceIds;
+        const weights = sliceWeights;
+        const n = num(e['count']) ?? ids.length;
+        const sub = ids.map((id, i) => `${id} (w${weights[i] ?? 1})`).join(' · ') || undefined;
+        compact({ kind: 'plan', text: `Cut into ${n} slice${n === 1 ? '' : 's'}`, sub });
+        verbose({
+          kind: 'plan',
+          text: `Cut into ${n} slice${n === 1 ? '' : 's'}${e['secs'] != null ? ` in ${num(e['secs'])}s` : ''}`,
+          sub,
+        });
+        break;
+      }
+      case 'clarify_proxy_armed': {
+        const mode = str(e['mode']) === 'immediate' ? 'immediate' : 'after_wait';
+        const waitSecs = num(e['wait_secs']) ?? 0;
+        const questions = num(e['questions']) ?? 0;
+        proxy.armed = { mode, waitSecs, questions };
+        // A QUESTION IS ALWAYS ANSWERED. Say WHO will answer it before the answer exists, so an unattended
+        // run never looks like a run someone steered.
+        const text =
+          mode === 'immediate'
+            ? `Unattended run — goose is answering ${questions} open decision${questions === 1 ? '' : 's'} itself`
+            : `Asking you ${questions} open decision${questions === 1 ? '' : 's'} — goose answers in ${Math.round(waitSecs / 60)} min if you don't`;
+        compact({ kind: 'plan', text, tone: 'warn' });
+        verbose({ kind: 'plan', text, tone: 'warn' });
+        break;
+      }
+      case 'clarify_proxy_answered': {
+        const questions = arr(e['questions']).map(String);
+        const answers = arr(e['answers']).map(String);
+        proxy.answered = { questions, answers };
+        const sub =
+          questions.map((q, i) => `${i + 1}. ${q}\n   → ${answers[i] ?? ''}`).join('\n') || undefined;
+        compact({ kind: 'plan', text: 'Answered by goose — you did not reply', tone: 'warn', sub });
+        verbose({ kind: 'plan', text: 'Answered by goose — you did not reply', tone: 'warn', sub });
+        break;
+      }
+      case 'clarify_proxy_failed': {
+        proxy.failed = str(e['error']);
+        const text = 'The proxy answer failed — goose took the most conventional option and carried on';
+        compact({ kind: 'plan', text, tone: 'warn' });
+        verbose({ kind: 'plan', text, tone: 'warn', sub: proxy.failed || undefined });
+        break;
+      }
+      case 'research_completed': {
+        const n = num(e['slices']);
+        const chars = arr(e['brief_chars']).map((c) => num(c) ?? 0);
+        if (n != null || chars.length > 0) {
+          // The rewritten engine reports SLICES + spec sizes; the old one reported a findings count. Only
+          // the new shape carries `slices`, so the legacy branch below still handles old logs verbatim.
+          sliceBriefChars = chars;
+          sliceResearchSecs = num(e['secs']);
+          const total = chars.reduce((a, b) => a + b, 0);
+          const t = `Slice specs written — ${n ?? chars.length} slice${(n ?? chars.length) === 1 ? '' : 's'}, ${total.toLocaleString()} chars of spec`;
+          compact({ kind: 'phase', text: t });
+          verbose({
+            kind: 'phase',
+            text: t,
+            sub:
+              (sliceIds.length === chars.length
+                ? sliceIds.map((id, i) => `${id}: ${chars[i]} chars`).join(' · ')
+                : chars.join(' · ')) || undefined,
+          });
+          phase = 'Synthesizing';
+          break;
+        }
+        const t = `Research done — ${num(e['findings']) ?? 0} findings`;
+        compact({ kind: 'phase', text: t });
+        verbose({ kind: 'phase', text: t });
+        phase = 'Planning';
+        break;
+      }
+      case 'synthesis_fallback': {
+        synthesisFallback = { error: str(e['error']), tasks: num(e['tasks']) ?? 0 };
+        // Not a failure: the fallback IS a valid plan, one task per slice, each carrying its owner's brief.
+        // It costs parallelism, never the research already paid for — so this is a warning, not an error.
+        const t = `Synthesis didn't return — building one task per slice instead (${synthesisFallback.tasks})`;
+        compact({ kind: 'plan', text: t, tone: 'warn' });
+        verbose({ kind: 'plan', text: t, tone: 'warn', sub: synthesisFallback.error || undefined });
+        break;
+      }
+      case 'review_findings': {
+        const round = num(e['round']) ?? reviewRounds.length + 1;
+        const findings = arr(e['findings']).map(String);
+        const fresh = num(e['new']) ?? findings.length;
+        const repeated = num(e['repeated']) ?? 0;
+        const patchTouches = num(e['patch_touches']) ?? 0;
+        reviewRounds.push({
+          round,
+          fresh,
+          repeated,
+          findings,
+          patchTouches,
+          patch: null,
+          rejected: null,
+        });
+        // A round that requested NO change has found nothing to fix, whatever prose it wrapped that in —
+        // the engine settles the loop on exactly that, so the feed says it in those terms.
+        const t =
+          patchTouches > 0
+            ? `Review round ${round} — ${fresh} finding${fresh === 1 ? '' : 's'}, patching ${patchTouches} task${patchTouches === 1 ? '' : 's'}`
+            : `Review round ${round} — settled, no change requested`;
+        compact({ kind: 'review', text: t, tone: patchTouches > 0 ? 'warn' : 'good' });
+        verbose({
+          kind: 'review',
+          text: t,
+          tone: patchTouches > 0 ? 'warn' : 'good',
+          sub:
+            [
+              findings.map((f, i) => `${i + 1}. ${f}`).join('\n'),
+              repeated > 0 ? `(${repeated} repeated from an earlier round)` : '',
+            ]
+              .filter(Boolean)
+              .join('\n') || undefined,
+        });
+        break;
+      }
+      case 'plan_patched': {
+        const round = num(e['round']) ?? 0;
+        const patch = {
+          replace: num(e['replace']) ?? 0,
+          add: num(e['add']) ?? 0,
+          remove: num(e['remove']) ?? 0,
+        };
+        const target = reviewRounds.find((r) => r.round === round);
+        if (target) target.patch = patch;
+        verbose({
+          kind: 'review',
+          text: `Plan patched (round ${round})`,
+          sub: `${patch.replace} replaced · ${patch.add} added · ${patch.remove} removed`,
+          tone: 'info',
+        });
+        break;
+      }
+      case 'plan_patch_rejected': {
+        const round = num(e['round']) ?? 0;
+        const diagnostic = str(e['diagnostic']);
+        const target = reviewRounds.find((r) => r.round === round);
+        if (target) target.rejected = diagnostic;
+        // A bad patch costs ONE patch: it is dropped, the plan it was meant to fix is untouched, and the run
+        // continues. Worth showing, but never as a failure of the run.
+        const t = `Review patch rejected (round ${round}) — dropped, plan unchanged`;
+        compact({ kind: 'review', text: t, tone: 'warn' });
+        verbose({ kind: 'review', text: t, tone: 'warn', sub: diagnostic || undefined });
+        break;
+      }
+      case 'sink_id_pinned': {
+        sinkRenamedFrom = str(e['from']);
+        verbose({
+          kind: 'plan',
+          text: `Sink renamed — \`${sinkRenamedFrom}\` → \`${str(e['to'])}\``,
+          sub: 'so the engine’s own sink checks keep matching',
+          tone: 'info',
+        });
+        break;
+      }
+      case 'defects_rated': {
+        const critical = num(e['critical']) ?? 0;
+        const minor = num(e['minor']) ?? 0;
+        const forced = num(e['engine_forced']) ?? 0;
+        knownActiveBugs = arr(e['minors']).map(String);
+        const t =
+          critical === 0
+            ? `Every critical defect closed — shipping with ${minor} known active bug${minor === 1 ? '' : 's'}`
+            : `${critical} critical defect${critical === 1 ? '' : 's'} remain · ${minor} minor`;
+        compact({ kind: critical === 0 ? 'review' : 'fail', text: t, tone: critical === 0 ? 'good' : 'bad' });
+        verbose({
+          kind: critical === 0 ? 'review' : 'fail',
+          text: t,
+          tone: critical === 0 ? 'good' : 'bad',
+          sub:
+            [
+              forced > 0 ? `${forced} forced critical by the engine, not the rater` : '',
+              knownActiveBugs.map((m, i) => `${i + 1}. ${m}`).join('\n'),
+            ]
+              .filter(Boolean)
+              .join('\n') || undefined,
+        });
+        phase = 'Repairing';
+        break;
+      }
+      case 'complete_result': {
+        const bugs = arr(e['known_active_bugs']).map(String);
+        if (bugs.length > 0) knownActiveBugs = bugs;
+        break;
+      }
+      case 'judge_look':
+      case 'judge_nudge': {
+        // The judge can no longer kill or move a task — it observes and steers. Say what it ESTABLISHED and
+        // what it asked for next; a verdict with no next step is noise on a board that already shows state.
+        const established = str(e['established']);
+        const next = str(e['next']);
+        if (!established && !next) break;
+        const delivery = str(e['delivery']);
+        verbose({
+          kind: 'judge',
+          text:
+            type === 'judge_nudge'
+              ? `Judge steered ${str(e['task_id']) || 'a worker'}${delivery ? ` (${delivery})` : ''}`
+              : `Judge looked at ${str(e['task_id']) || 'a worker'}${e['verdict'] ? ` → ${str(e['verdict'])}` : ''}`,
+          sub: [established && `established: ${established}`, next && `next: ${next}`]
+            .filter(Boolean)
+            .join('\n'),
+          tone: type === 'judge_nudge' ? 'warn' : 'info',
+        });
+        break;
+      }
       case 'scouts_planned': {
         const lenses = arr(e['lenses']).map(String).join(', ');
         compact({ kind: 'phase', text: 'Planning research', sub: lenses || undefined });
@@ -808,13 +1211,6 @@ function buildActivity(events: Array<Record<string, unknown>>): {
         verbose({ kind: 'phase', text: 'Researching the problem' });
         phase = 'Researching';
         break;
-      case 'research_completed': {
-        const t = `Research done — ${num(e['findings']) ?? 0} findings`;
-        compact({ kind: 'phase', text: t });
-        verbose({ kind: 'phase', text: t });
-        phase = 'Planning';
-        break;
-      }
       case 'pillars':
         verbose({ kind: 'phase', text: 'Defining quality pillars' });
         phase = 'Planning';
@@ -969,10 +1365,10 @@ function buildActivity(events: Array<Record<string, unknown>>): {
       }
       case 'task_dispatched': {
         const task = str(e['task_id']);
-        // integrate-verify is the SINK — its work IS the Verify phase (run the suite, build + run the
-        // advertised entry, golden-check). Dispatching it means the run has entered VERIFY, not Build.
-        // Without this the breadcrumb sat on "Build" for the whole (long) sink grind while it was actually
-        // verifying — the exact "isn't this already Verify? it still shows Building" confusion.
+        // integrate-verify is the SINK — its work IS the INTEGRATE phase (assemble the modules, run the
+        // suite, boot the advertised entry). Dispatching it means the run has entered Integrate, not Build.
+        // Without this the ribbon sat on "Build" for the whole (long) sink grind while it was actually
+        // integrating — the exact "isn't this already Verify? it still shows Building" confusion.
         const isSink = task === 'integrate-verify';
         const verb = isSink ? 'Integrating & verifying' : `Building ${task}`;
         const node = e['device'] ? nodeOf(str(e['device'])) : '';
@@ -984,7 +1380,7 @@ function buildActivity(events: Array<Record<string, unknown>>): {
           text: `${verb}${attempt > 0 ? ` (attempt ${attempt + 1})` : ''}`,
           sub: [node && `on ${node}`, owned].filter(Boolean).join(' — ') || undefined,
         });
-        phase = isSink ? 'Verifying' : 'Building';
+        phase = isSink ? 'Integrating' : 'Building';
         break;
       }
       case 'task_retry': {
@@ -1095,7 +1491,19 @@ function buildActivity(events: Array<Record<string, unknown>>): {
             .join(' · '),
           tone: smoke.testsPass === false || smoke.entryOk === false ? 'bad' : 'good',
         });
-        phase = 'Verifying';
+        phase = 'Integrating';
+        break;
+      }
+      case 'complete_verify': {
+        // The sink's verdict: findings mean the run has moved into REPAIR, none mean it is still integrating.
+        phase = (num(e['findings']) ?? 0) > 0 ? 'Repairing' : 'Integrating';
+        break;
+      }
+      case 'complete_fix_dispatched':
+      case 'complete_fix_completed':
+      case 'complete_fix_wave':
+      case 'spec_repair_wave': {
+        phase = 'Repairing';
         break;
       }
       case 'run_finished': {
@@ -1166,6 +1574,21 @@ function buildActivity(events: Array<Record<string, unknown>>): {
     summary,
     startedAt,
     overview,
+    slices:
+      sliceIds.length > 0 || sliceBriefChars.length > 0
+        ? {
+            ids: sliceIds,
+            weights: sliceWeights,
+            openSecs: sliceOpenSecs,
+            briefChars: sliceBriefChars,
+            researchSecs: sliceResearchSecs,
+          }
+        : null,
+    proxy,
+    reviewRounds,
+    sinkRenamedFrom,
+    synthesisFallback,
+    knownActiveBugs,
   };
 }
 
@@ -1197,6 +1620,8 @@ export function foldEvents(
   scoutLanes: TurnLane[];
   contractLanes: TurnLane[];
   detailLanes: TurnLane[];
+  sliceLanes: TurnLane[];
+  planningLanes: TurnLane[];
   fixLanes: TurnLane[];
 } {
   const tasks = new Map<string, TurnLane>();
@@ -1460,7 +1885,33 @@ export function foldEvents(
     .map((k, i) => laneFromDigest(k, `Detailing · ${k.replace(/^detail-/, '')}`, planned, i))
     .filter(hasActivity);
 
-  return { lanes, totals, planLanes, scoutLanes, contractLanes, detailLanes, fixLanes };
+  // THE SLICE FAN — the rewritten engine's RESEARCH phase. Every node owns one slice and writes that
+  // module's full specification into `.swarm/activity/slice-<id>.json`. Without an entry here the whole
+  // fleet generates for minutes behind an empty Research lane list, which is exactly what the old
+  // scout-/contract-/detail- table did for the phases it did not know about.
+  const sliceLanes: TurnLane[] = Object.keys(activity)
+    .filter((k) => /^slice-/.test(k))
+    .sort()
+    .map((k, i) => laneFromDigest(k, `Slice · ${k.replace(/^slice-/, '')}`, researchOver, i))
+    .filter(hasActivity);
+
+  // The single-node planning calls. Each is over the moment its own digest stamps phase='done', so a node
+  // that finished synthesising stops reading as working without waiting for the next phase to open.
+  const planningLanes: TurnLane[] = PLANNING_DIGEST_KEYS.filter((k) => activity[k] != null)
+    .map((k, i) => laneFromDigest(k, digestLabel(k), planned, i))
+    .filter(hasActivity);
+
+  return {
+    lanes,
+    totals,
+    planLanes,
+    scoutLanes,
+    contractLanes,
+    detailLanes,
+    sliceLanes,
+    planningLanes,
+    fixLanes,
+  };
 }
 
 // How long a digest may go unwritten and still count as a live open call. A streaming worker rewrites
@@ -1523,11 +1974,30 @@ export function foldSupervision(events: Array<Record<string, unknown>>): Supervi
   return [...open.values()];
 }
 
+/** The whole-run planning calls that own no slice and no task. Each writes exactly one digest under this
+ *  key, so a node running one is WORKING — the fleet strip reads "idle — no task" for every key missing
+ *  from this table, which is what made the Open/Synthesis/Review phases look like a dead fleet. */
+export const PLANNING_DIGEST_KEYS = [
+  'open',
+  'open-resplit',
+  'proxy-answer',
+  'synthesis',
+  'review',
+  'rate',
+] as const;
+
 /** Human label for a digest key that has no lane of its own ('verify::api' -> 'Verifying api'). */
 function digestLabel(key: string): string {
   if (key.startsWith('verify-e2e::')) return 'End-to-end verify';
   if (key.startsWith('verify::')) return `Verifying ${key.slice('verify::'.length)}`;
   if (key.startsWith('complete-fix::')) return 'Repairing verify findings';
+  if (key.startsWith('slice-')) return `Slice · ${key.slice('slice-'.length)}`;
+  if (key === 'open') return 'Opening · cutting the request into slices';
+  if (key === 'open-resplit') return 'Opening · re-cutting a lopsided slice';
+  if (key === 'proxy-answer') return 'Answering the open decisions';
+  if (key === 'synthesis') return 'Synthesis · wiring the slices into a task DAG';
+  if (key === 'review') return 'Review · the request against the plan';
+  if (key === 'rate') return 'Rating each defect critical or minor';
   if (key.startsWith('scout-')) return `Scouting · ${key.slice('scout-'.length)}`;
   if (key.startsWith('contract-')) return `Contract · ${key.slice('contract-'.length)}`;
   if (key.startsWith('detail-')) return `Detailing · ${key.slice('detail-'.length)}`;
@@ -1677,6 +2147,21 @@ export function buildPhaseTodo(
   let repro: number | null = null;
   let reviewFix: { reproduced: number; accepted: number } | null = null;
   let astReview: number | null = null;
+  // --- the rewritten pipeline's own events (see foldRunPhase for the phase mapping) ---
+  const phasesSeen = new Set<string>();
+  let sliceIds: string[] = [];
+  let sliceWeights: number[] = [];
+  let openSecs: number | null = null;
+  let briefChars: number[] = [];
+  let researchSecs: number | null = null;
+  let proxyArmed: { mode: string; waitSecs: number; questions: number } | null = null;
+  let proxyAnswered = 0;
+  let proxyFailed = false;
+  let sinkRenamedFrom: string | null = null;
+  let synthesisFallback: number | null = null;
+  const reviewRounds: Array<{ round: number; fresh: number; touches: number; rejected: boolean }> = [];
+  let defects: { critical: number; minor: number; forced: number } | null = null;
+  let fixWaves = 0;
   // Canonical node names throughout — a raw pool id stored here reaches the node chip and mis-keys its
   // letter/hue against the canonical device order (same defect class as the "fusi, fusi, fable" feed line).
   const nodeOf = nodeLabeler(events);
@@ -1685,9 +2170,49 @@ export function buildPhaseTodo(
     const t = String(e['event'] ?? '');
     if (t === 'run_started' && e['gates'] && typeof e['gates'] === 'object')
       gates = e['gates'] as Record<string, unknown>;
+    else if (t === 'phase') phasesSeen.add(str(e['phase']));
+    else if (t === 'slices_opened') {
+      sliceIds = arr(e['slices']).map(String);
+      sliceWeights = arr(e['weights']).map((w) => num(w) ?? 1);
+      openSecs = num(e['secs']);
+    } else if (t === 'clarify_proxy_armed')
+      proxyArmed = {
+        mode: str(e['mode']),
+        waitSecs: num(e['wait_secs']) ?? 0,
+        questions: num(e['questions']) ?? 0,
+      };
+    else if (t === 'clarify_proxy_answered') proxyAnswered = arr(e['answers']).length;
+    else if (t === 'clarify_proxy_failed') proxyFailed = true;
+    else if (t === 'synthesis_fallback') synthesisFallback = num(e['tasks']) ?? 0;
+    else if (t === 'sink_id_pinned') sinkRenamedFrom = str(e['from']);
+    else if (t === 'review_findings')
+      reviewRounds.push({
+        round: num(e['round']) ?? reviewRounds.length + 1,
+        fresh: num(e['new']) ?? 0,
+        touches: num(e['patch_touches']) ?? 0,
+        rejected: false,
+      });
+    else if (t === 'plan_patch_rejected') {
+      const target = reviewRounds.find((r) => r.round === (num(e['round']) ?? 0));
+      if (target) target.rejected = true;
+    } else if (t === 'defects_rated')
+      defects = {
+        critical: num(e['critical']) ?? 0,
+        minor: num(e['minor']) ?? 0,
+        forced: num(e['engine_forced']) ?? 0,
+      };
+    else if (t === 'complete_fix_wave' || t === 'spec_repair_wave') fixWaves += 1;
     else if (t === 'scouts_planned') scoutsN = arr(e['lenses']).length || (num(e['count']) ?? 0);
     else if (t === 'research_planned') researchQ = num(e['count']) ?? arr(e['questions']).length;
-    else if (t === 'research_completed') researchDone = num(e['findings']) ?? 0;
+    else if (t === 'research_completed') {
+      // Two shapes share this name: the rewritten engine reports SLICES + per-slice spec sizes; the old one
+      // reported a bare findings count. Only the new shape carries `brief_chars`.
+      const chars = arr(e['brief_chars']).map((c) => num(c) ?? 0);
+      if (chars.length > 0 || e['slices'] != null) {
+        briefChars = chars;
+        researchSecs = num(e['secs']);
+      } else researchDone = num(e['findings']) ?? 0;
+    }
     else if (t === 'pillars') pillarsN = num(e['count']) ?? arr(e['pillars']).length;
     else if (t === 'confidence_retarget')
       retargets.push({ round: num(e['round']) ?? 0, action: str(e['action']) });
@@ -1785,57 +2310,174 @@ export function buildPhaseTodo(
     device?: string
   ): PhaseTodoItem => ({ id, label, state, detail, device, advisory: state === 'advisory' });
 
-  // ---- RESEARCH ----
-  const researchHappened = scoutsN != null || researchQ != null || researchDone != null;
-  const research: PhaseTodoItem[] = [];
-  if (researchHappened || !planned) {
-    research.push(it('r-start', 'Fleet configured, run started', 'done'));
-    if (scoutsN != null) research.push(it('r-scouts', `Scouts dispatched — ${scoutsN} lenses`, 'done'));
-    else if (researchQ != null)
-      research.push(it('r-q', `Research questions scoped — ${researchQ}`, 'done'));
-    if (researchDone != null)
-      research.push(it('r-done', `Research finished — ${researchDone} findings returned`, 'done'));
-    else if (researchHappened) research.push(it('r-run', 'Researching…', 'running'));
-  } else {
-    research.push(it('r-skip', 'No research this run', 'skipped'));
-  }
-
-  // ---- PLAN ----
-  const plan: PhaseTodoItem[] = [];
-  if (plandraftN > 0 || planLoaded)
-    plan.push(
+  // ---- OPEN ---- (one node cuts the request into balanced semantic slices, and names what it cannot decide)
+  const open: PhaseTodoItem[] = [];
+  const openRan = phasesSeen.has('open') || sliceIds.length > 0;
+  if (openRan) {
+    open.push(it('o-start', 'Fleet configured, run started', 'done'));
+    if (sliceIds.length > 0) {
+      const lopsided =
+        sliceWeights.length > 1 && Math.max(...sliceWeights) > 2 * Math.min(...sliceWeights);
+      open.push(
+        it(
+          'o-slices',
+          `Request cut into ${sliceIds.length} slice${sliceIds.length === 1 ? '' : 's'}`,
+          'done',
+          [
+            sliceIds
+              .map((id, i) => `${id} (w${sliceWeights[i] ?? 1})`)
+              .join(', '),
+            // An uneven cut costs queue time — one node finishes early and waits. Worth saying, never a failure.
+            lopsided ? 'uneven — the heaviest slice is more than twice the lightest' : '',
+            openSecs != null ? `${openSecs}s` : '',
+          ]
+            .filter(Boolean)
+            .join(' · ')
+        )
+      );
+    } else open.push(it('o-run', 'Cutting the request into slices…', 'running'));
+    if (proxyArmed) {
+      // A QUESTION IS ALWAYS ANSWERED — by you, or by goose from the spec. Which of those happened is the
+      // fact the checklist must carry: a run that answered itself is not a run someone steered.
+      const answeredByProxy = proxyAnswered > 0 || proxyFailed;
+      open.push(
+        it(
+          'o-ask',
+          `${proxyArmed.questions} open decision${proxyArmed.questions === 1 ? '' : 's'}`,
+          opts.clarifyPending && !answeredByProxy ? 'running' : 'done',
+          answeredByProxy
+            ? proxyFailed
+              ? 'the proxy answer failed — goose took the most conventional option'
+              : 'answered by goose — you did not reply'
+            : opts.clarifyPending
+              ? proxyArmed.mode === 'immediate'
+                ? 'unattended run — goose is answering these'
+                : `waiting on you — goose answers in ${Math.round(proxyArmed.waitSecs / 60)} min`
+              : 'answered by you'
+        )
+      );
+    }
+  } else if (!planned) open.push(it('o-start', 'Fleet configured, run started', 'done'));
+  // An OLD run has no phase event and no slices, so it never enters the branch above — its ask must be
+  // surfaced from outside it or it drops off the checklist entirely. (It did: nesting this under `openRan`
+  // made it dead code for exactly the runs it exists to serve.)
+  if (!proxyArmed && askedQ != null)
+    open.push(
       it(
-        'p-draft',
-        `Drafting — ${Math.max(plandraftN, 1)} candidate${plandraftN === 1 ? '' : 's'}`,
-        planned ? 'done' : 'running'
-      )
-    );
-  if (planConf != null)
-    plan.push(it('p-conf', `Confidence scored — ${planConf}/100`, 'done')); // the NUMBER, never a verdict
-  for (const r of retargets)
-    plan.push(it(`p-rt-${r.round}`, `Retarget round ${r.round} — ${r.action}`, 'done'));
-  if (askedQ != null)
-    plan.push(
-      it(
-        'p-ask',
+        'o-ask-legacy',
         `Asked you ${askedQ} question${askedQ === 1 ? '' : 's'}`,
         opts.clarifyPending ? 'running' : 'done',
         opts.clarifyPending ? 'waiting on your answer' : undefined
       )
     );
-  if (pillarsN != null) plan.push(it('p-pillars', `Quality pillars distilled — ${pillarsN}`, 'done'));
-  if (planLoaded) plan.push(it('p-done', `Plan finalized — ${taskCount ?? 0} tasks`, 'done'));
-  else if (plandraftN > 0) plan.push(it('p-run', 'Finalizing the plan…', 'running'));
 
-  // ---- CONTRACTS ----
-  const contracts: PhaseTodoItem[] = [];
-  if (!gateOn('contracts')) contracts.push(it('c-off', 'Contract-freeze gate off', 'skipped'));
-  else if (contractsModules != null)
-    contracts.push(it('c-frozen', `Frozen interfaces — ${contractsModules} modules`, 'done'));
-  else if (planLoaded)
-    contracts.push(
-      it('c-adv', 'Contract-freeze gate on', 'advisory', 'runs for Python/TypeScript/Rust trees; not always observable')
+  // ---- RESEARCH ---- (one slice per node: answer its questions, then write that module's full spec)
+  const legacyResearch = scoutsN != null || researchQ != null || researchDone != null;
+  const research: PhaseTodoItem[] = [];
+  if (briefChars.length > 0) {
+    const total = briefChars.reduce((a, b) => a + b, 0);
+    research.push(
+      it(
+        'r-specs',
+        `Slice specs written — ${briefChars.length} of ${sliceIds.length || briefChars.length}`,
+        'done',
+        [
+          `${total.toLocaleString()} chars of spec`,
+          researchSecs != null ? `${researchSecs}s` : '',
+        ]
+          .filter(Boolean)
+          .join(' · ')
+      )
     );
+    // An EMPTY brief is a slice whose owner returned nothing — the module is unspecified and the synthesis
+    // will have to invent it. Say so; it never shows up as a failure anywhere else.
+    const empty = briefChars.filter((c) => c === 0).length;
+    if (empty > 0)
+      research.push(
+        it('r-empty', `${empty} slice${empty === 1 ? '' : 's'} came back with no spec`, 'unverified')
+      );
+  } else if (phasesSeen.has('research')) {
+    research.push(
+      it(
+        'r-run',
+        `Every node writing its slice's spec${sliceIds.length ? ` — ${sliceIds.length} slices` : ''}`,
+        'running'
+      )
+    );
+  } else if (legacyResearch) {
+    if (scoutsN != null) research.push(it('r-scouts', `Scouts dispatched — ${scoutsN} lenses`, 'done'));
+    else if (researchQ != null)
+      research.push(it('r-q', `Research questions scoped — ${researchQ}`, 'done'));
+    if (researchDone != null)
+      research.push(it('r-done', `Research finished — ${researchDone} findings returned`, 'done'));
+    else research.push(it('r-legacy-run', 'Researching…', 'running'));
+  } else if (planned) {
+    research.push(it('r-skip', 'No research this run', 'skipped'));
+  }
+
+  // ---- SYNTHESIS ---- (one node wires the researched slices into a task DAG; the specs splice in verbatim)
+  const synthesis: PhaseTodoItem[] = [];
+  if (synthesisFallback != null) {
+    // NOT a failure: the fallback IS a valid plan — one task per slice, each carrying its owner's brief.
+    // Flatter and more serial than a good synthesis, but every module is still specified and owned.
+    synthesis.push(
+      it(
+        's-fallback',
+        `Synthesis didn't return — one task per slice instead (${synthesisFallback})`,
+        'unverified',
+        'flatter and more serial; every module still specified and owned'
+      )
+    );
+  } else if (phasesSeen.has('synthesis') && !planLoaded)
+    synthesis.push(it('s-run', 'Wiring the slices into a task DAG…', 'running'));
+  if (sinkRenamedFrom)
+    synthesis.push(
+      it('s-sink', `Sink renamed from \`${sinkRenamedFrom}\``, 'done', 'so the engine’s own sink checks keep matching')
+    );
+  if (planLoaded) synthesis.push(it('s-done', `Plan wired — ${taskCount ?? 0} tasks`, 'done'));
+  // Legacy plan-phase evidence (candidate drafts, the confidence score, retarget rounds) has no phase of its
+  // own any more — the multi-draft vote and the redraft ladder were deleted. Keep it here so an OLD run still
+  // renders its planning history instead of dropping it on the floor.
+  if (plandraftN > 0)
+    synthesis.push(
+      it(
+        's-draft',
+        `Drafting — ${plandraftN} candidate${plandraftN === 1 ? '' : 's'}`,
+        planned ? 'done' : 'running'
+      )
+    );
+  if (planConf != null)
+    synthesis.push(it('s-conf', `Confidence scored — ${planConf}/100`, 'done')); // the NUMBER, never a verdict
+  for (const r of retargets)
+    synthesis.push(it(`s-rt-${r.round}`, `Retarget round ${r.round} — ${r.action}`, 'done'));
+  if (pillarsN != null)
+    synthesis.push(it('s-pillars', `Quality pillars distilled — ${pillarsN}`, 'done'));
+  if (contractsModules != null)
+    synthesis.push(it('s-contracts', `Frozen interfaces — ${contractsModules} modules`, 'done'));
+
+  // ---- REVIEW ---- (structural patches only; it stops when it requests no change)
+  const review: PhaseTodoItem[] = [];
+  for (const r of reviewRounds) {
+    // The honest measure is what the patch TOUCHED. A round can raise well-worded observations and request
+    // nothing — the engine settles on exactly that, because commentary is not a reason to spend a round.
+    review.push(
+      it(
+        `rv-${r.round}`,
+        r.touches > 0
+          ? `Round ${r.round} — patched ${r.touches} task${r.touches === 1 ? '' : 's'}`
+          : `Round ${r.round} — settled, no change requested`,
+        r.rejected ? 'unverified' : 'done',
+        [
+          r.fresh > 0 ? `${r.fresh} new finding${r.fresh === 1 ? '' : 's'}` : '',
+          r.rejected ? 'patch rejected — dropped, plan unchanged' : '',
+        ]
+          .filter(Boolean)
+          .join(' · ') || undefined
+      )
+    );
+  }
+  if (reviewRounds.length === 0 && phasesSeen.has('review') && !planLoaded)
+    review.push(it('rv-run', 'Reading the request against the plan…', 'running'));
 
   // ---- BUILD ---- (per plan task — surfaces PENDING + BLOCKED tasks lanes can't show)
   const build: PhaseTodoItem[] = [];
@@ -1873,8 +2515,8 @@ export function buildPhaseTodo(
     if (judge && (judge.verdict || judge.hint)) item.judge = judge;
     return item;
   };
-  // integrate-verify is the SINK — its work IS the Verify phase, so it is added to `verify` below, NOT here
-  // (otherwise Build carried a stuck 12th row and the run read "Building" while it was actually verifying).
+  // integrate-verify is the SINK — its work IS the INTEGRATE phase, so it is added to `integrate` below, NOT
+  // here (otherwise Build carried a stuck 12th row and read "Building" while the run was actually integrating).
   for (const tk of planTasks)
     if (tk.id !== 'integrate-verify') build.push(buildRow(tk.id, tk.description, tk.files));
   // Split children (+ any other dynamically-dispatched task) are NOT in planTasks — surface them so the todo
@@ -1885,14 +2527,14 @@ export function buildPhaseTodo(
   if (schedulerStuck != null)
     build.push(it('b-stuck', `Scheduler blocked — ${schedulerStuck} task(s) unschedulable`, 'blocked'));
 
-  // ---- VERIFY ---- (all events already emitted; the honest "it works" signal)
-  const verify: PhaseTodoItem[] = [];
-  // integrate-verify is the SINK — the run's actual verification work (build + run the advertised entry +
-  // golden-check). It LEADS the Verify phase, reusing the same state logic as a build task, so Verify shows
-  // RUNNING while it grinds instead of the run reading "Building 11/12" with a stuck integrate-verify row.
+  // ---- INTEGRATE ---- (the sink assembles the modules, runs the suite, boots what the request advertises)
+  const integrate: PhaseTodoItem[] = [];
+  // integrate-verify is the SINK — the run's actual integration work. It LEADS this phase, reusing the same
+  // state logic as a build task, so Integrate shows RUNNING while it grinds instead of the run reading
+  // "Building 11/12" with a stuck integrate-verify row.
   if (plannedIds.has('integrate-verify') || tstate.has('integrate-verify')) {
     const ivTask = planTasks.find((t) => t.id === 'integrate-verify');
-    verify.push(buildRow('integrate-verify', ivTask?.description, ivTask?.files));
+    integrate.push(buildRow('integrate-verify', ivTask?.description, ivTask?.files));
   }
   const verifyGate = gateOn('complete') || gateOn('smoke');
   if (verifyGate) {
@@ -1916,15 +2558,36 @@ export function buildPhaseTodo(
       vs = 'unverified';
       vdetail = 'no tests ran';
     }
-    verify.push(it('v-e2e', 'End-to-end verify', vs, vdetail));
+    integrate.push(it('v-e2e', 'End-to-end verify', vs, vdetail));
   }
-  if (repro != null) verify.push(it('v-repro', `Repro gate — ${repro} findings reproduced`, 'done'));
+
+  // ---- REPAIR ---- (defects found at integration are rated, repaired, and checked again)
+  const repair: PhaseTodoItem[] = [];
+  if (defects) {
+    // A green run with minors is still GREEN. The critical count is the verdict; the minors are the KNOWN
+    // ACTIVE BUGS the run shipped with, and they get their own surface — never a red mark here.
+    repair.push(
+      it(
+        'x-rated',
+        defects.critical === 0
+          ? `Every critical defect closed — ${defects.minor} known active bug${defects.minor === 1 ? '' : 's'}`
+          : `${defects.critical} critical defect${defects.critical === 1 ? '' : 's'} remain`,
+        defects.critical === 0 ? 'done' : 'failed',
+        defects.forced > 0
+          ? `${defects.forced} forced critical by the engine, not the rater`
+          : `${defects.minor} minor`
+      )
+    );
+  }
+  if (fixWaves > 0)
+    repair.push(it('x-waves', `Repair wave${fixWaves === 1 ? '' : 's'} — ${fixWaves}`, 'done'));
+  if (repro != null) repair.push(it('v-repro', `Repro gate — ${repro} findings reproduced`, 'done'));
   if (reviewFix)
-    verify.push(
+    repair.push(
       it('v-fix', `Review fixes — ${reviewFix.accepted} accepted / ${reviewFix.reproduced} reproduced`, 'done')
     );
   if (astReview != null)
-    verify.push(it('v-ast', `Unwired-module review — ${astReview} new findings`, 'done'));
+    repair.push(it('v-ast', `Unwired-module review — ${astReview} new findings`, 'done'));
 
   // ---- DONE ----
   const done: PhaseTodoItem[] = [];
@@ -2018,11 +2681,13 @@ export function buildPhaseTodo(
     },
   });
   const phases: PhaseTodo[] = [
+    mk('open', 'Open', open),
     mk('research', 'Research', research),
-    mk('plan', 'Plan', plan),
-    mk('contracts', 'Contracts', contracts),
+    mk('synthesis', 'Synthesize', synthesis),
+    mk('review', 'Review', review),
     mk('build', 'Build', build),
-    mk('verify', 'Verify', verify),
+    mk('integrate', 'Integrate', integrate),
+    mk('repair', 'Repair', repair),
     mk('done', 'Done', done),
   ];
   // Active = the last phase that has started (any non-pending item) and isn't fully done — monotonic pipeline.
@@ -2096,7 +2761,7 @@ export function deriveTaskBoard(args: {
   let addedByReplan = 0;
   let stuck: string | null = null;
   for (const phase of args.phaseTodo) {
-    if (phase.key !== 'build' && phase.key !== 'verify') continue;
+    if (phase.key !== 'build' && phase.key !== 'integrate' && phase.key !== 'repair') continue;
     for (const item of phase.items) {
       if (/^b-replan-/.test(item.id)) {
         addedByReplan += Number(item.id.slice('b-replan-'.length)) || 0;
@@ -2119,7 +2784,12 @@ export function deriveTaskBoard(args: {
         title: isTask ? boardTitle(id) : item.label,
         summary: item.summary,
         state: item.state,
-        kind: isTask && !/^verify/.test(id) && id !== 'integrate-verify' ? 'build' : 'verify',
+        kind:
+          phase.key === 'repair'
+            ? 'repair'
+            : isTask && !/^verify/.test(id) && id !== 'integrate-verify'
+              ? 'build'
+              : 'verify',
         detail: item.detail,
         deps: pt?.deps ?? [],
         difficulty: pt?.difficulty || undefined,
@@ -2207,8 +2877,17 @@ export function useSwarmRun(workingDir: string | undefined, pollMs = 500): Swarm
           lastRunId.current = null;
           return;
         }
-        const { lanes, totals, planLanes, scoutLanes, contractLanes, detailLanes, fixLanes } =
-          foldEvents(data.events, data.activity);
+        const {
+          lanes,
+          totals,
+          planLanes,
+          scoutLanes,
+          contractLanes,
+          detailLanes,
+          sliceLanes,
+          planningLanes,
+          fixLanes,
+        } = foldEvents(data.events, data.activity);
         const phaseTodo = buildPhaseTodo(data.events, data.activity, {
           clarifyPending: !!data.clarify?.pending,
         });
@@ -2227,7 +2906,14 @@ export function useSwarmRun(workingDir: string | undefined, pollMs = 500): Swarm
           summary,
           startedAt,
           overview,
+          slices,
+          proxy,
+          reviewRounds,
+          sinkRenamedFrom,
+          synthesisFallback,
+          knownActiveBugs,
         } = buildActivity(data.events);
+        const { phase: runPhase, observed: runPhasesObserved } = foldRunPhase(data.events);
         lastRunId.current = data.runId;
         // Engine-truth hold state: replay the pause events; the last run_paused with no later run_unpaused
         // means the scheduler actually reached the hold. This — never the sentinel stat — earns "Held".
@@ -2245,6 +2931,8 @@ export function useSwarmRun(workingDir: string | undefined, pollMs = 500): Swarm
           scoutLanes,
           contractLanes,
           detailLanes,
+          sliceLanes,
+          planningLanes,
           fixLanes,
           pool: resolvePool(data.events),
           supervision: foldSupervision(data.events),
@@ -2264,6 +2952,16 @@ export function useSwarmRun(workingDir: string | undefined, pollMs = 500): Swarm
           // scheduler has actually reached the hold it OVERRIDES the progress-derived label. The distinction
           // that matters to someone watching is not which task is next, it is "is this thing working or not".
           phase: held ? 'Paused' : phase,
+          // The RIBBON gets null while held for the same reason: a held run is not in a phase, it is
+          // stopped between them, and lighting a step would assert work that is not happening.
+          runPhase: held ? null : runPhase,
+          runPhasesObserved,
+          slices,
+          proxy,
+          reviewRounds,
+          sinkRenamedFrom,
+          synthesisFallback,
+          knownActiveBugs,
           planConfidence,
           confidence,
           askFloor,
@@ -2276,6 +2974,7 @@ export function useSwarmRun(workingDir: string | undefined, pollMs = 500): Swarm
           runDir: data.dir ?? null,
           mtime: data.mtime,
           heartbeat: data.heartbeat,
+          heartbeatExited: !!data.heartbeatExited,
           pauseRequested: !!data.pauseRequested,
           held,
           loading: false,

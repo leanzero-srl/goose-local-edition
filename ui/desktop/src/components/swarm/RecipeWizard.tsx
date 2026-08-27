@@ -4,6 +4,7 @@ import { toast } from 'react-toastify';
 import { LeanZero } from '../icons';
 import type { Recipe } from '../../recipe';
 import { saveRecipe } from '../../recipe/recipe_management';
+import { CHIP_RADIUS, SWARM_STATUS } from './formationVisualState';
 
 /**
  * Goose Local Edition — a GUIDED recipe wizard. It ASKS the questions in the UI (what should the agent do,
@@ -12,7 +13,7 @@ import { saveRecipe } from '../../recipe/recipe_management';
  * swarm is a build orchestrator, not a conversational model, so it just started a build run instead of a Q&A.
  */
 
-const AZURE = '#2e8bff';
+const AZURE = SWARM_STATUS.action;
 
 const inputClass =
   'w-full bg-background-primary border border-border-primary px-2.5 py-1.5 text-sm text-text-primary focus:border-text-secondary outline-none';
@@ -73,7 +74,7 @@ export function RecipeWizard({
     <div className="fixed inset-0 z-[75] flex items-center justify-center bg-black/50 p-4">
       <div
         className="bg-background-primary border border-border-primary shadow-lg w-[560px] max-h-[88vh] flex flex-col"
-        style={{ borderRadius: 3 }}
+        style={{ borderRadius: CHIP_RADIUS }}
         data-testid="recipe-wizard"
       >
         <div className="flex items-center justify-between px-4 py-3 border-b border-border-primary">
@@ -107,7 +108,7 @@ export function RecipeWizard({
               rows={5}
               placeholder="e.g. Check the CI dashboard for failed jobs, open the logs, and post a summary of any new failures to #alerts."
               className={inputClass}
-              style={{ borderRadius: 3, resize: 'vertical' }}
+              style={{ borderRadius: CHIP_RADIUS, resize: 'vertical' }}
               autoFocus
             />
           </Field>
@@ -118,7 +119,7 @@ export function RecipeWizard({
               onChange={(e) => setTitle(e.target.value)}
               placeholder="e.g. CI failure watcher"
               className={inputClass}
-              style={{ borderRadius: 3 }}
+              style={{ borderRadius: CHIP_RADIUS }}
             />
           </Field>
 
@@ -128,14 +129,14 @@ export function RecipeWizard({
               onChange={(e) => setDescription(e.target.value)}
               placeholder="e.g. Watches CI and summarizes new failures."
               className={inputClass}
-              style={{ borderRadius: 3 }}
+              style={{ borderRadius: CHIP_RADIUS }}
             />
           </Field>
 
           {error && (
             <div
               className="text-xs px-3 py-2 border"
-              style={{ color: '#ff3b30', borderColor: '#ff3b30', borderRadius: 3 }}
+              style={{ color: SWARM_STATUS.error, borderColor: SWARM_STATUS.error, borderRadius: CHIP_RADIUS }}
             >
               {error}
             </div>
@@ -148,7 +149,7 @@ export function RecipeWizard({
             onClick={() => void save()}
             disabled={!canSave || saving}
             className="flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 text-white transition-opacity hover:opacity-90 disabled:opacity-50"
-            style={{ backgroundColor: AZURE, borderRadius: 3 }}
+            style={{ backgroundColor: AZURE, borderRadius: CHIP_RADIUS }}
           >
             {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />}
             Save recipe

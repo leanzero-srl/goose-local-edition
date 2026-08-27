@@ -1,5 +1,6 @@
 import React from 'react';
 import { Check, X, Loader2 } from 'lucide-react';
+import { CHIP_RADIUS, FORMATION_RAMP, SWARM_STATUS } from './formationVisualState';
 
 /**
  * Desktop twin of the CLI swarm fan-in unit — Goose Local Edition's signature.
@@ -13,14 +14,13 @@ import { Check, X, Loader2 } from 'lucide-react';
 
 export type NodeStatus = 'running' | 'done' | 'error';
 
-/** Node identity: a 6-hue formation ramp (cyan → rose), matching the CLI palette. */
-const FORMATION_RAMP = ['#17c4c4', '#2e8bff', '#6a5cff', '#b14cff', '#ff3ea5', '#ff5c7a'];
-
-/** Semantic status triad — orthogonal to (disjoint from) the formation ramp. */
+/** The node ramp and the status triad both come from formationVisualState — the ONE definition the run
+ *  panel and the ribbon read. This file used to carry its own copies, so a palette change landed here only
+ *  if someone remembered it existed, and a node's hue could differ between this card and the fleet strip. */
 const STATUS_COLOR: Record<NodeStatus, string> = {
-  running: '#f5a623',
-  done: '#2ecc71',
-  error: '#ff3b30',
+  running: SWARM_STATUS.running,
+  done: SWARM_STATUS.done,
+  error: SWARM_STATUS.error,
 };
 /**
  * SVG icons, not unicode glyphs. `✔`/`●`/`✕` get emoji-presentation on some platforms, which IGNORES the
@@ -63,7 +63,7 @@ const FanInCard: React.FC<FanInCardProps> = ({ dispatch, lanes, className = '' }
     <div
       data-testid="fan-in-card"
       className={`border border-border-primary bg-background-secondary text-text-primary p-3 text-sm ${className}`}
-      style={{ borderRadius: 3 }}
+      style={{ borderRadius: CHIP_RADIUS }}
     >
       <div className="flex items-center justify-between text-text-secondary text-xs mb-2">
         <span>swarm · {dispatch}</span>

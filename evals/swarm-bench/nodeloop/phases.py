@@ -11,14 +11,30 @@ THE PAIRING IS NOT RE-IMPLEMENTED HERE. It is imported from occupancy.py via `_s
 those spans by hand is a documented way to be wrong: an ad-hoc version paired dispatch[i] with
 completion[i] across a retry and reported a 1484s solo window where the true figure was 55.9s.
 
-THE HONEST GAP, stated up front. Only EXECUTE and the repair tail dispatch tasks, so only they have
-`task_dispatched`/`task_completed` and therefore measurable node-seconds. Research, the planning
-skeleton, the detail fan and contracts are real model calls on real nodes that emit no dispatch pair
-at all. For those phases this instrument reports busy=None, NEVER busy=0 — a zero would read as "the
-fleet was idle for 29 minutes" when the truth is "nobody measured it", and those are opposite
-findings calling for opposite fixes. Where a phase does carry per-call timing (`detail_completed`
-now emits `secs`), it is used and labelled `partial` — because it covers the detail fan but not the
-skeleton draft that precedes it.
+THE BOUNDARIES ARE NOW FIRST-CLASS. The old segmentation inferred the plan->detail boundary from
+`confidence_retarget`, an event that only fired when the redraft ladder fired — so a run that
+converged first time reported plan and detail as "marker missing" and lost both walls. The linear
+engine emits {"event":"phase","phase":"open"|"ask"|"research"|"synthesis"|"review"} at every
+planning boundary, so this instrument reads the boundary the engine declares instead of guessing one
+from a side effect. Downstream of the plan the markers are still inferred, because the engine
+declares no phase event there: `plan_loaded` opens BUILD, the first `complete_verify` opens
+INTEGRATE, and the first fix dispatch opens REPAIR.
+
+PHASES THAT DID NOT RUN ARE NOT PHASES THAT WERE NOT MEASURED. ASK only fires when the opener listed
+an open decision, CONTRACTS/PILLARS only when their gates are on, REPAIR only when the app came back
+red. Those rows say "did not run", and only a MANDATORY phase missing its marker is reported as an
+instrument or engine fault — conflating the two turns a healthy green-first-time run into a table of
+red rows.
+
+THE HONEST GAP, stated up front. Only BUILD and the repair tail dispatch tasks, so only they have
+`task_dispatched`/`task_completed` and therefore measurable node-seconds. Every planning phase is
+real model calls on real nodes that emit no dispatch pair at all. For those phases this instrument
+reports busy=None, NEVER busy=0 — a zero would read as "the fleet was idle for 29 minutes" when the
+truth is "nobody measured it", and those are opposite findings calling for opposite fixes. There is
+no longer ANY partial figure to offer: the detail fan's per-call `secs` died with `detail_completed`,
+and what the new phases publish (`slices_opened.secs`, `research_completed.secs`) is the phase's own
+wall, not node-seconds. Multiplying it by the slice count would be a CEILING dressed as the floor
+this table used to print, so nothing is printed.
 
 Usage:
     python3 phases.py <run-dir> [...]
@@ -34,49 +50,94 @@ import sys
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 import occupancy  # noqa: E402  — the span pairing lives there and is not duplicated here
 
-PHASES_VERSION = "ph-1"
+PHASES_VERSION = "ph-2"
 
-# Each phase is [start marker, end marker). The markers are events the engine already emits; this
-# instrument invents no boundaries of its own. `plan_loaded` ends planning AND begins execute
-# because the engine dispatches the first task in the same instant it publishes the DAG.
+# Each phase is [first start marker present, first end marker present). Markers are events the engine
+# already emits; this instrument invents no boundaries of its own. A `phase` event is addressed as
+# `phase:<name>` so the five planning boundaries are distinguishable — they all share event="phase".
+#
+# WHY THE MARKERS ARE LISTS. The alternative that has to be lived with is a run losing a whole
+# phase's wall because a conditional neighbour never fired: OPEN ends at ASK when the opener raised an
+# open decision and at RESEARCH when it did not, and INTEGRATE ends at the first fix dispatch on a red
+# app and at `run_finished` on a green one. The EARLIEST candidate present wins — earliest, not
+# first-listed, so a run where the repair tail happens to emit its wave event before its first
+# dispatch cannot hand REPAIR's opening minutes to INTEGRATE.
+#
+# `optional=True` means the phase legitimately does not exist in some runs. `plan_loaded` ends REVIEW
+# (or PREP) and begins BUILD because the engine dispatches the first task in the same instant it
+# publishes the DAG.
 PHASE_SPEC = [
-    ("research", "run_started", "research_completed",
-     "scouts read the world; produces the findings every later phase quotes"),
-    ("plan", "research_completed", "confidence_retarget",
-     "best-of-N skeleton draft + the confidence/redraft decision"),
-    ("detail", "confidence_retarget", "plan_loaded",
-     "the fan that writes each subtask's real spec, one call per device"),
-    ("execute", "plan_loaded", "complete_failed_tasks",
+    ("startup", ["run_started"], ["phase:open"], False,
+     "pool resolution and config, before the opener's first call"),
+    ("open", ["phase:open"], ["phase:ask", "phase:research"], False,
+     "one node cuts the request into balanced semantic slices"),
+    ("ask", ["phase:ask"], ["phase:research"], True,
+     "the opener's open decisions get answered; the proxy answers when unattended"),
+    ("research", ["phase:research"], ["phase:synthesis"], False,
+     "one slice per node; each owner writes that module's full spec"),
+    ("synthesis", ["phase:synthesis"], ["phase:review"], False,
+     "one node wires the slices into a task DAG; the engine splices the specs in"),
+    ("review", ["phase:review"], ["contracts", "pillars", "plan_loaded"], False,
+     "structural patches only, until the reviewer asks for no change"),
+    ("prep", ["contracts", "pillars"], ["plan_loaded"], True,
+     "the CONTRACTS/PILLARS fans, when their gates are on"),
+    ("build", ["plan_loaded"], ["complete_verify", "run_finished"], False,
      "the DAG runs; this is the only phase the scheduler fully owns"),
-    ("tail", "complete_failed_tasks", "run_finished",
-     "verify -> findings -> fix, looped until green; the serial repair tail"),
+    ("integrate", ["complete_verify"], ["complete_fix_dispatched", "complete_fix_wave",
+                                        "run_finished"], False,
+     "the assembled app is run and graded; the verdict that decides green"),
+    ("repair", ["complete_fix_dispatched", "complete_fix_wave"], ["run_finished"], True,
+     "findings -> fix -> re-verify, looped; only fires on a red app"),
 ]
 
 # Phases known to run real model calls without emitting a dispatch pair. This set is a DEFAULT, not
 # the rule — the rule is applied from the data in `analyse`: a window containing no dispatch at all
 # is UNMEASURED whatever its name.
 #
-# `tail` is in this set and it is the reason the rule had to become data-driven. It was first
+# `repair` is in this set and it is the reason the rule had to become data-driven. It was first
 # classified as measurable because the repair loop is obviously doing work, and this instrument duly
 # reported occupancy 0.00 for it on all six archived runs — which reads as "26 minutes with the
 # whole fleet idle" and is exactly the fabricated zero the module docstring warns about. MEASURED:
 # the 26.5-minute tail of preboundary-7 emits TWELVE events, every one a phase summary
 # (spec_contract, complete_verify, review, ...), and NOT ONE task_dispatched. The fix worker's calls
 # go out through a path that reports nothing, so the tail's occupancy is not low — it is UNKNOWN.
-UNDISPATCHED = {"research", "plan", "detail", "tail"}
+UNDISPATCHED = {"startup", "open", "ask", "research", "synthesis", "review", "prep",
+                "integrate", "repair"}
+
+
+def _marker_key(e: dict) -> str | None:
+    """The name this event answers to as a boundary.
+
+    The five planning boundaries all arrive as event="phase" and differ only in the `phase` field, so
+    keying on the event name alone would collapse OPEN, ASK, RESEARCH, SYNTHESIS and REVIEW onto one
+    marker and hand every planning phase the same instant.
+    """
+    n = e.get("event")
+    if not n:
+        return None
+    if n == "phase":
+        p = e.get("phase")
+        return f"phase:{p}" if p else None
+    return n
 
 
 def _marker_times(events: list[dict]) -> dict[str, float]:
-    """First occurrence of each marker. FIRST, not last: `spec_contract` and `complete_verify`
-    repeat once per repair round, and taking the last would swallow the whole tail into a phase
-    boundary."""
+    """First occurrence of each marker. FIRST, not last: `complete_verify` and
+    `complete_fix_dispatched` repeat once per repair round, and taking the last would swallow the
+    whole tail into a phase boundary."""
     out: dict[str, float] = {}
     for e in events:
-        n = e.get("event")
+        n = _marker_key(e)
         ts = occupancy.parse_ts(e.get("ts"))
         if n and ts is not None and n not in out:
             out[n] = ts
     return out
+
+
+def _earliest(marks: dict[str, float], names: list[str]) -> float | None:
+    """The earliest of the candidate markers that actually fired, or None if none did."""
+    hits = [marks[n] for n in names if n in marks]
+    return min(hits) if hits else None
 
 
 def analyse(path) -> dict:
@@ -91,11 +152,6 @@ def analyse(path) -> dict:
     marks = _marker_times(events)
     t0 = occ.get("_t0")
     t_end = occ.get("_t_end")
-
-    # Per-call durations for the phases that dispatch nothing. Only the detail fan emits one today.
-    detail_secs: list[float] = [
-        float(e.get("secs") or 0.0) for e in events if e.get("event") == "detail_completed"
-    ]
 
     def clip_busy(a: float, b: float) -> tuple[float, dict[str, float]]:
         """Node-seconds inside [a,b), per device, as a UNION per device — never a sum. A device
@@ -122,14 +178,25 @@ def analyse(path) -> dict:
         return sum(dev.values()), dev
 
     out = []
-    for name, start_ev, end_ev, what in PHASE_SPEC:
-        a = marks.get(start_ev, t0 if start_ev == "run_started" else None)
-        b = marks.get(end_ev)
-        if b is None and end_ev == "run_finished":
+    for name, start_evs, end_evs, optional, what in PHASE_SPEC:
+        a = _earliest(marks, start_evs)
+        if a is None and "run_started" in start_evs:
+            a = t0
+        b = _earliest(marks, end_evs)
+        if b is None and "run_finished" in end_evs:
             b = t_end
-        if a is None or b is None or b < a:
+        if a is None:
+            # THE DISTINCTION THAT KEEPS A HEALTHY RUN GREEN. ASK, PREP and REPAIR are conditional
+            # branches of the engine, so their marker being absent is the engine reporting that the
+            # branch was not taken — not this instrument failing to see it.
+            note = (f"did not run ({'/'.join(start_evs)} never fired)" if optional
+                    else f"marker missing ({'/'.join(start_evs)}) — phase not measured")
             out.append({"phase": name, "what": what, "wall_secs": None,
-                        "note": f"marker missing ({start_ev} -> {end_ev}) — phase not measured"})
+                        "ran": False if optional else None, "note": note})
+            continue
+        if b is None or b < a:
+            out.append({"phase": name, "what": what, "wall_secs": None,
+                        "note": f"marker missing ({'/'.join(end_evs)}) — phase not measured"})
             continue
         wall = b - a
         busy, per_dev = clip_busy(a, b)
@@ -154,13 +221,6 @@ def analyse(path) -> dict:
         if blind:
             row["busy_node_secs"] = None
             row["occupancy"] = None
-            if name == "detail" and detail_secs:
-                # PARTIAL by construction: it covers the fan's own calls, not the skeleton or any
-                # retry around them, so it is a FLOOR on busy and therefore a floor on occupancy.
-                floor = sum(detail_secs)
-                row["measured_call_secs"] = round(floor, 1)
-                row["occupancy_floor"] = round(floor / (wall * n), 4) if (wall and n) else None
-                row["calls"] = len(detail_secs)
             row["note"] = "phase dispatches no tasks — busy is UNMEASURED, not zero"
             if busy > 0:
                 # Spans that merely OVERLAP the window (a task still finishing as the phase
@@ -181,9 +241,11 @@ def analyse(path) -> dict:
         "pool_size": n,
         "wall_secs": round(t_end - t0, 1) if (t_end and t0) else None,
         "phases": out,
+        # A phase that DID NOT RUN contributes no wall, so it cannot inflate the unmeasured figure.
         "unmeasured_wall_secs": round(
             sum(p["wall_secs"] for p in out
                 if p.get("wall_secs") and p.get("occupancy") is None), 1),
+        "phases_that_did_not_run": [p["phase"] for p in out if p.get("ran") is False],
         "worst_measured_phase": min(measured, key=lambda p: p["occupancy"])["phase"] if measured else None,
     }
 
@@ -192,24 +254,24 @@ def render(a: dict) -> str:
     if not a.get("phases"):
         return f"{a.get('path')}: {a.get('note', 'nothing to report')}"
     L = [f"{a['path']}  pool={a.get('pool_size')}  wall={(a.get('wall_secs') or 0)/60:.1f}m"]
-    L.append(f"  {'phase':<9} {'wall':>8} {'%run':>6} {'busy':>9} {'occ':>6}  what")
+    L.append(f"  {'phase':<10} {'wall':>8} {'%run':>6} {'busy':>9} {'occ':>6}  what")
     for p in a["phases"]:
         if p.get("wall_secs") is None:
-            L.append(f"  {p['phase']:<9} {'—':>8} {'—':>6} {'—':>9} {'—':>6}  {p.get('note','')}")
+            L.append(f"  {p['phase']:<10} {'—':>8} {'—':>6} {'—':>9} {'—':>6}  {p.get('note','')}")
             continue
         w = f"{p['wall_secs']/60:.1f}m"
         pc = f"{100*(p.get('share_of_run') or 0):.0f}%"
         if p.get("occupancy") is None:
-            floor = p.get("occupancy_floor")
-            busy = "unmeas." if floor is None else f">{p['measured_call_secs']/60:.0f}m"
-            occ = "?" if floor is None else f">{floor:.2f}"
+            busy, occ = "unmeas.", "?"
         else:
             busy = f"{p['busy_node_secs']/60:.0f}m"
             occ = f"{p['occupancy']:.2f}"
-        L.append(f"  {p['phase']:<9} {w:>8} {pc:>6} {busy:>9} {occ:>6}  {p['what']}")
+        L.append(f"  {p['phase']:<10} {w:>8} {pc:>6} {busy:>9} {occ:>6}  {p['what']}")
     L.append(f"  unmeasured wall: {a['unmeasured_wall_secs']/60:.1f}m "
              f"({100*a['unmeasured_wall_secs']/(a['wall_secs'] or 1):.0f}% of the run has NO "
              f"occupancy number at all)")
+    if a.get("phases_that_did_not_run"):
+        L.append(f"  did not run: {', '.join(a['phases_that_did_not_run'])}")
     if a.get("worst_measured_phase"):
         L.append(f"  worst measured phase: {a['worst_measured_phase']}")
     return "\n".join(L)
@@ -241,32 +303,45 @@ def self_test() -> int:
     pool = [{"id": d} for d in devs]
     perfect_dir: list[str] = []   # the SAME path twice, or the determinism check compares tempdirs
 
-    # CONTROL 1 — a perfect execute phase: 3 devices busy the whole window.
+    # CONTROL 1 — a perfect build phase: 3 devices busy the whole window, on a full linear run.
     ev = [{"event": "run_started", "pool": pool, "ts": ts(0)},
-          {"event": "research_completed", "ts": ts(10)},
-          {"event": "confidence_retarget", "ts": ts(20)},
-          {"event": "plan_loaded", "ts": ts(30), "tasks": []}]
+          {"event": "phase", "phase": "open", "ts": ts(5)},
+          {"event": "phase", "phase": "ask", "ts": ts(10)},
+          {"event": "phase", "phase": "research", "ts": ts(15)},
+          {"event": "phase", "phase": "synthesis", "ts": ts(25)},
+          {"event": "phase", "phase": "review", "ts": ts(30)},
+          {"event": "plan_loaded", "ts": ts(35), "tasks": []}]
     for i, d in enumerate(devs):
-        ev.append({"event": "task_dispatched", "task_id": f"t{i}", "device": d, "ts": ts(30)})
-        ev.append({"event": "task_completed", "task_id": f"t{i}", "device": d, "ts": ts(130)})
-    ev += [{"event": "complete_failed_tasks", "ts": ts(130)},
+        ev.append({"event": "task_dispatched", "task_id": f"t{i}", "device": d, "ts": ts(35)})
+        ev.append({"event": "task_completed", "task_id": f"t{i}", "device": d, "ts": ts(135)})
+    ev += [{"event": "complete_verify", "round": 1, "passed": False, "ts": ts(135)},
+           {"event": "complete_fix_dispatched", "round": 1, "ts": ts(145)},
            {"event": "run_finished", "ts": ts(160)}]
     perfect_dir.append(write(ev))
     a = analyse(perfect_dir[0])
     ph = {p["phase"]: p for p in a["phases"]}
-    check("perfect execute occupancy", ph["execute"]["occupancy"], 1.0)
-    check("execute wall", ph["execute"]["wall_secs"], 100.0, tol=0.6)
+    check("perfect build occupancy", ph["build"]["occupancy"], 1.0)
+    check("build wall", ph["build"]["wall_secs"], 100.0, tol=0.6)
+
+    # THE FIVE PLANNING BOUNDARIES MUST BE DISTINGUISHABLE. They all arrive as event="phase" and a
+    # naive `event` key collapses them onto one marker, which hands every planning phase the same
+    # instant and reports four zero-length phases plus one that swallows the lot.
+    check("open wall", ph["open"]["wall_secs"], 5.0, tol=0.6)
+    check("research wall", ph["research"]["wall_secs"], 10.0, tol=0.6)
+    check("review wall", ph["review"]["wall_secs"], 5.0, tol=0.6)
+    check("integrate wall", ph["integrate"]["wall_secs"], 10.0, tol=0.6)
+    check("repair wall", ph["repair"]["wall_secs"], 15.0, tol=0.6)
 
     # CONTROL 2 — the opposite: one device does everything, two idle. Must be ~1/3.
     ev2 = [e for e in ev if not (e.get("event", "").startswith("task_") and e.get("device") != "d0")]
     a2 = analyse(write(ev2))
     ph2 = {p["phase"]: p for p in a2["phases"]}
-    check("1-of-3 execute occupancy", ph2["execute"]["occupancy"], 1 / 3)
+    check("1-of-3 build occupancy", ph2["build"]["occupancy"], 1 / 3)
 
-    # THE TRAP THIS INSTRUMENT EXISTS TO AVOID. Research/plan/detail dispatch nothing, so a
+    # THE TRAP THIS INSTRUMENT EXISTS TO AVOID. Every planning phase dispatches nothing, so a
     # span-based measure sees no work there. It must report None, never 0.0 — reporting 0.0 would
     # say "the fleet idled through planning", which is a claim nobody has evidence for.
-    for name in ("research", "plan", "detail"):
+    for name in ("open", "ask", "research", "synthesis", "review", "integrate", "repair"):
         if ph[name]["occupancy"] is not None:
             fails.append(f"{name}: occupancy must be None (unmeasured), got {ph[name]['occupancy']}")
         if ph[name].get("busy_node_secs") is not None:
@@ -277,16 +352,39 @@ def self_test() -> int:
     if empty.get("phases"):
         fails.append("empty log produced phases — must produce none")
 
-    # A MISSING MARKER must degrade that phase to unmeasured, not silently absorb its wall into a
-    # neighbour. Drop `confidence_retarget` (a run where the redraft never fired) and both the plan
-    # and detail phases lose their boundary.
-    ev3 = [e for e in ev if e.get("event") != "confidence_retarget"]
+    # A MISSING MANDATORY MARKER must degrade that phase to unmeasured, not silently absorb its wall
+    # into a neighbour. Drop `phase:synthesis` and both research and synthesis lose their boundary.
+    ev3 = [e for e in ev if e.get("phase") != "synthesis"]
     a3 = analyse(write(ev3))
     ph3 = {p["phase"]: p for p in a3["phases"]}
-    if ph3["plan"]["wall_secs"] is not None or ph3["detail"]["wall_secs"] is not None:
+    if ph3["research"]["wall_secs"] is not None or ph3["synthesis"]["wall_secs"] is not None:
         fails.append("a missing marker must leave its phases unmeasured, not reassign the time")
-    if ph3["execute"]["occupancy"] is None:
-        fails.append("a missing planning marker must not break the execute measurement")
+    if ph3["synthesis"].get("ran") is False:
+        fails.append("synthesis is mandatory — a missing marker there is a fault, not 'did not run'")
+    if ph3["build"]["occupancy"] is None:
+        fails.append("a missing planning marker must not break the build measurement")
+
+    # A CONDITIONAL PHASE THAT DID NOT RUN IS NOT A FAULT, and its absence must not stretch its
+    # neighbour. The engine emits phase:ask only when the opener raised an open decision, so a run
+    # without one must report ask as "did not run" while OPEN still ends at RESEARCH.
+    ev4 = [e for e in ev if e.get("phase") != "ask"]
+    a4 = analyse(write(ev4))
+    ph4 = {p["phase"]: p for p in a4["phases"]}
+    if ph4["ask"].get("ran") is not False:
+        fails.append("a conditional phase that never fired must report ran=False, not a fault")
+    check("open absorbs the skipped ask window", ph4["open"]["wall_secs"], 10.0, tol=0.6)
+    if "ask" not in (a4.get("phases_that_did_not_run") or []):
+        fails.append("phases_that_did_not_run must name the skipped phase")
+
+    # A GREEN-FIRST-TIME RUN has no repair tail at all. INTEGRATE must then run to `run_finished`
+    # rather than reporting a missing marker — the failure the old `confidence_retarget` boundary
+    # made routine, where a run that simply converged lost two phases' wall.
+    ev5 = [e for e in ev if not str(e.get("event", "")).startswith("complete_fix")]
+    a5 = analyse(write(ev5))
+    ph5 = {p["phase"]: p for p in a5["phases"]}
+    check("green run integrate runs to the end", ph5["integrate"]["wall_secs"], 25.0, tol=0.6)
+    if ph5["repair"].get("ran") is not False:
+        fails.append("a green run must report repair as 'did not run', not as a missing marker")
 
     # DETERMINISM — two passes over identical input must agree exactly.
     if json.dumps(analyse(perfect_dir[0]), sort_keys=True) != json.dumps(a, sort_keys=True):
@@ -302,8 +400,9 @@ def self_test() -> int:
         print(f"FAIL {f}")
     if fails:
         return 1
-    print(f"self-test OK ({PHASES_VERSION}) — perfect/1-node controls, the unmeasured-is-not-zero "
-          f"trap, missing markers, vacuous truth, determinism and the partition invariant all pass")
+    print(f"self-test OK ({PHASES_VERSION}) — perfect/1-node controls, the five planning boundaries, "
+          f"the unmeasured-is-not-zero trap, missing markers, skipped conditional phases, a green "
+          f"run's absent repair tail, vacuous truth, determinism and the partition invariant")
     return 0
 
 

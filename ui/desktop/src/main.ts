@@ -3386,13 +3386,25 @@ ipcMain.handle('read-swarm-run', async (_event, workingDir: string) => {
       /* no clarify gate this run */
     }
 
-    // Liveness heartbeat (`.swarm/heartbeat`, touched every ~5s while the engine runs). Kept SEPARATE from
-    // `mtime` (which reflects real task activity, for the "Xs ago" label): a fresh heartbeat means the engine
-    // is alive even mid-long-tool-call, so the panel can flag "stopped" within seconds of a kill without
-    // false-positives. Null when the run predates heartbeats — the panel then falls back to mtime staleness.
+    // Liveness heartbeat (`.swarm/heartbeat`). Kept SEPARATE from `mtime` (which reflects real task activity,
+    // for the "Xs ago" label): a fresh heartbeat means the engine is alive even mid-long-tool-call.
+    //
+    // Read the file's CONTENT, not just its mtime, because the content distinguishes the two ways a run dies
+    // and they demand opposite fixes. The engine rewrites an RFC3339 timestamp every 5s, and its guard's Drop
+    // stamps `EXITED:<rfc3339>`:
+    //   - `EXITED:` present  -> the run future returned early and tore itself down (Drop ran)
+    //   - a frozen timestamp -> the process was hard-killed (SIGKILL), so Drop never ran
+    // An mtime alone reports both as "45s quiet" and cannot tell them apart.
     let heartbeat: number | null = null;
+    let heartbeatExited = false;
     try {
-      heartbeat = (await fs.stat(path.join(swarmDir, 'heartbeat'))).mtimeMs;
+      const hbPath = path.join(swarmDir, 'heartbeat');
+      const raw = (await fs.readFile(hbPath, 'utf8')).trim();
+      heartbeatExited = raw.startsWith('EXITED:');
+      const stamp = Date.parse(heartbeatExited ? raw.slice('EXITED:'.length) : raw);
+      // An unparseable stamp (a torn mid-write read) falls back to the file's mtime rather than reporting
+      // the engine as pre-heartbeat, which would read as "liveness unknown" on a run that has it.
+      heartbeat = Number.isNaN(stamp) ? (await fs.stat(hbPath)).mtimeMs : stamp;
     } catch {
       /* no heartbeat file (older run) */
     }
@@ -3417,6 +3429,7 @@ ipcMain.handle('read-swarm-run', async (_event, workingDir: string) => {
       dir: path.dirname(swarmDir),
       mtime: freshest,
       heartbeat,
+      heartbeatExited,
       events,
       activity,
       activityMtimes,

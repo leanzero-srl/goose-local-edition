@@ -7,12 +7,12 @@ whether the run told the truth when it claimed to be done.
 
 Every axis reads engine events that already exist. Two sources are load-bearing and worth naming:
 
-  * `research_completed{findings, grounded, looked_nothing_up}` — the engine itself distinguishes a
-    finding the agent LOOKED UP from one it invented. That is research quality, deterministically.
-  * `plan_loaded.plan_confidence` vs the score the run actually earned — the confidence formula is
-    `min(agreement, spec_clarity)` in pure Rust, so the arithmetic is checkable AND its calibration
-    is measurable. A run that declared 90 and delivered 40 is badly calibrated, and that is a real
-    defect nobody else publishes.
+  * `slices_opened{weights}` + `research_completed{slices, brief_chars}` — the decomposition and its
+    coverage, deterministically: how evenly the request was cut, and whether every slice came back
+    with a specification or one of them reached its builder as a bare objective.
+  * `plan_loaded.plan_confidence` vs the score the run actually earned — the calibration is
+    measurable whatever produced the number. A run that declared 90 and delivered 40 is badly
+    calibrated, and that is a real defect nobody else publishes.
 
 `complete_result.passed` is NEVER evidence of success here. It is only ever the CLAIM side of the
 honesty axis, checked against the deterministic build score.
@@ -59,45 +59,60 @@ def g(score: Optional[float], detail: str, consequence: str = "") -> Dict:
 # ── the six axes ──────────────────────────────────────────────────────────────────────────────
 
 def axis_research(ev: List[Dict], vendor_trace: List[Dict]) -> Dict:
+    """WHAT RESEARCH IS NOW. The four fixed scout lenses and the grounded/invented split are gone
+    with them: `scouts_planned` no longer exists, `research_tools` is a config key rather than an
+    event, and `research_completed` carries {slices, brief_chars, secs} instead of {findings,
+    grounded}. Reading the old fields against the new stream did not fail loudly — it reported
+    "0 findings, no lookup tools attached" on every run, which is a fabricated number, so those two
+    checks are removed rather than left to lie.
+
+    What replaces them grades the thing research now IS: one owner per slice, each writing that
+    module's full spec. A slice with no owner is a module nobody specified, and a lopsided cut is a
+    node that grinds while the others idle.
+    """
+    opened = first(ev, "slices_opened")
     done = first(ev, "research_completed")
-    tools = first(ev, "research_tools")
     checks = {}
 
-    could_look_up = bool(tools and tools.get("can_look_things_up"))
+    if not opened:
+        checks["slice_balance"] = g(None, "no slices_opened event (pre-linear-engine run?)")
+    else:
+        weights = [w for w in (opened.get("weights") or []) if isinstance(w, (int, float)) and w > 0]
+        if not weights:
+            checks["slice_balance"] = g(None, f"{opened.get('count')} slices, no usable weights")
+        else:
+            # THE ENGINE'S OWN RULE, not a threshold invented here: the opener prompt says a slice
+            # more than roughly twice the work of another must be split, and the engine re-cuts once
+            # when `lopsided_slice` sees that spread. So a run that ENDS above 2x is a run whose
+            # re-cut was asked for and declined — a decomposition defect the engine already named.
+            spread = max(weights) / min(weights)
+            checks["slice_balance"] = g(
+                1.0 if spread <= 2.0 else (0.5 if spread <= 3.0 else 0.0),
+                f"heaviest slice is {spread:.1f}x the lightest ({weights})",
+                "one node grinds through an oversized slice while the rest of the fleet idles")
 
     if not done:
-        checks["grounded_ratio"] = g(None, "no research_completed event (research off?)")
-    elif not could_look_up:
-        # Grounding is IMPOSSIBLE without lookup tools, so scoring it zero blames the run for the
-        # environment. The engine self-disables context7/web-search when their keys are absent and
-        # (with grounded_research_only + no_tools_means_ask on) correctly refuses to treat an
-        # invented finding as settled. Not measurable, not a defect.
-        checks["grounded_ratio"] = g(
-            None, f"{done.get('findings') or 0} findings, but no lookup tools were attached — "
-                  f"grounding was not achievable")
+        checks["every_slice_specified"] = g(None, "no research_completed event")
     else:
-        findings = done.get("findings") or 0
-        grounded = done.get("grounded") or 0
-        checks["grounded_ratio"] = g(
-            grounded / findings if findings else 0.0,
-            f"{grounded}/{findings} findings were grounded in an actual lookup",
-            "an invented finding presented as research is a guess the run then treats as settled")
-
-    # Availability is an ENVIRONMENT fact, not a model behaviour: reported for coverage, never scored.
-    checks["had_lookup_tools"] = g(
-        None, f"available: {(tools or {}).get('available') or 'none'} "
-              f"(environment, not scored)") if tools else g(None, "no research_tools event")
+        n_open = (opened or {}).get("count") or done.get("slices") or 0
+        briefs = [c for c in (done.get("brief_chars") or []) if c]
+        checks["every_slice_specified"] = g(
+            len(briefs) / n_open if n_open else 0.0,
+            f"{len(briefs)}/{n_open} slices came back with a specification",
+            "an unspecified slice reaches its builder as a one-line objective and nothing else")
+        # REPORTED, NEVER SCORED. How long a spec must be to be a good spec is not a question this
+        # scorer can settle, and picking a character floor would manufacture a verdict out of a
+        # guess. The distribution is here so a human can see a stub next to its siblings.
+        if briefs:
+            checks["brief_chars"] = g(
+                None, f"specs ran {min(briefs)}-{max(briefs)} chars "
+                      f"(median {sorted(briefs)[len(briefs) // 2]}) — reported, not scored")
 
     # Independent of the engine's own accounting: did anything actually read the vendor docs?
     read_docs = sum(1 for e in vendor_trace if "docs" in str(e.get("path", "")))
     checks["read_vendor_docs"] = g(
         1.0 if read_docs else 0.0, f"{read_docs} fetches of the vendor documentation",
         "integrating against an assumed contract instead of the published one")
-
-    lenses = first(ev, "scouts_planned")
-    checks["scouts_dispatched"] = (
-        g(1.0, f"lenses: {lenses.get('lenses')}") if lenses
-        else g(None, "no scouts_planned event"))
     return checks
 
 
@@ -151,9 +166,15 @@ def axis_planning(ev: List[Dict], build_score: Optional[float]) -> Dict:
 
 
 def axis_clarification(ev: List[Dict]) -> Dict:
+    """The ASK still emits `low_confidence_ask` / `low_confidence_answered` / the timeout — what
+    changed is the TRIGGER (the opener's own open decisions, not an agreement score) and what happens
+    when nobody is watching (a node answers as proxy). `confidence_rescored` is gone with the plan
+    vote that computed it, so "did answering move confidence" cannot be asked at all.
+    """
     asks = every(ev, "low_confidence_ask")
     answered = every(ev, "low_confidence_answered")
-    rescored = every(ev, "confidence_rescored")
+    proxied = every(ev, "clarify_proxy_answered")
+    proxy_failed = every(ev, "clarify_proxy_failed")
     timeouts = every(ev, "low_confidence_ask_timeout")
     checks = {}
 
@@ -168,11 +189,25 @@ def axis_clarification(ev: List[Dict]) -> Dict:
             f"{asked} asked, {not_asked} open decisions left unasked",
             "an unasked open decision is a guess the run will make silently")
 
-    checks["answering_moved_confidence"] = (
-        g(1.0, f"{len(rescored)} rescore(s) after answers") if rescored
-        else g(None if not answered else 0.0,
-               "answers arrived but confidence never moved" if answered else "no answers to assess",
-               "if answering changes nothing, the ask was theatre"))
+    # WHAT REPLACED THE RESCORE CHECK. The old measure asked whether answering moved the confidence
+    # number; there is no confidence number to move any more. The question that survives is whether
+    # the open decisions were actually SETTLED — because the engine's failure path writes
+    # "(unanswered — take the most conventional option)" into the answers file and carries on, which
+    # looks identical to a real answer from every event downstream of it.
+    if not asks:
+        checks["open_decisions_settled"] = g(None, "nothing was asked, so nothing needed settling")
+    elif proxy_failed:
+        checks["open_decisions_settled"] = g(
+            0.0, f"{len(proxy_failed)} proxy answer(s) failed — the run continued on "
+                 f"'take the most conventional option'",
+            "an open decision answered by a placeholder is a guess the run then treats as settled")
+    elif answered or proxied:
+        who = "a node as proxy" if proxied else "the operator"
+        checks["open_decisions_settled"] = g(1.0, f"answered by {who}")
+    else:
+        checks["open_decisions_settled"] = g(
+            0.0, "asked, and no answer of any kind arrived",
+            "the fleet waits out the whole window and then builds on its own assumption")
 
     # "no ask timed out" is vacuously true of a run that never asked. Credit only applies where
     # there was something to time out — the same inverted-logic trap that once awarded a tree with

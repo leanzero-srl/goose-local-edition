@@ -2,11 +2,11 @@
 """Where the pre-dispatch prefix goes. Exit 0 always — this reports, it never grades.
 
 WHY. `occupancy.py` measures the EXECUTE window, because that is the only window that emits task
-events. Everything before the first dispatch — scouts, the confidence ladder, the skeleton drafts,
-the detail fan, contracts — is invisible to it, and it is a quarter of the run. Round 5's proposals
-for shrinking that quarter were all refuted, and the reason is visible in hindsight: they were
-designed against a number nobody had measured. The prefix was treated as "serial planning" when most
-of it is fleet work that simply emits no task event.
+events. Everything before the first dispatch — the opener's cut, the ask, the slice owners, the
+synthesis, the review, contracts — is invisible to it, and it is a quarter of the run. Round 5's
+proposals for shrinking that quarter were all refuted, and the reason is visible in hindsight: they
+were designed against a number nobody had measured. The prefix was treated as "serial planning" when
+most of it is fleet work that simply emits no task event.
 
 MEASURED across the three baseline units on disk, and the shape is stable:
 
@@ -14,11 +14,16 @@ MEASURED across the three baseline units on disk, and the shape is stable:
     planning    1292 / 1457 / 892 s     <- 57-83% of the prefix
     prefix      1556 / 1836 / 1312 s
 
-The unit that retargeted spent 582 s on a planning round, discarded it, and spent 710 s on the
-replacement. So this also reports what `retarget_discarded` says was thrown away, and how much of it
-came back unchanged in the plan that actually shipped — the number that decides whether a reuse path
-is worth building. Runs from before that event existed report it as unavailable, never as zero: an
-absent event is a blind instrument, not an empty world.
+WHAT THIS FILE NO LONGER DOES, and why the deletion is the right answer rather than a port. It used
+to report what a redraft threw away and how much of it came back — `retarget_discarded` carried the
+entire discarded plan, and the reuse figure decided whether a reuse path was worth building. The
+OPEN -> ASK -> RESEARCH -> SYNTHESIS -> REVIEW rewrite deleted the redraft ladder, so there is no
+discarded plan to compare against and no `detail_fallback` to attribute: those columns could only
+ever have printed 0, which reads as "the ladder wasted nothing" rather than "there is no ladder".
+
+`phases.py` owns the full-run phase table and the occupancy that goes with it. This is deliberately
+the cheap pre-dispatch slice of the same timeline — it pairs no spans and computes no occupancy, so
+there is nothing here for the two to disagree about.
 
 Usage:
     python3 prefix.py <unit-dir> [<unit-dir> ...]
@@ -32,7 +37,12 @@ import pathlib
 import sys
 
 HERE = pathlib.Path(__file__).resolve().parent
-PREFIX_VERSION = "px-1"
+PREFIX_VERSION = "px-2"
+
+# The prefix is exactly these phases, in this order, and the engine names each one as it starts.
+# `ask` and `prep` are conditional — the opener may raise no open decision and the CONTRACTS/PILLARS
+# gates may be off — so a missing marker here means the phase did not happen, not that it was missed.
+PREFIX_PHASES = ["open", "ask", "research", "synthesis", "review"]
 
 
 def _ts(v):
@@ -45,9 +55,10 @@ def _ts(v):
 def plan_task_files(task: dict) -> list[str]:
     """A task's owned files, under whichever key the emitting event used.
 
-    `plan_loaded` says `files`; `retarget_discarded` says `owned_files`. Both are engine events and
-    both are authoritative — this reconciles them in ONE place so no caller has to know which stream
-    it is holding.
+    `plan_loaded` says `files`. Archived logs from the ladder era say `owned_files` on
+    `retarget_discarded`, and reading only one name is what once made this file's central number
+    structurally zero while still passing its own controls. Both are read here so a run pulled from
+    the archive answers the same as a live one.
     """
     return list(task.get("files") or task.get("owned_files") or [])
 
@@ -69,27 +80,19 @@ def analyse_events(events: list[dict]) -> dict:
     """Pure, so the controls can drive it with a hand-built stream."""
     t0 = None
     first_dispatch = None
-    research_done = None
-    rounds: list[dict] = []      # one per confidence_retarget that redrafted
-    discarded: list[dict] = []   # one per retarget_discarded
-    fallbacks: list[dict] = []
-    plan_tasks: list[dict] = []
     contracts_at = None
+    plan_tasks: list[dict] = []
+    phase_at: dict[str, float] = {}
 
     for e in events:
         ev = e.get("event")
         t = _ts(e.get("ts"))
         if ev == "run_started" and t0 is None:
             t0 = t
-        elif ev == "research_completed" and research_done is None:
-            research_done = t
-        elif ev == "confidence_retarget" and e.get("action") == "redraft":
-            rounds.append({"round": e.get("round"), "at": t, "conf_before": e.get("conf_before")})
-        elif ev == "retarget_discarded":
-            discarded.append({"round": e.get("round"), "tasks": e.get("tasks") or []})
-        elif ev == "detail_fallback":
-            fallbacks.append({"task_id": e.get("task_id"), "reason": e.get("reason"),
-                              "brief_chars": e.get("brief_chars"), "at": t})
+        elif ev == "phase" and t is not None:
+            # FIRST occurrence wins. REVIEW runs a round at a time and re-announces nothing, but a
+            # future phase that repeats must not be allowed to move its own start marker forward.
+            phase_at.setdefault(str(e.get("phase")), t)
         elif ev == "contracts" and contracts_at is None:
             contracts_at = t
         elif ev == "plan_loaded" and not plan_tasks:
@@ -104,48 +107,20 @@ def analyse_events(events: list[dict]) -> dict:
                 "reason": "no run_started or no task_dispatched — the prefix window does not exist"}
 
     prefix = first_dispatch - t0
-    research = (research_done - t0) if research_done else None
-    planning = prefix - research if research is not None else None
 
-    # Per-round planning cost. A round ENDS at its redraft event; the last round ends at first dispatch.
-    bounds = [research_done or t0] + [r["at"] for r in rounds] + [first_dispatch]
-    round_secs = [b - a for a, b in zip(bounds, bounds[1:])]
+    # Each phase runs until the next one that actually fired; the last one runs to the first dispatch.
+    # A phase that never fired gets no row at all, rather than a zero that reads as "it was instant".
+    fired = [(p, phase_at[p]) for p in PREFIX_PHASES if p in phase_at]
+    phase_secs = {}
+    for i, (name, start) in enumerate(fired):
+        end = fired[i + 1][1] if i + 1 < len(fired) else first_dispatch
+        phase_secs[name] = round(end - start, 1)
 
-    # THE decision number: of the tasks a redraft discarded, how many come back in the shipped plan?
-    #
-    # BY ID UNDER-COUNTS, and it is not a hypothetical. MEASURED: a run whose redraft discarded
-    # `meridian-client` shipped the same module as `meridian` — same job, same file, renamed. An
-    # id-keyed reuse path would have thrown that spec away and re-derived it. So survival is measured
-    # BOTH ways and the file-based number is the one a reuse path should be designed against: a
-    # module is the files it owns, not the name a draft happened to give it.
-    reuse = None
-    if discarded and plan_tasks:
-        shipped_ids = {t.get("id") for t in plan_tasks}
-        # THE TWO EVENTS DISAGREE ON THE KEY. `plan_loaded` emits a task's files as `files`
-        # (swarm.rs, "files": n.spec.owned_files) while `retarget_discarded` emits `owned_files`.
-        # Reading `owned_files` off plan_loaded returns nothing on every real run, which made the
-        # file-based survival number — the one this instrument exists to produce — structurally zero
-        # while still passing its own controls, because those controls were driven by a synthetic
-        # stream I wrote using my own assumed key. A control built from the assumption tests the
-        # assumption against itself. `plan_task_files` below reads both names, and `real_run_shapes`
-        # asserts against an actual run so the next key drift cannot hide.
-        shipped_files = {f for t in plan_tasks for f in plan_task_files(t)}
-        rows = []
-        for d in discarded:
-            tasks = [t_ for t_ in d["tasks"] if isinstance(t_, dict)]
-            by_id = [t_ for t_ in tasks if t_.get("id") in shipped_ids]
-            by_file = [t_ for t_ in tasks
-                       if set(plan_task_files(t_)) & shipped_files]
-            rows.append({
-                "round": d["round"],
-                "discarded": len(tasks),
-                "survived_by_id": len(by_id),
-                "survived_by_owned_files": len(by_file),
-                "survivor_desc_chars": sum(t_.get("desc_chars") or 0 for t_ in by_file),
-                "renamed": sorted({t_.get("id") for t_ in by_file}
-                                  - {t_.get("id") for t_ in by_id}),
-            })
-        reuse = rows
+    research = phase_secs.get("research")
+    # PLANNING IS THE REST OF THE PREFIX, not a phase. It is open + ask + synthesis + review + the
+    # contracts/pillars fans + whatever the engine does between them, and it is the number the
+    # prefix-shrinking proposals were all aimed at.
+    planning = (prefix - research) if research is not None else None
 
     return {
         "prefix_version": PREFIX_VERSION,
@@ -154,21 +129,13 @@ def analyse_events(events: list[dict]) -> dict:
         "research_secs": round(research, 1) if research is not None else None,
         "planning_secs": round(planning, 1) if planning is not None else None,
         "planning_share_of_prefix": round(planning / prefix, 3) if planning and prefix else None,
-        "redraft_rounds": len(rounds),
-        "round_secs": [round(s, 1) for s in round_secs],
-        "detail_fallbacks": fallbacks,
-        # A fallback on a task the shipped plan does not contain cost fleet time but harmed no
-        # worker: it belonged to a draft that was thrown away. Counting the two together overstates
-        # the damage, which is exactly the mechanism-vs-quality confusion dispatch_audit exists to
-        # avoid. MEASURED: `meridian-client` in one run, a ghost of the discarded round.
-        "ghost_fallbacks": [f["task_id"] for f in fallbacks
-                            if plan_tasks and f["task_id"] not in {t_.get("id") for t_ in plan_tasks}],
+        "phase_secs": phase_secs,
+        # None, never [], when the engine emitted no phase marker at all: a run from a build that
+        # predates the linear engine is UNSEGMENTED, which is not the same as a run with no phases.
+        "phases_seen": [p for p, _ in fired] or None,
         "contracts_to_dispatch_secs": (round(first_dispatch - contracts_at, 1)
                                        if contracts_at else None),
         "plan_task_count": len(plan_tasks),
-        # None means the engine did not emit retarget_discarded (pre-boundary build). NOT zero.
-        "reuse": reuse,
-        "reuse_available": bool(discarded),
     }
 
 
@@ -183,25 +150,15 @@ def render(r: dict) -> str:
         return f"=== PREFIX {r.get('unit','?')}  NOT MEASURABLE — {r.get('reason')}"
     out = [f"=== PREFIX {r['unit']}  ({r['prefix_version']})  {r['prefix_secs']:.0f}s before the "
            f"first dispatch"]
+    if r["research_secs"] is None:
+        out.append("    no phase markers — this run predates the linear engine, so the prefix is "
+                   "UNSEGMENTED, not instant")
+        return "\n".join(out)
     out.append(f"    research {r['research_secs']:.0f}s   planning {r['planning_secs']:.0f}s "
-               f"({r['planning_share_of_prefix']:.0%} of the prefix)   "
-               f"redraft rounds {r['redraft_rounds']}  per-round {r['round_secs']}")
-    if r["detail_fallbacks"]:
-        ghosts = set(r.get("ghost_fallbacks") or [])
-        who = ", ".join(f"{f['task_id']}({f['brief_chars']}ch)"
-                        + (" [GHOST — never shipped]" if f["task_id"] in ghosts else "")
-                        for f in r["detail_fallbacks"])
-        out.append(f"    detail fell back to the architect's one-liner for: {who}")
-    if r["reuse"]:
-        for row in r["reuse"]:
-            out.append(f"    round {row['round']}: discarded {row['discarded']} task(s); "
-                       f"{row['survived_by_owned_files']} came back by OWNED FILES "
-                       f"({row['survived_by_id']} by id), carrying {row['survivor_desc_chars']} "
-                       f"chars of detail that were re-derived"
-                       + (f" — renamed: {row['renamed']}" if row["renamed"] else ""))
-    elif not r["reuse_available"]:
-        out.append("    retarget reuse: UNAVAILABLE on this engine build (retarget_discarded not "
-                   "emitted) — not zero, unmeasured")
+               f"({r['planning_share_of_prefix']:.0%} of the prefix)")
+    out.append("    " + "  ".join(f"{k} {v:.0f}s" for k, v in r["phase_secs"].items()))
+    if r["contracts_to_dispatch_secs"] is not None:
+        out.append(f"    contracts -> first dispatch: {r['contracts_to_dispatch_secs']:.0f}s")
     return "\n".join(out)
 
 
@@ -221,55 +178,54 @@ def self_test() -> int:
     def at(s):
         return dt.datetime.fromtimestamp(s, dt.timezone.utc).isoformat()
 
-    # KNOWN VALUES: 100s research, a redraft at 400s, first dispatch at 1000s.
+    # KNOWN VALUES: open at 50s, ask at 150s, research 250-500s, synthesis 500-700s, review 700-980s,
+    # contracts at 980s, first dispatch at 1000s.
     stream = [
         {"event": "run_started", "ts": at(0)},
-        {"event": "research_completed", "ts": at(100)},
-        {"event": "confidence_retarget", "action": "redraft", "round": 1, "ts": at(400)},
-        {"event": "retarget_discarded", "round": 1, "ts": at(400), "tasks": [
-            {"id": "api", "desc_chars": 900, "owned_files": ["a.py"]},
-            {"id": "web-old", "desc_chars": 700, "owned_files": ["w.py"]},
-            {"id": "gone", "desc_chars": 500, "owned_files": ["z.py"]}]},
-        {"event": "detail_fallback", "task_id": "api", "reason": "timeout",
-         "brief_chars": 83, "ts": at(380)},
+        {"event": "phase", "phase": "open", "ts": at(50)},
+        {"event": "phase", "phase": "ask", "ts": at(150)},
+        {"event": "phase", "phase": "research", "ts": at(250)},
+        {"event": "phase", "phase": "synthesis", "ts": at(500)},
+        {"event": "phase", "phase": "review", "ts": at(700)},
         {"event": "contracts", "ts": at(980)},
         {"event": "plan_loaded", "ts": at(1000), "tasks": [
-            {"id": "api", "owned_files": ["a.py"]}, {"id": "web", "owned_files": ["w.py"]}]},
+            {"id": "api", "files": ["a.py"]}, {"id": "web", "files": ["w.py"]}]},
         {"event": "task_dispatched", "ts": at(1000)},
     ]
     r = analyse_events(stream)
     if r["prefix_secs"] != 1000.0:
         fails.append(f"prefix {r['prefix_secs']} != 1000")
-    if r["research_secs"] != 100.0:
-        fails.append(f"research {r['research_secs']} != 100")
-    if r["planning_secs"] != 900.0:
-        fails.append(f"planning {r['planning_secs']} != 900")
-    if r["round_secs"] != [300.0, 600.0]:
-        fails.append(f"round_secs {r['round_secs']} != [300, 600]")
-    # `api` survives by id and carried 900 chars; `gone` does not survive and must NOT be counted.
-    row = (r["reuse"] or [{}])[0]
-    # `api` survives under both keys. `web-old` -> `web` survives ONLY by owned files, and it is the
-    # case an id-keyed reuse path would silently miss. `gone` survives under neither.
-    if row.get("survived_by_id") != 1:
-        fails.append(f"survived_by_id {row.get('survived_by_id')} != 1: {row}")
-    if row.get("survived_by_owned_files") != 2:
-        fails.append(f"survived_by_owned_files {row.get('survived_by_owned_files')} != 2: {row}")
-    if row.get("renamed") != ["web-old"]:
-        fails.append(f"the rename was not detected: {row}")
-    if row.get("survivor_desc_chars") != 1600:
-        fails.append(f"survivor chars {row.get('survivor_desc_chars')} != 1600: {row}")
-    if r.get("ghost_fallbacks") != []:
-        fails.append(f"api shipped, so it is not a ghost: {r.get('ghost_fallbacks')}")
-    ghost = analyse_events(stream + [{"event": "detail_fallback", "task_id": "web-old",
-                                      "reason": "timeout", "brief_chars": 86, "ts": at(390)}])
-    if ghost.get("ghost_fallbacks") != ["web-old"]:
-        fails.append(f"a fallback on a task that never shipped must be a ghost: {ghost.get('ghost_fallbacks')}")
+    if r["research_secs"] != 250.0:
+        fails.append(f"research {r['research_secs']} != 250")
+    if r["planning_secs"] != 750.0:
+        fails.append(f"planning {r['planning_secs']} != 750")
+    if r["phase_secs"] != {"open": 100.0, "ask": 100.0, "research": 250.0,
+                           "synthesis": 200.0, "review": 300.0}:
+        fails.append(f"phase_secs wrong: {r['phase_secs']}")
+    if r["contracts_to_dispatch_secs"] != 20.0:
+        fails.append(f"contracts_to_dispatch {r['contracts_to_dispatch_secs']} != 20")
+    if r["plan_task_count"] != 2:
+        fails.append(f"plan_task_count {r['plan_task_count']} != 2")
 
-    # NEGATIVE DIRECTION: the same stream WITHOUT retarget_discarded must report unavailable, and
-    # must NOT report a reuse rate of zero — that is the difference between blind and empty.
-    no_ev = analyse_events([e for e in stream if e["event"] != "retarget_discarded"])
-    if no_ev["reuse"] is not None or no_ev["reuse_available"]:
-        fails.append("a build that never emitted retarget_discarded reported a reuse figure")
+    # A PHASE THAT DID NOT RUN gets no row and does not inflate its neighbour's END — the ask is
+    # conditional, and OPEN must then run all the way to RESEARCH rather than stopping at a marker
+    # that never arrived.
+    no_ask = analyse_events([e for e in stream if e.get("phase") != "ask"])
+    if "ask" in no_ask["phase_secs"]:
+        fails.append("a phase that never fired got a row")
+    if no_ask["phase_secs"].get("open") != 200.0:
+        fails.append(f"open must run to research when ask is skipped: {no_ask['phase_secs']}")
+
+    # NEGATIVE DIRECTION, and the whole reason this file reports `phases_seen`. A run from a build
+    # with no phase markers is UNSEGMENTED. It must not report research 0s / planning = the whole
+    # prefix, which is a confident split of a window nothing measured.
+    unseg = analyse_events([e for e in stream if e.get("event") != "phase"])
+    if unseg["research_secs"] is not None or unseg["planning_secs"] is not None:
+        fails.append("a run with no phase markers reported a research/planning split anyway")
+    if unseg["phases_seen"] is not None:
+        fails.append("phases_seen must be None, not [], when nothing was segmented")
+    if unseg["prefix_secs"] != 1000.0:
+        fails.append("the prefix window itself is still measurable without phase markers")
 
     # REAL-SHAPE CONTROL. Every check above is driven by a stream this file wrote, so all of them
     # passed while the file-survival path read a key the engine never emits. A control that shares the

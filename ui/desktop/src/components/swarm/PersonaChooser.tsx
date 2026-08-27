@@ -1,4 +1,5 @@
 import { Code2, Bot } from 'lucide-react';
+import { CHIP_RADIUS, SWARM_STATUS } from './formationVisualState';
 
 /**
  * Goose Local Edition — persona chooser for the chat input bar. Two personas:
@@ -27,7 +28,7 @@ export function PersonaChooser({
   return (
     <div
       className={`inline-flex border border-border-primary ${className}`}
-      style={{ borderRadius: 3 }}
+      style={{ borderRadius: CHIP_RADIUS }}
       role="group"
       aria-label="Persona"
     >
@@ -48,7 +49,7 @@ export function PersonaChooser({
             className={`flex items-center gap-1 px-2 py-0.5 text-xs transition-colors ${
               active ? 'font-semibold text-background-primary' : 'text-text-secondary hover:text-text-primary'
             } ${i > 0 ? 'border-l border-border-primary' : ''}`}
-            style={{ backgroundColor: active ? '#2e8bff' : 'transparent' }}
+            style={{ backgroundColor: active ? SWARM_STATUS.action : 'transparent' }}
           >
             <Icon className="h-3.5 w-3.5" />
             {opt.label}

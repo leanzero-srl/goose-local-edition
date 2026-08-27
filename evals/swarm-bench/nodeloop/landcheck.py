@@ -33,13 +33,20 @@ ARCHIVE = HERE.parent / "runs" / "nodeloop-SNAPSHOT-pre-batch-2026-08-09"
 
 # (event, field, what it is). The PAIR is the unit — `inconclusive_reasons` is only new on
 # `complete_verify`, and checking the bare field name would silently pass on `spec_contract`.
+# The four C5(A)/F707 rows that stood here checked fields on `skeleton_drafts` and `plan_convergence`,
+# both of which the OPEN -> ASK -> RESEARCH -> SYNTHESIS -> REVIEW rewrite deleted along with the plan
+# vote and the redraft ladder. Left in place they would have read INERT forever — and an INERT row is
+# neither a pass nor a failure, so the script's exit code would have been a permanent 2 that says
+# nothing. The linear engine's own counters replace them one for one: each is a NUMBER the phase
+# computes rather than a flag it copies, so a row reading MISSING means the phase ran and produced
+# nothing to count, which is the failure worth catching.
 EXPECTED = [
     ("task_dispatched", "description_chars", "C12(b) — the split child's instruction length"),
-    ("skeleton_drafts", "requested_best_of_n", "C5(A) — the PRE-clamp ask"),
-    ("skeleton_drafts", "distinct_draft_models", "C5(A) — what actually caps the pool"),
-    ("skeleton_drafts", "clamped", "C5(A) — whether the ask was cut down"),
+    ("slices_opened", "weights", "OPEN — the per-slice work estimate the re-cut trigger reads"),
+    ("research_completed", "brief_chars", "RESEARCH — how much spec each slice owner actually wrote"),
+    ("review_findings", "patch_touches", "REVIEW — how many tasks the round's patch moved"),
     ("complete_verify", "inconclusive_reasons", "C6(1) — why the run abstained (STRING PROBE CANNOT SEE THIS)"),
-    ("plan_convergence", "would_skip_ladder_prelift", "F707 — the pre-lift shadow"),
+    ("defects_rated", "engine_forced", "RATE — findings the engine called critical over the rater"),
 ]
 
 
