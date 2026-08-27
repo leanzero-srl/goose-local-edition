@@ -461,6 +461,11 @@ pub struct SwarmConfig {
     /// env GOOSE_SWARM_SPIRAL_BREAK_CHARS overrides.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub spiral_break_chars: Option<usize>,
+    /// UNATTENDED: the benchmark harness and the loop set this. Its ONLY effect is that a clarify
+    /// question is routed to a node INSTANTLY instead of waiting 5 minutes for the human. Config-reachable
+    /// because a desktop app launched with `open -n` receives no environment at all.
+    #[serde(default)]
+    pub benchmark: bool,
     /// UNCAPPED regime (Mihai 2026-08-21): remove EVERY wall-clock and volume cap — the run
     /// finishes when it finishes; only the omni-judge's content-based LOOPING verdicts,
     /// repeat-break, and the pure-idle dead-stream failsafes may stop a call. This config field is
@@ -1291,6 +1296,7 @@ impl Default for SwarmConfig {
             detail_memo: Some(true),
             repeat_break: Some(true),
             spiral_break_chars: Some(12000),
+            benchmark: false,
             uncapped: false,
             lm_extra_body: None,
             omni_judge: Some(true),
@@ -3580,6 +3586,34 @@ fn tails_recur(a: &std::collections::HashSet<u64>, b: &std::collections::HashSet
     }
     let inter = a.intersection(b).count();
     inter * 2 >= a.len().min(b.len())
+}
+
+/// UNATTENDED MODE. Set by the benchmark harness and by the loop — any run nobody is sitting in front of.
+///
+/// It changes exactly ONE thing: how long a question waits for a human before it is routed to a node.
+/// ON -> routed INSTANTLY, no wait at all. OFF -> the human gets exactly 5 minutes, then a node answers.
+/// Env wins, then config, because `open -n` gives a desktop-launched app no environment at all, so
+/// `launch.sh` must be able to set this in config.yaml.
+fn benchmark() -> bool {
+    match std::env::var("GOOSE_SWARM_BENCHMARK") {
+        Ok(v) => matches!(v.trim(), "1" | "on" | "true" | "yes"),
+        Err(_) => load_config().benchmark,
+    }
+}
+
+/// How long a question waits for the HUMAN before a node answers it.
+///
+/// This is NOT one of the caps §8 removed, and the distinction is the whole point: every one of those
+/// bounded how long a MODEL may work. This bounds how long the run waits on a PERSON, and it never
+/// discards anything — the question still gets a real answer, just from a node instead of you. It
+/// replaces `ask_wait_secs: 1800`, whose expiry left the question UNANSWERED and let the run proceed on
+/// a guess while three nodes sat idle for half an hour.
+fn proxy_answer_after_secs() -> u64 {
+    if benchmark() {
+        0
+    } else {
+        300
+    }
 }
 
 /// A week, in seconds: the stand-in for "no cap" at sites whose arithmetic needs a finite
@@ -24102,6 +24136,70 @@ impl GooseAgentDispatcher {
         Ok(parsed)
     }
 
+    /// THE USER-PROXY ANSWER. A node answers the clarify questions when the human does not.
+    ///
+    /// A question is always answered: it is never dropped and it never stalls the run. Before this, the
+    /// ask blocked for 1800s and then PROCEEDED UNANSWERED — three nodes idle for half an hour and the
+    /// decisions silently made by whatever the planner happened to assume.
+    ///
+    /// It answers strictly from the spec, and where the spec is silent it picks the most conventional
+    /// option and SAYS SO, so a proxy answer is never mistaken for a researched one.
+    pub(crate) async fn proxy_answer(
+        &self,
+        planner_model: &str,
+        user_prompt: &str,
+        questions: &[String],
+    ) -> Result<Vec<String>> {
+        let qs = questions
+            .iter()
+            .enumerate()
+            .map(|(i, q)| format!("{}. {q}", i + 1))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let system = "You are standing in for the person who commissioned this build, because they are \
+             not at the keyboard. Answer their questions from THE REQUEST ITSELF.\n\n\
+             For each question, in order, give ONE line: the decision, then why.\n\
+             - If the request settles it, say so and quote the part that does.\n\
+             - If the request does NOT settle it, choose the most CONVENTIONAL option a competent \
+               engineer would pick for this kind of program, and say explicitly that the request did not \
+               specify and this is a default.\n\n\
+             Never answer \"it depends\", never ask a question back, and never leave one blank. Decide."
+            .to_string();
+        let out = self
+            .run_agent_timed_at(
+                planner_model,
+                system,
+                format!("## The request\n{user_prompt}\n\n## Their questions\n{qs}"),
+                None,
+                planner_side_turns(),
+                &[],
+                None,
+                Some("proxy-answer"),
+            )
+            .await?;
+        // One answer per question, in order. A model that returns prose still yields usable lines, and a
+        // short answer set is padded rather than dropped — an unanswered question would re-block the run.
+        let lines: Vec<String> = out
+            .text
+            .lines()
+            .map(|l| {
+                l.trim()
+                    .trim_start_matches(|c: char| c.is_ascii_digit() || c == '.' || c == ')')
+                    .trim()
+            })
+            .filter(|l| l.len() > 3)
+            .map(|l| l.to_string())
+            .collect();
+        let mut answers: Vec<String> = lines.into_iter().take(questions.len()).collect();
+        while answers.len() < questions.len() {
+            answers.push(
+                "(the proxy did not answer this one; the most conventional choice applies)"
+                    .to_string(),
+            );
+        }
+        Ok(answers)
+    }
+
     /// One targeted re-cut of a single lopsided slice. A PATCH, not a re-open: the opener is shown the
     /// slice list it already produced and asked to replace exactly one entry, so the other slices — and
     /// the reasoning that produced them — are never re-emitted. If it declines, or returns something
@@ -24706,6 +24804,77 @@ async fn run_linear_plan(
                 resolves: String::new(),
             })
             .collect();
+        // A QUESTION IS ALWAYS ANSWERED. Arm the proxy BEFORE blocking, so the log states the routing
+        // before the answer exists: instantly under `benchmark`, otherwise after the human has had five
+        // minutes. The proxy writes the same `.swarm/clarify-answers.json` the desktop panel writes, so
+        // nothing downstream can tell the difference in shape — only the label says who answered.
+        let proxy_after = proxy_answer_after_secs();
+        sink.write_value(serde_json::json!({
+            "event": "clarify_proxy_armed",
+            "mode": if proxy_after == 0 { "immediate" } else { "after_wait" },
+            "wait_secs": proxy_after,
+            "questions": opened.open_decisions.len(),
+        }));
+        eprintln!(
+            "  · {} will answer these",
+            if proxy_after == 0 {
+                "unattended run — a node".to_string()
+            } else {
+                format!("you have {proxy_after}s, then a node")
+            }
+        );
+        {
+            let me = dispatcher.clone();
+            let sink2 = sink.clone();
+            let prompt = opts.prompt.clone();
+            let planner = cfg.planner_model.clone();
+            let decisions = opened.open_decisions.clone();
+            let apath = cwd_for_ask.join(".swarm").join("clarify-answers.json");
+            tokio::spawn(async move {
+                if proxy_after > 0 {
+                    tokio::time::sleep(std::time::Duration::from_secs(proxy_after)).await;
+                }
+                // The human may have answered while we waited; theirs wins.
+                if apath.exists() {
+                    return;
+                }
+                match me.proxy_answer(&planner, &prompt, &decisions).await {
+                    Ok(answers) => {
+                        sink2.write_value(serde_json::json!({
+                            "event": "clarify_proxy_answered",
+                            "questions": decisions,
+                            "answers": answers,
+                            "source": "proxy",
+                        }));
+                        let body = serde_json::json!({
+                            "answers": answers,
+                            "source": "proxy",
+                        });
+                        let _ = std::fs::write(&apath, body.to_string());
+                        eprintln!(
+                            "  · a node answered the open decisions (labelled `proxy` in the log)"
+                        );
+                    }
+                    Err(e) => {
+                        // Even a failed proxy must unblock the run: an unanswered question that idles the
+                        // whole fleet is strictly worse than a conventional default, and the label says
+                        // which it was.
+                        sink2.write_value(serde_json::json!({
+                            "event": "clarify_proxy_failed",
+                            "error": e.to_string(),
+                        }));
+                        let body = serde_json::json!({
+                            "answers": decisions
+                                .iter()
+                                .map(|_| "(unanswered — take the most conventional option)".to_string())
+                                .collect::<Vec<_>>(),
+                            "source": "proxy_failed",
+                        });
+                        let _ = std::fs::write(&apath, body.to_string());
+                    }
+                }
+            });
+        }
         let qa = ask_clarifying_questions(
             &questions,
             cwd_for_ask,
