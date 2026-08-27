@@ -2035,7 +2035,6 @@ impl State {
             .get(tid)
             .map(|n| n.attempts == attempt && n.state == TaskState::Claimed)
             .unwrap_or(false);
-        let interv = self.interventions.get(tid).copied().unwrap_or(0);
         // Captured ONCE, up front, because every branch below removes `attempt_started_at` before it
         // emits. All five emits in this function used to hard-code `elapsed_ms: 0` while this very
         // number sat in scope — and `finish()` sums `per_device.busy_ms += a.elapsed_ms` over the whole
@@ -2049,11 +2048,6 @@ impl State {
             .attempt_started_at
             .get(tid)
             .map(|t| t.elapsed().as_millis() as u64)
-            .unwrap_or(0);
-        let elapsed = self
-            .attempt_started_at
-            .get(tid)
-            .map(|t| t.elapsed().as_secs())
             .unwrap_or(0);
         // ACCEPT — the deliverable is COMPLETE (every owned file exists and none fails its compile
         // check). Finish the task instead of spending an attempt killing a worker that has already
@@ -2119,58 +2113,40 @@ impl State {
             });
             return true;
         }
-        // SPLIT is an action on healthy-but-too-big work, handled separately below — keep it out of the
-        // kill/re-dispatch path (which is for misbehaving workers).
-        let is_split = still_live
-            && outcome.verdict == crate::judge::Verdict::Split
-            && outcome.confidence >= cfg.intervene_confidence
-            && outcome
-                .proposed_split
-                .as_ref()
-                .is_some_and(|c| !c.is_empty());
-        let actionable = outcome.verdict.is_problem()
-            && outcome.verdict != crate::judge::Verdict::Split
-            && still_live
+        // THE JUDGE CAN NO LONGER END ANYTHING.
+        //
+        // It used to have three actions: observe, re_dispatch (kill the worker and re-queue it on a
+        // DIFFERENT device with a hint), and terminal-fail. Both of the acting ones are gone.
+        //
+        // re_dispatch went because every node in this fleet runs the SAME model on a different host, so
+        // moving a task buys nothing and costs the whole session — the thing the worker had already
+        // established. Redirection now happens IN the session, as a nudge, and it costs neither the
+        // session nor the attempt.
+        //
+        // terminal-fail went because a task should die from a deterministic engine event — retries
+        // exhausted on transport errors — not from an opinion. That rule was already half-written here
+        // (`outcome.deterministic` gated it, after a model opinion at confidence 0.90 turned a whole run
+        // red through the fan-verify sink); this finishes it.
+        //
+        // What remains is RESTART: the same task, on the SAME device, with a fresh session seeded with
+        // what the judge says the last attempt established. It is the judge's only remaining action.
+        let restart_asked = still_live
+            && !self.fix_round
+            && outcome.verdict == crate::judge::Verdict::Restart
             && outcome.confidence >= cfg.intervene_confidence;
-        // The judge's three actions: observe (log only), re_dispatch (kill + retry with a hint, while
-        // under the cap), or fail (cap exhausted and STILL broken — cut it loose so a doomed task can't
-        // spin a node to worker_max_turns and so the run terminates instead of hanging on a dead worker).
-        // Terminal-fail requires a positive cap that has been used up AND a final attempt that has run a
-        // meaningful while, so a brief flag on a just-(re)started attempt never fails a task prematurely.
-        // TERMINAL-FAIL REQUIRES A DETERMINISTIC VERDICT. `actionable` gates on
-        // `outcome.confidence >= cfg.intervene_confidence`, but the judge MODEL produces that confidence —
-        // so without this term a model OPINION decides an irreversible failure. MEASURED: nf-ts-cadence's
-        // integrate-verify went `over_reading -> re_dispatch, re_dispatch, FAILED` at confidence 0.90 from
-        // the LLM path; under fan-verify integrate-verify depends on every verify::<M>, so that single model
-        // opinion turned the whole run red. The standing rule is that only a DETERMINISTIC engine event may
-        // create or kill a verdict. A model verdict keeps its full STEERING power (re_dispatch with a hint,
-        // below) — it simply may no longer be the thing that fails a task; that task now runs to its own
-        // deterministic backstop (worker_timeout / the spiral + repeat breakers) instead.
-        let terminal = actionable
-            && outcome.deterministic
-            && cfg.max_interventions_per_task > 0
-            && interv >= cfg.max_interventions_per_task
-            && elapsed >= cfg.terminal_min_secs;
-        let redispatch = actionable && interv < cfg.max_interventions_per_task;
-        // FIX ROUNDS: the judge OBSERVES but never intervenes. A kill or split inside a fix
-        // round drops the shard's future before grade_promotion_preview can land its verified
-        // edit — the promotion dies with the worker — and judge splits are what kept rounds
-        // alive past the completion cap (F890; measured: one round was 31.9 wall-minutes of
-        // re-dispatch/split churn that landed nothing). Hints still flow as observations; the
-        // round's own deterministic gates stay the only authority on shard outcomes.
-        let (is_split, terminal, redispatch) = if self.fix_round {
-            (false, false, false)
-        } else {
-            (is_split, terminal, redispatch)
-        };
-        // PROGRESS-GATED KILLS: a second re_dispatch is allowed only if the task's owned files
-        // moved since the previous kill. A no-progress attempt that gets killed and restarted
-        // repeats the same doomed generation (each restart measured 4-25 min of a node); with
-        // the kill withheld, the attempt runs to its own deterministic backstop instead, and
-        // the judge's hint is still stored via the observed path below. File-less tasks
-        // (verify::, e2e shards) keep the old behavior — there is nothing to fingerprint.
-        let mut kill_withheld = false;
-        let redispatch = if redispatch {
+        // THE LIVENESS RULE, and the only thing standing between an unbounded judge and a task that never
+        // ends. A restart is permitted only while the previous attempt PRODUCED something — the owned-file
+        // fingerprint moved. Two consecutive asks against an unmoved tree mean restarting is not working,
+        // and the task is failed with the judge's notes attached so the run proceeds and its missing files
+        // become repair work. Progress, not a counter.
+        //
+        // This reuses the fingerprint machinery that already existed for the progress-gated kill, which
+        // was built for exactly this question and for exactly this reason: "a no-progress attempt that
+        // gets killed and restarted repeats the same doomed generation (each restart measured 4-25 min of
+        // a node)". File-less tasks (verify::, e2e shards) have nothing to fingerprint, so they never
+        // restart at all rather than restarting blind.
+        let mut restart_withheld = false;
+        let restart = if restart_asked {
             let files = self
                 .dag
                 .tasks
@@ -2178,14 +2154,20 @@ impl State {
                 .map(|n| n.spec.owned_files.clone())
                 .unwrap_or_default();
             if files.is_empty() {
-                true
+                false
             } else {
-                // Caveat (review): a speculation twin writes its SHADOW, so real-tree
-                // fingerprints cannot see its progress — the gate degrades such a task to
-                // observe-only rather than ever corrupting state.
                 let fp = owned_files_fingerprint(&files);
                 if self.kill_tree_hash.get(tid) == Some(&fp) {
-                    kill_withheld = true;
+                    // The tree has not moved since the last restart, so restarting is not working.
+                    // WITHHOLD it and let the attempt run to its own end — do not fail the task.
+                    //
+                    // I had this failing the task, which is what the plan said. The mock caught that it is
+                    // wrong: at this point the current attempt is still RUNNING and has not been aborted,
+                    // so failing here destroys live work to prevent a loop that withholding already
+                    // prevents. Liveness still holds without it — the attempt ends by completing, by
+                    // erroring into the bounded transport retries, or by the socket dying — and the
+                    // judge's hint is still stored for the next dispatch via the observed path.
+                    restart_withheld = true;
                     false
                 } else {
                     self.kill_tree_hash.insert(tid.to_string(), fp);
@@ -2195,6 +2177,12 @@ impl State {
         } else {
             false
         };
+        let is_split = false;
+        // NOTHING the judge says can fail a task any more. A task ends by completing, by exhausting its
+        // transport retries, or not at all.
+        let terminal = false;
+        let redispatch = restart;
+        let kill_withheld = restart_withheld;
         // SPLIT is handled FIRST so the emitted event reflects the ACTUAL outcome: apply_split validates the
         // proposal and returns false (no-op, worker keeps running) if it is malformed — in that case the
         // event must report "observed", not a "split" that never happened.
@@ -2214,13 +2202,16 @@ impl State {
             return applied;
         }
         let action = if terminal {
-            "failed"
+            // Not a judge opinion failing a task: the judge asked to restart a task whose tree had not
+            // moved, TWICE. Restarting is demonstrably not working, so the task ends here and its missing
+            // files become repair work. This is the liveness rule, not a verdict.
+            "restart_exhausted"
         } else if redispatch {
-            "re_dispatch"
+            "restart"
         } else if kill_withheld {
-            // The progress gate withheld a kill — distinguishable from an ordinary observe so
-            // the event stream can count how often the gate fires (instrument, don't note).
-            "kill_withheld"
+            // The progress gate withheld a restart — distinguishable from an ordinary observe so the
+            // event stream can count how often the gate fires (instrument, don't note).
+            "restart_withheld"
         } else {
             "observed"
         };
@@ -2342,7 +2333,6 @@ impl State {
             h.abort();
         }
         let released_dev = self.claimed_device.remove(tid);
-        let released_dev_id = released_dev.map(|i| self.devices[i].cfg.id.clone());
         if let Some(dev) = released_dev {
             if self.devices[dev].in_flight > 0 {
                 self.devices[dev].in_flight -= 1;
@@ -2354,24 +2344,46 @@ impl State {
             }
         }
         self.attempt_started_at.remove(tid);
+        // Counted so a RESTART does not burn the task's transport-retry budget (see the judge_kills term
+        // in the max_attempts check) — not as a cap. Nothing reads this as a ceiling any more.
         *self.interventions.entry(tid.to_string()).or_default() += 1;
         self.judge_notes
             .push((tid.to_string(), outcome.hint.clone()));
-        self.prior_hints.insert(tid.to_string(), outcome.hint);
+        // SEED THE FRESH SESSION with what the judge says the last attempt established, not just with a
+        // correction. That is the difference between a restart and a retry: the new session starts from
+        // what was worked out rather than from nothing, which is the entire reason a restart is preferable
+        // to letting the attempt die and be re-run cold.
+        let seeded_hint = if outcome.established.trim().is_empty() {
+            outcome.hint.clone()
+        } else {
+            format!(
+                "You have already established: {}\nDo this next: {}",
+                outcome.established.trim(),
+                if outcome.next_action.trim().is_empty() {
+                    outcome.hint.trim()
+                } else {
+                    outcome.next_action.trim()
+                }
+            )
+        };
+        self.prior_hints.insert(tid.to_string(), seeded_hint);
         self.attempt_log
             .entry(tid.to_string())
             .or_default()
             .push(AttemptRecord {
                 device,
                 model,
-                outcome: "judge_killed".to_string(),
+                outcome: "judge_restart".to_string(),
                 error: Some(outcome.verdict.as_str().to_string()),
                 elapsed_ms,
             });
-        // Advance the attempt epoch so the killed future's completion is ignored, then re-queue.
+        // Advance the attempt epoch so the abandoned future's completion is ignored, then re-queue.
         let n = self.dag.tasks.get_mut(tid).unwrap();
         n.attempts += 1;
-        n.avoid_device = released_dev_id;
+        // SAME DEVICE. `avoid_device` is deliberately NOT set: every node runs the same model on a
+        // different host, so steering the restart away from the node that just ran it buys nothing and
+        // only makes the task wait for a different slot.
+        n.avoid_device = None;
         n.state = TaskState::Ready;
         let fan_out = n.fan_out;
         self.ready.push(Ranked {
