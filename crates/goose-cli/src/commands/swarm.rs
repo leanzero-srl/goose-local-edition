@@ -10,20 +10,22 @@ use super::swarm_control_registry::{
 };
 use super::swarm_provider_journal::DurableProviderLifecycleJournal;
 use super::swarm_provider_lifecycle::{
-    bind_current_provider_lifecycle, provider_lifecycle_active, scope_provider_lifecycle,
-    ProviderNudgeDeliveryFactory, ProviderStreamProgressMeter, ProviderStreamProgressSnapshot,
+    PreSchedulerProviderControl, ProviderNudgeDeliveryFactory, ProviderStreamProgressMeter,
+    ProviderStreamProgressSnapshot, bind_current_provider_lifecycle,
+    bind_pre_scheduler_provider_lifecycle, provider_lifecycle_active, scope_provider_lifecycle,
 };
 use super::swarm_semantic::{
-    activity_digest_key, ActivitySinkHealth, GooseAdmittedSemanticObservationReviewer,
+    ActivitySinkHealth, GooseAdmittedSemanticObservationReviewer,
     GooseSemanticObservationSnapshotProducer, GooseSemanticProviderRoute, ReasoningRecurrenceMeter,
+    activity_digest_key,
 };
-use anyhow::{anyhow, bail, Result};
+use anyhow::{Result, anyhow, bail};
 use async_trait::async_trait;
 use console::style;
 use futures::{FutureExt, StreamExt};
 use goose::agents::{
-    large_text_threshold, Agent, AgentConfig, AgentEvent, ExtensionConfig, GoosePlatform,
-    SessionConfig,
+    Agent, AgentConfig, AgentEvent, ExtensionConfig, GoosePlatform, SessionConfig,
+    large_text_threshold,
 };
 use goose::config::permission::PermissionManager;
 use goose::config::{Config, GooseMode};
@@ -31,18 +33,18 @@ use goose::context_mgmt::local_context_cap;
 use goose::conversation::message::{Message, MessageContent};
 use goose::providers::base::Provider;
 use goose::recipe::Response;
-use goose::session::session_manager::SessionType;
 use goose::session::SessionManager;
+use goose::session::session_manager::SessionType;
 use goose_swarm::scheduler::split_inherit_spec_enabled;
 use goose_swarm::{
-    deterministic_verdict, is_split_candidate, AdmissionReceipt, AuthorityScope, ChildSpec, Dag,
-    DeviceCfg, DispatchError, DispatchRequest, EventSink, HostCapacityEvidence, Judge, JudgeConfig,
-    JudgeInput, JudgeOutcome, JudgeRequest, NullSink, PhysicalAdmissionControl,
-    PhysicalExecutionAuthority, PhysicalFleetSnapshot, PreReviewOutput, PreReviewRequest,
-    PreReviewer, ProviderLifecycle, ProviderLifecycleDispatcher, ProviderNudgeDelivery,
-    ReplanAuthorityFact, ReplanAuthorityReceipt, ReplanContext, Replanner, Scheduler,
-    SemanticActivityPublisher, SwarmEvent, TaskDispatcher, TaskRunOutput, TaskSpec, ToolCallRecord,
-    Verdict, VerifiedPhysicalIdentity, WorkRole,
+    AdmissionReceipt, AuthorityScope, ChildSpec, Dag, DeviceCfg, DispatchError, DispatchRequest,
+    EventSink, HostCapacityEvidence, Judge, JudgeConfig, JudgeInput, JudgeOutcome, JudgeRequest,
+    NullSink, PhysicalAdmissionControl, PhysicalExecutionAuthority, PhysicalFleetSnapshot,
+    PreReviewOutput, PreReviewRequest, PreReviewer, ProviderLifecycle, ProviderLifecycleDispatcher,
+    ProviderNudgeDelivery, ReplanAuthorityFact, ReplanAuthorityReceipt, ReplanContext, Replanner,
+    Scheduler, SemanticActivityPublisher, SwarmEvent, TaskDispatcher, TaskRunOutput, TaskSpec,
+    ToolCallRecord, Verdict, VerifiedPhysicalIdentity, WorkRole, deterministic_verdict,
+    is_split_candidate,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -3502,6 +3504,15 @@ fn omni_judge_enabled(cfg: Option<bool>) -> bool {
     straggler_stop_resolved(std::env::var("GOOSE_SWARM_OMNI_JUDGE").ok(), cfg)
 }
 
+fn pre_scheduler_supervision_eligible(activity_key: Option<&str>) -> bool {
+    activity_key.is_some_and(|key| {
+        key.starts_with("research-pod-")
+            || key.starts_with("research-queue-")
+            || key.starts_with("plan-pod-")
+            || key.starts_with("plan-canonical-")
+    })
+}
+
 /// #136: treat a spec-DELEGATED decision as a design choice for the workers, not as spec unclarity.
 fn delegated_decisions_ok(cfg: Option<bool>) -> bool {
     straggler_stop_resolved(std::env::var("GOOSE_SWARM_DELEGATED_OK").ok(), cfg)
@@ -3581,6 +3592,16 @@ fn tails_recur(a: &std::collections::HashSet<u64>, b: &std::collections::HashSet
     }
     let inter = a.intersection(b).count();
     inter * 2 >= a.len().min(b.len())
+}
+
+fn pre_scheduler_observation_recurred(
+    previous_provider: Option<(u64, u64, u64)>,
+    current_provider: (u64, u64, u64),
+    previous_tail: Option<&std::collections::HashSet<u64>>,
+    current_tail: &std::collections::HashSet<u64>,
+) -> bool {
+    (current_provider.1 == 0 && previous_provider == Some(current_provider))
+        || previous_tail.is_some_and(|previous| tails_recur(previous, current_tail))
 }
 
 /// GOOSE_SWARM_UNCAPPED (Mihai 2026-08-21: "remove all caps … let it run and only stop if the
@@ -5533,7 +5554,7 @@ mod tests {
         )); // 89 -> still runs
         assert!(should_run_backbone_round2(true, true, 85)); // the lone historical adoption -> preserved
         assert!(should_run_backbone_round2(true, true, 53)); // shaky plan -> lock still available
-                                                             // Backbone off => never runs regardless of the skip lever/confidence.
+        // Backbone off => never runs regardless of the skip lever/confidence.
         assert!(!should_run_backbone_round2(false, false, 100));
         assert!(!should_run_backbone_round2(false, true, 50));
     }
@@ -5611,35 +5632,41 @@ mod tests {
         assert_eq!(compiled.findings.len(), 1);
 
         let wrong_role = raw.replace("requirements-coverage", "dag-interfaces");
-        assert!(compile_planning_audit(
-            &wrong_role,
-            PlanningAuditRole::RequirementsCoverage,
-            "model-a".to_string(),
-            &requirements,
-            &tasks,
-            &evidence,
-        )
-        .is_err());
+        assert!(
+            compile_planning_audit(
+                &wrong_role,
+                PlanningAuditRole::RequirementsCoverage,
+                "model-a".to_string(),
+                &requirements,
+                &tasks,
+                &evidence,
+            )
+            .is_err()
+        );
         let unknown = raw.replace("REQ-a", "REQ-invented");
-        assert!(compile_planning_audit(
-            &unknown,
-            PlanningAuditRole::RequirementsCoverage,
-            "model-a".to_string(),
-            &requirements,
-            &tasks,
-            &evidence,
-        )
-        .is_err());
+        assert!(
+            compile_planning_audit(
+                &unknown,
+                PlanningAuditRole::RequirementsCoverage,
+                "model-a".to_string(),
+                &requirements,
+                &tasks,
+                &evidence,
+            )
+            .is_err()
+        );
         let incomplete = raw.replace("\"complete\":true", "\"complete\":false");
-        assert!(compile_planning_audit(
-            &incomplete,
-            PlanningAuditRole::RequirementsCoverage,
-            "model-a".to_string(),
-            &requirements,
-            &tasks,
-            &evidence,
-        )
-        .is_err());
+        assert!(
+            compile_planning_audit(
+                &incomplete,
+                PlanningAuditRole::RequirementsCoverage,
+                "model-a".to_string(),
+                &requirements,
+                &tasks,
+                &evidence,
+            )
+            .is_err()
+        );
     }
 
     #[test]
@@ -5708,9 +5735,11 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec!["node-a", "node-b", "node-c"]
         );
-        assert!(assignments
-            .iter()
-            .all(|assignment| !assignment.requirements.is_empty()));
+        assert!(
+            assignments
+                .iter()
+                .all(|assignment| !assignment.requirements.is_empty())
+        );
         assert_eq!(
             assignments
                 .iter()
@@ -5767,14 +5796,18 @@ mod tests {
         let merged = merge_research_seed_ledgers(&assignments, ledgers).unwrap();
         assert_eq!(merged.questions.len(), requirements.len());
         assert_eq!(merged.findings.len(), requirements.len());
-        assert!(merged
-            .questions
-            .iter()
-            .all(|question| question.requirement_ids.len() == 1));
-        assert!(merged
-            .findings
-            .iter()
-            .all(|finding| finding.requirement_ids.len() == 1 && !finding.grounded));
+        assert!(
+            merged
+                .questions
+                .iter()
+                .all(|question| question.requirement_ids.len() == 1)
+        );
+        assert!(
+            merged
+                .findings
+                .iter()
+                .all(|finding| finding.requirement_ids.len() == 1 && !finding.grounded)
+        );
         assert!(merged.blocked_requirement_ids.is_empty());
     }
 
@@ -5971,13 +6004,15 @@ mod tests {
             "summary": "Complete."
         })
         .to_string();
-        assert!(compile_research_saturation(
-            &false_grounding,
-            &requirements,
-            &evidence,
-            &HashSet::new(),
-        )
-        .is_err());
+        assert!(
+            compile_research_saturation(
+                &false_grounding,
+                &requirements,
+                &evidence,
+                &HashSet::new(),
+            )
+            .is_err()
+        );
         let wrong_requirement_evidence = vec![ResearchEvidenceRecord {
             id: "RESEARCH-docs".to_string(),
             question: "What is the endpoint?".to_string(),
@@ -5987,13 +6022,15 @@ mod tests {
             grounded: true,
             lookups: vec!["web-search".to_string()],
         }];
-        assert!(compile_research_saturation(
-            &false_grounding,
-            &requirements,
-            &wrong_requirement_evidence,
-            &HashSet::new(),
-        )
-        .is_err());
+        assert!(
+            compile_research_saturation(
+                &false_grounding,
+                &requirements,
+                &wrong_requirement_evidence,
+                &HashSet::new(),
+            )
+            .is_err()
+        );
 
         let previous = ResearchQuestion {
             id: "endpoint-1".to_string(),
@@ -6794,11 +6831,12 @@ mod tests {
         assert!(!out.contains("turn-context"));
         assert!(!out.contains("current-time"));
         // The first 200 chars a research question sees are now ALL spec.
-        assert!(out
-            .chars()
-            .take(200)
-            .collect::<String>()
-            .contains("shared-expense splitter"));
+        assert!(
+            out.chars()
+                .take(200)
+                .collect::<String>()
+                .contains("shared-expense splitter")
+        );
     }
 
     #[test]
@@ -7089,7 +7127,7 @@ mod tests {
         assert!(is_stub_content("// TODO: implement\n"));
         assert!(is_stub_content("import Foundation")); // one meaningful line = trivial
         assert!(is_stub_content("")); // empty
-                                      // Real code is not a stub.
+        // Real code is not a stub.
         assert!(!is_stub_content(
             "func add(a: Int, b: Int) -> Int {\n    return a + b\n}\nlet x = add(1, 2)"
         ));
@@ -8894,8 +8932,7 @@ mod tests {
 
     #[test]
     fn spec_contract_parsing() {
-        let spec =
-            "It runs as `python3 -m quorum` which starts the server. REST: POST /api/polls; \
+        let spec = "It runs as `python3 -m quorum` which starts the server. REST: POST /api/polls; \
                     GET /api/polls/<id>; GET /api/polls/<id>/results; GET /api/polls (list).";
         assert_eq!(spec_python_entry(spec).as_deref(), Some("quorum"));
         let gets = spec_get_endpoints(spec);
@@ -9085,13 +9122,13 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
         assert_eq!(spec_clarity_score(true, 2), 68);
         assert_eq!(spec_clarity_score(true, 3), 52);
         assert_eq!(spec_clarity_score(true, 9), 30); // floored, count clamped
-                                                     // Undefined product: always LOW (<= 30 so it asks regardless of agreement) but VARIES with how many
-                                                     // axes are open — so vague specs no longer all snap to a flat 20.
+        // Undefined product: always LOW (<= 30 so it asks regardless of agreement) but VARIES with how many
+        // axes are open — so vague specs no longer all snap to a flat 20.
         assert_eq!(spec_clarity_score(false, 0), 30);
         assert_eq!(spec_clarity_score(false, 1), 24);
         assert_eq!(spec_clarity_score(false, 2), 18);
         assert_eq!(spec_clarity_score(false, 9), 8); // floored
-                                                     // Ask boundary vs a ~70 floor preserved: defined+0/1 proceed, defined+2 asks, undefined always asks.
+        // Ask boundary vs a ~70 floor preserved: defined+0/1 proceed, defined+2 asks, undefined always asks.
         assert!(spec_clarity_score(true, 1) >= 70);
         assert!(spec_clarity_score(true, 2) < 70);
         assert!(spec_clarity_score(false, 0) < 70);
@@ -10727,10 +10764,12 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
         );
 
         // A spec with nothing but GETs discloses nothing — the message must not fire on every run.
-        assert!(spec_unprobed_advertised(
-            "| Method | Path | Response |\n|---|---|---|\n| `GET` | `/api/health` | `{}` |\n"
-        )
-        .is_empty());
+        assert!(
+            spec_unprobed_advertised(
+                "| Method | Path | Response |\n|---|---|---|\n| `GET` | `/api/health` | `{}` |\n"
+            )
+            .is_empty()
+        );
         // And prose with no table stays empty rather than inventing an omission.
         assert!(spec_unprobed_advertised("Build a CLI. It should be fast.").is_empty());
     }
@@ -10969,18 +11008,24 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
                 requires_completed_artifact: true,
             }],
             objective: "Implement the exact payments read endpoint".to_string(),
-            acceptance_evidence: vec!["GET /v1/payments returns the exact JSON payload".to_string()],
+            acceptance_evidence: vec![
+                "GET /v1/payments returns the exact JSON payload".to_string(),
+            ],
         };
         let compiled = compile_task_detail(&raw, &input).unwrap();
         assert!(compiled.rendered.contains("- app/api.py"));
         assert!(compiled.rendered.contains("GET /v1/payments"));
         assert!(compiled.rendered.contains("X-Trace"));
-        assert!(compiled
-            .rendered
-            .contains("Objective: Implement the exact payments read endpoint"));
-        assert!(compiled
-            .rendered
-            .contains("get_payments(request) -> exact JSON response"));
+        assert!(
+            compiled
+                .rendered
+                .contains("Objective: Implement the exact payments read endpoint")
+        );
+        assert!(
+            compiled
+                .rendered
+                .contains("get_payments(request) -> exact JSON response")
+        );
         assert!(compiled.rendered.contains("Required acceptance evidence:"));
         assert_eq!(compiled.citations, 1);
         assert_eq!(compiled.interfaces, 1);
@@ -11059,7 +11104,7 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
                         requirement_ids: vec!["REQ-route".to_string()],
                         evidence_ids: vec!["EVID-vendor".to_string()],
                         acceptance_evidence: vec![
-                            "A missing X-Trace header returns status 400".to_string()
+                            "A missing X-Trace header returns status 400".to_string(),
                         ],
                     }],
                 },
@@ -11250,9 +11295,11 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
         })
         .to_string();
         let error = compile_task_detail(&raw, &input).unwrap_err();
-        assert!(error
-            .to_string()
-            .contains("authoritative acceptance_evidence"));
+        assert!(
+            error
+                .to_string()
+                .contains("authoritative acceptance_evidence")
+        );
     }
 
     #[test]
@@ -11506,44 +11553,50 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
 
         let mut missing = original.clone();
         missing["task_coverage"][0]["owns_requirement_ids"] = serde_json::json!(["REQ-route"]);
-        assert!(compile_canonical_plan_adjudication(
-            &missing.to_string(),
-            &requirements,
-            &evidence,
-            &candidates,
-            &runtime_models,
-        )
-        .unwrap_err()
-        .to_string()
-        .contains("uncovered"));
+        assert!(
+            compile_canonical_plan_adjudication(
+                &missing.to_string(),
+                &requirements,
+                &evidence,
+                &candidates,
+                &runtime_models,
+            )
+            .unwrap_err()
+            .to_string()
+            .contains("uncovered")
+        );
 
         let mut invented_evidence = original.clone();
         invented_evidence["task_coverage"][0]["evidence_ids"] =
             serde_json::json!(["EVID-invented"]);
-        assert!(compile_canonical_plan_adjudication(
-            &invented_evidence.to_string(),
-            &requirements,
-            &evidence,
-            &candidates,
-            &runtime_models,
-        )
-        .unwrap_err()
-        .to_string()
-        .contains("canonical.evidence_ids"));
+        assert!(
+            compile_canonical_plan_adjudication(
+                &invented_evidence.to_string(),
+                &requirements,
+                &evidence,
+                &candidates,
+                &runtime_models,
+            )
+            .unwrap_err()
+            .to_string()
+            .contains("canonical.evidence_ids")
+        );
 
         let mut invented_model = original;
         invented_model["canonical_plan"]["subtasks"][0]["model"] =
             serde_json::json!("renamed-model");
-        assert!(compile_canonical_plan_adjudication(
-            &invented_model.to_string(),
-            &requirements,
-            &evidence,
-            &candidates,
-            &runtime_models,
-        )
-        .unwrap_err()
-        .to_string()
-        .contains("invented runtime model"));
+        assert!(
+            compile_canonical_plan_adjudication(
+                &invented_model.to_string(),
+                &requirements,
+                &evidence,
+                &candidates,
+                &runtime_models,
+            )
+            .unwrap_err()
+            .to_string()
+            .contains("invented runtime model")
+        );
     }
 
     #[test]
@@ -11561,32 +11614,36 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
             }));
         makework["canonical_plan"]["subtasks"][2]["depends_on"] =
             serde_json::json!(["api", "test-api", "test-dashboard"]);
-        assert!(compile_canonical_plan_adjudication(
-            &makework.to_string(),
-            &requirements,
-            &evidence,
-            &candidates,
-            &runtime_models,
-        )
-        .unwrap_err()
-        .to_string()
-        .contains("no requirement role"));
+        assert!(
+            compile_canonical_plan_adjudication(
+                &makework.to_string(),
+                &requirements,
+                &evidence,
+                &candidates,
+                &runtime_models,
+            )
+            .unwrap_err()
+            .to_string()
+            .contains("no requirement role")
+        );
 
         let mut bad_conflict = original;
         bad_conflict["material_conflicts"] = serde_json::json!([{
             "requirement_ids": ["REQ-invented"],
             "summary": "The operator must choose."
         }]);
-        assert!(compile_canonical_plan_adjudication(
-            &bad_conflict.to_string(),
-            &requirements,
-            &evidence,
-            &candidates,
-            &runtime_models,
-        )
-        .unwrap_err()
-        .to_string()
-        .contains("unknown requirement"));
+        assert!(
+            compile_canonical_plan_adjudication(
+                &bad_conflict.to_string(),
+                &requirements,
+                &evidence,
+                &candidates,
+                &runtime_models,
+            )
+            .unwrap_err()
+            .to_string()
+            .contains("unknown requirement")
+        );
     }
 
     #[test]
@@ -11636,30 +11693,34 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
             serde_json::json!(["REQ-test", "REQ-route"]);
         decision["task_coverage"][1]["verifies_requirement_ids"] =
             serde_json::json!(["REQ-header"]);
-        assert!(compile_canonical_plan_adjudication(
-            &decision.to_string(),
-            &requirements,
-            &evidence,
-            &candidates,
-            &runtime_models,
-        )
-        .unwrap_err()
-        .to_string()
-        .contains("more than one primary owner"));
+        assert!(
+            compile_canonical_plan_adjudication(
+                &decision.to_string(),
+                &requirements,
+                &evidence,
+                &candidates,
+                &runtime_models,
+            )
+            .unwrap_err()
+            .to_string()
+            .contains("more than one primary owner")
+        );
 
         let (_, _, _, decision, _) = canonical_plan_fixture();
         let mut poisoned: serde_json::Value = serde_json::from_str(&candidates[0]).unwrap();
         poisoned["subtasks"][0]["model"] = serde_json::json!("candidate-invented-model");
-        assert!(compile_canonical_plan_adjudication(
-            &decision.to_string(),
-            &requirements,
-            &evidence,
-            &[poisoned.to_string()],
-            &runtime_models,
-        )
-        .unwrap_err()
-        .to_string()
-        .contains("outside the resolved runtime roster"));
+        assert!(
+            compile_canonical_plan_adjudication(
+                &decision.to_string(),
+                &requirements,
+                &evidence,
+                &[poisoned.to_string()],
+                &runtime_models,
+            )
+            .unwrap_err()
+            .to_string()
+            .contains("outside the resolved runtime roster")
+        );
     }
 
     #[test]
@@ -11669,44 +11730,50 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
 
         let mut unsafe_path = original.clone();
         unsafe_path["canonical_plan"]["subtasks"][0]["files"] = serde_json::json!(["../api.py"]);
-        assert!(compile_canonical_plan_adjudication(
-            &unsafe_path.to_string(),
-            &requirements,
-            &evidence,
-            &candidates,
-            &runtime_models,
-        )
-        .unwrap_err()
-        .to_string()
-        .contains("not project-relative"));
+        assert!(
+            compile_canonical_plan_adjudication(
+                &unsafe_path.to_string(),
+                &requirements,
+                &evidence,
+                &candidates,
+                &runtime_models,
+            )
+            .unwrap_err()
+            .to_string()
+            .contains("not project-relative")
+        );
 
         let mut overlap = original.clone();
         overlap["canonical_plan"]["subtasks"][1]["files"] = serde_json::json!(["src/api.py"]);
-        assert!(compile_canonical_plan_adjudication(
-            &overlap.to_string(),
-            &requirements,
-            &evidence,
-            &candidates,
-            &runtime_models,
-        )
-        .unwrap_err()
-        .to_string()
-        .contains("overlaps tasks"));
+        assert!(
+            compile_canonical_plan_adjudication(
+                &overlap.to_string(),
+                &requirements,
+                &evidence,
+                &candidates,
+                &runtime_models,
+            )
+            .unwrap_err()
+            .to_string()
+            .contains("overlaps tasks")
+        );
 
         let mut disconnected = original;
         disconnected["canonical_plan"]["subtasks"][1]["files"] =
             serde_json::json!(["src/second.py"]);
         disconnected["canonical_plan"]["subtasks"][2]["depends_on"] = serde_json::json!(["api"]);
-        assert!(compile_canonical_plan_adjudication(
-            &disconnected.to_string(),
-            &requirements,
-            &evidence,
-            &candidates,
-            &runtime_models,
-        )
-        .unwrap_err()
-        .to_string()
-        .contains("disconnected completion closures"));
+        assert!(
+            compile_canonical_plan_adjudication(
+                &disconnected.to_string(),
+                &requirements,
+                &evidence,
+                &candidates,
+                &runtime_models,
+            )
+            .unwrap_err()
+            .to_string()
+            .contains("disconnected completion closures")
+        );
     }
 
     #[test]
@@ -11724,9 +11791,11 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
         assert_eq!(normalized.len(), 1);
         let value: serde_json::Value = serde_json::from_str(&normalized[0]).unwrap();
         assert!(value.get("poisoned_top_level_authority").is_none());
-        assert!(value["subtasks"][0]
-            .get("poisoned_task_authority")
-            .is_none());
+        assert!(
+            value["subtasks"][0]
+                .get("poisoned_task_authority")
+                .is_none()
+        );
 
         let disconnected = serde_json::json!({"subtasks":[
             {"id":"api", "description":"API", "model":"qwen", "depends_on":[], "files":["src/api.py"]},
@@ -11786,15 +11855,17 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
             .as_object_mut()
             .unwrap()
             .remove(CANONICAL_TASK_COVERAGE_FIELD);
-        assert!(validate_canonical_authoritative_plan(
-            &uncovered,
-            &requirements,
-            &evidence,
-            &runtime_models,
-        )
-        .unwrap_err()
-        .to_string()
-        .contains("no typed requirement coverage"));
+        assert!(
+            validate_canonical_authoritative_plan(
+                &uncovered,
+                &requirements,
+                &evidence,
+                &runtime_models,
+            )
+            .unwrap_err()
+            .to_string()
+            .contains("no typed requirement coverage")
+        );
 
         let mut poisoned_model = transformed;
         poisoned_model["subtasks"]
@@ -11803,15 +11874,17 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
             .iter_mut()
             .find(|task| task["id"] == "verify::api")
             .unwrap()["model"] = serde_json::json!("invented-model");
-        assert!(validate_canonical_authoritative_plan(
-            &poisoned_model,
-            &requirements,
-            &evidence,
-            &runtime_models,
-        )
-        .unwrap_err()
-        .to_string()
-        .contains("outside the resolved runtime roster"));
+        assert!(
+            validate_canonical_authoritative_plan(
+                &poisoned_model,
+                &requirements,
+                &evidence,
+                &runtime_models,
+            )
+            .unwrap_err()
+            .to_string()
+            .contains("outside the resolved runtime roster")
+        );
     }
 
     #[test]
@@ -11943,11 +12016,12 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
         .unwrap();
         let raw_spec = "Build the exact payments service.";
         let mut plan: serde_json::Value = serde_json::from_str(&compiled.plan_json).unwrap();
-        plan["canonical_plan_authority"]["requirement_ids"] =
-            serde_json::json!(normalized_requirement_inventory(raw_spec)
+        plan["canonical_plan_authority"]["requirement_ids"] = serde_json::json!(
+            normalized_requirement_inventory(raw_spec)
                 .into_iter()
                 .map(|requirement| requirement.id)
-                .collect::<Vec<_>>());
+                .collect::<Vec<_>>()
+        );
         let plan = plan.to_string();
         assert!(!canonical_plan_needs_binding_refresh(&plan, raw_spec).unwrap());
         let decisions = format!("{USER_DECISIONS_HEADER}- Use `|` as the exact separator.\n");
@@ -12040,43 +12114,49 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
 
         let mut role_poison = binding.clone();
         role_poison["bindings"][0]["applies_requirement_ids"] = serde_json::json!(["REQ-test"]);
-        assert!(compile_requirement_binding(
-            &role_poison.to_string(),
-            &requirements,
-            &evidence,
-            &compiled.plan_json,
-            &ids,
-        )
-        .unwrap_err()
-        .to_string()
-        .contains("roles diverged"));
+        assert!(
+            compile_requirement_binding(
+                &role_poison.to_string(),
+                &requirements,
+                &evidence,
+                &compiled.plan_json,
+                &ids,
+            )
+            .unwrap_err()
+            .to_string()
+            .contains("roles diverged")
+        );
 
         let mut file_poison = binding.clone();
         file_poison["bindings"][0]["owned_files"] =
             serde_json::json!(["src/api.py", "src/extra.py"]);
-        assert!(compile_requirement_binding(
-            &file_poison.to_string(),
-            &requirements,
-            &evidence,
-            &compiled.plan_json,
-            &ids,
-        )
-        .unwrap_err()
-        .to_string()
-        .contains("changed frozen file ownership"));
+        assert!(
+            compile_requirement_binding(
+                &file_poison.to_string(),
+                &requirements,
+                &evidence,
+                &compiled.plan_json,
+                &ids,
+            )
+            .unwrap_err()
+            .to_string()
+            .contains("changed frozen file ownership")
+        );
 
         let mut dependency_poison = binding;
         dependency_poison["bindings"][0]["depends_on"] = serde_json::json!(["test-api"]);
-        assert!(compile_requirement_binding(
-            &dependency_poison.to_string(),
-            &requirements,
-            &evidence,
-            &compiled.plan_json,
-            &ids,
-        )
-        .unwrap_err()
-        .to_string()
-        .contains("changed frozen dependencies"));
+        assert!(
+            compile_requirement_binding(
+                &dependency_poison.to_string(),
+                &requirements,
+                &evidence,
+                &compiled.plan_json,
+                &ids,
+            )
+            .unwrap_err()
+            .to_string()
+            .contains("changed frozen dependencies")
+        );
     }
 
     #[test]
@@ -12152,14 +12232,18 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
             vec!["REQ-route"]
         );
         assert_eq!(route.evidence[0].id, "EVID-route");
-        assert!(!route
-            .requirements
-            .iter()
-            .any(|requirement| requirement.quote.contains("X-Trace")));
-        assert!(!route
-            .evidence
-            .iter()
-            .any(|record| record.id == "EVID-unrelated"));
+        assert!(
+            !route
+                .requirements
+                .iter()
+                .any(|requirement| requirement.quote.contains("X-Trace"))
+        );
+        assert!(
+            !route
+                .evidence
+                .iter()
+                .any(|record| record.id == "EVID-unrelated")
+        );
     }
 
     #[test]
@@ -12196,9 +12280,11 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
             &detail_ids,
         )
         .unwrap_err();
-        assert!(duplicate_error
-            .to_string()
-            .contains("multiple primary owners"));
+        assert!(
+            duplicate_error
+                .to_string()
+                .contains("multiple primary owners")
+        );
 
         let mut overlap = original.clone();
         overlap["bindings"][1]["owned_files"] =
@@ -12227,9 +12313,11 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
             &detail_ids,
         )
         .unwrap_err();
-        assert!(edge_error
-            .to_string()
-            .contains("requires completed artifact"));
+        assert!(
+            edge_error
+                .to_string()
+                .contains("requires completed artifact")
+        );
     }
 
     #[test]
@@ -12331,9 +12419,11 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
             &detail_ids,
         )
         .unwrap_err();
-        assert!(edge_error
-            .to_string()
-            .contains("removed selected-plan dependencies"));
+        assert!(
+            edge_error
+                .to_string()
+                .contains("removed selected-plan dependencies")
+        );
 
         let mut moved_file = original;
         moved_file["bindings"][0]["owned_files"] = serde_json::json!([]);
@@ -12347,9 +12437,11 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
             &detail_ids,
         )
         .unwrap_err();
-        assert!(file_error
-            .to_string()
-            .contains("moved or dropped selected-plan files"));
+        assert!(
+            file_error
+                .to_string()
+                .contains("moved or dropped selected-plan files")
+        );
     }
 
     #[test]
@@ -12393,9 +12485,11 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
         )
         .unwrap();
         assert_eq!(compiled.delivered_artifacts, 1);
-        assert!(compiled.tasks["api"]
-            .owned_files
-            .contains(&"web/app.js".to_string()));
+        assert!(
+            compiled.tasks["api"]
+                .owned_files
+                .contains(&"web/app.js".to_string())
+        );
 
         let (_, ordinary_requirements, _, mut invented) = requirement_binding_fixture();
         invented["bindings"][0]["owned_files"] =
@@ -12408,9 +12502,11 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
             &detail_ids,
         )
         .unwrap_err();
-        assert!(invented_error
-            .to_string()
-            .contains("not classified as delivered artifacts"));
+        assert!(
+            invented_error
+                .to_string()
+                .contains("not classified as delivered artifacts")
+        );
     }
 
     #[test]
@@ -12510,19 +12606,21 @@ commands, the two database files, the `web/` files and `DECISIONS.md` are the co
             HashSet::from(["DECISIONS.md", "ledger.db", "notifier.db", "--db-dir"])
         );
         raw["bindings"][0]["owned_files"] = serde_json::json!(["src/api.py", "DECISIONS.md"]);
-        raw["artifact_evidence"] = serde_json::json!(candidates
-            .iter()
-            .map(|candidate| serde_json::json!({
-                "candidate_id": candidate.id,
-                "kind": match candidate.literal.as_str() {
-                    "DECISIONS.md" => "delivered_artifact",
-                    "ledger.db" | "notifier.db" => "runtime_data",
-                    "--db-dir" => "interface",
-                    literal => panic!("unexpected SB7 artifact candidate: {literal}"),
-                },
-                "task_id": "api"
-            }))
-            .collect::<Vec<_>>());
+        raw["artifact_evidence"] = serde_json::json!(
+            candidates
+                .iter()
+                .map(|candidate| serde_json::json!({
+                    "candidate_id": candidate.id,
+                    "kind": match candidate.literal.as_str() {
+                        "DECISIONS.md" => "delivered_artifact",
+                        "ledger.db" | "notifier.db" => "runtime_data",
+                        "--db-dir" => "interface",
+                        literal => panic!("unexpected SB7 artifact candidate: {literal}"),
+                    },
+                    "task_id": "api"
+                }))
+                .collect::<Vec<_>>()
+        );
         let detail_ids = ["api".into(), "test-api".into(), "integrate-verify".into()];
 
         let compiled = compile_requirement_binding(
@@ -12536,12 +12634,16 @@ commands, the two database files, the `web/` files and `DECISIONS.md` are the co
         assert_eq!(compiled.delivered_artifacts, 1);
         assert_eq!(compiled.runtime_data_literals, 2);
         assert_eq!(compiled.interface_literals, 1);
-        assert!(!compiled.tasks["api"]
-            .owned_files
-            .contains(&"ledger.db".to_string()));
-        assert!(!compiled.tasks["api"]
-            .owned_files
-            .contains(&"notifier.db".to_string()));
+        assert!(
+            !compiled.tasks["api"]
+                .owned_files
+                .contains(&"ledger.db".to_string())
+        );
+        assert!(
+            !compiled.tasks["api"]
+                .owned_files
+                .contains(&"notifier.db".to_string())
+        );
 
         let mut missing_evidence = raw.clone();
         missing_evidence["artifact_evidence"]
@@ -12556,9 +12658,11 @@ commands, the two database files, the `web/` files and `DECISIONS.md` are the co
             &detail_ids,
         )
         .unwrap_err();
-        assert!(missing_error
-            .to_string()
-            .contains("does not classify every quoted candidate"));
+        assert!(
+            missing_error
+                .to_string()
+                .contains("does not classify every quoted candidate")
+        );
 
         let mut source_owned_runtime = raw;
         source_owned_runtime["bindings"][0]["owned_files"] =
@@ -12571,9 +12675,11 @@ commands, the two database files, the `web/` files and `DECISIONS.md` are the co
             &detail_ids,
         )
         .unwrap_err();
-        assert!(runtime_error
-            .to_string()
-            .contains("incorrectly source-owned"));
+        assert!(
+            runtime_error
+                .to_string()
+                .contains("incorrectly source-owned")
+        );
     }
 
     #[test]
@@ -12644,9 +12750,11 @@ commands, the two database files, the `web/` files and `DECISIONS.md` are the co
             },
         ];
         let error = validate_integration_closure(&disconnected).unwrap_err();
-        assert!(error
-            .to_string()
-            .contains("disconnected completion closures"));
+        assert!(
+            error
+                .to_string()
+                .contains("disconnected completion closures")
+        );
         assert!(error.to_string().contains("assemble-api"));
         assert!(error.to_string().contains("release-web"));
 
@@ -12932,12 +13040,14 @@ commands, the two database files, the `web/` files and `DECISIONS.md` are the co
             command_probe_finding("", "error: 'str' object has no attribute 'mkdir'", Some(1))
                 .is_some()
         );
-        assert!(command_probe_finding(
-            "",
-            "error: unsupported operand type(s) for /: 'str' and 'str'",
-            Some(1)
-        )
-        .is_some());
+        assert!(
+            command_probe_finding(
+                "",
+                "error: unsupported operand type(s) for /: 'str' and 'str'",
+                Some(1)
+            )
+            .is_some()
+        );
         assert!(command_probe_finding("", "Traceback (most recent call last):", Some(1)).is_some());
 
         // HONEST usage errors must NOT be findings — `raftkv set` with no args SHOULD exit nonzero, and
@@ -13610,8 +13720,7 @@ commands, the two database files, the `web/` files and `DECISIONS.md` are the co
         // Python, the user picks Rust, and previously the answer went only into research findings (which
         // detect_language never reads) so the run silently stayed Python. Appending the Q&A block (which
         // embeds "A: Rust ...") must flip the detected language — that flip is what forces the re-plan.
-        let spec =
-            "Build a small command-line developer utility that saves time in day-to-day work. \
+        let spec = "Build a small command-line developer utility that saves time in day-to-day work. \
                     Pick something genuinely useful and make it good.";
         assert_eq!(detect_language(spec, &[]), TargetLang::Python);
         // The real Q&A block shape from ask_clarifying_questions (question + verbatim answer).
@@ -14508,7 +14617,7 @@ commands, the two database files, the `web/` files and `DECISIONS.md` are the co
         assert!(!resolve_gate(Some("off".to_string()), true, true));
         assert!(resolve_gate(Some("1".to_string()), false, true)); // assured off + explicit on -> on
         assert!(resolve_gate(Some("true".to_string()), false, false)); // explicit on even outside the bundle
-                                                                       // Truthy set matches the shipped pattern; unrecognized -> false (as the old checks did).
+        // Truthy set matches the shipped pattern; unrecognized -> false (as the old checks did).
         assert!(resolve_gate(Some(" YES ".to_string()), false, false)); // trimmed + case-insensitive
         assert!(!resolve_gate(Some("maybe".to_string()), true, true));
     }
@@ -14937,9 +15046,11 @@ commands, the two database files, the `web/` files and `DECISIONS.md` are the co
     fn generated_tests_extract_fenced_or_bare_but_never_garbage() {
         // Fenced: unchanged behavior.
         let fenced = "here you go\n```python\nimport pytest\n\ndef test_a():\n    assert 1\n```";
-        assert!(extract_generated_tests(fenced)
-            .unwrap()
-            .starts_with("import pytest"));
+        assert!(
+            extract_generated_tests(fenced)
+                .unwrap()
+                .starts_with("import pytest")
+        );
         // F804-batch: a BARE reply (the measured 0/3 class) lands via the fallback — reasoning
         // preamble stripped to the first import/def line.
         let bare = "I'll write the tests now. They cover the happy path.\n\nimport pytest\n\ndef test_b():\n    assert 2";
@@ -15289,7 +15400,7 @@ commands, the two database files, the `web/` files and `DECISIONS.md` are the co
         assert_eq!(cli.findings.len(), 2);
         assert!(groups.iter().any(|g| g.file == "tests/test_a.py"));
         assert_eq!(unassigned.len(), 1); // the file-less finding
-                                         // Partition invariant: every group names a distinct file.
+        // Partition invariant: every group names a distinct file.
         let files: std::collections::HashSet<_> = groups.iter().map(|g| &g.file).collect();
         assert_eq!(files.len(), groups.len());
     }
@@ -15452,7 +15563,7 @@ commands, the two database files, the `web/` files and `DECISIONS.md` are the co
         assert_eq!(f(2), "tests/test_stats.py"); // dir-prefixed untouched
         assert_eq!(f(3), "gradebook/__main__.py"); // already-prefixed untouched
         assert_eq!(f(4), "conftest.py"); // root non-collision untouched
-                                         // NO package (greenfield / empty existing set) -> no-op.
+        // NO package (greenfield / empty existing set) -> no-op.
         let mut v2 = serde_json::json!({"subtasks":[{"id":"s","files":["stats.py"]}]});
         assert_eq!(
             normalize_plan_files_to_package(&mut v2, pkg, &HashSet::new()),
@@ -15483,6 +15594,29 @@ commands, the two database files, the `web/` files and `DECISIONS.md` are the co
                 .repeat(30),
         );
         assert!(!tails_recur(&h1, &h2), "distinct content must not recur");
+    }
+
+    #[test]
+    fn pre_scheduler_semantic_corroboration_sees_zero_byte_stall_without_a_time_cap() {
+        let zero_byte = (0, 0, 0);
+        assert!(!pre_scheduler_observation_recurred(
+            None,
+            zero_byte,
+            None,
+            &HashSet::new(),
+        ));
+        assert!(pre_scheduler_observation_recurred(
+            Some(zero_byte),
+            zero_byte,
+            None,
+            &HashSet::new(),
+        ));
+        assert!(!pre_scheduler_observation_recurred(
+            Some(zero_byte),
+            (1, 1, 4096),
+            None,
+            &HashSet::new(),
+        ));
     }
 
     #[test]
@@ -15623,12 +15757,14 @@ commands, the two database files, the `web/` files and `DECISIONS.md` are the co
             .map(|f| f.as_str().unwrap())
             .collect();
         assert!(ledgerd_files.contains(&"app/ledgerd/__main__.py"));
-        assert!(v["subtasks"][1]["description"]
-            .as_str()
-            .map(str::to_string)
-            .unwrap_or_default()
-            .is_empty()); // no description field on input -> note skipped, never invented
-                          // The verify task (owns nothing) must never be picked.
+        assert!(
+            v["subtasks"][1]["description"]
+                .as_str()
+                .map(str::to_string)
+                .unwrap_or_default()
+                .is_empty()
+        ); // no description field on input -> note skipped, never invented
+        // The verify task (owns nothing) must never be picked.
         assert!(v["subtasks"][3]["files"].as_array().unwrap().is_empty());
 
         // Already satisfied (entry owned) and module form (X.py owned): both no-ops.
@@ -15636,11 +15772,13 @@ commands, the two database files, the `web/` files and `DECISIONS.md` are the co
             {"id":"a","files":["app/__main__.py"],"description":"d"},
             {"id":"b","files":["app/ledgerd.py"],"description":"d"}
         ]});
-        assert!(require_advertised_entry_files(
-            &mut sat,
-            "boot `python -m app` and `python -m app.ledgerd`"
-        )
-        .is_empty());
+        assert!(
+            require_advertised_entry_files(
+                &mut sat,
+                "boot `python -m app` and `python -m app.ledgerd`"
+            )
+            .is_empty()
+        );
         assert_eq!(sat["subtasks"][0]["description"].as_str().unwrap(), "d");
 
         // A description that exists gains the note exactly once, with the invocation named.
@@ -15683,10 +15821,12 @@ commands, the two database files, the `web/` files and `DECISIONS.md` are the co
         })
         .to_string();
         let stale_dag = Dag::from_planner_json(&plan).unwrap();
-        assert!(!stale_dag.tasks["service"]
-            .spec
-            .owned_files
-            .contains(&"app/__main__.py".to_string()));
+        assert!(
+            !stale_dag.tasks["service"]
+                .spec
+                .owned_files
+                .contains(&"app/__main__.py".to_string())
+        );
 
         let (final_json, dispatch_dag, added) = finalize_advertised_entry_plan(
             plan,
@@ -15699,10 +15839,12 @@ commands, the two database files, the `web/` files and `DECISIONS.md` are the co
             vec!["app/__main__.py".to_string()],
             "the existing package already owns a source file, so only its entry is missing"
         );
-        assert!(dispatch_dag.tasks["service"]
-            .spec
-            .owned_files
-            .contains(&"app/__main__.py".to_string()));
+        assert!(
+            dispatch_dag.tasks["service"]
+                .spec
+                .owned_files
+                .contains(&"app/__main__.py".to_string())
+        );
 
         let reparsed = Dag::from_planner_json(&final_json).unwrap();
         for task_id in ["service", "integrate-verify"] {
@@ -15848,20 +15990,24 @@ commands, the two database files, the `web/` files and `DECISIONS.md` are the co
         };
         let ambiguous = HashSet::from(["shared-model".to_string()]);
         let served = HashSet::from(["shared-model".to_string()]);
-        assert!(verified_physical_identity(
-            &process,
-            &ambiguous,
-            Some(&served),
-            "http://lm-link.test/v1/chat/completions"
-        )
-        .is_none());
-        assert!(verified_physical_identity(
-            &process,
-            &HashSet::new(),
-            None,
-            "http://lm-link.test/v1/chat/completions"
-        )
-        .is_none());
+        assert!(
+            verified_physical_identity(
+                &process,
+                &ambiguous,
+                Some(&served),
+                "http://lm-link.test/v1/chat/completions"
+            )
+            .is_none()
+        );
+        assert!(
+            verified_physical_identity(
+                &process,
+                &HashSet::new(),
+                None,
+                "http://lm-link.test/v1/chat/completions"
+            )
+            .is_none()
+        );
     }
 
     #[test]
@@ -15897,10 +16043,11 @@ commands, the two database files, the `web/` files and `DECISIONS.md` are the co
         assert!(s.skipped_existing.is_empty());
         assert!(s.skipped_collision.is_empty());
         assert_eq!(cfg.devices.len(), 5);
-        assert!(cfg
-            .devices
-            .iter()
-            .all(|d| d.weight == 2 && d.host.is_some()));
+        assert!(
+            cfg.devices
+                .iter()
+                .all(|d| d.weight == 2 && d.host.is_some())
+        );
     }
 
     #[test]
@@ -20192,8 +20339,36 @@ impl GooseAgentDispatcher {
                 session_id: session_id.clone(),
             });
         let provider_stream_progress = Arc::new(ProviderStreamProgressMeter::new());
+        let physical_provider_lifecycle = provider_lifecycle_active();
+        let pre_scheduler_provider_control =
+            if !physical_provider_lifecycle && pre_scheduler_supervision_eligible(activity_key) {
+                let events = self.events.clone();
+                let task_id = activity_key.unwrap_or("pre-scheduler").to_string();
+                let model = model_id.to_string();
+                Some(Arc::new(PreSchedulerProviderControl::new(Arc::new(
+                    move |lifecycle| {
+                        events.write_value(serde_json::json!({
+                            "event": "pre_scheduler_provider_lifecycle",
+                            "task_id": task_id,
+                            "model": model,
+                            "lifecycle": lifecycle,
+                        }));
+                    },
+                ))))
+            } else {
+                None
+            };
+        let provider = self.provider_for(model_id).await?;
+        let provider = match &pre_scheduler_provider_control {
+            Some(control) => bind_pre_scheduler_provider_lifecycle(
+                provider,
+                nudge_factory.clone(),
+                control.clone(),
+            ),
+            None => provider,
+        };
         let provider = bind_current_provider_lifecycle(
-            self.provider_for(model_id).await?,
+            provider,
             Some(nudge_factory),
             Some(provider_stream_progress.clone()),
         );
@@ -20247,7 +20422,7 @@ impl GooseAgentDispatcher {
             retry_config: None,
         };
 
-        let physical_activity_required = provider_lifecycle_active();
+        let physical_activity_required = physical_provider_lifecycle;
         if physical_activity_required && activity_key.is_none() {
             return Err(anyhow!(
                 "physical provider dispatch has no semantic activity task id"
@@ -20485,10 +20660,11 @@ impl GooseAgentDispatcher {
         // they have no retry path — cutting one loses the whole planning round. The integrate-verify SINK is
         // exempt for the same reason the thinking watchdog exempts it (it owns no deliverable and is bounded by
         // its own wall-clock cap). OFF => these stay untouched and nothing below runs => byte-identical.
-        let repeat_break_on = (self.repeat_break || semantic_saturation_call)
+        let repeat_break_on = self.repeat_break
             && activity_key.is_some()
             && activity_key != Some("integrate-verify")
-            && !authority_compiler;
+            && !authority_compiler
+            && !semantic_saturation_call;
         // #135 GLOBAL SPIRAL BREAK. Authority-bearing response compilers are exempt: detail no longer has a
         // one-line fallback, and silently dropping a contract result is not equivalent to finishing it.
         let spiral_budget = if authority_compiler || semantic_saturation_call {
@@ -20502,12 +20678,12 @@ impl GooseAgentDispatcher {
         // #135 OMNI-JUDGE: armed for calls with an activity key that have a safe continuation path. It is
         // deliberately not synchronous supervision for authority compilers until provider-terminal
         // cancellation and same-session continuation are proven end to end.
+        let locally_supervised_call = pre_scheduler_provider_control.is_some();
         let omni_judge_on = omni_judge_enabled(load_config().omni_judge)
             && !provider_lifecycle_active()
             && activity_key.is_some()
             && activity_key != Some("integrate-verify")
-            && !authority_compiler
-            && !semantic_saturation_call;
+            && ((!authority_compiler && !semantic_saturation_call) || locally_supervised_call);
         let mut omni_next_look = tokio::time::Instant::now()
             + std::time::Duration::from_secs(OMNI_JUDGE_FIRST_LOOK_SECS);
         let mut omni_looks: u32 = 0;
@@ -20515,6 +20691,8 @@ impl GooseAgentDispatcher {
         // content is a slow-starting call misread twice, not a loop — see the abort site.
         let mut omni_looping_streak: u32 = 0;
         let mut omni_prev_looping_tail: Option<std::collections::HashSet<u64>> = None;
+        let mut omni_prev_looping_provider: Option<(u64, u64, u64)> = None;
+        let mut omni_prev_provider_observation: Option<(u64, u64, u64)> = None;
         // F790-1: in-session redirects issued for this task (bounded by JUDGE_NUDGE_MAX).
         let mut nudges_used: u32 = 0;
         let mut repeat_hash: Option<u64> = None;
@@ -20538,11 +20716,12 @@ impl GooseAgentDispatcher {
             // aborts THIS call only; it can never fail a task or a run (a model verdict has
             // JudgeOutcome.deterministic == false, and scheduler.rs's terminal-fail requires it).
             if omni_judge_on
-                && (omni_looks < OMNI_JUDGE_MAX_LOOKS || uncapped())
-                && thinking_chars >= OMNI_JUDGE_MIN_CHARS
+                && (locally_supervised_call || omni_looks < OMNI_JUDGE_MAX_LOOKS || uncapped())
+                && (thinking_chars >= OMNI_JUDGE_MIN_CHARS
+                    || locally_supervised_call && provider_stream_progress.snapshot().chunks == 0)
                 && tokio::time::Instant::now() >= omni_next_look
             {
-                omni_looks += 1;
+                omni_looks = omni_looks.saturating_add(1);
                 // UNCAPPED keeps the judge watching for the call's whole life — with every wall and
                 // volume cap gone it is the ONLY stopper left, and a cap on its looks would turn
                 // "the judge decides" into "nothing decides after minute ~7". Past the normal look
@@ -20564,14 +20743,36 @@ impl GooseAgentDispatcher {
                     .take(8)
                     .map(|(n, sum, _, _)| format!("{n}: {sum}"))
                     .collect();
+                let progress_at_look = provider_stream_progress.snapshot();
+                let provider_signature = (
+                    progress_at_look.revision,
+                    progress_at_look.chunks,
+                    progress_at_look.bytes,
+                );
+                let provider_unchanged_since_prior =
+                    omni_prev_provider_observation == Some(provider_signature);
+                omni_prev_provider_observation = Some(provider_signature);
+                let nudge_capture = pre_scheduler_provider_control
+                    .as_ref()
+                    .and_then(|control| control.capture(progress_at_look));
                 let sys = "You inspect a RUNNING agent call and decide ONE thing: is it LOOPING — repeating \
-                     the same reasoning or the same commands without new information? Reply on ONE line as \
+                     the same reasoning or commands without new information, or remaining completely \
+                     byte-silent across repeated supervisor looks? Reply on ONE line as \
                      VERDICT|CONFIDENCE|hint where VERDICT is OK or LOOPING and CONFIDENCE is HIGH or LOW. \
-                     Say LOOPING only if the SAME content clearly recurs. Deep but ADVANCING reasoning is OK."
+                     Say LOOPING only when the supplied evidence clearly recurs or remains unchanged. Deep \
+                     but ADVANCING reasoning and growing structured output are OK."
                     .to_string();
                 let user = format!(
-                    "This call has emitted {thinking_chars} characters of reasoning.\n\nMost recent \
-                     reasoning:\n{tail}\n\nCommands it ran (most recent first):\n{}",
+                    "This call has emitted {thinking_chars} characters of reasoning. Provider decoder: \
+                     {} chunks / {} bytes; unchanged since the prior supervisor look={}; structured \
+                     output: {} bytes (active={}).\n\nMost recent \
+                     reasoning:\n{}\n\nCommands it ran (most recent first):\n{}",
+                    progress_at_look.chunks,
+                    progress_at_look.bytes,
+                    provider_unchanged_since_prior,
+                    progress_at_look.structured_output_bytes,
+                    progress_at_look.structured_output_active,
+                    if tail.is_empty() { "(none)" } else { &tail },
                     if ran.is_empty() {
                         "(none)".to_string()
                     } else {
@@ -20580,12 +20781,29 @@ impl GooseAgentDispatcher {
                 );
                 let pm = self.planner_model.clone();
                 // Box::pin: this is `run_agent` calling `run_agent`, i.e. async recursion (E0733).
-                let probe = tokio::time::timeout(
-                    std::time::Duration::from_secs(45),
-                    Box::pin(self.run_agent(&pm, sys, user, None, 1, &[], 0, None)),
-                )
-                .await;
-                if let Ok(Ok(o)) = probe {
+                let probe = if locally_supervised_call {
+                    Some(
+                        Box::pin(self.run_agent(
+                            &pm,
+                            sys,
+                            user,
+                            None,
+                            1,
+                            &[],
+                            self.planner_timeout_secs,
+                            None,
+                        ))
+                        .await,
+                    )
+                } else {
+                    tokio::time::timeout(
+                        std::time::Duration::from_secs(45),
+                        Box::pin(self.run_agent(&pm, sys, user, None, 1, &[], 0, None)),
+                    )
+                    .await
+                    .ok()
+                };
+                if let Some(Ok(o)) = probe {
                     // CORROBORATION, not a single verdict. MEASURED across four fires — 1,200 / 1,201 /
                     // 3,759 / 4,003 reasoning chars — the judge returns LOOPING on its FIRST look almost
                     // whatever the floor is, and every one of those kills was wrong: the tasks completed
@@ -20615,19 +20833,23 @@ impl GooseAgentDispatcher {
                         }
                     };
                     if omni_judge_says_looping(&o.text) {
-                        if omni_prev_looping_tail
-                            .as_ref()
-                            .is_some_and(|prev| tails_recur(prev, &tail_set))
-                        {
+                        if pre_scheduler_observation_recurred(
+                            omni_prev_looping_provider,
+                            provider_signature,
+                            omni_prev_looping_tail.as_ref(),
+                            &tail_set,
+                        ) {
                             omni_looping_streak += 1;
                         } else {
                             // First LOOPING on this content — arm, but do not yet count toward the kill.
                             omni_looping_streak = 1;
                         }
                         omni_prev_looping_tail = Some(tail_set);
+                        omni_prev_looping_provider = Some(provider_signature);
                     } else {
                         omni_looping_streak = 0;
                         omni_prev_looping_tail = None;
+                        omni_prev_looping_provider = None;
                     }
                     if omni_looping_streak == 1 {
                         eprintln!(
@@ -20644,46 +20866,116 @@ impl GooseAgentDispatcher {
                         // makes that expensive on healthy-but-slow calls). Per-call judge state
                         // resets so the redirected call is watched fresh; the abort stays as the
                         // backstop once JUDGE_NUDGE_MAX redirects are spent.
-                        if judge_nudge_on() && nudges_used < JUDGE_NUDGE_MAX {
-                            nudges_used += 1;
+                        if judge_nudge_on()
+                            && (locally_supervised_call || nudges_used < JUDGE_NUDGE_MAX)
+                        {
+                            nudges_used = nudges_used.saturating_add(1);
                             let direction = omni_hint.clone().unwrap_or_else(|| {
                                 "stop restating your plan; take the next concrete action on your \
                                  owned files now"
                                     .to_string()
                             });
                             self.events.write_value(serde_json::json!({
-                                "event": "judge_nudge",
+                                "event": if locally_supervised_call {
+                                    "judge_nudge_decided"
+                                } else {
+                                    "judge_nudge"
+                                },
                                 "task_id": activity_key,
                                 "nudge": nudges_used,
                                 "looks": omni_looks,
                                 "thinking_chars": thinking_chars,
                                 "hint": direction,
+                                "delivery": if locally_supervised_call {
+                                    "provider-terminal-proven-same-session"
+                                } else {
+                                    "legacy-direct-reply-replacement"
+                                },
+                                "nudge_cap": if locally_supervised_call {
+                                    serde_json::Value::Null
+                                } else {
+                                    serde_json::json!(JUDGE_NUDGE_MAX)
+                                },
                             }));
-                            eprintln!(
-                                "  {} omni-judge (look {omni_looks}): looping after {thinking_chars} reasoning chars — nudging with direction instead of stopping (nudge {nudges_used}/{JUDGE_NUDGE_MAX})",
-                                style("→").yellow()
-                            );
                             let nudge_text = format!(
                                 "SUPERVISOR NOTE (the run's judge inspected this call): your last \
                                  stretch of reasoning is repeating without new information. {direction}\n\
                                  Continue the SAME task; do not restart work you have already done."
                             );
-                            stream = agent
-                                .reply(
-                                    Message::user().with_text(nudge_text),
-                                    session_config.clone(),
-                                    None,
-                                )
-                                .await
-                                .map_err(|e| anyhow!("agent.reply (judge nudge): {e}"))?;
+                            if let Some(control) = &pre_scheduler_provider_control {
+                                let Some(capture) = nudge_capture else {
+                                    self.events.write_value(serde_json::json!({
+                                        "event": "judge_nudge_rejected",
+                                        "task_id": activity_key,
+                                        "reason": "provider request changed before nudge delivery",
+                                        "physical_broker_accounting": "unavailable_pre_scheduler",
+                                    }));
+                                    omni_looping_streak = 0;
+                                    omni_prev_looping_tail = None;
+                                    omni_prev_looping_provider = None;
+                                    omni_prev_provider_observation = None;
+                                    continue;
+                                };
+                                match control.try_enqueue_nudge(
+                                    capture,
+                                    provider_stream_progress.snapshot(),
+                                    nudge_text,
+                                ) {
+                                    Ok(()) => {
+                                        self.events.write_value(serde_json::json!({
+                                            "event": "judge_nudge_delivery_queued",
+                                            "task_id": activity_key,
+                                            "provider_generation": capture.generation,
+                                            "same_session": true,
+                                            "terminal_proof_required_before_continuation": true,
+                                            "physical_broker_accounting": "unavailable_pre_scheduler",
+                                            "payload_logged": false,
+                                        }));
+                                    }
+                                    Err(reason) => {
+                                        self.events.write_value(serde_json::json!({
+                                            "event": "judge_nudge_rejected",
+                                            "task_id": activity_key,
+                                            "reason": reason,
+                                            "structured_output_protected": true,
+                                            "physical_broker_accounting": "unavailable_pre_scheduler",
+                                        }));
+                                    }
+                                }
+                            } else {
+                                stream = agent
+                                    .reply(
+                                        Message::user().with_text(nudge_text),
+                                        session_config.clone(),
+                                        None,
+                                    )
+                                    .await
+                                    .map_err(|e| anyhow!("agent.reply (judge nudge): {e}"))?;
+                            }
                             thinking_chars = 0;
                             last_thinking.clear();
                             reasoning_recurrence.reset();
                             omni_looks = 0;
                             omni_looping_streak = 0;
                             omni_prev_looping_tail = None;
+                            omni_prev_looping_provider = None;
+                            omni_prev_provider_observation = None;
                             omni_next_look = tokio::time::Instant::now()
                                 + std::time::Duration::from_secs(OMNI_JUDGE_FIRST_LOOK_SECS);
+                            continue;
+                        }
+                        if locally_supervised_call {
+                            self.events.write_value(serde_json::json!({
+                                "event": "judge_nudge_not_delivered",
+                                "task_id": activity_key,
+                                "reason": "judge nudge is disabled; semantic verdict remains advisory",
+                                "provider_request_interrupted": false,
+                            }));
+                            omni_looping_streak = 0;
+                            omni_prev_looping_tail = None;
+                            omni_prev_looping_provider = None;
+                            omni_next_look = tokio::time::Instant::now()
+                                + std::time::Duration::from_secs(OMNI_JUDGE_INTERVAL_SECS);
                             continue;
                         }
                         eprintln!(
@@ -20792,7 +21084,7 @@ impl GooseAgentDispatcher {
             let mut quiet_deadline =
                 quiet_budget.map(|budget| tokio::time::Instant::now() + budget);
             let mut next_agent_event = Box::pin(stream.next());
-            let (next_event, timed_out) = loop {
+            let (next_event, timed_out, judge_due) = loop {
                 let deadline = match (quiet_deadline, sink_deadline) {
                     (Some(quiet), Some(sink)) => Some(quiet.min(sink)),
                     (Some(quiet), None) => Some(quiet),
@@ -20800,22 +21092,38 @@ impl GooseAgentDispatcher {
                     (None, None) => None,
                 };
                 let progress = provider_stream_progress.changed_since(observed_provider_revision);
+                let judge_tick = async {
+                    if omni_judge_on {
+                        tokio::time::sleep_until(omni_next_look).await;
+                    } else {
+                        futures::future::pending::<()>().await;
+                    }
+                };
                 let wait_result = match deadline {
                     Some(deadline) => tokio::select! {
-                        event = &mut next_agent_event => Some(Ok(event)),
-                        snapshot = progress => Some(Err(snapshot)),
+                        event = &mut next_agent_event => Some((Some(Ok(event)), false)),
+                        snapshot = progress => Some((Some(Err(snapshot)), false)),
+                        _ = judge_tick => Some((None, true)),
                         _ = tokio::time::sleep_until(deadline) => None,
                     },
                     None => tokio::select! {
-                        event = &mut next_agent_event => Some(Ok(event)),
-                        snapshot = progress => Some(Err(snapshot)),
+                        event = &mut next_agent_event => Some((Some(Ok(event)), false)),
+                        snapshot = progress => Some((Some(Err(snapshot)), false)),
+                        _ = judge_tick => Some((None, true)),
                     },
                 };
                 let Some(wait_result) = wait_result else {
-                    break (None, true);
+                    break (None, true, false);
+                };
+                let (wait_result, judge_due) = wait_result;
+                if judge_due {
+                    break (None, false, true);
+                }
+                let Some(wait_result) = wait_result else {
+                    unreachable!("non-judge wait always carries an agent or progress result");
                 };
                 let snapshot = match wait_result {
-                    Ok(event) => break (event, false),
+                    Ok(event) => break (event, false, false),
                     Err(snapshot) => snapshot,
                 };
 
@@ -20894,6 +21202,9 @@ impl GooseAgentDispatcher {
                     last_provider_progress_event_at = Some(tokio::time::Instant::now());
                 }
             };
+            if judge_due {
+                continue;
+            }
             if timed_out {
                 // Distinguish the sink wall-clock cap from a genuine idle stall: on the cap, finalize
                 // as DONE (the app files are already built; the sink owns no deliverables) instead of
@@ -21428,6 +21739,8 @@ impl GooseAgentDispatcher {
     ) -> Result<(Vec<ResearchSeedAssignment>, Vec<CompiledResearchSeedLedger>)> {
         let me = self.clone();
         let events = self.events.clone();
+        let seed_semantic_supervision =
+            omni_judge_enabled(load_config().omni_judge) && judge_nudge_on();
         let results = fanout_retrying_over_fleet(
             worker_models,
             partitions,
@@ -21632,8 +21945,13 @@ impl GooseAgentDispatcher {
                         "in_flight_partitions": observation.in_flight_details,
                         "logically_free_nodes": observation.logically_free_lanes,
                         "observation": "idle_capacity_observed",
-                        "supervision_available": false,
-                        "supervision_unavailable_reason": "research-seed-precedes-physical-scheduler-lifecycle",
+                        "supervision_available": seed_semantic_supervision,
+                        "supervision_mode": if seed_semantic_supervision {
+                            "semantic-judge-terminal-proven-same-session-nudge"
+                        } else {
+                            "disabled-by-config"
+                        },
+                        "physical_broker_accounting": "unavailable_pre_scheduler",
                     }));
                 }
             },
@@ -29523,10 +29841,12 @@ mod fan_order_tests {
             &mut cache,
         );
         assert_eq!(demand.requested_order, vec!["api", "store", "cli"]);
-        assert!(demand
-            .prefetched_by_id
-            .get("api")
-            .is_some_and(String::is_empty));
+        assert!(
+            demand
+                .prefetched_by_id
+                .get("api")
+                .is_some_and(String::is_empty)
+        );
         assert_eq!(
             demand
                 .missing
@@ -29784,9 +30104,11 @@ mod fan_order_tests {
             .collect::<HashSet<_>>();
         assert!(!failed_packets.is_empty());
         for packet in failed_packets {
-            assert!(attempts
-                .iter()
-                .any(|(candidate, device)| candidate == packet && device != "fast-failure"));
+            assert!(
+                attempts
+                    .iter()
+                    .any(|(candidate, device)| candidate == packet && device != "fast-failure")
+            );
             assert_eq!(
                 attempts
                     .iter()
@@ -35045,7 +35367,7 @@ fn legacy_auxiliary_control_enabled(
 
 #[cfg(test)]
 mod legacy_auxiliary_control_tests {
-    use super::{legacy_auxiliary_control_enabled, LegacyAuxiliaryPhase};
+    use super::{LegacyAuxiliaryPhase, legacy_auxiliary_control_enabled};
 
     #[test]
     fn physical_substitution_is_scoped_to_main_execute() {
@@ -41554,11 +41876,7 @@ fn anchor_subsplit(stub: &str, names: &[String]) -> Vec<String> {
         .filter(|n| have.contains(n.as_str()))
         .cloned()
         .collect();
-    if kept.len() >= 2 {
-        kept
-    } else {
-        Vec::new()
-    }
+    if kept.len() >= 2 { kept } else { Vec::new() }
 }
 
 /// S3 i3, skeleton half: the stub with every function body replaced by
@@ -42900,9 +43218,11 @@ mod repair_tree_seal_tests {
             .emit_final_events(&sink, serde_json::json!({ "event": "run_finished" }))
             .unwrap();
         std::fs::write(dir.path().join("app.txt"), "v3\n").unwrap();
-        assert!(sealed
-            .emit_final_events(&sink, serde_json::json!({ "event": "run_finished" }))
-            .is_err());
+        assert!(
+            sealed
+                .emit_final_events(&sink, serde_json::json!({ "event": "run_finished" }))
+                .is_err()
+        );
 
         let events = sink.names();
         for required in [
@@ -42987,10 +43307,12 @@ mod repair_tree_seal_tests {
             fixture["source"]["run_log_sha256"],
             "6402923479726a0a1533493955c0b5625caa59661db630e7b903d274dfcdd5b6"
         );
-        assert!(fixture["source"]["run_log_path"]
-            .as_str()
-            .unwrap()
-            .ends_with("swarm-3node-r1/run.jsonl"));
+        assert!(
+            fixture["source"]["run_log_path"]
+                .as_str()
+                .unwrap()
+                .ends_with("swarm-3node-r1/run.jsonl")
+        );
         let changed = fixture["changed_files"].as_array().unwrap();
         assert_eq!(changed.len(), 6);
         assert!(changed.iter().all(|file| {
@@ -43052,10 +43374,12 @@ mod repair_tree_seal_tests {
                 < events.iter().position(|event| *event == "review_after_fix")
         );
         assert_eq!(events.last(), Some(&"run_finished"));
-        assert!(fixture["mtime_caveat"]
-            .as_str()
-            .unwrap()
-            .contains("rsync -a preserves source mtimes"));
+        assert!(
+            fixture["mtime_caveat"]
+                .as_str()
+                .unwrap()
+                .contains("rsync -a preserves source mtimes")
+        );
     }
 }
 
@@ -44286,10 +44610,10 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             }
         }
     }; // clamp so the weak-bump can never dip below the literal floor
-       // Inc3: with a floor set, RAISE the effective floor for a WEAKER planner (fewer ACTIVE params) so a weak
-       // local model asks the user SOONER — "ask more on weaker models". Default-ON when a floor is set;
-       // GOOSE_SWARM_ASK_SCALE=0 disables (then the user's literal floor is used). HEURISTIC (model-id -> active
-       // params is fuzzy); the bump is small + capped at 100.
+    // Inc3: with a floor set, RAISE the effective floor for a WEAKER planner (fewer ACTIVE params) so a weak
+    // local model asks the user SOONER — "ask more on weaker models". Default-ON when a floor is set;
+    // GOOSE_SWARM_ASK_SCALE=0 disables (then the user's literal floor is used). HEURISTIC (model-id -> active
+    // params is fuzzy); the bump is small + capped at 100.
     let ask_scale = base_floor.is_some()
         && std::env::var("GOOSE_SWARM_ASK_SCALE")
             .map(|v| {
@@ -46529,10 +46853,10 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
         // failure path emitted nothing — also fixed below).
         let ship_best = ship_best_enabled();
         let mut best_verified: Option<(u32, usize)> = None; // (round, findings)
-                                                            // ESTABLISHED-AWARE SHIP CHAIN (contract-gap audit rank 1): a verify that RAN but
-                                                            // established nothing produces a count that is not comparable to an established one —
-                                                            // a blind low count must not capture the best slot, and an established snapshot must
-                                                            // never lose to an unestablished final state.
+        // ESTABLISHED-AWARE SHIP CHAIN (contract-gap audit rank 1): a verify that RAN but
+        // established nothing produces a count that is not comparable to an established one —
+        // a blind low count must not capture the best slot, and an established snapshot must
+        // never lose to an unestablished final state.
         let mut best_established = false;
         // Definite-init by the loop: every exit happens after this round's canonical ruler.
         let mut last_verify_ran;
@@ -48465,7 +48789,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             if crate::edition::resolve_edition(false).is_local() {
                 // Goose Local Edition: render the fleet's execute phase as a formation fan-in — one node
                 // lane per device (solid formation-hue chip), with its task count + avg speed.
-                use crate::theme::formation::{render_fan_in, NodeLane, NodeStatus};
+                use crate::theme::formation::{NodeLane, NodeStatus, render_fan_in};
                 let actions: Vec<String> = speeds
                     .iter()
                     .map(|(d, ms)| {
