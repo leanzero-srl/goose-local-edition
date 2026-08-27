@@ -8608,6 +8608,52 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
 
     /// The same reader, against the REAL logs this machine has produced — a fixture can agree with a bug.
     #[test]
+    /// SYNTHESIS is told to take each task's files "from its slice's FILES section" — and the index it
+    /// is handed never carried them, so it invented ownership and the engine ENFORCED the invention.
+    /// Measured on smoke-linear-1: task `cli-interface` was given `wordfreq/cli.py` while its spliced
+    /// brief declares three other files and never mentions cli.py.
+    ///
+    /// The parser is lenient on purpose — the contract asks for "2. FILES — the exact paths you will
+    /// create" and a 27B numbers, bolds, bullets, backticks or tabulates them.
+    fn a_slice_owners_declared_files_reach_synthesis() {
+        let brief = "## 1. PURPOSE\nServe the payments API.\n\n                     ## 2. FILES\n- `vendorsync/api.py`\n- `vendorsync/routes.py`\n\n                     ## 3. INTERFACE\n```python\ndef serve(port: int) -> None: ...\n```\n                     It must not touch `vendorsync/store.py`.";
+        let f = files_from_brief(brief);
+        assert_eq!(
+            f,
+            vec!["vendorsync/api.py", "vendorsync/routes.py"],
+            "{f:?}"
+        );
+
+        // Inline on the heading, bolded, unbulleted — all the shapes seen in real briefs.
+        assert_eq!(
+            files_from_brief("**FILES:** `app/cli.py`, `app/__main__.py`"),
+            vec!["app/__main__.py", "app/cli.py"]
+        );
+        assert_eq!(
+            files_from_brief("2. FILES\n   web/index.html\n   web/app.js\n3. INTERFACE\n   x.py"),
+            vec!["web/app.js", "web/index.html"],
+            "a later contract heading must end the section"
+        );
+
+        // A brief with no FILES section yields nothing rather than guessing.
+        assert!(files_from_brief("PURPOSE: do the thing\nINTERFACE: def f(): ...").is_empty());
+
+        // And the index actually renders them, which is the whole point.
+        let b = SliceBrief {
+            id: "api".into(),
+            title: "the API".into(),
+            objective: "serve it".into(),
+            files: files_from_brief(brief),
+            brief: brief.to_string(),
+        };
+        let idx = slice_index(&[b]);
+        assert!(
+            idx.contains("vendorsync/api.py") && idx.contains("vendorsync/routes.py"),
+            "synthesis still cannot see the owner's files:\n{idx}"
+        );
+    }
+
+    #[test]
     /// ORDER IS THE WHOLE BUG. `pin_sink_id` was correct and ran on the wrong value at the wrong time —
     /// after the DAG the scheduler actually runs had already been built from the unpinned JSON. This
     /// pins the composition: pin THEN build, and the DAG carries the engine's sink id.
@@ -24267,6 +24313,86 @@ pub(crate) struct SliceBrief {
     title: String,
     objective: String,
     brief: String,
+    /// The paths this slice's OWNER said it would create, read out of its brief's FILES section.
+    ///
+    /// SYNTHESIS is told "files: the paths that task owns, taken from its slice's FILES section" — and
+    /// it was never shown them. `slice_index` emits id, title, objective, a 400-char head and
+    /// `extract_interface_lines`, which needs parentheses plus a def/class/fn/-> token, so a bare path
+    /// never matched. So the model invented file ownership, and the engine ENFORCED the invention:
+    /// measured on smoke-linear-1, task `cli-interface` was given `wordfreq/cli.py` while its spliced
+    /// brief declares three other files and never mentions cli.py. A task's enforced ownership can
+    /// contradict the only instruction it is given, and the two go to different phases.
+    files: Vec<String>,
+}
+
+/// Pull the FILES section out of a slice owner's brief.
+///
+/// Deliberately lenient in the same way `parse_observed_defects` is: the contract asks for
+/// "2. FILES — the exact paths you will create", and a 27B numbers it, bolds it, bullets the paths,
+/// backticks them, or writes them as a table row. Anything that looks like a source path under a FILES
+/// heading counts, and an empty result simply leaves synthesis where it already was.
+fn files_from_brief(brief: &str) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    let mut in_files = false;
+    for raw in brief.lines() {
+        let l = raw.trim();
+        let bare = l
+            .trim_start_matches(['#', '*', '-', ' ', '\t'])
+            .trim_start_matches(|c: char| c.is_ascii_digit() || c == '.' || c == ')')
+            .trim()
+            .trim_start_matches("**")
+            .trim();
+        let upper = bare.to_uppercase();
+        if upper.starts_with("FILES") {
+            in_files = true;
+            // "FILES: a.py, b.py" puts them on the heading line itself.
+            if let Some((_, rest)) = bare.split_once(':') {
+                out.extend(paths_in(rest));
+            }
+            continue;
+        }
+        // Any other numbered contract heading ends the section.
+        if in_files
+            && [
+                "PURPOSE",
+                "INTERFACE",
+                "CONSUMES",
+                "BEHAVIOUR",
+                "BEHAVIOR",
+                "HOW",
+                "EXCLUDES",
+            ]
+            .iter()
+            .any(|h| upper.starts_with(h))
+        {
+            in_files = false;
+        }
+        if in_files {
+            out.extend(paths_in(l));
+        }
+    }
+    out.sort();
+    out.dedup();
+    out
+}
+
+/// Every source-looking path in one line — backticked, bulleted, or bare.
+fn paths_in(line: &str) -> Vec<String> {
+    line.split(|c: char| c.is_whitespace() || matches!(c, '`' | ',' | '|' | '(' | ')' | '"' | '\''))
+        .map(|t| t.trim_matches(|c: char| matches!(c, '.' | ':' | ';')))
+        .filter(|t| {
+            t.contains('.')
+                && !t.contains(' ')
+                && t.len() > 3
+                && [
+                    ".py", ".rs", ".ts", ".tsx", ".js", ".jsx", ".html", ".css", ".go", ".java",
+                    ".rb", ".swift", ".sh", ".md", ".json", ".toml", ".yaml", ".yml",
+                ]
+                .iter()
+                .any(|e| t.ends_with(e))
+        })
+        .map(|t| t.to_string())
+        .collect()
 }
 
 fn linear_plan_enabled() -> bool {
@@ -24820,6 +24946,7 @@ impl GooseAgentDispatcher {
                     id: slice.id,
                     title: slice.title,
                     objective: slice.objective,
+                    files: files_from_brief(&brief),
                     brief,
                 }
             }
@@ -24950,12 +25077,21 @@ fn slice_index(briefs: &[SliceBrief]) -> String {
                 .chars()
                 .take(400)
                 .collect();
+            // THE FILES THE OWNER DECLARED. The synthesis prompt says "files: the paths that task owns,
+            // taken from its slice's FILES section" and this index is the only thing it ever sees, so
+            // until now that instruction pointed at nothing and the model made the paths up.
+            let files = if b.files.is_empty() {
+                "(the owner named none — infer them from the interface)".to_string()
+            } else {
+                b.files.join(", ")
+            };
             format!(
-                "### slice `{}` — {}\nobjective: {}\nsummary: {}\ninterface:\n{}",
+                "### slice `{}` — {}\nobjective: {}\nsummary: {}\nfiles it will create: {}\ninterface:\n{}",
                 b.id,
                 b.title,
                 b.objective,
                 head,
+                files,
                 if signatures.is_empty() {
                     "  (none stated)".to_string()
                 } else {
