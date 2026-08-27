@@ -3405,7 +3405,12 @@ const OMNI_JUDGE_INTERVAL_SECS: u64 = 60;
 /// anything to read.
 const OMNI_JUDGE_MIN_CHARS: usize = 2_000;
 /// Cap the looks per call so a very long healthy call cannot spend unbounded judge time.
-const OMNI_JUDGE_MAX_LOOKS: u32 = 6;
+// REMOVED: OMNI_JUDGE_MAX_LOOKS (was 6). A cap on how many times the judge may look is a cap on how
+// long a call is supervised, and the judge is now the only thing watching.
+//
+// How much further reasoning, with NO intervening tool call, summons the judge again. This is not a
+// budget the call can exceed — nothing happens when it is crossed except that someone READS the call.
+const OMNI_JUDGE_GROWTH_CHARS: usize = 4_000;
 
 /// #F924 — a loop detector whose REACH is the whole call instead of its last 2,400 characters.
 ///
@@ -3577,21 +3582,6 @@ fn tails_recur(a: &std::collections::HashSet<u64>, b: &std::collections::HashSet
     inter * 2 >= a.len().min(b.len())
 }
 
-/// GOOSE_SWARM_UNCAPPED (Mihai 2026-08-21: "remove all caps … let it run and only stop if the
-/// judge identifies loops or other issues"): every WALL-CLOCK and VOLUME cap in the run path is
-/// neutralized — a slow local model must never lose work to a threshold. What stays armed: the
-/// omni-judge (reads the reasoning, stops REAL loops), repeat-break (identical tool calls), and
-/// the pure-idle failsafes that fire only on a dead stream (zero token/tool activity). The
-/// harness expresses the regime as `--timeout 0`, which sets this and sends no run deadline.
-fn uncapped() -> bool {
-    // Env wins in BOTH directions (the harness pins the regime per run); the config field is the
-    // DESKTOP's route — it cannot set env, and parity with headless runs is mandatory (Mihai).
-    match std::env::var("GOOSE_SWARM_UNCAPPED") {
-        Ok(v) => matches!(v.trim(), "1" | "on" | "true" | "yes"),
-        Err(_) => load_config().uncapped,
-    }
-}
-
 /// A week, in seconds: the stand-in for "no cap" at sites whose arithmetic needs a finite
 /// Duration (deadline sums, headroom division). Far beyond any run; never a real bound.
 const UNCAPPED_SECS: u64 = 604_800;
@@ -3605,89 +3595,41 @@ const UNCAPPED_SECS: u64 = 604_800;
 /// max-turns filler and core modules fell back to one-line skeleton briefs (the 44%-vs-90% class).
 /// Under uncapped the loop gets room; the judge/repeat-break govern runaway loops, not a turn count.
 fn planner_side_turns() -> u32 {
-    if uncapped() {
-        60
-    } else {
-        6
-    }
+    // Was 6, sized on qwen3.6's habits. qwen3.8 spends turns on tool reads plus deep thinking and hit
+    // that BEFORE emitting the deliverable — measured: 6 of the first 8 detail calls returned max-turns
+    // filler and core modules fell back to one-line briefs (the 44%-vs-90% class). The judge governs
+    // runaway loops now; a turn count never could.
+    60
 }
 
-fn planner_wall(planner_timeout_secs: u64) -> u64 {
-    if uncapped() {
-        UNCAPPED_SECS
-    } else {
-        planner_timeout_secs.max(90)
-    }
+fn planner_wall(_planner_timeout_secs: u64) -> u64 {
+    // No wall. A planner-side call ends when the model finishes, when the judge redirects it, or when
+    // the socket dies.
+    UNCAPPED_SECS
 }
 
-/// #135 global spiral-break: env GOOSE_SWARM_SPIRAL_BREAK_CHARS wins, else config, else 0 (OFF).
-/// A CHAR budget, not a bool, because the safe threshold depends on the model's verbosity — it must be
-/// tunable without a rebuild. Clamped to a floor well above the worst LEGITIMATE call measured (6,312 chars)
-/// so a mistyped small value cannot start cutting healthy work.
-fn spiral_break_chars_resolved(env: Option<String>, cfg: Option<usize>) -> usize {
-    let v = env
-        .and_then(|s| s.trim().parse::<usize>().ok())
-        .or(cfg)
-        .unwrap_or(0);
-    if v == 0 {
-        0
-    } else {
-        v.max(SPIRAL_BREAK_MIN_CHARS)
-    }
+fn spiral_break_chars(_cfg: Option<usize>) -> usize {
+    // OFF, permanently. A volume threshold cannot tell a deep call from a stuck one: healthy plan drafts
+    // reach 57,443 chars, from runs that scored 100/100. Reading the reasoning is the only thing that can,
+    // and that is the judge's job.
+    0
 }
 
-fn spiral_break_chars(cfg: Option<usize>) -> usize {
-    if uncapped() {
-        return 0;
-    }
-    spiral_break_chars_resolved(std::env::var("GOOSE_SWARM_SPIRAL_BREAK_CHARS").ok(), cfg)
-}
-
-/// #135: hard floor for the spiral budget.
-///
-/// CORRECTED 2026-07-20 — the original floor was derived from ONE scout in ONE run (6,312 chars) and was
-/// WRONG. Re-measured over 428 terminal call digests across every run on disk:
-///   kind        n   p50     p90     max     %cut@12k
-///   worker    205  2,359  19,524  46,165     16.6%
-///   plandraft 116 11,008  24,220  57,443     44.8%   <-- MEDIAN alone is ~the old floor
-///   detail     58      2     511   1,384      0.0%
-///   scout      33  2,635   5,882  46,191      3.0%   (the 46,191 IS the pathology)
-///   contract   17  2,820  11,158  18,518      5.9%
-/// A single global budget cannot serve `detail` (max 1,384) and `plandraft` (max 57,443) — they are 40x
-/// apart — so the budget is now scaled PER CALL KIND by `spiral_budget_for`. This floor applies to the
-/// SMALL kinds (scout/detail) where 12,000 is still ~1.8x the worst healthy observation.
-const SPIRAL_BREAK_MIN_CHARS: usize = 12_000;
-
-/// #135: per-kind multiplier on the configured spiral budget. Derived from the table above — each kind's
-/// budget must sit ABOVE that kind's healthy maximum, or the lever silently kills legitimate work that has
-/// NO retry path. Returns 0 to DISARM the kind entirely.
-fn spiral_budget_for(activity_key: Option<&str>, base: usize) -> usize {
-    if base == 0 {
-        return 0;
-    }
-    match activity_key {
-        // The SINK owns no deliverable and has its own wall-clock cap; re-routing it re-prefills the tree.
-        Some("integrate-verify") => 0,
-        // PLAN DRAFTS ARE DISARMED. A draft is a pure-reasoning call (the top outliers have zero tool calls)
-        // and healthy ones reach 57,443 chars — from runs that scored plan confidence 100/100. There is no
-        // volume threshold that separates a healthy deep draft from a spiral here, and a killed draft is
-        // simply gone from best-of-N. Refusing to guess is the correct answer for this kind.
-        Some(k) if k.starts_with("plandraft-") => 0,
-        // Healthy contracts reach 18,518.
-        Some(k) if k.starts_with("contract-") => base.saturating_mul(3),
-        // Scouts: healthy p90 5,882 and worst healthy 6,673, against a measured 46,191 pathology — a ~7x
-        // gap, the one kind where volume separates cleanly. Base applies.
-        Some(k) if k.starts_with("scout-") => base,
-        // Details are tiny (max 1,384). Base applies with enormous headroom.
-        Some(k) if k.starts_with("detail-") => base,
-        // WORKERS: healthy reach 46,165. 5x the floor (60k) clears that with margin.
-        _ => base.saturating_mul(5),
-    }
-}
-// Compile-time guard: the floor MUST clear the worst LEGITIMATE call measured (a 6,312-char scout), or a
-// configured value could start cutting healthy work. A runtime assert on a const proves nothing
-// (clippy::assertions_on_constants); this fails the BUILD if the floor is ever lowered into that range.
-const _: () = assert!(SPIRAL_BREAK_MIN_CHARS > 6_312);
+// REMOVED with the spiral break: the per-kind budget table, its 12,000-char floor, and the compile-time
+// guard on that floor. The table is kept here because it is the ARGUMENT, measured over 428 terminal call
+// digests across every run on disk:
+//
+//   kind        n   p50     p90     max
+//   worker    205  2,359  19,524  46,165
+//   plandraft 116 11,008  24,220  57,443   <- healthy, from runs that scored 100/100
+//   detail     58      2     511   1,384
+//   scout      33  2,635   5,882  46,191
+//   contract   17  2,820  11,158  18,518
+//
+// A single volume threshold cannot serve `detail` (worst healthy 1,384) and `plandraft` (worst healthy
+// 57,443) — forty times apart — which is why the budget had to be scaled per kind and why plan drafts had
+// to be disarmed outright. A threshold that must be disarmed for the kind it matters most for is not
+// measuring the thing it claims to. Reading the reasoning is; that is the judge.
 
 /// #136: consecutive identical tool calls that trip the repeat breaker. MEASURED across 268 shell-bearing
 /// tasks in 44 real runs: the longest legitimate consecutive identical run was 4 (`swift build` re-runs); the
@@ -3765,53 +3707,13 @@ fn detail_memo_key(goal: &str, id: &str, brief: &str, files: &str, findings: &st
 /// keeps a 5-point margin above the lone adoption so the guard never skips a historically-useful re-draft.
 const BACKBONE_SKIP_CONF_FLOOR: u8 = 90;
 
-/// Wall-clock budget for ONE subtask's detail expansion. Load-bearing: exceeding it does not fail the
-/// task, it silently hands the worker the architect's one-line brief as its entire spec.
-const DETAIL_BUDGET_SECS_DEFAULT: u64 = 75;
-
-/// How long ONE detail expansion may take. Env > default; clamped [30, 900]. Default unchanged, so a
-/// run that sets nothing is byte-identical.
-///
-/// 75 is a bare literal pinned at the OBSERVED MAXIMUM of the call it bounds, which is the wrong place
-/// for a ceiling: normal variance then lands on the far side of it. Measured across the runs on disk —
-/// the SAME `meridian` brief was detailed in 44.5s on one run and blew through 75s on another, and the
-/// run that lost it shipped a 95-character spec for the module tier C exists to grade, scoring 14.3%
-/// there against 85.7% for the run that kept it. The sibling CONTRACT fanout — same call shape, same
-/// fleet — already abandoned a small fixed budget for `worker_timeout_secs.max(120)` after a mass stub
-/// failure, and its comment records exactly that reasoning.
-///
-/// Deliberately NOT raised here. The default stays 75 so the campaign's baseline arm is unchanged and
-/// a `detail_budget` arm is attributable to this one constant; the number gets baked once a replicated
-/// arm says what it should be, not because the argument sounds right.
-fn detail_budget_secs() -> u64 {
-    // DERIVED, not a bare literal — the same source its SIBLING fan-out already uses. `contracts`
-    // clamps its straggler grace to `worker_timeout_secs.max(10)` (baked 900); `detail` had a
-    // hardcoded 75. Two fan-outs, same fleet, same model, both asking a worker to author a spec, and
-    // a 12x disparity in what they are allowed.
-    //
-    // MEASURED across the six runs on disk: 19 contract calls produced 1 empty/unparsed (5%), while
-    // detail produced **27 failures, 25 of them checked and ALL `timeout`** — zero filler, zero agent
-    // errors. So the detail failure mode is entirely this ceiling, and a retry at the same ceiling
-    // would fail identically; the ceiling is the fix, not a retry.
-    //
-    // It matters because the detail call produces the worker's ENTIRE spec, and losing it is the
-    // measured predictor of a bad build: `meridian` (the module owning the vendor contract) is the
-    // most frequent victim at 6 of 25, and the run where it shipped a 122-char brief scored 42.7%
-    // while the run where it got a 1497-char spec containing the vendor's `/v1` prefix scored 88.7%.
-    // The engine was willing to spend 10-19 MINUTES re-drafting a plan and 75 SECONDS writing the
-    // specs that plan depends on.
-    if uncapped() {
-        return UNCAPPED_SECS;
-    }
-    let ceiling = load_config()
-        .worker_timeout_secs
-        .max(DETAIL_BUDGET_SECS_DEFAULT);
-    std::env::var("GOOSE_SWARM_DETAIL_BUDGET_SECS")
-        .ok()
-        .and_then(|v| v.trim().parse::<u64>().ok())
-        .unwrap_or(ceiling)
-        .clamp(30, 900)
-}
+// REMOVED: fn detail_budget_secs() and DETAIL_BUDGET_SECS_DEFAULT (75s).
+//
+// This was the cap that wrote a worker's ENTIRE spec in 75 seconds. Its own comment recorded what that
+// cost: 27 detail failures on disk, 25 of them timeouts, and the run where `meridian` shipped a
+// 122-character brief scored 42.7% against 88.7% for the run where it got a 1,497-character spec
+// containing the vendor's /v1 prefix. "The engine was willing to spend 10-19 MINUTES re-drafting a plan
+// and 75 SECONDS writing the specs that plan depends on."
 
 /// #122 pure decision: should the backbone-lock round-2 re-draft actually run? It runs whenever the backbone
 /// lever is on, EXCEPT when the skip lever is on AND round-1 agreement already clears the floor — then the
@@ -5032,67 +4934,6 @@ mod tests {
         assert_eq!(post_answer_action(false, false, true, 90, 85), Replan);
         assert_eq!(post_answer_action(false, true, true, 90, 85), Replan);
         assert_eq!(post_answer_action(false, false, false, 40, 85), KeepReuse);
-    }
-
-    #[test]
-    fn spiral_budget_never_cuts_a_measured_healthy_call() {
-        // Healthy MAXIMA measured over 428 terminal call digests across every run on disk. Each kind's
-        // budget MUST exceed its own healthy max — a killed planner call has NO retry path, so an
-        // under-budget here silently deletes legitimate work. This test is the reason the single global
-        // floor was wrong: it was set from ONE scout and sat BELOW the plandraft MEDIAN (11,008).
-        let base = SPIRAL_BREAK_MIN_CHARS; // 12_000
-        for (key, healthy_max) in [
-            (Some("scout-libraries"), 6_673usize),
-            (Some("detail-cli"), 1_384),
-            (Some("contract-db"), 18_518),
-            (Some("cli-module"), 46_165), // a worker: activity_key is the task id
-        ] {
-            let b = spiral_budget_for(key, base);
-            assert!(
-                b > healthy_max,
-                "{key:?}: budget {b} would cut a MEASURED healthy call of {healthy_max} chars"
-            );
-        }
-        // Plan drafts are DISARMED: healthy ones reach 57,443 with zero tool calls, so no volume
-        // threshold separates deep reasoning from a spiral for this kind.
-        assert_eq!(spiral_budget_for(Some("plandraft-0"), base), 0);
-        // The sink keeps its own wall-clock cap.
-        assert_eq!(spiral_budget_for(Some("integrate-verify"), base), 0);
-        // OFF stays OFF for every kind.
-        for key in [Some("scout-x"), Some("plandraft-0"), Some("worker"), None] {
-            assert_eq!(spiral_budget_for(key, 0), 0);
-        }
-    }
-
-    #[test]
-    fn spiral_break_is_off_by_default_and_floored_when_on() {
-        // OFF unless explicitly set — 0 everywhere means byte-identical behaviour.
-        assert_eq!(spiral_break_chars_resolved(None, None), 0);
-        assert_eq!(spiral_break_chars_resolved(None, Some(0)), 0);
-        assert_eq!(spiral_break_chars_resolved(Some("0".into()), None), 0);
-        // env WINS over config, like every sibling lever.
-        assert_eq!(
-            spiral_break_chars_resolved(Some("40000".into()), Some(20000)),
-            40000
-        );
-        assert_eq!(spiral_break_chars_resolved(None, Some(20000)), 20000);
-        // A mistyped SMALL budget cannot cut healthy work: it is floored well above the worst LEGITIMATE
-        // call measured (a 6,312-char scout). Without this, `spiral_break_chars: 500` would kill everything.
-        assert_eq!(
-            spiral_break_chars_resolved(Some("500".into()), None),
-            SPIRAL_BREAK_MIN_CHARS
-        );
-        assert_eq!(
-            spiral_break_chars_resolved(None, Some(1)),
-            SPIRAL_BREAK_MIN_CHARS
-        );
-
-        // Garbage env falls back to config rather than silently arming.
-        assert_eq!(
-            spiral_break_chars_resolved(Some("abc".into()), Some(20000)),
-            20000
-        );
-        assert_eq!(spiral_break_chars_resolved(Some("abc".into()), None), 0);
     }
 
     #[test]
@@ -9050,33 +8891,6 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
         assert_eq!(sink_max_turns_resolved(Some("abc".into()), None, 40), 40);
     }
 
-    /// THE 480 THAT KILLED 2 OF 3 REDRAFT DRAFTS.
-    ///
-    /// Revealed live by the engine-stderr log on its very first run: "! 2 of 3 plan drafts returned nothing
-    /// (timeout/error/no final_output) — confidence is measured on 1 draft(s)". With one surviving draft,
-    /// plan_agreement returns the INERT NEUTRAL 60 (a placeholder, not a measurement) and the round is
-    /// discarded — a full round of 3-node fleet time spent to learn nothing.
-    #[test]
-    fn the_draft_budget_is_reachable_and_its_default_is_unchanged() {
-        // UNSET on both channels => exactly the hardcoded value it replaces. This is the whole safety claim.
-        assert_eq!(draft_timeout_resolved(None, None), 480);
-
-        // Config reaches it; env beats config.
-        assert_eq!(draft_timeout_resolved(None, Some(900)), 900);
-        assert_eq!(draft_timeout_resolved(Some("600".into()), Some(900)), 600);
-
-        // Clamped BOTH ways, on BOTH channels — the tight per-draft cap exists to bound a runaway generation
-        // the idle watchdog cannot see, so it must not be settable to "forever".
-        assert_eq!(draft_timeout_resolved(Some("99999".into()), None), 1800);
-        assert_eq!(draft_timeout_resolved(None, Some(99999)), 1800);
-        assert_eq!(draft_timeout_resolved(Some("1".into()), None), 60);
-        assert_eq!(draft_timeout_resolved(None, Some(0)), 60);
-
-        // Garbage env falls through to config, then to the default — never to 0.
-        assert_eq!(draft_timeout_resolved(Some("abc".into()), Some(700)), 700);
-        assert_eq!(draft_timeout_resolved(Some("abc".into()), None), 480);
-    }
-
     /// "INCONCLUSIVE" AND "VERIFIED" WERE THE SAME VALUE. This is the measured 4/4 false greens.
     ///
     /// smoke_output returns None on a spawn error OR a TIMEOUT, and every call site correctly declines to add
@@ -11940,82 +11754,6 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
     }
 
     #[test]
-    fn complete_cap_fits_its_own_rounds() {
-        // The geometry this guards exists only in the CAPPED regime: under GOOSE_SWARM_UNCAPPED
-        // (env or the operator's config.yaml — which this test host may genuinely have on) both
-        // sides read UNCAPPED_SECS-scale values and the read site substitutes cap_requested
-        // itself, so the invariant is vacuous there. Skip rather than pin env: tests run in
-        // parallel and env mutation races every other uncapped() reader.
-        if uncapped() {
-            return;
-        }
-        let rounds = complete_rounds_from(None) as u64;
-        let fixes = rounds; // a fix is dispatched on every round EXCEPT the last (`round == rounds`)
-        let need = fixes * fix_cap_secs();
-        assert!(
-            default_complete_cap_secs() >= need,
-            "the repair phase budgets {}s but its own defaults dispatch {} fix attempts of up to \
-             {}s each ({need}s). A budget smaller than that silently makes later rounds \
-             unreachable — measured as 4/4 attempts guillotined with agent_ok:false and no second \
-             try. Raise the cap or lower fix_cap_secs; do not let them drift apart again.",
-            default_complete_cap_secs(),
-            fixes,
-            fix_cap_secs(),
-        );
-        // And the bake must agree with the serde default, or config.yaml omitting the key gets a
-        // different budget than the Default impl — the exact divergence the merge path exists to stop.
-        assert_eq!(
-            SwarmConfig::default().complete_cap_secs,
-            default_complete_cap_secs()
-        );
-    }
-
-    #[test]
-    fn a_stale_config_cap_cannot_make_the_later_fix_rounds_unreachable() {
-        let (rounds, fix, def) = (2u64, 1200u64, 3000u64);
-
-        // The measured case: config.yaml still carries the pre-raise 1200, which is exactly ONE fix
-        // attempt, so round 1's fix was unreachable and baseline-n3-r0 shipped red at 1 finding.
-        assert_eq!(complete_cap_fitting_rounds(1200, rounds, fix, def), 3000);
-
-        // A budget that already fits is returned UNTOUCHED — this must not gratuitously inflate every
-        // run's cap, or it stops being a repair of a broken value and becomes a silent policy change.
-        assert_eq!(complete_cap_fitting_rounds(2400, rounds, fix, def), 2400);
-        assert_eq!(complete_cap_fitting_rounds(3000, rounds, fix, def), 3000);
-
-        // F856: a ≥2×-ref tree legally scales the per-fix cap to 2400, and the lift is now fed the
-        // SCALED value — the default 3000 must rise to fit two scaled rounds, or round 1 becomes
-        // unreachable on exactly the trees that need repair most (the guard's original defect, one
-        // scale factor later).
-        assert_eq!(complete_cap_fitting_rounds(3000, rounds, 2400, def), 4800);
-
-        // An operator who deliberately raised it keeps their number; lifting is a floor, never a set.
-        assert_eq!(complete_cap_fitting_rounds(5000, rounds, fix, def), 5000);
-
-        // 0 means "no cap at all" and is an explicit choice, not a too-small budget to repair.
-        assert_eq!(complete_cap_fitting_rounds(0, rounds, fix, def), 0);
-
-        // One round needs one attempt, so 1200 fits and must NOT be lifted — the defect is the
-        // mismatch between the cap and the rounds, never the number 1200 itself.
-        assert_eq!(complete_cap_fitting_rounds(1200, 1, fix, def), 1200);
-
-        // The live config must actually be repaired by this, or the fix is theatre.
-        let live = complete_cap_fitting_rounds(
-            load_config().complete_cap_secs,
-            complete_rounds() as u64,
-            fix_cap_secs(),
-            default_complete_cap_secs(),
-        );
-        assert!(
-            live == 0 || live >= complete_rounds() as u64 * fix_cap_secs(),
-            "the resolved repair budget is {live}s but this machine's config dispatches {} fix \
-             attempts of up to {}s each — the later rounds are still unreachable",
-            complete_rounds(),
-            fix_cap_secs(),
-        );
-    }
-
-    #[test]
     fn boundary_probe_from_defaults_on_and_parses() {
         assert!(boundary_probe_from(None)); // default ON (flipped 2026-07-10)
         assert!(!boundary_probe_from(Some("0".to_string())));
@@ -14308,46 +14046,10 @@ fn retarget_action(
     }
 }
 
-/// Wall-clock budget for ONE skeleton draft. env > config `draft_timeout_secs` > **480**; clamped [60, 1800].
-///
-/// The 480 default is DELIBERATE and is kept: it is a per-draft cap TIGHTER than `planner_timeout_secs` (900),
-/// added because "a runaway SINGLE generation on a slow local model can stream for 20+ min without ever going
-/// idle, hanging the whole run before execute starts" — the idle-based watchdog cannot catch that. Keying
-/// drafts off planner_timeout_secs would silently undo that decision for everyone, so this gets its own field.
-///
-/// What was wrong is that the value was HARDCODED — unreachable from config, so a fleet that needs longer had
-/// no way to say so. MEASURED LIVE, the first thing the new engine-stderr log ever revealed:
-///   "! 2 of 3 plan drafts returned nothing (timeout/error/no final_output) — confidence is measured on 1 draft(s)"
-/// With a single surviving draft `plan_agreement` returns the INERT NEUTRAL 60 — a placeholder, not a
-/// measurement — and the round was then discarded ("backbone round 2 not adopted"). A full round of 3-node
-/// fleet time to learn nothing.
-///
-/// It bites the REDRAFT hardest: that prompt carries the locked backbone AND round 1, so it is the longest
-/// generation of the run, and it was handed the same budget as the first and smallest draft. Whether 480 is
-/// simply too small for a 27B at 262k context is now MEASURABLE instead of unaskable.
-fn draft_timeout_secs() -> u64 {
-    draft_timeout_resolved(
-        std::env::var("GOOSE_SWARM_DRAFT_TIMEOUT_SECS").ok(),
-        load_config().draft_timeout_secs,
-    )
-}
-
 /// The draft wall with GOOSE_SWARM_UNCAPPED applied: a slow deep draft is legitimate work, and
 /// killing it is how both qwen3.8 r0 attempts lost their whole draft pool to the solo fallback.
 fn draft_timeout_eff() -> u64 {
-    if uncapped() {
-        UNCAPPED_SECS
-    } else {
-        draft_timeout_secs()
-    }
-}
-
-/// The pure precedence, split out so it is testable (the wrapper reads env + config).
-fn draft_timeout_resolved(env: Option<String>, cfg: Option<u64>) -> u64 {
-    env.and_then(|v| v.trim().parse::<u64>().ok())
-        .or(cfg)
-        .unwrap_or(480)
-        .clamp(60, 1800)
+    UNCAPPED_SECS
 }
 
 /// The turn budget for the `integrate-verify` SINK specifically. `None` = whatever workers get (so the
@@ -14356,9 +14058,8 @@ fn draft_timeout_resolved(env: Option<String>, cfg: Option<u64>) -> u64 {
 /// Never BELOW the worker budget: the sink strictly dominates a worker's job, so a smaller cap could only
 /// ever cut it off sooner — there is no configuration in which that is what someone meant.
 fn sink_max_turns(worker_default: u32) -> u32 {
-    if uncapped() {
-        return worker_default.max(100_000);
-    }
+    return worker_default.max(100_000);
+    #[allow(unreachable_code)]
     sink_max_turns_resolved(
         std::env::var("GOOSE_SWARM_SINK_MAX_TURNS").ok(),
         load_config().sink_max_turns,
@@ -14384,9 +14085,8 @@ fn sink_max_turns_resolved(env: Option<String>, cfg: Option<u32>, worker_default
 /// without ever being handed to the model. It is a suspect, not a proven cause: `clarity_fail` now records
 /// whether it was actually a timeout, so raising this can be judged on evidence rather than on my hunch.
 fn clarity_probe_secs() -> u64 {
-    if uncapped() {
-        return UNCAPPED_SECS;
-    }
+    return UNCAPPED_SECS;
+    #[allow(unreachable_code)]
     let cfg = load_config().clarity_probe_secs;
     std::env::var("GOOSE_SWARM_CLARITY_PROBE_SECS")
         .ok()
@@ -16340,10 +16040,23 @@ impl GooseAgentDispatcher {
                 let _ = std::fs::copy(p, m);
             }
         }
-        // IDLE-based watchdog: kill the task only if NO agent event arrives for `idle_secs` (a genuinely
-        // stalled stream), NOT on total wall-clock — a slow-but-progressing local model emits an event
-        // every turn and must be allowed to finish. idle_secs == 0 disables the watchdog.
-        let idle = std::time::Duration::from_secs(if idle_secs == 0 { 86_400 } else { idle_secs });
+        // THE ENGINE NO LONGER WATCHES FOR SILENCE. This was the last cap standing, kept as a
+        // "dead-socket detector" — and it turns out to be a redundant, coarser copy of something the
+        // TRANSPORT already does better.
+        //
+        // goose-providers/src/api_client.rs:48-59 configures reqwest with INACTIVITY semantics:
+        // `.read_timeout(..)`, which RESETS on every received chunk, plus a 30s `.connect_timeout(..)`.
+        // So a slow-but-alive generation survives indefinitely (it keeps emitting chunks), a genuinely
+        // silent stream is cut where the bytes actually stop arriving, and a dead endpoint fails at
+        // connect. That failure then surfaces as a provider error and flows into the existing transient
+        // retry path — which is exactly what this watchdog was approximating from one layer too high,
+        // with a number that could not tell prefill from death (hence the prefill-grace machinery below,
+        // which exists solely to patch that blindness).
+        //
+        // `idle_secs` is therefore ignored. The Duration below exists only because `tokio::time::timeout`
+        // needs one; it is never a real bound.
+        let _ = idle_secs;
+        let idle = std::time::Duration::from_secs(UNCAPPED_SECS);
         // PREFILL-AWARE FIRST-TOKEN BUDGET (F905 third catch, r9): prefill streams NOTHING, so a
         // large prompt on a contended node is indistinguishable from a dead stream to this
         // watchdog — r9's completed calls measured 164s TTFT at 14k prompt tokens while the
@@ -16434,28 +16147,15 @@ impl GooseAgentDispatcher {
         }
         let sink_deadline = sink_cap_plan
             .map(|(_, secs, _)| tokio::time::Instant::now() + std::time::Duration::from_secs(secs));
-        // PROGRESS WATCHDOG (GOOSE_SWARM_PROGRESS_WATCHDOG_SECS): the `idle` watchdog above only fires when the
-        // stream goes SILENT. A task that streams THINKING tokens continuously resets it forever — measured
-        // live, tasks ran 899s/348s/26min while emitting reasoning tokens and were never cut (the pathology
-        // documented at the digest note above). This SECOND budget bounds the max continuous wall-time a task
-        // may spend WITHOUT a PRODUCTIVE event (a real tool call/result, final_output, or non-empty non-thinking
-        // text). It is PROGRESS-shaped, not wall-clock: a slow-but-working local model emits a tool event every
-        // turn and resets it, so a legitimate long build survives while a thinking-only spiral is cut. 0 = OFF
-        // (byte-identical). Gated OFF for the integrate-verify SINK: the sink owns no deliverables and is bounded
-        // by its own wall-clock cap (GOOSE_SWARM_SINK_CAP_SECS above); re-routing it on a thinking stall would
-        // only re-prefill the whole tree.
-        let thinking_only_budget = if activity_key == Some("integrate-verify") {
-            None
-        } else {
-            std::env::var("GOOSE_SWARM_PROGRESS_WATCHDOG_SECS")
-                .ok()
-                .and_then(|v| v.parse::<u64>().ok())
-                .filter(|&s| s > 0)
-                .map(std::time::Duration::from_secs)
-        };
-        // Time of the last PRODUCTIVE event (tool/output/real-text). Only advanced on real progress, so the
-        // thinking_only_budget elapses while the stream emits only reasoning.
-        let mut last_productive_at = tokio::time::Instant::now();
+        // REMOVED: the PROGRESS WATCHDOG (GOOSE_SWARM_PROGRESS_WATCHDOG_SECS, 900s) and the
+        // last-productive-event clock it ran on.
+        //
+        // It bounded how long a call may spend WITHOUT a productive event while still streaming reasoning.
+        // Its own note argued it was "PROGRESS-shaped, not wall-clock" — but a model thinking hard about a
+        // hard module produces no tool call for exactly as long as it needs to, so what it actually bounded
+        // was THINKING. That is the one thing this engine must never cut on a clock. Reading the reasoning
+        // tells a deep call from a stuck one; a stopwatch never could, and that is the judge's job now.
+
         // #136 REPEAT BREAKER. Armed ONLY for dispatched WORKER tasks: `activity_key` is Some for a task lane,
         // and the planner-side calls (architect/scout/detailer/contract drafts) must never be armed because
         // they have no retry path — cutting one loses the whole planning round. The integrate-verify SINK is
@@ -16463,29 +16163,26 @@ impl GooseAgentDispatcher {
         // its own wall-clock cap). OFF => these stay untouched and nothing below runs => byte-identical.
         let repeat_break_on =
             self.repeat_break && activity_key.is_some() && activity_key != Some("integrate-verify");
-        // #135 GLOBAL SPIRAL BREAK — the ONLY supervision that exists outside EXECUTE.
-        // Armed for EVERY call in EVERY phase (scout, plan draft, detail, contract, worker), because this
-        // shared agent seam is the single point they all pass through and the judge never sees any of them
-        // except workers. The SINK is exempt for the same reason thinking_only_budget exempts it: it owns no
-        // deliverable, is already bounded by its own wall-clock cap, and re-routing it re-prefills the tree.
-        // SAFE TO ARM EVERYWHERE because every planner-side phase already degrades gracefully on a lost call:
-        // a scout -> "proceeding on N of 3" (research tolerates a missing lens), a plan draft -> best-of-N
-        // drops it ("proceeding on 2 valid of 3"), a detail -> falls back to the skeleton brief (`_ => brief`),
-        // a contract -> the module builds without its frozen interface (identical to a contract timeout),
-        // a worker -> the existing stall path (salvage / degrade_on_stall / bounded retry). 0 => OFF.
-        let spiral_budget = spiral_budget_for(
-            activity_key,
-            spiral_break_chars(load_config().spiral_break_chars),
-        );
-        // #135 OMNI-JUDGE: the JUDGE itself, in EVERY phase. Armed for any call with an activity_key except
-        // the sink. Unlike spiral_budget this READS the reasoning, so it covers the kind a threshold cannot
-        // police at all — plan drafts, where healthy calls reach 57k chars and look identical by volume.
-        let omni_judge_on = omni_judge_enabled(load_config().omni_judge)
-            && activity_key.is_some()
-            && activity_key != Some("integrate-verify");
+        // REMOVED: the global spiral break, and with it spiral_budget_for's per-kind multipliers.
+        //
+        // It was a CHAR COUNT deciding whether a call was stuck, and its own tuning table is the argument
+        // against it: healthy plan drafts reach 57,443 characters, from runs that scored 100/100, while
+        // the `detail` kind's worst healthy call was 1,384 — forty times apart, which is why the budget
+        // had to be scaled per kind and why plan drafts had to be DISARMED entirely. A threshold that
+        // cannot be set for two kinds of the same call is not measuring the thing it claims to.
+        // THE JUDGE, in EVERY phase — including the sink, which was exempt because it "is already bounded
+        // by its own wall-clock cap". That cap is gone, so the exemption would leave the longest call in
+        // the run as the only unsupervised one. Unlike a char count the judge READS the reasoning, which
+        // is the only thing that can tell a deep call from a stuck one.
+        let omni_judge_on = omni_judge_enabled(load_config().omni_judge) && activity_key.is_some();
         let mut omni_next_look = tokio::time::Instant::now()
             + std::time::Duration::from_secs(OMNI_JUDGE_FIRST_LOOK_SECS);
         let mut omni_looks: u32 = 0;
+        // The event-driven look trigger's state: reasoning volume and tool-call count as of the last
+        // look. Growth in the first with no change in the second is "talking without acting", which is
+        // the shape worth reading — and unlike a clock it is a property of the call, not of the wall.
+        let mut omni_thinking_at_last_look: usize = 0;
+        let mut omni_calls_at_last_look: usize = 0;
         // Consecutive LOOPING verdicts on the SAME content. One is not enough, and two on DIFFERENT
         // content is a slow-starting call misread twice, not a loop — see the abort site.
         let mut omni_looping_streak: u32 = 0;
@@ -16509,6 +16206,11 @@ impl GooseAgentDispatcher {
         let mut repeat_run: usize = 0usize;
         let mut repeat_run_started = tokio::time::Instant::now();
         let mut repeat_what = String::new();
+        let mut repeat_result = String::new();
+        // Set when the repeat detector trips. It no longer ABORTS the call — it summons the judge and
+        // hands it the evidence, because "you ran this six times and got the same answer" is a diagnosis
+        // the judge has to make, not a reason to stop.
+        let mut repeat_evidence: Option<String> = None;
         loop {
             // #136: cut a REPEATED-IDENTICAL-CALL loop — the same tool call returning the same result N times
             // in a row over at least the time floor. This is the ONLY guard that sees it: each repeat is a
@@ -16524,17 +16226,38 @@ impl GooseAgentDispatcher {
             // #F924: a measured recurrence SUMMONS the judge immediately, ahead of the interval.
             // It never kills by itself — under UNCAPPED the judge decides, and this only ensures
             // the judge is looking, and knows what the detector saw, while the loop is running.
+            // THE JUDGE LOOKS WHEN THE CALL'S OWN BEHAVIOUR SAYS THERE IS SOMETHING TO LOOK AT.
+            // The old trigger was a clock and a counter: first look at 45s, then every 60s, at most 6.
+            // Both are gone. It looks when the deterministic recurrence detector trips, or when reasoning
+            // has grown by another chunk with NO tool call in between — growth without action is the shape
+            // worth reading. OMNI_JUDGE_MIN_CHARS stays as a READINESS floor, not a cap: a call cannot be
+            // assessed from an empty tail. The interval that remains only backs the judge off when it
+            // keeps answering OK; it bounds how often the JUDGE runs, never how long the worker may.
+            let grew_without_acting = thinking_chars
+                >= omni_thinking_at_last_look + OMNI_JUDGE_GROWTH_CHARS
+                && call_records.len() == omni_calls_at_last_look;
+            // Repeat evidence summons the judge IMMEDIATELY and bypasses the readiness floor: a call
+            // stuck re-running one command may have emitted almost no reasoning at all, which is exactly
+            // the case the char floor would hide.
             if omni_judge_on
-                && (omni_looks < OMNI_JUDGE_MAX_LOOKS || uncapped())
-                && thinking_chars >= OMNI_JUDGE_MIN_CHARS
-                && (tokio::time::Instant::now() >= omni_next_look || recur.recurring())
+                && (repeat_evidence.is_some()
+                    || (thinking_chars >= OMNI_JUDGE_MIN_CHARS
+                        && (recur.recurring()
+                            || grew_without_acting
+                            || tokio::time::Instant::now() >= omni_next_look)))
             {
+                omni_thinking_at_last_look = thinking_chars;
+                omni_calls_at_last_look = call_records.len();
                 omni_looks += 1;
                 // UNCAPPED keeps the judge watching for the call's whole life — with every wall and
                 // volume cap gone it is the ONLY stopper left, and a cap on its looks would turn
                 // "the judge decides" into "nothing decides after minute ~7". Past the normal look
                 // budget it backs off to 5-minute checks so a very long call costs bounded judge time.
-                let look_interval = if omni_looks >= OMNI_JUDGE_MAX_LOOKS {
+                // COST BACKOFF, not a budget. The recurrence trip and the growth-without-action trip
+                // above are the real triggers; this interval only stops the judge re-reading a call that
+                // keeps coming back OK. It bounds judge spend, never the worker's life — nothing happens
+                // to the call when it elapses except that someone looks at it again.
+                let look_interval = if omni_looks >= 6 {
                     300
                 } else {
                     OMNI_JUDGE_INTERVAL_SECS
@@ -16583,6 +16306,22 @@ impl GooseAgentDispatcher {
                 // ESCALATION WITHOUT A COUNTER. The judge is shown its own prior direction and whether the
                 // call obeyed it, so nudge 2 differs from nudge 1 because the evidence differs — not
                 // because a branch counted to two. This is what replaces JUDGE_NUDGE_MAX.
+                // UNDERSTAND FIRST, THEN REDIRECT. When a command is repeating, the one answer that is
+                // certainly wrong is "run it again" — that is what the call is already doing. So the judge
+                // is given the command AND the result it keeps getting, and asked to work out why before
+                // it proposes anything, with an explicit ban on proposing the same thing.
+                if let Some(evidence) = &repeat_evidence {
+                    sys.push_str(&format!(
+                        "\n\nA deterministic detector measured this call REPEATING ITSELF:\n{evidence}\n\n\
+                         Before you answer, work out WHY that command keeps returning the same result — the \
+                         file it wants does not exist, the service it probes is not up, it is asserting on \
+                         output it has already seen, it is waiting for something that will never change. \
+                         Put that diagnosis in ESTABLISHED, in the call's own terms.\n\
+                         NEXT must then be DIFFERENT IN KIND. Not the same command. Not a retry of it. Not \
+                         \"try again\" or \"verify\". Name the different thing to do — the file to write, \
+                         the assumption to check another way, the step to skip."
+                    ));
+                }
                 if nudges_used > 0 {
                     let moved = if tool_calls_at_last_nudge.is_some_and(|n| call_records.len() > n)
                     {
@@ -16733,7 +16472,12 @@ impl GooseAgentDispatcher {
                     // one in-session message rather than a dead worker. So it acts on the first look.
                     let drifting_now = omni_outcome.verdict == goose_swarm::Verdict::Drifting
                         && omni_outcome.confidence >= 0.8;
-                    if omni_looping_streak >= 2 || drifting_now {
+                    // A MEASURED repeat needs no corroboration from a second look. The streak exists to
+                    // defend against the judge MISREADING a slow call as looping; here the loop is an
+                    // engine fact — the same command, the same bytes back, six times over a minute — and
+                    // the judge was called to diagnose it, not to confirm it happened.
+                    let repeat_measured = repeat_evidence.take().is_some();
+                    if omni_looping_streak >= 2 || drifting_now || repeat_measured {
                         // THE JUDGE NUDGES. It does not stop anything. This is the whole change:
                         // previously two redirects were allowed and the third strike aborted the call.
                         // JUDGE_NUDGE_MAX is gone and there is no abort path left here — a call ends
@@ -16837,33 +16581,32 @@ impl GooseAgentDispatcher {
             // repeat_break (identical TOOL CALLS) and from thinking_only_budget (time since a productive
             // event — which a spiral defeats by making an occasional real tool call). The measured scout made
             // 6 DISTINCT calls while emitting 30,403 chars, so only cumulative volume separates it.
-            if spiral_budget > 0 && thinking_chars > spiral_budget {
-                return Err(anyhow!(
-                    "agent stalled — no productive progress: reasoning spiral, {thinking_chars} thinking \
-                     chars exceeded the {spiral_budget}-char budget for this call"
-                ));
-            }
+
             if repeat_break_on
+                && repeat_evidence.is_none()
                 && repeat_run >= REPEAT_BREAK_N
                 && repeat_run_started.elapsed()
                     >= std::time::Duration::from_secs(REPEAT_BREAK_MIN_SECS)
             {
-                return Err(anyhow!(
-                    "agent stalled — no productive progress: repeated the identical tool call {repeat_run}x \
-                     with an identical result over {}s ({})",
+                // THE REPEAT BREAKER NO LONGER BREAKS ANYTHING. It used to return a stall error and throw
+                // the attempt away. Now it SUMMONS THE JUDGE and hands over what it measured, because the
+                // useful move here is a diagnosis, not a stop — and certainly not "do it again", which is
+                // what a bare retry amounts to. The judge is asked to work out WHY the command keeps
+                // returning the same thing and to name something DIFFERENT IN KIND.
+                repeat_evidence = Some(format!(
+                    "It has run the identical command {repeat_run} times over {}s and got the identical \
+                     result every time.\nCommand: {}\nResult it keeps getting:\n{}",
                     repeat_run_started.elapsed().as_secs(),
-                    repeat_what
+                    repeat_what,
+                    repeat_result
                 ));
+                repeat_run = 0;
+                repeat_hash = None;
             }
             // Cut a THINKING-ONLY spiral: no productive event for the whole budget while the stream stays alive
             // on reasoning tokens. Checked at the top so a continuously-thinking task is caught promptly (each
             // streamed Thinking token drives an iteration here).
-            if thinking_only_budget.is_some_and(|b| last_productive_at.elapsed() >= b) {
-                return Err(anyhow!(
-                    "agent stalled — no productive progress (tool/output/text) for {}s while streaming reasoning only",
-                    thinking_only_budget.map(|b| b.as_secs()).unwrap_or(0)
-                ));
-            }
+
             // HARD wall-clock ceiling: finalize the moment the sink deadline passes, regardless of whether
             // the sink is still emitting. The wait/timeout path below only reaches the deadline check on an
             // event GAP (the `Err(_)` arm), so a CONTINUOUSLY-active integrate-verify (steady tokens/tools)
@@ -16918,11 +16661,10 @@ impl GooseAgentDispatcher {
             // WHOLE call, not just before the first token: the failsafe still catches a genuinely
             // dead socket (it stays finite), but it can no longer mistake a compaction for a death.
             // Capped runs are byte-identical.
-            let quiet_budget = if first_event_seen && !uncapped() {
-                idle
-            } else {
-                idle + prefill_grace
-            };
+            // The prefill grace applies for the whole call, not just before the first event: a slow
+            // local model's first token can arrive long after the request, and the idle watchdog is a
+            // DEAD-SOCKET detector, not a pace limit.
+            let quiet_budget = idle + prefill_grace;
             let wait = match sink_deadline {
                 Some(dl) => {
                     quiet_budget.min(dl.saturating_duration_since(tokio::time::Instant::now()))
@@ -17071,6 +16813,10 @@ impl GooseAgentDispatcher {
                                                 repeat_run = 1;
                                                 repeat_run_started = tokio::time::Instant::now();
                                                 repeat_what = summary.chars().take(80).collect();
+                                                // The RESULT, not just the command. The judge cannot work
+                                                // out WHY a call keeps returning the same thing without
+                                                // seeing what it returns.
+                                                repeat_result = result.chars().take(600).collect();
                                             }
                                         }
                                     }
@@ -17086,16 +16832,9 @@ impl GooseAgentDispatcher {
                             _ => {}
                         }
                     }
-                    if productive {
-                        last_productive_at = tokio::time::Instant::now();
-                    }
+                    let _ = productive;
                 }
-                // An MCP tool streaming a progress/log NOTIFICATION during a single long-running call is proof
-                // the tool is actively working — reset the productive clock so the progress-watchdog never cuts
-                // a working tool mid-execution (the productive ToolResponse only arrives after the call ends).
-                Ok(AgentEvent::McpNotification(_)) => {
-                    last_productive_at = tokio::time::Instant::now();
-                }
+                Ok(AgentEvent::McpNotification(_)) => {}
                 Ok(_) => {}
                 Err(e) => return Err(anyhow!("agent stream error: {e}")),
             }
@@ -17817,11 +17556,7 @@ impl GooseAgentDispatcher {
                 let retry_on =
                     swarm_gate_cfg("GOOSE_SWARM_CONTRACT_RETRY", load_config().contract_retry);
                 let attempts = if retry_on { 2 } else { 1 };
-                let stub_budget = if uncapped() {
-                    UNCAPPED_SECS
-                } else {
-                    me.worker_timeout_secs.max(120)
-                };
+                let stub_budget = UNCAPPED_SECS;
                 // Write a per-module contract digest so the CONTRACTS phase shows live per-node activity (dev
                 // verbosity) instead of a black box — the desktop reads .swarm/activity/contract-<id>.json.
                 let contract_key = format!("contract-{}", spec.id);
@@ -19297,7 +19032,7 @@ impl GooseAgentDispatcher {
                 // tokens; prologue calls have already populated the telemetry; none → flat
                 // budget, byte-identical). Measured stake: the 44.2%-vs-90.0% spread across
                 // identical configs traced to which modules kept the one-line brief.
-                let detail_budget = detail_budget_secs();
+                let detail_budget = UNCAPPED_SECS;
                 let detail_grace = telemetry_prefill_floor(&model)
                     .map(|r| ((system.len() + user.len()) as f64 / 4.0 / r) as u64)
                     .unwrap_or(0);
@@ -24755,11 +24490,9 @@ impl Judge for GooseAgentDispatcher {
             // UNCAPPED: the split trip is elapsed-wall on a PRODUCTIVE task — exactly the class the
             // regime removes; the spiral kill is a volume threshold. Both forced off; the judge's
             // content-based LOOPING verdicts stay.
-            split_enabled: !uncapped()
-                && std::env::var("GOOSE_SWARM_SPLIT")
-                    .ok()
-                    .map(|v| matches!(v.to_lowercase().as_str(), "1" | "on" | "true" | "yes"))
-                    .unwrap_or_else(|| load_config().split.unwrap_or(true)),
+            // Task-splitting is gone entirely (step 4b): taking files off a running worker is the same
+            // mistake as moving it to another node.
+            split_enabled: false,
             // GOOSE_SWARM_SPLIT_SECS overrides the too-big threshold (default 900s) so a live M4 proof can
             // trigger a split on a moderate task without waiting ~15 min for one to cross the default.
             split_threshold_secs: std::env::var("GOOSE_SWARM_SPLIT_SECS")
@@ -24768,14 +24501,8 @@ impl Judge for GooseAgentDispatcher {
                 .unwrap_or_else(|| load_config().split_secs),
             // #134 reasoning-spiral cap: env wins, else config.yaml, else 0 (OFF). Config-reachable so the
             // desktop can enable it (env is discarded by `open -n`).
-            spiral_thinking_chars: if uncapped() {
-                0
-            } else {
-                std::env::var("GOOSE_SWARM_SPIRAL_THINKING_CHARS")
-                    .ok()
-                    .and_then(|v| v.parse().ok())
-                    .unwrap_or_else(|| load_config().spiral_thinking_chars)
-            },
+            // Permanently off: a char count is a volume threshold, and the judge reads content.
+            spiral_thinking_chars: 0,
             ..JudgeConfig::default()
         };
         // c5: the owned-file loop AND the activity-digest read below both derive from this one
@@ -32235,9 +31962,8 @@ fn fix_cap_secs() -> u64 {
     // cap with the ETag findings unchanged — indicts the shape of the repair (one monolithic
     // twin per model), not the constant: the S1 shard design and the G-batch progress-shaped cap
     // (rounds-without-mutation) are the fixes with evidence behind them.
-    if uncapped() {
-        return UNCAPPED_SECS;
-    }
+    return UNCAPPED_SECS;
+    #[allow(unreachable_code)]
     std::env::var("GOOSE_SWARM_FIX_CAP_SECS")
         .ok()
         .and_then(|v| v.parse::<u64>().ok())
@@ -32973,16 +32699,15 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
     if std::env::var("GOOSE_SWARM_SINK_CAP_SECS").is_err() {
         std::env::set_var("GOOSE_SWARM_SINK_CAP_SECS", cfg.sink_cap_secs.to_string());
     }
-    if uncapped() {
-        // GOOSE_SWARM_UNCAPPED wins over both config and an explicit env: the sink runs until
-        // done, the thinking-only timer never fires. Idle failsafes and the judge stay armed.
-        std::env::set_var("GOOSE_SWARM_SINK_CAP_SECS", "0");
-        std::env::set_var("GOOSE_SWARM_PROGRESS_WATCHDOG_SECS", "0");
-        std::env::set_var("GOOSE_SWARM_STRAGGLER_STOP_DEGRADE", "0");
-        eprintln!(
-            "  swarm: UNCAPPED — no wall/volume caps this run; only the judge, repeat-break and dead-stream failsafes can stop a call"
-        );
-    }
+    // NO CAPS. Unconditional now — this is the only regime. The sink runs until done, the thinking-only
+    // timer never fires, and a straggler is never degraded. What can still stop a call: the judge (which
+    // READS the reasoning), and the dead-socket detector (zero tokens AND zero tool activity).
+    std::env::set_var("GOOSE_SWARM_SINK_CAP_SECS", "0");
+    std::env::set_var("GOOSE_SWARM_PROGRESS_WATCHDOG_SECS", "0");
+    std::env::set_var("GOOSE_SWARM_STRAGGLER_STOP_DEGRADE", "0");
+    eprintln!(
+        "  swarm: no wall or volume caps — only the judge and the dead-socket failsafe can stop a call"
+    );
     // Same bridge for SINK IDLE-FILL, and it is the FIRST one this lever has ever had.
     // `sink_review_enabled()` reads the environment only, so a desktop run — which cannot set env vars
     // at all — could never switch it on, and `levers.sink_review` is absent from every cell on record:
@@ -33043,11 +32768,8 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
     // out of the spawn dir. The breadcrumb is written in the dir the desktop passed us, so it is always
     // where the panel is looking, and it is rewritten at the START of every run.
     publish_current_run(&spawn_dir, &working_dir, &run_id);
-    let worker_max_turns = if uncapped() {
-        100_000
-    } else {
-        opts.max_turns.unwrap_or(cfg.worker_max_turns)
-    };
+    // No turn cap. A worker ends when it finishes, when the judge redirects it, or when the socket dies.
+    let worker_max_turns = 100_000;
     // M5: a fresh run must NOT inherit stale .swarm/prereview findings from a previous run in this working
     // dir — they would be injected into THIS run's integrate-verify and describe code that no longer exists.
     let _ = std::fs::remove_dir_all(working_dir.join(".swarm").join("prereview"));
@@ -33474,11 +33196,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                     worker_models,
                     ScoutBudget {
                         max_lookups: cfg.scout_max_lookups,
-                        backstop_secs: if uncapped() {
-                            UNCAPPED_SECS
-                        } else {
-                            cfg.scout_budget_secs
-                        },
+                        backstop_secs: UNCAPPED_SECS,
                     },
                 )
                 .await
@@ -34035,7 +33753,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             "sink_cap_secs": load_config().sink_cap_secs,
             // A lever nobody can see resolve is a lever nobody can keep: this budget decides whether a
             // worker gets a real spec or the architect's one-liner, so the run must say what it was.
-            "detail_budget_secs": detail_budget_secs(),
+            "detail_budget_secs": UNCAPPED_SECS,
             "struct_stop": load_config().struct_stop,
             "spiral_thinking_chars": load_config().spiral_thinking_chars,
             "planner_weight": load_config().planner_weight,
@@ -35649,15 +35367,8 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
     let mut ov_verified = false;
     if complete_on {
         let rounds = complete_rounds();
-        let cap_requested = std::env::var("GOOSE_SWARM_COMPLETE_CAP_SECS")
-            .ok()
-            .and_then(|v| v.parse::<u64>().ok())
-            .unwrap_or_else(|| load_config().complete_cap_secs);
-        let cap_requested = if uncapped() {
-            UNCAPPED_SECS
-        } else {
-            cap_requested
-        };
+        // No wall on the repair phase. It ends when a round changes nothing on the tree, not on a clock.
+        let cap_requested = UNCAPPED_SECS;
         // F856 geometry: the phase budget must fit rounds of the SCALED per-fix ceiling, not the
         // static base — a ≥2× tree's twin may legally run to 2× fix_cap_secs, and budgeting the
         // static value reinstates the exact "later rounds unreachable" defect the lift exists to

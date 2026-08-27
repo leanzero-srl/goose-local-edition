@@ -1281,6 +1281,71 @@ async fn pre_review_never_oversubscribes_free_nodes() {
     );
 }
 
+/// RETRIES END ON PROGRESS, NOT ON A COUNT. This replaces `max_attempts`, which was the last counted
+/// limit in the engine.
+///
+/// It never capped THINKING — judge interventions and transport drops were already excluded from it.
+/// What it capped was REAL failures: a missing owned file, code that will not compile, a stall. Something
+/// has to end those, but a literal 3 is the wrong something: a task whose next attempt writes materially
+/// different code has earned another go, and one that writes the byte-identical broken file has not.
+///
+/// So: a failed attempt that leaves the owned files exactly as the previous failure did is the end. A
+/// task that keeps CHANGING its output keeps going — here it fails four times, twice as many as the old
+/// cap allowed, and still lands.
+#[tokio::test]
+async fn retries_continue_while_the_output_changes_and_stop_when_it_does_not() {
+    struct ChangingFailures {
+        path: std::path::PathBuf,
+        attempts: Arc<Mutex<u32>>,
+    }
+    #[async_trait]
+    impl TaskDispatcher for ChangingFailures {
+        async fn run(&self, req: DispatchRequest) -> Result<TaskRunOutput, DispatchError> {
+            let n = {
+                let mut g = self.attempts.lock().unwrap();
+                *g += 1;
+                *g
+            };
+            // Every failure writes DIFFERENT bytes into the owned file: the model is producing new
+            // (still wrong) code each time, which is exactly the case that deserves another attempt.
+            if n <= 4 {
+                std::fs::write(&self.path, format!("attempt {n} — still broken\n")).unwrap();
+                return Err(DispatchError::ContentRetry(format!(
+                    "attempt {n}: does not compile"
+                )));
+            }
+            std::fs::write(&self.path, "finally correct\n").unwrap();
+            Ok(format!("output-of-{}", req.task_id).into())
+        }
+    }
+
+    let path = std::env::temp_dir().join("goose_retry_progress_owned.rs");
+    let _ = std::fs::remove_file(&path);
+    let attempts = Arc::new(Mutex::new(0u32));
+    let disp = Arc::new(ChangingFailures {
+        path: path.clone(),
+        attempts: attempts.clone(),
+    });
+    let owned = path.to_string_lossy().to_string();
+    let dag = Dag::from_specs(vec![spec("m", &[], &[owned.as_str()])]).unwrap();
+    // max_attempts is retired and ignored; pass the old default to prove it no longer binds.
+    let sched = Scheduler::new(vec![dev("a", "m-a", 1)], 3);
+    let report = sched.run(dag, disp, String::new()).await.unwrap();
+
+    let n = *attempts.lock().unwrap();
+    assert!(
+        n >= 5,
+        "a task whose output KEEPS CHANGING keeps being retried past the old cap of 3; got {n} attempts"
+    );
+    assert!(
+        report.done.contains(&"m".to_string()),
+        "and it lands: {:?} / failed {:?}",
+        report.done,
+        report.failed
+    );
+    let _ = std::fs::remove_file(&path);
+}
+
 /// GOOSE_SWARM_DONE_GATE scoping: a `ContentRetry` (the pre-done syntax gate) must thread its error into
 /// the retry's `prior_hint` so the fix is GUIDED; an infra `Transient` (model unloaded) must NOT — a stale
 /// content note on an infra retry would mislead the worker. Guards the scheduler.rs combined-arm change.
