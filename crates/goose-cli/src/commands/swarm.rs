@@ -16563,6 +16563,16 @@ impl GooseAgentDispatcher {
         // and the judge was shown "it has emitted 18,236 characters", which reads exactly like a deep
         // call. Thirty-seven consecutive looks returned OK on a dead socket.
         let mut omni_last_look_at = tokio::time::Instant::now();
+        // ACTIONS TAKEN BY *THIS* STREAM. A re-stream resets thinking_chars and omni_looks but not
+        // call_records, and `acted_enough_to_judge` reads call_records — so a call that had just been
+        // restarted was instantly judgeable again on the previous attempt's action count, with zero
+        // reasoning to its name, at the short look interval. The judge then measured a low production
+        // rate it had itself caused, said LOOPING, and re-streamed again.
+        //
+        // MEASURED: nudge 20 on one sink, the console reading "after 202 reasoning chars", "after 390",
+        // "after 128" — three consecutive re-streams each firing on the reset the previous one produced.
+        // The remedy was manufacturing the symptom it fires on.
+        let mut calls_at_stream_start: usize = 0;
         let mut omni_calls_at_last_look: usize = 0;
         // Consecutive LOOPING verdicts on the SAME content. One is not enough, and two on DIFFERENT
         // content is a slow-starting call misread twice, not a loop — see the abort site.
@@ -16627,7 +16637,8 @@ impl GooseAgentDispatcher {
             // below the 2,000-char floor and yet the most assessable call in the run, because what it had
             // produced was a repeating command and its identical result. Judging by reasoning volume alone
             // makes the engine blindest to exactly the calls that are doing things.
-            let acted_enough_to_judge = call_records.len() >= 6;
+            let acted_enough_to_judge =
+                call_records.len().saturating_sub(calls_at_stream_start) >= 6;
             // A DEGENERATE ANSWER SUMMONS THE JUDGE IMMEDIATELY, like a measured repeat does.
             //
             // Twice now, on two different calls, this fleet has finished its reasoning and then emitted
@@ -16801,9 +16812,15 @@ impl GooseAgentDispatcher {
                     };
                     sys.push_str(&format!(
                         "\n\nYou have already redirected this call {nudges_used} time(s). Your last \
-                         direction was: \"{last_direction}\". Since then it has {moved}. If it did not \
-                         follow your direction, be MORE concrete this time — name the exact file and the \
-                         first thing to put in it."
+                         direction was: \"{last_direction}\". Since then it has {moved}.\n\
+                         If it did NOT follow your direction, be MORE CONCRETE this time — name the exact \
+                         file and the first thing to put in it.\n\
+                         If it DID follow your direction and the problem is still there, then being more \
+                         concrete is the wrong move: YOUR DIAGNOSIS IS THE THING THAT IS WRONG. You have \
+                         now been obeyed and the symptom survived, which is evidence about your theory, \
+                         not about the worker. Do not restate it in more detail. Name a DIFFERENT cause, \
+                         and make NEXT a MEASUREMENT that would prove you wrong — a command whose output \
+                         separates your old theory from the new one."
                     ));
                 }
                 // #F924: the judge used to get one 2,000-char window and nothing else, which is why a
@@ -17108,6 +17125,10 @@ impl GooseAgentDispatcher {
                             thinking_chars = 0;
                             last_thinking.clear();
                             omni_looks = 0;
+                            // The new stream is judged on what IT does, not on the actions that earned
+                            // the re-stream. Without this the readiness floor is cleared instantly by
+                            // the previous attempt's tool calls and the judge fires on its own reset.
+                            calls_at_stream_start = call_records.len();
                             omni_looping_streak = 0;
                             omni_prior_looping_tails.clear();
                             // The re-stream abandons that reasoning, so its fingerprints must not count
