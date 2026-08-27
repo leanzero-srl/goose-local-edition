@@ -24430,6 +24430,25 @@ impl GooseAgentDispatcher {
         if lanes.is_empty() {
             return Vec::new();
         }
+        // A PORT EACH, and a clash is never a defect.
+        //
+        // All three angles are told to run the app, and they run AT THE SAME TIME on three machines
+        // against one working tree. Two of them binding the app's default port means two of them see
+        // "address already in use" and report that the app does not start — and `engine_fatal` below
+        // matches exactly that phrasing and force-promotes it to CRITICAL whatever the rater says. A
+        // working app would be held red by its own test fan, and the repair loop would then be sent to
+        // fix code that was never broken. That is the pillar-check failure this codebase already paid
+        // for once (swarm.rs: a distilled check false-failed a correct app and the fix loop broke two
+        // passing tests trying to satisfy it).
+        let port_note = |i: usize| {
+            format!(
+                "\n\nIf you need to bind a port, use {}. Two other testers are exercising this SAME tree \
+                 on other machines right now. If a port is already taken, that is one of THEM, not a bug \
+                 in the app — pick another port and carry on. Never report a port conflict, an \
+                 'address already in use', or a database lock as a defect.",
+                18400 + i
+            )
+        };
         let me = self.clone();
         let prompt = user_prompt.to_string();
         let file_list = files
@@ -24439,8 +24458,8 @@ impl GooseAgentDispatcher {
             .join("\n");
         let out = fanout_over_fleet(
             lanes,
-            ANGLES.to_vec(),
-            move |(key, angle): (&'static str, &'static str), model: String| {
+            ANGLES.iter().copied().enumerate().collect::<Vec<_>>(),
+            move |(i, (key, angle)): (usize, (&'static str, &'static str)), model: String| {
                 let prompt = prompt.clone();
                 let file_list = file_list.clone();
                 let me = me.clone();
@@ -24457,7 +24476,8 @@ impl GooseAgentDispatcher {
                          Repeat that pair for each defect. Put every path in BACKTICKS — the repair fan \
                          routes each defect to whoever owns the file, and an unattributed defect goes to \
                          a worker that has to search the whole tree for it.\n\
-                         If you found nothing wrong from your angle, reply with exactly: NO DEFECTS"
+                         If you found nothing wrong from your angle, reply with exactly: NO DEFECTS{}",
+                        port_note(i)
                     );
                     let user = format!(
                         "## What this app was asked to be\n{prompt}\n\n## Files it was built from\n{file_list}"
@@ -36697,6 +36717,15 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                     }));
                 }
             }
+            // WHICH FINDINGS A MODEL MERELY OBSERVED. `engine_fatal` below force-promotes a finding to
+            // CRITICAL on its wording alone, and it exists for exactly one reason: an opinion may not
+            // overrule a MEASUREMENT. The strings it matches are written by run_smoke_gate and the
+            // command probes — engine facts. Feeding the TEST fan's output into the same list inverts
+            // that: a model that says "the app does not start" because a sibling tester already held the
+            // port would be force-promoted past the rater, and the fix loop would be sent at working
+            // code. Model-observed defects are rated like anything else; only measurements are forced.
+            let mut model_observed: std::collections::HashSet<String> =
+                std::collections::HashSet::new();
             // TEST — the three-node fan, before the round's verdict is written so its defects are
             // rated and fixed by exactly the same machinery as the engine's own.
             //
@@ -36729,6 +36758,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                 }));
                 for (angle, d) in observed {
                     let text = format!("[{angle}] {d}");
+                    model_observed.insert(text.clone());
                     if !verdict.findings.contains(&text) {
                         verdict.findings.push(text);
                     }
@@ -36853,8 +36883,9 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                         || l.contains("missing deliverable")
                 };
                 let mut criticals: Vec<String> = Vec::new();
+                let forced = |f: &String| engine_fatal(f) && !model_observed.contains(f);
                 for (f, is_crit) in verdict.findings.iter().zip(rated.iter()) {
-                    if *is_crit || engine_fatal(f) {
+                    if *is_crit || forced(f) {
                         criticals.push(f.clone());
                     } else {
                         minors.push(f.clone());
@@ -36865,7 +36896,8 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                     "round": round,
                     "critical": criticals.len(),
                     "minor": minors.len(),
-                    "engine_forced": verdict.findings.iter().filter(|f| engine_fatal(f)).count(),
+                    "engine_forced": verdict.findings.iter().filter(|f| forced(f)).count(),
+                    "model_observed": model_observed.len(),
                     "minors": minors,
                 }));
                 if criticals.is_empty() {
