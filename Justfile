@@ -4,6 +4,60 @@
 default:
   @just --list
 
+# Stable macOS code-signing identity for LOCAL builds (self-signed, login keychain).
+# A keychain item's trusted-application ACL binds to the code's DESIGNATED REQUIREMENT. An
+# ad-hoc signature's requirement is that build's cdhash, so every rebuild is a brand-new
+# identity and macOS re-prompts for the keychain password the first time the new binary reads
+# a stored key. Signing with a certificate makes the requirement `certificate leaf = <hash>`,
+# which does not move between builds, so one "Always Allow" then covers every later build.
+# That is one of TWO gates: the item's PartitionID ACL is a separate list, and code with no
+# Team Identifier (which a self-signed cert cannot supply) partitions as `cdhash:<build>`.
+# Signing alone therefore does not stop the prompts -- run scripts/fix-keychain-prompts.sh
+# once as well (`just fix-keychain-prompts`).
+# Absent (CI, fresh clone) the recipes fall back to ad-hoc and behave as before.
+# Create it once with: just setup-signing-identity
+# The gate below deliberately omits `find-identity -v`: -v filters out self-signed certs as
+# untrusted and reports "0 valid identities" even when the cert is installed and signs fine.
+# Stable local code-signing identity name.
+local_sign_identity := "Goose Local Dev"
+
+# Create the stable self-signed code-signing certificate this repo's macOS recipes look for.
+# Idempotent: refuses to add a second cert with the same name, because two would make
+# `codesign --sign "Goose Local Dev"` ambiguous and fail every build.
+# Prompts once for your LOGIN KEYCHAIN password (set-key-partition-list needs it to grant
+# codesign non-interactive access to the new private key). No trust settings are installed --
+# codesign does not require the certificate to be trusted.
+# One-time setup: create the stable local code-signing certificate
+[macos]
+setup-signing-identity:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if security find-identity -p codesigning | grep -q "{{local_sign_identity}}"; then
+        echo "'{{local_sign_identity}}' already present - nothing to do."
+        exit 0
+    fi
+    WORK=$(mktemp -d)
+    trap 'rm -rf "$WORK"' EXIT
+    openssl req -x509 -newkey rsa:2048 -sha256 -days 3650 -nodes \
+        -keyout "$WORK/key.pem" -out "$WORK/cert.pem" \
+        -subj "/CN={{local_sign_identity}}" \
+        -addext "basicConstraints=critical,CA:false" \
+        -addext "keyUsage=critical,digitalSignature" \
+        -addext "extendedKeyUsage=critical,codeSigning" >/dev/null 2>&1
+    openssl pkcs12 -export -out "$WORK/id.p12" -inkey "$WORK/key.pem" -in "$WORK/cert.pem" \
+        -passout pass:goose -macalg sha1 -keypbe PBE-SHA1-3DES -certpbe PBE-SHA1-3DES
+    security import "$WORK/id.p12" -k ~/Library/Keychains/login.keychain-db -P goose -T /usr/bin/codesign
+    echo ">>> Enter your macOS LOGIN password when prompted (grants codesign access to the key):"
+    security set-key-partition-list -S apple-tool:,apple:,codesign: -s -D "{{local_sign_identity}}" -t private ~/Library/Keychains/login.keychain-db
+    security find-identity -p codesigning | grep "{{local_sign_identity}}"
+
+# The second half of the fix, and the half signing cannot do. Proves the mechanism on a
+# throwaway item before it touches a real one, and asks for your login password.
+# One-time repair: clear per-build partition IDs off goose's keychain items
+[macos]
+fix-keychain-prompts:
+    ./scripts/fix-keychain-prompts.sh
+
 # Run all style checks and formatting (precommit validation)
 check-everything:
     @echo "🔧 RUNNING ALL STYLE CHECKS..."
@@ -44,11 +98,16 @@ copy-binary BUILD_MODE="release":
     @rm -f ./ui/desktop/src/bin/goosed
     @if [ -f ./target/{{BUILD_MODE}}/goose ]; then \
         echo "Copying goose CLI binary from target/{{BUILD_MODE}}..."; \
+        if [ "$(uname)" = "Darwin" ]; then \
+            if security find-identity -p codesigning | grep -q "{{local_sign_identity}}"; then \
+                echo "Signing with the stable '{{local_sign_identity}}' identity..."; \
+                codesign --force -s "{{local_sign_identity}}" ./target/{{BUILD_MODE}}/goose; \
+            else \
+                codesign --force -s - ./target/{{BUILD_MODE}}/goose; \
+            fi; \
+        fi; \
         rm -f ./ui/desktop/src/bin/goose; \
         cp -p ./target/{{BUILD_MODE}}/goose ./ui/desktop/src/bin/; \
-        if [ "$(uname)" = "Darwin" ]; then \
-            codesign --force -s - ./ui/desktop/src/bin/goose; \
-        fi; \
         ./ui/desktop/src/bin/goose --version >/dev/null || { echo "copied binary does not EXECUTE (broken code signature = silent SIGKILL on Apple Silicon)"; exit 1; }; \
     else \
         echo "goose CLI binary not found in target/{{BUILD_MODE}}"; \
@@ -126,23 +185,34 @@ debug-ui-main-process:
 	pnpm install && \
 	pnpm run start-gui-debug
 
+# Signs with entitlements (needed for mic access, etc.), preferring the stable
+# "Goose Local Dev" identity so the packaged app keeps one code identity across rebuilds
+# and stops re-triggering the keychain password prompt; ad-hoc otherwise.
+# The cert branch uses entitlements.local.plist: a self-signed cert has no Team Identifier,
+# and that file is the same entitlement set plus disable-library-validation, which is what
+# lets the nested Electron Framework load once anything turns the hardened runtime on.
+# `--deep` reaches the frameworks and helper .apps but NOT Contents/Resources/bin/goose --
+# a bare Mach-O under Resources is sealed as a resource, not re-signed. That binary is the
+# one that reads the keychain, and it carries whatever signature copy-binary gave it.
 # Package the desktop app locally for testing (macOS)
-# Applies ad-hoc code signing with entitlements (needed for mic access, etc.)
 package-ui:
     @just release-binary
     @echo "Packaging desktop app..."
     cd ui/desktop && pnpm install && pnpm run package
-    @echo "Signing with entitlements..."
-    codesign --force --deep --sign - --entitlements ui/desktop/entitlements.plist ui/desktop/out/Goose-darwin-arm64/Goose.app
+    @if security find-identity -p codesigning | grep -q "{{local_sign_identity}}"; then \
+        echo "Signing with the stable '{{local_sign_identity}}' identity + entitlements.local.plist..."; \
+        codesign --force --deep --sign "{{local_sign_identity}}" --entitlements ui/desktop/entitlements.local.plist ui/desktop/out/Goose-darwin-arm64/Goose.app; \
+    else \
+        echo "Signing ad-hoc with entitlements..."; \
+        codesign --force --deep --sign - --entitlements ui/desktop/entitlements.plist ui/desktop/out/Goose-darwin-arm64/Goose.app; \
+    fi
     @echo "Done! Launch with: open ui/desktop/out/Goose-darwin-arm64/Goose.app"
 
 # local-edition: build a SIGNED desktop release for our own fork's auto-update feed
 # (leanzero-srl/goose-local-edition), and stage the update artifacts.
-# One-time prereq: create a self-signed "Goose Local Dev" Code Signing cert in your
-# login keychain (Keychain Access -> Certificate Assistant -> Create a Certificate;
-# Name: "Goose Local Dev", Identity Type: Self Signed Root, Certificate Type: Code Signing).
-# Unlike `package-ui` (ad-hoc `--sign -`, which Squirrel rejects across versions), this
-# signs every build with the SAME stable cert so auto-update validates build-to-build.
+# One-time prereq: the stable self-signed cert -- run `just setup-signing-identity`.
+# Unlike an ad-hoc `--sign -` build, which Squirrel rejects across versions, this signs
+# every build with the SAME stable cert so auto-update validates build-to-build.
 # Usage: just release-fork 1.41.1
 release-fork version:
     # STAMP THE BUILD SO A RUN CAN SAY WHICH BINARY PRODUCED IT.
@@ -158,8 +228,10 @@ release-fork version:
     @echo "Signing the WHOLE bundle with the stable self-signed cert + local entitlements..."
     @echo "  (@electron/osx-sign ignores the entitlements path and applies defaults WITHOUT"
     @echo "   disable-library-validation, so the self-signed no-Team-ID build crashes on launch;"
-    @echo "   this explicit re-sign forces entitlements.local.plist onto every nested binary.)"
-    cd ui/desktop && codesign --force --deep --options runtime --entitlements entitlements.local.plist --sign "Goose Local Dev" out/Goose-darwin-arm64/Goose.app
+    @echo "   this explicit re-sign forces entitlements.local.plist onto the app, the frameworks"
+    @echo "   and the helper .apps. It does NOT reach Contents/Resources/bin/goose -- a bare Mach-O"
+    @echo "   under Resources is sealed as a resource, and keeps the signature copy-binary gave it.)"
+    cd ui/desktop && codesign --force --deep --options runtime --entitlements entitlements.local.plist --sign "{{local_sign_identity}}" out/Goose-darwin-arm64/Goose.app
     @echo "Re-zipping the signed app (auto-update artifact) + rebuilding the DMG FROM the signed app..."
     cd ui/desktop && rm -f out/Goose-darwin-arm64/Goose.zip && ditto -c -k --sequesterRsrc --keepParent out/Goose-darwin-arm64/Goose.app out/Goose-darwin-arm64/Goose.zip
     cd ui/desktop && rm -rf out/dmgstage && mkdir -p out/dmgstage && ditto out/Goose-darwin-arm64/Goose.app out/dmgstage/Goose.app && ln -s /Applications out/dmgstage/Applications && rm -f out/make/Goose-{{version}}.dmg && hdiutil create -volname Goose -srcfolder out/dmgstage -ov -format UDZO out/make/Goose-{{version}}.dmg
