@@ -315,6 +315,17 @@ lint-ui:
 make-ui:
     @just release-binary
     cd ui/desktop && pnpm run bundle:default
+    # electron-forge signs the bundle its own way (ad-hoc), so after bundling the app and the engine
+    # inside it disagree: Resources/bin/goose carries the stable "Goose Local Dev" leaf-hash requirement
+    # from copy-binary while the .app is still Signature=adhoc. The engine is the one that reads the
+    # keychain so prompts are already fixed by copy-binary, but a bundle whose identity changes every
+    # build is what Squirrel rejects across versions. Re-sign it here when the cert exists; ad-hoc
+    # otherwise, so CI and a fresh clone are unaffected.
+    @if security find-identity -p codesigning | grep -q "{{local_sign_identity}}"; then \
+        echo "Re-signing the bundle with '{{local_sign_identity}}'..."; \
+        codesign --force --deep --sign "{{local_sign_identity}}" --entitlements ui/desktop/entitlements.local.plist ui/desktop/out/Goose-darwin-arm64/Goose.app; \
+        ./ui/desktop/out/Goose-darwin-arm64/Goose.app/Contents/Resources/bin/goose --version >/dev/null || { echo "bundle does not EXECUTE after signing"; exit 1; }; \
+    fi
 
 # make GUI with latest Windows binary on a Windows host
 [unix]
