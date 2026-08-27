@@ -53,7 +53,7 @@ fn default_host() -> Option<String> {
     None
 }
 fn default_worker_max_turns() -> u32 {
-    40
+    1_000_000
 }
 fn default_max_attempts() -> u32 {
     3
@@ -71,7 +71,10 @@ fn default_dynamic_replan() -> bool {
     true
 }
 fn default_max_replans() -> u32 {
-    2
+    // Unbounded — section 8. Replan is suppressed while the sink is in flight and refuses when too
+    // little of the DAG is left, and both of those are structural; a count on top of them only decides
+    // that the LAST honest replan does not happen.
+    u32::MAX
 }
 fn default_research_scouts() -> bool {
     true
@@ -1144,12 +1147,8 @@ fn default_scout_max_lookups() -> u32 {
 }
 
 fn default_sink_max_turns() -> Option<u32> {
-    // Some(120), NOT the bare-serde None. A bare #[serde(default)] on an Option field yields
-    // Option::default() = None whenever config.yaml has a `swarm:` block (it does), so the struct
-    // Default impl's Some(120) never reached the config path — MEASURED: h1-e2e-4 AND h1-e2e-5 both
-    // resolved sink_max_turns=None => the worker cap of 40, never 120. A named default fn is the only way
-    // a non-None Option default actually applies through serde.
-    Some(120)
+    // No turn cap on the sink either — see `planner_side_turns`. Section 8 names it.
+    Some(1_000_000)
 }
 
 fn default_progress_watchdog_secs() -> u64 {
@@ -3612,11 +3611,14 @@ const UNCAPPED_SECS: u64 = 604_800;
 /// max-turns filler and core modules fell back to one-line skeleton briefs (the 44%-vs-90% class).
 /// Under uncapped the loop gets room; the judge/repeat-break govern runaway loops, not a turn count.
 fn planner_side_turns() -> u32 {
-    // Was 6, sized on qwen3.6's habits. qwen3.8 spends turns on tool reads plus deep thinking and hit
-    // that BEFORE emitting the deliverable — measured: 6 of the first 8 detail calls returned max-turns
-    // filler and core modules fell back to one-line briefs (the 44%-vs-90% class). The judge governs
-    // runaway loops now; a turn count never could.
-    60
+    // NO TURN CAP. Section 8 names planner_side_turns, worker_max_turns and sink_max_turns for deletion,
+    // and a turn count is a volume cap wearing a different hat: it ends a call on how many times it acted
+    // rather than on whether it is getting anywhere. Its own history says so — this was 6, and 6 of the
+    // first 8 detail calls returned max-turns filler with the deliverable never written.
+    //
+    // 60 was generous and still a number. The judge governs a runaway loop by reading it; a counter never
+    // could. Large rather than u32::MAX so any arithmetic downstream stays sane.
+    1_000_000
 }
 
 fn planner_wall(_planner_timeout_secs: u64) -> u64 {
@@ -10613,10 +10615,17 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
     fn omitted_config_keys_resolve_to_the_intended_default_not_the_type_default() {
         // A realistic partial swarm block: sets some keys, omits the ones with named defaults.
         let cfg: SwarmConfig = serde_yaml::from_str("persona: true\nconverge: true\n").unwrap();
+        // The NUMBER moved when section 8 removed the turn caps; the property this test exists for did
+        // not. A named default fn is still the only thing that stops an omitted key collapsing to
+        // Option::default() = None, which is what silently ran h1-e2e-4 and h1-e2e-5 at the worker cap.
         assert_eq!(
             cfg.sink_max_turns,
-            Some(120),
+            Some(default_sink_max_turns().unwrap()),
             "Option default must survive an omitted key, not collapse to None"
+        );
+        assert!(
+            cfg.sink_max_turns.unwrap() > 100_000,
+            "section 8: no turn cap on the sink"
         );
         assert!(
             cfg.contract_validate,
@@ -11699,12 +11708,23 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
     }
 
     #[test]
-    fn complete_rounds_defaults_and_clamps() {
-        assert_eq!(complete_rounds_from(None), 2); // default
-        assert_eq!(complete_rounds_from(Some("4".to_string())), 4);
-        assert_eq!(complete_rounds_from(Some("99".to_string())), 6); // clamped high
-        assert_eq!(complete_rounds_from(Some("0".to_string())), 1); // clamped low
-        assert_eq!(complete_rounds_from(Some("nope".to_string())), 2); // unparseable -> default
+    /// REWRITTEN with its subject. REPAIR had a round ceiling — default 2, clamped to [1,6] — and the
+    /// loop broke on `round >= rounds`, so the phase stopped on a counter no amount of progress could
+    /// pass. Section 8 names it. What ends REPAIR now is section 6's own list: a round that changes
+    /// nothing on the real tree, a finding count that refuses to fall, or the ask answered no.
+    fn the_repair_phase_has_no_round_ceiling() {
+        for raw in [
+            None,
+            Some("4".to_string()),
+            Some("0".to_string()),
+            Some("nope".to_string()),
+        ] {
+            assert_eq!(
+                complete_rounds_from(raw.clone()),
+                u32::MAX,
+                "a round ceiling came back for {raw:?}"
+            );
+        }
     }
 
     #[test]
@@ -32930,10 +32950,12 @@ async fn ask_clarifying_questions(
 
 /// GOOSE_SWARM_COMPLETE_ROUNDS: the fix-round budget for the push-to-completion loop. Default 2; clamped
 /// to [1,6] so a misconfigured value can never spin the fleet forever. Pure split-out for unit testing.
-fn complete_rounds_from(v: Option<String>) -> u32 {
-    v.and_then(|s| s.trim().parse::<u32>().ok())
-        .unwrap_or(2)
-        .clamp(1, 6)
+fn complete_rounds_from(_raw: Option<String>) -> u32 {
+    // NO ROUND CEILING. This defaulted to 2, clamped to [1,6], and the loop broke on `round >= rounds`
+    // — so REPAIR stopped on a counter that no amount of progress could pass, which is the shape section 8
+    // exists to remove. What ends REPAIR now is what section 6 says ends it: a round that changes nothing
+    // on the real tree (fix_converged), the count refusing to fall, or the ask being answered no.
+    u32::MAX
 }
 
 fn complete_rounds() -> u32 {
@@ -37686,11 +37708,26 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                             }
                         })
                         .await;
+                    // THE TREE CHANGED, AND THE REST OF THE PHASE HAS TO KNOW.
+                    //
+                    // `last_round_promoted` was written in exactly two branches — the race and the
+                    // fix_sched DAG — and neither is the one that normally runs. `prefer_shard_over_race`
+                    // returns true as soon as one finding names a file, and the TEST fan's FILES: contract
+                    // makes that the normal case, so THIS per-file fan is the live path. It computed
+                    // `promoted`, published it in the event, and threw it away.
+                    //
+                    // The consequence: at round 1 the repair ask computes `proxy_yes = round == 0 ||
+                    // last_round_promoted` -> false -> answered no -> break, with criticals still open,
+                    // however much that wave actually landed. The event even reported
+                    // `tree_changed_last_round: false` beside a `complete_fix_wave` that promoted. Both
+                    // exits from REPAIR were dead on the path that actually executes.
+                    let promoted_now = summaries.iter().filter(|p| **p).count();
+                    last_round_promoted = promoted_now > 0;
                     sink.write_value(serde_json::json!({
                         "event": "complete_fix_wave",
                         "round": round,
                         "shards": summaries.len(),
-                        "promoted": summaries.iter().filter(|p| **p).count(),
+                        "promoted": promoted_now,
                         "unassigned": unassigned.len(),
                     }));
                 }
@@ -37773,6 +37810,9 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                         )
                         .await;
                     let promoted = join_changed && shard_beats_baseline(verified, post_wave);
+                    // Same omission as the fan above: the residue worker can be the only thing that
+                    // lands in a round, and if it does not say so the round reads as barren.
+                    last_round_promoted = last_round_promoted || promoted;
                     if promoted {
                         smoke_fix_dispatcher.promote_speculative(&task_id).await;
                     } else {
