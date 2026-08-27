@@ -99,22 +99,31 @@ COMMAND = re.compile(
     r"`[^`]*\b(run|test|serve|build|sync|mine)\b[^`]*`", re.I)
 
 
+# Named, not inline, because selftest.py's cross-instrument ceiling derives from the SAME number:
+# a slice whose spec is at least this long cannot possibly ship as a one-liner. Two copies of the
+# threshold would let the two instruments disagree about what a one-liner is.
+ONE_LINER_MAX_CHARS = 400
+
+
 def is_skeleton_brief(desc: str) -> bool:
-    """Did this worker get the ARCHITECT's one-liner instead of a detailed spec?
+    """Did this worker get a one-liner instead of a module specification?
 
-    The architect is told to emit a description of "ONE short line" (swarm.rs:11494); the detailer
-    then expands each into an implementation-ready spec of ~150 words. That expansion is a best-
-    effort LLM call under a hard 75s cap, and on timeout/error the engine silently keeps the
-    one-liner (swarm.rs:12353, the `_ => brief` fallback). So the richest instruction channel in
-    the whole engine fails OPEN to the thinnest one, with no event emitted.
+    THE MECHANISM MOVED BUT THE FAILURE DID NOT. It used to be the detail fan: a best-effort call
+    under a hard cap that, on timeout, silently kept the architect's one-liner. That fan is gone. In
+    the linear engine each slice OWNER writes the spec and `splice_briefs` writes it into its task's
+    `description` VERBATIM — so a one-line description now means either the owner returned nothing
+    (RESEARCH substitutes a bare `PURPOSE:` line and the run continues) or the splice matched no
+    slice for that task. Both land a worker with the thinnest instruction in the engine, and neither
+    emits an event, which is precisely why this is measured off the shipped plan rather than off a
+    counter.
 
-    A surviving brief is recognisable by shape, not by length alone: a single unstructured line
+    A surviving one-liner is recognisable by shape, not by length alone: a single unstructured line
     with no code block, no bullets and no line breaks.
     """
     d = (desc or "").strip()
     if not d:
         return False
-    return "\n" not in d and "`" not in d and len(d) < 400
+    return "\n" not in d and "`" not in d and len(d) < ONE_LINER_MAX_CHARS
 
 
 def specificity(desc: str, owned: list[str]) -> dict:
@@ -331,24 +340,18 @@ def audit(path) -> dict:
     unmeasurable = [p["task_id"] for p in per_dispatch if not p["instruction_measurable"]]
     zero_ctx = sum(1 for p in per_dispatch if (p["context_slice_len"] or 0) == 0)
 
-    # TWO different questions, and conflating them cost me a wrong number on the first run that
-    # emitted both. `detail_fallback` events count DETAIL-CALL FAILURES in any planning round; the
-    # final `plan_loaded` records WHAT A WORKER ACTUALLY RECEIVED. A retarget redraft can fail a
-    # detail in round 1 and succeed in round 2, so the engine reported 3 fallbacks while only 1
-    # one-liner shipped — neither instrument was broken, they answer different things.
-    #   shipped_one_liners    -> what the workers got. The quality number.
-    #   detail_fallback_events -> how unreliable the detail call is. The mechanism number.
+    # ONLY THE QUALITY NUMBER SURVIVES, AND THAT IS THE RIGHT ONE TO KEEP. There used to be a second,
+    # `detail_fallback` events, counting DETAIL-CALL FAILURES in any planning round — plus a third,
+    # the GHOST split, for a failure on a task belonging to a draft that was later thrown away. The
+    # detail fan and the redraft ladder are both gone, so the mechanism counter has no event to read
+    # and no draft can be discarded: every one of those keys could only have printed 0 or [] forever,
+    # which reads as "the detail call never failed" rather than "there is no detail call". Removed.
+    #
+    # `shipped_one_liners` is measured off the final `plan_loaded` — WHAT A WORKER ACTUALLY RECEIVED —
+    # and that is unchanged by the rewrite. It is also the number that predicted a bad build: across
+    # the two runs whose scores differed most, the client module got 1497 chars containing the
+    # vendor's /v1 prefix and scored 88.7%, or 122 chars without it and scored 42.7%.
     briefed = sorted({tid for tid, desc in plan.items() if is_skeleton_brief(desc)})
-    fallback_events = [e for e in events if e.get("event") == "detail_fallback"]
-    # And a THIRD distinction inside the mechanism number, found by comparing the two runs whose
-    # scores differed most. A detail can fail for a task belonging to a draft that is later thrown
-    # away, so its id never reaches a worker at all: `meridian-client` failed its detail call in one
-    # run and the shipped plan contains `meridian` instead. That fallback cost fleet time and harmed
-    # nothing. Counting ghosts alongside live failures overstates the damage, and the live count is
-    # the one that predicts a bad build — in the same two runs, the client module got 1497 chars
-    # containing the vendor's /v1 prefix and scored 88.7%, or 122 chars without it and scored 42.7%.
-    ghost_fallbacks = sorted({e.get("task_id") for e in fallback_events
-                              if plan and e.get("task_id") not in plan})
 
     scored = [p["specificity_score"] for p in per_dispatch if p["specificity_score"] is not None]
     lens = sorted(p["specificity"]["chars"] for p in per_dispatch if p["specificity"])
@@ -384,12 +387,6 @@ def audit(path) -> dict:
         # Kept under the old key so existing result rows stay readable; it IS the shipped count.
         "detail_fallback_count": len(briefed),
         "detail_fallback_tasks": briefed,
-        "detail_fallback_events": len(fallback_events),
-        "detail_fallback_reasons": sorted({e.get("reason") for e in fallback_events}),
-        "detail_fallback_event_tasks": sorted({e.get("task_id") for e in fallback_events}),
-        "ghost_fallback_tasks": ghost_fallbacks,
-        "live_fallback_events": len(fallback_events) - len(
-            [e for e in fallback_events if e.get("task_id") in ghost_fallbacks]),
         "planned_tasks": len(plan),
         "zero_context_slice_count": zero_ctx,
         "specificity_mean": round(sum(scored) / len(scored), 3) if scored else None,
@@ -423,11 +420,6 @@ def render(a: dict) -> str:
                f"{a['test_author_contradiction_count']}")
     out.append(f"  SHIPPED one-liners (what workers got): "
                f"{a['shipped_one_liners']} of {a['planned_tasks']} tasks {a['shipped_one_liner_tasks']}")
-    out.append(f"  detail-call FAILURES (engine event, any round): {a['detail_fallback_events']} "
-               f"{a['detail_fallback_event_tasks']} reasons={a['detail_fallback_reasons']}")
-    if a.get("ghost_fallback_tasks"):
-        out.append(f"    of which GHOSTS (task never shipped — a discarded draft's): "
-                   f"{a['ghost_fallback_tasks']}  -> live failures: {a['live_fallback_events']}")
     out.append(f"  instruction NOT in log (split/fix children): "
                f"{a['instruction_unmeasurable_count']} {a['instruction_unmeasurable_tasks']}")
     out.append(f"  zero dependency context : {a['zero_context_slice_count']} of {a['dispatches']}")

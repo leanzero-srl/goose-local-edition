@@ -3176,4 +3176,508 @@ mod tests {
             Ok(())
         }
     }
+
+    /// Pins the steer/cancel contract the swarm engine's judge depends on.
+    ///
+    /// `Agent::steer` is a bare enqueue onto `pending_steers`; the only production
+    /// drain sits at the top of the reply loop behind `can_drain_pending_steers`,
+    /// which is set to true *after* the provider stream for the current round-trip
+    /// has closed. A steer therefore cannot interrupt generation — it lands on the
+    /// next provider request — which is why an in-call spiral has to be broken with
+    /// the cancel token instead. Cancellation breaks the provider loop at the next
+    /// chunk boundary and falls through the normal persistence, so the partial
+    /// assistant output survives.
+    #[cfg(test)]
+    mod steer_and_cancel_semantics_tests {
+        use super::*;
+        use async_trait::async_trait;
+        use goose::agents::{AgentConfig, SessionConfig};
+        use goose::config::permission::PermissionManager;
+        use goose::config::GooseMode;
+        use goose::conversation::message::Message;
+        use goose::providers::base::{stream_from_single_message, MessageStream, Provider};
+        use goose::session::session_manager::SessionType;
+        use goose::session::SessionManager;
+        use goose_providers::conversation::token_usage::{ProviderUsage, Usage};
+        use goose_providers::errors::ProviderError;
+        use goose_providers::model::ModelConfig;
+        use rmcp::model::{Role, Tool};
+        use std::path::PathBuf;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::sync::Mutex as StdMutex;
+        use std::time::Duration;
+        use tokio_util::sync::CancellationToken;
+
+        type StreamItem = Result<(Option<Message>, Option<ProviderUsage>), ProviderError>;
+
+        const STEER_TEXT: &str = "STEER-MARKER stop and summarise";
+
+        fn usage() -> ProviderUsage {
+            ProviderUsage::new(
+                "mock-model".to_string(),
+                Usage::new(Some(10), Some(5), Some(15)),
+            )
+        }
+
+        /// First provider call streams `chunk_count` text deltas `chunk_delay` apart
+        /// (or never stops, when `endless`); every later call answers immediately.
+        /// Records, per call, the messages it was handed and how many deltas the
+        /// first generation had already produced — that pair is what proves the
+        /// steer could only land on a *subsequent* request.
+        struct SlowStreamProvider {
+            call_count: AtomicUsize,
+            chunks_emitted: Arc<AtomicUsize>,
+            seen_messages: Arc<StdMutex<Vec<Vec<Message>>>>,
+            chunks_emitted_at_call: Arc<StdMutex<Vec<usize>>>,
+            chunk_count: usize,
+            chunk_delay: Duration,
+            endless: bool,
+        }
+
+        impl SlowStreamProvider {
+            fn new(chunk_count: usize, chunk_delay: Duration, endless: bool) -> Self {
+                Self {
+                    call_count: AtomicUsize::new(0),
+                    chunks_emitted: Arc::new(AtomicUsize::new(0)),
+                    seen_messages: Arc::new(StdMutex::new(Vec::new())),
+                    chunks_emitted_at_call: Arc::new(StdMutex::new(Vec::new())),
+                    chunk_count,
+                    chunk_delay,
+                    endless,
+                }
+            }
+
+            fn calls(&self) -> usize {
+                self.call_count.load(Ordering::SeqCst)
+            }
+
+            fn chunks_emitted(&self) -> usize {
+                self.chunks_emitted.load(Ordering::SeqCst)
+            }
+
+            fn messages_for_call(&self, call: usize) -> Vec<Message> {
+                self.seen_messages
+                    .lock()
+                    .unwrap()
+                    .get(call)
+                    .cloned()
+                    .unwrap_or_default()
+            }
+
+            fn chunks_emitted_at_call(&self, call: usize) -> usize {
+                self.chunks_emitted_at_call
+                    .lock()
+                    .unwrap()
+                    .get(call)
+                    .copied()
+                    .unwrap_or_default()
+            }
+        }
+
+        #[async_trait]
+        impl Provider for SlowStreamProvider {
+            async fn stream(
+                &self,
+                _model_config: &ModelConfig,
+                _system_prompt: &str,
+                messages: &[Message],
+                _tools: &[Tool],
+            ) -> Result<MessageStream, ProviderError> {
+                let call = self.call_count.fetch_add(1, Ordering::SeqCst);
+                self.seen_messages.lock().unwrap().push(messages.to_vec());
+                self.chunks_emitted_at_call
+                    .lock()
+                    .unwrap()
+                    .push(self.chunks_emitted.load(Ordering::SeqCst));
+
+                if call > 0 {
+                    return Ok(stream_from_single_message(
+                        Message::assistant().with_text("acknowledged"),
+                        usage(),
+                    ));
+                }
+
+                let emitted = self.chunks_emitted.clone();
+                let msg_id = format!("msg_{}", uuid::Uuid::new_v4());
+                let chunk_count = self.chunk_count;
+                let chunk_delay = self.chunk_delay;
+                let endless = self.endless;
+
+                let stream: MessageStream = Box::pin(futures::stream::unfold(0usize, move |i| {
+                    let emitted = emitted.clone();
+                    let msg_id = msg_id.clone();
+                    async move {
+                        if !endless && i >= chunk_count {
+                            return None;
+                        }
+                        tokio::time::sleep(chunk_delay).await;
+                        emitted.fetch_add(1, Ordering::SeqCst);
+                        let last = !endless && i + 1 == chunk_count;
+                        let message = Message::assistant()
+                            .with_text(format!("chunk-{i} "))
+                            .with_id(msg_id);
+                        let item: StreamItem = Ok((Some(message), last.then(usage)));
+                        Some((item, i + 1))
+                    }
+                }));
+                Ok(stream)
+            }
+
+            fn get_name(&self) -> &str {
+                "slow-stream-mock"
+            }
+        }
+
+        /// Cancels the run partway through a text stream, then answers normally so
+        /// the follow-up reply can be inspected for the history it inherited.
+        struct CancelMidstreamProvider {
+            call_count: AtomicUsize,
+            cancel_token: CancellationToken,
+            cancel_at_chunk: usize,
+            seen_messages: Arc<StdMutex<Vec<Vec<Message>>>>,
+        }
+
+        impl CancelMidstreamProvider {
+            fn new(cancel_token: CancellationToken, cancel_at_chunk: usize) -> Self {
+                Self {
+                    call_count: AtomicUsize::new(0),
+                    cancel_token,
+                    cancel_at_chunk,
+                    seen_messages: Arc::new(StdMutex::new(Vec::new())),
+                }
+            }
+
+            fn messages_for_call(&self, call: usize) -> Vec<Message> {
+                self.seen_messages
+                    .lock()
+                    .unwrap()
+                    .get(call)
+                    .cloned()
+                    .unwrap_or_default()
+            }
+        }
+
+        #[async_trait]
+        impl Provider for CancelMidstreamProvider {
+            async fn stream(
+                &self,
+                _model_config: &ModelConfig,
+                _system_prompt: &str,
+                messages: &[Message],
+                _tools: &[Tool],
+            ) -> Result<MessageStream, ProviderError> {
+                let call = self.call_count.fetch_add(1, Ordering::SeqCst);
+                self.seen_messages.lock().unwrap().push(messages.to_vec());
+
+                if call > 0 {
+                    return Ok(stream_from_single_message(
+                        Message::assistant().with_text("resumed and finished"),
+                        usage(),
+                    ));
+                }
+
+                let cancel = self.cancel_token.clone();
+                let cancel_at_chunk = self.cancel_at_chunk;
+                let msg_id = format!("msg_{}", uuid::Uuid::new_v4());
+                let tokens = ["alpha ", "bravo ", "charlie ", "delta ", "echo"];
+                let last_index = tokens.len() - 1;
+                let stream: MessageStream =
+                    Box::pin(futures::stream::iter(tokens.into_iter().enumerate().map(
+                        move |(i, token)| -> StreamItem {
+                            if i == cancel_at_chunk {
+                                cancel.cancel();
+                            }
+                            let message = Message::assistant()
+                                .with_text(token)
+                                .with_id(msg_id.clone());
+                            Ok((Some(message), (i == last_index).then(usage)))
+                        },
+                    )));
+                Ok(stream)
+            }
+
+            fn get_name(&self) -> &str {
+                "cancel-midstream-mock"
+            }
+        }
+
+        /// Session naming is disabled so every provider call in these tests is a
+        /// reply-loop round-trip and call indices stay meaningful.
+        async fn agent_with_provider(
+            provider: Arc<dyn Provider>,
+            session_name: &str,
+        ) -> Result<(Arc<Agent>, String, tempfile::TempDir)> {
+            let temp_dir = tempfile::tempdir()?;
+            let session_manager = Arc::new(SessionManager::new(temp_dir.path().to_path_buf()));
+            let config = AgentConfig::new(
+                session_manager.clone(),
+                PermissionManager::instance(),
+                None,
+                GooseMode::Auto,
+                true,
+                GoosePlatform::GooseCli,
+            );
+            let agent = Arc::new(Agent::with_config(config));
+
+            let session = session_manager
+                .create_session(
+                    PathBuf::default(),
+                    session_name.to_string(),
+                    SessionType::Hidden,
+                    GooseMode::default(),
+                )
+                .await?;
+            let session_id = session.id.clone();
+            agent
+                .update_provider(provider, ModelConfig::new("mock-model"), &session_id)
+                .await?;
+
+            Ok((agent, session_id, temp_dir))
+        }
+
+        fn session_config(session_id: &str) -> SessionConfig {
+            SessionConfig {
+                id: session_id.to_string(),
+                schedule_id: None,
+                max_turns: Some(10),
+                retry_config: None,
+            }
+        }
+
+        async fn persisted_messages(agent: &Agent, session_id: &str) -> Result<Vec<Message>> {
+            Ok(agent
+                .config
+                .session_manager
+                .get_session(session_id, true)
+                .await?
+                .conversation
+                .map(|c| c.messages().to_vec())
+                .unwrap_or_default())
+        }
+
+        fn concat_text(messages: &[Message]) -> String {
+            messages
+                .iter()
+                .map(|m| m.as_concat_text())
+                .collect::<Vec<_>>()
+                .join("\n")
+        }
+
+        /// A steer arriving mid-generation must not truncate that generation: it is
+        /// queued and only drained at the top of the next loop iteration, so the
+        /// current provider stream runs to its natural end and the steer is visible
+        /// to the *following* request.
+        #[tokio::test]
+        async fn test_steer_does_not_interrupt_in_flight_generation() -> Result<()> {
+            const CHUNKS: usize = 20;
+
+            let provider = Arc::new(SlowStreamProvider::new(
+                CHUNKS,
+                Duration::from_millis(100),
+                false,
+            ));
+            let (agent, session_id, _temp_dir) =
+                agent_with_provider(provider.clone(), "steer-no-interrupt").await?;
+
+            let reply_stream = agent
+                .reply(
+                    Message::user().with_text("start the long answer"),
+                    session_config(&session_id),
+                    None,
+                )
+                .await?;
+            tokio::pin!(reply_stream);
+
+            // 200ms lands inside the ~2s first generation with a wide margin on
+            // both sides, so the steer is queued while the stream is still open.
+            let steering_agent = agent.clone();
+            let steering_session = session_id.clone();
+            let steer_task = tokio::spawn(async move {
+                tokio::time::sleep(Duration::from_millis(200)).await;
+                steering_agent
+                    .steer(&steering_session, Message::user().with_text(STEER_TEXT))
+                    .await;
+            });
+
+            let mut yielded = Vec::new();
+            while let Some(event) = reply_stream.next().await {
+                if let AgentEvent::Message(m) = event? {
+                    yielded.push(m);
+                }
+            }
+            steer_task.await?;
+
+            let yielded_text = concat_text(&yielded);
+            for i in 0..CHUNKS {
+                assert!(
+                    yielded_text.contains(&format!("chunk-{i} ")),
+                    "chunk-{i} was never yielded — the steer truncated the generation: \
+                     {yielded_text:?}"
+                );
+            }
+            assert_eq!(
+                provider.chunks_emitted(),
+                CHUNKS,
+                "the first generation must run to completion despite the steer"
+            );
+
+            assert_eq!(
+                provider.calls(),
+                2,
+                "expected exactly two provider calls: the steered generation and the \
+                 request carrying the steer"
+            );
+            assert!(
+                !concat_text(&provider.messages_for_call(0)).contains(STEER_TEXT),
+                "the steer must not be visible to the call it was issued during"
+            );
+            assert!(
+                concat_text(&provider.messages_for_call(1)).contains(STEER_TEXT),
+                "the steer must be delivered to the next provider request"
+            );
+
+            assert_eq!(
+                provider.chunks_emitted_at_call(1),
+                CHUNKS,
+                "the second request was issued before the first generation finished"
+            );
+
+            Ok(())
+        }
+
+        /// The drain is gated on the provider stream closing, so a generation that
+        /// never ends never reaches it. This is the exact shape of the swarm judge's
+        /// trigger — a node stuck inside one call — and the reason the engine breaks
+        /// an in-call spiral with the cancel token and a fresh reply rather than a
+        /// steer.
+        #[tokio::test]
+        async fn test_steer_never_lands_on_a_nonterminating_generation() -> Result<()> {
+            let provider = Arc::new(SlowStreamProvider::new(0, Duration::from_millis(50), true));
+            let (agent, session_id, _temp_dir) =
+                agent_with_provider(provider.clone(), "steer-never-lands").await?;
+
+            let reply_stream = agent
+                .reply(
+                    Message::user().with_text("start the endless answer"),
+                    session_config(&session_id),
+                    None,
+                )
+                .await?;
+            tokio::pin!(reply_stream);
+
+            let steering_agent = agent.clone();
+            let steering_session = session_id.clone();
+            let steer_task = tokio::spawn(async move {
+                tokio::time::sleep(Duration::from_millis(200)).await;
+                steering_agent
+                    .steer(&steering_session, Message::user().with_text(STEER_TEXT))
+                    .await;
+            });
+
+            let drained = tokio::time::timeout(Duration::from_secs(3), async {
+                while let Some(event) = reply_stream.next().await {
+                    let _ = event?;
+                }
+                Ok::<(), anyhow::Error>(())
+            })
+            .await;
+            steer_task.await?;
+
+            assert!(
+                drained.is_err(),
+                "the reply must still be generating — a steer cannot end a turn"
+            );
+            assert!(
+                provider.chunks_emitted() > 0,
+                "the generation never started, so the test proves nothing"
+            );
+            assert_eq!(
+                provider.calls(),
+                1,
+                "a second provider request means the steer was drained mid-generation"
+            );
+            assert!(
+                !concat_text(&provider.messages_for_call(0)).contains(STEER_TEXT),
+                "the in-flight request must never see the queued steer"
+            );
+
+            Ok(())
+        }
+
+        /// Cancelling breaks the provider loop at the next chunk boundary and then
+        /// falls through the loop's normal persistence, so whatever the assistant
+        /// had produced is saved and the next reply on the session builds on it.
+        #[tokio::test]
+        async fn test_cancel_midstream_preserves_partial_then_reply_continues() -> Result<()> {
+            let cancel_token = CancellationToken::new();
+            let provider = Arc::new(CancelMidstreamProvider::new(cancel_token.clone(), 2));
+            let (agent, session_id, _temp_dir) =
+                agent_with_provider(provider.clone(), "cancel-midstream").await?;
+
+            let reply_stream = agent
+                .reply(
+                    Message::user().with_text("first question"),
+                    session_config(&session_id),
+                    Some(cancel_token),
+                )
+                .await?;
+            tokio::pin!(reply_stream);
+            while let Some(event) = reply_stream.next().await {
+                let _ = event?;
+            }
+
+            let after_cancel = persisted_messages(&agent, &session_id).await?;
+            let partial = after_cancel
+                .iter()
+                .find(|m| m.role == Role::Assistant && m.as_concat_text().contains("alpha"))
+                .map(|m| m.as_concat_text())
+                .unwrap_or_else(|| {
+                    panic!("the cancelled generation persisted nothing: {after_cancel:?}")
+                });
+            assert!(
+                partial.contains("bravo"),
+                "the partial should hold every delta received before the cancel: {partial:?}"
+            );
+            assert!(
+                !partial.contains("echo"),
+                "deltas after the cancel must not appear — the provider loop kept reading \
+                 past the cancel: {partial:?}"
+            );
+
+            let reply_stream2 = agent
+                .reply(
+                    Message::user().with_text("second question"),
+                    session_config(&session_id),
+                    None,
+                )
+                .await?;
+            tokio::pin!(reply_stream2);
+            while let Some(event) = reply_stream2.next().await {
+                let _ = event?;
+            }
+
+            let continuation = concat_text(&provider.messages_for_call(1));
+            assert!(
+                continuation.contains("first question"),
+                "the continuation lost the pre-cancel user turn: {continuation:?}"
+            );
+            assert!(
+                continuation.contains("alpha"),
+                "the continuation lost the preserved partial: {continuation:?}"
+            );
+            assert!(
+                continuation.contains("second question"),
+                "the continuation is missing the new user turn: {continuation:?}"
+            );
+
+            let final_messages = persisted_messages(&agent, &session_id).await?;
+            let final_text = concat_text(&final_messages);
+            assert!(
+                final_text.contains("alpha") && final_text.contains("resumed and finished"),
+                "the session must keep the partial alongside the completed reply: {final_text:?}"
+            );
+
+            Ok(())
+        }
+    }
 }

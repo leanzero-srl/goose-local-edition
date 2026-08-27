@@ -239,27 +239,86 @@
    no color-mix. Composes with .dark for free. Absent unless Local Edition is active.
    ═══════════════════════════════════════════════════════════════════════════ */
 .local-edition {
-  /* Signature accent: a migratory-dusk azure (goose's own), replacing the block teal focus ring. */
-  --color-block-teal: #2e8bff;
-  --color-accent-local: #2e8bff;
+  /* Signature accent: the LeanZero blue (globals.css --color-primary), replacing the block teal ring. */
+  --color-block-teal: #1d4ed8;
+  --color-accent-local: #1d4ed8;
+  --color-action-solid: #1d4ed8;
+  --color-secondary-local: #0891b2;
+  --color-tertiary-local: #7c3aed;
 
-  /* Route the accent into real chrome: focus rings turn azure when Local Edition is active. The theme
-     applies --color-ring-primary as an INLINE style on <html>, so !important is required to override it. */
-  --color-ring-primary: #2e8bff !important;
-  --color-ring: #2e8bff !important;
+  /* Route the accent into real chrome: focus rings turn LeanZero blue when Local Edition is active. The
+     theme applies --color-ring-primary as an INLINE style on <html>, so !important is required here. */
+  --color-ring-primary: #1d4ed8 !important;
+  --color-ring: #1d4ed8 !important;
 
-  /* Node-identity formation ramp — 6 saturated hues, disjoint from the status triad. */
-  --color-node-1: #17c4c4;
-  --color-node-2: #2e8bff;
-  --color-node-3: #6a5cff;
-  --color-node-4: #b14cff;
-  --color-node-5: #ff3ea5;
-  --color-node-6: #ff5c7a;
+  /* Node-identity formation ramp — 6 solid, distinct hues, disjoint enough that two adjacent node chips
+     are never confusable. Drawn from the LeanZero hue family (blue / cyan / violet / orange / pink / green). */
+  --color-node-1: #1d4ed8;
+  --color-node-2: #0891b2;
+  --color-node-3: #7c3aed;
+  --color-node-4: #ea580c;
+  --color-node-5: #db2777;
+  --color-node-6: #16a34a;
 
-  /* Semantic status triad (orthogonal to the node ramp). */
-  --color-status-ok: #2ecc71;
-  --color-status-warn: #f5a623;
-  --color-status-err: #ff3b30;
+  /* The INK on each node chip. A single glyph colour cannot clear AA across six saturated hues — white is
+     6.7:1 on the blue and 3.3:1 on the green — so the ink is picked per hue rather than the hue being
+     washed out to suit one glyph colour. */
+  --color-node-1-ink: #ffffff;
+  --color-node-2-ink: #0b0b0b;
+  --color-node-3-ink: #ffffff;
+  --color-node-4-ink: #0b0b0b;
+  --color-node-5-ink: #ffffff;
+  --color-node-6-ink: #0b0b0b;
+
+  /* Semantic status triad (orthogonal to the node ramp), LeanZero light values. */
+  --color-status-ok: #16a34a;
+  --color-status-warn: #d97706;
+  --color-status-err: #dc2626;
+  --color-status-stopped: #475569;
+
+  /* The -solid tokens are FILLS that carry WHITE text. #16a34a and #d97706 clear AA as foreground but only
+     reach 3.4:1 / 3.1:1 behind white, so their fills are one step darker in the same hue. Never a tint —
+     the fill stays fully saturated, it is the text contrast that forces the step. */
+  --color-status-ok-solid: #15803d;
+  --color-status-warn-solid: #b45309;
+  --color-status-err-solid: #dc2626;
+  --color-status-stopped-solid: #475569;
+}
+
+.dark.local-edition {
+  --color-block-teal: #3b82f6;
+  --color-accent-local: #3b82f6;
+  /* The action FILL stays the light-theme blue in both themes: it always carries white text. */
+  --color-action-solid: #1d4ed8;
+  --color-secondary-local: #06b6d4;
+  --color-tertiary-local: #a855f7;
+  --color-ring-primary: #3b82f6 !important;
+  --color-ring: #3b82f6 !important;
+
+  --color-node-1: #3b82f6;
+  --color-node-2: #06b6d4;
+  --color-node-3: #a855f7;
+  --color-node-4: #f97316;
+  --color-node-5: #ec4899;
+  --color-node-6: #22c55e;
+
+  /* Every dark-theme ramp hue is lighter than its light-theme twin, so dark ink wins on all six. */
+  --color-node-1-ink: #0b0b0b;
+  --color-node-2-ink: #0b0b0b;
+  --color-node-3-ink: #0b0b0b;
+  --color-node-4-ink: #0b0b0b;
+  --color-node-5-ink: #0b0b0b;
+  --color-node-6-ink: #0b0b0b;
+
+  --color-status-ok: #22c55e;
+  --color-status-warn: #f59e0b;
+  --color-status-err: #ef4444;
+  --color-status-stopped: #94a3b8;
+
+  --color-status-ok-solid: #15803d;
+  --color-status-warn-solid: #b45309;
+  --color-status-err-solid: #dc2626;
+  --color-status-stopped-solid: #475569;
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════

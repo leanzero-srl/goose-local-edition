@@ -1,5 +1,6 @@
 import React, { memo, useMemo } from 'react';
 import MarkdownContent from '../MarkdownContent';
+import { CHIP_RADIUS, SWARM_STATUS } from './formationVisualState';
 
 // A model's output is EITHER prose or a structured payload, and the panel used to run both through the
 // markdown renderer. That is wrong twice over for a payload:
@@ -71,8 +72,8 @@ export function classifyContent(text: string): Parsed {
 }
 
 const DIFFICULTY_COLOR: Record<string, string> = {
-  easy: '#2ecc71',
-  medium: '#f5a623',
+  easy: SWARM_STATUS.done,
+  medium: SWARM_STATUS.running,
   hard: '#ff5c7a',
 };
 
@@ -83,7 +84,7 @@ const PlanSkeleton: React.FC<{ subtasks: Subtask[]; integration?: string }> = ({
 }) => (
   <div className="space-y-1.5">
     {subtasks.map((s) => (
-      <div key={s.id} className="border border-border-primary px-2 py-1.5" style={{ borderRadius: 3 }}>
+      <div key={s.id} className="border border-border-primary px-2 py-1.5" style={{ borderRadius: CHIP_RADIUS }}>
         <div className="flex items-center gap-2 flex-wrap">
           <span className="text-[11px] font-mono font-semibold text-text-primary">{s.id}</span>
           {s.difficulty ? (
@@ -92,7 +93,7 @@ const PlanSkeleton: React.FC<{ subtasks: Subtask[]; integration?: string }> = ({
               style={{
                 color: DIFFICULTY_COLOR[s.difficulty] ?? 'var(--text-secondary)',
                 border: `1px solid ${DIFFICULTY_COLOR[s.difficulty] ?? 'var(--border-primary)'}`,
-                borderRadius: 2,
+                borderRadius: CHIP_RADIUS,
               }}
             >
               {s.difficulty}
@@ -143,7 +144,7 @@ export const CodeBlock: React.FC<{
       wrap ? 'whitespace-pre-wrap break-words' : 'overflow-x-auto'
     } ${className}`}
     style={{
-      borderRadius: 2,
+      borderRadius: CHIP_RADIUS,
       margin: 0,
       color: tone === 'error' ? '#ff8f88' : 'var(--text-primary)',
     }}

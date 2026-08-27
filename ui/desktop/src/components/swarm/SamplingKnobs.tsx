@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { SlidersHorizontal, Check } from 'lucide-react';
 import { Tooltip, TooltipTrigger, TooltipContent } from '../ui/Tooltip';
+import { CHIP_RADIUS, SWARM_STATUS } from './formationVisualState';
 import {
   SAMPLING_KNOBS,
   clampKnob,
@@ -18,7 +19,7 @@ import {
  * (never a tint), custom inline inputs (no native controls beyond a plain text field).
  */
 
-const STRIP_HUE = '#2e8bff';
+const STRIP_HUE = SWARM_STATUS.action;
 
 function KnobField({
   id,
@@ -61,7 +62,7 @@ function KnobField({
       type="text"
       inputMode="decimal"
       className="w-[5.5rem] border border-border-primary bg-background-primary px-1.5 py-0.5 text-right font-mono text-xs font-bold tabular-nums placeholder:font-normal placeholder:text-text-secondary focus:border-border-secondary focus-visible:outline-none"
-      style={{ borderRadius: 3, color: hue }}
+      style={{ borderRadius: CHIP_RADIUS, color: hue }}
       value={text}
       placeholder={unsetLabel}
       aria-label={`${id} sampling value`}
@@ -112,7 +113,7 @@ export default function SamplingKnobs({
   return (
     <div
       className={`border border-border-primary px-3 py-2 ${className}`}
-      style={{ borderRadius: 3 }}
+      style={{ borderRadius: CHIP_RADIUS }}
       data-testid="sampling-knobs"
     >
       <div className="flex items-center gap-2">
@@ -136,11 +137,11 @@ export default function SamplingKnobs({
               savedTimer.current = setTimeout(() => setSaved(false), 2000);
             }}
             className="ml-auto flex shrink-0 items-center gap-1 border border-border-primary px-2 py-0.5 text-[10px] font-semibold text-text-secondary transition-colors hover:border-text-secondary hover:text-text-primary"
-            style={{ borderRadius: 3 }}
+            style={{ borderRadius: CHIP_RADIUS }}
           >
             {saved ? (
               <>
-                <Check className="h-3 w-3" style={{ color: '#2ecc71' }} />
+                <Check className="h-3 w-3" style={{ color: SWARM_STATUS.done }} />
                 saved
               </>
             ) : (

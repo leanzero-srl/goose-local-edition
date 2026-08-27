@@ -466,6 +466,12 @@ pub struct SwarmConfig {
     /// because a desktop app launched with `open -n` receives no environment at all.
     #[serde(default)]
     pub benchmark: bool,
+    /// Secrets for the research MCP tools, keyed by the env var name they would otherwise come from
+    /// (CONTEXT7_API_KEY, WEBSEARCH_BEARER, SERPER_KEY, GITHUB_TOKEN, DOCPROC_BEARER, and the *_URI
+    /// overrides). Env still wins; this exists because a desktop app launched with `open -n` inherits no
+    /// environment at all, so without it the packaged app can never ground a single lookup.
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub research_keys: HashMap<String, String>,
     /// UNCAPPED regime (Mihai 2026-08-21): remove EVERY wall-clock and volume cap — the run
     /// finishes when it finishes; only the omni-judge's content-based LOOPING verdicts,
     /// repeat-break, and the pure-idle dead-stream failsafes may stop a call. This config field is
@@ -1297,6 +1303,7 @@ impl Default for SwarmConfig {
             repeat_break: Some(true),
             spiral_break_chars: Some(12000),
             benchmark: false,
+            research_keys: HashMap::new(),
             uncapped: false,
             lm_extra_body: None,
             omni_judge: Some(true),
@@ -3633,6 +3640,23 @@ fn benchmark() -> bool {
         Ok(v) => matches!(v.trim(), "1" | "on" | "true" | "yes"),
         Err(_) => load_config().benchmark,
     }
+}
+
+/// A research-tool secret, by the env var name. Env wins, then `swarm.research_keys` in config.yaml —
+/// the same precedence as every other lever, and for the same reason as `benchmark`: `open -n` hands a
+/// desktop-launched app no environment, so env-only meant the packaged app silently ran every research
+/// call ungrounded while printing "(skipping context7: set CONTEXT7_API_KEY)" to a console nobody reads.
+fn research_secret(name: &str) -> Option<String> {
+    if let Ok(v) = std::env::var(name) {
+        if !v.trim().is_empty() {
+            return Some(v);
+        }
+    }
+    load_config()
+        .research_keys
+        .get(name)
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty())
 }
 
 /// How long a question waits for the HUMAN before a node answers it.
@@ -8648,6 +8672,32 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
     }
 
     /// The same reader, against the REAL logs this machine has produced — a fixture can agree with a bug.
+    #[test]
+    /// THE BUG THAT MADE RESUME DEAD EVERYWHERE BUT THE BENCH.
+    ///
+    /// `resume_state_from_dir` took `logs.last()`, and by the time it runs the CURRENT run has already
+    /// created its own (empty) log in the same directory — so `last()` was always that empty file and
+    /// resume returned None from a desktop or CLI run every time. The bench escaped it only because
+    /// run_build.py redirects the live log elsewhere. This writes exactly that arrangement: a prior run
+    /// with a plan, and a newer empty log beside it.
+    fn resume_ignores_the_current_runs_own_empty_log() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let swarm = dir.path().join(".swarm");
+        std::fs::create_dir_all(&swarm).expect("mkdir");
+        std::fs::write(
+            swarm.join("run-swarm-20260101-000000000.jsonl"),
+            r#"{"event":"plan_loaded","tasks":[{"id":"core","depends_on":[]}]}
+{"event":"task_completed","task_id":"core"}
+"#,
+        )
+        .expect("prior log");
+        // Sorts AFTER the prior log, exactly as a freshly-created live log does.
+        std::fs::write(swarm.join("run-swarm-20260102-000000000.jsonl"), "").expect("empty log");
+        let state = resume_state_from_dir(dir.path()).expect("the prior run is still resumable");
+        assert!(state.plan_json.is_some(), "the prior plan must come back");
+        assert!(state.completed.contains("core"));
+    }
+
     #[test]
     fn resume_reads_the_real_run_logs() {
         let home = std::env::var("HOME").unwrap_or_default();
@@ -15174,7 +15224,7 @@ fn working_dir_has_sources(dir: &Path) -> bool {
 }
 
 // ---------------------------------------------------------------------------------------------
-// MCP worker extensions — built at runtime from env vars (no secrets stored on disk)
+// MCP worker extensions — secrets from env, falling back to swarm.research_keys in config
 // ---------------------------------------------------------------------------------------------
 
 /// Build a worker MCP extension by name, reading secrets from the environment. Returns None (with a
@@ -15182,8 +15232,10 @@ fn working_dir_has_sources(dir: &Path) -> bool {
 fn build_worker_extension(name: &str) -> Option<ExtensionConfig> {
     match name {
         "context7" => {
-            let key = std::env::var("CONTEXT7_API_KEY").ok().or_else(|| {
-                eprintln!("(skipping context7: set CONTEXT7_API_KEY)");
+            let key = research_secret("CONTEXT7_API_KEY").or_else(|| {
+                eprintln!(
+                    "(skipping context7: set CONTEXT7_API_KEY, or swarm.research_keys in config)"
+                );
                 None
             })?;
             Some(ExtensionConfig::Stdio {
@@ -15205,22 +15257,24 @@ fn build_worker_extension(name: &str) -> Option<ExtensionConfig> {
             })
         }
         "web-search" => {
-            let bearer = std::env::var("WEBSEARCH_BEARER").ok().or_else(|| {
-                eprintln!("(skipping web-search: set WEBSEARCH_BEARER)");
+            let bearer = research_secret("WEBSEARCH_BEARER").or_else(|| {
+                eprintln!(
+                    "(skipping web-search: set WEBSEARCH_BEARER, or swarm.research_keys in config)"
+                );
                 None
             })?;
             let mut headers = HashMap::new();
             headers.insert("Authorization".to_string(), format!("Bearer {bearer}"));
-            if let Ok(k) = std::env::var("SERPER_KEY") {
+            if let Some(k) = research_secret("SERPER_KEY") {
                 headers.insert("X-Serper-Key".to_string(), k);
             }
-            if let Ok(k) = std::env::var("GITHUB_TOKEN") {
+            if let Some(k) = research_secret("GITHUB_TOKEN") {
                 headers.insert("X-GitHub-Token".to_string(), k);
             }
             Some(ExtensionConfig::StreamableHttp {
                 name: "web-search".to_string(),
                 description: "Web search + GitHub".to_string(),
-                uri: std::env::var("WEBSEARCH_URI").unwrap_or_else(|_| {
+                uri: research_secret("WEBSEARCH_URI").unwrap_or_else(|| {
                     "https://worksmacstudio.tailfc4700.ts.net:8443/mcp".to_string()
                 }),
                 envs: Default::default(),
@@ -15233,8 +15287,8 @@ fn build_worker_extension(name: &str) -> Option<ExtensionConfig> {
             })
         }
         "doc-processor" => {
-            let bearer = std::env::var("DOCPROC_BEARER").ok().or_else(|| {
-                eprintln!("(skipping doc-processor: set DOCPROC_BEARER)");
+            let bearer = research_secret("DOCPROC_BEARER").or_else(|| {
+                eprintln!("(skipping doc-processor: set DOCPROC_BEARER, or swarm.research_keys in config)");
                 None
             })?;
             let mut headers = HashMap::new();
@@ -15242,7 +15296,7 @@ fn build_worker_extension(name: &str) -> Option<ExtensionConfig> {
             Some(ExtensionConfig::StreamableHttp {
                 name: "doc-processor".to_string(),
                 description: "Document processor".to_string(),
-                uri: std::env::var("DOCPROC_URI").unwrap_or_else(|_| {
+                uri: research_secret("DOCPROC_URI").unwrap_or_else(|| {
                     "https://worksmacstudio.tailfc4700.ts.net:10000/mcp".to_string()
                 }),
                 envs: Default::default(),
@@ -23991,7 +24045,7 @@ fn parse_judge_reply(s: &str) -> JudgeOutcome {
 
 /// One semantic slice of the request, as the opener sees it.
 #[derive(Clone, Debug, serde::Deserialize)]
-struct OpenSlice {
+pub(crate) struct OpenSlice {
     id: String,
     #[serde(default)]
     title: String,
@@ -24007,7 +24061,7 @@ struct OpenSlice {
 }
 
 #[derive(Clone, Debug, Default, serde::Deserialize)]
-struct OpenOutput {
+pub(crate) struct OpenOutput {
     #[serde(default)]
     slices: Vec<OpenSlice>,
     #[serde(default)]
@@ -24017,7 +24071,7 @@ struct OpenOutput {
 /// A slice after its owner has researched it. `brief` is the module specification, and it is spliced
 /// into the task description VERBATIM — it never passes through the synthesis model.
 #[derive(Clone, Debug)]
-struct SliceBrief {
+pub(crate) struct SliceBrief {
     id: String,
     title: String,
     objective: String,
@@ -24173,6 +24227,108 @@ impl GooseAgentDispatcher {
             bail!("opener returned zero slices");
         }
         Ok(parsed)
+    }
+
+    /// TEST — three nodes exercise the built app from three DIFFERENT angles, in parallel.
+    ///
+    /// Until now the only thing that ever tried the app was the engine's own smoke gate: pytest plus
+    /// `--help`. That gate is deterministic and it is why it decides green, but it can only find what it
+    /// was written to look for, and it has never once opened a page. Two of three sb-6 runs shipped an
+    /// app that never bound a port and the gate did not say so.
+    ///
+    /// Three angles, and they are NAMED IN THE PROMPT rather than being a const lens table, because a
+    /// fixed table is what made research breadth a property of the array's length instead of the request
+    /// (see `SCOUT_LENSES`, deleted). Each returns defects with the files they touch, in backticks, so
+    /// `extract_file_from_finding` attributes them and the existing per-file fix fan shards them with no
+    /// new plumbing.
+    pub(crate) async fn test_app(
+        self: &Arc<Self>,
+        worker_models: Vec<String>,
+        user_prompt: &str,
+        files: &[String],
+    ) -> Vec<(String, String)> {
+        const ANGLES: [(&str, &str); 3] = [
+            (
+                "primary-journey",
+                "THE PRIMARY JOURNEY. Do the thing this app exists to do, end to end, the way its user \
+                 would. Not a unit test — the real path, start to finish, with realistic input. If it is \
+                 a web app, start it and request its pages. If it is a CLI, run the actual workflow.",
+            ),
+            (
+                "advertised-surface",
+                "THE ADVERTISED SURFACE. Take every command, endpoint, flag and option the request or \
+                 the app's own help text CLAIMS to have, and try each one. Something that is advertised \
+                 and missing, or advertised and broken, is a defect even if nothing else touches it.",
+            ),
+            (
+                "bad-input",
+                "BAD INPUT AND BROKEN STATE. Missing file, empty input, wrong type, absent directory, \
+                 a second run over the first run's data. It does not have to succeed — it has to fail \
+                 CLEANLY: a readable message and a non-zero exit, never a traceback or a silent zero.",
+            ),
+        ];
+        let lanes = one_lane_per_host(worker_models);
+        if lanes.is_empty() {
+            return Vec::new();
+        }
+        let me = self.clone();
+        let prompt = user_prompt.to_string();
+        let file_list = files
+            .iter()
+            .map(|f| format!("- `{f}`"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let out = fanout_over_fleet(
+            lanes,
+            ANGLES.to_vec(),
+            move |(key, angle): (&'static str, &'static str), model: String| {
+                let prompt = prompt.clone();
+                let file_list = file_list.clone();
+                let me = me.clone();
+                async move {
+                    let system = format!(
+                        "The program in your working directory has just been built. You are testing it. \
+                         You are NOT fixing it — do not edit a single file.\n\n\
+                         YOUR ANGLE:\n{angle}\n\n\
+                         RUN IT. Use your shell. Read the code only to find out how to invoke it.\n\n\
+                         Report what you OBSERVED, never what you suspect. A defect you did not \
+                         reproduce is not a defect. Then report, in this exact shape and nothing else:\n\n\
+                         DEFECT: <what is wrong, and the exact command or URL that shows it>\n\
+                         FILES: `path/to/one.py`, `path/to/two.js`\n\n\
+                         Repeat that pair for each defect. Put every path in BACKTICKS — the repair fan \
+                         routes each defect to whoever owns the file, and an unattributed defect goes to \
+                         a worker that has to search the whole tree for it.\n\
+                         If you found nothing wrong from your angle, reply with exactly: NO DEFECTS"
+                    );
+                    let user = format!(
+                        "## What this app was asked to be\n{prompt}\n\n## Files it was built from\n{file_list}"
+                    );
+                    let text = match me
+                        .run_agent_timed_at(
+                            &model,
+                            system,
+                            user,
+                            None,
+                            planner_side_turns(),
+                            &[],
+                            None,
+                            Some(&format!("test-{key}")),
+                        )
+                        .await
+                    {
+                        Ok(o) => o.text,
+                        // A node that could not test is silence, never a defect. Inventing a finding
+                        // from a failed call would send the fix fan at a file nobody observed breaking.
+                        Err(_) => String::new(),
+                    };
+                    (key, parse_observed_defects(&text))
+                }
+            },
+        )
+        .await;
+        out.into_iter()
+            .flat_map(|(key, defects)| defects.into_iter().map(move |d| (key.to_string(), d)))
+            .collect()
     }
 
     /// RATE each defect against what the app IS FOR: does it stop the app doing its job, or is it an
@@ -24459,6 +24615,64 @@ impl GooseAgentDispatcher {
 /// A tolerant JSON object parse: takes the first balanced `{...}` in the reply and deserialises it.
 /// The fleet wraps structured output in prose and fences often enough that a strict parse is a coin
 /// flip, and losing a whole phase to a stray "Sure — here you go:" is not a trade worth making.
+/// Parse a TEST node's report into findings.
+///
+/// Deliberately lenient. The shape asked for is `DEFECT:` / `FILES:` pairs, but a 27B wraps it in prose,
+/// numbers it, bolds it, or drops the FILES line entirely — and a strict parser would turn a node that
+/// found three real bugs into a node that found none. A defect with no files is kept and simply falls to
+/// the unattributed residue worker, which is exactly where it belongs.
+///
+/// Paths are re-emitted in BACKTICKS because `extract_file_from_finding` reads them from there; that is
+/// the whole integration with the existing per-file fix fan.
+fn parse_observed_defects(reply: &str) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    let mut current: Option<String> = None;
+    let strip = |l: &str, tag: &str| -> Option<String> {
+        let t = l.trim_start_matches(['-', '*', '#', ' ', '\t']);
+        let t = t.trim_start_matches(|c: char| c.is_ascii_digit() || c == '.' || c == ')');
+        let t = t.trim().trim_start_matches("**").trim_start();
+        // Case-insensitive on the ORIGINAL bytes: `to_uppercase()` can change a string's byte length
+        // (ß -> SS), so a starts_with on an uppercased copy is not a licence to index the original.
+        let rest = t.get(tag.len()..).filter(|_| {
+            t.get(..tag.len())
+                .is_some_and(|h| h.eq_ignore_ascii_case(tag))
+        })?;
+        Some(rest.trim_start_matches([':', '*', ' ']).trim().to_string())
+    };
+    let mut flush = |cur: &mut Option<String>, files: &str, out: &mut Vec<String>| {
+        if let Some(text) = cur.take() {
+            if text.is_empty() {
+                return;
+            }
+            let paths: Vec<String> = files
+                .split(',')
+                .map(|p| p.trim().trim_matches('`').trim().to_string())
+                .filter(|p| !p.is_empty() && p != "-" && !p.eq_ignore_ascii_case("unknown"))
+                .map(|p| format!("`{p}`"))
+                .collect();
+            out.push(if paths.is_empty() {
+                text
+            } else {
+                format!("{text} (in {})", paths.join(", "))
+            });
+        }
+    };
+    for raw in reply.lines() {
+        if let Some(d) = strip(raw, "DEFECT") {
+            flush(&mut current, "", &mut out);
+            current = Some(d);
+        } else if let Some(f) = strip(raw, "FILES") {
+            flush(&mut current, &f, &mut out);
+        }
+    }
+    flush(&mut current, "", &mut out);
+    out.retain(|d| {
+        let u = d.to_uppercase();
+        !u.starts_with("NO DEFECTS") && !u.starts_with("NONE")
+    });
+    out
+}
+
 fn parse_json_lenient<T: serde::de::DeserializeOwned>(raw: &str) -> Option<T> {
     if let Ok(v) = serde_json::from_str::<T>(raw) {
         return Some(v);
@@ -28335,7 +28549,25 @@ fn resume_state_from_dir(dir: &std::path::Path) -> Option<ResumeState> {
         })
         .collect();
     logs.sort();
-    resume_state_from_log(&std::fs::read_to_string(logs.last()?).ok()?)
+    // NEWEST FIRST, and skip the ones with nothing in them.
+    //
+    // This took `logs.last()` — and by the time it runs, the CURRENT run has already created its own
+    // log in this same directory, so `last()` is that empty file and resume returned None every single
+    // time. The bench path escaped it only because run_build.py redirects the live log out of `.swarm`
+    // entirely; from a desktop or a plain CLI run, resume has never once worked.
+    //
+    // A log with no `plan_loaded` in it yields None from the pure half, so walking backwards until one
+    // parses is both the fix and the general rule: resume from the most recent run that got far enough
+    // to have something to resume.
+    for path in logs.iter().rev() {
+        let Ok(text) = std::fs::read_to_string(path) else {
+            continue;
+        };
+        if let Some(state) = resume_state_from_log(&text) {
+            return Some(state);
+        }
+    }
+    None
 }
 
 /// The pure half: given a run log's text, what can be resumed? Separate so it is testable against the REAL
@@ -32303,6 +32535,65 @@ fn phase_banner(label: &str, why: &str) {
 /// harness or an eval) -> write the questions to `.swarm/clarify-questions.json`, emit a `low_confidence_ask`
 /// event, and BLOCK-poll for `.swarm/clarify-answers.json` (the harness answers AS the human) up to
 /// `wait_secs`, then proceed. Returns a Q&A block to fold into the planner findings, or "" if unanswered.
+/// THE REPAIR ASK — "shall I spend another round on this?", routed by §5's one rule.
+///
+/// `benchmark` ON -> answered INSTANTLY by the proxy, no wait. OFF -> the human gets exactly
+/// `proxy_answer_after_secs()`, then the proxy answers. Identical routing to the clarify ask, from the
+/// same expression, because two ask sites with two timings is how one of them silently becomes a cap.
+///
+/// The proxy's answer is `proxy_yes`, and the caller derives it from ONE thing: did the last round change
+/// the real tree. Yes while it is still changing, no the moment it stops. That is deliberately not a model
+/// call — under `benchmark` a model asked "want another round?" answers yes forever, and the only exit
+/// from that is Ctrl-C. It is the same progress terminator the rest of the phase uses, applied to the
+/// question of whether another round is worth buying.
+async fn ask_repair_round(
+    dir: &Path,
+    key: &str,
+    question: &str,
+    detail: &[String],
+    proxy_yes: bool,
+) -> (bool, &'static str) {
+    let qpath = dir.join(format!("{key}-question.json"));
+    let apath = dir.join(format!("{key}-answer.json"));
+    let _ = std::fs::remove_file(&apath);
+    let _ = std::fs::create_dir_all(dir);
+    let _ = std::fs::write(
+        &qpath,
+        serde_json::to_string_pretty(&serde_json::json!({
+            "question": question,
+            "detail": detail,
+            "answer_file": format!(".swarm/{key}-answer.json"),
+            "answer_format": {"answer": "yes|no"},
+        }))
+        .unwrap_or_default(),
+    );
+    let wait = proxy_answer_after_secs();
+    let read_answer = |path: &Path| -> Option<bool> {
+        let s = std::fs::read_to_string(path).ok()?;
+        let v = serde_json::from_str::<serde_json::Value>(&s).ok()?;
+        let a = v
+            .get("answer")
+            .and_then(|a| a.as_str())
+            .map(|a| a.trim().to_lowercase())?;
+        match a.as_str() {
+            "yes" | "y" | "true" | "1" => Some(true),
+            "no" | "n" | "false" | "0" => Some(false),
+            _ => None,
+        }
+    };
+    let mut waited = 0u64;
+    loop {
+        if let Some(a) = read_answer(&apath) {
+            return (a, "human");
+        }
+        if waited >= wait {
+            return (proxy_yes, "proxy");
+        }
+        tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+        waited += 5;
+    }
+}
+
 async fn ask_clarifying_questions(
     questions: &[ClarifyQuestion],
     cwd: &Path,
@@ -35380,6 +35671,11 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             // a comparison across two drifted hashes reports rework that never happened.
             "desc_sha": short_digest(n.spec.description.trim()),
             "deps": n.spec.deps,
+            // THE SAME EDGES UNDER THE NAME THE LOADER READS. `specs_from_plan_json` (dag.rs) parses
+            // `depends_on`; this event has only ever written `deps`. So a resumed plan came back with
+            // every dependency stripped — a DAG whose edges are all gone still loads, still validates,
+            // and silently runs every task at once against files that do not exist yet.
+            "depends_on": n.spec.deps,
             "files": n.spec.owned_files,
             "difficulty": format!("{:?}", n.spec.difficulty).to_lowercase(),
             "model": n.spec.preferred_model,
@@ -35815,6 +36111,11 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
         // mechanism, and the stall exit used to fire before that arm ever saw the improved
         // tree (r10 and r11 both promoted a verified fix, then stall-exited at a flat count).
         let mut last_round_promoted = false;
+        // What the repair ASK quotes back. An ETA has to come from what actually happened in THIS
+        // run — rounds that ran, the wall-clock they took, and how many criticals they closed — or it
+        // is a number invented to make a question look answerable.
+        let mut round_walls: Vec<u64> = Vec::new();
+        let mut first_criticals: Option<usize> = None;
         let mut last_round_was_shard = false;
         // `rounds` fix attempts, each preceded by a verify, PLUS a final verify after the last fix so the
         // last fix is actually checked (0..=rounds => rounds+1 verifies, rounds fixes).
@@ -35998,6 +36299,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
         let mut force_shard_next = false;
         let mut strategy_switched = false;
         loop {
+            let round_started = std::time::Instant::now();
             let mut verdict = run_smoke_gate(&cwd, complete_lang).await;
             // A failed task blocks green ONLY when the smoke gate is BLIND (it did not run — an unprofiled
             // language, a missing toolchain, an empty tree). When the gate RAN (go build+test, pytest, cargo)
@@ -36237,6 +36539,43 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                     }));
                 }
             }
+            // TEST — the three-node fan, before the round's verdict is written so its defects are
+            // rated and fixed by exactly the same machinery as the engine's own.
+            //
+            // The engine gate above is deterministic and it is why it decides green; what it CANNOT do is
+            // notice something it was never written to look for. Two of three sb-6 runs shipped an app
+            // that never bound a port and pytest was perfectly happy. These three angles run the app the
+            // way a person would, and their defects join `verdict.findings` as ordinary strings with the
+            // paths in backticks — so `extract_file_from_finding` shards them across the fix fan with no
+            // new plumbing, and RATE below triages them against intent like everything else.
+            //
+            // A model observation never overrules a measurement: `engine_fatal` still forces the engine's
+            // own strings CRITICAL whatever the rater says.
+            if !fleet_models.is_empty() {
+                let observed = smoke_fix_dispatcher
+                    .test_app(fleet_models.clone(), &opts.prompt, &smoke_all_files)
+                    .await;
+                let mut by_angle: std::collections::BTreeMap<String, usize> =
+                    std::collections::BTreeMap::new();
+                for (angle, _) in &observed {
+                    *by_angle.entry(angle.clone()).or_default() += 1;
+                }
+                sink.write_value(serde_json::json!({
+                    "event": "defects_observed",
+                    "round": round,
+                    "total": observed.len(),
+                    "by_angle": by_angle,
+                    "defects": observed.iter()
+                        .map(|(a, d)| format!("[{a}] {}", elide_middle(d, 150, 650)))
+                        .collect::<Vec<_>>(),
+                }));
+                for (angle, d) in observed {
+                    let text = format!("[{angle}] {d}");
+                    if !verdict.findings.contains(&text) {
+                        verdict.findings.push(text);
+                    }
+                }
+            }
             sink.write_value(serde_json::json!({
                 "event": "complete_verify",
                 "round": round,
@@ -36392,8 +36731,123 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                     );
                 }
                 known_active_bugs = minors.clone();
+                round_walls.push(round_started.elapsed().as_secs());
+                if first_criticals.is_none() {
+                    first_criticals = Some(criticals.len());
+                }
+
+                // THE ASK. Whether to buy another round is the user's call, not the engine's — and it is
+                // asked either way, because "criticals remain" and "only minors remain" are different
+                // questions with the same answer shape. Routing is §5's rule verbatim, from the same
+                // expression: instant under `benchmark`, five minutes with the human otherwise.
+                //
+                // The proxy answers from PROGRESS. `last_round_promoted` is the only honest input: a fix
+                // landed on the real tree, or it did not. Asking a model would answer yes forever under
+                // benchmark and leave Ctrl-C as the only exit.
+                let rounds_run = round_walls.len();
+                let avg_round = if rounds_run > 0 {
+                    round_walls.iter().sum::<u64>() / rounds_run as u64
+                } else {
+                    0
+                };
+                let closed = first_criticals
+                    .map(|f| f.saturating_sub(criticals.len()))
+                    .unwrap_or(0);
+                // An ETA nobody can stand behind is worse than none. If no critical has ever closed, say
+                // exactly that instead of extrapolating from a rate of zero.
+                let eta = if rounds_run == 0 || avg_round == 0 {
+                    "no round has finished yet, so there is nothing to estimate from".to_string()
+                } else if criticals.is_empty() {
+                    format!(
+                        "another round looks like roughly {}m, from the {rounds_run} that have run",
+                        avg_round / 60
+                    )
+                } else if closed == 0 {
+                    format!(
+                        "{rounds_run} round(s) have run at about {}m each and have closed NO critical yet, \
+                         so I cannot honestly estimate how long the rest would take",
+                        avg_round / 60
+                    )
+                } else {
+                    let per = avg_round as f64 * criticals.len() as f64 / closed as f64;
+                    format!(
+                        "{rounds_run} round(s) at about {}m each have closed {closed} of {} criticals; \
+                         the remaining {} look like roughly {}m",
+                        avg_round / 60,
+                        first_criticals.unwrap_or(0),
+                        criticals.len(),
+                        (per / 60.0).round() as u64
+                    )
+                };
+                let (question, detail, key) = if criticals.is_empty() {
+                    (
+                        format!("The app works. {} minor issue(s) remain. {eta}. Spend another round on them?", minors.len()),
+                        minors.clone(),
+                        "fix_minors",
+                    )
+                } else {
+                    (
+                        format!(
+                            "{} critical problem(s) remain. {eta}. Continue?",
+                            criticals.len()
+                        ),
+                        criticals.clone(),
+                        "fix_criticals",
+                    )
+                };
+                // Round 0 has bought nothing yet, so it is never the moment to ask whether to buy more.
+                let proxy_yes = round == 0 || last_round_promoted;
+                sink.write_value(serde_json::json!({
+                    "event": "clarify_proxy_armed",
+                    "ask": key,
+                    "round": round,
+                    "mode": if benchmark() { "immediate" } else { "after_wait" },
+                    "wait_secs": proxy_answer_after_secs(),
+                    "questions": 1,
+                }));
+                if !benchmark() {
+                    eprintln!(
+                        "  {} {question}\n    answer in .swarm/{key}-answer.json ({{\"answer\":\"yes\"}}) within {}s, or goose decides",
+                        style("?").cyan().bold(),
+                        proxy_answer_after_secs()
+                    );
+                }
+                let (go_on, source) =
+                    ask_repair_round(&cwd.join(".swarm"), key, &question, &detail, proxy_yes).await;
+                sink.write_value(serde_json::json!({
+                    "event": key,
+                    "round": round,
+                    "question": question,
+                    "eta": eta,
+                    "answer": if go_on { "yes" } else { "no" },
+                    "source": source,
+                    "criticals": criticals.len(),
+                    "minors": minors.len(),
+                    "tree_changed_last_round": last_round_promoted,
+                }));
                 if criticals.is_empty() {
                     final_passed = true;
+                    if !go_on {
+                        eprintln!(
+                            "{}",
+                            style(format!(
+                                "complete: GREEN at round {round} — shipping with {} known active bug(s)",
+                                minors.len()
+                            ))
+                            .green()
+                        );
+                        break;
+                    }
+                } else if !go_on {
+                    eprintln!(
+                        "{}",
+                        style(format!(
+                            "complete: STOPPING at round {round} with {} critical(s) open — {source} said no",
+                            criticals.len()
+                        ))
+                        .yellow()
+                    );
+                    break;
                 }
             }
             if verdict.findings.is_empty() {

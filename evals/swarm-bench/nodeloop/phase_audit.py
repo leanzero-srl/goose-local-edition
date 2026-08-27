@@ -25,7 +25,7 @@ HERE = Path(__file__).resolve().parent
 BEST = HERE / "PHASE-BEST.json"
 QUEUE = HERE / "PHASE-POLISH.md"
 
-AUDIT_PHASE_VERSION = "pa-1"
+AUDIT_PHASE_VERSION = "pa-2"
 
 # A phase must be this much worse than the recorded best before it is called a regression: the
 # replicate spread on wall segments is real, and a queue full of noise trains the reader to skip it.
@@ -71,24 +71,40 @@ def audit_phases(path, update_state: bool = True) -> dict:
     t_end = _ts(finished) if finished else _ts(events[-1])
 
     # ---- PROLOGUE: run start -> first dispatch, segmented -----------------------------------
-    research = last("research_completed")
+    #
+    # SEGMENTED AT THE ENGINE'S OWN PHASE EVENTS. The three segments this used to cut — `research`
+    # (run start to research_completed), `skeleton_convergence` (to plan_convergence) and
+    # `detail_fan` (from detail_completed) — belonged to the scout fan, the plan vote and the detail
+    # fan. Two of the three events are deleted, so those keys would simply stop appearing: the audit
+    # would keep running, keep ratcheting, and report a prologue with a 20-minute hole in it and no
+    # sign anything was missing. The linear engine announces every boundary instead, so each phase is
+    # cut where the engine says it starts.
+    #
+    # THE `plan.` PREFIX IS DELIBERATE AND IS NOT COSMETIC. PHASE-BEST.json ratchets by key, and the
+    # old `research` key measured run-start-to-research_completed on an engine whose research was four
+    # fixed scout lenses. Reusing the name would compare the new RESEARCH phase against a best set by
+    # a different mechanism — pooling across engine builds, the cardinal sin here — and the first run
+    # would be filed as a regression or a record depending only on which engine was faster.
     plan_loaded = last("plan_loaded")
     dispatches = all_of("task_dispatched")
     first_dispatch = _ts(dispatches[0]) if dispatches else None
     seg = {}
-    if research and t0:
-        seg["research"] = max(0.0, (_ts(research) or t0) - t0)
-    # Skeleton + convergence: research end -> plan_convergence (covers redraft rounds too).
-    convs = all_of("plan_convergence")
-    if convs and research:
-        seg["skeleton_convergence"] = max(0.0, (_ts(convs[-1]) or 0) - (_ts(research) or 0))
-    details = all_of("detail_completed")
-    if details:
-        d_ts = [t for t in (_ts(d) for d in details) if t]
-        d0 = min((t - d.get("secs", 0)) for t, d in zip(d_ts, details)) if d_ts else None
-        if d0:
-            seg["detail_fan"] = max(0.0, max(d_ts) - d0)
+    phase_marks = [(_ts(e), e.get("phase")) for e in all_of("phase") if e.get("phase")]
+    phase_marks = sorted((t, n) for t, n in phase_marks if t is not None)
+    if phase_marks:
+        # Each phase runs until the next one that actually fired; the last runs to the shipped plan.
+        # A conditional phase that never fired (ASK, when the opener raised no open decision) gets no
+        # key at all rather than a zero that would ratchet as an unbeatable best.
+        ends = [t for t, _ in phase_marks[1:]] + [
+            _ts(plan_loaded) if plan_loaded else first_dispatch]
+        for (start, name), end in zip(phase_marks, ends):
+            if end:
+                seg[f"plan.{name}"] = max(0.0, end - start)
+        seg["plan.preamble"] = max(0.0, phase_marks[0][0] - t0) if t0 else 0.0
     if plan_loaded and t0 and first_dispatch:
+        # CONTRACTS and PILLARS live here — both gated, both silent when off — so this is the gap
+        # between a shipped plan and the first worker, not a phase of its own.
+        seg["plan_to_dispatch"] = max(0.0, first_dispatch - (_ts(plan_loaded) or first_dispatch))
         seg["prologue_total"] = first_dispatch - t0
 
     # ---- DAG WINDOW: intervals from task_completed (ts - elapsed_ms) ------------------------

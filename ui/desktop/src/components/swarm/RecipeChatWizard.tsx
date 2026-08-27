@@ -6,6 +6,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigge
 import { useFleet } from './useFleet';
 import type { Recipe } from '../../recipe';
 import { saveRecipe } from '../../recipe/recipe_management';
+import { CHIP_RADIUS, SWARM_STATUS } from './formationVisualState';
 
 /**
  * Goose Local Edition — build a recipe by TALKING TO THE FLEET. A warm local model (LM Studio, the same
@@ -18,7 +19,7 @@ import { saveRecipe } from '../../recipe/recipe_management';
  * a "Draft the recipe now" escape hatch that forces the JSON, and the parsed draft is fully editable.
  */
 
-const AZURE = '#2e8bff';
+const AZURE = SWARM_STATUS.action;
 const CHAT_URL = 'http://127.0.0.1:1234/v1/chat/completions';
 
 // The conversation is an INTERVIEW only — the model asks questions and never writes the recipe or any
@@ -255,7 +256,7 @@ export function RecipeChatWizard({
     <div className="fixed inset-0 z-[75] flex items-center justify-center bg-black/50 p-4">
       <div
         className="bg-background-primary border border-border-primary shadow-lg w-[620px] max-h-[88vh] flex flex-col"
-        style={{ borderRadius: 3 }}
+        style={{ borderRadius: CHIP_RADIUS }}
         data-testid="recipe-chat-wizard"
       >
         <div className="flex items-center justify-between px-4 py-3 border-b border-border-primary">
@@ -271,10 +272,10 @@ export function RecipeChatWizard({
                 <DropdownMenuTrigger asChild>
                   <button
                     className="hidden sm:flex items-center gap-1 text-[11px] font-mono px-1.5 py-0.5 border"
-                    style={{ borderRadius: 2, borderColor: AZURE, color: AZURE }}
+                    style={{ borderRadius: CHIP_RADIUS, borderColor: AZURE, color: AZURE }}
                     title={model ? `${model} — click to switch node` : 'pick a node'}
                   >
-                    <span className="h-1.5 w-1.5" style={{ backgroundColor: '#2ecc71', borderRadius: 1 }} />
+                    <span className="h-1.5 w-1.5" style={{ backgroundColor: SWARM_STATUS.done, borderRadius: CHIP_RADIUS }} />
                     {model ? model.split('-')[0] : 'model'}
                     <ChevronDown className="h-3 w-3" />
                   </button>
@@ -291,9 +292,9 @@ export function RecipeChatWizard({
             ) : (
               <span
                 className="hidden sm:flex items-center gap-1 text-[11px] font-mono px-1.5 py-0.5 border border-border-primary"
-                style={{ borderRadius: 2 }}
+                style={{ borderRadius: CHIP_RADIUS }}
               >
-                <span className="h-1.5 w-1.5" style={{ backgroundColor: '#ff3b30', borderRadius: 1 }} />
+                <span className="h-1.5 w-1.5" style={{ backgroundColor: SWARM_STATUS.error, borderRadius: CHIP_RADIUS }} />
                 offline
               </span>
             )}
@@ -313,8 +314,8 @@ export function RecipeChatWizard({
                 }`}
                 style={
                   m.role === 'user'
-                    ? { backgroundColor: AZURE, color: '#fff', borderRadius: 3 }
-                    : { borderRadius: 3 }
+                    ? { backgroundColor: AZURE, color: '#fff', borderRadius: CHIP_RADIUS }
+                    : { borderRadius: CHIP_RADIUS }
                 }
               >
                 {m.role === 'assistant' && (
@@ -337,7 +338,7 @@ export function RecipeChatWizard({
 
         {/* Draft review card */}
         {draft && (
-          <div className="mx-4 mb-2 border border-border-primary" style={{ borderRadius: 3 }}>
+          <div className="mx-4 mb-2 border border-border-primary" style={{ borderRadius: CHIP_RADIUS }}>
             <div className="px-3 py-1.5 text-xs font-semibold flex items-center gap-1.5 text-white" style={{ backgroundColor: AZURE }}>
               <Pencil className="h-3.5 w-3.5" /> Draft recipe — review &amp; edit before saving
             </div>
@@ -347,14 +348,14 @@ export function RecipeChatWizard({
                 onChange={(e) => setDraft({ ...draft, title: e.target.value })}
                 placeholder="Title"
                 className={inputClass}
-                style={{ borderRadius: 3 }}
+                style={{ borderRadius: CHIP_RADIUS }}
               />
               <input
                 value={draft.description}
                 onChange={(e) => setDraft({ ...draft, description: e.target.value })}
                 placeholder="One-line description"
                 className={inputClass}
-                style={{ borderRadius: 3 }}
+                style={{ borderRadius: CHIP_RADIUS }}
               />
               <textarea
                 value={draft.instructions}
@@ -362,14 +363,14 @@ export function RecipeChatWizard({
                 rows={5}
                 placeholder="Instructions the agent follows every run"
                 className={inputClass}
-                style={{ borderRadius: 3, resize: 'vertical' }}
+                style={{ borderRadius: CHIP_RADIUS, resize: 'vertical' }}
               />
             </div>
           </div>
         )}
 
         {error && (
-          <div className="mx-4 mb-2 text-xs px-3 py-2 border" style={{ borderColor: '#ff3b30', color: '#ff3b30', borderRadius: 3 }}>
+          <div className="mx-4 mb-2 text-xs px-3 py-2 border" style={{ borderColor: SWARM_STATUS.error, color: SWARM_STATUS.error, borderRadius: CHIP_RADIUS }}>
             {error}
           </div>
         )}
@@ -389,13 +390,13 @@ export function RecipeChatWizard({
               rows={1}
               placeholder="Answer the fleet…  (Enter to send)"
               className={`${inputClass} flex-1`}
-              style={{ borderRadius: 3, resize: 'none' }}
+              style={{ borderRadius: CHIP_RADIUS, resize: 'none' }}
             />
             <button
               onClick={send}
               disabled={busy || !input.trim()}
               className="flex items-center gap-1 text-xs font-semibold px-3 py-2 text-white transition-opacity hover:opacity-90 disabled:opacity-50"
-              style={{ backgroundColor: AZURE, borderRadius: 3 }}
+              style={{ backgroundColor: AZURE, borderRadius: CHIP_RADIUS }}
             >
               <Send className="h-3.5 w-3.5" /> Send
             </button>
@@ -405,7 +406,7 @@ export function RecipeChatWizard({
               onClick={() => void draftNow()}
               disabled={busy || messages.length < 2}
               className="text-xs px-2.5 py-1 border border-border-primary text-text-primary hover:border-text-secondary transition-colors disabled:opacity-50 flex items-center gap-1"
-              style={{ borderRadius: 3 }}
+              style={{ borderRadius: CHIP_RADIUS }}
             >
               <Sparkles className="h-3.5 w-3.5" /> Draft the recipe now
             </button>
@@ -413,7 +414,7 @@ export function RecipeChatWizard({
               onClick={() => void save()}
               disabled={!draft || saving}
               className="flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 text-white transition-opacity hover:opacity-90 disabled:opacity-40"
-              style={{ backgroundColor: draft ? '#2ecc71' : '#6b7280', borderRadius: 3 }}
+              style={{ backgroundColor: draft ? SWARM_STATUS.done : '#6b7280', borderRadius: CHIP_RADIUS }}
             >
               {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />}
               Save recipe

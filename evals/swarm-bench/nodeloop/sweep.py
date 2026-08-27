@@ -828,8 +828,12 @@ QUESTIONS: list[dict] = [
              "reps=3 because the mechanism settles at n=1 but the score cannot (F382)."},
     {"arm": "baseline", "nodes": 3, "reps": 3,
      "asks": "the replicate spread on this engine (every score comparison is measured against it), "
-             "AND whether the F49 detail-budget fix drove detail_fallback to zero — that second half "
-             "is a mechanism readout and is answered by the FIRST unit, not the third."},
+             "AND the linear engine's own shape: slices_opened weights, how many slice owners "
+             "returned a spec, and how many REVIEW rounds it took to stop asking for changes. That "
+             "second half is a mechanism readout and is answered by the FIRST unit, not the third. "
+             "(It replaces the F49 detail-budget readout: the detail fan and its detail_fallback "
+             "event were deleted with the plan vote, so 'did fallbacks go to zero' now reads zero "
+             "on every run whatever the engine does.)"},
     # PROMOTED BY F436 from position 10 of 15 — roughly two days of fleet time away — to cell 1 of 19,
     # which is the FIRST cell after the current baseline. `cells()` splices the node curve in after
     # QUESTIONS[:2], so sitting at QUESTIONS index 1 puts this arm BEFORE the curve, not after it, and
@@ -863,8 +867,9 @@ QUESTIONS: list[dict] = [
     # sink_review, not directly behind it. Left there deliberately — the curve's own reps are what
     # F430 showed the score comparison lacks — but the comment says where it actually goes, because an
     # ordering asserted in a comment is how arms go missing in this file.
-    # armcheck GATES this on the baseline's own `plan_convergence.would_skip_ladder`, so if the
-    # counterfactual says ENFORCE would change nothing the arm is refused BEFORE it spends a unit.
+    # armcheck USED to gate this on the baseline's own `plan_convergence.would_skip_ladder`. That
+    # counterfactual is gone with the plan vote and so is the probe, which is exactly why the arm
+    # below it is now parked at reps 0 rather than left to run ungated.
     {"arm": "probe_post", "nodes": 3, "reps": 1,
      "asks": "whether the engine can SEE the requirement that is rank 1 and rank 2 of all "
              "remaining weighted loss. The contract gate issues only bare GETs, so the spec's "
@@ -888,7 +893,14 @@ QUESTIONS: list[dict] = [
              "doc_fetch hands the document to WORKERS from the orchestrator, this hands it to "
              "SCOUTS via their own shell, and the two are separable because they touch different "
              "phases. NOT settled on `grounded`: the instruction guarantees it, so it is circular."},
-    {"arm": "diverse_plan", "nodes": 3, "reps": 2,
+    # ⏸ PARKED AT reps 0 BY THE LINEAR-ENGINE REWRITE. Its whole registered mechanism readout —
+    # `confidence_retarget` falling to zero, `plan_convergence{enforced}` showing struct_conv — is
+    # events the engine no longer emits, because the multi-draft plan vote and the redraft ladder it
+    # gated are both gone. GOOSE_SWARM_DIVERSE_PLAN still exists as a config key, so the arm would
+    # RUN and produce a score; it simply could not be attributed to anything. That is the null
+    # experiment `retarget_off` already was twice (F117/F118), and it now has no armcheck probe left
+    # to refuse it — so it is refused here instead. Requeue only against a mechanism that fires.
+    {"arm": "diverse_plan", "nodes": 3, "reps": 0,
      "asks": "GOAL ONE, THE PREFIX HALF. Does removing the pool-size penalty on plan agreement give "
              "the 3-node fleet back the 786-1657s redraft ladder it pays and the 1-node fleet does "
              "not? MECHANISM, valid at n=1: `confidence_retarget` count falls to zero and "
@@ -956,11 +968,16 @@ QUESTIONS: list[dict] = [
              "(3-6 modules, median 4) against SIX concurrent slots. Modules are the level-0 roots, so "
              "at t=0 the plan can occupy only that many. The instruction exists to raise cross-draft "
              "`plan_agreement`, an INTERNAL metric. With the lever off the architect is told to split "
-             "AGGRESSIVELY and target 2x-3x worker_count instead. RISK, registered first: lower "
-             "agreement drives the redraft ladder (~40 min of prefix when it fires), so this arm can "
-             "lose on wall-clock while winning on width — read module count, antichain width, "
-             "occupancy AND prefix together, not the score alone."},
-    {"arm": "retarget_off", "nodes": 3, "reps": 3,
+             "AGGRESSIVELY and target 2x-3x worker_count instead. RISK, registered first: a wider "
+             "plan is more slices to specify and more structure for REVIEW to patch, so this arm can "
+             "lose on prefix while winning on width — read module count, antichain width, occupancy "
+             "AND prefix together, not the score alone. (The redraft ladder this risk used to name "
+             "is gone; whether the linear opener still consults GOOSE_SWARM_CONVERGE at all is "
+             "UNVERIFIED and must be settled before the arm is run.)"},
+    # ⏸ PARKED AT reps 0 BY THE LINEAR-ENGINE REWRITE, same reason as diverse_plan above: the
+    # redraft ladder this arm switches OFF has already been deleted, so the lever now switches off
+    # something absent — the exact defect F117/F118 named, arrived at from the other direction.
+    {"arm": "retarget_off", "nodes": 3, "reps": 0,
      "asks": "THE highest-value question, after F53. The redraft is the most expensive mechanism in "
              "the engine and it optimises draft-count parity. MEASURED on the last unit: prefix 3014s "
              "with 90% of it planning across FOUR redraft rounds, ~15,800 chars of model-authored "
@@ -1450,12 +1467,24 @@ def abandon_decision(unit: Path, arm: dict, nodes: int, elapsed: float) -> tuple
         # abandoned a healthy cell and VOIDED ITS PAIR — the most expensive possible false positive on
         # goal one, because a dropped pair is worse than a lost one (F327).
         #
-        # The engine states its own progress. `skeleton_drafts`, `confidence_retarget`,
-        # `retarget_discarded` and `plan_loaded` are deterministic events, and one arriving two
+        # The engine states its own progress. Every event below is deterministic, and one arriving two
         # minutes ago proves planning is advancing whatever the total elapsed says. So the question is
         # not "how long has this run taken" but "how long since the engine last did anything".
-        PLANNING_EVENTS = {"skeleton_drafts", "confidence_retarget", "retarget_discarded",
-                           "plan_loaded", "research_findings", "scout_done", "pool_resolved"}
+        #
+        # ⚠ THIS SET IS LOAD-BEARING AND IT SILENTLY EMPTIED ITSELF ONCE. It used to name
+        # `skeleton_drafts`, `confidence_retarget`, `retarget_discarded`, `research_findings` and
+        # `scout_done` — the linear-engine rewrite deleted all five, leaving `plan_loaded` (which by
+        # definition has not fired yet in this branch) and `pool_resolved` (which fires in the first
+        # seconds). `last` then pins to the start of the run, `quiet` becomes the total elapsed, and
+        # the rule reverts to exactly the elapsed-time measure the comment above says would have
+        # abandoned a healthy cell and voided its pair. A planning event that stops being emitted must
+        # be REPLACED here, not merely deleted.
+        #
+        # `phase` is first in the set on purpose: the engine announces every planning boundary with
+        # one, so it is the single marker that cannot be removed without the phases themselves going.
+        PLANNING_EVENTS = {"phase", "slices_opened", "clarify_proxy_armed", "clarify_proxy_answered",
+                           "research_completed", "review_findings", "plan_patched",
+                           "plan_loaded", "contracts", "pillars", "pool_resolved"}
         last = None
         for e in events:
             if e.get("event") in PLANNING_EVENTS:
@@ -2471,7 +2500,7 @@ def summarise() -> None:
         groups.setdefault((r.get("arm"), r.get("nodes")), []).append(r)
     log("")
     log(f"{'arm':<18}{'nodes':>5}{'n':>3}  {'score mean':>10} {'spread':>8}  "
-        f"{'fallbacks':>9} {'kind-mm%':>9} {'wall min':>9}  void")
+        f"{'1-liners':>9} {'kind-mm%':>9} {'wall min':>9}  void")
     for (arm, nodes), g in sorted(groups.items(), key=lambda kv: (kv[0][0], kv[0][1] or 0)):
         ok = [r for r in g if not r.get("timed_out") and not r.get("aborted")
               and not r.get("abandoned") and not r.get("void")
@@ -2676,13 +2705,11 @@ def main() -> int:
             f"{result['score'] if result.get('score') is not None else 'FAILED'}  "
             f"pool={result.get('actual_nodes')}/{nodes}  void={result.get('void')}  "
             f"aborted={result.get('aborted')}  timed_out={result.get('timed_out')}  "
-            f"fallbacks={a.get('detail_fallback_count')}"
-            f"{'(+' + str(len(a.get('ghost_fallback_tasks') or [])) + ' ghost)' if a.get('ghost_fallback_tasks') else ''}"
+            f"one_liners={a.get('detail_fallback_count')}"
             f"{' ON:' + ','.join(a.get('shipped_one_liner_tasks') or []) if a.get('shipped_one_liner_tasks') else ''}  "
             f"kind_mismatch={a.get('kind_mismatch_pct')}%  "
             f"prefix={(result.get('prefix') or {}).get('prefix_secs')}s"
-            f"/plan{(result.get('prefix') or {}).get('planning_secs')}s"
-            f"/redraft{(result.get('prefix') or {}).get('redraft_rounds')}  "
+            f"/plan{(result.get('prefix') or {}).get('planning_secs')}s  "
             f"({round(unit_secs / 60)} min)")
 
         # FEASIBILITY GATE. If the very first unit cannot get the pool it asked for, every later

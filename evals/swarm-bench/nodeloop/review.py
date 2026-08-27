@@ -220,10 +220,13 @@ def settleable_on_this_build(ev: list[dict]) -> list[str]:
 
     A prediction is only testable by a binary that contains the fix it is about. The 1-node unit
     running while this was written carries none of `sink_capped`, `rules_delivered`, "WHAT THE
-    SUPERVISOR ALREADY FOUND", "was ALREADY BOUND before", `straggler_aborted` or "SAME KIND" — all
-    committed after that binary was built and all still held for the boundary. Its sink emitting no
-    `sink_capped` would therefore be an UNCONTROLLED ZERO, not a falsification of F115, and the same
-    standing rule I apply to arms applies here.
+    SUPERVISOR ALREADY FOUND" or "was ALREADY BOUND before" — all committed after that binary was
+    built and all still held for the boundary. Its sink emitting no `sink_capped` would therefore be
+    an UNCONTROLLED ZERO, not a falsification of F115, and the same standing rule I apply to arms
+    applies here. (Two more markers stood in that list — `straggler_aborted` and "SAME KIND" — and
+    they are gone from it because the mechanisms they belonged to, the draft fan's straggler stop and
+    the architect prompt, were deleted by the linear-engine rewrite. A prediction about a mechanism
+    that no longer exists is not merely unsettleable on this binary; it is unsettleable.)
 
     The live trap is F116: it predicts the next sink takes materially fewer than 25 calls, turn
     count is readable from any session trace, and reading THIS sink's count as the test would be the

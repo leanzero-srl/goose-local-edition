@@ -1,6 +1,7 @@
 import React, { memo } from 'react';
 import ReactMarkdown, { type Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import { CHIP_RADIUS } from './formationVisualState';
 
 // Inline markdown for the swarm panel's DENSE one-line rows: clarify questions, judge hints, plan lines.
 //
@@ -26,7 +27,7 @@ const INLINE_ONLY: Components = {
   code: ({ children }) => (
     <code
       className="font-mono bg-inline-code text-text-primary px-1 py-px break-all"
-      style={{ borderRadius: 2 }}
+      style={{ borderRadius: CHIP_RADIUS }}
     >
       {children}
     </code>

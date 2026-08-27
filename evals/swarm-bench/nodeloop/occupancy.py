@@ -568,8 +568,8 @@ def analyse(path) -> dict:
         "pool_size": n,
         "slot_count": slot_count(pool),
         "prefix_phases": prefix["phases"],
-        "prefix_draft_rounds": prefix["draft_rounds"],
-        "prefix_redraft_secs": prefix["redraft_secs"],
+        "prefix_review_rounds": prefix["review_rounds"],
+        "prefix_review_secs": prefix["review_secs"],
         "prefix_plan_confidence": prefix["plan_confidence"],
         "devices_that_worked": len(per_device),
         "wall_secs": round(wall, 1) if wall else None,
@@ -667,9 +667,18 @@ def analyse(path) -> dict:
     }
 
 
+# EVERY MILESTONE THE PREFIX HAS, on the linear engine. The five planning boundaries arrive as
+# {"event":"phase","phase":"..."} and are labelled `phase:<name>` here so they do not collapse onto
+# one marker — they share an event name and differ only in a field.
+#
+# The four this used to name — skeleton_drafts, confidence_retarget, retarget_discarded and
+# detail_completed — were the plan vote, the redraft ladder and the detail fan, all deleted. Left in
+# place the prefix breakdown would still have rendered, showing `research_completed` and `plan_loaded`
+# and nothing between them: a 20-minute unexplained gap presented as a phase table.
 PREFIX_MILESTONES = (
-    "research_completed", "skeleton_drafts", "confidence_retarget", "retarget_discarded",
-    "low_confidence_ask", "low_confidence_ask_timeout", "contracts", "plan_loaded",
+    "research_completed", "slices_opened", "review_findings", "plan_patched",
+    "low_confidence_ask", "low_confidence_ask_timeout", "clarify_proxy_answered",
+    "contracts", "pillars", "plan_loaded",
 )
 
 
@@ -781,22 +790,21 @@ def prefix_breakdown(events: list[dict], t0: float | None) -> dict:
     "2218.7s before the first dispatch" — so the phases had to be re-derived by hand every time, which
     is how a fourth ad-hoc reader gets written (L2).
 
-    It is also where the arms differ in KIND, not just in speed (F262): plan confidence is agreement
-    across independent drafts, so a 1-node run computes `null`, cannot breach the ask floor, and never
-    redrafts — while a 3-node run resolves a real number, fails the floor, and pays for a second full
-    planning pass. `draft_rounds` and `redraft_secs` are what make that visible without reading a log.
+    THE ITERATION COST IS STILL THE NUMBER THAT SEPARATES THE ARMS, it is just a different loop.
+    The redraft ladder that `draft_rounds`/`redraft_secs` measured is gone; REVIEW replaces it, and it
+    is the same shape — a round asks for structural changes, the plan is patched, and it goes again
+    until the reviewer requests nothing. `review_rounds` and `review_secs` are what make that visible
+    without reading a log. A run whose reviewer was satisfied first time reports 1 round and a real
+    cost, so unlike the redraft window there is no structural `None` here.
 
-    `detail_completed` fires once per task and would drown the list, so it is collapsed into one
-    `detail x N` span. Everything is measured from `run_started`; a run with no first dispatch yet
-    reports what it has.
+    Everything is measured from `run_started`; a run with no first dispatch yet reports what it has.
     """
     if t0 is None:
-        return {"phases": [], "draft_rounds": 0, "redraft_secs": None, "plan_confidence": None}
+        return {"phases": [], "review_rounds": 0, "review_secs": None, "plan_confidence": None}
     first_disp = None
     marks: list[tuple[float, str]] = []
-    detail_at: list[float] = []
-    draft_rounds = 0
-    first_retarget = None
+    review_rounds = 0
+    first_review = None
     plan_conf = None
     plan_loaded_at = None
     for e in events:
@@ -808,20 +816,21 @@ def prefix_breakdown(events: list[dict], t0: float | None) -> dict:
             first_disp = ts
         if first_disp is not None:
             continue
-        if ev == "detail_completed":
-            detail_at.append(ts)
+        if ev == "phase":
+            # LABELLED, not collapsed. All five planning boundaries share the event name `phase`, so
+            # keying on it alone would stack open/ask/research/synthesis/review on one row.
+            if e.get("phase"):
+                marks.append((ts, f"phase:{e['phase']}"))
             continue
         if ev in PREFIX_MILESTONES:
-            if ev == "skeleton_drafts":
-                draft_rounds += 1
-            if ev == "confidence_retarget" and first_retarget is None:
-                first_retarget = ts
+            if ev == "review_findings":
+                review_rounds += 1
+                if first_review is None:
+                    first_review = ts
             if ev == "plan_loaded":
                 plan_loaded_at = ts
                 plan_conf = e.get("plan_confidence")
             marks.append((ts, ev))
-    if detail_at:
-        marks.append((max(detail_at), f"detail x{len(detail_at)}"))
     marks.sort()
 
     phases, prev = [], t0
@@ -831,12 +840,12 @@ def prefix_breakdown(events: list[dict], t0: float | None) -> dict:
     if first_disp is not None:
         phases.append({"phase": "first dispatch", "at_secs": round(first_disp - t0, 1),
                        "dur_secs": round(first_disp - prev, 1)})
-    # The cost of NOT being confident: everything from the first retarget to a shipped plan. A 1-node
-    # run cannot enter this window at all, so `None` here is a structural fact, not a missing reading.
-    redraft = (round(plan_loaded_at - first_retarget, 1)
-               if (first_retarget is not None and plan_loaded_at is not None) else None)
-    return {"phases": phases, "draft_rounds": draft_rounds,
-            "redraft_secs": redraft, "plan_confidence": plan_conf}
+    # The cost of the review loop: the first finding to a shipped plan. None means REVIEW never
+    # reported — a run that has not got there yet, or a build that predates the event — never zero.
+    review = (round(plan_loaded_at - first_review, 1)
+              if (first_review is not None and plan_loaded_at is not None) else None)
+    return {"phases": phases, "review_rounds": review_rounds,
+            "review_secs": review, "plan_confidence": plan_conf}
 
 
 def render(a: dict) -> str:
@@ -863,13 +872,13 @@ def render(a: dict) -> str:
             out.append(f"    {k:>2d} task(s): {a['concurrency_share'].get(k, 0):6.1%}  "
                        f"({v / 60:6.1f} min){flag}")
     if a.get("prefix_phases"):
-        out.append(f"  PREFIX breakdown  (draft rounds {a.get('prefix_draft_rounds')}, "
+        out.append(f"  PREFIX breakdown  (review rounds {a.get('prefix_review_rounds')}, "
                    f"plan_confidence {a.get('prefix_plan_confidence')}, "
-                   # A 1-node run CANNOT enter the redraft window — its plan_confidence is null and the
-                   # floor is unbreachable — so "n/a (cannot redraft)" is the honest reading, not "0s".
-                   + (f"redraft cost {a['prefix_redraft_secs']}s)"
-                      if a.get("prefix_redraft_secs") is not None
-                      else "redraft cost n/a — this run never entered a redraft)"))
+                   # UNMEASURED, not zero: a run that never reached REVIEW has no review cost, and
+                   # printing 0s would read as "the review loop was free".
+                   + (f"review cost {a['prefix_review_secs']}s)"
+                      if a.get("prefix_review_secs") is not None
+                      else "review cost n/a — this run never reached REVIEW)"))
         for p in a["prefix_phases"]:
             out.append(f"    +{p['at_secs']:>7.0f}s  {p['dur_secs']:>6.0f}s  {p['phase']}")
     for d, s in a["per_device_secs"].items():

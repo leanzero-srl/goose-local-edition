@@ -18,12 +18,22 @@ function mirrorSwarmBenchPayload() {
   }
   fs.rmSync(dest, { recursive: true, force: true });
   fs.mkdirSync(join(dest, 'bench', 'probes'), { recursive: true });
-  for (const spec of ['spec-build.md', 'spec-build-v2.md']) {
-    fs.copyFileSync(join(src, spec), join(dest, spec));
+  // sb-7's spec belongs here too. The filter below ships every *.py, so score_sb7.py and
+  // vendor_service_v3.py already travelled — but the SPEC, the probe and the thresholds did not, and a
+  // packaged app would have died on a missing spec-build-sb7.md the first time anyone picked the tier.
+  // In dev this never showed, because resolveBenchPayloadDir() reads the live checkout.
+  for (const spec of ['spec-build.md', 'spec-build-v2.md', 'spec-build-sb7.md']) {
+    if (fs.existsSync(join(src, spec))) fs.copyFileSync(join(src, spec), join(dest, spec));
   }
   const benchSrc = join(src, 'bench');
   for (const name of fs.readdirSync(benchSrc)) {
-    if (name.endsWith('.py') || name === 'product_probe.mjs' || name === 'vendor_docs.md') {
+    if (
+      name.endsWith('.py') ||
+      name.endsWith('.mjs') ||
+      name.endsWith('.json') ||
+      name === 'vendor_docs.md' ||
+      name === 'vendor_docs_v3.md'
+    ) {
       fs.copyFileSync(join(benchSrc, name), join(dest, 'bench', name));
     }
   }
