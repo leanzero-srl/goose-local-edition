@@ -2075,8 +2075,21 @@ impl Agent {
                 // reasoning without hiding final-only non-streaming thoughts.
                 let mut surfaced_thinking_in_turn = false;
 
-                while let Some(next) = stream.next().await {
-                    if is_token_cancelled(&cancel_token) || exit_chat {
+                loop {
+                    let next = if let Some(cancel_token) = &cancel_token {
+                        tokio::select! {
+                            biased;
+                            _ = cancel_token.cancelled() => break,
+                            next = stream.next() => next,
+                        }
+                    } else {
+                        stream.next().await
+                    };
+                    let Some(next) = next else {
+                        break;
+                    };
+
+                    if exit_chat {
                         break;
                     }
 
@@ -2637,6 +2650,7 @@ impl Agent {
                     empty_turn_retries = 0;
                 }
 
+                let mut terminal_structured_provider_error = false;
                 if no_tools_called && !exit_chat {
                     // Lock, extract state, drop guard before branching — handle_retry_logic
                     // also locks final_output_tool and tokio::sync::Mutex is not reentrant.
@@ -2646,6 +2660,20 @@ impl Agent {
                     };
 
                     match final_output {
+                        Some(None)
+                            if provider_errored && !did_recovery_compact_this_iteration =>
+                        {
+                            // The provider turn has already failed, so asking that same failed
+                            // turn for a missing structured result would replay a terminal route
+                            // or transport error. Recipe retries remain authoritative for calls
+                            // without a structured final-output tool.
+                            terminal_structured_provider_error = true;
+                            exit_chat = true;
+                        }
+                        Some(None) if did_recovery_compact_this_iteration => {
+                            // Continue from the compacted conversation instead of treating the
+                            // provider error as a missing structured result.
+                        }
                         Some(None) => {
                             warn!("Final output tool has not been called yet. Continuing agent loop.");
                             let message = Message::user().with_text(FINAL_OUTPUT_CONTINUATION_MESSAGE);
@@ -2883,7 +2911,10 @@ impl Agent {
                     }
                 }
 
-                if exit_chat && self.has_pending_steers(&session_config.id).await {
+                if exit_chat
+                    && !terminal_structured_provider_error
+                    && self.has_pending_steers(&session_config.id).await
+                {
                     exit_chat = false;
                 }
 
