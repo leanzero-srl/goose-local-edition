@@ -24136,6 +24136,80 @@ impl GooseAgentDispatcher {
         Ok(parsed)
     }
 
+    /// RATE each defect against what the app IS FOR: does it stop the app doing its job, or is it an
+    /// imperfection in an app that works?
+    ///
+    /// This is what replaces all-or-nothing. Measured on the first end-to-end run of this engine: the app
+    /// satisfied every requirement in its spec — correct output, correct --top, `error: no such file` with
+    /// exit 1, `no words found` on empty — and the run reported passed:false because ONE of the model's own
+    /// generated tests asserted a word appears in a top-FIVE listing when it ranks sixth. A run that calls
+    /// that red is not being rigorous, it is being useless: it hides the difference between "the app does
+    /// not work" and "one of its tests is wrong".
+    ///
+    /// Returns one CRITICAL/MINOR verdict per finding, in order.
+    pub(crate) async fn rate_findings(
+        &self,
+        planner_model: &str,
+        user_prompt: &str,
+        findings: &[String],
+    ) -> Vec<bool> {
+        if findings.is_empty() {
+            return Vec::new();
+        }
+        let listing = findings
+            .iter()
+            .enumerate()
+            .map(|(i, f)| format!("{}. {}", i + 1, f.chars().take(600).collect::<String>()))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let system = "You are triaging defects in a program that was just built, against the request it \
+             was built from.\n\n\
+             For each numbered defect, decide ONE word:\n\
+             CRITICAL — the app does not do what it exists to do. It will not start, its main command \
+             errors or produces wrong output, data is lost, the page does not load, the advertised \
+             interface is missing.\n\
+             MINOR — the app DOES its job; this is an imperfection. A wrong assertion in a generated test, \
+             a cosmetic message, an unhandled edge case the request never named, a style complaint.\n\n\
+             Answer one line per defect, in order, exactly: `<number>. CRITICAL|MINOR — <six words why>`.\n\
+             Judge against the REQUEST, not against your taste. A test that is itself wrong about the \
+             app's specified behaviour is MINOR: the test is the defect, not the app."
+            .to_string();
+        let out = match self
+            .run_agent_timed_at(
+                planner_model,
+                system,
+                format!("## The request\n{user_prompt}\n\n## The defects\n{listing}"),
+                None,
+                planner_side_turns(),
+                &[],
+                None,
+                Some("rate"),
+            )
+            .await
+        {
+            Ok(o) => o.text,
+            // A rating we could not get is not licence to ship: unrated defects are CRITICAL, which is
+            // exactly the old all-or-nothing behaviour and therefore never worse than before.
+            Err(_) => return findings.iter().map(|_| true).collect(),
+        };
+        let upper = out.to_uppercase();
+        let mut verdicts: Vec<bool> = Vec::new();
+        for line in upper.lines() {
+            let l = line.trim();
+            if l.contains("CRITICAL") {
+                verdicts.push(true);
+            } else if l.contains("MINOR") {
+                verdicts.push(false);
+            }
+        }
+        // Never let a short reply silently downgrade a defect nobody rated.
+        while verdicts.len() < findings.len() {
+            verdicts.push(true);
+        }
+        verdicts.truncate(findings.len());
+        verdicts
+    }
+
     /// THE USER-PROXY ANSWER. A node answers the clarify questions when the human does not.
     ///
     /// A question is always answered: it is never dropped and it never stalls the run. Before this, the
@@ -35484,6 +35558,9 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
     // Planning ends here (skeleton draft + verbalized confidence + any ASK/re-plan + detailing are all
     // behind us); the scheduler.run below IS the execute phase (workers + judge + integrate-verify).
     let t_plan = std::time::Instant::now();
+    // Kept for the repair phase's criticality rating, which runs long after the scheduler consumed the
+    // dispatcher as a trait object.
+    let rater = dispatcher.clone();
     let report = scheduler
         .run_with_decisions(
             dag,
@@ -35637,6 +35714,8 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             }));
         }
         let mut final_passed = false;
+        // Minors that did not block green — reported, never hidden.
+        let mut known_active_bugs: Vec<String> = Vec::new();
         // Whether the smoke oracle actually RAN (vs skipped for an unprofiled language / missing toolchain
         // / empty tree). A skip ships byte-identically to today (final_passed stays true) but is reported
         // honestly as UNVERIFIED rather than GREEN, so a non-Python tree we can't check isn't a false green.
@@ -36187,8 +36266,74 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                     "ok": ok,
                 }));
             }
-            // Clean verify (no smoke finding AND no failing pillar check) => done. An empty findings set on a
-            // smoke-skipped tree is still green — there is genuinely nothing to fix.
+            // CRITICALITY DECIDES GREEN, not completeness.
+            //
+            // An empty findings set is green as before. But a NON-empty one is now triaged: if nothing
+            // that remains stops the app doing what it exists to do, the run is green and the rest are
+            // reported as KNOWN ACTIVE BUGS rather than hidden or treated as failure. Measured on this
+            // engine's first end-to-end run: the app met every requirement in its spec and the run said
+            // passed:false because one of the model's OWN generated tests asserted a word appears in a
+            // top-five listing when it ranked sixth.
+            //
+            // Engine-observed "the app does not run" findings are forced CRITICAL regardless of the
+            // rating. Those strings are written by run_smoke_gate and the command probes — they are
+            // engine facts, and a model opinion may not overrule a measurement.
+            let mut minors: Vec<String> = Vec::new();
+            if !verdict.findings.is_empty() {
+                let rated = rater
+                    .rate_findings(&cfg.planner_model, &opts.prompt, &verdict.findings)
+                    .await;
+                let engine_fatal = |f: &str| {
+                    let l = f.to_lowercase();
+                    l.contains("does not start")
+                        || l.contains("never bound its port")
+                        || l.contains("did not build")
+                        || l.contains("exited non-zero")
+                        || l.contains("no such command")
+                        || l.contains("runtime crash")
+                        || l.contains("missing deliverable")
+                };
+                let mut criticals: Vec<String> = Vec::new();
+                for (f, is_crit) in verdict.findings.iter().zip(rated.iter()) {
+                    if *is_crit || engine_fatal(f) {
+                        criticals.push(f.clone());
+                    } else {
+                        minors.push(f.clone());
+                    }
+                }
+                sink.write_value(serde_json::json!({
+                    "event": "defects_rated",
+                    "round": round,
+                    "critical": criticals.len(),
+                    "minor": minors.len(),
+                    "engine_forced": verdict.findings.iter().filter(|f| engine_fatal(f)).count(),
+                    "minors": minors,
+                }));
+                if criticals.is_empty() {
+                    eprintln!(
+                        "  {} every critical defect is closed — shipping GREEN with {} known active bug(s)",
+                        style("✓").green(),
+                        minors.len()
+                    );
+                    for m in &minors {
+                        eprintln!(
+                            "    · known active bug: {}",
+                            m.chars().take(160).collect::<String>()
+                        );
+                    }
+                } else {
+                    eprintln!(
+                        "  {} {} critical defect(s) remain, {} minor",
+                        style("✗").red(),
+                        criticals.len(),
+                        minors.len()
+                    );
+                }
+                known_active_bugs = minors.clone();
+                if criticals.is_empty() {
+                    final_passed = true;
+                }
+            }
             if verdict.findings.is_empty() {
                 final_passed = true;
                 // "VERIFIED" MUST MEAN WE ACTUALLY CHECKED — not merely that nothing we looked at was red.
@@ -37322,6 +37467,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                 best_verified.map(|(_, c)| c).unwrap_or(last_findings.len())
             },
             "shipped": shipped_desc,
+            "known_active_bugs": known_active_bugs,
         }));
         // ── LEARN & REFLECT (GOOSE_SWARM_PERSONA, default OFF) ────────────────────────────────────────
         // The run just PROVED the app builds and its checks pass. That proof is a deterministic engine
