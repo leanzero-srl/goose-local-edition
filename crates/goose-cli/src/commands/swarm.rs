@@ -24693,7 +24693,10 @@ impl GooseAgentDispatcher {
              `replace` changes ONLY files and depends_on. You may NOT rewrite a task's specification — \
              those were written by the engineers who researched each area, and they are not yours to \
              edit. If a SPECIFICATION is wrong, say so in findings and leave the task alone.\n\n\
-             If the plan is sound, return empty lists. Do not invent work to look useful."
+             `findings` is for PROBLEMS ONLY — things that need changing. Do NOT list what is correct, do \
+             NOT confirm the plan is sound, do NOT summarise it back. If the plan needs no change, return \
+             empty lists for all four keys and say nothing else. Saying \"the plan is sound\" as a finding \
+             is the same as saying nothing, and it costs a whole round of the fleet to say it."
             .to_string();
         let out = self
             .run_agent_timed_at(
@@ -24809,6 +24812,26 @@ async fn review_until_settled(
                     }));
                 }
             }
+        }
+        // STOP WHEN THERE IS NOTHING TO CHANGE.
+        //
+        // De-duping the finding TEXT was not enough, and a live run proved it: asked "what is
+        // missing?", the model answered "Plan is sound: all request requirements are covered",
+        // "Dependencies are correct", "Integration task correctly owns no files" — AFFIRMATIONS, worded
+        // differently every round, so every one counted as new and the loop would have run forever
+        // while three nodes sat idle.
+        //
+        // The review's job is to produce PATCHES. A round that asks for no change has found nothing to
+        // fix, whatever prose it wrapped that in. Findings without a patch are commentary, and
+        // commentary is not a reason to spend another round.
+        if patch.is_empty() {
+            if !fresh.is_empty() {
+                eprintln!(
+                    "  · review round {round} raised {} observation(s) but requested no change — settled",
+                    fresh.len()
+                );
+            }
+            return plan_json;
         }
         if fresh.is_empty() {
             return plan_json;

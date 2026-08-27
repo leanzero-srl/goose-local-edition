@@ -2736,6 +2736,7 @@ ipcMain.handle('benchmark-run', async (event, nodes: number, tier?: string, samp
   // ruler. The payload carries both scorers; the tier only switches which spec/probe/scorer the
   // harness wires up, so a run is always scored by exactly one frozen version end to end.
   const sb6 = tier === 'sb-6';
+  const sb7 = tier === 'sb-7';
   const payloadDir = resolveBenchPayloadDir();
   const runner = path.join(payloadDir, 'bench', 'run_build.py');
   // The engine the run measures: the exact binary this app ships (or the dev build), never a PATH
@@ -2769,14 +2770,21 @@ ipcMain.handle('benchmark-run', async (event, nodes: number, tier?: string, samp
   return await new Promise((resolvePromise, reject) => {
     const child = spawn(
       'python3',
-      ['-u', runner, '--entrant', entrant, '--only-rep', '0', '--timeout', '16200',
-        '--out', outRoot, ...(sb6 ? ['--sb6'] : [])],
+      // --timeout 0 is the UNCAPPED regime, and it is the only regime the engine has now: every
+      // wall-clock cap was removed, so a hard-coded 16200 here would put one back through the front
+      // door and cut a run the engine itself would never have stopped.
+      ['-u', runner, '--entrant', entrant, '--only-rep', '0', '--timeout', '0',
+        '--out', outRoot, ...(sb6 ? ['--sb6'] : []), ...(sb7 ? ['--sb7'] : [])],
       {
         cwd: workRoot,
         detached: true,
         env: {
           ...process.env,
           BENCH_GOOSE: engineBinary,
+          // A benchmark run is by definition unattended: nobody is sitting in front of the app
+          // waiting to answer a clarify question. Without this the engine gives the human 5 minutes
+          // before a node answers, and those 5 minutes are three idle machines.
+          GOOSE_SWARM_BENCHMARK: '1',
           GOOSE_SWARM_RENDER_NODE: benchNode,
           // The render gate is inert without the probe path, and without the gate there are no
           // repair rounds and no screenshots — the product story of the run.
