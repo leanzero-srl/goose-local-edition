@@ -586,9 +586,11 @@ export default function BenchmarkView() {
                   disabled={running}
                   aria-pressed={tier === t}
                   title={
-                    t === 'sb-6'
-                      ? 'VendorSync Pro — the hard tier: raw-WebGL 3D, webhooks, optimistic concurrency (scorer sb-6.0)'
-                      : 'VendorSync — the standard tier (scorer sb-5.3)'
+                    t === 'sb-7'
+                      ? 'Meridian Payments Console — the current tier: full web console, 3D scene, concurrency and resilience under seeded SIGKILL (scorer sb-7.0-rc, UNCALIBRATED)'
+                      : t === 'sb-6'
+                        ? 'VendorSync Pro — the hard tier: raw-WebGL 3D, webhooks, optimistic concurrency (scorer sb-6.0)'
+                        : 'VendorSync — the standard tier (scorer sb-5.3)'
                   }
                   className={`px-4 py-2 text-sm font-bold transition-colors ${
                     tier === t
@@ -596,7 +598,7 @@ export default function BenchmarkView() {
                       : 'bg-background-secondary text-text-secondary hover:text-text-primary'
                   }`}
                 >
-                  {t === 'sb-6' ? 'sb-6 · HARD' : 'sb-5.3'}
+                  {t === 'sb-7' ? 'sb-7 · rc' : t === 'sb-6' ? 'sb-6 · HARD' : 'sb-5.3'}
                 </button>
               ))}
             </div>

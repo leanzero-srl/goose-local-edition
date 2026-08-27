@@ -3588,6 +3588,40 @@ fn tails_recur(a: &std::collections::HashSet<u64>, b: &std::collections::HashSet
     inter * 2 >= a.len().min(b.len())
 }
 
+/// WHAT THIS CALL IS FOR, in one line, for the judge.
+///
+/// The judge was given the reasoning tail and nothing else, so it inferred the call's purpose from what
+/// the call happened to be talking about. MEASURED on a live run: it watched the plan-REVIEW call, saw it
+/// discussing modules named in the plan, concluded it was a build worker falling behind, and nudged it
+/// three times to "Write wordfreq/core.py implementing count_words(text)". The review must not write code
+/// at all. A supervisor that does not know what it is supervising does not help — it derails.
+fn call_objective(activity_key: Option<&str>) -> &'static str {
+    match activity_key {
+        Some("open") | Some("open-resplit") => {
+            "split the request into balanced semantic slices. It must NOT write code, plan files, or tasks."
+        }
+        Some("synthesis") => {
+            "wire already-researched slices into a task DAG — ids, files and dependencies only. It must              NOT write code and must NOT restate the specifications."
+        }
+        Some("review") => {
+            "read the original request against the plan and return a small structural PATCH. It must NOT              write code, and must NOT rewrite any task's specification."
+        }
+        Some("proxy-answer") => "answer the open decisions from the request. It must NOT write code.",
+        Some("rate") => "rate each defect CRITICAL or MINOR. It must NOT write code.",
+        Some(k) if k.starts_with("slice-") => {
+            "answer its slice's questions and then write that module's SPECIFICATION — interfaces, edge              cases, files. It must NOT write the implementation."
+        }
+        Some(k) if k.starts_with("contract-") => {
+            "emit a signature-only stub for one module. It must NOT implement anything."
+        }
+        Some("integrate-verify") => {
+            "assemble the produced modules, run the tests, boot the app and exercise the commands the              request advertises."
+        }
+        // A dispatched build worker: the only kind that SHOULD be writing files.
+        _ => "implement its assigned module — write the files it owns, then verify them.",
+    }
+}
+
 /// UNATTENDED MODE. Set by the benchmark harness and by the loop — any run nobody is sitting in front of.
 ///
 /// It changes exactly ONE thing: how long a question waits for a human before it is routed to a node.
@@ -16397,8 +16431,13 @@ impl GooseAgentDispatcher {
                     None => String::new(),
                 };
                 let user = format!(
-                    "This call has emitted {thinking_chars} characters of reasoning.{measured}{earlier_block}\
+                    "THIS CALL'S JOB: {}\n\n\
+                     Judge it against THAT job, not against the wider build. A call doing its own job \
+                     correctly is OK even when it is writing no code, because most jobs here are not \
+                     coding jobs.\n\n\
+                     It has emitted {thinking_chars} characters of reasoning.{measured}{earlier_block}\
                      \n\nMost recent reasoning:\n{tail}\n\nCommands it ran (most recent first):\n{}",
+                    call_objective(activity_key),
                     if ran.is_empty() {
                         "(none)".to_string()
                     } else {
