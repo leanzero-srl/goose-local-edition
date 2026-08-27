@@ -224,19 +224,24 @@ fn a_finished_deliverable_is_accepted_rather_than_failed() {
         secs_since_last_write: Some(600),
         owns_files: true,
     };
+    // REWRITTEN WITH ITS SUBJECT. This asserted `Accept` — and the scheduler answers Accept with
+    // h.abort() and a DONE record, so the assertion pinned a 420-second stopwatch that ENDS a model
+    // call. Section 8 leaves no wall-clock in the run path and section 7 gives the judge no power to
+    // terminate, so the branch is disarmed. F165's lesson survives and is in fact strengthened:
+    // test-meridian was recorded a TERMINAL FAILURE with 8 passing test functions on disk, and the
+    // reason was that every judge verdict was a way to STOP a worker. Now none of them is.
     let v = deterministic_verdict(
         &to_input(&r, Some(6), Some(7_674), Some(r.elapsed_secs - 60), true),
         &cfg,
-    )
-    .expect("an idle worker with a finished file still gets a verdict");
-    assert_eq!(
-        v.verdict,
-        Verdict::Accept,
-        "a complete, compiling deliverable must finish, not fail"
     );
     assert!(
-        !v.verdict.is_problem(),
-        "Accept must never reach the intervention path"
+        v.as_ref()
+            .is_none_or(|o| o.verdict != Verdict::Accept && o.verdict != Verdict::Looping),
+        "a finished deliverable sitting idle must not be terminated by a clock"
+    );
+    assert!(
+        v.as_ref().is_none_or(|o| !o.verdict.is_problem()),
+        "an idle finished deliverable must never reach the intervention path"
     );
 }
 
@@ -377,16 +382,20 @@ fn an_action_increase_across_a_stale_gap_does_not_count_as_producing() {
         owns_files: true,
     };
     // The real pair from the run: previous look at 360s with 0 calls, this look at 1627s with 8.
-    let stale = to_input(&r, Some(0), Some(1_048), Some(360), true);
-    let v = deterministic_verdict(&stale, &cfg)
-        .expect("a worker idle for 705s must not be protected by a 21-minute-old action count");
-    assert!(v.deterministic);
-
-    // CONTROL, the other direction: the SAME counts observed 60s apart are real production and must
-    // still suppress the verdict. Without this the test would pass for a predicate that never fires.
-    let fresh = to_input(&r, Some(0), Some(1_048), Some(1_627 - 60), true);
-    assert!(
-        deterministic_verdict(&fresh, &cfg).is_none(),
-        "a worker that made 8 tool calls in the last 60s is producing and must not be killed"
-    );
+    // REWRITTEN WITH ITS SUBJECT. The staleness rule this predicate guarded is disarmed (see the
+    // sibling test), so `is_still_producing` no longer decides anyone's fate and there is nothing left
+    // for a window comparison to veto. The measured incident stays recorded above because it is the
+    // clearest statement of why a coarse observation must never license a fine-grained decision.
+    //
+    // What must hold now, in both directions: neither a 21-minute-old action count nor a fresh one can
+    // produce a terminal verdict from elapsed time alone.
+    for prev_secs in [360u64, 1_627 - 60] {
+        let inp = to_input(&r, Some(0), Some(1_048), Some(prev_secs), true);
+        assert!(
+            deterministic_verdict(&inp, &cfg)
+                .as_ref()
+                .is_none_or(|o| o.verdict != Verdict::Accept && o.verdict != Verdict::Looping),
+            "prev_observed_secs={prev_secs} produced a terminal verdict from a clock"
+        );
+    }
 }

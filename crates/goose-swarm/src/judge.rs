@@ -674,9 +674,21 @@ pub fn deterministic_verdict(input: &JudgeInput, cfg: &JudgeConfig) -> Option<Ju
     // green veto so an accepted join gates nothing, and the deterministic smoke gate remains the
     // correctness backstop. Against the alternative — a kill that ALSO does not finish the job and
     // additionally burns a full restart — accepting is strictly better.
-    if input.owned_files.is_empty()
+    // REMOVED THE 420-SECOND WALL. This branch fired on `elapsed_secs >= min_age_secs.max(420)` and
+    // returned Accept, which the scheduler answers with `h.abort()` and a DONE record — a stopwatch
+    // truncating the longest call in the run and writing it into the log as finished.
+    //
+    // With the sink cap and the idle watchdog gone this was the last wall-clock terminator on a model
+    // call, and it was the worst-shaped one: `is_still_producing` counts TOOL CALLS, so a sink sitting
+    // inside one long `pytest`, `cargo build` or `npm install` registers nothing new, goes false at
+    // 420s, and is cut in the middle of the command it was asked to run.
+    //
+    // Disabled by a condition that can never hold rather than deleted, because the surrounding
+    // reasoning about Accept (it gates nothing, the smoke gate backstops) is worth keeping next to the
+    // decision that retired it.
+    if false
+        && input.owned_files.is_empty()
         && input.worker_tool_calls.is_some_and(|n| n > 0)
-        && input.elapsed_secs >= cfg.min_age_secs.max(420)
         && !is_still_producing(input, cfg)
         // A fix attempt must end through its own grade+promote tail — a judge Accept completes it
         // at the scheduler and the shadow is dropped UNGRADED (measured: a 434s fix shard accepted
@@ -722,7 +734,11 @@ pub fn deterministic_verdict(input: &JudgeInput, cfg: &JudgeConfig) -> Option<Ju
         // Same exclusion as the owns-nothing Accept above: a fix shadow's owned files pre-exist
         // (they ARE the app), so "all present + still" is true the moment the attempt starts.
         && !input.task_id.starts_with("fix::")
-        && input.elapsed_secs >= cfg.min_age_secs.max(420)
+        // DISARMED. A 420-second stillness window returning Accept, which the scheduler answers with
+        // h.abort() and a DONE record. A clock may SUMMON the judge or SUGGEST to a worker; it may never
+        // CUT one. `is_still_producing` counts tool calls only, so a worker inside one long command is
+        // "still" by this measure while being extremely busy.
+        && false
         && input.secs_since_last_write.is_some_and(|s| s >= 420)
         && !is_still_producing(input, cfg)
     {
@@ -749,7 +765,11 @@ pub fn deterministic_verdict(input: &JudgeInput, cfg: &JudgeConfig) -> Option<Ju
         // the attempt and discards the shadow ungraded — the exact bypass the exclusions close.
         // A quiet fix attempt runs to its cap and is graded by run_fix_task's own tail.
         && !input.task_id.starts_with("fix::")
-        && input.elapsed_secs >= cfg.min_age_secs.max(420)
+        // DISARMED, same rule as the Accept above: this Looping verdict is deterministic, and a
+        // deterministic Looping ABORTS the attempt. Section 7 is explicit that the judge redirects and
+        // never terminates, and that the deterministic detectors become EVIDENCE rather than killers.
+        // A real loop still reaches the judge through the recurrence meter, which reads content.
+        && false
         && input.secs_since_last_write.is_some_and(|s| s >= 420)
         && !is_still_producing(input, cfg)
     {
@@ -1011,10 +1031,14 @@ mod tests {
         // immunity. It now yields a verdict. That the verdict is `Accept` rather than a kill is the
         // separate F165 correction: the owned file exists and compiles, so the deliverable is DONE and
         // finishing it is right. What matters here is that climbing reasoning no longer BUYS SILENCE.
-        assert_eq!(
-            deterministic_verdict(&climbing, &cfg).map(|o| o.verdict),
-            Some(Verdict::Accept),
-            "climbing reasoning with FROZEN actions must not suppress the verdict"
+        // The stopwatch that used to answer this is disarmed (see `stillness_alone_never_ends_a_call`).
+        // What must still hold is that frozen actions do not buy SILENCE from the terminal verdicts —
+        // and that whatever comes back is not a stop.
+        assert!(
+            deterministic_verdict(&climbing, &cfg)
+                .as_ref()
+                .is_none_or(|o| o.verdict != Verdict::Accept && o.verdict != Verdict::Looping),
+            "a clock must not terminate a call, however still it looks"
         );
         // The control: the same worker with its ACTION count climbing is genuinely working.
         let mut acting = climbing.clone();
@@ -1029,8 +1053,12 @@ mod tests {
         // disk, or this block would only ever be exercising the completion branch.
         let mut flat = climbing.clone();
         flat.prev_thinking_chars = Some(8784);
-        let out = deterministic_verdict(&flat, &cfg).expect("a stopped worker is still judged");
-        assert_eq!(out.verdict, Verdict::Accept);
+        assert!(
+            deterministic_verdict(&flat, &cfg)
+                .as_ref()
+                .is_none_or(|o| o.verdict != Verdict::Accept && o.verdict != Verdict::Looping),
+            "a worker that merely went quiet must not be terminated by a clock"
+        );
 
         let mut stopped_unfinished = mk("test-meridian", false, None, 900);
         stopped_unfinished.worker_tool_calls = Some(3);
@@ -1042,12 +1070,16 @@ mod tests {
             .expect("a stopped worker with NOTHING written is still killed");
         assert!(killed.verdict.is_problem(), "{:?}", killed.verdict);
 
-        // No previous observation (first look) leaves the trip ARMED — absence is not proof of life.
+        // A first look with no delta used to leave the stillness trip ARMED. That trip is disarmed, so
+        // what must hold now is the opposite and stronger property: an absent observation cannot
+        // manufacture a termination either.
         let mut first = climbing.clone();
         first.prev_thinking_chars = None;
         assert!(
-            deterministic_verdict(&first, &cfg).is_some(),
-            "a first look has no delta and must not suppress the kill"
+            deterministic_verdict(&first, &cfg)
+                .as_ref()
+                .is_none_or(|o| o.verdict != Verdict::Accept && o.verdict != Verdict::Looping),
+            "absence of a prior observation must not terminate a call"
         );
     }
 
@@ -1254,12 +1286,38 @@ mod tests {
     /// The owned file here exists, is non-empty and compiles, so the deliverable IS done — killing the
     /// worker spends an attempt to reach the same artifact.
     #[test]
-    fn a_stale_but_finished_deliverable_is_accepted_not_killed() {
-        let v = deterministic_verdict(
-            &mk("scan-module", true, Some(500), 700),
-            &JudgeConfig::default(),
-        );
-        assert_eq!(v.map(|o| o.verdict), Some(Verdict::Accept));
+    /// REWRITTEN. It asserted that a worker still for 500s gets `Accept` — and the scheduler answers
+    /// Accept with `h.abort()` and a DONE record, so that assertion was pinning a stopwatch that ENDS a
+    /// model call. Section 7 gives the judge no power to terminate and section 8 leaves no wall-clock in
+    /// the run path; the branch is disarmed, so the invariant to pin is the new one.
+    ///
+    /// A clock may SUMMON the judge or SUGGEST to a worker. It may never CUT one.
+    fn stillness_alone_never_ends_a_call() {
+        // THE GATE. Every task shape the engine dispatches, across four orders of magnitude of elapsed
+        // time and both stillness states. Not one may come back Accept or Looping: the scheduler answers
+        // Accept with h.abort()+DONE and a deterministic Looping aborts the attempt, so either is a
+        // stopwatch ending a model call — the thing section 8 removes and that has now had to be asked
+        // for three times.
+        for task in ["scan-module", "integrate-verify", "fix::r0::app.py", "web"] {
+            for written in [true, false] {
+                for still in [None, Some(500u64), Some(5_000)] {
+                    for age in [700u64, 2_000, 20_000, 200_000] {
+                        let v = deterministic_verdict(
+                            &mk(task, written, still, age),
+                            &JudgeConfig::default(),
+                        );
+                        assert!(
+                            v.as_ref()
+                                .is_none_or(|o| o.verdict != Verdict::Accept
+                                    && o.verdict != Verdict::Looping),
+                            "{task} written={written} still={still:?} age={age}s gave a TERMINAL \
+                             verdict from a clock: {:?}",
+                            v.map(|o| o.verdict)
+                        );
+                    }
+                }
+            }
+        }
     }
 
     /// ...but an UNFINISHED one still trips the finalize spin. Without this the test above would pass
@@ -1344,11 +1402,11 @@ mod tests {
             "a no-owned verifier task must never receive a PROBLEM verdict, got {:?}",
             v.as_ref().map(|o| o.verdict.as_str())
         );
-        assert_eq!(
-            v.map(|o| o.verdict),
-            Some(Verdict::Accept),
-            "a quiet no-owned join that has acted should be accepted, not left to a timer"
-        );
+        // The "…should be accepted, not left to a timer" half of this test is gone with its subject.
+        // It pinned the owns-nothing Accept branch, which fired on a 420-second stopwatch and which the
+        // scheduler answers with h.abort() and a DONE record — a clock truncating the longest call in
+        // the run and logging it as finished. The guarantee above (never a PROBLEM verdict) is the one
+        // that was actually protecting this task, and it still holds.
     }
 
     /// A join that is STILL WORKING must be left alone — the Accept branch is for one that has gone

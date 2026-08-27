@@ -662,7 +662,9 @@ const TESTGEN_CAP: u32 = 3;
 /// per-call cap (240s, swarm.rs) bounds one review; this bounds the run. 8 calls rotates the
 /// dimension set roughly twice, which is where every finding in the measured run came from —
 /// the productive dimension (`wiring`) found 5 defects in under 3 minutes each, all early.
-const TAIL_REVIEW_CAP: u32 = 8;
+// Section 8: no volume caps. The tail reviewer fills IDLE slots, so it competes with nothing; capping
+// it bounded a diagnostic rather than a cost.
+const TAIL_REVIEW_CAP: u32 = u32::MAX;
 
 struct State {
     dag: Dag,
