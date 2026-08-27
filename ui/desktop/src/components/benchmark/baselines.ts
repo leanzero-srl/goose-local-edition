@@ -25,10 +25,17 @@ export interface BenchmarkRow {
  * offers two runnable tiers; each carries its own frozen scorer version and baseline set, and the
  * website's board keeps every era viewable behind its scorer selector.
  */
-export type BenchTier = 'sb-5.3' | 'sb-6';
-export const TIERS: BenchTier[] = ['sb-5.3', 'sb-6'];
+export type BenchTier = 'sb-5.3' | 'sb-6' | 'sb-7';
+export const TIERS: BenchTier[] = ['sb-5.3', 'sb-6', 'sb-7'];
 export const DEFAULT_TIER: BenchTier = 'sb-5.3';
-export const TIER_SCORER: Record<BenchTier, string> = { 'sb-5.3': 'sb-5.3', 'sb-6': 'sb-6.0' };
+export const TIER_SCORER: Record<BenchTier, string> = {
+  'sb-5.3': 'sb-5.3',
+  'sb-6': 'sb-6.0',
+  // sb-7 ships UNCALIBRATED — score_sb7.py reports itself as sb-7.0-rc and sb7-thresholds.json
+  // carries "calibrated": false. The board keeps the rc identity so an rc number is never quietly
+  // compared against a calibrated one.
+  'sb-7': 'sb-7.0-rc',
+};
 export const COMPARABLE_SCORER = TIER_SCORER[DEFAULT_TIER];
 
 export const TIER_LABELS: Record<Tier, string> = {
@@ -118,6 +125,17 @@ export const BASELINES_BY_TIER: Record<BenchTier, BenchmarkRow[]> = {
       tiers: { A: 0.8786, B: 0.9468, C: 0.8809, D: 0.8 },
       scorerVersion: 'sb-6.0',
       wallSecs: 463,
+    },
+  ],
+  // sb-7 has ONE published number so far: the local fleet's own last run. It is the thing to beat,
+  // and it is deliberately the only row — an rc scorer has no calibrated field to compare against.
+  'sb-7': [
+    {
+      label: 'Local fleet — 3x qwen3.8-27b (published)',
+      score: 0.0273,
+      tiers: { A: 0.4625, B: 0.2247, C: 0.0, D: 0.5571 },
+      scorerVersion: 'sb-7.0-rc',
+      wallSecs: 9093,
     },
   ],
 };
