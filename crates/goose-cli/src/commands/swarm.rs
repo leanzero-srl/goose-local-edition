@@ -24498,7 +24498,7 @@ impl GooseAgentDispatcher {
         let raw = out.final_output.clone().unwrap_or_else(|| out.text.clone());
         let mut v: serde_json::Value = parse_json_lenient(&raw)
             .ok_or_else(|| anyhow!("synthesis returned no parseable plan"))?;
-        splice_briefs(&mut v, briefs);
+        splice_briefs(&mut v, briefs, lang);
         Ok(v.to_string())
     }
 }
@@ -24509,7 +24509,7 @@ impl GooseAgentDispatcher {
 /// correction can be a small patch instead of a whole new plan. A task whose slice is unknown keeps
 /// whatever description it has; a slice nobody claimed is appended as its own task rather than being
 /// silently dropped, because a slice that was researched and then lost is work paid for and thrown away.
-fn splice_briefs(plan: &mut serde_json::Value, briefs: &[SliceBrief]) {
+fn splice_briefs(plan: &mut serde_json::Value, briefs: &[SliceBrief], lang: TargetLang) {
     let by_id: std::collections::HashMap<&str, &SliceBrief> =
         briefs.iter().map(|b| (b.id.as_str(), b)).collect();
     let mut claimed: std::collections::HashSet<String> = std::collections::HashSet::new();
@@ -24523,6 +24523,26 @@ fn splice_briefs(plan: &mut serde_json::Value, briefs: &[SliceBrief]) {
             if let Some(b) = by_id.get(slice_id.as_str()) {
                 t["description"] = serde_json::Value::from(b.brief.clone());
                 claimed.insert(slice_id);
+            }
+        }
+        // THE SINK GETS THE ENGINE'S CANONICAL SPEC.
+        //
+        // Caught by the first smoke run that reached a plan: integrate-verify shipped with a ZERO-CHARACTER
+        // description. It matches no slice — nobody researched "wire it together" — so the splice above
+        // skipped it, and the worker that has to boot the app and run its advertised commands would have
+        // been dispatched with no instruction at all. In the old engine this text came from the detail
+        // fan's canonicaliser, which went with the fan.
+        for t in tasks.iter_mut() {
+            if t.get("id").and_then(|v| v.as_str()) != Some(goose_swarm::SINK_ID) {
+                continue;
+            }
+            let empty = t
+                .get("description")
+                .and_then(|d| d.as_str())
+                .map(|d| d.trim().len() < 40)
+                .unwrap_or(true);
+            if empty {
+                t["description"] = serde_json::Value::from(integrate_verify_spec(lang));
             }
         }
         for b in briefs {
@@ -24950,7 +24970,13 @@ async fn run_linear_plan(
                 "error": e.to_string(),
                 "tasks": briefs.len() + 1,
             }));
-            flat_plan_from_briefs(&briefs)
+            flat_plan_from_briefs(
+                &briefs,
+                detect_language(
+                    &opts.prompt,
+                    &existing_files_manifest(&dispatcher.working_dir),
+                ),
+            )
         }
     };
 
@@ -24978,7 +25004,7 @@ async fn run_linear_plan(
 }
 
 /// One task per slice, deps stripped, plus the sink. Always validates.
-fn flat_plan_from_briefs(briefs: &[SliceBrief]) -> String {
+fn flat_plan_from_briefs(briefs: &[SliceBrief], lang: TargetLang) -> String {
     let mut tasks: Vec<serde_json::Value> = briefs
         .iter()
         .map(|b| {
@@ -24997,8 +25023,7 @@ fn flat_plan_from_briefs(briefs: &[SliceBrief]) -> String {
         "difficulty": "hard",
         "files": [],
         "depends_on": briefs.iter().map(|b| b.id.clone()).collect::<Vec<_>>(),
-        "description": "Wire the produced modules together, run the test suite, boot the app and \
-                        exercise every command the request advertises. Fix what fails.",
+        "description": integrate_verify_spec(lang),
     }));
     serde_json::json!({ "subtasks": tasks }).to_string()
 }
