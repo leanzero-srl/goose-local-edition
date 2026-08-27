@@ -3602,6 +3602,33 @@ fn tails_recur(a: &std::collections::HashSet<u64>, b: &std::collections::HashSet
 /// discussing modules named in the plan, concluded it was a build worker falling behind, and nudged it
 /// three times to "Write wordfreq/core.py implementing count_words(text)". The review must not write code
 /// at all. A supervisor that does not know what it is supervising does not help — it derails.
+/// The calls that must not write code — the SAME set `call_objective` already describes, made
+/// load-bearing instead of advisory.
+///
+/// A prompt saying "Do NOT write the implementation" is a request. Withholding the write tools is a
+/// rule. MEASURED on two consecutive runs of the same spec: the frontend slice owner wrote
+/// `vendorsync/web/app.js`, then next run `vendorsync/web/index.html` — implementation files created
+/// during RESEARCH, before any plan existed, against no spec, owned by no task. An unowned file is
+/// invisible to `smoke_all_files` (which comes from the DAG), so the missing-deliverable check and the
+/// repair fan's file attribution both look straight past it, and the BUILD task that later owns that
+/// path starts against a stranger's half-finished guess instead of a clean tree.
+///
+/// NOT hermetic, and saying so matters: these calls keep `shell`, because research that cannot look
+/// anything up is not research, and `shell` can always write with a redirect. This removes the obvious
+/// path and the model's default reach, not the possibility. `research_wrote_files` below is what
+/// catches the rest.
+fn is_read_only_call(activity_key: Option<&str>) -> bool {
+    matches!(
+        activity_key,
+        Some("open")
+            | Some("open-resplit")
+            | Some("synthesis")
+            | Some("review")
+            | Some("proxy-answer")
+            | Some("rate")
+    ) || activity_key.is_some_and(|k| k.starts_with("slice-") || k.starts_with("test-"))
+}
+
 fn call_objective(activity_key: Option<&str>) -> &'static str {
     match activity_key {
         Some("open") | Some("open-resplit") => {
@@ -3617,6 +3644,11 @@ fn call_objective(activity_key: Option<&str>) -> &'static str {
         Some("rate") => "rate each defect CRITICAL or MINOR. It must NOT write code.",
         Some(k) if k.starts_with("slice-") => {
             "answer its slice's questions and then write that module's SPECIFICATION — interfaces, edge              cases, files. It must NOT write the implementation."
+        }
+        Some(k) if k.starts_with("test-") => {
+            "exercise the BUILT app from one angle and report the defects it observes, with the files \
+             each touches. It must NOT fix anything and must not edit a single file — a call reporting \
+             bugs without writing code is doing this job exactly right."
         }
         Some(k) if k.starts_with("contract-") => {
             "emit a signature-only stub for one module. It must NOT implement anything."
@@ -8672,6 +8704,35 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
     }
 
     /// The same reader, against the REAL logs this machine has produced — a fixture can agree with a bug.
+    #[test]
+    /// The read-only taxonomy must stay in step with what `call_objective` TELLS the judge each call is
+    /// for. A call described as "must NOT write code" may not be handed write tools, and a call that
+    /// builds something must be. Two consecutive runs wrote implementation during RESEARCH because the
+    /// prompt asked nicely and nothing enforced it.
+    fn calls_told_not_to_write_code_do_not_get_write_tools() {
+        for k in [
+            "open",
+            "open-resplit",
+            "synthesis",
+            "review",
+            "proxy-answer",
+            "rate",
+            "slice-frontend-js",
+            "test-primary-journey",
+        ] {
+            assert!(is_read_only_call(Some(k)), "{k} must not be able to write");
+            assert!(
+                !call_objective(Some(k)).contains("implement its assigned module"),
+                "{k} is described as a building call yet is denied write tools"
+            );
+        }
+        for k in ["contract-store", "integrate-verify", "ledger", "web"] {
+            assert!(!is_read_only_call(Some(k)), "{k} builds and needs write");
+        }
+        // The judge itself carries no activity key and must keep today's tools.
+        assert!(!is_read_only_call(None));
+    }
+
     #[test]
     /// THE BUG THAT MADE RESUME DEAD EVERYWHERE BUT THE BENCH.
     ///
@@ -16049,12 +16110,18 @@ impl GooseAgentDispatcher {
                     // for images and every worker call to it was 100% wasted (a source/text/dir path it then
                     // recovers from via `cat`). The whitelist hides it from the menu AND rejects it if the
                     // model hallucinates it.
-                    available_tools: vec![
-                        "write".to_string(),
-                        "edit".to_string(),
-                        "shell".to_string(),
-                        "tree".to_string(),
-                    ],
+                    // A call whose job is to READ and DECIDE does not get the tools to write.
+                    // See `is_read_only_call`.
+                    available_tools: if is_read_only_call(activity_key) {
+                        vec!["shell".to_string(), "tree".to_string()]
+                    } else {
+                        vec![
+                            "write".to_string(),
+                            "edit".to_string(),
+                            "shell".to_string(),
+                            "tree".to_string(),
+                        ]
+                    },
                 },
                 &session_id,
             )
@@ -25361,6 +25428,14 @@ async fn run_linear_plan(
     );
     sink.write_value(serde_json::json!({"event": "phase", "phase": "research"}));
     let t_research = std::time::Instant::now();
+    // What the tree looked like before anyone researched it. RESEARCH produces BRIEFS, not files, so
+    // every path that appears during it is by definition unplanned — see `is_read_only_call`. The tool
+    // whitelist removes the obvious way to create one; this is how we find out whether that was enough,
+    // instead of discovering it a third time by reading a run tree by hand.
+    let tree_before_research: std::collections::HashSet<String> =
+        existing_files_manifest(&dispatcher.working_dir)
+            .into_iter()
+            .collect();
     let research_exts = build_research_exts(swarm_gate_cfg(
         "GOOSE_SWARM_RESEARCH_TOOLS",
         cfg.research_tools,
@@ -25374,6 +25449,25 @@ async fn run_linear_plan(
             research_exts,
         )
         .await;
+    {
+        let created: Vec<String> = existing_files_manifest(&dispatcher.working_dir)
+            .into_iter()
+            .filter(|f| !tree_before_research.contains(f))
+            .collect();
+        if !created.is_empty() {
+            sink.write_value(serde_json::json!({
+                "event": "research_wrote_files",
+                "count": created.len(),
+                "files": created,
+            }));
+            eprintln!(
+                "  {} RESEARCH created {} file(s) no task owns yet: {}",
+                style("!").yellow().bold(),
+                created.len(),
+                created.join(", ")
+            );
+        }
+    }
     for b in &briefs {
         eprintln!("  · {} — {} chars of spec", b.id, b.brief.chars().count());
     }
