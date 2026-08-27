@@ -14238,9 +14238,6 @@ fn retarget_rounds_resolved(env: Option<String>, cfg: Option<u32>) -> u32 {
     }
 }
 
-/// Ceiling on how many skeleton drafts the redraft lever may grow to (caps wall-clock).
-const RETARGET_MAX_N: usize = 6;
-
 /// Fail-closed spec-clarity value. A DEAD probe learned NOTHING about the spec, so it must not read as "clear."
 /// 20 is below the default ask floor (70) and every realistic config floor, so `min(agreement, 20)` forces the
 /// ASK. It is also NOT a value `spec_clarity_score` can emit (its outputs are {8,12,18,24,30,36,52,68,84,100}),
