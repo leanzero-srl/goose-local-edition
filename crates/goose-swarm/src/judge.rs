@@ -34,6 +34,16 @@ pub enum Verdict {
     /// before its first byte, not over-reading. Distinct from `OverReading` because the remedies differ
     /// and because a log that calls a zero-tool-call worker "over_reading" misdirects every later reader.
     NoFirstWrite,
+    /// The call is WORKING, but on the wrong thing — it has drifted off the goal. Redirect, never stop.
+    Drifting,
+    /// The call has produced nothing usable and a fresh session seeded with what it HAS established would
+    /// beat continuing. The task is re-run on the SAME device with a new session — never handed to another
+    /// node, because every node runs the same model, so moving work costs the session and buys nothing.
+    ///
+    /// Permitted only while the previous attempt produced SOMETHING (a tool call, a file byte, or new
+    /// reasoning). Two consecutive attempts that produce nothing at all end the task instead, with the
+    /// judge's notes attached — that is the liveness rule that stops a judge restarting forever.
+    Restart,
     /// The deliverable is DONE: every owned file exists and none fails its syntax/compile check, but the
     /// worker is still running. Finish it rather than spending an attempt on a kill.
     ///
@@ -115,6 +125,8 @@ impl Verdict {
             Verdict::BrokenCode => "broken_code",
             Verdict::SpecDrift => "spec_drift",
             Verdict::Split => "split",
+            Verdict::Drifting => "drifting",
+            Verdict::Restart => "restart",
             Verdict::Accept => "accept",
             Verdict::NoFirstWrite => "no_first_write",
         }
@@ -216,6 +228,13 @@ pub struct JudgeOutcome {
     pub confidence: f32,
     /// A one-line corrective hint, prepended to the task on re-dispatch.
     pub hint: String,
+    /// What this call has ALREADY WORKED OUT that is worth keeping, in the judge's words, drawn from what
+    /// the call actually said. This is the point of the whole mechanism: a nudge that throws away the
+    /// useful half of a spiralling call is just a slower kill. Empty when nothing was established.
+    pub established: String,
+    /// The single most concrete next action toward the goal — a file, a command, a function. Never
+    /// "continue" or "proceed", which is what the old one-line hint degenerated into.
+    pub next_action: String,
     /// Set only when `verdict == Split`: the child subtasks that partition the too-big task's files.
     pub proposed_split: Option<Vec<ChildSpec>>,
     /// PROVENANCE. True only for a verdict produced by `deterministic_verdict` — a real engine fact
@@ -237,6 +256,8 @@ impl JudgeOutcome {
             verdict: Verdict::Ok,
             confidence: 1.0,
             hint: String::new(),
+            established: String::new(),
+            next_action: String::new(),
             proposed_split: None,
             deterministic: false,
         }
@@ -248,6 +269,8 @@ impl JudgeOutcome {
             verdict: Verdict::Split,
             confidence: 0.9,
             hint: String::new(),
+            established: String::new(),
+            next_action: String::new(),
             proposed_split: Some(children),
             deterministic: false,
         }
@@ -444,6 +467,8 @@ pub fn deterministic_verdict(input: &JudgeInput, cfg: &JudgeConfig) -> Option<Ju
                  — if you are unsure how, write a SMALLER, SIMPLER version that compiles and covers the \
                  core of the spec; a working subset beats a broken whole."
             ),
+            established: String::new(),
+            next_action: String::new(),
             proposed_split: None,
             deterministic: true,
         });
@@ -476,6 +501,8 @@ pub fn deterministic_verdict(input: &JudgeInput, cfg: &JudgeConfig) -> Option<Ju
                    that satisfies the spec first (a small working file), then refine. A minimal working \
                    file beats endless exploration."
                 .to_string(),
+            established: String::new(),
+            next_action: String::new(),
             proposed_split: None,
             deterministic: true,
         });
@@ -501,6 +528,8 @@ pub fn deterministic_verdict(input: &JudgeInput, cfg: &JudgeConfig) -> Option<Ju
                    the SIMPLEST version that satisfies the spec FIRST (a small working file), then refine it. \
                    A minimal working file beats a plan you never wrote down."
                 .to_string(),
+            established: String::new(),
+            next_action: String::new(),
             proposed_split: None,
             deterministic: true,
         });
@@ -588,6 +617,8 @@ pub fn deterministic_verdict(input: &JudgeInput, cfg: &JudgeConfig) -> Option<Ju
                     input.owned_files.len(),
                     n_children
                 ),
+                established: String::new(),
+                next_action: String::new(),
                 proposed_split: Some(children),
                 deterministic: true,
             });
@@ -605,6 +636,8 @@ pub fn deterministic_verdict(input: &JudgeInput, cfg: &JudgeConfig) -> Option<Ju
             },
             confidence: 0.9,
             hint: no_file_hint(input, read_nothing),
+            established: String::new(),
+            next_action: String::new(),
             proposed_split: None,
             deterministic: true,
         });
@@ -658,6 +691,8 @@ pub fn deterministic_verdict(input: &JudgeInput, cfg: &JudgeConfig) -> Option<Ju
                  while — take what it established as the result instead of restarting the whole join.",
                 input.worker_tool_calls.unwrap_or(0)
             ),
+            established: String::new(),
+            next_action: String::new(),
             proposed_split: None,
             deterministic: true,
         });
@@ -700,6 +735,8 @@ pub fn deterministic_verdict(input: &JudgeInput, cfg: &JudgeConfig) -> Option<Ju
                 input.owned_files.len(),
                 input.secs_since_last_write.unwrap_or(0)
             ),
+            established: String::new(),
+            next_action: String::new(),
             proposed_split: None,
             deterministic: true,
         });
@@ -720,6 +757,8 @@ pub fn deterministic_verdict(input: &JudgeInput, cfg: &JudgeConfig) -> Option<Ju
             verdict: Verdict::Looping,
             confidence: 0.9,
             hint: spin_hint(input),
+            established: String::new(),
+            next_action: String::new(),
             proposed_split: None,
             deterministic: true,
         });

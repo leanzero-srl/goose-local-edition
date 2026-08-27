@@ -9238,6 +9238,54 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
     }
 
     #[test]
+    /// The FOUR-field contract, and the leniency it has to keep.
+    ///
+    /// ESTABLISHED is the field the whole nudge exists for — a redirect that throws away the useful half
+    /// of a spiralling call is just a slower kill — so it has to survive the shapes a 27B actually emits.
+    /// The old three-field replies must still parse, and when only ONE free segment arrives it is the
+    /// ACTION, not the establishment: a nudge can be written without knowing what was established, but not
+    /// without knowing what to do next.
+    fn parse_judge_reply_reads_established_and_next() {
+        let full = parse_judge_reply(
+            "LOOPING|HIGH|the CSV parser needs a header row and the delimiter is a pipe|write \
+             app/parse.py with parse_ledger(path: Path) -> list[Row]",
+        );
+        assert_eq!(full.verdict, Verdict::Looping);
+        assert!(
+            full.established.contains("delimiter is a pipe"),
+            "established must survive: {:?}",
+            full.established
+        );
+        assert!(
+            full.next_action.contains("app/parse.py"),
+            "next must be the action: {:?}",
+            full.next_action
+        );
+        assert_eq!(full.hint, full.next_action, "hint IS the next action now");
+
+        // Labels echoed back (the measured qwen habit) must not be mistaken for content.
+        let echoed = parse_judge_reply(
+            "VERDICT|CONFIDENCE|ESTABLISHED|NEXT|DRIFTING|HIGH|the schema is already written|wire it into \
+             app/main.py",
+        );
+        assert_eq!(echoed.verdict, Verdict::Drifting);
+        assert!(echoed.established.contains("schema is already written"));
+        assert!(echoed.next_action.contains("app/main.py"));
+
+        // Old three-field shape: one free segment is the ACTION, established stays empty.
+        let legacy = parse_judge_reply("LOOPING|HIGH|stop re-reading and write the file now");
+        assert_eq!(legacy.verdict, Verdict::Looping);
+        assert!(legacy.established.is_empty(), "no establishment claimed");
+        assert!(legacy.next_action.contains("write the file"));
+
+        // RESTART is recognised and is never confused with OK.
+        assert_eq!(
+            parse_judge_reply("RESTART|HIGH||start over from the frozen contract").verdict,
+            Verdict::Restart
+        );
+    }
+
+    #[test]
     fn parse_judge_reply_handles_qwen_formats() {
         // Healthy: qwen echoes the field labels and reorders OK/HIGH/LOW — all must read OK (no kill).
         for ok in [
@@ -16445,8 +16493,18 @@ impl GooseAgentDispatcher {
         // period exceeds one look interval never shows the same window twice in a ROW, so the
         // old single-slot memory reset the streak forever — measured live at 191,000 chars.
         let mut omni_prior_looping_tails: Vec<std::collections::HashSet<u64>> = Vec::new();
-        // F790-1: in-session redirects issued for this task (bounded by JUDGE_NUDGE_MAX).
+        // In-session redirects issued for this call. UNBOUNDED — the old JUDGE_NUDGE_MAX of 2 is gone.
+        // What escalates a nudge is not a counter but the judge seeing its own previous direction and
+        // whether the call obeyed it (see the escalation clause on the system prompt below).
         let mut nudges_used: u32 = 0;
+        // The judge's last NEXT, fed back to it verbatim so it can tell "it ignored me" from "it tried".
+        let mut last_direction = String::new();
+        // Tool-call count at the moment of the last nudge. Two jobs: it tells the judge whether the call
+        // acted on the previous direction, and it decides HOW the next nudge is delivered — a call that has
+        // taken an action since will hit a turn boundary, so a steer lands there losing nothing; a call
+        // that has not is inside one provider round-trip, where a steer is provably inert (the drain at
+        // agent.rs:1954 is gated on a flag set only at :2603, after the stream closes).
+        let mut tool_calls_at_last_nudge: Option<usize> = None;
         let mut repeat_hash: Option<u64> = None;
         let mut repeat_run: usize = 0usize;
         let mut repeat_run_started = tokio::time::Instant::now();
@@ -16493,13 +16551,56 @@ impl GooseAgentDispatcher {
                     .take(8)
                     .map(|(n, sum, _, _)| format!("{n}: {sum}"))
                     .collect();
-                let sys = "You inspect a RUNNING agent call and decide ONE thing: is it LOOPING — repeating \
-                     the same reasoning or the same commands without new information? Reply on ONE line as \
-                     VERDICT|CONFIDENCE|hint where VERDICT is OK or LOOPING and CONFIDENCE is HIGH or LOW. \
-                     Say LOOPING only if the SAME content clearly recurs. Deep but ADVANCING reasoning is OK. \
-                     You may be shown reasoning from EARLIER in the same call: if the recent reasoning covers \
-                     that same ground again, that is LOOPING even when the words are not identical."
+                // THE JUDGE CONTRACT. Four fields, not three. The third — ESTABLISHED — is the whole
+                // point: a redirect that throws away the useful half of a spiralling call is just a slower
+                // kill. The judge extracts what the call has actually worked out, and the nudge hands it
+                // back so the model resumes from there instead of restarting its own thinking.
+                //
+                // The last line is taken verbatim from codex/salvage-engine's one genuinely good idea
+                // (its pre-scheduler judge prompt): the judge may NEVER ask for termination. Only the
+                // engine ends a call, and only ever by cancelling a corroborated loop.
+                let mut sys = "You supervise ONE running agent call on a shared multi-agent build. You are \
+                     given its goal, what it has produced so far, a measurement of how much its reasoning is \
+                     repeating, a sample of its reasoning from much earlier in the same call, and its recent \
+                     commands.\n\
+                     Decide ONE thing: is this call still making meaningful progress toward its goal?\n\
+                     Deep, slow, or repetitive-LOOKING reasoning that is ADVANCING is OK. LOOPING means it is \
+                     revisiting the same analysis without adding evidence, resolving a decision, or taking the \
+                     next concrete step.\n\
+                     Reply on ONE line, exactly:\n\
+                     VERDICT|CONFIDENCE|ESTABLISHED|NEXT\n\
+                     VERDICT      OK | DRIFTING | LOOPING | RESTART\n\
+                     CONFIDENCE   HIGH | LOW\n\
+                     ESTABLISHED  what this call has actually worked out that is worth keeping. Draw it from \
+                     what it SAID; do not invent. Leave empty only if it has established nothing.\n\
+                     NEXT         the single most concrete next action toward the goal. Name the file, the \
+                     command, or the function. Never \"continue\" or \"proceed\".\n\
+                     DRIFTING = working, but on the wrong thing.\n\
+                     RESTART = only when the call has produced nothing usable AND a fresh start carrying what \
+                     you list in ESTABLISHED would beat continuing. Never for a call that is merely slow.\n\
+                     You may never request termination. Your job is to redirect."
                     .to_string();
+                // ESCALATION WITHOUT A COUNTER. The judge is shown its own prior direction and whether the
+                // call obeyed it, so nudge 2 differs from nudge 1 because the evidence differs — not
+                // because a branch counted to two. This is what replaces JUDGE_NUDGE_MAX.
+                if nudges_used > 0 {
+                    let moved = if tool_calls_at_last_nudge.is_some_and(|n| call_records.len() > n)
+                    {
+                        format!(
+                            "taken {} action(s)",
+                            call_records.len()
+                                - tool_calls_at_last_nudge.unwrap_or(call_records.len())
+                        )
+                    } else {
+                        "taken no action".to_string()
+                    };
+                    sys.push_str(&format!(
+                        "\n\nYou have already redirected this call {nudges_used} time(s). Your last \
+                         direction was: \"{last_direction}\". Since then it has {moved}. If it did not \
+                         follow your direction, be MORE concrete this time — name the exact file and the \
+                         first thing to put in it."
+                    ));
+                }
                 // #F924: the judge used to get one 2,000-char window and nothing else, which is why a
                 // ~4,000-char-period loop read as OK on every look. It now also gets the deterministic
                 // recurrence measurement and a snapshot from 20k-40k characters back — evidence the
@@ -16563,6 +16664,15 @@ impl GooseAgentDispatcher {
                     // invisible for a whole run — five hours of "is the judge even watching?" with
                     // no way to answer from the artifacts. Its verdict and the measured recurrence
                     // now land in run.jsonl where every other decision lives.
+                    let omni_outcome = parse_judge_reply(&o.text);
+                    let omni_hint = {
+                        let h = omni_outcome.next_action.trim();
+                        if h.is_empty() {
+                            None
+                        } else {
+                            Some(h.chars().take(400).collect::<String>())
+                        }
+                    };
                     self.events.write_value(serde_json::json!({
                         "event": "judge_look",
                         "task_id": activity_key,
@@ -16571,16 +16681,13 @@ impl GooseAgentDispatcher {
                         "recur_rate": recur.rate(),
                         "recur_span": recur.span(),
                         "looping": omni_judge_says_looping(&o.text),
+                        // The judge's OWN WORDS in the log. Without these a run tells you the judge fired
+                        // but not whether it was any good, which is the only question that matters once it
+                        // is the thing deciding when a call has stopped progressing.
+                        "verdict": omni_outcome.verdict.as_str(),
+                        "established": omni_outcome.established,
+                        "next": omni_outcome.next_action,
                     }));
-                    let omni_hint = {
-                        let h = parse_judge_reply(&o.text).hint;
-                        let h = h.trim();
-                        if h.is_empty() {
-                            None
-                        } else {
-                            Some(h.chars().take(300).collect::<String>())
-                        }
-                    };
                     if omni_judge_says_looping(&o.text) {
                         // #F924: corroborate against ANY earlier look, and treat a measured
                         // recurrence as corroboration in its own right — a long-period loop
@@ -16617,39 +16724,92 @@ impl GooseAgentDispatcher {
                             style("·").yellow()
                         );
                     }
-                    if omni_looping_streak >= 2 {
-                        // F790-1 (GOOSE_SWARM_JUDGE_NUDGE): REDIRECT before the abort. Dropping
-                        // the old stream cancels the spinning turn; the session keeps every prior
-                        // turn, so a fresh reply with the judge's own hint continues the work
-                        // in place — the attempt is not burned and no context is lost (a kill +
-                        // re-dispatch loses the session, and the measured misread-kill class
-                        // makes that expensive on healthy-but-slow calls). Per-call judge state
-                        // resets so the redirected call is watched fresh; the abort stays as the
-                        // backstop once JUDGE_NUDGE_MAX redirects are spent.
-                        if judge_nudge_on() && nudges_used < JUDGE_NUDGE_MAX {
-                            nudges_used += 1;
-                            let direction = omni_hint.clone().unwrap_or_else(|| {
-                                "stop restating your plan; take the next concrete action on your \
-                                 owned files now"
-                                    .to_string()
-                            });
-                            self.events.write_value(serde_json::json!({
-                                "event": "judge_nudge",
-                                "task_id": activity_key,
-                                "nudge": nudges_used,
-                                "looks": omni_looks,
-                                "thinking_chars": thinking_chars,
-                                "hint": direction,
-                            }));
-                            eprintln!(
-                                "  {} omni-judge (look {omni_looks}): looping after {thinking_chars} reasoning chars — nudging with direction instead of stopping (nudge {nudges_used}/{JUDGE_NUDGE_MAX})",
-                                style("→").yellow()
-                            );
-                            let nudge_text = format!(
-                                "SUPERVISOR NOTE (the run's judge inspected this call): your last \
-                                 stretch of reasoning is repeating without new information. {direction}\n\
-                                 Continue the SAME task; do not restart work you have already done."
-                            );
+                    // DRIFTING needs no corroboration, and LOOPING still does. The asymmetry is the
+                    // point: the measured misread class is "the FIRST look says LOOPING and it is wrong"
+                    // (four fires at 1,200 / 1,201 / 3,759 / 4,003 reasoning chars, every kill wrong, the
+                    // tasks completed fine on retry), and the defence against it is the content-gated
+                    // streak below. DRIFTING is a different claim — the call is WORKING, on the wrong
+                    // thing — which tail recurrence structurally cannot corroborate, and whose cost is now
+                    // one in-session message rather than a dead worker. So it acts on the first look.
+                    let drifting_now = omni_outcome.verdict == goose_swarm::Verdict::Drifting
+                        && omni_outcome.confidence >= 0.8;
+                    if omni_looping_streak >= 2 || drifting_now {
+                        // THE JUDGE NUDGES. It does not stop anything. This is the whole change:
+                        // previously two redirects were allowed and the third strike aborted the call.
+                        // JUDGE_NUDGE_MAX is gone and there is no abort path left here — a call ends
+                        // because the model finished, because the socket died, or not at all.
+                        //
+                        // ESCALATION comes from evidence, not a counter: the judge is shown its own last
+                        // direction and whether the call acted on it (see the system prompt above), so the
+                        // second note is sharper than the first because the second look sees more.
+                        nudges_used += 1;
+                        let direction = omni_hint.clone().unwrap_or_else(|| {
+                            "stop restating your plan; take the next concrete action on your \
+                             owned files now"
+                                .to_string()
+                        });
+                        let established = omni_outcome.established.trim().to_string();
+
+                        // DELIVERY. Two mechanisms, and which one is correct is decided by whether this
+                        // call has a TURN BOUNDARY coming, because a steer can only ever land on one:
+                        // Agent::steer pushes onto pending_steers (agent.rs:506) and the ONE production
+                        // drain (agent.rs:1955) is gated on a flag set only at agent.rs:2603 — after the
+                        // provider stream for the current round-trip has closed. So:
+                        //   acted since the last look  -> it is between turns; steer lands at the next
+                        //                                 one and costs NOTHING, not even the turn.
+                        //   pure reasoning growth      -> it is inside one round-trip with no boundary in
+                        //                                 sight; a steer would sit in the queue forever,
+                        //                                 so the stream is dropped and re-driven instead.
+                        // A steer is also refused while a tool call is in flight (`pending`), so a
+                        // request can never be orphaned from its response.
+                        let acted_since_last_look = tool_calls_at_last_nudge
+                            .is_none_or(|n| call_records.len() > n)
+                            && !call_records.is_empty();
+                        let can_steer = acted_since_last_look && pending.is_empty();
+                        let nudge_text = format!(
+                            "SUPERVISOR NOTE — an independent reviewer read this call's own reasoning.\n\
+                             {}Do this next: {direction}\n\
+                             Continue the SAME task. Do not restart work you have already done, and do not \
+                             re-explain your plan.",
+                            if established.is_empty() {
+                                String::new()
+                            } else {
+                                format!("You have already established: {established}\n")
+                            }
+                        );
+                        self.events.write_value(serde_json::json!({
+                            "event": "judge_nudge",
+                            "task_id": activity_key,
+                            "nudge": nudges_used,
+                            "looks": omni_looks,
+                            "thinking_chars": thinking_chars,
+                            "hint": direction,
+                            "established": established,
+                            "next": direction,
+                            "delivery": if can_steer { "steer" } else { "restream" },
+                        }));
+                        eprintln!(
+                            "  {} omni-judge (look {omni_looks}, nudge {nudges_used}): redirecting after \
+                             {thinking_chars} reasoning chars via {} — {direction}",
+                            style("→").yellow(),
+                            if can_steer { "steer" } else { "re-stream" }
+                        );
+                        last_direction = direction.clone();
+                        tool_calls_at_last_nudge = Some(call_records.len());
+
+                        if can_steer {
+                            // Queued into the SAME running session. The in-flight turn is not burned and
+                            // nothing is dropped; the note becomes the last user message before the next
+                            // provider request.
+                            agent
+                                .steer(&session_config.id, Message::user().with_text(nudge_text))
+                                .await;
+                            // Judge state resets so the redirected call is watched fresh, but the
+                            // recurrence fingerprints are KEPT: the stream did not restart, so the
+                            // reasoning that earned the nudge is still part of this call's history.
+                            omni_looping_streak = 0;
+                            omni_prior_looping_tails.clear();
+                        } else {
                             stream = agent
                                 .reply(
                                     Message::user().with_text(nudge_text),
@@ -16663,22 +16823,13 @@ impl GooseAgentDispatcher {
                             omni_looks = 0;
                             omni_looping_streak = 0;
                             omni_prior_looping_tails.clear();
-                            // The redirect restarts the stream, so the fingerprints of the
-                            // reasoning it was told to abandon must not count against what
-                            // follows.
+                            // The re-stream abandons that reasoning, so its fingerprints must not count
+                            // against what follows.
                             recur.reset();
-                            omni_next_look = tokio::time::Instant::now()
-                                + std::time::Duration::from_secs(OMNI_JUDGE_FIRST_LOOK_SECS);
-                            continue;
                         }
-                        eprintln!(
-                            "  {} omni-judge (look {omni_looks}): this call is LOOPING after {thinking_chars} reasoning chars — stopping it",
-                            style("↯").yellow()
-                        );
-                        return Err(anyhow!(
-                            "agent stalled — no productive progress: the judge read this call's own \
-                             reasoning ({thinking_chars} chars) and reported it is looping"
-                        ));
+                        omni_next_look = tokio::time::Instant::now()
+                            + std::time::Duration::from_secs(OMNI_JUDGE_FIRST_LOOK_SECS);
+                        continue;
                     }
                 }
             }
@@ -23918,10 +24069,12 @@ fn omni_judge_says_looping(reply: &str) -> bool {
 /// CONFIDENCE gates agency — the judge acts (kill + correct) only on a verdict it marks HIGH.
 fn parse_judge_reply(s: &str) -> JudgeOutcome {
     let upper = s.to_uppercase();
-    // The correction is the LAST pipe-segment that is real free text — not a field LABEL, verdict word, or
-    // confidence token. qwen-class models often echo the labels (e.g. `VERDICT|CONFIDENCE|BROKEN_CODE|HIGH|
-    // <fix>`), so naive "segment after the verdict" grabs a label; taking the last non-token segment is
-    // robust to both that and the terse `VERDICT|CONFIDENCE|hint` / `VERDICT|hint` forms.
+    // FOUR fields now: VERDICT|CONFIDENCE|ESTABLISHED|NEXT. Parsing stays deliberately LENIENT, because
+    // the fleet is a 27B and the old three-field parser earned that leniency the hard way: qwen-class
+    // models echo the field LABELS back (`VERDICT|CONFIDENCE|LOOPING|HIGH|<text>`), drop fields, or answer
+    // in two segments. So: pick the verdict and confidence out of wherever they land, and take the free
+    // text segments in order. One free segment means the old shape — treat it as NEXT, not ESTABLISHED,
+    // since an action is what the nudge cannot do without.
     let is_token = |seg: &str| {
         matches!(
             seg.to_uppercase().trim(),
@@ -23929,10 +24082,14 @@ fn parse_judge_reply(s: &str) -> JudgeOutcome {
                 | "CONFIDENCE"
                 | "CONF"
                 | "HINT"
+                | "ESTABLISHED"
+                | "NEXT"
                 | "OK"
                 | "BROKEN_CODE"
                 | "BROKEN CODE"
                 | "LOOPING"
+                | "DRIFTING"
+                | "RESTART"
                 | "OVER_READING"
                 | "OVER READING"
                 | "SPEC_DRIFT"
@@ -23941,33 +24098,44 @@ fn parse_judge_reply(s: &str) -> JudgeOutcome {
                 | "LOW"
         )
     };
-    let hint = s
+    let free: Vec<&str> = s
         .split('|')
         .map(|h| h.trim())
-        .rfind(|h| !h.is_empty() && !is_token(h));
-    // Confidence gates AGENCY: the judge acts (kill + re-dispatch with the correction) only when it marks
-    // the verdict HIGH; an unsure/LOW verdict is logged (observed) but never kills. TUNABLE: drop the HIGH
-    // mapping below intervene_confidence (0.8) to revert to advisory-only if it mis-fires live.
+        .filter(|h| !h.is_empty() && !is_token(h))
+        .collect();
+    let (established, next_action) = match free.len() {
+        0 => (String::new(), String::new()),
+        1 => (String::new(), free[0].to_string()),
+        _ => (
+            free[free.len() - 2].to_string(),
+            free[free.len() - 1].to_string(),
+        ),
+    };
+    // Confidence is the judge's own, and it no longer gates an irreversible action — nothing the judge
+    // says can fail a task any more. It only shapes how forcefully the nudge is worded.
     let confidence = if upper.contains("HIGH") { 0.85 } else { 0.5 };
-    let verdict = if upper.contains("BROKEN_CODE") || upper.contains("BROKEN CODE") {
-        Verdict::BrokenCode
+    let verdict = if upper.contains("RESTART") {
+        Verdict::Restart
     } else if upper.contains("LOOPING") {
         Verdict::Looping
+    } else if upper.contains("DRIFTING") {
+        Verdict::Drifting
+    } else if upper.contains("BROKEN_CODE") || upper.contains("BROKEN CODE") {
+        Verdict::BrokenCode
     } else if upper.contains("OVER_READING") || upper.contains("OVER READING") {
         Verdict::OverReading
     } else if upper.contains("SPEC_DRIFT") || upper.contains("SPEC DRIFT") {
         Verdict::SpecDrift
     } else {
-        // No explicit verdict keyword. qwen-class models routinely express a real problem as just
-        // `VERDICT|HIGH|<corrective hint>` with no keyword — dropping that would make the semantic judge
-        // inert on this fleet. Treat it as an actionable problem ONLY when the model did NOT call it OK,
-        // marked HIGH confidence, AND gave a substantive correction; anything else reads as healthy so a
-        // vague reply still can't kill a good worker. (Recoverable if wrong: a re-dispatch with a hint,
-        // capped per task — revert via the HIGH mapping above if false-positives show up live.)
+        // No keyword. The measured qwen habit is to state a real problem as `VERDICT|HIGH|<correction>`
+        // with no verdict word at all, and dropping that would make the judge inert on this fleet. Read it
+        // as DRIFTING — a redirect — only when the model did NOT say OK and gave something substantive.
+        // DRIFTING is the safe default now that the judge can only ever nudge: the worst case is one
+        // unnecessary in-session note, not a dead worker.
         let said_ok = s.split('|').any(|p| p.trim().eq_ignore_ascii_case("ok"));
-        let substantive = hint.map(|h| h.len() >= 16).unwrap_or(false);
-        if !said_ok && upper.contains("HIGH") && substantive {
-            Verdict::SpecDrift
+        let substantive = next_action.len() >= 16;
+        if !said_ok && substantive {
+            Verdict::Drifting
         } else {
             return JudgeOutcome::ok();
         }
@@ -23975,12 +24143,17 @@ fn parse_judge_reply(s: &str) -> JudgeOutcome {
     JudgeOutcome {
         verdict,
         confidence,
-        hint: hint
-            .map(|h| h.to_string())
-            .unwrap_or_else(|| "Your output does not match the spec — correct it now.".to_string()),
+        // `hint` stays the corrective one-liner every existing consumer reads; it is now the NEXT ACTION,
+        // which is what a hint was always trying to be.
+        hint: if next_action.is_empty() {
+            "Take the next concrete action on your owned files now.".to_string()
+        } else {
+            next_action.clone()
+        },
+        established,
+        next_action,
         proposed_split: None,
-        // MODEL-AUTHORED: this is the judge LLM's opinion, parsed from its reply. It may STEER (re-dispatch
-        // with a hint) but must never be what FAILS a task — see JudgeOutcome::deterministic.
+        // MODEL-AUTHORED. It may STEER; it may never fail a task.
         deterministic: false,
     }
 }
@@ -31613,9 +31786,9 @@ fn judge_nudge_on() -> bool {
     swarm_gate_cfg("GOOSE_SWARM_JUDGE_NUDGE", load_config().judge_nudge)
 }
 
-/// F790-1: in-session redirects per call before the abort backstop. Two mirrors the omni-judge's
-/// own corroboration count — a call that ignores two directed supervisor notes has earned the cut.
-const JUDGE_NUDGE_MAX: u32 = 2;
+// REMOVED: JUDGE_NUDGE_MAX (was 2, "before the abort backstop"). Redirects are unbounded now and there
+// is no abort backstop: the judge escalates on EVIDENCE — it is shown its own prior direction and whether
+// the call acted on it — rather than on a counter. See the nudge block in run_agent_in.
 
 fn fix_sched() -> bool {
     swarm_gate_cfg("GOOSE_SWARM_FIX_SCHED", load_config().fix_sched)

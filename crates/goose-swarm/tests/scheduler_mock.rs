@@ -701,6 +701,8 @@ impl Judge for DeterministicKillJudge {
                 verdict: Verdict::Looping,
                 confidence: 1.0,
                 hint: "STOP looping and WRITE the file now".to_string(),
+                established: String::new(),
+                next_action: String::new(),
                 proposed_split: None,
                 deterministic: true,
             }
@@ -718,6 +720,8 @@ impl Judge for KillJudge {
                 verdict: Verdict::Looping,
                 confidence: 1.0,
                 hint: "STOP looping and WRITE the file now".to_string(),
+                established: String::new(),
+                next_action: String::new(),
                 proposed_split: None,
                 // This mock stands in for the MODEL judge (it is a `Judge` impl), so it is NOT deterministic
                 // even at confidence 1.0 — which is the whole point of the flag. It can still RE-DISPATCH
@@ -940,6 +944,8 @@ async fn a_judge_killed_attempt_reports_the_time_it_really_ran() {
                     verdict: Verdict::Looping,
                     confidence: 1.0,
                     hint: "STOP looping and WRITE the file now".to_string(),
+                    established: String::new(),
+                    next_action: String::new(),
                     proposed_split: None,
                     deterministic: false,
                 }
