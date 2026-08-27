@@ -34646,6 +34646,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
     // Emitted as its own event rather than by correcting `run_started`, so nothing that already parses
     // that event changes meaning underneath it. `pool` stays what it always was; this is what the run
     // actually has.
+    let startup_started = std::time::Instant::now();
     sink.write_value(serde_json::json!({
         "event": "pool_resolved",
         "devices": devices.iter().map(|d| serde_json::json!({
@@ -34971,6 +34972,34 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
     //
     // `version` exists because NO version field existed in any run log: attributing a result to a build
     // meant trusting a note someone typed. A number the engine did not emit is not evidence.
+    // WHERE SECRETS COME FROM, AND WHETHER GETTING THEM COST ANYTHING.
+    //
+    // MEASURED (swarm-3node-r0, 2026-08-27): 75m55s passed between pool_resolved and levers_resolved
+    // with ZERO model calls and NOTHING in the run log. The engine was blocked on a macOS keychain
+    // dialog. goose builds with the system-keyring feature; a keychain ACL binds to the CODE IDENTITY;
+    // an ad-hoc signature is a new code identity on every rebuild — so a freshly built binary re-prompts,
+    // and the one run guaranteed to have nobody watching is the benchmark.
+    //
+    // Seventy-six minutes of a benchmark vanished and the log recorded not one byte of it. This does not
+    // stop it happening — GOOSE_DISABLE_KEYRING does, and the bench harness now sets it — but a gap that
+    // leaves no trace gets rediscovered from scratch every time, which is exactly how six days went once.
+    let keyring_live = std::env::var("GOOSE_DISABLE_KEYRING").is_err();
+    let secrets_secs = startup_started.elapsed().as_secs();
+    sink.write_value(serde_json::json!({
+        "event": "secrets_source",
+        "store": if keyring_live { "system-keyring" } else { "file" },
+        "startup_secs": secrets_secs,
+        "can_block_on_a_gui_prompt": keyring_live,
+    }));
+    if keyring_live && secrets_secs > 60 {
+        eprintln!(
+            "  {} startup took {}m{}s before any model call. The system keyring can block on a GUI \
+             password prompt; set GOOSE_DISABLE_KEYRING=1 for an unattended run.",
+            style("!").yellow().bold(),
+            secrets_secs / 60,
+            secrets_secs % 60
+        );
+    }
     let mut levers_event = serde_json::json!({
         "event": "levers_resolved",
         // WHICH BUILD PRODUCED THIS RUN.
