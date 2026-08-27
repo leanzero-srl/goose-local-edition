@@ -8694,7 +8694,10 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
         // Sorts AFTER the prior log, exactly as a freshly-created live log does.
         std::fs::write(swarm.join("run-swarm-20260102-000000000.jsonl"), "").expect("empty log");
         let state = resume_state_from_dir(dir.path()).expect("the prior run is still resumable");
-        assert!(state.plan_json.is_some(), "the prior plan must come back");
+        assert!(
+            state.plan_json.contains("\"id\":\"core\""),
+            "the prior plan must come back, not an empty one"
+        );
         assert!(state.completed.contains("core"));
     }
 
