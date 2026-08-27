@@ -8708,6 +8708,89 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
 
     /// The same reader, against the REAL logs this machine has produced — a fixture can agree with a bug.
     #[test]
+    /// The TEST fan's whole output goes through this. A strict parser would turn a node that found
+    /// three real bugs into a node that found none, so it is deliberately lenient — and lenient parsers
+    /// are exactly the ones that need tests, because their failures are silent.
+    ///
+    /// Every input below is the shape a 27B actually produces: numbered, bolded, bulleted, prose in
+    /// front, or the FILES line simply forgotten.
+    fn observed_defects_survive_the_shapes_a_weak_model_actually_emits() {
+        // The shape we asked for.
+        let clean = parse_observed_defects(
+            "DEFECT: `GET /api/payments` returns 500 when the db is empty\n\
+             FILES: `vendorsync/api.py`, `vendorsync/store.py`\n\
+             DEFECT: the sync button does nothing\n\
+             FILES: `vendorsync/web/app.js`",
+        );
+        assert_eq!(clean.len(), 2);
+        assert!(clean[0].contains("`vendorsync/api.py`"), "{:?}", clean[0]);
+        assert!(clean[0].contains("`vendorsync/store.py`"));
+        assert!(clean[1].contains("`vendorsync/web/app.js`"));
+
+        // Numbered, bolded, bulleted, with prose in front — all one model, one reply.
+        let messy = parse_observed_defects(
+            "I exercised the primary journey and found two problems.\n\n\
+             1. **DEFECT:** `python -m vendorsync` exits 1 with a traceback\n\
+             **FILES:** `vendorsync/__main__.py`\n\
+             - DEFECT : the --port flag is ignored\n\
+               FILES : `vendorsync/__main__.py`\n\n\
+             That is everything I could reproduce.",
+        );
+        assert_eq!(messy.len(), 2, "{messy:?}");
+        assert!(messy.iter().all(|d| d.contains("`vendorsync/__main__.py`")));
+
+        // A defect with no FILES line is KEPT — it falls to the unattributed residue worker, which is
+        // where an unattributable defect belongs. Dropping it would lose a real bug.
+        let orphan = parse_observed_defects("DEFECT: the app never binds a port");
+        assert_eq!(orphan.len(), 1);
+        assert!(!orphan[0].contains('`'));
+
+        // "unknown" and "-" are the model declining to attribute, not a path.
+        let declined = parse_observed_defects("DEFECT: something is slow\nFILES: unknown");
+        assert_eq!(declined.len(), 1);
+        assert!(!declined[0].contains("unknown"), "{:?}", declined[0]);
+
+        // A clean run must produce ZERO findings, however it phrases it — a false defect sends the fix
+        // loop at working code.
+        for clean_reply in [
+            "NO DEFECTS",
+            "no defects",
+            "  NO DEFECTS  ",
+            "I ran every advertised command and they all worked.\nNO DEFECTS",
+        ] {
+            assert!(
+                parse_observed_defects(clean_reply).is_empty(),
+                "{clean_reply:?} must yield no findings"
+            );
+        }
+
+        // A call that died returns nothing, and silence is not a defect.
+        assert!(parse_observed_defects("").is_empty());
+    }
+
+    #[test]
+    /// The parser re-emits paths in BACKTICKS because that is the ONLY thing that makes the repair fan
+    /// able to shard a model-observed defect: `extract_file_from_finding` reads a backticked path from
+    /// mid-sentence. If this contract breaks, every TEST-fan defect silently falls to the single
+    /// unattributed worker and the fan has nothing to fan.
+    fn observed_defects_are_attributable_by_the_repair_fan() {
+        let all = vec![
+            "vendorsync/api.py".to_string(),
+            "vendorsync/web/app.js".to_string(),
+        ];
+        let d = parse_observed_defects(
+            "DEFECT: /api/payments 500s on an empty db\nFILES: `vendorsync/api.py`",
+        );
+        assert_eq!(d.len(), 1);
+        assert_eq!(
+            extract_file_from_finding(&d[0], &all).as_deref(),
+            Some("vendorsync/api.py"),
+            "the repair fan could not attribute {:?}",
+            d[0]
+        );
+    }
+
+    #[test]
     /// The read-only taxonomy must stay in step with what `call_objective` TELLS the judge each call is
     /// for. A call described as "must NOT write code" may not be handed write tools, and a call that
     /// builds something must be. Two consecutive runs wrote implementation during RESEARCH because the
