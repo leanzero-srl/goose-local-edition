@@ -23893,6 +23893,947 @@ fn parse_judge_reply(s: &str) -> JudgeOutcome {
     }
 }
 
+// ================================================================================================
+// THE LINEAR PLAN: OPEN -> RESEARCH -> SYNTHESIS -> REVIEW
+//
+// Replaces the multi-draft vote. What it replaces, and why, from this project's own measurements:
+//
+//   * Every node in this fleet runs the SAME model on a different host. The LOOP-CHARTER already
+//     settled what that means for voting, for review panels: "Voters are the SAME 27B weights ->
+//     voting suppresses variance, not shared bias -> Condorcet fails". Plan drafts are the same
+//     shape.
+//   * No model ever read the drafts. select_best_skeleton picked the winner with score_skeleton —
+//     independent-task count, depth penalty, file overlap — which has NO semantic term at all.
+//   * plan_agreement caps count_score at 14 whenever drafts differ in subtask count by >= 2, so the
+//     maximum reachable score is 74 against an ask_floor of 80. Genuinely different drafts tripped
+//     the redraft ladder BY ARITHMETIC CONSTRUCTION.
+//   * That ladder measured 84 -> 84 -> 70 -> 70 across three rounds, ~60 minutes of the whole
+//     fleet, and plan_loaded then shipped 52.
+//
+// The drafts themselves were free in wall-clock — they fanned in parallel. Deleting them saves
+// nothing on its own. The win is that the same parallel window stops producing N-1 discarded copies
+// of one artifact and starts producing N DIFFERENT researched module specs, and that the ladder,
+// which was not free, disappears.
+// ================================================================================================
+
+/// One semantic slice of the request, as the opener sees it.
+#[derive(Clone, Debug, serde::Deserialize)]
+struct OpenSlice {
+    id: String,
+    #[serde(default)]
+    title: String,
+    #[serde(default)]
+    objective: String,
+    #[serde(default)]
+    questions: Vec<String>,
+    /// The opener's OWN estimate of how much work this slice is, 1-5. Not truth — a model estimate,
+    /// used only to notice a lopsided split and ask for one more cut. Independent machines pick these
+    /// up in parallel, so a slice twice the size of its siblings is a node idling while one grinds.
+    #[serde(default)]
+    weight: u32,
+}
+
+#[derive(Clone, Debug, Default, serde::Deserialize)]
+struct OpenOutput {
+    #[serde(default)]
+    slices: Vec<OpenSlice>,
+    #[serde(default)]
+    open_decisions: Vec<String>,
+}
+
+/// A slice after its owner has researched it. `brief` is the module specification, and it is spliced
+/// into the task description VERBATIM — it never passes through the synthesis model.
+#[derive(Clone, Debug)]
+struct SliceBrief {
+    id: String,
+    title: String,
+    objective: String,
+    brief: String,
+}
+
+fn linear_plan_enabled() -> bool {
+    swarm_gate("GOOSE_SWARM_LINEAR_PLAN", false)
+}
+
+/// The opener's contract, deliberately small: no files, no deps, no task ids, no requirement map.
+fn open_schema() -> serde_json::Value {
+    serde_json::json!({
+        "type": "object",
+        "required": ["slices"],
+        "properties": {
+            "slices": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "required": ["id", "title", "objective", "questions", "weight"],
+                    "properties": {
+                        "id": {"type": "string"},
+                        "title": {"type": "string"},
+                        "objective": {"type": "string"},
+                        "questions": {"type": "array", "items": {"type": "string"}},
+                        "weight": {"type": "integer"}
+                    }
+                }
+            },
+            "open_decisions": {"type": "array", "items": {"type": "string"}}
+        }
+    })
+}
+
+/// SYNTHESIS emits only the skeleton — ids, files, deps. Hundreds of tokens, not tens of thousands.
+fn skeleton_schema() -> serde_json::Value {
+    serde_json::json!({
+        "type": "object",
+        "required": ["subtasks"],
+        "properties": {
+            "subtasks": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "required": ["id", "slice", "difficulty", "files", "depends_on"],
+                    "properties": {
+                        "id": {"type": "string"},
+                        "slice": {"type": "string"},
+                        "difficulty": {"type": "string"},
+                        "files": {"type": "array", "items": {"type": "string"}},
+                        "depends_on": {"type": "array", "items": {"type": "string"}}
+                    }
+                }
+            }
+        }
+    })
+}
+
+/// Is this slice set lopsided enough to be worth one more cut? HEAVIEST vs LIGHTEST, matching the
+/// pairwise rule the prompt states ("more than roughly twice the work of another"). A median test
+/// structurally cannot see "two big, one tiny", which is the shape that actually idles a node.
+fn lopsided_slice(slices: &[OpenSlice]) -> Option<String> {
+    if slices.len() < 2 {
+        return None;
+    }
+    let mut w: Vec<(u32, &str)> = slices
+        .iter()
+        .map(|s| (s.weight.max(1), s.id.as_str()))
+        .collect();
+    w.sort_unstable();
+    let (light, _) = w[0];
+    let (heavy, heavy_id) = *w.last().unwrap();
+    if heavy > light * 2 {
+        Some(heavy_id.to_string())
+    } else {
+        None
+    }
+}
+
+/// THE BRIEF CONTRACT — what a slice owner must produce. This is the worker's ENTIRE instruction, so
+/// it is the deliverable of the research phase, not a note about it.
+const BRIEF_CONTRACT: &str = "\
+Write the MODULE SPECIFICATION for your slice. Another engineer, on another machine, with no access \
+to you and no other context, must be able to build it from this alone. Include, in this order:\n\
+1. PURPOSE — what this module is for, in one sentence, in the app's own terms.\n\
+2. FILES — the exact paths you will create. Nothing outside them.\n\
+3. INTERFACE — every function, class or endpoint it exports, with REAL signatures: names, parameter \
+types, return types. Not \"a function to parse the CSV\" but `parse_ledger(path: Path) -> list[Row]`.\n\
+4. CONSUMES — what it needs from other modules, named by symbol and signature, so two people building \
+in parallel meet in the middle.\n\
+5. BEHAVIOUR AND EDGE CASES — the error cases it must handle and what it does in each: bad input, \
+missing file, empty data, a failing upstream call.\n\
+6. HOW YOU WOULD KNOW IT WORKS — the concrete check. A command to run, a call to make, an output to see.\n\
+7. EXCLUDES — what it must NOT do, so it does not wander into a neighbour's files.";
+
+impl GooseAgentDispatcher {
+    /// OPEN — one call, on the strongest node. Splits the request into balanced semantic slices, the
+    /// questions each needs answered, and the decisions the spec genuinely leaves open.
+    pub(crate) async fn open_slices(
+        &self,
+        planner_model: &str,
+        user_prompt: &str,
+    ) -> Result<OpenOutput> {
+        let existing = existing_files_manifest(&self.working_dir);
+        let existing_block = if existing.is_empty() {
+            String::new()
+        } else {
+            format!(
+                "\n\nFiles ALREADY on disk in the working directory — your slices must fit this layout, \
+                 not invent a parallel one:\n{}",
+                existing.join("\n")
+            )
+        };
+        let system = format!(
+            "You are the OPENER. Read the request and split it into SEMANTIC SLICES — coherent areas of \
+             work, divided by MEANING and by interface, never by document order or by equal-sized \
+             buckets.\n\n\
+             Each slice gets: an id (kebab-case), a title, an objective, the QUESTIONS that must be \
+             answered before it can be built, and a weight from 1 to 5 estimating how much work it is.\n\n\
+             SLICES MUST BE COMPARABLE IN SIZE. Independent machines will pick them up in parallel, so a \
+             slice more than roughly twice the work of another means one machine grinds while the others \
+             idle — split that one. But do NOT pad or merge to match a machine count: HOW MANY MACHINES \
+             EXIST IS IRRELEVANT to how many slices this request has. The same request must yield the \
+             same slices on one machine or a hundred. Do not add slices to fill idle machines, and do not \
+             merge distinct concerns because the fleet is small.\n\n\
+             Also list OPEN DECISIONS: things the request genuinely leaves undecided and that a human \
+             would need to choose (storage format, auth or none, which library). Only real ones — if the \
+             request settles it, or convention obviously settles it, it is not an open decision.\n\n\
+             Do NOT plan files, tasks or dependencies. Do NOT write code. Call the final_output tool once \
+             with the slices.{existing_block}"
+        );
+        let out = self
+            .run_agent_timed_at(
+                planner_model,
+                system,
+                format!("The request:\n\n{user_prompt}"),
+                Some(Response {
+                    json_schema: Some(open_schema()),
+                }),
+                planner_side_turns(),
+                &[],
+                None,
+                Some("open"),
+            )
+            .await?;
+        let raw = out.final_output.clone().unwrap_or_else(|| out.text.clone());
+        // Tolerant on purpose: the fleet is a 27B and it wraps structured output in prose or fences
+        // often enough that a strict parse would be a coin flip.
+        let parsed: OpenOutput = parse_json_lenient(&raw)
+            .ok_or_else(|| anyhow!("opener returned no parseable slice list"))?;
+        if parsed.slices.is_empty() {
+            bail!("opener returned zero slices");
+        }
+        Ok(parsed)
+    }
+
+    /// One targeted re-cut of a single lopsided slice. A PATCH, not a re-open: the opener is shown the
+    /// slice list it already produced and asked to replace exactly one entry, so the other slices — and
+    /// the reasoning that produced them — are never re-emitted. If it declines, or returns something
+    /// unusable, the run proceeds on the original split: an uneven slice costs queue time, and `weight`
+    /// was a model estimate rather than a measurement in the first place.
+    pub(crate) async fn resplit_slice(
+        &self,
+        planner_model: &str,
+        user_prompt: &str,
+        slices: &[OpenSlice],
+        heavy_id: &str,
+    ) -> Result<Vec<OpenSlice>> {
+        let listing = slices
+            .iter()
+            .map(|s| format!("- {} (weight {}) — {}", s.id, s.weight.max(1), s.title))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let heavy = slices
+            .iter()
+            .find(|s| s.id == heavy_id)
+            .ok_or_else(|| anyhow!("slice `{heavy_id}` vanished"))?;
+        let system = "You previously split a request into slices. One of them is much larger than its \
+             siblings, which means one machine will grind on it while the others idle.\n\n\
+             Split THAT SLICE ONLY into two or more comparable slices. Keep every other slice exactly as \
+             it is — do not restate them, do not renumber them, do not return them.\n\n\
+             Return only the replacements, in the same shape as before: id, title, objective, questions, \
+             weight. Call the final_output tool once."
+            .to_string();
+        let out = self
+            .run_agent_timed_at(
+                planner_model,
+                system,
+                format!(
+                    "## The request\n{user_prompt}\n\n## Your slices\n{listing}\n\n\
+                     ## The one to split: `{}`\n{}\n\nQuestions it carries:\n{}",
+                    heavy.id,
+                    heavy.objective,
+                    heavy.questions.join("\n")
+                ),
+                Some(Response {
+                    json_schema: Some(open_schema()),
+                }),
+                planner_side_turns(),
+                &[],
+                None,
+                Some("open-resplit"),
+            )
+            .await?;
+        let raw = out.final_output.clone().unwrap_or_else(|| out.text.clone());
+        let parsed: OpenOutput = parse_json_lenient(&raw)
+            .ok_or_else(|| anyhow!("re-split returned nothing parseable"))?;
+        Ok(parsed.slices)
+    }
+
+    /// RESEARCH — one slice per node, queued through the fleet. Each owner answers its own questions
+    /// and then writes the module specification for its area. Uncapped: this is where the specificity
+    /// of every downstream task is earned, and the phase it replaces died 25 times to a 75-second cap.
+    pub(crate) async fn research_slices(
+        self: &Arc<Self>,
+        worker_models: Vec<String>,
+        user_prompt: &str,
+        user_decisions: &str,
+        slices: Vec<OpenSlice>,
+        research_exts: Vec<ExtensionConfig>,
+    ) -> Vec<SliceBrief> {
+        let lanes = one_lane_per_host(worker_models);
+        let me = self.clone();
+        let prompt = user_prompt.to_string();
+        let decisions = user_decisions.to_string();
+        let exts = research_exts;
+        let out = fanout_over_fleet(lanes, slices.clone(), move |slice: OpenSlice, model: String| {
+            let prompt = prompt.clone();
+            let decisions = decisions.clone();
+            let exts = exts.clone();
+            let me = me.clone();
+            async move {
+                let qs = if slice.questions.is_empty() {
+                    "(none listed — work out what you need to know, then answer it)".to_string()
+                } else {
+                    slice
+                        .questions
+                        .iter()
+                        .map(|q| format!("- {q}"))
+                        .collect::<Vec<_>>()
+                        .join("\n")
+                };
+                let decisions_block = if decisions.trim().is_empty() {
+                    String::new()
+                } else {
+                    format!("\n\n## USER DECISIONS — BINDING, honour these EXACTLY\n{decisions}")
+                };
+                let system = format!(
+                    "You OWN one slice of this build, and nobody else will touch it. Two jobs, in order.\n\n\
+                     FIRST answer your slice's questions. Use your tools if you have them; where you \
+                     cannot look something up, say what you assumed and why, rather than inventing a \
+                     citation.\n\n\
+                     THEN write the module specification.\n\n{BRIEF_CONTRACT}\n\n\
+                     Write the specification itself, not a description of one. Do NOT write the \
+                     implementation — the engineer who builds this gets your specification as their \
+                     entire instruction, so be precise and be complete, and stop there."
+                );
+                let user = format!(
+                    "## The overall request\n{prompt}{decisions_block}\n\n\
+                     ## Your slice: {} — {}\n{}\n\n## Questions to answer first\n{qs}",
+                    slice.id, slice.title, slice.objective
+                );
+                let key = format!("slice-{}", slice.id);
+                let res = me
+                    .run_agent_timed_at(
+                        &model,
+                        system,
+                        user,
+                        None,
+                        planner_side_turns(),
+                        &exts,
+                        None,
+                        Some(&key),
+                    )
+                    .await;
+                let brief = match res {
+                    Ok(o) if !o.text.trim().is_empty() => o.text,
+                    // AN OWNER THAT DIES SHIPS ITS OBJECTIVE, and the run continues. The slice still has
+                    // an owner and still becomes a task; it is simply less specified than its siblings.
+                    // Losing one brief must never cost the decomposition.
+                    _ => format!(
+                        "PURPOSE: {}\n(The owner of this slice did not return a specification; build it \
+                         from the objective and the overall request.)",
+                        slice.objective
+                    ),
+                };
+                SliceBrief {
+                    id: slice.id,
+                    title: slice.title,
+                    objective: slice.objective,
+                    brief,
+                }
+            }
+        })
+        .await;
+        out
+    }
+}
+
+/// A tolerant JSON object parse: takes the first balanced `{...}` in the reply and deserialises it.
+/// The fleet wraps structured output in prose and fences often enough that a strict parse is a coin
+/// flip, and losing a whole phase to a stray "Sure — here you go:" is not a trade worth making.
+fn parse_json_lenient<T: serde::de::DeserializeOwned>(raw: &str) -> Option<T> {
+    if let Ok(v) = serde_json::from_str::<T>(raw) {
+        return Some(v);
+    }
+    let obj = extract_first_json_object(raw)?;
+    serde_json::from_str::<T>(&obj).ok()
+}
+
+fn extract_first_json_object(s: &str) -> Option<String> {
+    let start = s.find('{')?;
+    let b = s.as_bytes();
+    let (mut depth, mut in_str, mut esc) = (0usize, false, false);
+    for (i, &c) in b.iter().enumerate().skip(start) {
+        if in_str {
+            if esc {
+                esc = false;
+            } else if c == b'\\' {
+                esc = true;
+            } else if c == b'"' {
+                in_str = false;
+            }
+            continue;
+        }
+        match c {
+            b'"' => in_str = true,
+            b'{' => depth += 1,
+            b'}' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(s[start..=i].to_string());
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+/// The compact index handed to SYNTHESIS. Deliberately NOT the briefs.
+///
+/// This is the single decision that separates this design from the one that failed. codex routed the
+/// full researched detail back through the planner on every attempt and every repair; its planner
+/// compacted at 53,902 structured bytes and the run produced six whole plans without ever reaching
+/// build. Here the planner sees a few lines per slice, emits a few hundred tokens of skeleton, and the
+/// ENGINE splices the owners' briefs in verbatim afterwards.
+fn slice_index(briefs: &[SliceBrief]) -> String {
+    briefs
+        .iter()
+        .map(|b| {
+            let signatures = extract_interface_lines(&b.brief);
+            let head: String = b
+                .brief
+                .lines()
+                .filter(|l| !l.trim().is_empty())
+                .take(3)
+                .collect::<Vec<_>>()
+                .join(" ")
+                .chars()
+                .take(400)
+                .collect();
+            format!(
+                "### slice `{}` — {}\nobjective: {}\nsummary: {}\ninterface:\n{}",
+                b.id,
+                b.title,
+                b.objective,
+                head,
+                if signatures.is_empty() {
+                    "  (none stated)".to_string()
+                } else {
+                    signatures
+                }
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n\n")
+}
+
+/// Pull the lines that look like exported signatures out of a brief, so the planner can wire modules
+/// together without being shown their implementations.
+fn extract_interface_lines(brief: &str) -> String {
+    brief
+        .lines()
+        .map(|l| l.trim())
+        .filter(|l| {
+            let has_call = l.contains('(') && l.contains(')');
+            let decl = l.starts_with("def ")
+                || l.starts_with("async def ")
+                || l.starts_with("class ")
+                || l.starts_with("fn ")
+                || l.starts_with("pub fn ")
+                || l.starts_with("function ")
+                || l.starts_with("export ")
+                || l.contains("->")
+                || l.contains("=>");
+            has_call && decl && l.len() < 200
+        })
+        .take(12)
+        .map(|l| format!("  {l}"))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+impl GooseAgentDispatcher {
+    /// SYNTHESIS — one call. Wires the researched slices into a task DAG. It sees the compact index
+    /// only, and emits only ids, files and dependencies.
+    pub(crate) async fn synthesize_plan(
+        &self,
+        planner_model: &str,
+        user_prompt: &str,
+        briefs: &[SliceBrief],
+    ) -> Result<String> {
+        let index = slice_index(briefs);
+        let lang = detect_language(user_prompt, &existing_files_manifest(&self.working_dir));
+        let test_cmd = lang.test_cmd();
+        let system = format!(
+            "You are the SYNTHESIS step. Every slice below has already been researched and specified by \
+             its owner. You are WIRING THEM TOGETHER, not designing them — do not restate their \
+             specifications and do not write code.\n\n\
+             Emit one task per slice, keyed to that slice's id, with:\n\
+             - id: kebab-case task id\n\
+             - slice: the slice id it implements (exactly as given)\n\
+             - difficulty: \"easy\" or \"hard\"\n\
+             - files: the paths that task owns, taken from its slice's FILES section\n\
+             - depends_on: task ids it needs\n\n\
+             DEPENDENCIES ARE EXPENSIVE — every one of them idles a machine. Add one ONLY when a task \
+             literally cannot compile or run without another's file already existing. Needing to know a \
+             signature is NOT a dependency: the interfaces are already frozen and shared. If you are not \
+             sure, leave it out.\n\n\
+             Then add ONE final task with id exactly `integrate-verify`, difficulty \"hard\", which \
+             depends_on EVERY other task and OWNS NO FILES AT ALL (`files: []`). It wires the produced \
+             modules together, runs `{test_cmd}`, boots the app, and exercises the commands the request \
+             advertises. It must own no files: a task that owns files is failed when an upstream task \
+             fails, and this one has to run precisely when something upstream went wrong.\n\n\
+             Call the final_output tool once with the subtasks."
+        );
+        let out = self
+            .run_agent_timed_at(
+                planner_model,
+                system,
+                format!("## The request\n{user_prompt}\n\n## The researched slices\n{index}"),
+                Some(Response {
+                    json_schema: Some(skeleton_schema()),
+                }),
+                planner_side_turns(),
+                &[],
+                None,
+                Some("synthesis"),
+            )
+            .await?;
+        let raw = out.final_output.clone().unwrap_or_else(|| out.text.clone());
+        let mut v: serde_json::Value = parse_json_lenient(&raw)
+            .ok_or_else(|| anyhow!("synthesis returned no parseable plan"))?;
+        splice_briefs(&mut v, briefs);
+        Ok(v.to_string())
+    }
+}
+
+/// THE SPLICE. Each owner's brief goes into its task's `description` VERBATIM.
+///
+/// This is why the synthesis model never has to reproduce the researched detail, and therefore why a
+/// correction can be a small patch instead of a whole new plan. A task whose slice is unknown keeps
+/// whatever description it has; a slice nobody claimed is appended as its own task rather than being
+/// silently dropped, because a slice that was researched and then lost is work paid for and thrown away.
+fn splice_briefs(plan: &mut serde_json::Value, briefs: &[SliceBrief]) {
+    let by_id: std::collections::HashMap<&str, &SliceBrief> =
+        briefs.iter().map(|b| (b.id.as_str(), b)).collect();
+    let mut claimed: std::collections::HashSet<String> = std::collections::HashSet::new();
+    if let Some(tasks) = plan.get_mut("subtasks").and_then(|v| v.as_array_mut()) {
+        for t in tasks.iter_mut() {
+            let slice_id = t
+                .get("slice")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default()
+                .to_string();
+            if let Some(b) = by_id.get(slice_id.as_str()) {
+                t["description"] = serde_json::Value::from(b.brief.clone());
+                claimed.insert(slice_id);
+            }
+        }
+        for b in briefs {
+            if claimed.contains(&b.id) {
+                continue;
+            }
+            if b.id == goose_swarm::SINK_ID {
+                continue;
+            }
+            tasks.push(serde_json::json!({
+                "id": b.id,
+                "slice": b.id,
+                "difficulty": "easy",
+                "files": [],
+                "depends_on": [],
+                "description": b.brief,
+            }));
+        }
+    }
+}
+
+impl GooseAgentDispatcher {
+    /// REVIEW — a fresh call on an idle node, holding the ORIGINAL request next to the plan.
+    ///
+    /// It replaces the eight deterministic plan rewrites the engine used to perform (sink injection,
+    /// the three dependency relaxations, split_fat_modules, fan_verify_split, fan_e2e_split,
+    /// normalize_plan_files_to_package). Each of those encoded a rule; here each rule is a question a
+    /// model answers, and its answer is a small patch rather than surgery.
+    ///
+    /// It NEVER rejects a plan. It can only ask for changes, and the plan proceeds either way — which
+    /// is the whole difference from the compiler that discarded six plans and never reached build.
+    pub(crate) async fn review_plan(
+        &self,
+        planner_model: &str,
+        user_prompt: &str,
+        plan_json: &str,
+    ) -> Result<(goose_swarm::PlanPatch, Vec<String>)> {
+        // The plan WITHOUT descriptions: the reviewer is asked about structure, and showing it the
+        // briefs would both blow up the prompt and tempt it to rewrite them.
+        let mut skeleton: serde_json::Value = serde_json::from_str(plan_json)?;
+        if let Some(tasks) = skeleton.get_mut("subtasks").and_then(|v| v.as_array_mut()) {
+            for t in tasks.iter_mut() {
+                if let Some(o) = t.as_object_mut() {
+                    let short: String = o
+                        .get("description")
+                        .and_then(|d| d.as_str())
+                        .unwrap_or_default()
+                        .lines()
+                        .find(|l| !l.trim().is_empty())
+                        .unwrap_or_default()
+                        .chars()
+                        .take(160)
+                        .collect();
+                    o.insert("summary".into(), serde_json::Value::from(short));
+                    o.remove("description");
+                }
+            }
+        }
+        let system = "You are REVIEWING a build plan against the request it came from. You did not write \
+             it and you are not rewriting it.\n\n\
+             Answer these, in order:\n\
+             1. If every task completed and I then opened this app, what would happen? Say concretely.\n\
+             2. Does the request ask for anything that NO task owns?\n\
+             3. Is there exactly one task that wires the parts together, and does it own no files?\n\
+             4. Does anything wait on a test, rather than on code it needs?\n\
+             5. Which dependencies are not strictly required for the dependent's file to compile or run?\n\
+             6. Is any task much larger than the others?\n\
+             7. Do the file paths match the layout already on disk?\n\n\
+             Then return a PATCH — only the tasks that must change:\n\
+             {\"replace\":[{\"id\":\"...\",\"files\":[...],\"depends_on\":[...]}],\n\
+              \"add\":[{\"id\":\"...\",\"description\":\"...\",\"files\":[...],\"depends_on\":[...]}],\n\
+              \"remove\":[\"...\"],\n\
+              \"findings\":[\"one line per thing you found\"]}\n\n\
+             `replace` changes ONLY files and depends_on. You may NOT rewrite a task's specification — \
+             those were written by the engineers who researched each area, and they are not yours to \
+             edit. If a SPECIFICATION is wrong, say so in findings and leave the task alone.\n\n\
+             If the plan is sound, return empty lists. Do not invent work to look useful."
+            .to_string();
+        let out = self
+            .run_agent_timed_at(
+                planner_model,
+                system,
+                format!(
+                    "## The original request\n{user_prompt}\n\n## The plan\n{}",
+                    serde_json::to_string_pretty(&skeleton).unwrap_or_default()
+                ),
+                None,
+                planner_side_turns(),
+                &[],
+                None,
+                Some("review"),
+            )
+            .await?;
+        let raw = out.final_output.clone().unwrap_or_else(|| out.text.clone());
+        #[derive(serde::Deserialize, Default)]
+        struct ReviewOut {
+            #[serde(default)]
+            findings: Vec<String>,
+        }
+        let findings = parse_json_lenient::<ReviewOut>(&raw)
+            .unwrap_or_default()
+            .findings;
+        let patch = goose_swarm::parse_patch(&raw).unwrap_or_default();
+        Ok((patch, findings))
+    }
+}
+
+/// Drive REVIEW until it stops finding anything NEW.
+///
+/// "Stops when it finds nothing" is not a stop condition — an open-ended *what is missing?* always
+/// finds something. So each round's findings are de-duped against the previous round's and the loop
+/// ends on the first round that surfaces no new one. That is the stall-guard predicate this repo
+/// already uses and already tests; it is semantic, and it is neither a counter nor a clock.
+async fn review_until_settled(
+    dispatcher: &Arc<GooseAgentDispatcher>,
+    planner_model: &str,
+    user_prompt: &str,
+    mut plan_json: String,
+    sink: &Arc<dyn EventSink>,
+) -> String {
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut round = 0u32;
+    loop {
+        round += 1;
+        let (patch, findings) = match dispatcher
+            .review_plan(planner_model, user_prompt, &plan_json)
+            .await
+        {
+            Ok(v) => v,
+            Err(e) => {
+                eprintln!(
+                    "  · review round {round} did not return ({e}); proceeding on the plan as-is"
+                );
+                return plan_json;
+            }
+        };
+        let norm = |f: &String| {
+            f.trim()
+                .to_lowercase()
+                .chars()
+                .take(120)
+                .collect::<String>()
+        };
+        let fresh: Vec<String> = findings
+            .iter()
+            .filter(|f| !f.trim().is_empty() && !seen.contains(&norm(f)))
+            .cloned()
+            .collect();
+        for f in &findings {
+            seen.insert(norm(f));
+        }
+        sink.write_value(serde_json::json!({
+            "event": "review_findings",
+            "round": round,
+            "new": fresh.len(),
+            "repeated": findings.len().saturating_sub(fresh.len()),
+            "findings": fresh,
+            "patch_touches": patch.touched(),
+        }));
+        for f in &fresh {
+            eprintln!("  · review: {f}");
+        }
+        if !patch.is_empty() {
+            match goose_swarm::apply_patch(&plan_json, &patch) {
+                Ok(next) => {
+                    eprintln!(
+                        "  · review patched {} task(s): {} replaced, {} added, {} removed",
+                        patch.touched(),
+                        patch.replace.len(),
+                        patch.add.len(),
+                        patch.remove.len()
+                    );
+                    sink.write_value(serde_json::json!({
+                        "event": "plan_patched",
+                        "round": round,
+                        "replace": patch.replace.len(),
+                        "add": patch.add.len(),
+                        "remove": patch.remove.len(),
+                    }));
+                    plan_json = next;
+                }
+                Err(diag) => {
+                    // A BAD PATCH COSTS ONE PATCH. It is dropped, the plan it was meant to fix is
+                    // untouched, and the run continues — never a regeneration.
+                    eprintln!("  · review patch rejected ({diag}); dropped, plan unchanged");
+                    sink.write_value(serde_json::json!({
+                        "event": "plan_patch_rejected",
+                        "round": round,
+                        "diagnostic": diag,
+                    }));
+                }
+            }
+        }
+        if fresh.is_empty() {
+            return plan_json;
+        }
+    }
+}
+
+/// Drive OPEN -> ASK -> RESEARCH -> SYNTHESIS -> REVIEW and return what the rest of the run expects:
+/// the plan JSON, its DAG, a PlanConf, and whether the detail fan still needs to run (it does not —
+/// the slice owners already wrote every task's specification).
+#[allow(clippy::too_many_arguments)]
+async fn run_linear_plan(
+    dispatcher: &Arc<GooseAgentDispatcher>,
+    cfg: &SwarmConfig,
+    opts: &mut RunOpts,
+    sink: &Arc<dyn EventSink>,
+    research_findings: &mut String,
+    user_decisions: &mut String,
+    devices: &[DeviceCfg],
+    cwd_for_ask: &std::path::Path,
+    ask_max_q: usize,
+    ask_wait_secs: u64,
+) -> Result<(String, Dag, PlanConf, bool)> {
+    let worker_models: Vec<String> = fleet_slot_models(devices);
+
+    // ---- OPEN -------------------------------------------------------------------------------
+    phase_banner(
+        "OPEN",
+        "one node splits the request into balanced semantic slices",
+    );
+    sink.write_value(serde_json::json!({"event": "phase", "phase": "open"}));
+    let t_open = std::time::Instant::now();
+    let mut opened = dispatcher
+        .open_slices(&cfg.planner_model, &opts.prompt)
+        .await?;
+
+    // ONE targeted re-cut if the opener's own weights are lopsided. Heaviest vs lightest, matching the
+    // pairwise rule the prompt states — a median test cannot see "two big, one tiny", which is exactly
+    // the shape that leaves a node idle. A patch, never a re-open: if it declines, we proceed, because
+    // an uneven slice costs queue time and `weight` is a model estimate, not truth.
+    if let Some(heavy) = lopsided_slice(&opened.slices) {
+        eprintln!(
+            "  · slice `{heavy}` is more than twice its lightest sibling — asking for one more cut"
+        );
+        if let Ok(re) = dispatcher
+            .resplit_slice(&cfg.planner_model, &opts.prompt, &opened.slices, &heavy)
+            .await
+        {
+            if re.len() >= 2 {
+                opened.slices.retain(|s| s.id != heavy);
+                opened.slices.extend(re);
+            }
+        }
+    }
+    eprintln!(
+        "  {} slice(s) in {:.0}s: {}",
+        opened.slices.len(),
+        t_open.elapsed().as_secs_f64(),
+        opened
+            .slices
+            .iter()
+            .map(|s| format!("{}(w{})", s.id, s.weight.max(1)))
+            .collect::<Vec<_>>()
+            .join(", ")
+    );
+    sink.write_value(serde_json::json!({
+        "event": "slices_opened",
+        "count": opened.slices.len(),
+        "weights": opened.slices.iter().map(|s| s.weight.max(1)).collect::<Vec<_>>(),
+        "slices": opened.slices.iter().map(|s| s.id.clone()).collect::<Vec<_>>(),
+        "secs": t_open.elapsed().as_secs(),
+    }));
+
+    // ---- ASK --------------------------------------------------------------------------------
+    // Fires on the OPENER'S OWN list of open decisions, not on an arithmetic agreement score. The old
+    // trigger was a number this project measured lying: control arms with levers silently OFF scored
+    // 93-96 and asked nothing, while the arm with levers actually live scored 30 and asked once.
+    if !opened.open_decisions.is_empty() {
+        sink.write_value(serde_json::json!({"event": "phase", "phase": "ask"}));
+        let questions: Vec<ClarifyQuestion> = opened
+            .open_decisions
+            .iter()
+            .take(ask_max_q.max(1))
+            .map(|d| ClarifyQuestion {
+                question: d.clone(),
+                options: Vec::new(),
+                resolves: String::new(),
+            })
+            .collect();
+        let qa = ask_clarifying_questions(
+            &questions,
+            cwd_for_ask,
+            0,
+            None,
+            ask_wait_secs,
+            sink.as_ref(),
+        )
+        .await;
+        if !qa.is_empty() {
+            research_findings
+                .push_str("\n[USER DECISIONS — binding; honor these EXACTLY, verbatim]\n");
+            research_findings.push_str(&qa);
+            opts.prompt.push_str(USER_DECISIONS_HEADER);
+            opts.prompt.push_str(&qa);
+            user_decisions.push_str(&qa);
+        }
+    }
+
+    // ---- RESEARCH ---------------------------------------------------------------------------
+    phase_banner(
+        "RESEARCH",
+        "every node owns a slice: answer its questions, then write its module spec",
+    );
+    sink.write_value(serde_json::json!({"event": "phase", "phase": "research"}));
+    let t_research = std::time::Instant::now();
+    let research_exts = build_research_exts(swarm_gate_cfg(
+        "GOOSE_SWARM_RESEARCH_TOOLS",
+        cfg.research_tools,
+    ));
+    let briefs = dispatcher
+        .research_slices(
+            worker_models.clone(),
+            &opts.prompt,
+            user_decisions,
+            opened.slices.clone(),
+            research_exts,
+        )
+        .await;
+    for b in &briefs {
+        eprintln!("  · {} — {} chars of spec", b.id, b.brief.chars().count());
+    }
+    sink.write_value(serde_json::json!({
+        "event": "research_completed",
+        "slices": briefs.len(),
+        "brief_chars": briefs.iter().map(|b| b.brief.chars().count()).collect::<Vec<_>>(),
+        "secs": t_research.elapsed().as_secs(),
+    }));
+    // The briefs ARE the research findings for everything downstream that reads them.
+    for b in &briefs {
+        research_findings.push_str(&format!("\n## {} — {}\n{}\n", b.id, b.title, b.brief));
+    }
+
+    // ---- SYNTHESIS --------------------------------------------------------------------------
+    phase_banner(
+        "SYNTHESIS",
+        "one node wires the researched slices into a task DAG",
+    );
+    sink.write_value(serde_json::json!({"event": "phase", "phase": "synthesis"}));
+    let plan_json = match dispatcher
+        .synthesize_plan(&cfg.planner_model, &opts.prompt, &briefs)
+        .await
+    {
+        Ok(p) => p,
+        Err(e) => {
+            // THE FALLBACK IS A VALID PLAN, not a dead run. One task per slice, no dependencies, each
+            // carrying its owner's verbatim brief and the sink behind them. Flatter and more serial
+            // than a good synthesis, but every module is specified and owned — a bad synthesis costs
+            // parallelism, never the work that was already paid for.
+            eprintln!("  · synthesis did not return ({e}); falling back to one task per slice");
+            sink.write_value(serde_json::json!({
+                "event": "synthesis_fallback",
+                "error": e.to_string(),
+                "tasks": briefs.len() + 1,
+            }));
+            flat_plan_from_briefs(&briefs)
+        }
+    };
+
+    // ---- REVIEW -----------------------------------------------------------------------------
+    phase_banner(
+        "REVIEW",
+        "an idle node reads the ORIGINAL request against the plan and patches what is missing",
+    );
+    sink.write_value(serde_json::json!({"event": "phase", "phase": "review"}));
+    let plan_json = review_until_settled(
+        dispatcher,
+        &cfg.planner_model,
+        &opts.prompt,
+        plan_json,
+        sink,
+    )
+    .await;
+
+    let dag = Dag::from_planner_json(&plan_json)
+        .map_err(|e| anyhow!("the synthesised plan will not parse: {e}"))?;
+    // plan_needs_detail = false: the slice owners already wrote every task's specification, which is
+    // the whole point. The detail fan exists to turn a one-line brief into a spec in 75 seconds; here
+    // there is no one-line brief to expand.
+    Ok((plan_json, dag, PlanConf::default(), false))
+}
+
+/// One task per slice, deps stripped, plus the sink. Always validates.
+fn flat_plan_from_briefs(briefs: &[SliceBrief]) -> String {
+    let mut tasks: Vec<serde_json::Value> = briefs
+        .iter()
+        .map(|b| {
+            serde_json::json!({
+                "id": b.id,
+                "slice": b.id,
+                "difficulty": "hard",
+                "files": [],
+                "depends_on": [],
+                "description": b.brief,
+            })
+        })
+        .collect();
+    tasks.push(serde_json::json!({
+        "id": goose_swarm::SINK_ID,
+        "difficulty": "hard",
+        "files": [],
+        "depends_on": briefs.iter().map(|b| b.id.clone()).collect::<Vec<_>>(),
+        "description": "Wire the produced modules together, run the test suite, boot the app and \
+                        exercise every command the request advertises. Fix what fails.",
+    }));
+    serde_json::json!({ "subtasks": tasks }).to_string()
+}
+
 impl GooseAgentDispatcher {
     /// M3: ask the idle judge model to PARTITION an over-long task's files into 2–4 independent children.
     /// Returns the parsed children (the scheduler re-validates the partition before applying), or None if
@@ -33934,6 +34875,20 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
         let dag = Dag::from_planner_json(&r.plan_json)
             .map_err(|e| anyhow!("the resumed plan will not parse: {e}"))?;
         (r.plan_json, dag, PlanConf::default(), false)
+    } else if true {
+        run_linear_plan(
+            &dispatcher,
+            &cfg,
+            &mut opts,
+            &sink,
+            &mut research_findings,
+            &mut user_decisions,
+            &devices,
+            &cwd_for_ask,
+            ask_max_q,
+            ask_wait_secs,
+        )
+        .await?
     } else {
         // Labeled so ASK-AWAY's inner ask loop can `continue 'plan_loop` to force a re-plan on a structural
         // answer (language flip / product first defined) while ordinary inline batches loop the inner ask.
