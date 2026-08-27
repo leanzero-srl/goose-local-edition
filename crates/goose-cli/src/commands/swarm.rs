@@ -8600,6 +8600,39 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
 
     /// The same reader, against the REAL logs this machine has produced — a fixture can agree with a bug.
     #[test]
+    /// The judge's own words must never become a verdict about the judge.
+    ///
+    /// `upper.contains("RESTART")` scanned the whole reply, hint included. The hint is exactly where the
+    /// word appears in normal use — the live run's best diagnosis was "stop retrying the same port ...
+    /// or check if the server is already running", and a sibling shape is "the worker keeps restarting
+    /// the dev server". Both parsed as Verdict::Restart at 0.85, which clears the intervention bar and
+    /// re-queues a LIVE worker.
+    fn a_verdict_is_read_from_a_field_not_from_the_hint() {
+        // The hint mentions restarting. The verdict is LOOPING and must stay LOOPING.
+        let o = parse_judge_reply(
+            "LOOPING|HIGH|it has re-run one command 8 times|stop and restart the server on a new port",
+        );
+        assert_eq!(o.verdict, Verdict::Looping, "hint text became the verdict");
+
+        let o = parse_judge_reply("BROKEN_CODE|HIGH|the worker keeps restarting the dev server");
+        assert_eq!(o.verdict, Verdict::BrokenCode);
+
+        // A real RESTART verdict still parses, in both measured shapes.
+        assert_eq!(
+            parse_judge_reply("RESTART|HIGH|nothing usable yet|start again from the spec").verdict,
+            Verdict::Restart
+        );
+        assert_eq!(
+            parse_judge_reply("VERDICT|CONFIDENCE|RESTART|HIGH|est|next").verdict,
+            Verdict::Restart
+        );
+
+        // Confidence had the same bug: "high priority" in a hint used to raise it.
+        let low = parse_judge_reply("DRIFTING|LOW|est|this is a high priority fix");
+        assert!(low.confidence < 0.8, "hint text raised the confidence");
+    }
+
+    #[test]
     /// The TEST fan's whole output goes through this. A strict parser would turn a node that found
     /// three real bugs into a node that found none, so it is deliberately lenient — and lenient parsers
     /// are exactly the ones that need tests, because their failures are silent.
@@ -24031,20 +24064,37 @@ fn parse_judge_reply(s: &str) -> JudgeOutcome {
             free[free.len() - 1].to_string(),
         ),
     };
-    // Confidence is the judge's own, and it no longer gates an irreversible action — nothing the judge
-    // says can fail a task any more. It only shapes how forcefully the nudge is worded.
-    let confidence = if upper.contains("HIGH") { 0.85 } else { 0.5 };
-    let verdict = if upper.contains("RESTART") {
+    // THE VERDICT COMES FROM A TOKEN SEGMENT, NEVER FROM A SUBSTRING SCAN OF THE WHOLE REPLY.
+    //
+    // This was `upper.contains("RESTART")` over the entire text — including the free-form hint. So the
+    // judge's own good advice turned into a verdict about itself: `LOOPING|HIGH|est|stop and restart the
+    // server` parsed as Restart, and `BROKEN_CODE|HIGH|the worker keeps restarting the dev server`
+    // parsed as Restart at confidence 0.85, which clears the intervention bar and re-queues a live
+    // worker. The mirror case lost a real verdict — a Restart the in-call loop has no branch for falls
+    // to the `else` and wipes the looping streak and its corroboration tails.
+    //
+    // `is_token` already knows which segments are field values rather than prose, and every measured
+    // reply shape puts the verdict in one of them (`LOOPING|HIGH|…` and the label-echoing
+    // `VERDICT|CONFIDENCE|LOOPING|HIGH|…`). Reading only those is exact and keeps the leniency.
+    let tokens: Vec<String> = s
+        .split('|')
+        .map(|h| h.trim().to_uppercase())
+        .filter(|h| is_token(h))
+        .collect();
+    let said = |k: &str| tokens.iter().any(|t| t == k);
+    // Same bug, same fix: a hint containing "high priority" used to raise the confidence.
+    let confidence = if said("HIGH") { 0.85 } else { 0.5 };
+    let verdict = if said("RESTART") {
         Verdict::Restart
-    } else if upper.contains("LOOPING") {
+    } else if said("LOOPING") {
         Verdict::Looping
-    } else if upper.contains("DRIFTING") {
+    } else if said("DRIFTING") {
         Verdict::Drifting
-    } else if upper.contains("BROKEN_CODE") || upper.contains("BROKEN CODE") {
+    } else if said("BROKEN_CODE") || said("BROKEN CODE") {
         Verdict::BrokenCode
-    } else if upper.contains("OVER_READING") || upper.contains("OVER READING") {
+    } else if said("OVER_READING") || said("OVER READING") {
         Verdict::OverReading
-    } else if upper.contains("SPEC_DRIFT") || upper.contains("SPEC DRIFT") {
+    } else if said("SPEC_DRIFT") || said("SPEC DRIFT") {
         Verdict::SpecDrift
     } else {
         // No keyword. The measured qwen habit is to state a real problem as `VERDICT|HIGH|<correction>`
@@ -25235,9 +25285,56 @@ async fn run_linear_plan(
     let tree_at_start: Vec<String> = existing_files_manifest(&dispatcher.working_dir);
     sink.write_value(serde_json::json!({"event": "phase", "phase": "open"}));
     let t_open = std::time::Instant::now();
-    let mut opened = dispatcher
+    // OPEN PROCEEDS REGARDLESS. Section 8.1 says so and the code did not: this was a single `?`, so a
+    // reply `parse_json_lenient` could not recover, or an empty slice array, propagated straight out of
+    // the run. A 27B that wraps its list oddly ended the whole thing at minute one, with no plan, no
+    // output and nothing to resume from — the most expensive possible failure of the cheapest call.
+    //
+    // One re-ask (the fleet is a weak model and a second sample is genuinely different), then the
+    // single-slice fallback: the whole request as one slice. That always parses, always validates, and
+    // costs parallelism rather than the run. RESEARCH then writes one large brief instead of nine, which
+    // is a worse plan and still a plan.
+    let mut opened = match dispatcher
         .open_slices(&cfg.planner_model, &opts.prompt)
-        .await?;
+        .await
+    {
+        Ok(o) => o,
+        Err(first) => {
+            eprintln!(
+                "  {} opener failed ({first}) — asking once more",
+                style("!").yellow()
+            );
+            match dispatcher
+                .open_slices(&cfg.planner_model, &opts.prompt)
+                .await
+            {
+                Ok(o) => o,
+                Err(second) => {
+                    sink.write_value(serde_json::json!({
+                        "event": "open_fallback",
+                        "first_error": first.to_string(),
+                        "second_error": second.to_string(),
+                        "detail": "the opener produced no parseable slices twice; proceeding with the \
+                                   whole request as ONE slice rather than ending the run",
+                    }));
+                    eprintln!(
+                        "  {} opener failed twice — building from ONE slice (the whole request)",
+                        style("!").yellow().bold()
+                    );
+                    OpenOutput {
+                        slices: vec![OpenSlice {
+                            id: "app".to_string(),
+                            title: "the whole request".to_string(),
+                            objective: opts.prompt.clone(),
+                            questions: Vec::new(),
+                            weight: 5,
+                        }],
+                        open_decisions: Vec::new(),
+                    }
+                }
+            }
+        }
+    };
 
     // ONE targeted re-cut if the opener's own weights are lopsided. Heaviest vs lightest, matching the
     // pairwise rule the prompt states — a median test cannot see "two big, one tiny", which is exactly
@@ -25447,7 +25544,7 @@ async fn run_linear_plan(
         "one node wires the researched slices into a task DAG",
     );
     sink.write_value(serde_json::json!({"event": "phase", "phase": "synthesis"}));
-    let plan_json = match dispatcher
+    let mut plan_json = match dispatcher
         .synthesize_plan(&cfg.planner_model, &opts.prompt, &briefs, &tree_at_start)
         .await
     {
@@ -25479,7 +25576,7 @@ async fn run_linear_plan(
         "an idle node reads the ORIGINAL request against the plan and patches what is missing",
     );
     sink.write_value(serde_json::json!({"event": "phase", "phase": "review"}));
-    let plan_json = review_until_settled(
+    let mut plan_json = review_until_settled(
         dispatcher,
         &cfg.planner_model,
         &opts.prompt,
@@ -25488,8 +25585,32 @@ async fn run_linear_plan(
     )
     .await;
 
-    let dag = Dag::from_planner_json(&plan_json)
-        .map_err(|e| anyhow!("the synthesised plan will not parse: {e}"))?;
+    // AN INVALID DAG FALLS BACK. It used to `?` out of the run — AFTER research had been paid for.
+    //
+    // `synthesize_plan` returns Ok for anything `parse_json_lenient` turns into an object and does no
+    // DAG validation at all, so a cycle, a duplicate id or a dangling depends_on — including one a
+    // REVIEW patch introduced — landed here and killed the run. The flat fallback that "always
+    // validates" was reachable only from the Err arm of synthesis, which is not the failure that
+    // actually happens.
+    let dag = match Dag::from_planner_json(&plan_json) {
+        Ok(d) => d,
+        Err(e) => {
+            sink.write_value(serde_json::json!({
+                "event": "synthesis_fallback",
+                "error": e.to_string(),
+                "detail": "the synthesised plan is not a valid DAG (cycle, duplicate id or dangling \
+                           dependency); falling back to one task per slice",
+            }));
+            eprintln!(
+                "  {} the synthesised plan will not load ({e}) — one task per slice instead",
+                style("!").yellow().bold()
+            );
+            plan_json =
+                flat_plan_from_briefs(&briefs, detect_language(&opts.prompt, &tree_at_start));
+            Dag::from_planner_json(&plan_json)
+                .map_err(|e2| anyhow!("even the flat fallback will not load: {e2}"))?
+        }
+    };
     // plan_needs_detail = false: the slice owners already wrote every task's specification, which is
     // the whole point. The detail fan exists to turn a one-line brief into a spec in 75 seconds; here
     // there is no one-line brief to expand.
