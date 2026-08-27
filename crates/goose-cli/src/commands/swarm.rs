@@ -3329,6 +3329,14 @@ const OMNI_JUDGE_INTERVAL_SECS: u64 = 60;
 /// Deliberately a raise, not a disable — the intent of #135 stands ("you will see it immediately"; waiting
 /// for 26,000 threw away minutes of a node per incident). This only stops it firing before there is
 /// anything to read.
+/// How often the streaming loop wakes when the provider is sending nothing.
+///
+/// NOT A CAP, and the distinction is the whole point: expiry runs the judge-look trigger and then goes
+/// back to awaiting the same stream. Nothing is cancelled, failed, or given up on. It exists because
+/// every judge look lives inside the stream loop, so a call that has gone silent is a call the judge
+/// cannot see — which is precisely the call it most needs to see.
+const JUDGE_WAKE: std::time::Duration = std::time::Duration::from_secs(30);
+
 const OMNI_JUDGE_MIN_CHARS: usize = 2_000;
 /// Cap the looks per call so a very long healthy call cannot spend unbounded judge time.
 // REMOVED: OMNI_JUDGE_MAX_LOOKS (was 6). A cap on how many times the judge may look is a cap on how
@@ -8599,6 +8607,55 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
     }
 
     /// The same reader, against the REAL logs this machine has produced — a fixture can agree with a bug.
+    #[test]
+    /// ORDER IS THE WHOLE BUG. `pin_sink_id` was correct and ran on the wrong value at the wrong time —
+    /// after the DAG the scheduler actually runs had already been built from the unpinned JSON. This
+    /// pins the composition: pin THEN build, and the DAG carries the engine's sink id.
+    ///
+    /// The negative half is the one that matters, because it is what shipped: build first and the DAG
+    /// keeps the model's name, so every exact-equality consumer of `integrate-verify` reads false while
+    /// the raw plan says otherwise.
+    fn pinning_before_the_dag_is_what_makes_the_sink_id_real() {
+        let raw = r#"{"subtasks":[
+            {"id":"store","depends_on":[],"files":["app/store.py"]},
+            {"id":"cli","depends_on":["store"],"files":["app/cli.py"]},
+            {"id":"wire-app","depends_on":["store","cli"],"files":[]}
+        ]}"#;
+
+        // BUILD FIRST — the shipped order. The DAG never sees the pin.
+        let unpinned = goose_swarm::Dag::from_planner_json(raw).expect("valid dag");
+        assert!(
+            !unpinned.tasks.contains_key(goose_swarm::SINK_ID),
+            "building before pinning leaves the model's join name in the DAG"
+        );
+
+        // PIN FIRST — the fixed order.
+        let mut v: serde_json::Value = serde_json::from_str(raw).unwrap();
+        assert_eq!(
+            goose_swarm::pin_sink_id(&mut v).as_deref(),
+            Some("wire-app")
+        );
+        let pinned = goose_swarm::Dag::from_planner_json(&v.to_string()).expect("valid dag");
+        assert!(
+            pinned.tasks.contains_key(goose_swarm::SINK_ID),
+            "the DAG must carry the engine's sink id, not the model's"
+        );
+        // and every reference to it followed
+        let deps: Vec<String> = pinned
+            .tasks
+            .values()
+            .flat_map(|n| n.spec.deps.clone())
+            .collect();
+        assert!(
+            !deps.iter().any(|d| d == "wire-app"),
+            "a dangling reference to the old join name survived: {deps:?}"
+        );
+
+        // Idempotent, so the later call in run_swarm is a no-op rather than a second rename.
+        let mut again = v.clone();
+        assert_eq!(goose_swarm::pin_sink_id(&mut again), None);
+    }
+
     #[test]
     /// The judge's own words must never become a verdict about the judge.
     ///
@@ -16924,12 +16981,38 @@ impl GooseAgentDispatcher {
             //
             // What ends a call now: the model finishes, the judge cancels a corroborated loop, or the
             // socket dies. Nothing else, and no clock.
-            let ev = match stream.next().await {
-                Some(ev) => {
+            // A CLOCK MAY SUMMON THE JUDGE. IT MAY NEVER CUT THE CALL.
+            //
+            // I deleted the timeout that used to wrap this await, on the argument that reqwest's
+            // inactivity read_timeout makes an engine watchdog redundant. That argument is right about
+            // WATCHING and wrong about WAKING, and the difference cost a run.
+            //
+            // MEASURED (swarm-3node-r0, 17:11-17:39): a research call went silent, the judge looked, said
+            // LOOPING at `rate 0/109s` — and then never looked again, because EVERY judge look lives
+            // inside this loop body and the loop body only runs when the stream yields. No events, no
+            // looks, no nudge, no end. Nine lanes idle for 26-40 minutes behind one open socket while the
+            // engine sat at 0.0% CPU. The deleted timeout was not only a watchdog; it was this loop's
+            // heartbeat, and it was the only thing that woke the supervisor when the supervised went
+            // quiet.
+            //
+            // reqwest cannot cover it either: read_timeout counts BYTES, and an SSE keep-alive is bytes
+            // with no semantic event. The engine watchdog counted EVENTS. They are not the same measure,
+            // and section 8's "redundant" note conflated them.
+            //
+            // So the wake-up comes back and the TERMINATION does not. On expiry we do not error, do not
+            // break and do not touch the call — we fall through to the judge-look trigger below with
+            // whatever the call has produced, and go straight back to awaiting. The judge decides, as it
+            // is supposed to; the clock only makes sure it is asked.
+            let ev = match tokio::time::timeout(JUDGE_WAKE, stream.next()).await {
+                Ok(Some(ev)) => {
                     first_event_seen = true;
-                    ev
+                    Some(ev)
                 }
-                None => break,
+                Ok(None) => break,
+                Err(_) => None,
+            };
+            let Some(ev) = ev else {
+                continue;
             };
             match ev {
                 Ok(AgentEvent::Message(msg)) => {
@@ -25584,6 +25667,50 @@ async fn run_linear_plan(
         sink,
     )
     .await;
+
+    // PIN THE SINK BEFORE THE DAG EXISTS, NOT TEN THOUSAND LINES LATER.
+    //
+    // `pin_sink_id` also runs in run_swarm, on the plan_json this function RETURNS — and that was a dead
+    // write. The DAG the scheduler actually runs is the one built immediately below, from the PRE-pin
+    // JSON, and it is only rebuilt from the pinned plan under `fill_fan_enabled()`, which defaults false.
+    // So in the exact case the pin exists for — the model calls its join `wire-app` — the rename reached
+    // raw_plan_json and the sink_id_pinned event and NOTHING ELSE. Six exact-equality consumers kept the
+    // model's name and silently read false: the replan-suppression gate (scheduler.rs:906), the claim
+    // gate (:1110), the phase:integrate emit (:1158), plan_loaded.tasks[].id (built from dag.tasks), the
+    // desktop's only Verify row, and the bench sink detectors. plan_loaded then contradicted itself in a
+    // single event — tasks[].id said `wire-app` while raw_plan_json said `integrate-verify`.
+    //
+    // require_advertised_entry_files was the same dead write on the same value: an injected entry file
+    // never became any task's owned_files and never entered smoke_all_files, both of which come from the
+    // dag. Applying both here makes the plan and the DAG agree by construction. The later call is now
+    // idempotent — pin_sink_id returns None when the join is already named correctly.
+    if let Ok(mut v) = serde_json::from_str::<serde_json::Value>(&plan_json) {
+        let pinned = goose_swarm::pin_sink_id(&mut v);
+        let added = require_advertised_entry_files(&mut v, &opts.prompt);
+        if pinned.is_some() || !added.is_empty() {
+            if let Some(old) = &pinned {
+                eprintln!(
+                    "  {} the plan's join was named `{old}` — pinned to `{}` before the DAG is built",
+                    style("·").cyan(),
+                    goose_swarm::SINK_ID
+                );
+                sink.write_value(serde_json::json!({
+                    "event": "sink_id_pinned",
+                    "from": old,
+                    "to": goose_swarm::SINK_ID,
+                    "where": "pre-dag",
+                }));
+            }
+            if !added.is_empty() {
+                sink.write_value(serde_json::json!({
+                    "event": "entry_files_required",
+                    "files": added,
+                    "where": "pre-dag",
+                }));
+            }
+            plan_json = v.to_string();
+        }
+    }
 
     // AN INVALID DAG FALLS BACK. It used to `?` out of the run — AFTER research had been paid for.
     //
