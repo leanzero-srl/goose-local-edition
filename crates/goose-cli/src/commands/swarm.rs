@@ -19051,15 +19051,19 @@ subprocess.Popen(
             normalize_repair_finding(no_bind_seq_12),
             "the hermetic scratch sequence and dynamic ports cannot mint a new causal defect"
         );
+        let repair_root = tempfile::TempDir::new().unwrap();
+        std::fs::write(repair_root.path().join("app.txt"), "unchanged\n").unwrap();
+        let snapshot = repair_tree_snapshot(repair_root.path()).unwrap();
         let mut feedback = AuthoritativeRepairFeedback::default();
         assert_eq!(
-            feedback.classify(&[no_bind_seq_1.to_string()]),
-            AuthoritativeRepairDisposition::Continue { cycle: 1 }
+            feedback.ensure_cycle(&[no_bind_seq_1.to_string()], snapshot.clone()),
+            1
         );
-        assert!(matches!(
-            feedback.classify(&[no_bind_seq_12.to_string()]),
-            AuthoritativeRepairDisposition::Incomplete(_)
-        ));
+        assert_eq!(
+            feedback.classify(&[no_bind_seq_12.to_string()], snapshot),
+            AuthoritativeRepairDisposition::Continue { cycle: 2 },
+            "finding equality alone cannot close or terminalize a repair cycle"
+        );
     }
 
     #[test]
@@ -19155,11 +19159,11 @@ subprocess.Popen(
             .iter()
             .map(|finding| finding.as_str().unwrap().to_string())
             .collect::<Vec<_>>();
+        let feedback_root = tempfile::TempDir::new().unwrap();
+        std::fs::write(feedback_root.path().join("app.txt"), "before\n").unwrap();
+        let before = repair_tree_snapshot(feedback_root.path()).unwrap();
         let mut feedback = AuthoritativeRepairFeedback::default();
-        assert_eq!(
-            feedback.classify(&authoritative),
-            AuthoritativeRepairDisposition::Continue { cycle: 1 }
-        );
+        assert_eq!(feedback.ensure_cycle(&authoritative, before.clone()), 1);
         let now = std::time::Instant::now();
         let mut deadline = Some(now);
         assert_eq!(
@@ -19169,29 +19173,53 @@ subprocess.Popen(
         assert_eq!(deadline, Some(now + Duration::from_secs(60)));
         feedback.note_budget_refreshed();
         feedback.note_ruler(&authoritative);
-        feedback.note_repair_dispatch();
-        feedback.note_ruler(&authoritative);
-        let AuthoritativeRepairDisposition::Incomplete(evidence) =
-            feedback.classify(&authoritative)
+        feedback.note_repair_dispatch("whole-tree-race");
+        feedback.note_repair_outcome("whole-tree-race", false, false);
+        std::fs::write(feedback_root.path().join("app.txt"), "after\n").unwrap();
+        let after = repair_tree_snapshot(feedback_root.path()).unwrap();
+        let mut end_findings = authoritative.clone();
+        end_findings[0] = "a deeper entrypoint contract remains unresolved".to_string();
+        feedback.note_ruler(&end_findings);
+        let AuthoritativeRepairDisposition::NeedsSemanticDecision(evidence) =
+            feedback.classify(&end_findings, after.clone())
         else {
-            panic!("unchanged authoritative findings reopened an unbounded repair cycle");
+            panic!("complete zero-promotion cycle did not request admitted semantic authority");
         };
+        assert_eq!(evidence.cycle, 1);
+        assert!(evidence.feedback_applied);
+        assert!(evidence.repair_dispatched);
+        assert_eq!(evidence.post_dispatch_rulers, 1);
+        assert!(evidence.budget_refreshed);
+        assert_eq!(evidence.start_findings, authoritative);
+        assert_eq!(evidence.end_findings, end_findings);
+        assert_ne!(
+            evidence.start_findings, evidence.end_findings,
+            "semantic-cycle admission must not depend on finding-text equality"
+        );
+        assert_eq!(evidence.start_tree_hash, before.sha256);
+        assert_eq!(evidence.end_tree_hash, after.sha256);
+        assert_eq!(evidence.changed_files, ["app.txt"]);
+        let app_diff = evidence.file_diffs.get("app.txt").unwrap();
         assert_eq!(
-            evidence,
-            AuthoritativeRepairCycleEvidence {
-                cycle: 1,
-                feedback_applied: true,
-                repair_dispatched: true,
-                post_dispatch_rulers: 1,
-                budget_refreshed: true,
-            }
+            app_diff.before_sha256,
+            before.entries.get("app.txt").cloned()
+        );
+        assert_eq!(app_diff.after_sha256, after.entries.get("app.txt").cloned());
+        assert_eq!(
+            evidence.routes.get("whole-tree-race"),
+            Some(&AuthoritativeRepairRouteEvidence {
+                dispatches: 1,
+                completions: 1,
+                promotions: 0,
+                failures: 0,
+            })
         );
 
         let improved = authoritative.into_iter().skip(1).collect::<Vec<_>>();
         assert_eq!(
-            feedback.classify(&improved),
+            feedback.classify(&improved, after.clone()),
             AuthoritativeRepairDisposition::Continue { cycle: 2 },
-            "a genuinely changed cause set gets one new bounded feedback cycle"
+            "a genuinely changed cause set opens a new causal cycle"
         );
 
         let no_bind = fixture["volatile_no_bind_findings"]
@@ -19211,20 +19239,23 @@ subprocess.Popen(
         );
         let mut volatile_feedback = AuthoritativeRepairFeedback::default();
         assert_eq!(
-            volatile_feedback.classify(std::slice::from_ref(&no_bind[0])),
-            AuthoritativeRepairDisposition::Continue { cycle: 1 }
+            volatile_feedback.ensure_cycle(std::slice::from_ref(&no_bind[0]), after.clone()),
+            1
         );
         volatile_feedback.note_ruler(std::slice::from_ref(&no_bind[1]));
-        volatile_feedback.note_repair_dispatch();
+        volatile_feedback.note_repair_dispatch("serial-whole-tree");
+        volatile_feedback.note_repair_outcome("serial-whole-tree", false, false);
         volatile_feedback.note_ruler(std::slice::from_ref(&no_bind[2]));
         assert!(matches!(
-            volatile_feedback.classify(std::slice::from_ref(&no_bind[2])),
-            AuthoritativeRepairDisposition::Incomplete(AuthoritativeRepairCycleEvidence {
-                feedback_applied: true,
-                repair_dispatched: true,
-                post_dispatch_rulers: 1,
-                ..
-            })
+            volatile_feedback.classify(std::slice::from_ref(&no_bind[2]), after),
+            AuthoritativeRepairDisposition::NeedsSemanticDecision(
+                AuthoritativeRepairCycleEvidence {
+                    feedback_applied: true,
+                    repair_dispatched: true,
+                    post_dispatch_rulers: 1,
+                    ..
+                }
+            )
         ));
     }
 
@@ -28012,6 +28043,191 @@ impl GooseAgentDispatcher {
         self.run_read_only_agent(model_id, system_prompt, user_text, None, 1, 0, None)
             .await
             .map(Some)
+    }
+
+    async fn run_complete_semantic_cycle_judge(
+        &self,
+        run_id: &str,
+        evidence: &AuthoritativeRepairCycleEvidence,
+        attempted: &[String],
+        available: &[CompleteSemanticRepairStrategy],
+    ) -> CompleteSemanticCycleDecision {
+        let wait = |reason: String, resume_condition: String| CompleteSemanticCycleDecision::Wait {
+            reason,
+            resume_condition,
+        };
+        let Some(control) = self.physical_auxiliary_control.lock().unwrap().clone() else {
+            return wait(
+                "physical semantic authority is unavailable".to_string(),
+                "resume with the frozen tree when an authenticated physical lane is available"
+                    .to_string(),
+            );
+        };
+        let snapshot = control.snapshot().await;
+        let eligible_logical_device_ids = snapshot
+            .lanes
+            .iter()
+            .map(|lane| lane.logical_device_id.clone())
+            .collect::<Vec<_>>();
+        if eligible_logical_device_ids.is_empty() {
+            return wait(
+                "physical semantic authority has no verified lane".to_string(),
+                "resume when an authenticated physical lane is present".to_string(),
+            );
+        }
+        let task_id = format!(
+            "complete-semantic-cycle-{}-{}",
+            evidence.cycle,
+            evidence.end_tree_hash.chars().take(12).collect::<String>()
+        );
+        let source = TaskVersion {
+            authority_scope: AuthorityScope::new(run_id, "complete-semantic-cycle"),
+            phase_epoch: evidence.cycle as u64,
+            task_id: task_id.clone(),
+            attempt: 0,
+            revision: evidence.cycle as u64,
+            kind: SourceRevisionKind::Trace {
+                trace_sequence: evidence.cycle as u64,
+                snapshot_hash: evidence.end_tree_hash.clone(),
+            },
+        };
+        if let Err(error) = control.set_source_revision(source.clone()).await {
+            return wait(
+                format!("semantic authority source registration failed: {error}"),
+                "resume after the physical broker journal is healthy".to_string(),
+            );
+        }
+        let opportunity = WorkOpportunity {
+            work_id: task_id.clone(),
+            role: WorkRole::SemanticJudgeObservation,
+            priority: WorkRole::SemanticJudgeObservation.priority(),
+            task_rank: evidence.cycle as u64,
+            source,
+            eligible_logical_device_ids,
+            preferred_model_id: None,
+            excluded_logical_device_id: None,
+        };
+        let admitted = match control.try_admit_idle(opportunity).await {
+            Ok(Some(admitted)) => admitted,
+            Ok(None) => {
+                return wait(
+                    "no authenticated physical lane was idle for semantic cycle authority"
+                        .to_string(),
+                    "resume with the frozen cycle evidence when one verified lane is idle"
+                        .to_string(),
+                );
+            }
+            Err(error) => {
+                return wait(
+                    format!("semantic authority admission failed: {error}"),
+                    "resume after the physical broker can admit semantic authority".to_string(),
+                );
+            }
+        };
+        let judge_model = admitted.receipt().model_id.clone();
+        let judge_key = admitted.receipt().source.task_id.clone();
+        let judge_lifecycle = admitted.lifecycle();
+        let publisher = SemanticActivityPublisher::from_admission(admitted.receipt());
+        self.events.write_value(serde_json::json!({
+            "event": "complete_semantic_judge_summoned",
+            "cycle": evidence.cycle,
+            "admission_id": admitted.receipt().admission_id,
+            "device": admitted.receipt().logical_device_id,
+            "physical_host": admitted.receipt().physical_host_id,
+            "model": admitted.receipt().model_id,
+            "available_strategies": available,
+            "physical_idle_admission": true,
+            "payload_logged": false,
+        }));
+        let available_lines = available
+            .iter()
+            .map(|strategy| strategy.as_str())
+            .collect::<Vec<_>>()
+            .join(", ");
+        let system = format!(
+            "You are the admitted semantic authority after a complete repair cycle. Every route and tree diff from that cycle is frozen below. Do not approve a hot rerun and do not judge progress by elapsed time, attempt count, raw finding count, or text equality. Select exactly one materially different untried strategy from [{available_lines}], or select a resumable wait when none is honest. Reply exactly `STRATEGY|strategy-id|concrete causal guidance` or `WAIT|reason|specific evidence or capability needed to resume`. A strategy must name a different causal approach, not merely say retry, inspect more, or try again."
+        );
+        let user = serde_json::json!({
+            "cycle_evidence": evidence,
+            "attempted_semantic_strategies": attempted,
+            "available_semantic_strategies": available,
+        })
+        .to_string();
+        let result = scope_provider_lifecycle(
+            judge_lifecycle.clone(),
+            self.run_agent_in(
+                self.working_dir.clone(),
+                &judge_model,
+                system,
+                user,
+                None,
+                Some(1),
+                &[],
+                AgentToolSurface::ResponseOnly,
+                self.planner_timeout_secs,
+                Some(&judge_key),
+                Some(&publisher),
+                None,
+                None,
+                None,
+                None,
+            ),
+        )
+        .await;
+        if let Err(error) = judge_lifecycle.reconcile_cancelled_after_drop().await {
+            let quarantine = admitted.quarantine_unproven(error.to_string()).await;
+            self.events.write_value(serde_json::json!({
+                "event": "complete_semantic_judge_failed",
+                "cycle": evidence.cycle,
+                "reason": "provider terminal could not be proven",
+                "error": error.to_string(),
+                "quarantined": quarantine.is_ok(),
+                "payload_logged": false,
+            }));
+            return wait(
+                "semantic judge provider terminal is unproven".to_string(),
+                "resume after the exact provider request has terminal proof".to_string(),
+            );
+        }
+        let completion_kind = if result.is_ok() {
+            LocalCompletionKind::Success
+        } else {
+            LocalCompletionKind::Error
+        };
+        if let Err(error) = admitted.complete_local(completion_kind).await {
+            self.events.write_value(serde_json::json!({
+                "event": "complete_semantic_judge_failed",
+                "cycle": evidence.cycle,
+                "reason": "admitted semantic authority did not close cleanly",
+                "error": error.to_string(),
+                "payload_logged": false,
+            }));
+            return wait(
+                "admitted semantic authority did not close cleanly".to_string(),
+                "resume after the broker lifecycle is fully drained".to_string(),
+            );
+        }
+        let decision = match result {
+            Ok(output) => parse_complete_semantic_cycle_decision(&output.text, available),
+            Err(error) => wait(
+                format!("semantic judge failed: {error}"),
+                "resume when admitted semantic authority can produce a typed decision".to_string(),
+            ),
+        };
+        self.events.write_value(serde_json::json!({
+            "event": "complete_semantic_judge_decided",
+            "cycle": evidence.cycle,
+            "decision": match &decision {
+                CompleteSemanticCycleDecision::Strategy(_) => "strategy",
+                CompleteSemanticCycleDecision::Wait { .. } => "wait",
+            },
+            "strategy": match &decision {
+                CompleteSemanticCycleDecision::Strategy(directive) => Some(directive.strategy.as_str()),
+                CompleteSemanticCycleDecision::Wait { .. } => None,
+            },
+            "payload_logged": false,
+        }));
+        decision
     }
 
     async fn generate_run_overview(
@@ -59915,71 +60131,229 @@ fn normalize_repair_finding(finding: &str) -> String {
     normalized
 }
 
-fn normalized_repair_findings(findings: &[String]) -> Vec<String> {
-    let mut signature = findings
-        .iter()
-        .map(|finding| normalize_repair_finding(finding))
-        .collect::<Vec<_>>();
-    signature.sort();
-    signature.dedup();
-    signature
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize)]
+#[serde(rename_all = "kebab-case")]
+enum CompleteSemanticRepairStrategy {
+    TraceCausalRoot,
+    ReconcileInterfaceContracts,
+    MinimalRunnableSlice,
+    IsolateFailingCapability,
+    RewireEntrypoint,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+impl CompleteSemanticRepairStrategy {
+    const ALL: [Self; 5] = [
+        Self::TraceCausalRoot,
+        Self::ReconcileInterfaceContracts,
+        Self::MinimalRunnableSlice,
+        Self::IsolateFailingCapability,
+        Self::RewireEntrypoint,
+    ];
+
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::TraceCausalRoot => "trace-causal-root",
+            Self::ReconcileInterfaceContracts => "reconcile-interface-contracts",
+            Self::MinimalRunnableSlice => "minimal-runnable-slice",
+            Self::IsolateFailingCapability => "isolate-failing-capability",
+            Self::RewireEntrypoint => "rewire-entrypoint",
+        }
+    }
+
+    fn parse(value: &str) -> Option<Self> {
+        Self::ALL
+            .into_iter()
+            .find(|strategy| strategy.as_str() == value.trim())
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct CompleteSemanticRepairDirective {
+    strategy: CompleteSemanticRepairStrategy,
+    guidance: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum CompleteSemanticCycleDecision {
+    Strategy(CompleteSemanticRepairDirective),
+    Wait {
+        reason: String,
+        resume_condition: String,
+    },
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
+struct AuthoritativeRepairRouteEvidence {
+    dispatches: u32,
+    completions: u32,
+    promotions: u32,
+    failures: u32,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
+struct AuthoritativeRepairFileDiff {
+    before_sha256: Option<String>,
+    after_sha256: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 enum AuthoritativeRepairDisposition {
     Continue { cycle: u32 },
-    Incomplete(AuthoritativeRepairCycleEvidence),
+    NeedsSemanticDecision(AuthoritativeRepairCycleEvidence),
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
 struct AuthoritativeRepairCycleEvidence {
     cycle: u32,
     feedback_applied: bool,
     repair_dispatched: bool,
     post_dispatch_rulers: u32,
     budget_refreshed: bool,
+    start_findings: Vec<String>,
+    end_findings: Vec<String>,
+    start_tree_hash: String,
+    end_tree_hash: String,
+    changed_files: Vec<String>,
+    file_diffs: BTreeMap<String, AuthoritativeRepairFileDiff>,
+    routes: BTreeMap<String, AuthoritativeRepairRouteEvidence>,
+    semantic_strategy: Option<String>,
 }
 
 #[derive(Debug)]
 struct PendingAuthoritativeRepairCycle {
-    signature: Vec<String>,
+    start_tree: RepairTreeSnapshot,
     evidence: AuthoritativeRepairCycleEvidence,
 }
 
 #[derive(Debug, Default)]
 struct AuthoritativeRepairFeedback {
-    seen: std::collections::BTreeSet<Vec<String>>,
     next_cycle: u32,
     pending: Option<PendingAuthoritativeRepairCycle>,
+    attempted_semantic_strategies: BTreeSet<CompleteSemanticRepairStrategy>,
 }
 
 impl AuthoritativeRepairFeedback {
-    fn classify(&mut self, findings: &[String]) -> AuthoritativeRepairDisposition {
-        let signature = normalized_repair_findings(findings);
-        if self.seen.insert(signature.clone()) {
-            self.next_cycle = self.next_cycle.saturating_add(1);
-            self.pending = Some(PendingAuthoritativeRepairCycle {
-                signature,
-                evidence: AuthoritativeRepairCycleEvidence {
-                    cycle: self.next_cycle,
-                    ..AuthoritativeRepairCycleEvidence::default()
-                },
-            });
-            AuthoritativeRepairDisposition::Continue {
+    fn begin_cycle(
+        &mut self,
+        findings: &[String],
+        tree: RepairTreeSnapshot,
+        semantic_strategy: Option<CompleteSemanticRepairStrategy>,
+    ) -> u32 {
+        self.next_cycle = self.next_cycle.saturating_add(1);
+        self.pending = Some(PendingAuthoritativeRepairCycle {
+            start_tree: tree.clone(),
+            evidence: AuthoritativeRepairCycleEvidence {
                 cycle: self.next_cycle,
-            }
+                start_findings: findings.to_vec(),
+                start_tree_hash: tree.sha256,
+                semantic_strategy: semantic_strategy.map(|strategy| strategy.as_str().to_string()),
+                ..AuthoritativeRepairCycleEvidence::default()
+            },
+        });
+        self.next_cycle
+    }
+
+    fn ensure_cycle(&mut self, findings: &[String], tree: RepairTreeSnapshot) -> u32 {
+        if let Some(pending) = self.pending.as_ref() {
+            pending.evidence.cycle
         } else {
-            let evidence = self
-                .pending
-                .take()
-                .filter(|pending| pending.signature == signature)
-                .map(|pending| pending.evidence)
-                .unwrap_or(AuthoritativeRepairCycleEvidence {
-                    cycle: self.next_cycle,
-                    ..AuthoritativeRepairCycleEvidence::default()
-                });
-            AuthoritativeRepairDisposition::Incomplete(evidence)
+            self.begin_cycle(findings, tree, None)
         }
+    }
+
+    fn classify(
+        &mut self,
+        findings: &[String],
+        tree: RepairTreeSnapshot,
+    ) -> AuthoritativeRepairDisposition {
+        let Some(mut pending) = self.pending.take() else {
+            let cycle = self.begin_cycle(findings, tree, None);
+            return AuthoritativeRepairDisposition::Continue { cycle };
+        };
+        pending.evidence.file_diffs = authoritative_repair_file_diffs(&pending.start_tree, &tree);
+        pending.evidence.changed_files = pending.evidence.file_diffs.keys().cloned().collect();
+        pending.evidence.end_findings = findings.to_vec();
+        pending.evidence.end_tree_hash = tree.sha256.clone();
+        let routes_closed = !pending.evidence.routes.is_empty()
+            && pending
+                .evidence
+                .routes
+                .values()
+                .all(|route| route.completions >= route.dispatches);
+        let zero_promotions = pending
+            .evidence
+            .routes
+            .values()
+            .all(|route| route.promotions == 0);
+        let complete_zero_promotion_cycle = pending.evidence.feedback_applied
+            && pending.evidence.post_dispatch_rulers > 0
+            && routes_closed
+            && zero_promotions;
+        if !complete_zero_promotion_cycle {
+            let cycle = self.begin_cycle(findings, tree, None);
+            return AuthoritativeRepairDisposition::Continue { cycle };
+        }
+        AuthoritativeRepairDisposition::NeedsSemanticDecision(pending.evidence)
+    }
+
+    fn begin_semantic_cycle(
+        &mut self,
+        findings: &[String],
+        tree: RepairTreeSnapshot,
+        directive: &CompleteSemanticRepairDirective,
+    ) -> u32 {
+        self.attempted_semantic_strategies
+            .insert(directive.strategy);
+        self.begin_cycle(findings, tree, Some(directive.strategy))
+    }
+
+    fn available_semantic_strategies(&self) -> Vec<CompleteSemanticRepairStrategy> {
+        CompleteSemanticRepairStrategy::ALL
+            .into_iter()
+            .filter(|strategy| !self.attempted_semantic_strategies.contains(strategy))
+            .collect()
+    }
+
+    fn attempted_semantic_strategies(&self) -> Vec<String> {
+        self.attempted_semantic_strategies
+            .iter()
+            .map(|strategy| strategy.as_str().to_string())
+            .collect()
+    }
+
+    fn current_cycle(&self) -> u32 {
+        self.pending
+            .as_ref()
+            .map_or(self.next_cycle, |pending| pending.evidence.cycle)
+    }
+
+    fn note_repair_dispatch(&mut self, route: &str) {
+        let Some(pending) = self.pending.as_mut() else {
+            return;
+        };
+        if pending.evidence.feedback_applied {
+            pending.evidence.repair_dispatched = true;
+            let route = pending
+                .evidence
+                .routes
+                .entry(route.to_string())
+                .or_default();
+            route.dispatches = route.dispatches.saturating_add(1);
+        }
+    }
+
+    fn note_repair_outcome(&mut self, route: &str, promoted: bool, failed: bool) {
+        let Some(pending) = self.pending.as_mut() else {
+            return;
+        };
+        let route = pending
+            .evidence
+            .routes
+            .entry(route.to_string())
+            .or_default();
+        route.completions = route.completions.saturating_add(1);
+        route.promotions = route.promotions.saturating_add(u32::from(promoted));
+        route.failures = route.failures.saturating_add(u32::from(failed));
     }
 
     fn note_budget_refreshed(&mut self) {
@@ -59989,28 +60363,16 @@ impl AuthoritativeRepairFeedback {
     }
 
     fn note_ruler(&mut self, findings: &[String]) {
-        let signature = normalized_repair_findings(findings);
         let Some(pending) = self.pending.as_mut() else {
             return;
         };
-        if pending.signature != signature {
-            return;
-        }
         if !pending.evidence.feedback_applied {
             pending.evidence.feedback_applied = true;
-        } else if pending.evidence.repair_dispatched {
+        } else if !pending.evidence.routes.is_empty() {
             pending.evidence.post_dispatch_rulers =
                 pending.evidence.post_dispatch_rulers.saturating_add(1);
         }
-    }
-
-    fn note_repair_dispatch(&mut self) {
-        let Some(pending) = self.pending.as_mut() else {
-            return;
-        };
-        if pending.evidence.feedback_applied {
-            pending.evidence.repair_dispatched = true;
-        }
+        pending.evidence.end_findings = findings.to_vec();
     }
 }
 
@@ -60076,6 +60438,135 @@ impl RepairFrontier {
     fn strictly_extends(&self, baseline: &Self) -> bool {
         self.preserves(baseline) && self != baseline
     }
+}
+
+fn parse_complete_semantic_cycle_decision(
+    reply: &str,
+    available: &[CompleteSemanticRepairStrategy],
+) -> CompleteSemanticCycleDecision {
+    let mut fields = reply.trim().splitn(3, '|');
+    let disposition = fields.next().unwrap_or_default().trim();
+    let value = fields.next().unwrap_or_default().trim();
+    let detail = fields.next().unwrap_or_default().trim();
+    if disposition.eq_ignore_ascii_case("STRATEGY") {
+        if let Some(strategy) = CompleteSemanticRepairStrategy::parse(value)
+            .filter(|strategy| available.contains(strategy))
+        {
+            let guidance = if detail.is_empty() {
+                format!(
+                    "Apply the materially different `{}` route to the exact surviving causes; do not repeat the prior cycle's repair steps.",
+                    strategy.as_str()
+                )
+            } else {
+                detail.chars().take(1200).collect()
+            };
+            return CompleteSemanticCycleDecision::Strategy(CompleteSemanticRepairDirective {
+                strategy,
+                guidance,
+            });
+        }
+        return CompleteSemanticCycleDecision::Wait {
+            reason: format!(
+                "semantic judge selected unavailable or already-attempted strategy `{value}`"
+            ),
+            resume_condition:
+                "resume when a materially different repair strategy or new authoritative evidence is available"
+                    .to_string(),
+        };
+    }
+    if disposition.eq_ignore_ascii_case("WAIT") {
+        return CompleteSemanticCycleDecision::Wait {
+            reason: if value.is_empty() {
+                "semantic judge found no honest materially different repair route".to_string()
+            } else {
+                value.chars().take(600).collect()
+            },
+            resume_condition: if detail.is_empty() {
+                "resume when new authoritative evidence or a new repair route is available"
+                    .to_string()
+            } else {
+                detail.chars().take(1200).collect()
+            },
+        };
+    }
+    CompleteSemanticCycleDecision::Wait {
+        reason: "semantic judge returned an invalid typed decision".to_string(),
+        resume_condition:
+            "resume after obtaining a typed STRATEGY or WAIT decision from admitted semantic authority"
+                .to_string(),
+    }
+}
+
+fn complete_semantic_strategy_hint(
+    directive: Option<&CompleteSemanticRepairDirective>,
+) -> Option<String> {
+    directive.map(|directive| {
+        format!(
+            "SEMANTIC CYCLE STRATEGY `{}`: {} This direction was selected from the complete prior repair-cycle evidence. Do not repeat the prior cycle's approach; preserve correct bytes and change only what this strategy requires.",
+            directive.strategy.as_str(),
+            directive.guidance
+        )
+    })
+}
+
+fn emit_authoritative_repair_cycle_complete(
+    sink: &dyn EventSink,
+    evidence: &AuthoritativeRepairCycleEvidence,
+    attempted_semantic_strategies: &[String],
+) {
+    sink.write_value(serde_json::json!({
+        "event": "authoritative_repair_cycle_complete",
+        "status": "needs-semantic-decision",
+        "cycle": evidence.cycle,
+        "feedback_applied": evidence.feedback_applied,
+        "repair_dispatched": evidence.repair_dispatched,
+        "post_dispatch_rulers": evidence.post_dispatch_rulers,
+        "budget_refreshed": evidence.budget_refreshed,
+        "start_findings": evidence.start_findings,
+        "end_findings": evidence.end_findings,
+        "start_tree_hash": evidence.start_tree_hash,
+        "end_tree_hash": evidence.end_tree_hash,
+        "changed_files": evidence.changed_files,
+        "file_diffs": evidence.file_diffs,
+        "routes": evidence.routes,
+        "semantic_strategy": evidence.semantic_strategy,
+        "attempted_semantic_strategies": attempted_semantic_strategies,
+        "terminal_basis": serde_json::Value::Null,
+    }));
+}
+
+#[allow(clippy::too_many_arguments)]
+fn persist_complete_semantic_wait(
+    root: &Path,
+    run_id: &str,
+    evidence: &AuthoritativeRepairCycleEvidence,
+    reason: &str,
+    resume_condition: &str,
+    attempted_semantic_strategies: &[String],
+    available_semantic_strategies: &[CompleteSemanticRepairStrategy],
+) -> Result<PathBuf> {
+    let state_dir = root.join(".swarm");
+    std::fs::create_dir_all(&state_dir)?;
+    let path = state_dir.join("complete-semantic-wait.json");
+    let temp = state_dir.join(format!(
+        ".complete-semantic-wait-{}-{}.tmp",
+        std::process::id(),
+        evidence.cycle
+    ));
+    let value = serde_json::json!({
+        "schema": 1,
+        "status": "waiting",
+        "resumable": true,
+        "run_id": run_id,
+        "cycle_evidence": evidence,
+        "reason": reason,
+        "resume_condition": resume_condition,
+        "attempted_semantic_strategies": attempted_semantic_strategies,
+        "available_semantic_strategies": available_semantic_strategies,
+    });
+    std::fs::write(&temp, serde_json::to_vec_pretty(&value)?)?;
+    std::fs::rename(&temp, &path)?;
+    Ok(path)
 }
 
 #[derive(Clone, Debug, Default)]
@@ -61280,6 +61771,22 @@ fn changed_repair_files(before: &RepairTreeSnapshot, after: &RepairTreeSnapshot)
         .collect()
 }
 
+fn authoritative_repair_file_diffs(
+    before: &RepairTreeSnapshot,
+    after: &RepairTreeSnapshot,
+) -> BTreeMap<String, AuthoritativeRepairFileDiff> {
+    changed_repair_files(before, after)
+        .into_iter()
+        .map(|path| {
+            let diff = AuthoritativeRepairFileDiff {
+                before_sha256: before.entries.get(&path).cloned(),
+                after_sha256: after.entries.get(&path).cloned(),
+            };
+            (path, diff)
+        })
+        .collect()
+}
+
 struct RepairCandidateToken {
     cause: String,
     epoch: u64,
@@ -61295,14 +61802,31 @@ struct RepairTreeRuling {
     remaining_findings: usize,
 }
 
-fn emit_authoritative_repair_unavailable(
+#[allow(clippy::too_many_arguments)]
+fn emit_authoritative_repair_wait(
     sink: &dyn EventSink,
+    root: &Path,
+    run_id: &str,
     ruling: &RepairTreeRuling,
-    evidence: AuthoritativeRepairCycleEvidence,
-) {
+    evidence: &AuthoritativeRepairCycleEvidence,
+    reason: &str,
+    resume_condition: &str,
+    attempted_semantic_strategies: &[String],
+    available_semantic_strategies: &[CompleteSemanticRepairStrategy],
+) -> Result<()> {
+    let checkpoint = persist_complete_semantic_wait(
+        root,
+        run_id,
+        evidence,
+        reason,
+        resume_condition,
+        attempted_semantic_strategies,
+        available_semantic_strategies,
+    )?;
     sink.write_value(serde_json::json!({
-        "event": "authoritative_repair_unavailable",
-        "status": "degraded",
+        "event": "authoritative_repair_wait",
+        "status": "waiting",
+        "resumable": true,
         "cycle": evidence.cycle,
         "findings": ruling.remaining_findings,
         "tree_hash": ruling.tree_hash,
@@ -61310,8 +61834,20 @@ fn emit_authoritative_repair_unavailable(
         "repair_dispatched": evidence.repair_dispatched,
         "post_dispatch_rulers": evidence.post_dispatch_rulers,
         "budget_refreshed": evidence.budget_refreshed,
-        "reason": "the same normalized authoritative finding set survived a full feedback cycle",
+        "start_findings": evidence.start_findings,
+        "end_findings": evidence.end_findings,
+        "start_tree_hash": evidence.start_tree_hash,
+        "end_tree_hash": evidence.end_tree_hash,
+        "changed_files": evidence.changed_files,
+        "file_diffs": evidence.file_diffs,
+        "routes": evidence.routes,
+        "semantic_strategy": evidence.semantic_strategy,
+        "reason": reason,
+        "resume_condition": resume_condition,
+        "checkpoint": checkpoint.strip_prefix(root).unwrap_or(&checkpoint),
+        "terminal_basis": serde_json::Value::Null,
     }));
+    Ok(())
 }
 
 struct OpenRepairTree {
@@ -62222,7 +62758,7 @@ mod repair_tree_seal_tests {
     }
 
     #[test]
-    fn recorded_authoritative_feedback_terminalizes_explicitly_incomplete() {
+    fn recorded_authoritative_feedback_persists_typed_resumable_wait() {
         let fixture: serde_json::Value = serde_json::from_str(include_str!(
             "../../../../evals/swarm-bench/fixtures/qwen38-v21-r5-final-repair-feedback.json"
         ))
@@ -62233,28 +62769,42 @@ mod repair_tree_seal_tests {
             .iter()
             .map(|finding| finding.as_str().unwrap().to_string())
             .collect::<Vec<_>>();
-        let mut feedback = AuthoritativeRepairFeedback::default();
-        assert_eq!(
-            feedback.classify(&findings),
-            AuthoritativeRepairDisposition::Continue { cycle: 1 }
-        );
-        feedback.note_budget_refreshed();
-        feedback.note_ruler(&findings);
-        feedback.note_repair_dispatch();
-        feedback.note_ruler(&findings);
-        let AuthoritativeRepairDisposition::Incomplete(evidence) = feedback.classify(&findings)
-        else {
-            panic!("the repeated recorded authority reopened instead of degrading");
-        };
-
         let dir = tempfile::TempDir::new().unwrap();
         std::fs::write(dir.path().join("app.txt"), "still incomplete\n").unwrap();
+        let before = repair_tree_snapshot(dir.path()).unwrap();
+        let mut feedback = AuthoritativeRepairFeedback::default();
+        assert_eq!(feedback.ensure_cycle(&findings, before), 1);
+        feedback.note_budget_refreshed();
+        feedback.note_ruler(&findings);
+        feedback.note_repair_dispatch("boot-repair");
+        feedback.note_repair_outcome("boot-repair", false, true);
+        feedback.note_ruler(&findings);
+        let AuthoritativeRepairDisposition::NeedsSemanticDecision(evidence) =
+            feedback.classify(&findings, repair_tree_snapshot(dir.path()).unwrap())
+        else {
+            panic!("the complete recorded cycle did not request semantic authority");
+        };
+
         let sink = CaptureSink::default();
         let mut tree = OpenRepairTree::open(dir.path(), &sink).unwrap();
         let ruling = tree
             .record_ruling_values(false, true, findings.len(), "post-repair-floor", &sink)
             .unwrap();
-        emit_authoritative_repair_unavailable(&sink, &ruling, evidence);
+        let attempted = feedback.attempted_semantic_strategies();
+        let available = feedback.available_semantic_strategies();
+        emit_authoritative_repair_cycle_complete(&sink, &evidence, &attempted);
+        emit_authoritative_repair_wait(
+            &sink,
+            dir.path(),
+            "recorded-v21-r5",
+            &ruling,
+            &evidence,
+            "semantic authority found no honest materially different route",
+            "resume when a new causal route or authoritative evidence exists",
+            &attempted,
+            &available,
+        )
+        .unwrap();
         let sealed = tree
             .seal_incomplete("incomplete evidence tree".to_string(), false, &sink)
             .unwrap();
@@ -62271,7 +62821,8 @@ mod repair_tree_seal_tests {
             [
                 "repair_tree_opened",
                 "repair_tree_ruled",
-                "authoritative_repair_unavailable",
+                "authoritative_repair_cycle_complete",
+                "authoritative_repair_wait",
                 "repair_tree_incomplete_sealed",
                 "complete_result",
                 "run_finished",
@@ -62279,13 +62830,25 @@ mod repair_tree_seal_tests {
         );
         let values = sink.values();
         assert!(values.iter().any(|event| {
-            event["event"] == "authoritative_repair_unavailable"
-                && event["status"] == "degraded"
+            event["event"] == "authoritative_repair_wait"
+                && event["status"] == "waiting"
+                && event["resumable"] == true
                 && event["feedback_applied"] == true
                 && event["repair_dispatched"] == true
                 && event["post_dispatch_rulers"] == 1
                 && event["budget_refreshed"] == true
+                && event["terminal_basis"].is_null()
         }));
+        let wait: serde_json::Value = serde_json::from_slice(
+            &std::fs::read(dir.path().join(".swarm/complete-semantic-wait.json")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(wait["status"], "waiting");
+        assert_eq!(wait["resumable"], true);
+        assert_eq!(
+            wait["cycle_evidence"]["routes"]["boot-repair"]["failures"],
+            1
+        );
         assert!(values.iter().any(|event| {
             event["event"] == "complete_result"
                 && event["passed"] == false
@@ -65905,6 +66468,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             }));
         }
         let mut authoritative_feedback = AuthoritativeRepairFeedback::default();
+        let mut semantic_repair_directive: Option<CompleteSemanticRepairDirective> = None;
         let sealed = 'authoritative_repair: loop {
             let mut last_findings: Vec<String> = Vec::new();
             // F835 SHIP-BEST-VERIFIED, never ship-last-edited. The serial fix path writes straight
@@ -66054,6 +66618,8 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             let mut force_race_next = false;
             let mut force_shard_next = false;
             let mut strategy_switched = false;
+            let repair_semantic_hint =
+                complete_semantic_strategy_hint(semantic_repair_directive.as_ref());
             let mut reusable_green_ruler: Option<(String, CompleteRulerResult)> = None;
             loop {
                 let ruler = run_complete_ruler(
@@ -66066,6 +66632,8 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                     &failed_task_findings,
                 )
                 .await;
+                authoritative_feedback
+                    .ensure_cycle(&ruler.verdict.findings, repair_tree_snapshot(&cwd)?);
                 authoritative_feedback.note_ruler(&ruler.verdict.findings);
                 let baseline_grade = RepairGrade::from_ruler(&ruler);
                 emit_complete_ruler_observations(sink.as_ref(), round, complete_lang, &ruler);
@@ -66386,6 +66954,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                     let wave_missing_gate = missing_deliverable_gate;
                     let wave_baseline_grade = baseline_grade.clone();
                     let sink_r = sink.clone();
+                    let semantic_hint = repair_semantic_hint.clone();
                     // F846 EARLY-CLOSE (NEXT-BIG rank 2). MEASURED on the first green product-regime
                     // run: both waves' winners re-verified 5-7.5 minutes before the wave closed, while
                     // capped losers burned 2,400 twin-seconds converting nothing. FIRST-PAST-THE-POST:
@@ -66405,7 +66974,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                     let win_claim: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
                     let wave_cancel = tokio_util::sync::CancellationToken::new();
                     let win_claim_outer = win_claim.clone();
-                    authoritative_feedback.note_repair_dispatch();
+                    authoritative_feedback.note_repair_dispatch("whole-tree-race");
                     let outcomes =
                     fanout_over_fleet(fleet_models.clone(), attempts, move |(i, _), model| {
                         let me = me.clone();
@@ -66420,6 +66989,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                         let wave_prompt = wave_prompt.clone();
                         let wave_cwd = wave_cwd.clone();
                         let wave_baseline_grade = wave_baseline_grade.clone();
+                        let semantic_hint = semantic_hint.clone();
                         async move {
                             let task_id = format!("complete-fix::twin{i}");
                             // THE TAIL'S FIRST DISPATCH EVENT. The repair tail emitted no task_dispatched at
@@ -66444,7 +67014,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                                 // real tree, so the files it does not touch promote back byte-identical.
                                 owned_files: all_files.clone(),
                                 all_files: all_files.clone(),
-                                prior_hint: None,
+                                prior_hint: semantic_hint,
                                 subsplit: Vec::new(),
                                 speculative: true,
                                 user_decisions: decisions,
@@ -66601,6 +67171,11 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                 }));
                     last_round_was_shard = false;
                     last_round_promoted = winner.is_some();
+                    authoritative_feedback.note_repair_outcome(
+                        "whole-tree-race",
+                        winner.is_some(),
+                        outcomes.is_empty(),
+                    );
                     if winner.is_none() {
                         if !strategy_switched && fix_sched() {
                             strategy_switched = true;
@@ -66674,7 +67249,10 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                                         lang: complete_lang,
                                         all_files: smoke_all_files.clone(),
                                         round: round as usize,
-                                        prompt: final_binding_spec.clone(),
+                                        prompt: repair_semantic_hint.as_ref().map_or_else(
+                                            || final_binding_spec.clone(),
+                                            |hint| format!("{final_binding_spec}\n\n{hint}"),
+                                        ),
                                         race_next: fleet_models.len() > 1 && spec_repair(),
                                         composite: delivery_on || spec_contract_enabled(),
                                         missing_gate: missing_deliverable_gate,
@@ -66717,7 +67295,8 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                                     // inside the cap's remaining window. The deadline is enforced INSIDE
                                     // Scheduler so expiry aborts and joins every worker and auxiliary before
                                     // this caller proceeds to the authoritative re-verify and seal.
-                                    authoritative_feedback.note_repair_dispatch();
+                                    authoritative_feedback
+                                        .note_repair_dispatch("scheduled-file-repair");
                                     let report = match cap_deadline {
                                         Some(dl) => {
                                             match fix_run
@@ -66762,6 +67341,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                                         }
                                     };
                                     fresh.end_fix_round();
+                                    let scheduler_failed = report.is_err();
                                     // The fix run's review findings have no consumer yet — drained to
                                     // an informational event so they are visible, never green-blocking.
                                     let dropped = fresh.drain_sink_review();
@@ -66793,15 +67373,16 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                                         }
                                     }
                                     last_round_was_shard = true;
-                                    last_round_promoted = fresh
+                                    let scheduler_promotions = fresh
                                         .fix_promotions
-                                        .load(std::sync::atomic::Ordering::Relaxed)
-                                        > 0;
-                                    if fresh
-                                        .fix_promotions
-                                        .load(std::sync::atomic::Ordering::Relaxed)
-                                        == 0
-                                    {
+                                        .load(std::sync::atomic::Ordering::Relaxed);
+                                    last_round_promoted = scheduler_promotions > 0;
+                                    authoritative_feedback.note_repair_outcome(
+                                        "scheduled-file-repair",
+                                        scheduler_promotions > 0,
+                                        scheduler_failed,
+                                    );
+                                    if scheduler_promotions == 0 {
                                         if !strategy_switched
                                             && spec_repair()
                                             && fleet_models.len() > 1
@@ -66851,7 +67432,8 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                         let decisions = user_decisions.clone();
                         let facts = doc_facts.clone();
                         let sink_r = sink.clone();
-                        authoritative_feedback.note_repair_dispatch();
+                        let semantic_hint = repair_semantic_hint.clone();
+                        authoritative_feedback.note_repair_dispatch("per-file-shards");
                         let summaries =
                             fanout_over_fleet(fleet_slots.clone(), groups, move |g, model| {
                                 let me = me.clone();
@@ -66865,6 +67447,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                                 let sink_r = sink_r.clone();
                                 let taken = taken.clone();
                                 let baseline_grade = fan_baseline_grade.clone();
+                                let semantic_hint = semantic_hint.clone();
                                 async move {
                                     let task_id = format!("complete-fix::{}", g.file);
                                     sink_r.write_value(serde_json::json!({
@@ -66886,7 +67469,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                                         attempt: round,
                                         owned_files: shard_owned_files(&g.file, &all_files, &taken),
                                         all_files,
-                                        prior_hint: None,
+                                        prior_hint: semantic_hint,
                                         subsplit: Vec::new(),
                                         // Shadow-isolate: this shard runs rooted at its OWN cp -r shadow tree, so N
                                         // concurrent fix agents can never write the real tree at once. On success
@@ -66990,6 +67573,11 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                             "promoted": summaries.iter().filter(|p| **p).count(),
                             "unassigned": unassigned.len(),
                         }));
+                        authoritative_feedback.note_repair_outcome(
+                            "per-file-shards",
+                            summaries.iter().any(|promoted| *promoted),
+                            summaries.is_empty(),
+                        );
                     }
                     // A finding that names no file still gets one shot after the partitioned wave —
                     // S1 increment 3: as a JOIN TWIN under the same shadow-and-gate discipline, not
@@ -67025,7 +67613,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                     {
                         let post_wave = post_wave_grade.count().expect("filtered ruler grade");
                         let task_id = "complete-fix::cross-file".to_string();
-                        authoritative_feedback.note_repair_dispatch();
+                        authoritative_feedback.note_repair_dispatch("cross-file-join");
                         sink.write_value(serde_json::json!({
                             "event": "complete_fix_dispatched",
                             "round": round, "shard": "(cross-file)", "model": model_id.as_str(),
@@ -67046,7 +67634,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                             // in full or not at all.
                             owned_files: smoke_all_files.clone(),
                             all_files: smoke_all_files.clone(),
-                            prior_hint: None,
+                            prior_hint: repair_semantic_hint.clone(),
                             subsplit: Vec::new(),
                             speculative: true,
                             // A FIX worker must honour the user's choices too — a fix that re-introduces
@@ -67089,11 +67677,16 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                             "round": round, "shard": "(cross-file)", "model": model_id.as_str(),
                             "task_id": task_id,
                             "secs": started.elapsed().as_secs(),
-                            "agent_ok": matches!(ran, Ok(Ok(_))),
+                            "agent_ok": matches!(&ran, Ok(Ok(_))),
                             "verified_findings": verified,
                             "baseline_findings": post_wave,
                             "promoted": promoted,
                         }));
+                        authoritative_feedback.note_repair_outcome(
+                            "cross-file-join",
+                            promoted,
+                            !matches!(&ran, Ok(Ok(_))),
+                        );
                     }
                 } else {
                     eprintln!("complete: fix round {round} against the distilled failure ...");
@@ -67108,7 +67701,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                         attempt: round,
                         owned_files: vec![],
                         all_files: smoke_all_files.clone(),
-                        prior_hint: None,
+                        prior_hint: repair_semantic_hint.clone(),
                         subsplit: Vec::new(),
                         speculative: false,
                         // A FIX worker must honour the user's choices too — a fix that re-introduces
@@ -67133,7 +67726,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                     // That is a mechanism whose precondition never holds, inside the fix for mechanisms
                     // whose preconditions never hold. The events now ride the SERIAL path, which is the
                     // one that actually runs.
-                    authoritative_feedback.note_repair_dispatch();
+                    authoritative_feedback.note_repair_dispatch("serial-whole-tree");
                     sink.write_value(serde_json::json!({
                         "event": "complete_fix_dispatched",
                         "round": round,
@@ -67143,12 +67736,14 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                         "baseline_findings": verdict.findings.len(),
                         "path": "serial",
                     }));
+                    let serial_before = repair_tree_snapshot(&cwd)?;
                     let fix_started = std::time::Instant::now();
                     let fix_out = tokio::time::timeout(
                         std::time::Duration::from_secs(fix_cap_eff),
                         smoke_fix_dispatcher.run(fix_req),
                     )
                     .await;
+                    let serial_changed = repair_tree_snapshot(&cwd)?.sha256 != serial_before.sha256;
                     sink.write_value(serde_json::json!({
                         "event": "complete_fix_completed",
                         "round": round,
@@ -67160,10 +67755,16 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                         // complete_verify is the only check, and saying `null` states that plainly rather
                         // than implying a grade that was never computed.
                         "verified_findings": serde_json::Value::Null,
-                        "agent_ok": matches!(fix_out, Ok(Ok(_))),
+                        "agent_ok": matches!(&fix_out, Ok(Ok(_))),
+                        "changed": serial_changed,
                         "baseline_findings": verdict.findings.len(),
                         "path": "serial",
                     }));
+                    authoritative_feedback.note_repair_outcome(
+                        "serial-whole-tree",
+                        serial_changed,
+                        !matches!(&fix_out, Ok(Ok(_))),
+                    );
                 }
                 if fix_converged {
                     sink.write_value(serde_json::json!({
@@ -67263,31 +67864,25 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             // the symptoms too late and converged red. Before anything ships: boot the advertised
             // entry. If it does not BIND, run dedicated boot-repair attempts — the worker gets the
             // ACTUAL boot traceback (the smallest, most actionable finding a run can produce) —
-            // and stop on PROGRESS grounds only: an attempt that leaves the traceback byte-
-            // identical taught the loop nothing, two such stops end it. Attempt budget reuses the
-            // existing per-fix cap; no new time constants. This block runs AFTER the F835 restore
+            // then re-probe once. A surviving defect closes one fully evidenced cycle; it is never
+            // hot-rerun here and never terminalized from traceback equality, elapsed time, or an
+            // attempt counter. The admitted semantic cycle authority below either changes the causal
+            // strategy on the next outer cycle or persists a typed resumable wait. This block runs AFTER the F835 restore
             // (adversarial review, boot-floor 1a: probing before the restore let the restore
             // clobber a successful boot repair with a pre-repair snapshot — the floor must probe
-            // the tree that SHIPS). Past the completion deadline the budget drops to one attempt:
-            // the floor is the point, but not three fix-caps past the wall.
+            // the tree that SHIPS).
             if matches!(complete_lang, TargetLang::Python) {
-                let boot_budget: u32 =
-                    if cap_deadline.is_some_and(|dl| std::time::Instant::now() >= dl) {
-                        1
-                    } else {
-                        3
-                    };
-                let mut prev_err: Option<String> = None;
-                let mut attempts = 0u32;
+                let boot_cycle = authoritative_feedback.current_cycle();
+                let mut boot_attempted = false;
                 loop {
                     let Some(probe) = boot_probe(&cwd, &final_binding_spec).await else {
                         break; // spec advertises no bootable entry — the floor does not apply
                     };
                     let Some(err_tail) = probe else {
-                        if attempts > 0 {
+                        if boot_attempted {
                             sink.write_value(serde_json::json!({
                                 "event": "boot_repaired",
-                                "attempts": attempts,
+                                "cycle": boot_cycle,
                                 "detail": "the app now binds and answers — a dead app never ships \
                                            without a fight",
                             }));
@@ -67298,29 +67893,31 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                         }
                         break;
                     };
-                    if attempts >= boot_budget || prev_err.as_deref() == Some(err_tail.as_str()) {
+                    if boot_attempted {
                         sink.write_value(serde_json::json!({
-                        "event": "boot_repair_exhausted",
-                        "attempts": attempts,
-                        "detail": "boot repair stopped — no progress between attempts (identical \
-                                   traceback) or attempt budget spent; the ship-best restore \
-                                   decides what ships",
-                        "boot_error": elide_middle(&err_tail, 150, 650),
-                    }));
+                            "event": "boot_repair_cycle_complete",
+                            "cycle": boot_cycle,
+                            "status": "needs-semantic-decision",
+                            "detail": "the boot defect survived one complete causal repair attempt; \
+                                       the engine will not hot-rerun it or stop on traceback equality, \
+                                       elapsed time, or attempt count",
+                            "boot_error": err_tail,
+                            "terminal_basis": serde_json::Value::Null,
+                        }));
                         break;
                     }
-                    attempts += 1;
+                    boot_attempted = true;
                     sink.write_value(serde_json::json!({
                         "event": "boot_repair_attempt",
-                        "attempt": attempts,
+                        "cycle": boot_cycle,
                         "boot_error": elide_middle(&err_tail, 150, 650),
                     }));
-                    prev_err = Some(err_tail.clone());
                     if let Some((dev_id, model_id)) = smoke_fix_target.clone() {
-                        let candidate =
-                            repair_tree.begin_candidate(format!("boot-repair-{attempts}"))?;
+                        authoritative_feedback.note_repair_dispatch("boot-repair");
+                        let candidate = repair_tree
+                            .begin_candidate(format!("boot-repair-cycle-{boot_cycle}"))?;
                         let boot_req = DispatchRequest {
-                        task_id: format!("boot-repair-{attempts}"),
+                        task_id: format!("boot-repair-cycle-{boot_cycle}"),
                         description: format!(
                             "THE APP DOES NOT START. The documented invocation was spawned and \
                              never bound its port. This is the ONLY thing to fix — do not add \
@@ -67343,7 +67940,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                         attempt: 0,
                         owned_files: vec![],
                         all_files: smoke_all_files.clone(),
-                        prior_hint: None,
+                        prior_hint: repair_semantic_hint.clone(),
                         subsplit: Vec::new(),
                         speculative: false,
                         user_decisions: user_decisions.clone(),
@@ -67352,13 +67949,26 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                         replan_authority: None,
                         activity_publisher: None,
                     };
-                        let _ = tokio::time::timeout(
+                        let boot_result = tokio::time::timeout(
                             std::time::Duration::from_secs(fix_cap_eff),
                             smoke_fix_dispatcher.run(boot_req),
                         )
                         .await;
-                        repair_tree.finish_candidate(candidate, sink.as_ref())?;
+                        let changed = repair_tree.finish_candidate(candidate, sink.as_ref())?;
+                        authoritative_feedback.note_repair_outcome(
+                            "boot-repair",
+                            changed,
+                            !matches!(&boot_result, Ok(Ok(_))),
+                        );
                     } else {
+                        sink.write_value(serde_json::json!({
+                            "event": "boot_repair_cycle_complete",
+                            "cycle": boot_cycle,
+                            "status": "needs-semantic-decision",
+                            "detail": "no authenticated repair route was available",
+                            "boot_error": err_tail,
+                            "terminal_basis": serde_json::Value::Null,
+                        }));
                         break;
                     }
                 }
@@ -67477,8 +68087,12 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             }));
             }
             if !ruling.passed || !ruling.verified || force_unverified {
-                match authoritative_feedback.classify(&authoritative.verdict.findings) {
+                let semantic_tree = repair_tree_snapshot(&cwd)?;
+                match authoritative_feedback
+                    .classify(&authoritative.verdict.findings, semantic_tree.clone())
+                {
                     AuthoritativeRepairDisposition::Continue { cycle } => {
+                        semantic_repair_directive = None;
                         sink.write_value(serde_json::json!({
                             "event": "authoritative_repair_continued",
                             "cycle": cycle,
@@ -67503,8 +68117,69 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                         }
                         continue 'authoritative_repair;
                     }
-                    AuthoritativeRepairDisposition::Incomplete(evidence) => {
-                        emit_authoritative_repair_unavailable(sink.as_ref(), &ruling, evidence);
+                    AuthoritativeRepairDisposition::NeedsSemanticDecision(evidence) => {
+                        let attempted = authoritative_feedback.attempted_semantic_strategies();
+                        let available = authoritative_feedback.available_semantic_strategies();
+                        emit_authoritative_repair_cycle_complete(
+                            sink.as_ref(),
+                            &evidence,
+                            &attempted,
+                        );
+                        match smoke_fix_dispatcher
+                            .run_complete_semantic_cycle_judge(
+                                &run_id, &evidence, &attempted, &available,
+                            )
+                            .await
+                        {
+                            CompleteSemanticCycleDecision::Strategy(directive) => {
+                                let cycle = authoritative_feedback.begin_semantic_cycle(
+                                    &authoritative.verdict.findings,
+                                    semantic_tree,
+                                    &directive,
+                                );
+                                sink.write_value(serde_json::json!({
+                                    "event": "authoritative_repair_strategy_selected",
+                                    "cycle": cycle,
+                                    "strategy": directive.strategy.as_str(),
+                                    "prior_cycle": evidence.cycle,
+                                    "materially_different": true,
+                                    "deterministic_stop": false,
+                                    "payload_logged": false,
+                                }));
+                                semantic_repair_directive = Some(directive);
+                                if let Some(harness_clamped) = refresh_authoritative_repair_budget(
+                                    &mut cap_deadline,
+                                    harness_deadline,
+                                    std::time::Instant::now(),
+                                    cap_secs,
+                                ) {
+                                    authoritative_feedback.note_budget_refreshed();
+                                    sink.write_value(serde_json::json!({
+                                        "event": "authoritative_repair_budget_refreshed",
+                                        "cycle": cycle,
+                                        "cap_secs": cap_secs,
+                                        "harness_clamped": harness_clamped,
+                                    }));
+                                }
+                                continue 'authoritative_repair;
+                            }
+                            CompleteSemanticCycleDecision::Wait {
+                                reason,
+                                resume_condition,
+                            } => {
+                                emit_authoritative_repair_wait(
+                                    sink.as_ref(),
+                                    &cwd,
+                                    &run_id,
+                                    &ruling,
+                                    &evidence,
+                                    &reason,
+                                    &resume_condition,
+                                    &attempted,
+                                    &available,
+                                )?;
+                            }
+                        }
                     }
                 }
             }
@@ -73902,6 +74577,154 @@ mod pre_scheduler_semantic_runtime_tests {
         assert_eq!(idle_skip["idle_physical_hosts"], 2);
         assert_eq!(idle_skip["provider_start_admitted"], false);
         assert!(!sink.has("broker_provider_request_permitted"));
+    }
+
+    fn complete_semantic_cycle_fixture() -> AuthoritativeRepairCycleEvidence {
+        AuthoritativeRepairCycleEvidence {
+            cycle: 7,
+            feedback_applied: true,
+            repair_dispatched: true,
+            post_dispatch_rulers: 1,
+            budget_refreshed: true,
+            start_findings: vec!["entrypoint does not bind its documented port".to_string()],
+            end_findings: vec!["entrypoint does not bind its documented port".to_string()],
+            start_tree_hash: "before-tree".to_string(),
+            end_tree_hash: "after-tree".to_string(),
+            changed_files: vec!["app.py".to_string()],
+            file_diffs: BTreeMap::from([(
+                "app.py".to_string(),
+                AuthoritativeRepairFileDiff {
+                    before_sha256: Some("before-file".to_string()),
+                    after_sha256: Some("after-file".to_string()),
+                },
+            )]),
+            routes: BTreeMap::from([(
+                "boot-repair".to_string(),
+                AuthoritativeRepairRouteEvidence {
+                    dispatches: 1,
+                    completions: 1,
+                    promotions: 0,
+                    failures: 1,
+                },
+            )]),
+            semantic_strategy: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn complete_semantic_cycle_judge_is_idle_only_and_broker_admitted_once() {
+        let working_dir = tempfile::tempdir().unwrap();
+        std::fs::write(working_dir.path().join("app.py"), "broken entrypoint\n").unwrap();
+        let sink = Arc::new(RuntimeRecordingSink::default());
+        let provider = Arc::new(ResearchCorrectionRuntimeProvider::new(HashMap::new()));
+        provider.queue_finished_text(
+            SOURCE_MODEL,
+            "STRATEGY|trace-causal-root|trace the documented entrypoint into the first failed bind",
+        );
+        provider.queue_finished_text(
+            JUDGE_MODEL,
+            "STRATEGY|trace-causal-root|trace the documented entrypoint into the first failed bind",
+        );
+        let dispatcher = overview_test_dispatcher(
+            working_dir.path().to_path_buf(),
+            sink.clone(),
+            provider.clone(),
+        )
+        .await;
+        let snapshot = PhysicalFleetSnapshot::new(
+            "complete-semantic-cycle-snapshot",
+            vec![
+                lane(SOURCE_DEVICE, SOURCE_MODEL, SOURCE_HOST),
+                lane(JUDGE_DEVICE, JUDGE_MODEL, JUDGE_HOST),
+            ],
+        )
+        .unwrap();
+        let control = PhysicalAdmissionControl::new(
+            "complete-semantic-cycle-control",
+            snapshot,
+            sink.clone(),
+        )
+        .unwrap();
+        dispatcher.set_physical_auxiliary_control(Some(control.clone()));
+        let evidence = complete_semantic_cycle_fixture();
+        let available = CompleteSemanticRepairStrategy::ALL.to_vec();
+
+        let planner_repair = admit_direct(&control, "semantic-busy-planner", SOURCE_DEVICE)
+            .await
+            .unwrap();
+        let sibling_repair = admit_direct(&control, "semantic-busy-repair", JUDGE_DEVICE)
+            .await
+            .unwrap();
+        let busy = dispatcher
+            .run_complete_semantic_cycle_judge(
+                "complete-semantic-runtime",
+                &evidence,
+                &[],
+                &available,
+            )
+            .await;
+        assert!(matches!(
+            busy,
+            CompleteSemanticCycleDecision::Wait { ref reason, .. }
+                if reason.contains("no authenticated physical lane was idle")
+        ));
+        assert_eq!(provider.call_count(SOURCE_MODEL), 0);
+        assert_eq!(provider.call_count(JUDGE_MODEL), 0);
+        assert!(!sink.has("complete_semantic_judge_summoned"));
+
+        planner_repair
+            .complete_local(LocalCompletionKind::Error)
+            .await
+            .unwrap();
+        sibling_repair
+            .complete_local(LocalCompletionKind::Error)
+            .await
+            .unwrap();
+        control.wait_until_drained().await.unwrap();
+
+        let idle = dispatcher
+            .run_complete_semantic_cycle_judge(
+                "complete-semantic-runtime",
+                &evidence,
+                &[],
+                &available,
+            )
+            .await;
+        assert!(matches!(
+            idle,
+            CompleteSemanticCycleDecision::Strategy(CompleteSemanticRepairDirective {
+                strategy: CompleteSemanticRepairStrategy::TraceCausalRoot,
+                ..
+            })
+        ));
+        assert_eq!(
+            provider.call_count(SOURCE_MODEL) + provider.call_count(JUDGE_MODEL),
+            1,
+            "one idle semantic decision must admit at most one provider start"
+        );
+        assert!(sink.has("complete_semantic_judge_summoned"));
+        assert!(sink.has("complete_semantic_judge_decided"));
+        assert!(sink.has("broker_provider_request_permitted"));
+        control.wait_until_drained().await.unwrap();
+        assert_eq!(control.occupancy().await, (0, 0));
+    }
+
+    #[test]
+    fn complete_semantic_decision_rejects_repeated_or_untyped_routes() {
+        let available = [CompleteSemanticRepairStrategy::MinimalRunnableSlice];
+        assert!(matches!(
+            parse_complete_semantic_cycle_decision(
+                "STRATEGY|trace-causal-root|repeat the old route",
+                &available,
+            ),
+            CompleteSemanticCycleDecision::Wait { ref reason, .. }
+                if reason.contains("unavailable or already-attempted")
+        ));
+        assert!(matches!(
+            parse_complete_semantic_cycle_decision("try again", &available),
+            CompleteSemanticCycleDecision::Wait { ref reason, .. }
+                if reason.contains("invalid typed decision")
+        ));
     }
 
     fn released_completion_for(events: &[serde_json::Value], model: &str) -> Vec<String> {
