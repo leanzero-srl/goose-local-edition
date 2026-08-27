@@ -16599,12 +16599,12 @@ impl GooseAgentDispatcher {
                 );
                 let pm = self.planner_model.clone();
                 // Box::pin: this is `run_agent` calling `run_agent`, i.e. async recursion (E0733).
-                let probe = tokio::time::timeout(
-                    std::time::Duration::from_secs(45),
-                    Box::pin(self.run_agent(&pm, sys, user, None, 1, &[], 0, None)),
-                )
-                .await;
-                if let Ok(Ok(o)) = probe {
+                // The judge's own call carries no deadline either. It is a model call like any other,
+                // and reqwest's inactivity timeout is what ends a dead one. A 45s ceiling here cut a
+                // supervisor that was merely slow on a loaded fleet — and an unsupervised worker is
+                // exactly the state this whole design exists to prevent.
+                let probe = Box::pin(self.run_agent(&pm, sys, user, None, 1, &[], 0, None)).await;
+                if let Ok(o) = probe {
                     // CORROBORATION, not a single verdict. MEASURED across four fires — 1,200 / 1,201 /
                     // 3,759 / 4,003 reasoning chars — the judge returns LOOPING on its FIRST look almost
                     // whatever the floor is, and every one of those kills was wrong: the tasks completed
@@ -16853,25 +16853,30 @@ impl GooseAgentDispatcher {
             // The prefill grace applies for the whole call, not just before the first event: a slow
             // local model's first token can arrive long after the request, and the idle watchdog is a
             // DEAD-SOCKET detector, not a pace limit.
-            let quiet_budget = idle + prefill_grace;
-            let wait = quiet_budget;
-            let ev = match tokio::time::timeout(wait, stream.next()).await {
-                Ok(Some(ev)) => {
+            // NO ENGINE WATCHDOG. The stream is awaited with no deadline of any kind.
+            //
+            // This was `timeout(idle + prefill_grace, ...)` where idle is worker_timeout_secs /
+            // planner_timeout_secs — both 900 — and its expiry returned "agent stalled — no progress for
+            // 900s" and threw the attempt away. Section 8 names both for deletion and its RESOLVED note
+            // says this detector was already gone as redundant. It was not: it was live on EVERY model
+            // call in the engine, and it is the last thing in the run path that could cut one.
+            //
+            // Redundant is the right word, though. goose-providers/src/api_client.rs:58 configures reqwest
+            // with `.read_timeout(..)`, which is INACTIVITY semantics — it resets on every received chunk —
+            // plus a 30s `.connect_timeout(..)`. A slow-but-alive generation survives indefinitely because
+            // it keeps emitting; a genuinely silent stream is cut where the bytes actually stop; a dead
+            // endpoint fails at connect. This watchdog was a coarser copy of that from one layer too high,
+            // with a number that could not tell prefill from death — which is precisely why it needed a
+            // measured prefill grace bolted onto it to stop killing healthy calls.
+            //
+            // What ends a call now: the model finishes, the judge cancels a corroborated loop, or the
+            // socket dies. Nothing else, and no clock.
+            let ev = match stream.next().await {
+                Some(ev) => {
                     first_event_seen = true;
                     ev
                 }
-                Ok(None) => break,
-                Err(_) => {
-                    return Err(anyhow!(
-                        "agent stalled — no progress for {}s (no token/tool activity{})",
-                        quiet_budget.as_secs(),
-                        if first_event_seen {
-                            ""
-                        } else {
-                            "; budget included measured prefill grace for the first token"
-                        }
-                    ));
-                }
+                None => break,
             };
             match ev {
                 Ok(AgentEvent::Message(msg)) => {
@@ -32315,13 +32320,11 @@ impl TaskDispatcher for GooseAgentDispatcher {
             // reached a conclusion in four minutes is not about to; the node is worth more back
             // in the pool. Env-overridable for the arm that measures whether the cap costs
             // anything.
-            std::time::Duration::from_secs(
-                std::env::var("GOOSE_SWARM_TAIL_REVIEW_SECS")
-                    .ok()
-                    .and_then(|v| v.trim().parse::<u64>().ok())
-                    .filter(|n| *n >= 30)
-                    .unwrap_or(240),
-            ),
+            // No ceiling. This was 240s (GOOSE_SWARM_TAIL_REVIEW_SECS) and the comment above argues
+            // for it on COST — an idle-fill reviewer holding a node. But cost is not a reason to cut a
+            // model mid-thought, and the fix for "this is dispatched too eagerly" is to dispatch it less
+            // eagerly, not to guillotine it once it has started. Section 8: no wall-clock anywhere.
+            std::time::Duration::from_secs(UNCAPPED_SECS),
             self.run_agent(model_id, system, user, None, 2, &[], 0, None),
         )
         .await
@@ -38579,8 +38582,9 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             let resp = Some(Response {
                 json_schema: Some(run_overview_schema()),
             });
+            // No ceiling on the overview call either — it is a model call like every other one.
             let res = tokio::time::timeout(
-                std::time::Duration::from_secs(120),
+                std::time::Duration::from_secs(UNCAPPED_SECS),
                 smoke_fix_dispatcher.run_agent_timed(
                     &smoke_fix_dispatcher.planner_model,
                     system,
