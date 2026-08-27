@@ -673,7 +673,6 @@ struct State {
     claimed_device: HashMap<TaskId, usize>,
     dispatched_per_device: HashMap<String, u32>,
     ctx: SharedContext,
-    max_attempts: u32,
     degrade_on_stall: bool,
     sink: Arc<dyn EventSink>,
     attempt_started_at: HashMap<TaskId, Instant>,
@@ -721,6 +720,10 @@ struct State {
     /// full task restart (measured 4-25 min) and converges on nothing the deterministic
     /// backstops would not handle better.
     kill_tree_hash: HashMap<TaskId, u64>,
+    /// Owned-file fingerprint as of this task's previous REAL failure (not a judge restart, not a
+    /// transport drop). A failure that leaves the tree exactly as the last one did is a failure that
+    /// retrying will reproduce, and that is what ends the retries — rather than a count of three.
+    retry_tree_hash: HashMap<TaskId, u64>,
     prior_hints: HashMap<TaskId, String>,
     /// Every corrective note the judge has produced this run, in order, and NEVER consumed.
     ///
@@ -1403,12 +1406,41 @@ impl State {
                         *self.transport_drops.entry(tid.to_string()).or_insert(0) += 1;
                     }
                     let transport = self.transport_drops.get(tid).copied().unwrap_or(0);
+                    let files = self
+                        .dag
+                        .tasks
+                        .get(tid)
+                        .map(|n| n.spec.owned_files.clone())
+                        .unwrap_or_default();
                     let n = self.dag.tasks.get_mut(tid).unwrap();
                     n.attempts += 1;
-                    n.attempts
+                    let real_failures = n
+                        .attempts
                         .saturating_sub(judge_kills)
-                        .saturating_sub(transport)
-                        >= self.max_attempts
+                        .saturating_sub(transport);
+                    // RETRY WHILE THE OUTPUT IS CHANGING — not three times.
+                    //
+                    // max_attempts was the last count left in the engine. It never capped THINKING (judge
+                    // interventions and transport drops are both already excluded above); what it capped
+                    // was how many times a task may fail for a real reason — a missing owned file, a file
+                    // that will not compile, a stall. Retrying that forever is a loop, so something has to
+                    // end it; a literal 3 is just the wrong something. A task whose second attempt writes
+                    // materially different code deserves a third, and a task whose fifth attempt writes
+                    // the byte-identical broken file does not deserve a sixth.
+                    //
+                    // So the terminator is progress, the same rule the judge's restarts and the repair
+                    // phase use: exhausted when this failed attempt left the owned files exactly as the
+                    // previous failed attempt did. File-less tasks (verify::, e2e shards) have nothing to
+                    // fingerprint, so they fall back to "more than one real failure" — one retry, then
+                    // stop, which is what they had.
+                    if files.is_empty() {
+                        real_failures >= 2
+                    } else {
+                        let fp = owned_files_fingerprint(&files);
+                        let unchanged = self.retry_tree_hash.get(tid) == Some(&fp);
+                        self.retry_tree_hash.insert(tid.to_string(), fp);
+                        unchanged && real_failures >= 2
+                    }
                 };
                 if exhausted {
                     // DEGRADE-ON-STALL (#134/#132): a transient exhaustion is usually a mid-generation model
@@ -2749,7 +2781,6 @@ impl State {
 
 pub struct Scheduler {
     devices: Vec<DeviceCfg>,
-    max_attempts: u32,
     sink: Arc<dyn EventSink>,
     replanner: Option<Arc<dyn Replanner>>,
     max_replans: u32,
@@ -2775,10 +2806,12 @@ pub struct Scheduler {
 }
 
 impl Scheduler {
-    pub fn new(devices: Vec<DeviceCfg>, max_attempts: u32) -> Self {
+    /// `max_attempts` is RETIRED and ignored. Retries now end when a failed attempt stops changing the
+    /// owned files (see the exhaustion check), not after a fixed count. The parameter is kept so every
+    /// caller and test keeps compiling; pass anything.
+    pub fn new(devices: Vec<DeviceCfg>, _max_attempts: u32) -> Self {
         Self {
             devices,
-            max_attempts,
             sink: Arc::new(NullSink),
             replanner: None,
             max_replans: 0,
@@ -2944,7 +2977,6 @@ impl Scheduler {
             claimed_device: HashMap::new(),
             dispatched_per_device: HashMap::new(),
             ctx: SharedContext::new(),
-            max_attempts: self.max_attempts,
             degrade_on_stall: self.degrade_on_stall,
             sink: self.sink.clone(),
             attempt_started_at: HashMap::new(),
@@ -2961,6 +2993,7 @@ impl Scheduler {
             device_speed: HashMap::new(),
             abort_handles: HashMap::new(),
             kill_tree_hash: HashMap::new(),
+            retry_tree_hash: HashMap::new(),
             prior_hints: HashMap::new(),
             judge_notes: Vec::new(),
             interventions: HashMap::new(),
