@@ -12,6 +12,7 @@ pub mod dispatch;
 pub mod event;
 pub mod judge;
 pub mod memory_classify;
+pub mod patch;
 pub mod replan;
 pub mod scheduler;
 
@@ -27,6 +28,7 @@ pub use judge::{
     deterministic_verdict, is_split_candidate, ChildSpec, Judge, JudgeConfig, JudgeInput,
     JudgeOutcome, JudgeRequest, PreReviewOutput, PreReviewRequest, PreReviewer, Verdict,
 };
+pub use patch::{apply_patch, parse_patch, PlanPatch, TaskAdd, TaskEdit};
 pub use replan::{ReplanContext, Replanner};
 pub use scheduler::{
     qa_enabled, sink_review_enabled, tail_review_enabled, testgen_enabled, AttemptRecord,
