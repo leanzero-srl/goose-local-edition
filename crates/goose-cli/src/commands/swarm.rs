@@ -1174,19 +1174,6 @@ fn default_scout_budget_secs() -> u64 {
     900
 }
 
-/// A scout's budget: the WORK it may do, and the clock that only exists so a wedged model cannot hang the run.
-///
-/// These travel together because either alone is a trap. A clock alone is what shipped: it guillotined a
-/// scout at 120.023s mid-thought and called the apology a finding. A work cap alone would let one stuck model
-/// hold the fleet forever.
-#[derive(Clone, Copy)]
-struct ScoutBudget {
-    /// Agent turns (≈ tool calls). THE budget — a scout stops when it has looked enough things up.
-    max_lookups: u32,
-    /// Wall-clock backstop ONLY. Set well clear of the work cap so it never stops a healthy scout.
-    backstop_secs: u64,
-}
-
 /// How much WORK a scout may do — the real budget, in agent turns (each turn is at most one tool call).
 ///
 /// 10 per Mihai's ask. This is what should stop a scout: it has looked things up until it had enough, not
@@ -3896,56 +3883,6 @@ where
     (c, dead, stopped, deferred)
 }
 
-/// #135 generic straggler collector for a fleet fanout where EVERY completed task is a usable result and any
-/// completion counts toward the quorum (e.g. SCOUTS — advisory research with no parse/validity gate, so there
-/// is no "dead" concept). Drains `js`; once every task but one has completed (should_arm_straggler_grace on
-/// the completion count), the lone straggler gets `grace_secs` then is aborted. Returns (results in completion
-/// order, stopped count). `n` is the initial task count. Shares the verified grace/abort mechanics with the
-/// draft collector (same 1-day bounded inert timer, same biased/guarded select).
-async fn collect_fleet_with_straggler_stop<R>(
-    mut js: tokio::task::JoinSet<R>,
-    n: usize,
-    grace_secs: u64,
-) -> (Vec<R>, usize)
-where
-    R: Send + 'static,
-{
-    let mut results: Vec<R> = Vec::new();
-    let mut done = 0usize;
-    let mut stopped = 0usize;
-    let grace_timer = tokio::time::sleep(std::time::Duration::from_secs(86_400));
-    tokio::pin!(grace_timer);
-    let mut armed = false;
-    while !js.is_empty() {
-        tokio::select! {
-            biased;
-            joined = js.join_next() => {
-                match joined {
-                    Some(Ok(r)) => {
-                        results.push(r);
-                        done += 1;
-                    }
-                    // A panicked/aborted task still reduces the outstanding count (it will never deliver).
-                    Some(Err(_)) => done += 1,
-                    None => break,
-                }
-                if !armed && should_arm_straggler_grace(n, done) {
-                    grace_timer
-                        .as_mut()
-                        .reset(tokio::time::Instant::now() + std::time::Duration::from_secs(grace_secs));
-                    armed = true;
-                }
-            }
-            _ = &mut grace_timer, if armed => {
-                stopped = js.len();
-                js.abort_all();
-                while js.join_next().await.is_some() {}
-            }
-        }
-    }
-    (results, stopped)
-}
-
 /// integrate-verify runs the PROGRAM end-to-end; it does NOT need the unit-test subtask, and a FAILING test
 /// must NOT block it. Otherwise the run reports FAILED while integrate-verify never ran to check whether the
 /// app actually works (the dependency-blocked false-negative: observed on UNIQ6, where a failed `tests` task
@@ -4408,33 +4345,6 @@ fn id_names_a_test(id: &str) -> bool {
 /// Delimiter discipline is the same one `spec_get_endpoints` had to learn: the URL arrives wrapped in
 /// backticks, so scanning to whitespace captures the closing delimiter and the fetch 404s on a URL
 /// that differs from the real one by one character.
-/// Which grounding a scout is told it has. Extracted as a pure function because the alternative —
-/// an inline three-branch `if` — is exactly the shape that let the ladder's shadow diagnostic and
-/// the branch it mirrored drift apart (F707): a test of the *condition* passes while the *call site*
-/// does something else. Here the call site matches on this value, so a test of this function is a
-/// test of the call site.
-#[derive(Debug, PartialEq, Eq, Clone, Copy)]
-enum ScoutLookup {
-    /// An MCP extension is attached; the lens's own tool hint applies.
-    Mcp,
-    /// No extension, but the SPEC NAMES DOCUMENTS and the scout has a shell to curl them with.
-    SpecDocs,
-    /// Nothing to look up with — ask for calibration instead of lookup.
-    None,
-}
-
-fn scout_lookup(has_mcp: bool, has_docs: bool) -> ScoutLookup {
-    // MCP wins when both are available: it is the channel the lens tool_hints are written for, and
-    // the doc URLs still reach the worker verbatim through `doc_facts` regardless.
-    if has_mcp {
-        ScoutLookup::Mcp
-    } else if has_docs {
-        ScoutLookup::SpecDocs
-    } else {
-        ScoutLookup::None
-    }
-}
-
 /// The fenced example blocks of a fetched document, which is where the wire contract actually lives.
 ///
 /// WHY. `doc_fetch` delivers the whole document verbatim into `doc_facts`, which reaches the planner
@@ -8342,49 +8252,6 @@ mod tests {
         assert_eq!(derived_straggler_grace(400, 480), 80);
     }
 
-    // Scout collector (generic, every completion counts — advisory phase, no validity gate).
-    #[tokio::test]
-    async fn fleet_straggler_stop_aborts_lone_lagging_scout() {
-        let mut js = tokio::task::JoinSet::new();
-        js.spawn(async { "libraries".to_string() });
-        js.spawn(async { "edge-cases".to_string() });
-        js.spawn(async {
-            tokio::time::sleep(std::time::Duration::from_secs(30)).await;
-            "architecture".to_string()
-        });
-        // Two scouts land instantly and arm a 1s grace; the 30s straggler is aborted ~1s later.
-        let (results, stopped) = collect_fleet_with_straggler_stop(js, 3, 1).await;
-        assert_eq!(stopped, 1, "the lone lagging scout is stopped");
-        assert_eq!(results.len(), 2, "proceed on the 2 that landed");
-        assert!(!results.contains(&"architecture".to_string()));
-    }
-
-    #[tokio::test]
-    async fn fleet_straggler_stop_keeps_all_when_none_lags() {
-        let mut js = tokio::task::JoinSet::new();
-        for k in ["a", "b", "c"] {
-            let s = k.to_string();
-            js.spawn(async move { s });
-        }
-        let (results, stopped) = collect_fleet_with_straggler_stop(js, 3, 1).await;
-        assert_eq!(stopped, 0);
-        assert_eq!(results.len(), 3);
-    }
-
-    #[tokio::test]
-    async fn fleet_straggler_stop_never_arms_below_three() {
-        // n < 3 can never arm — both tasks are awaited even if one is slower.
-        let mut js = tokio::task::JoinSet::new();
-        js.spawn(async { "a".to_string() });
-        js.spawn(async {
-            tokio::time::sleep(std::time::Duration::from_millis(60)).await;
-            "b".to_string()
-        });
-        let (results, stopped) = collect_fleet_with_straggler_stop(js, 2, 1).await;
-        assert_eq!(stopped, 0, "no lone straggler concept below 3");
-        assert_eq!(results.len(), 2);
-    }
-
     #[test]
     fn score_skeleton_does_not_rewrite_real_dependencies_for_width() {
         let wide = goose_swarm::specs_from_plan_json(
@@ -9912,47 +9779,6 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
     /// are expected", and the run still shipped complete_result{passed:true, verified:true}. The mechanism is
     /// that only `Failures` ever pushed a finding, so NoTests was silently green.
     /// An unparseable stub must LEAVE the frozen bundle, not merely be warned about.
-    /// `fanout_over_fleet` promises "Results come back in item order" and the straggler variant
-    /// bills itself as the same thing with a tail-stop — but its collector pushed in COMPLETION
-    /// order, which is race-determined across nodes. MEASURED: two runs of one config produced
-    /// [libraries, architecture] and [architecture, libraries], changing the research block handed
-    /// to the planner by ordering alone. This pins the promise for every caller: scouts, the frozen
-    /// contract bundle, and the detail fan.
-    #[test]
-    fn the_straggler_fanout_returns_results_in_item_order_not_completion_order() {
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        // Item 0 is deliberately the SLOWEST, so completion order is the exact reverse of item order.
-        let items = vec![(0usize, 90u64), (1, 60), (2, 30), (3, 1)];
-        let out = rt.block_on(fanout_over_fleet_straggler(
-            vec!["a".into(), "b".into(), "c".into(), "d".into()],
-            items,
-            0, // grace 0 => the await-all path, which already promised item order
-            "test",
-            |(idx, delay): (usize, u64), _dev: String| async move {
-                tokio::time::sleep(std::time::Duration::from_millis(delay)).await;
-                idx
-            },
-        ));
-        assert_eq!(out, vec![0, 1, 2, 3], "await-all path must be item-ordered");
-
-        // And the STRAGGLER path, which is the one that was returning completion order.
-        let items = vec![(0usize, 90u64), (1, 60), (2, 30), (3, 1)];
-        let out = rt.block_on(fanout_over_fleet_straggler(
-            vec!["a".into(), "b".into(), "c".into(), "d".into()],
-            items,
-            30, // non-zero grace => the indexed collector path
-            "test",
-            |(idx, delay): (usize, u64), _dev: String| async move {
-                tokio::time::sleep(std::time::Duration::from_millis(delay)).await;
-                idx
-            },
-        ));
-        assert!(
-            out.windows(2).all(|w| w[0] < w[1]),
-            "straggler path must be item-ordered, got {out:?}"
-        );
-    }
-
     /// The JOIN must never be handed the canonical spec AND a second copy of an engine-authored
     /// sweep. When fan_verify applies, the sink is excluded from the detail fan, so the description
     /// it carries is thin_integrate_verify_spec — which is >240 chars and used to pass the
@@ -9968,67 +9794,6 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
     /// whitespace fetches an address one character off the real one — and a 404 here is
     /// indistinguishable from a spec that named no documentation at all. The bare origin on the next
     /// line must NOT be fetched: it is the service the build is writing a client for, not a document.
-    /// ONE BOOLEAN WAS ANSWERING TWO QUESTIONS AND GOT THE SECOND WRONG — all four combinations.
-    ///
-    /// The defect: `has_lookup = !exts.is_empty()` drove BOTH the tool hint and the clause asserting
-    /// the scout "cannot look anything up on this run". A scout with no MCP extension still has a
-    /// shell, and 59 of 77 archived scouts (77%) fetched a spec-named URL while under that
-    /// instruction — so the engine told them a falsehood and then counted the result as grounded.
-    ///
-    /// The bottom row is the one that makes the change SAFE to ship: a spec naming no document is
-    /// byte-identical to today, which is why the gate's off-state cannot regress an existing run.
-    #[test]
-    fn a_spec_naming_documents_is_not_told_it_cannot_look_anything_up() {
-        assert_eq!(
-            scout_lookup(true, true),
-            ScoutLookup::Mcp,
-            "MCP wins when both exist"
-        );
-        assert_eq!(
-            scout_lookup(true, false),
-            ScoutLookup::Mcp,
-            "MCP alone is unchanged"
-        );
-        assert_eq!(
-            scout_lookup(false, true),
-            ScoutLookup::SpecDocs,
-            "THE DEFECT: no extension but the spec names documents — this used to say 'you cannot \
-             look anything up' to a scout holding a shell and a URL"
-        );
-        assert_eq!(
-            scout_lookup(false, false),
-            ScoutLookup::None,
-            "no extension and no named document must stay EXACTLY as today — this is what makes the \
-             change safe on every spec that names no URL"
-        );
-    }
-
-    /// The gate must be able to force the old behaviour even when the spec DOES name documents,
-    /// because that off-state is the control arm any measurement of this change compares against.
-    #[test]
-    fn the_scout_doc_gate_off_reproduces_todays_behaviour_on_a_spec_that_names_documents() {
-        let urls = spec_doc_urls("see https://example.com/api/reference.md for the contract");
-        assert!(
-            !urls.is_empty(),
-            "positive control: the spec really does name a document"
-        );
-        // has_docs is `gate && !doc_urls.is_empty()` at the call site — with the gate off it is false
-        // no matter what the spec says, so the decision must collapse to today's None branch.
-        let gate_off = false;
-        assert_eq!(
-            scout_lookup(false, gate_off && !urls.is_empty()),
-            ScoutLookup::None,
-            "gate OFF must reproduce today's clause even on a doc-naming spec"
-        );
-        let gate_on = true;
-        assert_eq!(
-            scout_lookup(false, gate_on && !urls.is_empty()),
-            ScoutLookup::SpecDocs,
-            "gate ON on the same spec must take the new branch — otherwise the gate does nothing \
-             and the arm would measure a no-op"
-        );
-    }
-
     /// THE 44%-OF-REMAINING-LOSS CHECK, and every way it must refuse to fire.
     ///
     /// Measured across the four best 3-node cells on the current binary: `vendor_conditional` and
@@ -15481,38 +15246,6 @@ commands, the two database files, the `web/` files and `DECISIONS.md` are the co
         assert!(rt.block_on(run_pillar_checks(empty.path())).is_empty());
     }
 
-    #[test]
-    fn scout_lenses_select_correctly() {
-        // greenfield drops the amendment-only `codebase` lens.
-        // ORDER IS PRIORITY: straggler-stop sacrifices whichever lens finishes LAST, and measured on
-        // 4 of 4 runs that was `edge-cases` every single time — the lens carrying the failure modes
-        // the vendor-contract tier grades. It now runs FIRST so the sacrifice falls on `libraries`,
-        // which is near-inert on a spec that forbids dependencies.
-        let g: Vec<&str> = select_lenses(false, 4).iter().map(|l| l.id).collect();
-        assert_eq!(g, vec!["edge-cases", "architecture", "libraries"]);
-        assert_eq!(
-            g.last(),
-            Some(&"libraries"),
-            "the LAST lens is the one straggler-stop drops; it must be the cheapest to lose"
-        );
-        // amendments include codebase, and it is first so a low clamp keeps it.
-        let a: Vec<&str> = select_lenses(true, 4).iter().map(|l| l.id).collect();
-        assert_eq!(
-            a,
-            vec!["codebase", "edge-cases", "architecture", "libraries"]
-        );
-        // A low clamp now keeps the two lenses worth keeping rather than codebase + libraries.
-        assert_eq!(
-            select_lenses(true, 2)
-                .iter()
-                .map(|l| l.id)
-                .collect::<Vec<_>>(),
-            vec!["codebase", "edge-cases"]
-        );
-        // max clamps up to at least 1 even if 0 is passed.
-        assert_eq!(select_lenses(false, 0).len(), 1);
-    }
-
     // Captured verbatim from a real `lms ps` (5 models; the macbook 'Local' hosts two).
     const FIXTURE: &str = "\nIDENTIFIER                                      MODEL                                           STATUS        SIZE        CONTEXT    PARALLEL    DEVICE                TTL     \nqwen/qwen3.6-27b                                qwen/qwen3.6-27b                                GENERATING    29.53 GB    262144     4           WorksMacStudio.lan    1h / 1h \nqwen/qwen3.6-35b-a3b                            qwen/qwen3.6-35b-a3b                            IDLE          29.09 GB    200000     4           Mac.lan                       \nqwen3.6-35b-a3b-mtp-holo3-qwopus-qx86-hi-mlx    qwen3.6-35b-a3b-mtp-holo3-qwopus-qx86-hi-mlx    IDLE          39.51 GB    128000     4           Local                         \nqwopus3.6-27b-coder-mlx                         qwopus3.6-27b-coder-mlx                         IDLE          28.60 GB    128000     4           Local                         \nqwopus3.6-35b-a3b-v1-mtp                        qwopus3.6-35b-a3b-v1-mtp                        IDLE          38.70 GB    262144     4           WorksMacStudio.lan    17m / 1h\n";
 
@@ -16071,17 +15804,6 @@ enum ResearchCoverageState {
     SpecSufficient,
     Unresolved,
     Blocked,
-}
-
-impl ResearchCoverageState {
-    fn as_str(self) -> &'static str {
-        match self {
-            Self::Grounded => "grounded",
-            Self::SpecSufficient => "spec-sufficient",
-            Self::Unresolved => "unresolved",
-            Self::Blocked => "blocked",
-        }
-    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
@@ -16881,74 +16603,6 @@ fn pitfall_items() -> Vec<String> {
         *i = i.trim_end().to_string();
     }
     items
-}
-
-/// A fixed research angle a SCOUT investigates in parallel (no serial scoping call needed). The
-/// `codebase` lens is amendment-only; it is listed first so it survives a low `max` clamp.
-///
-/// ORDER IS PRIORITY, and for two reasons now, not one. Beyond the `max` clamp above, straggler-stop
-/// sacrifices the LAST lens to finish: `select_lenses` preserves this order, the fan dispatches in it,
-/// and `should_arm_straggler_grace` then gives whichever lens is still outstanding only
-/// `straggler_grace_secs` more. MEASURED on 4 of 4 runs — 1-node and 3-node alike — the dropped scout
-/// was `edge-cases` EVERY time (`scouts_planned` lists three lenses, `research_completed` reports two
-/// findings, and `.swarm/activity/scout-edge-cases.json` never reaches `phase: done`).
-///
-/// That made the sacrifice systematic rather than incidental, and it fell on the worst possible lens:
-/// `edge-cases` is the one asked for "failure modes and the concrete tests that would prove the task
-/// is done correctly", which is exactly what the vendor-contract and robustness checks grade — the
-/// tier that collapsed to 14.3% on the weakest run. The straggler-stop comment at the scout call site
-/// reasons that "dropping the last scout only loses one lens of context"; that is true of a random
-/// lens and false of the same lens every run.
-///
-/// So `edge-cases` now precedes the two lenses whose loss is cheaper: `architecture` largely restates
-/// work the architect does itself from the spec, and `libraries` is near-inert on a spec that forbids
-/// dependencies. Behaviourally inert when straggler-stop is off — with grace 0 the fan awaits all.
-struct ScoutLens {
-    id: &'static str,
-    title: &'static str,
-    brief: &'static str,
-    tool_hint: &'static str,
-    amendment_only: bool,
-}
-
-const SCOUT_LENSES: &[ScoutLens] = &[
-    ScoutLens {
-        id: "codebase",
-        title: "Existing codebase",
-        brief: "Investigate the EXISTING code in the working directory: structure, key files, conventions, and exactly where the requested change must hook in.",
-        tool_hint: "Use the developer shell tools (ls, grep, cat) to read the existing code.",
-        amendment_only: true,
-    },
-    ScoutLens {
-        id: "edge-cases",
-        title: "Edge cases & testing",
-        brief: "Enumerate the tricky edge cases, failure modes, and the concrete tests that would prove the task is done correctly.",
-        tool_hint: "Reason from the task; use web-search for domain specifics if needed.",
-        amendment_only: false,
-    },
-    ScoutLens {
-        id: "architecture",
-        title: "Architecture & data model",
-        brief: "Propose the module/file breakdown, the data model/types, and how the pieces fit — a skeleton the planner can decompose from.",
-        tool_hint: "Reason from the task; use web-search only to confirm conventions.",
-        amendment_only: false,
-    },
-    ScoutLens {
-        id: "libraries",
-        title: "Libraries & APIs",
-        brief: "Identify the key libraries/frameworks this task needs and look up their REAL current API: function/class names, signatures, minimal usage snippets, and gotchas.",
-        tool_hint: "Use the context7 tools (resolve-library-id then get-library-docs) and web-search.",
-        amendment_only: false,
-    },
-];
-
-/// The lenses to run for this task: drop amendment-only lenses on greenfield, then clamp to `max`.
-fn select_lenses(is_amendment: bool, max: u32) -> Vec<&'static ScoutLens> {
-    SCOUT_LENSES
-        .iter()
-        .filter(|l| !l.amendment_only || is_amendment)
-        .take(max.max(1) as usize)
-        .collect()
 }
 
 /// M6 plan confidence via SELF-CONSISTENCY: how much the N drafted skeleton candidates AGREE on shape.
@@ -20069,75 +19723,6 @@ impl GooseAgentDispatcher {
         })
     }
 
-    /// Ask the planner for a small set of INDEPENDENT research questions to resolve before planning.
-    /// Degrades to an empty list on any error (research is optional, never aborts the run).
-    async fn research_questions(
-        &self,
-        planner_model: &str,
-        user_prompt: &str,
-        max_q: u32,
-        is_amendment: bool,
-    ) -> Result<Vec<ResearchQuestion>> {
-        let codebase = if is_amendment {
-            " You MAY also include \"codebase\" questions to investigate the EXISTING code in the working dir."
-        } else {
-            ""
-        };
-        let system = format!(
-            "You scope a coding task BEFORE planning. Emit AT MOST {max_q} INDEPENDENT research questions whose \
-             answers would MATERIALLY change the plan: \"library_docs\" (look up a library's real API via its docs) \
-             or \"web\" (a fact to look up).{codebase} Ask ONLY what you cannot already answer; if the task is \
-             self-contained, return an EMPTY questions list. Do NOT invent make-work. Then call the final_output tool."
-        );
-        let response = Some(Response {
-            json_schema: Some(research_schema()),
-        });
-        let out = match self
-            .run_agent_timed(
-                planner_model,
-                system,
-                format!("Task: {user_prompt}"),
-                response,
-                8,
-                &[],
-            )
-            .await
-        {
-            Ok(o) => o,
-            Err(_) => return Ok(Vec::new()),
-        };
-        let Some(fo) = out.final_output else {
-            return Ok(Vec::new());
-        };
-        #[derive(serde::Deserialize)]
-        struct Q {
-            id: String,
-            question: String,
-            kind: String,
-        }
-        #[derive(serde::Deserialize)]
-        struct Qs {
-            #[serde(default)]
-            questions: Vec<Q>,
-        }
-        let parsed: Qs = match serde_json::from_str(&fo) {
-            Ok(p) => p,
-            Err(_) => return Ok(Vec::new()),
-        };
-        Ok(parsed
-            .questions
-            .into_iter()
-            .take(max_q as usize)
-            .map(|q| ResearchQuestion {
-                id: q.id,
-                question: q.question,
-                kind: q.kind,
-                requirement_ids: Vec::new(),
-                evidence_needed: String::new(),
-            })
-            .collect())
-    }
-
     /// GOOSE_SWARM_ASK: generate crisp INTERROGATIVE clarifying questions to ask the USER when plan
     /// confidence is low. The answers should change HOW the program is built (scope/IO/formats/acceptance),
     /// not be make-work. Returns an empty vec on any failure or a self-contained task — the caller falls
@@ -20647,246 +20232,6 @@ impl GooseAgentDispatcher {
             }
             findings.extend(batch);
         }
-    }
-
-    /// Fan out fixed-lens SCOUTS IN PARALLEL across the fleet — each self-directs its lens with no
-    /// serial scoping call. Returns the same `ResearchFinding` shape as `run_research` so the planner
-    /// and the findings-join are unchanged.
-    async fn run_scouts(
-        self: &Arc<Self>,
-        user_prompt: &str,
-        is_amendment: bool,
-        max_lenses: u32,
-        research_extensions: Arc<Vec<ExtensionConfig>>,
-        worker_models: Vec<String>,
-        budget: ScoutBudget,
-    ) -> Vec<ResearchFinding> {
-        let ScoutBudget {
-            max_lookups,
-            backstop_secs: scout_budget,
-        } = budget;
-        if worker_models.is_empty() {
-            return Vec::new();
-        }
-        let me = self.clone();
-        let prompt = user_prompt.to_string();
-        let lenses = select_lenses(is_amendment, max_lenses);
-        // #135 straggler-stop for scouts, gated by the legacy `straggler_stop_degrade` switch (default OFF).
-        // Required contract/detail compilation no longer reads this gate; those requests are always awaited.
-        //
-        // THE ASYMMETRY THAT WAS MISSED. Plan drafts are REDUNDANT — best-of-N produces N candidates and one
-        // is kept, so aborting the slowest costs nothing. Scout lenses are COMPLEMENTARY — each covers ground
-        // no other lens covers, so aborting the slowest costs that ground outright. A redundancy optimisation
-        // was applied to a complementary fanout.
-        //
-        // MEASURED, on every archived run that reached research: 6 of 6 lost EXACTLY ONE lens, never zero and
-        // never two — 33.3% of planned research discarded by design, on 1-node and 3-node runs alike.
-        //
-        // THIS ALSO REFUTES THE PREVIOUS FIX AT ITS OWN ADDRESS. fb0885328 reordered SCOUT_LENSES to put
-        // `edge-cases` FIRST, reasoning that straggler-stop "sacrifices the LAST lens" and the order is the
-        // dispatch order. It is not positional: `collect_fleet_with_straggler_stop` arms the grace on the
-        // COMPLETION count, so the victim is whichever lens is SLOWEST. Run swarm-20260804-184525912, on a
-        // binary built 2026-08-04 21:42 (the reorder landed 2026-08-01 14:14, so it WAS armed), still lost
-        // `edge-cases` — now first in the order — while architecture and libraries reached `phase: done`.
-        // Edge-cases asks for failure modes and concrete tests, the most generative of the three prompts, so
-        // it is reliably the slowest and reliably the one killed.
-        //
-        // The trade is not close: research ran 297s of a ~7200s unit, so waiting out the straggler costs on
-        // the order of 1% of wall-clock to recover 50% more research, and research feeds every later dispatch.
-        // FALSIFIER: if a run under this change shows `lenses_returned` still short of `scouts_planned`, the
-        // cause is NOT straggler-stop and this comment is wrong.
-        let scout_grace = if self.straggler_stop_degrade {
-            self.straggler_grace_secs
-                .unwrap_or(45)
-                .clamp(10, scout_budget.max(10))
-        } else {
-            0
-        };
-        // THE DOCUMENTS THE SPEC ITSELF NAMES, hoisted out of the per-lens closure so every scout is
-        // told the same truth. `spec_doc_urls` is pure and cheap; computing it per lens would just be
-        // the same parse three times.
-        let (scout_doc_urls, doc_urls) = scout_docs_decision(user_prompt);
-        // One scout per device (work-stealing): a weight-1 node never has a second scout queued.
-        fanout_over_fleet_straggler(one_lane_per_host(worker_models), lenses, scout_grace, "scout", move |lens, model| {
-            let me = me.clone();
-            let exts = research_extensions.clone();
-            let prompt = prompt.clone();
-            let doc_urls = doc_urls.clone();
-            async move {
-                let started = std::time::Instant::now();
-                eprintln!(
-                    "  {} scout {} → {}",
-                    style("▸").cyan().bold(),
-                    style(lens.id).bold(),
-                    model
-                );
-                // THE ENGINE ALREADY KNOWS WHETHER IT CAN LOOK ANYTHING UP, AND WAS TELLING THE SCOUT
-                // OTHERWISE.
-                //
-                // `research_tools` is emitted every run as {"available": [], "can_look_things_up": false}
-                // on this fleet — no MCP extensions are attached by default. Yet the `libraries` lens ships
-                // the tool_hint "Use the context7 tools (resolve-library-id then get-library-docs) and
-                // web-search", and the closing line ordered EVERY scout to "spend them on LOOKING THINGS UP".
-                //
-                // Naming tools that do not exist is worse than wasted tokens here. That lens's whole job is
-                // "look up their REAL current API: function/class names, signatures, minimal usage snippets".
-                // Told to look it up, with nothing to look it up WITH, a 27B's only remaining move is to
-                // produce the API from memory — and those invented signatures flow straight into the plan
-                // and then into the frozen contracts. F78 measured the downstream half of this: `grounded`
-                // was 0 on every run, so `doc_facts` — the one verbatim research->worker channel — carried
-                // nothing.
-                //
-                // So when there is nothing attached, say so, and ask for CALIBRATION instead of lookup: what
-                // it is confident of, and what it is NOT, marked. An honest "I am not certain of this
-                // signature" is worth more to the planner than a fluent invention.
-                // ONE BOOLEAN WAS ANSWERING TWO DIFFERENT QUESTIONS, AND GOT THE SECOND ONE WRONG.
-                //
-                // `has_lookup = !exts.is_empty()` is the right test for `tool_hint` — naming context7
-                // when no extension is attached is the falsehood the block above exists to stop. It is
-                // the WRONG test for `lookup_clause`, which asserts the scout "cannot look anything up
-                // on this run". A scout with no MCP extension still has a SHELL, and the spec routinely
-                // names its own documentation URLs.
-                //
-                // MEASURED, and it is not marginal: `research_completed.grounded` averages 2.27/3 with
-                // ZERO runs at 0, and 59 of 77 scouts (77%) fetched a URL while under an explicit
-                // instruction that they could not. `research_lookups` grounds on `is_mcp ||
-                // fetched_external`, and `fetched_external` is set by a shell curl. So the engine both
-                // tells the scout it cannot look anything up AND counts it as grounded when it does.
-                //
-                // The stale comment that justified the old wording claimed `grounded` was 0 on every
-                // run. The corpus refutes it — that reading predates the `is_mcp || fetched_external`
-                // change, which landed 12h43m earlier the same day.
-                let has_mcp = !exts.is_empty();
-                let has_docs = scout_doc_urls && !doc_urls.is_empty();
-                let lookup = scout_lookup(has_mcp, has_docs);
-                let tool_hint = if has_mcp {
-                    lens.tool_hint
-                } else {
-                    "You have NO documentation or web-search tools attached — do not attempt to use \
-                     context7 or web-search, they are not there."
-                };
-                let lookup_clause = if lookup == ScoutLookup::Mcp {
-                    format!(
-                        "You have at most {max_lookups} tool call(s): spend them on LOOKING THINGS UP, not \
-                         on exploring. Stop as soon as you can answer — an early, grounded answer beats a \
-                         long one."
-                    )
-                } else if lookup == ScoutLookup::SpecDocs {
-                    // THE ONLY NEW BRANCH. It fires exactly when the spec named a document and no MCP
-                    // extension is attached — the case the old code described as "you cannot look
-                    // anything up". Everything the scout asserts about the vendor API must now come
-                    // from fetched text or be marked UNVERIFIED, because an invented signature here
-                    // becomes a frozen contract every worker builds against.
-                    format!(
-                        "The spec names these documents: {}. Fetch each one with `curl -s <url>` as \
-                         your FIRST action, and quote it VERBATIM for anything you assert about the \
-                         vendor API. Mark anything NOT present in the fetched text as UNVERIFIED \
-                         rather than guessing a plausible-looking name — a signature you invent here \
-                         becomes a frozen contract every worker builds against.",
-                        doc_urls.join(", ")
-                    )
-                } else {
-                    "You cannot look anything up on this run, so answer from what you already know — and \
-                     CALIBRATE: state plainly which API names and signatures you are CONFIDENT of, and mark \
-                     anything you are unsure of as UNVERIFIED rather than guessing a plausible-looking name. \
-                     A signature you invent here becomes a frozen contract every worker builds against, so \
-                     an honest 'unverified' is far more useful to the planner than a confident invention."
-                        .to_string()
-                };
-                let system = format!(
-                    "You are a SCOUT investigating ONE aspect of a coding task to inform the planner. \
-                     Your lens is \"{}\": {} {} Return a CONCISE, factual brief (key facts, API names, \
-                     short snippets, file refs, and a suggested breakdown for your lens) as your TEXT \
-                     RESPONSE ONLY. You have NO write task: do NOT create, write, or edit ANY file \
-                     (no .md brief, no notes, no scratch) — read-only investigation, then report in your \
-                     message. Do NOT produce the full plan. To read text use `cat`; `python3` not `python`. \
-                     Keep it LEAN: never dump full docs/help()/pydoc text into your context; for \
-                     standard-library modules just name the relevant APIs in one line. A few hundred words \
-                     is plenty — large context is very slow on local models. \
-                     STAY in the current working directory: for a NEW/empty project there is nothing on \
-                     disk to investigate, so reason from the task itself; NEVER `ls`/`cat` parent or \
-                     sibling directories — they are unrelated projects. {lookup_clause}",
-                    lens.title, lens.brief, tool_hint
-                );
-                // Write a per-scout activity digest (.swarm/activity/scout-<lens>.json) so the RESEARCH phase is
-                // no longer a black box — the desktop surfaces each scout's live tool calls + generation per node,
-                // exactly like a worker. Was previously invisible (planner-side calls passed activity_key=None).
-                let scout_key = format!("scout-{}", lens.id);
-                let (findings, lookups, timed_out, errored, attempt) = match tokio::time::timeout(
-                    std::time::Duration::from_secs(scout_budget),
-                    me.run_agent_timed_at(
-                        &model,
-                        system,
-                        format!("Task: {prompt}"),
-                        None,
-                        max_lookups,
-                        &exts,
-                        None,
-                        Some(scout_key.as_str()),
-                    ),
-                )
-                .await
-                {
-                    Ok(Ok(o)) => {
-                        let lookups = research_lookups(&o.tool_calls);
-                        let attempt = classify_research_attempt(&o.tool_calls);
-                        (o.text, lookups, false, false, attempt)
-                    }
-                    Ok(Err(e)) => (
-                        format!("(scout failed: {e})"),
-                        Vec::new(),
-                        false,
-                        true,
-                        ResearchAttempt::Errored,
-                    ),
-                    Err(_) => (
-                        format!(
-                            "(scout '{}' exceeded {}s budget — skipped to keep the fleet moving)",
-                            lens.id, scout_budget
-                        ),
-                        Vec::new(),
-                        true,
-                        false,
-                        ResearchAttempt::Errored,
-                    ),
-                };
-                // SAY WHAT HAPPENED. The tick used to print OUTSIDE the match, so a scout that timed out at
-                // the budget wall, one that errored, and one that actually looked something up all rendered
-                // an identical green "✓ scout libraries (120s)". MEASURED: research_completed fired at
-                // exactly +120.023s against a 120s budget — a guillotine, to the millisecond — and the
-                // "finding" handed to the planner was the literal string "(scout 'x' exceeded 120s budget —
-                // skipped to keep the fleet moving)". The run still reported "research: 3 findings", because
-                // that count is findings.len() = the LENS count, which is fixed no matter what came back.
-                // A tick that cannot fail is not a status; it is decoration.
-                let outcome = if timed_out {
-                    (style("⏱").yellow().bold(), "timed out at the budget — no finding")
-                } else if errored {
-                    (style("✗").red().bold(), "failed — no finding")
-                } else if lookups.is_empty() {
-                    (style("~").yellow().bold(), "answered from the model's own knowledge, looked nothing up")
-                } else {
-                    (style("✓").green().bold(), "looked things up")
-                };
-                eprintln!(
-                    "  {} scout {} ({:.0}s) — {}",
-                    outcome.0,
-                    style(lens.id).bold(),
-                    started.elapsed().as_secs_f64(),
-                    outcome.1
-                );
-                ResearchFinding {
-                    question: lens.title.to_string(),
-                    kind: lens.id.to_string(),
-                    requirement_ids: Vec::new(),
-                    evidence_needed: lens.brief.to_string(),
-                    findings,
-                    grounded: !lookups.is_empty(),
-                    lookups,
-                    attempt,
-                }
-            }
-        })
-        .await
     }
 
     /// GOOSE_SWARM_CONTRACTS (2b): freeze the contract before EXECUTE. Set once; every worker reads it.
@@ -25850,28 +25195,6 @@ fn spec_python_entry(spec: &str) -> Option<String> {
     })
 }
 
-/// ONE resolution of the scout-docs condition, shared by the per-scout prompt builder and the
-/// F818 scout_docs_mode event — two independent computations of the same condition is the
-/// sink_review_enabled drift class this file documents (adversarial-review finding).
-fn scout_docs_decision(prompt: &str) -> (bool, Vec<String>) {
-    // DEFAULT ON (F864). The ETag/If-None-Match class failed in EVERY product-regime run — the
-    // vendor documents the conditional-fetch protocol and no fact channel carried it to where
-    // the protocol is DECIDED (the detail planner invents a wrong single-ETag scheme and the
-    // implementer faithfully builds it). The scout_doc_urls arm measured 0.782 (2nd-best
-    // mechanism single). Self-gating: a spec that names no doc URLs yields an empty list and
-    // the mechanism is inert; env opts out.
-    //
-    // F870 review: `swarm_gate(name, true)` is ASSURED-BUNDLE membership, not a default — with
-    // GOOSE_SWARM_ASSURED unset (every regime and desktop run) this lever was DEAD despite the
-    // "default ON" intent; the arm that measured 0.782 set the env var explicitly, which is why
-    // F818 found the mechanism unverifiable in regime artifacts. swarm_gate_cfg(_, true) is the
-    // real default-ON with the same env escape hatch.
-    (
-        swarm_gate_cfg("GOOSE_SWARM_SCOUT_DOC_URLS", true),
-        spec_doc_urls(prompt),
-    )
-}
-
 /// The VENDOR the spec tells the builder to integrate against: (docs_url, base_url, api_key).
 /// Parsed from the spec's own idiom — "documentation is at `URL`", "Base URL `URL`",
 /// "API key `KEY`" — so this is spec-derived, never benchmark-specific; a spec that names no
@@ -28581,92 +27904,6 @@ where
         details: details.into_iter().flatten().collect(),
         auxiliary: auxiliary.into_iter().flatten().collect(),
     })
-}
-
-/// #135: like `fanout_over_fleet`, but stops the lone lagging advisory scout once the others are in. Detail
-/// and contract compilers are authority-bearing and must use `fanout_staged`; they are never admitted here.
-/// `grace_secs == 0` (feature off) or a fan smaller than three falls back to await-all. `noun` labels the
-/// generic helper in logs and tests; the only production caller is the scout fan.
-async fn fanout_over_fleet_straggler<T, R, F, Fut>(
-    devices: Vec<String>,
-    items: Vec<T>,
-    grace_secs: u64,
-    noun: &str,
-    f: F,
-) -> Vec<R>
-where
-    T: Send + 'static,
-    R: Send + 'static,
-    F: Fn(T, String) -> Fut + Clone + Send + 'static,
-    Fut: std::future::Future<Output = R> + Send + 'static,
-{
-    let n = items.len();
-    // The arming rule is "every item but one has finished". With more items than devices, items first queue
-    // through the semaphore and grace arms only at the true logical tail.
-    if grace_secs == 0 || n < 3 {
-        return fanout_over_fleet(devices, items, f).await;
-    }
-    // Observability (verify-instrument-reporting-zero): make the straggler PATH visible even on runs where it
-    // never has to abort, so a clean "no fire" is distinguishable from a silent fall-back to await-all.
-    eprintln!(
-        "  {} straggler-stop watching {n} {noun}(s) — the last lagger gets a {grace_secs}s grace, then stops",
-        style("↯").dim()
-    );
-    use std::collections::VecDeque;
-    let devices = order_fleet_by_speed(devices, &load_config().speed_weights);
-    let permits = Arc::new(tokio::sync::Semaphore::new(devices.len()));
-    let pool = Arc::new(Mutex::new(
-        devices.into_iter().collect::<VecDeque<String>>(),
-    ));
-    let mut js = tokio::task::JoinSet::new();
-    // Spawn INDEXED so the results can be restored to item order below. `fanout_over_fleet`
-    // documents "Results come back in item order" and this function bills itself as "like
-    // `fanout_over_fleet`, but stops the lone lagging task" — yet the collector pushes each result
-    // as it JOINS, i.e. in completion order, which is race-determined on a multi-node fleet.
-    //
-    // That silently made three callers nondeterministic. MEASURED across two runs of the same
-    // config: one completed libraries then architecture, the other architecture then libraries, so
-    // the research block handed to the planner differed by ordering alone. The same collector also
-    // feeds `generate_contracts`, which builds the FROZEN CONTRACT BUNDLE by iterating the returned
-    // Vec — so the "### module:" sections every worker is told to honour were emitted in race order
-    // too. And `detail_memo_key` hashes the findings string, so a reorder also misses the memo.
-    //
-    // In a campaign whose entire problem is a 46-point replicate spread, an engine lever that
-    // injects ordering nondeterminism into the planner's own prompt is a variance source worth
-    // removing outright. Sorting here fixes every caller at the seam that made the promise, rather
-    // than at one call site while the seam keeps lying to the others.
-    for (idx, item) in items.into_iter().enumerate() {
-        let permits = permits.clone();
-        let pool = pool.clone();
-        let f = f.clone();
-        js.spawn(async move {
-            let _permit = permits
-                .acquire_owned()
-                .await
-                .expect("fleet semaphore never closed");
-            let dev = {
-                pool.lock()
-                    .unwrap()
-                    .pop_front()
-                    .expect("a device is free whenever a permit is held")
-            };
-            let out = f(item, dev.clone()).await;
-            pool.lock().unwrap().push_back(dev);
-            (idx, out)
-        });
-    }
-    let (mut indexed, stopped) = collect_fleet_with_straggler_stop(js, n, grace_secs).await;
-    indexed.sort_by_key(|(i, _)| *i);
-    let results: Vec<R> = indexed.into_iter().map(|(_, r)| r).collect();
-    if stopped > 0 {
-        eprintln!(
-            "  {} straggler-stop: {stopped} lagging {noun}(s) aborted after {grace_secs}s grace — proceeding \
-             on {} of {n}",
-            style("↯").yellow(),
-            results.len()
-        );
-    }
-    results
 }
 
 /// #135 OMNI-JUDGE probe. Asks a model whether an IN-FLIGHT call is repeating itself, from the call's own
@@ -36102,29 +35339,6 @@ fn clarify_schema() -> serde_json::Value {
                         "options": {"type": "array", "items": {"type": "string"}},
                         // the ONE open decision this question settles (verbatim from the uncertainties), for the panel rationale.
                         "resolves": {"type": "string"}
-                    }
-                }
-            }
-        }
-    })
-}
-
-fn research_schema() -> serde_json::Value {
-    serde_json::json!({
-        "type": "object",
-        "additionalProperties": false,
-        "required": ["questions"],
-        "properties": {
-            "questions": {
-                "type": "array",
-                "items": {
-                    "type": "object",
-                    "additionalProperties": false,
-                    "required": ["id", "question", "kind"],
-                    "properties": {
-                        "id": {"type": "string"},
-                        "question": {"type": "string"},
-                        "kind": {"type": "string", "enum": ["library_docs", "web", "codebase"]}
                     }
                 }
             }
