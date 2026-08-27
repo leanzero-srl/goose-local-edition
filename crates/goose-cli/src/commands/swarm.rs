@@ -24942,10 +24942,17 @@ impl GooseAgentDispatcher {
         planner_model: &str,
         user_prompt: &str,
         briefs: &[SliceBrief],
+        // The tree AS IT WAS AT RUN START, passed in rather than re-read here.
+        //
+        // Re-reading it at this point means reading a tree RESEARCH has already written into, and this
+        // list is what tells synthesis "these files already exist, put your modules where they belong".
+        // MEASURED: research left vendorsync/web/index.html, web/SPEC.md and __main__.py.spec.md behind,
+        // so a GREENFIELD build would have been handed a three-file manifest and told to fit around it —
+        // a brand-new build reading as an amendment over somebody else's half-written frontend.
+        existing: &[String],
     ) -> Result<String> {
         let index = slice_index(briefs);
-        let existing = existing_files_manifest(&self.working_dir);
-        let lang = detect_language(user_prompt, &existing);
+        let lang = detect_language(user_prompt, existing);
         let test_cmd = lang.test_cmd();
         let system = format!(
             "You are the SYNTHESIS step. Every slice below has already been researched and specified by \
@@ -25291,6 +25298,14 @@ async fn run_linear_plan(
         "OPEN",
         "one node splits the request into balanced semantic slices",
     );
+    // THE TREE AS THE RUN FOUND IT — captured before a single call runs.
+    //
+    // Both OPEN and SYNTHESIS are told what is already on disk so an amendment run puts its modules
+    // inside the package that is there instead of beside it. That list has to be the tree the USER
+    // handed us, not the tree as it stands once RESEARCH has written into it: measured on this run,
+    // research left three files behind and a greenfield build would have read them as an existing
+    // codebase to fit around.
+    let tree_at_start: Vec<String> = existing_files_manifest(&dispatcher.working_dir);
     sink.write_value(serde_json::json!({"event": "phase", "phase": "open"}));
     let t_open = std::time::Instant::now();
     let mut opened = dispatcher
@@ -25452,9 +25467,7 @@ async fn run_linear_plan(
     // whitelist removes the obvious way to create one; this is how we find out whether that was enough,
     // instead of discovering it a third time by reading a run tree by hand.
     let tree_before_research: std::collections::HashSet<String> =
-        existing_files_manifest(&dispatcher.working_dir)
-            .into_iter()
-            .collect();
+        tree_at_start.iter().cloned().collect();
     let research_exts = build_research_exts(swarm_gate_cfg(
         "GOOSE_SWARM_RESEARCH_TOOLS",
         cfg.research_tools,
@@ -25480,7 +25493,7 @@ async fn run_linear_plan(
                 "files": created,
             }));
             eprintln!(
-                "  {} RESEARCH created {} file(s) no task owns yet: {}",
+                "  {} planning created {} file(s) no task owns yet: {}",
                 style("!").yellow().bold(),
                 created.len(),
                 created.join(", ")
@@ -25508,7 +25521,7 @@ async fn run_linear_plan(
     );
     sink.write_value(serde_json::json!({"event": "phase", "phase": "synthesis"}));
     let plan_json = match dispatcher
-        .synthesize_plan(&cfg.planner_model, &opts.prompt, &briefs)
+        .synthesize_plan(&cfg.planner_model, &opts.prompt, &briefs, &tree_at_start)
         .await
     {
         Ok(p) => p,
