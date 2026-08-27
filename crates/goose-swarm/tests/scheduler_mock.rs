@@ -4,9 +4,9 @@
 
 use async_trait::async_trait;
 use goose_swarm::{
-    ChildSpec, Dag, DeviceCfg, Difficulty, DispatchError, DispatchRequest, Judge, JudgeConfig,
-    JudgeOutcome, JudgeRequest, PreReviewOutput, PreReviewRequest, PreReviewer, ReplanContext,
-    Replanner, Scheduler, TaskDispatcher, TaskRunOutput, TaskSpec, Verdict,
+    Dag, DeviceCfg, Difficulty, DispatchError, DispatchRequest, Judge, JudgeConfig, JudgeOutcome,
+    JudgeRequest, PreReviewOutput, PreReviewRequest, PreReviewer, ReplanContext, Replanner,
+    Scheduler, TaskDispatcher, TaskRunOutput, TaskSpec, Verdict,
 };
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -686,46 +686,20 @@ struct KillJudge {
     target: String,
 }
 
-/// Same as `KillJudge` but its verdict carries DETERMINISTIC provenance — i.e. it stands in for an engine
-/// FACT (a compile error, an owned file never written), not for the judge model's opinion. Only this kind of
-/// verdict is allowed to terminal-fail a task.
-struct DeterministicKillJudge {
-    target: String,
-}
-
-#[async_trait]
-impl Judge for DeterministicKillJudge {
-    async fn judge(&self, req: JudgeRequest) -> JudgeOutcome {
-        if req.task_id == self.target {
-            JudgeOutcome {
-                verdict: Verdict::Looping,
-                confidence: 1.0,
-                hint: "STOP looping and WRITE the file now".to_string(),
-                established: String::new(),
-                next_action: String::new(),
-                proposed_split: None,
-                deterministic: true,
-            }
-        } else {
-            JudgeOutcome::ok()
-        }
-    }
-}
-
 #[async_trait]
 impl Judge for KillJudge {
     async fn judge(&self, req: JudgeRequest) -> JudgeOutcome {
         if req.task_id == self.target {
             JudgeOutcome {
-                verdict: Verdict::Looping,
+                verdict: Verdict::Restart,
                 confidence: 1.0,
                 hint: "STOP looping and WRITE the file now".to_string(),
-                established: String::new(),
-                next_action: String::new(),
+                established: "the CSV has a header row".to_string(),
+                next_action: "write the file now".to_string(),
                 proposed_split: None,
-                // This mock stands in for the MODEL judge (it is a `Judge` impl), so it is NOT deterministic
-                // even at confidence 1.0 — which is the whole point of the flag. It can still RE-DISPATCH
-                // (what this test asserts); it just can no longer terminal-fail a task.
+                // This mock stands in for the MODEL judge, so it is NOT deterministic even at confidence
+                // 1.0. That flag used to be what let a verdict terminal-fail a task; nothing can do that
+                // from here any more. RESTART is the judge's only remaining action.
                 deterministic: false,
             }
         } else {
@@ -734,8 +708,16 @@ impl Judge for KillJudge {
     }
 }
 
+/// The judge's ONLY remaining action, and the two things that make it a restart rather than a retry:
+/// it stays on the SAME device, and the fresh session is SEEDED with what the last attempt established.
+///
+/// This replaces `judge_kills_and_redispatches_stuck_worker`, which asserted the opposite on both counts
+/// (that the task moved to a different node, and that it carried a bare corrective hint). Moving it was
+/// pointless — every node in this fleet runs the same model on a different host — and a bare hint throws
+/// away the half of the call that was working, which is the whole thing the four-field contract exists to
+/// keep.
 #[tokio::test]
-async fn judge_kills_and_redispatches_stuck_worker() {
+async fn judge_restarts_in_place_and_seeds_what_was_established() {
     let runs = Arc::new(Mutex::new(HashMap::new()));
     let hints = Arc::new(Mutex::new(Vec::new()));
     let disp = Arc::new(JudgeTestDispatcher {
@@ -768,13 +750,88 @@ async fn judge_kills_and_redispatches_stuck_worker() {
     assert_eq!(
         runs.lock().unwrap()[&"stuck".to_string()],
         2,
-        "stuck task ran twice: killed once by the judge, then completed on re-dispatch"
+        "stuck task ran twice: restarted once by the judge, then completed"
     );
     let h = hints.lock().unwrap();
+    let seeded = h
+        .iter()
+        .find(|(t, _)| t == "stuck")
+        .map(|(_, hint)| hint.clone())
+        .expect("the restart must carry a seed");
     assert!(
-        h.iter()
-            .any(|(t, hint)| t == "stuck" && hint.contains("WRITE")),
-        "the re-dispatch carried the judge's corrective hint"
+        seeded.contains("the CSV has a header row"),
+        "the fresh session is seeded with what the last attempt ESTABLISHED — that is the difference \
+         between a restart and a cold retry. got: {seeded:?}"
+    );
+    assert!(
+        seeded.contains("write the file now"),
+        "...and with the concrete next action. got: {seeded:?}"
+    );
+}
+
+/// THE LIVENESS RULE. The judge's restarts are unbounded by any counter, so the only thing standing
+/// between it and a task it restarts forever is PROGRESS: a restart is permitted only while the task's
+/// owned files moved since the last one. A judge that asks on every look, against a tree that never
+/// changes, must get exactly ONE restart and then be withheld — and crucially the task must still
+/// COMPLETE rather than be failed, because at the moment the ask is withheld the current attempt is
+/// still running and failing it would destroy live work to prevent a loop that withholding already
+/// prevents.
+///
+/// This is the guard the plan's §8.1 liveness argument rests on, and it had no test until here.
+#[tokio::test]
+async fn a_barren_restart_is_withheld_and_never_fails_the_task() {
+    /// Asks for a restart on EVERY look, forever — the pathological judge the rule exists for.
+    struct AlwaysRestartJudge;
+    #[async_trait]
+    impl Judge for AlwaysRestartJudge {
+        async fn judge(&self, _req: JudgeRequest) -> JudgeOutcome {
+            JudgeOutcome {
+                verdict: Verdict::Restart,
+                confidence: 1.0,
+                hint: "start over".to_string(),
+                established: String::new(),
+                next_action: "start over".to_string(),
+                proposed_split: None,
+                deterministic: false,
+            }
+        }
+    }
+
+    let runs = Arc::new(Mutex::new(HashMap::new()));
+    let hints = Arc::new(Mutex::new(Vec::new()));
+    let disp = Arc::new(JudgeTestDispatcher {
+        runs: runs.clone(),
+        hints: hints.clone(),
+        target: "stuck".to_string(),
+        delay: Duration::from_millis(20),
+        slow_all: false,
+    });
+    // The owned file is never written by the mock, so the fingerprint never moves — which is exactly
+    // the "produced nothing" case the rule is about.
+    let dag = Dag::from_specs(vec![spec("stuck", &[], &["never-written.py"])]).unwrap();
+    let cfg = JudgeConfig {
+        min_age_secs: 0,
+        intervene_confidence: 0.5,
+        ..JudgeConfig::default()
+    };
+    let sched = Scheduler::new(vec![dev("a", "m-a", 1), dev("b", "m-b", 1)], 3)
+        .with_judge(Arc::new(AlwaysRestartJudge), cfg);
+    let report = sched.run(dag, disp, String::new()).await.unwrap();
+
+    assert!(
+        report.failed.is_empty(),
+        "a withheld restart must never fail the task: {:?}",
+        report.failed
+    );
+    assert!(
+        report.done.contains(&"stuck".to_string()),
+        "the task still completes on its own"
+    );
+    let n = runs.lock().unwrap()[&"stuck".to_string()];
+    assert_eq!(
+        n, 2,
+        "exactly one restart is granted; every later ask is withheld because the tree never moved. \
+         An unbounded judge with no progress rule would run this task forever. got {n} runs"
     );
 }
 
@@ -914,7 +971,11 @@ async fn judge_skips_rejudging_owns_nothing_sink() {
     );
 }
 
-/// SPEED-PILLAR INSTRUMENT: a judge-terminated attempt must report the time it really ran.
+/// SPEED-PILLAR INSTRUMENT: a judge-RESTARTED attempt must report the time it really ran.
+///
+/// This matters MORE now, not less: node-busy fraction is the falsifier for the whole
+/// semantic-plan change, and it is computed from these numbers. If a restarted attempt reports
+/// 0 ms, the fleet looks idler than it was and the falsifier lies.
 ///
 /// Every emit inside `apply_judge_outcome` — accept, kill, salvage, terminal-fail — hard-coded
 /// `elapsed_ms: 0` while the elapsed time sat in scope one screen above. `finish()` then sums
@@ -931,7 +992,7 @@ async fn judge_skips_rejudging_owns_nothing_sink() {
 /// much elapsed by the time the verdict is applied, whatever the loop does around it.
 #[tokio::test]
 async fn a_judge_killed_attempt_reports_the_time_it_really_ran() {
-    /// Kills its target like `KillJudge`, but takes measurable wall-clock to say so.
+    /// Restarts its target like `KillJudge`, but takes measurable wall-clock to say so.
     struct SlowKillJudge {
         target: String,
     }
@@ -941,7 +1002,7 @@ async fn a_judge_killed_attempt_reports_the_time_it_really_ran() {
             tokio::time::sleep(Duration::from_millis(50)).await;
             if req.task_id == self.target {
                 JudgeOutcome {
-                    verdict: Verdict::Looping,
+                    verdict: Verdict::Restart,
                     confidence: 1.0,
                     hint: "STOP looping and WRITE the file now".to_string(),
                     established: String::new(),
@@ -982,21 +1043,22 @@ async fn a_judge_killed_attempt_reports_the_time_it_really_ran() {
         .tasks
         .iter()
         .find(|t| t.task_id == "stuck")
-        .expect("the killed task is in the report");
-    let killed: Vec<_> = stuck
+        .expect("the restarted task is in the report");
+    let restarted: Vec<_> = stuck
         .attempt_history
         .iter()
-        .filter(|a| a.outcome == "judge_killed")
+        .filter(|a| a.outcome == "judge_restart")
         .collect();
     assert!(
-        !killed.is_empty(),
-        "the scenario must actually produce a judge kill, or this asserts nothing; history={:?}",
+        !restarted.is_empty(),
+        "the scenario must actually produce a judge restart, or this asserts nothing; history={:?}",
         stuck.attempt_history
     );
-    for a in &killed {
+    for a in &restarted {
         assert!(
             a.elapsed_ms > 0,
-            "a judge-killed attempt ran for real time; reporting 0 ms erases it from per_device.busy_ms"
+            "a judge-restarted attempt ran for real time; reporting 0 ms erases it from \
+             per_device.busy_ms, which is what node-occupancy is measured from"
         );
     }
     let busy: u64 = report.per_device.values().map(|d| d.busy_ms).sum();
@@ -1006,44 +1068,9 @@ async fn a_judge_killed_attempt_reports_the_time_it_really_ran() {
     );
 }
 
-/// With the per-task intervention cap at 0, the judge may flag but must never kill — the worker runs
-/// to completion untouched. Guards against a weak judge looping a task forever.
-#[tokio::test]
-async fn judge_respects_intervention_cap() {
-    let runs = Arc::new(Mutex::new(HashMap::new()));
-    let hints = Arc::new(Mutex::new(Vec::new()));
-    let disp = Arc::new(JudgeTestDispatcher {
-        runs: runs.clone(),
-        hints: hints.clone(),
-        target: "never-killed".to_string(),
-        delay: Duration::from_millis(20),
-        slow_all: false,
-    });
-    let dag = Dag::from_specs(vec![spec("never-killed", &[], &["a.py"])]).unwrap();
-    let judge = Arc::new(KillJudge {
-        target: "never-killed".to_string(),
-    });
-    let cfg = JudgeConfig {
-        min_age_secs: 0,
-        intervene_confidence: 0.5,
-        max_interventions_per_task: 0,
-        ..JudgeConfig::default()
-    };
-    let sched =
-        Scheduler::new(vec![dev("a", "m-a", 1), dev("b", "m-b", 1)], 3).with_judge(judge, cfg);
-    let report = sched.run(dag, disp, String::new()).await.unwrap();
-    assert!(report.done.contains(&"never-killed".to_string()));
-    assert_eq!(
-        runs.lock().unwrap()[&"never-killed".to_string()],
-        1,
-        "intervention cap 0 -> the judge never kills; the task runs exactly once"
-    );
-    assert!(hints.lock().unwrap().is_empty(), "no re-dispatch hint");
-}
-
 /// Under weight-1 with every node busy there is NO idle device for the judge — but the deterministic
 /// verdicts need no model, so the judge must still fire. A single-device pool running its one task is
-/// fully saturated; the judge should still inspect + kill it (regression guard for judge-dark-saturation).
+/// fully saturated; the judge must still inspect + act on it (regression guard for judge-dark-saturation).
 #[tokio::test]
 async fn judge_fires_when_fleet_is_saturated() {
     let runs = Arc::new(Mutex::new(HashMap::new()));
@@ -1073,204 +1100,6 @@ async fn judge_fires_when_fleet_is_saturated() {
         runs.lock().unwrap()[&"stuck".to_string()],
         2,
         "no idle device, yet the judge still fired + re-dispatched the stuck worker"
-    );
-}
-
-/// A worker that exhausts its re-dispatch cap and is STILL flagged by a DETERMINISTIC verdict must be
-/// terminal-failed, not left to spin a node to worker_max_turns. The judge's third action: give up cleanly
-/// so the run terminates. `terminal_min_secs: 0` lets the final attempt be failed immediately; `slow_all`
-/// keeps that attempt alive so the judge acts on it rather than it self-completing.
-///
-/// THIS TEST USED TO USE THE MODEL JUDGE (`KillJudge`) AND ASSERT THE SAME THING. That encoded a rule
-/// violation: the judge MODEL produces its own `confidence`, so gating an irreversible terminal-fail on
-/// confidence alone let a model OPINION fail a task — and because integrate-verify depends on every
-/// verify::<M> under fan-verify, one opinion turned a whole run red (MEASURED: nf-ts-cadence,
-/// over_reading -> re_dispatch x2 -> FAILED at confidence 0.90). `terminal` now also requires
-/// `outcome.deterministic`, so the protection is kept exactly where it is legitimate — an engine FACT —
-/// and the companion test below pins the other half: a model verdict at cap must NOT fail the task.
-#[tokio::test]
-async fn judge_terminal_fails_worker_stuck_at_cap() {
-    let runs = Arc::new(Mutex::new(HashMap::new()));
-    let hints = Arc::new(Mutex::new(Vec::new()));
-    let disp = Arc::new(JudgeTestDispatcher {
-        runs: runs.clone(),
-        hints: hints.clone(),
-        target: "doomed".to_string(),
-        delay: Duration::from_millis(20),
-        slow_all: true,
-    });
-    let dag = Dag::from_specs(vec![spec("doomed", &[], &["a.py"])]).unwrap();
-    let judge = Arc::new(DeterministicKillJudge {
-        target: "doomed".to_string(),
-    });
-    let cfg = JudgeConfig {
-        min_age_secs: 0,
-        intervene_confidence: 0.5,
-        max_interventions_per_task: 1,
-        terminal_min_secs: 0,
-        ..JudgeConfig::default()
-    };
-    let sched =
-        Scheduler::new(vec![dev("a", "m-a", 1), dev("b", "m-b", 1)], 3).with_judge(judge, cfg);
-    let report = sched.run(dag, disp, String::new()).await.unwrap();
-    assert!(
-        report.failed.contains(&"doomed".to_string()),
-        "a still-flagged worker at its cap is terminal-failed, not left to spin"
-    );
-    assert!(!report.done.contains(&"doomed".to_string()));
-    assert_eq!(
-        runs.lock().unwrap()[&"doomed".to_string()],
-        2,
-        "re-dispatched once (kill at cap-0), then terminal-failed on the still-flagged retry"
-    );
-}
-
-/// THE OTHER HALF OF THE RULE: a MODEL-authored verdict must NEVER terminal-fail a task, no matter how
-/// confident it is. `KillJudge` flags at confidence 1.0 and the cap is 1, so under the old code this task
-/// was FAILED. It must now survive: the model keeps its steering power (it re-dispatched once, below) but
-/// the kill decision belongs to a deterministic engine event alone.
-///
-/// The residual cost is real and deliberate: a task only a MODEL can tell is doomed now runs to a
-/// DETERMINISTIC backstop (worker_timeout, or the spiral/repeat breakers) instead of being cut at the judge
-/// cap. That is the accepted trade — a slower doomed task is recoverable, a wrongly-failed run is not.
-#[tokio::test]
-async fn a_model_verdict_at_cap_does_not_terminal_fail() {
-    let runs = Arc::new(Mutex::new(HashMap::new()));
-    let hints = Arc::new(Mutex::new(Vec::new()));
-    let disp = Arc::new(JudgeTestDispatcher {
-        runs: runs.clone(),
-        hints: hints.clone(),
-        target: "opinionated".to_string(),
-        delay: Duration::from_millis(20),
-        slow_all: false,
-    });
-    let dag = Dag::from_specs(vec![spec("opinionated", &[], &["a.py"])]).unwrap();
-    // The MODEL judge — same flag, same 1.0 confidence, but no deterministic provenance.
-    let judge = Arc::new(KillJudge {
-        target: "opinionated".to_string(),
-    });
-    let cfg = JudgeConfig {
-        min_age_secs: 0,
-        intervene_confidence: 0.5,
-        max_interventions_per_task: 1,
-        terminal_min_secs: 0,
-        ..JudgeConfig::default()
-    };
-    let sched =
-        Scheduler::new(vec![dev("a", "m-a", 1), dev("b", "m-b", 1)], 3).with_judge(judge, cfg);
-    let report = sched.run(dag, disp, String::new()).await.unwrap();
-    assert!(
-        !report.failed.contains(&"opinionated".to_string()),
-        "a MODEL opinion must never terminal-fail a task — only a deterministic engine event may"
-    );
-}
-
-/// Records the ORDER tasks FINISH in, so the test can prove a dependent ran only after ALL split children.
-struct SplitTestDispatcher {
-    order: Arc<Mutex<Vec<String>>>,
-    delay: Duration,
-}
-
-#[async_trait]
-impl TaskDispatcher for SplitTestDispatcher {
-    async fn run(&self, req: DispatchRequest) -> Result<TaskRunOutput, DispatchError> {
-        // `big` runs long so the judge has time to split it (its future is then aborted). `big-b` is a
-        // deliberately SLOW child: a correctly re-pointed dependent MUST wait for it, so if the dependent
-        // finishes before `big-b` then the re-point/indegree logic dropped a child — caught by the order
-        // assertion below (this is what makes the test catch the subtle indegree bug, not just deadlock).
-        let mult = match req.task_id.as_str() {
-            "big" => 50,
-            "big-b" => 8,
-            _ => 1,
-        };
-        tokio::time::sleep(self.delay * mult).await;
-        self.order.lock().unwrap().push(req.task_id.clone());
-        Ok(format!("out-{}", req.task_id).into())
-    }
-}
-
-/// A judge that SPLITS the target into two file-partitioned children, passing everything else.
-struct SplitJudge {
-    target: String,
-}
-
-#[async_trait]
-impl Judge for SplitJudge {
-    async fn judge(&self, req: JudgeRequest) -> JudgeOutcome {
-        // Mirror the real cap: only split a task that has never been split (split_count threaded from the
-        // scheduler's generation map). A child of this split carries split_count >= 1 and is left alone.
-        if req.task_id == self.target && req.split_count == 0 {
-            JudgeOutcome::split(vec![
-                ChildSpec {
-                    id: "big-a".to_string(),
-                    files: vec!["a.py".to_string()],
-                    depends_on: vec![],
-                },
-                ChildSpec {
-                    id: "big-b".to_string(),
-                    files: vec!["b.py".to_string()],
-                    depends_on: vec![],
-                },
-            ])
-        } else {
-            JudgeOutcome::ok()
-        }
-    }
-}
-
-/// M3 task-splitting: the judge SPLITS a too-big task into file-partitioned children, and the original's
-/// dependent must be re-pointed onto ALL children — waiting for the whole split, never running early
-/// (indegree dropped a child) and never deadlocking (indegree stuck too high).
-#[tokio::test]
-async fn judge_splits_task_and_dependent_waits_for_all_children() {
-    let order = Arc::new(Mutex::new(Vec::new()));
-    let disp = Arc::new(SplitTestDispatcher {
-        order: order.clone(),
-        delay: Duration::from_millis(20),
-    });
-    // `big` owns two files; `verify` depends on it. The judge partitions `big` into big-a (a.py) + big-b (b.py).
-    let dag = Dag::from_specs(vec![
-        spec("big", &[], &["a.py", "b.py"]),
-        spec("verify", &["big"], &["v.py"]),
-    ])
-    .unwrap();
-    let judge = Arc::new(SplitJudge {
-        target: "big".to_string(),
-    });
-    let cfg = JudgeConfig {
-        min_age_secs: 0,
-        intervene_confidence: 0.5,
-        max_interventions_per_task: 1,
-        ..JudgeConfig::default()
-    };
-    let sched =
-        Scheduler::new(vec![dev("a", "m-a", 1), dev("b", "m-b", 1)], 3).with_judge(judge, cfg);
-    let report = sched.run(dag, disp, String::new()).await.unwrap();
-
-    assert!(
-        report.failed.is_empty(),
-        "no task fails: {:?}",
-        report.failed
-    );
-    for child in ["big-a", "big-b", "verify"] {
-        assert!(
-            report.done.contains(&child.to_string()),
-            "{child} completed; done = {:?}",
-            report.done
-        );
-    }
-    let order = order.lock().unwrap();
-    let ia = order.iter().position(|t| t == "big-a").expect("big-a ran");
-    let ib = order.iter().position(|t| t == "big-b").expect("big-b ran");
-    let iv = order
-        .iter()
-        .position(|t| t == "verify")
-        .expect("verify ran");
-    assert!(
-        iv > ia && iv > ib,
-        "the dependent finished AFTER both split children — dependents were re-pointed onto the WHOLE \
-         split with correct indegree (completion order = {:?})",
-        *order
     );
 }
 
@@ -1449,81 +1278,6 @@ async fn pre_review_never_oversubscribes_free_nodes() {
         "concurrent pre-reviews ({}) must not exceed idle_capacity 2 while `slow` holds one of 3 nodes \
          (an idle_jobs double-decrement would let a 3rd spawn and oversubscribe the fleet)",
         peak.load(Ordering::SeqCst)
-    );
-}
-
-/// A judge that proposes a MALFORMED split — a sibling cycle (big-a<->big-b). apply_split must reject it.
-struct CyclicSplitJudge {
-    target: String,
-}
-
-#[async_trait]
-impl Judge for CyclicSplitJudge {
-    async fn judge(&self, req: JudgeRequest) -> JudgeOutcome {
-        if req.task_id == self.target && req.split_count == 0 {
-            JudgeOutcome::split(vec![
-                ChildSpec {
-                    id: "big-a".to_string(),
-                    files: vec!["a.py".to_string()],
-                    depends_on: vec!["big-b".to_string()],
-                },
-                ChildSpec {
-                    id: "big-b".to_string(),
-                    files: vec!["b.py".to_string()],
-                    depends_on: vec!["big-a".to_string()],
-                },
-            ])
-        } else {
-            JudgeOutcome::ok()
-        }
-    }
-}
-
-/// M3 robustness (audit fix A): a malformed split proposal (sibling cycle) must be a TRUE NO-OP — the
-/// worker keeps running and completes, the task is NOT failed, and NO children are injected. Guards the
-/// contract that a bad judge proposal can never corrupt the DAG (the cycle is rejected BEFORE the abort).
-#[tokio::test]
-async fn cyclic_split_proposal_is_a_noop() {
-    let runs = Arc::new(Mutex::new(HashMap::new()));
-    let disp = Arc::new(JudgeTestDispatcher {
-        runs: runs.clone(),
-        hints: Arc::new(Mutex::new(Vec::new())),
-        target: "big".to_string(), // slow target so the judge fires on it repeatedly
-        delay: Duration::from_millis(20),
-        slow_all: false,
-    });
-    let dag = Dag::from_specs(vec![
-        spec("big", &[], &["a.py", "b.py"]),
-        spec("verify", &["big"], &["v.py"]),
-    ])
-    .unwrap();
-    let judge = Arc::new(CyclicSplitJudge {
-        target: "big".to_string(),
-    });
-    let cfg = JudgeConfig {
-        min_age_secs: 0,
-        intervene_confidence: 0.5,
-        max_interventions_per_task: 1,
-        ..JudgeConfig::default()
-    };
-    let sched =
-        Scheduler::new(vec![dev("a", "m-a", 1), dev("b", "m-b", 1)], 3).with_judge(judge, cfg);
-    let report = sched.run(dag, disp, String::new()).await.unwrap();
-
-    assert!(
-        report.failed.is_empty(),
-        "a malformed (cyclic) split must NOT fail the task: failed={:?}",
-        report.failed
-    );
-    assert!(
-        report.done.contains(&"big".to_string()) && report.done.contains(&"verify".to_string()),
-        "the worker keeps running and the run completes normally: done={:?}",
-        report.done
-    );
-    assert!(
-        !report.done.contains(&"big-a".to_string()) && !report.done.contains(&"big-b".to_string()),
-        "NO children are injected from a rejected proposal: done={:?}",
-        report.done
     );
 }
 
