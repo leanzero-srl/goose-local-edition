@@ -28,7 +28,7 @@ pub use judge::{
     deterministic_verdict, is_split_candidate, ChildSpec, Judge, JudgeConfig, JudgeInput,
     JudgeOutcome, JudgeRequest, PreReviewOutput, PreReviewRequest, PreReviewer, Verdict,
 };
-pub use patch::{apply_patch, parse_patch, PlanPatch, TaskAdd, TaskEdit};
+pub use patch::{apply_patch, parse_patch, pin_sink_id, PlanPatch, TaskAdd, TaskEdit, SINK_ID};
 pub use replan::{ReplanContext, Replanner};
 pub use scheduler::{
     qa_enabled, sink_review_enabled, tail_review_enabled, testgen_enabled, AttemptRecord,

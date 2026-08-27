@@ -34799,9 +34799,31 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
     // than kill the run over an instrument.
     let plan_json = match serde_json::from_str::<serde_json::Value>(&plan_json) {
         Ok(mut v) => {
+            // PIN THE SINK ID before anything downstream looks at the plan.
+            //
+            // `integrate-verify` is not a label, it is an exact-equality TYPE TEST in code the planner
+            // never sees: sink_in_flight (scheduler.rs:906, the replan suppression gate), the claim gate
+            // (scheduler.rs:1110), the desktop's only Verify-row source, and the bench sink detectors. A
+            // model that calls its join `wire-app` turns every one of them silently false — and because
+            // they are checks rather than errors, nothing says so. That matters more now that dynamic
+            // replan is no longer bounded by a round count: the suppression gate and the bound would fail
+            // together. Identified structurally (the task nothing depends on that depends on the most),
+            // so it does not care what the model called it.
+            if let Some(old_id) = goose_swarm::pin_sink_id(&mut v) {
+                eprintln!(
+                    "  · sink: the plan's join was named `{old_id}`; pinned to `{}` so the engine's own \
+                     sink checks keep matching",
+                    goose_swarm::SINK_ID
+                );
+                sink.write_value(serde_json::json!({
+                    "event": "sink_id_pinned",
+                    "from": old_id,
+                    "to": goose_swarm::SINK_ID,
+                }));
+            }
             let added = require_advertised_entry_files(&mut v, &opts.prompt);
             if added.is_empty() {
-                plan_json
+                v.to_string()
             } else {
                 eprintln!(
                     "  · package-entry: spec-advertised `python -m` entry file(s) nobody owned, injected into the plan: {}",
