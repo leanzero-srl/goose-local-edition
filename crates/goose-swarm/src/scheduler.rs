@@ -1151,6 +1151,14 @@ impl State {
         self.attempt_started_at.insert(tid.clone(), Instant::now());
         self.task_final_device
             .insert(tid.clone(), (device_id.clone(), model_id.clone()));
+        // INTEGRATE is a phase boundary, and this is the only place that knows when it starts. The
+        // engine emits a first-class `phase` event for every other phase; without this one the desktop
+        // ribbon and nodeloop/phases.py both have to INFER integrate from a task id, which is the kind
+        // of guessing the phase event exists to remove.
+        if tid.as_str() == crate::patch::SINK_ID {
+            self.sink
+                .write_value(serde_json::json!({"event": "phase", "phase": "integrate"}));
+        }
         self.sink.emit(&SwarmEvent::TaskDispatched {
             task_id: tid.clone(),
             device: device_id.clone(),
