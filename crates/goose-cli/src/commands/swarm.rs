@@ -24861,7 +24861,8 @@ impl GooseAgentDispatcher {
         briefs: &[SliceBrief],
     ) -> Result<String> {
         let index = slice_index(briefs);
-        let lang = detect_language(user_prompt, &existing_files_manifest(&self.working_dir));
+        let existing = existing_files_manifest(&self.working_dir);
+        let lang = detect_language(user_prompt, &existing);
         let test_cmd = lang.test_cmd();
         let system = format!(
             "You are the SYNTHESIS step. Every slice below has already been researched and specified by \
@@ -24884,11 +24885,27 @@ impl GooseAgentDispatcher {
              fails, and this one has to run precisely when something upstream went wrong.\n\n\
              Call the final_output tool once with the subtasks."
         );
+        // THE FILES ALREADY ON DISK. This is what `normalize_plan_files_to_package` used to read — an
+        // on-disk collision test, the one deterministic rewrite that did not map cleanly onto a REVIEW
+        // question, because REVIEW sees the plan and the request but never the tree. Without it an
+        // amendment run puts its modules at paths that do not match the package that is already there.
+        // Inert on a greenfield build, where the list is empty.
+        let existing_block = if existing.is_empty() {
+            String::new()
+        } else {
+            format!(
+                "\n\n## Files ALREADY on disk\nPut each task's files where they belong in this tree. Do \
+                 not invent a parallel package beside an existing one.\n{}",
+                existing.join("\n")
+            )
+        };
         let out = self
             .run_agent_timed_at(
                 planner_model,
                 system,
-                format!("## The request\n{user_prompt}\n\n## The researched slices\n{index}"),
+                format!(
+                    "## The request\n{user_prompt}\n\n## The researched slices\n{index}{existing_block}"
+                ),
                 Some(Response {
                     json_schema: Some(skeleton_schema()),
                 }),
@@ -25183,7 +25200,7 @@ async fn run_linear_plan(
     cwd_for_ask: &std::path::Path,
     ask_max_q: usize,
     ask_wait_secs: u64,
-) -> Result<(String, Dag, PlanConf, bool)> {
+) -> Result<(String, Dag, PlanConf)> {
     let worker_models: Vec<String> = fleet_slot_models(devices);
 
     // ---- OPEN -------------------------------------------------------------------------------
@@ -25426,7 +25443,7 @@ async fn run_linear_plan(
     // plan_needs_detail = false: the slice owners already wrote every task's specification, which is
     // the whole point. The detail fan exists to turn a one-line brief into a spec in 75 seconds; here
     // there is no one-line brief to expand.
-    Ok((plan_json, dag, PlanConf::default(), false))
+    Ok((plan_json, dag, PlanConf::default()))
 }
 
 /// One task per slice, deps stripped, plus the sink. Always validates.
@@ -34709,15 +34726,6 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
 
     // Parallel research-planning: scope independent research questions, run them across the fleet,
     // feed the findings into the planner. Best-effort — never blocks the run.
-    let is_amendment = working_dir_has_sources(&working_dir);
-    let do_research = match opts.research {
-        Some(v) => v,
-        None => match cfg.research_planning {
-            ResearchPlanningMode::Off => false,
-            ResearchPlanningMode::On => true,
-            ResearchPlanningMode::Auto => is_amendment,
-        },
-    };
     let mut research_findings = String::new();
     // DOC-PREFETCH (Phase 1, Move 2): the GROUNDED research findings, VERBATIM, to hand to every worker. Stays
     // empty unless GOOSE_SWARM_DOC_PREFETCH is on AND a scout actually looked something up — so off (or with
@@ -34767,7 +34775,6 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
     // retarget's triage and the reported fact can never disagree. Defaults FALSE: if research never ran, the
     // engine has established no ability to research, and routing an open decision to a research round it
     // never configured would be the same guess-laundering by another door.
-    let mut can_research = false;
     // REMOVED: the SCOUT phase — a const array of four fixed research angles, of which `codebase`
     // was amendment-only, so a greenfield build got THREE. select_lenses took no node count: the
     // fleet was never consulted, so three nodes getting three scouts was a coincidence and sixty-four
@@ -34937,26 +34944,9 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
         .unwrap_or(1800);
     // After the ASK handshake, re-plan from scratch (default) or reuse the first plan (answers still reach
     // workers via research_findings). Default-ON = today's behavior; the evidence-based default is set by A/B.
-    let ask_replan = ask_replan_enabled(std::env::var("GOOSE_SWARM_ASK_REPLAN").ok());
-    let best_of_n = {
-        let base = opts.best_of_n.unwrap_or(cfg.best_of_n_skeletons);
-        // Size the skeleton drafting to the FLEET so no worker node sits IDLE during the draft step (the user
-        // flagged a 3rd node idling while only 2 of 3 drafted). Drafts run in parallel, so using all nodes
-        // adds no wall-clock and yields a better best-of-N skeleton. Capped so a large fleet does not
-        // over-draft. An explicit --best-of-n still wins (max with the fleet, never below the user's intent).
-        let fleet = devices.len().clamp(1, 5);
-        let sized = base.max(fleet);
-        if ask_floor.is_some() {
-            sized.max(2)
-        } else {
-            sized
-        }
-    };
     let cwd_for_ask = std::env::current_dir().unwrap_or_default();
     // The confidence meter only exists on the parallel (best-of-N) path; force it when a floor is set so
     // the gate is never silently inert (the solo planner returns no confidence).
-    let use_parallel = cfg.parallel_planning || ask_floor.is_some();
-    let mut asked = false;
     // GOOSE_SWARM_RETARGET (Part C): a bounded, monotonic loop that DYNAMICALLY raises confidence when it's
     // below the floor BEFORE the one-shot ask — re-drafting toward convergence (agreement-bound) or targeted
     // re-research (spec-clarity-bound with a defined product + lookupable open decisions). Requires a floor;
@@ -34967,11 +34957,6 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
         std::env::var("GOOSE_SWARM_RETARGET_ROUNDS").ok(),
         cfg.retarget_rounds,
     );
-    let retarget_step: usize = std::env::var("GOOSE_SWARM_RETARGET_DRAFT_STEP")
-        .ok()
-        .and_then(|v| v.trim().parse().ok())
-        .unwrap_or(1)
-        .clamp(1, 3);
     // EVERY LEVER'S RESOLVED VALUE, FROM THE ENGINE'S OWN MOUTH — and the build that resolved it.
     //
     // A lever's value is decided by a precedence chain (env > config.yaml > assured bundle > default)
@@ -35249,8 +35234,6 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
     // The BINDING block below is built inside the loop; without this, it died with the loop and the only
     // thing that ever left was `opts.prompt` -> Scheduler::goal, which no worker reads.
     let mut user_decisions = String::new();
-    let mut retarget_round = 0u32;
-    let mut effective_best_of_n = best_of_n;
     // F855: how many DISTINCT drafts this fleet can physically produce — the same dedup
     // `parallel_plan` applies before drafting (planner + slot models, deduped by model name, the
     // planner IS a worker). The Redraft rung grows `effective_best_of_n`, but the draft fan is
@@ -35258,14 +35241,6 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
     // a run requested best_of_n 3→4, got `clamped=true`, drafted the same 3 models again, and paid
     // 756s for a structurally identical plan. `can_grow_drafts` must mean "a draft that does not
     // exist yet CAN exist", not "the counter is below its ceiling".
-    let distinct_draft_models = {
-        let mut seen = std::collections::HashSet::new();
-        std::iter::once(cfg.planner_model.clone())
-            .chain(fleet_slot_models(&devices))
-            .filter(|m| seen.insert(m.clone()))
-            .count()
-    };
-    let mut best_plan: Option<(String, PlanConf)> = None;
     // GOOSE_SWARM_RETARGET_STALL_GUARD: stop the redraft ladder once a round FAILS TO BEAT the best confidence
     // already measured, instead of climbing to RETARGET_MAX_N on faith.
     //
@@ -35286,68 +35261,34 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
     // full ladder would have shipped unless a later round would have beaten the best — which is exactly the
     // event this observed not to happen. It only removes rounds that produced nothing. Default OFF and
     // byte-identical when off; the campaign proves it before it becomes a default.
-    let stall_guard_on =
-        swarm_gate_cfg("GOOSE_SWARM_RETARGET_STALL_GUARD", cfg.retarget_stall_guard);
     // How many consecutive non-improving redraft rounds to tolerate before stopping. 1 = stop at the first
     // round that fails to beat the best (what the measurement above supports); 2 gives noise one more chance.
-    let stall_tolerance: u32 = std::env::var("GOOSE_SWARM_RETARGET_STALL_TOLERANCE")
-        .ok()
-        .and_then(|v| v.trim().parse().ok())
-        .unwrap_or(1)
-        .clamp(1, 3);
-    let mut stalled_rounds = 0u32;
     // The best confidence seen BEFORE the current round's redraft, so a round can be judged against it.
-    let mut best_conf_seen: Option<u8> = None;
     // GOOSE_SWARM_DRAFT_TEMP: draft plan skeletons at a fixed low temperature so the weak fleet's independent
     // drafts converge (its draft VARIANCE is the root cause of low/noisy agreement — growing best_of_n can't
     // reduce variance, but a lower temperature can). Unset → server/model default (byte-identical). Clamped
     // to a sane [0, 1]. Under retarget, each round drafts a notch cooler to force convergence harder.
-    let base_draft_temp: Option<f32> = std::env::var("GOOSE_SWARM_DRAFT_TEMP")
-        .ok()
-        .and_then(|v| v.trim().parse::<f32>().ok())
-        .or(cfg.draft_temp)
-        .map(|t| t.clamp(0.0, 1.0));
     // Convergence molding: config default (true) unless the env explicitly overrides. Threaded into every
     // parallel_plan call so it drives BOTH the architect prompt and the role-normalized agreement metric.
-    let converge = swarm_gate_cfg("GOOSE_SWARM_CONVERGE", cfg.converge);
     // Backbone lock (structure lever): config default OFF unless env overrides. Read once outside the loop.
-    let backbone_on = swarm_gate_cfg("GOOSE_SWARM_BACKBONE", cfg.backbone);
     // #122: skip the backbone round-2 re-draft when round-1 agreement is already high. Read once outside the loop.
-    let backbone_skip_confident = backbone_skip_confident_enabled(cfg.backbone_skip_confident);
     // Incremental replan (Phase 1): config default OFF unless env overrides. Read once outside the loop. Takes
     // precedence over backbone_on inside parallel_plan when both are set.
-    let incremental_on = swarm_gate_cfg("GOOSE_SWARM_INCREMENTAL_REPLAN", cfg.incremental_replan);
     // #133 DIVERSE PLAN (default OFF): skip the sequential retarget ladder when the parallel drafts
     // structurally converge. Read once outside the loop, mirroring the levers above.
-    let diverse_plan_on = swarm_gate_cfg("GOOSE_SWARM_DIVERSE_PLAN", cfg.diverse_plan);
-    let struct_stop_val = std::env::var("GOOSE_SWARM_STRUCT_STOP")
-        .ok()
-        .and_then(|v| v.trim().parse::<u8>().ok())
-        .unwrap_or(cfg.struct_stop);
     // GOOSE_SWARM_ANSWERS_WIN_FLOOR (#129, default ON): after the user answers the clarify ask and the
     // deterministic rescore lifts the plan to/over the floor, keep THAT plan instead of letting a
     // non-structural ask_replan re-draft it away (nf-hexohm: rescored 85, re-planned, shipped 52). Read once
     // outside the loop; env>config>true. Byte-identical to the legacy path whenever ask_replan is OFF (the true
     // default), since post_answer_action ignores this flag then — so the ON default only closes the ask_replan
     // foot-gun and never changes a default-config run.
-    let answers_win_floor = answers_win_floor_resolved(
-        std::env::var("GOOSE_SWARM_ANSWERS_WIN_FLOOR").ok(),
-        cfg.answers_win_floor,
-    );
     // ASK-AWAY (Concept A, GOOSE_SWARM_ASK_AWAY, default OFF, byte-identical when OFF): turn the one-shot
     // clarify latch into a BOUNDED multi-round loop that keeps asking the next batch while the plan is below
     // the floor AND material open decisions remain, re-deriving the batch from the TRIMMED open_decisions each
     // round. When OFF the ask block runs exactly once, exactly as before. Read once outside the loop.
-    let ask_away = swarm_gate_cfg("GOOSE_SWARM_ASK_AWAY", cfg.ask_away);
     // How many clarify rounds ASK-AWAY may spend within one below-floor visit. Env > config > default 3; the
     // upper clamp bounds the worst-case idle on the non-interactive file handshake (each round waits up to
     // `ask_wait_secs`). Inert unless `ask_away` is on.
-    let ask_rounds_max: u32 = std::env::var("GOOSE_SWARM_ASK_ROUNDS")
-        .ok()
-        .and_then(|v| v.trim().parse().ok())
-        .or(cfg.ask_rounds_max)
-        .unwrap_or(3)
-        .clamp(1, 6);
     // RESUME (GOOSE_SWARM_RESUME=1, default OFF). Reuse the last run's PLAN and skip research + planning.
     //
     // Mihai lost ~2.5h twice in one day to a machine going off mid-run, and his scope was explicit: "don't
@@ -35392,10 +35333,10 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
     // plan_loaded.tasks, which is written AFTER the detail step, so its descriptions are already the
     // detailed specs and re-fanning would re-buy work the log already carries. False on the solo-planner
     // paths, which never had a detail fan.
-    let (plan_json, dag, plan_conf, plan_needs_detail) = if let Some(r) = resume {
+    let (plan_json, dag, plan_conf) = if let Some(r) = resume {
         let dag = Dag::from_planner_json(&r.plan_json)
             .map_err(|e| anyhow!("the resumed plan will not parse: {e}"))?;
-        (r.plan_json, dag, PlanConf::default(), false)
+        (r.plan_json, dag, PlanConf::default())
     } else {
         run_linear_plan(
             &dispatcher,
@@ -35412,22 +35353,11 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
         .await?
     };
 
-    // DEFER_DETAIL — THE ONE SEAM (speed hunt 2026-08-19). The detail fan used to run inside every
-    // parallel_plan call, so each retarget/ask redraft re-bought the whole fan (MEASURED baseline-n3-r0:
-    // 3× fan = 26 detail_completed with 18/18 same-id rework by round 2; ~11-30 min per retargeting run).
-    // It now runs HERE, exactly once, on the plan the loop shipped — reading the POST-ask `opts.prompt` +
-    // `research_findings` (the ask's answers were folded into both before the loop exited, so specs are
-    // written against the answered spec). A retargeted round's details cannot leak into this plan: the fan
-    // has not run until now. The rebound pair below is the ONLY (plan_json, dag) downstream ever sees —
-    // pillars, contracts, plan_loaded, the fill-fan rebuild and Scheduler::run all read it, and nothing
-    // loop-resident survives past this point.
-    // REMOVED: the DEFER_DETAIL seam and the detail fan it drove.
-    //
-    // It expanded the architect's one-line brief into a real spec, one LLM call per subtask, under a
-    // 75-second cap. There is no one-line brief any more: each task's description IS its slice owner's
-    // module specification, written during RESEARCH with the fleet in parallel and no clock. The phase
-    // it replaces failed 25 times to that cap, and the run where `meridian` lost its detail shipped a
-    // 122-character spec and scored 42.7% against 88.7% for the run that kept it.
+    // The DETAIL fan used to run here, one LLM call per subtask under a 75-second cap, expanding the
+    // architect's one-line brief into a real spec. There is no one-line brief any more: each task's
+    // description IS its slice owner's module specification, written during RESEARCH with the fleet in
+    // parallel and no clock. That phase failed 25 times to its cap on record, and the run where
+    // `meridian` lost its detail shipped a 122-character spec and scored 42.7% against 88.7%.
 
     // PACKAGE-ENTRY TRUTH (sb-7 r1+r3): runs on the FINAL plan regardless of which path produced it
     // (parallel loop, solo fallback, resume) — the one seam every dispatch reads. Mutates only owned
