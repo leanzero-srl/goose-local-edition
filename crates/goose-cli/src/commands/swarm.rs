@@ -16304,6 +16304,13 @@ impl GooseAgentDispatcher {
         // look. Growth in the first with no change in the second is "talking without acting", which is
         // the shape worth reading — and unlike a clock it is a property of the call, not of the wall.
         let mut omni_thinking_at_last_look: usize = 0;
+        // WHEN the last look happened, so the judge can be told a RATE and not just a total.
+        // MEASURED (swarm-3node-r0, 2026-08-27): a REVIEW call produced 8 characters in 101 seconds and
+        // was still GENERATING on the node. reqwest's read_timeout resets on every received chunk, so a
+        // trickle defeats it by design; the recurrence detector needs text to recur and there was none;
+        // and the judge was shown "it has emitted 18,236 characters", which reads exactly like a deep
+        // call. Thirty-seven consecutive looks returned OK on a dead socket.
+        let mut omni_last_look_at = tokio::time::Instant::now();
         let mut omni_calls_at_last_look: usize = 0;
         // Consecutive LOOPING verdicts on the SAME content. One is not enough, and two on DIFFERENT
         // content is a slow-starting call misread twice, not a loop — see the abort site.
@@ -16368,6 +16375,10 @@ impl GooseAgentDispatcher {
                             || grew_without_acting
                             || tokio::time::Instant::now() >= omni_next_look)))
             {
+                let produced_since_last_look =
+                    thinking_chars.saturating_sub(omni_thinking_at_last_look);
+                let secs_since_last_look = omni_last_look_at.elapsed().as_secs();
+                omni_last_look_at = tokio::time::Instant::now();
                 omni_thinking_at_last_look = thinking_chars;
                 omni_calls_at_last_look = call_records.len();
                 omni_looks += 1;
@@ -16477,6 +16488,66 @@ impl GooseAgentDispatcher {
                 } else {
                     String::new()
                 };
+                // THE ANSWER, not only the reasoning.
+                //
+                // The judge has only ever been shown a call's THINKING. MEASURED (swarm-3node-r0,
+                // 2026-08-27): a REVIEW call reasoned all the way to a complete, correct patch — the
+                // last thing in its tail is `"replace": [{"id":"entry-point", ...}]` — and then emitted
+                // its answer as an unbroken run of newline characters and never stopped. Reasoning had
+                // ended, so the recurrence detector (which reads thinking) had nothing left to measure;
+                // the socket stayed alive because newline tokens are still tokens; and the judge, shown
+                // 18,236 characters of excellent reasoning, said OK thirty-seven times.
+                //
+                // A degenerate answer is the easiest thing in this whole system to recognise, and it was
+                // the one thing nobody was looking at.
+                let answer_so_far: String = texts.concat();
+                let answer_block = if answer_so_far.trim().is_empty() && answer_so_far.len() >= 40 {
+                    format!(
+                        "\n\nIts ANSWER so far is {} characters of nothing but whitespace. That is a \
+                         degenerate generation, not an answer being composed — the model has stopped \
+                         producing content and will not stop on its own. Say LOOPING.",
+                        answer_so_far.len()
+                    )
+                } else if answer_so_far.is_empty() {
+                    String::new()
+                } else {
+                    let distinct = answer_so_far
+                        .chars()
+                        .collect::<std::collections::HashSet<char>>()
+                        .len();
+                    let degenerate = answer_so_far.chars().count() >= 200 && distinct <= 3;
+                    format!(
+                        "\n\nWhat it has emitted as its ANSWER so far ({} characters{}):\n{}",
+                        answer_so_far.chars().count(),
+                        if degenerate {
+                            format!(
+                                ", built from only {distinct} distinct character(s) — that is a \
+                                 degenerate generation and it will not end on its own; say LOOPING"
+                            )
+                        } else {
+                            String::new()
+                        },
+                        tail_chars(&answer_so_far, 600)
+                    )
+                };
+                // PRODUCTION RATE, not volume. A total says nothing about whether the call is still
+                // alive: 18,236 characters looks identical whether it arrived in the last minute or
+                // stopped arriving twenty minutes ago. This is the one measurement that separates a slow
+                // model from a dead socket, and without it the judge cannot tell them apart at all.
+                let rate_block = if omni_looks > 1 && secs_since_last_look > 0 {
+                    let rate = produced_since_last_look as f64 / secs_since_last_look as f64;
+                    format!(
+                        "\n\nSince the previous look {secs_since_last_look}s ago it has produced \
+                         {produced_since_last_look} more characters — {rate:.2} characters per second. \
+                         For scale, this fleet generates 20-60 characters per second when it is really \
+                         working. A call producing under about one character per second is not thinking \
+                         slowly, it is a DEAD STREAM: the connection is open and delivering just enough \
+                         to look alive. Nothing it does next will finish. Say LOOPING and put the job it \
+                         was given into NEXT so it can be restarted from a fresh connection."
+                    )
+                } else {
+                    String::new()
+                };
                 let earlier_block = match recur.earlier() {
                     Some(e) => format!(
                         "\n\nReasoning from EARLIER in this same call (tens of thousands of characters \
@@ -16489,7 +16560,7 @@ impl GooseAgentDispatcher {
                      Judge it against THAT job, not against the wider build. A call doing its own job \
                      correctly is OK even when it is writing no code, because most jobs here are not \
                      coding jobs.\n\n\
-                     It has emitted {thinking_chars} characters of reasoning.{measured}{earlier_block}\
+                     It has emitted {thinking_chars} characters of reasoning.{rate_block}{answer_block}{measured}{earlier_block}\
                      \n\nMost recent reasoning:\n{tail}\n\nCommands it ran (most recent first):\n{}",
                     call_objective(activity_key),
                     if ran.is_empty() {
@@ -16541,6 +16612,8 @@ impl GooseAgentDispatcher {
                     };
                     self.events.write_value(serde_json::json!({
                         "event": "judge_look",
+                        "produced_since_last_look": produced_since_last_look,
+                        "secs_since_last_look": secs_since_last_look,
                         "task_id": activity_key,
                         "look": omni_looks,
                         "thinking_chars": thinking_chars,
