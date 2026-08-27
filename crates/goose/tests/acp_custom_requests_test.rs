@@ -4,7 +4,7 @@
 mod common_tests;
 
 use agent_client_protocol::schema::v1::{
-    ContentBlock, PromptRequest, SessionUpdate, StopReason, TextContent,
+    ContentBlock, McpServer, McpServerHttp, PromptRequest, SessionUpdate, StopReason, TextContent,
 };
 use common_tests::fixtures::server::AcpServerConnection;
 use common_tests::fixtures::{
@@ -15,7 +15,7 @@ use goose::acp::server::AcpProviderFactory;
 use goose::providers::base::{MessageStream, Provider};
 use goose_providers::errors::ProviderError;
 use goose_providers::model::ModelConfig;
-use goose_test_support::{EnforceSessionId, IgnoreSessionId};
+use goose_test_support::{EnforceSessionId, IgnoreSessionId, McpFixture, FAKE_CODE};
 use serial_test::serial;
 use std::path::PathBuf;
 use std::sync::{Arc, LazyLock, Mutex};
@@ -1314,5 +1314,74 @@ fn test_custom_provider_supported_models_maps_authentication_error() {
 
         assert_eq!(error.code, agent_client_protocol::ErrorCode::AuthRequired);
         assert!(error.to_string().contains("credentials rejected"));
+    });
+}
+
+const APP_TOOL: &str = "mcp-fixture__get_code";
+
+async fn connect_with_mcp_fixture(mcp_url: &str, mode: &str) -> (AcpServerConnection, String) {
+    let openai = OpenAiFixture::new(vec![], Arc::new(IgnoreSessionId)).await;
+    let mcp_servers = vec![McpServer::Http(McpServerHttp::new("mcp-fixture", mcp_url))];
+    let config = TestConnectionConfig {
+        mcp_servers,
+        ..Default::default()
+    };
+    let mut conn = AcpServerConnection::new(config, openai).await;
+    let SessionData { session, .. } = conn.new_session().await.unwrap();
+    let session_id = session.session_id().0.to_string();
+    conn.set_mode(&session_id, mode).await.unwrap();
+    (conn, session_id)
+}
+
+async fn call_app_tool(
+    conn: &AcpServerConnection,
+    session_id: &str,
+) -> Result<serde_json::Value, agent_client_protocol::Error> {
+    send_custom(
+        conn.cx(),
+        "_goose/unstable/tools/call",
+        serde_json::json!({ "sessionId": session_id, "name": APP_TOOL }),
+    )
+    .await
+}
+
+#[test]
+#[serial]
+fn test_app_tool_call_requires_auto_mode() {
+    write_acp_global_config(DEFAULT_ACP_TEST_CONFIG);
+    run_test(async move {
+        let mcp = McpFixture::new().await;
+
+        for mode in ["approve", "smart_approve", "chat"] {
+            let (conn, session_id) = connect_with_mcp_fixture(&mcp.url, mode).await;
+            let error = call_app_tool(&conn, &session_id)
+                .await
+                .expect_err("app tool call should be rejected outside auto mode");
+            assert_eq!(error.code, agent_client_protocol::ErrorCode::InvalidParams);
+            assert!(error
+                .to_string()
+                .contains("app tool calls require auto mode"));
+        }
+    });
+}
+
+#[test]
+#[serial]
+fn test_app_tool_call_dispatched_in_auto_mode() {
+    write_acp_global_config(DEFAULT_ACP_TEST_CONFIG);
+    run_test(async move {
+        let mcp = McpFixture::new().await;
+        let (conn, session_id) = connect_with_mcp_fixture(&mcp.url, "auto").await;
+
+        let response = call_app_tool(&conn, &session_id)
+            .await
+            .expect("app tool call should dispatch in auto mode");
+        let text = response["content"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|block| block.get("text").and_then(|text| text.as_str()))
+            .collect::<String>();
+        assert!(text.contains(FAKE_CODE));
     });
 }
