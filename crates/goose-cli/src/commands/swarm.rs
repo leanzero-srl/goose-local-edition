@@ -8608,6 +8608,69 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
 
     /// The same reader, against the REAL logs this machine has produced — a fixture can agree with a bug.
     #[test]
+    /// `verified` decides whether the desktop ever promotes a finished build task out of UNVERIFIED, and
+    /// under the old rule it could not: one inconclusive side-check vetoed the run, so it read false in
+    /// 25 of 25 archived runs and every task in every run stayed badged UNVERIFIED forever.
+    fn verified_means_an_oracle_concluded_not_that_nothing_was_inconclusive() {
+        let base = SmokeResult {
+            ran: true,
+            py_files: 3,
+            collect: None,
+            tests: None,
+            entry_package: Some("app".into()),
+            entry_ok: None,
+            findings: vec![],
+            inconclusive: vec![],
+        };
+
+        // Nothing executed the program: `ran` is true merely because .py files exist. NOT established —
+        // this is the false-green the old rule was written to stop, and it stays stopped.
+        assert!(!base.established());
+
+        // The entry point actually ran. Established, even though a side-check could not conclude.
+        let mut entry = base.clone();
+        entry.entry_ok = Some(true);
+        entry.inconclusive = vec!["we never probe POST /api/sync by design".into()];
+        assert!(
+            entry.established(),
+            "one inconclusive side-check must not veto a run that genuinely executed the app"
+        );
+
+        // Concluding that the entry FAILS is also a conclusion: verified true, passed false.
+        let mut broken = base.clone();
+        broken.entry_ok = Some(false);
+        broken.findings = vec!["entry point exited non-zero".into()];
+        assert!(broken.established());
+        assert!(!broken.passed());
+
+        // The test suite running is the other oracle.
+        let mut tested = base.clone();
+        tested.tests = Some(TestRunVerdict::Pass);
+        assert!(tested.established());
+
+        // ...but the two TestRunVerdict variants that mean "could not conclude" must NOT count, or this
+        // reintroduces the exact false-green the old rule existed to stop.
+        for v in [
+            TestRunVerdict::Inconclusive("an environment collision".into()),
+            TestRunVerdict::PytestMissing,
+            TestRunVerdict::NoTests,
+        ] {
+            let mut t = base.clone();
+            t.tests = Some(v);
+            assert!(
+                !t.established(),
+                "a non-conclusion must not establish anything"
+            );
+        }
+
+        // A gate that did not run establishes nothing, whatever else is true.
+        let mut skipped = base.clone();
+        skipped.ran = false;
+        skipped.entry_ok = Some(true);
+        assert!(!skipped.established());
+    }
+
+    #[test]
     /// SYNTHESIS is told to take each task's files "from its slice's FILES section" — and the index it
     /// is handed never carried them, so it invented ownership and the engine ENFORCED the invention.
     /// Measured on smoke-linear-1: task `cli-interface` was given `wordfreq/cli.py` while its spliced
@@ -9256,9 +9319,25 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
             inconclusive: vec![],
         };
 
-        // The healthy case: it ran, nothing was red, nothing was skipped -> genuinely verified.
-        assert!(base.passed());
-        assert!(base.established(), "a clean full run must stay verified");
+        // CORRECTED with the rule. `base` has tests: None and entry_ok: None — the gate ran in the sense
+        // that .py files exist, and NOTHING EXECUTED THE PROGRAM. That is the very false-green this test
+        // was written about, so asserting it "verified" was the old weaker semantics leaking into the
+        // guard. `established` now means an oracle actually concluded.
+        assert!(base.passed(), "nothing was red, so passed stays true");
+        assert!(
+            !base.established(),
+            "a gate that executed nothing establishes nothing, however clean it looks"
+        );
+
+        // The genuinely healthy case: the entry point ran and answered.
+        let healthy = SmokeResult {
+            entry_ok: Some(true),
+            ..base.clone()
+        };
+        assert!(
+            healthy.passed() && healthy.established(),
+            "a real run must verify"
+        );
 
         // THE BUG: a --help that HANGS (a server ignoring --help and binding a port) is killed at 30s ->
         // no finding -> findings empty -> passed. It must NOT be verified.
@@ -16602,7 +16681,13 @@ impl GooseAgentDispatcher {
                      DRIFTING = working, but on the wrong thing.\n\
                      RESTART = only when the call has produced nothing usable AND a fresh start carrying what \
                      you list in ESTABLISHED would beat continuing. Never for a call that is merely slow.\n\
-                     You may never request termination. Your job is to redirect."
+                     You may never request termination. Your job is to redirect.\n\n\
+                     Finally, end your reply with a token of the form ETA=<n>m — your honest estimate of \
+                     how many more MINUTES this call needs to finish the job it was given. You are the \
+                     only party that can judge this: you have read what it has established, what it is \
+                     doing now, and how fast it is producing. Base it on the work you can see REMAINING, \
+                     not on how long it has already taken. ETA=0m means it is essentially done. If you \
+                     genuinely cannot tell, write ETA=? rather than inventing a number."
                     .to_string();
                 // A NEXT the call physically cannot carry out is worse than no NEXT — it redirects the
                 // call at an action, watches it fail, and escalates by being MORE specific about the
@@ -16786,6 +16871,7 @@ impl GooseAgentDispatcher {
                     // no way to answer from the artifacts. Its verdict and the measured recurrence
                     // now land in run.jsonl where every other decision lives.
                     let omni_outcome = parse_judge_reply(&o.text);
+                    let judge_eta_mins = parse_judge_eta_mins(&o.text);
                     let omni_hint = {
                         let h = omni_outcome.next_action.trim();
                         if h.is_empty() {
@@ -16798,6 +16884,11 @@ impl GooseAgentDispatcher {
                         "event": "judge_look",
                         "produced_since_last_look": produced_since_last_look,
                         "secs_since_last_look": secs_since_last_look,
+                        // THE ONLY PARTY THAT CAN ESTIMATE THIS. Wall-clock arithmetic answers "how long
+                        // have rounds taken"; the judge has read what the call established, what it is
+                        // doing now and how fast it is producing, so it can answer "how much is LEFT".
+                        // null when it said ETA=? — an admitted unknown beats an invented number.
+                        "eta_mins": judge_eta_mins,
                         "task_id": activity_key,
                         "look": omni_looks,
                         "thinking_chars": thinking_chars,
@@ -20400,7 +20491,29 @@ impl SmokeResult {
     /// flipping `passed` red on a correct app is forbidden here. The honest state is passed:true +
     /// verified:false — which the engine and the UI already support (a skipped oracle produces exactly it).
     fn established(&self) -> bool {
-        self.ran && self.inconclusive.is_empty()
+        // AT LEAST ONE REAL ORACLE CONCLUDED — not "every check concluded".
+        //
+        // This was `ran && inconclusive.is_empty()`, and that is unreachable in practice: a single
+        // side-check that legitimately cannot conclude ("we never probe POST /api/sync by design") vetoes
+        // the whole run. MEASURED: verified is false in 25 of 25 archived runs. And `verified` is what the
+        // desktop promotes a finished build task on (useSwarmRun: `if (e2eVerified) ... state = 'done'`),
+        // so EVERY task in EVERY run stayed badged UNVERIFIED forever, including runs that passed. A badge
+        // that is always on says nothing, and this one said something alarming.
+        //
+        // The bug the old rule was written for is real and stays fixed: `ran` alone is true for any tree
+        // holding one .py file, so a tree with no python3, a timed-out pytest, or a `--help` that HANGS all
+        // reported verified having executed NOTHING. The fix for that is not "everything concluded" — it is
+        // "something did". `tests` and `entry_ok` are the two oracles that actually EXECUTE the program;
+        // either being Some means the app was really run and a verdict was really reached. Some(false) still
+        // counts: concluding that the entry point fails is a conclusion, and it lands as a finding, so the
+        // honest state is verified:true + passed:false rather than silence.
+        // `tests: Some(..)` is not enough on its own — TestRunVerdict carries Inconclusive and
+        // PytestMissing, which are precisely the "could not conclude" cases this rule must not count.
+        let tests_concluded = matches!(
+            self.tests,
+            Some(TestRunVerdict::Pass) | Some(TestRunVerdict::Failures(_))
+        );
+        self.ran && (tests_concluded || self.entry_ok.is_some())
     }
     /// The gate did not apply to this tree (no recognized build) — never a failure.
     fn skipped() -> Self {
@@ -24149,6 +24262,29 @@ fn omni_judge_says_looping(reply: &str) -> bool {
 /// Parse the semantic judge's one-line `VERDICT|CONFIDENCE|hint` reply. Conservative: anything not a
 /// clearly-flagged problem reads as OK, so a vague weak-model reply can never kill a healthy worker.
 /// CONFIDENCE gates agency — the judge acts (kill + correct) only on a verdict it marks HIGH.
+/// The judge's own estimate of how many more MINUTES a call needs, from an `ETA=<n>m` token.
+///
+/// Mihai, watching a sink spend an hour on one bug: "the estimate time needs to be updated so the judge
+/// models should update the ETA because they can tell best what time is left". He is right — the repair
+/// ETA is arithmetic over past round durations, which answers "how long did rounds take" and not "how much
+/// is left". The judge has read what the call established, what it is doing now and how fast it is
+/// producing; nothing else in the engine has that.
+///
+/// A labelled token rather than a fifth pipe field on purpose: the free-segment parser above earned its
+/// leniency the hard way, and shifting its indices to add a field would break every measured reply shape.
+/// `ETA=?` is a first-class answer — an invented number is worse than an admitted unknown.
+fn parse_judge_eta_mins(s: &str) -> Option<u64> {
+    let up = s.to_uppercase();
+    let at = up.find("ETA")?;
+    let rest = &up[at + 3..];
+    let rest = rest.trim_start_matches([':', '=', ' ']);
+    let digits: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
+    if digits.is_empty() {
+        return None; // "ETA=?" and anything unparseable
+    }
+    digits.parse::<u64>().ok().filter(|m| *m <= 24 * 60)
+}
+
 fn parse_judge_reply(s: &str) -> JudgeOutcome {
     let upper = s.to_uppercase();
     // FOUR fields now: VERDICT|CONFIDENCE|ESTABLISHED|NEXT. Parsing stays deliberately LENIENT, because

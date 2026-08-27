@@ -2814,11 +2814,18 @@ ipcMain.handle('benchmark-run', async (event, nodes: number, tier?: string, samp
           // off — so it invented pagination/429/ETag/idempotency and nine Tier-B checks collapsed.
           GOOSE_SWARM_DOC_PREFETCH: '1',
           GOOSE_SWARM_DIVERSE_PLAN: '1',
-          // Run-window sampling knobs. Temperature keeps its shipped 0.2 pin unless the strip set
-          // one; the other four ride only when set, so an untouched knob stays at config/model
-          // default. Env beats config engine-side, so these pin exactly this run.
+          // Run-window sampling knobs. ALL FIVE now ride only when set, so an untouched knob stays at
+          // the config/model default. Env beats config engine-side, so an explicit knob pins this run.
           ...samplingEnv(runSampling),
-          GOOSE_SWARM_TEMP: String(runSampling.temperature ?? 0.2),
+          // NO HARDCODED TEMPERATURE. This was `runSampling.temperature ?? 0.2`, and the config ships
+          // `temperature: null`, so EVERY desktop run forced 0.2 onto the engine and overrode the
+          // per-model setting in LM Studio — Mihai runs 0.7 there deliberately, and a 27B at 0.2 is a
+          // duller model than the one he configured. Omit the variable when nothing is set, exactly as
+          // the sibling block above already does, so the engine sends no temperature and LM Studio's
+          // own value applies. An explicit setting still wins.
+          ...(runSampling.temperature != null
+            ? { GOOSE_SWARM_TEMP: String(runSampling.temperature) }
+            : {}),
         },
       }
     );
