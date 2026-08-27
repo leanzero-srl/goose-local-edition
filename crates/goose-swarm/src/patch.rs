@@ -350,3 +350,135 @@ mod tests {
         assert_eq!(p.touched(), 1);
     }
 }
+
+/// The engine's name for the integration task. It is not a label — it is an exact-equality TYPE TEST
+/// in live code that the planner never sees: `sink_in_flight` (the replan suppression gate) and the
+/// claim gate in `scheduler.rs`, the desktop's only Verify-row source, and the bench sink detectors.
+pub const SINK_ID: &str = "integrate-verify";
+
+/// Rename whichever task the plan designates as the join to [`SINK_ID`], rewriting every reference.
+///
+/// A model chooses task ids, and it will call the join `wire-app` or `final-integration` sooner or later.
+/// When it does, every one of those exact-equality checks silently goes false — and because they are
+/// checks, not errors, nothing says so: the replan suppression gate stops matching (while dynamic replan
+/// is no longer bounded by a round count), the desktop's Verify phase renders empty, and the bench sink
+/// detectors go blind. No compiler error anywhere.
+///
+/// The join is identified structurally, not by name: the task NOTHING depends on which itself depends on
+/// the most others. Ties and degenerate plans (no such task, or it is already named right) are left
+/// alone. Returns the old id when a rename happened.
+pub fn pin_sink_id(plan: &mut Value) -> Option<String> {
+    let subtasks = plan.get_mut("subtasks")?.as_array_mut()?;
+    if subtasks.is_empty() {
+        return None;
+    }
+    let id_of = |t: &Value| {
+        t.get("id")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string()
+    };
+    let deps_of = |t: &Value| -> Vec<String> {
+        t.get("depends_on")
+            .and_then(|v| v.as_array())
+            .map(|a| {
+                a.iter()
+                    .filter_map(|d| d.as_str().map(|s| s.to_string()))
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
+
+    if subtasks.iter().any(|t| id_of(t) == SINK_ID) {
+        return None;
+    }
+
+    let all: Vec<(String, Vec<String>)> = subtasks.iter().map(|t| (id_of(t), deps_of(t))).collect();
+    let depended_on: std::collections::HashSet<&str> = all
+        .iter()
+        .flat_map(|(_, d)| d.iter().map(|s| s.as_str()))
+        .collect();
+    let join = all
+        .iter()
+        .filter(|(id, _)| !depended_on.contains(id.as_str()))
+        .max_by_key(|(_, d)| d.len())?;
+    if join.1.is_empty() {
+        // A terminal task that depends on nothing is not a join, it is an isolated task.
+        return None;
+    }
+    let old = join.0.clone();
+
+    for t in subtasks.iter_mut() {
+        if t.get("id").and_then(|v| v.as_str()) == Some(old.as_str()) {
+            t["id"] = Value::from(SINK_ID);
+        }
+        if let Some(deps) = t.get_mut("depends_on").and_then(|v| v.as_array_mut()) {
+            for d in deps.iter_mut() {
+                if d.as_str() == Some(old.as_str()) {
+                    *d = Value::from(SINK_ID);
+                }
+            }
+        }
+    }
+    Some(old)
+}
+
+#[cfg(test)]
+mod sink_tests {
+    use super::*;
+
+    #[test]
+    fn a_differently_named_join_is_renamed_and_every_reference_follows() {
+        let mut plan: Value = serde_json::from_str(
+            r#"{"subtasks":[
+                {"id":"store","files":["a.py"],"depends_on":[]},
+                {"id":"api","files":["b.py"],"depends_on":["store"]},
+                {"id":"wire-app","files":[],"depends_on":["store","api"]}
+            ]}"#,
+        )
+        .unwrap();
+        assert_eq!(pin_sink_id(&mut plan).as_deref(), Some("wire-app"));
+        let ids: Vec<&str> = plan["subtasks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|t| t["id"].as_str().unwrap())
+            .collect();
+        assert!(
+            ids.contains(&SINK_ID),
+            "the join now carries the engine's id: {ids:?}"
+        );
+        assert!(!ids.contains(&"wire-app"));
+        // and nothing still points at the old name
+        let json = serde_json::to_string(&plan).unwrap();
+        assert!(
+            !json.contains("wire-app"),
+            "every reference followed: {json}"
+        );
+    }
+
+    #[test]
+    fn a_plan_that_already_names_it_right_is_untouched() {
+        let src = r#"{"subtasks":[
+            {"id":"store","files":["a.py"],"depends_on":[]},
+            {"id":"integrate-verify","files":[],"depends_on":["store"]}
+        ]}"#;
+        let mut plan: Value = serde_json::from_str(src).unwrap();
+        let before = plan.clone();
+        assert_eq!(pin_sink_id(&mut plan), None);
+        assert_eq!(plan, before);
+    }
+
+    /// A flat plan with no join must not have one invented by renaming an unrelated leaf.
+    #[test]
+    fn a_flat_plan_with_no_join_is_left_alone() {
+        let mut plan: Value = serde_json::from_str(
+            r#"{"subtasks":[
+                {"id":"a","files":["a.py"],"depends_on":[]},
+                {"id":"b","files":["b.py"],"depends_on":[]}
+            ]}"#,
+        )
+        .unwrap();
+        assert_eq!(pin_sink_id(&mut plan), None);
+    }
+}
