@@ -16648,11 +16648,44 @@ impl GooseAgentDispatcher {
                     let c: Vec<char> = last_thinking.chars().collect();
                     c[c.len().saturating_sub(2_000)..].iter().collect()
                 };
+                // WHAT THE COMMANDS ACTUALLY RETURNED — not just that they were run.
+                //
+                // `call_records` is (name, summary, ok, RESULT) and this builder discarded the last two.
+                // So the judge has been diagnosing every call blind: it could see that a command was
+                // issued and never what it printed, nor whether it failed.
+                //
+                // MEASURED (swarm-3node-r0, 18:27-19:47Z, 80 minutes): integrate-verify served its
+                // frontend 404s. The judge diagnosed "static file path resolution", escalated over five
+                // nudges to dictating the literal line, the worker applied it — and the path had been
+                // correct all along. The real defect was that the `/`, `/index.html`, `/styles.css` and
+                // `/app.js` branches sit inside `do_POST` instead of `do_GET`, which no amount of path
+                // arithmetic can reach. Every `curl` the worker ran returned the same 404 and the judge
+                // could not see a single one of them. It had no way to falsify its own theory, so
+                // escalation amplified a misdiagnosis instead of correcting it, and five of the worker's
+                // shell calls ERRORED without the judge knowing.
+                //
+                // A supervisor that cannot see outcomes can only ever supervise intentions. Outcome and
+                // an elided result tail now ride with every call, newest first.
                 let ran: Vec<String> = call_records
                     .iter()
                     .rev()
                     .take(8)
-                    .map(|(n, sum, _, _)| format!("{n}: {sum}"))
+                    .map(|(n, sum, ok, result)| {
+                        let mark = match ok {
+                            Some(true) => "ok",
+                            Some(false) => "FAILED",
+                            None => "no result yet",
+                        };
+                        let out = result.trim();
+                        if out.is_empty() {
+                            format!("{n} [{mark}]: {sum}")
+                        } else {
+                            format!(
+                                "{n} [{mark}]: {sum}\n      it printed: {}",
+                                elide_middle(out, 80, 240)
+                            )
+                        }
+                    })
                     .collect();
                 // THE JUDGE CONTRACT. Four fields, not three. The third — ESTABLISHED — is the whole
                 // point: a redirect that throws away the useful half of a spiralling call is just a slower
@@ -16830,7 +16863,11 @@ impl GooseAgentDispatcher {
                      correctly is OK even when it is writing no code, because most jobs here are not \
                      coding jobs.\n\n\
                      It has emitted {thinking_chars} characters of reasoning.{rate_block}{answer_block}{measured}{earlier_block}\
-                     \n\nMost recent reasoning:\n{tail}\n\nCommands it ran (most recent first):\n{}",
+                     \n\nMost recent reasoning:\n{tail}\n\n\
+                     Commands it ran, newest first, WITH WHAT THEY PRINTED. Read these before you decide: \
+                     if it already ran the check you were about to ask for and the output does not show \
+                     the defect you suspect, YOUR DIAGNOSIS IS WRONG and repeating it more forcefully \
+                     will not help. Name a different hypothesis and a command that would settle it.\n{}",
                     call_objective(activity_key),
                     if ran.is_empty() {
                         "(none)".to_string()
@@ -32067,6 +32104,42 @@ impl GooseAgentDispatcher {
             },
         }));
         // "STOP WHEN GREEN" is meaningless to a task that authors tests rather than satisfying them.
+        // THE SUPERVISOR PROTOCOL, established at turn ZERO rather than arriving inside the note.
+        //
+        // The measured defect is agreement-without-action. A worker's own reasoning, verbatim: "The
+        // supervisor is right - I've been going in circles. Let me just fix the path resolution
+        // properly" — and it then re-read the same twenty lines for the fourth time. Compliance is at
+        // ceiling; the gap is between AGREEING and ACTING.
+        //
+        // Two reasons this lives here and not in the note. First, arXiv:2510.00777 measured on
+        // Gemma-3-27b-it and Qwen2.5-7B that feedback acceptance collapses between turns 5 and 9
+        // regardless of wording, because accumulated history drives copying of prior behaviour — so a
+        // rule first appearing at turn 60, inside a context holding ninety demonstrations of ignoring
+        // notes, is exactly the rule that gets copied over. Established at turn 0, the note becomes a
+        // TRIGGER for an already-agreed protocol instead of a novel instruction competing with them.
+        // Second, the one framing change this engine has actually measured (`act_now_nudge`, 23.8%
+        // refusals -> 0.0%) won by being ONE line, not by being thorough. Split the protocol from the
+        // trigger.
+        //
+        // The "it does not see what your commands printed" sentence is not a framing device, it is a
+        // true fact about this engine that the worker was never told — and until the commit that added
+        // outcomes to the judge prompt it was true without qualification. Naming the reviewer's blind
+        // spot precisely is what makes DISSENT a legitimate move rather than insubordination, which
+        // matters because the FlipFlop result (arXiv:2311.08596) has models abandoning correct work
+        // under mild pushback 46% of the time. So the protocol is deliberately symmetric — act, or
+        // dissent with evidence — and "agree" is not one of the options.
+        let supervisor_rules = if omni_judge_enabled(load_config().omni_judge) {
+            "- A REVIEWER IS WATCHING THIS CALL and may send you a SUPERVISOR NOTE mid-task. It reads \
+             your reasoning and the outcome of your commands, but it is working from less context than \
+             you have — so it can be wrong about the CAUSE and still right that you are stuck. A note is \
+             answered by a TOOL CALL, never by agreeing with it: it is discharged when a command has \
+             been run and its real output is in front of you. If you have ALREADY run what it asks and \
+             the output did not show the defect, then you hold evidence it does not: say so in ONE line, \
+             quote the output that ruled it out, name the hypothesis you are testing INSTEAD, and act on \
+             that. Re-running a check you have already run answers neither of you.\n"
+        } else {
+            ""
+        };
         let stopping_rules = if kind_prompt_on && is_test_author {
             "- STOP WHEN YOUR TESTS RUN. Your job is a test file that IMPORTS and EXERCISES the real \
              module. Run it once to prove it collects and executes — a test file with a SyntaxError or \
@@ -32210,6 +32283,26 @@ impl GooseAgentDispatcher {
             && !req.all_files.is_empty();
         let read_on_fix =
             is_fix_round && swarm_gate_cfg("GOOSE_SWARM_READ_ON_FIX", load_config().read_on_fix);
+        // NO PERSONA, AND NO LOW-STATUS OPENER EITHER.
+        //
+        // This read "You are a WORKER on a local AI swarm." Two separate measurements say that is the
+        // wrong sentence. Claiming EXPERTISE buys nothing: Zheng et al. tested 162 personas over 2,410
+        // questions on Qwen2.5-Instruct 3B-72B, the closest published family to this fleet, and not one
+        // beat the no-persona control. But a LOW-STATUS role measurably costs — Kong et al. measured
+        // "careless student" 51.6 and "math rookie" 45.3 against 53.5 for no role at all. "WORKER on a
+        // local AI swarm" is exactly that register: small, subordinate, one of many.
+        //
+        // So the opener asserts OWNERSHIP AND COMPLETION DUTY, which are engine facts, and no competence
+        // adjective. No "senior", no "expert". The branch exists because "you own the files below" is
+        // simply false for integrate-verify and the verify shards, and a false identity line at position
+        // zero is worse than a generic one.
+        let role_opener = if read_only_shard {
+            "You are the reviewer of record for this build. "
+        } else if req.owned_files.is_empty() {
+            "You are the engineer who makes this build actually run end to end. "
+        } else {
+            "You are the engineer who owns the files listed below, and you finish them. "
+        };
         let fix_directive = if read_on_fix {
             "\nYOU ARE FIXING A PROVEN DEFECT, NOT WRITING NEW CODE. The rules about not reading are \
              SUSPENDED for this task, because the failure below was already reproduced by running the \
@@ -32228,7 +32321,7 @@ impl GooseAgentDispatcher {
             ""
         };
         let system_prompt = format!(
-            "You are a WORKER on a local AI swarm. {worker_directive}{fix_directive}Complete EXACTLY the task below using your tools, \
+            "{role_opener}{worker_directive}{fix_directive}Complete EXACTLY the task below using your tools, \
              in the current working directory. Write correct, minimal code; do nothing beyond the task. \
              When finished, briefly state what you produced.\n\
              SMALL MODULAR FILES (hard rule): write SMALL, single-responsibility files — ONE clear concern each. If you own \
@@ -32276,7 +32369,7 @@ impl GooseAgentDispatcher {
              folder. They are run logs / the plan / the task prompt — NOT project files; cat-ing them tells \
              you nothing and wastes turns (workers have looped 10+ times on `plan.json`). Ignore them \
              completely and also do NOT create a `plan.json`.\n\
-             {reading_rules}{stopping_rules}\
+             {reading_rules}{stopping_rules}{supervisor_rules}\
              \n{write_first_block}{decisions_block}{doc_facts_block}{pitfalls_block}{notes_block}{pillars_block}{layout_block}{contracts_block}{context_block}"
         );
         // Live concurrency view: each task prints when it STARTS and FINISHES. Because dispatches
