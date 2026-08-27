@@ -3643,7 +3643,10 @@ fn call_objective(activity_key: Option<&str>) -> &'static str {
         Some("proxy-answer") => "answer the open decisions from the request. It must NOT write code.",
         Some("rate") => "rate each defect CRITICAL or MINOR. It must NOT write code.",
         Some(k) if k.starts_with("slice-") => {
-            "answer its slice's questions and then write that module's SPECIFICATION — interfaces, edge              cases, files. It must NOT write the implementation."
+            "answer its slice's questions and then give that module's SPECIFICATION — interfaces, edge \
+             cases, files — AS ITS REPLY. The specification is what it says back, not a file it puts on \
+             disk, and it has no file tools: never direct it to create or edit one. It must NOT write \
+             the implementation."
         }
         Some(k) if k.starts_with("test-") => {
             "exercise the BUILT app from one angle and report the defects it observes, with the files \
@@ -16503,6 +16506,22 @@ impl GooseAgentDispatcher {
                      you list in ESTABLISHED would beat continuing. Never for a call that is merely slow.\n\
                      You may never request termination. Your job is to redirect."
                     .to_string();
+                // A NEXT the call physically cannot carry out is worse than no NEXT — it redirects the
+                // call at an action, watches it fail, and escalates by being MORE specific about the
+                // thing that is impossible. MEASURED live: the judge read a slice owner's objective
+                // ("write that module's SPECIFICATION") as an instruction to create a file and told it
+                // to "Write vendorsync/web/SPEC.md". These calls have no `write` or `edit` tool by
+                // design (`is_read_only_call`), so once that landed the node would have had nowhere to
+                // go. The judge has to be told what the call can actually do.
+                if is_read_only_call(activity_key) {
+                    sys.push_str(
+                        "\n\nThis call has NO write or edit tool — by design, because its job is to read \
+                         and decide, not to build. Its answer IS its deliverable. NEXT must therefore be \
+                         something it can actually do: a thing to work out, a command to run, a \
+                         conclusion to state, or the answer to start giving. Never tell it to create or \
+                         edit a file; it cannot, and it will burn its turns trying.",
+                    );
+                }
                 // ESCALATION WITHOUT A COUNTER. The judge is shown its own prior direction and whether the
                 // call obeyed it, so nudge 2 differs from nudge 1 because the evidence differs — not
                 // because a branch counted to two. This is what replaces JUDGE_NUDGE_MAX.
