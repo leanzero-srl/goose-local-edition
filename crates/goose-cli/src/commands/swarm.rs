@@ -21623,6 +21623,7 @@ impl GooseAgentDispatcher {
                     .fold(0usize, usize::saturating_add)
             },
             |partition| partition.partition_id.clone(),
+            |_| {},
             move |observation| {
                 if observation.kind == StagedFanObservationKind::DetailTailStarted {
                     events.write_value(serde_json::json!({
@@ -22578,8 +22579,11 @@ impl GooseAgentDispatcher {
             "advisory_evidence": evidence,
             "canonical_skeleton": serde_json::from_str::<serde_json::Value>(canonical_skeleton)?,
         }));
+        let audit_input_cost = serde_json::to_string(input.as_ref())?.len();
         let dispatcher = self.clone();
-        let results = fanout_over_fleet(
+        let attempt_events = self.events.clone();
+        let tail_events = self.events.clone();
+        let results = fanout_retrying_over_fleet(
             one_lane_per_host(models),
             roles,
             move |role, model| {
@@ -22609,7 +22613,7 @@ impl GooseAgentDispatcher {
                         role.brief(),
                     );
                     let key = format!("plan-pod-audit-{}", role.as_str());
-                    let compiled = dispatcher
+                    let compiled = match dispatcher
                         .run_response_only_agent(
                             &model,
                             system,
@@ -22621,23 +22625,24 @@ impl GooseAgentDispatcher {
                             Some(key.as_str()),
                         )
                         .await
-                        .map_err(|error| anyhow!("planning pod audit `{}` failed: {error}", role.as_str()))
-                        .and_then(|output| {
-                            output
-                                .final_output
-                                .filter(|raw| !raw.trim().is_empty())
-                                .or_else(|| {
-                                    (!output.text.trim().is_empty()).then_some(output.text)
-                                })
-                                .ok_or_else(|| {
-                                    anyhow!(
-                                        "planning pod audit `{}` produced no typed output",
-                                        role.as_str()
-                                    )
-                                })
-                        })
-                        .and_then(|raw| {
-                            compile_planning_audit(
+                    {
+                        Err(error) => Err((
+                            "transport-or-agent",
+                            format!("planning pod audit `{}` failed: {error}", role.as_str()),
+                        )),
+                        Ok(output) => match output
+                            .final_output
+                            .filter(|raw| !raw.trim().is_empty())
+                            .or_else(|| (!output.text.trim().is_empty()).then_some(output.text))
+                        {
+                            None => Err((
+                                "missing-typed-output",
+                                format!(
+                                    "planning pod audit `{}` produced no typed output",
+                                    role.as_str()
+                                ),
+                            )),
+                            Some(raw) => compile_planning_audit(
                                 &raw,
                                 role,
                                 model.clone(),
@@ -22645,7 +22650,17 @@ impl GooseAgentDispatcher {
                                 task_ids.as_ref(),
                                 evidence_ids.as_ref(),
                             )
-                        });
+                            .map_err(|error| {
+                                (
+                                    "schema-or-semantic-compile",
+                                    format!(
+                                        "planning pod audit `{}` failed typed compilation: {error}",
+                                        role.as_str()
+                                    ),
+                                )
+                            }),
+                        },
+                    };
                     dispatcher.events.write_value(serde_json::json!({
                         "event": "planning_pod_role_completed",
                         "role": role.as_str(),
@@ -22653,36 +22668,69 @@ impl GooseAgentDispatcher {
                         "authority": "peer-audit-only",
                         "accepted": compiled.is_ok(),
                         "findings": compiled.as_ref().map(|audit| audit.findings.len()).ok(),
+                        "failure_class": compiled.as_ref().err().map(|(class, _)| class),
                         "secs": started.elapsed().as_secs_f64(),
                     }));
-                    compiled
+                    compiled.map_err(|(class, detail)| format!("{class}: {detail}"))
+                }
+            },
+            move |role| audit_input_cost.saturating_add(role.brief().len()),
+            |role| role.as_str().to_string(),
+            move |attempt| {
+                attempt_events.write_value(serde_json::json!({
+                    "event": "planning_pod_audit_attempt_started",
+                    "role": &attempt.packet,
+                    "source_ordinal": attempt.source_index,
+                    "model": &attempt.device,
+                    "attempt": attempt.attempt,
+                    "estimated_prompt_cost": attempt.priority,
+                    "prior_failed_nodes": &attempt.failed_devices,
+                    "admission_basis": "estimated-prompt-cost-descending-stable-source-ordinal",
+                    "authority": "peer-audit-only",
+                    "may_emit_full_plan": false,
+                }));
+                if attempt.attempt > 1 {
+                    attempt_events.write_value(serde_json::json!({
+                        "event": "planning_pod_audit_reassigned",
+                        "role": &attempt.packet,
+                        "source_ordinal": attempt.source_index,
+                        "model": &attempt.device,
+                        "attempt": attempt.attempt,
+                        "prior_failed_nodes": &attempt.failed_devices,
+                        "retry_basis": "previous-node-failed-packet-distinct-node-remained",
+                    }));
+                }
+            },
+            move |observation| {
+                if observation.kind == StagedFanObservationKind::DetailTailStarted {
+                    tail_events.write_value(serde_json::json!({
+                        "event": "planning_pod_audit_tail_started",
+                        "outstanding_role": observation.outstanding_detail,
+                        "completed_roles": observation.completed_details,
+                        "in_flight_roles": observation.in_flight_details,
+                        "logically_free_nodes": observation.logically_free_lanes,
+                        "straggler_abort": false,
+                    }));
                 }
             },
         )
         .await;
-        let mut audits = Vec::with_capacity(results.len());
-        let mut failures = Vec::new();
-        for result in results {
-            match result {
-                Ok(audit) => audits.push(audit),
-                Err(error) => failures.push(error.to_string()),
-            }
-        }
-        if !failures.is_empty() || audits.len() != planning_pod_audit_roles().len() {
-            bail!(
-                "planning pod peer audit incomplete; no unreviewed plan accepted: {}",
-                if failures.is_empty() {
-                    format!(
-                        "returned {} of {} audit roles",
-                        audits.len(),
-                        planning_pod_audit_roles().len()
-                    )
-                } else {
-                    failures.join(" | ")
-                }
-            );
-        }
-        Ok(audits)
+        self.events.write_value(serde_json::json!({
+            "event": "planning_pod_audits_drained",
+            "accepted": results.is_ok(),
+            "all_admitted_attempts_drained": true,
+            "roles_returned": results.as_ref().map(|audits| audits.len()).unwrap_or(0),
+            "roles_required": planning_pod_audit_roles().len(),
+            "source_order_restored": results.is_ok(),
+            "retry_authority": "finite-distinct-physical-node-roster",
+            "attempt_cap": null,
+            "elapsed_cap_secs": null,
+        }));
+        results.map_err(|error| {
+            anyhow!(
+                "planning pod peer audit incomplete after distinct-node retry and drain: {error}"
+            )
+        })
     }
 
     async fn adjudicate_canonical_plan(
@@ -29716,6 +29764,7 @@ mod fan_order_tests {
             |item| item.1,
             |item| item.0.clone(),
             |_| {},
+            |_| {},
         ));
 
         admitted
@@ -29766,6 +29815,7 @@ mod fan_order_tests {
             },
             |_| 0,
             String::clone,
+            |_| {},
             |_| {},
         )
         .await
@@ -29850,6 +29900,7 @@ mod fan_order_tests {
             },
             |item| item.1,
             |item| item.0.clone(),
+            |_| {},
             |_| {},
         ));
 
@@ -30186,17 +30237,28 @@ struct RetryingFanCompletion<T, R> {
     output: std::result::Result<R, String>,
 }
 
+#[derive(Clone, Debug)]
+struct RetryingFanAttemptObservation {
+    packet: String,
+    source_index: usize,
+    device: String,
+    attempt: usize,
+    priority: usize,
+    failed_devices: Vec<String>,
+}
+
 /// Run authority-bearing packets with work stealing and failover. A failed packet may not return to a
 /// device that already failed it; it remains queued until a different device is free. There is no retry-count
 /// or time cap: the finite set of distinct physical nodes is the retry authority, and failure is terminal only
 /// after that set is exhausted. Results are restored to source order even when admission is priority-ordered.
-async fn fanout_retrying_over_fleet<T, R, F, Fut, Priority, Label, Observe>(
+async fn fanout_retrying_over_fleet<T, R, F, Fut, Priority, Label, ObserveAttempt, ObserveTail>(
     devices: Vec<String>,
     items: Vec<T>,
     f: F,
     priority: Priority,
     label: Label,
-    observe: Observe,
+    observe_attempt: ObserveAttempt,
+    observe_tail: ObserveTail,
 ) -> Result<Vec<R>>
 where
     T: Clone + Send + 'static,
@@ -30205,7 +30267,8 @@ where
     Fut: std::future::Future<Output = std::result::Result<R, String>> + Send + 'static,
     Priority: Fn(&T) -> usize,
     Label: Fn(&T) -> String,
-    Observe: Fn(StagedFanObservation),
+    ObserveAttempt: Fn(RetryingFanAttemptObservation),
+    ObserveTail: Fn(StagedFanObservation),
 {
     use std::collections::VecDeque;
 
@@ -30258,6 +30321,18 @@ where
                     continue;
                 };
                 let mut pending_item = pending.remove(position);
+                observe_attempt(RetryingFanAttemptObservation {
+                    packet: labels.get(pending_item.index).cloned().unwrap_or_default(),
+                    source_index: pending_item.index,
+                    device: device.clone(),
+                    attempt: pending_item.attempted_devices.len().saturating_add(1),
+                    priority: pending_item.priority,
+                    failed_devices: pending_item
+                        .failures
+                        .iter()
+                        .map(|(device, _)| device.clone())
+                        .collect(),
+                });
                 pending_item.attempted_devices.insert(device.clone());
                 in_flight.insert(pending_item.index);
                 let call_item = pending_item.item.clone();
@@ -30280,7 +30355,7 @@ where
 
         if pending.is_empty() && in_flight.len() == 1 && !tail_reported {
             let index = *in_flight.iter().next().expect("one packet is in flight");
-            observe(StagedFanObservation {
+            observe_tail(StagedFanObservation {
                 kind: StagedFanObservationKind::DetailTailStarted,
                 outstanding_detail: labels.get(index).cloned().unwrap_or_default(),
                 pending_details: 0,
