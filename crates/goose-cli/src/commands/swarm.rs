@@ -891,8 +891,20 @@ pub struct SwarmConfig {
     /// repairing a defect the gates already reproduced by RUNNING the app; a cross-module signature
     /// mismatch is by definition not visible in the one file the implementer rules allow it to read.
     /// MEASURED: swarm-3node died on `Store.__init__() got an unexpected keyword argument 'path'`,
-    /// complete_verify caught it three rounds running, and the fix worker could not repair it. OFF by
-    /// default => the fix prompt is byte-identical to today.
+    /// complete_verify caught it three rounds running, and the fix worker could not repair it.
+    ///
+    /// ⚠️ BAKED ON. It was off by default, and `is_fix_round` is TRUE for integrate-verify (it owns no
+    /// files and is not a `verify::` id) — so this switch has always been wired to the sink and has
+    /// always been denied to it. Off, the sink reads the FIRST-AUTHORING rules ("write your owned
+    /// file(s) IN FULL", "do NOT reflexively `cat` the whole file", "Create ONLY the files your task
+    /// owns") while its actual job is a cross-file repair of code somebody else wrote.
+    ///
+    /// MEASURED (swarm-3node-r0): 84 minutes, 100 tool calls and 8 errors chasing a static-file 404 by
+    /// re-running `sed -n '135,160p'` on api.py exactly as instructed, never reading the whole handler —
+    /// where the defect was plainly visible, the static routes sitting inside `do_POST` instead of
+    /// `do_GET`. The judge spent five escalating nudges asking for precisely what `fix_directive` says
+    /// in the prompt this lever was withholding. Gated on `is_fix_round`, so a first-authoring worker is
+    /// untouched and still told to write rather than read.
     // No serde default made this a REQUIRED key, so any config.yaml omitting it failed to
     // deserialize SwarmConfig. load_config merges over Default so runtime was safe, but its
     // fallback at the `unwrap_or_else` is a DIRECT typed read that would fail the same way and
@@ -1273,7 +1285,26 @@ impl Default for SwarmConfig {
             owned_file_fence: false,
             spiral_thinking_chars: 0,
             contract_retry: false,
-            read_on_fix: false,
+            // ON. A repair is not first authoring, and the sink is a repair.
+            //
+            // `is_fix_round` is TRUE for integrate-verify (it owns no files and is not a verify:: id), so
+            // this switch has always been wired to the sink and has always been off. With it off the sink
+            // reads the FIRST-AUTHORING rules — "write your owned file(s) IN FULL", "do NOT reflexively
+            // `cat` the whole file before every fix", "Create ONLY the files your task owns" — while its
+            // actual job is a cross-file repair of code somebody else wrote.
+            //
+            // MEASURED (swarm-3node-r0, 84 minutes, 100 tool calls, 8 errors): the sink chased a static
+            // file 404 by running `sed -n '135,160p'` on api.py over and over, exactly as instructed, and
+            // never read the whole handler — where the defect was plainly visible, the static routes being
+            // inside `do_POST` instead of `do_GET`. The judge spent five escalating nudges telling it to
+            // read more of the file, which is what `fix_directive` says in the prompt it was denied:
+            // "READ every file named in the error, and the file that DEFINES any symbol the error
+            // mentions", "confirm the REAL signature/behaviour by reading the definition", "you may edit
+            // ANY file the fix requires", "re-run the failing command itself".
+            //
+            // Blast radius is exactly the calls that ARE repairs: the gate is `is_fix_round && ...`, so a
+            // first-authoring worker is untouched and still told to write rather than read.
+            read_on_fix: true,
             kind_prompt: true,
             degrade_on_stall: true,
             // BAKED ON (F873 waste mine): the vendorsync spec demands a 3-file web triplet
