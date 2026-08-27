@@ -35721,6 +35721,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             })
             .collect();
         if !modules.is_empty() {
+            sink.write_value(serde_json::json!({"event": "phase", "phase": "contracts"}));
             phase_banner(
                 "CONTRACTS",
                 "freeze signature-only module interfaces across the fleet before EXECUTE",
@@ -35948,6 +35949,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
     }
     sink.write_value(plan_evt);
 
+    sink.write_value(serde_json::json!({"event": "phase", "phase": "build"}));
     phase_banner(
         "EXECUTE",
         "subtasks run IN PARALLEL across the fleet; dynamic replan fills idle workers",
@@ -36375,6 +36377,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
         // What the repair ASK quotes back. An ETA has to come from what actually happened in THIS
         // run — rounds that ran, the wall-clock they took, and how many criticals they closed — or it
         // is a number invented to make a question look answerable.
+        sink.write_value(serde_json::json!({"event": "phase", "phase": "repair"}));
         let mut round_walls: Vec<u64> = Vec::new();
         let mut first_criticals: Option<usize> = None;
         let mut last_round_was_shard = false;
@@ -36809,6 +36812,9 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             // code. Model-observed defects are rated like anything else; only measurements are forced.
             let mut model_observed: std::collections::HashSet<String> =
                 std::collections::HashSet::new();
+            sink.write_value(
+                serde_json::json!({"event": "phase", "phase": "test", "round": round}),
+            );
             // TEST — the three-node fan, before the round's verdict is written so its defects are
             // rated and fixed by exactly the same machinery as the engine's own.
             //
@@ -36952,6 +36958,9 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             // engine facts, and a model opinion may not overrule a measurement.
             let mut minors: Vec<String> = Vec::new();
             if !verdict.findings.is_empty() {
+                sink.write_value(
+                    serde_json::json!({"event": "phase", "phase": "rate", "round": round}),
+                );
                 let rated = rater
                     .rate_findings(&cfg.planner_model, &opts.prompt, &verdict.findings)
                     .await;
