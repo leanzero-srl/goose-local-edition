@@ -397,6 +397,28 @@ it. A problem that turns out to be already owned is left out, but then it was no
 **THIS RUN KEEPS THE DEFECT** — the binary is the old one. Expect 4 features missing from its app, and read
 the score with that in mind rather than as a verdict on the decomposition.
 
+## FIRST EVIDENCE FROM THE NEW BINARY: OPEN GAVE EACH FRONTEND FILE ITS OWN SLICE — 02:55 EEST
+
+`slices_opened` on the relaunched run:
+
+    count 10   weights [2,3,2,3,5,5,1,1,3,2]   secs 487
+    boot-contract · notifierd-service · frontend-html · frontend-css · frontend-app-js ·
+    frontend-viz-js · decisions-doc · readme-doc · ledgerd-sync-api · ledgerd-webhooks-approval
+
+**FOUR frontend slices, each owning ONE file** — and `frontend-viz-js` is its own slice rather than sharing
+with `frontend-app-js`. The previous run's single defect was `viz-scene-rendering` and
+`viz-camera-picking-interaction` both owning `web/viz.js`, which made the second task a zero-tool-call
+no-op. This decomposition cannot produce that collision.
+
+The weight spread is 5-vs-1, over the 2x pairwise trigger, and **`open-resplit` fired and completed** — the
+rebalance mechanism working rather than an even spread by luck.
+
+`clarify_proxy_armed {mode: "immediate", wait_secs: 0, questions: 3}` — benchmark mode routing the three
+open decisions to a node instantly instead of idling three machines for five minutes.
+
+Too early to credit `DO NOT CLASSIFY`: the coverage lanes are still running and the number that tests it is
+`tasks_sharing_a_file` at SYNTHESIS, which must be 0.
+
 ## RELAUNCHED ON THE NEW BINARY — 2026-08-29 02:52 EEST, run `swarm-3node-r0`
 
 Recovery from the kill above, complete:
