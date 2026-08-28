@@ -14053,6 +14053,28 @@ fn activity_digest_key(task_id: &str) -> String {
 /// An append-only sibling has neither problem. Each write costs only the NEW text, the file is the whole
 /// narration with nothing elided, and the digest keeps its bounded tail for the judge and the live panel.
 /// Best-effort throughout: a transcript that fails to write must never disturb a run.
+/// Append buffered THINKING to `<activity>.think.log` and clear the buffer.
+///
+/// The digest carries a 2,400-character rolling window of the reasoning channel, which is why the panel's
+/// THINKING pane clears and refills instead of accumulating. This is the reasoning channel's only durable
+/// record. Best-effort: a transcript that cannot be written must never disturb a run.
+fn append_thinking_transcript(activity_path: &Path, buf: &mut String) {
+    if buf.is_empty() {
+        return;
+    }
+    use std::io::Write;
+    let log = activity_path.with_extension("think.log");
+    if let Ok(mut f) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&log)
+    {
+        if f.write_all(buf.as_bytes()).is_ok() {
+            buf.clear();
+        }
+    }
+}
+
 fn append_reasoning_transcript(activity_path: &Path, texts: &[String], already: usize) -> usize {
     if texts.len() <= already {
         return already;
@@ -16896,6 +16918,9 @@ impl GooseAgentDispatcher {
         let mut last_digest_at: Option<tokio::time::Instant> = None;
         // How many text chunks have already reached the append-only transcript beside the digest.
         let mut transcript_at: usize = 0;
+        // Thinking produced since the last flush to `<task>.think.log`. The digest keeps only a rolling
+        // 2,400-char window, so without this the reasoning channel has no durable record at all.
+        let mut think_unflushed = String::new();
         // REMOVED: the sink wall-clock cap (sink_cap_secs, sink_cap_ref_bytes, scaled_sink_cap,
         // GOOSE_SWARM_SINK_CAP_SECS, sink_plan and sink_capped).
         //
@@ -17933,6 +17958,16 @@ impl GooseAgentDispatcher {
                                 // a time. Append and keep a bounded window so the digest's tail_chars(400) shows
                                 // a readable run of the live reasoning instead of the last fragment.
                                 last_thinking.push_str(&t.thinking);
+                                // THE FULL THINKING STREAM, CAPTURED BEFORE IT IS THROWN AWAY.
+                                //
+                                // The window below keeps 2,400 characters, so the panel's THINKING pane
+                                // does not scroll — it CLEARS AND REFILLS as the model streams. Mihai:
+                                // *"the content does not exist, it just clears and adds new content as it
+                                // streams. it's very bad."* Exactly right, and the comment immediately
+                                // below has always said this is the only place the full stream is seen.
+                                // Buffered here and flushed with the digest, so it costs one append per
+                                // 400ms rather than one per token.
+                                think_unflushed.push_str(&t.thinking);
                                 // #F924: fingerprint BEFORE the truncation below discards it —
                                 // this is the only place the full stream is ever seen.
                                 recur.push(&t.thinking);
@@ -18054,6 +18089,7 @@ impl GooseAgentDispatcher {
                         let _ = std::fs::write(m, digest.to_string());
                     }
                     transcript_at = append_reasoning_transcript(p, &texts, transcript_at);
+                    append_thinking_transcript(p, &mut think_unflushed);
                     last_digest_at = Some(tokio::time::Instant::now());
                 }
             }
@@ -18089,6 +18125,7 @@ impl GooseAgentDispatcher {
             }
             let _ = std::fs::write(p, digest.to_string());
             transcript_at = append_reasoning_transcript(p, &texts, transcript_at);
+            append_thinking_transcript(p, &mut think_unflushed);
             // The mirrored copy MUST receive this terminal phase="done" too, or the panel would hold
             // a mirrored fix node at "working" forever — the shadow (and its digest) is deleted the
             // moment the round ends, so the mirror is the only copy left to correct.

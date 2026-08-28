@@ -818,21 +818,60 @@ const NodeLiveText: React.FC<{ text: string; lines: number }> = ({ text, lines }
 
 // The expanded full-generation box — auto-scrolls to the newest text as the stream grows (like a terminal),
 // but only when the user is already near the bottom, so scrolling up to read stays put.
-const NodeExpandBox: React.FC<{ text: string }> = ({ text }) => {
+/**
+ * A live text stream you can actually READ.
+ *
+ * `fill` is the difference between an inline row and a modal pane, and getting it wrong made the node
+ * inspector nearly useless. MEASURED 2026-08-28: this box was written for the collapsed row — hard
+ * `maxHeight: 300` and `ml-6` margins — and then reused inside a full-screen modal, so the text stopped a
+ * third of the way down a 950px pane and two-thirds of the window was dead space. Mihai: *"the content
+ * does not cover the full estate, the output rolls and it does not save into a cohesive unit."*
+ *
+ * FOLLOW IS A CHOICE, NOT A BEHAVIOUR. Auto-scrolling only when already at the bottom sounds right, but on
+ * a stream that is appending constantly you are ALWAYS at the bottom, so it yanks forever and reading is
+ * impossible. Following is now explicit and stops the moment you scroll away — scroll back down to resume.
+ */
+const NodeExpandBox: React.FC<{ text: string; fill?: boolean }> = ({ text, fill }) => {
   const ref = useRef<HTMLDivElement>(null);
+  const [follow, setFollow] = useState(true);
   useEffect(() => {
     const el = ref.current;
+    if (!el || !follow) return;
+    el.scrollTop = el.scrollHeight;
+  }, [text, follow]);
+  const onScroll = () => {
+    const el = ref.current;
     if (!el) return;
-    const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 48;
-    if (nearBottom) el.scrollTop = el.scrollHeight;
-  }, [text]);
+    const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
+    if (atBottom !== follow) setFollow(atBottom);
+  };
   return (
-    <div
-      ref={ref}
-      className="ml-6 mt-1 mb-1 p-2 font-mono text-[11px] text-text-secondary whitespace-pre-wrap break-words border border-border-primary bg-background-secondary"
-      style={{ borderRadius: CHIP_RADIUS, maxHeight: 300, overflowY: 'auto' }}
-    >
-      {text}
+    <div className={fill ? 'relative flex flex-col min-h-0 h-full' : 'contents'}>
+      <div
+        ref={ref}
+        onScroll={onScroll}
+        className={
+          fill
+            ? 'flex-1 min-h-0 overflow-y-auto px-3 py-2 font-mono text-[11px] leading-relaxed text-text-secondary whitespace-pre-wrap break-words'
+            : 'ml-6 mt-1 mb-1 p-2 font-mono text-[11px] text-text-secondary whitespace-pre-wrap break-words border border-border-primary bg-background-secondary'
+        }
+        style={fill ? undefined : { borderRadius: CHIP_RADIUS, maxHeight: 300, overflowY: 'auto' }}
+      >
+        {text}
+      </div>
+      {fill && !follow ? (
+        <button
+          onClick={() => {
+            const el = ref.current;
+            if (el) el.scrollTop = el.scrollHeight;
+            setFollow(true);
+          }}
+          className="absolute bottom-2 right-3 px-2 py-1 text-[10px] font-mono uppercase tracking-wider font-bold text-white shadow-lg"
+          style={{ borderRadius: CHIP_RADIUS, background: SWARM_STATUS.running }}
+        >
+          ↓ follow
+        </button>
+      ) : null}
     </div>
   );
 };
@@ -870,7 +909,11 @@ const NodeInspector: React.FC<{
     return () => window.removeEventListener('keydown', onKey);
   }, [onClose]);
 
-  const thinking = lane?.fullReasoning?.trim() || lane?.reasoning?.trim() || '';
+  // PREFER THE DURABLE THINKING LOG. `fullReasoning` is built from the ANSWER channel and the digest's
+  // thinking is a 2,400-char rolling window, so without this the pane clears and refills as the model
+  // streams instead of accumulating a readable document.
+  const thinking =
+    lane?.fullThinking?.trim() || lane?.fullReasoning?.trim() || lane?.reasoning?.trim() || '';
   const lastThink = collapseRepeats(lane?.lastThinking?.trim() ?? '');
   const thinkText = [thinking, lastThink && lastThink !== thinking ? lastThink : '']
     .filter(Boolean)
@@ -898,7 +941,7 @@ const NodeInspector: React.FC<{
       </div>
       <div className="min-h-0 flex-1 overflow-hidden">
         {body ? (
-          <NodeExpandBox text={body} />
+          <NodeExpandBox text={body} fill />
         ) : (
           <div className="px-3 py-2 text-xs text-text-secondary">{empty}</div>
         )}
