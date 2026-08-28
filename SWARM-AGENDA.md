@@ -296,6 +296,27 @@ chars reaching every worker, working. `entry_files_required`(1) — `app/__main_
 looked fine. Blind spots do not announce themselves — they are the events nobody wrote a reader for.
 **Count every event type at least once per campaign and open the ones you have never opened.**
 
+## THE CHAIN'S LAUNCH GATE WORKED — and its failure mode was stopping instead of skipping (2026-08-28)
+
+`18:51:13Z HOLDING hy4-preview: projected $11.27 > remaining $9.97.` Exactly right: it refused to START a
+run it could not finish, which since caps were removed is the only way to avoid a run dying at 90% for
+want of credit. **But it then EXITED**, stranding FOUR affordable models behind one expensive one —
+ling-3.0-flash ($0.28), laguna-s-2.1 ($1.20), longcat-2.0 ($4.12) and both Seeds, none attempted.
+One model being unaffordable says nothing about the next. Now it SKIPS and continues, leaves the model in
+the queue for a later run, and reports what it skipped when the queue drains.
+
+**BOARD SO FAR — and the ordering is worth staring at:**
+| model | score | time | files | frontend files |
+|---|---|---|---|---|
+| **deepseek-v4-flash-vision-exp** | **67.53%** | **33 min** | 13 | 4 (exactly as the spec names) |
+| glm-5.3-flash | 41.59% | 72 min | 14 | — |
+| qwen3.8-27b | 20.06% | 151 min | 60 | — |
+| our 3-node swarm (target) | 2.73% | — | — | 9 |
+
+The winner is the FASTEST and the SMALLEST. Thirteen files, four frontend files, 33 minutes, one agent,
+no planning phase — against our 23 tasks, nine frontend files and 3h15m before BUILD started. Every
+argument for thinning the engine is in that table.
+
 ## Standing constraints — absolute, never negotiate them
 
 - **NO SPEND CAP MAY EVER BIND ON A CLOUD RUN.** Mihai, 2026-08-28: *"don't put caps on models or runs
