@@ -27491,6 +27491,57 @@ async fn review_until_settled(
         for f in &fresh {
             eprintln!("  · review: {f}");
         }
+        // FINDINGS WITHOUT A PATCH IS A CONTRADICTION, AND IT COSTS THE BUILD THE FEATURE.
+        //
+        // MEASURED, run swarm-3node-r0 round 1: `new: 4, patch_touches: 0`. The reviewer reported that an
+        // SSE streaming endpoint, a `vs7dbg` debug API, screen-space labels with occlusion culling, and a
+        // linked brush were each "not explicitly owned by any task" — and proposed no owner for any of
+        // them. The run went to CONTRACTS and BUILD with all four unowned, which means they are simply
+        // absent from the finished program and no later phase can notice: the builders build the list,
+        // the reviewer reviews the list, and the missing part is never mentioned again. This is the exact
+        // failure class that left the last published local run at 0.0273 with `GET /` 404ing.
+        //
+        // So ask ONCE, concretely, naming its own findings back to it. One patch-shaped follow-up costs a
+        // few hundred tokens; a silently dropped feature costs the score.
+        let mut patch = patch;
+        if patch.is_empty() && !fresh.is_empty() {
+            let demand = format!(
+                "You reported these {} problems with the plan and returned NO patch:\n{}\n\n\
+                 A finding with no patch changes nothing — the plan proceeds exactly as it was and each \
+                 of these is then absent from the finished program, with no later phase able to notice. \
+                 Return ONLY a patch. For EACH problem above, do one of two things: `add` a task that \
+                 owns it (id, files it owns that no other task owns, depends_on), or `replace` an \
+                 existing task whose files should own it. If a problem is in fact already owned by a \
+                 task, leave it out of the patch entirely — but then it was not a finding.",
+                fresh.len(),
+                fresh
+                    .iter()
+                    .enumerate()
+                    .map(|(i, f)| format!("{}. {f}", i + 1))
+                    .collect::<Vec<_>>()
+                    .join("\n"),
+            );
+            match dispatcher
+                .review_plan_fanned(worker_models.clone(), &demand, &plan_json, &reported_so_far)
+                .await
+            {
+                Ok((p2, _)) => {
+                    sink.write_value(serde_json::json!({
+                        "event": "review_patch_demanded",
+                        "round": round,
+                        "findings": fresh.len(),
+                        "patch_touches": p2.touched(),
+                    }));
+                    eprintln!(
+                        "  · review returned {} finding(s) and no patch; demanded one, got {} touch(es)",
+                        fresh.len(),
+                        p2.touched()
+                    );
+                    patch = p2;
+                }
+                Err(e) => eprintln!("  · review patch demand did not return ({e}); proceeding"),
+            }
+        }
         if !patch.is_empty() {
             match goose_swarm::apply_patch(&plan_json, &patch) {
                 Ok(next) => {
