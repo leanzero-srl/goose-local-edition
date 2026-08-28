@@ -116,8 +116,26 @@ runs several rounds and the gaps arrive in the later ones.
       comparable. Key `OPENROUTER_API_KEY` in the harness secrets file (0600, no git repo), $15 balance.
       Coordinator taught the provider by mirroring the `xai_api` branch in four places; full procedure and
       bindings in the `goose-swarm-campaign` skill §4e.
-- [ ] **Q. qwen3.8-flash — REROUTED TO DIRECT TOKEN PLAN, manifest PREFLIGHT-PASSED, waiting only on the
-      new binary.** OpenRouter is a dead end for this model and always will be: ONE endpoint (Alibaba),
+- [ ] **Q. qwen3.8-flash — DIRECT TOKEN PLAN, manifest PREFLIGHT-PASSED, BLOCKED ON A CLOUD BINARY THAT
+      MUST BE BUILT FROM `codex/salvage-benchmarks`, NOT `local-edition`.**
+      MEASURED 2026-08-28: the fresh `local-edition` release binary is REJECTED by the harness —
+      "goose binary lacks required cloud safety capabilities: GOOSE_BENCH_BUDGET_CONFIG,
+      GOOSE_BENCH_BUDGET_LEDGER, GOOSE_BENCH_EXPECTED_PROVIDER, GOOSE_PROVIDER_LIFECYCLE_FILE,
+      GOOSE_TOOL_SANDBOX_ROOT, ..." (11 in total). Those rails are the budget guard, the provider
+      lifecycle ledger and the tool sandbox, and they exist ONLY on `codex/salvage-benchmarks`
+      (`benchmark_budget.rs`, `provider_lifecycle.rs`, `developer/sandbox.rs`, `developer/shell.rs`).
+      So a cloud binary is `codex/salvage-benchmarks` PLUS the Alibaba Token Plan change from `93cdb1d14`
+      — verified to apply: that branch has the same `sanitize_request_for_compat` compat table and the same
+      `alibaba.json`. The Token Plan contract itself is in NO branch here; the sealed binary was built from
+      source that is not in this repo, which is why it had to be written from scratch.
+      **THE BUILD IS DEFERRED WHILE A LOCAL RUN IS LIVE** — every machine that could compile it is also a
+      fleet node (mihai = local, workhorse = Mac Studio, gabee = Mac.lan), and a compile starved the fleet
+      badly enough once to take judge probe latency from 16s to 117s. Degrading the primary run to build a
+      cloud binary is the wrong trade. Build it the moment the local run ends.
+      Everything else is READY: manifest at `~/goose-builds/ali-stage`, vendor port 9142, $60 shadow cap,
+      flash on the authenticated Token Plan roster, `sk-sp-` credential reading from the keychain, harness
+      identity gate widened to `{qwen3.8-max, qwen3.8-flash}`, website registry on the bare id, and
+      **preflight passes against the sealed binary**. OpenRouter is a dead end for this model and always will be: ONE endpoint (Alibaba),
       served from OpenRouter's SHARED key pool (`is_byok: false`,
       `limit_source: upstream_provider_shared_pool`). It 429'd inside the 3-turn smoke, then the episode
       died at 123s / 5 requests / 3 files. Archived `-KILLED-openrouter-shared-pool-429`, $0.0198 spent.
