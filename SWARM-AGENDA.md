@@ -92,6 +92,36 @@ runs several rounds and the gaps arrive in the later ones.
       (c) LeanZero palette: ZONE_HUES and FORMATION_RAMP already carry #1d4ed8 / #0891b2 / #7c3aed /
       #d97706 / #dc2626 / #db2777. Was: — LeanZero palette pass on the swarm panel; known-active-bugs panel; phase
       chips read the engine `phase` event.
+- [x] **P. OpenRouter cloud entrants — WORKING, no rebuild needed.** goose ships an `openrouter` provider
+      and the SEALED grok46-era binary (`af7bf73c…`, 2026-08-25) already speaks it — proven by RUNNING it,
+      not by `strings` (which found nothing and was the wrong probe). So a model too new for the sealed
+      binary routes through OpenRouter instead of forcing a new binary, and every board row stays
+      comparable. Key `OPENROUTER_API_KEY` in the harness secrets file (0600, no git repo), $15 balance.
+      Coordinator taught the provider by mirroring the `xai_api` branch in four places; full procedure and
+      bindings in the `goose-swarm-campaign` skill §4e.
+- [ ] **Q. qwen3.8-flash via OpenRouter — BLOCKED ON CAPACITY, not on us.** It has exactly ONE endpoint
+      (Alibaba) so no fallback is possible, and it is served from OpenRouter's SHARED key pool
+      (`is_byok: false`, `limit_source: upstream_provider_shared_pool`). It 429'd inside the 3-turn
+      contract smoke, then the real episode died at 123s / 5 requests / 3 files with
+      `Rate limit exceeded: Provider returned error`. Archived
+      `-KILLED-openrouter-shared-pool-429`; $0.0198 spent. `terminal_safe_retry_limit: 0` makes one
+      upstream 429 terminal, so retrying into the same saturated pool is not a fix.
+      UNBLOCK: add an Alibaba key as BYOK at https://openrouter.ai/settings/integrations — that gives
+      dedicated rate limits AND keeps OpenRouter's request shape, so it also sidesteps the Token Plan
+      contract problem that blocked the direct Alibaba route.
+- [ ] **R. qwen3.8-27b via OpenRouter — LIVE from 14:3xZ**, `cloud-sb7-orqwen27b-20260828-r1`, cap $8,
+      projected ~$6. 11 endpoints / 8 healthy, so it fails over cleanly — the reason it runs where flash
+      cannot. Their context limits differ (65,500 → 1,000,000), so the manifest declares the FLOOR of the
+      healthy set (262144 / 65536); declaring 1M would overflow a route to a small provider.
+      TRAP HIT AND FIXED: the contract smoke compared the final marker with strict equality, and 27b
+      reliably prefixes `\n\n`. It emitted the marker byte-for-byte otherwise, so the comparison now
+      ignores surrounding whitespace only. Smoke is a pre-flight gate and feeds no published score.
+      First root archived `-KILLED-smoke-marker-whitespace`.
+- [ ] **S. deepseek-v4-flash-vision-exp — BLOCKED BY AN ACCOUNT SETTING ONLY MIHAI CAN CHANGE.**
+      One endpoint, and the account rejects it: "No endpoints available matching your guardrail
+      restrictions and data policy." A per-request `provider.data_collection: "allow"` does NOT override
+      it. Needs a toggle at https://openrouter.ai/settings/privacy. `deepseek/deepseek-v4-flash` works
+      today and is the fallback he authorised ("or a version that works for this").
 - [ ] **D. Dead-code sweep — DEFERRED UNTIL NO LOCAL RUN IS LIVE.** `cargo clippy` starves the fleet:
       with the sweep running, judge probe latency went 16s -> 18s -> 27s -> **117s**, clippy-driver at
       55%+30% CPU. I was degrading my own run to tidy code. Ordering also matters and cost one aborted
