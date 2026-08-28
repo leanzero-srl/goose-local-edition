@@ -332,6 +332,29 @@ runs several rounds and the gaps arrive in the later ones.
       **RISK: 5 of the 6 have exactly ONE endpoint** (only ling-3.0-flash has 2), which is the qwen-flash
       shape — no failover, and one upstream 429 is terminal at zero retries. Expect at least one re-run.
       All six support tool calling and carry 262k-1M context, so none is disqualified on capability.
+- [ ] **Y. QUEUED MESSAGES CANNOT INTERRUPT A GENERATION — Mihai's concern, CONFIRMED IN CODE, and it is
+      a CORE AGENT issue, not a swarm one.** *"I am not sure how well queued messages work in goose right
+      now but it's a must for them to work well as an agent."* He is right.
+      THE MECHANISM: `Agent::steer` (agent.rs:506) ONLY enqueues onto `pending_steers`. There is ONE
+      production drain (agent.rs:1955) and it is gated on `can_drain_pending_steers`, which is set at
+      exactly one place — **agent.rs:2616, AFTER the provider stream for the round-trip has closed.** So a
+      queued message lands at the next TURN BOUNDARY and nowhere else. There is no cancel path on the user
+      side at all: `steer()` pushes and returns.
+      THE BEHAVIOUR IS PINNED AS INTENDED by two tests whose names state the failure outright:
+      `test_steer_does_not_interrupt_in_flight_generation` and
+      **`test_steer_never_lands_on_a_nonterminating_generation`**.
+      WHY IT MATTERS BEYOND THEORY: qwen3.8-27b spent 40+ minutes inside ONE generation (25,000 thinking
+      chunks, one outstanding request). A user message typed into that session would have sat unread for
+      the whole 40 minutes. On a local 27B this is the normal case, not an edge case.
+      THE JUDGE ALREADY SOLVED THIS and its solution is the proposal: two-mode delivery — steer when the
+      call has ACTED since the last look (a turn boundary is coming, so it costs nothing), cancel-and-reply
+      when it has not (drop the socket; the partial is persisted through the normal path). The swarm judge
+      does exactly this today and it works.
+      CONFIDENCE: HIGH on the diagnosis (read from code, corroborated by the test names). MEDIUM on a safe
+      fix, and the blast radius is the honest reason to pause — this is `crates/goose/src/agents/agent.rs`,
+      every goose session, not just swarm. Cancelling mid-tool-call also aborts in-flight tool futures;
+      `fix_messages` repairs the pairing but whether every provider accepts the repaired history is not
+      determinable from code. NOT implemented unilaterally — Mihai's call.
 - [ ] **D. Dead-code sweep — DEFERRED UNTIL NO LOCAL RUN IS LIVE.** `cargo clippy` starves the fleet:
       with the sweep running, judge probe latency went 16s -> 18s -> 27s -> **117s**, clippy-driver at
       55%+30% CPU. I was degrading my own run to tidy code. Ordering also matters and cost one aborted
