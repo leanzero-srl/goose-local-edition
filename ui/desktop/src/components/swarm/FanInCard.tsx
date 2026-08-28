@@ -68,7 +68,9 @@ const FanInCard: React.FC<FanInCardProps> = ({ dispatch, lanes, className = '' }
       <div className="flex items-center justify-between text-text-secondary text-xs mb-2">
         <span>swarm · {dispatch}</span>
         <span>
-          {lanes.length} nodes · {done}/{lanes.length} done
+          {/* LANES, not nodes: a 3-node fleet running 8 slice specs read "8 NODES". And the count was
+              rendered again verbatim at the foot of the same card. */}
+          {lanes.length} lane{lanes.length === 1 ? '' : 's'} · {done}/{lanes.length} done
         </span>
       </div>
 
@@ -101,7 +103,6 @@ const FanInCard: React.FC<FanInCardProps> = ({ dispatch, lanes, className = '' }
         ))}
       </div>
 
-      <div className="text-text-secondary text-xs mt-2">▾ fan-in · {lanes.length} lane(s)</div>
     </div>
   );
 };

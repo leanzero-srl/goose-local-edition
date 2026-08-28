@@ -50,6 +50,7 @@ describe('FanInCard', () => {
     }
     const text = container.textContent ?? '';
     expect(text).not.toContain('⏺'); // not Claude Code's glyph
-    expect(text).toContain('fan-in');
+    // The footer repeated the lane count verbatim under a header that already gave it.
+    expect(card.textContent).toContain('3 lanes');
   });
 });

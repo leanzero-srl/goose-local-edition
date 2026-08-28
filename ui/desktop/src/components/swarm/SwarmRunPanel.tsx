@@ -347,8 +347,11 @@ const LaneRow: React.FC<{
   open: boolean;
   mode: SwarmLogMode;
   dev?: boolean;
+  /** True when the fleet runs MORE THAN ONE model, which is the only case where a per-row model id
+   *  tells the reader something the node letter does not. */
+  heterogeneous?: boolean;
   onToggle: () => void;
-}> = ({ lane, deviceOrder, stale, open, mode, dev, onToggle }) => {
+}> = ({ lane, deviceOrder, stale, open, mode, dev, heterogeneous, onToggle }) => {
   const idx = deviceIndex(lane.device, deviceOrder);
   const hue = FORMATION_RAMP[idx % FORMATION_RAMP.length];
   const letter = String.fromCharCode(65 + (idx % 26));
@@ -439,14 +442,20 @@ const LaneRow: React.FC<{
             </span>
           }
         >
-          <span className="flex-1 min-w-0 flex flex-col leading-tight">
-            <span className="truncate text-xs text-text-primary">{lane.description || lane.taskId}</span>
-            {lane.description ? (
-              <span className="truncate text-[10px] font-mono text-text-secondary">{lane.taskId}</span>
-            ) : null}
+          {/* THE ID IS NOT A SECOND LINE. "Slice · approval-workflow-outbox" over
+              "slice-approval-workflow-outbox" is the same string twice, on every row of every group —
+              Mihai: "a lot of this UI is self duplicating information". It stays in the hover tip, where
+              it is available without costing a line. */}
+          <span className="flex-1 min-w-0 truncate text-xs text-text-primary">
+            {lane.description || lane.taskId}
           </span>
         </Tip>
-        {lane.model && (
+        {/* THE MODEL ID IS THE SAME ON EVERY ROW. A homogeneous fleet runs one model, so
+            "workhorse-qwen3.8-27b-br…" truncated identically on fourteen rows says nothing the node
+            letter has not already said. It stays in the row's tip, and the FLEET zone still shows the
+            full id per node. Kept only when a row's model differs from the rest — a heterogeneous or
+            cloud fleet, where it is the whole point. */}
+        {lane.model && heterogeneous && (
           <Tip label={<span className="font-mono">{lane.model}</span>}>
             <span className="hidden sm:inline shrink-0 max-w-[9rem] truncate text-[10px] font-mono text-text-secondary">
               {lane.model}
@@ -2840,7 +2849,7 @@ const PlanningZone: React.FC<{
                 <div className="px-3 pt-1 pb-0.5 flex items-center gap-1.5">
                   <Braces className="h-3 w-3" style={{ color: ZONE_HUES.planning }} />
                   <span className={`${EYEBROW_CLASS} text-text-secondary`}>
-                    {group.label} · {group.lanes.length} node{group.lanes.length === 1 ? '' : 's'}
+                    {group.label} · {group.lanes.length} lane{group.lanes.length === 1 ? '' : 's'}
                     {group.lanes.some((l) => l.status === 'running') ? ' · thinking…' : ''}
                   </span>
                 </div>

@@ -35,7 +35,9 @@ describe('FormationRibbon', () => {
     expect(nodes[0]).toHaveAttribute('data-node-state', 'working');
     expect(nodes[1]).toHaveAttribute('data-node-state', 'idle');
     expect(screen.getByLabelText('Node A, gabee, working')).toBeInTheDocument();
-    expect(screen.getByText('1 working · 1 idle')).toBeInTheDocument();
+    // The working/idle COUNT moved to the FLEET header, which is where the nodes are named. The ribbon
+    // keeps the chips, which carry WHICH node is lit — the fact the count could not express.
+    expect(screen.getByText('2 nodes')).toBeInTheDocument();
   });
 
   // A held run has no phase. The ribbon must show nothing active rather than the old regex fallback,
