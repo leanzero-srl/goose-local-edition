@@ -26865,6 +26865,10 @@ impl GooseAgentDispatcher {
         };
         let system = "You are REVIEWING a build plan against the request it came from. You did not write \
              it and you are not rewriting it.\n\n\
+             EVERYTHING YOU NEED IS IN THIS MESSAGE — the request, the plan, and the list of \
+             files that exist on disk. The plan is NOT a file. There is no BUILD_PLAN.md, no \
+             plan.md and no request.md to open, and searching the filesystem for one finds \
+             nothing and wastes the round. Read what you were given and answer from it.\n\n\
              Answer these, in order:\n\
              1. If every task completed and I then opened this app, what would happen? Say concretely.\n\
              2. COVERAGE, and do this one by ENUMERATION rather than impression: list the request's own \
@@ -26880,7 +26884,8 @@ impl GooseAgentDispatcher {
              4. Does anything wait on a test, rather than on code it needs?\n\
              5. Which dependencies are not strictly required for the dependent's file to compile or run?\n\
              6. Is any task much larger than the others?\n\
-             7. Do the file paths match the layout already on disk?\n\n\
+             7. Do the file paths match the layout already on disk? The manifest below IS that \
+             layout — answer from it, not from the filesystem.\n\n\
              Then return a PATCH — only the tasks that must change:\n\
              {\"replace\":[{\"id\":\"...\",\"files\":[...],\"depends_on\":[...]}],\n\
               \"add\":[{\"id\":\"...\",\"description\":\"...\",\"files\":[...],\"depends_on\":[...]}],\n\
@@ -26899,6 +26904,28 @@ impl GooseAgentDispatcher {
              empty lists for all four keys and say nothing else. Saying \"the plan is sound\" as a finding \
              is the same as saying nothing, and it costs a whole round of the fleet to say it."
             .replace("{already}", &already);
+        // Question 7 asks whether the plan's paths match what is on disk. Handing over that list is what
+        // makes it answerable. MEASURED 2026-08-28: without it the reviewer shelled out looking for the
+        // layout, found an almost-empty tree, concluded the plan itself must be a file it had not found,
+        // and spent the whole phase running `find / -name BUILD_PLAN.md`. The judge then read the failure
+        // as drifting and its NEXT told it to search harder — 13 re-streams, one round of findings in 45
+        // minutes, and the fleet idle. The plan was in the prompt the entire time.
+        let on_disk = existing_files_manifest(&self.working_dir);
+        let tree = if on_disk.is_empty() {
+            "## Files on disk\nNothing has been built yet — the working directory is empty. Every path in \
+             the plan is one the build will create, so no path can mismatch, and question 7 has no \
+             findings this round."
+                .to_string()
+        } else {
+            format!(
+                "## Files on disk — this list IS the layout, and it is complete\n{}",
+                on_disk
+                    .iter()
+                    .map(|f| format!("  {f}"))
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            )
+        };
         let out = self
             .run_agent_timed_at(
                 planner_model,
@@ -26908,11 +26935,11 @@ impl GooseAgentDispatcher {
                         "## PART {i} OF {n} of the original request\n\
                          You hold one portion. A task may look unrelated to your part and be perfectly \
                          good for another — never remove or rename on that basis. Judge only whether YOUR \
-                         part is owned, wired and buildable.\n\n{user_prompt}\n\n## The whole plan\n{}",
+                         part is owned, wired and buildable.\n\n{user_prompt}\n\n## The whole plan\n{}\n\n{tree}",
                         serde_json::to_string_pretty(&skeleton).unwrap_or_default()
                     ),
                     None => format!(
-                        "## The original request\n{user_prompt}\n\n## The plan\n{}",
+                        "## The original request\n{user_prompt}\n\n## The plan\n{}\n\n{tree}",
                         serde_json::to_string_pretty(&skeleton).unwrap_or_default()
                     ),
                 },
