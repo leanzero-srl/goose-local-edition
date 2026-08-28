@@ -92,6 +92,25 @@ Make the swarm BUILD BETTER SOFTWARE on local models, then beat the published `b
 
 ## Evidence worth acting on
 
+- **THE CHAIN THAT KILLED RUN swarm-3node-r0 (archived -KILLED-restream-killed-coverage-lanes-1008).**
+  Four links, and each is worth keeping straight:
+  1. The new coverage deliverable IS a table — dozens of near-identical rows. The recurrence detector
+     reads structural repetition, so it trips on exactly the output the task was redesigned to produce.
+  2. The judge returns `drifting` (or `looping`). DRIFTING acts on the FIRST look with no corroboration —
+     deliberately, because tail recurrence cannot corroborate "working on the wrong thing".
+  3. Delivery is a re-stream, and it could not have been anything else: a coverage lane makes ZERO tool
+     calls, so `actions_since_last_look` is 0, so `can_steer` is false. THIS IS A CONSEQUENCE OF MY OWN
+     can_steer FIX and it is still the right rule — a pure-reasoning call has no turn boundary for a steer
+     to land on until it finishes. For such calls, re-stream is the ONLY delivery.
+  4. The re-stream dropped the socket and the new stream produced NOTHING. `open-coverage-1` sat with
+     `thinking_chars: null` and a frozen digest for 9.6 minutes; two of three lanes idle, OPEN at 56 min.
+  Fix landed for link 1 (fcef6947f: the judge is told repetition is the deliverable here). Links 2-4 are
+  untouched and are the next thing to watch: if a healthy coverage lane still gets nudged, the objective
+  fix was not enough.
+- [ ] **O. A re-stream that produces nothing has no recovery.** The lane dies silently — no event, no
+      retry, and the fan waits for it forever. Either detect a re-stream that yields nothing and fall
+      back to the pre-re-stream partial, or do not re-stream a call that is producing steadily.
+
 - **THE JUDGE RE-STREAMS COVERAGE SHARDS ON A FALSE LOOP READ (fixed in source, needs next build).** The
   coverage table is repetitive by construction, the recurrence detector trips on it, and the re-stream
   delivery discards the partial table and restarts from the top. Three times in one run = 30-minute
