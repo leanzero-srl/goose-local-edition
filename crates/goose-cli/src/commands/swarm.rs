@@ -25502,6 +25502,111 @@ pub(crate) struct CoverageOutput {
 ///
 /// This is not a cap: nothing is truncated, dropped or bounded. Every character still reaches exactly one
 /// lane. It only decides WHERE the cuts fall.
+/// Cut the request into `n` portions ALONG ITS OWN SECTION HEADINGS, and name each portion after the
+/// sections it holds.
+///
+/// WHY THIS REPLACES THE CHARACTER-BALANCED CUT. Mihai, seeing three fleet lanes all reading
+/// "Review 1 / 2 / 3 · this part of the request against the whole plan":
+/// *"we have a swarm, we should be splitting this shit up, the only way that this will work is if slices
+/// are neatly done not generic … never build generic shit, never induce goose to offer generic
+/// information."*
+///
+/// He is right, and the damage is mechanical rather than cosmetic. A lane told it owns "part 2 of 3" has
+/// no idea what it is responsible for, so it re-derives scope from scratch, overlaps its neighbours, and
+/// reasons about the whole document anyway — which is exactly what the split existed to prevent. MEASURED
+/// 2026-08-28: a REVIEW fanned by character count ran 90+ minutes over five rounds without reaching a
+/// fixed point, with all three lanes arguing the same global question about frontend file counts.
+///
+/// A heading is the request's OWN statement of where one concern ends and the next begins, so cutting
+/// there gives each lane something it can name. The title travels with the body precisely so the lane can
+/// be LABELLED with it — the one-glance test is that no two lanes may read the same.
+///
+/// Falls back to the paragraph cut when a request has no headings, but still names each portion after its
+/// first line: an honest name beats "part 2 of 3" even when it is only a first line.
+fn cut_request_into_sections(text: &str, n: usize) -> Vec<(String, String)> {
+    let is_heading = |l: &str| {
+        let t = l.trim_start();
+        t.starts_with('#') && t.trim_start_matches('#').starts_with(' ')
+    };
+    let heading_text = |l: &str| {
+        l.trim_start()
+            .trim_start_matches('#')
+            .trim()
+            .chars()
+            .take(48)
+            .collect::<String>()
+    };
+
+    // Group the document into (title, body) sections at every heading.
+    let mut sections: Vec<(String, String)> = Vec::new();
+    let mut cur_title = String::new();
+    let mut cur_body: Vec<&str> = Vec::new();
+    for line in text.lines() {
+        if is_heading(line) {
+            if !cur_body.is_empty() || !cur_title.is_empty() {
+                sections.push((cur_title.clone(), cur_body.join("\n")));
+            }
+            cur_title = heading_text(line);
+            cur_body = vec![line];
+        } else {
+            cur_body.push(line);
+        }
+    }
+    if !cur_body.is_empty() || !cur_title.is_empty() {
+        sections.push((cur_title, cur_body.join("\n")));
+    }
+    sections.retain(|(t, b)| !(t.is_empty() && b.trim().is_empty()));
+
+    if sections.len() < 2 {
+        // No headings to cut on. Keep the old balance, but never call a portion "part N".
+        return cut_request_into_portions(text, n)
+            .into_iter()
+            .map(|p| {
+                let name = p
+                    .lines()
+                    .find(|l| !l.trim().is_empty())
+                    .unwrap_or("")
+                    .trim()
+                    .chars()
+                    .take(48)
+                    .collect::<String>();
+                (name, p)
+            })
+            .collect();
+    }
+
+    if n <= 1 || sections.len() <= n {
+        return sections;
+    }
+    // Balance by size while keeping whole sections together — the boundary is the request's, not ours.
+    let total: usize = sections.iter().map(|(_, b)| b.chars().count()).sum();
+    let target = total.div_ceil(n).max(1);
+    let mut out: Vec<(String, String)> = Vec::new();
+    let mut titles: Vec<String> = Vec::new();
+    let mut bodies: Vec<String> = Vec::new();
+    let mut cur_len = 0usize;
+    for (i, (t, b)) in sections.iter().enumerate() {
+        titles.push(t.clone());
+        bodies.push(b.clone());
+        cur_len += b.chars().count();
+        let left = sections.len() - i - 1;
+        let buckets_left = n.saturating_sub(out.len() + 1);
+        if buckets_left == 0 {
+            continue;
+        }
+        if cur_len >= target || left <= buckets_left {
+            out.push((titles.join(", "), bodies.join("\n\n")));
+            titles = Vec::new();
+            bodies = Vec::new();
+            cur_len = 0;
+        }
+    }
+    if !bodies.is_empty() {
+        out.push((titles.join(", "), bodies.join("\n\n")));
+    }
+    out
+}
+
 fn cut_request_into_portions(text: &str, n: usize) -> Vec<String> {
     let paras: Vec<&str> = text
         .split("\n\n")
@@ -26112,8 +26217,9 @@ impl GooseAgentDispatcher {
         if lanes.is_empty() {
             return Vec::new();
         }
-        // One portion per lane, cut at a blank line so no component is severed mid-description.
-        let parts: Vec<String> = cut_request_into_portions(user_prompt, lanes.len().max(1));
+        // ONE NAMED SECTION-GROUP PER LANE, cut at the request's OWN headings so no component is severed
+        // and every lane can say what it owns. Never "part i of n" — see cut_request_into_sections.
+        let parts = cut_request_into_sections(user_prompt, lanes.len().max(1));
         let listing = slices
             .iter()
             .map(|s| format!("- {} — {}: {}", s.id, s.title, s.objective))
@@ -26125,14 +26231,15 @@ impl GooseAgentDispatcher {
         let out = fanout_over_fleet(
             lanes,
             parts.into_iter().enumerate().collect::<Vec<_>>(),
-            move |(i, part): (usize, String), model: String| {
+            move |(i, (title, part)): (usize, (String, String)), model: String| {
                 let listing = listing.clone();
                 let known_ids = known_ids.clone();
                 let me = me.clone();
                 async move {
                     let system = format!(
-                        "You are building a COVERAGE TABLE for PART {} OF {} of a request. You are not \
-                         improving the breakdown, not re-balancing it, and not renaming anything.\n\n\
+                        "You are building a COVERAGE TABLE for THESE SECTIONS OF THE REQUEST: {}\n\
+                         (portion {} of {} — the request's own sections, not an arbitrary split). You are \
+                         not improving the breakdown, not re-balancing it, and not renaming anything.\n\n\
                          DO IT IN THIS ORDER, and the table you return is the proof you did.\n\n\
                          FIRST, before you look at the slice list at all, read YOUR PART and write down \
                          every component it names. A component is a thing the request asks to EXIST: a \
@@ -26160,11 +26267,13 @@ impl GooseAgentDispatcher {
                          the reviewer reviews the list, and the missing part is never mentioned again.\n\n\
                          You are seeing one part of a longer request, so a slice may look unrelated to \
                          your part and be perfectly good for another. Never remove or rename anything.",
+                        title,
                         i + 1,
                         total
                     );
-                    let user =
-                        format!("## Your part of the request\n{part}\n\n## The slices so far\n{listing}");
+                    let user = format!(
+                        "## THE SECTIONS YOU OWN: {title}\n{part}\n\n## The slices so far\n{listing}"
+                    );
                     match me
                         .run_agent_timed_at(
                             &model,
@@ -26953,7 +27062,11 @@ impl GooseAgentDispatcher {
             let m = lanes.first().cloned().unwrap_or_default();
             return self.review_plan(&m, user_prompt, plan_json).await;
         }
-        let parts: Vec<String> = cut_request_into_portions(user_prompt, lanes.len().max(1));
+        // NAMED SECTIONS, NEVER "part i of n". See cut_request_into_sections for why, and for the
+        // 90-minute run that proved it. The lane's activity key carries the section names so the fleet
+        // strip says WHAT each node owns; two lanes reading the same label is the one-glance test that
+        // a fan has gone generic.
+        let parts = cut_request_into_sections(user_prompt, lanes.len().max(1));
         let total = parts.len();
         let me = self.clone();
         let plan = plan_json.to_string();
@@ -26961,17 +27074,22 @@ impl GooseAgentDispatcher {
         let out = fanout_over_fleet(
             lanes,
             parts.into_iter().enumerate().collect::<Vec<_>>(),
-            move |(i, part): (usize, String), model: String| {
+            move |(i, (title, part)): (usize, (String, String)), model: String| {
                 let me = me.clone();
                 let plan = plan.clone();
                 let prior = prior.clone();
                 async move {
+                    let key = if title.trim().is_empty() {
+                        format!("review-{}", i + 1)
+                    } else {
+                        format!("review-{}", slugify_slice_id(&title))
+                    };
                     me.review_plan_part(
                         &model,
                         &part,
                         &plan,
-                        Some((i + 1, total)),
-                        &format!("review-{}", i + 1),
+                        Some((title, i + 1, total)),
+                        &key,
                         &prior,
                     )
                     .await
@@ -27011,7 +27129,7 @@ impl GooseAgentDispatcher {
         planner_model: &str,
         user_prompt: &str,
         plan_json: &str,
-        part: Option<(usize, usize)>,
+        part: Option<(String, usize, usize)>,
         activity_key: &str,
         already_reported: &[String],
     ) -> Result<(goose_swarm::PlanPatch, Vec<String>)> {
@@ -27123,11 +27241,13 @@ impl GooseAgentDispatcher {
                 planner_model,
                 system,
                 match part {
-                    Some((i, n)) => format!(
-                        "## PART {i} OF {n} of the original request\n\
-                         You hold one portion. A task may look unrelated to your part and be perfectly \
-                         good for another — never remove or rename on that basis. Judge only whether YOUR \
-                         part is owned, wired and buildable.\n\n{user_prompt}\n\n## The whole plan\n{}\n\n{tree}",
+                    Some((title, i, n)) => format!(
+                        "## YOU OWN THESE SECTIONS OF THE REQUEST: {title}\n\
+                         (portion {i} of {n} — the request's OWN sections, not an arbitrary split)\n\
+                         Everything below is yours to judge. A task may look unrelated to your sections \
+                         and be perfectly good for another — never remove or rename on that basis. Judge \
+                         only whether what YOUR SECTIONS ask for is owned, wired and buildable.\n\n\
+                         {user_prompt}\n\n## The whole plan\n{}\n\n{tree}",
                         serde_json::to_string_pretty(&skeleton).unwrap_or_default()
                     ),
                     None => format!(
@@ -27844,6 +27964,92 @@ async fn run_linear_plan(
         sink,
     )
     .await;
+
+    // A TASK REVIEW ADDED HAS NO OWNER, SO NOBODY EVER RESEARCHED IT.
+    //
+    // MEASURED 2026-08-28, on the first run to reach BUILD: `frontend-notifications-feed` was dispatched
+    // with a **182-character** description against a 6,312-char median. REVIEW invented it in round 2
+    // because nothing owned the notifications feed — correct call — but an added task has no slice, so
+    // `splice_briefs` matches nothing and it ships with whatever sentence the reviewer typed. The entire
+    // case for deleting the DETAIL fan is "a worker's instruction IS its slice owner's brief"; a task
+    // with no owner silently falls outside that guarantee, and it is exactly the NEW work — the part
+    // nobody planned for — that most needs a real specification.
+    //
+    // So research them now, the same way coverage's late slices are researched, at the same depth and
+    // with the same tools. This runs only when REVIEW actually added something.
+    {
+        let have: std::collections::HashSet<String> = briefs.iter().map(|b| b.id.clone()).collect();
+        let orphans: Vec<OpenSlice> = serde_json::from_str::<serde_json::Value>(&plan_json)
+            .ok()
+            .and_then(|v| v.get("subtasks").and_then(|t| t.as_array()).cloned())
+            .unwrap_or_default()
+            .iter()
+            .filter_map(|t| {
+                let id = t.get("id").and_then(|v| v.as_str())?.to_string();
+                if id == goose_swarm::SINK_ID {
+                    return None;
+                }
+                let slice = t.get("slice").and_then(|v| v.as_str()).unwrap_or(&id);
+                if have.contains(slice) {
+                    return None;
+                }
+                Some(OpenSlice {
+                    id: slice.to_string(),
+                    title: id.replace('-', " "),
+                    objective: t
+                        .get("description")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or_default()
+                        .to_string(),
+                    questions: Vec::new(),
+                    weight: 3,
+                })
+            })
+            .collect();
+        if !orphans.is_empty() {
+            eprintln!(
+                "  {} {} task(s) REVIEW added have no brief — researching them before BUILD: {}",
+                style("+").cyan().bold(),
+                orphans.len(),
+                orphans
+                    .iter()
+                    .map(|o| o.id.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            );
+            sink.write_value(serde_json::json!({
+                "event": "review_added_tasks_researched",
+                "ids": orphans.iter().map(|o| o.id.clone()).collect::<Vec<_>>(),
+                "objective_chars": orphans.iter().map(|o| o.objective.chars().count()).collect::<Vec<_>>(),
+            }));
+            let extra = dispatcher
+                .research_slices(
+                    worker_models.clone(),
+                    &opts.prompt,
+                    user_decisions,
+                    orphans,
+                    build_research_exts(swarm_gate_cfg(
+                        "GOOSE_SWARM_RESEARCH_TOOLS",
+                        cfg.research_tools,
+                    )),
+                )
+                .await;
+            if !extra.is_empty() {
+                let mut v: serde_json::Value =
+                    serde_json::from_str(&plan_json).unwrap_or(serde_json::Value::Null);
+                splice_briefs(
+                    &mut v,
+                    &extra,
+                    detect_language(
+                        &opts.prompt,
+                        &existing_files_manifest(&dispatcher.working_dir),
+                    ),
+                );
+                plan_json = v.to_string();
+                briefs.extend(extra);
+            }
+        }
+    }
 
     // PIN THE SINK BEFORE THE DAG EXISTS, NOT TEN THOUSAND LINES LATER.
     //
