@@ -160,6 +160,18 @@ runs several rounds and the gaps arrive in the later ones.
       comparable. Key `OPENROUTER_API_KEY` in the harness secrets file (0600, no git repo), $15 balance.
       Coordinator taught the provider by mirroring the `xai_api` branch in four places; full procedure and
       bindings in the `goose-swarm-campaign` skill §4e.
+- [x] **AA. DONE — the ETA token was still becoming the worker's DIRECTION, and my first fix missed it.**
+      Caught live at 16:41/16:42Z: two nudges delivered as re-streams whose `next` read, in full,
+      `ETA=5m` and `ETA=10m`. A direction that says only how long something will take is not a direction.
+      ROOT CAUSE, second order: the stripper I added this morning used `find("ETA")` — the FIRST match —
+      so any earlier word containing those three letters (metadata, details, theta, beta, retain) failed
+      the `:`/`=` guard, the line was kept whole, and the real token at the end survived as a free segment.
+      Reproduced deterministically before fixing. Now scans EVERY occurrence, byte-compared against the
+      ORIGINAL string rather than an uppercased copy (`to_uppercase` can change length, so an index from
+      it cannot safely slice the original — a latent unsoundness in the old code). Four shielding words
+      pinned by a test.
+      LESSON WORTH KEEPING: a fix shipped is not a fix proven. This one had a comment explaining the
+      failure it prevented, and still failed within hours on a case the comment did not consider.
 - [ ] **Q. qwen3.8-flash — DIRECT TOKEN PLAN, manifest PREFLIGHT-PASSED, BLOCKED ON A CLOUD BINARY THAT
       MUST BE BUILT FROM `codex/salvage-benchmarks`, NOT `local-edition`.**
       MEASURED 2026-08-28: the fresh `local-edition` release binary is REJECTED by the harness —
