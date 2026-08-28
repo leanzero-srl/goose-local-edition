@@ -370,6 +370,39 @@ planning phases leave slots free by accident. The fleet strip correctly showed t
 was wrong on any dashboard. It was visible ONLY by counting `judge_skipped` by phase — an event nobody had
 ever read.
 
+## THE OVER-DECOMPOSITION FALSIFIER: MOSTLY PASSED — measured 2026-08-29 01:22 EEST
+
+`plan_synthesized` on run `swarm-3node-r0`:
+
+    tasks 11  (was 21 before the fix)      distinct_files 16
+    tasks_sharing_a_file 1                 module_package_collisions []
+    files_per_task  [2,2,2,2,1,2,1,1,1,3,0]
+    deps_per_task   [0,1,1,2,0,0,0,1,2,5,10]
+    description_chars [5200,5191,4744,7518,5452,6029,5958,4681,8418,6441,3650]
+    ids: ledgerd-core · vendor-sync · webhook-event-ledger · approval-workflow-outbox ·
+         notifierd-service · frontend-structure-style · viz-scene-rendering ·
+         viz-camera-picking-interaction · frontend-app-js · boot-wrapper-docs · integrate-verify
+
+**WHAT PASSED, and each is a named checkpoint:** the join is called `integrate-verify` and **owns 0 files**
+(the [R-M1b] rule — a file-owning join is cascaded Failed by any build failure, which is the "app never
+binds a port" class); it depends on all **10** producers; **no task shipped a one-line description** — the
+minimum is 3,650 characters; **zero module/package collisions**; and **four tasks own the frontend/viz**
+(`frontend-structure-style`, `viz-scene-rendering`, `viz-camera-picking-interaction`, `frontend-app-js`) —
+the allocation whose absence made the last published local run score 0.0273 with `GET /` 404ing.
+
+**THE ONE DEFECT: `tasks_sharing_a_file: 1`.** The target is 0. Not fatal — the scheduler serialises two
+tasks that own the same file — but it violates "A SLICE MUST OWN FILES NO OTHER SLICE OWNS".
+
+**AND THE INSTRUMENT COULD NOT NAME IT.** The event counted the collision and carried no file names, so the
+single defect in an otherwise excellent plan was visible and un-actionable. Fixed in `be655e662`:
+`shared_files: [{file, tasks:[ids]}]`. Next run says WHICH file, and the OPEN prompt can then be aimed at
+the actual pattern instead of at the rule in general.
+
+**ALSO VISIBLE THIS PHASE:** REVIEW lanes are named from the request's own headings —
+`review-6-notifierd-the-ide`, `review-screen-space-labels`, `review-build-app-meridian` — the
+`cut_request_into_sections` fix working in the display, where the old char-balanced cut produced two lanes
+both reading "Answers to slice questions".
+
 ## THE BURST-GAP FIX (AB) SAVED THIS RUN'S RESEARCH PHASE — measured 2026-08-29 01:18 EEST
 
 `open-coverage-1` went **329 seconds silent** at 21:18:34 after enumerating 145,000 characters. Under the
