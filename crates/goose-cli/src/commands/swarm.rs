@@ -17892,6 +17892,47 @@ impl GooseAgentDispatcher {
                                 "tool_calls": call_records.len(),
                                 "thinking_chars": thinking_chars,
                             }));
+                            // AND NOW THE ENGINE ACTS, because nothing else can.
+                            //
+                            // The condition is entirely semantic -- no counter, no clock. The call OWES a
+                            // structured reply, it has made ZERO tool calls, and the supervisor has just
+                            // repeated itself verbatim, which is the measurable proof that escalation has
+                            // hit its floor. A call in that state has produced nothing any later phase can
+                            // read and has demonstrated it will not act on the most concrete instruction
+                            // the judge can form.
+                            //
+                            // MEASURED across TWO consecutive runs: `open-coverage-1` (145,514 chars, 5
+                            // nudges) and `open-coverage-2` (70,932 chars, 22 nudges, ~50 minutes) each
+                            // held RESEARCH alone with a node idle while every other lane had finished.
+                            // Tonight's judge fixes made the supervisor say exactly the right thing and
+                            // changed the outcome not at all.
+                            //
+                            // Ending the call is SAFE HERE because the fanout already treats an unreadable
+                            // lane as "leaves the breakdown as it was for that part" (`Err(_) =>
+                            // Vec::new()`). Coverage is enrichment: losing one part costs completeness,
+                            // while blocking on it costs the whole run. The doctrine that the JUDGE may
+                            // never request termination is intact -- the judge asked for a redirect; the
+                            // ENGINE ended the call on a deterministic condition it measured itself.
+                            if wants_structured_reply && call_records.is_empty() {
+                                self.events.write_value(serde_json::json!({
+                                    "event": "judge_call_ended_unproductive",
+                                    "task_id": activity_key,
+                                    "nudges": nudges_used,
+                                    "thinking_chars": thinking_chars,
+                                    "reason": "owes a structured reply, zero tool calls, direction repeated",
+                                }));
+                                eprintln!(
+                                    "  {} omni-judge: ending {} — {nudges_used} nudges, {thinking_chars} \
+                                     reasoning chars, ZERO tool calls, and the direction has stopped \
+                                     changing. The phase proceeds without this part.",
+                                    style("■").red(),
+                                    activity_key.unwrap_or("call")
+                                );
+                                return Err(anyhow!(
+                                    "call owed a structured reply and never made one: {nudges_used} nudges, \
+                                     {thinking_chars} reasoning chars, 0 tool calls"
+                                ));
+                            }
                         }
                         last_direction = direction.clone();
                         tool_calls_at_last_nudge = Some(call_records.len());
