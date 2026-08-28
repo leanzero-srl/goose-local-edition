@@ -715,6 +715,31 @@ export default function SwarmSettingsSection() {
     [upsert]
   );
 
+  /// EXACTLY ONE SUPERVISOR. `supervision` keeps a node OUT of the build pool so it is free to take the
+  /// judge, review and synthesis calls — which is what "smartest" means operationally: put the strongest
+  /// model where the thinking happens and let the others build under it. The engine refuses a pool with no
+  /// non-supervision device, so this can never empty the build fleet; clicking the current supervisor
+  /// again clears it.
+  const setSupervisor = useCallback(
+    (deviceId: string, modelId: string, on: boolean) => {
+      setCfg((prev) => {
+        const rows: SwarmDeviceRow[] = Array.isArray(prev.devices) ? [...prev.devices] : [];
+        for (const r of rows) r.supervision = false;
+        if (on) {
+          const found = rows.find((r) => r.id === deviceId || r.model_id === modelId);
+          if (found) found.supervision = true;
+          // A live LM Studio node the user has never configured has no row yet; give it one so the
+          // setting has somewhere to live, matching the shape discovery would have produced.
+          else rows.push({ id: deviceId, model_id: modelId, weight: 1, enabled: true, supervision: true });
+        }
+        const next = { ...prev, devices: rows };
+        void upsert('swarm', next, false).catch(() => {});
+        return next;
+      });
+    },
+    [upsert]
+  );
+
   const setSamplingDefault = useCallback(
     (id: SamplingKnobId, v: number | null) => {
       const clamped = v == null ? null : (clampKnob(id, v) ?? null);
@@ -766,9 +791,17 @@ export default function SwarmSettingsSection() {
             // A cloud id like `us.anthropic.claude-…` has no `<node>-` prefix; derive nothing from it.
             name: chip ? d.model_id : deviceFromModelId(d.model_id) || d.id,
             chip,
+            modelId: d.model_id,
+            supervises: d.supervision === true,
           };
         })
-      : fleet.models.map((m) => ({ id: m, name: deviceFromModelId(m), chip: null }));
+      : fleet.models.map((m) => ({
+          id: m,
+          name: deviceFromModelId(m),
+          chip: null,
+          modelId: m,
+          supervises: configuredDevices.some((d) => d.model_id === m && d.supervision === true),
+        }));
   const weightFor = (id: string): number => {
     const sw = cfg.speed_weights ?? {};
     if (id in sw) return sw[id] ?? 1; // exact device-id key wins (avoids substring collisions)
@@ -842,7 +875,28 @@ export default function SwarmSettingsSection() {
                       {row.name}
                     </span>
                   </span>
-                  <WeightStepper value={weightFor(row.id)} onChange={(v) => setWeight(row.id, v)} />
+                  <span className="flex items-center gap-2 shrink-0">
+                    <button
+                      type="button"
+                      onClick={() => setSupervisor(row.id, row.modelId, !row.supervises)}
+                      aria-pressed={row.supervises}
+                      title={
+                        row.supervises
+                          ? 'Supervisor: takes the judge, review and synthesis calls and does not build'
+                          : 'Make this the supervisor — the strongest model, kept out of the build pool'
+                      }
+                      className="text-[10px] font-bold px-2 py-1 uppercase tracking-wide"
+                      style={{
+                        borderRadius: 4,
+                        backgroundColor: row.supervises ? '#7c3aed' : 'transparent',
+                        color: row.supervises ? '#ffffff' : 'var(--text-secondary)',
+                        border: `1px solid ${row.supervises ? '#7c3aed' : 'var(--border-primary)'}`,
+                      }}
+                    >
+                      Smartest
+                    </button>
+                    <WeightStepper value={weightFor(row.id)} onChange={(v) => setWeight(row.id, v)} />
+                  </span>
                 </div>
               ))}
             </div>

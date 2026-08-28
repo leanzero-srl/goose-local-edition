@@ -21,6 +21,12 @@ export interface SwarmDeviceRow {
   instances?: number;
   host?: string | null;
   provider?: string | null;
+  /** How fast this node is relative to its siblings — routes proportionally more of the build to it.
+   *  Mirrors SwarmDevice.speed_weight; the legacy `speed_weights` substring map remains the fallback. */
+  speed_weight?: number;
+  /** This node SUPERVISES rather than builds: it takes the judge, review and synthesis calls and is kept
+   *  out of the build pool. Put the strongest model here. Mirrors SwarmDevice.supervision. */
+  supervision?: boolean;
 }
 
 export interface SwarmConfig {
