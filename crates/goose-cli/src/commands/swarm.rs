@@ -152,6 +152,21 @@ pub struct SwarmDevice {
     /// check and merge into the run pool additively.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub provider: Option<String>,
+    /// HOW FAST this node is, relative to its siblings. Higher gets proportionally more of the build,
+    /// spread over time by work-stealing rather than by oversubscribing the node (see the weight comment
+    /// in the pool builder — weight is CONCURRENCY, this is ROUTING).
+    ///
+    /// Until now this could only be set through the free-form `speed_weights` substring map, which is
+    /// keyed by a fragment of the device id and therefore cannot be edited per node from a UI. A node is
+    /// a thing the user configures; how fast it is belongs on the node.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub speed_weight: Option<u32>,
+    /// This node SUPERVISES rather than builds: it takes the judge, review and synthesis calls and is
+    /// kept out of the build pool. The "smartest node" setting — put the strongest model here and the
+    /// weaker ones build under it. The scheduler refuses a pool with no non-supervision device, so this
+    /// can never empty the build fleet.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub supervision: Option<bool>,
 }
 
 impl SwarmDevice {
@@ -1181,6 +1196,8 @@ impl Default for SwarmConfig {
                     instances: 1,
                     host: None,
                     provider: None,
+                    speed_weight: None,
+                    supervision: None,
                 },
                 SwarmDevice {
                     id: "macbook".to_string(),
@@ -1190,6 +1207,8 @@ impl Default for SwarmConfig {
                     instances: 1,
                     host: None,
                     provider: None,
+                    speed_weight: None,
+                    supervision: None,
                 },
             ],
             worker_max_turns: default_worker_max_turns(),
@@ -2074,6 +2093,8 @@ async fn handle_cloud(def: &'static CloudDef, cmd: Option<CloudCommand>) -> Resu
                 instances: 1,
                 host: Some(name.to_string()),
                 provider: Some(name.to_string()),
+                speed_weight: None,
+                supervision: None,
             });
             save_config(&cfg)?;
             println!(
@@ -2399,6 +2420,8 @@ fn pool_menu() -> Result<()> {
                     instances,
                     host: None,
                     provider: None,
+                    speed_weight: None,
+                    supervision: None,
                 });
             }
             "weight" => {
@@ -2620,6 +2643,8 @@ fn pool_op(pc: PoolCommand) -> Result<()> {
                 instances: instances.max(1),
                 host: None,
                 provider: None,
+                speed_weight: None,
+                supervision: None,
             });
         }
         PoolCommand::Rm { id } => cfg.devices.retain(|d| d.id != id),
@@ -3014,6 +3039,19 @@ fn reconcile_pool_with_fleet(cfg: &SwarmConfig) -> (Vec<SwarmDevice>, Option<Str
             instances: 1,
             host: p.device.clone(),
             provider: None,
+            // Discovery rebuilds the local pool from `lms ps`, so anything the user set per node has to be
+            // carried across or it is silently lost every run. Matched on model_id, which is what LM Link
+            // actually routes by.
+            speed_weight: cfg
+                .devices
+                .iter()
+                .find(|d| d.model_id == p.identifier)
+                .and_then(|d| d.speed_weight),
+            supervision: cfg
+                .devices
+                .iter()
+                .find(|d| d.model_id == p.identifier)
+                .and_then(|d| d.supervision),
         })
         .collect();
     // Planner: keep the configured planner if it is resident; else pick the best resident model for the
@@ -3113,6 +3151,8 @@ fn import_processes(
             instances: 1,
             host: p.device.clone(),
             provider: None,
+            speed_weight: None,
+            supervision: None,
         };
         cfg.devices.push(dev.clone());
         summary.added.push(dev);
@@ -9371,6 +9411,8 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
             instances: 1,
             host: None,
             provider: None,
+            speed_weight: None,
+            supervision: None,
         }
     }
 
@@ -13670,6 +13712,8 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
             instances: 1,
             host: None,
             provider: None,
+            speed_weight: None,
+            supervision: None,
         });
         let procs = vec![
             LmsProcess {
@@ -17362,9 +17406,18 @@ impl GooseAgentDispatcher {
                         //                                 so the stream is dropped and re-driven instead.
                         // A steer is also refused while a tool call is in flight (`pending`), so a
                         // request can never be orphaned from its response.
-                        let acted_since_last_look = tool_calls_at_last_nudge
-                            .is_none_or(|n| call_records.len() > n)
-                            && !call_records.is_empty();
+                        // A STEER NEEDS A TURN BOUNDARY IT CAN ACTUALLY LAND ON, and the only evidence
+                        // that one is coming is that the call acted SINCE THIS LOOK — not that it acted
+                        // at some point in its life.
+                        //
+                        // MEASURED on the wedged REVIEW call: it had 3 tool calls in total and empty
+                        // `pending`, and `tool_calls_at_last_nudge` was None, so `is_none_or` made
+                        // acted_since_last_look true and every nudge was delivered as a steer. The stream
+                        // was emitting nothing but newlines and would never reach another turn boundary,
+                        // so each note went onto a queue that was never drained — and the re-stream, the
+                        // ONLY path that drops the socket and actually redirects, was unreachable for the
+                        // whole call.
+                        let acted_since_last_look = actions_since_last_look > 0;
                         let can_steer = acted_since_last_look && pending.is_empty();
                         let nudge_text = format!(
                             "SUPERVISOR NOTE — an independent reviewer read this call's own reasoning.\n\
@@ -17421,6 +17474,17 @@ impl GooseAgentDispatcher {
                             thinking_chars = 0;
                             last_thinking.clear();
                             omni_looks = 0;
+                            // AND THE LOOK BASELINES, or the next look measures the NEW stream's output
+                            // against the OLD stream's total and reports that it produced nothing.
+                            //
+                            // MEASURED in run swarm-3node-r0, seq 89-91: a re-stream nudge landed, and the
+                            // very next look reported thinking_chars 2000 with produced_since_last_look 0,
+                            // then 2005 with produced 5 — 0.07 chars/sec. The rate block hands that to the
+                            // judge as "a DEAD STREAM ... Say LOOPING", and the judge duly answered
+                            // restart. The engine manufactured the exact symptom it then fired on, and
+                            // each firing threw away another stream's reasoning.
+                            omni_thinking_at_last_look = 0;
+                            omni_calls_at_last_look = call_records.len();
                             // The new stream is judged on what IT does, not on the actions that earned
                             // the re-stream. Without this the readiness floor is cleared instantly by
                             // the previous attempt's tool calls and the judge fires on its own reset.
@@ -24657,9 +24721,21 @@ where
 /// NO retry path. It can never fail a task or a run: it aborts at most this one call, and every phase
 /// degrades gracefully (scout -> N of 3, draft -> best-of-N, detail -> skeleton brief, contract -> no frozen
 /// interface, worker -> the existing stall path).
+/// Does this verdict mean the call needs REDIRECTING, as opposed to being left alone?
+///
+/// RESTART belongs here and was missing. `parse_judge_reply` produces it, nothing in the planner-side
+/// omni path matched on it, and the only other actuator is `drifting_now` — so a restart verdict fell
+/// through to the branch that CLEARS the looping streak and was discarded. MEASURED: at 07:36:28 on run
+/// swarm-3node-r0 the judge answered `restart` on the wedged REVIEW call and the engine did nothing with
+/// it, then went quiet. The judge's own words were "Restart the call on a fresh connection and have it
+/// produce the structured output" — which is precisely what the re-stream delivery does, so the verdict
+/// had a working actuator all along and simply was not wired to it.
 fn omni_judge_says_looping(reply: &str) -> bool {
     let out = parse_judge_reply(reply);
-    matches!(out.verdict, Verdict::Looping | Verdict::OverReading) && out.confidence >= 0.8
+    matches!(
+        out.verdict,
+        Verdict::Looping | Verdict::OverReading | Verdict::Restart
+    ) && out.confidence >= 0.8
 }
 
 /// Parse the semantic judge's one-line `VERDICT|CONFIDENCE|hint` reply. Conservative: anything not a
@@ -36314,8 +36390,10 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             model_id: d.model_id.clone(),
             weight: d.weight,
             enabled: true,
-            speed_weight: speed_weight_for(&d.id),
-            supervision: false,
+            // The node's own setting wins; the substring map stays as the fallback so every existing
+            // config keeps its current routing byte-for-byte.
+            speed_weight: d.speed_weight.unwrap_or_else(|| speed_weight_for(&d.id)),
+            supervision: d.supervision.unwrap_or(false),
         })
         .collect();
     // The planner model also pitches in as a worker after planning, so the smartest model isn't idle
