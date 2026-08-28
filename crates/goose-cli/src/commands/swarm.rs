@@ -36962,6 +36962,14 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
         sink.write_value(serde_json::json!({"event": "phase", "phase": "repair"}));
         let mut round_walls: Vec<u64> = Vec::new();
         let mut first_criticals: Option<usize> = None;
+        // WHICH defects, not HOW MANY. Progress here is a set difference and the count hides it
+        // completely: MEASURED round 0 -> round 1, criticals 8 -> 8 and findings 11 -> 11, while NINE
+        // findings were actually closed (the page rendering no rows, app.js referencing DOM ids no html
+        // defines, an empty pytest suite, negative offset unrejected) and TEN new ones were found by the
+        // TEST fan going deeper on its second pass. The ask reported "closed NO critical yet" to the
+        // human, which was the exact opposite of the truth, and the ETA it derived was worthless.
+        let mut prev_findings: std::collections::HashSet<String> = std::collections::HashSet::new();
+        let mut closed_total: usize = 0;
         let mut last_round_was_shard = false;
         // `rounds` fix attempts, each preceded by a verify, PLUS a final verify after the last fix so the
         // last fix is actually checked (0..=rounds => rounds+1 verifies, rounds fixes).
@@ -37568,6 +37576,11 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                 sink.write_value(serde_json::json!({
                     "event": "defects_rated",
                     "round": round,
+                    // The two numbers that show progress a count cannot. MEASURED: 11 -> 11 findings
+                    // across a round that closed 9 and found 10.
+                    "closed_this_round": closed_this_round,
+                    "found_this_round": found_this_round,
+                    "closed_total": closed_total,
                     "critical": criticals.len(),
                     "minor": minors.len(),
                     "engine_forced": verdict.findings.iter().filter(|f| forced(f)).count(),
@@ -37614,9 +37627,17 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                 } else {
                     0
                 };
-                let closed = first_criticals
-                    .map(|f| f.saturating_sub(criticals.len()))
-                    .unwrap_or(0);
+                let now_findings: std::collections::HashSet<String> =
+                    verdict.findings.iter().cloned().collect();
+                let closed_this_round = prev_findings.difference(&now_findings).count();
+                let found_this_round = if prev_findings.is_empty() {
+                    0
+                } else {
+                    now_findings.difference(&prev_findings).count()
+                };
+                closed_total += closed_this_round;
+                prev_findings = now_findings;
+                let closed = closed_total;
                 // An ETA nobody can stand behind is worse than none. If no critical has ever closed, say
                 // exactly that instead of extrapolating from a rate of zero.
                 let eta = if rounds_run == 0 || avg_round == 0 {
@@ -37626,19 +37647,22 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                         "another round looks like roughly {}m, from the {rounds_run} that have run",
                         avg_round / 60
                     )
-                } else if closed == 0 {
+                } else if closed == 0 && rounds_run > 1 {
                     format!(
                         "{rounds_run} round(s) have run at about {}m each and have closed NO critical yet, \
                          so I cannot honestly estimate how long the rest would take",
                         avg_round / 60
                     )
                 } else {
-                    let per = avg_round as f64 * criticals.len() as f64 / closed as f64;
+                    let per = avg_round as f64 * criticals.len() as f64 / closed.max(1) as f64;
                     format!(
-                        "{rounds_run} round(s) at about {}m each have closed {closed} of {} criticals; \
-                         the remaining {} look like roughly {}m",
+                        "{rounds_run} round(s) at about {}m each have CLOSED {closed} defect(s); this \
+                         round closed {closed_this_round} and found {found_this_round} new ones, so {} \
+                         remain ({} critical). At that rate the rest look like roughly {}m — though a \
+                         round that keeps finding new defects is making progress even when the count \
+                         holds flat.",
                         avg_round / 60,
-                        first_criticals.unwrap_or(0),
+                        verdict.findings.len(),
                         criticals.len(),
                         (per / 60.0).round() as u64
                     )
