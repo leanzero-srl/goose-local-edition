@@ -16980,6 +16980,13 @@ impl GooseAgentDispatcher {
                      what it SAID; do not invent. Leave empty only if it has established nothing.\n\
                      NEXT         the single most concrete next action toward the goal. Name the file, the \
                      command, or the function. Never \"continue\" or \"proceed\".\n\
+                     A DIRECTION THAT RESTATES THE BRIEF IS NOT A DIRECTION. If the most concrete thing \
+                     you can name is the job the call was already given, you have nothing to add and the \
+                     verdict is OK — say so and let it work. MEASURED twice on one run: the direction \
+                     returned was \"Check the slice list against the request section by section\", which \
+                     is verbatim the task. Each cost a re-stream, and a re-stream throws away everything \
+                     the call had reasoned so far. Redirect it only when you can tell it something it \
+                     does not already know.\n\
                      DRIFTING = working, but on the wrong thing.\n\
                      RESTART = only when the call has produced nothing usable AND a fresh start carrying what \
                      you list in ESTABLISHED would beat continuing. Never for a call that is merely slow.\n\
