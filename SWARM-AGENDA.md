@@ -180,6 +180,26 @@ runs several rounds and the gaps arrive in the later ones.
       pinned by a test.
       LESSON WORTH KEEPING: a fix shipped is not a fix proven. This one had a comment explaining the
       failure it prevented, and still failed within hours on a case the comment did not consider.
+- [ ] **AB. THE JUDGE IS RE-STREAMING CALLS THAT ARE MERELY BETWEEN BURSTS — measured 2026-08-28, and it
+      is costing this run its REVIEW phase.** These models do not stream evenly: they emit in ~2000/4000
+      character BURSTS with quiet gaps between. The judge looks during a gap, sees
+      `produced_since_last_look` of 1..9, calls LOOPING, and re-streams — discarding everything the call
+      had built.
+      THE EVIDENCE (review lanes, `thinking_total`):
+        review-3: 12013 -> produced 4004 -> 12018 -> produced 5 (STALL, re-streamed) -> 16021 -> produced
+                  4003. It was NOT dead; it resumed and produced another 4,000 immediately after.
+        Resets paid for those false stalls: review-3 **27,297 -> 2,004**, review-2 **13,291 -> 2,002**,
+        review-1 **8,640 -> 2,006**. Ten nudges, every one a re-stream, REVIEW 30 min and round 2 not
+        landed.
+      NOT COVERED BY `f3cfbdbbd` (production veto): that only stops tail-similarity arming the streak
+      while a call IS producing. Here the call genuinely reads as not-producing at that instant, because
+      the look landed in the gap.
+      THE FIX SHAPE, and it must not be a constant: the burst gap is a property OF THE CALL, so measure
+      it. Treat produced≈0 as a stall only when the silence exceeds that call's own longest observed gap
+      between bursts. Self-calibrating, no literal seconds anywhere, and a genuinely dead socket still
+      trips it because its silence grows without bound.
+      Confirms the earlier note "OPEN LANES STALL NEAR ROUND NUMBERS ... looks like a provider-side buffer
+      or chunk edge" — it is, and the round numbers (4001/4002/4003/4009) are the giveaway.
 - [ ] **Q. qwen3.8-flash — DIRECT TOKEN PLAN, manifest PREFLIGHT-PASSED, BLOCKED ON A CLOUD BINARY THAT
       MUST BE BUILT FROM `codex/salvage-benchmarks`, NOT `local-edition`.**
       MEASURED 2026-08-28: the fresh `local-edition` release binary is REJECTED by the harness —
