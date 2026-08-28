@@ -17481,10 +17481,28 @@ impl GooseAgentDispatcher {
                         // recurrence as corroboration in its own right — a long-period loop
                         // presents DIFFERENT windows on consecutive looks by construction, which
                         // is exactly the case the old same-window-twice-in-a-row rule threw away.
+                        // PRODUCTION IS THE VETO, and tail similarity alone may no longer arm the
+                        // streak. MEASURED 2026-08-28: the judge returned LOOPING on a call that had
+                        // produced 4,006 NEW characters since the previous look at a measured recurrence
+                        // of 1.8% — the detector was saying "not repeating" while its own `established`
+                        // read "48 component-to-slice mappings are established". The deliverable for that
+                        // task is a TABLE, so consecutive tails resemble each other by construction and
+                        // `tails_recur` matches whatever the call does; it cannot distinguish a stuck
+                        // call from one steadily emitting rows. Four re-streams in one OPEN phase came
+                        // from this, each throwing away a table the call had already built.
+                        //
+                        // A MEASURED recurrence still arms on its own — that is an engine fact. Tail
+                        // similarity now arms only when the call is NOT producing, where the resemblance
+                        // actually means something. The threshold is the existing readiness floor, not a
+                        // new number: if a call has generated enough new reasoning to be judged at all
+                        // since the last look, it is advancing.
+                        let producing_since_last_look =
+                            produced_since_last_look >= OMNI_JUDGE_MIN_CHARS;
                         if recur.recurring()
-                            || omni_prior_looping_tails
-                                .iter()
-                                .any(|prev| tails_recur(prev, &tail_set))
+                            || (!producing_since_last_look
+                                && omni_prior_looping_tails
+                                    .iter()
+                                    .any(|prev| tails_recur(prev, &tail_set)))
                         {
                             omni_looping_streak += 1;
                         } else {
