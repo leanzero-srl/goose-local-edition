@@ -302,6 +302,7 @@ export interface PhaseTodo {
 
 export type ActivityKind =
   | 'note'
+  | 'judge-act'
   | 'phase'
   | 'plan'
   | 'dispatch'
@@ -878,7 +879,7 @@ export function foldRunPhase(events: Array<Record<string, unknown>>): {
  *  (every dispatch, judge verdict + hint, pre-review, completion, smoke) — plus the run header meta, the
  *  planned task graph, and the smoke result. All of this is already in the event stream; nothing is dropped
  *  server-side, so verbose mode is purely a richer read of the same data. */
-function buildActivity(events: Array<Record<string, unknown>>): {
+export function buildActivity(events: Array<Record<string, unknown>>): {
   activity: ActivityItem[];
   verbose: ActivityItem[];
   meta: RunMeta | null;
@@ -1208,15 +1209,34 @@ function buildActivity(events: Array<Record<string, unknown>>): {
         const next = str(e['next']);
         if (!established && !next) break;
         const delivery = str(e['delivery']);
+        const task = str(e['task_id']) || 'a worker';
+        const sub = [established && `established: ${established}`, next && `next: ${next}`]
+          .filter(Boolean)
+          .join('\n');
+        // A NUDGE REPEATS ITS OWN LOOK, WORD FOR WORD. The engine emits judge_look then judge_nudge in the
+        // same breath carrying the identical `established` and `next`, so rendering both put every action
+        // on screen twice and buried the three moments that DID something in a wall of moments that did
+        // not. When the pair matches, replace the observation with the action rather than appending to it.
+        const prev = vfeed[vfeed.length - 1];
+        if (
+          type === 'judge_nudge' &&
+          prev &&
+          (prev.kind === 'judge' || prev.kind === 'judge-act') &&
+          prev.sub === sub &&
+          prev.text.includes(task)
+        ) {
+          prev.kind = 'judge-act';
+          prev.text = `Judge steered ${task}${delivery ? ` (${delivery})` : ''}`;
+          prev.tone = 'warn';
+          break;
+        }
         verbose({
-          kind: 'judge',
+          kind: type === 'judge_nudge' ? 'judge-act' : 'judge',
           text:
             type === 'judge_nudge'
-              ? `Judge steered ${str(e['task_id']) || 'a worker'}${delivery ? ` (${delivery})` : ''}`
-              : `Judge looked at ${str(e['task_id']) || 'a worker'}${e['verdict'] ? ` → ${str(e['verdict'])}` : ''}`,
-          sub: [established && `established: ${established}`, next && `next: ${next}`]
-            .filter(Boolean)
-            .join('\n'),
+              ? `Judge steered ${task}${delivery ? ` (${delivery})` : ''}`
+              : `Judge looked at ${task}${e['verdict'] ? ` → ${str(e['verdict'])}` : ''}`,
+          sub,
           tone: type === 'judge_nudge' ? 'warn' : 'info',
         });
         break;
