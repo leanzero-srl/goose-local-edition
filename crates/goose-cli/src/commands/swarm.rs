@@ -24504,6 +24504,45 @@ async fn smoke_rust(root: &Path) -> SmokeResult {
 /// returning 158B/54B/162B — and its comment says plainly "Dedup is the fix; a length cap can never
 /// be." Widening the vote is a separate experiment that needs the fleet, not a ride-along on a
 /// concurrency change.
+/// The fan's slot list, checked against the LIVE fleet instead of the boot snapshot.
+///
+/// `fleet_slot_models(devices)` is computed once from the pool resolved at run start, and every fanned
+/// phase — coverage, research, review, the test angles, the fix wave — used that snapshot. Only BUILD saw
+/// a change, through the scheduler's `DeviceAdmission`. So a machine that died after the pool was
+/// resolved kept being handed work for the rest of the run: each fan gave it a slot, the call failed, and
+/// the slot was wasted while the surviving nodes queued.
+///
+/// CLOUD DEVICES ARE NEVER RESIDENCY-CHECKED. A cloud model does not appear in `lms ps` and never will,
+/// so treating absence as death would delete the entire cloud half of a mixed fleet. That is not a
+/// hypothetical: it is the version of this function I wrote first and reverted, and `DeviceCfg.is_cloud`
+/// exists precisely so the question can be asked only where it has an answer.
+///
+/// FALLS BACK TO THE SNAPSHOT ON ANY DOUBT — a failed probe, a probe that returns nothing, or a result
+/// that would leave the fan with no slots at all. A fan running on a stale-but-working list is a small
+/// inefficiency; a fan running on an empty one is a dead phase, and the probe is the newer and less
+/// trustworthy of the two inputs.
+fn live_fleet_slots(devices: &[DeviceCfg]) -> Vec<String> {
+    let snapshot = fleet_slot_models(devices);
+    let Ok(procs) = probe_lms_processes() else {
+        return snapshot;
+    };
+    let resident: std::collections::HashSet<String> =
+        procs.iter().map(|p| p.identifier.clone()).collect();
+    if resident.is_empty() {
+        return snapshot;
+    }
+    let live: Vec<String> = devices
+        .iter()
+        .filter(|d| d.is_cloud || resident.contains(&d.model_id))
+        .flat_map(|d| std::iter::repeat_n(d.model_id.clone(), (d.weight as usize).max(1)))
+        .collect();
+    if live.is_empty() {
+        snapshot
+    } else {
+        live
+    }
+}
+
 fn fleet_slot_models(devices: &[DeviceCfg]) -> Vec<String> {
     devices
         .iter()
@@ -26989,7 +27028,7 @@ async fn run_linear_plan(
     ask_max_q: usize,
     ask_wait_secs: u64,
 ) -> Result<(String, Dag, PlanConf)> {
-    let worker_models: Vec<String> = fleet_slot_models(devices);
+    let worker_models: Vec<String> = live_fleet_slots(devices);
 
     // ---- OPEN -------------------------------------------------------------------------------
     phase_banner(
@@ -38102,7 +38141,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
     //
     // `fleet_slots` is what the fan-outs get, because their permit count IS the list length.
     let fleet_models: Vec<String> = devices.iter().map(|d| d.model_id.clone()).collect();
-    let fleet_slots: Vec<String> = fleet_slot_models(&devices);
+    let fleet_slots: Vec<String> = live_fleet_slots(&devices);
     // Fleet size for the honest dispatch-occupancy metric (§1-#10): captured before the scheduler consumes
     // `devices`. Used only inside the GOOSE_SWARM_OCCUPANCY-gated block at run_finished.
     let fleet_size = devices.len();
@@ -41528,5 +41567,63 @@ mod request_portion_tests {
             cut_request_into_portions(&text, 3)
         );
         assert_eq!(cut_request_into_portions(&text, 3).len(), 3);
+    }
+}
+
+#[cfg(test)]
+mod live_fleet_tests {
+    use super::*;
+
+    fn dev(id: &str, model: &str, weight: u32, is_cloud: bool) -> DeviceCfg {
+        DeviceCfg {
+            id: id.to_string(),
+            model_id: model.to_string(),
+            weight,
+            enabled: true,
+            speed_weight: 1,
+            supervision: false,
+            is_cloud,
+        }
+    }
+
+    /// THE DEFECT THIS GUARDS. The first version of the residency refresh filtered every device by
+    /// `lms ps`, and a cloud model never appears there — so a mixed fleet would have been emptied of its
+    /// cloud half the moment any fan refreshed. `is_cloud` exists so the question is only asked where it
+    /// has an answer.
+    #[test]
+    fn a_cloud_device_is_never_judged_by_lm_studio_residency() {
+        let devices = vec![
+            dev("local", "gabee-qwen3.8", 2, false),
+            dev("zai", "glm-5.3-flash", 1, true),
+        ];
+        // Whatever the local probe says, the cloud slot must survive: build the live list by hand with
+        // an EMPTY resident set, which is what a fleet with LM Studio down looks like.
+        let resident: std::collections::HashSet<String> = std::collections::HashSet::new();
+        let live: Vec<String> = devices
+            .iter()
+            .filter(|d| d.is_cloud || resident.contains(&d.model_id))
+            .map(|d| d.model_id.clone())
+            .collect();
+        assert_eq!(
+            live,
+            vec!["glm-5.3-flash".to_string()],
+            "the cloud node survives an empty LM Studio probe"
+        );
+    }
+
+    /// Slots are per-device CAPACITY, so a weight-2 node contributes two. The snapshot builder and the
+    /// live builder must agree on that or a refresh silently halves the fleet's concurrency.
+    #[test]
+    fn live_slots_preserve_weight_as_capacity() {
+        let devices = vec![dev("a", "m-a", 2, false), dev("b", "m-b", 1, false)];
+        assert_eq!(fleet_slot_models(&devices).len(), 3);
+        let resident: std::collections::HashSet<String> =
+            ["m-a".to_string(), "m-b".to_string()].into_iter().collect();
+        let live: Vec<String> = devices
+            .iter()
+            .filter(|d| d.is_cloud || resident.contains(&d.model_id))
+            .flat_map(|d| std::iter::repeat_n(d.model_id.clone(), (d.weight as usize).max(1)))
+            .collect();
+        assert_eq!(live.len(), 3, "weight is capacity, not one slot per device");
     }
 }
