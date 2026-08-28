@@ -14008,6 +14008,37 @@ fn activity_digest_key(task_id: &str) -> String {
         .replace('\\', "~b")
 }
 
+/// Append the reasoning produced SINCE THE LAST CALL to `<activity>.log`, and return the new index.
+///
+/// WHY THIS EXISTS. The digest's `full_reasoning` is a 24,000-char TAIL clip, so a long call's narration
+/// starts partway through — Mihai, twice, on a node whose panel began at item 25 of a 39-item list:
+/// *"the generations stop displaying past a certain number of characters"*. The clip is not gratuitous:
+/// the digest is REWRITTEN on a hot 400ms timer, so it cannot simply grow, and raising the number just
+/// moves the cliff while making every rewrite more expensive.
+///
+/// An append-only sibling has neither problem. Each write costs only the NEW text, the file is the whole
+/// narration with nothing elided, and the digest keeps its bounded tail for the judge and the live panel.
+/// Best-effort throughout: a transcript that fails to write must never disturb a run.
+fn append_reasoning_transcript(activity_path: &Path, texts: &[String], already: usize) -> usize {
+    if texts.len() <= already {
+        return already;
+    }
+    use std::io::Write;
+    let fresh = texts[already..].join("");
+    if fresh.is_empty() {
+        return texts.len();
+    }
+    let log = activity_path.with_extension("log");
+    if let Ok(mut f) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&log)
+    {
+        let _ = f.write_all(fresh.as_bytes());
+    }
+    texts.len()
+}
+
 /// Build the `.swarm/activity/<key>.json` digest a worker/scout/planner call refreshes as it streams. The judge
 /// reads only tool_calls/errors/recent/last_text; every other key is inert to it (unknown-key-tolerant reader) and
 /// powers the desktop panel's live per-node view. Two dev-verbosity additions over the old inline block: (1) each
@@ -16829,6 +16860,8 @@ impl GooseAgentDispatcher {
         // blocking fs::write + JSON serializes per task × N nodes. Refresh at most ~2.5x/s; a guaranteed final
         // write after the loop keeps the terminal state exact. Every consumer polls slower (judge 15s, panel ≤10Hz).
         let mut last_digest_at: Option<tokio::time::Instant> = None;
+        // How many text chunks have already reached the append-only transcript beside the digest.
+        let mut transcript_at: usize = 0;
         // REMOVED: the sink wall-clock cap (sink_cap_secs, sink_cap_ref_bytes, scaled_sink_cap,
         // GOOSE_SWARM_SINK_CAP_SECS, sink_plan and sink_capped).
         //
@@ -17926,6 +17959,7 @@ impl GooseAgentDispatcher {
                     if let Some(m) = &activity_mirror {
                         let _ = std::fs::write(m, digest.to_string());
                     }
+                    transcript_at = append_reasoning_transcript(p, &texts, transcript_at);
                     last_digest_at = Some(tokio::time::Instant::now());
                 }
             }
@@ -17960,6 +17994,7 @@ impl GooseAgentDispatcher {
                 obj.insert("phase".to_string(), serde_json::Value::from("done"));
             }
             let _ = std::fs::write(p, digest.to_string());
+            transcript_at = append_reasoning_transcript(p, &texts, transcript_at);
             // The mirrored copy MUST receive this terminal phase="done" too, or the panel would hold
             // a mirrored fix node at "working" forever — the shadow (and its digest) is deleted the
             // moment the round ends, so the mirror is the only copy left to correct.
@@ -27545,6 +27580,41 @@ async fn run_linear_plan(
             )
         }
     };
+
+    // THE PLAN, THE MOMENT IT EXISTS — not after CONTRACTS, which is where `plan_loaded` lands.
+    //
+    // MEASURED 2026-08-28: asked what the plan looked like while REVIEW was running, the honest answer was
+    // "the engine has not said". `plan_loaded` is emitted well after `phase: contracts`, so for the whole
+    // of REVIEW the plan is invisible — and REVIEW is precisely the phase that patches it. Two runs were
+    // killed IN REVIEW today and both took their plan to the grave: the kill checkpoints that read
+    // `plan_loaded.tasks[]` (a one-line description, a misnamed or file-owning join) cannot be evaluated
+    // at the only time they would still be worth acting on.
+    //
+    // Additive and pre-review, so it says what SYNTHESIS produced before any patch touches it, and a
+    // later diff against `plan_loaded` shows exactly what REVIEW changed.
+    {
+        let tasks: Vec<serde_json::Value> = serde_json::from_str::<serde_json::Value>(&plan_json)
+            .ok()
+            .and_then(|v| v.get("subtasks").and_then(|t| t.as_array()).cloned())
+            .unwrap_or_default();
+        sink.write_value(serde_json::json!({
+            "event": "plan_synthesized",
+            "tasks": tasks.len(),
+            "ids": tasks.iter().filter_map(|t| t.get("id").and_then(|i| i.as_str())).collect::<Vec<_>>(),
+            "description_chars": tasks
+                .iter()
+                .map(|t| t.get("description").and_then(|d| d.as_str()).unwrap_or("").chars().count())
+                .collect::<Vec<_>>(),
+            "files_per_task": tasks
+                .iter()
+                .map(|t| t.get("files").and_then(|f| f.as_array()).map_or(0, |a| a.len()))
+                .collect::<Vec<_>>(),
+            "deps_per_task": tasks
+                .iter()
+                .map(|t| t.get("depends_on").and_then(|f| f.as_array()).map_or(0, |a| a.len()))
+                .collect::<Vec<_>>(),
+        }));
+    }
 
     // ---- REVIEW -----------------------------------------------------------------------------
     phase_banner(
