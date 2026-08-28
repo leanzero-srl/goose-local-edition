@@ -49,7 +49,7 @@ Make the swarm BUILD BETTER SOFTWARE on local models, then beat the published `b
       worker and logged nothing. The probe now races the stream; deferred events drain in order; a call
       that finishes while the judge is out abandons the look, not the result. Detector shipped:
       `judge_look_dispatched` before the call — a dispatched with no matching `judge_look` = hung judge.
-- [~] **B. Virtual nodes — PARTLY DONE.** Engine: SwarmDevice gains speed_weight+supervision, threaded into DeviceCfg and carried across pool rebuild (d4fdbeeb2). UI: per-node Smartest/supervisor control shipped. Cloud-node-per-provider already existed (CloudPane). REMAINING: unified Node A/B/C list with `+`, provider picker per node in one place. Original ask: — a Node is a slot that picks a PROVIDER + MODEL.
+- [x] **B. Virtual nodes — DONE.** Node-first unified list (Node A/B/C, provider chip per node, union of local+cloud — 02c79ac77), per-node Smartest/supervisor (67b431faf), '+ Add node' picker, engine fields carried across pool rebuild (d4fdbeeb2). Earlier note: Engine: SwarmDevice gains speed_weight+supervision, threaded into DeviceCfg and carried across pool rebuild (d4fdbeeb2). UI: per-node Smartest/supervisor control shipped. Cloud-node-per-provider already existed (CloudPane). REMAINING: unified Node A/B/C list with `+`, provider picker per node in one place. Original ask: — a Node is a slot that picks a PROVIDER + MODEL.
       Settings > Swarm > Nodes. Node A picks a provider; LM Studio populates from loaded models; cloud
       providers must be configured first to appear. `+` adds Node B, C… Each node independently chooses.
       Per-node role hints: which is FASTEST, which is SMARTEST. Engine must consume the role hints.
