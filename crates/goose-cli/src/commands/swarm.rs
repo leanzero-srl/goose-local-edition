@@ -37564,6 +37564,18 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                         || l.contains("runtime crash")
                         || l.contains("missing deliverable")
                 };
+                // Computed here, before the event that reports it. Progress is a SET difference: the
+                // count is flat across a round that closed nine and found ten.
+                let now_findings: std::collections::HashSet<String> =
+                    verdict.findings.iter().cloned().collect();
+                let closed_this_round = prev_findings.difference(&now_findings).count();
+                let found_this_round = if prev_findings.is_empty() {
+                    0
+                } else {
+                    now_findings.difference(&prev_findings).count()
+                };
+                closed_total += closed_this_round;
+                prev_findings = now_findings;
                 let mut criticals: Vec<String> = Vec::new();
                 let forced = |f: &String| engine_fatal(f) && !model_observed.contains(f);
                 for (f, is_crit) in verdict.findings.iter().zip(rated.iter()) {
@@ -37627,16 +37639,6 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                 } else {
                     0
                 };
-                let now_findings: std::collections::HashSet<String> =
-                    verdict.findings.iter().cloned().collect();
-                let closed_this_round = prev_findings.difference(&now_findings).count();
-                let found_this_round = if prev_findings.is_empty() {
-                    0
-                } else {
-                    now_findings.difference(&prev_findings).count()
-                };
-                closed_total += closed_this_round;
-                prev_findings = now_findings;
                 let closed = closed_total;
                 // An ETA nobody can stand behind is worse than none. If no critical has ever closed, say
                 // exactly that instead of extrapolating from a rate of zero.
