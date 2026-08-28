@@ -819,8 +819,17 @@ export default function SwarmSettingsSection() {
           </CardDescription>
         </CardHeader>
         <CardContent className="pt-4 px-4 space-y-2">
+          {/* ADD A NODE, by choosing what will serve it. The list above is the nodes you HAVE; this row is
+              how a new one is made, which is the order the user thinks in — a node first, then what runs
+              it. A provider only appears here once it has been configured with a working key (the panes
+              below validate engine-side), so the list can never offer a node that cannot run. */}
           <div className="text-xs flex items-center justify-between gap-3">
-            <Segmented options={NODE_PROVIDERS} value={nodeProvider} onChange={setNodeProvider} />
+            <span className="flex items-center gap-2 min-w-0">
+              <span className="text-[10px] font-bold uppercase tracking-wide text-text-secondary shrink-0">
+                + Add node
+              </span>
+              <Segmented options={NODE_PROVIDERS} value={nodeProvider} onChange={setNodeProvider} />
+            </span>
             {nodeProvider === 'LM Studio' ? (
               <span className="flex items-center gap-2 min-w-0">
                 <span className="text-text-secondary truncate">{cfg.endpoint}</span>
