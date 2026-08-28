@@ -254,6 +254,25 @@ over-decomposition it was never allowed to fix at the root.
 node occupancy across the 3 nodes, whether the fan actually parallelises, and whether the 9-file frontend
 deformation reaches the product.
 
+## THE FALSIFIER PASSED — parallel BUILD is real, measured 2026-08-28 18:18:33Z
+
+The plan names node occupancy during BUILD as the falsifier for deleting the 8 deterministic rewrites,
+and it has never been measurable because no run reached BUILD. It did.
+
+**SIX TASKS DISPATCHED IN THE SAME SECOND, TWO PER NODE, ALL THREE GENERATING:**
+    18:18:33  service-boot-architecture   -> workhorse
+    18:18:33  notifierd-consumer          -> mihai
+    18:18:33  viz-picking-camera          -> gabee
+    18:18:33  documentation-decisions     -> workhorse
+    18:18:33  frontend-css-styling        -> mihai
+    18:18:33  frontend-drafts-panel       -> gabee
+Then `frontend-html-structure` at 18:23:36 and `frontend-notifications-feed` at 18:24:25 as nodes freed.
+At 6.6 min: 8 dispatched, 2 completed, 6 in flight, 12 files on disk, **0 idle nodes**.
+
+**So the fan works.** The DAG parallelises, work-stealing refills a freed node, and the zero-collision
+file ownership REVIEW produced is what makes it legal for six tasks to write at once. Everything upstream
+of BUILD is what costs us — 4h15m to the first file — not BUILD itself.
+
 ## Standing constraints — absolute, never negotiate them
 
 - **NO SPEND CAP MAY EVER BIND ON A CLOUD RUN.** Mihai, 2026-08-28: *"don't put caps on models or runs
