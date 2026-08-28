@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildPhaseTodo, foldEvents, foldRunPhase } from './useSwarmRun';
+import { buildPhaseTodo, foldEvents, foldRunPhase, isPlanningDigestKey } from './useSwarmRun';
 
 /**
  * The rewritten engine's planning flow, folded from its ACTUAL event stream:
@@ -359,5 +359,24 @@ describe('buildPhaseTodo — a revised complete_result retracts the green everyw
 
   it('with it, built tasks are no longer promoted to done off a retracted verdict', () => {
     expect(row([...BUILT, REVISED, FINISH], 'b-core')!.state).toBe('unverified');
+  });
+});
+
+describe('planning lanes include the calls that FAN', () => {
+  /** Observed live: the panel read "PLANNING CALLS · 2 NODES" (open, open-resplit) while three
+   *  open-coverage-* lanes were running — the heaviest work in OPEN. They showed in FLEET, which reads
+   *  node state, so the two halves of the same screen disagreed. A fixed key list cannot describe a phase
+   *  whose lane count is a property of the fleet. */
+  it('recognises coverage and review fan lanes, not just the fixed keys', () => {
+    expect(isPlanningDigestKey('open')).toBe(true);
+    expect(isPlanningDigestKey('open-coverage-1')).toBe(true);
+    expect(isPlanningDigestKey('open-coverage-3')).toBe(true);
+    expect(isPlanningDigestKey('review-2')).toBe(true);
+  });
+
+  it('does not swallow lanes that belong to other phases', () => {
+    expect(isPlanningDigestKey('slice-store-layer')).toBe(false);
+    expect(isPlanningDigestKey('apptest-bad-input')).toBe(false);
+    expect(isPlanningDigestKey('verify::api')).toBe(false);
   });
 });
