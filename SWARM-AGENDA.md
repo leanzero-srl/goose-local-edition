@@ -202,6 +202,27 @@ row needs corroboration before reading "working" · Alibaba Token Plan contract.
 
 Run `python3 ~/goose-builds/loop-state/compare_runs.py` — it scores all of this against the baseline.
 
+## FREEZE THE WEBSITE REPO UNTIL THE CLOUD QUEUE DRAINS — 2026-08-28, learned the expensive way
+
+**DO NOT COMMIT ANYTHING TO `~/Projects/LeanZero-website` WHILE ANY CLOUD CAMPAIGN IS LIVE.**
+
+`cloud_sb7.py init` FREEZES the publisher at a commit and verifies it at publish time. Any commit to that
+repo — even one touching nothing the run uses — invalidates every campaign in flight.
+
+MEASURED: **qwen3.8-27b ran 151 minutes, built 60 app files and SCORED 0.2006 (inner 0.7662)** — then
+died at the last step with `publication dry-run-validation failed: pinned publisher cannot be verified:
+publisher website commit changed after freeze`. The cause was me registering the six new entrants in that
+repo while the campaign was running. The result is preserved on disk and is NOT published.
+
+**All seven entrants are already registered, so no further commits are needed.** The chain has six
+campaigns left; touching that repo now loses each of them the same way, at the very end, after the money
+and hours are spent.
+
+**qwen3.8-27b RESULT, unpublished:** score **0.2006**, inner 0.7662, 60 app files incl. the full frontend,
+151 min, $3.93, 56 admitted requests. For scale that is **7.3x the local published target of 0.0273** and
+about half of glm-5.3-flash's 0.4159. Publish deliberately once the queue is drained and the publisher is
+stable — do not retry blind, `resume` may re-run the episode.
+
 ## Standing constraints — absolute, never negotiate them
 
 - **NO SPEND CAP MAY EVER BIND ON A CLOUD RUN.** Mihai, 2026-08-28: *"don't put caps on models or runs
