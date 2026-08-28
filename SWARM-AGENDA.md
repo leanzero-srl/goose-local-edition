@@ -397,6 +397,35 @@ it. A problem that turns out to be already owned is left out, but then it was no
 **THIS RUN KEEPS THE DEFECT** — the binary is the old one. Expect 4 features missing from its app, and read
 the score with that in mind rather than as a verdict on the decomposition.
 
+## THREE OF FOUR CLOUD ENTRANTS DIED TO HARNESS RULES, NOT TO MODEL FAILURE — 2026-08-29
+
+| entrant | admitted / terminal | spent | what it built | what killed it |
+|---|---|---|---|---|
+| seed-2-1-turbo | — | $12.29 | 152 KB, flat | **the model** — 509 shell calls, exploring not building |
+| seed-2.0-code | 13 / 12 | $0.22 | nothing | terminal-finish-reason guard |
+| laguna-s-2.1 | 17 / 16 | $0.09 | 4 files | finish-reason guard + ambiguous request |
+| **longcat-2.0** | **102 / 101** | **$2.41** | **20 files, app booting** | **ONE ambiguous request out of 102** |
+
+**longcat is the expensive one.** `failure: 1 provider request(s) retain full budget reserves; admission or
+terminal usage is ambiguous and the episode is never retried`. It had already produced a COMPLETE app —
+13 Python modules (`ledgerd`, `notifierd`, `sse`, `events`, `database`, `vendor`, `sync`…), `web/index.html`,
+`web/styles.css`, `web/viz.js`, `web/app.js`, plus README and DECISIONS.md — and was booting it
+(`python3 -m app --db-dir data --ledger-port 8080`, reading `logs/boot.log`, clearing ports). 2,360 seconds
+and $2.41 discarded over a bookkeeping ambiguity in **one request out of 102**.
+
+**THE RECOVERY, and it is a durable procedure:** the tree survives the campaign's verdict, so score it
+directly with the campaign's OWN recorded seed —
+
+    SEED=$(python3 -c "import json;print(json.load(open('<root>/entrants/<id>/state.json'))['fixture_seed'])")
+    python3 score_sb7.py --tree <root>/entrants/<id>/tree --seed $SEED --json-out out.json
+
+Serial, hermetic, at the advertised port, replaying the recorded seed rather than drawing a fresh one — so
+the number is comparable to the published board. **An INCOMPLETE campaign is not an unscoreable tree.**
+
+**THE HARNESS QUESTION THIS RAISES** (recorded, not acted on): one unresolved request out of 102 voiding a
+finished build is a rule with the wrong blast radius. It exists so an ambiguous spend cannot be
+under-counted, which is right — but it should void the ACCOUNTING, not the RESULT.
+
 ## TWO CLOUD MODELS KILLED BY ONE HARNESS RULE — the terminal-finish-reason guard, 2026-08-29
 
 `seed-2.0-code` (12 of 13 requests) and `laguna-s-2.1` (16 of 17, $0.09, 908k tokens) both died with:
