@@ -370,6 +370,21 @@ planning phases leave slots free by accident. The fleet strip correctly showed t
 was wrong on any dashboard. It was visible ONLY by counting `judge_skipped` by phase — an event nobody had
 ever read.
 
+## THE BURST-GAP FIX (AB) SAVED THIS RUN'S RESEARCH PHASE — measured 2026-08-29 01:18 EEST
+
+`open-coverage-1` went **329 seconds silent** at 21:18:34 after enumerating 145,000 characters. Under the
+OLD rule that is a five-and-a-half minute stall and the judge re-streams — **discarding the entire coverage
+table** it had spent 50 minutes building. `judge_quiet_within_rhythm` fired instead:
+`quiet=329s <= known_gap=338s`. The lane had ALREADY recovered from a 338s gap earlier in its own life, so
+the silence was inside its measured rhythm.
+
+**It then emitted.** `tools=1`, 145,514 chars, done — and the run advanced to SYNTHESIS with two nodes that
+had been idle waiting on it.
+
+Nine characters of margin between the silence and the high-water mark. A literal seconds constant anywhere
+near that number would have been wrong in both directions; the mark is per-call and self-calibrating, which
+is the only reason it fit.
+
 ## [DONE 2026-08-29] AND THE SAME BLINDNESS FOR A STRUCTURED REPLY — `46cc5ff4f`
 
 `owned_block` covers build tasks. A PLANNING lane owns nothing, so it stayed empty and the judge again read
