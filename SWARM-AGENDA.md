@@ -137,7 +137,15 @@ runs several rounds and the gaps arrive in the later ones.
 
 ## Evidence worth acting on
 
-- **QWEN3.8-FLASH / 27B ARE BLOCKED ON THE ENGINE, not on credentials or the guard.** Preflight passes:
+- **WHY: `qwen3.8-flash` IS TWO DAYS OLD (created 2026-08-26) AND THE SEALED BINARY IS FROM 2026-08-25.**
+  The engine cannot know a model that did not exist when it was compiled, so it falls back to the generic
+  OpenAI shape. Live Token Plan roster, 12 models, newest first: qwen3.8-flash (08-26),
+  qwen-audio-3.0-realtime-plus (08-05), qwen3.8-max (08-03), deepseek-v4-flash-0731 (07-31),
+  qwen-audio-3.0-tts-plus (07-28), glm-5.2 (06-16), qwen3.7-plus (06-07), qwen3.7-max (05-21),
+  wan2.7-image-pro, wan2.7-image, qwen3.6-flash, deepseek-v4-pro (05-19).
+  **`qwen3.8-27b` IS NOT ON THIS ROSTER AT ALL** — there is no 27B under the Token Plan. And `qwen-flash`,
+  which alibaba.json does list, is not served either: that definition is stale against the live plan.
+- **QWEN3.8-FLASH IS BLOCKED ON THE ENGINE, not on credentials or the guard.** Preflight passes:
   the roster PROVES `qwen3.8-flash` exists under the Token Plan, the keychain credential reads without a
   prompt, ports are free, the website entrants are registered. The SMOKE fails:
   `Qwen request 0 violates Chat contract: max_completion_tokens, enable_thinking, preserve_thinking,
