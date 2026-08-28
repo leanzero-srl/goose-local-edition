@@ -8797,6 +8797,55 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
     }
 
     #[test]
+    /// The ETA token must never become the direction.
+    ///
+    /// Added as a labelled token so the positional free-segment parse would be undisturbed — and then
+    /// not removed from the segments, so it survived the `is_token` filter and became ESTABLISHED or
+    /// NEXT. MEASURED live within hours: workers received nudges whose entire text was `ETA=0m`.
+    fn the_eta_token_never_becomes_the_direction() {
+        let o = parse_judge_reply(
+            "LOOPING|HIGH|it has re-run one command 8 times|read the whole handler, not 25 lines\nETA=8m",
+        );
+        assert_eq!(parse_judge_eta_mins("ETA=8m"), Some(8));
+        assert!(
+            !o.next_action.contains("ETA"),
+            "ETA leaked into NEXT: {:?}",
+            o.next_action
+        );
+        assert!(
+            !o.established.contains("ETA"),
+            "ETA leaked into ESTABLISHED: {:?}",
+            o.established
+        );
+        assert!(o.next_action.contains("read the whole handler"));
+
+        // The pathological shape actually observed: the judge answered with nothing BUT an ETA.
+        let bare = parse_judge_reply("LOOPING|HIGH|ETA=0m");
+        assert!(
+            !bare.next_action.contains("ETA"),
+            "a reply carrying only an ETA must not yield 'ETA=0m' as the direction, got {:?}",
+            bare.next_action
+        );
+
+        // Inline on the same segment, and the ':' spelling.
+        let inline = parse_judge_reply("DRIFTING|HIGH|est|fix the do_GET routing ETA: 5m");
+        assert!(
+            !inline.next_action.contains("ETA"),
+            "{:?}",
+            inline.next_action
+        );
+        assert!(inline.next_action.contains("do_GET"));
+
+        // A word merely CONTAINING eta must survive — "metadata", "beta".
+        let word = parse_judge_reply("DRIFTING|HIGH|est|update the beta metadata table");
+        assert!(
+            word.next_action.contains("beta metadata"),
+            "{:?}",
+            word.next_action
+        );
+    }
+
+    #[test]
     /// The judge's own words must never become a verdict about the judge.
     ///
     /// `upper.contains("RESTART")` scanned the whole reply, hint included. The hint is exactly where the
@@ -24405,7 +24454,26 @@ fn parse_judge_reply(s: &str) -> JudgeOutcome {
                 | "LOW"
         )
     };
-    let free: Vec<&str> = s
+    // STRIP THE ETA TOKEN BEFORE ANYTHING ELSE READS THE SEGMENTS.
+    //
+    // I added `ETA=<n>m` to the judge contract tonight as a labelled token, precisely so it would not
+    // disturb the positional free-segment parse — and then did not remove it from the segments. It is
+    // not in `is_token`, so it survived the filter, became a free segment, and therefore became
+    // ESTABLISHED or NEXT. MEASURED within hours, live: nudges delivered to workers reading, in full,
+    // `ETA=0m`, `ETA=5m`, `ETA=45m`, and `Complete rating all defects and deliver the final verdict
+    // list\nETA=5m`. A direction that says only how long something will take is not a direction, and it
+    // was going out as one.
+    let without_eta: String = s
+        .lines()
+        .map(|l| match l.to_uppercase().find("ETA") {
+            Some(i) if l[i + 3..].trim_start().starts_with([':', '=']) => {
+                l[..i].trim_end().to_string()
+            }
+            _ => l.to_string(),
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    let free: Vec<&str> = without_eta
         .split('|')
         .map(|h| h.trim())
         .filter(|h| !h.is_empty() && !is_token(h))
