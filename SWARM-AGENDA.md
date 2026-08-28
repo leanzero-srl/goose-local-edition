@@ -137,6 +137,14 @@ runs several rounds and the gaps arrive in the later ones.
 
 ## Evidence worth acting on
 
+- **LENS 3, measured this run — one fix works, one did not.** Abandoned judge probes: 213 on one lane
+  before, 1 worst-lane / 2 total now — the storm fix WORKS. But coverage lanes were still judged `looping`
+  at produced_since_last_look 4000 and 4001, because the recurrence sentence asserted "a healthy advancing
+  call measures under 5%" — a prose threshold applied to a TABLE, which measures high by construction. A
+  model choosing between a deterministic detector with a stated healthy range and a paragraph of
+  reassurance believes the detector. Fixed by removing the verdict from the measurement and pointing the
+  judge at whether the repeats ADVANCE.
+
 - **RUN KILLED 12:40Z — `-KILLED-review-cannot-converge-1240` — and the reason is a fixed defect not yet
   in the binary.** REVIEW rounds 1 and 2 each reported the SAME defects in different words and both logged
   `repeated: 0`, because the cross-round de-dupe is a 120-char lowercase PREFIX comparison. The stop rule
