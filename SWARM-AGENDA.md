@@ -654,7 +654,7 @@ runs several rounds and the gaps arrive in the later ones.
       pinned by a test.
       LESSON WORTH KEEPING: a fix shipped is not a fix proven. This one had a comment explaining the
       failure it prevented, and still failed within hours on a case the comment did not consider.
-- [ ] **AB. THE JUDGE IS RE-STREAMING CALLS THAT ARE MERELY BETWEEN BURSTS — measured 2026-08-28, and it
+- [x] **AB. DONE AND MEASURED LIVE 2026-08-28 23:44 EEST — THE JUDGE WAS RE-STREAMING CALLS THAT ARE MERELY BETWEEN BURSTS — measured 2026-08-28, and it
       is costing this run its REVIEW phase.** These models do not stream evenly: they emit in ~2000/4000
       character BURSTS with quiet gaps between. The judge looks during a gap, sees
       `produced_since_last_look` of 1..9, calls LOOPING, and re-streams — discarding everything the call
@@ -674,6 +674,22 @@ runs several rounds and the gaps arrive in the later ones.
       trips it because its silence grows without bound.
       Confirms the earlier note "OPEN LANES STALL NEAR ROUND NUMBERS ... looks like a provider-side buffer
       or chunk edge" — it is, and the round numbers (4001/4002/4003/4009) are the giveaway.
+      **PROOF, from the live run's own log** (`swarm-3node-r0/run.jsonl`, 52 looks):
+        `judge_nudge` delivery = **{'steer': 5}** — five nudges, FIVE steers, **zero re-streams**.
+        Before the fix the same shape measured **12 nudges, 12 re-streams, 0 steers**.
+        `judge_quiet_within_rhythm` fired **twice**, and each firing is a re-stream that did not happen:
+          20:28:33 open-coverage-1            quiet=93s <= known_gap=338s
+          20:32:31 slice-frontend-structure-s quiet=90s <= known_gap=144s
+        Both silences would have read as LOOPING under the old rule. The gap high-water mark is per-call
+        and self-calibrating, so there is no literal seconds constant anywhere in it, and a genuinely dead
+        socket still trips because its silence grows without bound while the mark stops rising.
+        `judge_skipped` = **0** (BUILD previously ran 45% unsupervised).
+      **DETECTOR SHIPPED IN THE SAME PASS:** `tick.py` now prints `RE-STREAMS PREVENTED (burst-gap): N`
+      with the last four firings, and prints `0  <-- calibration never engaged, check it` when a run has
+      nudges but no firings. A fix with no counter is a fix that silently regresses.
+      **TRAP:** the event key is `task_id`, not `task`. My ad-hoc reader used `task` and printed `?` for
+      every lane — the instrument lied, not the engine. Read the emission site before believing a null.
+
 - [x] **AC. DONE — THE QUEUED MESSAGE NOW LANDS MID-GENERATION, and steer is the default delivery again.**
       Mihai, twice: *"the queued message is a must"*, and *"is the judge not offering partial incremental
       nudges? instead is it just restarting? this should not be the case."* He was exactly right.
