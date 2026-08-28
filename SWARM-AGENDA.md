@@ -206,6 +206,12 @@ runs several rounds and the gaps arrive in the later ones.
       UNBLOCK: add an Alibaba key as BYOK at https://openrouter.ai/settings/integrations — that gives
       dedicated rate limits AND keeps OpenRouter's request shape, so it also sidesteps the Token Plan
       contract problem that blocked the direct Alibaba route.
+- **STANDING DECISION 2026-08-28 ~16:20Z — 27b r2 RUNS TO COMPLETION. Do not stop it.** Mihai: *"let it
+  continue please"*, after being shown the evidence that it is 42 min in with an empty tree, 10 tool calls
+  frozen >10 min, and the application being composed inside its reasoning channel. The tick will keep
+  printing REASONING BUT NOTHING LANDING and ACTIONS FROZEN — **those flags are now EXPECTED on this
+  entrant and are NOT grounds to act.** A later tick must not stop it on its own initiative; report only.
+  It is uncapped and costing ~$0.19, so time is the only thing at stake.
 - [ ] **R. qwen3.8-27b via OpenRouter — LIVE from 14:3xZ**, `cloud-sb7-orqwen27b-20260828-r1`, cap $8,
       projected ~$6. 11 endpoints / 8 healthy, so it fails over cleanly — the reason it runs where flash
       cannot. Their context limits differ (65,500 → 1,000,000), so the manifest declares the FLOOR of the
