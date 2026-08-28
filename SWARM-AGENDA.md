@@ -336,7 +336,17 @@ runs several rounds and the gaps arrive in the later ones.
       **RISK: 5 of the 6 have exactly ONE endpoint** (only ling-3.0-flash has 2), which is the qwen-flash
       shape — no failover, and one upstream 429 is terminal at zero retries. Expect at least one re-run.
       All six support tool calling and carry 262k-1M context, so none is disqualified on capability.
-- [ ] **Y. QUEUED MESSAGES CANNOT INTERRUPT A GENERATION — Mihai's concern, CONFIRMED IN CODE, and it is
+- [ ] **Y. DECIDED: NOT IMPLEMENTING. Diagnosis stands; the change does not belong to me.**
+      This is not a confidence problem — I am confident in both the diagnosis and the fix shape. It is a
+      SCOPE problem. `Agent::steer` is `crates/goose/src/agents/agent.rs`, so changing when a queued
+      message lands changes behaviour for EVERY goose session, not the swarm. The current behaviour is
+      PINNED BY TWO TESTS that assert it deliberately
+      (`test_steer_does_not_interrupt_in_flight_generation`,
+      `test_steer_never_lands_on_a_nonterminating_generation`), so implementing it means deleting tests
+      that exist to say "this is intended" — that is a product decision about how goose behaves for all
+      users, and Mihai should make it, not me inside a swarm campaign. The swarm judge already has the
+      two-mode delivery and is unaffected. Original finding follows.
+      ORIGINAL: **QUEUED MESSAGES CANNOT INTERRUPT A GENERATION — Mihai's concern, CONFIRMED IN CODE, and it is
       a CORE AGENT issue, not a swarm one.** *"I am not sure how well queued messages work in goose right
       now but it's a must for them to work well as an agent."* He is right.
       THE MECHANISM: `Agent::steer` (agent.rs:506) ONLY enqueues onto `pending_steers`. There is ONE
@@ -359,6 +369,15 @@ runs several rounds and the gaps arrive in the later ones.
       every goose session, not just swarm. Cancelling mid-tool-call also aborts in-flight tool futures;
       `fix_messages` repairs the pairing but whether every provider accepts the repaired history is not
       determinable from code. NOT implemented unilaterally — Mihai's call.
+- [ ] **Z. DECIDED: NOT IMPLEMENTING the `live_fleet_slots` node RE-ADD.** A node absent at boot that
+      returns mid-run stays idle through RESEARCH/REVIEW/TEST/FIX. Real, but: it needs the CONFIGURED
+      device list, and `live_fleet_slots(devices)` is fed a function PARAMETER — the full config is not in
+      scope at either call site (swarm.rs:27161, :38351), so the fix is threading a second list through
+      the planning signature and its caller. Against that: the scenario needs a node to be down at boot
+      AND to come back mid-run, and the probe-failure fallback would then have to distinguish "config" from
+      "boot pool" or a failed `lms` probe would dispatch to a permanently dead node — WORSE than the bug.
+      Departure is already handled (`is_cloud`-exempt residency filter). Revisit only if a node actually
+      rejoins mid-run and is measured sitting idle.
 - [ ] **D. Dead-code sweep — DEFERRED UNTIL NO LOCAL RUN IS LIVE.** `cargo clippy` starves the fleet:
       with the sweep running, judge probe latency went 16s -> 18s -> 27s -> **117s**, clippy-driver at
       55%+30% CPU. I was degrading my own run to tidy code. Ordering also matters and cost one aborted
