@@ -171,6 +171,16 @@ runs several rounds and the gaps arrive in the later ones.
       restrictions and data policy." A per-request `provider.data_collection: "allow"` does NOT override
       it. Needs a toggle at https://openrouter.ai/settings/privacy. `deepseek/deepseek-v4-flash` works
       today and is the fallback he authorised ("or a version that works for this").
+- [x] **T. DONE — a node no longer renders as WORKING on an engine claim alone.** Mihai saw gabee showing
+      "Review 1 · working" with a live nudge quoted under it while `lms ps` reported all three nodes IDLE.
+      Cause: `deriveFleet` populated `workingByDevice` from `laneSources` where `status === 'running'`
+      with NO corroboration of any kind, so a lane the engine opened and never closed — re-streamed 13
+      times, its stream gone — stayed working for as long as the panel was open. The digest path beside it
+      already had freshness guards; the lane path had none. Now the claim is demoted only when BOTH
+      independent signals disagree: LM Studio is reporting fleet state at all AND does not list the node,
+      AND the digest is stale past the open-call window. No timer was added — each signal alone has
+      wrongly demoted a working node before (mtime mid-shell-call; `busyNodes` is empty for a cloud
+      device, which never appears in `lms ps`). 5 tests pin every branch including both keep-it cases.
 - [ ] **D. Dead-code sweep — DEFERRED UNTIL NO LOCAL RUN IS LIVE.** `cargo clippy` starves the fleet:
       with the sweep running, judge probe latency went 16s -> 18s -> 27s -> **117s**, clippy-driver at
       55%+30% CPU. I was degrading my own run to tidy code. Ordering also matters and cost one aborted

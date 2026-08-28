@@ -60,6 +60,50 @@ describe('deriveFleet — every pool node renders; idle is a state, never absenc
     expect(workingByDevice.has('workhorse')).toBe(false);
   });
 
+  describe('a running lane is a CLAIM — LM Studio and the digest get to disagree', () => {
+    // gabee rendered "Review 1 · working", with a nudge quoted under it, while `lms ps` showed all
+    // three nodes IDLE. Its lane had been re-streamed 13 times and the stream was gone; nothing ever
+    // closed the lane, so the claim stood forever.
+    const deadLane = (over: Partial<Parameters<typeof deriveFleet>[0]> = {}) =>
+      deriveFleet({
+        pool: ['gabee', 'mihai'],
+        laneSources: [lane('gabee', 'running')],
+        digests: { 't-gabee': { calls: [{ ok: true }] } },
+        digestMtimes: { 't-gabee': 0 },
+        now: 10 * 60_000,
+        busyNodes: ['mihai'],
+        ...over,
+      });
+
+    it('drops the claim when LM Studio says the node is not busy AND the digest is stale', () => {
+      expect(deadLane().workingByDevice.has('gabee')).toBe(false);
+    });
+
+    it('keeps it when LM Studio still reports that node busy — the digest alone may not demote', () => {
+      expect(deadLane({ busyNodes: ['gabee', 'mihai'] }).workingByDevice.has('gabee')).toBe(true);
+    });
+
+    it('keeps it when the digest is fresh, even though the node is not in busyNodes', () => {
+      expect(
+        deadLane({ digestMtimes: { 't-gabee': 10 * 60_000 - 1_000 } }).workingByDevice.has('gabee')
+      ).toBe(true);
+    });
+
+    it('keeps it when nothing is reporting fleet state — a cloud node never appears in lms ps', () => {
+      expect(deadLane({ busyNodes: [] }).workingByDevice.has('gabee')).toBe(true);
+      expect(deadLane({ busyNodes: undefined }).workingByDevice.has('gabee')).toBe(true);
+    });
+
+    it('keeps it while a tool call is open, which legitimately streams nothing for minutes', () => {
+      expect(
+        deadLane({
+          digests: { 't-gabee': { calls: [{ ok: null }] } },
+          digestMtimes: { 't-gabee': 10 * 60_000 - 5 * 60_000 },
+        }).workingByDevice.has('gabee')
+      ).toBe(true);
+    });
+  });
+
   it('keeps a lane device the pool missed', () => {
     const { devices } = deriveFleet({
       pool: ['gabee'],
