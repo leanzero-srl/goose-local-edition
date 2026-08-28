@@ -27331,6 +27331,13 @@ impl GooseAgentDispatcher {
              4. Does anything wait on a test, rather than on code it needs?\n\
              5. Which dependencies are not strictly required for the dependent's file to compile or run?\n\
              6. Is any task much larger than the others?\n\
+             6b. DO TWO TASKS OWN THE SAME FILE? Say which, and give the file to exactly ONE of them. \
+             MEASURED: `viz-scene-rendering` and `viz-camera-picking-interaction` both owned \
+             `web/viz.js`. The scheduler serialised them, the first wrote the whole file, and the second \
+             ran with nothing left to do and completed having made ZERO tool calls. It survived only \
+             because the first task happened to implement BOTH halves — had it written only its own, the \
+             camera and picking work would have been silently absent, or overwritten. A file has one \
+             owner; the other task either gets its own file or is merged into the owner.\n\
              7. Do the file paths match the layout already on disk? The manifest below IS that \
              layout — answer from it, not from the filesystem.\n\n\
              Then return a PATCH — only the tasks that must change:\n\
