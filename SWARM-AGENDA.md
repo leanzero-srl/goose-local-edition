@@ -120,6 +120,14 @@ runs several rounds and the gaps arrive in the later ones.
 
 ## Evidence worth acting on
 
+- **RESEARCH BRIEFS ARE SUBSTANTIAL (11:58:09Z, 1564s).** brief_chars = [5073, 5808, 6995, 5971, 15292,
+  8110, 5838, 7123, 5512, 11256, 3530, 23059, 7442] — all 13, min 3,530. The historical failure was a
+  122-char brief scoring 42.7% where a 1,497-char spec scored 88.7%. The DETAIL-fan deletion is vindicated.
+- **REPAIR'S FOUR DEFECTS, all pre-existing, all fixed in source (0a5d4e8c1 + the spec fix):** the fix
+  worker's done-condition was already true before it started (verify_recipe cannot see TEST-fan, DOM, CSS,
+  HTTP or spec-contract findings); criticals were computed then went OUT OF SCOPE before the wave; the
+  benchmark proxy bought rounds forever; and the fix worker never saw the request. None needed a cap.
+
 - **THE DECOMPOSITION PROBLEM IS SOLVED (11:29:59Z, first verified sb-7 run).** 13 slices in 1181s:
   boot-contract, vendor-sync, **event-ledger-outbox**, **webhook-handling**, **approval-workflow**,
   ledgerd-api, **notifierd-service**, frontend-html, frontend-css, frontend-app-js, **decisions-docs**,
