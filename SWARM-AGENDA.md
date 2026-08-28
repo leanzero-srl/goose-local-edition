@@ -56,6 +56,10 @@ Make the swarm BUILD BETTER SOFTWARE on local models, then beat the published `b
   work LANDS: glm turned 112 calls into 14 files; the 27b episode had 10 calls and an empty tree. The tick
   flags a RUNNING entrant with substantial reasoning and an EMPTY TREE. It only warns; it terminates
   nothing.
+- **`lms ps` HAS THREE STATES, NOT TWO — `PROCESSINGPROMPT` IS BUSY.** MEASURED 2026-08-28: the tick
+  printed "0 generating / 0 idle / 3 nodes" while ALL THREE nodes were prompt-processing at a phase
+  boundary — a fully busy fleet reading as a dead one, which is a kill-checkpoint input. Counting only
+  GENERATING and IDLE is the same neighbouring-question mistake as the rest of this section.
 - **THE FLEET LINE MUST REPORT THE TOTAL, NOT JUST THE SPLIT.** MEASURED 2026-08-28: the tick printed
   "1 generating / 1 idle" for a fleet that had THREE nodes — one row was transiently absent from `lms ps`
   and nothing in the line said so, so a two-node fleet read as normal. A node missing from `lms ps` is
