@@ -128,6 +128,19 @@ runs several rounds and the gaps arrive in the later ones.
 
 ## Evidence worth acting on
 
+- **RUN KILLED 12:40Z — `-KILLED-review-cannot-converge-1240` — and the reason is a fixed defect not yet
+  in the binary.** REVIEW rounds 1 and 2 each reported the SAME defects in different words and both logged
+  `repeated: 0`, because the cross-round de-dupe is a 120-char lowercase PREFIX comparison. The stop rule
+  is "a round with no NEW finding", so a reviewer that rephrases can never satisfy it. Round 3 ran 19
+  minutes. Verified with a positive control that none of the four completion-critical fixes were in the
+  running binary: ALREADY REPORTED, DUPLICATE <n>, the fix worker's real done-condition, and the
+  advertised surface. Letting it run would have re-proved the old REPAIR does not finish — which nine
+  runs already established.
+- **WHAT THAT RUN PROVED BEFORE IT DIED, and it is a lot:** 13 correct slices naming the request's own
+  components; coverage 49 components / 0 unowned; all 13 briefs substantial (3,530-23,059 chars);
+  SYNTHESIS produced a DAG; the fanned REVIEW ran on 3 nodes; judge probe accounting fully balanced. Every
+  phase before REPAIR now works. The remaining unknown is BUILD onward.
+
 - **RESEARCH BRIEFS ARE SUBSTANTIAL (11:58:09Z, 1564s).** brief_chars = [5073, 5808, 6995, 5971, 15292,
   8110, 5838, 7123, 5512, 11256, 3530, 23059, 7442] — all 13, min 3,530. The historical failure was a
   122-char brief scoring 42.7% where a 1,497-char spec scored 88.7%. The DETAIL-fan deletion is vindicated.
