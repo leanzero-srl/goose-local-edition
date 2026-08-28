@@ -16688,6 +16688,10 @@ impl GooseAgentDispatcher {
             .map(|rate| std::time::Duration::from_secs_f64(prompt_chars as f64 / 4.0 / rate))
             .unwrap_or_default();
         let mut first_event_seen = false;
+        // Worker events that arrived while a judge look was in flight, and whether the call finished
+        // during one. See the judge probe below: the supervisor races the stream instead of blocking it.
+        let mut deferred_events = std::collections::VecDeque::new();
+        let mut stream_ended_during_probe = false;
         // Coalesce the activity-digest write: it used to fire once per stream event (≈ per token) — thousands of
         // blocking fs::write + JSON serializes per task × N nodes. Refresh at most ~2.5x/s; a guaranteed final
         // write after the loop keeps the terminal state exact. Every consumer polls slower (judge 15s, panel ≤10Hz).
@@ -17167,7 +17171,53 @@ impl GooseAgentDispatcher {
                 // and reqwest's inactivity timeout is what ends a dead one. A 45s ceiling here cut a
                 // supervisor that was merely slow on a loaded fleet — and an unsupervised worker is
                 // exactly the state this whole design exists to prevent.
-                let probe = Box::pin(self.run_agent(&pm, sys, user, None, 1, &[], 0, None)).await;
+                self.events.write_value(serde_json::json!({
+                    "event": "judge_look_dispatched",
+                    "task_id": activity_key,
+                    "look": omni_looks,
+                    "thinking_chars": thinking_chars,
+                }));
+                // THE SUPERVISOR MUST NEVER STALL THE SUPERVISED.
+                //
+                // MEASURED, run swarm-3node-r0 (archived -KILLED-review-3h-silent-1036): look 8 was
+                // emitted at 07:40:21 with thinking_chars 13733 and verdict ok, on a REVIEW call that was
+                // producing healthily — 4,003 then 4,004 chars between looks. The 5-minute cost backoff
+                // came due at ~07:45:21, look 9 dispatched THIS call, and it never returned. The engine
+                // then emitted nothing for 2h56m, two of three nodes idle, and the worker's thinking_chars
+                // stayed frozen at exactly 13733 — the value look 8 had recorded. `judge_look` is written
+                // AFTER this await, so the supervisor died silently while supervising and the log showed
+                // a run that had simply stopped.
+                //
+                // The bug is not the missing deadline. Restoring one would re-create the defect the
+                // comment above records (a 45s ceiling cutting a supervisor that was merely slow), and a
+                // clock may never CUT a call. The bug is that the judge is awaited SERIALLY inside the
+                // stream loop it watches, so its latency is charged to the worker.
+                //
+                // So race it against the worker's own stream. Events that arrive while the judge is
+                // reading are deferred and processed the moment it returns, so nothing is lost and the
+                // provider socket keeps being read. And if the worker FINISHES while the judge is still
+                // out, the look is abandoned rather than the result: a completed call must never be held
+                // hostage to an opinion about it. That alone would have let round 3 finish and the run
+                // continue.
+                let probe = {
+                    let mut probe_fut =
+                        Box::pin(self.run_agent(&pm, sys, user, None, 1, &[], 0, None));
+                    loop {
+                        tokio::select! {
+                            biased;
+                            r = &mut probe_fut => break r,
+                            e = stream.next() => match e {
+                                Some(ev) => deferred_events.push_back(ev),
+                                None => {
+                                    stream_ended_during_probe = true;
+                                    break Err(anyhow!(
+                                        "the call finished while the judge was still reading it — look abandoned"
+                                    ));
+                                }
+                            }
+                        }
+                    }
+                };
                 if let Ok(o) = probe {
                     // CORROBORATION, not a single verdict. MEASURED across four fires — 1,200 / 1,201 /
                     // 3,759 / 4,003 reasoning chars — the judge returns LOOPING on its FIRST look almost
@@ -17475,13 +17525,24 @@ impl GooseAgentDispatcher {
             // break and do not touch the call — we fall through to the judge-look trigger below with
             // whatever the call has produced, and go straight back to awaiting. The judge decides, as it
             // is supposed to; the clock only makes sure it is asked.
-            let ev = match tokio::time::timeout(JUDGE_WAKE, stream.next()).await {
-                Ok(Some(ev)) => {
-                    first_event_seen = true;
-                    Some(ev)
+            // Anything the worker produced while the judge was reading it comes first, in order, before
+            // the socket is touched again. `stream_ended_during_probe` records that the call already
+            // finished, so once the backlog is drained the loop leaves rather than awaiting a closed
+            // stream.
+            let ev = if let Some(ev) = deferred_events.pop_front() {
+                first_event_seen = true;
+                Some(ev)
+            } else if stream_ended_during_probe {
+                break;
+            } else {
+                match tokio::time::timeout(JUDGE_WAKE, stream.next()).await {
+                    Ok(Some(ev)) => {
+                        first_event_seen = true;
+                        Some(ev)
+                    }
+                    Ok(None) => break,
+                    Err(_) => None,
                 }
-                Ok(None) => break,
-                Err(_) => None,
             };
             let Some(ev) = ev else {
                 continue;
