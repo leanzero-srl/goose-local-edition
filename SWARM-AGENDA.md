@@ -262,7 +262,14 @@ runs several rounds and the gaps arrive in the later ones.
       last 24k chars, which is why the screenshot starts at item 25 rather than item 1. The clip exists
       because the digest is REWRITTEN on a hot timer, so it cannot simply grow. The right fix is an
       append-only per-task transcript the modal reads instead of the digest — not a bigger number.
-- [ ] **W. OPEN'S WALL-CLOCK — Mihai's question, awaiting HIS decision. Do not change it unilaterally.**
+- [x] **W. DONE — Mihai chose (C): COVERAGE MOVED OFF THE CRITICAL PATH.** It now runs CONCURRENTLY with
+      ASK and RESEARCH instead of ahead of them. The fleet researches the slices the opener already found
+      while coverage keeps reading for the ones it missed; the task is joined just before SYNTHESIS (which
+      cannot wire a slice with no brief) and any late slice is researched then, at the SAME depth with the
+      SAME tools — a component found late is still one the request named, and a thin brief would give back
+      exactly what coverage was built to win. Only the WAIT moved; none of the work was dropped. Still a
+      patch loop ending the first time it adds nothing, still no round ceiling. New event
+      `coverage_late_slices` so the next run can be measured rather than assumed. Was:
       *"how did we end up from my idea of opener with one model doing something to an opener that lasts
       over 40 min? … at some point we were having everything up to integrate in probably an hour max."*
       THE HONEST ANSWER, from the commits:
