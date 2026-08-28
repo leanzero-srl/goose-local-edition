@@ -32,6 +32,7 @@ Make the swarm BUILD BETTER SOFTWARE on local models, then beat the published `b
 | the join task is not named `integrate-verify`, or owns files | `plan_loaded.tasks[]` |
 | any task dispatches with a one-line description | `plan_loaded.tasks[].description` length |
 | anything at all is stopped by a clock | any `agent stalled` text |
+| a judge look hung | `judge_look_dispatched` with no matching `judge_look` for that task_id |
 
 ## DONE (committed on `local-edition`)
 
@@ -43,9 +44,11 @@ Make the swarm BUILD BETTER SOFTWARE on local models, then beat the published `b
 
 ## TODO — in order. Check items off IN THIS FILE as they land.
 
-- [ ] **A. REVIEW wedge** (killed run `-KILLED-review-3h-silent-1036`). REVIEW round 3 ran 3h06m,
-      emitted no event, two nodes idle, thinking frozen at 13,733. Root-cause it and fix. This is the
-      blocker for the next run.
+- [x] **A. REVIEW wedge — FIXED.** Root cause: the judge's own model call was `.await`ed serially inside
+      the stream loop it supervises, and `judge_look` is emitted AFTER it, so a hung supervisor froze the
+      worker and logged nothing. The probe now races the stream; deferred events drain in order; a call
+      that finishes while the judge is out abandons the look, not the result. Detector shipped:
+      `judge_look_dispatched` before the call — a dispatched with no matching `judge_look` = hung judge.
 - [ ] **B. Virtual nodes** — a Node is a slot that picks a PROVIDER + MODEL.
       Settings > Swarm > Nodes. Node A picks a provider; LM Studio populates from loaded models; cloud
       providers must be configured first to appear. `+` adds Node B, C… Each node independently chooses.
