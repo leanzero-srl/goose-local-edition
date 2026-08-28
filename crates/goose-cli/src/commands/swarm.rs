@@ -9008,27 +9008,62 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
                      2. CRITICAL — the app will not start — FILES: `b.py`\n\
                      3. MINOR — an edge case — FILES: `c.py`";
         let v = parse_rating_reply(reply, 3);
-        assert!(!v[0].0, "defect 1 is MINOR");
+        assert!(!v[0].critical, "defect 1 is MINOR");
         assert!(
-            v[1].0,
+            v[1].critical,
             "defect 2 is the CRITICAL one and must not have shifted"
         );
-        assert!(!v[2].0, "defect 3 is MINOR");
-        assert_eq!(v[1].1, vec!["b.py"], "its files must travel with it");
+        assert!(!v[2].critical, "defect 3 is MINOR");
+        assert_eq!(v[1].files, vec!["b.py"], "its files must travel with it");
 
         // A reply that numbers NOTHING still parses positionally — the fallback must survive.
         let unnumbered = "MINOR — cosmetic\nCRITICAL — will not start\nMINOR — edge case";
         let u = parse_rating_reply(unnumbered, 3);
         assert_eq!(
-            (u[0].0, u[1].0, u[2].0),
+            (u[0].critical, u[1].critical, u[2].critical),
             (false, true, false),
             "an unnumbered reply must still map in order"
         );
 
         // A defect nobody rated stays CRITICAL — never more permissive than the old all-or-nothing.
         let short = parse_rating_reply("1. MINOR — only the first", 3);
-        assert!(!short[0].0);
-        assert!(short[1].0 && short[2].0, "unrated defects stay critical");
+        assert!(!short[0].critical);
+        assert!(
+            short[1].critical && short[2].critical,
+            "unrated defects stay critical"
+        );
+    }
+
+    /// THREE TESTERS, ONE BROKEN THING. The TEST fan runs three angles over the same app, so one defect
+    /// is routinely reported three ways. `dedupe_findings_exact` only catches IDENTICAL text, so the
+    /// near-misses each became their own shard repairing the same cause, and every later round
+    /// re-reported all of them. The rater is the only party that reads every defect together.
+    #[test]
+    fn a_duplicate_is_recorded_as_one_not_rated_twice() {
+        let out = "1. CRITICAL — payments table renders nothing — FILES: `web/app.js`\n\
+                   2. DUPLICATE 1 — same empty table, different angle — FILES: `web/app.js`\n\
+                   3. MINOR — header wording is off — FILES: `web/index.html`";
+        let v = parse_rating_reply(out, 3);
+        assert_eq!(v[0].duplicate_of, None);
+        assert_eq!(v[1].duplicate_of, Some(0), "defect 2 restates defect 1");
+        assert_eq!(v[2].duplicate_of, None);
+        // A duplicate line names a severity in its own words; reading THAT as the verdict would rate the
+        // restatement instead of recording it.
+        assert!(!v[1].critical, "a duplicate is not separately critical");
+        assert!(v[0].critical);
+    }
+
+    /// A defect may not defer to itself or to a LATER one — two lines each pointing at the other would
+    /// erase a real defect between them.
+    #[test]
+    fn a_duplicate_may_only_point_backwards() {
+        let v = parse_rating_reply(
+            "1. DUPLICATE 2 — points forward — FILES: `a.py`\n2. CRITICAL — the real one — FILES: `a.py`",
+            2,
+        );
+        assert_eq!(v[0].duplicate_of, None, "forward reference must be ignored");
+        let self_ref = parse_rating_reply("1. DUPLICATE 1 — points at itself — FILES: `a.py`", 1);
+        assert_eq!(self_ref[0].duplicate_of, None);
     }
 
     #[test]
@@ -25619,7 +25654,7 @@ impl GooseAgentDispatcher {
         // never asked. A model that can tell a CRITICAL from a MINOR can tell you that "--db pointing at
         // a directory crashes" lives in __main__.py and store.py — the TEST fan's own defects name their
         // files correctly and this is the same judgement on the findings that do not.
-    ) -> Vec<(bool, Vec<String>)> {
+    ) -> Vec<RatedFinding> {
         if findings.is_empty() {
             return Vec::new();
         }
@@ -25637,8 +25672,12 @@ impl GooseAgentDispatcher {
              interface is missing.\n\
              MINOR — the app DOES its job; this is an imperfection. A wrong assertion in a generated test, \
              a cosmetic message, an unhandled edge case the request never named, a style complaint.\n\n\
+             DUPLICATE <n> — this is the SAME DEFECT as defect <n> above, described differently. Two \
+             testers looking from different angles report one broken thing twice; that is expected, and \
+             saying so is worth more than rating it again. Only when it is genuinely the same defect — \
+             two different symptoms of one cause are still two defects.\n\n\
              Answer one line per defect, in order, exactly:\n\
-             `<number>. CRITICAL|MINOR — <six words why> — FILES: <paths>`\n\
+             `<number>. CRITICAL|MINOR|DUPLICATE <n> — <six words why> — FILES: <paths>`\n\
              FILES is where the defect LIVES — the files that must change to fix it. Name them even when \
              the defect text does not: you have read the request and you know what the program is made \
              of. This decides whether one worker repairs three files or reads the whole tree looking for \
@@ -25664,7 +25703,16 @@ impl GooseAgentDispatcher {
             Ok(o) => o.text,
             // A rating we could not get is not licence to ship: unrated defects are CRITICAL, which is
             // exactly the old all-or-nothing behaviour and therefore never worse than before.
-            Err(_) => return findings.iter().map(|_| (true, Vec::new())).collect(),
+            Err(_) => {
+                return findings
+                    .iter()
+                    .map(|_| RatedFinding {
+                        critical: true,
+                        files: Vec::new(),
+                        duplicate_of: None,
+                    })
+                    .collect()
+            }
         };
         parse_rating_reply(&out, findings.len())
     }
@@ -26140,7 +26188,25 @@ impl GooseAgentDispatcher {
 /// holding its own copy of the same logic — and the two drifted within minutes: the fix for the
 /// preamble shift landed in the copy, the test went green, and production kept the bug. A test that
 /// mirrors the code it is testing passes for the wrong reason, which is worse than having none.
-fn parse_rating_reply(out: &str, count: usize) -> Vec<(bool, Vec<String>)> {
+/// One defect's triage: how bad, where it lives, and whether it is the same thing as an earlier one.
+#[derive(Clone, Debug, PartialEq)]
+struct RatedFinding {
+    critical: bool,
+    files: Vec<String>,
+    /// Zero-based index of the defect this one merely restates, when the rater says so.
+    ///
+    /// Three testers exercise the app from three angles and one broken thing gets reported three times.
+    /// `dedupe_findings_exact` only catches IDENTICAL text, so the near-misses all survived into the fix
+    /// wave — each one becoming its own shard, each shard repairing the same cause, and every later round
+    /// re-reporting all three. The rater is already reading every defect together and is the only party
+    /// that can tell "the page renders no rows" and "the payments table is empty" are one bug.
+    ///
+    /// The model decides. There is no similarity score and no threshold here — that would be exactly the
+    /// deterministic machinery this engine exists without.
+    duplicate_of: Option<usize>,
+}
+
+fn parse_rating_reply(out: &str, count: usize) -> Vec<RatedFinding> {
     // INDEXED BY THE MODEL'S OWN NUMBER, not by the order lines happen to arrive.
     //
     // This pushed one verdict per line containing CRITICAL or MINOR anywhere and the caller zipped
@@ -26148,7 +26214,14 @@ fn parse_rating_reply(out: &str, count: usize) -> Vec<(bool, Vec<String>)> {
     // app CRITICAL.") shifted every severity AND every FILES list by one. A CRITICAL inheriting the
     // previous line's MINOR lands in `minors`, `criticals` empties, and the round prints GREEN.
     // The prompt asks for `<number>. ...`, so honour the number when it is there.
-    let mut verdicts: Vec<(bool, Vec<String>)> = vec![(true, Vec::new()); count];
+    let mut verdicts: Vec<RatedFinding> = vec![
+        RatedFinding {
+            critical: true,
+            files: Vec::new(),
+            duplicate_of: None
+        };
+        count
+    ];
     let mut seen: Vec<bool> = vec![false; count];
     let mut appended = 0usize;
     // IF THE REPLY IS NUMBERED AT ALL, UNNUMBERED LINES ARE PROSE.
@@ -26170,7 +26243,20 @@ fn parse_rating_reply(out: &str, count: usize) -> Vec<(bool, Vec<String>)> {
     for line in out.lines() {
         let l = line.trim();
         let u = l.to_uppercase();
-        let crit = if u.contains("CRITICAL") {
+        // DUPLICATE is checked FIRST: a duplicate line still names a severity in its six words
+        // ("DUPLICATE 2 — same critical render failure"), and reading that as the verdict would rate
+        // the restatement instead of recording it.
+        let dup_of = u.find("DUPLICATE").and_then(|i| {
+            l[i + "DUPLICATE".len()..]
+                .split(|c: char| !c.is_ascii_digit())
+                .find(|t| !t.is_empty())
+                .and_then(|t| t.parse::<usize>().ok())
+                .filter(|n| *n >= 1 && *n <= count)
+                .map(|n| n - 1)
+        });
+        let crit = if dup_of.is_some() {
+            false
+        } else if u.contains("CRITICAL") {
             true
         } else if u.contains("MINOR") {
             false
@@ -26192,7 +26278,14 @@ fn parse_rating_reply(out: &str, count: usize) -> Vec<(bool, Vec<String>)> {
             .map(|n| n - 1);
         match idx {
             Some(i) if !seen[i] => {
-                verdicts[i] = (crit, files);
+                // A defect cannot be a duplicate of ITSELF, and pointing forward would let two lines
+                // each defer to the other and erase a real defect between them.
+                let duplicate_of = dup_of.filter(|d| *d < i);
+                verdicts[i] = RatedFinding {
+                    critical: crit,
+                    files,
+                    duplicate_of,
+                };
                 seen[i] = true;
             }
             // No number, or one already used: fall back to arrival order over the slots still
@@ -26204,7 +26297,11 @@ fn parse_rating_reply(out: &str, count: usize) -> Vec<(bool, Vec<String>)> {
                     appended += 1;
                 }
                 if appended < count {
-                    verdicts[appended] = (crit, files);
+                    verdicts[appended] = RatedFinding {
+                        critical: crit,
+                        files,
+                        duplicate_of: dup_of.filter(|d| *d < appended),
+                    };
                     seen[appended] = true;
                 }
             }
@@ -38928,7 +39025,17 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                 // stops the residue worker owning the whole tree.
                 let mut rated_files: std::collections::HashSet<String> =
                     std::collections::HashSet::new();
-                for (f, (is_crit, files)) in verdict.findings.iter().zip(rated.iter()) {
+                // A DUPLICATE IS NOT A SEPARATE DEFECT. The rater has said this line restates an
+                // earlier one; counting it again would give the same cause two shards in the wave, two
+                // entries in the criticals list, and a re-report every round. `forced` still wins — an
+                // engine product check is a measurement, and a model may not rate a measurement away.
+                let mut deduped = 0usize;
+                for (f, r) in verdict.findings.iter().zip(rated.iter()) {
+                    let (is_crit, files) = (&r.critical, &r.files);
+                    if r.duplicate_of.is_some() && !forced(f) {
+                        deduped += 1;
+                        continue;
+                    }
                     if *is_crit || forced(f) {
                         criticals.push(f.clone());
                     } else {
@@ -39001,7 +39108,23 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                     "engine_forced": verdict.findings.iter().filter(|f| forced(f)).count(),
                     "model_observed": model_observed.len(),
                     "minors": minors,
+                    "deduped": deduped,
                 }));
+                if deduped > 0 {
+                    let keep: Vec<String> = verdict
+                        .findings
+                        .iter()
+                        .zip(rated.iter())
+                        .filter(|(f, r)| r.duplicate_of.is_none() || forced(f))
+                        .map(|(f, _)| f.clone())
+                        .collect();
+                    eprintln!(
+                        "  · {} defect(s) were the same thing said twice — one fix, not {}",
+                        deduped,
+                        deduped + 1
+                    );
+                    verdict.findings = keep;
+                }
                 if criticals.is_empty() {
                     eprintln!(
                         "  {} every critical defect is closed — shipping GREEN with {} known active bug(s)",
