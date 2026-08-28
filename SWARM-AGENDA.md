@@ -155,6 +155,14 @@ and whether any nudge still fires on a call producing >=2000.
   restating the job is the CORRECT thing to say. I was one step from "fixing" a mechanism that was
   working. The tick now prints verdict + produced beside each nudge and flags one that hit a call
   producing >=2000.
+- **`compare_runs.py` SCORES A RUN AGAINST THE 2026-08-28 BASELINE** — decomposition ratio, brief chars,
+  per-phase time, time-to-first-app-file, and the judge's delivery split, each with a +/-% against the
+  baseline. Hand-deriving these is how a comparison becomes an argument.
+  **AN APP FILE MUST LIVE IN A SUBDIRECTORY.** Everything the engine writes lands at the run ROOT --
+  `run.jsonl`, `heartbeat`, `engine-console.log`, and `patch.json`, which is REVIEW's own output. The
+  first cut counted `patch.json` and reported "first app file at 96.1 min" for a run that had built
+  NOTHING. The instrument was about to flatter us; the products the winners built were all `app/…` and
+  `web/…`.
 - **THE TICK NOW READS THE CLOUD RUNS TOO, and the number that matters is WHETHER ANYTHING LANDS.**
   MEASURED 2026-08-28: qwen3.8-27b sat 32 min with 4.7 MB of log and ZERO app files, composing the
   application inside its reasoning channel (`"thinking": " = document.getElementById('"`). Not stuck — it
