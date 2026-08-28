@@ -200,6 +200,27 @@ runs several rounds and the gaps arrive in the later ones.
       trips it because its silence grows without bound.
       Confirms the earlier note "OPEN LANES STALL NEAR ROUND NUMBERS ... looks like a provider-side buffer
       or chunk edge" — it is, and the round numbers (4001/4002/4003/4009) are the giveaway.
+- [x] **AC. DONE — THE QUEUED MESSAGE NOW LANDS MID-GENERATION, and steer is the default delivery again.**
+      Mihai, twice: *"the queued message is a must"*, and *"is the judge not offering partial incremental
+      nudges? instead is it just restarting? this should not be the case."* He was exactly right.
+      MEASURED: **12 nudges, 12 re-streams, 0 steers**, because **128 of 134 looks saw
+      `actions_since_last_look = 0`** — planning calls (OPEN/coverage/REVIEW) are pure reasoning, never
+      reach a turn boundary, so `can_steer` was always false. Re-stream DROPS THE SOCKET and discards the
+      partial: review-3 **27,297 -> 2,004**, review-2 13,291 -> 2,002, review-1 8,640 -> 2,006.
+      TWO HALVES, both landed:
+      (1) `Agent::steer` now notifies the in-flight stream, which stops at its next chunk boundary and
+      KEEPS the partial (the cancelled path already falls through normal persistence). Guarded on
+      `saw_tool_request_in_turn` so it can never orphan a tool request — and a tool call IS a boundary, so
+      waiting there costs nothing.
+      (2) The swarm's `can_steer` drops `acted_since_last_look` and keeps only `pending.is_empty()`.
+      THIS ALSO REPAIRS THE DRIFTING PATH honestly rather than gating it: DRIFTING acts on the FIRST look
+      with no corroboration, justified in the code as costing "one in-session message rather than a dead
+      worker" — true for a steer, FALSE for a re-stream. Caught live re-streaming a call producing 4,001
+      chars. Making steer the default delivery makes that justification true again.
+      NOTE: two core tests assert the OLD behaviour by name and must be REWRITTEN, not silenced —
+      `test_steer_does_not_interrupt_in_flight_generation`,
+      `test_steer_never_lands_on_a_nonterminating_generation`. This supersedes item Y, which I had
+      declined on scope; Mihai made the call.
 - [ ] **Q. qwen3.8-flash — DIRECT TOKEN PLAN, manifest PREFLIGHT-PASSED, BLOCKED ON A CLOUD BINARY THAT
       MUST BE BUILT FROM `codex/salvage-benchmarks`, NOT `local-edition`.**
       MEASURED 2026-08-28: the fresh `local-edition` release binary is REJECTED by the harness —
