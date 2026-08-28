@@ -41,6 +41,16 @@ Make the swarm BUILD BETTER SOFTWARE on local models, then beat the published `b
   the Electron binary only; `Resources/bin/goose swarm run` survived, reparented to launchd, and drove all
   three nodes for ~25 minutes after the window closed. `launch.sh` already had the right patterns — I
   retyped a shorter version instead of calling it. If a procedure exists, CALL IT.
+- **THE TICK NOW READS THE CLOUD RUNS TOO, and the number that matters is WHETHER ANYTHING LANDS.**
+  MEASURED 2026-08-28: qwen3.8-27b sat 32 min with 4.7 MB of log and ZERO app files, composing the
+  application inside its reasoning channel (`"thinking": " = document.getElementById('"`). Not stuck — it
+  had made 10 tool calls — but 2,051 thinking chunks PER tool call where the same model's previous episode
+  averaged 369 and finished with 53 calls. Neither `campaign=RUNNING` nor the spend showed any of it.
+  CALIBRATION, because my first threshold flagged a winner: the RATIO ALONE proves nothing —
+  **glm-5.3-flash PUBLISHED at 41.59% while running 1,223 think/call.** What separates them is whether
+  work LANDS: glm turned 112 calls into 14 files; the 27b episode had 10 calls and an empty tree. The tick
+  flags a RUNNING entrant with substantial reasoning and an EMPTY TREE. It only warns; it terminates
+  nothing.
 - **THE FLEET LINE MUST REPORT THE TOTAL, NOT JUST THE SPLIT.** MEASURED 2026-08-28: the tick printed
   "1 generating / 1 idle" for a fleet that had THREE nodes — one row was transiently absent from `lms ps`
   and nothing in the line said so, so a two-node fleet read as normal. A node missing from `lms ps` is
