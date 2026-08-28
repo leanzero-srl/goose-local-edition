@@ -24999,6 +24999,103 @@ fn open_schema() -> serde_json::Value {
     })
 }
 
+/// A slice id for a component the model named but did not shape into a slice itself. The request's own
+/// vocabulary is kept — `notifierd` stays `notifierd` — because a component renamed into a layer word is
+/// exactly how it stops being findable in the plan.
+fn slugify_slice_id(name: &str) -> String {
+    let mut out = String::new();
+    let mut dash = false;
+    for ch in name.trim().to_lowercase().chars() {
+        if ch.is_ascii_alphanumeric() {
+            out.push(ch);
+            dash = false;
+        } else if !out.is_empty() && !dash {
+            out.push('-');
+            dash = true;
+        }
+    }
+    out.trim_end_matches('-').chars().take(48).collect()
+}
+
+#[derive(serde::Deserialize, Default)]
+pub(crate) struct CoverageComponent {
+    #[serde(default)]
+    name: String,
+    #[serde(default)]
+    named_in_request: String,
+    #[serde(default)]
+    owner_slice_id: String,
+    #[serde(default)]
+    owner_evidence: String,
+    #[serde(default)]
+    slice: Option<OpenSlice>,
+}
+
+/// A coverage row counts as OWNED only when it names a slice that exists AND quotes that slice's own
+/// words. An unquoted claim is the generous match the table exists to catch: asked whether anything owns
+/// webhooks against a list containing `api-backend`, the honest-looking answer is yes.
+fn coverage_row_is_owned(
+    c: &CoverageComponent,
+    known_lowercase_ids: &std::collections::HashSet<String>,
+) -> bool {
+    !c.owner_slice_id.trim().is_empty()
+        && !c.owner_evidence.trim().is_empty()
+        && known_lowercase_ids.contains(&c.owner_slice_id.trim().to_lowercase())
+}
+
+#[derive(serde::Deserialize, Default)]
+pub(crate) struct CoverageOutput {
+    #[serde(default)]
+    components: Vec<CoverageComponent>,
+}
+
+/// COVERAGE returns the whole component -> owner TABLE, not just the gaps.
+///
+/// MEASURED across three runs: coverage was asked to "find the slice that owns" each part of the request
+/// and report what nothing owned. It reported almost nothing missing while the plan was missing webhooks,
+/// an approval workflow, a notifier daemon, an outbox, an event ledger and a 3D field — and the run scored
+/// 0.0023 against a 0.0273 target because most scorer checks came back UNAVAILABLE: the app had no such
+/// surface. Fanning it across the fleet lifted the reading ceiling (1 gap -> 5) but the named components
+/// stayed at 2 of 11, because every gap it found was a refinement of what the plan already had.
+///
+/// The mechanism is generosity, not blindness. Asked "does anything own webhooks?" against a slice list
+/// containing `api-backend`, the honest answer looks like yes. So the enumeration becomes the OUTPUT: the
+/// model must list every component its part names, say which slice owns each, and QUOTE the words in that
+/// slice's objective that prove it. A claim it cannot quote is not ownership. The engine then takes the
+/// unowned rows — it no longer depends on the model volunteering that something is missing.
+fn coverage_schema() -> serde_json::Value {
+    serde_json::json!({
+        "type": "object",
+        "required": ["components"],
+        "properties": {
+            "components": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "required": ["name", "named_in_request", "owner_slice_id", "owner_evidence"],
+                    "properties": {
+                        "name": {"type": "string"},
+                        "named_in_request": {"type": "string"},
+                        "owner_slice_id": {"type": "string"},
+                        "owner_evidence": {"type": "string"},
+                        "slice": {
+                            "type": "object",
+                            "required": ["id", "title", "objective", "questions", "weight"],
+                            "properties": {
+                                "id": {"type": "string"},
+                                "title": {"type": "string"},
+                                "objective": {"type": "string"},
+                                "questions": {"type": "array", "items": {"type": "string"}},
+                                "weight": {"type": "integer"}
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    })
+}
+
 /// SYNTHESIS emits only the skeleton — ids, files, deps. Hundreds of tokens, not tens of thousands.
 fn skeleton_schema() -> serde_json::Value {
     serde_json::json!({
@@ -25464,6 +25561,7 @@ impl GooseAgentDispatcher {
             .map(|s| format!("- {} — {}: {}", s.id, s.title, s.objective))
             .collect::<Vec<_>>()
             .join("\n");
+        let known_ids: Vec<String> = slices.iter().map(|s| s.id.trim().to_lowercase()).collect();
         let total = parts.len();
         let me = self.clone();
         let out = fanout_over_fleet(
@@ -25471,29 +25569,39 @@ impl GooseAgentDispatcher {
             parts.into_iter().enumerate().collect::<Vec<_>>(),
             move |(i, part): (usize, String), model: String| {
                 let listing = listing.clone();
+                let known_ids = known_ids.clone();
                 let me = me.clone();
                 async move {
                     let system = format!(
-                        "You are checking a work breakdown for COVERAGE against PART {} OF {} of a \
-                         request. Do not improve the breakdown, do not re-balance it, do not rename \
-                         anything.\n\n\
-                         Work through YOUR PART section by section — its headings, the components it \
-                         names by name, the behaviours it says must exist. For each, find the slice that \
-                         owns it. Return ONLY what NO slice owns, as new slices in the same shape.\n\n\
+                        "You are building a COVERAGE TABLE for PART {} OF {} of a request. You are not \
+                         improving the breakdown, not re-balancing it, and not renaming anything.\n\n\
+                         DO IT IN THIS ORDER, and the table you return is the proof you did.\n\n\
+                         FIRST, before you look at the slice list at all, read YOUR PART and write down \
+                         every component it names. A component is a thing the request asks to EXIST: a \
+                         service, a daemon, a file, an endpoint, a workflow, a stored artefact, a screen, \
+                         a document it says you must write. Take them from the request's own words and \
+                         keep its own vocabulary — if it says `notifierd`, the component is `notifierd`, \
+                         not `the notification layer`. Quote the words that name it.\n\n\
+                         THEN, and only then, go down your list and say which slice owns each one. For \
+                         every component you claim is owned you must QUOTE the words in that slice's \
+                         objective that prove it. If you cannot quote them, it is NOT owned — leave the \
+                         owner empty. `api-backend` does not own webhooks because webhooks arrive over \
+                         HTTP, and `store-layer` does not own an event ledger because a ledger is \
+                         stored. A slice named after a LAYER of a program owns a named component only \
+                         when its objective names that component. \"It would probably go there\" is the \
+                         exact mistake this table exists to catch: it is how a plan of nine tasks passed \
+                         review while missing webhooks, an approval workflow, an idempotent consumer, an \
+                         event ledger, a second service and a 3D field — six of the nine things its \
+                         request named.\n\n\
+                         For every component with no owner, write the slice that SHOULD own it, in the \
+                         slice shape, in the `slice` field.\n\n\
+                         Return EVERY component you found, owned and unowned alike. The owned rows are \
+                         not wasted work — they are how anyone can check you actually enumerated rather \
+                         than skimmed. A part nobody was asked to build is simply absent from the \
+                         finished program, and no later phase can notice: the builders build the list, \
+                         the reviewer reviews the list, and the missing part is never mentioned again.\n\n\
                          You are seeing one part of a longer request, so a slice may look unrelated to \
-                         your part and be perfectly good for another. Never remove or rename; only ADD \
-                         what your part needs and nothing owns.\n\n\
-                         What makes this worth doing: a part nobody was asked to build is simply absent \
-                         from the finished program, and no later phase can notice. The builders build \
-                         the list, the reviewer reviews the list, and the missing part is never \
-                         mentioned again by anyone.\n\n\
-                         The mistake to look for is a breakdown that reads like the LAYERS OF A PROGRAM \
-                         — client, store, html, css, js, entry point, docs. Those are the layers of any \
-                         program at all, so such a list looks complete while naming nothing the request \
-                         actually asked for. If you see that shape, your part's own named components are \
-                         what is missing.\n\n\
-                         If everything in YOUR PART already has an owner, return an empty slice list. \
-                         That is a good answer — do not invent work to look useful.",
+                         your part and be perfectly good for another. Never remove or rename anything.",
                         i + 1,
                         total
                     );
@@ -25505,7 +25613,7 @@ impl GooseAgentDispatcher {
                             system,
                             user,
                             Some(Response {
-                                json_schema: Some(open_schema()),
+                                json_schema: Some(coverage_schema()),
                             }),
                             planner_side_turns(),
                             &[],
@@ -25517,9 +25625,47 @@ impl GooseAgentDispatcher {
                     {
                         Ok(o) => {
                             let raw = o.final_output.clone().unwrap_or_else(|| o.text.clone());
-                            parse_json_lenient::<OpenOutput>(&raw)
-                                .map(|p| p.slices)
+                            let table = parse_json_lenient::<CoverageOutput>(&raw)
                                 .unwrap_or_default()
+                                .components;
+                            // OWNERSHIP MUST BE PROVEN, not asserted. A row counts as owned only when it
+                            // names a slice that actually exists AND quotes that slice's own words. An
+                            // unquoted claim is the generous match this table was built to catch.
+                            let known: std::collections::HashSet<String> =
+                                known_ids.iter().cloned().collect();
+                            let owned = |c: &CoverageComponent| coverage_row_is_owned(c, &known);
+                            me.events.write_value(serde_json::json!({
+                                "event": "coverage_enumerated",
+                                "part": i + 1,
+                                "of": total,
+                                "components": table.len(),
+                                "unowned": table.iter().filter(|c| !owned(c)).count(),
+                                "table": table
+                                    .iter()
+                                    .map(|c| serde_json::json!({
+                                        "name": c.name,
+                                        "owner": if owned(c) { c.owner_slice_id.clone() } else { String::new() },
+                                    }))
+                                    .collect::<Vec<_>>(),
+                            }));
+                            table
+                                .into_iter()
+                                .filter(|c| !owned(c))
+                                .map(|c| {
+                                    c.slice.unwrap_or_else(|| OpenSlice {
+                                        id: slugify_slice_id(&c.name),
+                                        title: c.name.clone(),
+                                        objective: if c.named_in_request.trim().is_empty() {
+                                            c.name.clone()
+                                        } else {
+                                            c.named_in_request.clone()
+                                        },
+                                        questions: Vec::new(),
+                                        weight: 3,
+                                    })
+                                })
+                                .filter(|sl| !sl.id.trim().is_empty())
+                                .collect::<Vec<_>>()
                         }
                         // A part nobody could read leaves the breakdown as it was for that part.
                         Err(_) => Vec::new(),
@@ -40574,5 +40720,75 @@ mod clarify_proxy_tests {
         )
         .await;
         assert!(out.is_empty(), "got {out:?}");
+    }
+}
+
+#[cfg(test)]
+mod coverage_table_tests {
+    use super::*;
+
+    fn known(ids: &[&str]) -> std::collections::HashSet<String> {
+        ids.iter().map(|s| s.to_string()).collect()
+    }
+
+    fn row(name: &str, owner: &str, evidence: &str) -> CoverageComponent {
+        CoverageComponent {
+            name: name.to_string(),
+            named_in_request: String::new(),
+            owner_slice_id: owner.to_string(),
+            owner_evidence: evidence.to_string(),
+            slice: None,
+        }
+    }
+
+    /// THE WHOLE POINT. Three runs reported almost nothing missing while the plan lacked webhooks, an
+    /// approval workflow, a notifier daemon, an outbox, an event ledger and a 3D field, and the run
+    /// scored 0.0023 because the scorer's checks came back UNAVAILABLE — the app had no such surface.
+    /// A layer-named slice absorbs any component you hold up against it, so an owner claimed without a
+    /// quote from that slice's objective is not an owner.
+    #[test]
+    fn an_owner_claimed_without_evidence_is_not_an_owner() {
+        let k = known(&["api-backend", "store-layer"]);
+        assert!(
+            !coverage_row_is_owned(&row("webhooks", "api-backend", ""), &k),
+            "no quote means the match was assumed, not found"
+        );
+        assert!(
+            !coverage_row_is_owned(&row("event-ledger", "store-layer", "   "), &k),
+            "whitespace is not evidence"
+        );
+        assert!(coverage_row_is_owned(
+            &row(
+                "webhooks",
+                "api-backend",
+                "receives vendor webhook callbacks at POST /hooks"
+            ),
+            &k
+        ));
+    }
+
+    /// An owner the plan does not contain cannot own anything — this is the hallucinated-id case, and it
+    /// would otherwise silently swallow a component exactly like a generous match does.
+    #[test]
+    fn an_owner_that_is_not_in_the_plan_owns_nothing() {
+        let k = known(&["api-backend"]);
+        assert!(!coverage_row_is_owned(
+            &row("notifierd", "notifier-service", "sends the notifications"),
+            &k
+        ));
+        assert!(coverage_row_is_owned(
+            &row("notifierd", "API-Backend", "runs the notifier daemon"),
+            &k
+        ));
+    }
+
+    /// The request's own vocabulary survives into the slice id, because a component renamed into a layer
+    /// word stops being findable in the plan — which is the failure one level up.
+    #[test]
+    fn a_synthesized_slice_id_keeps_the_requests_own_words() {
+        assert_eq!(slugify_slice_id("notifierd"), "notifierd");
+        assert_eq!(slugify_slice_id("Approval workflow"), "approval-workflow");
+        assert_eq!(slugify_slice_id("  3D field / scene  "), "3d-field-scene");
+        assert_eq!(slugify_slice_id("!!!"), "");
     }
 }
