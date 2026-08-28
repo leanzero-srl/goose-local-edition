@@ -397,6 +397,27 @@ it. A problem that turns out to be already owned is left out, but then it was no
 **THIS RUN KEEPS THE DEFECT** — the binary is the old one. Expect 4 features missing from its app, and read
 the score with that in mind rather than as a verdict on the decomposition.
 
+## LONGCAT RESCORE ABANDONED — the app is SOUND, the scorer is not worth more ticks
+
+Three attempts, ~35 minutes of tick time. **What is settled, and it is the part that matters:**
+longcat's app **BINDS IN 1 SECOND** under the exact invocation the scorer uses —
+`python3 -m app --db-dir X --ledger-port P --notifier-port Q --vendor URL --tokens-file sb7-tokens.json`.
+Its 20-file tree is a real, working product. The harness voided it over ONE ambiguous request in 102.
+
+**What the scorer does:** vendor mock up on 8899 (ESTABLISHED), then **SYN_SENT to 127.0.0.1:50810 forever**
+with no app process alive — it spawns the app, the app is gone, and the connect retries against nothing.
+Attempt 1 was my own port conflict; attempts 2 and 3 were not, and the cause is inside `score_sb7.py`'s
+spawn path, on a machine also running a live 3-node build.
+
+**DECISION: STOP.** This is a nice-to-have recovery of a campaign the harness already discarded. The live
+local run is the campaign, and three ticks against a voided cloud entrant is exactly the rabbit hole the
+tick protocol exists to prevent. If the number is ever wanted, score it on an idle machine.
+
+**BANKED ANYWAY, and it is the real result:** longcat-2.0 built a complete working app — 13 Python modules,
+`web/{index.html,styles.css,viz.js,app.js}`, README, DECISIONS.md — that starts and serves. **Two cloud
+models (deepseek 67.53%, longcat) produced working products; the local fleet's best published number is
+0.0273.** That gap, not longcat's exact score, is what the campaign is about.
+
 ## FIRST EVIDENCE FROM THE NEW BINARY: OPEN GAVE EACH FRONTEND FILE ITS OWN SLICE — 02:55 EEST
 
 `slices_opened` on the relaunched run:
