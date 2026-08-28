@@ -370,6 +370,33 @@ planning phases leave slots free by accident. The fleet strip correctly showed t
 was wrong on any dashboard. It was visible ONLY by counting `judge_skipped` by phase — an event nobody had
 ever read.
 
+## [FIXED 2026-08-29] REVIEW REPORTED 4 UNOWNED FEATURES AND PATCHED NOTHING — `68d89b965`
+
+`review_findings` round 1, run `swarm-3node-r0`: **`new: 4, patch_touches: 0`**.
+
+    SSE streaming endpoint (GET /api/stream) with batch numbering — not explicitly owned by any task
+    vs7dbg debug API (8 methods on window.vs7dbg)                — not explicitly owned by any task
+    Screen-space labels with collision culling and occlusion     — not explicitly owned
+    Linked brush with table<->instance sync and dimming          — not explicitly owned
+
+The reviewer named four things nothing owns and **proposed an owner for none of them**. The run went to
+CONTRACTS and BUILD with all four unowned, which means they are absent from the finished program and no
+later phase can notice — the builders build the list, the reviewer reviews the list, and the missing part
+is never mentioned again. **This is precisely the failure that left the last published local run at 0.0273
+with `GET /` 404ing**, and it is why the coverage table exists.
+
+Worth naming: the machinery WORKED. The coverage fan found the gaps, REVIEW reported them, the event
+recorded them. The only broken link was that a finding with no patch changes nothing, and the engine
+accepted that silently.
+
+**THE FIX:** when a round returns fresh findings and an EMPTY patch, ask once — naming its own findings
+back to it — and demand a patch only: `add` a task that owns each, or `replace` one whose files should own
+it. A problem that turns out to be already owned is left out, but then it was not a finding. Emits
+`review_patch_demanded {round, findings, patch_touches}` so the next run says whether the demand worked.
+
+**THIS RUN KEEPS THE DEFECT** — the binary is the old one. Expect 4 features missing from its app, and read
+the score with that in mind rather than as a verdict on the decomposition.
+
 ## TWO CLOUD MODELS KILLED BY ONE HARNESS RULE — the terminal-finish-reason guard, 2026-08-29
 
 `seed-2.0-code` (12 of 13 requests) and `laguna-s-2.1` (16 of 17, $0.09, 908k tokens) both died with:
