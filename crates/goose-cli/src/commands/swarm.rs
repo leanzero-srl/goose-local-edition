@@ -8945,6 +8945,57 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
     }
 
     #[test]
+    /// The finding COUNT gates green, fires the stall exit, AND is the baseline shard_beats_baseline
+    /// compares against — so one duplicate is charged three times, making the app harder to call green
+    /// and the shard easier to promote in the same round.
+    ///
+    /// MEASURED: two testers reported "Empty limit parameter silently falls back to default" and both
+    /// survived, because TEST prefixes every defect with `[{angle}] ` and the merge was a `contains`.
+    fn the_same_defect_from_two_testers_counts_once() {
+        let engine = "vendorsync/api.py:17 references DOM id `prev-btn`".to_string();
+        let a = "[bad-input] Empty limit parameter silently falls back to default".to_string();
+        let b =
+            "[primary-journey] Empty limit parameter silently falls back to default".to_string();
+        let model: std::collections::HashSet<String> = [a.clone(), b.clone()].into_iter().collect();
+
+        let out = dedupe_findings_exact(&[a.clone(), engine.clone(), b.clone()], &model);
+        assert_eq!(
+            out.len(),
+            2,
+            "the angle prefix must not make one defect two: {out:?}"
+        );
+        assert!(out.contains(&engine), "an unrelated finding must survive");
+
+        // AN ENGINE FINDING IS ALWAYS THE SURVIVOR, in either arrival order — engine_fatal forces its
+        // wording CRITICAL and keeping a tester's paraphrase would silently un-force it.
+        let measured = "the served page renders NO data rows".to_string();
+        let paraphrase = "[primary-journey] the served page renders NO data rows".to_string();
+        let only_model: std::collections::HashSet<String> =
+            [paraphrase.clone()].into_iter().collect();
+        for pair in [
+            vec![paraphrase.clone(), measured.clone()],
+            vec![measured.clone(), paraphrase.clone()],
+        ] {
+            let out = dedupe_findings_exact(&pair, &only_model);
+            assert_eq!(
+                out,
+                vec![measured.clone()],
+                "the engine string must survive"
+            );
+        }
+
+        // Two DIFFERENT defects that share a file must both stand — a false merge hides a real defect,
+        // which is worse than the duplicate this removes.
+        let x = "[bad-input] `--db` pointing at a directory crashes".to_string();
+        let y = "[bad-input] `--db` pointing at a non-SQLite file crashes".to_string();
+        assert_eq!(dedupe_findings_exact(&[x, y], &model).len(), 2);
+
+        // Nothing to fold leaves the list byte-identical.
+        let solo = vec!["only one".to_string()];
+        assert_eq!(dedupe_findings_exact(&solo, &model), solo);
+    }
+
+    #[test]
     /// A MARKDOWN HEADING IS NOT A DEFECT. `strip` matches "DEFECT" as a prefix, so `**Defect found:**`
     /// yields "found:**". MEASURED live: that fragment was reported as a defect, rated CRITICAL beside
     /// eight real ones, and handed to the fix fan as work.
@@ -30568,6 +30619,77 @@ fn extract_file_from_finding(finding: &str, all_files: &[String]) -> Option<Stri
 /// Dedup + group findings by the file they name so each file becomes ONE fix agent (writes partitioned,
 /// same-file findings serialized). Returns (groups in first-seen order, unassigned findings that name no
 /// file) — the unassigned bucket gets a single serial fallback fix so a file-less finding is not dropped.
+/// The one string that decides whether two findings are the SAME defect.
+///
+/// The angle prefix is stripped — `[bad-input] X` and `[primary-journey] X` are one defect, not two —
+/// then every non-alphanumeric run collapses to one space and the body lowercases. Deliberately a
+/// WHOLE-BODY fingerprint: matching on a first line would fold two different pytest findings that
+/// happen to share a banner, and a FALSE MERGE hides a real defect, which is the one outcome worse than
+/// the duplicate this exists to remove.
+fn finding_fingerprint(f: &str) -> String {
+    let body = match f.strip_prefix('[') {
+        Some(rest) => match rest.split_once("] ") {
+            Some((_, tail)) => tail,
+            None => f,
+        },
+        None => f,
+    };
+    body.chars()
+        .map(|c| {
+            if c.is_alphanumeric() {
+                c.to_ascii_lowercase()
+            } else {
+                ' '
+            }
+        })
+        .collect::<String>()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// Fold findings with equal fingerprints, keeping ONE.
+///
+/// The finding COUNT is the ruler for three decisions at once: it gates green, it fires the stall exit,
+/// and it is the baseline `shard_beats_baseline` compares a shadow against. One duplicate is charged
+/// three times — and in the SAME round it makes the app harder to call green and the shard easier to
+/// promote.
+///
+/// MEASURED (round 0 of a live run): "Empty limit parameter silently falls back to default" was reported
+/// by two testers and BOTH survived, because TEST prefixes every defect with `[{angle}] ` and the merge
+/// is a `contains` — an exact compare on strings made distinct one line earlier.
+///
+/// It only ever REMOVES, never rewrites, so every survivor is the exact string the fix fan already knows
+/// how to attribute. An ENGINE finding (absent from `model_observed`) always displaces a model-observed
+/// twin whichever order they arrived in, because `engine_fatal` forces the engine's own wording CRITICAL
+/// and keeping a tester's paraphrase would silently un-force it.
+fn dedupe_findings_exact(
+    findings: &[String],
+    model_observed: &std::collections::HashSet<String>,
+) -> Vec<String> {
+    let mut keep: Vec<String> = Vec::new();
+    let mut at: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+    for f in findings {
+        let fp = finding_fingerprint(f);
+        if fp.is_empty() {
+            keep.push(f.clone());
+            continue;
+        }
+        match at.get(&fp) {
+            None => {
+                at.insert(fp, keep.len());
+                keep.push(f.clone());
+            }
+            Some(&i) => {
+                if model_observed.contains(&keep[i]) && !model_observed.contains(f) {
+                    keep[i] = f.clone();
+                }
+            }
+        }
+    }
+    keep
+}
+
 fn group_findings_by_file(
     findings: &[String],
     all_files: &[String],
@@ -37700,6 +37822,25 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                     if !verdict.findings.contains(&text) {
                         verdict.findings.push(text);
                     }
+                }
+            }
+            // DE-DUPLICATE BEFORE ANYTHING COUNTS — the count is the ruler for green, for the stall
+            // exit, and for shard_beats_baseline's baseline, so a duplicate is charged three times.
+            {
+                let before = verdict.findings.len();
+                verdict.findings = dedupe_findings_exact(&verdict.findings, &model_observed);
+                if verdict.findings.len() < before {
+                    sink.write_value(serde_json::json!({
+                        "event": "defects_deduped",
+                        "round": round,
+                        "before": before,
+                        "after": verdict.findings.len(),
+                    }));
+                    eprintln!(
+                        "  · {} duplicate defect(s) folded ({before} -> {})",
+                        before - verdict.findings.len(),
+                        verdict.findings.len()
+                    );
                 }
             }
             sink.write_value(serde_json::json!({
