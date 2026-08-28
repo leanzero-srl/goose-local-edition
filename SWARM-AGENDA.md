@@ -404,10 +404,15 @@ longcat's app **BINDS IN 1 SECOND** under the exact invocation the scorer uses �
 `python3 -m app --db-dir X --ledger-port P --notifier-port Q --vendor URL --tokens-file sb7-tokens.json`.
 Its 20-file tree is a real, working product. The harness voided it over ONE ambiguous request in 102.
 
-**What the scorer does:** vendor mock up on 8899 (ESTABLISHED), then **SYN_SENT to 127.0.0.1:50810 forever**
-with no app process alive — it spawns the app, the app is gone, and the connect retries against nothing.
-Attempt 1 was my own port conflict; attempts 2 and 3 were not, and the cause is inside `score_sb7.py`'s
-spawn path, on a machine also running a live 3-node build.
+**What the scorer does:** vendor mock up on 8899 (ESTABLISHED), then **SYN_SENT to 127.0.0.1:50810
+forever**. Attempt 1 was my own port conflict; 2 and 3 were not.
+
+**CORRECTION, from the scoped kill's own output:** I wrote above that no app process was alive. That was
+WRONG — `kill_scoped.sh` listed `app.notifierd` (90237) and `app.ledgerd` (90238) running as children under
+the clone. The scorer HAD booted the app successfully; the unanswered connect was to some other endpoint
+(50810), not to a dead service. I asserted an absence I had checked with a pattern that did not match, which
+is gotcha 8's shape again: **an empty result licensed a conclusion without proving the query could see the
+thing.** The right check was the one that eventually printed it — enumerate by PATH, not by module name.
 
 **DECISION: STOP.** This is a nice-to-have recovery of a campaign the harness already discarded. The live
 local run is the campaign, and three ticks against a voided cloud entrant is exactly the rabbit hole the
