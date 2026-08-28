@@ -16146,6 +16146,16 @@ pub struct GooseAgentDispatcher {
     /// `detail_memo_on` -> byte-identical when off. Survives across rounds because the dispatcher is a
     /// persistent Arc across the whole plan loop.
     detail_memo: Mutex<HashMap<String, String>>,
+    /// task id -> the files that task OWNS. Published when a plan loads, read by the omni-judge loop,
+    /// which is handed only an `activity_key` and otherwise cannot tell a build task from a planner call.
+    ///
+    /// The liveness rule counts NEW REASONING as production. That is correct for a planning call, whose
+    /// deliverable IS text, and wrong for a build task, whose deliverable is a file. MEASURED: the task
+    /// owning `web/viz.js` -- roughly 0.56 of the sb-7 scoring weight -- made ZERO tool calls in 76
+    /// minutes across 28 looks and 13 nudges, and satisfied the liveness rule forever by emitting ~460
+    /// characters of fresh reasoning after every restart. Empty for planner-side calls, which therefore
+    /// keep today's behaviour exactly.
+    owned_files_by_task: Mutex<HashMap<String, Vec<String>>>,
     /// #122: gate for `detail_memo`. Resolved once at construction (env > config > default OFF).
     detail_memo_on: bool,
     /// #136: gate for the repeated-identical-tool-call breaker. Resolved once at construction (default OFF).
@@ -16258,6 +16268,7 @@ impl GooseAgentDispatcher {
             straggler_grace_secs,
             straggler_stop_degrade,
             detail_memo: Mutex::new(HashMap::new()),
+            owned_files_by_task: Mutex::new(HashMap::new()),
             detail_memo_on,
             repeat_break,
         })
@@ -17434,6 +17445,46 @@ impl GooseAgentDispatcher {
                 } else {
                     String::new()
                 };
+                // WHAT THIS TASK OWES THE BUILD, and whether any of it exists yet. Without this the
+                // judge cannot tell a build task from a planning call, so it reads "no tool calls, lots
+                // of reasoning" as a call thinking hard -- correct for a planner, and the exact signature
+                // of a build task composing a whole file in its head and never emitting it.
+                let owned_block = {
+                    let owned = self
+                        .owned_files_by_task
+                        .lock()
+                        .unwrap()
+                        .get(activity_key.unwrap_or(""))
+                        .cloned()
+                        .unwrap_or_default();
+                    if owned.is_empty() {
+                        String::new()
+                    } else {
+                        let listed: Vec<String> = owned
+                            .iter()
+                            .map(|f| {
+                                let path = self.working_dir.join(f);
+                                let state = match std::fs::metadata(&path) {
+                                    Ok(m) if m.len() > 0 => format!("EXISTS, {} bytes", m.len()),
+                                    Ok(_) => "EXISTS BUT EMPTY".to_string(),
+                                    Err(_) => "DOES NOT EXIST".to_string(),
+                                };
+                                format!("  {f} — {state}")
+                            })
+                            .collect();
+                        format!(
+                            "\n\nTHIS TASK OWNS THESE FILES, and nothing else in the build will write \
+                             them:\n{}\n\
+                             ITS DELIVERABLE IS THE FILE, NOT THE REASONING. Characters of thinking are \
+                             not progress here; bytes on disk are. If it owns a file that does not exist \
+                             yet and it has taken no action, it is composing the file in its head and \
+                             waiting for it to be perfect — the single most expensive failure this run \
+                             can have. Tell it to write a first minimal version of that exact path NOW \
+                             and extend it afterwards.",
+                            listed.join("\n")
+                        )
+                    }
+                };
                 let earlier_block = match recur.earlier() {
                     Some(e) => format!(
                         "\n\nReasoning from EARLIER in this same call (tens of thousands of characters \
@@ -17446,7 +17497,7 @@ impl GooseAgentDispatcher {
                      Judge it against THAT job, not against the wider build. A call doing its own job \
                      correctly is OK even when it is writing no code, because most jobs here are not \
                      coding jobs.\n\n\
-                     It has emitted {thinking_chars} characters of reasoning.{rate_block}{answer_block}{measured}{earlier_block}\
+                     It has emitted {thinking_chars} characters of reasoning.{rate_block}{answer_block}{owned_block}{measured}{earlier_block}\
                      \n\nMost recent reasoning:\n{tail}\n\n\
                      Commands it ran, newest first, WITH WHAT THEY PRINTED. Read these before you decide: \
                      if it already ran the check you were about to ask for and the output does not show \
@@ -35086,6 +35137,14 @@ impl GooseAgentDispatcher {
 #[async_trait]
 impl TaskDispatcher for GooseAgentDispatcher {
     async fn run(&self, req: DispatchRequest) -> Result<TaskRunOutput, DispatchError> {
+        // Publish what this task OWNS so the judge loop, which is handed only an activity_key, can tell
+        // a build task from a planner call. See `owned_files_by_task`.
+        if !req.owned_files.is_empty() {
+            self.owned_files_by_task
+                .lock()
+                .unwrap()
+                .insert(req.task_id.clone(), req.owned_files.clone());
+        }
         // S3 FILL FAN (GOOSE_SWARM_FILL_FAN): the two DETERMINISTIC task kinds and the fill
         // normalization. Gate first so a coincidentally-named plan task can never trip these
         // paths on an ordinary run — with the gate off this block is byte-identical to absent.
