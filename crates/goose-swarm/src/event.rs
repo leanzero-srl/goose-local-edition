@@ -128,6 +128,28 @@ pub enum SwarmEvent {
         /// Its slot-time had to be ESTIMATED from same-device inter-arrival gaps, which is a guess.
         secs: f64,
     },
+    /// A device was ADMITTED to a run already in progress — a fleet node that came back after the
+    /// pool was resolved. The pool is read once from `lms ps` at run start, so before this event
+    /// existed a returning node was invisible in both directions: it took no calls and the log said
+    /// nothing at all about it, which is indistinguishable from the engine having tried and failed.
+    DeviceAdmitted {
+        id: String,
+        model_id: String,
+        weight: u32,
+        speed_weight: u32,
+        supervision: bool,
+        /// Build devices in the pool AFTER this admission — the number every capacity decision now
+        /// uses, and the one `pool_resolved.worker_count` no longer describes.
+        build_devices: usize,
+    },
+    /// A mid-run device offer was REFUSED, with why. Emitted rather than silently dropped: the
+    /// whole point of admission is that a returning node stops being invisible, and a rejection is
+    /// exactly as informative as an acceptance.
+    DeviceRejected {
+        id: String,
+        model_id: String,
+        reason: String,
+    },
 }
 
 pub trait EventSink: Send + Sync {

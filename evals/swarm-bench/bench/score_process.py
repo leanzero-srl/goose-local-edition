@@ -255,9 +255,35 @@ def axis_judge(ev: List[Dict], build_ok: Optional[bool]) -> Dict:
     return checks
 
 
+def final_claim(events: List[Dict]) -> Optional[Dict]:
+    """The run's completion claim AS IT STOOD AT THE END, not as it was first written.
+
+    `complete_result` is the claim. `complete_result_revised` is the engine RETRACTING part of it: a
+    deterministic ast.parse import-graph walk found a pure library the app builds and nothing imports,
+    so `verified` was never true and the CLI prints "NOT VERIFIED - dead code shipped".
+
+    MEASURED: that event shipped with no consumer anywhere — this scorer, the desktop panel and every
+    eval read `complete_result` alone — so a run the engine had already un-verified was still reported
+    here as `verified=True`. The retraction is deterministic and no model is in its path, which is
+    exactly why it outranks the claim. Only the revised KEYS are overlaid; `passed` is never touched,
+    because the engine never flips it red either.
+    """
+    claim = first(events, "complete_result")
+    if claim is None:
+        return None
+    merged = dict(claim)
+    for rev in every(events, "complete_result_revised"):
+        for k in ("verified",):
+            if k in rev:
+                merged[k] = rev[k]
+        merged["revised_reason"] = rev.get("reason")
+        merged["revised_evidence"] = rev.get("evidence") or []
+    return merged
+
+
 def axis_delivery(ev: List[Dict], build_score: Optional[float]) -> Dict:
     finished = first(ev, "run_finished")
-    result = first(ev, "complete_result")
+    result = final_claim(ev)
     if not ev:
         return {"run_finished": g(None, "no swarm event stream — nothing to grade")}
     checks = {
@@ -288,6 +314,22 @@ def axis_delivery(ev: List[Dict], build_score: Optional[float]) -> Dict:
             f"claimed passed={claimed}, verified={result.get('verified')}, "
             f"artifact scored {100 * build_score:.0f}%",
             "a false green is worse than a failure: it stops anyone looking")
+
+    # THE ENGINE RETRACTED ITS OWN GREEN. Scored ONLY when it actually fired: a run with no
+    # `complete_result_revised` is not measurable here (the demote gate may be off, or the run predates
+    # it), so this check is inert on every archived run and can never hand out a free 1.0. When it does
+    # fire it is a deterministic proof that the shipped tree contains a module nothing can ever run —
+    # the app was un-verified by the engine, and the delivery score must say so rather than quietly
+    # reporting the claim the engine already withdrew.
+    revised = first(ev, "complete_result_revised")
+    if revised is None:
+        checks["claim_stood"] = g(None, "no retraction — the engine never revised its own verdict")
+    else:
+        dead = ", ".join(str(m) for m in (revised.get("evidence") or [])) or "a module"
+        checks["claim_stood"] = g(
+            0.0,
+            f"verified RETRACTED ({revised.get('reason')}): {dead}",
+            "code that nothing imports cannot run: the app was shipped un-verified by its own engine")
     return checks
 
 

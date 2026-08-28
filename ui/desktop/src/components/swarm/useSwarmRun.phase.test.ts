@@ -285,3 +285,60 @@ describe('foldEvents — the slice fan and the planning calls have lanes', () =>
     expect(folded.planningLanes.find((l) => l.taskId === 'synthesis')!.status).toBe('running');
   });
 });
+
+/**
+ * THE ENGINE MAY TAKE ITS GREEN BACK, AND THE PANEL MUST LET IT.
+ *
+ * `complete_result_revised` shipped with NO consumer in this file, in the scorer, or anywhere else — grep
+ * across crates/, ui/desktop/src and evals/ returned only the emit site. So the CLI printed
+ * "NOT VERIFIED - dead code shipped" while this panel, reading the retracted `complete_result` alone,
+ * promoted every built task to 'done' and headed the run "Finished - app verified". The demote is ON by
+ * default (SwarmConfig::default().unwired_demotes_verified) and `review: true` is in the shipped user
+ * config, so this was the DEFAULT rendering of a run the engine had already called unverified.
+ *
+ * These pin all three derived verdicts, because one consumer that forgets the revision re-opens the whole
+ * hole: the v-e2e row, the Done headline, and the unverified -> done promotion of the build rows.
+ */
+describe('buildPhaseTodo — a revised complete_result retracts the green everywhere', () => {
+  const BUILT = [
+    { event: 'phase', phase: 'open' },
+    { event: 'plan_loaded', tasks: [{ id: 'core', files: ['app/core.py'] }] },
+    { event: 'task_dispatched', task_id: 'core', device: 'n1' },
+    { event: 'task_completed', task_id: 'core', status: 'ok', device: 'n1' },
+    { event: 'complete_verify', round: 0, ran: true, findings: 0 },
+    { event: 'complete_result', passed: true, verified: true, remaining_findings: 0 },
+  ];
+  const REVISED = {
+    event: 'complete_result_revised',
+    verified: false,
+    reason: 'unwired-module-unfixed',
+    evidence: ['kanban/db.py'],
+  };
+  const FINISH = { event: 'run_finished', report: {} };
+  const row = (events: Array<Record<string, unknown>>, id: string) =>
+    buildPhaseTodo(events, {}, { clarifyPending: false })
+      .flatMap((p) => p.items)
+      .find((i) => i.id === id);
+
+  it('without the revision the run is green — the baseline this fix must not break', () => {
+    const events = [...BUILT, FINISH];
+    expect(row(events, 'v-e2e')!.state).toBe('done');
+    expect(row(events, 'd-outcome')!.label).toBe('Finished — app verified');
+    expect(row(events, 'b-core')!.state).toBe('done');
+  });
+
+  it('with it, v-e2e drops to unverified and names the dead module', () => {
+    const r = row([...BUILT, REVISED, FINISH], 'v-e2e')!;
+    expect(r.state).toBe('unverified');
+    expect(r.detail).toContain('kanban/db.py');
+    expect(r.detail).toContain('imported by nothing');
+  });
+
+  it('with it, the run never reads "app verified"', () => {
+    expect(row([...BUILT, REVISED, FINISH], 'd-outcome')!.label).toBe('Finished — unverified');
+  });
+
+  it('with it, built tasks are no longer promoted to done off a retracted verdict', () => {
+    expect(row([...BUILT, REVISED, FINISH], 'b-core')!.state).toBe('unverified');
+  });
+});

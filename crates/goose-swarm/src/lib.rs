@@ -32,5 +32,5 @@ pub use patch::{apply_patch, parse_patch, pin_sink_id, PlanPatch, TaskAdd, TaskE
 pub use replan::{ReplanContext, Replanner};
 pub use scheduler::{
     qa_enabled, sink_review_enabled, tail_review_enabled, testgen_enabled, AttemptRecord,
-    DeviceCfg, DeviceSummary, RunReport, Scheduler, TaskOutcome,
+    DeviceAdmission, DeviceCfg, DeviceSummary, RunReport, Scheduler, TaskOutcome,
 };
