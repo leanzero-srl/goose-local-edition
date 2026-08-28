@@ -3556,6 +3556,11 @@ fn tails_recur(a: &std::collections::HashSet<u64>, b: &std::collections::HashSet
 /// at all. A supervisor that does not know what it is supervising does not help — it derails.
 fn call_objective(activity_key: Option<&str>) -> &'static str {
     match activity_key {
+        Some("open-coverage") => {
+            "check the slice list against the request SECTION BY SECTION and return only the sections \
+             no slice owns. It must NOT write code and must NOT rewrite the slices that exist — an \
+             empty answer is the common and correct one."
+        }
         Some("open") | Some("open-resplit") => {
             "split the request into balanced semantic slices. It must NOT write code, plan files, or tasks."
         }
@@ -25045,7 +25050,18 @@ impl GooseAgentDispatcher {
         planner_model: &str,
         user_prompt: &str,
         findings: &[String],
-    ) -> Vec<bool> {
+        // FILES TOO, NOT JUST SEVERITY — section 6 [R-M3], never implemented until now.
+        //
+        // The residue worker `#join` owns `smoke_all_files` — the ENTIRE tree — on the stated grounds
+        // that "which file a cross-file fix needs is exactly what is unknown". MEASURED: that worker took
+        // 115 minutes of a 138-minute fix wave, 83% of it, while the four FILE-ATTRIBUTED shards beside
+        // it ran in parallel and finished in 24 minutes wall-clock, all four promoted.
+        //
+        // The scope is not unknown. RATE has already read every defect and the request; it simply was
+        // never asked. A model that can tell a CRITICAL from a MINOR can tell you that "--db pointing at
+        // a directory crashes" lives in __main__.py and store.py — the TEST fan's own defects name their
+        // files correctly and this is the same judgement on the findings that do not.
+    ) -> Vec<(bool, Vec<String>)> {
         if findings.is_empty() {
             return Vec::new();
         }
@@ -25063,7 +25079,13 @@ impl GooseAgentDispatcher {
              interface is missing.\n\
              MINOR — the app DOES its job; this is an imperfection. A wrong assertion in a generated test, \
              a cosmetic message, an unhandled edge case the request never named, a style complaint.\n\n\
-             Answer one line per defect, in order, exactly: `<number>. CRITICAL|MINOR — <six words why>`.\n\
+             Answer one line per defect, in order, exactly:\n\
+             `<number>. CRITICAL|MINOR — <six words why> — FILES: <paths>`\n\
+             FILES is where the defect LIVES — the files that must change to fix it. Name them even when \
+             the defect text does not: you have read the request and you know what the program is made \
+             of. This decides whether one worker repairs three files or reads the whole tree looking for \
+             them, so a guess you are reasonably confident of beats leaving it blank. If a defect \
+             genuinely spans the whole program, say `FILES: -` and mean it.\n\
              Judge against the REQUEST, not against your taste. A test that is itself wrong about the \
              app's specified behaviour is MINOR: the test is the defect, not the app."
             .to_string();
@@ -25084,21 +25106,31 @@ impl GooseAgentDispatcher {
             Ok(o) => o.text,
             // A rating we could not get is not licence to ship: unrated defects are CRITICAL, which is
             // exactly the old all-or-nothing behaviour and therefore never worse than before.
-            Err(_) => return findings.iter().map(|_| true).collect(),
+            Err(_) => return findings.iter().map(|_| (true, Vec::new())).collect(),
         };
-        let upper = out.to_uppercase();
-        let mut verdicts: Vec<bool> = Vec::new();
-        for line in upper.lines() {
+        let mut verdicts: Vec<(bool, Vec<String>)> = Vec::new();
+        for line in out.lines() {
             let l = line.trim();
-            if l.contains("CRITICAL") {
-                verdicts.push(true);
-            } else if l.contains("MINOR") {
-                verdicts.push(false);
-            }
+            let u = l.to_uppercase();
+            let crit = if u.contains("CRITICAL") {
+                true
+            } else if u.contains("MINOR") {
+                false
+            } else {
+                continue;
+            };
+            // Same lenient shape as the defect parser, and for the same reason: a 27B writes FILES:,
+            // **FILES**:, `files:` or drops the label entirely, and a strict parse would return nothing
+            // at all — which is the state this change exists to leave behind.
+            let files = match u.find("FILES") {
+                Some(i) => paths_in(&l[i.min(l.len())..]),
+                None => paths_in(l),
+            };
+            verdicts.push((crit, files));
         }
         // Never let a short reply silently downgrade a defect nobody rated.
         while verdicts.len() < findings.len() {
-            verdicts.push(true);
+            verdicts.push((true, Vec::new()));
         }
         verdicts.truncate(findings.len());
         verdicts
@@ -25174,6 +25206,78 @@ impl GooseAgentDispatcher {
     /// the reasoning that produced them — are never re-emitted. If it declines, or returns something
     /// unusable, the run proceeds on the original split: an uneven slice costs queue time, and `weight`
     /// was a model estimate rather than a measurement in the first place.
+    /// COVERAGE — the one question the opener never asks itself: what did I miss?
+    ///
+    /// Returns ONLY the slices that are missing. It is a PATCH, never a re-open: the slices that exist
+    /// are not re-described, not re-ordered and not re-weighted, so a coverage pass costs one call and
+    /// cannot damage a decomposition that was already good. Same principle as the REVIEW patch, applied
+    /// one phase earlier.
+    ///
+    /// It runs BEFORE research on purpose. A component discovered at REVIEW time can only be added as a
+    /// task carrying a one-line description invented by the reviewer; discovered here, it becomes a slice
+    /// with a real owner that writes it a 2,000-6,000 character brief like every other.
+    ///
+    /// MEASURED, the failure this exists for: an opener read a 54,146-character spec naming two services,
+    /// webhooks, an approval workflow, an idempotent consumer, an event ledger and a 3D field of 12,288
+    /// instances — and produced nine slices for a table with pagination. It ended its own reasoning
+    /// "This looks comprehensive." The scorer then reported most checks UNAVAILABLE rather than failed,
+    /// because the app had no such surface, and seven hours of repair could not reach it: repair fixes
+    /// what was built, never what was never planned.
+    pub(crate) async fn cover_slices(
+        &self,
+        planner_model: &str,
+        user_prompt: &str,
+        slices: &[OpenSlice],
+    ) -> Result<Vec<OpenSlice>> {
+        let listing = slices
+            .iter()
+            .map(|s| format!("- {} — {}: {}", s.id, s.title, s.objective))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let system = "You are checking a work breakdown for COVERAGE, and nothing else. Do not improve \
+             it, do not re-balance it, do not rename anything.\n\n\
+             Work through the REQUEST section by section — its numbered parts, its headings, the \
+             components it names by name. For each one, find the slice that owns it. Then return ONLY \
+             the sections that NO slice owns, as new slices in the same shape.\n\n\
+             What makes this worth doing: a part nobody was asked to build is simply absent from the \
+             finished program, and no later phase can notice. The builders build the list, the reviewer \
+             reviews the list, and the missing part is never mentioned again by anyone.\n\n\
+             The shape of the mistake you are looking for is a breakdown that reads like the LAYERS OF A \
+             PROGRAM — client, store, html, css, js, entry point, docs — rather than like the request. \
+             Those are the layers of any program at all, so such a list looks complete while naming \
+             nothing the request actually asked for. If you see that shape, the request's own named \
+             components are what is missing.\n\n\
+             If every section already has an owner, return an empty slice list. That is a good answer and \
+             the common one — do not invent work to look useful."
+            .to_string();
+        let out = self
+            .run_agent_timed_at(
+                planner_model,
+                system,
+                format!("## The request\n{user_prompt}\n\n## The slices so far\n{listing}"),
+                Some(Response {
+                    json_schema: Some(open_schema()),
+                }),
+                planner_side_turns(),
+                &[],
+                None,
+                Some("open-coverage"),
+                true,
+            )
+            .await?;
+        let raw = out.final_output.clone().unwrap_or_else(|| out.text.clone());
+        let parsed: OpenOutput = parse_json_lenient(&raw)
+            .ok_or_else(|| anyhow!("coverage pass returned nothing parseable"))?;
+        // Never let it re-add something that already exists under another name it happens to prefer.
+        let have: std::collections::HashSet<String> =
+            slices.iter().map(|s| s.id.to_lowercase()).collect();
+        Ok(parsed
+            .slices
+            .into_iter()
+            .filter(|s| !have.contains(&s.id.to_lowercase()))
+            .collect())
+    }
+
     pub(crate) async fn resplit_slice(
         &self,
         planner_model: &str,
@@ -25952,6 +26056,54 @@ async fn run_linear_plan(
             if re.len() >= 2 {
                 opened.slices.retain(|s| s.id != heavy);
                 opened.slices.extend(re);
+            }
+        }
+    }
+    // COVERAGE, before RESEARCH so anything missing still gets a real owner and a real brief.
+    //
+    // A patch loop, terminating the same way REVIEW does: it runs again only because the LAST pass
+    // actually added something, and stops the first time it adds nothing. Usually that is one call. No
+    // round ceiling — a request that genuinely names twelve components should get twelve, and the thing
+    // that ends this is having nothing left to add.
+    loop {
+        match dispatcher
+            .cover_slices(&cfg.planner_model, &opts.prompt, &opened.slices)
+            .await
+        {
+            Ok(missing) if !missing.is_empty() => {
+                eprintln!(
+                    "  {} coverage: {} section(s) of the request had no slice — adding {}",
+                    style("+").cyan().bold(),
+                    missing.len(),
+                    missing
+                        .iter()
+                        .map(|s| s.id.as_str())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                );
+                sink.write_value(serde_json::json!({
+                    "event": "coverage_gap",
+                    "added": missing.iter().map(|s| s.id.clone()).collect::<Vec<_>>(),
+                    "titles": missing.iter().map(|s| s.title.clone()).collect::<Vec<_>>(),
+                    "slices_before": opened.slices.len(),
+                }));
+                opened.slices.extend(missing);
+            }
+            Ok(_) => {
+                sink.write_value(serde_json::json!({
+                    "event": "coverage_complete",
+                    "slices": opened.slices.len(),
+                }));
+                break;
+            }
+            Err(e) => {
+                // A coverage pass that fails leaves the decomposition exactly as the opener wrote it,
+                // which is where it was before this existed. Never fatal.
+                sink.write_value(serde_json::json!({
+                    "event": "coverage_skipped",
+                    "error": e.to_string(),
+                }));
+                break;
             }
         }
     }
@@ -37596,6 +37748,9 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             // rating. Those strings are written by run_smoke_gate and the command probes — they are
             // engine facts, and a model opinion may not overrule a measurement.
             let mut minors: Vec<String> = Vec::new();
+            // The files the RATER named across every defect this round. Empty until RATE has run, and
+            // empty is the honest signal to fall back to the whole tree.
+            let mut join_scope: Vec<String> = Vec::new();
             if !verdict.findings.is_empty() {
                 sink.write_value(
                     serde_json::json!({"event": "phase", "phase": "rate", "round": round}),
@@ -37627,16 +37782,38 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                 prev_findings = now_findings;
                 let mut criticals: Vec<String> = Vec::new();
                 let forced = |f: &String| engine_fatal(f) && !model_observed.contains(f);
-                for (f, is_crit) in verdict.findings.iter().zip(rated.iter()) {
+                // WHERE THE UNATTRIBUTABLE DEFECTS LIVE, as the rater sees it. `extract_file_from_finding`
+                // can only read a path the finding TEXT happens to contain; the rater has read the defect
+                // AND the request and can say where it lives when the text does not. That answer is what
+                // stops the residue worker owning the whole tree.
+                let mut rated_files: std::collections::HashSet<String> =
+                    std::collections::HashSet::new();
+                for (f, (is_crit, files)) in verdict.findings.iter().zip(rated.iter()) {
                     if *is_crit || forced(f) {
                         criticals.push(f.clone());
                     } else {
                         minors.push(f.clone());
                     }
+                    for p in files {
+                        rated_files.insert(normalize_rel_path(p));
+                    }
+                }
+                // Only a scope that is genuinely NARROWER than the tree is worth having. A rater that
+                // names every file has told us nothing, and a rater that named nothing must not shrink
+                // the residue worker's reach to zero.
+                join_scope = rated_files
+                    .iter()
+                    .filter(|f| smoke_all_files.contains(f))
+                    .cloned()
+                    .collect();
+                join_scope.sort();
+                if join_scope.len() >= smoke_all_files.len() {
+                    join_scope.clear();
                 }
                 sink.write_value(serde_json::json!({
                     "event": "defects_rated",
                     "round": round,
+                    "join_scope": join_scope,
                     // The two numbers that show progress a count cannot. MEASURED: 11 -> 11 findings
                     // across a round that closed 9 and found 10.
                     "closed_this_round": closed_this_round,
@@ -38641,7 +38818,17 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                         // what is unknown, so it owns everything and its shadow (cp -r of the
                         // POST-promote tree — this dispatch is after the wave's barrier) promotes
                         // in full or not at all.
-                        owned_files: smoke_all_files.clone(),
+                        // SCOPED BY THE RATER, when the rater could say. The comment above is from
+                        // before the TEST fan and RATE could answer this: the scope is no longer unknown.
+                        // MEASURED: this worker took 115 minutes of a 138-minute wave — 83% — owning all
+                        // eight files, while the four file-attributed shards beside it ran in parallel
+                        // and finished in 24 minutes wall-clock, all four promoted. Falls back to the
+                        // whole tree whenever the rater named nothing, or named everything.
+                        owned_files: if join_scope.is_empty() {
+                            smoke_all_files.clone()
+                        } else {
+                            join_scope.clone()
+                        },
                         all_files: smoke_all_files.clone(),
                         prior_hint: None,
                         subsplit: Vec::new(),
