@@ -53,7 +53,14 @@ Make the swarm BUILD BETTER SOFTWARE on local models, then beat the published `b
       Settings > Swarm > Nodes. Node A picks a provider; LM Studio populates from loaded models; cloud
       providers must be configured first to appear. `+` adds Node B, C… Each node independently chooses.
       Per-node role hints: which is FASTEST, which is SMARTEST. Engine must consume the role hints.
-- [ ] **C. UI improvements** — LeanZero palette pass on the swarm panel; known-active-bugs panel; phase
+- [x] **C. DONE — all three sub-items were ALREADY BUILT; I verified rather than assumed, and nearly
+      shipped a duplicate.** (a) known-active-bugs panel: exists at SwarmRunPanel.tsx:2668, labelled
+      "the run passed — these are what it passed WITH". I added a SECOND one in error red; the existing
+      smoke test caught the duplicate ("Found multiple elements with the text: Known active bugs") and I
+      reverted it (d264c278c reverted). (b) phase chips read the engine `phase` event via `foldRunPhase`,
+      with a test named "the ribbon reads the engine, never a label" — no regex-on-label path remains.
+      (c) LeanZero palette: ZONE_HUES and FORMATION_RAMP already carry #1d4ed8 / #0891b2 / #7c3aed /
+      #d97706 / #dc2626 / #db2777. Was: — LeanZero palette pass on the swarm panel; known-active-bugs panel; phase
       chips read the engine `phase` event.
 - [ ] **D. Dead-code sweep — DEFERRED UNTIL NO LOCAL RUN IS LIVE.** `cargo clippy` starves the fleet:
       with the sweep running, judge probe latency went 16s -> 18s -> 27s -> **117s**, clippy-driver at
