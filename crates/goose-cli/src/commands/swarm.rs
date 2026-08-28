@@ -26644,7 +26644,7 @@ impl GooseAgentDispatcher {
         user_prompt: &str,
         plan_json: &str,
     ) -> Result<(goose_swarm::PlanPatch, Vec<String>)> {
-        self.review_plan_part(planner_model, user_prompt, plan_json, None, "review")
+        self.review_plan_part(planner_model, user_prompt, plan_json, None, "review", &[])
             .await
     }
 
@@ -26664,6 +26664,7 @@ impl GooseAgentDispatcher {
         worker_models: Vec<String>,
         user_prompt: &str,
         plan_json: &str,
+        already_reported: &[String],
     ) -> Result<(goose_swarm::PlanPatch, Vec<String>)> {
         let lanes = one_lane_per_host(worker_models);
         if lanes.len() <= 1 {
@@ -26674,12 +26675,14 @@ impl GooseAgentDispatcher {
         let total = parts.len();
         let me = self.clone();
         let plan = plan_json.to_string();
+        let prior: Vec<String> = already_reported.to_vec();
         let out = fanout_over_fleet(
             lanes,
             parts.into_iter().enumerate().collect::<Vec<_>>(),
             move |(i, part): (usize, String), model: String| {
                 let me = me.clone();
                 let plan = plan.clone();
+                let prior = prior.clone();
                 async move {
                     me.review_plan_part(
                         &model,
@@ -26687,6 +26690,7 @@ impl GooseAgentDispatcher {
                         &plan,
                         Some((i + 1, total)),
                         &format!("review-{}", i + 1),
+                        &prior,
                     )
                     .await
                     .ok()
@@ -26727,6 +26731,7 @@ impl GooseAgentDispatcher {
         plan_json: &str,
         part: Option<(usize, usize)>,
         activity_key: &str,
+        already_reported: &[String],
     ) -> Result<(goose_swarm::PlanPatch, Vec<String>)> {
         // The plan WITHOUT descriptions: the reviewer is asked about structure, and showing it the
         // briefs would both blow up the prompt and tempt it to rewrite them.
@@ -26749,6 +26754,25 @@ impl GooseAgentDispatcher {
                 }
             }
         }
+        // WHAT HAS ALREADY BEEN SAID. Rounds 1 and 2 of a live run each reported the SAME defect in
+        // different words — "viz-interaction and viz-rendering-engine share the same file (web/viz.js)",
+        // "Two tasks write to the same file (web/viz.js)", "viz.js written by two tasks" — and the
+        // cross-round de-dupe is `lowercase().take(120)`, a PREFIX comparison, so all three counted as
+        // NEW. The loop's stop rule is "a round that surfaces no new finding", which a rephrasing defeats
+        // by construction: the review could never settle, and every round patched the same thing again.
+        //
+        // The reviewer is the only party that can tell those three sentences are one finding, so it is
+        // shown what has already been raised. No similarity score, no threshold — the same remedy the
+        // rater got for duplicate defects, one phase up.
+        let already = if already_reported.is_empty() {
+            " (nothing yet — this is the first round)".to_string()
+        } else {
+            already_reported
+                .iter()
+                .map(|f| format!("\n  - {}", f.chars().take(200).collect::<String>()))
+                .collect::<Vec<_>>()
+                .join("")
+        };
         let system = "You are REVIEWING a build plan against the request it came from. You did not write \
              it and you are not rewriting it.\n\n\
              Answer these, in order:\n\
@@ -26775,11 +26799,16 @@ impl GooseAgentDispatcher {
              `replace` changes ONLY files and depends_on. You may NOT rewrite a task's specification — \
              those were written by the engineers who researched each area, and they are not yours to \
              edit. If a SPECIFICATION is wrong, say so in findings and leave the task alone.\n\n\
+             ALREADY REPORTED — do not report these again. Earlier rounds raised them and the plan has \
+             already been patched for them. Saying the same thing in different words costs a whole round \
+             of the fleet and stops the review ever settling. If one of them is genuinely STILL not \
+             fixed after the patch, say so and begin that finding with the word STILL, so it is not \
+             mistaken for a new discovery.\n{already}\n\n\
              `findings` is for PROBLEMS ONLY — things that need changing. Do NOT list what is correct, do \
              NOT confirm the plan is sound, do NOT summarise it back. If the plan needs no change, return \
              empty lists for all four keys and say nothing else. Saying \"the plan is sound\" as a finding \
              is the same as saying nothing, and it costs a whole round of the fleet to say it."
-            .to_string();
+            .replace("{already}", &already);
         let out = self
             .run_agent_timed_at(
                 planner_model,
@@ -26834,11 +26863,20 @@ async fn review_until_settled(
     sink: &Arc<dyn EventSink>,
 ) -> String {
     let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+    // The findings VERBATIM, in the order they were raised, to hand back to the next round. `seen` holds
+    // a 120-char lowercase prefix — enough to spot an exact repeat, useless against a rephrasing, and it
+    // is the reviewer that has to judge sameness, so it needs the real sentences.
+    let mut reported_so_far: Vec<String> = Vec::new();
     let mut round = 0u32;
     loop {
         round += 1;
         let (patch, findings) = match dispatcher
-            .review_plan_fanned(worker_models.clone(), user_prompt, &plan_json)
+            .review_plan_fanned(
+                worker_models.clone(),
+                user_prompt,
+                &plan_json,
+                &reported_so_far,
+            )
             .await
         {
             Ok(v) => v,
@@ -26862,7 +26900,9 @@ async fn review_until_settled(
             .cloned()
             .collect();
         for f in &findings {
-            seen.insert(norm(f));
+            if seen.insert(norm(f)) {
+                reported_so_far.push(f.clone());
+            }
         }
         sink.write_value(serde_json::json!({
             "event": "review_findings",
