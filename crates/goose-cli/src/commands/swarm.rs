@@ -17649,6 +17649,20 @@ impl GooseAgentDispatcher {
                         // the floor was never met, and the lane died unobserved.
                         "post_restream_silence": thinking_total >= OMNI_JUDGE_MIN_CHARS
                             && thinking_chars == 0,
+                        // THE BURST-GAP CALIBRATION, ON EVERY LOOK — not only when it fires.
+                        //
+                        // `judge_quiet_within_rhythm` is emitted only on a save, so a run with ZERO saves
+                        // is unreadable: it could mean nothing ever went quiet, or that silences were not
+                        // protected. MEASURED on this run: 6 of 23 looks saw under 100 characters and the
+                        // rule fired 0 times, and the only way to tell whether that was correct was to
+                        // re-derive the high-water mark by hand from the source.
+                        //
+                        // The mark rises ONLY when a quiet spell is FOLLOWED by production, so a call's
+                        // FIRST silence is structurally unprotected — it has not yet shown it can recover
+                        // from a gap. That is deliberate (an unfounded grace would be a literal seconds
+                        // constant), but it must be VISIBLE, or "0 saves" reads as a broken mechanism.
+                        "quiet_secs": omni_quiet_secs,
+                        "longest_recovered_gap_secs": omni_longest_gap_secs,
                         "thinking_total": thinking_total,
                         "produced_since_last_look": produced_since_last_look,
                         "actions_since_last_look": actions_since_last_look,
