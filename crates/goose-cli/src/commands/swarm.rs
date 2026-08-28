@@ -16988,6 +16988,14 @@ impl GooseAgentDispatcher {
         // Consecutive LOOPING verdicts on the SAME content. One is not enough, and two on DIFFERENT
         // content is a slow-starting call misread twice, not a loop — see the abort site.
         let mut omni_looping_streak: u32 = 0;
+        // THIS CALL'S OWN BURST RHYTHM. These models do not stream evenly — they emit in ~2000/4000
+        // character bursts with quiet gaps between, and a judge look that lands in a gap sees
+        // `produced_since_last_look` of single digits and reads a healthy call as dead.
+        // `omni_quiet_secs` accumulates how long the CURRENT silence has run; `omni_longest_gap_secs`
+        // remembers the longest silence this call has previously RECOVERED from. Silence shorter than
+        // that is this call behaving normally; silence longer than it has ever been is new information.
+        let mut omni_quiet_secs: u64 = 0;
+        let mut omni_longest_gap_secs: u64 = 0;
         // #F924: ALL prior looking tails, not just the immediately previous one. A loop whose
         // period exceeds one look interval never shows the same window twice in a ROW, so the
         // old single-slot memory reset the streak forever — measured live at 191,000 chars.
@@ -17094,6 +17102,14 @@ impl GooseAgentDispatcher {
                 let produced_since_last_look =
                     thinking_chars.saturating_sub(omni_thinking_at_last_look);
                 let secs_since_last_look = omni_last_look_at.elapsed().as_secs();
+                // Track the silence BEFORE anything reads it. A look that saw real production ends the
+                // current quiet spell and records how long it turned out to be recoverable for.
+                if produced_since_last_look >= OMNI_JUDGE_MIN_CHARS {
+                    omni_longest_gap_secs = omni_longest_gap_secs.max(omni_quiet_secs);
+                    omni_quiet_secs = 0;
+                } else {
+                    omni_quiet_secs = omni_quiet_secs.saturating_add(secs_since_last_look);
+                }
                 // ACTIONS ARE PRODUCTION TOO, and counting only thinking made the judge blind to that.
                 //
                 // MEASURED over one 8h20m run: 242 looks, MEDIAN rate 0.09 chars/sec, and 138 of them
@@ -17565,8 +17581,34 @@ impl GooseAgentDispatcher {
                         // since the last look, it is advancing.
                         let producing_since_last_look =
                             produced_since_last_look >= OMNI_JUDGE_MIN_CHARS;
+                        // A GAP THIS CALL HAS ALREADY RECOVERED FROM IS NOT EVIDENCE OF DEATH.
+                        //
+                        // MEASURED 2026-08-28: review-3 was re-streamed at `produced=5` and immediately
+                        // produced another 4,003 characters — it had been between bursts, not dead. Ten
+                        // such re-streams in one REVIEW cost the lanes everything they had built:
+                        // 27,297 -> 2,004, 13,291 -> 2,002, 8,640 -> 2,006. The round numbers
+                        // (4001/4002/4003/4009) say this is a provider chunk edge, not model behaviour.
+                        //
+                        // So silence only counts once it exceeds the longest silence this SAME call has
+                        // already come back from. That is self-calibrating — no literal seconds anywhere,
+                        // the threshold is measured from the call's own rhythm — and a genuinely dead
+                        // socket still trips it, because its silence grows without bound while the
+                        // recovered-gap high-water mark stops rising.
+                        let within_known_rhythm =
+                            !producing_since_last_look && omni_quiet_secs <= omni_longest_gap_secs;
+                        if within_known_rhythm {
+                            // Say so, so a run can be audited for how often this fired.
+                            self.events.write_value(serde_json::json!({
+                                "event": "judge_quiet_within_rhythm",
+                                "task_id": activity_key,
+                                "quiet_secs": omni_quiet_secs,
+                                "longest_recovered_gap_secs": omni_longest_gap_secs,
+                                "produced_since_last_look": produced_since_last_look,
+                            }));
+                        }
                         if recur.recurring()
                             || (!producing_since_last_look
+                                && !within_known_rhythm
                                 && omni_prior_looping_tails
                                     .iter()
                                     .any(|prev| tails_recur(prev, &tail_set)))
