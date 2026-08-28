@@ -120,6 +120,11 @@ runs several rounds and the gaps arrive in the later ones.
 
 ## Evidence worth acting on
 
+- **VERIFIED sb-7 RUN LIVE from 11:10Z** — the first correct local run of the day. prompt 53,634 chars,
+  "# Build `app` — Meridian Payments Console", all of ledgerd/notifierd/viz.js/DECISIONS.md/outbox/12,288
+  present, BENCH_SPEC=spec-build-sb7.md, vendor 200, secrets store=file, benchmark=true.
+  `bench_dispatch.mjs` now asserts these markers itself and exits 6 rather than reporting success.
+
 - **THE BENCHMARK VIEW COULD NEVER RUN sb-7 (fixed 80ccfe548).** `benchmark-run` set `BENCH_SPEC` with no
   sb-7 branch, and `build_prompt` reads BENCH_SPEC BEFORE the regime — so selecting sb-7 ran the sb-5
   spec. The 10:44Z run received 6,278 chars of "# Build `vendorsync`" instead of 54,146 chars of Meridian,
