@@ -494,6 +494,11 @@ task, 12 fired, 2 with findings, working. `tail_review` — dimension reviews (`
   the same second across three nodes. A falsifier that reports the OPPOSITE of the truth is worse than no
   falsifier: it would have sent the next version chasing a parallelism bug that does not exist. Slice to
   `[:19]` before comparing.
+- **`__pycache__` IS A BUILD ARTEFACT — exclude it from every file count.** It makes deltas lie in BOTH
+  directions: seed-2-1-turbo read **+25 files then -50** across two ticks purely from pyc churn, and the
+  same inflation once reported "first app file at 96.1 min" for a run that had built nothing. Fixed in
+  `compare_runs.py` earlier the same day and left unfixed in `tick.py` — fixing the instance, not the
+  class, again.
 - **THE TICK IS A SCRIPT: `python3 ~/goose-builds/loop-state/tick.py`.** Do not retype the reader. Three
   times today a hand-written check answered a NEIGHBOURING question and read as healthy: `pgrep -f
   run_build.py` matched the shell running the tick; a build-progress grep for cargo/rustc/electron/node
