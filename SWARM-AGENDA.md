@@ -397,6 +397,42 @@ it. A problem that turns out to be already owned is left out, but then it was no
 **THIS RUN KEEPS THE DEFECT** — the binary is the old one. Expect 4 features missing from its app, and read
 the score with that in mind rather than as a verdict on the decomposition.
 
+## [FIXED] THE ENGINE CAN NOW END A CALL THE JUDGE CANNOT MOVE — `5b14b8fc6`
+
+**TWO CONSECUTIVE RUNS, SAME SHAPE, ~50 MINUTES EACH.** A coverage lane owes ONE structured reply, makes
+**zero tool calls**, and holds RESEARCH alone with a node idle while every other lane has finished:
+
+    run 1  open-coverage-1   145,514 chars   5 nudges    delivered at ~50 min
+    run 2  open-coverage-2    70,932 chars  22 nudges    still blocking at ~50 min
+
+Tonight's judge fixes made the supervisor say **exactly the right thing** — *"Call `final_output`
+immediately with the 80 enumerated rows"* — and changed the outcome **not at all**. That is the honest
+result of the prompt work: the supervisor is fixed, the obedience is not.
+
+**THE TERMINATOR, and it is fully semantic — no counter, no clock:** the call OWES a structured reply
+(`wants_structured_reply`), has made **zero tool calls** (`call_records.is_empty()`), and the supervisor
+has just repeated its direction **verbatim** — the measurable proof that escalation has hit its floor,
+because "be more concrete than last time" has nowhere left to go once it has said "submit the rows you
+already have".
+
+**WHY ENDING IT IS SAFE:** the coverage fanout ALREADY treats an unreadable lane as
+`Err(_) => Vec::new()` — *"a part nobody could read leaves the breakdown as it was for that part."*
+Coverage is ENRICHMENT: losing one part costs completeness, blocking on it costs the whole run.
+
+**THE DOCTRINE IS INTACT.** "You may never request termination. Your job is to redirect." The judge asked
+for a redirect. The ENGINE ended the call, on a condition it measured itself. That distinction is the
+whole design and it is preserved.
+
+Emits `judge_call_ended_unproductive {task_id, nudges, thinking_chars, reason}`.
+
+**AND THE OTHER HALF OF THE DIAGNOSIS — `40c231152`:** `Agent::steer` appends to an UNBOUNDED queue, and a
+pure-reasoning call never reaches a turn boundary, so nothing drains. `open-coverage-2` accumulated
+**FIFTEEN queued nudges**. When it finally takes a turn it receives all fifteen at once — 55 rows, then 80,
+then variants. **The judge was not being ignored; it was about to be delivered fifteen times over.**
+`steer_superseding` drops only messages carrying the caller's own marker, so a USER's queued message is
+never collapsed — pinned by a test that queues a human message beside two supervisor notes and asserts the
+human's survives in place while only the newest note remains.
+
 ## THE STRUCTURED-REPLY FIX WORKS — AND THE MODEL STILL WILL NOT OBEY, 2026-08-29 03:25 EEST
 
 `open-coverage-2`, this run, on the new binary. **The judge's directions, verbatim:**
