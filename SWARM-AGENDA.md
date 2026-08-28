@@ -363,6 +363,12 @@ of BUILD is what costs us — 4h15m to the first file — not BUILD itself.
   like, and it is explicitly not a kill. MEASURED 2026-08-28: review-2 (974s) and review-3 (1239s) both
   read as alarming ancient lanes; both were `done`, with review-1 fresh at 14s. I hand-checked the stamp
   twice before putting it in the tick.
+- **COMPARE TIMESTAMPS BY THE SECOND — `ts` CARRIES MICROSECONDS.** The BUILD falsifier in
+  `compare_runs.py` grouped dispatches by exact `ts` equality, matched exactly ONE event, and printed
+  **"SERIAL -- the DAG is over-constrained"** for the run whose six tasks had demonstrably dispatched in
+  the same second across three nodes. A falsifier that reports the OPPOSITE of the truth is worse than no
+  falsifier: it would have sent the next version chasing a parallelism bug that does not exist. Slice to
+  `[:19]` before comparing.
 - **THE TICK IS A SCRIPT: `python3 ~/goose-builds/loop-state/tick.py`.** Do not retype the reader. Three
   times today a hand-written check answered a NEIGHBOURING question and read as healthy: `pgrep -f
   run_build.py` matched the shell running the tick; a build-progress grep for cargo/rustc/electron/node
