@@ -2791,13 +2791,26 @@ ipcMain.handle('benchmark-run', async (event, nodes: number, tier?: string, samp
           GOOSE_SWARM_RENDER_PROBE: path.join(
             payloadDir,
             'bench',
-            sb6 ? 'product_probe_v2.mjs' : 'product_probe.mjs'
+            sb7 ? 'product_probe_v3.mjs' : sb6 ? 'product_probe_v2.mjs' : 'product_probe.mjs'
           ),
           // sb-5.2 comparability rail: the baked baselines are v2-spec product-regime numbers, so
           // a user run must be scored by the same scorer against the same spec or the board
           // cannot hold both.
           BENCH_PRODUCT: '1',
-          BENCH_SPEC: path.join(payloadDir, sb6 ? 'spec-build-v3.md' : 'spec-build-v2.md'),
+          // BENCH_SPEC OVERRIDES THE REGIME, so a tier missing from this ternary does not fall back to
+          // its own spec — it runs someone else's. There was no sb-7 branch here, so every sb-7 run
+          // started from `spec-build-v2.md`: the app dutifully passed `--sb7`, run_build dutifully set
+          // BENCH_SB7, and `build_prompt` read BENCH_SPEC FIRST and threw the regime away.
+          //
+          // MEASURED 2026-08-28: a run started from the Benchmark view with sb-7 selected received a
+          // 6,278-character prompt beginning "# Build `vendorsync`" and produced slices called
+          // meridian-client / local-store / http-api. The sb-7 spec is 54,146 characters and asks for
+          // ledgerd, notifierd, webhooks, an outbox, an event ledger and a 3D field. None of it was
+          // present, and the run looked completely healthy while building the wrong product.
+          BENCH_SPEC: path.join(
+            payloadDir,
+            sb7 ? 'spec-build-sb7.md' : sb6 ? 'spec-build-v3.md' : 'spec-build-v2.md'
+          ),
           // The FULL tuned regime (REGIME.env parity, minus harness-only keys and resolved
           // paths): a user's benchmark must run the same engine configuration the baked
           // baselines and the campaign's numbers ran, or the board compares different swarms.
