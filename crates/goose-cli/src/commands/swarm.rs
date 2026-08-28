@@ -17900,9 +17900,25 @@ impl GooseAgentDispatcher {
                             // Queued into the SAME running session. The in-flight turn is not burned and
                             // nothing is dropped; the note becomes the last user message before the next
                             // provider request.
-                            agent
-                                .steer(&session_config.id, Message::user().with_text(nudge_text))
+                            // SUPERSEDING, not stacking: see `Agent::steer_superseding`. A pure-reasoning
+                            // call never reaches a turn boundary, so nothing drains and the notes pile up
+                            // -- open-coverage-2 accumulated fifteen. The newest direction is the only one
+                            // that should land; the older ones name row counts that are already stale.
+                            let dropped = agent
+                                .steer_superseding(
+                                    &session_config.id,
+                                    Message::user().with_text(nudge_text),
+                                    "SUPERVISOR NOTE",
+                                )
                                 .await;
+                            if dropped > 0 {
+                                self.events.write_value(serde_json::json!({
+                                    "event": "judge_notes_superseded",
+                                    "task_id": activity_key,
+                                    "dropped": dropped,
+                                    "nudges": nudges_used,
+                                }));
+                            }
                             // Judge state resets so the redirected call is watched fresh, but the
                             // recurrence fingerprints are KEPT: the stream did not restart, so the
                             // reasoning that earned the nudge is still part of this call's history.
