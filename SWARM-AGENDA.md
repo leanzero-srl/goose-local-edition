@@ -397,6 +397,27 @@ it. A problem that turns out to be already owned is left out, but then it was no
 **THIS RUN KEEPS THE DEFECT** — the binary is the old one. Expect 4 features missing from its app, and read
 the score with that in mind rather than as a verdict on the decomposition.
 
+## THE SHARED FILE, IDENTIFIED — and the local run BUILT ITS FRONTEND, 2026-08-29 02:05 EEST
+
+`tasks_sharing_a_file: 1` resolved by hand (the `shared_files` fix will name it automatically next run):
+**`viz-scene-rendering` and `viz-camera-picking-interaction` both own `web/viz.js`.**
+
+The scheduler serialised them correctly. The first wrote the whole file — **20,945 bytes containing camera
+(37 refs), pick (29), brush (7) and label (7)** — and the second then ran with nothing left to do and
+completed having made **ZERO tool calls**. Benign THIS time, and only because the first task implemented
+both halves; had it written only its own, the camera and picking work would have been silently absent or
+overwritten. Fixed by REVIEW question 6b (`b2f...`), which names the pair and demands one owner.
+
+**THE HEADLINE, AND IT IS THE POINT OF THE WHOLE CAMPAIGN:** the run has **`web/viz.js` (20,945 B),
+`web/index.html` (4,050 B) and `web/styles.css` (5,052 B) on disk** — plus `app/db.py`, `app/ledgerd.py`,
+`app/notifierd.py`, `app/ledger.py`, `app/sync/engine.py`, `app/sync/upsert.py`. The last published local
+run scored 0.0273 with **no web frontend at all** and `GET /` 404ing, roughly 0.56 of the scoring weight
+unreachable. The previous run's `viz-picking-camera` made zero tool calls for 76 minutes and never wrote
+that file.
+
+BUILD at 23 min: **8 dispatched, 5 completed, 0 retries, 0 failures**, 19 files, fleet 3/3 busy,
+`judge_skipped` 0, 4 re-streams prevented, every nudge a steer.
+
 ## THREE OF FOUR CLOUD ENTRANTS DIED TO HARNESS RULES, NOT TO MODEL FAILURE — 2026-08-29
 
 | entrant | admitted / terminal | spent | what it built | what killed it |
