@@ -118,7 +118,7 @@ runs several rounds and the gaps arrive in the later ones.
       slice list against the request section by section" — the job restated, costing a restream. The judge
       must add information or return OK.
 - [x] **I. DONE.** The rater can answer `DUPLICATE <n>`; the engine drops those from the wave. Model decides — no similarity score, no threshold. Backward-only, and `forced` engine checks still win. Was: (`merge_duplicate_findings`) — designed, never shipped.
-- [~] **J. BLOCKED ON A PREREQUISITE, and I stopped rather than ship it.** Confirmed real: `worker_models`
+- [x] **J. DONE.** `DeviceCfg.is_cloud` (54a06a882) then `live_fleet_slots` — fans drop devices LM Studio no longer serves, and never residency-check a cloud device. Falls back to the boot snapshot on any doubt. KNOWN LIMIT: drops the departed, does not re-add a node absent at boot (needs cfg, not the pool). Was: Confirmed real: `worker_models`
       is `fleet_slot_models(devices)` computed ONCE at swarm.rs:26951 (planning) and again at :38053
       (repair), both from the boot pool. Only BUILD sees a rejoin, via the scheduler's `DeviceAdmission`.
       So a machine that returns mid-run sits idle through RESEARCH/REVIEW/TEST/FIX however long they take.
