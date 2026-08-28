@@ -29,6 +29,14 @@ Make the swarm BUILD BETTER SOFTWARE on local models, then beat the published `b
   the Electron binary only; `Resources/bin/goose swarm run` survived, reparented to launchd, and drove all
   three nodes for ~25 minutes after the window closed. `launch.sh` already had the right patterns — I
   retyped a shorter version instead of calling it. If a procedure exists, CALL IT.
+- **THE TICK IS A SCRIPT: `python3 ~/goose-builds/loop-state/tick.py`.** Do not retype the reader. Three
+  times today a hand-written check answered a NEIGHBOURING question and read as healthy: `pgrep -f
+  run_build.py` matched the shell running the tick; a build-progress grep for cargo/rustc/electron/node
+  counted VS Code helpers and MCP servers, so a finished build read as running for 11 minutes; and the
+  judge pairing keyed on `activity_key`, which these events DO NOT CARRY — they carry **`task_id`** — so
+  every probe fell into one '?' bucket and the hung-probe checkpoint was never actually evaluated at all.
+  The script also skips any dir whose name contains `-KILLED-` or `-DEBRIS-`, because "newest dir" briefly
+  pointed at orphan debris.
 - **NEVER COUNT PROCESSES BY NAME PATTERN — anchor on the PID you started or the log you are writing.**
   MEASURED 2026-08-28: a build-progress check of `ps aux | grep -cE '[c]argo|[r]ustc|[e]lectron|[n]ode.*build'`
   counted 4 and I reported the build still running. All four were VS Code helpers and MCP servers; the
