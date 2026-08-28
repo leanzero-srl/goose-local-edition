@@ -1912,7 +1912,19 @@ export function foldEvents(
 
   // The single-node planning calls. Each is over the moment its own digest stamps phase='done', so a node
   // that finished synthesising stops reading as working without waiting for the next phase to open.
-  const planningLanes: TurnLane[] = PLANNING_DIGEST_KEYS.filter((k) => activity[k] != null)
+  // PIPELINE ORDER, with each fan slotted beside the phase it belongs to. Sorting these alphabetically
+  // would put `rate` before `review` and `synthesis` last, which is not the order they run in — the list
+  // is read as a sequence.
+  const planningKeys: string[] = [];
+  const activityKeys = Object.keys(activity);
+  for (const k of PLANNING_DIGEST_KEYS) {
+    if (activity[k] != null) planningKeys.push(k);
+    const prefix = PLANNING_FAN_AFTER[k];
+    if (prefix) {
+      planningKeys.push(...activityKeys.filter((x) => x.startsWith(prefix)).sort());
+    }
+  }
+  const planningLanes: TurnLane[] = planningKeys
     .map((k, i) => laneFromDigest(k, digestLabel(k), planned, i))
     .filter(hasActivity);
 
@@ -2001,12 +2013,38 @@ export const PLANNING_DIGEST_KEYS = [
   'rate',
 ] as const;
 
+/** Planning calls that FAN, so their lane count is a property of the fleet and cannot be a fixed list.
+ *
+ *  A hardcoded key set goes stale the moment a phase learns to fan, and it did: coverage runs one lane per
+ *  host as `open-coverage-1..N` and is the heaviest part of OPEN, yet the panel showed "PLANNING CALLS ·
+ *  2 NODES" — only `open` and `open-resplit` — while three coverage lanes were live. They appeared in
+ *  FLEET, which reads node state, so the two halves of the same screen disagreed. REVIEW now fans the same
+ *  way as `review-1..N` and would have been invisible identically. */
+const PLANNING_FAN_PREFIXES = ['open-coverage-', 'review-'] as const;
+
+/** Which fixed key each fan follows, so the lanes render in the order the phases actually run. */
+const PLANNING_FAN_AFTER: Record<string, string | undefined> = {
+  'open-resplit': 'open-coverage-',
+  review: 'review-',
+};
+
+export function isPlanningDigestKey(key: string): boolean {
+  return (
+    (PLANNING_DIGEST_KEYS as readonly string[]).includes(key) ||
+    PLANNING_FAN_PREFIXES.some((p) => key.startsWith(p))
+  );
+}
+
 /** Human label for a digest key that has no lane of its own ('verify::api' -> 'Verifying api'). */
 function digestLabel(key: string): string {
   if (key.startsWith('verify-e2e::')) return 'End-to-end verify';
   if (key.startsWith('verify::')) return `Verifying ${key.slice('verify::'.length)}`;
   if (key.startsWith('complete-fix::')) return 'Repairing verify findings';
   if (key.startsWith('slice-')) return `Slice · ${key.slice('slice-'.length)}`;
+  if (key.startsWith('open-coverage-'))
+    return `Coverage ${key.slice('open-coverage-'.length)} · what the request names that nothing owns`;
+  if (key.startsWith('review-'))
+    return `Review ${key.slice('review-'.length)} · this part of the request against the whole plan`;
   if (key === 'open') return 'Opening · cutting the request into slices';
   if (key === 'open-resplit') return 'Opening · re-cutting a lopsided slice';
   if (key === 'proxy-answer') return 'Answering the open decisions';
