@@ -83,11 +83,22 @@ Make the swarm BUILD BETTER SOFTWARE on local models, then beat the published `b
 - [ ] **I. Semantic de-duplication of findings** (`merge_duplicate_findings`) — designed, never shipped.
 - [ ] **J. Node re-admission covers BUILD only.** RESEARCH/TEST/FIX hold pre-BUILD fleet snapshots, so a
       node that comes back mid-run (gabee) sits idle for those phases.
-- [ ] **K. Judge-supplied ETA** — the judge estimates remaining time; surface it in the panel.
+- [x] **K. DONE.** Judge's `eta_mins` now surfaces per running lane (latest wins). The run-level band stays arithmetic and is honest about being an extrapolation. Was: — the judge estimates remaining time; surface it in the panel.
+- [ ] **N. The coverage/review fan splits by paragraph count, not weight.** Measured: part 1 got 72
+      components, part 3 got 9; one lane ran 25+ min while two sat idle. Cut on section headings, or
+      rebalance by character weight — the same "no slice more than ~2x another" rule OPEN applies to slices.
 - [ ] **L. Everything renders "unverified".** There must be a real transition to verified when the engine
       has evidence; today no event ever promotes it.
 
 ## Evidence worth acting on
+
+- **COVERAGE IS ENUMERATING PROPERLY NOW (2026-08-28 run).** part 1/3 -> **72 components, 1 unowned**;
+  part 3/3 -> 9 components, 0 unowned. Previous runs found 1-5 gaps IN TOTAL. The table is in the request's
+  own vocabulary (`vs7dbg.pickPixel`, `#viz-labels`, `GET /api/stream`, `DECISIONS.md`) and owners are
+  specific slices (`viz-interaction`, `viz-rendering`, `decisions-doc`) rather than layers.
+- **BUT THE SPLIT IS BADLY UNBALANCED:** 72 components in part 1 against 9 in part 3, because the fan cuts
+  by PARAGRAPH COUNT, not by content weight. One lane grinds while two idle. Same defect shape as the
+  slice-balance rule OPEN already applies to itself. -> new item N.
 
 - **THE WEDGE FIX IS CONFIRMED LIVE (2026-08-28 09:16-09:18Z).** `open` judge look 4 was dispatched at
   09:16:30 and never returned; the phase advanced to `open-resplit` at 09:18:01 regardless. The OPEN call
