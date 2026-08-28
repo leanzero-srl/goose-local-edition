@@ -4,6 +4,7 @@ import {
   resolvePool,
   foldEvents,
   buildActivity,
+  cleanTaskTitle,
   foldSupervision,
   DIGEST_FRESH_MS,
   DIGEST_OPEN_CALL_FRESH_MS,
@@ -484,5 +485,31 @@ describe('event log — an action must be distinguishable from an observation at
       nudge('open-coverage-2', 'A', 'B'),
     ]);
     expect(items.filter((i) => i.kind === 'judge' || i.kind === 'judge-act')).toHaveLength(2);
+  });
+});
+
+describe('a task title must name the work, never a heading from its brief', () => {
+  // MEASURED: the fleet strip showed "Answers to slice questions" on two nodes at once while they were
+  // building vendor-sync-engine and frontend-table-interactions. A task's description IS its research
+  // brief now, so its first heading is not a title.
+  it('falls back to the id when the description opens with a markdown heading', () => {
+    expect(cleanTaskTitle('## Answers to Slice Questions\n\nThe module...', 'vendor-sync-engine')).toBe(
+      'Vendor sync engine'
+    );
+    expect(cleanTaskTitle('# Questions Answered\n\nblah', 'frontend-css-styling')).toBe(
+      'Frontend css styling'
+    );
+  });
+
+  it('two different tasks can never render the same label', () => {
+    const a = cleanTaskTitle('## Answers to slice questions\n\nx', 'frontend-drafts-panel');
+    const b = cleanTaskTitle('## Answers to slice questions\n\ny', 'frontend-table-interactions');
+    expect(a).not.toBe(b);
+  });
+
+  it('still prefers a real prose description', () => {
+    expect(
+      cleanTaskTitle('Build the notifications feed UI component that displays outbox events', 'x')
+    ).toContain('notifications feed');
   });
 });

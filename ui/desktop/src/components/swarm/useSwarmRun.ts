@@ -724,6 +724,25 @@ export function collapseRepeats(text: string): string {
 
 export function cleanTaskTitle(desc: string | undefined, id: string): string {
   if (!desc) return id;
+  // A DESCRIPTION THAT OPENS WITH A MARKDOWN HEADING IS A DOCUMENT, NOT A TITLE.
+  //
+  // Since the DETAIL fan was deleted, a task's description IS its slice owner's research brief — a
+  // multi-thousand-character specification that opens with whatever section heading the research model
+  // chose. Stripping the `#` and cutting at the first blank line then yields that heading as the task's
+  // "title".
+  //
+  // MEASURED 2026-08-28, and Mihai has raised it repeatedly: the FLEET strip showed
+  //   gabee     -> "Answers to slice questions"
+  //   mihai     -> "Questions Answered"
+  //   workhorse -> "Answers to slice questions"
+  // while those nodes were building `vendor-sync-engine`, `frontend-css-styling` and
+  // `frontend-table-interactions`. Three nodes, two identical labels, none of them naming the work —
+  // the §0 one-glance test failed inside our own UI. Four of the six loaded tasks opened with
+  // "## Answers to slice questions" or "## Questions answered".
+  //
+  // The id is the honest handle and it always names the work. The brief is still there, in the row's
+  // detail and in the node inspector, which is where a specification belongs.
+  if (/^\s*#{1,6}\s/.test(desc)) return humanizeTaskId(id);
   // TRIM first: the architect's descriptions start with "\n\n", which would make the "\n\s*\n" cut match at
   // index 0 and get skipped — leaving the whole wall. Strip md emphasis/fences (NOT underscores — they occur
   // in filenames like test_projects.py), then cut at the first section marker or blank line.
