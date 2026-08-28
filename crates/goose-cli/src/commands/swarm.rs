@@ -8949,71 +8949,36 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
     /// pushed one verdict per matching LINE and the caller zipped by position. A CRITICAL inheriting the
     /// previous line's MINOR lands in `minors`, `criticals` empties, and the round prints GREEN.
     fn a_preamble_line_cannot_shift_every_severity() {
-        // The parser is exercised through its own indexing rules; this pins the shape, not the call.
-        let findings: Vec<String> = (1..=3).map(|i| format!("defect {i}")).collect();
-        // What a 27B actually emits: a sentence first, then the numbered triage.
+        // Exercises parse_rating_reply ITSELF. The previous version of this test held its own copy of
+        // the parsing logic, the fix landed in the copy, the test went green, and PRODUCTION KEPT THE
+        // BUG — caught only by grepping the shipped binary. That is why the parser is now a free
+        // function: a test that mirrors the code it tests passes for the wrong reason.
         let reply = "Here is the triage; I marked anything that stops the app CRITICAL.\n\
                      1. MINOR — cosmetic wording — FILES: `a.py`\n\
                      2. CRITICAL — the app will not start — FILES: `b.py`\n\
                      3. MINOR — an edge case — FILES: `c.py`";
-        let mut verdicts: Vec<(bool, Vec<String>)> = vec![(true, Vec::new()); findings.len()];
-        let mut seen = vec![false; findings.len()];
-        let mut appended = 0usize;
-        let numbered = reply.lines().any(|l| {
-            let u = l.to_uppercase();
-            (u.contains("CRITICAL") || u.contains("MINOR"))
-                && l.trim()
-                    .split(|c: char| !c.is_ascii_digit())
-                    .find(|t| !t.is_empty())
-                    .and_then(|t| t.parse::<usize>().ok())
-                    .is_some_and(|n| n >= 1 && n <= findings.len())
-        });
-        for line in reply.lines() {
-            let l = line.trim();
-            let u = l.to_uppercase();
-            let crit = if u.contains("CRITICAL") {
-                true
-            } else if u.contains("MINOR") {
-                false
-            } else {
-                continue;
-            };
-            let files = match u.find("FILES") {
-                Some(i) => paths_in(&l[i.min(l.len())..]),
-                None => paths_in(l),
-            };
-            let idx = l
-                .split(|c: char| !c.is_ascii_digit())
-                .find(|t| !t.is_empty())
-                .and_then(|t| t.parse::<usize>().ok())
-                .filter(|n| *n >= 1 && *n <= findings.len())
-                .map(|n| n - 1);
-            match idx {
-                Some(i) if !seen[i] => {
-                    verdicts[i] = (crit, files);
-                    seen[i] = true;
-                }
-                Some(_) => {}
-                None if numbered => {}
-                None => {
-                    while appended < findings.len() && seen[appended] {
-                        appended += 1;
-                    }
-                    if appended < findings.len() {
-                        verdicts[appended] = (crit, files);
-                        seen[appended] = true;
-                    }
-                }
-            }
-        }
-        // The preamble contains "CRITICAL" and no usable number. Defect 2 must still be the critical one.
-        assert!(!verdicts[0].0, "defect 1 is MINOR");
+        let v = parse_rating_reply(reply, 3);
+        assert!(!v[0].0, "defect 1 is MINOR");
         assert!(
-            verdicts[1].0,
+            v[1].0,
             "defect 2 is the CRITICAL one and must not have shifted"
         );
-        assert!(!verdicts[2].0, "defect 3 is MINOR");
-        assert_eq!(verdicts[1].1, vec!["b.py"], "its files must travel with it");
+        assert!(!v[2].0, "defect 3 is MINOR");
+        assert_eq!(v[1].1, vec!["b.py"], "its files must travel with it");
+
+        // A reply that numbers NOTHING still parses positionally — the fallback must survive.
+        let unnumbered = "MINOR — cosmetic\nCRITICAL — will not start\nMINOR — edge case";
+        let u = parse_rating_reply(unnumbered, 3);
+        assert_eq!(
+            (u[0].0, u[1].0, u[2].0),
+            (false, true, false),
+            "an unnumbered reply must still map in order"
+        );
+
+        // A defect nobody rated stays CRITICAL — never more permissive than the old all-or-nothing.
+        let short = parse_rating_reply("1. MINOR — only the first", 3);
+        assert!(!short[0].0);
+        assert!(short[1].0 && short[2].0, "unrated defects stay critical");
     }
 
     #[test]
@@ -25307,60 +25272,7 @@ impl GooseAgentDispatcher {
             // exactly the old all-or-nothing behaviour and therefore never worse than before.
             Err(_) => return findings.iter().map(|_| (true, Vec::new())).collect(),
         };
-        // INDEXED BY THE MODEL'S OWN NUMBER, not by the order lines happen to arrive.
-        //
-        // This pushed one verdict per line containing CRITICAL or MINOR anywhere and the caller zipped
-        // by position — so a single preamble line ("Here is the triage; I marked anything that stops the
-        // app CRITICAL.") shifted every severity AND every FILES list by one. A CRITICAL inheriting the
-        // previous line's MINOR lands in `minors`, `criticals` empties, and the round prints GREEN.
-        // The prompt asks for `<number>. ...`, so honour the number when it is there.
-        let mut verdicts: Vec<(bool, Vec<String>)> = vec![(true, Vec::new()); findings.len()];
-        let mut seen: Vec<bool> = vec![false; findings.len()];
-        let mut appended = 0usize;
-        for line in out.lines() {
-            let l = line.trim();
-            let u = l.to_uppercase();
-            let crit = if u.contains("CRITICAL") {
-                true
-            } else if u.contains("MINOR") {
-                false
-            } else {
-                continue;
-            };
-            // Same lenient shape as the defect parser, and for the same reason: a 27B writes FILES:,
-            // **FILES**:, `files:` or drops the label entirely, and a strict parse would return nothing
-            // at all — which is the state this change exists to leave behind.
-            let files = match u.find("FILES") {
-                Some(i) => paths_in(&l[i.min(l.len())..]),
-                None => paths_in(l),
-            };
-            let idx = l
-                .split(|c: char| !c.is_ascii_digit())
-                .find(|t| !t.is_empty())
-                .and_then(|t| t.parse::<usize>().ok())
-                .filter(|n| *n >= 1 && *n <= findings.len())
-                .map(|n| n - 1);
-            match idx {
-                Some(i) if !seen[i] => {
-                    verdicts[i] = (crit, files);
-                    seen[i] = true;
-                }
-                // No number, or one already used: fall back to arrival order over the slots still
-                // unclaimed, which is the old behaviour for a reply that gives no numbering at all.
-                _ => {
-                    while appended < findings.len() && seen[appended] {
-                        appended += 1;
-                    }
-                    if appended < findings.len() {
-                        verdicts[appended] = (crit, files);
-                        seen[appended] = true;
-                    }
-                }
-            }
-        }
-        // A defect nobody rated stays CRITICAL — the pre-filled default, and the old all-or-nothing
-        // behaviour, so this is never more permissive than before.
-        verdicts
+        parse_rating_reply(&out, findings.len())
     }
 
     /// THE USER-PROXY ANSWER. A node answers the clarify questions when the human does not.
@@ -25669,6 +25581,87 @@ impl GooseAgentDispatcher {
 ///
 /// Paths are re-emitted in BACKTICKS because `extract_file_from_finding` reads them from there; that is
 /// the whole integration with the existing per-file fix fan.
+/// Parse a RATE reply into one (critical, files) per finding, BY THE MODEL'S OWN NUMBERING.
+///
+/// Free and pure so the test exercises THE SHIPPED CODE. It was inline in `rate_findings` with the test
+/// holding its own copy of the same logic — and the two drifted within minutes: the fix for the
+/// preamble shift landed in the copy, the test went green, and production kept the bug. A test that
+/// mirrors the code it is testing passes for the wrong reason, which is worse than having none.
+fn parse_rating_reply(out: &str, count: usize) -> Vec<(bool, Vec<String>)> {
+    // INDEXED BY THE MODEL'S OWN NUMBER, not by the order lines happen to arrive.
+    //
+    // This pushed one verdict per line containing CRITICAL or MINOR anywhere and the caller zipped
+    // by position — so a single preamble line ("Here is the triage; I marked anything that stops the
+    // app CRITICAL.") shifted every severity AND every FILES list by one. A CRITICAL inheriting the
+    // previous line's MINOR lands in `minors`, `criticals` empties, and the round prints GREEN.
+    // The prompt asks for `<number>. ...`, so honour the number when it is there.
+    let mut verdicts: Vec<(bool, Vec<String>)> = vec![(true, Vec::new()); count];
+    let mut seen: Vec<bool> = vec![false; count];
+    let mut appended = 0usize;
+    // IF THE REPLY IS NUMBERED AT ALL, UNNUMBERED LINES ARE PROSE.
+    //
+    // A positional fallback per line is not enough: the preamble a 27B actually writes — "Here is
+    // the triage; I marked anything that stops the app CRITICAL." — contains the word CRITICAL and
+    // no number, so it claims slot 0 and shifts every real verdict down by one anyway. The fallback
+    // exists for a reply that numbers NOTHING; it must not rescue a stray sentence in a reply that
+    // numbers everything.
+    let numbered = out.lines().any(|l| {
+        let u = l.to_uppercase();
+        (u.contains("CRITICAL") || u.contains("MINOR"))
+            && l.trim()
+                .split(|c: char| !c.is_ascii_digit())
+                .find(|t| !t.is_empty())
+                .and_then(|t| t.parse::<usize>().ok())
+                .is_some_and(|v| v >= 1 && v <= count)
+    });
+    for line in out.lines() {
+        let l = line.trim();
+        let u = l.to_uppercase();
+        let crit = if u.contains("CRITICAL") {
+            true
+        } else if u.contains("MINOR") {
+            false
+        } else {
+            continue;
+        };
+        // Same lenient shape as the defect parser, and for the same reason: a 27B writes FILES:,
+        // **FILES**:, `files:` or drops the label entirely, and a strict parse would return nothing
+        // at all — which is the state this change exists to leave behind.
+        let files = match u.find("FILES") {
+            Some(i) => paths_in(&l[i.min(l.len())..]),
+            None => paths_in(l),
+        };
+        let idx = l
+            .split(|c: char| !c.is_ascii_digit())
+            .find(|t| !t.is_empty())
+            .and_then(|t| t.parse::<usize>().ok())
+            .filter(|n| *n >= 1 && *n <= count)
+            .map(|n| n - 1);
+        match idx {
+            Some(i) if !seen[i] => {
+                verdicts[i] = (crit, files);
+                seen[i] = true;
+            }
+            // No number, or one already used: fall back to arrival order over the slots still
+            // unclaimed, which is the old behaviour for a reply that gives no numbering at all.
+            Some(_) => {}
+            None if numbered => {}
+            None => {
+                while appended < count && seen[appended] {
+                    appended += 1;
+                }
+                if appended < count {
+                    verdicts[appended] = (crit, files);
+                    seen[appended] = true;
+                }
+            }
+        }
+    }
+    // A defect nobody rated stays CRITICAL — the pre-filled default, and the old all-or-nothing
+    // behaviour, so this is never more permissive than before.
+    verdicts
+}
+
 fn parse_observed_defects(reply: &str) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
     let mut current: Option<String> = None;
