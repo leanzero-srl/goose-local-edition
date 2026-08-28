@@ -276,6 +276,12 @@ Run `python3 ~/goose-builds/loop-state/compare_runs.py` — it scores all of thi
   explicit `BUILD OK` only on `-eq 0`. Absence of matched error lines is NOT success — it is also what an
   empty file looks like. This is the third instance today of a check answering a neighbouring question,
   and the first one that reached a commit.
+- **A STALE LANE THAT IS `phase=done` IS FINISHED, NOT DYING — the tick now says which.** The digest
+  stamps `phase: "done"` the instant a call ends, so a lane 20 minutes old with that stamp is a completed
+  member of a fan whose straggler is still running: two idle nodes and one working is what a fan LOOKS
+  like, and it is explicitly not a kill. MEASURED 2026-08-28: review-2 (974s) and review-3 (1239s) both
+  read as alarming ancient lanes; both were `done`, with review-1 fresh at 14s. I hand-checked the stamp
+  twice before putting it in the tick.
 - **THE TICK IS A SCRIPT: `python3 ~/goose-builds/loop-state/tick.py`.** Do not retype the reader. Three
   times today a hand-written check answered a NEIGHBOURING question and read as healthy: `pgrep -f
   run_build.py` matched the shell running the tick; a build-progress grep for cargo/rustc/electron/node
