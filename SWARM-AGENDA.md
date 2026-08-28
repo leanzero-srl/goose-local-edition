@@ -140,6 +140,14 @@ runs several rounds and the gaps arrive in the later ones.
       fleet node (mihai = local, workhorse = Mac Studio, gabee = Mac.lan), and a compile starved the fleet
       badly enough once to take judge probe latency from 16s to 117s. Degrading the primary run to build a
       cloud binary is the wrong trade. Build it the moment the local run ends.
+      **STAGED AND READY TO COMPILE (2026-08-28 15:2xZ):** worktree `~/goose-builds/cloudbin-wt` on
+      `codex/salvage-benchmarks` with `93cdb1d14` cherry-picked. Two conflicts, both branch drift, both
+      resolved: that branch's `sanitize_request_for_compat` takes an extra `&ModelConfig`, and its tests
+      go through a `sanitize(&provider, payload)` helper. `alibaba.json` applied clean. No conflict
+      markers, braces balance. **NOT COMPILED — that is the verification step and it waits for the fleet.**
+      When the local run ends: `cd ~/goose-builds/cloudbin-wt && cargo build --release && cargo test -p
+      goose-providers --lib sanitize`, then preflight/init/smoke/start the ali-stage campaign against
+      `~/goose-builds/cloudbin-wt/target/release/goose`.
       Everything else is READY: manifest at `~/goose-builds/ali-stage`, vendor port 9142, $60 shadow cap,
       flash on the authenticated Token Plan roster, `sk-sp-` credential reading from the keychain, harness
       identity gate widened to `{qwen3.8-max, qwen3.8-flash}`, website registry on the bare id, and
