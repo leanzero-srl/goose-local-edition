@@ -25817,6 +25817,12 @@ impl GooseAgentDispatcher {
              objective — you lose nothing, because the objective still says everything the request \
              asked for, and the builder writes one coherent file instead of two people fighting over \
              it.\n\n\
+             AND A MODULE COLLIDES WITH A PACKAGE OF THE SAME NAME. `app/viz.py` and `app/viz/` are the \
+             SAME import path: Python resolves `app.viz` to the package and the file is dead code that \
+             can never be loaded. MEASURED: one slice owned `app/viz.py` and another owned \
+             `app/viz/layout.py`, both passed a path-equality check because the strings differ, and the \
+             endpoint in the shadowed file was unreachable in the finished program. If one slice needs \
+             `X/` then no other slice may own `X.py`, and the reverse.\n\n\
              COVER THE WHOLE REQUEST, AND PROVE IT TO YOURSELF BEFORE YOU ANSWER. Read back through \
              the request and list ITS OWN sections — its numbered parts, its headings, the named \
              components it says to build. Then check that every single one is owned by a slice, and put \
@@ -27917,6 +27923,16 @@ async fn run_linear_plan(
         }
         let distinct_files = owner_count.len();
         let tasks_sharing_a_file = owner_count.values().filter(|n| **n > 1).count();
+        let dirs: std::collections::HashSet<String> = owner_count
+            .keys()
+            .filter_map(|f| f.rsplit_once('/').map(|(d, _)| d.to_string()))
+            .collect();
+        let shadowed_modules: Vec<String> = owner_count
+            .keys()
+            .filter(|f| f.ends_with(".py"))
+            .filter(|f| dirs.contains(f.trim_end_matches(".py")))
+            .cloned()
+            .collect();
         sink.write_value(serde_json::json!({
             "event": "plan_synthesized",
             "tasks": tasks.len(),
@@ -27946,6 +27962,12 @@ async fn run_linear_plan(
             // extra ones are pure overhead.
             "distinct_files": distinct_files,
             "tasks_sharing_a_file": tasks_sharing_a_file,
+            // A MODULE SHADOWED BY A PACKAGE IS DEAD CODE, and path equality cannot see it.
+            // `app/viz.py` and `app/viz/layout.py` are different strings and the same import path;
+            // Python loads the package and the file is unreachable. MEASURED on the first run to reach
+            // BUILD: viz-records-endpoint wrote 1,796 bytes into `app/viz.py` that nothing could import,
+            // because viz-layout-transforms had created `app/viz/`.
+            "module_package_collisions": shadowed_modules,
         }));
     }
 
