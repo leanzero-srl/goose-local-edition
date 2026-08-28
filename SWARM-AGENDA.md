@@ -144,7 +144,17 @@ drafts.js and…"*. So: round 1 stripped the shared files, round 3 invented file
 round 4 noticed the invented files violate the request. REVIEW is CORRECT at every step and is now
 fighting itself.
 
-**AND THE PLAN IS UNSATISFIABLE, which is why it will oscillate forever.** Counted from the run:
+**CORRECTION, 18:12Z — IT DID SETTLE, AND THAT IS WORSE.** I claimed the constraints had no fixed point
+and REVIEW would oscillate forever. Wrong: rounds ran 5 -> 2 -> 7 -> 3 -> 1 and then SETTLED into
+CONTRACTS. What actually happens is that the reviewer recognises it cannot fix the problem — it may not
+merge slices — so round 5 raises the violation prefixed `STILL:` ("the request's performance budget
+explicitly names exactly 4 frontend files … but the plan …") and then asks for no further change. The
+stop rule fires and the run proceeds **with a plan that knowingly violates the request**. So the failure
+is not non-termination, it is SETTLING ON A KNOWN-BAD PLAN, which is quieter and worse. The cycle
+detector still earns its place — it bounds the oscillating case — but the real fix remains OPEN's
+file-disjointness rule, and the falsifier is unchanged.
+
+**THE ORIGINAL (over-stated) ARGUMENT, kept because the counting is still right:** Counted from the run:
 **10 frontend/viz slices** — frontend-html-structure, frontend-css-styling, frontend-table-interactions,
 frontend-drafts-panel, viz-picking-camera, viz-labels-brush, viz-streaming-instrumentation,
 viz-layout-transforms, viz-webgl-rendering, viz-records-endpoint — against the **4 files the request
