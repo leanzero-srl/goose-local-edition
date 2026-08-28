@@ -3300,6 +3300,37 @@ ipcMain.handle('read-swarm-run', async (_event, workingDir: string) => {
             const c = await fs.readFile(p, 'utf8');
             const key = f.replace(/\.json$/, '');
             const parsed = JSON.parse(c);
+            // THE UNCLIPPED NARRATION, from the append-only transcript beside the digest.
+            //
+            // `full_reasoning` inside the digest is a 24,000-char TAIL clip — the digest is rewritten
+            // ~2.5x/second so it cannot grow — which is why a long call's narration begins partway
+            // through. Mihai, twice, on a node whose panel started at item 25 of a 39-item list: "the
+            // generations stop displaying past a certain number of characters".
+            //
+            // The engine now also APPENDS every chunk to `<task>.log`, which has no clip. Read its TAIL
+            // rather than the whole file: the poll loop runs over every lane continuously, so an
+            // unbounded read here would grow without limit, and a bound eight times the digest's is
+            // already past every call measured. Reading only the tail keeps the newest text, which is
+            // the end a reader is following.
+            try {
+              const logPath = p.replace(/\.json$/, '.log');
+              const lst = await fs.stat(logPath);
+              const MAX = 200_000;
+              const start = Math.max(0, lst.size - MAX);
+              const fh = await fs.open(logPath, 'r');
+              try {
+                const buf = Buffer.alloc(Math.min(lst.size, MAX));
+                await fh.read(buf, 0, buf.length, start);
+                (parsed as Record<string, unknown>).full_transcript = buf.toString('utf8');
+                (parsed as Record<string, unknown>).transcript_bytes = lst.size;
+                (parsed as Record<string, unknown>).transcript_clipped = lst.size > MAX;
+              } finally {
+                await fh.close();
+              }
+            } catch {
+              // No transcript yet (a pre-fix engine, or a call that has produced nothing). The digest's
+              // clipped field remains the fallback — never worse than before.
+            }
             activity[key] = parsed;
             activityMtimes[key] = st.mtimeMs;
             // The engine sanitizes path separators out of the digest FILENAME (a scheduled fix
