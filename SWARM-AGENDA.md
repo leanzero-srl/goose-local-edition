@@ -262,6 +262,30 @@ runs several rounds and the gaps arrive in the later ones.
       last 24k chars, which is why the screenshot starts at item 25 rather than item 1. The clip exists
       because the digest is REWRITTEN on a hot timer, so it cannot simply grow. The right fix is an
       append-only per-task transcript the modal reads instead of the digest — not a bigger number.
+- [ ] **W. OPEN'S WALL-CLOCK — Mihai's question, awaiting HIS decision. Do not change it unilaterally.**
+      *"how did we end up from my idea of opener with one model doing something to an opener that lasts
+      over 40 min? … at some point we were having everything up to integrate in probably an hour max."*
+      THE HONEST ANSWER, from the commits:
+      - The DESIGNED opener (plan §3) is ONE call plus at most one rebalance patch. That is still what
+        `open` and `open-resplit` are.
+      - `59d999d2d` added COVERAGE after a run scored **0.0023**: the opener read a 54,146-char spec naming
+        ~11 components and produced nine slices for "a table with pagination and a filter". Webhooks,
+        notifierd, the outbox, the event ledger, the approval workflow and the 3D field were never planned.
+        **Seven hours of repair could not reach it — repair fixes what was BUILT, never what was never
+        PLANNED.** Most scorer checks came back UNAVAILABLE, not failed.
+      - `4e5cec44d` fanned coverage across 3 nodes because one 27B call could not hold 54KB. Reading depth
+        rose (1 gap -> 5); named components stayed 2/11.
+      - `4411fff13` made the component->owner TABLE the output with a quoted proof of ownership. THIS is
+        the one that worked: 139 components, 0 unowned, 12 slices naming the request's own components.
+      SO EACH STEP ANSWERED A MEASURED FAILURE — but I optimised for the CORRECTNESS of the decomposition
+      and never re-measured what it did to the PHASE BUDGET. That is the real mistake and it is mine.
+      VALUE, measured on the live run: 79 components, and round 2 closed the 3 gaps round 1 left. So the
+      extra rounds buy ~3 components out of 79.
+      COST: OPEN at 50+ min. A large share of it was the judge re-streaming producing coverage calls —
+      4 in one phase, each discarding a table already built. `f3cfbdbbd` fixes that and is NOT yet measured.
+      OPTIONS PUT TO HIM: (A) keep, and measure OPEN again with the judge fix in; (B) one coverage round
+      only; (C) run coverage CONCURRENTLY with RESEARCH so it leaves the critical path — research starts
+      on known slices immediately, late-found slices research a few minutes behind.
 - [ ] **D. Dead-code sweep — DEFERRED UNTIL NO LOCAL RUN IS LIVE.** `cargo clippy` starves the fleet:
       with the sweep running, judge probe latency went 16s -> 18s -> 27s -> **117s**, clippy-driver at
       55%+30% CPU. I was degrading my own run to tidy code. Ordering also matters and cost one aborted
