@@ -176,7 +176,7 @@ runs several rounds and the gaps arrive in the later ones.
       clause (roster id, exact endpoint, 1M context, 131072 out, thinking max) untouched. Website registry
       is back to the bare `qwen3.8-flash` for the direct route. **Preflight PASSES.** Launch once the
       release build lands. Old note follows:
-- [ ] **Q-old. via OpenRouter — BLOCKED ON CAPACITY, not on us.** It has exactly ONE endpoint
+      SUPERSEDED — **Q-old. via OpenRouter — BLOCKED ON CAPACITY, not on us.** It has exactly ONE endpoint
       (Alibaba) so no fallback is possible, and it is served from OpenRouter's SHARED key pool
       (`is_byok: false`, `limit_source: upstream_provider_shared_pool`). It 429'd inside the 3-turn
       contract smoke, then the real episode died at 123s / 5 requests / 3 files with
@@ -204,10 +204,14 @@ runs several rounds and the gaps arrive in the later ones.
       **RISK, same shape as flash: ONE endpoint (DeepSeek first-party), so no failover.** If it hits an
       upstream rate limit mid-episode, `terminal_safe_retry_limit: 0` makes it terminal. Fallback the user
       already authorised is `deepseek/deepseek-v4-flash` (17 providers).
-      Launch when 27b finishes: `cd ~/goose-builds/ds-stage/evals/swarm-bench/bench && python3 cloud_sb7.py
+      **LAUNCHES ITSELF: `~/goose-builds/loop-state/cloud_queue.sh` is watching r2 and will init+smoke+
+      start `cloud-sb7-dsvision-20260828-r0` the moment 27b reaches a terminal status** (log:
+      `~/goose-builds/loop-state/cloud_queue.log`). It waits for the watched manager PID to exit first, so
+      two campaigns never share a provider lane. Manual equivalent if the watcher is gone:
+      `cd ~/goose-builds/ds-stage/evals/swarm-bench/bench && python3 cloud_sb7.py
       init --root ~/goose-builds/cloud-sb7-dsvision-20260828-r0 --binary <sealed glm binary>
       --publisher-repo ~/Projects/LeanZero-website --publish-live` then `smoke`.
-- [ ] **S-old. was BLOCKED BY AN ACCOUNT SETTING.**
+      SUPERSEDED — **S-old. was BLOCKED BY AN ACCOUNT SETTING.**
       One endpoint, and the account rejects it: "No endpoints available matching your guardrail
       restrictions and data policy." A per-request `provider.data_collection: "allow"` does NOT override
       it. Needs a toggle at https://openrouter.ai/settings/privacy. `deepseek/deepseek-v4-flash` works
