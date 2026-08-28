@@ -370,6 +370,27 @@ planning phases leave slots free by accident. The fleet strip correctly showed t
 was wrong on any dashboard. It was visible ONLY by counting `judge_skipped` by phase — an event nobody had
 ever read.
 
+## TWO CLOUD MODELS KILLED BY ONE HARNESS RULE — the terminal-finish-reason guard, 2026-08-29
+
+`seed-2.0-code` (12 of 13 requests) and `laguna-s-2.1` (16 of 17, $0.09, 908k tokens) both died with:
+
+    Usage data error: Provider stream ended before a recognized terminal tool-call finish reason.
+
+That is `goose-provider-types/src/formats/openai.rs` refusing to yield a tool call whose stream ended
+without a `finish_reason` — pinned by two tests (`deepseek_partial_tool_usage_at_eof_is_not_terminal`,
+`terminal_safe_partial_tool_at_eof_is_never_yielded`). **THE RULE IS CORRECT**: accepting a truncated tool
+call is worse than failing. But it is now rejecting a meaningful fraction of OpenRouter models, and it costs
+nothing to say so — laguna spent $0.09 and produced 4 files before dying, seed $0.22.
+
+**NOT A CAP AND NOT TO BE RELAXED.** Recorded so the next session does not read two independent "model is
+broken" verdicts and re-derive the shared cause. If a third model dies this way the question becomes whether
+the retry path (`terminal_safe_retries_enabled`) should retry a stream that ended cleanly but without the
+marker — a provider-format question, not a swarm question.
+
+**AND THE OPPOSITE RESULT ON THE SAME TICK:** `longcat-2.0` reached **18 source files / 154 KB with its app
+RUNNING** — `ledger.db` at 4.1 MB plus two 2.0 MB SQLite WAL files, written by its own booted service. That
+is the deepseek shape, and it is what the local fleet has never produced.
+
 ## THE OVER-DECOMPOSITION FALSIFIER: MOSTLY PASSED — measured 2026-08-29 01:22 EEST
 
 `plan_synthesized` on run `swarm-3node-r0`:
