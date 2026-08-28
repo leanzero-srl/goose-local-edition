@@ -92,6 +92,15 @@ Make the swarm BUILD BETTER SOFTWARE on local models, then beat the published `b
 
 ## Evidence worth acting on
 
+- **THE JUDGE RE-STREAMS COVERAGE SHARDS ON A FALSE LOOP READ (fixed in source, needs next build).** The
+  coverage table is repetitive by construction, the recurrence detector trips on it, and the re-stream
+  delivery discards the partial table and restarts from the top. Three times in one run = 30-minute
+  coverage rounds. Fixed by telling the judge what repetition means for that call.
+- **Dispatch/return imbalance to re-check next run:** 2,140 `judge_look_dispatched` vs 63 `judge_look` on
+  the 0828 run. Partly abandonment (call finished first) but the running binary predates
+  `judge_look_abandoned`, so it cannot be attributed yet. CHECK THIS on the next run — if the gap is not
+  fully explained by abandonments, there is a second defect.
+
 - **COVERAGE IS ENUMERATING PROPERLY NOW (2026-08-28 run).** part 1/3 -> **72 components, 1 unowned**;
   part 3/3 -> 9 components, 0 unowned. Previous runs found 1-5 gaps IN TOTAL. The table is in the request's
   own vocabulary (`vs7dbg.pickPixel`, `#viz-labels`, `GET /api/stream`, `DECISIONS.md`) and owners are
