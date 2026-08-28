@@ -46,6 +46,14 @@ Make the swarm BUILD BETTER SOFTWARE on local models, then beat the published `b
   a model talking to itself, invisible in the absolute. `tick.py` keeps `tick-state.json` beside it and
   prints `Δcalls / Δthink / Δfiles`, flagging **ACTIONS FROZEN, thinking still growing**. Proven live:
   Δcalls+0 Δthink+275 across 45s on qwen3.8-27b r2.
+- **PAIR EVERY NUDGE WITH THE `produced_since_last_look` THAT JUSTIFIED IT — the direction text alone
+  reads the same whether the nudge was right or wrong.** MEASURED 2026-08-28: four of seven directions
+  looked like the task merely restated ("Restart the call to complete the structural patch analysis"),
+  which reads as a judge defect and as evidence that the "must add information" fix had failed. The
+  pairing showed **every one of the seven fired at produced=0..9** — genuinely dead streams, where
+  restating the job is the CORRECT thing to say. I was one step from "fixing" a mechanism that was
+  working. The tick now prints verdict + produced beside each nudge and flags one that hit a call
+  producing >=2000.
 - **THE TICK NOW READS THE CLOUD RUNS TOO, and the number that matters is WHETHER ANYTHING LANDS.**
   MEASURED 2026-08-28: qwen3.8-27b sat 32 min with 4.7 MB of log and ZERO app files, composing the
   application inside its reasoning channel (`"thinking": " = document.getElementById('"`). Not stuck — it
