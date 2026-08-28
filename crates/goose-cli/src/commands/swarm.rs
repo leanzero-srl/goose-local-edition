@@ -27736,6 +27736,25 @@ async fn run_linear_plan(
             .ok()
             .and_then(|v| v.get("subtasks").and_then(|t| t.as_array()).cloned())
             .unwrap_or_default();
+        // Computed BEFORE the macro: `serde_json::json!` cannot parse a block containing `let` in a
+        // value position, and the error it gives ("comparison operators cannot be chained") points at
+        // the turbofish rather than the real cause.
+        let mut owner_count: std::collections::HashMap<String, usize> =
+            std::collections::HashMap::new();
+        for t in &tasks {
+            for f in t
+                .get("files")
+                .and_then(|f| f.as_array())
+                .into_iter()
+                .flatten()
+            {
+                if let Some(f) = f.as_str() {
+                    *owner_count.entry(f.to_string()).or_default() += 1;
+                }
+            }
+        }
+        let distinct_files = owner_count.len();
+        let tasks_sharing_a_file = owner_count.values().filter(|n| **n > 1).count();
         sink.write_value(serde_json::json!({
             "event": "plan_synthesized",
             "tasks": tasks.len(),
@@ -27763,29 +27782,8 @@ async fn run_linear_plan(
             // `distinct_files` vs `tasks` is the ratio that matters: at 1.0 every task owns its own file
             // and the fan is real; well under 1.0 means slices are competing for the same file and the
             // extra ones are pure overhead.
-            "distinct_files": {
-                let mut all: Vec<String> = tasks
-                    .iter()
-                    .filter_map(|t| t.get("files").and_then(|f| f.as_array()))
-                    .flatten()
-                    .filter_map(|f| f.as_str().map(str::to_string))
-                    .collect();
-                all.sort();
-                all.dedup();
-                all.len()
-            },
-            "tasks_sharing_a_file": {
-                let mut seen: std::collections::HashMap<String, usize> =
-                    std::collections::HashMap::new();
-                for t in &tasks {
-                    for f in t.get("files").and_then(|f| f.as_array()).into_iter().flatten() {
-                        if let Some(f) = f.as_str() {
-                            *seen.entry(f.to_string()).or_default() += 1;
-                        }
-                    }
-                }
-                seen.values().filter(|n| **n > 1).count()
-            },
+            "distinct_files": distinct_files,
+            "tasks_sharing_a_file": tasks_sharing_a_file,
         }));
     }
 
