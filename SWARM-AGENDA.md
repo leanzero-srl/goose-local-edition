@@ -120,6 +120,13 @@ runs several rounds and the gaps arrive in the later ones.
 
 ## Evidence worth acting on
 
+- **THE BENCHMARK VIEW COULD NEVER RUN sb-7 (fixed 80ccfe548).** `benchmark-run` set `BENCH_SPEC` with no
+  sb-7 branch, and `build_prompt` reads BENCH_SPEC BEFORE the regime — so selecting sb-7 ran the sb-5
+  spec. The 10:44Z run received 6,278 chars of "# Build `vendorsync`" instead of 54,146 chars of Meridian,
+  and looked healthy: 9 balanced slices, coverage 0 unowned, clean verdicts. ALWAYS verify the tier from
+  `run_started.prompt` (54,146 chars, contains ledgerd/notifierd/viz.js/outbox/12,288), never from the flag.
+  `GOOSE_SWARM_RENDER_PROBE` had the identical gap and would have graded Meridian by VendorSync's rules.
+
 - **THE FIRST VALID LOCAL RUN of 2026-08-28 started 10:44Z** through the Benchmark view. All three
   conditions hold and were checked from the run's own events, not the UI: `run_build.py --sb7` running,
   its own vendor answering /v3/docs 200, `secrets_source {store:"file"}`, `levers_resolved
