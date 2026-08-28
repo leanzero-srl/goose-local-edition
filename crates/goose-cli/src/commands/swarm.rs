@@ -11713,15 +11713,44 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
                     .to_string(),
             ],
             TargetLang::Python,
+            "",
         );
         assert!(d.contains("ImportError cannot import name bar from baz"));
         assert!(d.contains("--collect-only"));
         assert!(d.contains("--help"));
         assert!(d.contains("SMALLEST"));
+        // THE DONE-CONDITION, which used to be reachable without doing the work: a per-finding verdict
+        // line, and {verify} demoted to a regression check rather than proof the defect is gone.
+        assert!(
+            d.contains("1. pytest --collect-only errors"),
+            "findings must be NUMBERED: {d}"
+        );
+        assert!(
+            d.contains("FINDING <n>: FIXED"),
+            "must demand a per-finding verdict: {d}"
+        );
+        assert!(d.contains("NOT FIXED"));
+        assert!(d.contains("NOT REAL"));
+        assert!(
+            d.contains("does NOT prove"),
+            "must say the verify commands do not prove a finding is closed: {d}"
+        );
+        // The advertised surface is DERIVED, so a spec with no table adds nothing rather than noise.
+        assert!(!d.contains("WHAT THIS APP ADVERTISES"));
+        let with_surface = smoke_fix_description(
+            &["the page renders no rows".to_string()],
+            TargetLang::Python,
+            "| GET | /api/payments | list them |\n",
+        );
+        assert!(
+            with_surface.contains("WHAT THIS APP ADVERTISES"),
+            "a spec WITH a surface table must reach the fix worker: {with_surface}"
+        );
         // Language-aware: the TS variant names the npm build + node entry, not pytest.
         let ts = smoke_fix_description(
             &["`npm run build` failed".to_string()],
             TargetLang::TypeScript,
+            "",
         );
         assert!(ts.contains("npm run build"));
         assert!(ts.contains("node "));
@@ -41114,7 +41143,7 @@ mod clarify_proxy_tests {
         let out = ask_clarifying_questions(
             &[q("storage: sqlite or a json file?")],
             dir.path(),
-            0,
+            None,
             None,
             1,
             Some(proxy),
@@ -41135,7 +41164,7 @@ mod clarify_proxy_tests {
         let out = ask_clarifying_questions(
             &[q("storage: sqlite or a json file?")],
             dir.path(),
-            0,
+            None,
             None,
             1,
             Some(proxy),
@@ -41153,7 +41182,7 @@ mod clarify_proxy_tests {
         let out = ask_clarifying_questions(
             &[q("storage: sqlite or a json file?")],
             dir.path(),
-            0,
+            None,
             None,
             0,
             None,
