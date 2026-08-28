@@ -3312,6 +3312,26 @@ ipcMain.handle('read-swarm-run', async (_event, workingDir: string) => {
             // unbounded read here would grow without limit, and a bound eight times the digest's is
             // already past every call measured. Reading only the tail keeps the newest text, which is
             // the end a reader is following.
+            // THE REASONING CHANNEL'S ONLY DURABLE RECORD. The digest keeps a 2,400-char rolling window
+            // of thinking, so a panel reading it watches the text CLEAR AND REFILL rather than
+            // accumulate. The engine now appends every thinking chunk to `<task>.think.log`.
+            try {
+              const tPath = p.replace(/\.json$/, '.think.log');
+              const tst = await fs.stat(tPath);
+              const TMAX = 400_000;
+              const tstart = Math.max(0, tst.size - TMAX);
+              const tfh = await fs.open(tPath, 'r');
+              try {
+                const tbuf = Buffer.alloc(Math.min(tst.size, TMAX));
+                await tfh.read(tbuf, 0, tbuf.length, tstart);
+                (parsed as Record<string, unknown>).full_thinking = tbuf.toString('utf8');
+                (parsed as Record<string, unknown>).thinking_bytes = tst.size;
+              } finally {
+                await tfh.close();
+              }
+            } catch {
+              // No thinking transcript (pre-fix engine, or a call that has not reasoned yet).
+            }
             try {
               const logPath = p.replace(/\.json$/, '.log');
               const lst = await fs.stat(logPath);

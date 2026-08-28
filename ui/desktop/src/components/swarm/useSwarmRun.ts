@@ -208,6 +208,8 @@ export interface TurnLane {
   /** Reasoning-channel activity — a node drafting in the <think> channel has thinking but empty text. Used so
    *  a heavily-generating node counts as WORKING and its thinking previews inline instead of reading "idle". */
   thinkingChars?: number;
+  /** The WHOLE reasoning channel from `<task>.think.log` — the digest only keeps a 2,400-char window. */
+  fullThinking?: string;
   lastThinking?: string;
   /** "processing" while the node is prompt-processing (dispatched, no tokens yet) — shown before generation. */
   phase?: string;
@@ -2209,6 +2211,7 @@ export function deriveFleet(args: {
       calls: d?.calls,
       toolCalls: d?.tool_calls,
       thinkingChars: d?.thinking_chars,
+      fullThinking: (d as { full_thinking?: string })?.full_thinking,
       lastThinking: d?.last_thinking,
       phase: d?.phase,
       errors: d?.errors,
