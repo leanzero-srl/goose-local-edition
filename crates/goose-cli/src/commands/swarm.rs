@@ -8940,6 +8940,31 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
     }
 
     #[test]
+    /// A MARKDOWN HEADING IS NOT A DEFECT. `strip` matches "DEFECT" as a prefix, so `**Defect found:**`
+    /// yields "found:**". MEASURED live: that fragment was reported as a defect, rated CRITICAL beside
+    /// eight real ones, and handed to the fix fan as work.
+    fn a_heading_is_not_a_defect() {
+        for heading in [
+            "**Defect found:**",
+            "## Defects found:",
+            "DEFECTS:",
+            "**DEFECT REPORT**",
+        ] {
+            assert!(
+                parse_observed_defects(heading).is_empty(),
+                "{heading:?} was read as a defect"
+            );
+        }
+        // ...and the real thing still parses, including a short-but-real one.
+        let real = parse_observed_defects(
+            "DEFECT: negative offset is not rejected, GET /api/payments?offset=-3 returns 200\n\
+             FILES: `vendorsync/api.py`",
+        );
+        assert_eq!(real.len(), 1, "{real:?}");
+        assert!(real[0].contains("negative offset"));
+    }
+
+    #[test]
     /// The parser re-emits paths in BACKTICKS because that is the ONLY thing that makes the repair fan
     /// able to shard a model-observed defect: `extract_file_from_finding` reads a backticked path from
     /// mid-sentence. If this contract breaks, every TEST-fan defect silently falls to the single
@@ -25305,7 +25330,22 @@ fn parse_observed_defects(reply: &str) -> Vec<String> {
     flush(&mut current, "", &mut out);
     out.retain(|d| {
         let u = d.to_uppercase();
-        !u.starts_with("NO DEFECTS") && !u.starts_with("NONE")
+        if u.starts_with("NO DEFECTS") || u.starts_with("NONE") {
+            return false;
+        }
+        // A HEADING IS NOT A DEFECT. `strip` matches "DEFECT" as a prefix, so a model writing the
+        // markdown heading `**Defect found:**` yields the text "found:**" — which MEASURED live became a
+        // reported defect, was rated CRITICAL alongside eight real ones, and went to the fix fan as work.
+        // A real defect names something; a heading is a fragment that trails off into punctuation.
+        // A heading ANNOUNCES a list: it trails off into punctuation and names nothing. A defect, even a
+        // vague one ("something is slow"), is a sentence. Length alone is the wrong test — it threw away
+        // real short findings — so this reads the shape instead.
+        let raw = d.trim();
+        let body = raw.trim_end_matches(['*', ':', '#', ' ']);
+        !raw.ends_with(':')
+            && !raw.ends_with("**")
+            && body.chars().count() >= 12
+            && body.contains(' ')
     });
     out
 }
