@@ -499,6 +499,10 @@ task, 12 fired, 2 with findings, working. `tail_review` — dimension reviews (`
   same inflation once reported "first app file at 96.1 min" for a run that had built nothing. Fixed in
   `compare_runs.py` earlier the same day and left unfixed in `tick.py` — fixing the instance, not the
   class, again.
+- **ARCHIVE MARKERS ARE A VOCABULARY — when you add one, update every reader.** `tick.py` skipped
+  `-KILLED-` and `-DEBRIS-` but not `-ENDED-`, which I introduced the same evening, so it reported
+  `phase=build (96m)` for a run that had been stopped four minutes earlier. The three markers now live in
+  one tuple. Same shape as the `__pycache__` count: fixing the instance and leaving the class.
 - **THE TICK IS A SCRIPT: `python3 ~/goose-builds/loop-state/tick.py`.** Do not retype the reader. Three
   times today a hand-written check answered a NEIGHBOURING question and read as healthy: `pgrep -f
   run_build.py` matched the shell running the tick; a build-progress grep for cargo/rustc/electron/node
