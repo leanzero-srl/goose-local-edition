@@ -109,7 +109,21 @@ runs several rounds and the gaps arrive in the later ones.
       comparable. Key `OPENROUTER_API_KEY` in the harness secrets file (0600, no git repo), $15 balance.
       Coordinator taught the provider by mirroring the `xai_api` branch in four places; full procedure and
       bindings in the `goose-swarm-campaign` skill §4e.
-- [ ] **Q. qwen3.8-flash via OpenRouter — BLOCKED ON CAPACITY, not on us.** It has exactly ONE endpoint
+- [ ] **Q. qwen3.8-flash — REROUTED TO DIRECT TOKEN PLAN, manifest PREFLIGHT-PASSED, waiting only on the
+      new binary.** OpenRouter is a dead end for this model and always will be: ONE endpoint (Alibaba),
+      served from OpenRouter's SHARED key pool (`is_byok: false`,
+      `limit_source: upstream_provider_shared_pool`). It 429'd inside the 3-turn smoke, then the episode
+      died at 123s / 5 requests / 3 files. Archived `-KILLED-openrouter-shared-pool-429`, $0.0198 spent.
+      THE REAL FIX IS THE DIRECT ROUTE, and it is now unblocked: `93cdb1d14` teaches the alibaba provider
+      the Token Plan contract (`max_completion_tokens`, no `max_tokens`, `enable_thinking`,
+      `preserve_thinking`) with tests pinning all four; `qwen3.8-flash` IS on the authenticated Token Plan
+      roster (12 models) and the `sk-sp-` credential reads from the keychain. Staged at
+      `~/goose-builds/ali-stage`, vendor port 9142, cap $60 shadow guard. The harness pinned the Alibaba
+      identity to the literal `qwen3.8-max`; widened to `{qwen3.8-max, qwen3.8-flash}` with every other
+      clause (roster id, exact endpoint, 1M context, 131072 out, thinking max) untouched. Website registry
+      is back to the bare `qwen3.8-flash` for the direct route. **Preflight PASSES.** Launch once the
+      release build lands. Old note follows:
+- [ ] **Q-old. via OpenRouter — BLOCKED ON CAPACITY, not on us.** It has exactly ONE endpoint
       (Alibaba) so no fallback is possible, and it is served from OpenRouter's SHARED key pool
       (`is_byok: false`, `limit_source: upstream_provider_shared_pool`). It 429'd inside the 3-turn
       contract smoke, then the real episode died at 123s / 5 requests / 3 files with
