@@ -24726,6 +24726,35 @@ fn files_from_brief(brief: &str) -> Vec<String> {
     out
 }
 
+/// EVERY EXTENSION A DEFECT MAY NAME. One list, because there were two and they disagreed.
+///
+/// `paths_in` (the RATE reply parser) and `extract_file_from_finding`'s `is_code` (the TEST/verdict text
+/// parser) answer the SAME question — "is this token a file this app is made of?" — and answered it
+/// differently. `is_code` knew six extensions, so a defect naming `cmd/app/main.go`, `App.tsx`,
+/// `Foo.java` or `Note.swift` in backticks — the exact shape the angle prompt DEMANDS — extracted
+/// nothing, fell to `unassigned`, and the round degraded to the whole-tree race. A Go or Swift app could
+/// not shard a single defect.
+///
+/// Short extensions (.c, .h) are admitted deliberately: every caller resolves its result against the
+/// run's own file list, so a stray `self.c` token can never become a fix target.
+const FINDING_PATH_EXTS: &[&str] = &[
+    ".py", ".pyi", ".rs", ".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".go", ".java", ".kt",
+    ".kts", ".rb", ".swift", ".c", ".cc", ".cpp", ".cxx", ".h", ".hpp", ".cs", ".php", ".scala",
+    ".ex", ".exs", ".dart", ".lua", ".sh", ".html", ".htm", ".css", ".scss", ".vue", ".svelte",
+    ".sql", ".json", ".toml", ".yaml", ".yml", ".md",
+];
+
+/// The SOURCE subset. A defect may name `config.yaml` or `README.md` and that is a real path worth
+/// reading, but it must never outrank the source file in the same finding: broadening the list above
+/// without this made "`app/main.go` mis-parses the flag, see `config.yaml`" aim its fix shard at the
+/// config file, because the last path taken wins.
+const FINDING_SOURCE_EXTS: &[&str] = &[
+    ".py", ".pyi", ".rs", ".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".go", ".java", ".kt",
+    ".kts", ".rb", ".swift", ".c", ".cc", ".cpp", ".cxx", ".h", ".hpp", ".cs", ".php", ".scala",
+    ".ex", ".exs", ".dart", ".lua", ".sh", ".html", ".htm", ".css", ".scss", ".vue", ".svelte",
+    ".sql",
+];
+
 /// Every source-looking path in one line — backticked, bulleted, or bare.
 fn paths_in(line: &str) -> Vec<String> {
     line.split(|c: char| c.is_whitespace() || matches!(c, '`' | ',' | '|' | '(' | ')' | '"' | '\''))
@@ -24734,12 +24763,7 @@ fn paths_in(line: &str) -> Vec<String> {
             t.contains('.')
                 && !t.contains(' ')
                 && t.len() > 3
-                && [
-                    ".py", ".rs", ".ts", ".tsx", ".js", ".jsx", ".html", ".css", ".go", ".java",
-                    ".rb", ".swift", ".sh", ".md", ".json", ".toml", ".yaml", ".yml",
-                ]
-                .iter()
-                .any(|e| t.ends_with(e))
+                && FINDING_PATH_EXTS.iter().any(|e| t.ends_with(e))
         })
         .map(|t| t.to_string())
         .collect()
@@ -26053,9 +26077,39 @@ async fn run_linear_plan(
             .resplit_slice(&cfg.planner_model, &opts.prompt, &opened.slices, &heavy)
             .await
         {
-            if re.len() >= 2 {
+            // NEVER SPLICE AN ID THAT ALREADY EXISTS. The coverage pass below filters its additions
+            // by id for exactly this reason; the re-split, which lands one phase earlier, never did.
+            //
+            // A replacement reusing a surviving sibling's id is FATAL, not cosmetic: SYNTHESIS is told
+            // to emit "one task per slice, keyed to that slice's id", and the synthesis fallback sets
+            // `"id": b.id` verbatim — so two slices called `store` become two tasks called `store` and
+            // Dag::from_specs bails "duplicate task id", ending a run that has already paid for the
+            // opener, the ask and the entire research phase.
+            //
+            // `heavy` is excluded from the collision set on purpose: it is being removed, so a child
+            // that keeps its parent's id is legitimate and common.
+            let mut seen: std::collections::HashSet<String> = opened
+                .slices
+                .iter()
+                .filter(|s| s.id != heavy)
+                .map(|s| s.id.to_lowercase())
+                .collect();
+            let fresh: Vec<OpenSlice> = re
+                .into_iter()
+                .filter(|s| seen.insert(s.id.to_lowercase()))
+                .collect();
+            // Below two this is no longer a split — proceed on the original rather than replace a heavy
+            // slice with one renamed copy of itself.
+            if fresh.len() >= 2 {
                 opened.slices.retain(|s| s.id != heavy);
-                opened.slices.extend(re);
+                opened.slices.extend(fresh);
+            } else {
+                sink.write_value(serde_json::json!({
+                    "event": "resplit_discarded",
+                    "slice": heavy,
+                    "detail": "the re-split's ids collided with surviving siblings; keeping the \
+                               original slice rather than risking a duplicate task id",
+                }));
             }
         }
     }
@@ -30388,23 +30442,24 @@ fn normalize_rel_path(p: &str) -> String {
 fn extract_file_from_finding(finding: &str, all_files: &[String]) -> Option<String> {
     // F862 forensics: .js/.html/.css were missing, so every FRONTEND finding (render-no-rows,
     // DOM TypeError) fell out of per-file fix scoping and collapsed into the unscoped join.
+    // The same hole F862 found for .js/.html/.css was still open for Go, Java, Kotlin, Swift, Ruby,
+    // C/C++ and .tsx — see FINDING_PATH_EXTS, which this now shares with `paths_in`.
     let is_code = |p: &str| {
-        (p.ends_with(".py")
-            || p.ends_with(".rs")
-            || p.ends_with(".ts")
-            || p.ends_with(".js")
-            || p.ends_with(".html")
-            || p.ends_with(".css"))
-            && !p.is_empty()
-            && !p.contains(' ')
+        !p.is_empty() && !p.contains(' ') && FINDING_PATH_EXTS.iter().any(|e| p.ends_with(e))
     };
     let mut last: Option<String> = None;
     let mut src: Option<String> = None;
     let mut take = |p: &str| {
         // Normalize so two spellings of one file become ONE group (partition invariant).
         let norm = normalize_rel_path(p);
-        last = Some(norm.clone());
-        if !p.contains("test") && !p.contains("conftest") {
+        // A DATA OR DOC FILE NEVER OUTRANKS SOURCE. The shared list admits .json/.yaml/.md so a defect
+        // that lives in one is readable at all; without this the LAST path won, and "`app/main.go`
+        // mis-parses the flag, see `config.yaml`" aimed its fix shard at the config file.
+        let code = FINDING_SOURCE_EXTS.iter().any(|e| norm.ends_with(e));
+        if code || last.is_none() {
+            last = Some(norm.clone());
+        }
+        if code && !p.contains("test") && !p.contains("conftest") {
             src = Some(norm);
         }
     };
@@ -37169,6 +37224,9 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
         // defines, an empty pytest suite, negative offset unrejected) and TEN new ones were found by the
         // TEST fan going deeper on its second pass. The ask reported "closed NO critical yet" to the
         // human, which was the exact opposite of the truth, and the ETA it derived was worthless.
+        // When the previous round actually began, so its duration can be closed out AFTER its fix wave
+        // rather than at its RATE call.
+        let mut prev_round_started: Option<std::time::Instant> = None;
         let mut prev_findings: std::collections::HashSet<String> = std::collections::HashSet::new();
         let mut closed_total: usize = 0;
         let mut last_round_was_shard = false;
@@ -37846,7 +37904,17 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                     );
                 }
                 known_active_bugs = minors.clone();
-                round_walls.push(round_started.elapsed().as_secs());
+                // The PREVIOUS round's full duration, recorded here because this point is after that
+                // round's fix wave and before this one's.
+                //
+                // It used to push `round_started.elapsed()` — the time from the round's start to RATE,
+                // which excludes the fix wave entirely. The fix wave is the expensive part: MEASURED,
+                // 115 minutes of a 138-minute wave in ONE worker. So every ETA the operator was shown
+                // understated a round by most of it, and the sentence it appears in is the one a human
+                // reads before deciding whether to spend another hour.
+                if let Some(prev) = prev_round_started.replace(round_started) {
+                    round_walls.push(prev.elapsed().as_secs());
+                }
                 if first_criticals.is_none() {
                     first_criticals = Some(criticals.len());
                 }

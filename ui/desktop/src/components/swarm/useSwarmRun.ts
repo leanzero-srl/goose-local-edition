@@ -1179,6 +1179,21 @@ function buildActivity(events: Array<Record<string, unknown>>): {
         if (bugs.length > 0) knownActiveBugs = bugs;
         break;
       }
+      case 'complete_result_revised': {
+        // The engine took its own green back. This is a deterministic finding, not an advisory opinion, so
+        // it belongs in the COMPACT feed too — the compact lane is what a user watches, and a run that
+        // silently drops from verified to unverified with no line is the exact confusion this event exists
+        // to prevent.
+        const why = str(e['reason']);
+        const mods = arr(e['evidence']).map(String);
+        const text =
+          why === 'unwired-module-unfixed'
+            ? `Not verified — ${mods.length} module${mods.length === 1 ? '' : 's'} built but imported by nothing`
+            : `Not verified — the engine retracted its green (${why || 'revised'})`;
+        compact({ kind: 'fail', text, tone: 'bad' });
+        verbose({ kind: 'fail', text, tone: 'bad', sub: mods.join('\n') || undefined });
+        break;
+      }
       case 'judge_look':
       case 'judge_nudge': {
         // The judge can no longer kill or move a task — it observes and steers. Say what it ESTABLISHED and
@@ -2143,6 +2158,17 @@ export function buildPhaseTodo(
   const reportFailed = new Set<string>();
   let completeResult: { passed: boolean; verified: boolean; remaining?: number | null } | null = null;
   let completeRan = false;
+  // THE ENGINE'S OWN RETRACTION OF ITS GREEN, and the only event allowed to make one.
+  //
+  // `complete_result_revised` is emitted AFTER complete_result by the unwired-module demote (default ON in
+  // SwarmConfig, and `review: true` in the shipped user config, so it is reachable on an ordinary run). An
+  // ast.parse import-graph walk found a pure library the app builds and nothing imports: it cannot run, so
+  // `verified` was never true. No model is in that path, which is why it may overrule a green.
+  //
+  // MEASURED: the engine emitted this event with NO consumer anywhere — not here, not in the scorer. So the
+  // CLI printed "NOT VERIFIED - dead code shipped" while this panel promoted every build row to 'done' and
+  // headed the run "Finished - app verified" off the retracted complete_result.
+  let completeRevision: { verified: boolean; reason: string; evidence: string[] } | null = null;
   let smoke: { ran: boolean; kind?: string } | null = null;
   let repro: number | null = null;
   let reviewFix: { reproduced: number; accepted: number } | null = null;
@@ -2274,6 +2300,19 @@ export function buildPhaseTodo(
         verified: e['verified'] === true,
         remaining: num(e['remaining_findings']),
       };
+    else if (t === 'complete_result_revised') {
+      // Always AFTER complete_result in the stream (the engine emits it from the same block, downstream of
+      // the claim), so folding it onto completeResult here is enough to correct every derived verdict at
+      // once: the v-e2e row, the d-outcome headline, and the e2eVerified promotion of built tasks.
+      // `passed` is deliberately NOT touched — the engine never flips it red either, because false-failing a
+      // correct app costs the whole run while an honest UNVERIFIED slate costs nothing.
+      completeRevision = {
+        verified: e['verified'] === true,
+        reason: str(e['reason']),
+        evidence: arr(e['evidence']).map(String),
+      };
+      if (completeResult) completeResult.verified = completeRevision.verified;
+    }
     else if (t === 'smoke' || t === 'smoke_after_fix') {
       const r = (e['result'] ?? {}) as Record<string, unknown>;
       const tests = (r['tests'] ?? {}) as Record<string, unknown>;
@@ -2557,6 +2596,15 @@ export function buildPhaseTodo(
     if (vs === 'done' && smoke && smoke.kind !== 'pass') {
       vs = 'unverified';
       vdetail = 'no tests ran';
+    }
+    // The engine RETRACTED verified after the claim. The row that states the verdict is the row that must
+    // carry the reason — a downgrade with no cause reads as a missing oracle, which is a different thing.
+    if (completeRevision && !completeRevision.verified) {
+      if (vs === 'done') vs = 'unverified';
+      vdetail =
+        completeRevision.reason === 'unwired-module-unfixed'
+          ? `dead code shipped — built but imported by nothing: ${completeRevision.evidence.join(', ') || 'a module'}`
+          : `verified retracted by the engine — ${completeRevision.reason || 'revised'}`;
     }
     integrate.push(it('v-e2e', 'End-to-end verify', vs, vdetail));
   }

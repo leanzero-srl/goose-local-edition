@@ -1695,3 +1695,270 @@ async fn supervision_devices_append_flagged_and_drop_collisions() {
         r.total_per_device
     );
 }
+
+// ---------------------------------------------------------------------------------------------
+// MID-RUN DEVICE ADMISSION. A fleet node dropped out of `lms ps` before a run started, the run
+// resolved worker_count=2, and the node came back partway through an eight-hour build: it took
+// ZERO calls and the log carried ZERO events naming it, because the pool is read once at run
+// start and `Scheduler::run` snapshots it into the run state on entry.
+// ---------------------------------------------------------------------------------------------
+
+#[derive(Default)]
+struct EventLog(Mutex<Vec<serde_json::Value>>);
+
+impl goose_swarm::EventSink for EventLog {
+    fn emit(&self, event: &goose_swarm::SwarmEvent) {
+        if let Ok(v) = serde_json::to_value(event) {
+            self.0.lock().unwrap().push(v);
+        }
+    }
+}
+
+impl EventLog {
+    fn named(&self, name: &str) -> Vec<serde_json::Value> {
+        self.0
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|v| v["event"] == name)
+            .cloned()
+            .collect()
+    }
+}
+
+/// Offer `cfgs` the moment the run has actually started dispatching — no sleep, no clock: the
+/// offer is triggered by the run's own first dispatch, so the device arrives strictly MID-run.
+fn offer_after_first_dispatch(
+    adm: goose_swarm::DeviceAdmission,
+    rec: Arc<Mutex<Recorder>>,
+    cfgs: Vec<DeviceCfg>,
+) {
+    tokio::spawn(async move {
+        loop {
+            if rec.lock().unwrap().seq > 0 {
+                adm.offer(cfgs);
+                return;
+            }
+            tokio::task::yield_now().await;
+        }
+    });
+}
+
+#[tokio::test]
+async fn a_device_admitted_mid_run_actually_takes_work() {
+    // The measured hole, inverted: the returning node must receive dispatches in the SAME run.
+    let rec = Arc::new(Mutex::new(Recorder::default()));
+    let specs: Vec<_> = (0..14).map(|i| spec(&format!("t{i}"), &[], &[])).collect();
+    let dag = Dag::from_specs(specs).unwrap();
+    let events = Arc::new(EventLog::default());
+    let adm = goose_swarm::DeviceAdmission::new();
+    offer_after_first_dispatch(adm.clone(), rec.clone(), vec![dev("gabee", "m-gabee", 2)]);
+    let sched = Scheduler::new(vec![dev("a", "m-a", 1)], 3)
+        .with_admission(adm)
+        .with_sink(events.clone());
+    let report = sched.run(dag, mock(&rec, 10), String::new()).await.unwrap();
+    assert_eq!(report.done.len(), 14, "every task still completes");
+    let r = rec.lock().unwrap();
+    assert!(
+        r.total_per_device.get("gabee").copied().unwrap_or(0) > 0,
+        "the mid-run device must actually build: {:?}",
+        r.total_per_device
+    );
+    let admitted = events.named("device_admitted");
+    assert_eq!(admitted.len(), 1, "exactly one admission event");
+    assert_eq!(admitted[0]["id"], "gabee");
+    assert_eq!(
+        admitted[0]["build_devices"], 2,
+        "the event reports the pool size AFTER admission"
+    );
+}
+
+#[tokio::test]
+async fn a_mid_run_device_is_reported_in_the_run_report() {
+    // Invisibility was half the defect: the returning node must appear in the report's per-device
+    // breakdown, not just in the dispatch counts a harness would have to infer it from.
+    let rec = Arc::new(Mutex::new(Recorder::default()));
+    let specs: Vec<_> = (0..10).map(|i| spec(&format!("t{i}"), &[], &[])).collect();
+    let dag = Dag::from_specs(specs).unwrap();
+    let adm = goose_swarm::DeviceAdmission::new();
+    offer_after_first_dispatch(adm.clone(), rec.clone(), vec![dev("gabee", "m-gabee", 2)]);
+    let sched = Scheduler::new(vec![dev("a", "m-a", 1)], 3).with_admission(adm);
+    let report = sched.run(dag, mock(&rec, 10), String::new()).await.unwrap();
+    assert!(
+        report.per_device.contains_key("gabee"),
+        "per_device must carry the admitted node: {:?}",
+        report.per_device.keys().collect::<Vec<_>>()
+    );
+}
+
+#[tokio::test]
+async fn a_duplicate_offer_is_dropped_and_never_bails_the_run() {
+    // LM Link routes by model_id ALONE, so two enabled devices sharing one are indistinguishable
+    // to it. `run_with_decisions` bails on that at run start; mid-run it must DROP instead —
+    // killing an eight-hour build because a returning node re-announced a model it already has is
+    // strictly worse than ignoring the offer. Same for a duplicate device id and a weight of 0.
+    let rec = Arc::new(Mutex::new(Recorder::default()));
+    let specs: Vec<_> = (0..8).map(|i| spec(&format!("t{i}"), &[], &[])).collect();
+    let dag = Dag::from_specs(specs).unwrap();
+    let events = Arc::new(EventLog::default());
+    let adm = goose_swarm::DeviceAdmission::new();
+    offer_after_first_dispatch(
+        adm.clone(),
+        rec.clone(),
+        vec![
+            dev("other-host", "m-a", 2),
+            dev("a", "m-other", 2),
+            dev("zero", "m-zero", 0),
+        ],
+    );
+    let sched = Scheduler::new(vec![dev("a", "m-a", 2)], 3)
+        .with_admission(adm)
+        .with_sink(events.clone());
+    let report = sched.run(dag, mock(&rec, 10), String::new()).await.unwrap();
+    assert_eq!(
+        report.done.len(),
+        8,
+        "the run survives every rejected offer"
+    );
+    let r = rec.lock().unwrap();
+    assert_eq!(
+        r.total_per_device.len(),
+        1,
+        "nothing but the original device built: {:?}",
+        r.total_per_device
+    );
+    let reasons: Vec<String> = events
+        .named("device_rejected")
+        .iter()
+        .map(|v| v["reason"].as_str().unwrap_or_default().to_string())
+        .collect();
+    assert_eq!(
+        reasons,
+        vec!["duplicate model_id", "duplicate device id", "weight 0"],
+        "every rejection is logged with why"
+    );
+    assert!(events.named("device_admitted").is_empty());
+}
+
+#[tokio::test]
+async fn admission_while_work_is_in_flight_keeps_every_device_index_valid() {
+    // The append-only contract. `claimed_device`, `spec_device` and `device_speed` key devices by
+    // POSITION, and an in-flight task decrements `devices[i].in_flight` by an index captured at
+    // claim time. Admitting while a slow task is mid-flight is exactly the window where a reorder
+    // or a removal would corrupt that bookkeeping: the slow task must still complete, and the
+    // fleet must still be fully claimable afterwards (a leaked in_flight would starve it).
+    let rec = Arc::new(Mutex::new(Recorder::default()));
+    let mut specs: Vec<_> = (0..10).map(|i| spec(&format!("t{i}"), &[], &[])).collect();
+    specs.push(spec("slowpoke", &[], &[]));
+    let dag = Dag::from_specs(specs).unwrap();
+    let disp = Arc::new(MockDispatcher {
+        rec: rec.clone(),
+        delay: Duration::from_millis(10),
+        fail_transient_first: HashSet::new(),
+        terminal: HashSet::new(),
+        slow: ["slowpoke".to_string()].into_iter().collect(),
+    });
+    let adm = goose_swarm::DeviceAdmission::new();
+    offer_after_first_dispatch(
+        adm.clone(),
+        rec.clone(),
+        vec![dev("gabee", "m-gabee", 2), dev("workhorse", "m-work", 2)],
+    );
+    let sched = Scheduler::new(vec![dev("a", "m-a", 2)], 3).with_admission(adm);
+    let report = sched.run(dag, disp, String::new()).await.unwrap();
+    assert_eq!(report.done.len(), 11, "including the in-flight straggler");
+    assert!(report.failed.is_empty());
+    let r = rec.lock().unwrap();
+    assert!(
+        r.total_per_device.len() == 3,
+        "all three devices took work: {:?}",
+        r.total_per_device
+    );
+    assert!(
+        r.peak_per_device.values().all(|p| *p <= 2),
+        "no device ever exceeded its weight — in_flight accounting survived the append: {:?}",
+        r.peak_per_device
+    );
+}
+
+#[tokio::test]
+async fn without_an_admission_handle_an_offer_reaches_nothing() {
+    // The off path. No handle attached -> the queue is never drained, the loop keeps its
+    // single-future wake, and a run behaves exactly as it did before admission existed.
+    let rec = Arc::new(Mutex::new(Recorder::default()));
+    let specs: Vec<_> = (0..6).map(|i| spec(&format!("t{i}"), &[], &[])).collect();
+    let dag = Dag::from_specs(specs).unwrap();
+    let events = Arc::new(EventLog::default());
+    let orphan = goose_swarm::DeviceAdmission::new();
+    orphan.offer(vec![dev("gabee", "m-gabee", 2)]);
+    let sched = Scheduler::new(vec![dev("a", "m-a", 2)], 3).with_sink(events.clone());
+    let report = sched.run(dag, mock(&rec, 10), String::new()).await.unwrap();
+    assert_eq!(report.done.len(), 6);
+    let r = rec.lock().unwrap();
+    assert!(!r.total_per_device.contains_key("gabee"));
+    assert!(events.named("device_admitted").is_empty());
+}
+
+#[tokio::test]
+async fn demand_fires_only_when_the_fleet_is_saturated_with_queued_work() {
+    // The clock-free trigger. A saturated fleet with a ready queue is the ONLY state in which a
+    // returning node is worth probing for, and the signal must actually arrive — a rescan loop
+    // parked on `wanted()` forever is the same invisibility, one level up.
+    let rec = Arc::new(Mutex::new(Recorder::default()));
+    let specs: Vec<_> = (0..12).map(|i| spec(&format!("t{i}"), &[], &[])).collect();
+    let dag = Dag::from_specs(specs).unwrap();
+    let adm = goose_swarm::DeviceAdmission::new();
+    let probes = Arc::new(AtomicUsize::new(0));
+    {
+        let adm = adm.clone();
+        let probes = probes.clone();
+        tokio::spawn(async move {
+            loop {
+                adm.wanted().await;
+                probes.fetch_add(1, Ordering::SeqCst);
+            }
+        });
+    }
+    let sched = Scheduler::new(vec![dev("a", "m-a", 1)], 3).with_admission(adm);
+    let report = sched.run(dag, mock(&rec, 10), String::new()).await.unwrap();
+    assert_eq!(report.done.len(), 12);
+    let n = probes.load(Ordering::SeqCst);
+    assert!(
+        n > 0,
+        "a one-slot fleet with 12 ready tasks must raise demand"
+    );
+    assert!(
+        n <= 12,
+        "demand is armed by a CLAIM, so it can never outrun the dispatch count: {n} probes for 12 claims"
+    );
+}
+
+#[tokio::test]
+async fn an_unsaturated_fleet_never_asks_for_another_node() {
+    // The other half: two tasks on a four-slot fleet is never short of nodes, so nothing should
+    // ever be probed. A signal that fires whenever the loop wakes would spawn `lms ps` subprocesses
+    // against a fleet that has nothing to give.
+    let rec = Arc::new(Mutex::new(Recorder::default()));
+    let specs = vec![spec("t0", &[], &[]), spec("t1", &[], &[])];
+    let dag = Dag::from_specs(specs).unwrap();
+    let adm = goose_swarm::DeviceAdmission::new();
+    let probes = Arc::new(AtomicUsize::new(0));
+    {
+        let adm = adm.clone();
+        let probes = probes.clone();
+        tokio::spawn(async move {
+            loop {
+                adm.wanted().await;
+                probes.fetch_add(1, Ordering::SeqCst);
+            }
+        });
+    }
+    let sched = Scheduler::new(vec![dev("a", "m-a", 2), dev("b", "m-b", 2)], 3).with_admission(adm);
+    let report = sched.run(dag, mock(&rec, 10), String::new()).await.unwrap();
+    assert_eq!(report.done.len(), 2);
+    assert_eq!(
+        probes.load(Ordering::SeqCst),
+        0,
+        "no queued work was ever blocked on a full fleet"
+    );
+}

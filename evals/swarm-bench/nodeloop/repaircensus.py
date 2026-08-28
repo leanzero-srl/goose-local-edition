@@ -54,6 +54,12 @@ def read_cell(cell: str) -> dict | None:
     verifies = [e for e in ev if e.get("event") == "complete_verify"]
     fixes = [e for e in ev if e.get("event") == "complete_fix_dispatched"]
     result = next((e for e in ev if e.get("event") == "complete_result"), {})
+    # The engine may RETRACT `verified` after the claim (`complete_result_revised`, unwired-module
+    # demote — deterministic, no model in its path). Reading the claim alone reports a run as verified
+    # that its own engine un-verified, which is the one number a census exists not to get wrong.
+    for rev in (e for e in ev if e.get("event") == "complete_result_revised"):
+        if "verified" in rev:
+            result = {**result, "verified": rev["verified"], "unverified_by": rev.get("reason")}
     r0 = next((e for e in verifies if e.get("round") == 0), None)
     return {
         "cell": cell,
@@ -65,6 +71,7 @@ def read_cell(cell: str) -> dict | None:
         "round0_ran": (r0 or {}).get("ran"),
         "fixes": len(fixes),
         "passed": result.get("passed"), "verified": result.get("verified"),
+        "unverified_by": result.get("unverified_by"),
         "remaining": result.get("remaining_findings"),
     }
 

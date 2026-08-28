@@ -487,6 +487,80 @@ pub struct DeviceCfg {
     pub supervision: bool,
 }
 
+/// MID-RUN DEVICE ADMISSION — the handle a caller keeps so a node that comes BACK during a run can
+/// be given work.
+///
+/// THE MEASURED HOLE THIS CLOSES. The pool is resolved ONCE, from `lms ps` at run start. A fleet node
+/// that had dropped out came back partway through an eight-hour run, took ZERO calls, and produced
+/// ZERO log lines: nothing ever re-read the fleet, so the engine did not fail on it — it never knew
+/// it existed.
+///
+/// WHY A QUEUE AND NOT A SETTER. `Scheduler::run_with_decisions` snapshots `self.devices` into the
+/// run `State` on entry and never looks at `self.devices` again, and it takes `&self`, so the
+/// builder (`with_supervision_devices`) cannot reach a live run. The queue is drained by the run
+/// loop into `State.devices`, under the same lock every scheduling decision already takes.
+///
+/// APPEND-ONLY, DELIBERATELY. Three maps key devices by POSITION — `claimed_device`,
+/// `spec_device`, `device_speed` — and an in-flight task's completion decrements
+/// `devices[i].in_flight` by an index it captured at claim time. Pushing to the end invalidates
+/// none of that; removing or reordering would corrupt all of it. There is no eviction here and
+/// there must not be one: a device that goes away again is handled the way it always was, by the
+/// dispatch failing and the task retrying elsewhere.
+#[derive(Clone, Default)]
+pub struct DeviceAdmission {
+    queue: Arc<std::sync::Mutex<Vec<DeviceCfg>>>,
+    wake: Arc<Notify>,
+    demand: Arc<Notify>,
+}
+
+impl DeviceAdmission {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Offer devices to a live run. Non-blocking, never fails, safe from any task. Each offer is
+    /// vetted at the drain (see `State::admit_device`) — a duplicate id or model_id is DROPPED and
+    /// logged, never bailed: an eight-hour run must not die because a returning node re-announced a
+    /// model it already had.
+    ///
+    /// THE CALLER OWNS SERVABILITY. Residency (`lms ps`) is not servability (`/v1/models`), and the
+    /// two disagree in exactly the case that costs a run — a withdrawn LM Link alias answers every
+    /// dispatch with a 400 in ~2s, which here would mean a real task failing on a phantom node.
+    /// Offer only devices that passed BOTH probes.
+    pub fn offer(&self, cfgs: Vec<DeviceCfg>) {
+        if cfgs.is_empty() {
+            return;
+        }
+        if let Ok(mut q) = self.queue.lock() {
+            q.extend(cfgs);
+        }
+        self.wake.notify_one();
+    }
+
+    fn take(&self) -> Vec<DeviceCfg> {
+        match self.queue.lock() {
+            Ok(mut q) if !q.is_empty() => std::mem::take(&mut *q),
+            _ => Vec::new(),
+        }
+    }
+
+    /// Resolves when the run WANTS another node: there is ready work it cannot place because every
+    /// build slot is full. Await it in a loop to drive a fleet re-probe, then `offer` what came back.
+    ///
+    /// A SIGNAL, NOT A TIMER — deliberately. A clock-driven rescan needs a literal interval nobody
+    /// can defend, and it is wrong at both ends: it probes a fleet that has nothing to give while a
+    /// single serial task runs, and it is too slow the moment the queue is deep. This fires on the
+    /// run's own state, and it is RATE-LIMITED BY THE RUN'S OWN TEMPO: the signal is armed by a
+    /// CLAIM, so at most one probe happens per task dispatch. A fleet chewing 10-minute tasks is
+    /// probed every ~10 minutes; a fast one is probed more often, which is exactly when the pool is
+    /// worth re-reading. No interval constant exists anywhere in this path.
+    ///
+    /// `Notify` stores one permit, so demand raised while the caller was mid-probe is not lost.
+    pub async fn wanted(&self) {
+        self.demand.notified().await
+    }
+}
+
 #[derive(Debug, Serialize)]
 pub struct RunReport {
     pub done: Vec<TaskId>,
@@ -669,6 +743,9 @@ const TAIL_REVIEW_CAP: u32 = u32::MAX;
 struct State {
     dag: Dag,
     ready: BinaryHeap<Ranked>,
+    /// Monotonic count of build claims. Arms the `DeviceAdmission` demand signal, so a fleet
+    /// re-probe can never run more than once per dispatch — the run's own tempo IS the cadence.
+    claims: u64,
     devices: Vec<DeviceRt>,
     held_files: HashSet<String>,
     held_by: HashMap<TaskId, Vec<String>>,
@@ -869,6 +946,61 @@ impl State {
             .filter(|d| d.cfg.enabled && !d.cfg.supervision)
             .map(|d| d.cfg.weight.saturating_sub(d.in_flight))
             .sum()
+    }
+
+    /// Admit ONE offered device into the live pool. Returns whether it was taken.
+    ///
+    /// Enforces, at admission, the two invariants `run_with_decisions` checks once at run start and
+    /// can never re-check: model_id uniqueness across enabled devices (LM Link routes by model id
+    /// alone — two devices sharing one id are indistinguishable to it) and a non-zero weight (a
+    /// weight-0 device can never satisfy `in_flight < weight`, so it would sit in the pool taking
+    /// nothing and inflating every count). A violation DROPS the offer and emits `device_rejected`;
+    /// it must never `bail!` the way the run-start check does, because that check runs before any
+    /// work exists and this one runs hours into a build.
+    ///
+    /// PUSH ONLY. `claimed_device`, `spec_device` and `device_speed` all key by position and
+    /// in-flight completions decrement `devices[i]` by an index captured at claim time — appending
+    /// preserves every one of them.
+    fn admit_device(&mut self, cfg: DeviceCfg) -> bool {
+        let reject = |s: &Self, reason: &str| {
+            s.sink.emit(&SwarmEvent::DeviceRejected {
+                id: cfg.id.clone(),
+                model_id: cfg.model_id.clone(),
+                reason: reason.to_string(),
+            });
+            false
+        };
+        if !cfg.enabled {
+            return reject(self, "disabled");
+        }
+        if cfg.weight == 0 {
+            return reject(self, "weight 0");
+        }
+        if self.devices.iter().any(|d| d.cfg.id == cfg.id) {
+            return reject(self, "duplicate device id");
+        }
+        if self
+            .devices
+            .iter()
+            .any(|d| d.cfg.enabled && d.cfg.model_id == cfg.model_id)
+        {
+            return reject(self, "duplicate model_id");
+        }
+        self.sink.emit(&SwarmEvent::DeviceAdmitted {
+            id: cfg.id.clone(),
+            model_id: cfg.model_id.clone(),
+            weight: cfg.weight,
+            speed_weight: cfg.speed_weight,
+            supervision: cfg.supervision,
+            build_devices: self
+                .devices
+                .iter()
+                .filter(|d| d.cfg.enabled && !d.cfg.supervision)
+                .count()
+                + usize::from(!cfg.supervision),
+        });
+        self.devices.push(DeviceRt { cfg, in_flight: 0 });
+        true
     }
 
     /// K1: is the integrate-verify SINK the (only) in-flight task? Dynamic-replan is suppressed in this
@@ -1143,6 +1275,7 @@ impl State {
             self.held_files.insert(f.clone());
         }
         self.devices[dev].in_flight += 1;
+        self.claims += 1;
         self.claimed_device.insert(tid.clone(), dev);
         let device_id = self.devices[dev].cfg.id.clone();
         let model_id = self.devices[dev].cfg.model_id.clone();
@@ -2813,6 +2946,9 @@ pub struct Scheduler {
     degrade_on_stall: bool,
     /// F883/E8: marks this scheduler as a repair-round run — testgen idle-fill is disabled there.
     fix_round: bool,
+    /// MID-RUN DEVICE ADMISSION (see `DeviceAdmission`). None (default) -> the queue is never
+    /// drained, the loop's wake is the plain `notify`, and the run is byte-identical.
+    admission: Option<DeviceAdmission>,
 }
 
 impl Scheduler {
@@ -2833,7 +2969,16 @@ impl Scheduler {
             doc_facts: String::new(),
             degrade_on_stall: false,
             fix_round: false,
+            admission: None,
         }
+    }
+
+    /// Accept devices offered DURING the run — a node that dropped out of `lms ps` before the run
+    /// started and came back partway through. Not called -> nothing is ever drained and the loop is
+    /// byte-identical. Returns the handle to offer on; clone it freely.
+    pub fn with_admission(mut self, admission: DeviceAdmission) -> Self {
+        self.admission = Some(admission);
+        self
     }
 
     /// Attach the GROUNDED research facts (Phase 1, Move 2) that each worker gets VERBATIM. Empty (default)
@@ -2982,6 +3127,7 @@ impl Scheduler {
                 .cloned()
                 .map(|cfg| DeviceRt { cfg, in_flight: 0 })
                 .collect(),
+            claims: 0,
             held_files: HashSet::new(),
             held_by: HashMap::new(),
             claimed_device: HashMap::new(),
@@ -3029,8 +3175,24 @@ impl Scheduler {
         let notify = Arc::new(Notify::new());
         // Edge-detect pause transitions so run_paused/run_unpaused is emitted once per transition, not per tick.
         let mut was_paused = false;
+        // Claim count at the last demand signal — the rate limiter for the caller's fleet re-probe.
+        let mut last_demand_claims: u64 = 0;
 
         loop {
+            // MID-RUN DEVICE ADMISSION. Drained here, at the TOP of the pass, so an admitted device is
+            // visible to `pick_assignments` on the very same iteration rather than one wake later.
+            // Under the same `state` lock every other scheduling decision takes, and append-only, so
+            // no index any in-flight task is holding can move. No-op (and no lock taken) when no
+            // admission handle was attached.
+            if let Some(adm) = self.admission.as_ref() {
+                let offered = adm.take();
+                if !offered.is_empty() {
+                    let mut s = state.lock().await;
+                    for cfg in offered {
+                        s.admit_device(cfg);
+                    }
+                }
+            }
             // In-process PAUSE hold: while the sentinel exists, claim NO new ready task. Already-spawned
             // in-flight futures (below) run to completion — the hold is BETWEEN tasks, so it can never
             // corrupt a half-written file. Cheap Path::exists per wake; inert when pause_file is None.
@@ -3050,6 +3212,17 @@ impl Scheduler {
                 state.lock().await.pick_assignments()
             };
             let dispatched_now = !assignments.is_empty();
+            // RAISE DEMAND FOR ANOTHER NODE. The run has ready work it cannot place because every
+            // build slot is full — the one state in which a returning fleet node is worth anything.
+            // Armed by a CLAIM (see `State::claims`), so the caller's re-probe runs at most once per
+            // dispatch and there is no interval constant in the path. Inert with no handle attached.
+            if let Some(adm) = self.admission.as_ref() {
+                let s = state.lock().await;
+                if s.claims > last_demand_claims && !s.ready.is_empty() && s.idle_capacity() == 0 {
+                    last_demand_claims = s.claims;
+                    adm.demand.notify_one();
+                }
+            }
             for a in assignments {
                 let dispatcher = dispatcher.clone();
                 let task_state = state.clone();
@@ -3517,7 +3690,26 @@ impl Scheduler {
             } else {
                 std::time::Duration::from_secs(86_400)
             };
-            let _ = tokio::time::timeout(tick, notify.notified()).await;
+            // Wake on a completion OR on a device offer. Without the second arm an admitted node
+            // would wait out the pass timeout — 15s with any idle mechanism attached (the default),
+            // but a full DAY on the plain no-judge configuration, which is the same invisibility
+            // this feature exists to remove. The admission arm is absent entirely when no handle is
+            // attached, so that path keeps the single-future await it always had.
+            match self.admission.as_ref() {
+                Some(adm) => {
+                    let wake = adm.wake.clone();
+                    let _ = tokio::time::timeout(tick, async {
+                        tokio::select! {
+                            _ = notify.notified() => {}
+                            _ = wake.notified() => {}
+                        }
+                    })
+                    .await;
+                }
+                None => {
+                    let _ = tokio::time::timeout(tick, notify.notified()).await;
+                }
+            }
         }
     }
 }
