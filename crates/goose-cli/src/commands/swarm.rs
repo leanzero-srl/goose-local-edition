@@ -26290,6 +26290,13 @@ impl GooseAgentDispatcher {
                          a document it says you must write. Take them from the request's own words and \
                          keep its own vocabulary — if it says `notifierd`, the component is `notifierd`, \
                          not `the notification layer`. Quote the words that name it.\n\n\
+                         DO NOT CLASSIFY. If the request NAMES it, it goes in the table. Never spend a \
+                         line deciding whether something is \"really a component\" or \"just an \
+                         implementation detail\" — that question has no answer and it is not your job. \
+                         The two mistakes are not equal: an extra row costs one line that a reader \
+                         skips, and a missing row is a part of the program nobody ever builds and \
+                         nobody ever notices. So when you are unsure, INCLUDE IT. A table that lists \
+                         everything named is finished; a table that argues about categories is not.\n\n\
                          THEN, and only then, go down your list and say which slice owns each one. For \
                          every component you claim is owned you must QUOTE the words in that slice's \
                          objective that prove it. If you cannot quote them, it is NOT owned — leave the \
