@@ -223,6 +223,37 @@ and hours are spent.
 about half of glm-5.3-flash's 0.4159. Publish deliberately once the queue is drained and the publisher is
 stable — do not retry blind, `resume` may re-run the episode.
 
+## FIRST RUN TO REACH BUILD — 2026-08-28 18:18:33Z (21:18 EEST). Findings for the next one.
+
+**IT GOT THERE.** open 55.6 · ask 1.3 · research 25.9 · synthesis 7.4 · review 94 · contracts 10 ·
+**BUILD**. 23 tasks, 32 files, **0 files with more than one owner**, `integrate-verify` present owning
+nothing, median description 6,312 chars. REVIEW's ownership work landed completely. First app files any
+local run has ever written: `README.md`, `DECISIONS.md`, `app/db.py`.
+**Time to first file: 4h15m.** glm shipped 14 files and PUBLISHED 41.59% in 72 minutes total.
+
+**FINDING 1 — A TASK REVIEW ADDS GETS A SENTENCE; A TASK OPEN PRODUCES GETS A SPECIFICATION.**
+`frontend-notifications-feed` shipped to BUILD with a **182-character** description against a 6,312
+median. It is the task REVIEW invented in round 2 because nothing owned the notifications feed — so it
+never had a slice, never had an owner, and never went through RESEARCH. The whole DETAIL-fan deletion
+rests on "a worker's entire instruction is its slice owner's brief"; a REVIEW-added task has no owner, so
+it gets whatever sentence the reviewer typed. **FIX: route REVIEW's `add` through the same late-research
+path coverage now uses (`coverage_late_slices`), so an added task is researched before BUILD like any
+other.** The machinery already exists.
+
+**FINDING 2 — THE DEFORMATION SURVIVED INTO THE BUILD.** The plan builds NINE frontend files
+(`index.html`, `styles.css`, `app.js`, `viz.js` + the invented `notifications.js`, `drafts.js`,
+`viz_labels.js`, `viz_streaming.js`, `viz_webgl.js`) against a request that names FOUR and caps them at
+150KB. REVIEW flagged it `STILL:` and settled anyway. Already fixed upstream at OPEN (file-disjointness);
+this run is the proof of what it costs when it is not.
+
+**FINDING 3 — REVIEW COST 94 MINUTES, and Mihai is right that it earns its keep.** It found every
+ownership collision and fixed all of them. The cost is not REVIEW's fault: it was cleaning up an
+over-decomposition it was never allowed to fix at the root.
+
+**WHAT TO MEASURE FROM BUILD, now that we are finally here — the thesis has never been tested:**
+node occupancy across the 3 nodes, whether the fan actually parallelises, and whether the 9-file frontend
+deformation reaches the product.
+
 ## Standing constraints — absolute, never negotiate them
 
 - **NO SPEND CAP MAY EVER BIND ON A CLOUD RUN.** Mihai, 2026-08-28: *"don't put caps on models or runs
