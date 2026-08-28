@@ -345,6 +345,31 @@ chain read the model list at start, so editing it now does not reach it.
 One agent, no planning phase, 33 minutes, thirteen files — against our 23 tasks, nine frontend files and
 3h15m before BUILD even started. Every argument for thinning the engine is in that table.
 
+## §4k CONFIRMED IN THE WORST WAY, AND FIXED — BUILD ran 45% blind (2026-08-28 19:04Z)
+
+The unsupervised-BUILD finding stopped being a trade-off and became measured damage.
+
+**NINE OF TWENTY BUILD TASKS WERE NEVER SUPERVISED ONCE:** event-ledger-outbox, frontend-css-styling,
+frontend-html-structure, **ledgerd-api-layer**, notification-materialization, notifierd-consumer,
+stream-sse-endpoint, viz-records-endpoint, viz-records-validation-tests. `judge_skipped` reached **84**,
+every one `no_idle_device`.
+
+**AND ONE OF THEM STALLED WHILE UNWATCHED.** `ledgerd-api-layer` — owner of `app/api.py`, `app/routes.py`,
+`app/serve.py`, i.e. the app's entire HTTP surface — was dispatched 18:55:54 and sat EIGHT MINUTES with
+ZERO tool calls, its last words *"Let me write these"*. Zero judge looks, ever. Found only because the
+`STALE, NOT DONE` lane column added an hour earlier fired on it.
+
+**THE FIX (scheduler.rs `supervision_device`):** supervision prefers a free slot and now NEVER returns
+nothing while a device is enabled. `weight` is the ENGINE's dispatch budget, not the provider's — LM
+Studio serves `PARALLEL=2` per node and queues beyond it, so a judge call on a full node is a QUEUED SMALL
+REQUEST, not a dropped check. **A late look beats no look.** Build dispatch still never oversubscribes;
+this path is judge-only. 72+6+42 swarm tests green.
+
+**WHY IT HID FOR A WHOLE DAY:** `judge_look` counts stayed healthy (58 in open, 114 in review) because
+planning phases leave slots free by accident. The fleet strip correctly showed three busy nodes. Nothing
+was wrong on any dashboard. It was visible ONLY by counting `judge_skipped` by phase — an event nobody had
+ever read.
+
 ## Standing constraints — absolute, never negotiate them
 
 - **NO SPEND CAP MAY EVER BIND ON A CLOUD RUN.** Mihai, 2026-08-28: *"don't put caps on models or runs

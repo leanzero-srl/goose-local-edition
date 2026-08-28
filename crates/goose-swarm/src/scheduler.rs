@@ -1731,6 +1731,36 @@ impl State {
             .map(|(i, _)| i)
     }
 
+    /// A device for SUPERVISION, preferring a free slot but never returning `None` while any device is
+    /// enabled.
+    ///
+    /// WHY IT MAY OVERSUBSCRIBE. Supervision was gated on a device having a free slot
+    /// (`in_flight < weight`), and during BUILD the fan fills every slot by design. MEASURED 2026-08-28
+    /// on the first run to reach BUILD: **84 `judge_skipped` events, every one `no_idle_device`, and
+    /// NINE OF TWENTY build tasks never supervised once** — among them `ledgerd-api-layer`, which stalled
+    /// eight minutes mid-sentence ("Let me write these") with zero tool calls and no observer, while
+    /// owning the app's entire HTTP surface.
+    ///
+    /// Every wall-clock, turn and volume cap was deleted from this engine on purpose, which makes the
+    /// judge the ONLY thing that can notice a stuck call. Dropping it exactly where the fleet is most
+    /// committed is the worst possible time to be blind, and it was invisible: `judge_look` counts stayed
+    /// healthy because planning phases leave slots free.
+    ///
+    /// `weight` is the ENGINE's dispatch budget, not the provider's. LM Studio serves `PARALLEL=2` per
+    /// node and queues beyond it, so a supervision call on a full node is a QUEUED small request, not a
+    /// dropped check — a late look beats no look. Build work still never oversubscribes: this is used
+    /// only for the judge.
+    fn supervision_device(&self) -> Option<usize> {
+        self.least_loaded_free_device().or_else(|| {
+            self.devices
+                .iter()
+                .enumerate()
+                .filter(|(_, d)| d.cfg.enabled)
+                .min_by_key(|(i, d)| (!d.cfg.supervision, d.in_flight, *i))
+                .map(|(i, _)| i)
+        })
+    }
+
     fn pick_judge_target(
         &mut self,
         cfg: &JudgeConfig,
@@ -1740,7 +1770,8 @@ impl State {
         // the next idle-job never stack on it), but fall through with no claim + an empty model_id so the
         // deterministic verdicts still fire when every node is busy (saturated) — a stuck worker must not go
         // unjudged. The actual claim (in_flight bump) happens at the end, only if a task is selected.
-        let claimed_device = self.least_loaded_free_device();
+        // Supervision must not be dropped because BUILD filled every slot — see supervision_device.
+        let claimed_device = self.supervision_device();
         let judge_model_id = claimed_device
             .map(|i| self.devices[i].cfg.model_id.clone())
             .unwrap_or_default();
