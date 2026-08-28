@@ -397,6 +397,38 @@ it. A problem that turns out to be already owned is left out, but then it was no
 **THIS RUN KEEPS THE DEFECT** — the binary is the old one. Expect 4 features missing from its app, and read
 the score with that in mind rather than as a verdict on the decomposition.
 
+## THE STRUCTURED-REPLY FIX WORKS — AND THE MODEL STILL WILL NOT OBEY, 2026-08-29 03:25 EEST
+
+`open-coverage-2`, this run, on the new binary. **The judge's directions, verbatim:**
+
+    23:12:27  Call the output tool NOW with the 55 rows already enumerated as the coverage table
+              — do not add more rows or refine further
+    23:13:20  Call the output tool NOW with all 80 rows — stop verifying and submit what exists
+    23:15:00  Call the output tool IMMEDIATELY with the partial coverage table containing all rows
+              enumerated so far - do not wait for completeness or perfection
+    23:16:09  Call `final_output` immediately with all 80 enumerated rows - do not enumerate any more
+    23:20:56  Call `final_output` immediately with all 80 enumerated rows - do not enumerate any more
+
+**THAT IS THE FIX FIRING.** Last run the same lane got *"stop deliberating about whether items are
+components vs implementation details"* — an argument about CONTENT. Now every direction is about
+SUBMITTING, in the exact language the new block asks for: *a partial table that exists beats a complete one
+still being composed.* The `structured_block` reaches the judge and changes what it says.
+
+**AND IT CHANGED NOTHING.** Six nudges, **zero tool calls**, 68,658 characters, all delivered by steer.
+
+**THE NEW FINDING: the last two directions are BYTE-IDENTICAL.** Escalation asks the judge to be *more
+concrete* than last time, and that has a floor — once the direction is "call `final_output` with the 80 rows
+you already have", there is nothing more concrete to say. **The supervisor is out of moves, and more nudges
+cannot fix a call that ignores a maximally concrete instruction. Only the engine can.**
+
+Shipped `judge_out_of_moves {task_id, nudges, repeated_direction, tool_calls, thinking_chars}` — emitted,
+NOT acted on. What the engine should do depends on whether the lane is load-bearing (coverage is enrichment;
+a build task is not), and choosing that from inside the judge loop would be guessing. Counts across runs
+decide it.
+
+**HONEST READ:** tonight's judge work made the supervisor say the right thing. It did not make a 27B model
+obey it. Those are different problems and only the first is fixed.
+
 ## LONGCAT RESCORE ABANDONED — the app is SOUND, the scorer is not worth more ticks
 
 Three attempts, ~35 minutes of tick time. **What is settled, and it is the part that matters:**
