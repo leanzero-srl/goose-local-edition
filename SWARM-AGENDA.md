@@ -29,6 +29,13 @@ Make the swarm BUILD BETTER SOFTWARE on local models, then beat the published `b
   the Electron binary only; `Resources/bin/goose swarm run` survived, reparented to launchd, and drove all
   three nodes for ~25 minutes after the window closed. `launch.sh` already had the right patterns — I
   retyped a shorter version instead of calling it. If a procedure exists, CALL IT.
+- **NEVER COUNT PROCESSES BY NAME PATTERN — anchor on the PID you started or the log you are writing.**
+  MEASURED 2026-08-28: a build-progress check of `ps aux | grep -cE '[c]argo|[r]ustc|[e]lectron|[n]ode.*build'`
+  counted 4 and I reported the build still running. All four were VS Code helpers and MCP servers; the
+  build had finished 11 minutes earlier. Mihai asked why I was watching VS Code. Same shape as the
+  `pgrep -f run_build.py` trap two entries up, and the third time this class has cost something today.
+  A background job returns a PID — poll `kill -0 <pid>`, or the mtime of the log it writes. Both are things
+  the observer cannot accidentally contain.
 - **Never "stop the fleet" by unloading.** `lms load` has no host flag and gabee (Mac.lan) has no
   passwordless SSH, so an unload there cannot be undone from this laptop. IDLE is the correct resting
   state; stop whatever is DRIVING the fleet instead.
