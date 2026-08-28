@@ -206,6 +206,9 @@ runs several rounds and the gaps arrive in the later ones.
       UNBLOCK: add an Alibaba key as BYOK at https://openrouter.ai/settings/integrations — that gives
       dedicated rate limits AND keeps OpenRouter's request shape, so it also sidesteps the Token Plan
       contract problem that blocked the direct Alibaba route.
+- **VINDICATED 16:24Z — 27b UNFROZE ON ITS OWN.** Δcalls+3, Δfiles+1, an 8,385-byte `app/common.py`,
+  20 minutes after I recommended stopping it. A very long single generation on a 27B is a normal prelude
+  to a large first write, not a hang. THE FLAGS ARE A REASON TO LOOK, NEVER A REASON TO ACT.
 - **STANDING DECISION 2026-08-28 ~16:20Z — 27b r2 RUNS TO COMPLETION. Do not stop it.** Mihai: *"let it
   continue please"*, after being shown the evidence that it is 42 min in with an empty tree, 10 tool calls
   frozen >10 min, and the application being composed inside its reasoning channel. The tick will keep
