@@ -109,6 +109,38 @@ to fix a mechanism that was working — see the nudge-justification entry.
 `judge_quiet_within_rhythm` count, the nudge delivery split (this run: 17 nudges, 17 re-streams, 0 steers),
 and whether any nudge still fires on a call producing >=2000.
 
+## OVER-DECOMPOSITION DEFORMS THE PRODUCT — proven by REVIEW's own three rounds, 2026-08-28
+
+The strongest evidence of the session, and it came from the run itself rather than from argument.
+
+**ROUND 1 (new=5)** found exactly the over-decomposition the slice fix targets:
+  `web/viz.js` owned by **FOUR** tasks (viz-picking-camera, viz-labels-brush, viz-streaming-instrumentation,
+  viz-webgl-rendering) — stripped from three. Plus `app/notifierd.py`, `app/drafts.py`, `web/app.js` and
+  `DECISIONS.md` each owned by two.
+**ROUND 2 (new=2)** found the consequence: tasks left owning no files at all.
+**ROUND 3 (new=7)** is REVIEW REPAIRING ITS OWN DAMAGE, and the method is the problem:
+  viz-labels-brush -> `web/viz_labels.js` · viz-streaming-instrumentation -> `web/viz_streaming.js` ·
+  viz-webgl-rendering -> `web/viz_webgl.js` · frontend-drafts-panel -> `web/drafts.js` ·
+  draft-api-endpoints -> `app/drafts_api.py`.
+
+**IT IS SPLITTING `viz.js` INTO THREE INVENTED FILES TO JUSTIFY THE SLICE COUNT.** REVIEW emits STRUCTURAL
+PATCHES ONLY — by design it may not merge slices or edit a description — so when a task is orphaned its
+only available lever is to invent a file for it. The decomposition therefore propagates into the product:
+we will build `viz_labels.js`, `viz_streaming.js` and `viz_webgl.js` because OPEN made five slices for one
+file. **The plan deforms the product to fit itself.**
+
+**THIS IS NOT A REVIEW DEFECT.** REVIEW did good work three times: it found the collisions, found the
+orphans, and repaired them with the only tool it has. Mihai is right that REVIEW is earning its keep. The
+defect is upstream, at OPEN, and the fix is already committed: a slice must own files no other slice owns,
+so the merge happens where merging is legal.
+
+**ALSO SETTLED: the de-dupe is NOT broken.** `repeated=0` on all three rounds looked like the prefix-match
+failing, which is what the previous run died of. Reading the texts shows the rounds are a genuine CASCADE —
+round 1's fix caused round 2's finding caused round 3's fix — not three rephrasings of one complaint.
+
+**WATCH ON THE NEXT RUN:** if `tasks_sharing_a_file` is 0 at `plan_synthesized`, REVIEW should never reach
+this cascade at all, and round 1's findings should be about coverage rather than ownership.
+
 ## Standing constraints — absolute, never negotiate them
 
 - **NO SPEND CAP MAY EVER BIND ON A CLOUD RUN.** Mihai, 2026-08-28: *"don't put caps on models or runs
