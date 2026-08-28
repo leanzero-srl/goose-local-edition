@@ -2110,8 +2110,32 @@ export function deriveFleet(args: {
     new Set([...args.pool, ...args.laneSources.map((l) => l.device)])
   ).sort();
   const workingByDevice = new Map<string, TurnLane>();
+  // A lane the engine OPENED and never closed is a claim, not an observation. It stays 'running'
+  // through a re-stream that produced nothing, and through a kill that never got to write a closing
+  // event -- so on its own it renders a dead node as working for as long as the panel is open.
+  // MEASURED 2026-08-28: gabee showed "Review 1 · working" with a live nudge quoted under it while
+  // `lms ps` reported all three nodes IDLE; Mihai saw it and asked. The lane had been re-streamed 13
+  // times and its stream was gone.
+  //
+  // So the claim must be CORROBORATED, and only by evidence we already collect -- no timer is added
+  // here, because a clock is what we deleted everywhere else. Demote only when BOTH independent
+  // signals disagree with the claim: LM Studio is reporting fleet state at all AND does not list this
+  // node as busy, AND the lane's own digest is stale past the open-call window. Either signal alone
+  // has demoted a genuinely working node before: mtime did it mid-shell-call, and busyNodes is empty
+  // for a cloud device, which never appears in `lms ps`.
+  const reportingBusy = args.busyNodes != null && args.busyNodes.length > 0;
+  const laneLooksDead = (l: TurnLane): boolean => {
+    if (!reportingBusy || (args.busyNodes ?? []).includes(l.device)) return false;
+    const d = args.digests[l.taskId] as Digest | undefined;
+    const lastCall = d?.calls?.length ? d.calls[d.calls.length - 1] : undefined;
+    const callOpen = lastCall != null && (lastCall.ok === null || lastCall.ok === undefined);
+    const age = args.now - (args.digestMtimes[l.taskId] ?? 0);
+    return age > (callOpen ? DIGEST_OPEN_CALL_FRESH_MS : DIGEST_FRESH_MS);
+  };
   for (const l of args.laneSources) {
-    if (l.status === 'running' && !workingByDevice.has(l.device)) workingByDevice.set(l.device, l);
+    if (l.status === 'running' && !workingByDevice.has(l.device) && !laneLooksDead(l)) {
+      workingByDevice.set(l.device, l);
+    }
   }
   // A lane the LIFECYCLE closed (task_completed / fix completed) is over even if its digest predates
   // the phase stamp — engine truth beats file freshness.
