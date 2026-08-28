@@ -109,7 +109,15 @@ runs several rounds and the gaps arrive in the later ones.
       slice list against the request section by section" — the job restated, costing a restream. The judge
       must add information or return OK.
 - [x] **I. DONE.** The rater can answer `DUPLICATE <n>`; the engine drops those from the wave. Model decides — no similarity score, no threshold. Backward-only, and `forced` engine checks still win. Was: (`merge_duplicate_findings`) — designed, never shipped.
-- [ ] **J. Node re-admission covers BUILD only.** RESEARCH/TEST/FIX hold pre-BUILD fleet snapshots, so a
+- [~] **J. BLOCKED ON A PREREQUISITE, and I stopped rather than ship it.** Confirmed real: `worker_models`
+      is `fleet_slot_models(devices)` computed ONCE at swarm.rs:26951 (planning) and again at :38053
+      (repair), both from the boot pool. Only BUILD sees a rejoin, via the scheduler's `DeviceAdmission`.
+      So a machine that returns mid-run sits idle through RESEARCH/REVIEW/TEST/FIX however long they take.
+      THE OBVIOUS FIX IS WRONG: filtering the slot list by LM Studio residency drops every CLOUD device,
+      because a cloud model never appears in `lms ps` — and cloud nodes are now a supported fleet.
+      `DeviceCfg` has no provider field to tell them apart (SwarmDevice does; it is not threaded through).
+      PREREQUISITE: put the provider on DeviceCfg, then residency-filter LOCAL devices only. Confidence in
+      the diagnosis HIGH, in a safe fix without that prerequisite LOW. Was: RESEARCH/TEST/FIX hold pre-BUILD fleet snapshots, so a
       node that comes back mid-run (gabee) sits idle for those phases.
 - [x] **K. DONE.** Judge's `eta_mins` now surfaces per running lane (latest wins). The run-level band stays arithmetic and is honest about being an extrapolation. Was: — the judge estimates remaining time; surface it in the panel.
 - [x] **N. DONE.** `cut_request_into_portions` cuts by character count; deliberately NOT named 'weight' (four other meanings exist). Was: Measured: part 1 got 72
