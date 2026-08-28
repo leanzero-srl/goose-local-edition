@@ -199,6 +199,12 @@ export interface TurnLane {
   fullReasoning?: string;
   calls?: SwarmCall[];
   toolCalls?: number;
+  /** The JUDGE'S OWN estimate of how many more minutes this call needs, from the `ETA=<n>m` token it is
+   *  asked for on every look. It is the only estimate anyone has that is based on reading the work: the
+   *  judge has seen what the call established, what it is doing now and how fast it is producing.
+   *  The panel's run-level "min left" is arithmetic — elapsed / items_done x remaining — and ignored this
+   *  entirely, so a model judgement was being computed over rather than shown. */
+  judgeEtaMins?: number;
   /** Reasoning-channel activity — a node drafting in the <think> channel has thinking but empty text. Used so
    *  a heavily-generating node counts as WORKING and its thinking previews inline instead of reading "idle". */
   thinkingChars?: number;
@@ -1640,6 +1646,17 @@ export function foldEvents(
   fixLanes: TurnLane[];
 } {
   const tasks = new Map<string, TurnLane>();
+  // THE JUDGE'S OWN ETA, kept per task. It is asked for an `ETA=<n>m` on every look and it answers — the
+  // live run shows open-coverage-2 estimating 5, 5, 3, 3, 2 as it converged. Nothing consumed it, so the
+  // only "time left" on screen was the panel's own extrapolation from item counts. The last look wins:
+  // the judge revises as it reads more, and an older estimate is strictly worse information.
+  const judgeEta = new Map<string, number>();
+  for (const e of events) {
+    if (e['event'] !== 'judge_look') continue;
+    const id = typeof e['task_id'] === 'string' ? e['task_id'] : '';
+    const eta = e['eta_mins'];
+    if (id && typeof eta === 'number' && Number.isFinite(eta)) judgeEta.set(id, eta);
+  }
   // The verify REPAIR WAVE dispatches fix twins via complete_fix_dispatched / complete_fix_completed —
   // NOT the task_dispatched lifecycle — so for its whole duration (10-18 min per twin, measured) no lane
   // existed and every busy node read "idle — no task". Kept separate from `tasks` so the header's task
@@ -1859,6 +1876,7 @@ export function foldEvents(
     return {
       taskId: k,
       description: desc,
+      judgeEtaMins: judgeEta.get(k),
       device: canonDevice(d.model ?? 'planner'),
       model: d.model,
       // Per-call phase="done" (written when THIS call ends) drops the node out of "working" immediately, so a
