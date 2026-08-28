@@ -12954,7 +12954,7 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
             "the second sync re-fetched 247 rows".to_string(),
         ];
         let all = vec!["app/api.py".to_string(), "app/store.py".to_string()];
-        let specs = fix_round_specs(&findings, &all, 2, TargetLang::Python);
+        let specs = fix_round_specs(&findings, &all, 2, TargetLang::Python, "");
         let ids: Vec<&str> = specs.iter().map(|t| t.id.as_str()).collect();
         assert_eq!(
             ids,
@@ -12986,7 +12986,7 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
         // collide with the join id — '#' never appears in a normalized file id.
         let tricky = vec!["join.py:1: broken".to_string(), "no file here".to_string()];
         let all2 = vec!["join.py".to_string()];
-        let specs2 = fix_round_specs(&tricky, &all2, 0, TargetLang::Python);
+        let specs2 = fix_round_specs(&tricky, &all2, 0, TargetLang::Python, "");
         let ids2: Vec<&str> = specs2.iter().map(|t| t.id.as_str()).collect();
         assert_eq!(ids2, ["fix::r0::join.py", "fix::r0::#join"]);
         assert!(
@@ -12995,11 +12995,11 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
         );
         // No file-less findings -> no join at all.
         let only_file = vec!["app/api.py:1: x".to_string()];
-        let specs3 = fix_round_specs(&only_file, &all, 1, TargetLang::Python);
+        let specs3 = fix_round_specs(&only_file, &all, 1, TargetLang::Python, "");
         assert_eq!(specs3.len(), 1);
         assert!(!specs3.iter().any(|t| t.id.ends_with("#join")));
         // No findings -> no tasks.
-        assert!(fix_round_specs(&[], &all, 0, TargetLang::Python).is_empty());
+        assert!(fix_round_specs(&[], &all, 0, TargetLang::Python, "").is_empty());
     }
 
     /// F881 REGRESSION (run 8, score 0.601): the repair round RACED whole-tree twins even though its
@@ -31621,6 +31621,7 @@ fn fix_round_specs(
     all_files: &[String],
     round: usize,
     lang: TargetLang,
+    spec: &str,
 ) -> Vec<goose_swarm::TaskSpec> {
     let (groups, unassigned) = group_findings_by_file(findings, all_files);
     let fix_ids: Vec<String> = groups
@@ -31633,7 +31634,7 @@ fn fix_round_specs(
         .zip(fix_ids.iter())
         .map(|(g, id)| goose_swarm::TaskSpec {
             id: id.clone(),
-            description: smoke_fix_description(&g.findings, lang),
+            description: smoke_fix_description(&g.findings, lang, spec),
             difficulty: goose_swarm::Difficulty::Hard,
             preferred_model: None,
             owned_files: shard_owned_files(&g.file, all_files, &taken),
@@ -31644,7 +31645,7 @@ fn fix_round_specs(
     if !unassigned.is_empty() {
         specs.push(goose_swarm::TaskSpec {
             id: format!("fix::r{round}::#join"),
-            description: smoke_fix_description(&unassigned, lang),
+            description: smoke_fix_description(&unassigned, lang, spec),
             difficulty: goose_swarm::Difficulty::Hard,
             preferred_model: None,
             owned_files: all_files.to_vec(),
@@ -31679,8 +31680,31 @@ fn fix_round_specs(
 /// generic gate: number them, demand one verdict line each, and say plainly that a silent finding is one
 /// the next worker repeats. `{verify}` stays, demoted to what it is — a regression check that the repair
 /// did not break the build, not proof the defect is gone. No counter, no threshold, no cap.
-fn smoke_fix_description(findings: &[String], lang: TargetLang) -> String {
+fn smoke_fix_description(findings: &[String], lang: TargetLang, spec: &str) -> String {
     let verify = verify_recipe(lang);
+    // WHAT THE APP WAS ADVERTISED TO DO. The fix worker was the only party in the phase that never saw
+    // the request: `DispatchRequest` carries no spec, TEST is given the whole prompt and RATE is given
+    // the request, but FIX got a finding and nothing else. So "an advertised endpoint is missing" arrived
+    // at the one worker with no definition of what was advertised.
+    //
+    // The whole 54,000-character spec cannot go in every fix task, and truncating it to N characters
+    // would be an arbitrary cut that could slice the very row the finding is about. The advertised
+    // SURFACE is the part a repair actually needs and the engine already extracts it — the same numbered
+    // table the spec-contract check tests against.
+    let surface = spec_advertised_surface(spec);
+    let surface_block = if surface.is_empty() {
+        String::new()
+    } else {
+        format!(
+            "\n\nWHAT THIS APP ADVERTISES (the request's own table — a finding about a missing or broken \
+             one of these is about THIS row):\n{}",
+            surface
+                .iter()
+                .map(|a| format!("  - {a}"))
+                .collect::<Vec<_>>()
+                .join("\n")
+        )
+    };
     let numbered = findings
         .iter()
         .enumerate()
@@ -31705,8 +31729,9 @@ fn smoke_fix_description(findings: &[String], lang: TargetLang) -> String {
          FINDING <n>: NOT FIXED — <what you tried and what still fails>\n\
          FINDING <n>: NOT REAL — <the output that rules it out>\n\
          Write the line even for the ones you could not close. A finding you leave silent is one the next \
-         worker repeats from scratch, having no idea you already tried.{}",
-        fix_evidence_pointers(findings)
+         worker repeats from scratch, having no idea you already tried.{}{}",
+        fix_evidence_pointers(findings),
+        surface_block
     )
 }
 
@@ -39355,7 +39380,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                 let dev = dev_id.clone();
                 let decisions = user_decisions.clone();
                 let facts = doc_facts.clone();
-                let desc = smoke_fix_description(&verdict.findings, complete_lang);
+                let desc = smoke_fix_description(&verdict.findings, complete_lang, &opts.prompt);
                 let wave_prompt = opts.prompt.clone();
                 let wave_cwd = cwd.clone();
                 // F862: the ruler flags the round graded with — the twins grade with the same.
@@ -39597,6 +39622,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                     &smoke_all_files,
                     round as usize,
                     complete_lang,
+                    &opts.prompt,
                 );
                 match goose_swarm::Dag::from_specs(specs) {
                     Err(e) => {
@@ -39803,7 +39829,11 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                                 let started = std::time::Instant::now();
                                 let req = DispatchRequest {
                                     task_id: task_id.clone(),
-                                    description: smoke_fix_description(&g.findings, complete_lang),
+                                    description: smoke_fix_description(
+                                        &g.findings,
+                                        complete_lang,
+                                        &fan_prompt,
+                                    ),
                                     device_id: dev,
                                     model_id: model.clone(),
                                     context_slice: String::new(),
@@ -39961,7 +39991,11 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                     let started = std::time::Instant::now();
                     let req = DispatchRequest {
                         task_id: task_id.clone(),
-                        description: smoke_fix_description(&unassigned, complete_lang),
+                        description: smoke_fix_description(
+                            &unassigned,
+                            complete_lang,
+                            &opts.prompt,
+                        ),
                         device_id: dev_id,
                         model_id: model_id.clone(),
                         context_slice: String::new(),
@@ -40035,7 +40069,11 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                 let fix_model_id = model_id.clone();
                 let fix_req = DispatchRequest {
                     task_id: "complete-fix".to_string(),
-                    description: smoke_fix_description(&verdict.findings, complete_lang),
+                    description: smoke_fix_description(
+                        &verdict.findings,
+                        complete_lang,
+                        &opts.prompt,
+                    ),
                     device_id: dev_id,
                     model_id,
                     context_slice: String::new(),
@@ -40435,7 +40473,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                 eprintln!("smoke gate: dispatching ONE corrective fix attempt ...");
                 let fix_req = DispatchRequest {
                     task_id: "smoke-fix".to_string(),
-                    description: smoke_fix_description(&smoke.findings, smoke_lang),
+                    description: smoke_fix_description(&smoke.findings, smoke_lang, &opts.prompt),
                     device_id: dev_id,
                     model_id,
                     context_slice: String::new(),
