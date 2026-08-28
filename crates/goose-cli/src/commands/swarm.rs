@@ -36802,6 +36802,12 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
         "build_sha": option_env!("GOOSE_BUILD_SHA").unwrap_or("dev"),
         "crate_version": env!("CARGO_PKG_VERSION"),
         "levers": {
+            // UNATTENDED OR NOT, stated in the log. `benchmark` decides whether all three ask sites route
+            // to a proxy node instantly or wait five minutes on a human, and it was the one lever the run
+            // record could not show — it is read from config.yaml, so a run that silently blocked on a
+            // person who was not there looked identical to one that never asked. Measured today: the flag
+            // was correctly set and live, and there was no way to prove it from run.jsonl.
+            "benchmark": benchmark(),
             "ask_floor": ask_floor,
             "ask_max_q": ask_max_q,
             // Prompt-only levers emit nothing of their own, which is why two earlier ones were screened
