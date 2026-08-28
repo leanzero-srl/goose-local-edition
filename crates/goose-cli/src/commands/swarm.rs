@@ -11377,6 +11377,7 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
             enabled: true,
             speed_weight: 1,
             supervision: false,
+            is_cloud: false,
         }
     }
 
@@ -27747,6 +27748,7 @@ mod shipped_defaults_tests {
                 enabled: true,
                 speed_weight: 1,
                 supervision: false,
+                is_cloud: false,
             },
             DeviceCfg {
                 id: "fast-but-off".into(),
@@ -27755,6 +27757,7 @@ mod shipped_defaults_tests {
                 enabled: false,
                 speed_weight: 9,
                 supervision: false,
+                is_cloud: false,
             },
             DeviceCfg {
                 id: "workhorse".into(),
@@ -27763,6 +27766,7 @@ mod shipped_defaults_tests {
                 enabled: true,
                 speed_weight: 3,
                 supervision: false,
+                is_cloud: false,
             },
         ];
         let picked = devices
@@ -36501,6 +36505,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                             enabled: true,
                             speed_weight: configured_speed_weight(&cfg.speed_weights, &d.id),
                             supervision: true,
+                            is_cloud: d.is_cloud(),
                         })
                         .collect();
                 }
@@ -36847,6 +36852,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             // config keeps its current routing byte-for-byte.
             speed_weight: d.speed_weight.unwrap_or_else(|| speed_weight_for(&d.id)),
             supervision: d.supervision.unwrap_or(false),
+            is_cloud: d.is_cloud(),
         })
         .collect();
     // The planner model also pitches in as a worker after planning, so the smartest model isn't idle
@@ -36871,6 +36877,12 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             enabled: true,
             speed_weight: speed_weight_for(&cfg.planner_model),
             supervision: false,
+            // The planner joining as a worker is the SAME model the pool already knows; if any configured
+            // device serves it from a cloud provider, so does this one.
+            is_cloud: cfg
+                .devices
+                .iter()
+                .any(|d| d.model_id == cfg.planner_model && d.is_cloud()),
         });
         eprintln!(
             "planner also working: {} (weight {})",

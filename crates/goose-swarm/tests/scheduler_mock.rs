@@ -134,6 +134,7 @@ fn dev_sw(id: &str, model: &str, weight: u32, speed_weight: u32) -> DeviceCfg {
         enabled: true,
         speed_weight,
         supervision: false,
+        is_cloud: false,
     }
 }
 
@@ -1638,6 +1639,7 @@ async fn supervision_device_never_takes_build_work() {
     let dag = Dag::from_specs(specs).unwrap();
     let sup = DeviceCfg {
         supervision: true,
+        is_cloud: false,
         ..dev("s", "m-s", 2)
     };
     let sched = Scheduler::new(vec![dev("a", "m-a", 2), sup], 3);
@@ -1666,6 +1668,7 @@ async fn supervision_only_pool_refuses_to_run() {
     let dag = Dag::from_specs(vec![spec("t0", &[], &[])]).unwrap();
     let sup = DeviceCfg {
         supervision: true,
+        is_cloud: false,
         ..dev("s", "m-s", 2)
     };
     let sched = Scheduler::new(vec![sup], 3);

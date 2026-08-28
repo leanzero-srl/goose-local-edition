@@ -485,6 +485,17 @@ pub struct DeviceCfg {
     /// sizing all count build devices). This is how a capped run (the n1 arm) borrows its excluded
     /// idle machines for quality work without changing what it BUILDS.
     pub supervision: bool,
+    /// TRUE when a CLOUD provider serves this device rather than the local LM Studio fleet.
+    ///
+    /// Needed because "is this node still there?" has two completely different answers depending on the
+    /// provider, and the scheduler could not tell them apart. A local node's residency is observable —
+    /// it appears in `lms ps` or it does not. A cloud model NEVER appears there, so any check that reads
+    /// residency and treats absence as death silently deletes the entire cloud half of a mixed fleet.
+    ///
+    /// I wrote exactly that check and reverted it: refreshing a fan's slot list against the live LM
+    /// Studio fleet, to pick up a node that rejoined mid-run, would have emptied a cloud pool. This field
+    /// is the prerequisite that makes the residency question answerable per device.
+    pub is_cloud: bool,
 }
 
 /// MID-RUN DEVICE ADMISSION — the handle a caller keeps so a node that comes BACK during a run can
