@@ -27176,6 +27176,16 @@ async fn review_until_settled(
     // a 120-char lowercase prefix — enough to spot an exact repeat, useless against a rephrasing, and it
     // is the reviewer that has to judge sameness, so it needs the real sentences.
     let mut reported_so_far: Vec<String> = Vec::new();
+    // EVERY PLAN STATE THIS REVIEW HAS ALREADY PRODUCED. A repeat is a CYCLE, and a cycle is a proof
+    // that no further round can do anything the previous ones did not.
+    let mut plan_states: std::collections::HashSet<u64> = std::collections::HashSet::new();
+    let plan_hash = |p: &str| -> u64 {
+        use std::hash::{Hash, Hasher};
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        p.hash(&mut h);
+        h.finish()
+    };
+    plan_states.insert(plan_hash(&plan_json));
     let mut round = 0u32;
     loop {
         round += 1;
@@ -27242,6 +27252,38 @@ async fn review_until_settled(
                         "remove": patch.remove.len(),
                     }));
                     plan_json = next;
+                    // THE REVIEW IS CYCLING, AND THAT IS A PROOF, NOT A HEURISTIC.
+                    //
+                    // The loop ends when a round asks for NO change. That rule assumes a fixed point
+                    // exists. MEASURED 2026-08-28: it does not always. A plan with TEN frontend/viz
+                    // slices against the FOUR files the request permits has no valid assignment under
+                    // disjoint ownership, so every round must either orphan a task or invent a file —
+                    // and the review correctly objects to whichever it just did. Rounds went
+                    // 5 -> 2 -> 7 -> 3 across EIGHTY MINUTES: round 1 stripped the shared files, round 3
+                    // invented files to un-orphan the tasks, round 4 objected that the invented files
+                    // violate the request. Each step was right; the set of constraints was not
+                    // satisfiable.
+                    //
+                    // Returning to a plan state already seen means the next round faces exactly the
+                    // input some earlier round faced, so it will do exactly what that round did. This is
+                    // not a cap on rounds — an oscillation-free review still runs as long as it needs.
+                    // It ends a loop that is PROVABLY not going anywhere, which is the same class of
+                    // terminator as `fix_converged`: the tree stopped changing, so stop.
+                    if !plan_states.insert(plan_hash(&plan_json)) {
+                        eprintln!(
+                            "  {} review is CYCLING — round {round} returned the plan to a state it \
+                             already held. No further round can differ; settling here.",
+                            style("!").yellow().bold()
+                        );
+                        sink.write_value(serde_json::json!({
+                            "event": "review_oscillating",
+                            "round": round,
+                            "detail": "the plan returned to a state an earlier round already produced, \
+                                       so no later round can differ — the constraints have no fixed \
+                                       point (usually more slices than the request permits files)",
+                        }));
+                        return plan_json;
+                    }
                 }
                 Err(diag) => {
                     // A BAD PATCH COSTS ONE PATCH. It is dropped, the plan it was meant to fix is
