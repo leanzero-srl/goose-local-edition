@@ -26540,7 +26540,7 @@ async fn run_linear_plan(
                 format!("you have {proxy_after}s, then a node")
             }
         );
-        {
+        let clarify_proxy = {
             let me = dispatcher.clone();
             let sink2 = sink.clone();
             let prompt = opts.prompt.clone();
@@ -26590,14 +26590,15 @@ async fn run_linear_plan(
                         let _ = std::fs::write(&apath, body.to_string());
                     }
                 }
-            });
-        }
+            })
+        };
         let qa = ask_clarifying_questions(
             &questions,
             cwd_for_ask,
             0,
             None,
             ask_wait_secs,
+            Some(clarify_proxy),
             sink.as_ref(),
         )
         .await;
@@ -34167,6 +34168,7 @@ async fn ask_clarifying_questions(
     plan_conf: u8,
     breakdown: Option<serde_json::Value>,
     wait_secs: u64,
+    proxy: Option<tokio::task::JoinHandle<()>>,
     sink: &dyn EventSink,
 ) -> String {
     use std::io::IsTerminal;
@@ -34266,15 +34268,20 @@ async fn ask_clarifying_questions(
         eprintln!(
             "{}",
             style(format!(
-                "Plan confidence {plan_conf}/100 below floor — wrote {} question(s) to {}; BLOCKING up to {}s for answers in {} (the harness answers as the human) ...",
+                "Plan confidence {plan_conf}/100 below floor — wrote {} question(s) to {}; BLOCKING for answers in {} ({}) ...",
                 questions.len(),
                 qpath.display(),
-                wait_secs,
-                apath.display()
+                apath.display(),
+                if proxy.is_some() {
+                    "a node is answering these; the run waits for it, not for a clock".to_string()
+                } else {
+                    format!("up to {wait_secs}s, then goose decides these itself")
+                }
             ))
             .yellow()
         );
         let mut waited = 0u64;
+        let mut proxy_settled = false;
         loop {
             if let Ok(s) = std::fs::read_to_string(&apath) {
                 let val = serde_json::from_str::<serde_json::Value>(&s).ok();
@@ -34308,7 +34315,36 @@ async fn ask_clarifying_questions(
                     break;
                 }
             }
-            if waited >= wait_secs {
+            // NO DEADLINE OF ITS OWN WHILE A PROXY IS IN FLIGHT.
+            //
+            // MEASURED, run swarm-3node-r0: clarify_proxy_armed 06:49:09 -> low_confidence_ask_timeout
+            // {waited_secs:5} 06:49:14 -> clarify_proxy_answered 06:49:56. The proxy's three answers — the
+            // colour palette, HTTP 409 on a concurrent sync, ThreadingHTTPServer — landed 42s AFTER the only
+            // reader had stopped reading, so OPEN's plan was built from guesses while `clarify_proxy_answered`
+            // and the console both reported that a node had answered. TWO INDEPENDENT CLOCKS ON ONE
+            // HANDSHAKE: `proxy_after` bounds the HUMAN, `wait_secs` bounded this reader, and a 27B answering
+            // three product questions is slower than the shorter of the two. Whichever number is smaller
+            // silently wins, which is how a wait on a MODEL got reintroduced after §8 deleted them all.
+            //
+            // So the exit condition is the proxy TASK, never a duration. Both its arms — Ok, and the Err that
+            // writes conventional defaults — write the answer file before returning, so a finished handle
+            // means the bytes are already on disk: settle once, re-read, parse. A proxy that panicked leaves
+            // no file and is reported as itself rather than disguised as a timeout.
+            if let Some(h) = &proxy {
+                if h.is_finished() {
+                    if proxy_settled {
+                        sink.write_value(serde_json::json!({
+                            "event": "clarify_proxy_unusable",
+                            "questions_unanswered": questions.len(),
+                            "detail": "the proxy task ended without leaving a readable answer file",
+                        }));
+                        return String::new();
+                    }
+                    proxy_settled = true;
+                    continue;
+                }
+            }
+            if proxy.is_none() && waited >= wait_secs {
                 eprintln!(
                     "{}",
                     style(format!(
@@ -40390,5 +40426,92 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
         Ok(())
     } else {
         Err(anyhow!("{} core subtask(s) failed", core_failed))
+    }
+}
+
+#[cfg(test)]
+mod clarify_proxy_tests {
+    use super::*;
+
+    fn q(text: &str) -> ClarifyQuestion {
+        ClarifyQuestion {
+            question: text.to_string(),
+            options: vec![],
+            resolves: String::new(),
+        }
+    }
+
+    /// THE REGRESSION: the reader must wait for the PROXY, not for a clock of its own.
+    ///
+    /// Run swarm-3node-r0 measured `low_confidence_ask_timeout {waited_secs:5}` at 06:49:14 and
+    /// `clarify_proxy_answered` at 06:49:56 — the answers landed 42s after the only reader stopped
+    /// reading, so the plan was built from guesses while the log said a node had answered.
+    ///
+    /// The timings below reproduce that shape rather than describe it: `wait_secs` is 1 and the proxy
+    /// takes 6s, so the reader's second poll is where the old code bailed. It returns empty on the
+    /// fire-and-forget version and the answer only while the handle is the exit condition.
+    #[tokio::test(start_paused = true)]
+    async fn a_slow_proxy_is_waited_for_never_timed_out() {
+        let dir = tempfile::tempdir().unwrap();
+        let apath = dir.path().join(".swarm").join("clarify-answers.json");
+        let proxy = tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_secs(6)).await;
+            std::fs::create_dir_all(apath.parent().unwrap()).unwrap();
+            std::fs::write(
+                &apath,
+                serde_json::json!({"answers": ["sqlite"], "source": "proxy"}).to_string(),
+            )
+            .unwrap();
+        });
+        let out = ask_clarifying_questions(
+            &[q("storage: sqlite or a json file?")],
+            dir.path(),
+            0,
+            None,
+            1,
+            Some(proxy),
+            &NullSink,
+        )
+        .await;
+        assert!(
+            out.contains("sqlite"),
+            "a proxy answer that arrives after wait_secs must still reach the plan; got {out:?}"
+        );
+    }
+
+    /// A proxy that dies without writing reports itself, and does not hang the run either.
+    #[tokio::test(start_paused = true)]
+    async fn a_proxy_that_writes_nothing_unblocks_and_says_so() {
+        let dir = tempfile::tempdir().unwrap();
+        let proxy = tokio::spawn(async {});
+        let out = ask_clarifying_questions(
+            &[q("storage: sqlite or a json file?")],
+            dir.path(),
+            0,
+            None,
+            1,
+            Some(proxy),
+            &NullSink,
+        )
+        .await;
+        assert!(out.is_empty(), "got {out:?}");
+    }
+
+    /// With no proxy armed the human deadline is untouched — this fix removes a wait on a MODEL, not the
+    /// bound on a HUMAN.
+    #[tokio::test(start_paused = true)]
+    async fn without_a_proxy_the_human_wait_still_expires() {
+        let dir = tempfile::tempdir().unwrap();
+        let out = ask_clarifying_questions(
+            &[q("storage: sqlite or a json file?")],
+            dir.path(),
+            0,
+            None,
+            0,
+            None,
+            &NullSink,
+        )
+        .await;
+        assert!(out.is_empty(), "got {out:?}");
     }
 }
