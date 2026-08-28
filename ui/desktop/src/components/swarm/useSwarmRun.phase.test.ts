@@ -154,6 +154,25 @@ describe('buildPhaseTodo — the new phases are populated from the new events', 
     expect(withEmpty.some((r) => r.includes('1 slice came back with no spec'))).toBe(true);
   });
 
+  // MEASURED on swarm-3node-r0: `phase synthesis` 07:04:52 -> `phase review` 07:08:27, strictly sequential,
+  // and `plan_loaded` lands only after REVIEW has patched the DAG. Gating the Synthesize row on plan_loaded
+  // therefore rendered it as still-running for the whole of Review on EVERY run, which reads as two phases
+  // executing at once. The row must close when its own phase ends.
+  it('closes the synthesis row when review opens, not when the plan loads', () => {
+    const phase = todo([OPEN, SLICES, RESEARCH, RESEARCH_DONE, SYNTHESIS, REVIEW]).find(
+      (p) => p.key === 'synthesis'
+    )!;
+    expect(phase.items.some((i) => i.state === 'running')).toBe(false);
+    expect(phase.items.some((i) => i.id === 's-wired' && i.state === 'done')).toBe(true);
+  });
+
+  it('still shows synthesis running while it is genuinely the live phase', () => {
+    const phase = todo([OPEN, SLICES, RESEARCH, RESEARCH_DONE, SYNTHESIS]).find(
+      (p) => p.key === 'synthesis'
+    )!;
+    expect(phase.items.some((i) => i.id === 's-run' && i.state === 'running')).toBe(true);
+  });
+
   it('treats the synthesis fallback as a degraded plan, never a failure', () => {
     const phase = todo([
       OPEN,

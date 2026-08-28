@@ -2467,8 +2467,16 @@ export function buildPhaseTodo(
         'flatter and more serial; every module still specified and owned'
       )
     );
-  } else if (phasesSeen.has('synthesis') && !planLoaded)
+  } else if (phasesSeen.has('synthesis') && !planLoaded && !phasesSeen.has('review'))
     synthesis.push(it('s-run', 'Wiring the slices into a task DAG…', 'running'));
+  // SYNTHESIS ENDS WHEN REVIEW OPENS, NOT WHEN THE PLAN LOADS. `plan_loaded` is emitted only after REVIEW
+  // has finished patching the DAG, so gating this row on it made Synthesize render as still-running for the
+  // whole of Review — on EVERY run, which read as the two phases executing in parallel. They never do:
+  // measured 07:04:52 phase=synthesis -> 07:08:27 phase=review, strictly sequential.
+  else if (phasesSeen.has('review') && !planLoaded)
+    synthesis.push(
+      it('s-wired', 'Slices wired into a DAG', 'done', 'review is still patching it, so the task count lands with the plan')
+    );
   if (sinkRenamedFrom)
     synthesis.push(
       it('s-sink', `Sink renamed from \`${sinkRenamedFrom}\``, 'done', 'so the engine’s own sink checks keep matching')
