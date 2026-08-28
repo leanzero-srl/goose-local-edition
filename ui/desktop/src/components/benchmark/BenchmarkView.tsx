@@ -667,8 +667,12 @@ export default function BenchmarkView() {
 
           {mine && !comparable && (
             <p className="mt-4 rounded border-2 border-[var(--color-node-5)] px-4 py-3 text-sm font-semibold text-text-primary">
-              Your last result was scored by {mine.scorerVersion}, but the board runs on{' '}
-              {COMPARABLE_SCORER} — the numbers are not comparable, so your row sits out. Run the
+              {/* NAME THE SAME CONSTANT THE PREDICATE USES. `comparable` compares against
+                  TIER_SCORER[tier], but this printed COMPARABLE_SCORER — so the banner read "scored by
+                  sb-5.3, but the board runs on sb-5.3", telling the operator two identical versions were
+                  incompatible. */}
+              Your last result was scored by {mine.scorerVersion}, but this board runs on{' '}
+              {TIER_SCORER[tier]} — the numbers are not comparable, so your row sits out. Run the
               benchmark again to enter the board.
             </p>
           )}

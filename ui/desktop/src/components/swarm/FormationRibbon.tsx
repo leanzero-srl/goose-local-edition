@@ -42,7 +42,6 @@ export function FormationRibbon({
   evidence?: FormationEvidence;
 }) {
   const activeIndex = formationPhaseIndex(phase);
-  const workingCount = nodes.filter((node) => node.working).length;
 
   return (
     <div
@@ -133,7 +132,10 @@ export function FormationRibbon({
           ))}
         </div>
         <p className="text-center text-xs text-text-secondary" aria-live="polite">
-          {workingCount} working · {nodes.length - workingCount} idle
+          {/* The FLEET zone header already reads "N nodes · N working" a few rows below, and the node
+              chips above already show which are lit. Three renderings of one fact. The ribbon keeps the
+              chips, which carry WHICH node; the count belongs where the nodes are named. */}
+          {nodes.length} node{nodes.length === 1 ? '' : 's'}
         </p>
       </div>
     </div>
