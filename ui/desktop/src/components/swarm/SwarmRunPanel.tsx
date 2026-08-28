@@ -837,6 +837,141 @@ const NodeExpandBox: React.FC<{ text: string }> = ({ text }) => {
   );
 };
 
+/**
+ * NODE INSPECTOR — one node's full stream, in a window big enough to read it.
+ *
+ * WHY. The fleet strip put a node's generation as loose text under its name, clipped by whatever height
+ * the row happened to have. Mihai: *"it's sort of useless what it shows now… it's just throwing in some
+ * floating text… here it usually gets truncated"*.
+ *
+ * The two channels are shown SEPARATELY because they are separate in the protocol and answer different
+ * questions. THINKING is the reasoning channel — what the model is working out. OUTPUT is what it actually
+ * emitted: the tool calls it made and the text it returned. A node reasoning hard while emitting nothing is
+ * the precise state that has cost this project whole runs, and it is invisible the moment the two are
+ * concatenated into one blob.
+ *
+ * Both panes reuse NodeExpandBox, so each follows the newest text like a terminal while a scroll-up to
+ * read stays where it was put.
+ */
+const NodeInspector: React.FC<{
+  device: string;
+  letter: string;
+  hue: string;
+  ink: string;
+  lane?: TurnLane;
+  nodeState?: string;
+  onClose: () => void;
+}> = ({ device, letter, hue, ink, lane, nodeState, onClose }) => {
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
+
+  const thinking = lane?.fullReasoning?.trim() || lane?.reasoning?.trim() || '';
+  const lastThink = collapseRepeats(lane?.lastThinking?.trim() ?? '');
+  const thinkText = [thinking, lastThink && lastThink !== thinking ? lastThink : '']
+    .filter(Boolean)
+    .join('\n\n');
+  const calls = lane?.calls ?? [];
+  const outText = [...(lane?.recent ?? []), lane?.lastText?.trim() ?? '']
+    .filter(Boolean)
+    .join('\n\n');
+
+  const Pane: React.FC<{ title: string; count: string; body: string; empty: string }> = ({
+    title,
+    count,
+    body,
+    empty,
+  }) => (
+    <div
+      className="flex flex-col min-h-0 flex-1 border border-border-primary overflow-hidden"
+      style={{ borderRadius: CHIP_RADIUS }}
+    >
+      <div className="flex items-center justify-between px-3 py-1.5 border-b border-border-primary shrink-0 bg-background-secondary">
+        <span className="font-mono uppercase tracking-[0.18em] text-[10px] font-bold text-text-primary">
+          {title}
+        </span>
+        <span className="text-[10px] tabular-nums text-text-secondary">{count}</span>
+      </div>
+      <div className="min-h-0 flex-1 overflow-hidden">
+        {body ? (
+          <NodeExpandBox text={body} />
+        ) : (
+          <div className="px-3 py-2 text-xs text-text-secondary">{empty}</div>
+        )}
+      </div>
+    </div>
+  );
+
+  return createPortal(
+    <>
+      <div className="fixed inset-0 z-40 bg-black/60" onClick={onClose} />
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-label={`Node ${letter}, ${device}`}
+        className="fixed z-50 inset-4 md:inset-8 flex flex-col bg-background-primary border border-border-primary shadow-2xl"
+        style={{ borderRadius: CHIP_RADIUS }}
+      >
+        <div className="flex items-center gap-2 px-4 py-3 border-b border-border-primary shrink-0">
+          <span
+            className="inline-flex items-center justify-center font-mono font-semibold shrink-0"
+            style={{ width: 20, height: 20, borderRadius: CHIP_RADIUS, background: hue, color: ink, fontSize: 11 }}
+          >
+            {letter}
+          </span>
+          <span className="font-mono text-sm text-text-primary">{device}</span>
+          {nodeState && (
+            <span
+              className="px-2 py-0.5 text-[10px] font-mono uppercase tracking-wider font-bold text-white"
+              style={{
+                borderRadius: CHIP_RADIUS,
+                background:
+                  nodeState === 'generating'
+                    ? SWARM_STATUS.done
+                    : nodeState === 'processingPrompt'
+                      ? SWARM_STATUS.running
+                      : SWARM_STATUS.stopped,
+              }}
+            >
+              {nodeState === 'processingPrompt' ? 'processing prompt' : nodeState}
+            </span>
+          )}
+          {lane?.description && (
+            <span className="text-xs text-text-secondary truncate">{lane.description}</span>
+          )}
+          <button
+            className="ml-auto shrink-0 text-text-secondary hover:text-text-primary"
+            onClick={onClose}
+            aria-label="Close"
+          >
+            <X size={16} />
+          </button>
+        </div>
+
+        <div className="flex-1 min-h-0 grid grid-cols-1 lg:grid-cols-2 gap-3 p-3">
+          <Pane
+            title="Thinking"
+            count={`${(lane?.thinkingChars ?? 0).toLocaleString()} chars`}
+            body={thinkText}
+            empty="Nothing on the reasoning channel yet."
+          />
+          <Pane
+            title="Output"
+            count={`${calls.length} tool call${calls.length === 1 ? '' : 's'}`}
+            body={outText}
+            empty="Nothing emitted yet — reasoning, but no tool call and no text."
+          />
+        </div>
+      </div>
+    </>,
+    document.body
+  );
+};
+
 const FleetStrip: React.FC<{
   /** Every node the run's RESOLVED POOL carries (idle ones included) + any lane device — see deriveFleet. */
   deviceOrder: string[];
@@ -849,11 +984,13 @@ const FleetStrip: React.FC<{
   /** Open supervision spans deriveFleet could not pin to a busy node — still shown, never dropped. */
   unattributed: SupervisionSpan[];
 }> = ({ deviceOrder, runningByDevice, live, dev, nodeStatus, unattributed }) => {
-  const [expanded, setExpanded] = useState<string | null>(null);
+  // The full stream opens in a MODAL. Inline it was clipped by whatever height the row happened to have,
+  // which made the panel least readable exactly when a node was busiest.
+  const [inspect, setInspect] = useState<string | null>(null);
   if (deviceOrder.length === 0) return null;
   const shortName = (device: string): string => device.match(/^([^-]+)/)?.[1] ?? device;
   return (
-    <div className="px-3 py-2 bg-background-primary space-y-1">
+    <div className="px-3 py-2 bg-background-primary space-y-1.5">
       {deviceOrder.map((device, i) => {
         const hue = FORMATION_RAMP[i % FORMATION_RAMP.length];
         // Each ramp hue carries its own glyph colour: no single ink clears AA across six saturated fills.
@@ -891,14 +1028,30 @@ const FleetStrip: React.FC<{
         ]
           .filter(Boolean)
           .join('\n\n');
-        const isExpanded = expanded === device;
         const canExpand = !!lane && fullGen.length > 0;
         return (
-          <div key={device}>
+          <div
+            key={device}
+            className="border border-border-primary px-2 py-1.5"
+            style={{ borderRadius: CHIP_RADIUS }}
+          >
             <div
               className="flex items-start gap-2 text-xs"
               style={{ cursor: canExpand ? 'pointer' : 'default' }}
-              onClick={canExpand ? () => setExpanded(isExpanded ? null : device) : undefined}
+              role={canExpand ? 'button' : undefined}
+              tabIndex={canExpand ? 0 : undefined}
+              aria-label={canExpand ? `Open the full stream from ${shortName(device)}` : undefined}
+              onClick={canExpand ? () => setInspect(device) : undefined}
+              onKeyDown={
+                canExpand
+                  ? (e: React.KeyboardEvent) => {
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault();
+                        setInspect(device);
+                      }
+                    }
+                  : undefined
+              }
             >
               <span
                 className="inline-flex items-center justify-center font-mono font-semibold shrink-0 mt-[1px]"
@@ -975,7 +1128,7 @@ const FleetStrip: React.FC<{
                       <ChevronRight
                         size={12}
                         className="shrink-0 text-text-secondary transition-transform"
-                        style={{ transform: isExpanded ? 'rotate(90deg)' : 'none' }}
+                        style={{ transform: 'none' }}
                       />
                     ) : null}
                   </div>
@@ -1002,7 +1155,7 @@ const FleetStrip: React.FC<{
                         );
                       })()
                     : null}
-                  {liveGen && !isExpanded ? (
+                  {liveGen ? (
                     live ? (
                       // LIVE: typewriter-smoothed so the stream flows instead of jumping every poll. dev = 5
                       // lines to fill the space, compact/verbose = 2. Click the node to expand the full stream.
@@ -1044,7 +1197,6 @@ const FleetStrip: React.FC<{
                   );
                 })()}
             </div>
-            {isExpanded && canExpand ? <NodeExpandBox text={fullGen} /> : null}
           </div>
         );
       })}
@@ -1058,6 +1210,22 @@ const FleetStrip: React.FC<{
             <span className="text-text-secondary">— on an idle node (the verdict names it when it lands)</span>
           </div>
         ))}
+      {inspect
+        ? (() => {
+            const i = Math.max(deviceOrder.indexOf(inspect), 0);
+            return (
+              <NodeInspector
+                device={inspect}
+                letter={String.fromCharCode(65 + (i % 26))}
+                hue={FORMATION_RAMP[i % FORMATION_RAMP.length]}
+                ink={FORMATION_INK[i % FORMATION_INK.length]}
+                lane={runningByDevice.get(inspect)}
+                nodeState={nodeStatus[shortName(inspect)]}
+                onClose={() => setInspect(null)}
+              />
+            );
+          })()
+        : null}
     </div>
   );
 };
