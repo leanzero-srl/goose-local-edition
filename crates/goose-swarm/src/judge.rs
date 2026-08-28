@@ -686,103 +686,22 @@ pub fn deterministic_verdict(input: &JudgeInput, cfg: &JudgeConfig) -> Option<Ju
     // Disabled by a condition that can never hold rather than deleted, because the surrounding
     // reasoning about Accept (it gates nothing, the smoke gate backstops) is worth keeping next to the
     // decision that retired it.
-    if false
-        && input.owned_files.is_empty()
-        && input.worker_tool_calls.is_some_and(|n| n > 0)
-        && !is_still_producing(input, cfg)
-        // A fix attempt must end through its own grade+promote tail — a judge Accept completes it
-        // at the scheduler and the shadow is dropped UNGRADED (measured: a 434s fix shard accepted
-        // as done, no grade, no promote, its work silently discarded while the round read done:3).
-        && !input.task_id.starts_with("fix::")
-    {
-        return Some(JudgeOutcome {
-            verdict: Verdict::Accept,
-            confidence: 1.0,
-            hint: format!(
-                "This check owns no files, has taken {} action(s), and has done nothing new for a \
-                 while — take what it established as the result instead of restarting the whole join.",
-                input.worker_tool_calls.unwrap_or(0)
-            ),
-            established: String::new(),
-            next_action: String::new(),
-            proposed_split: None,
-            deterministic: true,
-        });
-    }
-    let all_owned_present = !input.owned_files.is_empty()
-        && input.owned_files.iter().all(|f| {
-            input
-                .file_contents
-                .iter()
-                .any(|(p, c)| p == f && !c.trim().is_empty())
-        });
-    // F884: an owned file that is still the engine's own signature skeleton is NOT a deliverable
-    // — it existed before the worker's first token. Refusing here lets the quiet-worker branches
-    // below take over (kill -> a guided retry), instead of laundering a zero-tool-call attempt
-    // into "done" on the strength of a file the engine wrote itself.
-    let all_owned_skeleton = all_owned_present
-        && input.owned_files.iter().all(|f| {
-            input
-                .file_contents
-                .iter()
-                .any(|(p, c)| p == f && skeleton_only(c))
-        });
-    if all_owned_present
-        && !all_owned_skeleton
-        && input.compile_errors.is_empty()
-        && input.task_id != "integrate-verify"
-        // Same exclusion as the owns-nothing Accept above: a fix shadow's owned files pre-exist
-        // (they ARE the app), so "all present + still" is true the moment the attempt starts.
-        && !input.task_id.starts_with("fix::")
-        // DISARMED. A 420-second stillness window returning Accept, which the scheduler answers with
-        // h.abort() and a DONE record. A clock may SUMMON the judge or SUGGEST to a worker; it may never
-        // CUT one. `is_still_producing` counts tool calls only, so a worker inside one long command is
-        // "still" by this measure while being extremely busy.
-        && false
-        && input.secs_since_last_write.is_some_and(|s| s >= 420)
-        && !is_still_producing(input, cfg)
-    {
-        return Some(JudgeOutcome {
-            verdict: Verdict::Accept,
-            confidence: 1.0,
-            hint: format!(
-                "All {} owned file(s) exist and pass their syntax check, and nothing has changed for \
-                 {}s — the deliverable is complete.",
-                input.owned_files.len(),
-                input.secs_since_last_write.unwrap_or(0)
-            ),
-            established: String::new(),
-            next_action: String::new(),
-            proposed_split: None,
-            deterministic: true,
-        });
-    }
-    if input.any_owned_written
-        && input.task_id != "integrate-verify"
-        // Adversarial review: without this guard the fix:: Accept exclusions above just fell
-        // through HERE — a fix shadow's files pre-exist (any_owned_written from t=0) and its
-        // stillness equals its age, so the 434s incident replayed as Looping, whose kill ABORTS
-        // the attempt and discards the shadow ungraded — the exact bypass the exclusions close.
-        // A quiet fix attempt runs to its cap and is graded by run_fix_task's own tail.
-        && !input.task_id.starts_with("fix::")
-        // DISARMED, same rule as the Accept above: this Looping verdict is deterministic, and a
-        // deterministic Looping ABORTS the attempt. Section 7 is explicit that the judge redirects and
-        // never terminates, and that the deterministic detectors become EVIDENCE rather than killers.
-        // A real loop still reaches the judge through the recurrence meter, which reads content.
-        && false
-        && input.secs_since_last_write.is_some_and(|s| s >= 420)
-        && !is_still_producing(input, cfg)
-    {
-        return Some(JudgeOutcome {
-            verdict: Verdict::Looping,
-            confidence: 0.9,
-            hint: spin_hint(input),
-            established: String::new(),
-            next_action: String::new(),
-            proposed_split: None,
-            deterministic: true,
-        });
-    }
+    // THE THREE 420-SECOND STOPWATCH VERDICTS ARE GONE, not disarmed.
+    //
+    // Each returned Accept or Looping off `secs_since_last_write >= 420`, and the scheduler answered an
+    // Accept with `h.abort()` plus a DONE record — a wall clock truncating the longest call in the run and
+    // writing it into the log as finished. `is_still_producing` counts TOOL CALLS, so a worker sitting
+    // inside one long `pytest`, `cargo build` or `npm install` looked "still" while being extremely busy.
+    //
+    // They were parked behind `&& false` so the surrounding reasoning stayed next to the decision that
+    // retired them. That was a mistake of its own: clippy reads `if false && ..` as a logic bug, and the
+    // lint only surfaced once `cargo fmt` reflowed the constant to the front of the condition — so the
+    // parked code was one reformat away from breaking the build. Dead code does not get to keep living
+    // as a comment attached to an expression; the reasoning is preserved here, and git holds the rest.
+    //
+    // What still catches a genuinely stuck call: the recurrence meter (content, not time), the semantic
+    // judge on an idle node, and the transport's own inactivity read-timeout, which is where a dead
+    // socket belongs.
     None
 }
 
@@ -927,84 +846,6 @@ fn is_still_producing(input: &JudgeInput, cfg: &JudgeConfig) -> bool {
     }
 }
 
-/// The finalize-spin correction, COMPOSED FROM WHAT THIS WORKER ACTUALLY DID.
-///
-/// This branch fired **40 times across the archive with one identical sentence** — the single most
-/// repeated string the engine produces, sent to forty workers doing forty different jobs. It is the
-/// clearest instance of the standing rule that a generic instruction to a node IS the failure, not a
-/// rough edge: a supervisor that has read the worker's files, knows their sizes, holds its compile
-/// errors and can see how long each has sat untouched, and then says only "your owned file(s) are
-/// written but unchanged for minutes".
-///
-/// Everything below is already in `JudgeInput` at the moment of the kill and was being discarded.
-/// The order is deliberate — OBSERVATION first (so the worker can check the claim against reality
-/// rather than take it on authority), then the DECISIVE EVIDENCE if any exists, then the principle.
-/// A compile error is the most actionable thing a stuck worker can be handed, and the canned text
-/// threw it away in favour of "make the SIMPLEST change that works".
-///
-/// No model call: this is composition from observed state, so it costs nothing and cannot hallucinate.
-fn spin_hint(input: &JudgeInput) -> String {
-    let mins = |s: u64| format!("{:.1}", s as f64 / 60.0);
-    let mut h = String::new();
-
-    // 1. THE OBSERVATION, naming the actual files and the actual sizes on disk.
-    let files: Vec<String> = input
-        .file_contents
-        .iter()
-        .map(|(f, c)| format!("`{f}` ({} bytes)", c.len()))
-        .collect();
-    let idle = input.secs_since_last_write.unwrap_or(0);
-    if files.is_empty() {
-        h.push_str(&format!(
-            "You have been running {} minutes and your owned file(s) have not changed for {} of them.",
-            mins(input.elapsed_secs),
-            mins(idle)
-        ));
-    } else {
-        h.push_str(&format!(
-            "You wrote {} and have not touched {} for {} minutes, while continuing to run for {} \
-             minutes in total.",
-            files.join(" and "),
-            if files.len() > 1 { "them" } else { "it" },
-            mins(idle),
-            mins(input.elapsed_secs)
-        ));
-    }
-
-    // 2. THE DECISIVE EVIDENCE. If the engine already knows why the file is not acceptable, that is
-    //    the one thing worth saying — and it is specific by construction.
-    if let Some((file, err)) = input.compile_errors.first() {
-        let e = err.trim();
-        let e = if e.chars().count() > 400 {
-            format!("{}…", e.chars().take(400).collect::<String>())
-        } else {
-            e.to_string()
-        };
-        h.push_str(&format!(
-            "\n\nIt does not compile. `{file}` reports:\n{e}\n\nFIX EXACTLY THAT and nothing else, \
-             then report done. Do not re-read the project looking for other problems — this is the \
-             problem."
-        ));
-        return h;
-    }
-
-    // 3. NO ERROR KNOWN: then the file is plausibly finished and the worker is polishing. Say what
-    //    would settle it, in terms of this task's own deliverable, rather than a general exhortation.
-    let owned = input
-        .owned_files
-        .first()
-        .map(|f| format!("`{f}`"))
-        .unwrap_or_else(|| "your file".to_string());
-    h.push_str(&format!(
-        "\n\nNothing is reported failing, so {owned} is most likely already done and you are polishing \
-         or re-verifying. Re-read your own task statement above: if every deliverable it names is \
-         present in the file you already wrote, REPORT DONE NOW — that is the correct end of this \
-         task. If one deliverable is genuinely missing, add ONLY that one, in a single edit, then \
-         report done."
-    ));
-    h
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1119,45 +960,6 @@ mod tests {
         assert_ne!(
             hb, hh,
             "acted-but-wrote-nothing differs from thought-but-acted-nothing"
-        );
-    }
-
-    /// The 40x canned sentence is gone: a spin hint must name THIS worker's files and, when the
-    /// engine already knows why the file is unacceptable, must lead with that error instead of a
-    /// general exhortation. Two workers in different states must not receive the same text.
-    #[test]
-    fn a_spin_hint_is_composed_from_what_this_worker_actually_did() {
-        let mut a = mk("store", true, Some(500), 900);
-        a.file_contents = vec![("store.py".into(), "x = 1\n".repeat(20))];
-        let ha = spin_hint(&a);
-        assert!(ha.contains("store.py"), "must name the file: {ha}");
-        assert!(ha.contains("8.3"), "must state the real idle minutes: {ha}");
-        assert!(
-            ha.contains("REPORT DONE NOW"),
-            "no error known => settle it: {ha}"
-        );
-
-        // Same shape, but the engine HOLDS a compile error — that must lead, and must be quoted.
-        let mut b = mk("api", true, Some(600), 1000);
-        b.file_contents = vec![("api.py".into(), "def f(:\n".into())];
-        b.compile_errors = vec![(
-            "api.py".into(),
-            "SyntaxError: invalid syntax (line 1)".into(),
-        )];
-        let hb = spin_hint(&b);
-        assert!(
-            hb.contains("SyntaxError: invalid syntax"),
-            "must quote the real error: {hb}"
-        );
-        assert!(hb.contains("FIX EXACTLY THAT"), "must point at it: {hb}");
-        assert!(
-            !hb.contains("REPORT DONE NOW"),
-            "an uncompilable file is not done: {hb}"
-        );
-
-        assert_ne!(
-            ha, hb,
-            "two workers in different states must not get the same text"
         );
     }
 
