@@ -3556,7 +3556,7 @@ fn tails_recur(a: &std::collections::HashSet<u64>, b: &std::collections::HashSet
 /// at all. A supervisor that does not know what it is supervising does not help — it derails.
 fn call_objective(activity_key: Option<&str>) -> &'static str {
     match activity_key {
-        Some("open-coverage") => {
+        Some(k) if k.starts_with("open-coverage") => {
             "check the slice list against the request SECTION BY SECTION and return only the sections \
              no slice owns. It must NOT write code and must NOT rewrite the slices that exist — an \
              empty answer is the common and correct one."
@@ -25362,6 +25362,124 @@ impl GooseAgentDispatcher {
     /// "This looks comprehensive." The scorer then reported most checks UNAVAILABLE rather than failed,
     /// because the app had no such surface, and seven hours of repair could not reach it: repair fixes
     /// what was built, never what was never planned.
+    /// COVERAGE, FANNED ACROSS THE FLEET — because one call cannot read 54,000 characters.
+    ///
+    /// MEASURED twice on the same spec. First an opener read all 54,146 characters, produced nine slices
+    /// for a table with pagination, and ended its own reasoning "This looks comprehensive." Then a
+    /// dedicated coverage call — one node, same 54,146 characters, asked only "what is missing?" — found
+    /// exactly ONE gap and declared complete, while webhooks, notifierd, the outbox, the event ledger,
+    /// the approval workflow, the 3D field and DECISIONS.md all still had no owner. Nine slices became
+    /// ten. Seven of nine components stayed unplanned.
+    ///
+    /// The instruction was not the problem; the volume is. So the DOCUMENT is divided, not the judgement:
+    /// each node reads a portion it can actually hold and answers about that portion only, and the gaps
+    /// are unioned. Same shape as RESEARCH fanning slices and TEST fanning angles — this fans reading.
+    ///
+    /// The split is at paragraph boundaries and knows nothing about the content: it does not look for
+    /// headings, requirements or keywords, and it makes no decision about what matters. Every judgement
+    /// about what is missing is still a model's, made against the slices it is shown.
+    pub(crate) async fn cover_slices_fanned(
+        self: &Arc<Self>,
+        worker_models: Vec<String>,
+        user_prompt: &str,
+        slices: &[OpenSlice],
+    ) -> Vec<OpenSlice> {
+        let lanes = one_lane_per_host(worker_models);
+        if lanes.is_empty() {
+            return Vec::new();
+        }
+        // One portion per lane, cut at a blank line so no component is severed mid-description.
+        let parts: Vec<String> = {
+            let paras: Vec<&str> = user_prompt.split("\n\n").collect();
+            let per = paras.len().div_ceil(lanes.len().max(1));
+            paras
+                .chunks(per.max(1))
+                .map(|c| c.join("\n\n"))
+                .filter(|c| !c.trim().is_empty())
+                .collect()
+        };
+        let listing = slices
+            .iter()
+            .map(|s| format!("- {} — {}: {}", s.id, s.title, s.objective))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let total = parts.len();
+        let me = self.clone();
+        let out = fanout_over_fleet(
+            lanes,
+            parts.into_iter().enumerate().collect::<Vec<_>>(),
+            move |(i, part): (usize, String), model: String| {
+                let listing = listing.clone();
+                let me = me.clone();
+                async move {
+                    let system = format!(
+                        "You are checking a work breakdown for COVERAGE against PART {} OF {} of a \
+                         request. Do not improve the breakdown, do not re-balance it, do not rename \
+                         anything.\n\n\
+                         Work through YOUR PART section by section — its headings, the components it \
+                         names by name, the behaviours it says must exist. For each, find the slice that \
+                         owns it. Return ONLY what NO slice owns, as new slices in the same shape.\n\n\
+                         You are seeing one part of a longer request, so a slice may look unrelated to \
+                         your part and be perfectly good for another. Never remove or rename; only ADD \
+                         what your part needs and nothing owns.\n\n\
+                         What makes this worth doing: a part nobody was asked to build is simply absent \
+                         from the finished program, and no later phase can notice. The builders build \
+                         the list, the reviewer reviews the list, and the missing part is never \
+                         mentioned again by anyone.\n\n\
+                         The mistake to look for is a breakdown that reads like the LAYERS OF A PROGRAM \
+                         — client, store, html, css, js, entry point, docs. Those are the layers of any \
+                         program at all, so such a list looks complete while naming nothing the request \
+                         actually asked for. If you see that shape, your part's own named components are \
+                         what is missing.\n\n\
+                         If everything in YOUR PART already has an owner, return an empty slice list. \
+                         That is a good answer — do not invent work to look useful.",
+                        i + 1,
+                        total
+                    );
+                    let user =
+                        format!("## Your part of the request\n{part}\n\n## The slices so far\n{listing}");
+                    match me
+                        .run_agent_timed_at(
+                            &model,
+                            system,
+                            user,
+                            Some(Response {
+                                json_schema: Some(open_schema()),
+                            }),
+                            planner_side_turns(),
+                            &[],
+                            None,
+                            Some(&format!("open-coverage-{}", i + 1)),
+                            true,
+                        )
+                        .await
+                    {
+                        Ok(o) => {
+                            let raw = o.final_output.clone().unwrap_or_else(|| o.text.clone());
+                            parse_json_lenient::<OpenOutput>(&raw)
+                                .map(|p| p.slices)
+                                .unwrap_or_default()
+                        }
+                        // A part nobody could read leaves the breakdown as it was for that part.
+                        Err(_) => Vec::new(),
+                    }
+                }
+            },
+        )
+        .await;
+        // Union, de-duped against the existing slices AND against each other — two parts naming the
+        // same missing component is the expected case, not an error.
+        let mut have: std::collections::HashSet<String> =
+            slices.iter().map(|s| s.id.to_lowercase()).collect();
+        out.into_iter()
+            .flatten()
+            .filter(|s| {
+                let id = s.id.trim().to_lowercase();
+                !id.is_empty() && have.insert(id)
+            })
+            .collect()
+    }
+
     pub(crate) async fn cover_slices(
         &self,
         planner_model: &str,
@@ -26327,10 +26445,10 @@ async fn run_linear_plan(
     // round ceiling — a request that genuinely names twelve components should get twelve, and the thing
     // that ends this is having nothing left to add.
     loop {
-        match dispatcher
-            .cover_slices(&cfg.planner_model, &opts.prompt, &opened.slices)
-            .await
-        {
+        let missing = dispatcher
+            .cover_slices_fanned(worker_models.clone(), &opts.prompt, &opened.slices)
+            .await;
+        match Ok::<_, anyhow::Error>(missing) {
             Ok(missing) if !missing.is_empty() => {
                 eprintln!(
                     "  {} coverage: {} section(s) of the request had no slice — adding {}",
