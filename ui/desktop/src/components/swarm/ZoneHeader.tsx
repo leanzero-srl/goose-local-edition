@@ -21,9 +21,6 @@ export const ZONE_HUES = {
   work: 'var(--color-status-warn, #d97706)',
   log: 'var(--color-text-secondary)',
   bench: 'var(--color-node-5, #db2777)',
-  /** Known active bugs — solid error red. A run that shipped green while carrying MINOR defects has to
-   *  say so as loudly as it says "verified", or the green is a lie by omission. */
-  bugs: 'var(--color-status-error, #dc2626)',
 } as const;
 
 export const ZoneHeader: React.FC<{

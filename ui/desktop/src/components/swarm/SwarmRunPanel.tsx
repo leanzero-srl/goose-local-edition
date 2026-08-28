@@ -3378,40 +3378,6 @@ export const SwarmRunPanel: React.FC<{
         digests={run.activityDigests}
       />
 
-      {/* ── KNOWN ACTIVE BUGS — the MINOR defects the engine shipped GREEN with.
-          The engine emits them in complete_result.known_active_bugs and the panel folded them into one
-          line of the event log, where a green run reads as simply finished. Under the current design a
-          run goes green when every CRITICAL is closed, so shipping with open minors is the NORMAL case,
-          not an edge one — leaving them in the log makes the green a lie by omission. Rendered above the
-          log, in solid error red, and only when there are some. */}
-      {run.knownActiveBugs.length > 0 ? (
-        <div className="border-t border-border-primary">
-          <ZoneHeader
-            hue={ZONE_HUES.bugs}
-            label="Known active bugs"
-            explain="shipped green with these still open"
-            right={
-              <span className="text-[10px] tabular-nums text-text-secondary shrink-0">
-                {run.knownActiveBugs.length}
-              </span>
-            }
-          />
-          <ul className="px-3 pb-3 pt-1 space-y-1">
-            {run.knownActiveBugs.map((bug, i) => (
-              <li key={i} className="flex gap-2 text-xs text-text-primary">
-                <span
-                  className="shrink-0 font-bold tabular-nums text-background-primary px-1.5"
-                  style={{ backgroundColor: ZONE_HUES.bugs, borderRadius: 3 }}
-                >
-                  {i + 1}
-                </span>
-                <span className="min-w-0">{bug}</span>
-              </li>
-            ))}
-          </ul>
-        </div>
-      ) : null}
-
       {/* ── EVENT LOG zone — the chronological engine narrative, subordinate and collapsed by default in
           compact mode (judge verdicts + failures already surface on the WORK rows). */}
       <EventLogZone
