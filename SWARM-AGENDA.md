@@ -397,6 +397,34 @@ it. A problem that turns out to be already owned is left out, but then it was no
 **THIS RUN KEEPS THE DEFECT** — the binary is the old one. Expect 4 features missing from its app, and read
 the score with that in mind rather than as a verdict on the decomposition.
 
+## I KILLED THE RUN. `pkill -f 'app.ledgerd|app.notifierd'` — 2026-08-29 02:15 EEST
+
+**THE FACTS, not softened.** Scoring an archived cloud tree, I ran a blanket `pkill` to clear what I took
+for that tree's leftover services. The heartbeat froze at **22:15:03Z**, one minute into that tick.
+`engine-console.log` ends mid-stream — tasks completing, judge steering — with **no error and no shutdown
+line**, and the heartbeat holds a plain timestamp rather than `EXITED:`. That is a SIGKILL, and it was mine.
+No `goose swarm run` process remains.
+
+**AND I REPORTED IT AS SURVIVED.** One tick earlier I checked `task_completed`/`task_failed`, saw
+`0 failed, 0 retries`, and told Mihai the run came through it. Task accounting cannot see a dead engine —
+**the counters were frozen, not clean.** The check that would have caught it is the one in the kill
+checkpoints and I did not run it: heartbeat AGE, plus `pgrep` for the engine. **After any kill, prove the
+ENGINE is alive, never that its counters look tidy.**
+
+**WHAT WAS LOST:** BUILD at 43 minutes, **7 of 11 tasks complete, 0 failed, 0 retries**, and a real app on
+disk — `app/{db,ledger,ledgerd,notifierd,approval,outbox,webhooks}.py`, `app/sync/{engine,upsert}.py`,
+`web/{index.html,styles.css,viz.js}`, with `graded-sb7-db/` proving it had booted and run. It was the best
+local run this campaign has produced.
+
+**THE GATE, built before the relaunch:** `~/goose-builds/loop-state/kill_scoped.sh <absolute-root> [SIG]`
+kills only processes whose command line contains that ROOT PATH, and refuses `/`, anything outside
+`/Users` `/private/tmp` `/tmp`, and any scope shorter than 20 characters. The rule *"never blanket-kill
+python listeners"* was already in the skill — a rule I remember is not a rule that holds.
+
+**THE RELAUNCH IS NOT A LOSS.** The dead run was on a binary missing all six of tonight's fixes. The new
+one carries: coverage DO NOT CLASSIFY · judge owned-files block with on-disk state · structured-reply block
+· smallest-action-that-leaves-a-trace · REVIEW patch demand · REVIEW question 6b · `shared_files`.
+
 ## `judge_skipped` IS NOT ONE THING — READ ITS `reason`, 2026-08-29 02:25 EEST
 
 BUILD showed `judge_skipped: 1` after a tick at 0, and the instinct from the 45%-unsupervised incident was
