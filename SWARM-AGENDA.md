@@ -55,7 +55,13 @@ Make the swarm BUILD BETTER SOFTWARE on local models, then beat the published `b
       Per-node role hints: which is FASTEST, which is SMARTEST. Engine must consume the role hints.
 - [ ] **C. UI improvements** — LeanZero palette pass on the swarm panel; known-active-bugs panel; phase
       chips read the engine `phase` event.
-- [ ] **D. Dead-code sweep** — 79 dead-code warnings exist at HEAD in `swarm.rs` (old planning path:
+- [ ] **D. Dead-code sweep — DEFERRED UNTIL NO LOCAL RUN IS LIVE.** `cargo clippy` starves the fleet:
+      with the sweep running, judge probe latency went 16s -> 18s -> 27s -> **117s**, clippy-driver at
+      55%+30% CPU. I was degrading my own run to tidy code. Ordering also matters and cost one aborted
+      pass: delete FUNCTIONS to fixpoint, THEN structs/enums, THEN consts last — a const deleted while a
+      dead function still references it breaks the build. Script: scratchpad/sweep3.sh (builds after each
+      pass, `git checkout` on failure, so a broken compile can never read as "no warnings left").
+      Original: — 79 dead-code warnings exist at HEAD in `swarm.rs` (old planning path:
       SCOUT_LENSES, plan_agreement, consensus_backbone, fan_verify_split, …). The clippy gate has been
       passing on STALE per-crate cache. Delete bottom-up: methods/fns first to fixpoint, then structs.
       A broken compile must never read as "no warnings".
@@ -82,6 +88,16 @@ Make the swarm BUILD BETTER SOFTWARE on local models, then beat the published `b
       has evidence; today no event ever promotes it.
 
 ## Evidence worth acting on
+
+- **THE WEDGE FIX IS CONFIRMED LIVE (2026-08-28 09:16-09:18Z).** `open` judge look 4 was dispatched at
+  09:16:30 and never returned; the phase advanced to `open-resplit` at 09:18:01 regardless. The OPEN call
+  finished while its probe was still out and the "abandon the look, not the result" path fired. Under the
+  old serial `.await` that probe would have blocked the loop and OPEN could not have completed. Measured
+  probe latencies this run: 16s, 18s, 27s, and one >117s — every one of those was previously time the
+  supervised worker spent frozen.
+- **The re-stream baseline reset is also confirmed:** `open-resplit` look 1 reported
+  `produced_since_last_look: 2002` against `thinking_chars: 2002`. Before the fix this reported 0, which
+  the rate block hands to the judge as "a DEAD STREAM ... Say LOOPING" — the symptom the engine invented.
 
 - **GLM-5.3-flash (cloud) is producing what the local swarm never has**: `DECISIONS.md`, `notifierd.log`,
   `ledgerd.pid`, `notifier.db`, 95 files. The local coverage failure (named components stuck at 2/11) is
