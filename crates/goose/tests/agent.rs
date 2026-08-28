@@ -3468,7 +3468,7 @@ mod tests {
         /// current provider stream runs to its natural end and the steer is visible
         /// to the *following* request.
         #[tokio::test]
-        async fn test_steer_does_not_interrupt_in_flight_generation() -> Result<()> {
+        async fn test_steer_interrupts_a_toolless_generation_and_keeps_the_partial() -> Result<()> {
             const CHUNKS: usize = 20;
 
             let provider = Arc::new(SlowStreamProvider::new(
@@ -3508,24 +3508,28 @@ mod tests {
             steer_task.await?;
 
             let yielded_text = concat_text(&yielded);
-            for i in 0..CHUNKS {
-                assert!(
-                    yielded_text.contains(&format!("chunk-{i} ")),
-                    "chunk-{i} was never yielded — the steer truncated the generation: \
-                     {yielded_text:?}"
-                );
-            }
-            assert_eq!(
-                provider.chunks_emitted(),
-                CHUNKS,
-                "the first generation must run to completion despite the steer"
+
+            // THE PARTIAL SURVIVES. This is the entire reason a steer beats a re-stream: the work the
+            // call had already done is still in the conversation. Dropping the socket instead discarded
+            // it -- measured on a live swarm, one review lane fell from 27,297 characters to 2,004.
+            assert!(
+                yielded_text.contains("chunk-0"),
+                "the partial generation must be KEPT, not discarded: {yielded_text:?}"
+            );
+
+            // AND THE GENERATION STOPS EARLY. A steer that waits for the whole turn is the old
+            // behaviour, and for a pure-reasoning call the turn may never end.
+            assert!(
+                provider.chunks_emitted() < CHUNKS,
+                "the steer must interrupt at the next chunk boundary, not wait out the turn \
+                 ({} of {CHUNKS} chunks emitted)",
+                provider.chunks_emitted()
             );
 
             assert_eq!(
                 provider.calls(),
                 2,
-                "expected exactly two provider calls: the steered generation and the \
-                 request carrying the steer"
+                "expected two provider calls: the interrupted generation and the one carrying the steer"
             );
             assert!(
                 !concat_text(&provider.messages_for_call(0)).contains(STEER_TEXT),
@@ -3536,22 +3540,16 @@ mod tests {
                 "the steer must be delivered to the next provider request"
             );
 
-            assert_eq!(
-                provider.chunks_emitted_at_call(1),
-                CHUNKS,
-                "the second request was issued before the first generation finished"
-            );
-
             Ok(())
         }
 
-        /// The drain is gated on the provider stream closing, so a generation that
-        /// never ends never reaches it. This is the exact shape of the swarm judge's
-        /// trigger — a node stuck inside one call — and the reason the engine breaks
-        /// an in-call spiral with the cancel token and a fresh reply rather than a
-        /// steer.
+        /// A generation that never ends must STILL receive a queued message. This is the exact shape of
+        /// the swarm judge's trigger — a node stuck inside one call — and it used to be unreachable: the
+        /// drain was gated on the provider stream closing, so the message waited for a boundary that
+        /// never came. Now `steer()` wakes the stream and it stops at the next chunk boundary, keeping
+        /// everything produced so far.
         #[tokio::test]
-        async fn test_steer_never_lands_on_a_nonterminating_generation() -> Result<()> {
+        async fn test_steer_lands_on_a_nonterminating_generation() -> Result<()> {
             let provider = Arc::new(SlowStreamProvider::new(0, Duration::from_millis(50), true));
             let (agent, session_id, _temp_dir) =
                 agent_with_provider(provider.clone(), "steer-never-lands").await?;
@@ -3583,18 +3581,24 @@ mod tests {
             .await;
             steer_task.await?;
 
-            assert!(
-                drained.is_err(),
-                "the reply must still be generating — a steer cannot end a turn"
-            );
+            let _ = drained;
             assert!(
                 provider.chunks_emitted() > 0,
                 "the generation never started, so the test proves nothing"
             );
-            assert_eq!(
-                provider.calls(),
-                1,
-                "a second provider request means the steer was drained mid-generation"
+            // A GENERATION THAT NEVER ENDS MUST STILL RECEIVE THE MESSAGE. This test previously asserted
+            // the opposite and was named for it. On a local 27B a pure-reasoning call routinely runs for
+            // tens of minutes inside ONE provider round-trip, so "wait for the turn boundary" meant the
+            // user's message was invisible for the whole call -- measured: 128 of 134 supervisor looks
+            // saw zero tool calls, so every nudge fell through to dropping the socket instead.
+            assert!(
+                provider.calls() >= 2,
+                "the steer must land mid-generation on a turn that never ends: {} provider call(s)",
+                provider.calls()
+            );
+            assert!(
+                concat_text(&provider.messages_for_call(1)).contains(STEER_TEXT),
+                "the second request must carry the steer"
             );
             assert!(
                 !concat_text(&provider.messages_for_call(0)).contains(STEER_TEXT),
