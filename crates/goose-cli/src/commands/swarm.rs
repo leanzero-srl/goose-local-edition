@@ -17208,11 +17208,33 @@ impl GooseAgentDispatcher {
                 // ~4,000-char-period loop read as OK on every look. It now also gets the deterministic
                 // recurrence measurement and a snapshot from 20k-40k characters back — evidence the
                 // rolling tail structurally cannot carry.
+                // THE NUMBER IS A MEASUREMENT; "UNDER 5% IS HEALTHY" WAS AN INTERPRETATION, and it was
+                // wrong for half the calls in the run.
+                //
+                // That threshold was derived from calls that write PROSE. A call whose deliverable is a
+                // TABLE — the coverage enumeration, one near-identical row per component, dozens of them —
+                // measures high by construction and is working perfectly. Telling the judge that under 5%
+                // is healthy hands it a reason to answer LOOPING that outvotes everything else in the
+                // prompt, including the objective saying repetition is expected here.
+                //
+                // MEASURED on this run: open-coverage-1 was judged `looping` at produced_since_last_look
+                // 4000 and 4001 — four thousand characters between looks, which is the fleet working
+                // properly — because the repeat rate was high and the prompt called that unhealthy.
+                //
+                // So the number goes in without a verdict attached, and the judge is pointed at the one
+                // thing that actually distinguishes a loop from a table: whether the repeats ADVANCE.
+                // It already has the objective and the tail; it does not need a threshold.
                 let measured = if recur.span() >= RECURRENCE_MIN_SPAN {
                     format!(
                         "\n\nA deterministic detector measured the last {} characters of this call: {:.0}% of \
-                         its 48-character windows are exact repeats of earlier windows in this SAME call \
-                         (a healthy advancing call measures under 5%).",
+                         its 48-character windows are exact repeats of earlier windows in this SAME call.\n\
+                         WHAT THAT NUMBER MEANS DEPENDS ON WHAT THIS CALL WAS ASKED TO PRODUCE. A call \
+                         writing prose repeats itself only when it is stuck. A call whose deliverable is a \
+                         LIST OR TABLE — one near-identical row per item, dozens of them — measures high \
+                         because that IS the shape it was asked for, and is working perfectly. Read the \
+                         objective above, then decide: are the repeating windows ADVANCING through new \
+                         material (new rows, new names, new sections), or is it re-emitting the same \
+                         content it already produced? Only the second is a loop.",
                         recur.span(),
                         recur.rate() * 100.0
                     )
