@@ -370,6 +370,27 @@ planning phases leave slots free by accident. The fleet strip correctly showed t
 was wrong on any dashboard. It was visible ONLY by counting `judge_skipped` by phase — an event nobody had
 ever read.
 
+## [DONE 2026-08-29] AND THE SAME BLINDNESS FOR A STRUCTURED REPLY — `46cc5ff4f`
+
+`owned_block` covers build tasks. A PLANNING lane owns nothing, so it stayed empty and the judge again read
+"enormous reasoning, no actions" as a call thinking hard.
+
+MEASURED LIVE, this run, while the previous fix was being written: `open-coverage-1` reached **144,935
+characters with ZERO tool calls across FIVE nudges** — the last two literally *"call final_output NOW"* —
+while **two of three nodes sat idle** waiting on it. Every verdict was DRIFTING and never LOOPING, and that
+was CORRECT: it produced ~4,000 FRESH characters between every look. It was not looping. It was enumerating
+forever into a channel that is not the deliverable, and no detector in the engine could say so.
+
+THE FIX: when a call owes a structured reply (`response.is_some()`) and `call_records` is empty, the judge
+is told that, plus the consequence it cannot otherwise know — **if the call ends without that tool call,
+everything it worked out is discarded and the phase gets nothing.** A partial table that exists beats a
+complete one still being composed. `wants_structured_reply` is captured before `apply_recipe_components`
+moves the `Response`.
+
+NOTE THE PAIR: a file never written and a structured reply never made are ONE failure with two deliverable
+types. Both were invisible for the same reason — the judge is handed an `activity_key` and nothing about
+what the call OWES.
+
 ## [DONE 2026-08-29] THE LIVENESS RULE ACCEPTED REASONING AS PROGRESS — a build task's progress is a FILE
 
 MEASURED 2026-08-28, BUILD at 76 min, 20 of 21 tasks done and `viz-picking-camera` unable to finish.
