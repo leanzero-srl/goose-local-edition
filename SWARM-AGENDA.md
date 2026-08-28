@@ -170,6 +170,21 @@ runs several rounds and the gaps arrive in the later ones.
   `ledgerd.pid`, `notifier.db`, 95 files. The local coverage failure (named components stuck at 2/11) is
   therefore a DECOMPOSITION defect, not a model-capability ceiling. Compare its plan against ours.
 
+## HOW TO LAUNCH A LOCAL sb-7 RUN — the vendor is NOT optional
+
+`launch.sh` alone is WRONG and produced a full day of void runs: it types the raw spec into the desktop,
+so the prompt keeps its literal {BASE_URL} / {DOCS_URL} / {API_KEY} and there is no vendor to sync from.
+
+    cd evals/swarm-bench/bench
+    nohup python3 sb7_local_vendor.py --port 8850 \
+        --out /tmp/sb7-prompt.md --trace /tmp/sb7-trace.jsonl > /tmp/sb7-vendor.log 2>&1 &
+    # it prints {port, seed, prompt, docs_status} — KEEP THE SEED, scoring needs the same one
+    ~/goose-builds/loop-state/launch.sh swarm-3node-r0 9897 /tmp/sb7-prompt.md benchmark=true
+
+CHECK BEFORE TRUSTING ANY RUN: the dispatched prompt must contain ZERO `{[A-Z_]+}` placeholders and the
+vendor must answer /v3/docs with 200. Both are asserted by the script, and both must be re-checked from
+`run_started.prompt` in run.jsonl. The vendor must stay up for the WHOLE run.
+
 ## Commands
 
 ```bash
