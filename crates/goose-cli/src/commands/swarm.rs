@@ -25657,8 +25657,36 @@ impl GooseAgentDispatcher {
                          If you found nothing wrong from your angle, reply with exactly: NO DEFECTS{}",
                         port_note(i)
                     );
+                    // THE ADVERTISED SURFACE, AS A LIST, TO THE ANGLE THAT NEEDS IT.
+                    //
+                    // The advertised-surface angle is told "take every command, endpoint, flag and option
+                    // the request CLAIMS to have, and try each one" — and is then handed the whole 53,000
+                    // character request and left to find them. The engine already extracts that table
+                    // (`spec_advertised_surface`, used verbatim by the end-to-end shards) and simply did
+                    // not give it to the tester whose entire job is checking it.
+                    //
+                    // An angle asked to be exhaustive with no enumeration in front of it has no way to
+                    // know when it has finished, which is the same defect the fix worker had: a task with
+                    // no completion condition. Numbering the surface makes "I tried all of them" a
+                    // statement the model can actually make and a reader can check.
+                    let surface = spec_advertised_surface(&prompt);
+                    let surface_block = if surface.is_empty() || key != "advertised-surface" {
+                        String::new()
+                    } else {
+                        format!(
+                            "\n\n## The advertised surface — THIS numbered table is the list to work through\n{}\n\
+                             Try each one. Say which you tried and what happened; an item you never reached \
+                             is not an item that passed.",
+                            surface
+                                .iter()
+                                .enumerate()
+                                .map(|(i, a)| format!("  {}. {a}", i + 1))
+                                .collect::<Vec<_>>()
+                                .join("\n")
+                        )
+                    };
                     let user = format!(
-                        "## What this app was asked to be\n{prompt}\n\n## Files it was built from\n{file_list}"
+                        "## What this app was asked to be\n{prompt}\n\n## Files it was built from\n{file_list}{surface_block}"
                     );
                     let text = match me
                         .run_agent_timed_at(
