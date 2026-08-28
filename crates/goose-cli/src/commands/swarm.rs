@@ -17867,6 +17867,32 @@ impl GooseAgentDispatcher {
                             style("→").yellow(),
                             if can_steer { "steer" } else { "re-stream" }
                         );
+                        // THE JUDGE HAS RUN OUT OF MOVES, AND THAT IS A STATE WORTH NAMING.
+                        //
+                        // Escalation works by telling the judge what it said last time and asking it to be
+                        // MORE concrete. That has a floor: once the direction is "call `final_output`
+                        // immediately with the 80 rows you already have", there is nothing more concrete to
+                        // say, and the judge repeats itself.
+                        //
+                        // MEASURED, this run at 23:16:09 and 23:20:56: `open-coverage-2` received the SAME
+                        // direction twice, byte for byte, having made ZERO tool calls across six nudges and
+                        // 68,658 characters. The supervisor was saying exactly the right thing -- that is
+                        // the structured-reply block working -- and the call was not listening. More nudges
+                        // cannot fix that; only the engine can.
+                        //
+                        // Emitted, not acted on: what the engine should DO depends on whether the lane is
+                        // load-bearing, and choosing that from inside the judge loop would be guessing.
+                        // This makes the state greppable so the decision rests on counts.
+                        if direction == last_direction && !direction.is_empty() {
+                            self.events.write_value(serde_json::json!({
+                                "event": "judge_out_of_moves",
+                                "task_id": activity_key,
+                                "nudges": nudges_used,
+                                "repeated_direction": direction,
+                                "tool_calls": call_records.len(),
+                                "thinking_chars": thinking_chars,
+                            }));
+                        }
                         last_direction = direction.clone();
                         tool_calls_at_last_nudge = Some(call_records.len());
 
