@@ -32,7 +32,7 @@ Make the swarm BUILD BETTER SOFTWARE on local models, then beat the published `b
 | the join task is not named `integrate-verify`, or owns files | `plan_loaded.tasks[]` |
 | any task dispatches with a one-line description | `plan_loaded.tasks[].description` length |
 | anything at all is stopped by a clock | any `agent stalled` text |
-| a judge look hung | `judge_look_dispatched` with no matching `judge_look` for that task_id |
+| a judge look hung | `judge_look_dispatched` with NEITHER a `judge_look` NOR a `judge_look_abandoned` for that task_id. Pair PER TASK_ID — global-order pairing falsely flags three tasks at once. An abandoned look is the design working (the call finished first), not a hang. |
 
 ## DONE (committed on `local-edition`)
 
