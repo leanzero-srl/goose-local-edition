@@ -26402,6 +26402,98 @@ impl GooseAgentDispatcher {
         user_prompt: &str,
         plan_json: &str,
     ) -> Result<(goose_swarm::PlanPatch, Vec<String>)> {
+        self.review_plan_part(planner_model, user_prompt, plan_json, None, "review")
+            .await
+    }
+
+    /// REVIEW, fanned across the fleet — one portion of the request per lane, each against the WHOLE plan.
+    ///
+    /// REVIEW had the identical shape to the coverage defect: one call reading a 54,000-character request
+    /// plus the entire plan, and the same generosity follows from it — what a reader cannot hold, it
+    /// cannot miss. Measured on the last run, three rounds took 07:08 to 07:40 and each read everything;
+    /// the fan gives each lane a third to read properly, and the two idle nodes stop idling.
+    ///
+    /// Patches union rather than compete: `replace` and `add` are de-duped by task id (first lane to claim
+    /// an id keeps it, so two lanes proposing the same fix cannot double-apply), `remove` is de-duped
+    /// outright. A lane that errors contributes nothing and the round proceeds — reviewing two thirds of a
+    /// request beats failing the round.
+    pub(crate) async fn review_plan_fanned(
+        self: &Arc<Self>,
+        worker_models: Vec<String>,
+        user_prompt: &str,
+        plan_json: &str,
+    ) -> Result<(goose_swarm::PlanPatch, Vec<String>)> {
+        let lanes = one_lane_per_host(worker_models);
+        if lanes.len() <= 1 {
+            let m = lanes.first().cloned().unwrap_or_default();
+            return self.review_plan(&m, user_prompt, plan_json).await;
+        }
+        let parts: Vec<String> = {
+            let paras: Vec<&str> = user_prompt.split("\n\n").collect();
+            let per = paras.len().div_ceil(lanes.len().max(1));
+            paras
+                .chunks(per.max(1))
+                .map(|c| c.join("\n\n"))
+                .filter(|c| !c.trim().is_empty())
+                .collect()
+        };
+        let total = parts.len();
+        let me = self.clone();
+        let plan = plan_json.to_string();
+        let out = fanout_over_fleet(
+            lanes,
+            parts.into_iter().enumerate().collect::<Vec<_>>(),
+            move |(i, part): (usize, String), model: String| {
+                let me = me.clone();
+                let plan = plan.clone();
+                async move {
+                    me.review_plan_part(
+                        &model,
+                        &part,
+                        &plan,
+                        Some((i + 1, total)),
+                        &format!("review-{}", i + 1),
+                    )
+                    .await
+                    .ok()
+                }
+            },
+        )
+        .await;
+        let mut patch = goose_swarm::PlanPatch::default();
+        let mut findings: Vec<String> = Vec::new();
+        let mut seen_replace = std::collections::HashSet::new();
+        let mut seen_add = std::collections::HashSet::new();
+        let mut seen_remove = std::collections::HashSet::new();
+        for (p, f) in out.into_iter().flatten() {
+            for e in p.replace {
+                if seen_replace.insert(e.id.to_lowercase()) {
+                    patch.replace.push(e);
+                }
+            }
+            for a in p.add {
+                if seen_add.insert(a.id.to_lowercase()) {
+                    patch.add.push(a);
+                }
+            }
+            for r in p.remove {
+                if seen_remove.insert(r.to_lowercase()) {
+                    patch.remove.push(r);
+                }
+            }
+            findings.extend(f);
+        }
+        Ok((patch, findings))
+    }
+
+    async fn review_plan_part(
+        &self,
+        planner_model: &str,
+        user_prompt: &str,
+        plan_json: &str,
+        part: Option<(usize, usize)>,
+        activity_key: &str,
+    ) -> Result<(goose_swarm::PlanPatch, Vec<String>)> {
         // The plan WITHOUT descriptions: the reviewer is asked about structure, and showing it the
         // briefs would both blow up the prompt and tempt it to rewrite them.
         let mut skeleton: serde_json::Value = serde_json::from_str(plan_json)?;
@@ -26458,15 +26550,24 @@ impl GooseAgentDispatcher {
             .run_agent_timed_at(
                 planner_model,
                 system,
-                format!(
-                    "## The original request\n{user_prompt}\n\n## The plan\n{}",
-                    serde_json::to_string_pretty(&skeleton).unwrap_or_default()
-                ),
+                match part {
+                    Some((i, n)) => format!(
+                        "## PART {i} OF {n} of the original request\n\
+                         You hold one portion. A task may look unrelated to your part and be perfectly \
+                         good for another — never remove or rename on that basis. Judge only whether YOUR \
+                         part is owned, wired and buildable.\n\n{user_prompt}\n\n## The whole plan\n{}",
+                        serde_json::to_string_pretty(&skeleton).unwrap_or_default()
+                    ),
+                    None => format!(
+                        "## The original request\n{user_prompt}\n\n## The plan\n{}",
+                        serde_json::to_string_pretty(&skeleton).unwrap_or_default()
+                    ),
+                },
                 None,
                 planner_side_turns(),
                 &[],
                 None,
-                Some("review"),
+                Some(activity_key),
                 true,
             )
             .await?;
@@ -26493,6 +26594,7 @@ impl GooseAgentDispatcher {
 async fn review_until_settled(
     dispatcher: &Arc<GooseAgentDispatcher>,
     planner_model: &str,
+    worker_models: Vec<String>,
     user_prompt: &str,
     mut plan_json: String,
     sink: &Arc<dyn EventSink>,
@@ -26502,7 +26604,7 @@ async fn review_until_settled(
     loop {
         round += 1;
         let (patch, findings) = match dispatcher
-            .review_plan(planner_model, user_prompt, &plan_json)
+            .review_plan_fanned(worker_models.clone(), user_prompt, &plan_json)
             .await
         {
             Ok(v) => v,
@@ -27002,6 +27104,7 @@ async fn run_linear_plan(
     let mut plan_json = review_until_settled(
         dispatcher,
         &cfg.planner_model,
+        worker_models.clone(),
         &opts.prompt,
         plan_json,
         sink,
