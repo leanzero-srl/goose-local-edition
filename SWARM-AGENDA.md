@@ -10,6 +10,18 @@ Make the swarm BUILD BETTER SOFTWARE on local models, then beat the published `b
 
 ## Standing constraints — absolute, never negotiate them
 
+- **NO SPEND CAP MAY EVER BIND ON A CLOUD RUN.** Mihai, 2026-08-28: *"don't put caps on models or runs
+  please cause otherwise they might get blocked because of that!!!"* The harness REFUSES the request that
+  would cross `spend_policy.total_cap` / `provider_caps`, which kills the episode mid-build — a cap is a
+  way to throw away a nearly finished run, and the harness even ships a `budget-blocked` recovery path
+  because it has happened. The schema requires a positive number, so set it to **500.0** — far above
+  anything reachable. The REAL limit is the account: the OpenRouter balance or Token Plan credits, which
+  fail cleanly at the provider instead of inside the ledger.
+  MEASURED: 27b burned **$1.99/hour and RISING** (input tokens grow with context), so an $8 cap bound at
+  ~4h. Caught at 63 min and relaunched uncapped for $2.08 rather than lose the run at hour four. This is
+  the same doctrine as [uncapped runs, judge decides] — no wall-clock, no volume, and no spend threshold
+  may terminate work.
+
 - **NO deterministic caps, timers, thresholds or gates.** A clock may SUMMON the judge or SUGGEST to a
   worker; it may NEVER CUT one. No new literal seconds constant as a mechanism, ever.
 - **Never reconfigure the fleet** on my own initiative. `lms ps` + `pgrep` before ANY run.
