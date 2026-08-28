@@ -49,7 +49,7 @@ Make the swarm BUILD BETTER SOFTWARE on local models, then beat the published `b
       worker and logged nothing. The probe now races the stream; deferred events drain in order; a call
       that finishes while the judge is out abandons the look, not the result. Detector shipped:
       `judge_look_dispatched` before the call — a dispatched with no matching `judge_look` = hung judge.
-- [ ] **B. Virtual nodes** — a Node is a slot that picks a PROVIDER + MODEL.
+- [~] **B. Virtual nodes — PARTLY DONE.** Engine: SwarmDevice gains speed_weight+supervision, threaded into DeviceCfg and carried across pool rebuild (d4fdbeeb2). UI: per-node Smartest/supervisor control shipped. Cloud-node-per-provider already existed (CloudPane). REMAINING: unified Node A/B/C list with `+`, provider picker per node in one place. Original ask: — a Node is a slot that picks a PROVIDER + MODEL.
       Settings > Swarm > Nodes. Node A picks a provider; LM Studio populates from loaded models; cloud
       providers must be configured first to appear. `+` adds Node B, C… Each node independently chooses.
       Per-node role hints: which is FASTEST, which is SMARTEST. Engine must consume the role hints.
@@ -59,13 +59,13 @@ Make the swarm BUILD BETTER SOFTWARE on local models, then beat the published `b
       SCOUT_LENSES, plan_agreement, consensus_backbone, fan_verify_split, …). The clippy gate has been
       passing on STALE per-crate cache. Delete bottom-up: methods/fns first to fixpoint, then structs.
       A broken compile must never read as "no warnings".
-- [ ] **E. Coverage still under-covers.** Fanned coverage got 10 -> 13 slices but named components stayed
+- [x] **E. Coverage — DONE (4411fff13).** Enumerate-then-prove: the component->owner table IS the output, an owner must quote the slice's own words, `coverage_enumerated` logs the table. Old text: Fanned coverage got 10 -> 13 slices but named components stayed
       2/11. Next fix: each shard must ENUMERATE its portion's components first, then match against the
       slice list — two steps in one call. Generic slice names (`api-backend`) absorb everything.
 - [ ] **F. Rebuild + relaunch the local run**, then tick every 10 min.
 - [ ] **G. Fan REVIEW across the fleet.** It reads the 54KB spec + the whole plan in ONE call — the same
       volume ceiling that made single-call coverage useless. Same fix shape as `cover_slices_fanned`.
-- [ ] **H. Judge nudges that echo `call_objective` back.** Seen twice: the nudge was literally "Check the
+- [x] **H. DONE (612cbd4cb).** Seen twice: the nudge was literally "Check the
       slice list against the request section by section" — the job restated, costing a restream. The judge
       must add information or return OK.
 - [ ] **I. Semantic de-duplication of findings** (`merge_duplicate_findings`) — designed, never shipped.
