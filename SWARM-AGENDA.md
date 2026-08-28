@@ -317,6 +317,21 @@ runs several rounds and the gaps arrive in the later ones.
       OPTIONS PUT TO HIM: (A) keep, and measure OPEN again with the judge fix in; (B) one coverage round
       only; (C) run coverage CONCURRENTLY with RESEARCH so it leaves the critical path — research starts
       on known slices immediately, late-found slices research a few minutes behind.
+- [ ] **X. CLOUD QUEUE — 7 campaigns chained, unattended. `~/goose-builds/loop-state/cloud_chain.py`,
+      pid in `cloud_chain.pid`, log `cloud_chain.log`.** Order: deepseek-vision → hy4-preview →
+      seed-2-1-turbo → seed-2.0-code → ling-3.0-flash → longcat-2.0 → laguna-s-2.1. All seven are
+      REGISTERED on the website (22 entrants, model-id regex passes) and each manifest is generated from
+      `cloud-queue-models.json` with caps at 500 so nothing can bind.
+      **THE ONE GATE IS ON LAUNCH, NEVER ON A RUNNING EPISODE:** a campaign is not started unless the
+      remaining balance covers its projection. Since caps were removed, running out of credit mid-episode
+      is now how a run dies at 90%, so the money is checked BEFORE the work starts, where refusing costs
+      nothing. Unreadable balance is NOT treated as zero.
+      PROJECTIONS from glm's measured 12.85M in / 0.22M out (which reproduced $1.02 exactly, so these are
+      FLOORS): hy4 $11.22 · seed-2-1-turbo $6.97 · seed-2.0-code $7.08 · longcat $4.12 · laguna $1.20 ·
+      ling $0.27 — **~$31 for the six**, plus deepseek ~$3. Mihai is topping up OpenRouter.
+      **RISK: 5 of the 6 have exactly ONE endpoint** (only ling-3.0-flash has 2), which is the qwen-flash
+      shape — no failover, and one upstream 429 is terminal at zero retries. Expect at least one re-run.
+      All six support tool calling and carry 262k-1M context, so none is disqualified on capability.
 - [ ] **D. Dead-code sweep — DEFERRED UNTIL NO LOCAL RUN IS LIVE.** `cargo clippy` starves the fleet:
       with the sweep running, judge probe latency went 16s -> 18s -> 27s -> **117s**, clippy-driver at
       55%+30% CPU. I was degrading my own run to tidy code. Ordering also matters and cost one aborted
