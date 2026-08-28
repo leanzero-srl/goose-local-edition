@@ -138,8 +138,28 @@ so the merge happens where merging is legal.
 failing, which is what the previous run died of. Reading the texts shows the rounds are a genuine CASCADE —
 round 1's fix caused round 2's finding caused round 3's fix — not three rephrasings of one complaint.
 
-**WATCH ON THE NEXT RUN:** if `tasks_sharing_a_file` is 0 at `plan_synthesized`, REVIEW should never reach
-this cascade at all, and round 1's findings should be about coverage rather than ownership.
+**ROUND 4 CLOSES THE ARC — REVIEW CAUGHT ITS OWN DEFORMATION:** *"The request explicitly requires exactly
+4 frontend files (index.html, styles.css, app.js, viz.js), but the plan creates 9 by splitting app.js into
+drafts.js and…"*. So: round 1 stripped the shared files, round 3 invented files to un-orphan the tasks,
+round 4 noticed the invented files violate the request. REVIEW is CORRECT at every step and is now
+fighting itself.
+
+**AND THE PLAN IS UNSATISFIABLE, which is why it will oscillate forever.** Counted from the run:
+**10 frontend/viz slices** — frontend-html-structure, frontend-css-styling, frontend-table-interactions,
+frontend-drafts-panel, viz-picking-camera, viz-labels-brush, viz-streaming-instrumentation,
+viz-layout-transforms, viz-webgl-rendering, viz-records-endpoint — against the **4 files the request
+permits**. With disjoint ownership required, NO VALID ASSIGNMENT EXISTS. REVIEW must either orphan tasks
+(round 2's finding) or invent files (round 4's finding); there is no third option and no fixed point.
+Rounds so far: 5 -> 2 -> 7 -> 3, and the stop rule is a round with NO new finding, which cannot occur.
+
+**THIS IS THE COMPLETE DIAGNOSIS OF THE 136-MINUTE PLANNING PHASE.** Not slowness, not a weak reviewer:
+OPEN produced a decomposition finer than the product is allowed to be, and every phase downstream pays
+for it forever. The fix is committed at the only place it is legal — OPEN merges slices that would share
+a file, keeping both concerns named in the merged objective.
+
+**WATCH ON THE NEXT RUN:** `plan_synthesized.tasks_sharing_a_file` must be 0. If it is, this cascade cannot
+occur, round 1's findings should concern COVERAGE rather than ownership, and REVIEW should reach its
+no-new-finding round instead of oscillating.
 
 ## Standing constraints — absolute, never negotiate them
 
