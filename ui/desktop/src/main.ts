@@ -30,6 +30,7 @@ import { startGooseServe, findGooseBinaryPath } from './gooseServe';
 import { GooseServeLeaseRegistry, type GooseServeLease } from './gooseServeLeaseRegistry';
 import { acpWebSocketUrlFromHttpBase, normalizeAcpHttpBaseUrl } from './acp/url';
 import { expandTilde } from './utils/pathUtils';
+import { BENCH_SPEC_FILE, BENCH_RENDER_PROBE, tierOf } from './benchTierPayload';
 import log from './utils/logger';
 import { ensureWinShims } from './utils/winShims';
 import { addRecentDir, loadRecentDirs } from './utils/recentDirs';
@@ -2791,7 +2792,7 @@ ipcMain.handle('benchmark-run', async (event, nodes: number, tier?: string, samp
           GOOSE_SWARM_RENDER_PROBE: path.join(
             payloadDir,
             'bench',
-            sb7 ? 'product_probe_v3.mjs' : sb6 ? 'product_probe_v2.mjs' : 'product_probe.mjs'
+            BENCH_RENDER_PROBE[tierOf(tier)]
           ),
           // sb-5.2 comparability rail: the baked baselines are v2-spec product-regime numbers, so
           // a user run must be scored by the same scorer against the same spec or the board
@@ -2807,10 +2808,7 @@ ipcMain.handle('benchmark-run', async (event, nodes: number, tier?: string, samp
           // meridian-client / local-store / http-api. The sb-7 spec is 54,146 characters and asks for
           // ledgerd, notifierd, webhooks, an outbox, an event ledger and a 3D field. None of it was
           // present, and the run looked completely healthy while building the wrong product.
-          BENCH_SPEC: path.join(
-            payloadDir,
-            sb7 ? 'spec-build-sb7.md' : sb6 ? 'spec-build-v3.md' : 'spec-build-v2.md'
-          ),
+          BENCH_SPEC: path.join(payloadDir, BENCH_SPEC_FILE[tierOf(tier)]),
           // The FULL tuned regime (REGIME.env parity, minus harness-only keys and resolved
           // paths): a user's benchmark must run the same engine configuration the baked
           // baselines and the campaign's numbers ran, or the board compares different swarms.
