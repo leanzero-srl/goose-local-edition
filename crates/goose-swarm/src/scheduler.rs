@@ -724,22 +724,6 @@ const SPECULATION_CAP: u32 = 8;
 /// 3-5 functions is the design's own ask, and a cap keeps a long idle tail from burning
 /// unbounded generations on one app.
 const TESTGEN_CAP: u32 = 3;
-
-/// F779: total tail-review jobs per run. "Generous" was written when this mechanism emitted no
-/// event and nobody could see what it cost — the ceiling was reasoned about as noise/CPU because
-/// the reviews are read-only.
-///
-/// MEASURED the first run that instrumented it (run 6): 27 calls, 12,382s — **3.4 hours of fleet
-/// time in one run** — for 7 findings, five of the calls sitting at the 900s timeout having found
-/// nothing. It is dispatched into EVERY free slot on EVERY scheduler tick, so a long tail
-/// multiplies it, and it takes the idle slot ahead of `testgen`, whose output IS consumed. The
-/// per-call cap (240s, swarm.rs) bounds one review; this bounds the run. 8 calls rotates the
-/// dimension set roughly twice, which is where every finding in the measured run came from —
-/// the productive dimension (`wiring`) found 5 defects in under 3 minutes each, all early.
-// Section 8: no volume caps. The tail reviewer fills IDLE slots, so it competes with nothing; capping
-// it bounded a diagnostic rather than a cost.
-const TAIL_REVIEW_CAP: u32 = u32::MAX;
-
 struct State {
     dag: Dag,
     ready: BinaryHeap<Ranked>,
@@ -864,8 +848,6 @@ struct State {
     /// F883/E8: set for the repair-round scheduler run — disables testgen idle-fill (its landed
     /// files write the REAL tree, which a fix round must never touch except via a graded promote).
     fix_round: bool,
-    /// F779: tail-review jobs fired this run (capped at TAIL_REVIEW_CAP) + its rotating dimension.
-    tail_review_count: u32,
     tail_review_dim: usize,
 }
 
@@ -1950,7 +1932,7 @@ impl State {
     /// possible corruption. Mirrors pick_sink_review's claim discipline (idle_jobs + in_flight,
     /// released by the IdleSlotGuard) and its rotating dimension.
     fn pick_tail_review(&mut self) -> Option<(String, usize, String, usize)> {
-        if !tail_review_enabled() || self.tail_review_count >= TAIL_REVIEW_CAP {
+        if !tail_review_enabled() {
             return None;
         }
         // The tail: nothing dispatchable is waiting, and at least one task has been dispatched
@@ -1963,7 +1945,6 @@ impl State {
         let model_id = self.devices[claimed_device].cfg.model_id.clone();
         let dim = self.tail_review_dim;
         self.tail_review_dim = self.tail_review_dim.wrapping_add(1);
-        self.tail_review_count += 1;
         self.idle_jobs += 1;
         self.devices[claimed_device].in_flight += 1;
         Some((model_id, dim, self.goal.clone(), claimed_device))
@@ -3169,7 +3150,6 @@ impl Scheduler {
             spec_count: 0,
             testgen_count: 0,
             fix_round: self.fix_round,
-            tail_review_count: 0,
             tail_review_dim: 0,
         }));
         let notify = Arc::new(Notify::new());
