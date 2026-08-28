@@ -75,7 +75,7 @@ Make the swarm BUILD BETTER SOFTWARE on local models, then beat the published `b
 - [x] **M. DONE.** `benchmark` now emitted in `levers_resolved`. Was: It is read from config.yaml (SwarmConfig.benchmark) but is
       absent from the `levers_resolved` event, so the log cannot show whether a run was unattended. Add it.
       Functional proof meanwhile: `clarify_proxy_armed {mode:"immediate", wait_secs:0}` at ASK.
-- [ ] **G. Fan REVIEW across the fleet.** It reads the 54KB spec + the whole plan in ONE call — the same
+- [x] **G. DONE.** `review_plan_fanned` — one portion per lane against the whole plan, patches union with per-id dedupe, lanes<=1 falls through to the old path. Needs the next build to take effect. Was: It reads the 54KB spec + the whole plan in ONE call — the same
       volume ceiling that made single-call coverage useless. Same fix shape as `cover_slices_fanned`.
 - [x] **H. DONE (612cbd4cb).** Seen twice: the nudge was literally "Check the
       slice list against the request section by section" — the job restated, costing a restream. The judge
