@@ -353,9 +353,17 @@ runs several rounds and the gaps arrive in the later ones.
 
 ## HOW TO LAUNCH — THROUGH THE BENCHMARK VIEW, NOT A CHAT
 
-    pkill -9 -f 'Goose.app/Contents/MacOS/Goose'
+    ~/goose-builds/loop-state/stop_local_run.sh 9897    # MUST exit 0 — it gates on `lms ps`
     open -n /Applications/Goose.app --args --remote-debugging-port=9897
     node ~/goose-builds/loop-state/bench_dispatch.mjs 9897 sb-7 3
+
+THE FIRST LINE USED TO READ `pkill -9 -f 'Goose.app/Contents/MacOS/Goose'` AND THAT IS THE BUG. It matches
+the Electron binary only, so `Resources/bin/goose swarm run` survives, reparents to launchd, and keeps the
+whole fleet GENERATING for a run whose window is gone — measured 2026-08-28, ~25 minutes across three nodes,
+and Mihai had to point it out. Never launch over that: a second run against a fleet already serving a
+zombie makes both numbers meaningless. `stop_local_run.sh` kills all three goose command lines plus the
+harness and refuses to exit 0 while any node is still generating, so a failed stop cannot be mistaken for a
+clean one.
 
 `benchmark-run` spawns run_build.py --sb7 --timeout 0 with GOOSE_SWARM_BENCHMARK=1; run_build serves the
 vendor, builds the fixtures, substitutes the spec placeholders and SCORES at the end. Verify with
