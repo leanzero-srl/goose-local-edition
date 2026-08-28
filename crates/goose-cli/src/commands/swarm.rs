@@ -9823,6 +9823,40 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
         assert!(legacy.established.is_empty(), "no establishment claimed");
         assert!(legacy.next_action.contains("write the file"));
 
+        // AN EARLIER WORD CONTAINING "ETA" MUST NOT SHIELD THE REAL ETA TOKEN. `find` returned the
+        // first match, so "metadata"/"details"/"theta" failed the `:`/`=` guard and the line survived
+        // whole — workers were then re-streamed with a direction that read, in full, "ETA=5m".
+        for shield in [
+            "read the metadata table first",
+            "check the details of the outbox",
+            "theta values for the camera",
+            "retain the beta flag",
+        ] {
+            let r = parse_judge_reply(&format!(
+                "LOOPING|HIGH|{shield}|write app/main.py with parse_ledger()|ETA=5m"
+            ));
+            assert!(
+                !r.next_action.contains("ETA"),
+                "the ETA token leaked into the direction after {shield:?}: {:?}",
+                r.next_action
+            );
+            assert!(
+                r.next_action.contains("app/main.py"),
+                "the real direction must survive after {shield:?}: {:?}",
+                r.next_action
+            );
+            assert!(
+                r.established.contains(shield),
+                "established must survive: {:?}",
+                r.established
+            );
+        }
+        // The plain case must keep working.
+        let plain =
+            parse_judge_reply("LOOPING|HIGH|the schema is written|write app/main.py|ETA=45m");
+        assert!(!plain.next_action.contains("ETA"));
+        assert!(plain.next_action.contains("app/main.py"));
+
         // RESTART is recognised and is never confused with OK.
         assert_eq!(
             parse_judge_reply("RESTART|HIGH||start over from the frozen contract").verdict,
@@ -25046,16 +25080,28 @@ fn parse_judge_reply(s: &str) -> JudgeOutcome {
     // `ETA=0m`, `ETA=5m`, `ETA=45m`, and `Complete rating all defects and deliver the final verdict
     // list\nETA=5m`. A direction that says only how long something will take is not a direction, and it
     // was going out as one.
-    let without_eta: String = s
-        .lines()
-        .map(|l| match l.to_uppercase().find("ETA") {
-            Some(i) if l[i + 3..].trim_start().starts_with([':', '=']) => {
-                l[..i].trim_end().to_string()
+    // EVERY occurrence, not the first. `find("ETA")` returned the FIRST match, so any earlier word
+    // CONTAINING those three letters — metadata, details, theta, beta, retain — failed the `:`/`=` guard,
+    // the line was kept whole, and the REAL `ETA=` at the end survived to become a free segment.
+    // MEASURED live 2026-08-28, after the first fix was already shipped: workers re-streamed with a
+    // direction reading, in full, `ETA=5m` and `ETA=10m`. Reproduced deterministically — "read the
+    // metadata table first" leaks, "the schema is written" does not.
+    // Byte-scanned against the ORIGINAL rather than an uppercased copy: `to_uppercase()` can CHANGE
+    // LENGTH (ß -> SS), so an index taken from it and used to slice the original is unsound.
+    let cut_eta = |l: &str| -> String {
+        let b = l.as_bytes();
+        for i in 0..b.len().saturating_sub(2) {
+            if b[i..i + 3].eq_ignore_ascii_case(b"ETA")
+                && l.is_char_boundary(i)
+                && l.is_char_boundary(i + 3)
+                && l[i + 3..].trim_start().starts_with([':', '='])
+            {
+                return l[..i].trim_end().to_string();
             }
-            _ => l.to_string(),
-        })
-        .collect::<Vec<_>>()
-        .join("\n");
+        }
+        l.to_string()
+    };
+    let without_eta: String = s.lines().map(cut_eta).collect::<Vec<_>>().join("\n");
     let free: Vec<&str> = without_eta
         .split('|')
         .map(|h| h.trim())
