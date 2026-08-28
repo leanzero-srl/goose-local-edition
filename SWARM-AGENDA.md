@@ -503,6 +503,12 @@ task, 12 fired, 2 with findings, working. `tail_review` — dimension reviews (`
   `-KILLED-` and `-DEBRIS-` but not `-ENDED-`, which I introduced the same evening, so it reported
   `phase=build (96m)` for a run that had been stopped four minutes earlier. The three markers now live in
   one tuple. Same shape as the `__pycache__` count: fixing the instance and leaving the class.
+- **COUNT BYTES, NOT JUST FILES — an EDITING model looks identical to a stuck one.** seed-2-1-turbo added
+  **331 tool calls across two ticks with Δfiles+0**, which is either steady refinement of existing files or
+  a spiral, and a file COUNT cannot distinguish them. The cloud line now carries `files/NNKB` and `ΔKB`,
+  and flags **CALLS RISING, NOTHING LANDING** when calls climb past 20 in a tick with zero byte movement.
+  Same family as the `__pycache__` inflation: the number was measuring the wrong thing rather than
+  measuring it wrongly.
 - **THE TICK IS A SCRIPT: `python3 ~/goose-builds/loop-state/tick.py`.** Do not retype the reader. Three
   times today a hand-written check answered a NEIGHBOURING question and read as healthy: `pgrep -f
   run_build.py` matched the shell running the tick; a build-progress grep for cargo/rustc/electron/node
