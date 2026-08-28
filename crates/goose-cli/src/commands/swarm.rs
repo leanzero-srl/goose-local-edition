@@ -36969,7 +36969,24 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
     // Seventy-six minutes of a benchmark vanished and the log recorded not one byte of it. This does not
     // stop it happening — GOOSE_DISABLE_KEYRING does, and the bench harness now sets it — but a gap that
     // leaves no trace gets rediscovered from scratch every time, which is exactly how six days went once.
-    let keyring_live = std::env::var("GOOSE_DISABLE_KEYRING").is_err();
+    // ENV **OR** CONFIG, because that is what actually governs the keyring. `goose/src/config/base.rs`
+    // decides with `env::var(..).is_ok() || keyring_disabled_in_config(&config_path)` (:189, :406), and
+    // this line checked only the env — so a DESKTOP-launched run, which `open -n` gives no environment at
+    // all, reported `store: "system-keyring", can_block_on_a_gui_prompt: true` while the keyring was in
+    // fact disabled by config.yaml and no prompt could ever appear.
+    //
+    // That is not a cosmetic disagreement: I read this event, believed the run was one dialog away from
+    // stalling, and killed a healthy run on it. A status line that contradicts the thing it reports on is
+    // worse than no status line, because it gets acted upon. Same precedence as every other lever —
+    // env first, then config — matching `benchmark()` directly above.
+    let keyring_live = std::env::var("GOOSE_DISABLE_KEYRING").is_err()
+        && !goose::config::Config::global()
+            .get_param::<serde_yaml::Value>("GOOSE_DISABLE_KEYRING")
+            .map(|v| {
+                !matches!(v, serde_yaml::Value::Bool(false))
+                    && v != serde_yaml::Value::String(String::new())
+            })
+            .unwrap_or(false);
     let secrets_secs = startup_started.elapsed().as_secs();
     sink.write_value(serde_json::json!({
         "event": "secrets_source",
