@@ -16746,6 +16746,20 @@ impl GooseAgentDispatcher {
         // during one. See the judge probe below: the supervisor races the stream instead of blocking it.
         let mut deferred_events = std::collections::VecDeque::new();
         let mut stream_ended_during_probe = false;
+        // EVERYTHING THIS CALL HAS EVER REASONED, across re-streams. `thinking_chars` is reset to 0 by a
+        // re-stream so the new stream is judged on its own output, which is right — but the judge's
+        // READINESS FLOOR is `thinking_chars >= OMNI_JUDGE_MIN_CHARS`, and a re-streamed call that then
+        // produces NOTHING can never reach it again. The judge is silenced permanently by the reset meant
+        // to give the call a fresh start, and the lane dies with no event, no verdict and no retry.
+        //
+        // MEASURED (run -KILLED-restream-killed-coverage-lanes-1008): open-coverage-1 took a `drifting`
+        // verdict, was re-streamed, and sat with `thinking_chars: null` and a frozen digest for 9.6
+        // minutes while the fan waited on it. Two of three lanes idle, the phase never advanced.
+        //
+        // The floor exists because a call cannot be assessed from an empty tail. That reasoning is about
+        // the CALL, not about one stream of it — a call that has reasoned 20,000 characters and then gone
+        // silent is the most assessable state there is, and the one most worth looking at.
+        let mut thinking_total = 0usize;
         // Coalesce the activity-digest write: it used to fire once per stream event (≈ per token) — thousands of
         // blocking fs::write + JSON serializes per task × N nodes. Refresh at most ~2.5x/s; a guaranteed final
         // write after the loop keeps the terminal state exact. Every consumer polls slower (judge 15s, panel ≤10Hz).
@@ -16926,7 +16940,7 @@ impl GooseAgentDispatcher {
             if omni_judge_on
                 && (repeat_evidence.is_some()
                     || degenerate_answer
-                    || ((thinking_chars >= OMNI_JUDGE_MIN_CHARS || acted_enough_to_judge)
+                    || ((thinking_total >= OMNI_JUDGE_MIN_CHARS || acted_enough_to_judge)
                         && (recur.recurring()
                             || grew_without_acting
                             || tokio::time::Instant::now() >= omni_next_look)))
@@ -17331,6 +17345,15 @@ impl GooseAgentDispatcher {
                     };
                     self.events.write_value(serde_json::json!({
                         "event": "judge_look",
+                        // POST-RE-STREAM SILENCE, named so it is greppable. True when the call has
+                        // reasoned a great deal in total but the CURRENT stream has produced nothing —
+                        // which is exactly the state a re-stream leaves behind when its replacement
+                        // stream never yields. Before the readiness floor was changed to read the call's
+                        // total, this state was unreachable by the judge at all: `thinking_chars` was 0,
+                        // the floor was never met, and the lane died unobserved.
+                        "post_restream_silence": thinking_total >= OMNI_JUDGE_MIN_CHARS
+                            && thinking_chars == 0,
+                        "thinking_total": thinking_total,
                         "produced_since_last_look": produced_since_last_look,
                         "actions_since_last_look": actions_since_last_look,
                         "secs_since_last_look": secs_since_last_look,
@@ -17658,6 +17681,7 @@ impl GooseAgentDispatcher {
                             MessageContent::Text(t) => texts.push(t.text.clone()),
                             MessageContent::Thinking(t) => {
                                 thinking_chars += t.thinking.chars().count();
+                                thinking_total += t.thinking.chars().count();
                                 // ACCUMULATE a rolling tail, don't overwrite: each streamed Thinking chunk is a
                                 // single token (" the", "ents"), so assigning it made the panel show one word at
                                 // a time. Append and keep a bounded window so the digest's tail_chars(400) shows
