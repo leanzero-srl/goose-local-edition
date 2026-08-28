@@ -62,7 +62,13 @@ Make the swarm BUILD BETTER SOFTWARE on local models, then beat the published `b
 - [x] **E. Coverage — DONE (4411fff13).** Enumerate-then-prove: the component->owner table IS the output, an owner must quote the slice's own words, `coverage_enumerated` logs the table. Old text: Fanned coverage got 10 -> 13 slices but named components stayed
       2/11. Next fix: each shard must ENUMERATE its portion's components first, then match against the
       slice list — two steps in one call. Generic slice names (`api-backend`) absorb everything.
-- [ ] **F. Rebuild + relaunch the local run**, then tick every 10 min.
+- [x] **F. DONE 12:11.** Run `swarm-3node-r0` live on the FRESH engine (build_sha 79e0f6d41).
+      TRAP HIT AND CLEARED: the first launch ran `/Applications/Goose.app` from **Jul 28** — a month-old
+      engine, proven by three missing strings with a positive control. Always verify the INSTALLED binary,
+      not the built one. `just make-ui` writes to ui/desktop/out; /Applications must be replaced separately.
+- [ ] **M. `benchmark` is live but invisible.** It is read from config.yaml (SwarmConfig.benchmark) but is
+      absent from the `levers_resolved` event, so the log cannot show whether a run was unattended. Add it.
+      Functional proof meanwhile: `clarify_proxy_armed {mode:"immediate", wait_secs:0}` at ASK.
 - [ ] **G. Fan REVIEW across the fleet.** It reads the 54KB spec + the whole plan in ONE call — the same
       volume ceiling that made single-call coverage useless. Same fix shape as `cover_slices_fanned`.
 - [x] **H. DONE (612cbd4cb).** Seen twice: the nudge was literally "Check the
