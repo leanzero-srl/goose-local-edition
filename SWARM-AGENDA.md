@@ -87,7 +87,7 @@ Make the swarm BUILD BETTER SOFTWARE on local models, then beat the published `b
 - [x] **N. DONE.** `cut_request_into_portions` cuts by character count; deliberately NOT named 'weight' (four other meanings exist). Was: Measured: part 1 got 72
       components, part 3 got 9; one lane ran 25+ min while two sat idle. Cut on section headings, or
       rebalance by character weight — the same "no slice more than ~2x another" rule OPEN applies to slices.
-- [ ] **L. Everything renders "unverified".** There must be a real transition to verified when the engine
+- [x] **L. DONE (as far as is honest).** Rows now say "built — the app has not been run yet; verified end-to-end after Repair". NO earlier trigger exists: the `smoke` gate is superseded by GOOSE_SWARM_COMPLETE and has never fired on any run; the panel also drops its findings list so it could not tell pass from fail. Promotion stays complete_result.passed && verified — engine truth, not a model claim. The board has never flipped green because no run has finished, not because the rule is wrong. Was: There must be a real transition to verified when the engine
       has evidence; today no event ever promotes it.
 
 ## Evidence worth acting on
