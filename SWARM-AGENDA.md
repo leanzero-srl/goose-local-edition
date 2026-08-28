@@ -370,6 +370,34 @@ planning phases leave slots free by accident. The fleet strip correctly showed t
 was wrong on any dashboard. It was visible ONLY by counting `judge_skipped` by phase — an event nobody had
 ever read.
 
+## THE LIVENESS RULE ACCEPTS REASONING AS PROGRESS — but a build task's progress is a FILE
+
+MEASURED 2026-08-28, BUILD at 76 min, 20 of 21 tasks done and `viz-picking-camera` unable to finish.
+It owns `web/viz.js` — the 3D field, roughly **0.56 of the sb-7 scoring weight** — and after 76 minutes has
+made **ZERO tool calls** and written nothing. 28 judge looks, 13 nudges, all re-streams, verdicts
+looping -> looping -> RESTART -> looping.
+
+**WHY IT CANNOT END.** §8.1's rule is "a RESTART is permitted only while the previous attempt produced
+something — a tool call, a file byte, or NEW REASONING. Two consecutive attempts that produce nothing end
+the task as Failed." This call produces ~460 characters of new reasoning after every restart, so it
+satisfies the rule forever. `thinking_total` climbed 8,340 -> 8,800 while `thinking_chars` reset each time.
+0 retries, 0 failures recorded. **A task that owns files can reason indefinitely and never build.**
+
+**THE FIX SHAPE:** for a task that OWNS FILES, "produced something" must mean a tool call or a file byte —
+reasoning alone is not progress, because reasoning is not the deliverable. Its missing files then become
+REPAIR work, which is the designed outcome. Needs `owned_files` plumbed to the nudge site, which the
+judge loop does not currently have.
+
+**AND THE PROBABLE CAUSE OF THE SPIRAL, which is cheap to address now:** every nudge asked for the WHOLE
+file — *"write web/viz.js with the complete implementation (WebGL context, orbit camera, picking…)"*. That
+is the same failure the cloud qwen3.8-27b showed for 40 minutes: composing an entire large file inside the
+reasoning channel and never emitting it. Asking for a MINIMAL first write breaks the spiral, because a
+file that exists can be extended.
+
+**ALSO CLEARED THIS PASS (both previously unread):** `pre_review` — a per-task review after each build
+task, 12 fired, 2 with findings, working. `tail_review` — dimension reviews (`interface`, `wiring`),
+2 fired, no findings, working.
+
 ## Standing constraints — absolute, never negotiate them
 
 - **NO SPEND CAP MAY EVER BIND ON A CLOUD RUN.** Mihai, 2026-08-28: *"don't put caps on models or runs
