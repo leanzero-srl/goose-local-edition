@@ -770,7 +770,7 @@ runs several rounds and the gaps arrive in the later ones.
   printing REASONING BUT NOTHING LANDING and ACTIONS FROZEN — **those flags are now EXPECTED on this
   entrant and are NOT grounds to act.** A later tick must not stop it on its own initiative; report only.
   It is uncapped and costing ~$0.19, so time is the only thing at stake.
-- [ ] **R. qwen3.8-27b via OpenRouter — LIVE from 14:3xZ**, `cloud-sb7-orqwen27b-20260828-r1`, cap $8,
+- [x] **R. DONE — qwen3.8-27b via OpenRouter PUBLISHED at 20.06%.** Was LIVE from 14:3xZ**, `cloud-sb7-orqwen27b-20260828-r1`, cap $8,
       projected ~$6. 11 endpoints / 8 healthy, so it fails over cleanly — the reason it runs where flash
       cannot. Their context limits differ (65,500 → 1,000,000), so the manifest declares the FLOOR of the
       healthy set (262144 / 65536); declaring 1M would overflow a route to a small provider.
@@ -778,7 +778,7 @@ runs several rounds and the gaps arrive in the later ones.
       reliably prefixes `\n\n`. It emitted the marker byte-for-byte otherwise, so the comparison now
       ignores surrounding whitespace only. Smoke is a pre-flight gate and feeds no published score.
       First root archived `-KILLED-smoke-marker-whitespace`.
-- [ ] **S. deepseek-v4-flash-vision-exp — UNBLOCKED 2026-08-28, PREFLIGHT PASSES, QUEUED BEHIND 27b.**
+- [x] **S. DONE — deepseek-v4-flash-vision-exp PUBLISHED at 67.53%, the board leader.** 33 min, 13 files, exactly 4 frontend files — the allocation the local fleet has never managed. Score follows DECOMPOSITION, not model size.
       Mihai toggled the OpenRouter privacy settings and DeepSeek-the-provider came back into the roster.
       VERIFIED BY A REAL COMPLETION, not by the roster: `content='VISION_OK'`, reasoning present,
       finish=stop, provider=DeepSeek. (A first 16-token probe returned `content: None` because reasoning
@@ -872,6 +872,19 @@ runs several rounds and the gaps arrive in the later ones.
       OPTIONS PUT TO HIM: (A) keep, and measure OPEN again with the judge fix in; (B) one coverage round
       only; (C) run coverage CONCURRENTLY with RESEARCH so it leaves the critical path — research starts
       on known slices immediately, late-found slices research a few minutes behind.
+- [x] **X-2026-08-29. CLOUD QUEUE — four models dropped, and TWO of the four were MY bugs.**
+      `seed-2-1-turbo` exploring not building (509 shell calls, $12.29) · `seed-2.0-code` stream ends with
+      no terminal finish reason so the harness refuses a possibly-truncated tool call — a safety rule
+      working correctly, $0.22 · `ling-3.0-flash` rate-limited, and when it ran its final text was not the
+      exact contract token · `longcat-2.0` **NOT a model failure**: OpenRouter advertises
+      `max_completion_tokens=262144`, the serving provider 400s on it, 131072 proven fine by direct probe.
+      Pinned in `cloud-queue-models.json` and requeued.
+      TWO CHAIN BUGS FOUND AND FIXED (`loop-state` b22db28): `root exists` was read as "model is done", so
+      ling was dropped from the queue on every pass with $0 spent and nothing logged; and `wait_terminal`
+      polls campaign status, which never leaves INITIALIZED when smoke fails — the chain was about to hang
+      on ling with longcat and laguna blocked behind it forever.
+      REMAINING: longcat-2.0 (pinned), laguna-s-2.1. Budget $28.76.
+
 - [ ] **X. CLOUD QUEUE — 7 campaigns chained, unattended. `~/goose-builds/loop-state/cloud_chain.py`,
       pid in `cloud_chain.pid`, log `cloud_chain.log`.** Order: deepseek-vision → hy4-preview →
       seed-2-1-turbo → seed-2.0-code → ling-3.0-flash → longcat-2.0 → laguna-s-2.1. All seven are
