@@ -21,6 +21,15 @@ Make the swarm BUILD BETTER SOFTWARE on local models, then beat the published `b
   LeanZero palette. Solid saturated accents.
 - Commit EVERY change as it lands.
 
+## TICK HYGIENE — do not let the tick lie to you
+
+- **`pgrep -f run_build.py` MATCHES THE SHELL RUNNING THE TICK.** The tick command contains that string,
+  so pgrep finds its own zsh and reports `run_build RUNNING` when the harness is dead. Observed 12:44Z
+  with a 3/3 IDLE fleet and the run dir already archived. Use `pgrep -f 'Python.*run_build\.py'` — anchor
+  on the INTERPRETER, so only a real harness process matches.
+- Same shape as every other defect this week: a check that answers a neighbouring question. Anchor every
+  process check on something the observer itself cannot contain.
+
 ## Kill checkpoints — DELIBERATELY NARROW. Slowness is NOT a kill.
 
 Rewritten 2026-08-28 after counting the kills. Nine runs died; where they died:
