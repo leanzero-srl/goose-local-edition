@@ -21,18 +21,39 @@ Make the swarm BUILD BETTER SOFTWARE on local models, then beat the published `b
   LeanZero palette. Solid saturated accents.
 - Commit EVERY change as it lands.
 
-## Kill checkpoints — stop the local run the moment one trips
+## Kill checkpoints — DELIBERATELY NARROW. Slowness is NOT a kill.
 
-| checkpoint | read from |
+Rewritten 2026-08-28 after counting the kills. Nine runs died; where they died:
+
+    open x2 · research x2 · synthesis x1 · review x4 · integrate x1 · rate x1
+
+Two of those got a long way — `undercovered-0738` reached RATE, meaning it went through BUILD, INTEGRATE
+and TEST into REPAIR and produced a scored app (0.0023). `nudge-loop-2257` reached INTEGRATE. So the
+pipeline DOES run end to end. It was killed for PLAN QUALITY, not for hanging — and plan quality is the
+thing the coverage rewrite has now fixed.
+
+One kill was simply WRONG: `review-3h-silent-1036` was healthy, and I killed it on a local-time-minus-UTC
+subtraction that invented a three-hour gap.
+
+So the posture changes. A kill costs hours and cannot be undone; being slow costs only time and often ends
+in a finished run. KILL ONLY ON A PROVEN WEDGE OR A PROVEN DEFECT:
+
+| kill when | proof required — all of it, not one snapshot |
 |---|---|
-| no engine event for > 20 min while a call is live | newest `run.jsonl` mtime vs `.swarm/activity/*.json` |
-| REVIEW past round 3 still surfacing new findings | `review_findings.new > 0` at `round >= 3` |
-| a phase runs > 45 min with 2+ nodes IDLE | `phase` event age + `lms ps` |
-| a correction is a full re-emission, not a patch | `plan_patched` absent where a plan changed |
-| the join task is not named `integrate-verify`, or owns files | `plan_loaded.tasks[]` |
-| any task dispatches with a one-line description | `plan_loaded.tasks[].description` length |
-| anything at all is stopped by a clock | any `agent stalled` text |
-| a judge look hung | `judge_look_dispatched` with NEITHER a `judge_look` NOR a `judge_look_abandoned` for that task_id. Pair PER TASK_ID — global-order pairing falsely flags three tasks at once. An abandoned look is the design working (the call finished first), not a hang. |
+| the engine is wedged | NO new event in `run.jsonl` AND no `.swarm/activity/*.json` mtime movement, sampled >=3 times over >=90s, AND `lms ps` shows the fleet idle |
+| a lane died after a re-stream | its digest has `thinking_chars: null` or frozen for >5 min AND its last judge verdict was drifting/looping AND no other lane is still feeding the fan |
+| a correction is a full re-emission | `plan_patched` absent where the plan changed |
+| the join is misnamed or owns files | `plan_loaded.tasks[]` |
+| a task dispatches with a one-line description | `plan_loaded.tasks[].description` length |
+| anything is stopped by a clock | any `agent stalled` text |
+| a judge look genuinely hung | `judge_look_dispatched` with NEITHER `judge_look` NOR `judge_look_abandoned`, paired PER TASK_ID |
+
+**NOT kill conditions, and each of these has caused a wrong kill:** a phase taking a long time; nodes idle
+while a fanned straggler finishes (that is what a fan looks like); a judge probe outstanding (it is raced
+against the stream now, and abandoned looks are normal); a plan that looks under-covered mid-run — coverage
+runs several rounds and the gaps arrive in the later ones.
+
+**Before any kill, state the UTC clock explicitly.** `date -u`, and compare UTC to UTC.
 
 ## DONE (committed on `local-edition`)
 
