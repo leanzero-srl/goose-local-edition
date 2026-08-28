@@ -566,7 +566,8 @@ const ACTIVITY_ICON: Record<ActivityItem['kind'], React.ComponentType<{ size?: n
   retry: RotateCcw,
   retarget: TrendingUp,
   review: FlaskConical,
-  judge: Gavel,
+  judge: Eye,
+  'judge-act': Gavel,
   prereview: Eye,
   smoke: FlaskConical,
   brief: FileText,
@@ -585,7 +586,10 @@ const ACTIVITY_COLOR: Record<ActivityItem['kind'], string> = {
   retry: SWARM_STATUS.running,
   retarget: FORMATION_RAMP[2],
   review: FORMATION_RAMP[4],
+  // An observation recedes; an ACTION is a solid saturated accent, because the whole question the log
+  // has to answer at a glance is which rows changed the run and which only watched it.
   judge: FORMATION_RAMP[4],
+  'judge-act': SWARM_STATUS.action,
   prereview: FORMATION_RAMP[1],
   smoke: SWARM_STATUS.done,
   brief: 'var(--color-text-secondary)',
@@ -693,10 +697,17 @@ const ActivityLine: React.FC<{ it: ActivityItem; wrap?: boolean; workingDir?: st
         }}
       >
         <Icon size={dim ? 12 : 13} strokeWidth={2.5} className="mt-0.5 shrink-0" style={{ color }} />
-        <span className={`shrink-0 ${dim ? 'text-text-secondary' : 'text-text-primary'}`}>{it.text}</span>
+        <span
+          className={`shrink-0 ${dim ? 'text-text-secondary' : 'text-text-primary'}`}
+          style={it.kind === 'judge-act' ? { color, fontWeight: 600 } : undefined}
+        >
+          {it.text}
+        </span>
         {it.sub && !open && (
           <span
-            className={`text-text-secondary ${wrap ? 'break-words' : 'truncate'} ${it.kind === 'brief' ? 'line-clamp-3' : ''}`}
+            className={`text-text-secondary ${wrap ? 'break-words' : 'truncate'} ${
+              it.kind === 'brief' ? 'line-clamp-3' : wrap ? 'line-clamp-2' : ''
+            }`}
           >
             — {it.sub}
           </span>

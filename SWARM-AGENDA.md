@@ -226,6 +226,20 @@ runs several rounds and the gaps arrive in the later ones.
       AND the digest is stale past the open-call window. No timer was added — each signal alone has
       wrongly demoted a working node before (mtime mid-shell-call; `busyNodes` is empty for a cloud
       device, which never appears in `lms ps`). 5 tests pin every branch including both keep-it cases.
+- [x] **U. DONE — the event log now shows at a glance what ACTED and what only WATCHED.** Mihai: *"the
+      event log is not clear right off the bat with just observations or nudges? It's way too thick right
+      now and it's not clear what is what?"* Three separate causes, all fixed:
+      (1) **Every action was a verbatim duplicate of the observation above it.** The engine emits
+      `judge_look` then `judge_nudge` in the same breath carrying identical `established`/`next`, and the
+      panel rendered both — so half the wall was literal repetition and the 3 rows that changed the run
+      were lost among the 15 that did not. A nudge matching the look before it now REPLACES it.
+      (2) **Nothing was ever actually collapsed.** The row used `wrap ? 'break-words' : 'truncate'`, and
+      the event log passes `wrap`, so every "collapsed" sub grew to full height — the chevron was there
+      but had nothing to reveal. Collapsed subs now clamp to 2 lines.
+      (3) **Both used the same icon and register.** Observation is now a recessive `Eye` on the muted
+      formation hue; an action is a solid saturated `Gavel` in the action colour with a 600-weight label.
+      No left rail, no faded tint. 4 tests pin the fold, including both must-NOT-fold cases (different
+      direction, different task).
 - [ ] **D. Dead-code sweep — DEFERRED UNTIL NO LOCAL RUN IS LIVE.** `cargo clippy` starves the fleet:
       with the sweep running, judge probe latency went 16s -> 18s -> 27s -> **117s**, clippy-driver at
       55%+30% CPU. I was degrading my own run to tidy code. Ordering also matters and cost one aborted

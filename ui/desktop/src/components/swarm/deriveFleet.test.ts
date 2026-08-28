@@ -3,6 +3,7 @@ import {
   deriveFleet,
   resolvePool,
   foldEvents,
+  buildActivity,
   foldSupervision,
   DIGEST_FRESH_MS,
   DIGEST_OPEN_CALL_FRESH_MS,
@@ -428,5 +429,60 @@ describe('foldEvents — the repair wave has lanes (the 19-minute "all idle" gap
       {}
     );
     expect(fixLanes[0].status).toBe('done');
+  });
+});
+
+describe('event log — an action must be distinguishable from an observation at a glance', () => {
+  const look = (task: string, established: string, next: string) => ({
+    event: 'judge_look',
+    task_id: task,
+    verdict: 'looping',
+    established,
+    next,
+  });
+  const nudge = (task: string, established: string, next: string) => ({
+    event: 'judge_nudge',
+    task_id: task,
+    delivery: 'restream',
+    established,
+    next,
+  });
+
+  // MEASURED from a real run: the engine emits judge_look then judge_nudge in the same breath carrying
+  // identical established/next, so the log rendered every action twice and the three rows that changed
+  // the run were lost among fifteen that only watched it.
+  it('folds a nudge into the look it repeats, leaving ONE row marked as an action', () => {
+    const { verbose: items } = buildActivity([
+      look('open-coverage-1', 'Identified components', 'Build the coverage table'),
+      nudge('open-coverage-1', 'Identified components', 'Build the coverage table'),
+    ]);
+    const judged = items.filter((i) => i.kind === 'judge' || i.kind === 'judge-act');
+    expect(judged).toHaveLength(1);
+    expect(judged[0].kind).toBe('judge-act');
+    expect(judged[0].text).toContain('steered');
+  });
+
+  it('keeps a look that led to no action as an observation', () => {
+    const { verbose: items } = buildActivity([look('open-coverage-2', 'Enumerated parts', 'Keep going')]);
+    const judged = items.filter((i) => i.kind === 'judge' || i.kind === 'judge-act');
+    expect(judged).toHaveLength(1);
+    expect(judged[0].kind).toBe('judge');
+    expect(judged[0].text).toContain('looked at');
+  });
+
+  it('does NOT fold a nudge whose direction differs from the look before it', () => {
+    const { verbose: items } = buildActivity([
+      look('open-coverage-1', 'Identified components', 'Build the coverage table'),
+      nudge('open-coverage-1', 'Identified components', 'Something genuinely different'),
+    ]);
+    expect(items.filter((i) => i.kind === 'judge' || i.kind === 'judge-act')).toHaveLength(2);
+  });
+
+  it('does NOT fold across different tasks', () => {
+    const { verbose: items } = buildActivity([
+      look('open-coverage-1', 'A', 'B'),
+      nudge('open-coverage-2', 'A', 'B'),
+    ]);
+    expect(items.filter((i) => i.kind === 'judge' || i.kind === 'judge-act')).toHaveLength(2);
   });
 });
