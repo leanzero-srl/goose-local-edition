@@ -170,7 +170,19 @@ runs several rounds and the gaps arrive in the later ones.
   `ledgerd.pid`, `notifier.db`, 95 files. The local coverage failure (named components stuck at 2/11) is
   therefore a DECOMPOSITION defect, not a model-capability ceiling. Compare its plan against ours.
 
-## HOW TO LAUNCH A LOCAL sb-7 RUN — the vendor is NOT optional
+## HOW TO LAUNCH — THROUGH THE BENCHMARK VIEW, NOT A CHAT
+
+    pkill -9 -f 'Goose.app/Contents/MacOS/Goose'
+    open -n /Applications/Goose.app --args --remote-debugging-port=9897
+    node ~/goose-builds/loop-state/bench_dispatch.mjs 9897 sb-7 3
+
+`benchmark-run` spawns run_build.py --sb7 --timeout 0 with GOOSE_SWARM_BENCHMARK=1; run_build serves the
+vendor, builds the fixtures, substitutes the spec placeholders and SCORES at the end. Verify with
+`pgrep -fl run_build.py` (must carry --sb7) and `curl 127.0.0.1:8850/v3/docs` (200). Do NOT start a vendor
+yourself — run_build owns the port. A benchmark run must NOT appear as a "# Build `app`" chat in the
+sidebar; if it does, it is a chat, not a benchmark.
+
+## SUPERSEDED — the chat path, kept only as a warning
 
 `launch.sh` alone is WRONG and produced a full day of void runs: it types the raw spec into the desktop,
 so the prompt keeps its literal {BASE_URL} / {DOCS_URL} / {API_KEY} and there is no vendor to sync from.
