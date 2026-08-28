@@ -3597,9 +3597,17 @@ fn tails_recur(a: &std::collections::HashSet<u64>, b: &std::collections::HashSet
 fn call_objective(activity_key: Option<&str>) -> &'static str {
     match activity_key {
         Some(k) if k.starts_with("open-coverage") => {
-            "check the slice list against the request SECTION BY SECTION and return only the sections \
-             no slice owns. It must NOT write code and must NOT rewrite the slices that exist — an \
-             empty answer is the common and correct one."
+            "build a COVERAGE TABLE for its part of the request: every component that part names, which \
+             slice owns each, and a QUOTE from that slice's objective proving it. It must NOT write code \
+             and must NOT rewrite the slices that exist.\n\n\
+             THIS CALL IS SUPPOSED TO LOOK REPETITIVE, and that is the thing to understand before you \
+             judge it. Its deliverable IS a table: dozens of near-identical rows, each naming a component \
+             and an owner in the same shape. Structural repetition here is the call doing exactly what it \
+             was asked to do. MEASURED: judging that shape as a loop re-streamed these lanes three times \
+             in one run, and every re-stream threw away the whole partial table and started the \
+             enumeration again from the top — which is why a phase that should take minutes took thirty. \
+             It is stuck only if the rows stop ADVANCING: the same component named twice, or an owner it \
+             has already given. Rows that merely look alike are progress."
         }
         Some("open") | Some("open-resplit") => {
             "split the request into balanced semantic slices. It must NOT write code, plan files, or tasks."
@@ -3608,9 +3616,11 @@ fn call_objective(activity_key: Option<&str>) -> &'static str {
             "wire already-researched slices into a task DAG — ids, files and dependencies only. It \
              must NOT write code and must NOT restate the specifications."
         }
-        Some("review") => {
+        Some(k) if k == "review" || k.starts_with("review-") => {
             "read the original request against the plan and return a small structural PATCH. It must \
-             NOT write code, and must NOT rewrite any task's specification."
+             NOT write code, and must NOT rewrite any task's specification. A fanned lane (review-N) \
+             holds ONE portion of the request and the whole plan, so a task that looks unrelated to its \
+             portion is almost certainly owned by another portion — that is not a finding."
         }
         Some("proxy-answer") => "answer the open decisions from the request. It must NOT write code.",
         Some("rate") => "rate each defect CRITICAL or MINOR. It must NOT write code.",
