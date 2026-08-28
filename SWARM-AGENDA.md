@@ -108,7 +108,7 @@ runs several rounds and the gaps arrive in the later ones.
 - [x] **H. DONE (612cbd4cb).** Seen twice: the nudge was literally "Check the
       slice list against the request section by section" — the job restated, costing a restream. The judge
       must add information or return OK.
-- [ ] **I. Semantic de-duplication of findings** (`merge_duplicate_findings`) — designed, never shipped.
+- [x] **I. DONE.** The rater can answer `DUPLICATE <n>`; the engine drops those from the wave. Model decides — no similarity score, no threshold. Backward-only, and `forced` engine checks still win. Was: (`merge_duplicate_findings`) — designed, never shipped.
 - [ ] **J. Node re-admission covers BUILD only.** RESEARCH/TEST/FIX hold pre-BUILD fleet snapshots, so a
       node that comes back mid-run (gabee) sits idle for those phases.
 - [x] **K. DONE.** Judge's `eta_mins` now surfaces per running lane (latest wins). The run-level band stays arithmetic and is honest about being an extrapolation. Was: — the judge estimates remaining time; surface it in the panel.
