@@ -72,7 +72,7 @@ Make the swarm BUILD BETTER SOFTWARE on local models, then beat the published `b
       TRAP HIT AND CLEARED: the first launch ran `/Applications/Goose.app` from **Jul 28** — a month-old
       engine, proven by three missing strings with a positive control. Always verify the INSTALLED binary,
       not the built one. `just make-ui` writes to ui/desktop/out; /Applications must be replaced separately.
-- [ ] **M. `benchmark` is live but invisible.** It is read from config.yaml (SwarmConfig.benchmark) but is
+- [x] **M. DONE.** `benchmark` now emitted in `levers_resolved`. Was: It is read from config.yaml (SwarmConfig.benchmark) but is
       absent from the `levers_resolved` event, so the log cannot show whether a run was unattended. Add it.
       Functional proof meanwhile: `clarify_proxy_armed {mode:"immediate", wait_secs:0}` at ASK.
 - [ ] **G. Fan REVIEW across the fleet.** It reads the 54KB spec + the whole plan in ONE call — the same
