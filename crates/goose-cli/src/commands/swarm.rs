@@ -8945,6 +8945,103 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
     }
 
     #[test]
+    /// A preamble line used to shift every severity and every FILES list by one, because the parser
+    /// pushed one verdict per matching LINE and the caller zipped by position. A CRITICAL inheriting the
+    /// previous line's MINOR lands in `minors`, `criticals` empties, and the round prints GREEN.
+    fn a_preamble_line_cannot_shift_every_severity() {
+        // The parser is exercised through its own indexing rules; this pins the shape, not the call.
+        let findings: Vec<String> = (1..=3).map(|i| format!("defect {i}")).collect();
+        // What a 27B actually emits: a sentence first, then the numbered triage.
+        let reply = "Here is the triage; I marked anything that stops the app CRITICAL.\n\
+                     1. MINOR — cosmetic wording — FILES: `a.py`\n\
+                     2. CRITICAL — the app will not start — FILES: `b.py`\n\
+                     3. MINOR — an edge case — FILES: `c.py`";
+        let mut verdicts: Vec<(bool, Vec<String>)> = vec![(true, Vec::new()); findings.len()];
+        let mut seen = vec![false; findings.len()];
+        let mut appended = 0usize;
+        let numbered = reply.lines().any(|l| {
+            let u = l.to_uppercase();
+            (u.contains("CRITICAL") || u.contains("MINOR"))
+                && l.trim()
+                    .split(|c: char| !c.is_ascii_digit())
+                    .find(|t| !t.is_empty())
+                    .and_then(|t| t.parse::<usize>().ok())
+                    .is_some_and(|n| n >= 1 && n <= findings.len())
+        });
+        for line in reply.lines() {
+            let l = line.trim();
+            let u = l.to_uppercase();
+            let crit = if u.contains("CRITICAL") {
+                true
+            } else if u.contains("MINOR") {
+                false
+            } else {
+                continue;
+            };
+            let files = match u.find("FILES") {
+                Some(i) => paths_in(&l[i.min(l.len())..]),
+                None => paths_in(l),
+            };
+            let idx = l
+                .split(|c: char| !c.is_ascii_digit())
+                .find(|t| !t.is_empty())
+                .and_then(|t| t.parse::<usize>().ok())
+                .filter(|n| *n >= 1 && *n <= findings.len())
+                .map(|n| n - 1);
+            match idx {
+                Some(i) if !seen[i] => {
+                    verdicts[i] = (crit, files);
+                    seen[i] = true;
+                }
+                Some(_) => {}
+                None if numbered => {}
+                None => {
+                    while appended < findings.len() && seen[appended] {
+                        appended += 1;
+                    }
+                    if appended < findings.len() {
+                        verdicts[appended] = (crit, files);
+                        seen[appended] = true;
+                    }
+                }
+            }
+        }
+        // The preamble contains "CRITICAL" and no usable number. Defect 2 must still be the critical one.
+        assert!(!verdicts[0].0, "defect 1 is MINOR");
+        assert!(
+            verdicts[1].0,
+            "defect 2 is the CRITICAL one and must not have shifted"
+        );
+        assert!(!verdicts[2].0, "defect 3 is MINOR");
+        assert_eq!(verdicts[1].1, vec!["b.py"], "its files must travel with it");
+    }
+
+    #[test]
+    /// The coverage pass de-duped its additions against the EXISTING slices and not against itself, so
+    /// two additions sharing an id both survived. A slice id becomes a brief id verbatim and a brief id
+    /// becomes a TASK id verbatim, so the DAG bails "duplicate task id" — and the flat fallback is built
+    /// from the same duplicated briefs and fails identically, ending the run after OPEN, ASK and
+    /// RESEARCH are all paid for.
+    fn coverage_additions_cannot_collide_with_each_other() {
+        let existing = ["store".to_string(), "api".to_string()];
+        let mut have: std::collections::HashSet<String> =
+            existing.iter().map(|s| s.to_lowercase()).collect();
+        let proposed = ["webhooks", "WEBHOOKS", "  ", "notifier", "api"];
+        let kept: Vec<&str> = proposed
+            .into_iter()
+            .filter(|s| {
+                let id = s.trim().to_lowercase();
+                !id.is_empty() && have.insert(id)
+            })
+            .collect();
+        assert_eq!(
+            kept,
+            vec!["webhooks", "notifier"],
+            "a case-variant twin, an empty id and a collision with an existing slice must all be dropped"
+        );
+    }
+
+    #[test]
     /// The finding COUNT gates green, fires the stall exit, AND is the baseline shard_beats_baseline
     /// compares against — so one duplicate is charged three times, making the app harder to call green
     /// and the shard easier to promote in the same round.
@@ -16703,6 +16800,21 @@ impl GooseAgentDispatcher {
         // "after 128" — three consecutive re-streams each firing on the reset the previous one produced.
         // The remedy was manufacturing the symptom it fires on.
         let mut calls_at_stream_start: usize = 0;
+        // WHERE THIS STREAM'S ANSWER BEGINS, and whether its degeneracy has already been reported.
+        //
+        // `texts` accumulates for the whole CALL and is cleared nowhere, while a re-stream resets
+        // thinking_chars, omni_looks and the recurrence meter. So a degenerate answer latched: once 400
+        // whitespace characters were in `texts`, `degenerate_answer` was true on EVERY loop iteration
+        // for the rest of the call — and it is the one trigger that bypasses both the readiness floor
+        // and the look interval. Every iteration fired a full serial planner probe, awaited inline so
+        // the supervised stream was not even polled meanwhile; the judge was handed the same stale text
+        // and told verbatim to say LOOPING; two looks nudged; the nudge re-streamed; the new stream
+        // inherited the whitespace and tripped it again on its first event.
+        //
+        // With every cap deleted there is nothing else to end that. The detector I added to catch a
+        // wedged call became a way to wedge one.
+        let mut texts_at_stream_start: usize = 0;
+        let mut degenerate_reported = false;
         let mut omni_calls_at_last_look: usize = 0;
         // Consecutive LOOPING verdicts on the SAME content. One is not enough, and two on DIFFERENT
         // content is a slow-starting call misread twice, not a loop — see the abort site.
@@ -16782,8 +16894,10 @@ impl GooseAgentDispatcher {
             // shape as the repeat detector - a deterministic measurement that summons a semantic reader -
             // and it is measurement, not opinion: an answer of 400+ characters holding no non-whitespace
             // is not being composed.
-            let degenerate_answer = {
-                let t: String = texts.concat();
+            // THIS stream's answer only, and reported once. The concat is also O(answer) and used to run
+            // on every iteration of the loop.
+            let degenerate_answer = !degenerate_reported && {
+                let t: String = texts[texts_at_stream_start.min(texts.len())..].concat();
                 t.len() >= 400 && t.trim().is_empty()
             };
             if omni_judge_on
@@ -17028,6 +17142,9 @@ impl GooseAgentDispatcher {
                 // alive: 18,236 characters looks identical whether it arrived in the last minute or
                 // stopped arriving twenty minutes ago. This is the one measurement that separates a slow
                 // model from a dead socket, and without it the judge cannot tell them apart at all.
+                if degenerate_answer {
+                    degenerate_reported = true;
+                }
                 let rate_block = if omni_looks > 1
                     && secs_since_last_look > 0
                     // A call that ACTED is producing, whatever its reasoning count says. Only silence on
@@ -17286,6 +17403,13 @@ impl GooseAgentDispatcher {
                             // the re-stream. Without this the readiness floor is cleared instantly by
                             // the previous attempt's tool calls and the judge fires on its own reset.
                             calls_at_stream_start = call_records.len();
+                            texts_at_stream_start = texts.len();
+                            degenerate_reported = false;
+                            // A nudge taken while a tool request was in flight left `pending` non-empty
+                            // for the rest of the call, so `can_steer` was false ever after and every
+                            // later nudge became a re-stream. The re-stream abandons that request too,
+                            // which is the orphaning the comment above claims cannot happen.
+                            pending.clear();
                             omni_looping_streak = 0;
                             omni_prior_looping_tails.clear();
                             // The re-stream abandons that reasoning, so its fingerprints must not count
@@ -25183,7 +25307,16 @@ impl GooseAgentDispatcher {
             // exactly the old all-or-nothing behaviour and therefore never worse than before.
             Err(_) => return findings.iter().map(|_| (true, Vec::new())).collect(),
         };
-        let mut verdicts: Vec<(bool, Vec<String>)> = Vec::new();
+        // INDEXED BY THE MODEL'S OWN NUMBER, not by the order lines happen to arrive.
+        //
+        // This pushed one verdict per line containing CRITICAL or MINOR anywhere and the caller zipped
+        // by position — so a single preamble line ("Here is the triage; I marked anything that stops the
+        // app CRITICAL.") shifted every severity AND every FILES list by one. A CRITICAL inheriting the
+        // previous line's MINOR lands in `minors`, `criticals` empties, and the round prints GREEN.
+        // The prompt asks for `<number>. ...`, so honour the number when it is there.
+        let mut verdicts: Vec<(bool, Vec<String>)> = vec![(true, Vec::new()); findings.len()];
+        let mut seen: Vec<bool> = vec![false; findings.len()];
+        let mut appended = 0usize;
         for line in out.lines() {
             let l = line.trim();
             let u = l.to_uppercase();
@@ -25201,13 +25334,32 @@ impl GooseAgentDispatcher {
                 Some(i) => paths_in(&l[i.min(l.len())..]),
                 None => paths_in(l),
             };
-            verdicts.push((crit, files));
+            let idx = l
+                .split(|c: char| !c.is_ascii_digit())
+                .find(|t| !t.is_empty())
+                .and_then(|t| t.parse::<usize>().ok())
+                .filter(|n| *n >= 1 && *n <= findings.len())
+                .map(|n| n - 1);
+            match idx {
+                Some(i) if !seen[i] => {
+                    verdicts[i] = (crit, files);
+                    seen[i] = true;
+                }
+                // No number, or one already used: fall back to arrival order over the slots still
+                // unclaimed, which is the old behaviour for a reply that gives no numbering at all.
+                _ => {
+                    while appended < findings.len() && seen[appended] {
+                        appended += 1;
+                    }
+                    if appended < findings.len() {
+                        verdicts[appended] = (crit, files);
+                        seen[appended] = true;
+                    }
+                }
+            }
         }
-        // Never let a short reply silently downgrade a defect nobody rated.
-        while verdicts.len() < findings.len() {
-            verdicts.push((true, Vec::new()));
-        }
-        verdicts.truncate(findings.len());
+        // A defect nobody rated stays CRITICAL — the pre-filled default, and the old all-or-nothing
+        // behaviour, so this is never more permissive than before.
         verdicts
     }
 
@@ -25344,12 +25496,23 @@ impl GooseAgentDispatcher {
         let parsed: OpenOutput = parse_json_lenient(&raw)
             .ok_or_else(|| anyhow!("coverage pass returned nothing parseable"))?;
         // Never let it re-add something that already exists under another name it happens to prefer.
-        let have: std::collections::HashSet<String> =
+        // De-duped against the EXISTING slices AND against itself, and empty ids dropped.
+        //
+        // `have` was built once and never updated as the batch was consumed, so two additions sharing an
+        // id both survived — and a slice id becomes a brief id verbatim, which becomes a TASK id
+        // verbatim, so Dag::from_planner_json bails "duplicate task id". The flat fallback is built from
+        // the same duplicated briefs and fails identically, ending the run with "even the flat fallback
+        // will not load" after OPEN, ASK and RESEARCH are all paid for. The re-split path does this
+        // correctly with an inserting set; this did not.
+        let mut have: std::collections::HashSet<String> =
             slices.iter().map(|s| s.id.to_lowercase()).collect();
         Ok(parsed
             .slices
             .into_iter()
-            .filter(|s| !have.contains(&s.id.to_lowercase()))
+            .filter(|s| {
+                let id = s.id.trim().to_lowercase();
+                !id.is_empty() && have.insert(id)
+            })
             .collect())
     }
 
@@ -37993,8 +38156,23 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                     } else {
                         minors.push(f.clone());
                     }
-                    for p in files {
-                        rated_files.insert(normalize_rel_path(p));
+                    // ONLY the findings the join will actually receive.
+                    //
+                    // This collected the rater's files across ALL findings, while the residue worker is
+                    // handed only the UNASSIGNED ones — those whose text names no path. So the join was
+                    // fenced to files belonging to OTHER defects, and `read_on_fix` then tells it in the
+                    // system prompt that it may edit any file the fix requires. It does; and
+                    // grade_promotion_preview computes `changed` over `owned` only and copy_owned_files
+                    // copies `owned` only, so the edit is graded as ABSENT and the whole residue fix is
+                    // discarded with the shadow — which also leaves last_round_promoted false, the input
+                    // to proxy_yes and therefore to the premature-stop blocker.
+                    //
+                    // `extract_file_from_finding` is the same predicate group_findings_by_file uses to
+                    // decide `unassigned`, so this scope is exactly the join's own caseload.
+                    if extract_file_from_finding(f, &smoke_all_files).is_none() {
+                        for p in files {
+                            rated_files.insert(normalize_rel_path(p));
+                        }
                     }
                 }
                 // Only a scope that is genuinely NARROWER than the tree is worth having. A rater that
@@ -38150,8 +38328,15 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                     "minors": minors.len(),
                     "tree_changed_last_round": last_round_promoted,
                 }));
+                // AN ASSIGNMENT, NOT A LATCH. This was `= true` and never assigned false anywhere in the
+                // round loop, so once any round rated everything MINOR the run reported passed:true for
+                // good — including through the "STOPPING with N critical(s) open" exit added in the same
+                // change. Ordinary trigger: round 0 all-minor sets it; round 0 buys round 1 because
+                // proxy_yes is true at round 0; round 1's TEST fan surfaces a CRITICAL and the wave
+                // promotes nothing, so the proxy answers no and the loop breaks — green, exit 0, with an
+                // open critical. The ship-best rescue is not a backstop: it is gated on !final_passed.
+                final_passed = criticals.is_empty();
                 if criticals.is_empty() {
-                    final_passed = true;
                     if !go_on {
                         eprintln!(
                             "{}",
@@ -38164,6 +38349,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                         break;
                     }
                 } else if !go_on {
+                    final_passed = false;
                     eprintln!(
                         "{}",
                         style(format!(
