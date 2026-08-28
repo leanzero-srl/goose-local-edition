@@ -120,6 +120,17 @@ runs several rounds and the gaps arrive in the later ones.
 
 ## Evidence worth acting on
 
+- **THE COVERAGE-OBJECTIVE FIX WORKS (measured 11:19-11:24Z).** BEFORE it, `looping` fired on coverage
+  lanes at `produced_since_last_look=4003` — calls producing healthily, judged as looping because the
+  table's rows repeat. AFTER it, looping fires only at `produced=1,2,3` — a genuine stall — and the
+  re-stream RECOVERS the lane (coverage-1: think 2002 stalled -> restream -> 4002 produced -> 8005). The
+  judge also carries `established` forward, so the replacement stream resumes rather than restarting
+  blind. The judge is now right when it acts, which is the whole point.
+- **OPEN LANES STALL NEAR ROUND NUMBERS — worth watching, not yet explained.** Stalls observed at
+  think=2001, 2002, 4400, 4403; recoveries then run to exactly 4002/4003/8005. Repeated stalls landing on
+  ~2k/~4k boundaries look like a provider-side buffer or chunk edge rather than model behaviour. If this
+  recurs, splice the stream and compare against LM Studio's own chunking before blaming the engine.
+
 - **VERIFIED sb-7 RUN LIVE from 11:10Z** — the first correct local run of the day. prompt 53,634 chars,
   "# Build `app` — Meridian Payments Console", all of ledgerd/notifierd/viz.js/DECISIONS.md/outbox/12,288
   present, BENCH_SPEC=spec-build-sb7.md, vendor 200, secrets store=file, benchmark=true.
