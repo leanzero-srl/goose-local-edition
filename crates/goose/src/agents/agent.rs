@@ -529,6 +529,35 @@ impl Agent {
         self.steer_arrived.notify_waiters();
     }
 
+    /// Queue a supervisor note, DROPPING this supervisor's own earlier un-delivered notes first.
+    ///
+    /// `steer` appends to an unbounded queue, which is right for a human: every message a person types is
+    /// theirs and none may be silently discarded. It is wrong for the judge. A pure-reasoning call never
+    /// reaches a turn boundary, so nothing drains, and MEASURED on run swarm-3node-r0 `open-coverage-2`
+    /// accumulated FIFTEEN queued nudges. When that call finally takes a turn it receives all fifteen at
+    /// once -- "call the output tool with the 55 rows", then 80, then variants -- a wall of stale and
+    /// mutually inconsistent instructions. The judge was not being ignored; it was about to be delivered
+    /// fifteen times over.
+    ///
+    /// Escalation means the newest direction SUPERSEDES the previous one, so only the newest should land.
+    /// Messages that do not carry `marker` are left alone -- a user's queued message is never collapsed.
+    pub async fn steer_superseding(
+        &self,
+        session_id: &str,
+        message: Message,
+        marker: &str,
+    ) -> usize {
+        let mut q = self.pending_steers.lock().await;
+        let slot = q.entry(session_id.to_string()).or_default();
+        let before = slot.len();
+        slot.retain(|m| !m.as_concat_text().starts_with(marker));
+        let dropped = before - slot.len();
+        slot.push_back(message);
+        drop(q);
+        self.steer_arrived.notify_waiters();
+        dropped
+    }
+
     pub async fn discard_pending_steers(&self, session_id: &str) {
         self.pending_steers.lock().await.remove(session_id);
     }
@@ -4240,6 +4269,67 @@ echo start >> "$PLUGIN_ROOT/hook.log"
             "discarding must drop steers orphaned by a cancelled run so they cannot leak into a later prompt"
         );
         assert!(agent.drain_pending_steers(session_id).await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn steer_superseding_replaces_the_supervisors_own_stale_notes_only() {
+        let agent = Agent::new();
+        let session_id = "session-supersede";
+
+        // A human's queued message. It must survive everything below: a person's words are theirs and
+        // the queued-message feature exists so they are never silently dropped.
+        agent
+            .steer(
+                session_id,
+                Message::user().with_text("user: also add a CSV export"),
+            )
+            .await;
+
+        let dropped = agent
+            .steer_superseding(
+                session_id,
+                Message::user()
+                    .with_text("SUPERVISOR NOTE — call the output tool with the 55 rows"),
+                "SUPERVISOR NOTE",
+            )
+            .await;
+        assert_eq!(
+            dropped, 0,
+            "the first supervisor note has nothing to supersede"
+        );
+
+        let dropped = agent
+            .steer_superseding(
+                session_id,
+                Message::user()
+                    .with_text("SUPERVISOR NOTE — call the output tool with all 80 rows"),
+                "SUPERVISOR NOTE",
+            )
+            .await;
+        assert_eq!(
+            dropped, 1,
+            "the newer direction must replace the stale one, not stack behind it"
+        );
+
+        let queued = agent.drain_pending_steers(session_id).await;
+        let texts: Vec<String> = queued.iter().map(|m| m.as_concat_text()).collect();
+        assert_eq!(
+            texts.len(),
+            2,
+            "exactly the user's message and the NEWEST supervisor note: {texts:?}"
+        );
+        assert!(
+            texts[0].starts_with("user:"),
+            "the human's queued message must survive and keep its place: {texts:?}"
+        );
+        assert!(
+            texts[1].contains("all 80 rows"),
+            "the surviving note must be the newest one: {texts:?}"
+        );
+        assert!(
+            !texts.iter().any(|t| t.contains("55 rows")),
+            "the stale row count must be gone -- delivering both is what confused the call: {texts:?}"
+        );
     }
 
     #[test]
