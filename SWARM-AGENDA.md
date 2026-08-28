@@ -397,6 +397,34 @@ it. A problem that turns out to be already owned is left out, but then it was no
 **THIS RUN KEEPS THE DEFECT** — the binary is the old one. Expect 4 features missing from its app, and read
 the score with that in mind rather than as a verdict on the decomposition.
 
+## RELAUNCHED ON THE NEW BINARY — 2026-08-29 02:52 EEST, run `swarm-3node-r0`
+
+Recovery from the kill above, complete:
+
+1. `cargo build --release -p goose-cli --bin goose` — clean, 2m48s, fleet idle (the rebuild rule).
+2. Copied into `/Applications/Goose.app/Contents/Resources/bin/goose`, `codesign --force --sign -`,
+   `--version` runs (a broken signature is a silent SIGKILL on Apple Silicon).
+3. **Verified the fixes in the INSTALLED bundle, not the build tree** — all seven PRESENT as string
+   literals: `DO NOT CLASSIFY` · `THIS TASK OWNS THESE FILES` · `SINGLE STRUCTURED REPLY` ·
+   `SMALLEST ACTION THAT LEAVES A TRACE` · `review_patch_demanded` · `shared_files` ·
+   `DO TWO TASKS OWN THE SAME FILE`.
+4. Stopped Goose with launch.sh's THREE patterns (`swarm run`, `serve`, `MacOS/Goose`) — config's
+   `swarm:` block survived, as `kill -9` always preserves it.
+5. Started through **the app's own IPC**, `window.electron.benchmarkRun(3, 'sb-7')` over CDP
+   (`loop-state/start_bench.mjs`), NOT a hand-built `run_build.py` env.
+
+**WHY POINT 5 MATTERS:** the desktop passes a full REGIME env — `BENCH_SPEC`, `BENCH_PRODUCT`,
+`GOOSE_SWARM_BENCHMARK`, the render probe, the whole tuned lever set. `main.ts` records what one wrong
+piece costs: a run started with sb-7 selected once received the 6,278-char **v2** spec because
+`BENCH_SPEC` was read before the regime, produced slices called `meridian-client`/`local-store`, and
+**looked completely healthy while building the wrong product**. Hand-building that env is how a run
+becomes incomparable to the board without saying so.
+
+**VERIFIED LIVE:** `run_started` carries the Meridian Payments Console prompt (ledgerd, notifierd,
+webhooks — not vendorsync), `pool_resolved` has all 3 devices, `levers_resolved` reports
+**`build_sha: afb767583`** — tonight's commit — and `benchmark: true`. Engine up, `run_build.py` running,
+fleet processing.
+
 ## I KILLED THE RUN. `pkill -f 'app.ledgerd|app.notifierd'` — 2026-08-29 02:15 EEST
 
 **THE FACTS, not softened.** Scoring an archived cloud tree, I ran a blanket `pkill` to clear what I took
