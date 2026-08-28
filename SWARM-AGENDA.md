@@ -370,7 +370,7 @@ planning phases leave slots free by accident. The fleet strip correctly showed t
 was wrong on any dashboard. It was visible ONLY by counting `judge_skipped` by phase — an event nobody had
 ever read.
 
-## THE LIVENESS RULE ACCEPTS REASONING AS PROGRESS — but a build task's progress is a FILE
+## [DONE 2026-08-29] THE LIVENESS RULE ACCEPTED REASONING AS PROGRESS — a build task's progress is a FILE
 
 MEASURED 2026-08-28, BUILD at 76 min, 20 of 21 tasks done and `viz-picking-camera` unable to finish.
 It owns `web/viz.js` — the 3D field, roughly **0.56 of the sb-7 scoring weight** — and after 76 minutes has
@@ -387,6 +387,22 @@ satisfies the rule forever. `thinking_total` climbed 8,340 -> 8,800 while `think
 reasoning alone is not progress, because reasoning is not the deliverable. Its missing files then become
 REPAIR work, which is the designed outcome. Needs `owned_files` plumbed to the nudge site, which the
 judge loop does not currently have.
+
+**IMPLEMENTED 2026-08-29, both halves, `0eca49bbb` + `b318c21ff`.**
+(1) `GooseAgentDispatcher.owned_files_by_task: Mutex<HashMap<String, Vec<String>>>`, published in
+`TaskDispatcher::run` — `DispatchRequest` already carries `task_id` AND `owned_files`, so no plan-load
+plumbing and no signature churn across the 14 `run_agent_timed_at` call sites was needed. The judge prompt
+now lists every owned path with its REAL state on disk (`EXISTS, N bytes` / `EXISTS BUT EMPTY` /
+`DOES NOT EXIST`) and states that bytes are the progress, not characters. Empty for planner-side calls, so
+those are byte-identical to before.
+(2) The judge's NEXT instruction now says ASK FOR THE SMALLEST ACTION THAT LEAVES A TRACE, never the whole
+deliverable — the file, the stub, the imports, one function; for a structured reply, emit what it has NOW
+and refine after. Escalating by being more specific about the whole artefact is what made the viz spiral
+worse, because the whole artefact is exactly what the call could not finish.
+These two are one fix: (2) says "if it owns a file, name the file" and until (1) the judge had no way to
+know whether it did.
+Clippy 104 pre-existing errors in the crate, NONE in the edited ranges — verified line-by-line against the
+diff hunks, not asserted.
 
 **AND THE PROBABLE CAUSE OF THE SPIRAL, which is cheap to address now:** every nudge asked for the WHOLE
 file — *"write web/viz.js with the complete implementation (WebGL context, orbit camera, picking…)"*. That
