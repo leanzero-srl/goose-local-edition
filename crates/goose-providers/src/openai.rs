@@ -356,12 +356,29 @@ impl OpenAiProvider {
 
     const PROVIDERS_NEEDING_STANDARD_CHAT_PARAMS: &[&str] = &["nearai"];
 
+    /// Alibaba's Token Plan endpoint speaks a stricter dialect than the OpenAI shape it otherwise
+    /// accepts: the cap must arrive as `max_completion_tokens`, `max_tokens` is rejected outright
+    /// rather than ignored, and reasoning is opt-in per request through `enable_thinking` /
+    /// `preserve_thinking`. Without all four the newer Qwen models answer without reasoning at all.
+    const PROVIDERS_NEEDING_QWEN_TOKEN_PLAN: &[&str] = &["alibaba"];
+
     fn sanitize_request_for_compat(&self, mut payload: serde_json::Value) -> serde_json::Value {
         if let Some(obj) = payload.as_object_mut() {
             if Self::PROVIDERS_NEEDING_MAX_TOKENS_REMAP.contains(&self.name.as_str()) {
                 if let Some(value) = obj.remove("max_completion_tokens") {
                     obj.entry("max_tokens").or_insert(value);
                 }
+            }
+
+            if Self::PROVIDERS_NEEDING_QWEN_TOKEN_PLAN.contains(&self.name.as_str()) {
+                if let Some(value) = obj.remove("max_tokens") {
+                    obj.entry("max_completion_tokens").or_insert(value);
+                }
+                obj.insert("enable_thinking".to_string(), serde_json::Value::Bool(true));
+                obj.insert(
+                    "preserve_thinking".to_string(),
+                    serde_json::Value::Bool(true),
+                );
             }
 
             if Self::PROVIDERS_NEEDING_STANDARD_CHAT_PARAMS.contains(&self.name.as_str()) {
@@ -884,6 +901,42 @@ mod tests {
             preserve_thinking_context: false,
             n_ctx_cache: Arc::new(Mutex::new(HashMap::new())),
         }
+    }
+
+    /// Alibaba's Token Plan rejects a request outright when any of these four are wrong, and the
+    /// rejection surfaces as a contract violation from the cloud harness rather than as a provider
+    /// error, so it is worth failing the build instead of a benchmark episode.
+    #[test]
+    fn sanitize_applies_the_qwen_token_plan_contract_for_alibaba() {
+        let provider = make_provider("alibaba");
+        let payload = json!({
+            "model": "qwen3.8-flash",
+            "messages": [],
+            "max_tokens": 131072
+        });
+
+        let result = provider.sanitize_request_for_compat(payload);
+        let obj = result.as_object().unwrap();
+
+        assert!(
+            !obj.contains_key("max_tokens"),
+            "max_tokens is rejected, not ignored"
+        );
+        assert_eq!(obj.get("max_completion_tokens").unwrap(), &json!(131072));
+        assert_eq!(obj.get("enable_thinking").unwrap(), &json!(true));
+        assert_eq!(obj.get("preserve_thinking").unwrap(), &json!(true));
+    }
+
+    #[test]
+    fn sanitize_leaves_other_openai_providers_alone() {
+        let provider = make_provider("openai");
+        let payload = json!({"model": "gpt-5.6", "messages": [], "max_tokens": 4096});
+
+        let obj = provider.sanitize_request_for_compat(payload);
+        let obj = obj.as_object().unwrap();
+
+        assert_eq!(obj.get("max_tokens").unwrap(), &json!(4096));
+        assert!(!obj.contains_key("enable_thinking"));
     }
 
     #[test]
