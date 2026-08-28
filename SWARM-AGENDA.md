@@ -137,6 +137,13 @@ runs several rounds and the gaps arrive in the later ones.
 
 ## Evidence worth acting on
 
+- **THE CLARIFY-PROXY RACE FIX IS CONFIRMED IN PRODUCTION (13:23:40-13:25:20Z).**
+  ask 13:23:40 -> proxy armed + question asked 13:23:40 -> answered 13:25:19 -> low_confidence_answered
+  13:25:20 -> research 13:25:20. The run WAITED 99 SECONDS for the proxy and NO
+  `low_confidence_ask_timeout` was emitted, so the answers reached the plan.
+  Compare the defect: reader gave up at 5s, proxy answered 42s LATER, plan built from guesses while the
+  log said a node had answered. The exit condition is the proxy TASK now, not a clock, and it holds.
+
 - **BEST OPEN YET (13:23:40Z, 1982s).** 139 components enumerated across parts of 25/57/57 with **0
   unowned in every part**, and 12 slices that are the request's own components: ledgerd-core, vendor-sync,
   event-ledger-outbox, webhook-handling, approval-workflow, notifierd-service, ledgerd-api,
