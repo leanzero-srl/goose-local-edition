@@ -41,6 +41,11 @@ Make the swarm BUILD BETTER SOFTWARE on local models, then beat the published `b
   the Electron binary only; `Resources/bin/goose swarm run` survived, reparented to launchd, and drove all
   three nodes for ~25 minutes after the window closed. `launch.sh` already had the right patterns — I
   retyped a shorter version instead of calling it. If a procedure exists, CALL IT.
+- **CLOUD TICK SHOWS DELTAS, because absolutes hide a freeze.** "10 tool calls" read identically on two
+  ticks eight minutes apart while thinking grew 4,000 chunks — the difference between a model working and
+  a model talking to itself, invisible in the absolute. `tick.py` keeps `tick-state.json` beside it and
+  prints `Δcalls / Δthink / Δfiles`, flagging **ACTIONS FROZEN, thinking still growing**. Proven live:
+  Δcalls+0 Δthink+275 across 45s on qwen3.8-27b r2.
 - **THE TICK NOW READS THE CLOUD RUNS TOO, and the number that matters is WHETHER ANYTHING LANDS.**
   MEASURED 2026-08-28: qwen3.8-27b sat 32 min with 4.7 MB of log and ZERO app files, composing the
   application inside its reasoning channel (`"thinking": " = document.getElementById('"`). Not stuck — it
