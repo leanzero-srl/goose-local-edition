@@ -417,6 +417,25 @@ lane appeared TWICE — once parsed, once as "(being written this instant)" — 
 the last suffix and `json.loads` fails on a transcript. **When you add files next to a file another tool
 reads, check that tool.** Fixed: the lane listing reads `.json` only.
 
+## THE CALLS-RISING-NOTHING-LANDING DETECTOR CAUGHT A REAL SPIRAL (seed-2-1-turbo, 2026-08-28 20:34Z)
+
+Built two ticks earlier because a FILE COUNT cannot tell an editing model from a stuck one. First live
+firing, and it was right.
+
+**seed-2-1-turbo: Δcalls+132, ΔKB+0.** Breakdown of its 852 calls: **509 shell**, 110 tree, 49 read_file,
+31 read_image, 53 write, 78 todo. The last six calls were `ls web/ && ls app/`, `curl /v3/docs | head`,
+`tree app`, `curl /v3/docs | wc -l`, `curl /v3/docs | tail -200` — **it re-read the vendor docs endpoint
+three times in six calls.** Its own todo still reads `[ ] Build project structure and module layout` after
+95 minutes. Spend **$8.54 -> $12.17**, 75% over the $6.97 projection, with bytes flat at 152KB since 23:14.
+
+**IT IS EXPLORING, NOT BUILDING** — the opposite failure to qwen3.8-27b, which composed the app inside its
+reasoning channel and made no calls at all. Same symptom in the tick (nothing landing), opposite cause.
+That is precisely why the tick now shows calls AND bytes AND thinking: any one of them alone reads the
+wrong story.
+
+**NOT STOPPED.** A detector flag is a reason to LOOK, never to act — the rule earned on 27b, which unfroze
+by itself twenty minutes after I recommended killing it. Reported to Mihai with the evidence; his call.
+
 ## Standing constraints — absolute, never negotiate them
 
 - **NO SPEND CAP MAY EVER BIND ON A CLOUD RUN.** Mihai, 2026-08-28: *"don't put caps on models or runs
