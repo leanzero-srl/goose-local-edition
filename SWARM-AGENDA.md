@@ -137,6 +137,16 @@ runs several rounds and the gaps arrive in the later ones.
 
 ## Evidence worth acting on
 
+- **BEST OPEN YET (13:23:40Z, 1982s).** 139 components enumerated across parts of 25/57/57 with **0
+  unowned in every part**, and 12 slices that are the request's own components: ledgerd-core, vendor-sync,
+  event-ledger-outbox, webhook-handling, approval-workflow, notifierd-service, ledgerd-api,
+  frontend-structure-style, frontend-behavior, decisions-readme, frontend-3d-rendering,
+  frontend-3d-interaction. No coverage_gap was needed — OPEN got it right first time.
+  - The BALANCED SPLITTER is confirmed: 25/57/57 against the previous run's 72/9.
+  - Judge health: 2 nudges, 3 abandoned probes for the whole phase, against 213 abandoned on ONE lane
+    two runs ago.
+  - Cost: OPEN 33 min against 20 min, for 139 enumerated components against 49. Worth it.
+
 - **LENS 3, measured this run — one fix works, one did not.** Abandoned judge probes: 213 on one lane
   before, 1 worst-lane / 2 total now — the storm fix WORKS. But coverage lanes were still judged `looping`
   at produced_since_last_look 4000 and 4001, because the recurrence sentence asserted "a healthy advancing
