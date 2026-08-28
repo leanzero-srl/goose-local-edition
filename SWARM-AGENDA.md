@@ -41,6 +41,11 @@ Make the swarm BUILD BETTER SOFTWARE on local models, then beat the published `b
   the Electron binary only; `Resources/bin/goose swarm run` survived, reparented to launchd, and drove all
   three nodes for ~25 minutes after the window closed. `launch.sh` already had the right patterns — I
   retyped a shorter version instead of calling it. If a procedure exists, CALL IT.
+- **THE FLEET LINE MUST REPORT THE TOTAL, NOT JUST THE SPLIT.** MEASURED 2026-08-28: the tick printed
+  "1 generating / 1 idle" for a fleet that had THREE nodes — one row was transiently absent from `lms ps`
+  and nothing in the line said so, so a two-node fleet read as normal. A node missing from `lms ps` is
+  exactly the departed-node case `live_fleet_slots` exists to handle, and the tick has to be able to see
+  it. `tick.py` now prints `N generating / N idle / N nodes` and flags a total under 3.
 - **THE TICK IS A SCRIPT: `python3 ~/goose-builds/loop-state/tick.py`.** Do not retype the reader. Three
   times today a hand-written check answered a NEIGHBOURING question and read as healthy: `pgrep -f
   run_build.py` matched the shell running the tick; a build-progress grep for cargo/rustc/electron/node
