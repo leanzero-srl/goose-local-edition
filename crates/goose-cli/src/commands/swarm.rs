@@ -25147,6 +25147,67 @@ pub(crate) struct CoverageOutput {
     components: Vec<CoverageComponent>,
 }
 
+/// Cut a request into `n` portions of roughly equal CHARACTER COUNT, in order, never splitting a paragraph.
+///
+/// NOTHING TO DO WITH ANY DEVICE WEIGHT. This function sees only the request text and a lane count; it
+/// touches no config, no device and no scheduler state. The word is avoided deliberately, because this
+/// codebase already gives "weight" four unrelated meanings and a fifth would be a bug waiting to happen:
+///   - `SwarmDevice.weight`      max CONCURRENT tasks on a device (`in_flight < weight`)
+///   - `DeviceCfg.speed_weight`  routing preference — how fast a host is relative to its siblings
+///   - `swarm.speed_weights`     the substring map that feeds the above
+///   - `OpenSlice.weight`        the opener's own 1-5 estimate of how big a slice is
+/// This is none of them. It decides only where the cuts fall in a string.
+///
+/// The fans cut by paragraph COUNT, and measured on the 2026-08-28 run that put 72 components in part 1
+/// against 9 in part 3: one lane ground for 25 minutes while two sat idle, and the deepest part of the
+/// request got the shallowest read. Paragraph count is not work — a spec's sections differ by an order of
+/// magnitude in what they ask for, and the character count tracks that far better than the newline count.
+///
+/// Greedy in document order, so part 1 is still the opening of the request and a reader is never handed a
+/// discontiguous jumble. A paragraph longer than a whole target bucket lands alone rather than being cut
+/// mid-sentence; that is the honest failure for a request written as one enormous block.
+///
+/// This is not a cap: nothing is truncated, dropped or bounded. Every character still reaches exactly one
+/// lane. It only decides WHERE the cuts fall.
+fn cut_request_into_portions(text: &str, n: usize) -> Vec<String> {
+    let paras: Vec<&str> = text
+        .split("\n\n")
+        .filter(|p| !p.trim().is_empty())
+        .collect();
+    if n <= 1 || paras.len() <= n {
+        return paras.iter().map(|p| p.to_string()).collect();
+    }
+    let total: usize = paras.iter().map(|p| p.chars().count()).sum();
+    let target = total.div_ceil(n).max(1);
+    let mut out: Vec<String> = Vec::new();
+    let mut cur: Vec<&str> = Vec::new();
+    let mut cur_len = 0usize;
+    for (i, p) in paras.iter().enumerate() {
+        cur.push(p);
+        cur_len += p.chars().count();
+        let paras_left = paras.len() - i - 1;
+        // Buckets still to open AFTER this one is closed.
+        let buckets_left = n.saturating_sub(out.len() + 1);
+        if buckets_left == 0 {
+            continue; // the last bucket takes the whole remainder
+        }
+        // Close when this bucket holds its share, OR when the paragraphs left would not otherwise fill
+        // the buckets left. The second rule is what makes the lane count come out right: without it a
+        // single heavy paragraph early on swallows the target and the tail rides in one bucket, so the
+        // fan silently runs on fewer lanes than the fleet has — the idle-node defect this exists to fix,
+        // reproduced by its own test at 2 portions for 3 lanes.
+        if cur_len >= target || paras_left <= buckets_left {
+            out.push(cur.join("\n\n"));
+            cur = Vec::new();
+            cur_len = 0;
+        }
+    }
+    if !cur.is_empty() {
+        out.push(cur.join("\n\n"));
+    }
+    out
+}
+
 /// COVERAGE returns the whole component -> owner TABLE, not just the gaps.
 ///
 /// MEASURED across three runs: coverage was asked to "find the slice that owns" each part of the request
@@ -25645,15 +25706,7 @@ impl GooseAgentDispatcher {
             return Vec::new();
         }
         // One portion per lane, cut at a blank line so no component is severed mid-description.
-        let parts: Vec<String> = {
-            let paras: Vec<&str> = user_prompt.split("\n\n").collect();
-            let per = paras.len().div_ceil(lanes.len().max(1));
-            paras
-                .chunks(per.max(1))
-                .map(|c| c.join("\n\n"))
-                .filter(|c| !c.trim().is_empty())
-                .collect()
-        };
+        let parts: Vec<String> = cut_request_into_portions(user_prompt, lanes.len().max(1));
         let listing = slices
             .iter()
             .map(|s| format!("- {} — {}: {}", s.id, s.title, s.objective))
@@ -26443,15 +26496,7 @@ impl GooseAgentDispatcher {
             let m = lanes.first().cloned().unwrap_or_default();
             return self.review_plan(&m, user_prompt, plan_json).await;
         }
-        let parts: Vec<String> = {
-            let paras: Vec<&str> = user_prompt.split("\n\n").collect();
-            let per = paras.len().div_ceil(lanes.len().max(1));
-            paras
-                .chunks(per.max(1))
-                .map(|c| c.join("\n\n"))
-                .filter(|c| !c.trim().is_empty())
-                .collect()
-        };
+        let parts: Vec<String> = cut_request_into_portions(user_prompt, lanes.len().max(1));
         let total = parts.len();
         let me = self.clone();
         let plan = plan_json.to_string();
@@ -40999,5 +41044,98 @@ mod coverage_table_tests {
         assert_eq!(slugify_slice_id("Approval workflow"), "approval-workflow");
         assert_eq!(slugify_slice_id("  3D field / scene  "), "3d-field-scene");
         assert_eq!(slugify_slice_id("!!!"), "");
+    }
+}
+
+#[cfg(test)]
+mod request_portion_tests {
+    use super::*;
+
+    fn para(tag: &str, n: usize) -> String {
+        format!("{tag} {}", "x".repeat(n))
+    }
+
+    /// EVERY CHARACTER REACHES EXACTLY ONE LANE. This splits work; it never bounds it. A portion cut is
+    /// not a cap, and a request must never lose a section to the fan that was meant to read it properly.
+    #[test]
+    fn nothing_is_dropped_and_order_is_preserved() {
+        let text = format!(
+            "{}\n\n{}\n\n{}\n\n{}\n\n{}",
+            para("A", 10),
+            para("B", 900),
+            para("C", 10),
+            para("D", 10),
+            para("E", 900)
+        );
+        let parts = cut_request_into_portions(&text, 3);
+        assert_eq!(parts.len(), 3, "one portion per lane: {parts:?}");
+        let rejoined: String = parts.join("\n\n");
+        for tag in ["A", "B", "C", "D", "E"] {
+            assert_eq!(
+                rejoined.matches(&format!("{tag} ")).count(),
+                1,
+                "{tag} must appear exactly once across the portions"
+            );
+        }
+        let a = rejoined.find("A ").unwrap();
+        let e = rejoined.find("E ").unwrap();
+        assert!(
+            a < e,
+            "document order is preserved so part 1 is still the opening"
+        );
+    }
+
+    /// THE DEFECT THIS FIXES, as measured: cutting by paragraph COUNT put 72 components in part 1 against
+    /// 9 in part 3. Four tiny paragraphs and one huge one must not put the huge one alone with three
+    /// crumbs beside it.
+    #[test]
+    fn a_heavy_section_does_not_leave_the_other_lanes_with_crumbs() {
+        let text = format!(
+            "{}\n\n{}\n\n{}\n\n{}",
+            para("tiny1", 20),
+            para("tiny2", 20),
+            para("tiny3", 20),
+            para("huge", 3000)
+        );
+        let by_count: Vec<usize> = text
+            .split("\n\n")
+            .collect::<Vec<_>>()
+            .chunks(2)
+            .map(|c| c.join("\n\n").chars().count())
+            .collect();
+        let by_weight: Vec<usize> = cut_request_into_portions(&text, 2)
+            .iter()
+            .map(|p| p.chars().count())
+            .collect();
+        let spread = |v: &[usize]| v.iter().max().unwrap() / v.iter().min().unwrap().max(&1);
+        assert!(
+            spread(&by_weight) < spread(&by_count),
+            "weighted cut must be more even than the paragraph-count cut: {by_weight:?} vs {by_count:?}"
+        );
+    }
+
+    #[test]
+    fn fewer_paragraphs_than_lanes_just_gives_one_each() {
+        let text = format!("{}\n\n{}", para("A", 5), para("B", 5));
+        assert_eq!(cut_request_into_portions(&text, 5).len(), 2);
+    }
+
+    /// IT IS NOT A DEVICE WEIGHT. The only inputs are a string and a lane count — no config, no device,
+    /// no scheduler state — so it cannot perturb `SwarmDevice.weight` (concurrency),
+    /// `DeviceCfg.speed_weight` (routing), `swarm.speed_weights` (the substring map) or
+    /// `OpenSlice.weight` (the opener's size estimate). Same text and lane count, same answer, always.
+    #[test]
+    fn the_cut_depends_only_on_the_text_and_the_lane_count() {
+        let text = format!(
+            "{}\n\n{}\n\n{}",
+            para("A", 300),
+            para("B", 300),
+            para("C", 300)
+        );
+        assert_eq!(
+            cut_request_into_portions(&text, 3),
+            cut_request_into_portions(&text, 3)
+        );
+        assert_eq!(cut_request_into_portions(&text, 3).len(), 3);
     }
 }
