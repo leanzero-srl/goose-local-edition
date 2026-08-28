@@ -120,6 +120,19 @@ runs several rounds and the gaps arrive in the later ones.
 
 ## Evidence worth acting on
 
+- **THE DECOMPOSITION PROBLEM IS SOLVED (11:29:59Z, first verified sb-7 run).** 13 slices in 1181s:
+  boot-contract, vendor-sync, **event-ledger-outbox**, **webhook-handling**, **approval-workflow**,
+  ledgerd-api, **notifierd-service**, frontend-html, frontend-css, frontend-app-js, **decisions-docs**,
+  **viz-rendering-engine**, **viz-interaction**. Those are the REQUEST'S components, not program layers.
+  Every previous run scored 2 of 11 named components; this is 9+. Coverage enumerated 49 across three
+  parts with 0 unowned. This is what the enumerate-and-prove rewrite was for.
+- **MY OWN DEFECT, found the same tick: 213 abandoned judge looks on one lane.** open-coverage-2
+  dispatched 218 and abandoned 213, looks 2-214 over 838s. Once a stream ends mid-probe the loop drains
+  its deferred events, and the judge trigger — which sits at the TOP of that loop — fired again on each
+  one, dispatching a fresh probe against an ended stream. Correctness was fine (abandoning is the right
+  behaviour) but it is 213 started-and-dropped model calls, scaling with the deferred backlog rather than
+  with anything real. Fixed by teaching the trigger that an ended call is not worth looking at.
+
 - **THE COVERAGE-OBJECTIVE FIX WORKS (measured 11:19-11:24Z).** BEFORE it, `looping` fired on coverage
   lanes at `produced_since_last_look=4003` — calls producing healthily, judged as looping because the
   table's rows repeat. AFTER it, looping fires only at `produced=1,2,3` — a genuine stall — and the
