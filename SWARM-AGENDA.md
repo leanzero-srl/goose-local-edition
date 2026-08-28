@@ -182,6 +182,17 @@ and whether any nudge still fires on a call producing >=2000.
   and nothing in the line said so, so a two-node fleet read as normal. A node missing from `lms ps` is
   exactly the departed-node case `live_fleet_slots` exists to handle, and the tick has to be able to see
   it. `tick.py` now prints `N generating / N idle / N nodes` and flags a total under 3.
+- **NEVER READ A BUILD'S SUCCESS FROM A PIPELINE, AND NEVER FROM AN UNFINISHED BACKGROUND TASK.**
+  MEASURED 2026-08-28, and it cost a BROKEN COMMIT on `local-edition`: I ran
+  `cargo build ... | grep -E '^error' -A 8 | head -14; echo "exit=$?"`. `$?` there is HEAD's exit code,
+  never cargo's — and when the same command ran in the background I read its output file BEFORE the
+  compile had written anything, saw no errors, and committed. `goose-cli` had FOUR errors
+  (`serde_json::json!` cannot take a block containing `let` in a value position; it reports it as
+  "comparison operators cannot be chained" pointing at an unrelated turbofish).
+  THE RULE: redirect to a file, capture cargo's OWN `$?` on the line immediately after, and print an
+  explicit `BUILD OK` only on `-eq 0`. Absence of matched error lines is NOT success — it is also what an
+  empty file looks like. This is the third instance today of a check answering a neighbouring question,
+  and the first one that reached a commit.
 - **THE TICK IS A SCRIPT: `python3 ~/goose-builds/loop-state/tick.py`.** Do not retype the reader. Three
   times today a hand-written check answered a NEIGHBOURING question and read as healthy: `pgrep -f
   run_build.py` matched the shell running the tick; a build-progress grep for cargo/rustc/electron/node
