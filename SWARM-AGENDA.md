@@ -137,6 +137,21 @@ runs several rounds and the gaps arrive in the later ones.
 
 ## Evidence worth acting on
 
+- **QWEN3.8-FLASH / 27B ARE BLOCKED ON THE ENGINE, not on credentials or the guard.** Preflight passes:
+  the roster PROVES `qwen3.8-flash` exists under the Token Plan, the keychain credential reads without a
+  prompt, ports are free, the website entrants are registered. The SMOKE fails:
+  `Qwen request 0 violates Chat contract: max_completion_tokens, enable_thinking, preserve_thinking,
+  unsupported:max_tokens`. The Token Plan needs `max_completion_tokens` equal to the declared cap,
+  `enable_thinking: true`, `preserve_thinking`, and NO `max_tokens`.
+  The sealed cloud binary CONTAINS all three field names and the literal `qwen3.8-max`, so it speaks that
+  contract — for that ONE model. `crates/.../definitions/alibaba.json` lists qwen3.7-max, qwen3.6-*,
+  qwen3-max, qwen-plus, qwen-turbo, qwen-flash and NO qwen3.8-* at all, and **no ref in this repo declares
+  `qwen3.8-max` anywhere under crates/** (verified with a positive control). The source that taught the
+  engine that model is not in any branch here — it exists only inside the sealed binary.
+  SO: teaching flash/27b means writing the token-plan contract into the alibaba provider and building a
+  NEW cloud binary, which also raises a comparability question for the board (other entrants ran the
+  grok46-sealed binary). Nothing was spent: $0.0020 of a $60 guard, and the campaign is stopped.
+
 - **THE CLARIFY-PROXY RACE FIX IS CONFIRMED IN PRODUCTION (13:23:40-13:25:20Z).**
   ask 13:23:40 -> proxy armed + question asked 13:23:40 -> answered 13:25:19 -> low_confidence_answered
   13:25:20 -> research 13:25:20. The run WAITED 99 SECONDS for the proxy and NO
