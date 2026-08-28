@@ -16,6 +16,7 @@ import { useSwarmLogMode, SWARM_LOG_MODES } from '../../swarm/useVerboseSwarm';
 import {
   type SwarmConfig,
   type SwarmDeviceRow,
+  nodeRows,
   DEFAULTS,
   RESEARCH_MODES,
   type ResearchMode,
@@ -370,6 +371,11 @@ const CLOUD_PROVIDERS = [
 type CloudProviderDef = (typeof CLOUD_PROVIDERS)[number];
 const chipFor = (provider: string | null | undefined) =>
   CLOUD_PROVIDERS.find((c) => c.cli === provider) ?? null;
+/** A node is local unless a cloud provider claims it. Local gets its own solid hue so EVERY row in the
+ *  Nodes list is labelled by what serves it — the list is node-first, so the provider has to travel with
+ *  the node rather than being a mode the whole panel is in. */
+const LOCAL_CHIP = { seg: 'LM Studio', chip: '#1d4ed8' } as const;
+const NODE_LETTERS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
 
 const NODE_PROVIDERS = ['LM Studio', ...CLOUD_PROVIDERS.map((c) => c.seg)] as [string, ...string[]];
 type NodeProvider = string;
@@ -782,26 +788,20 @@ export default function SwarmSettingsSection() {
   const activeCloudDevices = activeCloud
     ? configuredDevices.filter((d) => d.provider === activeCloud.cli)
     : [];
-  const weightRows =
-    configuredDevices.length > 0
-      ? configuredDevices.map((d) => {
-          const chip = chipFor(d.provider);
-          return {
-            id: d.id,
-            // A cloud id like `us.anthropic.claude-…` has no `<node>-` prefix; derive nothing from it.
-            name: chip ? d.model_id : deviceFromModelId(d.model_id) || d.id,
-            chip,
-            modelId: d.model_id,
-            supervises: d.supervision === true,
-          };
-        })
-      : fleet.models.map((m) => ({
-          id: m,
-          name: deviceFromModelId(m),
-          chip: null,
-          modelId: m,
-          supervises: configuredDevices.some((d) => d.model_id === m && d.supervision === true),
-        }));
+  // EVERY node the swarm would actually run, in one list. `nodeRows` (golden.ts) owns the union so the
+  // test exercises the shipped rule rather than a copy of it.
+  const weightRows = nodeRows(configuredDevices, fleet.models).map((r) => {
+    const chip = chipFor(r.provider);
+    return {
+      id: r.id,
+      name: chip ? r.modelId : deviceFromModelId(r.modelId) || r.id,
+      chip,
+      provider: chip ? chip.seg : LOCAL_CHIP.seg,
+      providerChip: chip ? chip.chip : LOCAL_CHIP.chip,
+      modelId: r.modelId,
+      supervises: r.supervises,
+    };
+  });
   const weightFor = (id: string): number => {
     const sw = cfg.speed_weights ?? {};
     if (id in sw) return sw[id] ?? 1; // exact device-id key wins (avoids substring collisions)
@@ -863,14 +863,15 @@ export default function SwarmSettingsSection() {
               {weightRows.map((row) => (
                 <div key={row.id} className="flex items-center justify-between gap-3 py-0.5">
                   <span className="min-w-0 flex items-center gap-2">
-                    {row.chip && (
-                      <span
-                        className="text-[10px] font-bold px-1.5 py-0.5 text-background-primary shrink-0"
-                        style={{ backgroundColor: row.chip.chip, borderRadius: 3 }}
-                      >
-                        {row.chip.seg.toUpperCase()}
-                      </span>
-                    )}
+                    <span className="text-[10px] font-bold text-text-secondary shrink-0 w-12 uppercase tracking-wide">
+                      Node {NODE_LETTERS[weightRows.indexOf(row)] ?? '+'}
+                    </span>
+                    <span
+                      className="text-[10px] font-bold px-1.5 py-0.5 text-background-primary shrink-0"
+                      style={{ backgroundColor: row.providerChip, borderRadius: 3 }}
+                    >
+                      {row.provider.toUpperCase()}
+                    </span>
                     <span className="text-sm font-mono text-text-primary truncate" title={row.id}>
                       {row.name}
                     </span>

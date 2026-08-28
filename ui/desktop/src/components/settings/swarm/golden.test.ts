@@ -6,6 +6,7 @@ import {
   detectPreset,
   presetPatch,
   type SwarmConfig,
+  nodeRows,
 } from './golden';
 
 describe('swarm golden preset', () => {
@@ -99,5 +100,40 @@ describe('swarm golden preset', () => {
         undefined
       );
     }
+  });
+});
+
+describe('nodeRows — the Nodes list is node-first and shows every node', () => {
+  const local = ['gabee-qwen3.8-27b', 'mihai-qwen3.8-27b', 'workhorse-qwen3.8-27b'];
+
+  /** THE REGRESSION. The panel used to render `devices.length > 0 ? devices : fleet.models`, so adding a
+   *  single cloud node made all three local nodes disappear from settings while the engine still ran them. */
+  it('keeps the local fleet visible after a cloud node is added', () => {
+    const rows = nodeRows(
+      [{ id: 'zai-glm', model_id: 'glm-5.3-flash', weight: 2, enabled: true, provider: 'zai' }],
+      local
+    );
+    expect(rows).toHaveLength(4);
+    expect(rows.filter((r) => r.provider === null).map((r) => r.modelId)).toEqual(local);
+    expect(rows[0].provider).toBe('zai');
+  });
+
+  it('does not list a local model twice once it has a device row', () => {
+    const rows = nodeRows(
+      [{ id: 'mihai', model_id: 'mihai-qwen3.8-27b', weight: 1, enabled: true }],
+      local
+    );
+    expect(rows).toHaveLength(3);
+    expect(rows.filter((r) => r.modelId === 'mihai-qwen3.8-27b')).toHaveLength(1);
+    expect(rows[0].configured).toBe(true);
+  });
+
+  it('carries the supervisor flag through', () => {
+    const rows = nodeRows(
+      [{ id: 'w', model_id: 'workhorse-qwen3.8-27b', weight: 1, enabled: true, supervision: true }],
+      local
+    );
+    expect(rows.find((r) => r.modelId === 'workhorse-qwen3.8-27b')?.supervises).toBe(true);
+    expect(rows.filter((r) => r.supervises)).toHaveLength(1);
   });
 });

@@ -370,3 +370,28 @@ export function presetPatch(values: SwarmConfig): Partial<SwarmConfig> {
   }
   return patch;
 }
+
+/** Every node the swarm would actually run, in one list, in pool order: the configured devices first,
+ *  then any resident LM Studio model that has no device row yet.
+ *
+ *  This used to be either/or in the panel — configured devices OR the live fleet — so the moment a single
+ *  cloud node was added, the three local nodes disappeared from the settings list while still being in the
+ *  pool the engine ran. A node-first list that shows a subset of the nodes is worse than no list.
+ */
+export function nodeRows(
+  devices: SwarmDeviceRow[],
+  fleetModels: string[]
+): Array<{ id: string; modelId: string; provider: string | null; supervises: boolean; configured: boolean }> {
+  const rows = devices.map((d) => ({
+    id: d.id,
+    modelId: d.model_id,
+    provider: d.provider ?? null,
+    supervises: d.supervision === true,
+    configured: true,
+  }));
+  for (const m of fleetModels) {
+    if (devices.some((d) => d.model_id === m)) continue;
+    rows.push({ id: m, modelId: m, provider: null, supervises: false, configured: false });
+  }
+  return rows;
+}
