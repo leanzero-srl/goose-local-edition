@@ -8,6 +8,53 @@ That already happened once and cost a whole night: the run was killed and nothin
 Make the swarm BUILD BETTER SOFTWARE on local models, then beat the published `brun-fleet-qwen38-brainwaves-sb70`
 (0.0273) on leanzero.net. Numbers follow from the product, not the other way round.
 
+## THE HARD QUESTION, measured 2026-08-28 — one qwen3.8-27b beat our whole fleet of the SAME MODEL
+
+Mihai: *"if the cloud 27b managed, ours must manage much better... otherwise all of our mechanisms are
+proven invalid... what have we done that is wrong and how can one single qwen3.8 27b do so much better?"*
+
+**THE NUMBERS, and they are not close:**
+
+| | wall clock | app files | code written |
+|---|---|---|---|
+| our 3-node swarm | **136 min** | **0** | **0 bytes** |
+| cloud qwen3.8-27b, ONE agent, no planning | 106 min | 9 incl. the whole frontend | 163,962 B |
+| cloud glm-5.3-flash, ONE agent | 72.5 min | 14 | 167,555 B — **PUBLISHED 41.59%** |
+
+Our planning phase alone is **1.9x the entire winning run**. Phase split: open 55.6 · ask 1.3 ·
+research 25.9 · synthesis 7.4 · review 46.2.
+
+**THE SINGLE MOST DAMNING NUMBER: we wrote 140,680 characters of SPECIFICATION before one line of code.**
+That is 86% of the character count of the winner's entire finished codebase. We produced a shadow of the
+program in English instead of the program.
+
+**WHY THE SINGLE AGENT WINS — the mechanism, not the excuse.** It writes `ledgerd.py`, then writes
+`notifierd.py` HAVING SEEN `ledgerd.py`. Coherence is free because there is one context. Our parallelism
+destroys that coherence, so we spend the whole budget rebuilding it IN ADVANCE, in prose — and prose can
+never be as good as looking at the code. We pay an enormous upfront cost to approximate something the
+serial agent gets for nothing.
+
+**WHAT IS ACTUALLY OVER-ENGINEERED — ranked, with the evidence:**
+1. **Everything waits for everything.** No task starts building until all 21 briefs, the DAG and every
+   REVIEW round are done. A slice whose brief is ready could build while others are still researched.
+   This is the same fix Mihai already approved for coverage, applied to BUILD. Biggest single win.
+2. **Over-decomposition: 21 slices for a 9-14 file product.** Every slice costs an OPEN entry, a coverage
+   row, a ~6.7k-char brief, a DAG task, a contract stub, a BUILD lane and a REVIEW pass — seven phases
+   times 21 units, for something that is 9 files. Decompose at roughly FILE granularity.
+3. **Brief size: 6,443 chars MEDIAN.** A specification longer than the file it describes will be
+   contradicted by the code. Interface + edge cases, not prose.
+4. **REVIEW round 2 cost ~20 min for 2 findings.** Round 1 gave 5.
+5. **Coverage ran 6 rounds; the later ones found 3 components of 79.** Already moved off the critical
+   path; the rounds themselves are still the cheapest thing to cap.
+6. **The judge's net contribution THIS RUN IS NEGATIVE.** 141 looks, 13 nudges, every one a re-stream
+   that discarded a call's work. Two fixes landed (burst-gap rhythm, steer-lands-mid-generation) but the
+   honest accounting is that supervision has destroyed more than it saved so far.
+
+**THE THING WE CANNOT YET CLAIM.** The swarm's whole thesis is that parallel BUILD beats serial build.
+**We have never reached BUILD.** So no mechanism here is proven either way — not the decomposition, not
+the contracts, not the fan. The falsifier the plan already names is node occupancy during BUILD, and we
+have never measured it. Until a run reaches BUILD, "our mechanisms are invalid" is unfalsified, not false.
+
 ## Standing constraints — absolute, never negotiate them
 
 - **NO SPEND CAP MAY EVER BIND ON A CLOUD RUN.** Mihai, 2026-08-28: *"don't put caps on models or runs
