@@ -16782,6 +16782,9 @@ impl GooseAgentDispatcher {
             }
         }
 
+        // Captured before the move: the judge loop below needs to know whether this call OWES a
+        // structured reply, which is what makes "zero tool calls" a failure rather than a style.
+        let wants_structured_reply = response.is_some();
         agent.apply_recipe_components(response, true).await;
         agent.override_system_prompt(system_prompt).await;
 
@@ -17485,6 +17488,29 @@ impl GooseAgentDispatcher {
                         )
                     }
                 };
+                // THE SAME BLINDNESS, FOR A CALL WHOSE DELIVERABLE IS A STRUCTURED REPLY RATHER THAN A
+                // FILE. `owned_block` above covers build tasks; a planning lane owns nothing, so it stays
+                // empty and the judge again reads "enormous reasoning, no actions" as thinking hard.
+                //
+                // MEASURED, run swarm-3node-r0: `open-coverage-1` reached 144,935 characters with ZERO
+                // tool calls across five nudges — the last two literally "call final_output NOW" — while
+                // two of three nodes sat idle waiting on it. Every verdict was DRIFTING, never LOOPING,
+                // because it genuinely produced ~4,000 FRESH characters between looks. It was not looping.
+                // It was enumerating forever into a channel that is not the deliverable.
+                let structured_block = if wants_structured_reply && call_records.is_empty() {
+                    format!(
+                        "\n\nTHIS CALL'S DELIVERABLE IS A SINGLE STRUCTURED REPLY, made by calling its \
+                         output tool. IT HAS NOT CALLED IT ONCE, and it has written \
+                         {thinking_chars} characters of reasoning instead. Reasoning is not the \
+                         deliverable here and no later phase can read it — if this call ends without that \
+                         tool call, everything it worked out is discarded and the phase gets nothing. \
+                         Whatever it has enumerated so far is enough to submit: tell it to call the \
+                         output tool NOW with what it already has. A partial table that exists beats a \
+                         complete one that is still being composed."
+                    )
+                } else {
+                    String::new()
+                };
                 let earlier_block = match recur.earlier() {
                     Some(e) => format!(
                         "\n\nReasoning from EARLIER in this same call (tens of thousands of characters \
@@ -17497,7 +17523,7 @@ impl GooseAgentDispatcher {
                      Judge it against THAT job, not against the wider build. A call doing its own job \
                      correctly is OK even when it is writing no code, because most jobs here are not \
                      coding jobs.\n\n\
-                     It has emitted {thinking_chars} characters of reasoning.{rate_block}{answer_block}{owned_block}{measured}{earlier_block}\
+                     It has emitted {thinking_chars} characters of reasoning.{rate_block}{answer_block}{owned_block}{structured_block}{measured}{earlier_block}\
                      \n\nMost recent reasoning:\n{tail}\n\n\
                      Commands it ran, newest first, WITH WHAT THEY PRINTED. Read these before you decide: \
                      if it already ran the check you were about to ask for and the output does not show \
