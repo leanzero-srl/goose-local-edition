@@ -17235,6 +17235,16 @@ impl GooseAgentDispatcher {
                      what it SAID; do not invent. Leave empty only if it has established nothing.\n\
                      NEXT         the single most concrete next action toward the goal. Name the file, the \
                      command, or the function. Never \"continue\" or \"proceed\".\n\
+                     ASK FOR THE SMALLEST ACTION THAT LEAVES A TRACE, NEVER THE WHOLE DELIVERABLE. \
+                     A call that has produced no action yet is usually composing the entire artefact \
+                     inside its reasoning and waiting until it is perfect to emit it — and it never \
+                     becomes perfect. MEASURED: a task owning `web/viz.js` took 13 nudges over 76 \
+                     minutes, every one of them asking for the complete file (\"WebGL context, orbit \
+                     camera, picking\"), and wrote nothing at all. So if it owns a file, name the file \
+                     and ask for a FIRST MINIMAL VERSION it can extend — the stub, the imports, one \
+                     function. If its deliverable is a structured reply, tell it to emit what it has \
+                     NOW and refine after. A thing that exists can be improved; a thing being perfected \
+                     in silence cannot.\n\
                      A DIRECTION THAT RESTATES THE BRIEF IS NOT A DIRECTION. If the most concrete thing \
                      you can name is the job the call was already given, you have nothing to add and the \
                      verdict is OK — say so and let it work. MEASURED twice on one run: the direction \
