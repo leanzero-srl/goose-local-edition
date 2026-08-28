@@ -120,6 +120,11 @@ runs several rounds and the gaps arrive in the later ones.
 
 ## Evidence worth acting on
 
+- **THE FIRST VALID LOCAL RUN of 2026-08-28 started 10:44Z** through the Benchmark view. All three
+  conditions hold and were checked from the run's own events, not the UI: `run_build.py --sb7` running,
+  its own vendor answering /v3/docs 200, `secrets_source {store:"file"}`, `levers_resolved
+  {benchmark:true}`. Everything before this was a chat with a placeholder spec and no vendor.
+
 - **THE CHAIN THAT KILLED RUN swarm-3node-r0 (archived -KILLED-restream-killed-coverage-lanes-1008).**
   Four links, and each is worth keeping straight:
   1. The new coverage deliverable IS a table — dozens of near-identical rows. The recurrence detector
