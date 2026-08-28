@@ -16937,7 +16937,21 @@ impl GooseAgentDispatcher {
                 let t: String = texts[texts_at_stream_start.min(texts.len())..].concat();
                 t.len() >= 400 && t.trim().is_empty()
             };
+            // A CALL THAT HAS ENDED IS NOT WORTH LOOKING AT, and looking costs a model call.
+            //
+            // When the worker's stream ends while a probe is in flight, the probe is abandoned and the
+            // loop drains whatever was deferred. But the judge trigger sits at the TOP of that loop and
+            // knew nothing about the ending, so every remaining deferred event gave it another chance to
+            // fire — each firing dispatching a fresh probe against a stream that returns None instantly,
+            // and abandoning it.
+            //
+            // MEASURED on this run: open-coverage-2 dispatched 218 looks and abandoned 213 of them, looks
+            // 2 through 214, over 838 seconds. Every one of those started an HTTP request to a model and
+            // dropped it. Harmless to correctness — the abandon path is exactly what should happen once —
+            // but it is 213 model calls of pure waste on one lane, and it scales with the deferred
+            // backlog rather than with anything real.
             if omni_judge_on
+                && !stream_ended_during_probe
                 && (repeat_evidence.is_some()
                     || degenerate_answer
                     || ((thinking_total >= OMNI_JUDGE_MIN_CHARS || acted_enough_to_judge)
