@@ -182,7 +182,20 @@ runs several rounds and the gaps arrive in the later ones.
       reliably prefixes `\n\n`. It emitted the marker byte-for-byte otherwise, so the comparison now
       ignores surrounding whitespace only. Smoke is a pre-flight gate and feeds no published score.
       First root archived `-KILLED-smoke-marker-whitespace`.
-- [ ] **S. deepseek-v4-flash-vision-exp — BLOCKED BY AN ACCOUNT SETTING ONLY MIHAI CAN CHANGE.**
+- [ ] **S. deepseek-v4-flash-vision-exp — UNBLOCKED 2026-08-28, PREFLIGHT PASSES, QUEUED BEHIND 27b.**
+      Mihai toggled the OpenRouter privacy settings and DeepSeek-the-provider came back into the roster.
+      VERIFIED BY A REAL COMPLETION, not by the roster: `content='VISION_OK'`, reasoning present,
+      finish=stop, provider=DeepSeek. (A first 16-token probe returned `content: None` because reasoning
+      consumed the budget — a 200 with empty content is not a working model, so it was re-tested at 600.)
+      Staged at `~/goose-builds/ds-stage`, vendor port 9143, cap $4, registered on the website as
+      `deepseek-v4-flash-vision-exp` -> `brun-baseline-deepseek-v4-flash-vision-exp-sb70`.
+      **RISK, same shape as flash: ONE endpoint (DeepSeek first-party), so no failover.** If it hits an
+      upstream rate limit mid-episode, `terminal_safe_retry_limit: 0` makes it terminal. Fallback the user
+      already authorised is `deepseek/deepseek-v4-flash` (17 providers).
+      Launch when 27b finishes: `cd ~/goose-builds/ds-stage/evals/swarm-bench/bench && python3 cloud_sb7.py
+      init --root ~/goose-builds/cloud-sb7-dsvision-20260828-r0 --binary <sealed glm binary>
+      --publisher-repo ~/Projects/LeanZero-website --publish-live` then `smoke`.
+- [ ] **S-old. was BLOCKED BY AN ACCOUNT SETTING.**
       One endpoint, and the account rejects it: "No endpoints available matching your guardrail
       restrictions and data policy." A per-request `provider.data_collection: "allow"` does NOT override
       it. Needs a toggle at https://openrouter.ai/settings/privacy. `deepseek/deepseek-v4-flash` works
