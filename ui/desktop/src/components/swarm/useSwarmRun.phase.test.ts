@@ -380,3 +380,35 @@ describe('planning lanes include the calls that FAN', () => {
     expect(isPlanningDigestKey('verify::api')).toBe(false);
   });
 });
+
+describe("the judge's own ETA reaches the panel", () => {
+  /** The judge is asked for an `ETA=<n>m` on every look and answers — measured live, open-coverage-2
+   *  estimated 5, 5, 3, 3, 2 as it converged. Nothing consumed it, so the only "time left" on screen was
+   *  the panel's own extrapolation (elapsed / items_done x remaining). A model judgement was being
+   *  computed over rather than shown. */
+  it('keeps the LATEST estimate per task, because the judge revises as it reads', () => {
+    const folded = foldEvents(
+      [
+        OPEN,
+        { event: 'judge_look', task_id: 'open-coverage-2', eta_mins: 5, verdict: 'ok' },
+        { event: 'judge_look', task_id: 'open-coverage-2', eta_mins: 2, verdict: 'ok' },
+        { event: 'judge_look', task_id: 'open', eta_mins: 7, verdict: 'ok' },
+      ],
+      {
+        'open-coverage-2': { model: 'gabee-qwen', last_text: 'mapping components' },
+        open: { model: 'workhorse-qwen', last_text: 'cutting slices' },
+      }
+    );
+    const byId = Object.fromEntries(folded.planningLanes.map((l) => [l.taskId, l.judgeEtaMins]));
+    expect(byId['open-coverage-2']).toBe(2);
+    expect(byId['open']).toBe(7);
+  });
+
+  it('ignores a look that carries no estimate rather than inventing one', () => {
+    const folded = foldEvents(
+      [OPEN, { event: 'judge_look', task_id: 'open', verdict: 'ok', eta_mins: null }],
+      { open: { model: 'workhorse-qwen', last_text: 'cutting slices' } }
+    );
+    expect(folded.planningLanes.find((l) => l.taskId === 'open')?.judgeEtaMins).toBeUndefined();
+  });
+});

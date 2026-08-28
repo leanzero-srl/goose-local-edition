@@ -454,6 +454,23 @@ const LaneRow: React.FC<{
           </Tip>
         )}
         <span className="text-xs text-text-secondary tabular-nums shrink-0 flex items-center gap-1.5">
+          {/* THE JUDGE'S OWN ESTIMATE, shown only while the call is still running — the one number on this
+              screen produced by something that READ the work rather than extrapolated from item counts.
+              Solid amber, because it is a live claim that will be revised, not a settled fact. */}
+          {lane.status === 'running' && typeof lane.judgeEtaMins === 'number' ? (
+            <Tip
+              label={`The supervisor read this call and estimates ~${lane.judgeEtaMins} more minute${
+                lane.judgeEtaMins === 1 ? '' : 's'
+              } of work`}
+            >
+              <span
+                className="text-[10px] font-bold px-1.5 py-0.5 text-background-primary"
+                style={{ backgroundColor: '#d97706', borderRadius: 3 }}
+              >
+                ~{lane.judgeEtaMins}m
+              </span>
+            </Tip>
+          ) : null}
           {typeof lane.toolCalls === 'number' && lane.toolCalls > 0 ? (
             <Tip label={`${lane.toolCalls} tool call${lane.toolCalls === 1 ? '' : 's'} in this task`}>
               <span className="flex items-center gap-0.5">
