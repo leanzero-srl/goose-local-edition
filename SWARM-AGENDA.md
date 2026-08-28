@@ -161,6 +161,37 @@ a file, keeping both concerns named in the merged objective.
 occur, round 1's findings should concern COVERAGE rather than ownership, and REVIEW should reach its
 no-new-finding round instead of oscillating.
 
+## THE NEXT BUILD — what it must contain, and what it must prove
+
+Everything below is committed on `local-edition` and NONE of it is in the running binary (installed
+18:02 local). The run in flight is therefore a clean baseline for all of it.
+
+**THE TWO THAT MATTER MOST, both from the same root cause:**
+- OPEN merges slices that would share a file. Prevents the unsatisfiable plan — 10 frontend/viz slices
+  against 4 permitted files — that has held REVIEW for 80+ minutes with no fixed point.
+- REVIEW ends on a repeated plan STATE. An exact cycle proof, not a round cap; it would have caught this
+  run at round 3 instead of hour two.
+
+**THE JUDGE, five fixes:** ETA no longer becomes the direction · tail similarity cannot arm the streak on
+a producing call · silence is measured against the call's own recovered burst gap · a steer lands
+MID-GENERATION and keeps the partial · steer is the default delivery again, which also restores the
+DRIFTING path's stated justification.
+
+**THE REST:** brief concision · `plan_synthesized` before REVIEW with `distinct_files` /
+`tasks_sharing_a_file` · append-only reasoning transcript (kills the 24k tail clip) · the REVIEW file
+manifest · fleet node cards + full-stream modal · event log separates action from observation · fleet
+row needs corroboration before reading "working" · Alibaba Token Plan contract.
+
+**WHAT THE NEXT RUN MUST PROVE, in order of how damning failure would be:**
+1. `plan_synthesized.tasks_sharing_a_file` == 0. If not, OPEN's rule did not take and everything
+   downstream repeats.
+2. It REACHES BUILD. No run has. Until one does, the swarm's central thesis — that parallel build beats
+   serial build — is untested, and one cloud instance of the same model has 36 files to our 0.
+3. Time to the FIRST app file. Baseline: never, in 136 minutes.
+4. `judge_quiet_within_rhythm` > 0 and nudges delivered as `steer` rather than `restream`.
+
+Run `python3 ~/goose-builds/loop-state/compare_runs.py` — it scores all of this against the baseline.
+
 ## Standing constraints — absolute, never negotiate them
 
 - **NO SPEND CAP MAY EVER BIND ON A CLOUD RUN.** Mihai, 2026-08-28: *"don't put caps on models or runs
