@@ -398,6 +398,25 @@ file that exists can be extended.
 task, 12 fired, 2 with findings, working. `tail_review` — dimension reviews (`interface`, `wiring`),
 2 fired, no findings, working.
 
+## THE FIXES ARE WORKING — first measurements from run 2 (2026-08-28 20:24Z)
+
+| | run 1 (baseline) | run 2 | |
+|---|---|---|---|
+| OPEN | **55.6 min** | **9.2 min** | coverage moved off the critical path |
+| OPEN -> RESEARCH | 57 min | **11.2 min** | |
+| coverage | blocked OPEN, 6 rounds | runs BESIDE research | as designed |
+| slice names | 21, many per file | semantic, fewer | ledgerd-core, notifierd-service, webhook-event-ledger, vendor-sync, approval-workflow-ou…, frontend-structure-s… |
+
+`open@20:05:59 -> ask@20:15:11 -> research@20:17:11`. The single largest phase cost in the engine fell by
+**46 minutes**, and coverage lanes now run alongside slice research in the same tick. Still to confirm at
+SYNTHESIS: `plan_synthesized.tasks_sharing_a_file` must be **0**.
+
+**AND I BROKE MY OWN READER WITH TONIGHT'S CHANGE.** The engine now writes `<task>.log` and
+`<task>.think.log` beside each `<task>.json`; `tick.py` iterated the whole activity directory, so every
+lane appeared TWICE — once parsed, once as "(being written this instant)" — because `Path.stem` strips only
+the last suffix and `json.loads` fails on a transcript. **When you add files next to a file another tool
+reads, check that tool.** Fixed: the lane listing reads `.json` only.
+
 ## Standing constraints — absolute, never negotiate them
 
 - **NO SPEND CAP MAY EVER BIND ON A CLOUD RUN.** Mihai, 2026-08-28: *"don't put caps on models or runs
