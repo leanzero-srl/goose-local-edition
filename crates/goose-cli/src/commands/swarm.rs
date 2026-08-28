@@ -27095,7 +27095,7 @@ async fn run_linear_plan(
         let qa = ask_clarifying_questions(
             &questions,
             cwd_for_ask,
-            0,
+            None,
             None,
             ask_wait_secs,
             Some(clarify_proxy),
@@ -31657,14 +31657,55 @@ fn fix_round_specs(
 
 /// Build the worker instruction for the GOOSE_SWARM_SMOKE corrective re-dispatch from the smoke findings.
 /// Pure — unit-tested. Asks for the SMALLEST root-cause fix that makes collect-only + the `-m` entry pass.
+/// The ONLY instruction every fix worker receives — all five dispatch paths pass it verbatim. So its
+/// completion condition is the completion condition for one hundred percent of repair work.
+///
+/// IT USED TO BE ALREADY TRUE BEFORE THE WORKER STARTED. It said "edit the offending file(s) so that
+/// {verify} succeed ... then run those commands yourself to confirm before finishing", and `verify_recipe`
+/// for Python is `pytest --collect-only -q` plus `python3 -m <pkg> --help`. By the time REPAIR runs, the
+/// round's findings come from the three-node TEST fan, the DOM-id scan, the CSS coherence scan, the HTTP
+/// timeout scan and the spec-contract 5xx/404/405 checks — and NEITHER of those two commands can see any
+/// of them. A worker handed "the page loads but renders no rows" runs collect-only and --help, watches
+/// both pass on the still-broken app, and its own stated confirmation ritual is satisfied by changing
+/// nothing. That is a done-condition reachable without doing the work, and it is the strongest single
+/// reason a weak model stops early.
+///
+/// AND THERE WAS NO WAY TO REPORT A RESULT. The findings were pasted with `join("\n")` — unnumbered — and
+/// nothing asked which were closed. A worker that fixed one of five and one that fixed none emitted
+/// indistinguishable output, so the next round handed the same undifferentiated list to a fresh worker
+/// with no memory of what had already been tried. That is the mechanism behind rounds that change nothing.
+///
+/// So DONE is now defined per finding, by the model, against the finding's OWN evidence rather than a
+/// generic gate: number them, demand one verdict line each, and say plainly that a silent finding is one
+/// the next worker repeats. `{verify}` stays, demoted to what it is — a regression check that the repair
+/// did not break the build, not proof the defect is gone. No counter, no threshold, no cap.
 fn smoke_fix_description(findings: &[String], lang: TargetLang) -> String {
     let verify = verify_recipe(lang);
+    let numbered = findings
+        .iter()
+        .enumerate()
+        .map(|(i, f)| format!("{}. {f}", i + 1))
+        .collect::<Vec<_>>()
+        .join("\n");
     format!(
-        "The integrated app FAILS a deterministic end-to-end smoke check the harness just ran. Findings:\n{}\n\n\
-         FIX THE ROOT CAUSE directly — edit the offending file(s) in this project so that {verify} succeed. \
-         Do NOT add features or rewrite working modules; make the SMALLEST change that resolves the findings, \
-         then run those commands yourself to confirm before finishing.{}",
-        findings.join("\n"),
+        "The integrated app FAILS checks the harness just ran against the RUNNING app. \
+         The findings are listed below, MOST IMPORTANT FIRST — earlier numbers are what stop the app \
+         doing its job, so close those before you touch a later one.\n\n{numbered}\n\n\
+         FIX THE ROOT CAUSE directly — edit the offending file(s). Do NOT add features or rewrite working \
+         modules; make the SMALLEST change that resolves each finding.\n\n\
+         HOW TO KNOW A FINDING IS CLOSED: reproduce the finding's OWN symptom and watch it stop happening. \
+         If it names a URL, request that URL. If it names a command, run that command. If it names an \
+         element or a field, look for it in the actual response. {verify} must still pass when you are \
+         done — but passing them proves only that you did not break the build. It does NOT prove any \
+         finding above is fixed: those commands cannot see a page that renders no rows, an endpoint that \
+         returns 500, or a missing DOM id, which is most of what is listed above.\n\n\
+         YOU ARE DONE WHEN EVERY NUMBERED FINDING HAS ONE LINE IN YOUR FINAL MESSAGE, AND NOT BEFORE. \
+         For each, exactly one of:\n\
+         FINDING <n>: FIXED — <the exact command or URL you ran> — <the output that proves it>\n\
+         FINDING <n>: NOT FIXED — <what you tried and what still fails>\n\
+         FINDING <n>: NOT REAL — <the output that rules it out>\n\
+         Write the line even for the ones you could not close. A finding you leave silent is one the next \
+         worker repeats from scratch, having no idea you already tried.{}",
         fix_evidence_pointers(findings)
     )
 }
@@ -34666,7 +34707,12 @@ async fn ask_repair_round(
 async fn ask_clarifying_questions(
     questions: &[ClarifyQuestion],
     cwd: &Path,
-    plan_conf: u8,
+    // plan_conf: the planner's confidence in its own breakdown, 0-100 — or None when NOTHING MEASURED IT,
+    // which is not the same as zero. The arithmetic agreement metric was deleted with the multi-draft vote
+    // (section 8), so nothing computes this any more and the call site passed a literal `0`. The panel
+    // renders any number as a red `conf N` chip, so every run displayed "conf 0" — reading as "the planner
+    // has no confidence in this plan at all". It was a placeholder sitting there looking like a verdict.
+    plan_conf: Option<u8>,
     breakdown: Option<serde_json::Value>,
     wait_secs: u64,
     proxy: Option<tokio::task::JoinHandle<()>>,
@@ -34682,7 +34728,7 @@ async fn ask_clarifying_questions(
     let apath = dir.join("clarify-answers.json");
     let _ = std::fs::remove_file(&apath); // never read a stale answer from a previous gate
     let mut file_obj = serde_json::json!({
-        "plan_confidence": plan_conf,
+        "plan_confidence": plan_conf,  // null when unmeasured — never a fabricated 0
         "questions": questions,
         "answer_file": ".swarm/clarify-answers.json",
         "how_to_answer": "Write {\"answers\":[...one string per question, same order; pick an option or your own words...], \"guidance\":\"...free-form: anything else to change about the plan...\"} to answer_file (a bare JSON array of answers also works). The swarm is BLOCKED on it and will re-plan with your answers + guidance.",
@@ -34714,7 +34760,7 @@ async fn ask_clarifying_questions(
     let not_asked = open_n.saturating_sub(questions.len());
     let mut ask_evt = serde_json::json!({
         "event": "low_confidence_ask",
-        "plan_confidence": plan_conf,
+        "plan_confidence": plan_conf,  // null when unmeasured — never a fabricated 0
         "questions": questions,
         "open_decisions_total": open_n,
         "open_decisions_not_asked": not_asked,
@@ -34733,6 +34779,11 @@ async fn ask_clarifying_questions(
         );
     }
 
+    // "Plan confidence 0/100" is a lie when nothing measured it. Say nothing rather than a number.
+    let conf_label = match plan_conf {
+        Some(c) => format!("Plan confidence {c}/100 — "),
+        None => String::new(),
+    };
     let mut answers: Vec<String> = Vec::new();
     let mut guidance = String::new();
     // INTERACTIVE only when BOTH stdin AND stdout are real terminals. A capture harness that pipes stdout
@@ -34747,7 +34798,7 @@ async fn ask_clarifying_questions(
         eprintln!(
             "{}",
             style(format!(
-                "Plan confidence {plan_conf}/100 — {} quick question(s) to get this right:",
+                "{conf_label}{} quick question(s) to get this right:",
                 questions.len()
             ))
             .yellow()
@@ -34769,7 +34820,7 @@ async fn ask_clarifying_questions(
         eprintln!(
             "{}",
             style(format!(
-                "Plan confidence {plan_conf}/100 below floor — wrote {} question(s) to {}; BLOCKING for answers in {} ({}) ...",
+                "{conf_label}wrote {} question(s) to {}; BLOCKING for answers in {} ({}) ...",
                 questions.len(),
                 qpath.display(),
                 apath.display(),
@@ -38848,6 +38899,28 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                         }
                     }
                 }
+                // CRITICAL FIRST — by REORDER, never by exclusion.
+                //
+                // `verdict.findings` reaches every fix path WHOLE (race, fix_sched DAG, shard fan,
+                // residue/join, serial) in DETECTOR-APPEND order, so the css probe's findings sit ahead
+                // of the model fan's and a cosmetic defect can own the first shard the fleet picks up
+                // while a critical waits behind it. RATE has just worked out which is which and then
+                // dropped the answer on the floor: `criticals` is declared inside this block and the fix
+                // wave is outside it, so the split was not merely unused — it was out of scope.
+                //
+                // Order is the only severity signal the wave can carry without changing any of the five
+                // dispatch paths. Nothing is dropped: a minor still gets fixed, just after the thing that
+                // stops the app working. Stable within each group, so detector order still decides ties.
+                {
+                    let crit: std::collections::HashSet<&String> = criticals.iter().collect();
+                    let (mut first, rest): (Vec<String>, Vec<String>) = verdict
+                        .findings
+                        .iter()
+                        .cloned()
+                        .partition(|f| crit.contains(f));
+                    first.extend(rest);
+                    verdict.findings = first;
+                }
                 // Only a scope that is genuinely NARROWER than the tree is worth having. A rater that
                 // names every file has told us nothing, and a rater that named nothing must not shrink
                 // the residue worker's reach to zero.
@@ -38972,7 +39045,18 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                     )
                 };
                 // Round 0 has bought nothing yet, so it is never the moment to ask whether to buy more.
-                let proxy_yes = round == 0 || last_round_promoted;
+                //
+                // UNDER BENCHMARK THE ANSWER IS NO, ALWAYS. There is no human on the other end and
+                // nothing downstream that pays for grinding: the run is measured on the TREE, by a scorer
+                // that never reads the round count. Granting rounds while anything at all changed is how
+                // a repair phase reached eight hours and 115 minutes in a single worker, and no run has
+                // ever emitted complete_result — the loop outlived every one of them.
+                //
+                // So a benchmark round gets its ONE fix wave and then the phase ends and the tree gets
+                // scored. That is not a cap on the models: nothing is cut mid-call, the wave runs to
+                // completion, and the verdict reports honestly whether criticals remain. It is the answer
+                // to a question, and the answer for an unattended run is end.
+                let proxy_yes = !benchmark() && (round == 0 || last_round_promoted);
                 sink.write_value(serde_json::json!({
                     "event": "clarify_proxy_armed",
                     "ask": key,
