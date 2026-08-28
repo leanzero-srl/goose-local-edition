@@ -2599,6 +2599,17 @@ export function buildPhaseTodo(
       // to green). Say so honestly — the verification was at the app level, not this unit grading itself.
       if (state === 'done') detail = salvaged.has(id) ? 'salvaged · verified end-to-end' : 'verified end-to-end';
       else if (state === 'unverified' && salvaged.has(id)) detail = 'salvaged — judge cut a loop';
+      // SAY WHAT IT IS WAITING FOR. 'unverified' is a pipeline STAGE, not a failure: the worker returned
+      // and the file passed a syntax gate, but nobody has RUN the app yet. Mihai read a board of them as
+      // things having gone wrong, which is fair — a bare negative word with no explanation reads as one.
+      //
+      // The promotion is real and it is engine truth, not a model claim: complete_result.passed &&
+      // verified, at the end of REPAIR. It is deliberately the ONLY trigger. The standalone `smoke` gate
+      // looked like an earlier one and is not — it runs only when GOOSE_SWARM_COMPLETE is off, which it
+      // never is on these runs, so no run has ever emitted it. Promoting on anything weaker would launder
+      // work nobody ran into "verified", which is the one thing this state exists to prevent.
+      else if (state === 'unverified')
+        detail = 'built — the app has not been run yet; verified end-to-end after Repair';
       else if (state === 'judge_failed') detail = 'judge decision';
       else if (s.error) detail = s.error.slice(0, 80);
     } else if (reportFailed.has(id) || schedulerStuck != null) {
