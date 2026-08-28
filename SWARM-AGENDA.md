@@ -317,6 +317,34 @@ The winner is the FASTEST and the SMALLEST. Thirteen files, four frontend files,
 no planning phase — against our 23 tasks, nine frontend files and 3h15m before BUILD started. Every
 argument for thinning the engine is in that table.
 
+## THE LAUNCH GATE BLOCKED WORK ON AN INVENTED NUMBER — 2026-08-28
+
+`18:51:13Z HOLDING hy4-preview: projected $11.27 > remaining $9.97.` **Both halves were wrong.**
+
+1. **The balance was invented.** `/api/v1/key` reports `limit: null` on a pay-as-you-go account, so I fell
+   back to a HARDCODED `$15`. The real balance was **$40.22**. Every rule in this file forbids inventing a
+   number and I built a gate on one. **`/api/v1/credits` returns `total_credits` and `total_usage`; their
+   difference is what the account page shows.** Ask the provider — never assume the balance.
+2. **A hold stopped the whole queue.** It raised `SystemExit`, stranding FOUR affordable models behind one
+   expensive one — ling-3.0-flash ($0.28), laguna-s-2.1 ($1.20), longcat-2.0 ($4.12), both Seeds. One
+   model being unaffordable says nothing about the next. It now SKIPS, continues, and reports what it
+   skipped.
+
+**hy4-preview was skipped by the old chain and needs one more pass after the queue drains** — the running
+chain read the model list at start, so editing it now does not reach it.
+
+## BOARD, 2026-08-28 — the winner is the fastest AND the smallest
+
+| model | score | time | files | frontend files |
+|---|---|---|---|---|
+| **deepseek-v4-flash-vision-exp** | **67.53%** | **33 min** | 13 | 4 — exactly what the spec names |
+| glm-5.3-flash | 41.59% | 72 min | 14 | — |
+| qwen3.8-27b | 20.06% | 151 min | 60 | — |
+| our 3-node swarm (published target) | 2.73% | — | — | 9 |
+
+One agent, no planning phase, 33 minutes, thirteen files — against our 23 tasks, nine frontend files and
+3h15m before BUILD even started. Every argument for thinning the engine is in that table.
+
 ## Standing constraints — absolute, never negotiate them
 
 - **NO SPEND CAP MAY EVER BIND ON A CLOUD RUN.** Mihai, 2026-08-28: *"don't put caps on models or runs
