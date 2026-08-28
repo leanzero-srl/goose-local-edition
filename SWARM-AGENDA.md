@@ -397,6 +397,26 @@ it. A problem that turns out to be already owned is left out, but then it was no
 **THIS RUN KEEPS THE DEFECT** — the binary is the old one. Expect 4 features missing from its app, and read
 the score with that in mind rather than as a verdict on the decomposition.
 
+## `judge_skipped` IS NOT ONE THING — READ ITS `reason`, 2026-08-29 02:25 EEST
+
+BUILD showed `judge_skipped: 1` after a tick at 0, and the instinct from the 45%-unsupervised incident was
+that supervision had regressed. It had not. The single event reads:
+
+    {"event":"judge_skipped","task_id":"frontend-app-js","reason":"unchanged_since_last_review"}
+
+That is a DEDUPLICATED look — the call had not changed since the previous review, so re-judging it would
+cost a look and tell the judge nothing new. **Correct behaviour, and the opposite of a supervision gap.**
+
+**So "judge_skipped must be 0" was the wrong falsifier.** The right one is `judge_skipped` grouped BY
+`reason`: `unchanged_since_last_review` is healthy at any count; anything else is a call that went
+unwatched and must be opened. Recorded because the blunt version would have sent the next session chasing a
+regression that is a working optimisation.
+
+BUILD at this point: **9 dispatched, 7 of 11 complete, 0 failed, 0 retries**, and the tree holds
+`app/{db,ledger,ledgerd,notifierd,approval,outbox,webhooks}.py`, `app/sync/{engine,upsert}.py`,
+`web/{index.html,styles.css,viz.js}` — plus a `graded-sb7-db/` with real ledger and notifier databases,
+meaning the app it built has BOOTED AND RUN.
+
 ## THE SHARED FILE, IDENTIFIED — and the local run BUILT ITS FRONTEND, 2026-08-29 02:05 EEST
 
 `tasks_sharing_a_file: 1` resolved by hand (the `shared_files` fix will name it automatically next run):
