@@ -84,7 +84,7 @@ Make the swarm BUILD BETTER SOFTWARE on local models, then beat the published `b
 - [ ] **J. Node re-admission covers BUILD only.** RESEARCH/TEST/FIX hold pre-BUILD fleet snapshots, so a
       node that comes back mid-run (gabee) sits idle for those phases.
 - [x] **K. DONE.** Judge's `eta_mins` now surfaces per running lane (latest wins). The run-level band stays arithmetic and is honest about being an extrapolation. Was: — the judge estimates remaining time; surface it in the panel.
-- [ ] **N. The coverage/review fan splits by paragraph count, not weight.** Measured: part 1 got 72
+- [x] **N. DONE.** `cut_request_into_portions` cuts by character count; deliberately NOT named 'weight' (four other meanings exist). Was: Measured: part 1 got 72
       components, part 3 got 9; one lane ran 25+ min while two sat idle. Cut on section headings, or
       rebalance by character weight — the same "no slice more than ~2x another" rule OPEN applies to slices.
 - [ ] **L. Everything renders "unverified".** There must be a real transition to verified when the engine
