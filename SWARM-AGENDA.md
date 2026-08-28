@@ -240,6 +240,23 @@ runs several rounds and the gaps arrive in the later ones.
       formation hue; an action is a solid saturated `Gavel` in the action colour with a 600-weight label.
       No left rail, no faded tint. 4 tests pin the fold, including both must-NOT-fold cases (different
       direction, different task).
+- [x] **V. DONE — FLEET is delineated node cards, and a click opens the node's FULL stream in a modal.**
+      Mihai: *"it's sort of useless what it shows now… just throwing in some floating text… here it usually
+      gets truncated… I would want to see the thinking tags correctly exposed and then what it shoots
+      out"*, then a screenshot of a generation cut mid-word at `39. three-role authentication (maker/check`.
+      (1) Each node is now its own bordered card instead of text floating under a name.
+      (2) Clicking a node (or Enter/Space — it is a real button with an aria-label) opens `NodeInspector`,
+      an inset-8 modal, Escape to close, backdrop to dismiss.
+      (3) THINKING and OUTPUT are SEPARATE panes, because they answer different questions and are separate
+      in the protocol: thinking is the reasoning channel, output is the tool calls and text it actually
+      emitted. A node reasoning hard while emitting nothing is the exact state that has cost whole runs and
+      it is invisible once the two are concatenated. Each pane carries its own count (chars / tool calls).
+      (4) Both panes reuse `NodeExpandBox`, so each follows the newest text like a terminal while a
+      scroll-up to read stays put. The clipped inline box it replaced is deleted, not left dangling.
+      **STILL OPEN — the 24,000-char TAIL clip.** `build_full_reasoning` (swarm.rs:13926) keeps only the
+      last 24k chars, which is why the screenshot starts at item 25 rather than item 1. The clip exists
+      because the digest is REWRITTEN on a hot timer, so it cannot simply grow. The right fix is an
+      append-only per-task transcript the modal reads instead of the digest — not a bigger number.
 - [ ] **D. Dead-code sweep — DEFERRED UNTIL NO LOCAL RUN IS LIVE.** `cargo clippy` starves the fleet:
       with the sweep running, judge probe latency went 16s -> 18s -> 27s -> **117s**, clippy-driver at
       55%+30% CPU. I was degrading my own run to tidy code. Ordering also matters and cost one aborted
