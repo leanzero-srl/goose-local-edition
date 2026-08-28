@@ -397,6 +397,31 @@ it. A problem that turns out to be already owned is left out, but then it was no
 **THIS RUN KEEPS THE DEFECT** — the binary is the old one. Expect 4 features missing from its app, and read
 the score with that in mind rather than as a verdict on the decomposition.
 
+## RUN 2 KILLED ON A CHECKPOINT — 2026-08-29 03:58 EEST, and the kill is the DESIGNED outcome
+
+`open-coverage-2`, sampled three times over 70 seconds: **thinking_chars 70969 -> 70969 -> 70970**. One
+character per thirty-five seconds. Alive by the letter, dead by any honest reading. Thirty nudges, **zero
+tool calls**, verdict RESTART, **58 minutes in RESEARCH**, all ten slice briefs finished, one node idle
+throughout.
+
+**WHY THIS KILL IS CORRECT AND THE LAST ONE WAS NOT.** The previous kill was an accident — a blanket
+`pkill` that hit the engine. This one is the protocol: a lane that cannot finish, a phase that cannot
+advance, and *"a diverged run is never allowed to finish, because letting it finish buys nothing and costs
+hours."* Stopped with the three documented patterns, engine and app confirmed gone, `swarm:` block intact,
+**fleet confirmed 0 GENERATING before archiving**.
+
+**AND THE FIX FOR EXACTLY THIS IS BUILT, TESTED AND COMMITTED** (`5b14b8fc6`) — it simply was not in the
+running binary. Relaunching on it makes run 3 a direct test of three changes at once:
+
+    judge_call_ended_unproductive   the engine ends a call that owes a structured reply,
+                                    has zero tool calls, and whose direction stopped changing
+    judge_notes_superseded          the newest supervisor note replaces the judge's own stale ones
+                                    (open-coverage-2 had FIFTEEN queued at once)
+    judge_look.quiet_secs           the burst-gap calibration visible on every look, not only on saves
+
+**COST OF THE KILL:** ten completed slice briefs. **VALUE:** the blocker that has now eaten ~110 minutes
+across two runs gets its first live test.
+
 ## [FIXED] THE ENGINE CAN NOW END A CALL THE JUDGE CANNOT MOVE — `5b14b8fc6`
 
 **TWO CONSECUTIVE RUNS, SAME SHAPE, ~50 MINUTES EACH.** A coverage lane owes ONE structured reply, makes
