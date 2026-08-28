@@ -24860,6 +24860,20 @@ impl GooseAgentDispatcher {
              EXIST IS IRRELEVANT to how many slices this request has. The same request must yield the \
              same slices on one machine or a hundred. Do not add slices to fill idle machines, and do not \
              merge distinct concerns because the fleet is small.\n\n\
+             COVER THE WHOLE REQUEST, AND PROVE IT TO YOURSELF BEFORE YOU ANSWER. Read back through \
+             the request and list ITS OWN sections — its numbered parts, its headings, the named \
+             components it says to build. Then check that every single one is owned by a slice, and put \
+             any you have no slice for into a slice. A request that names nine things and gets five \
+             slices has lost four of them, and nothing downstream will ever notice: the builders build \
+             what you list, the reviewer reviews what you list, and the parts you never named are simply \
+             absent from the finished program.\n\
+             This is the failure that costs most. MEASURED: an opener read a 54,000-character spec asking \
+             for two services, webhooks, an approval workflow, an idempotent consumer, an event ledger \
+             and a 3D field, produced nine slices for a table with pagination and a filter, and ended its \
+             own reasoning with \"This looks comprehensive.\" It was thorough about the slices it had and \
+             never asked what it was missing. Slicing by TECHNICAL LAYER — client, store, html, css, js, \
+             entry, docs — is the shape that error takes: those are the layers of any program at all, so \
+             the list looks complete while naming nothing the request actually asked for.\n\n\
              Also list OPEN DECISIONS: things the request genuinely leaves undecided and that a human \
              would need to choose (storage format, auth or none, which library). Only real ones — if the \
              request settles it, or convention obviously settles it, it is not an open decision.\n\n\
@@ -25670,7 +25684,15 @@ impl GooseAgentDispatcher {
              it and you are not rewriting it.\n\n\
              Answer these, in order:\n\
              1. If every task completed and I then opened this app, what would happen? Say concretely.\n\
-             2. Does the request ask for anything that NO task owns?\n\
+             2. COVERAGE, and do this one by ENUMERATION rather than impression: list the request's own \
+             sections — its numbered parts, its headings, the components it names — and against each \
+             write the task id that owns it. Any section you cannot name an owner for is a finding, and \
+             it is the most expensive kind, because a part nobody was asked to build is simply absent \
+             from the finished program and no later phase can notice. MEASURED: a plan of nine tasks \
+             passed this review with one finding while missing webhooks, an approval workflow, an \
+             idempotent consumer, an event ledger, a second service and a 3D field — six of the nine \
+             things its request named. A task list that reads like the layers of a program (client, \
+             store, html, css, js, entry, docs) rather than like the request is the signature of it.\n\
              3. Is there exactly one task that wires the parts together, and does it own no files?\n\
              4. Does anything wait on a test, rather than on code it needs?\n\
              5. Which dependencies are not strictly required for the dependent's file to compile or run?\n\
