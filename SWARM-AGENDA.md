@@ -23,6 +23,16 @@ Make the swarm BUILD BETTER SOFTWARE on local models, then beat the published `b
 
 ## TICK HYGIENE — do not let the tick lie to you
 
+- **STOPPING A RUN IS A SCRIPT, NOT A pkill: `~/goose-builds/loop-state/stop_local_run.sh`.** It cancels in
+  the app, kills all THREE goose command lines plus the harness, and refuses to exit 0 until `lms ps` shows
+  zero GENERATING. MEASURED 2026-08-28: a hand-written `pkill -f 'Goose.app/Contents/MacOS/Goose'` matched
+  the Electron binary only; `Resources/bin/goose swarm run` survived, reparented to launchd, and drove all
+  three nodes for ~25 minutes after the window closed. `launch.sh` already had the right patterns — I
+  retyped a shorter version instead of calling it. If a procedure exists, CALL IT.
+- **Never "stop the fleet" by unloading.** `lms load` has no host flag and gabee (Mac.lan) has no
+  passwordless SSH, so an unload there cannot be undone from this laptop. IDLE is the correct resting
+  state; stop whatever is DRIVING the fleet instead.
+
 - **`pgrep -f run_build.py` MATCHES THE SHELL RUNNING THE TICK.** The tick command contains that string,
   so pgrep finds its own zsh and reports `run_build RUNNING` when the harness is dead. Observed 12:44Z
   with a 3/3 IDLE fleet and the run dir already archived. Use `pgrep -f 'Python.*run_build\.py'` — anchor
