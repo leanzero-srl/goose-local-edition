@@ -17261,6 +17261,21 @@ impl GooseAgentDispatcher {
                                 Some(ev) => deferred_events.push_back(ev),
                                 None => {
                                     stream_ended_during_probe = true;
+                                    // ABANDONED, NOT HUNG — and the log has to say which.
+                                    //
+                                    // Without this event the two are indistinguishable: both leave a
+                                    // `judge_look_dispatched` with no matching `judge_look`. Observed
+                                    // within minutes of shipping the detector — `open`, `open-resplit`
+                                    // and `open-coverage-3` each showed a probe "outstanding" for 800s,
+                                    // 660s and 475s, and every one of them was a call that had simply
+                                    // finished first. A detector whose alarm fires on the normal case is
+                                    // not a detector.
+                                    self.events.write_value(serde_json::json!({
+                                        "event": "judge_look_abandoned",
+                                        "task_id": activity_key,
+                                        "look": omni_looks,
+                                        "reason": "the call finished while the judge was still reading it",
+                                    }));
                                     break Err(anyhow!(
                                         "the call finished while the judge was still reading it — look abandoned"
                                     ));
