@@ -135,7 +135,7 @@ runs several rounds and the gaps arrive in the later ones.
   Fix landed for link 1 (fcef6947f: the judge is told repetition is the deliverable here). Links 2-4 are
   untouched and are the next thing to watch: if a healthy coverage lane still gets nudged, the objective
   fix was not enough.
-- [ ] **O. A re-stream that produces nothing has no recovery.** The lane dies silently — no event, no
+- [x] **O. DONE (4e70ad192).** The judge's readiness floor now reads `thinking_total` (survives the re-stream reset) instead of `thinking_chars`, so a re-streamed lane that produces nothing can still be looked at. Detector `post_restream_silence` ships with it. Was: The lane dies silently — no event, no
       retry, and the fan waits for it forever. Either detect a re-stream that yields nothing and fall
       back to the pre-re-stream partial, or do not re-stream a call that is producing steadily.
 
