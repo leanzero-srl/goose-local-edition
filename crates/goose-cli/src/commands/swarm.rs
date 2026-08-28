@@ -28054,6 +28054,27 @@ async fn run_linear_plan(
         }
         let distinct_files = owner_count.len();
         let tasks_sharing_a_file = owner_count.values().filter(|n| **n > 1).count();
+        // NAME THE COLLISION, do not just count it. MEASURED: this event reported
+        // `tasks_sharing_a_file: 1` on an otherwise excellent 11-task plan and there was no way to learn
+        // WHICH file or WHICH tasks from the log — so the one defect in the plan could be seen and not
+        // acted on. A detector that cannot name the thing it found sends the next session to re-derive it.
+        let mut shared_files: Vec<serde_json::Value> = owner_count
+            .iter()
+            .filter(|(_, n)| **n > 1)
+            .map(|(f, _)| {
+                let owners: Vec<&str> = tasks
+                    .iter()
+                    .filter(|t| {
+                        t.get("files")
+                            .and_then(|v| v.as_array())
+                            .is_some_and(|a| a.iter().any(|x| x.as_str() == Some(f.as_str())))
+                    })
+                    .filter_map(|t| t.get("id").and_then(|i| i.as_str()))
+                    .collect();
+                serde_json::json!({ "file": f, "tasks": owners })
+            })
+            .collect();
+        shared_files.sort_by_key(|v| v["file"].as_str().unwrap_or("").to_string());
         let dirs: std::collections::HashSet<String> = owner_count
             .keys()
             .filter_map(|f| f.rsplit_once('/').map(|(d, _)| d.to_string()))
@@ -28093,6 +28114,7 @@ async fn run_linear_plan(
             // extra ones are pure overhead.
             "distinct_files": distinct_files,
             "tasks_sharing_a_file": tasks_sharing_a_file,
+            "shared_files": shared_files,
             // A MODULE SHADOWED BY A PACKAGE IS DEAD CODE, and path equality cannot see it.
             // `app/viz.py` and `app/viz/layout.py` are different strings and the same import path;
             // Python loads the package and the file is unreachable. MEASURED on the first run to reach
