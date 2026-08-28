@@ -17693,8 +17693,26 @@ impl GooseAgentDispatcher {
                         // so each note went onto a queue that was never drained — and the re-stream, the
                         // ONLY path that drops the socket and actually redirects, was unreachable for the
                         // whole call.
-                        let acted_since_last_look = actions_since_last_look > 0;
-                        let can_steer = acted_since_last_look && pending.is_empty();
+                        // A STEER NO LONGER NEEDS A TURN BOUNDARY, so it no longer needs a prior action.
+                        //
+                        // `Agent::steer` now wakes the in-flight stream, which stops at its next chunk
+                        // boundary and KEEPS the partial. That removes the reason this required
+                        // `acted_since_last_look`: the old rule existed because a steer could only land at
+                        // a turn boundary, and a pure-reasoning call has none until it ends.
+                        //
+                        // MEASURED 2026-08-28 on the run this fixes: 128 of 134 looks saw ZERO actions, so
+                        // every one of 12 nudges fell through to re-stream — which DROPS THE SOCKET and
+                        // discards everything the call built (27,297 -> 2,004 on one review lane). The
+                        // DRIFTING path made that worse: it acts on the FIRST look without corroboration,
+                        // on the stated grounds that its cost is "one in-session message rather than a dead
+                        // worker" — true for a steer, false for a re-stream. It re-streamed a call
+                        // producing 4,001 characters. Restoring steer as the default delivery makes that
+                        // justification true again rather than papering over it with another gate.
+                        //
+                        // `pending.is_empty()` remains: a tool request in flight must never be orphaned,
+                        // and a tool call IS a boundary, so waiting there costs nothing.
+                        let _acted_since_last_look = actions_since_last_look > 0;
+                        let can_steer = pending.is_empty();
                         let nudge_text = format!(
                             "SUPERVISOR NOTE — an independent reviewer read this call's own reasoning.\n\
                              {}Do this next: {direction}\n\
@@ -25629,7 +25647,28 @@ in parallel meet in the middle.\n\
 5. BEHAVIOUR AND EDGE CASES — the error cases it must handle and what it does in each: bad input, \
 missing file, empty data, a failing upstream call.\n\
 6. HOW YOU WOULD KNOW IT WORKS — the concrete check. A command to run, a call to make, an output to see.\n\
-7. EXCLUDES — what it must NOT do, so it does not wander into a neighbour's files.";
+7. EXCLUDES — what it must NOT do, so it does not wander into a neighbour's files.\n\n\
+WRITE IT TIGHT. This is a specification, not an essay: signatures, paths, error cases, the check. No \
+restating the request back, no rationale, no summary at the end. A specification LONGER THAN THE FILE \
+IT DESCRIBES will be contradicted by the code, and the whole point of it is that the code can be \
+trusted to follow it.";
+
+// MEASURED 2026-08-28, and this is why the concision clause above exists.
+//
+// A 21-slice run wrote **140,680 characters of specification before one line of code** — 86% of the
+// character count of the entire codebase the winning cloud entrant actually shipped. Median brief:
+// 6,443 chars. Meanwhile our own ledger says what is SUFFICIENT: a 122-char brief scored 42.7% and a
+// **1,497-char brief scored 88.7%**. So the measured-good size is ~1,500, and we were writing four
+// times that.
+//
+// The cost is not only the 26 minutes of RESEARCH. Every one of those characters is spliced verbatim
+// into a worker's prompt at BUILD, so an over-long brief spends the worker's context on prose about the
+// program instead of leaving room for the program. A single agent with no brief at all beat this fleet
+// on the same model, and the difference was that it spent its budget writing code.
+//
+// NO CAP IS IMPOSED — nothing truncates a brief, and a slice that genuinely needs more gets more. This
+// is an instruction about what a specification IS, which is the only lever that has ever worked on
+// output shape here; a hard limit would just produce a brief that stops mid-signature.
 
 impl GooseAgentDispatcher {
     /// OPEN — one call, on the strongest node. Splits the request into balanced semantic slices, the
@@ -25661,6 +25700,18 @@ impl GooseAgentDispatcher {
              EXIST IS IRRELEVANT to how many slices this request has. The same request must yield the \
              same slices on one machine or a hundred. Do not add slices to fill idle machines, and do not \
              merge distinct concerns because the fleet is small.\n\n\
+             A SLICE MUST OWN FILES NO OTHER SLICE OWNS. If two areas of work would live in the SAME \
+             file, they are ONE slice — always. Two slices sharing a file cannot be built at the same \
+             time no matter how many machines exist, because only one of them may hold that file; the \
+             second buys no parallelism at all and costs a whole research pass, a contract and a review \
+             pass to gain nothing. MEASURED: a request was split into 21 slices of which FIVE — picking, \
+             labels, layout, rendering, streaming — all described ONE file, `viz.js`, and four more \
+             described endpoints of ONE service. The product a single engineer built from the same \
+             request was NINE files. Ask, for each slice: what files does this own, and does any other \
+             slice name them? If yes, merge them and keep BOTH concerns named inside the merged \
+             objective — you lose nothing, because the objective still says everything the request \
+             asked for, and the builder writes one coherent file instead of two people fighting over \
+             it.\n\n\
              COVER THE WHOLE REQUEST, AND PROVE IT TO YOURSELF BEFORE YOU ANSWER. Read back through \
              the request and list ITS OWN sections — its numbered parts, its headings, the named \
              components it says to build. Then check that every single one is owned by a slice, and put \
@@ -27701,6 +27752,40 @@ async fn run_linear_plan(
                 .iter()
                 .map(|t| t.get("depends_on").and_then(|f| f.as_array()).map_or(0, |a| a.len()))
                 .collect::<Vec<_>>(),
+            // THE OVER-DECOMPOSITION NUMBER, so the next run can be COMPARED rather than argued about.
+            //
+            // Two tasks owning the same file cannot build at the same time — the scheduler holds the file
+            // — so the second buys no parallelism and costs a research pass, a contract and a review pass
+            // to gain nothing. MEASURED 2026-08-28: a 21-slice plan had FIVE slices describing one file
+            // (`viz.js`) and four describing endpoints of one service, against the NINE files a single
+            // engineer produced from the same request.
+            //
+            // `distinct_files` vs `tasks` is the ratio that matters: at 1.0 every task owns its own file
+            // and the fan is real; well under 1.0 means slices are competing for the same file and the
+            // extra ones are pure overhead.
+            "distinct_files": {
+                let mut all: Vec<String> = tasks
+                    .iter()
+                    .filter_map(|t| t.get("files").and_then(|f| f.as_array()))
+                    .flatten()
+                    .filter_map(|f| f.as_str().map(str::to_string))
+                    .collect();
+                all.sort();
+                all.dedup();
+                all.len()
+            },
+            "tasks_sharing_a_file": {
+                let mut seen: std::collections::HashMap<String, usize> =
+                    std::collections::HashMap::new();
+                for t in &tasks {
+                    for f in t.get("files").and_then(|f| f.as_array()).into_iter().flatten() {
+                        if let Some(f) = f.as_str() {
+                            *seen.entry(f.to_string()).or_default() += 1;
+                        }
+                    }
+                }
+                seen.values().filter(|n| **n > 1).count()
+            },
         }));
     }
 

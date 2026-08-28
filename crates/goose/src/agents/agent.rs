@@ -62,7 +62,7 @@ use rmcp::model::{
     GetPromptResult, Prompt, ServerNotification, Tool,
 };
 use serde_json::Value;
-use tokio::sync::{mpsc, Mutex};
+use tokio::sync::{mpsc, Mutex, Notify};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, instrument, warn};
 
@@ -262,6 +262,19 @@ pub struct Agent {
     goal: Mutex<Option<String>>,
     grind: Mutex<Option<String>>,
     pending_steers: Mutex<HashMap<String, VecDeque<Message>>>,
+    /// Woken the instant a steer is queued, so a generation ALREADY IN FLIGHT can stop at its next chunk
+    /// boundary and let the message land.
+    ///
+    /// WHY. `steer()` only enqueued, and the single drain is gated on a flag set after the provider stream
+    /// closes — so a queued message landed at a TURN BOUNDARY and nowhere else. A call that is pure
+    /// reasoning has no boundary until it finishes, so the message waited for the whole generation.
+    /// MEASURED 2026-08-28 on a live swarm: 128 of 134 supervisor looks saw zero tool calls since the
+    /// previous look, so every one of 12 nudges was delivered by DROPPING THE SOCKET instead — and that
+    /// discards the partial. Three review lanes lost what they had built: 27,297 -> 2,004,
+    /// 13,291 -> 2,002, 8,640 -> 2,006.
+    /// Breaking out of the stream loop keeps the partial (the cancelled path already falls through normal
+    /// persistence), so landing the message this way preserves the work that dropping the socket destroys.
+    steer_arrived: Notify,
     /// SWARM tool-call repair (opt-in, set per worker task by the swarm): when a weak local model emits a
     /// `write`/`edit` tool call that OMITS `path` and the task owns EXACTLY ONE file, inject that file's path
     /// so the turn is not wasted on a "missing field path" error. `None` (default) = no repair; every non-swarm
@@ -399,6 +412,7 @@ impl Agent {
             goal: Mutex::new(None),
             grind: Mutex::new(None),
             pending_steers: Mutex::new(HashMap::new()),
+            steer_arrived: Notify::new(),
             swarm_single_owned_file: std::sync::RwLock::new(None),
         }
     }
@@ -510,6 +524,9 @@ impl Agent {
             .entry(session_id.to_string())
             .or_default()
             .push_back(message);
+        // Wake a generation that is already streaming. Without this the message is invisible until the
+        // provider stream closes on its own, which for a pure-reasoning call can be the whole call.
+        self.steer_arrived.notify_waiters();
     }
 
     pub async fn discard_pending_steers(&self, session_id: &str) {
@@ -2074,16 +2091,33 @@ impl Agent {
                 // thinking so a later tool-call chunk can suppress replayed
                 // reasoning without hiding final-only non-streaming thoughts.
                 let mut surfaced_thinking_in_turn = false;
+                // A steer may only interrupt a generation that has NOT yet asked for a tool. Once a tool
+                // request has been seen in this turn, breaking would leave that request without its
+                // response and the conversation needs repairing; waiting for the turn boundary costs
+                // nothing there, because a tool call IS a boundary and one is imminent.
+                let mut saw_tool_request_in_turn = false;
 
                 loop {
+                    let steer_may_interrupt = !saw_tool_request_in_turn
+                        && self.has_pending_steers(&session_config.id).await;
                     let next = if let Some(cancel_token) = &cancel_token {
                         tokio::select! {
                             biased;
                             _ = cancel_token.cancelled() => break,
+                            // The message is already queued: stop at this chunk boundary and let the
+                            // outer loop drain it. The partial is kept, which is the whole point --
+                            // dropping the socket instead is what destroys the call's accumulated work.
+                            _ = std::future::ready(()), if steer_may_interrupt => break,
+                            _ = self.steer_arrived.notified(), if !saw_tool_request_in_turn => break,
                             next = stream.next() => next,
                         }
                     } else {
-                        stream.next().await
+                        tokio::select! {
+                            biased;
+                            _ = std::future::ready(()), if steer_may_interrupt => break,
+                            _ = self.steer_arrived.notified(), if !saw_tool_request_in_turn => break,
+                            next = stream.next() => next,
+                        }
                     };
                     let Some(next) = next else {
                         break;
@@ -2114,6 +2148,12 @@ impl Agent {
                                         surfaced_thinking_in_turn,
                                     )
                                     .await;
+
+                                // From here on this turn is heading for a tool call, so a steer must wait
+                                // for the boundary rather than interrupt and orphan the request.
+                                if !frontend_requests.is_empty() || !remaining_requests.is_empty() {
+                                    saw_tool_request_in_turn = true;
+                                }
 
                                 let filtered_response = if let Some(inference) = inference.as_ref() {
                                     filtered_response.with_inference(inference.clone())

@@ -55,6 +55,33 @@ serial agent gets for nothing.
 the contracts, not the fan. The falsifier the plan already names is node occupancy during BUILD, and we
 have never measured it. Until a run reaches BUILD, "our mechanisms are invalid" is unfalsified, not false.
 
+## MEASURE THIS RUN'S END QUALITY BEFORE JUDGING THE SLICE CHANGE — Mihai, 2026-08-28
+
+*"but for sure measure it after this run ends and we see the end quality. ok?"* — yes, and this run is a
+CLEAN BASELINE: every change made today is committed but NOT BUILT, so none of it can touch it.
+
+**THE BASELINE TO BEAT (run `swarm-3node-r0`, started 15:03:55Z):** 21 slices · 21 briefs ·
+140,680 chars of spec · open 55.6m / research 25.9m / synthesis 7.4m / review 46.2m · REVIEW converged
+5 findings -> 2. Score and file count TBD when it finishes.
+
+**WHAT THE NEXT RUN MUST BE COMPARED ON, not argued about:**
+- `plan_synthesized.tasks` vs `.distinct_files` vs `.tasks_sharing_a_file` — the over-decomposition
+  ratio. This run's plan had FIVE slices for one file (`viz.js`) and four for endpoints of one service,
+  against the NINE files a single engineer produced from the same request. At a ratio of 1.0 every task
+  owns its own file and the fan is real; well under 1.0 the extra slices are pure overhead, because two
+  tasks holding one file cannot build at once.
+- `research_completed.brief_chars` — median was 6,443 against the 1,497 our own ledger measured as
+  sufficient for 88.7%.
+- Time to the FIRST app file. This run: never, in 136 minutes.
+- `judge_quiet_within_rhythm` count — how often the burst-gap fix suppressed a false stall.
+- Nudge delivery split. This run: 15 nudges, 15 re-streams, 0 steers.
+
+**DO NOT tune any of these further until that comparison exists.** Two prompt changes are already in
+(slice file-disjointness, brief concision) and they are the things being measured; stacking more blind
+changes destroys the comparison. REVIEW IS EXPLICITLY NOT ON THE LIST — Mihai: *"review is good, 2 finding
+in 20 min is excellent"*, and he is right; it produced a structural `add` in round 2. I had wrongly listed
+it as over-engineered.
+
 ## Standing constraints — absolute, never negotiate them
 
 - **NO SPEND CAP MAY EVER BIND ON A CLOUD RUN.** Mihai, 2026-08-28: *"don't put caps on models or runs
