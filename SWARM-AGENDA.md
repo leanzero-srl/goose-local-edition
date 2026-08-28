@@ -273,6 +273,29 @@ At 6.6 min: 8 dispatched, 2 completed, 6 in flight, 12 files on disk, **0 idle n
 file ownership REVIEW produced is what makes it legal for six tasks to write at once. Everything upstream
 of BUILD is what costs us — 4h15m to the first file — not BUILD itself.
 
+## THE LOG SWEEP FOUND WHAT EVERY DASHBOARD MISSED — BUILD IS UNSUPERVISED (2026-08-28)
+
+Mihai asked whether I had checked the logs for something essential. I had not swept them systematically.
+Doing it — counting EVERY event type and looking at the ones I had never opened — found seven blind spots
+and one that matters enormously:
+
+**44 `judge_skipped`, ALL in BUILD, all `reason: no_idle_device`.** Against 32 successful looks in the
+same phase: **58% of supervision during BUILD is silently dropped.** The judge needs a device with a free
+parallel slot; each node is `PARALLEL=2`; the fan dispatches 2 tasks per node and saturates them. Every
+cap was deleted from this engine on purpose, so the judge is THE ONLY STOPPER — and it is missing exactly
+where a spiral costs most. Invisible in `judge_look` counts (which stay healthy) and in the fleet strip
+(which correctly shows 3 busy nodes). See skill §4k for the mechanism and the trade-offs.
+
+**THE OTHER SIX BLIND SPOTS, now checked and benign:** `judge_observed`(66)/`judge_verdict`(65) — the
+deterministic path, working. `force_write_decision`(11) — `armed:false, lever_on:false` on every task, a
+deleted lever still emitting an inert record. `pitfalls_delivered`(11)/`rules_delivered`(11) — 3.3-4.2k
+chars reaching every worker, working. `entry_files_required`(1) — `app/__main__.py`, pre-dag, correct.
+`fan_last_outstanding`(1) — the contract fan's straggler, expected.
+
+**THE LESSON, and it is the reason this sweep must be routine:** every number I was watching all day
+looked fine. Blind spots do not announce themselves — they are the events nobody wrote a reader for.
+**Count every event type at least once per campaign and open the ones you have never opened.**
+
 ## Standing constraints — absolute, never negotiate them
 
 - **NO SPEND CAP MAY EVER BIND ON A CLOUD RUN.** Mihai, 2026-08-28: *"don't put caps on models or runs
