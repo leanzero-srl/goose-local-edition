@@ -16741,6 +16741,20 @@ impl GooseAgentDispatcher {
                 let produced_since_last_look =
                     thinking_chars.saturating_sub(omni_thinking_at_last_look);
                 let secs_since_last_look = omni_last_look_at.elapsed().as_secs();
+                // ACTIONS ARE PRODUCTION TOO, and counting only thinking made the judge blind to that.
+                //
+                // MEASURED over one 8h20m run: 242 looks, MEDIAN rate 0.09 chars/sec, and 138 of them
+                // (57%) below the one-char-per-second I told the judge means DEAD STREAM. Ninety-six
+                // verdicts came back `looping`. The reason is that `produced_since_last_look` counts
+                // thinking_chars ONLY — and a worker that is WORKING barely thinks. apptest-bad-input, a
+                // read-only observer that ran 26 shell commands, collected EIGHTEEN nudges.
+                //
+                // The metric was built for the wedged REVIEW call, which reasoned at length and then went
+                // silent, and it is correct for that. Applied to a tool-using worker it inverts: the
+                // busier the call, the deader it looks. Half the resulting nudges changed nothing (27 vs
+                // 28), and each of the 21 re-streams restarted a call from scratch.
+                let actions_since_last_look =
+                    call_records.len().saturating_sub(omni_calls_at_last_look);
                 omni_last_look_at = tokio::time::Instant::now();
                 omni_thinking_at_last_look = thinking_chars;
                 omni_calls_at_last_look = call_records.len();
@@ -16958,7 +16972,12 @@ impl GooseAgentDispatcher {
                 // alive: 18,236 characters looks identical whether it arrived in the last minute or
                 // stopped arriving twenty minutes ago. This is the one measurement that separates a slow
                 // model from a dead socket, and without it the judge cannot tell them apart at all.
-                let rate_block = if omni_looks > 1 && secs_since_last_look > 0 {
+                let rate_block = if omni_looks > 1
+                    && secs_since_last_look > 0
+                    // A call that ACTED is producing, whatever its reasoning count says. Only silence on
+                    // BOTH channels is silence.
+                    && actions_since_last_look == 0
+                {
                     let rate = produced_since_last_look as f64 / secs_since_last_look as f64;
                     format!(
                         "\n\nSince the previous look {secs_since_last_look}s ago it has produced \
@@ -16968,6 +16987,13 @@ impl GooseAgentDispatcher {
                          slowly, it is a DEAD STREAM: the connection is open and delivering just enough \
                          to look alive. Nothing it does next will finish. Say LOOPING and put the job it \
                          was given into NEXT so it can be restarted from a fresh connection."
+                    )
+                } else if actions_since_last_look > 0 {
+                    format!(
+                        "\n\nSince the previous look {secs_since_last_look}s ago it has taken \
+                         {actions_since_last_look} action(s) and produced {produced_since_last_look} \
+                         characters of reasoning. It is WORKING. A call that acts rather than narrates is \
+                         doing its job — do not read a low reasoning count as a stall."
                     )
                 } else {
                     String::new()
@@ -17042,6 +17068,7 @@ impl GooseAgentDispatcher {
                     self.events.write_value(serde_json::json!({
                         "event": "judge_look",
                         "produced_since_last_look": produced_since_last_look,
+                        "actions_since_last_look": actions_since_last_look,
                         "secs_since_last_look": secs_since_last_look,
                         // THE ONLY PARTY THAT CAN ESTIMATE THIS. Wall-clock arithmetic answers "how long
                         // have rounds taken"; the judge has read what the call established, what it is
@@ -37792,6 +37819,20 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                 }
                 break;
             }
+            // THE FIX WAVE IS A PHASE AND HAD NO PHASE EVENT.
+            //
+            // Every other phase says its own name; this one never did, so the most expensive thing in
+            // the run was invisible and got folded into whichever label came before it. MEASURED on an
+            // 8h20m run: "rate" appeared to consume 4h23m, 52.7% of the whole thing — while the rate
+            // lane showed `tools 0` and RATE is a single triage call. The receipts say what actually
+            // happened: fix_criticals at 22:18, then complete_fix_completed at 22:22, 22:29, 22:31,
+            // 22:42 and 00:38. Two hours twenty of fix wave inside a two hour twenty-one "rate"
+            // segment.
+            //
+            // A phase you cannot measure is a phase you cannot make faster, and this is the one to make
+            // faster: planning plus BUILD together were 62 minutes of that run and repair was seven
+            // hours.
+            sink.write_value(serde_json::json!({"event": "phase", "phase": "fix", "round": round}));
             // STALL EXIT, count-based (speed hunt 2026-08-16). The old predicate compared finding
             // STRINGS (never equal in practice — the pytest finding's embedded failure list mutates
             // while the app stays red) and needed `stall_cap=2` consecutive hits that the round
