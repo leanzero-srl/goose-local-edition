@@ -82,6 +82,33 @@ changes destroys the comparison. REVIEW IS EXPLICITLY NOT ON THE LIST — Mihai:
 in 20 min is excellent"*, and he is right; it produced a structural `add` in round 2. I had wrongly listed
 it as over-engineered.
 
+## THE JUDGE — five fixes landed today, ALL UNMEASURED. Stop and measure before touching it again.
+
+Mihai: *"the judge seems to be a pretty piss poor implementation, you need to improve heavily, make it
+smarter, make it bring more value not weight."* Fair on the evidence he had. What was actually wrong, and
+what is now fixed but NOT YET IN ANY BINARY:
+1. `6ecfe77cb` the ETA token became the worker's whole direction — `next: "ETA=5m"` — because the stripper
+   only looked at the FIRST "ETA" in a line, so `metadata`/`details`/`theta` shielded the real one.
+2. `f3cfbdbbd` tail similarity armed the looping streak on a PRODUCING call, because a coverage TABLE is
+   repetitive by construction. Verdict `looping` at produced=4,006 with recurrence measured at 1.8%.
+3. `2cdfaaa00` these models stream in ~2000/4000-char BURSTS with quiet gaps; a look landing in a gap read
+   a healthy call as dead. Silence now only counts past the longest gap that same call already recovered
+   from — self-calibrating, no seconds constant.
+4. Steer lands MID-GENERATION and keeps the partial, so a nudge stops being destructive.
+5. `can_steer` no longer needs a prior tool call, which also repairs the DRIFTING path honestly: drifting
+   acts uncorroborated on the stated grounds that it costs "one in-session message" — true for a steer,
+   false for the re-stream it always fell through to. Caught re-streaming producing calls TWICE
+   (produced=4,001 and 4,004).
+
+**WHAT IS NOT WRONG, corrected after I nearly "fixed" it:** the look CADENCE. 152 looks looked wasteful
+against 17 nudges, but a cost backoff already exists (60s for the first 6 looks, then 300s), so that is
+~14 looks per lane across 10+ lanes over 2h20m. Bounded and reasonable. Second time today I have started
+to fix a mechanism that was working — see the nudge-justification entry.
+
+**DO NOT ADD MORE JUDGE MECHANISM UNTIL THESE FIVE ARE MEASURED.** The next run must report:
+`judge_quiet_within_rhythm` count, the nudge delivery split (this run: 17 nudges, 17 re-streams, 0 steers),
+and whether any nudge still fires on a call producing >=2000.
+
 ## Standing constraints — absolute, never negotiate them
 
 - **NO SPEND CAP MAY EVER BIND ON A CLOUD RUN.** Mihai, 2026-08-28: *"don't put caps on models or runs
