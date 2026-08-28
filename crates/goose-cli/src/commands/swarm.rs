@@ -27239,54 +27239,53 @@ async fn run_linear_plan(
             }
         }
     }
-    // COVERAGE, before RESEARCH so anything missing still gets a real owner and a real brief.
+    // COVERAGE, OFF THE CRITICAL PATH — it runs CONCURRENTLY with ASK and RESEARCH instead of ahead of
+    // them, and its late-found slices are researched when they arrive.
     //
-    // A patch loop, terminating the same way REVIEW does: it runs again only because the LAST pass
-    // actually added something, and stops the first time it adds nothing. Usually that is one call. No
-    // round ceiling — a request that genuinely names twelve components should get twelve, and the thing
-    // that ends this is having nothing left to add.
-    loop {
-        let missing = dispatcher
-            .cover_slices_fanned(worker_models.clone(), &opts.prompt, &opened.slices)
-            .await;
-        match Ok::<_, anyhow::Error>(missing) {
-            Ok(missing) if !missing.is_empty() => {
-                eprintln!(
-                    "  {} coverage: {} section(s) of the request had no slice — adding {}",
-                    style("+").cyan().bold(),
-                    missing.len(),
-                    missing
-                        .iter()
-                        .map(|s| s.id.as_str())
-                        .collect::<Vec<_>>()
-                        .join(", ")
-                );
-                sink.write_value(serde_json::json!({
+    // WHY IT EXISTS AT ALL, because the cost below is only justified by this: an opener read a
+    // 54,146-character spec naming two services, webhooks, an approval workflow, an idempotent consumer,
+    // an event ledger and a 3D field, and produced nine slices for a table with pagination and a filter.
+    // That run scored 0.0023, and SEVEN HOURS of repair could not reach it — repair fixes what was BUILT,
+    // never what was never PLANNED. Coverage took named components from 2-of-11 to 12-of-12.
+    //
+    // WHY IT MOVED. Mihai, 2026-08-28, on an OPEN that had run 50 minutes: *"how did we end up from my
+    // idea of opener with one model doing something to an opener that lasts over 40 min?"* Fair, and the
+    // honest answer was that each layer here answered a measured failure while nobody re-measured the
+    // phase budget. The value is real; being SERIAL was not load-bearing. Research of a slice depends
+    // only on that slice, so the slices the opener already found can be researched while coverage is
+    // still looking for the ones it missed.
+    //
+    // It is still a patch loop that ends the first time it adds nothing, with no round ceiling — a
+    // request naming twelve components should get twelve. Only its position changed.
+    let coverage_task = {
+        let d = Arc::clone(&dispatcher);
+        let models = worker_models.clone();
+        let prompt = opts.prompt.clone();
+        let sk = Arc::clone(&sink);
+        let mut known = opened.slices.clone();
+        tokio::spawn(async move {
+            let mut late: Vec<OpenSlice> = Vec::new();
+            loop {
+                let missing = d.cover_slices_fanned(models.clone(), &prompt, &known).await;
+                if missing.is_empty() {
+                    sk.write_value(serde_json::json!({
+                        "event": "coverage_complete",
+                        "slices": known.len(),
+                    }));
+                    break;
+                }
+                sk.write_value(serde_json::json!({
                     "event": "coverage_gap",
                     "added": missing.iter().map(|s| s.id.clone()).collect::<Vec<_>>(),
                     "titles": missing.iter().map(|s| s.title.clone()).collect::<Vec<_>>(),
-                    "slices_before": opened.slices.len(),
+                    "slices_before": known.len(),
                 }));
-                opened.slices.extend(missing);
+                known.extend(missing.clone());
+                late.extend(missing);
             }
-            Ok(_) => {
-                sink.write_value(serde_json::json!({
-                    "event": "coverage_complete",
-                    "slices": opened.slices.len(),
-                }));
-                break;
-            }
-            Err(e) => {
-                // A coverage pass that fails leaves the decomposition exactly as the opener wrote it,
-                // which is where it was before this existed. Never fatal.
-                sink.write_value(serde_json::json!({
-                    "event": "coverage_skipped",
-                    "error": e.to_string(),
-                }));
-                break;
-            }
-        }
-    }
+            late
+        })
+    };
     eprintln!(
         "  {} slice(s) in {:.0}s: {}",
         opened.slices.len(),
@@ -27430,15 +27429,58 @@ async fn run_linear_plan(
         "GOOSE_SWARM_RESEARCH_TOOLS",
         cfg.research_tools,
     ));
-    let briefs = dispatcher
+    let mut briefs = dispatcher
         .research_slices(
             worker_models.clone(),
             &opts.prompt,
             user_decisions,
             opened.slices.clone(),
-            research_exts,
+            research_exts.clone(),
         )
         .await;
+    // THE LATE SLICES. Coverage has been reading the request while the fleet researched what the opener
+    // already found; join it here, because SYNTHESIS cannot wire a slice that has no brief. Anything it
+    // discovered is researched now, at the same depth and with the same tools — a component found late is
+    // still a component the request named, and shipping it with a thin brief would give back exactly what
+    // coverage was built to win. Only the WAIT moved off the critical path, never the work.
+    match coverage_task.await {
+        Ok(late) if !late.is_empty() => {
+            eprintln!(
+                "  {} coverage added {} slice(s) while research ran: {}",
+                style("+").cyan().bold(),
+                late.len(),
+                late.iter()
+                    .map(|s| s.id.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            );
+            sink.write_value(serde_json::json!({
+                "event": "coverage_late_slices",
+                "added": late.iter().map(|s| s.id.clone()).collect::<Vec<_>>(),
+                "researched_after_the_first_wave": true,
+            }));
+            opened.slices.extend(late.clone());
+            let late_briefs = dispatcher
+                .research_slices(
+                    worker_models.clone(),
+                    &opts.prompt,
+                    user_decisions,
+                    late,
+                    research_exts,
+                )
+                .await;
+            briefs.extend(late_briefs);
+        }
+        Ok(_) => {}
+        Err(e) => {
+            // A coverage pass that fails leaves the decomposition exactly as the opener wrote it, which
+            // is where it was before this existed. Never fatal.
+            sink.write_value(serde_json::json!({
+                "event": "coverage_skipped",
+                "error": e.to_string(),
+            }));
+        }
+    }
     {
         let created: Vec<String> = existing_files_manifest(&dispatcher.working_dir)
             .into_iter()
