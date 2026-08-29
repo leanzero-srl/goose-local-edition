@@ -153,8 +153,9 @@ and `items`-vs-`data`). **r1** (18:43–20:23) killed at REVIEW round 4 — see 
 and the campaign skill changelog for the full record.
 
 **QUEUED for r3 (desktop + engine, Mihai 22:29): tool calls must show in the inspector WHILE running,
-not after.** Engine writes `inflight[]` into the digest at request time; the WORK pane renders RUNNING
-rows and flips them. UI half waits for the phase-chip agent (same files). Token-level argument streaming
+not after.** Engine half LANDED `156a95957`: the digest carries `inflight: [{id, tool, args, since}]` written at the
+request moment and cleared at the result; the WORK pane must render RUNNING rows from it and flip them. UI half
+waits for the phase-chip agent (same files). Token-level argument streaming
 is out of scope on this branch (no partial tool-call deltas in the provider layer).
 
 **QUEUED for r3 (desktop, Mihai 22:00): the app must not answer stray shortcuts** — Cmd+Shift+N opened a
