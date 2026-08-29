@@ -70,3 +70,25 @@ describe('thinkingCaption', () => {
     expect(thinkingCaption('hello there')).toBe('11 chars');
   });
 });
+
+describe('the THINKING path advances too', () => {
+  it('shows the newest reasoning line, not the start of a 2,400-char block', () => {
+    const lane = {
+      fullThinking: 'older reasoning line\n'.repeat(200) + 'THE NEWEST THOUGHT',
+      thinkingChars: 5000,
+    } as never;
+    expect(laneLiveLine(lane)).toBe('💭 THE NEWEST THOUGHT');
+  });
+
+  it('advances when the thinking grows — the exact defect the tick named', () => {
+    const base = 'reasoning about the ledger\n'.repeat(150);
+    const before = laneLiveLine({ fullThinking: base + 'step one', thinkingChars: 4000 } as never);
+    const after = laneLiveLine({ fullThinking: base + 'step one\nstep two', thinkingChars: 4200 } as never);
+    expect(before).not.toBe(after);
+    expect(after).toBe('💭 step two');
+  });
+
+  it('still yields nothing when there is no reasoning at all', () => {
+    expect(laneLiveLine({ thinkingChars: 0 } as never)).toBe('');
+  });
+});
