@@ -397,6 +397,35 @@ it. A problem that turns out to be already owned is left out, but then it was no
 **THIS RUN KEEPS THE DEFECT** — the binary is the old one. Expect 4 features missing from its app, and read
 the score with that in mind rather than as a verdict on the decomposition.
 
+## `shared_files` EARNED ITSELF — IT NAMED THE PREDICTED COLLISION, 2026-08-29 05:34 EEST
+
+`plan_synthesized` on run 3:
+
+    tasks 19   distinct_files 26   tasks_sharing_a_file 3   (target 0)
+    shared_files:
+      app/ledgerd.py   <- [app-package, sse-streaming]
+      app/notifierd.py <- [app-package, notifierd-service]
+      web/viz.js       <- [viz-rendering-core, viz-interaction]     <-- PREDICTED TWO TICKS AGO
+    module_package_collisions: [app/ledgerd.py]
+    description_chars min 1103 max 10434   (no one-line specs)
+
+**THE VIZ PAIR COLLIDED AGAIN.** In run 1 it was `viz-scene-rendering` + `viz-camera-picking-interaction`
+on `web/viz.js`, and the second task completed with ZERO tool calls because the first had written the whole
+file. Same file, same shape, different slice names — which is exactly why naming it beats counting it. Two
+ticks ago I could only say "watch this pair"; the event now says it outright, with the ids.
+
+**AND `app-package` IS THE NEW OFFENDER:** it owns 4 files and collides with TWO other tasks
+(`app/ledgerd.py`, `app/notifierd.py`). It came from `coverage_gap` — "App Package Structure" — so the gap
+conversion did not only manufacture junk, it manufactured a task that claims other tasks' files.
+
+**THE JUNK TASKS SURVIVED AND OWN INVENTED FILES:** `12-288-payments` and `96-calendar-days` each own ONE
+file apiece, and neither appears in `shared_files`, so SYNTHESIS gave them files of their own to write.
+**Worse than owning nothing** — they will produce files the app does not need. `web-directory` owns 0 files,
+which `tasks_owning_nothing` would flag (that counter is committed but lands next run).
+
+**NOW THE LIVE TEST OF REVIEW 6b** — *"DO TWO TASKS OWN THE SAME FILE? Say which, and give the file to
+exactly ONE of them."* — which IS in this binary. REVIEW started at 01:31.
+
 ## EVERY UI CHANGE I MADE TONIGHT IS NOT IN THE RUNNING APP — found 2026-08-29 05:25 EEST
 
 I have been replacing `/Applications/Goose.app/Contents/Resources/bin/goose` — the RUST ENGINE — and never
