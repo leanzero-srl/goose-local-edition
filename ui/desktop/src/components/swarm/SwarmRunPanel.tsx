@@ -901,6 +901,23 @@ const NodeExpandBox: React.FC<{ text: string; fill?: boolean }> = ({ text, fill 
  * Both panes reuse NodeExpandBox, so each follows the newest text like a terminal while a scroll-up to
  * read stays where it was put.
  */
+/// WHICH TEXT THE INSPECTOR SHOWS. Exported so the rule can be tested without rendering, because this pane
+/// has now been wrong twice: once truncated (the header counted the real transcript while the body fell
+/// back to the rolling window) and once DOUBLED (the log and the window concatenated).
+///
+/// `fullThinking` is the durable `<task>.think.log`. `lastThinking` is the digest's 2,400-char ROLLING
+/// WINDOW over that same stream — a suffix of the log by construction. They must never be joined.
+export function inspectorThinkingText(lane: {
+  fullThinking?: string;
+  fullReasoning?: string;
+  reasoning?: string;
+  lastThinking?: string;
+}): string {
+  const durable =
+    lane.fullThinking?.trim() || lane.fullReasoning?.trim() || lane.reasoning?.trim() || '';
+  return durable || (lane.lastThinking?.trim() ?? '');
+}
+
 const NodeInspector: React.FC<{
   device: string;
   letter: string;
@@ -921,12 +938,20 @@ const NodeInspector: React.FC<{
   // PREFER THE DURABLE THINKING LOG. `fullReasoning` is built from the ANSWER channel and the digest's
   // thinking is a 2,400-char rolling window, so without this the pane clears and refills as the model
   // streams instead of accumulating a readable document.
-  const thinking =
-    lane?.fullThinking?.trim() || lane?.fullReasoning?.trim() || lane?.reasoning?.trim() || '';
-  const lastThink = collapseRepeats(lane?.lastThinking?.trim() ?? '');
-  const thinkText = [thinking, lastThink && lastThink !== thinking ? lastThink : '']
-    .filter(Boolean)
-    .join('\n\n');
+  // NEVER CONCATENATE THE LOG WITH THE ROLLING WINDOW — THEY ARE THE SAME STREAM.
+  //
+  // `fullThinking` is the durable `<task>.think.log`; `lastThinking` is the digest's 2,400-char ROLLING
+  // WINDOW over that same stream, so the window is a SUFFIX of the log by construction. Appending it
+  // rendered every lane's reasoning TWICE.
+  //
+  // Mihai caught it on `slice-ledgerd-core`: the same ~2,000-char block shown twice, the second copy
+  // starting mid-word at "me analyze my slice" — the window's cut head. The engine had one copy
+  // (thinking_chars 2,003, think.log 2,009 bytes, recur_rate 0.0), so it looked like a MODEL loop and was
+  // a render bug. And the duplication is what made the pane look truncated: double the text overflows,
+  // the box auto-scrolls to the bottom, and the real beginning is pushed out of view.
+  //
+  // The window is only a FALLBACK, for a lane whose durable log has not appeared yet.
+  const thinkText = collapseRepeats(inspectorThinkingText(lane ?? {}));
   const calls = lane?.calls ?? [];
   const outText = [...(lane?.recent ?? []), lane?.lastText?.trim() ?? '']
     .filter(Boolean)
@@ -1007,7 +1032,15 @@ const NodeInspector: React.FC<{
         <div className="flex-1 min-h-0 grid grid-cols-1 lg:grid-cols-2 gap-3 p-3">
           <Pane
             title="Thinking"
-            count={`${(lane?.thinkingChars ?? 0).toLocaleString()} chars`}
+            // COUNT WHAT IS ON SCREEN, and say so when it is a clipped tail. The header used to report
+            // the engine's `thinkingChars` while the body rendered something else entirely, so a pane
+            // showing 2,000 characters could be captioned 22,150 — which reads as "the UI is hiding
+            // things" and, before the lane-path fix, actually was.
+            count={
+              thinkText.length < (lane?.thinkingChars ?? 0)
+                ? `${thinkText.length.toLocaleString()} of ${(lane?.thinkingChars ?? 0).toLocaleString()} chars`
+                : `${thinkText.length.toLocaleString()} chars`
+            }
             body={thinkText}
             empty="Nothing on the reasoning channel yet."
           />
