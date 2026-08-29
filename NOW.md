@@ -184,14 +184,17 @@ tool-call deltas in this branch's provider layer).
 **LIVE CHECKS for the first tick of the rebuilt app (r3), over CDP, before trusting any of it:** (1) ribbon shows
 10 chips Open · Ask · Research · Synthesize · Review · Contracts · Build · Integrate · Repair · Done, Contracts
 active during CONTRACTS with the node chips under it; (2) a RUNNING row appears in the inspector the moment a
-write/shell starts, caption "N tool calls · k ok · 1 running", no duplicate when it lands; (3) Cmd+N / Cmd+W /
-Cmd+R / Cmd+Q do nothing destructive while the benchmark runs (per the shortcut workflow's live list). Token-level argument streaming
+write/shell starts, caption "N tool calls · k ok · 1 running", no duplicate when it lands; (3) on `#/benchmark` with
+the run live, Cmd+N / Cmd+W / Cmd+Q / Cmd+T / Cmd+, each show the warning toast and do nothing, mouse clicks on the
+same menu items still act; Cmd+R / Cmd+Shift+R / Cmd+Alt+I do nothing and the View menu shows no Reload items;
+without a run, Cmd+N opens a sibling window on the focused directory and Cmd+W / Cmd+Q behave as before. Token-level argument streaming
 is out of scope on this branch (no partial tool-call deltas in the provider layer).
 
-**QUEUED for r3 (desktop, Mihai 22:00): the app must not answer stray shortcuts** — Cmd+Shift+N opened a
-second window on the Benchmark view mid-run. Enumerate every combo (menu accelerators, globalShortcut,
-renderer keydown, Electron default roles), remove the spawn/reload/close ones, guard the rest while a
-benchmark is live; verify over CDP in the rebuilt app after r2. Agenda item stamped.
+**LANDED for r3 (desktop, Mihai 22:00): the app no longer answers stray shortcuts** — `959ab7ebb` (the
+renderer Cmd+N keydown that matched Cmd+Shift+N is gone), `3ea9495d7` (Reload / Force Reload / DevTools off in
+the packaged app), `82a6d1708` (with a run live: Cmd+N, Cmd+W, Cmd+Q, Cmd+T, Cmd+, from an accelerator are
+refused with an in-app toast; mouse clicks still act). 995 vitest green. Live check after the rebuild —
+nothing was verified on the running r2 app.
 
 **NO THROWAWAY WORK (Mihai, 22:20: "if something gets deleted and redone what's the point of doing it to
 begin with?").** Nothing gets built for a layer the design deletes — no config fields, no gates, no
