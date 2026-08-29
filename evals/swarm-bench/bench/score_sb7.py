@@ -382,6 +382,33 @@ def _probe(scenario: str, base: str, *flags: str, env: Optional[Dict] = None,
         return {"_probe_error": f"{scenario}: {type(e).__name__}: {e}"[:300]}
 
 
+def _probe_preflight() -> Optional[str]:
+    """Why the probe cannot run under the configured node, or None when it can.
+
+    REFUSE-BEFORE-GRADE. A verdict a third blind is not a verdict: r0 (2026-08-29) was scored under
+    hermit's node, which has no playwright; every J/V/P/T/E check came back PROBE-UNAVAILABLE, the
+    means quietly excluded them, and 0.0832 was printed as if it compared with a run whose frontend
+    HAD been graded. The gate belongs here, before the vendor even starts, so the operator learns
+    which node to point GOOSE_SWARM_RENDER_NODE at instead of learning it from the verdict.
+    """
+    node = os.environ.get("GOOSE_SWARM_RENDER_NODE", "node")
+    if not PROBE_SCRIPT.is_file():
+        return f"{PROBE_SCRIPT.name} not present"
+    try:
+        r = subprocess.run([node, str(PROBE_SCRIPT), "--preflight"], capture_output=True,
+                           text=True, timeout=120)
+    except Exception as e:
+        return f"node={node!r}: {type(e).__name__}: {e}"
+    try:
+        out = json.loads(r.stdout.strip().splitlines()[-1])
+    except Exception:
+        return (f"node={node!r} exit {r.returncode}: no preflight JSON "
+                f"(stderr: {(r.stderr or '')[:300]})")
+    if out.get("ok"):
+        return None
+    return f"node={out.get('execPath') or node} ({out.get('node')}): {out.get('error')}"
+
+
 class _ProbeThread(threading.Thread):
     """Runs a probe scenario concurrently with vendor pokes (the D1 mutation, the stream
     batch, the feed heal) — result lands in .result after join."""
@@ -4637,6 +4664,9 @@ def main() -> int:
                          "aces every non-CAL check, every critical is exactly 1.0, the "
                          "severity selftest passes, and the coverage ledger is non-vacuous")
     ap.add_argument("--json-out", type=Path, help="write the verdict JSON here")
+    ap.add_argument("--allow-blind-probe", action="store_true",
+                    help="grade even when the browser probe cannot run (the J/V/P/T/E checks "
+                         "come back PROBE-UNAVAILABLE and the number does NOT compare)")
     args = ap.parse_args()
     args.tree = args.tree.resolve()
 
@@ -4658,6 +4688,16 @@ def main() -> int:
         print("REFUSED: fixtures_v3/schedule_sb7 are not importable — every expectation "
               "derives from them (§5.5).", file=sys.stderr)
         return 2
+
+    if not args.allow_blind_probe:
+        why = _probe_preflight()
+        if why:
+            print("REFUSED: the browser probe cannot run, so a third of the checks would be "
+                  "PROBE-UNAVAILABLE and the number would not compare. Point "
+                  "GOOSE_SWARM_RENDER_NODE at a node that has playwright installed globally "
+                  "(npm root -g), or pass --allow-blind-probe to grade blind on purpose.\n"
+                  f"  ✗ {why}", file=sys.stderr)
+            return 3
 
     seed = args.seed or _draw_seed()
     seed = seed.lower()

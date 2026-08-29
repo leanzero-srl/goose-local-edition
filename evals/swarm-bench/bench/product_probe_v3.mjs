@@ -513,6 +513,24 @@ function selfcheck() {
 // ── CLI ──────────────────────────────────────────────────────────────────────────────────────
 const args = process.argv.slice(2);
 if (args.includes('--selfcheck')) selfcheck();
+// --preflight: can THIS node resolve playwright and launch chromium? The scorer refuses to grade
+// when this fails. r0 was scored under a node with no playwright: 30 of 99 checks came back
+// PROBE-UNAVAILABLE, were excluded from the means, and a number was printed anyway.
+if (args.includes('--preflight')) {
+  (async () => {
+    try {
+      const pw = loadPlaywright();
+      const b = await pw.chromium.launch({ headless: true });
+      await b.close();
+      console.log(JSON.stringify({ ok: true, node: process.version, execPath: process.execPath }));
+      process.exit(0);
+    } catch (e) {
+      console.log(JSON.stringify({ ok: false, node: process.version, execPath: process.execPath,
+                                   error: String(e && e.message || e) }));
+      process.exit(3);
+    }
+  })();
+} else {
 
 const blockApi = args.includes('--block-api');
 const positional = args.filter((a) => !a.startsWith('--'));
@@ -3361,3 +3379,4 @@ main()
     } catch {}
     process.exit(1);
   });
+}
