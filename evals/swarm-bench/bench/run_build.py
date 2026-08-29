@@ -252,6 +252,21 @@ def run(entrant: str, rep: int, out_root: Path, timeout: int, port: int) -> Dict
     # reported "harness failure"). Same hermetic wipes as score_sb7's own CLI.
     sb7 = bool(os.environ.get("BENCH_SB7"))
     seed = None
+    # REFUSE BEFORE BIND. vendor.serve() is a bare ThreadingHTTPServer: a held port is a traceback
+    # in the launching shell and an engine that never starts (2026-08-29: an archive rescore held
+    # 8850 while a launch was being prepared). And a probe that cannot load playwright grades a third
+    # of the checks PROBE-UNAVAILABLE and blinds the engine's own render gate the same way -- the
+    # same refuse-before-grade rule the scorer CLI applies. Not a model cap: nothing has started.
+    held = scorer._port_holder(port) if hasattr(scorer, "_port_holder") else None  # noqa: SLF001
+    if held:
+        raise SystemExit(f"REFUSED: {held}. Stop it, or launch with --port <free port>.")
+    if sb7 and hasattr(scorer, "_probe_preflight") and not os.environ.get("BENCH_ALLOW_BLIND_PROBE"):
+        why = scorer._probe_preflight()  # noqa: SLF001
+        if why:
+            raise SystemExit("REFUSED: the browser probe cannot run, so the render gate and a third "
+                             "of the checks would be blind. Point GOOSE_SWARM_RENDER_NODE at a node "
+                             "with playwright (npm root -g), or set BENCH_ALLOW_BLIND_PROBE=1 on "
+                             f"purpose.\n  ✗ {why}")
     if sb7:
         seed = scorer._draw_seed()  # noqa: SLF001 — the scorer owns seed policy
         for leftover in ("sb7-tokens.json", "sb7-expect.json"):
