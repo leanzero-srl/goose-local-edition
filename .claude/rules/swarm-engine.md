@@ -20,6 +20,22 @@ that is expected, not a fault. Every terminator must be progress-based or live i
   purge. It cut `integrate-verify` at exactly 1800s and the run logged `status=done` — a truncated call
   and a finished one written identically into the row every verdict is read from.
 
+## AUDIT FOR DEAD PHASES, NOT ONLY FOR CAPS
+
+`let proxy_yes = !benchmark() && (round == 0 || last_round_promoted);` was false for EVERY round under
+`GOOSE_SWARM_BENCHMARK=1`, so the repair-continue ask could only be answered no and **REPAIR had never run
+in any measured run** — r0 ended with 29 criticals and `complete_fix_dispatched: 0`. Every local
+benchmark number this project published was a pre-repair score.
+
+It survived because its own comment three lines below described the opposite: *"round 0 buys round 1
+because proxy_yes is true at round 0"*. A comment stating the intent is what stops the next reader
+checking the expression.
+
+**So when auditing this file, ask "is this reachable?" as well as "is this capped?".** A no-caps sweep
+passes happily over a phase that never executes. The check that finds these: for any flag or mode the
+benchmark sets, grep for it in boolean expressions and ask what the expression evaluates to WITH the flag
+on — which is the only configuration we ever measure.
+
 ## `"integrate-verify"` is an exact-equality string test in five live places
 
 `patch.rs:254`, eight sites here, 34 in `scheduler.rs`, 16 in `useSwarmRun.ts`, plus the bench detectors.
