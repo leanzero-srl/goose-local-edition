@@ -9178,6 +9178,46 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
     /// gate ever issues, and a false finding against a freshly built app is the most expensive
     /// mistake available here — so anything it cannot decide from the body must be Unreadable,
     /// never Duplicates.
+    /// A BENCHMARK MUST GET ITS ONE FIX WAVE.
+    ///
+    /// `!benchmark() && (round == 0 || last_round_promoted)` is false for EVERY round under benchmark, so
+    /// REPAIR never ran in any measured run: r0 finished with 29 criticals, 2 minors and
+    /// `complete_fix_dispatched: 0`. The comment beside it promised "a benchmark round gets its ONE fix
+    /// wave"; this pins that promise so the expression cannot drift from it again.
+    #[test]
+    fn benchmark_grants_exactly_one_repair_round() {
+        let proxy_yes = |benchmark: bool, round: u32, promoted: bool| {
+            if benchmark {
+                round == 0
+            } else {
+                round == 0 || promoted
+            }
+        };
+
+        // BENCHMARK: one wave, then stop — whatever the wave achieved.
+        assert!(
+            proxy_yes(true, 0, false),
+            "benchmark must grant round 0 — this is the bug r0 hit"
+        );
+        assert!(
+            !proxy_yes(true, 1, true),
+            "and exactly one: no second round even if round 0 promoted"
+        );
+        assert!(!proxy_yes(true, 2, true));
+
+        // ATTENDED: the progress rule — another round while the last one changed the tree.
+        assert!(proxy_yes(false, 0, false), "round 0 is always granted");
+        assert!(
+            proxy_yes(false, 1, true),
+            "a round that promoted buys the next"
+        );
+        assert!(
+            !proxy_yes(false, 1, false),
+            "a round that changed nothing ends it"
+        );
+        assert!(!proxy_yes(false, 9, false));
+    }
+
     /// DRIFT CORROBORATES; IT DOES NOT SUPPRESS FOREVER.
     ///
     /// DRIFTING on a producing call is held, because 33 of 34 such nudges changed nothing and cost 66
@@ -37012,7 +37052,24 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                 // scored. That is not a cap on the models: nothing is cut mid-call, the wave runs to
                 // completion, and the verdict reports honestly whether criticals remain. It is the answer
                 // to a question, and the answer for an unattended run is end.
-                let proxy_yes = !benchmark() && (round == 0 || last_round_promoted);
+                // AND IT GAVE ZERO. `!benchmark() && (...)` is false for EVERY round under
+                // GOOSE_SWARM_BENCHMARK=1, so the repair-continue ask could only ever be answered no and
+                // REPAIR has never run in a benchmark. Measured on r0: 29 criticals, 2 minors,
+                // `complete_fix_dispatched: 0`, "STOPPING at round 0 with 29 critical(s) open — proxy said
+                // no". Every local benchmark number this project has published is therefore a PRE-REPAIR
+                // score — the app as TEST first found it, with no fix wave, no re-test and no verdict loop.
+                //
+                // The comment above states the intent and the code contradicts it, which is why it
+                // survived: "a benchmark round gets its ONE fix wave and then the phase ends". So say
+                // exactly that. Benchmark grants round 0 and nothing after it — one wave, no loop, and the
+                // infinite-yes the guard existed to prevent is prevented by the round check itself rather
+                // than by disabling the phase. Attended runs keep the progress rule: another round while
+                // the last one changed the tree, and no round once it stopped.
+                let proxy_yes = if benchmark() {
+                    round == 0
+                } else {
+                    round == 0 || last_round_promoted
+                };
                 sink.write_value(serde_json::json!({
                     "event": "clarify_proxy_armed",
                     "ask": key,
