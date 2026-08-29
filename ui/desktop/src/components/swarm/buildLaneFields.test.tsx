@@ -56,6 +56,8 @@ const EXPECTED: Record<string, unknown> = {
   transcriptClipped: true,
   judging: true,
   phase: 'processing',
+  // Derived by the join, not copied: first sight of a lane with an answer reads the answer channel.
+  liveChannel: 'transcript',
   errors: 1,
 };
 
