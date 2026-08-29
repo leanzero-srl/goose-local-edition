@@ -13,7 +13,11 @@ import {
   deriveTaskBoard,
   runAppName,
   classifyCall,
+  callRowMeta,
+  callTallies,
   collapseRepeats,
+  firstCallNeedingAttention,
+  workCaption,
   substantiveChunk,
   resolveActivityPath,
   type TurnStatus,
@@ -207,7 +211,11 @@ const MonoOutput: React.FC<{ text: string; failed?: boolean }> = ({ text, failed
 // expand. Each call is EXPLAINED — a tool-type icon, a plain-English intent ("Ran the tests"), and an honest
 // outcome ("found a failing test — iterating") so an app-error reads as productive work, not a scary failure.
 // A genuine malformed call auto-expands so the reason is zero clicks away.
-const CallRow: React.FC<{ call: SwarmCall; defaultOpen?: boolean }> = ({ call, defaultOpen }) => {
+const CallRow: React.FC<{ call: SwarmCall; defaultOpen?: boolean; ordinal?: number | null }> = ({
+  call,
+  defaultOpen,
+  ordinal,
+}) => {
   const m = classifyCall(call);
   const color = CALL_KIND_COLOR[m.kind];
   const pill = CALL_KIND_PILL[m.kind];
@@ -259,6 +267,14 @@ const CallRow: React.FC<{ call: SwarmCall; defaultOpen?: boolean }> = ({ call, d
             </span>
           ) : null}
         </span>
+        {/* WHERE THIS CALL SITS IN THE LANE'S WHOLE HISTORY. The engine sends the last 60 records, so an
+            array index is not a position; this makes "last 60 of 69" checkable and gives a reader a
+            bearing inside a 60-row scroll. A numeral in the row's own flow — no rail, no chip. */}
+        {ordinal != null ? (
+          <span className="shrink-0 mt-0.5 font-mono text-[10px] tabular-nums text-text-secondary">
+            #{ordinal}
+          </span>
+        ) : null}
         {hasOutput &&
           (open ? (
             <ChevronDown className="h-3 w-3 shrink-0 text-text-secondary mt-0.5" />
@@ -372,8 +388,10 @@ const LaneRow: React.FC<{
   const laneError = failLike && lane.error ? lane.error.trim() : '';
   const hasBody =
     reasoning.length > 0 || calls.length > 0 || (lane.recent?.length ?? 0) > 0 || laneError.length > 0;
-  // The first failing call auto-expands so the error is zero clicks away.
-  const firstFailIdx = calls.findIndex((c) => c.ok === false);
+  // The first call NEEDING ATTENTION auto-expands so the reason is zero clicks away. One definition —
+  // this site used `c.ok === false`, which opens on productive app-errors (the worker testing), while the
+  // board row two thousand lines down used the classifier. Two rules for one question is how they drift.
+  const firstFailIdx = firstCallNeedingAttention(calls);
   // Compact mode's single high-level line: the freshest activity, else the last line of reasoning.
   const compactLine =
     (lane.recent && lane.recent.length ? lane.recent[lane.recent.length - 1] : '') ||
@@ -850,6 +868,68 @@ const NodeLiveText: React.FC<{ text: string; lines: number }> = ({ text, lines }
   );
 };
 
+/**
+ * ONE FOLLOW IMPLEMENTATION, for every scroller in the inspector.
+ *
+ * WHY A SENTINEL AND NOT `scrollTop = scrollHeight`. The old assignment ran in an effect, and any append
+ * landing before layout settled satisfied the `scrollHeight - scrollTop - clientHeight < 40` at-bottom test
+ * in `onScroll` — so follow latched OFF while the user believed it was on, and the pane sat still while the
+ * node generated. Mihai: *"the right side you can't even scroll, it jumps down but does not actively show
+ * what is being generated"*. Observing the END ELEMENT cannot race a growing list: it is either in view or
+ * it is not.
+ *
+ * BOTH feature guards are load-bearing — jsdom has neither `IntersectionObserver` nor `scrollIntoView`, and
+ * the panel's smoke tests render this tree.
+ */
+const FollowScroll: React.FC<{ dep: unknown; className?: string; children: React.ReactNode }> = ({
+  dep,
+  className,
+  children,
+}) => {
+  const boxRef = useRef<HTMLDivElement>(null);
+  const sentinelRef = useRef<HTMLDivElement>(null);
+  const [follow, setFollow] = useState(true);
+
+  useEffect(() => {
+    if (typeof window.IntersectionObserver === 'undefined') return;
+    const io = new window.IntersectionObserver(([e]) => setFollow(e.isIntersecting), {
+      root: boxRef.current,
+      rootMargin: '0px 0px 40px 0px',
+    });
+    if (sentinelRef.current) io.observe(sentinelRef.current);
+    return () => io.disconnect();
+  }, []);
+
+  useEffect(() => {
+    if (follow) sentinelRef.current?.scrollIntoView?.({ block: 'end' });
+  }, [dep, follow]);
+
+  return (
+    <div className="relative flex flex-col min-h-0 h-full">
+      <div
+        ref={boxRef}
+        className={`flex-1 min-h-0 overflow-y-auto ${className ?? ''}`}
+        style={{ scrollPaddingBlockEnd: 8 }}
+      >
+        {children}
+        <div ref={sentinelRef} aria-hidden style={{ height: 1 }} />
+      </div>
+      {!follow ? (
+        <button
+          onClick={() => {
+            setFollow(true);
+            sentinelRef.current?.scrollIntoView?.({ block: 'end' });
+          }}
+          className="absolute bottom-2 right-3 px-2 py-1 text-[10px] font-mono uppercase tracking-wider font-bold text-white shadow-lg"
+          style={{ borderRadius: CHIP_RADIUS, background: SWARM_STATUS.running }}
+        >
+          ↓ follow
+        </button>
+      ) : null}
+    </div>
+  );
+};
+
 // The expanded full-generation box — auto-scrolls to the newest text as the stream grows (like a terminal),
 // but only when the user is already near the bottom, so scrolling up to read stays put.
 /**
@@ -866,46 +946,24 @@ const NodeLiveText: React.FC<{ text: string; lines: number }> = ({ text, lines }
  * impossible. Following is now explicit and stops the moment you scroll away — scroll back down to resume.
  */
 const NodeExpandBox: React.FC<{ text: string; fill?: boolean }> = ({ text, fill }) => {
-  const ref = useRef<HTMLDivElement>(null);
-  const [follow, setFollow] = useState(true);
-  useEffect(() => {
-    const el = ref.current;
-    if (!el || !follow) return;
-    el.scrollTop = el.scrollHeight;
-  }, [text, follow]);
-  const onScroll = () => {
-    const el = ref.current;
-    if (!el) return;
-    const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
-    if (atBottom !== follow) setFollow(atBottom);
-  };
+  if (fill) {
+    return (
+      <FollowScroll
+        dep={text}
+        className="px-3 py-2 font-mono text-[11px] leading-relaxed text-text-secondary whitespace-pre-wrap break-words"
+      >
+        {text}
+      </FollowScroll>
+    );
+  }
   return (
-    <div className={fill ? 'relative flex flex-col min-h-0 h-full' : 'contents'}>
+    <div className="contents">
       <div
-        ref={ref}
-        onScroll={onScroll}
-        className={
-          fill
-            ? 'flex-1 min-h-0 overflow-y-auto px-3 py-2 font-mono text-[11px] leading-relaxed text-text-secondary whitespace-pre-wrap break-words'
-            : 'ml-6 mt-1 mb-1 p-2 font-mono text-[11px] text-text-secondary whitespace-pre-wrap break-words border border-border-primary bg-background-secondary'
-        }
-        style={fill ? undefined : { borderRadius: CHIP_RADIUS, maxHeight: 300, overflowY: 'auto' }}
+        className="ml-6 mt-1 mb-1 p-2 font-mono text-[11px] text-text-secondary whitespace-pre-wrap break-words border border-border-primary bg-background-secondary"
+        style={{ borderRadius: CHIP_RADIUS, maxHeight: 300, overflowY: 'auto' }}
       >
         {text}
       </div>
-      {fill && !follow ? (
-        <button
-          onClick={() => {
-            const el = ref.current;
-            if (el) el.scrollTop = el.scrollHeight;
-            setFollow(true);
-          }}
-          className="absolute bottom-2 right-3 px-2 py-1 text-[10px] font-mono uppercase tracking-wider font-bold text-white shadow-lg"
-          style={{ borderRadius: CHIP_RADIUS, background: SWARM_STATUS.running }}
-        >
-          ↓ follow
-        </button>
-      ) : null}
     </div>
   );
 };
@@ -934,8 +992,12 @@ const NodeExpandBox: React.FC<{ text: string; fill?: boolean }> = ({ text, fill 
 /// its own beginning. `main.ts` had been supplying `full_transcript` on every digest the whole time and
 /// NOTHING in the UI read it — zero references outside main.ts.
 ///
-/// Tool-call summaries (`recent`) are a DIFFERENT channel and are still prepended: they are what the model
-/// DID, and the transcript is what it SAID.
+/// TOOL CALLS ARE NOT TEXT AND ARE NO LONGER PREPENDED HERE. `recent` is `calls` with the information
+/// removed — the engine builds it as six literal `"<name> ok|ERR"` strings (swarm.rs `recent`), so a lane
+/// that made 51 calls rendered the six words "shell ok" and nothing about what it ran or what came back.
+/// The inspector now renders `calls` themselves (WorkPane), where `summary` is the command and `result`
+/// is its output; this function is only what the model SAID. `StreamLane.recent` stays in the type —
+/// `laneLiveLine` still reads it as a last-resort live line.
 /**
  * The stream fields of a lane, as every renderer needs them.
  *
@@ -955,9 +1017,52 @@ export type StreamLane = {
 };
 
 export function inspectorOutputText(lane: StreamLane): string {
-  const durable = lane.fullTranscript?.trim() ?? '';
-  const said = durable || (lane.lastText?.trim() ?? '');
-  return [...(lane.recent ?? []), said].filter(Boolean).join('\n\n');
+  return lane.fullTranscript?.trim() || lane.lastText?.trim() || '';
+}
+
+/**
+ * THE ANSWER CHANNEL'S BLANK RUNS ARE AN ARTIFACT, NOT SPACING.
+ *
+ * `<task>.log` is `texts[already..].join("")` over raw stream deltas (append_reasoning_transcript in
+ * swarm.rs) — nobody authored the 13-line gaps, the chunking produced them, and `whitespace-pre-wrap`
+ * renders every one of them. MEASURED on lane `apptest-advertised-surface`: 2,300 bytes over 143 lines,
+ * 123 of them blank, runs of up to 13 — a pane 86% empty.
+ *
+ * The TRAILING trim is not cosmetic. Follow scrolls to the end, and if the last 13 lines are blank it
+ * lands the viewport on nothing, which is half of "it jumps down but does not actively show what is
+ * being generated".
+ *
+ * DELIBERATELY NOT folded into `collapseRepeats`, which preserves blank runs on purpose and is shared
+ * with the reasoning surfaces; the two channels differ in kind and the comment there must keep saying why.
+ */
+export function squeezeBlankRuns(text: string): string {
+  if (!text) return text;
+  const lines = text.split('\n');
+  const isBlank = (l: string) => l.trim().length === 0;
+  let start = 0;
+  let end = lines.length;
+  while (start < end && isBlank(lines[start])) start += 1;
+  while (end > start && isBlank(lines[end - 1])) end -= 1;
+  const out: string[] = [];
+  for (let i = start; i < end; i += 1) {
+    if (isBlank(lines[i])) {
+      // Keep the FIRST line of the run verbatim rather than substituting '': a lone whitespace-only line
+      // is not a run and must survive byte-identical.
+      if (out.length && isBlank(out[out.length - 1])) continue;
+      out.push(lines[i]);
+      continue;
+    }
+    out.push(lines[i]);
+  }
+  return out.join('\n');
+}
+
+/** COUNT WHAT IS ON SCREEN — and say when the screen is holding less than the log did. Kept separate from
+ *  `thinkingCaption` so that caption's signature, and its tests, stay exactly as they are. */
+export function squeezeNote(before: string, after: string): string {
+  const blanks = (t: string) => t.split('\n').filter((l) => l.trim().length === 0).length;
+  const n = blanks(before) - blanks(after);
+  return n > 0 ? ` · ${n} blank lines collapsed` : '';
 }
 
 /// WHICH TEXT THE INSPECTOR SHOWS. Exported so the rule can be tested without rendering, because this pane
@@ -1175,6 +1280,87 @@ export function taskGenReasoning(digest: Record<string, unknown>): string {
   return tailOf(text, CARD_TAIL_CHARS);
 }
 
+/**
+ * ONE PANE OF THE INSPECTOR — declared at MODULE SCOPE, and that is the whole point.
+ *
+ * This was a `Pane` const declared INSIDE `NodeInspector`'s body. A component defined in a render body is a
+ * NEW COMPONENT TYPE on every render, so React unmounted and remounted the entire subtree — at the 500 ms
+ * poll (`useSwarmRun(dir, pollMs = 500)`), twice a second, forever. Every remount reset `follow` to true and
+ * re-fired the jump-to-bottom, which is exactly "it jumps down but does not actively show what is being
+ * generated", and no amount of fixing the TEXT could reach it because it was never in the text pipeline.
+ */
+const InspectorPane: React.FC<{
+  title: string;
+  count: string;
+  empty: string;
+  isEmpty: boolean;
+  children: React.ReactNode;
+}> = ({ title, count, empty, isEmpty, children }) => (
+  <div
+    className="flex flex-col min-h-0 flex-1 border border-border-primary overflow-hidden"
+    style={{ borderRadius: CHIP_RADIUS }}
+  >
+    <div className="flex items-center justify-between px-3 py-1.5 border-b border-border-primary shrink-0 bg-background-secondary">
+      <span className="font-mono uppercase tracking-[0.18em] text-[10px] font-bold text-text-primary">
+        {title}
+      </span>
+      <span className="text-[10px] tabular-nums text-text-secondary">{count}</span>
+    </div>
+    <div className="min-h-0 flex-1 overflow-hidden">
+      {isEmpty ? <div className="px-3 py-2 text-xs text-text-secondary">{empty}</div> : children}
+    </div>
+  </div>
+);
+
+/**
+ * WHAT THE NODE ACTUALLY DID — the call list first, the narration second, in ONE scroller.
+ *
+ * The pane used to be a string: six literal "shell ok" summaries joined onto the answer log. A lane that
+ * made 51 tool calls therefore displayed six words of status and a wall of blank space, under a header
+ * counting 42 tool calls — the header named the work and the body showed none of it, while every record
+ * needed to render it (`summary` = the command, `result` = its output) sat unread in the same object.
+ *
+ * NO MODE SWITCH AND NO LANE-KIND GUESS. A tool lane has ~1 character of prose, so it renders as calls; a
+ * planning lane has no calls and 30 KB of prose, so it renders as prose. The window cannot guess wrong
+ * because it never guesses.
+ */
+const WorkPane: React.FC<{ calls: SwarmCall[]; toolCalls?: number; narration: string }> = ({
+  calls,
+  toolCalls,
+  narration,
+}) => {
+  const meta = callRowMeta(calls, toolCalls);
+  const attention = firstCallNeedingAttention(calls);
+  return (
+    <FollowScroll dep={`${calls.length}:${narration.length}`} className="px-3 py-2">
+      {calls.length > 0 ? (
+        <div>
+          {calls.map((c, i) => (
+            <CallRow
+              key={meta[i].key}
+              ordinal={meta[i].ordinal}
+              call={c}
+              defaultOpen={i === attention}
+            />
+          ))}
+        </div>
+      ) : null}
+      {narration.length > 0 ? (
+        <div>
+          {calls.length > 0 ? (
+            <div className="mt-3 pt-2 border-t border-border-primary text-[10px] font-bold uppercase tracking-[0.12em] text-text-secondary">
+              Said
+            </div>
+          ) : null}
+          <div className="font-mono text-[11px] leading-relaxed text-text-secondary whitespace-pre-wrap break-words">
+            {narration}
+          </div>
+        </div>
+      ) : null}
+    </FollowScroll>
+  );
+};
+
 const NodeInspector: React.FC<{
   device: string;
   letter: string;
@@ -1208,35 +1394,18 @@ const NodeInspector: React.FC<{
   // the box auto-scrolls to the bottom, and the real beginning is pushed out of view.
   //
   // The window is only a FALLBACK, for a lane whose durable log has not appeared yet.
-  const thinkText = collapseRepeats(inspectorThinkingText(lane ?? {}));
+  // BLANK RUNS ARE AN ARTIFACT OF STREAM CHUNKING, on both channels — see squeezeBlankRuns. The measured
+  // lane was 123 blank lines out of 143, rendered verbatim by whitespace-pre-wrap.
+  const rawThink = collapseRepeats(inspectorThinkingText(lane ?? {}));
+  const thinkText = squeezeBlankRuns(rawThink);
   const calls = lane?.calls ?? [];
-  const outText = inspectorOutputText(lane ?? {});
-
-  const Pane: React.FC<{ title: string; count: string; body: string; empty: string }> = ({
-    title,
-    count,
-    body,
-    empty,
-  }) => (
-    <div
-      className="flex flex-col min-h-0 flex-1 border border-border-primary overflow-hidden"
-      style={{ borderRadius: CHIP_RADIUS }}
-    >
-      <div className="flex items-center justify-between px-3 py-1.5 border-b border-border-primary shrink-0 bg-background-secondary">
-        <span className="font-mono uppercase tracking-[0.18em] text-[10px] font-bold text-text-primary">
-          {title}
-        </span>
-        <span className="text-[10px] tabular-nums text-text-secondary">{count}</span>
-      </div>
-      <div className="min-h-0 flex-1 overflow-hidden">
-        {body ? (
-          <NodeExpandBox text={body} fill />
-        ) : (
-          <div className="px-3 py-2 text-xs text-text-secondary">{empty}</div>
-        )}
-      </div>
-    </div>
-  );
+  const rawNarration = inspectorOutputText(lane ?? {});
+  const narration = squeezeBlankRuns(rawNarration);
+  // THE PREDICATE HAD TO MOVE IN THE SAME COMMIT AS THE `recent` REMOVAL. With `recent` gone from
+  // `inspectorOutputText`, the measured lane (60 calls, last_text one character) yields narration === '',
+  // and the old `outText` grid predicate would collapse the column and take all 60 calls with it.
+  const hasWork = calls.length > 0 || narration.length > 0;
+  const tallies = callTallies(calls);
 
   return createPortal(
     <>
@@ -1305,10 +1474,10 @@ const NodeInspector: React.FC<{
             when it has something in it. */}
         <div
           className={`flex-1 min-h-0 grid gap-3 p-3 ${
-            outText ? 'grid-cols-1 lg:grid-cols-2' : 'grid-cols-1'
+            hasWork ? 'grid-cols-1 lg:grid-cols-2' : 'grid-cols-1'
           }`}
         >
-          <Pane
+          <InspectorPane
             title="Thinking"
             // COUNT WHAT IS ON SCREEN, and say so when it is a clipped tail. The header used to report
             // the engine's `thinkingChars` while the body rendered something else entirely, so a pane
@@ -1318,27 +1487,36 @@ const NodeInspector: React.FC<{
             // `thinkingChars` IS NOT THE DENOMINATOR. It is the engine's per-stream counter and resets on
             // a re-stream, so it says nothing about the size of `<task>.think.log`; the only number that
             // does is `thinkingBytes`, which main.ts has attached to every digest and nothing has read.
-            count={thinkingCaption(
+            count={`${thinkingCaption(
               thinkText,
               lane?.fullThinking,
               lane?.thinkingBytes,
               lane?.thinkingChars
-            )}
-            body={thinkText}
+            )}${squeezeNote(rawThink, thinkText)}`}
             empty="Nothing on the reasoning channel yet — the node has been dispatched but has not produced a token."
-          />
-          <Pane
-            title="Output"
+            isEmpty={!thinkText}
+          >
+            <NodeExpandBox text={thinkText} fill />
+          </InspectorPane>
+          <InspectorPane
+            title="Work"
+            // THE HEADER STOPS CONFLATING TWO NUMBERS. `tool_calls` counts RESOLVED records; `calls` is the
+            // last 60 of those plus the in-flight ones, so the two are not the same quantity and the header
+            // said one while the body showed the other. workCaption labels the difference ("last 60 of 69")
+            // and every other figure it prints is over the rows actually on screen.
+            //
             // SAY WHEN THE TRANSCRIPT IS A TAIL — main.ts already computed the answer, in the one place
             // that knows both the file size and the budget it read with. See streamTailNote.
-            count={`${calls.length} tool call${calls.length === 1 ? '' : 's'}${streamTailNote(lane?.fullTranscript, lane?.transcriptBytes, lane?.transcriptClipped)}`}
-            body={outText}
+            count={`${workCaption(calls.length, lane?.toolCalls, tallies)}${streamTailNote(lane?.fullTranscript, lane?.transcriptBytes, lane?.transcriptClipped)}${squeezeNote(rawNarration, narration)}`}
             empty={
               thinkText
                 ? 'Still thinking — this fills with tool calls and written text once it starts acting.'
                 : 'Nothing yet on either channel.'
             }
-          />
+            isEmpty={!hasWork}
+          >
+            <WorkPane calls={calls} toolCalls={lane?.toolCalls} narration={narration} />
+          </InspectorPane>
         </div>
       </div>
     </>,
@@ -2401,10 +2579,7 @@ const BoardTaskRow: React.FC<{
     const base = workingDir.replace(/\/$/, '');
     void window.electron.revealInFinder(rel.startsWith('/') ? rel : `${base}/${rel}`);
   };
-  const firstBadCall = calls.findIndex((cl) => {
-    const k = classifyCall(cl).kind;
-    return k === 'malformed' || k === 'ran-nothing';
-  });
+  const firstBadCall = firstCallNeedingAttention(calls);
   return (
     <div className="min-w-0" data-testid="board-row">
       <div

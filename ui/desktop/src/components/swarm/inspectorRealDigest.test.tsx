@@ -106,7 +106,15 @@ describe.each([
   });
 });
 
-describe('the inspector OUTPUT pane keeps the tool-call channel separate', () => {
+// `recent` IS `calls` WITH THE INFORMATION REMOVED, and it is no longer prepended to the answer text.
+// The engine builds it as six literal "<name> ok|ERR" strings, so a lane that made 51 tool calls put six
+// words of status on screen; the inspector now renders `calls` themselves, where `summary` is the command
+// and `result` is its output.
+//
+// These assertions replace two that had gone VACUOUS the moment the prepend was removed: they compared
+// `out.indexOf(summary)` (-1, absent) against `out.indexOf(transcript)` (0) and passed on -1 < 0, so they
+// would have gone on reporting green whatever this function did with the tool channel.
+describe('the inspector OUTPUT pane no longer smuggles the tool-call channel into the text', () => {
   const fixture = realOutput.open;
   const lane = {
     fullTranscript: fixture.full_transcript,
@@ -114,15 +122,19 @@ describe('the inspector OUTPUT pane keeps the tool-call channel separate', () =>
     recent: fixture.recent as string[],
   };
 
-  it('prepends what the model DID to what it SAID', () => {
+  it('renders none of the "<name> ok" summaries as text', () => {
     expect(fixture.recent.length).toBeGreaterThan(0);
     const out = inspectorOutputText(lane);
     for (const summary of fixture.recent) {
-      expect(out.indexOf(summary)).toBeLessThan(out.indexOf(fixture.full_transcript.trim()));
+      expect(out).not.toContain(summary);
     }
   });
 
-  it('drops the rolling view entirely rather than appending it after the summaries', () => {
+  it('is exactly the durable transcript, nothing prepended and nothing appended', () => {
+    expect(inspectorOutputText(lane)).toBe(fixture.full_transcript.trim());
+  });
+
+  it('drops the rolling view entirely rather than appending it to the durable log', () => {
     const out = inspectorOutputText(lane);
     const withoutDurable = out.replace(fixture.full_transcript.trim(), '');
     expect(withoutDurable).not.toContain(fixture.last_text.trim().slice(0, 120));

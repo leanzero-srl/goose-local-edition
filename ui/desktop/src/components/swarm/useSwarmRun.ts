@@ -180,24 +180,95 @@ export function classifyCall(call: SwarmCall): CallMeaning {
   return { kind: 'app-error', icon, action, outcome };
 }
 
-/** Roll a lane's calls into honest counts: genuine tool slips vs productive app-errors vs successes. */
+/** Roll a lane's calls into honest counts. The five buckets are DISJOINT and sum to calls.length —
+ *  'ran nothing' is the LYING-GREEN case and gets its own number rather than hiding inside app-errors,
+ *  which is precisely the folding that let a header count one thing while a body showed another. */
 export function callTallies(calls: SwarmCall[]): {
   ok: number;
   appError: number;
+  ranNothing: number;
   malformed: number;
+  pending: number;
 } {
   let ok = 0;
   let appError = 0;
+  let ranNothing = 0;
   let malformed = 0;
+  let pending = 0;
   for (const c of calls) {
     const k = classifyCall(c).kind;
     if (k === 'ok') ok++;
     else if (k === 'malformed') malformed++;
-    // 'ran-nothing' tallies with app-errors: the command surface reported a problem, the tool call itself
-    // was well-formed — and it must never inflate the success count.
-    else if (k === 'app-error' || k === 'ran-nothing') appError++;
+    else if (k === 'ran-nothing') ranNothing++;
+    else if (k === 'app-error') appError++;
+    else if (k === 'pending') pending++;
   }
-  return { ok, appError, malformed };
+  return { ok, appError, ranNothing, malformed, pending };
+}
+
+/** The one call a reader must not have to hunt for. An APP-ERROR is deliberately not it: the command ran
+ *  and reported something while the worker tests, and auto-opening twenty of those buries the lane. */
+export function firstCallNeedingAttention(calls: SwarmCall[]): number {
+  return calls.findIndex((c) => {
+    const k = classifyCall(c).kind;
+    return k === 'malformed' || k === 'ran-nothing';
+  });
+}
+
+export interface CallRowMeta {
+  key: string;
+  ordinal: number | null;
+}
+
+/** WHERE EACH SHOWN CALL SITS IN THE LANE'S WHOLE HISTORY, and a key that survives the window sliding.
+ *  The engine sends the LAST 60 resolved records plus every in-flight one, so array index is not position.
+ *  A pending call has NO ordinal: `tool_calls` counts only resolved records, so it does not have a number yet. */
+export function callRowMeta(calls: SwarmCall[], toolCalls?: number): CallRowMeta[] {
+  // `!= null` covers both null and a digest that omitted the field entirely — a pending call is any call
+  // the engine has not resolved yet, and `tool_calls` does not count it.
+  const isResolved = (c: SwarmCall) => c.ok != null;
+  const resolved = calls.filter(isResolved).length;
+  const total = Math.max(toolCalls ?? resolved, resolved);
+  const base = total - resolved;
+  let n = 0;
+  const seenPending = new Map<string, number>();
+  return calls.map((c) => {
+    if (isResolved(c)) {
+      n += 1;
+      const ordinal = base + n;
+      return { key: `#${ordinal}`, ordinal };
+    }
+    // A pending call has no stable identity from the engine: it arrives out of a HashMap, so its position
+    // in `calls` can change between polls. Key it by what it IS, plus a duplicate counter.
+    const sig = `${c.name ?? ''}|${c.summary ?? ''}`;
+    const dupIndex = seenPending.get(sig) ?? 0;
+    seenPending.set(sig, dupIndex + 1);
+    return { key: `pending:${dupIndex}:${c.name ?? ''}:${c.summary ?? ''}`, ordinal: null };
+  });
+}
+
+/** WHAT THE WORK PANE'S HEADER IS ALLOWED TO SAY. One rule, three call sites.
+ *  `tool_calls` counts resolved records; `calls` is the last 60 of those PLUS the in-flight ones, so a lane
+ *  with 3 resolved + 1 pending would otherwise report "last 4 of 3". `total` is clamped for exactly that. */
+export function workCaption(
+  shown: number,
+  engineTotal: number | undefined,
+  t: ReturnType<typeof callTallies>
+): string {
+  if (shown === 0) return 'no tool calls yet';
+  const total = Math.max(engineTotal ?? shown, shown);
+  const head =
+    shown === total
+      ? `${total} tool call${total === 1 ? '' : 's'}`
+      : `last ${shown} of ${total} tool calls`;
+  const parts = [
+    t.ok ? `${t.ok} ok` : '',
+    t.appError ? `${t.appError} app output` : '',
+    t.ranNothing ? `${t.ranNothing} ran nothing` : '',
+    t.malformed ? `${t.malformed} retried` : '',
+    t.pending ? `${t.pending} running` : '',
+  ].filter(Boolean);
+  return [head, ...parts].join(' · ');
 }
 
 export interface TurnLane {
