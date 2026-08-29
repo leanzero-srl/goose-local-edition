@@ -2,8 +2,17 @@
 
 ## Durable context in this repo — read the one that matches what you are doing
 
-Compaction destroys conversation knowledge, so it lives in files instead. Path-scoped rules under
-`.claude/rules/` load automatically when you touch a matching file; these four you should open yourself:
+Compaction destroys conversation knowledge, so it lives in files instead.
+
+**`.claude/rules/*.md` load only when you open a matching file with the `Read` tool.** `cat`, `sed`,
+`grep`, Grep and Glob do NOT arm them — measured on 2.1.247. That matters here because the files are
+large enough that `grep -n` + `sed -n 'A,Bp'` is the correct way to open them, so **you can work all
+session and never see the rule for the file you are editing.** Two consequences: the invariants that
+must never be broken are repeated in `AGENTS.md`, which loads unconditionally; and if you are about to
+change something load-bearing, open `.claude/rules/` for that area DELIBERATELY rather than assuming it
+arrived.
+
+These you should open yourself:
 
 - **`NOW.md`** — the current thread. Read this BEFORE `SWARM-AGENDA.md`, which is 2,400 lines of history.
 - **`EXPERIMENTS-LEDGER.md`** — what was tried, what it measured, why it is not coming back. **Read before
