@@ -102,7 +102,7 @@ line follows the channel that advanced last and the second-lane rows open the in
 contract block, REPAIR under benchmark) is in.
 
 **Claims r2 settles, in order:** (1) ✅ SETTLED 22:08 — REVIEW ran ONE round, 7 min, 9 new → 10 touches, patch replace 4 / remove 6, sharing 0 / owning-nothing 0, then CONTRACTS. (Was:) REVIEW ends after ONE round with a patch that fixes the measured flags
-— `review_findings round:1` then `plan_loaded`, no round 2; (2) BUILD is reached and the run COMPLETES:
+— `review_findings round:1` then `plan_loaded`, no round 2; (2) ✅ BUILD REACHED 22:14 (CONTRACTS 6 min, plan_loaded=1, plan_patched=1) — and the run COMPLETES:
 `complete_result` → `run_finished` → heartbeat `EXITED:`, orphans 0; (3) REPAIR round 0 runs
 (`fix_criticals yes`, `complete_fix_dispatched` with `app/sync.py` and `app/ledgerd.py` shards) and
 round 1 answers no; (4) the score: does `sync_completeness` close and `GET /` serve? (5) the durable

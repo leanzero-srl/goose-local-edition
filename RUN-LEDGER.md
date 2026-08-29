@@ -10,38 +10,38 @@ DAG is actually parallel). reasoning_chars against answer_chars is the waste.
 
 ## swarm-3node-r0
 
-- **phases**: open → ask → research → synthesis → review → contracts
+- **phases**: open → ask → research → synthesis → review → contracts → build
 - **started**: 17:43:01
-- **tasks**: 0
-- **files_planned**: 0
+- **tasks**: 11
+- **files_planned**: 23
 - **collisions**: none
-- **sink_owns**: NO SINK
-- **chain**: 0
-- **startable**: 0
-- **brief_median**: 0
-- **reasoning_chars**: 219562
-- **answer_chars**: 131077
+- **sink_owns**: []
+- **chain**: 2
+- **startable**: 10
+- **brief_median**: 4740
+- **reasoning_chars**: 231569
+- **answer_chars**: 137125
 - **code_files**: 2
 - **code_bytes**: 9621
-- **elapsed_min**: 88
-- **phase_split**: open 22m · ask 2m · research 48m · synthesis 5m · review 6m · contracts 3m
-- **before_build_min**: 0 (internal diagnosis only — never a cross-run number)
-- **vs_target**: ONLY THE SCORE COMPARES. Target 20.06% (qwen3.8-27b, one cloud agent, same model). Wall clock is NOT comparable — that run is on far faster hardware, so minutes measure the machine. Bytes are NOT a verdict — more code is not better code, and it had no planning phases to spend budget on. Cross-hardware-honest work numbers for THIS run: 9,621B delivered, 219,562 chars reasoned, 0 tasks completed, 0 retried.
+- **elapsed_min**: 93
+- **phase_split**: open 22m · ask 2m · research 48m · synthesis 5m · review 6m · contracts 6m · build 1m
+- **before_build_min**: 92 (internal diagnosis only — never a cross-run number)
+- **vs_target**: ONLY THE SCORE COMPARES. Target 20.06% (qwen3.8-27b, one cloud agent, same model). Wall clock is NOT comparable — that run is on far faster hardware, so minutes measure the machine. Bytes are NOT a verdict — more code is not better code, and it had no planning phases to spend budget on. Cross-hardware-honest work numbers for THIS run: 9,621B delivered, 231,569 chars reasoned, 0 tasks completed, 0 retried.
 - **python_parses**: 0 ok / 0 SYNTAX ERROR / 0 empty
 - **web_files**: test_camera.js, viz_camera.js
-- **tasks_done**: 0/? completed, 0 dispatched, 0 retried
+- **tasks_done**: 0/11 completed, 6 dispatched, 0 retried
 - **arm**: F (fleet of 3)
 - **fixture_seed**: 5cd47b42e2a7c3e0
 - **plan_patched**: 1
 - **plan_repaired**: none
-- **plan_loaded**: 0
+- **plan_loaded**: 1
 - **review_rounds**: r1:new=9
-- **judge_looks**: 64
-- **judge_nudges**: 5
+- **judge_looks**: 66
+- **judge_nudges**: 6
 - **judge_ended**: 0
-- **drift_held**: 9
+- **drift_held**: 10
 - **tree_defects**: 0
-- **repair**: delivery_defect_steer=0 brief_defects=2 testgen=0 fix_target_selected=0 complete_verify=0 complete_result=0
+- **repair**: delivery_defect_steer=1 brief_defects=2 testgen=0 fix_target_selected=0 complete_verify=0 complete_result=0
 ## swarm-3node-r0-ENDED-29criticals-repair-never-ran-benchmark-forces-proxy-no
 
 - **phases**: open → ask → research → synthesis → review → contracts → build → integrate → repair → test → rate
