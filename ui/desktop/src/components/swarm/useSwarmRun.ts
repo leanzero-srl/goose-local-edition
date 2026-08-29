@@ -1981,6 +1981,32 @@ export function foldEvents(
       calls: act?.calls ?? t.calls,
       toolCalls: act?.tool_calls ?? t.toolCalls,
       errors: act?.errors ?? t.errors,
+      // THE BUILD LANE IS THE FIFTH PATH, AND IT WINS.
+      //
+      // A comment further down says these fields are "set on all four of these paths". There are FIVE.
+      // This one -- the BUILD worker lane -- was never counted, and it is first in `laneSources`, so it
+      // is what BOTH the fleet strip and the inspector receive for a build node. The whole of BUILD,
+      // which is where a run spends its hours, therefore had every one of these undefined.
+      //
+      // What that cost, all of it invisible to me because I only ever inspected planner lanes:
+      //   - the thinking line is gated on thinkingChars > 0, so it never rendered
+      //   - phase === 'processing' never fired; a node chewing 100k of prompt read "generating..."
+      //   - canExpand is fullGen.length > 0, so a THINKING-ONLY model produced an UNCLICKABLE ROW --
+      //     the node you most need to open is the one you cannot
+      //   - the "supervisor reading" badge and the char count were dead
+      //   - LaneRow and BoardTaskRow fell back to the 24k full_reasoning CLIP, which is exactly the
+      //     truncation I had already declared fixed twice
+      thinkingChars: act?.thinking_chars ?? t.thinkingChars,
+      lastThinking: act?.last_thinking ?? t.lastThinking,
+      fullThinking: (act as { full_thinking?: string } | undefined)?.full_thinking ?? t.fullThinking,
+      fullTranscript:
+        (act as { full_transcript?: string } | undefined)?.full_transcript ?? t.fullTranscript,
+      transcriptBytes:
+        (act as { transcript_bytes?: number } | undefined)?.transcript_bytes ?? t.transcriptBytes,
+      judging: (act as { judging?: boolean } | undefined)?.judging ?? t.judging,
+      queuedChunks:
+        (act as { queued_chunks?: number } | undefined)?.queued_chunks ?? t.queuedChunks,
+      phase: (act as { phase?: string } | undefined)?.phase ?? t.phase,
     };
   });
 

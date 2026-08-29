@@ -27679,11 +27679,33 @@ fn splice_briefs(plan: &mut serde_json::Value, briefs: &[SliceBrief], lang: Targ
     let mut claimed: std::collections::HashSet<String> = std::collections::HashSet::new();
     if let Some(tasks) = plan.get_mut("subtasks").and_then(|v| v.as_array_mut()) {
         for t in tasks.iter_mut() {
-            let slice_id = t
-                .get("slice")
+            // A TASK WITH NO `slice` IS KEYED BY ITS OWN ID, AND GETTING THIS WRONG PRODUCES A DUPLICATE.
+            //
+            // `unwrap_or_default()` gave the EMPTY STRING, which matches no brief. Synthesis always emits
+            // `slice`, so this was invisible -- until REVIEW started ADDING tasks, which carry no slice
+            // because nobody researched them, and until I then added the orphan-research block that
+            // creates a brief for exactly those tasks (`slice = t["slice"].unwrap_or(&id)`, so the brief
+            // is keyed by the task's ID).
+            //
+            // The two disagreed. The splice looked up "" and found nothing, so the task was never
+            // `claimed`, and the append loop below then pushed a SECOND task carrying the same id --
+            // `Dag::from_specs` bails "duplicate task id" and the run loses the plan it just spent an
+            // hour building. My orphan-research fix is what armed it: before it, no brief existed for an
+            // added task, so nothing was appended.
+            //
+            // Falling back to the task's own id makes the two sides agree and is what the orphan block
+            // already assumed.
+            let own_id = t
+                .get("id")
                 .and_then(|v| v.as_str())
                 .unwrap_or_default()
                 .to_string();
+            let slice_id = t
+                .get("slice")
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.trim().is_empty())
+                .map(str::to_string)
+                .unwrap_or(own_id);
             if let Some(b) = by_id.get(slice_id.as_str()) {
                 t["description"] = serde_json::Value::from(b.brief.clone());
                 claimed.insert(slice_id);
