@@ -63,6 +63,51 @@ import { usePageViewTracking } from './hooks/useAnalytics';
 import { trackErrorWithContext } from './utils/analytics';
 import { AppEvents } from './constants/events';
 import { registerPlatformEventHandlers } from './utils/platform_events';
+import { defineMessages, useIntl } from './i18n';
+
+const i18n = defineMessages({
+  shortcutRefusedTitle: {
+    id: 'shortcutRefused.title',
+    defaultMessage: 'Shortcut ignored while a benchmark is running',
+  },
+  shortcutRefusedSpawn: {
+    id: 'shortcutRefused.spawn',
+    defaultMessage:
+      'Cmd+N would open a second window and a second backend on the live run. Use File > New Chat Window if you really mean it.',
+  },
+  shortcutRefusedClose: {
+    id: 'shortcutRefused.close',
+    defaultMessage:
+      'Closing this window would drop the live benchmark view. Use File > Close if you really mean it.',
+  },
+  shortcutRefusedReload: {
+    id: 'shortcutRefused.reload',
+    defaultMessage: 'Reloading would discard the live log and swarm panel state.',
+  },
+  shortcutRefusedQuit: {
+    id: 'shortcutRefused.quit',
+    defaultMessage:
+      'Quitting would orphan the run and lose its score. Use Goose > Quit if you really mean it.',
+  },
+  shortcutRefusedNavigate: {
+    id: 'shortcutRefused.navigate',
+    defaultMessage:
+      'Leaving the Benchmark view is one-way while a run is live; use File > New Chat if you really mean it.',
+  },
+});
+
+type RefusedShortcutAction = 'spawn' | 'close' | 'reload' | 'quit' | 'navigate';
+
+const refusedShortcutMessage = {
+  spawn: i18n.shortcutRefusedSpawn,
+  close: i18n.shortcutRefusedClose,
+  reload: i18n.shortcutRefusedReload,
+  quit: i18n.shortcutRefusedQuit,
+  navigate: i18n.shortcutRefusedNavigate,
+} as const satisfies Record<RefusedShortcutAction, unknown>;
+
+const isRefusedShortcutAction = (value: unknown): value is RefusedShortcutAction =>
+  typeof value === 'string' && Object.prototype.hasOwnProperty.call(refusedShortcutMessage, value);
 
 function PageViewTracker() {
   usePageViewTracking();
@@ -328,6 +373,7 @@ export function AppInner() {
 
   const navigate = useNavigate();
   const setView = useNavigation();
+  const intl = useIntl();
 
   const [chat, setChat] = useState<ChatType>({
     sessionId: '',
@@ -467,24 +513,6 @@ export function AppInner() {
     };
   }, [navigate]);
 
-  useEffect(() => {
-    const handleKeyDown = (event: KeyboardEvent) => {
-      const isMac = window.electron.platform === 'darwin';
-      if ((isMac ? event.metaKey : event.ctrlKey) && event.key === 'n') {
-        event.preventDefault();
-        try {
-          window.electron.createChatWindow({ dir: getInitialWorkingDir() });
-        } catch (error) {
-          console.error('Error creating new window:', error);
-        }
-      }
-    };
-    window.addEventListener('keydown', handleKeyDown);
-    return () => {
-      window.removeEventListener('keydown', handleKeyDown);
-    };
-  }, []);
-
   // Prevent default drag and drop behavior globally to avoid opening files in new windows
   // but allow our React components to handle drops in designated areas
   useEffect(() => {
@@ -566,6 +594,23 @@ export function AppInner() {
     window.electron.on('new-chat', handleNewChat);
     return () => window.electron.off('new-chat', handleNewChat);
   }, [navigate]);
+
+  useEffect(() => {
+    const handleShortcutRefused = (_event: IpcRendererEvent, ...args: unknown[]) => {
+      const action = (args[0] as { action?: unknown } | undefined)?.action;
+      if (!isRefusedShortcutAction(action)) return;
+      toast.warn(
+        <div>
+          <strong className="font-medium">{intl.formatMessage(i18n.shortcutRefusedTitle)}</strong>
+          <div>{intl.formatMessage(refusedShortcutMessage[action])}</div>
+        </div>,
+        { position: 'top-right', closeButton: true, hideProgressBar: true, autoClose: 5000 }
+      );
+    };
+
+    window.electron.on('shortcut-refused', handleShortcutRefused);
+    return () => window.electron.off('shortcut-refused', handleShortcutRefused);
+  }, [intl]);
 
   useEffect(() => {
     const handleFocusInput = (_event: IpcRendererEvent, ..._args: unknown[]) => {

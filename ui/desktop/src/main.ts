@@ -3928,6 +3928,22 @@ const createNewWindow = async (app: App, dir?: string | null) => {
   return await createChat(app, { dir: openDir });
 };
 
+// A menu click has no sender window, so without this a sibling window would open on recents[0]
+// or $HOME rather than on the focused window's project; the sessions-nav and --dir paths never
+// record a recent dir, so recents[0] is often a different project.
+const focusedWindowWorkingDir = async (): Promise<string | undefined> => {
+  const focused = BrowserWindow.getFocusedWindow();
+  if (!focused) return undefined;
+  try {
+    const dir = await focused.webContents.executeJavaScript(
+      `window.appConfig ? window.appConfig.get('GOOSE_WORKING_DIR') : null`
+    );
+    return typeof dir === 'string' && dir.trim() ? dir : undefined;
+  } catch {
+    return undefined;
+  }
+};
+
 const focusWindow = () => {
   const windows = BrowserWindow.getAllWindows();
   if (windows.length > 0) {
@@ -4158,8 +4174,8 @@ async function appMain() {
         new MenuItem({
           label: menuT('New Chat Window'),
           accelerator: shortcuts.newChatWindow,
-          click() {
-            ipcMain.emit('create-chat-window');
+          async click() {
+            await createNewWindow(app, await focusedWindowWorkingDir());
           },
         })
       );
