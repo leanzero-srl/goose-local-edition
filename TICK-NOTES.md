@@ -14,3 +14,4 @@ Appended by `loop-state/note.sh`. The tick prints only the newest three; this is
 - `08-29 10:36` **backend** — disk hit 16GB free of 926; target/debug was 27GB and target/release only 9GB — removing debug alone reclaimed to 42GB and kept the release build incremental
 - `08-29 10:36` **ui** — /Applications/Goose.app/Contents/MacOS/ was EMPTY — the installed app had no binary at all, which is why no UI assessment could ever attach
 - `08-29 10:51` **ui** — the active nav row was styled-only — bg-background-tertiary vs transparent, ZERO of 19 controls carried aria-current/aria-selected; found by probing the RUNNING app over CDP, not by reading code
+- `08-29 10:53` **ui** — static UX audit found: 7x duplicate paint of one long string, 2 of 86 controls with no accessible name (both real, unfixed)
