@@ -152,6 +152,11 @@ fresh, no event ≥10m, fleet idle, 0% CPU); a leaked server count > 0.
 and `items`-vs-`data`). **r1** (18:43–20:23) killed at REVIEW round 4 — see RUN-LEDGER, EXPERIMENTS-LEDGER
 and the campaign skill changelog for the full record.
 
+**LANDED for r3 (desktop, Mihai 22:35): every engine phase is its own chip** — `ac9715d24`: the ribbon draws
+10 steps in engine order (Open, Ask, Research, Synthesize, Review, Contracts, Build, Integrate, Repair, Done);
+the engine's `ask`/`contracts` events no longer map onto Open/Build; contract-* lanes file under CONTRACTS;
+r0 fixture test. Live check in the rebuilt app: Contracts chip active with the node chips under it.
+
 **QUEUED for r3 (desktop + engine, Mihai 22:29): tool calls must show in the inspector WHILE running,
 not after.** Engine half LANDED `156a95957`: the digest carries `inflight: [{id, tool, args, since}]` written at the
 request moment and cleared at the result; the WORK pane must render RUNNING rows from it and flip them. UI half
