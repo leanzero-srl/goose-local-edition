@@ -17772,8 +17772,37 @@ impl GooseAgentDispatcher {
                     // streak below. DRIFTING is a different claim — the call is WORKING, on the wrong
                     // thing — which tail recurrence structurally cannot corroborate, and whose cost is now
                     // one in-session message rather than a dead worker. So it acts on the first look.
+                    // DRIFTING ON A CALL THAT IS PRODUCING IS AN OPINION, AND IT COSTS 66 MINUTES.
+                    //
+                    // MEASURED across run 4: of 34 nudges with a follow-up look, **ONE** was followed by
+                    // an action and 33 were not -- 43,842 characters of reasoning and 66 minutes of WORKER
+                    // time burned reading supervisor notes and doing nothing. The no-action nudges are
+                    // overwhelmingly DRIFTING fired at `produced` of 4,000-4,005: a call generating four
+                    // thousand fresh characters between looks, told it is working on the wrong thing.
+                    //
+                    // The justification for acting on the first look was that a steer costs "one
+                    // in-session message rather than a dead worker". At a 3% action rate that message is
+                    // not free -- it is a turn boundary, a re-read and a re-plan on the working node.
+                    //
+                    // So DRIFTING now acts only on a call that is NOT producing. A call that is steadily
+                    // generating gets left alone unless something factual is wrong with what it has
+                    // written, which is the verifier's job and not a matter of opinion. LOOPING and a
+                    // MEASURED repeat are unchanged: those are claims about a stuck call, not about taste.
                     let drifting_now = omni_outcome.verdict == goose_swarm::Verdict::Drifting
-                        && omni_outcome.confidence >= 0.8;
+                        && omni_outcome.confidence >= 0.8
+                        && produced_since_last_look < OMNI_JUDGE_MIN_CHARS;
+                    if omni_outcome.verdict == goose_swarm::Verdict::Drifting
+                        && omni_outcome.confidence >= 0.8
+                        && produced_since_last_look >= OMNI_JUDGE_MIN_CHARS
+                    {
+                        self.events.write_value(serde_json::json!({
+                            "event": "judge_drift_held",
+                            "task_id": activity_key,
+                            "produced_since_last_look": produced_since_last_look,
+                            "detail": "DRIFTING on a producing call -- held, because 33 of 34 such nudges \
+                                       changed nothing and cost 66 minutes of worker time",
+                        }));
+                    }
                     // A MEASURED repeat needs no corroboration from a second look. The streak exists to
                     // defend against the judge MISREADING a slow call as looping; here the loop is an
                     // engine fact — the same command, the same bytes back, six times over a minute — and
