@@ -3721,6 +3721,22 @@ fn proxy_answer_after_secs() -> u64 {
 /// Duration (deadline sums, headroom division). Far beyond any run; never a real bound.
 const UNCAPPED_SECS: u64 = 604_800;
 
+/// The idle budget actually applied to a call — ALWAYS uncapped, whatever the config says.
+///
+/// `worker_timeout_secs` (420 in the live config) and `planner_timeout_secs` (900, which reaches this
+/// same parameter through `run_agent_timed`) are both DEAD: the transport already does this better, with
+/// INACTIVITY semantics that reset on every received chunk, so a slow-but-alive local generation
+/// survives indefinitely and a genuinely silent stream is cut where the bytes stop.
+///
+/// This is a FUNCTION rather than an inline `let _ = idle_secs` because the sink cap was deleted once
+/// and came back unguarded — its own note records "it survived the purge, unguarded, because
+/// `uncapped()` was removed at the same time", and the cost was integrate-verify running exactly 1800s,
+/// its cap to the second, and being logged `status=done`. A comment cannot fail a build. Re-arming a
+/// wall clock here now has to go through a tested function.
+fn effective_idle_budget(_configured_secs: u64) -> std::time::Duration {
+    std::time::Duration::from_secs(UNCAPPED_SECS)
+}
+
 /// The wall for a planner-side helper call (judge review, question answerer, per-task reviewer,
 /// test generator, finding verifier, split partitioner): the configured no-progress window with
 /// a 90s floor — or no wall at all under GOOSE_SWARM_UNCAPPED.
@@ -10066,6 +10082,21 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
     /// mistake available here — so anything it cannot decide from the body must be Unreadable,
     /// never Duplicates.
     #[test]
+    /// NO CONFIGURED NUMBER MAY EVER BECOME A WALL CLOCK ON A CALL. Mihai's standing rule, and the one
+    /// that has been re-broken most: "All of the caps, all of the timers need to go, local models take a
+    /// long time to complete." The live config still carries worker_timeout_secs: 420 and
+    /// planner_timeout_secs: 900; both reach this budget, and both must be ignored.
+    #[test]
+    fn no_configured_timeout_can_ever_bound_a_call() {
+        for configured in [0u64, 1, 42, 420, 900, 1800, 604_800, u64::MAX] {
+            assert_eq!(
+                effective_idle_budget(configured).as_secs(),
+                UNCAPPED_SECS,
+                "a configured {configured}s became a real bound — a cap is back"
+            );
+        }
+    }
+
     /// THE THREE SENTENCES THAT DEFEATED THE OLD KEY, verbatim from the live run that measured this.
     /// They must be ONE finding, and the `STILL: ` prefix that produced 9 findings with `repeated: 0`
     /// on an untouched plan must not create a fourth.
@@ -16978,8 +17009,7 @@ impl GooseAgentDispatcher {
         //
         // `idle_secs` is therefore ignored. The Duration below exists only because `tokio::time::timeout`
         // needs one; it is never a real bound.
-        let _ = idle_secs;
-        let idle = std::time::Duration::from_secs(UNCAPPED_SECS);
+        let idle = effective_idle_budget(idle_secs);
         // PREFILL-AWARE FIRST-TOKEN BUDGET (F905 third catch, r9): prefill streams NOTHING, so a
         // large prompt on a contended node is indistinguishable from a dead stream to this
         // watchdog — r9's completed calls measured 164s TTFT at 14k prompt tokens while the
