@@ -152,8 +152,11 @@ held-port probe shared with run_build), so none of those wrong-number mechanisms
    whole run, so `_pthread_join` on the main thread was never a finding. **The leak is systemic:** 41
    orphaned app servers were alive on this machine, 25 from r0 alone — every boot probe / smoke that
    killed a wrapper leaked its grandchildren, and `boot_probe` refuses to conclude on a pre-bound port.
-   Fix = kill the process group + bounded pipe drain after the kill (not a model cap: the process is
-   dead). Landing via the workflow's single swarm.rs agent, with a regression test.
+   **FIXED `44b2ad6cd`**: every app spawn leads its own process group; `kill_app_tree` SIGKILLs the
+   group; the pipe drain releases on GROUP liveness, not EOF. Applied at six spawn sites. Two regression
+   tests (`boot_invocation_returns_when_a_grandchild_holds_the_pipe`, `..._escaped_the_group`);
+   609 lib tests, clippy clean. Isolation proof in flight: `goose swarm verify` over r0's tree hangs on
+   the old binary and must return on the new one.
 
 ### NEXT swarm.rs BATCH (after the hang commit; one agent, one file)
 
