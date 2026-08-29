@@ -1942,6 +1942,13 @@ export function foldEvents(
       toolCalls: act?.tool_calls ?? t.toolCalls,
       thinkingChars: act?.thinking_chars ?? t.thinkingChars,
       lastThinking: act?.last_thinking ?? t.lastThinking,
+      // THE DURABLE TRANSCRIPT, ON EVERY LANE-BUILDING PATH.
+      //
+      // `thinkingChars` was set on all four of these paths and `fullThinking` on only one, so the
+      // inspector's header counted the real transcript while its body fell back to the digest's
+      // 2,400-char rolling window. The pane WAS truncated -- just not where anyone was looking.
+      fullThinking:
+        (act as { full_thinking?: string } | undefined)?.full_thinking ?? t.fullThinking,
       errors: act?.errors ?? t.errors,
     };
   });
@@ -1986,6 +1993,8 @@ export function foldEvents(
         toolCalls: d.tool_calls,
         thinkingChars: d.thinking_chars,
         lastThinking: d.last_thinking,
+        // Same source for the count and the body -- see the note on the merge site.
+        fullThinking: (d as { full_thinking?: string })?.full_thinking,
         phase: d.phase,
         errors: d.errors,
         seq: i,
@@ -2032,6 +2041,9 @@ export function foldEvents(
       toolCalls: d.tool_calls,
       thinkingChars: d.thinking_chars,
       lastThinking: d.last_thinking,
+      // See the note below: the header and the body must read the SAME source, or the count says
+      // 22,150 chars while the pane shows the digest's 2,400-char rolling window.
+      fullThinking: (d as { full_thinking?: string })?.full_thinking,
       phase: d.phase,
       errors: d.errors,
       seq: i,
