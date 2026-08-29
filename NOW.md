@@ -121,6 +121,29 @@ Verified live over CDP against a growing run: events 3→4, thinking bytes 25→
 
 ---
 
+## r1 IS LIVE — launched 2026-08-29 18:43:52 from the Benchmark view, engine `d748a7d3e`
+
+**What r1 carries that r0 did not:** REPAIR round 0 under benchmark (`a1324c68e`); the exit-hang fix —
+process-group kill + drain on group liveness at six spawn sites (`44b2ad6cd`), proven by two unit tests
+and by the `swarm gate` replay on r0's tree (old binary leaked 2 servers, new leaks 0); the contract
+block that tells workers a stub is a signature and licenses a targeted read of the real file
+(`133bf3bec`); no phantom endpoints in the deterministic gate (`0d5ac740d`: r0's gate findings on its
+own tree went 10 → 4 and the REAL `GET /` 404 finally appears); first-source-path attribution so
+"Frontend not served (in `app/ledgerd.py`, `web/index.html`)" shards to ledgerd (`d748a7d3e`).
+
+**Claims r1 settles, in order of the score they gate:**
+1. Does the run COMPLETE — `complete_result` then `run_finished`, heartbeat `EXITED:`, orphans 0?
+2. Does REPAIR run — `fix_criticals.answer == "yes"` at round 0, `phase: fix`, `complete_fix_dispatched`
+   with shards including `app/sync.py` and `app/ledgerd.py`; round 1 answers "no" and the loop ends?
+3. Does the wave close `sync_completeness` (the `items`-vs-`data` key) and serve `GET /`? Those two
+   criticals are the whole distance between 0.0568 and the target.
+4. Do BUILD workers READ their dependencies now (tool calls > 0 on dependents like boot-wrapper)?
+5. Judge: drift corroborates (`judge_drift_held.drift_streak`), REVIEW stops on a no-new-finding round.
+
+**First-tick checks:** `~/goose-builds/loop-state/first_tick_r1.sh d748a7d3e`. **Scoring after:**
+seed from `runs/build/trace-swarm-3node-r0.jsonl` header, port 8850, `GOOSE_SWARM_RENDER_NODE` = nvm v22,
+orphans 0 first, then `compare_vs_cloud.py`.
+
 ## WHERE THINGS STAND — r0 scored, the hang is root-caused, r1 is being prepared (2026-08-29 ~17:55)
 
 **r0 = 0.0568 hermetic** (inner 0.1789 × crit_mult 0.36; seed `687ff58bfa6b707d`, vendor port 8850,
