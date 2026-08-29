@@ -14,16 +14,18 @@ import {
   runAppName,
   classifyCall,
   callRowMeta,
-  callTallies,
   collapseRepeats,
   firstCallNeedingAttention,
   workCaption,
+  workRows,
+  elapsedSince,
   substantiveChunk,
   resolveActivityPath,
   type TurnStatus,
   type TurnLane,
   type LiveChannel,
   type SwarmCall,
+  type InflightCall,
   type CallMeaning,
   type ActivityItem,
   type PlanTask,
@@ -381,7 +383,7 @@ const LaneRow: React.FC<{
   const Icon = interrupted ? CircleSlash : lane.status === 'done' ? Check : lane.status === 'error' ? X : Loader2;
   const iconColor = interrupted ? CALL_PENDING : STATUS_COLOR[lane.status];
 
-  const calls = lane.calls ?? [];
+  const { completed: calls, running } = workRows(lane.calls, lane.inflight);
   // THE DURABLE TRANSCRIPT FIRST — see `laneNarrative`, which is the one copy of this chain. It was
   // written out here and again on the board row, and the board's copy had already lost its `lastText`
   // fallback, which is how a rule with N copies reads on the day someone edits N-1 of them.
@@ -560,15 +562,17 @@ const LaneRow: React.FC<{
                   label={dev ? `${live ? 'Generating' : 'Reasoning'} · ${lane.model ?? lane.device}` : undefined}
                 />
               )}
-              {calls.length > 0 ? (
+              {calls.length > 0 || running.length > 0 ? (
                 <div>
                   <div className="text-[10px] font-bold uppercase tracking-[0.12em] text-text-secondary mb-1.5">
                     Tool calls · {lane.toolCalls ?? calls.length}
+                    {running.length > 0 ? ` · ${running.length} running` : ''}
                   </div>
                   <div
                     className="bg-background-primary border border-border-primary px-2 py-1"
                     style={{ borderRadius: CHIP_RADIUS }}
                   >
+                    <InflightRows running={running} />
                     {calls.map((c, i) => (
                       // Developer mode opens every call's output; otherwise only the first failure.
                       <CallRow key={i} call={c} defaultOpen={dev || i === firstFailIdx} />
@@ -1018,7 +1022,15 @@ export type StreamLane = {
   thinkingChars?: number;
   recent?: string[];
   liveChannel?: LiveChannel;
+  inflight?: InflightCall[];
 };
+
+/** The fleet cell's line for a node waiting on a tool: what it is running, not what it last thought. */
+export function inflightLiveLine(running: InflightCall[] | undefined): string {
+  if (!running || running.length === 0) return '';
+  const newest = running[running.length - 1];
+  return `running: ${newest.args}${running.length > 1 ? ` +${running.length - 1}` : ''}`;
+}
 
 export function inspectorOutputText(lane: StreamLane): string {
   return lane.fullTranscript?.trim() || lane.lastText?.trim() || '';
@@ -1144,6 +1156,12 @@ export function lastSubstantiveLine(text: string): string {
 }
 
 export function laneLiveLine(lane: StreamLane): string {
+  // A TOOL CALL IN FLIGHT OUTRANKS BOTH CHANNELS. While the node waits on a tool neither channel moves,
+  // so the freshest thought is what it thought BEFORE it acted; the request is newer by construction and
+  // it is the one thing the node is doing. The channel rule below still decides between the two streams
+  // the moment the result lands and the row drops.
+  const running = inflightLiveLine(lane.inflight);
+  if (running) return running;
   // THE CHANNEL THAT MOVED LAST LEADS. A fixed transcript-first order showed a REVIEW lane's round-1
   // answer for the whole of round 2's thinking (measured on r1: cell text unchanged across two 10-minute
   // ticks while thinking_chars climbed past 24,000), because the lane key is reused every round and
@@ -1340,6 +1358,82 @@ const InspectorPane: React.FC<{
   </div>
 );
 
+/** Re-renders once a second so a running call's elapsed time moves between digest polls. */
+function useSecondTick(active: boolean): number {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!active) return;
+    const t = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(t);
+  }, [active]);
+  return now;
+}
+
+// A tool request whose result has not landed, as a RUNNING row: the same tool-type icon and intent verb a
+// finished call gets, the engine's argument preview, a solid amber RUNNING pill with a spinner, and the time
+// since the request. Mihai, watching lane service-boot: the WORK pane listed a call only after its result,
+// while THINKING streamed — a two-minute write was invisible for two minutes.
+const INFLIGHT_VERB: Record<string, string> = {
+  write: 'Writing',
+  edit: 'Editing',
+  str_replace: 'Editing',
+  text_editor: 'Editing',
+  read: 'Reading',
+  view: 'Reading',
+  shell: 'Running',
+  bash: 'Running',
+  tree: 'Listing',
+};
+
+const InflightRow: React.FC<{ call: InflightCall; now: number }> = ({ call, now }) => {
+  const m = classifyCall({ name: call.tool, summary: call.args, ok: null });
+  const tool = call.tool.replace(/^developer__/, '').toLowerCase();
+  const verb = INFLIGHT_VERB[tool] ?? call.tool;
+  const color = SWARM_STATUS.running;
+  return (
+    <div
+      className="py-0.5 border-b border-border-primary last:border-0"
+      data-testid="inflight-row"
+      data-call-id={call.id}
+    >
+      <div className="w-full flex items-start gap-2 text-left">
+        <span className="mt-0.5">
+          <CallTypeIcon icon={m.icon} color={color} />
+        </span>
+        <span className="flex-1 min-w-0">
+          <span className="flex items-center gap-1.5 flex-wrap">
+            <span className="text-xs font-medium text-text-primary">{verb}</span>
+            <span
+              className="shrink-0 inline-flex items-center gap-1 font-mono text-[9px] uppercase tracking-wide px-1 py-px text-white"
+              style={{ background: color, borderRadius: CHIP_RADIUS }}
+            >
+              <Loader2 size={9} className="animate-spin" />
+              running
+            </span>
+            <span className="font-mono text-[10px] tabular-nums" style={{ color }}>
+              {elapsedSince(call.since, now)}
+            </span>
+          </span>
+          <span className="block font-mono text-[11px] text-text-secondary break-words">{call.args}</span>
+        </span>
+      </div>
+    </div>
+  );
+};
+
+/** The running rows, ABOVE the completed ones wherever a call list is drawn. */
+const InflightRows: React.FC<{ running: InflightCall[] }> = ({ running }) => {
+  const now = useSecondTick(running.length > 0);
+  if (running.length === 0) return null;
+  return (
+    <>
+      {running.map((c) => (
+        <InflightRow key={c.id} call={c} now={now} />
+      ))}
+    </>
+  );
+};
+
 /**
  * WHAT THE NODE ACTUALLY DID — the call list first, the narration second, in ONE scroller.
  *
@@ -1352,17 +1446,19 @@ const InspectorPane: React.FC<{
  * planning lane has no calls and 30 KB of prose, so it renders as prose. The window cannot guess wrong
  * because it never guesses.
  */
-const WorkPane: React.FC<{ calls: SwarmCall[]; toolCalls?: number; narration: string }> = ({
-  calls,
-  toolCalls,
-  narration,
-}) => {
+const WorkPane: React.FC<{
+  calls: SwarmCall[];
+  running: InflightCall[];
+  toolCalls?: number;
+  narration: string;
+}> = ({ calls, running, toolCalls, narration }) => {
   const meta = callRowMeta(calls, toolCalls);
   const attention = firstCallNeedingAttention(calls);
   return (
-    <FollowScroll dep={`${calls.length}:${narration.length}`} className="px-3 py-2">
-      {calls.length > 0 ? (
+    <FollowScroll dep={`${running.length}:${calls.length}:${narration.length}`} className="px-3 py-2">
+      {calls.length > 0 || running.length > 0 ? (
         <div>
+          <InflightRows running={running} />
           {calls.map((c, i) => (
             <CallRow
               key={meta[i].key}
@@ -1375,7 +1471,7 @@ const WorkPane: React.FC<{ calls: SwarmCall[]; toolCalls?: number; narration: st
       ) : null}
       {narration.length > 0 ? (
         <div>
-          {calls.length > 0 ? (
+          {calls.length > 0 || running.length > 0 ? (
             <div className="mt-3 pt-2 border-t border-border-primary text-[10px] font-bold uppercase tracking-[0.12em] text-text-secondary">
               Said
             </div>
@@ -1426,14 +1522,13 @@ const NodeInspector: React.FC<{
   // lane was 123 blank lines out of 143, rendered verbatim by whitespace-pre-wrap.
   const rawThink = collapseRepeats(inspectorThinkingText(lane ?? {}));
   const thinkText = squeezeBlankRuns(rawThink);
-  const calls = lane?.calls ?? [];
+  const { completed: calls, running, tallies } = workRows(lane?.calls, lane?.inflight);
   const rawNarration = inspectorOutputText(lane ?? {});
   const narration = squeezeBlankRuns(rawNarration);
   // THE PREDICATE HAD TO MOVE IN THE SAME COMMIT AS THE `recent` REMOVAL. With `recent` gone from
   // `inspectorOutputText`, the measured lane (60 calls, last_text one character) yields narration === '',
   // and the old `outText` grid predicate would collapse the column and take all 60 calls with it.
-  const hasWork = calls.length > 0 || narration.length > 0;
-  const tallies = callTallies(calls);
+  const hasWork = calls.length > 0 || running.length > 0 || narration.length > 0;
 
   return createPortal(
     <>
@@ -1536,7 +1631,7 @@ const NodeInspector: React.FC<{
             //
             // SAY WHEN THE TRANSCRIPT IS A TAIL — main.ts already computed the answer, in the one place
             // that knows both the file size and the budget it read with. See streamTailNote.
-            count={`${workCaption(calls.length, lane?.toolCalls, tallies)}${streamTailNote(lane?.fullTranscript, lane?.transcriptBytes, lane?.transcriptClipped)}${squeezeNote(rawNarration, narration)}`}
+            count={`${workCaption(calls.length + running.length, lane?.toolCalls, tallies)}${streamTailNote(lane?.fullTranscript, lane?.transcriptBytes, lane?.transcriptClipped)}${squeezeNote(rawNarration, narration)}`}
             empty={
               thinkText
                 ? 'Still thinking — this fills with tool calls and written text once it starts acting.'
@@ -1544,7 +1639,7 @@ const NodeInspector: React.FC<{
             }
             isEmpty={!hasWork}
           >
-            <WorkPane calls={calls} toolCalls={lane?.toolCalls} narration={narration} />
+            <WorkPane calls={calls} running={running} toolCalls={lane?.toolCalls} narration={narration} />
           </InspectorPane>
         </div>
       </div>
@@ -2634,7 +2729,7 @@ const BoardTaskRow: React.FC<{
   const c = interrupted ? CALL_PENDING : TODO_COLOR[row.state];
   const idx = row.device ? deviceIndex(row.device, deviceOrder) : -1;
   const lane = row.lane;
-  const calls = lane?.calls ?? [];
+  const { completed: calls, running } = workRows(lane?.calls, lane?.inflight);
   const reasoning = lane ? laneNarrative(lane) : '';
   const failLike = row.state === 'failed' || row.state === 'judge_failed' || interrupted;
   const laneError = failLike && lane?.error ? lane.error.trim() : '';
@@ -2747,7 +2842,14 @@ const BoardTaskRow: React.FC<{
       </div>
       {row.state === 'running' && !interrupted && !expanded ? (
         <div className="flex items-center gap-1.5 pl-5 pb-0.5 text-[10px] min-w-0">
-          {lastCall ? (
+          {running.length > 0 ? (
+            <>
+              <Loader2 size={10} className="animate-spin shrink-0" style={{ color: SWARM_STATUS.running }} />
+              <span className="truncate font-mono" style={{ color: SWARM_STATUS.running }}>
+                {inflightLiveLine(running)}
+              </span>
+            </>
+          ) : lastCall ? (
             (() => {
               const cm = classifyCall(lastCall);
               return (
@@ -2829,12 +2931,14 @@ const BoardTaskRow: React.FC<{
               label={row.state === 'running' ? 'Generating' : 'Reasoning'}
             />
           ) : null}
-          {calls.length > 0 ? (
+          {calls.length > 0 || running.length > 0 ? (
             <div>
               <div className="text-[10px] font-bold uppercase tracking-[0.12em] text-text-secondary mb-1.5">
                 Tool calls · {lane?.toolCalls ?? calls.length}
+                {running.length > 0 ? ` · ${running.length} running` : ''}
               </div>
               <div className="bg-background-primary border border-border-primary px-2 py-1" style={{ borderRadius: CHIP_RADIUS }}>
+                <InflightRows running={running} />
                 {calls.map((cl, i) => (
                   <CallRow key={i} call={cl} defaultOpen={dev || i === firstBadCall} />
                 ))}

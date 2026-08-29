@@ -17,6 +17,18 @@ export interface SwarmCall {
   ok: boolean | null;
   /** A snippet of what the call produced — test output, a traceback, a printed value. */
   result?: string;
+  /** The engine's request id, when a digest carries it; the key an `inflight` row is deduplicated by. */
+  id?: string;
+}
+
+/** One tool request whose result has not landed — written by the engine at the REQUEST moment and removed
+ *  when the result arrives (`build_worker_digest`, swarm.rs). `args` is a bounded preview of what the call
+ *  is about ("write app/cli.py (83 lines, 2100 bytes)"), never the content; `since` is RFC 3339 UTC. */
+export interface InflightCall {
+  id: string;
+  tool: string;
+  args: string;
+  since: string;
 }
 
 // What a tool call MEANS — so the UI stops rendering every ok:false as a scary red "failure". The load-bearing
@@ -271,6 +283,42 @@ export function workCaption(
   return [head, ...parts].join(' · ');
 }
 
+/**
+ * THE WORK PANE'S ROWS: the calls that finished, and the requests still running, with no call in both.
+ *
+ * The engine writes the pending set twice into one digest — as provisional `ok: null` rows in `calls`
+ * (older panels render those as "running…") and as `inflight` rows carrying the id, an argument preview
+ * and the request time. Rendering both lists a running write twice. When a digest carries `inflight`,
+ * that array IS the running set, so the provisional rows are dropped, and any completed row that still
+ * names an in-flight id is dropped too. A digest from an engine without the key keeps the old shape.
+ * When a result lands the engine removes the inflight row and the finished record is already in `calls`,
+ * so the running row drops and the completed row takes its place — one row per call, before and after.
+ */
+export function workRows(
+  calls: SwarmCall[] | undefined,
+  inflight: InflightCall[] | undefined
+): { completed: SwarmCall[]; running: InflightCall[]; tallies: ReturnType<typeof callTallies> } {
+  const all = calls ?? [];
+  if (!inflight) {
+    return { completed: all, running: [], tallies: callTallies(all) };
+  }
+  const runningIds = new Set(inflight.map((c) => c.id));
+  const completed = all.filter((c) => c.ok != null && !(c.id && runningIds.has(c.id)));
+  const t = callTallies(completed);
+  return { completed, running: inflight, tallies: { ...t, pending: t.pending + inflight.length } };
+}
+
+/** "12s" / "1m 05s" since an RFC 3339 stamp; empty when the stamp does not parse. */
+export function elapsedSince(since: string, now: number): string {
+  const t = Date.parse(since);
+  if (!Number.isFinite(t)) return '';
+  const s = Math.max(0, Math.round((now - t) / 1000));
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  const r = s % 60;
+  return `${m}m ${String(r).padStart(2, '0')}s`;
+}
+
 export interface TurnLane {
   taskId: string;
   /** The architect's one-line human description of the subtask (e.g. "Tokenize the template source") — the
@@ -285,6 +333,9 @@ export interface TurnLane {
   /** The worker's full narration (all substantive text chunks) — the "reasoning in plain" the panel shows. */
   fullReasoning?: string;
   calls?: SwarmCall[];
+  /** The tool requests still running — see InflightCall. A `calls` record appears only once its result
+   *  lands, so without this a long write or shell command is invisible for its whole duration. */
+  inflight?: InflightCall[];
   toolCalls?: number;
   /** The JUDGE'S OWN estimate of how many more minutes this call needs, from the `ETA=<n>m` token it is
    *  asked for on every look. It is the only estimate anyone has that is based on reading the work: the
@@ -2074,6 +2125,7 @@ type Digest = {
   reasoning?: string;
   full_reasoning?: string;
   calls?: SwarmCall[];
+  inflight?: InflightCall[];
   /** Reasoning-channel activity: these local coder models do their PLAN drafting in the <think> channel, so
    *  reasoning/last_text stay empty while thinking_chars climbs. A lane with thinking is WORKING — without
    *  these fields a heavily-generating node reads as "idle — no task". */
@@ -2181,6 +2233,7 @@ export function digestStreamFields(
   | 'reasoning'
   | 'fullReasoning'
   | 'calls'
+  | 'inflight'
   | 'toolCalls'
   | 'thinkingChars'
   | 'lastThinking'
@@ -2202,6 +2255,7 @@ export function digestStreamFields(
     reasoning: d?.reasoning ?? prev?.reasoning,
     fullReasoning: d?.full_reasoning ?? prev?.fullReasoning,
     calls: d?.calls ?? prev?.calls,
+    inflight: d?.inflight ?? prev?.inflight,
     toolCalls: d?.tool_calls ?? prev?.toolCalls,
     thinkingChars: d?.thinking_chars ?? prev?.thinkingChars,
     lastThinking: d?.last_thinking ?? prev?.lastThinking,

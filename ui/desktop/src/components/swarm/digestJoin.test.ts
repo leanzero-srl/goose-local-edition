@@ -29,6 +29,14 @@ const DIGEST = {
   transcript_clipped: true,
   judging: true,
   phase: 'processing',
+  inflight: [
+    {
+      id: 'call_9',
+      tool: 'write',
+      args: 'write app/cli.py (83 lines, 2100 bytes)',
+      since: '2026-08-29T22:40:01+00:00',
+    },
+  ],
   errors: 2,
 };
 
@@ -48,6 +56,14 @@ const EXPECTED = {
   transcriptClipped: true,
   judging: true,
   phase: 'processing',
+  inflight: [
+    {
+      id: 'call_9',
+      tool: 'write',
+      args: 'write app/cli.py (83 lines, 2100 bytes)',
+      since: '2026-08-29T22:40:01+00:00',
+    },
+  ],
   // Derived by the join, not copied: first sight of a lane with an answer reads the answer channel.
   liveChannel: 'transcript',
   errors: 2,
