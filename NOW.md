@@ -93,6 +93,10 @@ a measurement, never an error).**
    synthesis + two refuters); its output lands as PART II of DESIGN-STABILITY-FIRST.md. Engine code waits for
    r2's score; the two desktop items (2, 3) may go first once the research says how.
 
+**FULL AUTONOMY (Mihai, 2026-08-30 00:21): "don't wait on me for anything - go at it unattended. I will ask
+questions if need be."** No decision waits on him — including the deletions; the adversarial reviews are the
+authority. Short reports continue every tick.
+
 **THE r3 PLAN (Mihai, 2026-08-30 00:19 EEST, supersedes the 22:35 scope rule): EVERYTHING goes into r3.** No parts
 staged across runs. The sequence: (1) r2 finishes; (2) assess r2 VERY THOROUGHLY (score + full review);
 (3) build every candidate — Part I, Part II, Part III — into r3, batch by file, isolation-tested;
