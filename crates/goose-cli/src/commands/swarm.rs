@@ -28241,6 +28241,27 @@ async fn run_linear_plan(
             })
             .collect();
         shared_files.sort_by_key(|v| v["file"].as_str().unwrap_or("").to_string());
+        // A TASK THAT OWNS NO FILES AND IS NOT THE SINK IS A TASK THAT CANNOT PRODUCE ANYTHING.
+        //
+        // `integrate-verify` owns nothing BY DESIGN -- a file-owning join is cascaded Failed by any build
+        // failure. Every other task must own something, or it is a slice that should never have existed.
+        //
+        // MEASURED 2026-08-29: `coverage_gap` converted five unowned coverage rows into slices, and two
+        // were `12-288-payments` ("12,288 payments") and `96-calendar-days` ("96 calendar days") -- a
+        // volume and a span. Nobody can be assigned those, they name no file, and they pushed a 13-slice
+        // plan to 18 against the 21 that collapsed under its own decomposition. The prompt now refuses to
+        // propose them; this counts the ones that get through anyway, because a prompt rule with no
+        // measurement is a rule that quietly stops working.
+        let tasks_owning_nothing: Vec<&str> = tasks
+            .iter()
+            .filter(|t| {
+                t.get("files")
+                    .and_then(|f| f.as_array())
+                    .is_none_or(|a| a.is_empty())
+            })
+            .filter_map(|t| t.get("id").and_then(|i| i.as_str()))
+            .filter(|id| *id != "integrate-verify")
+            .collect();
         let dirs: std::collections::HashSet<String> = owner_count
             .keys()
             .filter_map(|f| f.rsplit_once('/').map(|(d, _)| d.to_string()))
@@ -28281,6 +28302,7 @@ async fn run_linear_plan(
             "distinct_files": distinct_files,
             "tasks_sharing_a_file": tasks_sharing_a_file,
             "shared_files": shared_files,
+            "tasks_owning_nothing": tasks_owning_nothing,
             // A MODULE SHADOWED BY A PACKAGE IS DEAD CODE, and path equality cannot see it.
             // `app/viz.py` and `app/viz/layout.py` are different strings and the same import path;
             // Python loads the package and the file is unreachable. MEASURED on the first run to reach
