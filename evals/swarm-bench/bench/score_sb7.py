@@ -4664,6 +4664,9 @@ def main() -> int:
                          "aces every non-CAL check, every critical is exactly 1.0, the "
                          "severity selftest passes, and the coverage ledger is non-vacuous")
     ap.add_argument("--json-out", type=Path, help="write the verdict JSON here")
+    ap.add_argument("--fresh-seed", action="store_true",
+                    help="draw a fresh fixture seed on purpose instead of scoring against the "
+                         "seed the run was fed (reference runs and fresh trees only)")
     ap.add_argument("--allow-blind-probe", action="store_true",
                     help="grade even when the browser probe cannot run (the J/V/P/T/E checks "
                          "come back PROBE-UNAVAILABLE and the number does NOT compare)")
@@ -4689,6 +4692,19 @@ def main() -> int:
               "derives from them (§5.5).", file=sys.stderr)
         return 2
 
+    if not args.seed and not args.fresh_seed:
+        print("REFUSED: no --seed. A tree is scored against the seed its run was FED, or the number "
+              "does not compare: r0 (2026-08-29) was scored twice on a freshly drawn seed before "
+              "anyone noticed. The seed is in the harness vendor trace header -- "
+              "head -c 300 '<benchmark>/runs/build/trace-<run>.jsonl' -> \"fixture_seed\". "
+              "Pass --fresh-seed to draw one on purpose (reference runs, fresh trees).",
+              file=sys.stderr)
+        return 2
+    if args.seed and not (len(args.seed) == 16
+                          and all(ch in "0123456789abcdefABCDEF" for ch in args.seed)):
+        print(f"REFUSED: --seed must be 16 hex chars (got {args.seed!r})", file=sys.stderr)
+        return 2
+
     if not args.allow_blind_probe:
         why = _probe_preflight()
         if why:
@@ -4701,9 +4717,6 @@ def main() -> int:
 
     seed = args.seed or _draw_seed()
     seed = seed.lower()
-    if not (len(seed) == 16 and all(ch in "0123456789abcdef" for ch in seed)):
-        print(f"REFUSED: --seed must be 16 hex chars (got {seed!r})", file=sys.stderr)
-        return 2
 
     trace = args.tree / "vendor-trace-sb7.jsonl"
     # Hermetic wipes (F895-F897 at the CLI): a graded db, tokens file, expectation pack,
