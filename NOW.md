@@ -121,6 +121,24 @@ Verified live over CDP against a growing run: events 3→4, thinking bytes 25→
 
 ---
 
+## r2 IS LIVE — launched 2026-08-29 20:42:59 from the Benchmark view, engine `a80c1fa98`
+
+**Different from r1:** REVIEW is ONE round with SYNTHESIS's measured flags injected as MUST-FIX
+(`5173eab67`); the judge-probe branch flushes both durable transcripts (`c3b211582`); the desktop's live
+line follows the channel that advanced last and the second-lane rows open the inspector (`2dd046553`,
+`3ecdbed9d`). Everything r1 carried (process-group kill, phantom-free gate, first-source attribution,
+contract block, REPAIR under benchmark) is in.
+
+**Claims r2 settles, in order:** (1) REVIEW ends after ONE round with a patch that fixes the measured flags
+— `review_findings round:1` then `plan_loaded`, no round 2; (2) BUILD is reached and the run COMPLETES:
+`complete_result` → `run_finished` → heartbeat `EXITED:`, orphans 0; (3) REPAIR round 0 runs
+(`fix_criticals yes`, `complete_fix_dispatched` with `app/sync.py` and `app/ledgerd.py` shards) and
+round 1 answers no; (4) the score: does `sync_completeness` close and `GET /` serve? (5) the durable
+logs keep pace with the digests under judge looks (`tick_ui` "EXCEEDS the durable log" must stay quiet).
+
+**Kill checkpoints armed:** a second REVIEW round; a plan re-emission; a clock stop; WEDGED (heartbeat
+fresh, no event ≥10m, fleet idle, 0% CPU); a leaked server count > 0.
+
 ## r1 KILLED at REVIEW round 4 (20:23) — REVIEW diverged; r2 launches with a ONE-ROUND REVIEW
 
 **r1 (engine `d748a7d3e`, 18:43 → 20:23, 98 min) never reached BUILD.** OPEN 7m → ASK proxied → RESEARCH
