@@ -449,6 +449,19 @@ component that had an owner still has one, and the section's own text never chan
 skip it. The settled set lives across rounds at the call site, which is the only place it means anything.
 No heuristic, no threshold — a section either found something or it did not.
 
+**AND THE JUNK SLICES' MEASURED COST, now that RESEARCH has finished briefing all 18:**
+
+    slice-12-288-payments    24 tool calls, 5,810 reasoning chars   <-- the most tool-active late slice
+    slice-96-calendar-days    0 tool calls, 2,847 reasoning chars
+    slice-app-package         0 tool calls, 3,803 chars
+    slice-tokens-json-file    8 tool calls, 5,621 chars
+    slice-web-directory       0 tool calls, 1,212 chars
+
+A node spent **24 tool calls researching "12,288 payments"** — a number in the spec — and produced a brief
+for it. That is the leak priced: not just an extra row in a table, but a research lane, a brief, and a task
+that will be dispatched to a builder. RESEARCH took **71 minutes** (00:12:09 -> 01:23:03) with five of its
+eighteen briefs written for rows that `coverage_gap` should never have proposed.
+
 ## MY OWN FIX LEAKED: `DO NOT CLASSIFY` MADE SLICES OUT OF FACTS — 2026-08-29 04:52 EEST
 
 The coverage fan's first round on run 3 worked: parts 1/3, 2/3, 3/3 returned 17, 31 and 8 components with
