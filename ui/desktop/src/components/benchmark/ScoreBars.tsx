@@ -11,6 +11,9 @@ import { BenchmarkRow } from './baselines';
 export function ScoreBars({ rows }: { rows: BenchmarkRow[] }) {
   if (!rows.length) return null;
   const barHeight = 26;
+  /** "YOUR FLEET" at 10px/800 with 0.06em tracking measures ~66px. Below that the badge cannot sit in
+   *  the bar without overprinting the row label beside it. */
+  const YOUR_FLEET_LABEL_WIDTH = 66;
   const gap = 10;
   const labelWidth = 190;
   const valueWidth = 62;
@@ -66,7 +69,16 @@ export function ScoreBars({ rows }: { rows: BenchmarkRow[] }) {
               >
                 {(row.score * 100).toFixed(1)}%
               </text>
-              {row.mine && (
+              {/* ONLY INSIDE A BAR THAT CAN HOLD IT.
+                  This was drawn unconditionally at `labelWidth + filled - 8`, end-anchored, so a low
+                  score put it straight on top of the row's own name: at 1.6% the bar is a handful of
+                  pixels wide and "YOUR FLEET" landed across "Your fleet · 3 nodes", two strings
+                  overprinted into an unreadable smear. And the low scores are exactly the ones this
+                  project spends its time looking at.
+
+                  The row label already says whose bar it is, so when the bar is too narrow the badge is
+                  simply dropped rather than moved somewhere it would collide with the percentage. */}
+              {row.mine && filled > YOUR_FLEET_LABEL_WIDTH + 16 && (
                 <text
                   x={labelWidth + filled - 8}
                   y={y + barHeight * 0.68}
