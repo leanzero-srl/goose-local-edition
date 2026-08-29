@@ -8083,14 +8083,17 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
             {"id":"wire-app","depends_on":["store","cli"],"files":[]}
         ]}"#;
 
-        // BUILD FIRST — the shipped order. The DAG never sees the pin. It used to load under the
-        // model's name and every exact-equality consumer read false in silence; since the plan
-        // boundary refuses a file-less task that is not `integrate-verify`, the same order is a
-        // refusal that names the join.
-        let unpinned = goose_swarm::Dag::from_planner_json(raw).expect_err(
-            "an unpinned file-less join must be refused, not loaded under the model's name",
+        // BUILD FIRST — the shipped order. The DAG never sees the pin: it loads under the model's
+        // name and every exact-equality consumer of `integrate-verify` reads false in silence. The
+        // plan boundary REPORTS a file-less non-join task and never refuses it (the owner's "be very
+        // mild" steer, 2026-08-29), so the silent-wrong DAG is exactly what this order produces.
+        let unpinned = goose_swarm::Dag::from_planner_json(raw)
+            .expect("an unpinned plan loads — leniently — under the model's name");
+        assert!(
+            unpinned.tasks.contains_key("wire-app")
+                && !unpinned.tasks.contains_key(goose_swarm::SINK_ID),
+            "the unpinned DAG must carry the model's join name, which no consumer recognises"
         );
-        assert!(unpinned.to_string().contains("wire-app"), "{unpinned}");
 
         // PIN FIRST — the fixed order.
         let mut v: serde_json::Value = serde_json::from_str(raw).unwrap();
