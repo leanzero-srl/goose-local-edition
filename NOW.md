@@ -263,6 +263,19 @@ the run live, Cmd+N / Cmd+W / Cmd+Q / Cmd+T / Cmd+, each show the warning toast 
 same menu items still act; Cmd+R / Cmd+Shift+R / Cmd+Alt+I do nothing and the View menu shows no Reload items;
 without a run, Cmd+N opens a sibling window on the focused directory and Cmd+W / Cmd+Q behave as before. Token-level argument streaming
 is out of scope on this branch (no partial tool-call deltas in the provider layer).
+Extended after r2 (the run exposed more): (2c) the SAID check must also pass on the SINK shape — r2's
+integrate-verify body drop (task_retry 21:26:35Z, re-dispatch 21:37:37Z) is the second real case beside
+ledger-core-tests (19:57:50Z → completed 20:22:20Z = the 24m30s the installed app showed the dead error as
+the live answer); attempt 0's error renders as error→retried, attempt 1 as "processing the prompt…", never
+the old error as body. (4) the `plan_repaired` row (`6d009c901`/`972d81f53`) is SILENT until the engine
+emits the event — the r2 archive must render with no row and no console error, and the r1 archive (which
+had multi-round review) must render with the `review_patch_stuck` handler gone (`49beda438`). (5) prove
+`afa644ddd` from the live process, not the code: `ps eww <engine pid>` shows
+`GOOSE_PROVIDER_READ_TIMEOUT_SECS=1800` (same method that verified r1's env at 18:45 on 08-29). (6) caveat
+armed for the tick itself: a frozen digest with NO inflight row while `lms ps` shows GENERATING is the
+FORMING class (r2: sink digest mtime 23:46:28 → body drop 00:26:35, ~40 min), not a dead lane and not an
+inflight-row defect — `inflight[]` is written at the REQUEST moment and row 11 (forming line) is unbuilt;
+do not kill on it and do not file it as a regression of (2).
 
 **LANDED for r3 (desktop, Mihai 22:00): the app no longer answers stray shortcuts** — `959ab7ebb` (the
 renderer Cmd+N keydown that matched Cmd+Shift+N is gone), `3ea9495d7` (Reload / Force Reload / DevTools off in
