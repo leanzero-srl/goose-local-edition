@@ -33,6 +33,7 @@ import {
   type SwarmRunState,
   type ClarifyProxy,
   type RunOverview as RunOverviewData,
+  cleanTaskTitle,
 } from './useSwarmRun';
 import { ZoneHeader, ZONE_HUES } from './ZoneHeader';
 import { SWARM_LOG_MODES, useSwarmLogMode, type SwarmLogMode } from './useVerboseSwarm';
@@ -1350,13 +1351,23 @@ const FleetStrip: React.FC<{
   deviceOrder: string[];
   /** node -> its live lane (task lifecycle, open activity digest, or supervision span), from deriveFleet. */
   runningByDevice: Map<string, TurnLane>;
+  /** The node's OTHER live lanes. Nodes run PARALLEL: 2, so this is routinely non-empty. */
+  alsoRunningByDevice: Map<string, TurnLane[]>;
   live: boolean;
   dev: boolean;
   /** LM Studio's own live status per node short-name (generating/processingPrompt/idle), for the truth dot. */
   nodeStatus: Record<string, string>;
   /** Open supervision spans deriveFleet could not pin to a busy node — still shown, never dropped. */
   unattributed: SupervisionSpan[];
-}> = ({ deviceOrder, runningByDevice, live, dev, nodeStatus, unattributed }) => {
+}> = ({
+  deviceOrder,
+  runningByDevice,
+  alsoRunningByDevice,
+  live,
+  dev,
+  nodeStatus,
+  unattributed,
+}) => {
   // The full stream opens in a MODAL. Inline it was clipped by whatever height the row happened to have,
   // which made the panel least readable exactly when a node was busiest.
   const [inspect, setInspect] = useState<string | null>(null);
@@ -1539,6 +1550,30 @@ const FleetStrip: React.FC<{
                       </div>
                     )
                   ) : null}
+                  {/* THE NODE'S OTHER LIVE LANES. Every node runs PARALLEL: 2, so this is routinely
+                      non-empty and the strip used to drop it: measured live, gabee ran open-coverage-1
+                      at 68,393 reasoning characters alongside slice-index-html and only the second had
+                      a cell. The two LARGEST lanes in the run were invisible — "I cannot see what the
+                      nodes are doing" with a mechanism behind it.
+
+                      Compact sibling lines rather than full cells: the point is that nothing a node is
+                      doing is missing, not that every lane gets equal estate. */}
+                  {(alsoRunningByDevice.get(device) ?? []).map((extra) => (
+                    <div
+                      key={extra.taskId}
+                      data-testid="fleet-node-also"
+                      data-task={extra.taskId}
+                      className="mt-1 flex items-baseline gap-2 text-[11px] text-text-secondary"
+                    >
+                      <span className="shrink-0 font-mono font-bold" style={{ color: hue }}>
+                        +
+                      </span>
+                      <span className="shrink-0 truncate max-w-[40%] text-text-primary">
+                        {cleanTaskTitle(extra.description ?? extra.taskId, extra.taskId)}
+                      </span>
+                      <span className="truncate">{laneLiveLine(extra)}</span>
+                    </div>
+                  ))}
                 </div>
               ) : (() => {
                   // No lane, no span — but LM Studio's own status may still say the node is generating.
@@ -3901,6 +3936,7 @@ export const SwarmRunPanel: React.FC<{
           <FleetStrip
             deviceOrder={deviceOrder}
             runningByDevice={fleet.workingByDevice}
+            alsoRunningByDevice={fleet.alsoRunningByDevice}
             dev={dev}
             live={run.inProgress && !stale && !ended}
             nodeStatus={nodeStatus}
