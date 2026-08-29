@@ -79,6 +79,39 @@ check compares each process's start time against the bundle mtime; the click tic
 
 ---
 
+## THE TARGET'S SCORECARD — read before designing anything (2026-08-29)
+
+The 20.06%/22.07% run is not a run that wrote better code. Its verdict.json says:
+
+    inner            0.7662     the app itself was GOOD
+    crit multiplier  0.288      three unsuppressed criticals
+    FINAL            22.07%
+
+It lost **72% of its score to three criticals**, not to code quality:
+
+| critical | factor | what it was |
+|---|---|---|
+| `b_buckets_dst` | 0.8 | wrong money — mis-bucketed days |
+| `j_workflow_journey` | 0.6 | dead primary flow — approval cannot complete through the UI |
+| `r_workflow_durability` | 0.6 | data loss — submitted/approved state reverting after SIGKILL |
+
+**This reframes the whole target.** Byte counts and wall clock were implying "write more, write faster".
+The scorecard says the lever is "stop tripping criticals", and criticals MULTIPLY rather than add — a
+better app with more unsuppressed criticals scores LOWER, which has already happened here once (2.6× the
+inner scoring 0.017 against 0.0273).
+
+**Our engine already aims at all three, verified 2026-08-29 rather than assumed:**
+
+- `b_buckets_dst` → the REVIEW `domain-conventions` dimension, which names calendar/cron/timezone
+  explicitly, plus `correctness` for a wrong constant, unit or sign.
+- `j_workflow_journey` → the REVIEW `wiring` dimension: "a spec deliverable is BUILT but never
+  imported/wired into the program's entry point, so the advertised behaviour is unreachable at runtime."
+- `r_workflow_durability` → an in-run check at `swarm.rs:20653`: it respawns the app on the SAME db with
+  the SAME argv and recounts rows. Its own comment records this as "the `h_durability` class the fleet
+  shipped blind — now an in-run finding."
+
+So the machinery is pointed at the right targets. Whether it FIRES is what r0's score will say.
+
 ## OPEN QUESTION — raised by evidence, not yet answered
 
 ### Transport drops are excluded from exhaustion. Correct premise, possibly wrong diagnosis.
