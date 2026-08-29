@@ -128,6 +128,11 @@ fresh, no event ≥10m, fleet idle, 0% CPU); a leaked server count > 0.
 and `items`-vs-`data`). **r1** (18:43–20:23) killed at REVIEW round 4 — see RUN-LEDGER, EXPERIMENTS-LEDGER
 and the campaign skill changelog for the full record.
 
+**QUEUED for r3 (desktop, Mihai 22:00): the app must not answer stray shortcuts** — Cmd+Shift+N opened a
+second window on the Benchmark view mid-run. Enumerate every combo (menu accelerators, globalShortcut,
+renderer keydown, Electron default roles), remove the spawn/reload/close ones, guard the rest while a
+benchmark is live; verify over CDP in the rebuilt app after r2. Agenda item stamped.
+
 **QUEUED for r3, behind the step-1 agent (same file, so not concurrent) — design step 10 measured 21:50:**
 four supervision layers are ENV-ONLY and ON by default, so a packaged app cannot switch them off and
 `levers_resolved` cannot prove their state: `GOOSE_SWARM_PREREVIEW` (swarm.rs:36724),
