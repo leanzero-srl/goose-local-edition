@@ -1035,6 +1035,18 @@ const NodeInspector: React.FC<{
               {nodeState === 'processingPrompt' ? 'processing prompt' : nodeState}
             </span>
           )}
+          {/* THE SUPERVISOR IS READING THIS LANE. While an omni-judge probe is in flight the engine
+              buffers the worker's stream instead of processing it, so the counters below are genuinely
+              frozen and the lane is NOT dead. Saying so is the difference between a panel that looks
+              broken and one that is telling the truth. */}
+          {lane?.judging && (
+            <span
+              className="px-2 py-0.5 text-[10px] font-mono uppercase tracking-wider font-bold text-white"
+              style={{ borderRadius: CHIP_RADIUS, background: SWARM_STATUS.running }}
+            >
+              {`supervisor reading${lane.queuedChunks ? ` · ${lane.queuedChunks} chunks queued` : ''}`}
+            </span>
+          )}
           {lane?.description && (
             <span className="text-xs text-text-secondary truncate">{lane.description}</span>
           )}

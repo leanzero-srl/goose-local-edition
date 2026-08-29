@@ -17603,7 +17603,54 @@ impl GooseAgentDispatcher {
                             biased;
                             r = &mut probe_fut => break r,
                             e = stream.next() => match e {
-                                Some(ev) => deferred_events.push_back(ev),
+                                Some(ev) => {
+                                    deferred_events.push_back(ev);
+                                    // THE LANE MUST STAY OBSERVABLE WHILE THE SUPERVISOR READS IT.
+                                    //
+                                    // These events are deliberately NOT processed here -- processing lives
+                                    // in one place, below, and duplicating it would double-count every
+                                    // chunk. But the digest is the ONLY thing the desktop can see, and it
+                                    // is written at the tail of this loop body, which a judge probe does
+                                    // not reach: a probe is a full model call with no deadline, queued on
+                                    // the same saturated fleet, and it routinely runs for MINUTES.
+                                    //
+                                    // MEASURED: three lanes held identical `thinking_chars` (6014, 6018,
+                                    // 2012) across a 12s sample while `lms ps` said GENERATING. The comment
+                                    // at 17583 records the same shape from the previous incarnation --
+                                    // "stayed frozen at exactly 13733, the value look 8 had recorded".
+                                    //
+                                    // So report the TRUTH rather than fake progress: the counters are
+                                    // genuinely stale, and what has changed is that the supervisor is
+                                    // reading and chunks are queueing behind it. `judging` and
+                                    // `queued_chunks` say exactly that, and they keep the staleness
+                                    // detector honest -- a lane whose digest stops moving with
+                                    // `judging: false` is still a dead lane.
+                                    if let Some(p) = &activity_file {
+                                        let due = last_digest_at.is_none_or(|t| {
+                                            t.elapsed() >= std::time::Duration::from_millis(400)
+                                        });
+                                        if due {
+                                            let mut d = build_worker_digest(
+                                                &tool_calls,
+                                                &call_records,
+                                                &pending,
+                                                &texts,
+                                                malformed,
+                                                thinking_chars,
+                                                &last_thinking,
+                                                model_id,
+                                            );
+                                            d["judging"] = serde_json::Value::Bool(true);
+                                            d["queued_chunks"] =
+                                                serde_json::Value::from(deferred_events.len());
+                                            let _ = std::fs::write(p, d.to_string());
+                                            if let Some(m) = &activity_mirror {
+                                                let _ = std::fs::write(m, d.to_string());
+                                            }
+                                            last_digest_at = Some(tokio::time::Instant::now());
+                                        }
+                                    }
+                                }
                                 None => {
                                     stream_ended_during_probe = true;
                                     // ABANDONED, NOT HUNG — and the log has to say which.
