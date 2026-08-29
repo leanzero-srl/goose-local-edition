@@ -12326,6 +12326,99 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
         );
     }
 
+    /// r0 (2026-08-29) TEST defect D5, verbatim: the tester's FILES line, re-emitted by
+    /// `parse_observed_defects` as the trailing "(in ...)" list, names the SERVER first and the page
+    /// second — the fix lives in ledgerd.py, which must serve the page. Last-wins sharded it to
+    /// web/index.html; so would first-wins over the whole sentence, because the prose mentions the
+    /// page ("despite `web/index.html` existing") before the list. The attribution list outranks
+    /// the prose, and within it — and within any authored sentence — the first source path wins.
+    #[test]
+    fn an_authored_finding_shards_to_the_first_file_in_its_attribution_list() {
+        let files: Vec<String> = [
+            "app/__init__.py",
+            "app/ledgerd.py",
+            "app/notifierd.py",
+            "web/index.html",
+            "web/app.js",
+            "tests/test_api.py",
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+        let d5 = "[primary-journey] Frontend not served at all. `GET /` returns `{\"error\": \"Not \
+                  found\"}` instead of the HTML console page. The app cannot be used as a payments \
+                  console because there's no UI being served, despite `web/index.html` existing. \
+                  Command: `curl -s http://127.0.0.1:18400/` (in `app/ledgerd.py`, `web/index.html`)";
+        assert_eq!(
+            extract_file_from_finding(d5, &files).as_deref(),
+            Some("app/ledgerd.py"),
+            "D5's fix lives in the server that must serve the page"
+        );
+        // The same list through parse_observed_defects, which is where the suffix comes from.
+        let d = parse_observed_defects(
+            "DEFECT: Frontend not served at all, despite `web/index.html` existing\n\
+             FILES: `app/ledgerd.py`, `web/index.html`",
+        );
+        assert_eq!(d.len(), 1);
+        assert_eq!(
+            extract_file_from_finding(&d[0], &files).as_deref(),
+            Some("app/ledgerd.py")
+        );
+        // A test file first in the list never outranks the source that follows it.
+        let d = parse_observed_defects(
+            "DEFECT: /api/health 500s on an empty db\nFILES: `tests/test_api.py`, `app/ledgerd.py`",
+        );
+        assert_eq!(
+            extract_file_from_finding(&d[0], &files).as_deref(),
+            Some("app/ledgerd.py")
+        );
+        // Without a list, an authored sentence is still subject-first.
+        assert_eq!(
+            extract_file_from_finding(
+                "`app/ledgerd.py` returns the wrong shape; `app/notifierd.py` is correct",
+                &files
+            )
+            .as_deref(),
+            Some("app/ledgerd.py")
+        );
+        // THE DATA/DOC RULE STANDS: a source path anywhere beats a config file named first.
+        assert_eq!(
+            extract_file_from_finding(
+                "see `config.yaml`: `app/ledgerd.py` mis-parses the flag",
+                &files
+            )
+            .as_deref(),
+            Some("app/ledgerd.py")
+        );
+    }
+
+    /// A traceback orders its frames the OTHER way: the failing frame is LAST, and the first is
+    /// routinely the test or CPython itself. First-wins there would send the shard to the caller,
+    /// or to the stdlib — so frames keep last-wins while authored paths take first-wins.
+    #[test]
+    fn a_traceback_still_shards_to_its_last_owned_frame() {
+        let files: Vec<String> = ["app/api.py", "app/store.py", "tests/test_api.py"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        let tb = "`pytest -q` failed:\n \
+                  File \"/opt/homebrew/Cellar/python@3.14/lib/python3.14/threading.py\", line 1024, in run\n \
+                  File \"/Users/x/runs/unit/app/api.py\", line 40, in list_payments\n \
+                  File \"/Users/x/runs/unit/app/store.py\", line 88, in query";
+        assert_eq!(
+            extract_file_from_finding(tb, &files).as_deref(),
+            Some("app/store.py"),
+            "the failing frame is the last one"
+        );
+        let short = "tests/test_api.py:9: in test_list\n    api.list_payments()\n\
+                     app/api.py:40: in list_payments\n    store.query()\n\
+                     app/store.py:88: in query\nE   sqlite3.OperationalError";
+        assert_eq!(
+            extract_file_from_finding(short, &files).as_deref(),
+            Some("app/store.py")
+        );
+    }
+
     #[test]
     fn a_multi_file_round_shards_instead_of_racing_when_the_lever_is_on() {
         // S1 both directions: the preference needs the lever AND real per-file work.
@@ -29813,8 +29906,16 @@ fn extract_file_from_finding(finding: &str, all_files: &[String]) -> Option<Stri
         !p.is_empty() && !p.contains(' ') && FINDING_PATH_EXTS.iter().any(|e| p.ends_with(e))
     };
     let mut last: Option<String> = None;
-    let mut src: Option<String> = None;
-    let mut take = |p: &str| {
+    // TWO SOURCE SLOTS, BECAUSE THE TWO FINDING SHAPES ORDER THEIR PATHS OPPOSITELY. A traceback
+    // lists the failing frame LAST and routinely opens on a stdlib frame, so among frames the last
+    // wins. An authored finding is written subject-FIRST — r0's TEST defect D5, "Frontend not served
+    // ... (in `app/ledgerd.py`, `web/index.html`)", names the server that must serve the page and
+    // then the page — so among named paths the first wins. One slot with last-wins sharded D5 to
+    // web/index.html, a file that was never wrong, which is the defect the module branch below had
+    // already fixed for its own shape ("FIRST match wins").
+    let mut frame_src: Option<String> = None;
+    let mut named_src: Option<String> = None;
+    let mut take = |p: &str, named: bool| {
         // Normalize so two spellings of one file become ONE group (partition invariant).
         let norm = normalize_rel_path(p);
         // A DATA OR DOC FILE NEVER OUTRANKS SOURCE. The shared list admits .json/.yaml/.md so a defect
@@ -29825,9 +29926,30 @@ fn extract_file_from_finding(finding: &str, all_files: &[String]) -> Option<Stri
             last = Some(norm.clone());
         }
         if code && !p.contains("test") && !p.contains("conftest") {
-            src = Some(norm);
+            if named {
+                named_src.get_or_insert(norm);
+            } else {
+                frame_src = Some(norm);
+            }
         }
     };
+    // THE ATTRIBUTION LIST OUTRANKS THE PROSE. `parse_observed_defects` re-emits the tester's FILES
+    // line as a trailing "(in `a`, `b`)" — the author's own answer to "which file", subject-first.
+    // Paths in the sentence before it are context: D5 says "despite `web/index.html` existing"
+    // three clauses before its list names `app/ledgerd.py` first, so first-wins over the whole
+    // sentence would still have aimed the shard at the page instead of the server.
+    if let Some((_, list)) = finding
+        .trim_end()
+        .strip_suffix(')')
+        .and_then(|f| f.rsplit_once(" (in `"))
+    {
+        for chunk in format!("`{list}").split('`').skip(1).step_by(2) {
+            let c = chunk.trim();
+            if is_code(c) {
+                take(c, true);
+            }
+        }
+    }
     for raw in finding.lines() {
         let line = raw.trim();
         let cand: Option<&str> = if let Some((_, rest)) = line.split_once("File \"") {
@@ -29837,7 +29959,7 @@ fn extract_file_from_finding(finding: &str, all_files: &[String]) -> Option<Stri
         };
         if let Some(p) = cand.map(|p| p.trim()) {
             if is_code(p) {
-                take(p);
+                take(p, false);
             }
         }
         // A PATH IN BACKTICKS, anywhere in the sentence. The line-leading forms above only match a
@@ -29848,7 +29970,7 @@ fn extract_file_from_finding(finding: &str, all_files: &[String]) -> Option<Stri
         for chunk in line.split('`').skip(1).step_by(2) {
             let c = chunk.trim();
             if is_code(c) {
-                take(c);
+                take(c, true);
             }
         }
         // A PYTEST NODE ID, anywhere in the line. `pytest -q` names the failing file ONLY as
@@ -29862,7 +29984,7 @@ fn extract_file_from_finding(finding: &str, all_files: &[String]) -> Option<Stri
             if let Some((head, _)) = tok.split_once("::") {
                 let h = head.trim();
                 if is_code(h) {
-                    take(h);
+                    take(h, true);
                 }
             }
         }
@@ -29880,7 +30002,7 @@ fn extract_file_from_finding(finding: &str, all_files: &[String]) -> Option<Stri
     //
     // With an EMPTY file list there is nothing to resolve against, so the old behaviour stands — that
     // is the unit-test path; every real call site passes the run's planned files.
-    if let Some(f) = src.clone().or_else(|| last.clone()) {
+    if let Some(f) = named_src.clone().or(frame_src).or(last) {
         if all_files.is_empty() {
             return Some(f);
         }
