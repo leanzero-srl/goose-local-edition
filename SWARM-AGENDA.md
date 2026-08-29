@@ -397,6 +397,38 @@ it. A problem that turns out to be already owned is left out, but then it was no
 **THIS RUN KEEPS THE DEFECT** — the binary is the old one. Expect 4 features missing from its app, and read
 the score with that in mind rather than as a verdict on the decomposition.
 
+## MY PROMPT FIX COULD NEVER HAVE WORKED — THE ENGINE WAS CANCELLING IT, 2026-08-29 07:05 EEST
+
+Run 4's coverage gap, the first test of the slice-vs-fact clause:
+
+    +7  sse-stream-endpoint-api-stream · 12-288-payment-instances · berlin-day-positions ·
+        currency-exponent-heights · flat-status-colors · background-color-101828 ·
+        scene-digest-computation
+        "SSE stream endpoint /api/stream" · "12,288 payment instances" · "Berlin day positions" ·
+        "Currency-exponent heights" · "Flat status colors" · "Background color #101828" ·
+        "Scene digest computation"
+
+**FIVE OF SEVEN ARE PROPERTIES. A HEX COLOUR BECAME A BUILD TASK.** Worse than run 3's 2-of-5, on the run
+that was supposed to have fixed it.
+
+**AND THE REASON IS A BUG I WROTE AGAINST MYSELF.** The prompt says *leave `slice` EMPTY when the row is a
+fact rather than a thing somebody builds*. The engine then did:
+
+    c.slice.unwrap_or_else(|| OpenSlice { id: slugify_slice_id(&c.name), title: c.name, ... })
+
+**Obeying my instruction produced a slice anyway, named after the fact.** The clause could never have
+worked; the model may well have complied perfectly and I would never have known.
+
+**THE FIX IS DETERMINISTIC, NOT ANOTHER REQUEST** (`971d33cc4`): a row with no `slice` is coverage and is
+dropped, and `coverage_rows_not_work {part, dropped, names}` reports what was kept as coverage so the drop
+is measurable rather than silent. The fallback was correct when the prompt said *"write the slice that
+SHOULD own it"* and empty meant non-compliance. The prompt gives empty a MEANING now, so the engine has to
+honour it.
+
+**THE LESSON, and it is the third time tonight in a different costume:** when a prompt change does not take,
+check whether the CODE downstream is overriding it before concluding the model ignored you. I blamed the
+model in the commit message for run 3's version of this.
+
 ## [VERIFIED IN THE RUNNING APP] THE THINKING TRANSCRIPT IS LIVE — 2026-08-29 06:44 EEST
 
 Measured through the app's own IPC over CDP, the same way the defect was found:
