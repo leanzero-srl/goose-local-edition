@@ -159,6 +159,42 @@ recovering, the candidate signal is the same task drawing the same transport err
 
 ---
 
+## REPAIR HAS NEVER RUN IN A BENCHMARK — found 2026-08-29 on r0
+
+```rust
+let proxy_yes = !benchmark() && (round == 0 || last_round_promoted);   // swarm.rs:37015
+```
+
+Under `GOOSE_SWARM_BENCHMARK=1` — which is how every benchmark run is launched — `benchmark()` is true,
+so `!benchmark()` is false, so **`proxy_yes` is false unconditionally**. The repair-continue ask can only
+ever be answered NO. r0's console says it plainly:
+
+    ✗ 29 critical defect(s) remain, 2 minor
+    complete: STOPPING at round 0 with 29 critical(s) open — proxy said no
+
+`complete_fix_dispatched: 0`. **Not one fix was attempted.** TEST found 12 defects, RATE expanded them to
+29 criticals and 2 minors, and the run shipped every one of them untouched.
+
+**The code believes the opposite.** Its own comment three lines below reads *"round 0 buys round 1
+because proxy_yes is true at round 0"* — describing a branch that cannot be reached in the only mode we
+ever measure in. The intent is visible and correct; the expression contradicts it.
+
+**Why it looks defensible:** the guard exists because "under `benchmark` a model asked 'want another
+round?' answers yes forever, and the only exit is Ctrl-C". That is a real hazard and the fix for it is
+`last_round_promoted` — grant a round while the tree is still changing, refuse once it stops. The
+`!benchmark()` term is belt-and-braces on top of a rule that already terminates, and it disables the
+whole phase to prevent a loop the other half of the same expression already prevents.
+
+**Consequence for every number this project has published.** Each local benchmark result is a
+pre-repair score: the app as TEST first found it, with no fix wave, no re-test, no verdict loop. The
+REPAIR design — the fan by file, the promote-only-if-better guard, `fix_converged` — has never executed
+under measurement. That is not a small correction to the numbers; it is a phase of the engine that has
+been dark every time we looked.
+
+**The fix is one term**, and it must keep the anti-loop property: `round == 0 || last_round_promoted`
+already refuses the moment a round stops changing the tree, which is exactly the terminator the design
+asks for. Removing `!benchmark()` restores the phase without restoring the infinite-yes.
+
 ## THE GUTTING — measured on r0, 2026-08-29. This is the mechanism, not a metaphor.
 
 Mihai: *"check if the model isn't gutted by something. Clearly the cloud model shows us that it's very
