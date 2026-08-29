@@ -114,8 +114,11 @@ vi.mock('./components/ui/ConfirmationModal', () => ({
   ConfirmationModal: () => null,
 }));
 
+const { mockToastWarn } = vi.hoisted(() => ({ mockToastWarn: vi.fn() }));
+
 vi.mock('react-toastify', () => ({
   ToastContainer: () => null,
+  toast: { warn: mockToastWarn, error: vi.fn(), success: vi.fn(), info: vi.fn() },
 }));
 
 vi.mock('./components/GoosehintsModal', () => ({
@@ -299,6 +302,74 @@ describe('App Component - Brand New State', () => {
     newChatHandler?.({} as any);
 
     expect(mockNavigate).toHaveBeenCalledWith('/');
+  });
+
+  it('never spawns a window from a renderer keydown; the menu accelerator owns Cmd+N', async () => {
+    mockElectron.getConfig.mockReturnValue({
+      GOOSE_DEFAULT_PROVIDER: 'openai',
+      GOOSE_DEFAULT_MODEL: 'gpt-4',
+      GOOSE_ALLOWLIST_WARNING: false,
+    });
+
+    render(<AppInner />, { wrapper: AppInnerTestWrapper });
+
+    await waitFor(() => {
+      expect(mockElectron.reactReady).toHaveBeenCalled();
+    });
+
+    const presses = [
+      { key: 'n', metaKey: true },
+      { key: 'n', metaKey: true, shiftKey: true },
+      { key: 'N', metaKey: true, shiftKey: true },
+      { key: 'n', ctrlKey: true },
+    ];
+    for (const press of presses) {
+      const notPrevented = window.dispatchEvent(
+        new KeyboardEvent('keydown', { ...press, bubbles: true, cancelable: true })
+      );
+      expect(notPrevented).toBe(true);
+    }
+
+    expect(mockElectron.createChatWindow).not.toHaveBeenCalled();
+  });
+
+  it('shows a warning toast when the main process refuses a shortcut during a benchmark', async () => {
+    mockElectron.getConfig.mockReturnValue({
+      GOOSE_DEFAULT_PROVIDER: 'openai',
+      GOOSE_DEFAULT_MODEL: 'gpt-4',
+      GOOSE_ALLOWLIST_WARNING: false,
+    });
+
+    render(<AppInner />, { wrapper: AppInnerTestWrapper });
+
+    await waitFor(() => {
+      expect(mockElectron.reactReady).toHaveBeenCalled();
+    });
+
+    const refusedHandler = mockElectron.on.mock.calls.find(
+      ([channel]) => channel === 'shortcut-refused'
+    )?.[1];
+    expect(refusedHandler).toBeDefined();
+
+    refusedHandler?.({} as any, { action: 'spawn' });
+
+    expect(mockToastWarn).toHaveBeenCalledTimes(1);
+    const [content, options] = mockToastWarn.mock.calls[0];
+    expect(options).toMatchObject({
+      position: 'top-right',
+      closeButton: true,
+      hideProgressBar: true,
+      autoClose: 5000,
+    });
+
+    render(content);
+    expect(screen.getByText('Shortcut ignored while a benchmark is running')).toBeInTheDocument();
+    expect(screen.getByText(/Cmd\+N would open a second window/)).toBeInTheDocument();
+
+    refusedHandler?.({} as any, { action: 'not-a-refusal' });
+    refusedHandler?.({} as any, { action: 'constructor' });
+    refusedHandler?.({} as any);
+    expect(mockToastWarn).toHaveBeenCalledTimes(1);
   });
 
   it('should seed recipe sessions with the recipe prompt when no initial message is provided', () => {
