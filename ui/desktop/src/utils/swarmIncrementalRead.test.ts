@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import fsp from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -279,5 +279,109 @@ describe('eventsGeneration — the same number for the same accumulation, a new 
 
   it('is 0 for a log that is not there', async () => {
     expect(eventsGeneration(path.join(dir, 'nothing.jsonl'))).toBe(0);
+  });
+});
+
+/**
+ * TWO POLLS IN FLIGHT ON ONE LOG.
+ *
+ * The panel polls with `setInterval(() => void tick(), 500)` and never awaits the previous tick, the
+ * `read-swarm-run` handler does not serialise, and `useSwarmRun` is mounted at four sites — the chat and
+ * the navigation panel can both be live on one workingDir. So two `readEvents` on one path overlap as a
+ * matter of course, not as an exotic case.
+ *
+ * Unserialised, both start from the same stale offset: the overlap is parsed twice, and an overlapped
+ * partial line is concatenated with itself into garbage that JSON.parse rejects and the offset has
+ * already moved past — the event is gone for the life of that generation, which is the panel silently
+ * losing a dispatched task. These are the tests that fail the moment the per-path chain is removed.
+ */
+describe('readEvents under overlapping polls', () => {
+  it('returns each appended line ONCE when two polls overlap', async () => {
+    const p = path.join(dir, 'run.jsonl');
+    await fsp.writeFile(p, '{"event":"run_started"}\n');
+    await readEvents(p);
+
+    await fsp.appendFile(
+      p,
+      '{"event":"task_dispatched","task_id":"t1"}\n{"event":"task_completed"}\n'
+    );
+    const [a, b] = await Promise.all([readEvents(p), readEvents(p)]);
+
+    expect(a).toBe(b);
+    expect(a).toEqual([
+      { event: 'run_started' },
+      { event: 'task_dispatched', task_id: 't1' },
+      { event: 'task_completed' },
+    ]);
+  });
+
+  it('does not lose a line the engine was mid-way through writing', async () => {
+    const p = path.join(dir, 'run.jsonl');
+    await fsp.writeFile(p, '{"event":"run_started"}\n');
+    await readEvents(p);
+
+    const whole = '{"event":"task_dispatched","task_id":"IMPORTANT"}\n';
+    await fsp.appendFile(p, whole.slice(0, 20));
+    await Promise.all([readEvents(p), readEvents(p)]);
+    await fsp.appendFile(p, whole.slice(20));
+
+    expect(await readEvents(p)).toEqual([
+      { event: 'run_started' },
+      { event: 'task_dispatched', task_id: 'IMPORTANT' },
+    ]);
+  });
+
+  it('two poll loops against a growing log see every event exactly once', async () => {
+    const p = path.join(dir, 'run.jsonl');
+    await fsp.writeFile(p, '');
+    let stop = false;
+    let served: Record<string, unknown>[] = [];
+    const poll = async (every: number) => {
+      while (!stop) {
+        served = await readEvents(p);
+        await new Promise((r) => setTimeout(r, every));
+      }
+    };
+    const loops = [poll(2), poll(3)];
+    for (let i = 0; i < 60; i++) {
+      await fsp.appendFile(p, JSON.stringify({ event: 'e', seq: i }) + '\n');
+      await new Promise((r) => setTimeout(r, 3));
+    }
+    stop = true;
+    await Promise.all(loops);
+    served = await readEvents(p);
+
+    const onDisk = (await fsp.readFile(p, 'utf8')).split('\n').filter((l) => l.trim()).length;
+    expect(onDisk).toBe(60);
+    expect(served.map((e) => e['seq'])).toEqual([...Array(60).keys()]);
+  });
+
+  it('keeps two different logs independent when their reads overlap', async () => {
+    const a = path.join(dir, 'run-a.jsonl');
+    const b = path.join(dir, 'run-b.jsonl');
+    await fsp.writeFile(a, '{"event":"a1"}\n');
+    await fsp.writeFile(b, '{"event":"b1"}\n');
+    const [ra, rb, ra2, rb2] = await Promise.all([
+      readEvents(a),
+      readEvents(b),
+      readEvents(a),
+      readEvents(b),
+    ]);
+    expect(ra).toEqual([{ event: 'a1' }]);
+    expect(ra2).toEqual([{ event: 'a1' }]);
+    expect(rb).toEqual([{ event: 'b1' }]);
+    expect(rb2).toEqual([{ event: 'b1' }]);
+  });
+
+  it('a failed read does not strand the polls queued behind it', async () => {
+    const p = path.join(dir, 'run.jsonl');
+    await fsp.writeFile(p, '{"event":"a"}\n');
+    const spy = vi.spyOn(fsp, 'open').mockRejectedValueOnce(new Error('EMFILE'));
+    const [first, second] = await Promise.allSettled([readEvents(p), readEvents(p)]);
+    spy.mockRestore();
+
+    expect(first.status).toBe('rejected');
+    expect(second.status).toBe('fulfilled');
+    expect(second.status === 'fulfilled' && second.value).toEqual([{ event: 'a' }]);
   });
 });
