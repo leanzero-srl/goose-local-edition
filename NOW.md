@@ -62,6 +62,20 @@ changes r2's own evidence says would definitely help (each one must name the r2 
 `afa644ddd` 1800 s read window, `ee0cbfe73` PLAN-REPAIR (now warning-only), the panel/instrument rows. Each
 gets a keep/drop verdict against r2's evidence before the rebuild.
 
+**r3 KEEP/DROP CANDIDATES — judged against r2's score and events, not before (prepared 22:45):**
+| candidate | the r2 finding it answers | class | verdict |
+|---|---|---|---|
+| `2b1e755ac` re-stream on ignored steers | r2 opener: 5 steers ignored, 22 min; r1 review lane: 6 | KEEP-class | after score |
+| `afa644ddd` 1800 s provider read window | r2 open-coverage-2: 581 s silent slot, valid result | KEEP-class | after score |
+| `ee0cbfe73`+`fae38abc3` PLAN-REPAIR, warning-only | r2 REVIEW fixed sharing/owning-nothing itself → the pass is a no-op safety net | KEEP-class, zero cost | after score |
+| `ac9715d24` phase chips (Ask, Contracts) | Mihai 22:35 | his ask | keep |
+| `156a95957` + panel RUNNING rows | Mihai 22:29 | his ask | keep |
+| shortcut fix (workflow) | Mihai 22:00 | his ask | keep |
+| judge sees the owned files (agenda :2486) | r2 camera-system: judge said "ok" while the lane coded at the tree root | ADD, mild (a measurement fed to the judge) | after score |
+| delete coverage lanes / RESEARCH | r2: RESEARCH 48 min, fleet 1/3 for 12+ min behind one coverage call, a slice coding instead of briefing | DELETE — Mihai's call | his word |
+| delete CONTRACTS | r0 sync critical built against a stub; Mihai 22:13 "what the fuck" at the stub nudge | DELETE — Mihai's call | his word |
+Anything not on this table does not go into r3.
+
 **DESIGN STEER (Mihai, 2026-08-29 22:30, binding for every step from here): "let's avoid making it overly
 too deterministic and gated, be very mild with this, we've done deterministic and plumbing a lot and it
 didn't work because of how unpredictable these models are."** Code MEASURES and feeds the measurement to a
