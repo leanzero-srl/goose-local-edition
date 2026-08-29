@@ -189,6 +189,12 @@ logs keep pace with the digests under judge looks (`tick_ui` "EXCEEDS the durabl
 
 **r2's OWN fixture seed is `5cd47b42e2a7c3e0`** (header of `runs/build/trace-swarm-3node-r0.jsonl`, mtime
 21:10 — the harness overwrote r0's trace because the run dir name is reused; r0 was `687ff58bfa6b707d`).
+**THE ASSESSMENT IS PRE-ARMED:** when `run_finished` lands — (1) `score_run.sh "<run dir>"`; (2) launch the
+workflow at `scratchpad/r2-assessment-workflow.js` (Workflow scriptPath, args {runDir, verdictJson,
+wallMinutes}) — five lenses → the r3 BUILD QUEUE with build/refuse verdicts (the deletions decided there,
+full autonomy) → two refuters; (3) refusals into REFUSED.md; (4) execute the queue batch-by-file with
+adversarial review per change; (5) rebuild, install, launch r3, run NOW.md's live checks first tick.
+
 Score r2 with ONE command once `run_finished` lands: `~/goose-builds/loop-state/score_run.sh "<run dir>"` —
 it refuses while the run is live or a server leaks a port, waits for run_build.py, stops only the vendor,
 clones the tree, scores under the playwright node at 8850 with the run's OWN seed (`5cd47b42e2a7c3e0`, from
