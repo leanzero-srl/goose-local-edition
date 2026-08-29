@@ -217,6 +217,9 @@ export interface TurnLane {
   /// True while an omni-judge probe is in flight for this lane. The engine buffers the worker's stream
   /// during a probe rather than processing it, so every counter is frozen at the value the look recorded.
   /// Without this the panel cannot tell "the supervisor is reading" from "this worker died".
+  /// The TRUE size of `<task>.log` on disk. main.ts has attached this to every digest all along and
+  /// nothing read it, so a pane could show a clipped tail with no way to say how much was dropped.
+  transcriptBytes?: number;
   judging?: boolean;
   queuedChunks?: number;
   lastThinking?: string;
@@ -2006,6 +2009,8 @@ export function foldEvents(
       fullTranscript:
         (act as { full_transcript?: string } | undefined)?.full_transcript ?? t.fullTranscript,
       judging: (act as { judging?: boolean } | undefined)?.judging ?? t.judging,
+      transcriptBytes:
+        (act as { transcript_bytes?: number } | undefined)?.transcript_bytes ?? t.transcriptBytes,
       queuedChunks:
         (act as { queued_chunks?: number } | undefined)?.queued_chunks ?? t.queuedChunks,
       errors: act?.errors ?? t.errors,
@@ -2056,6 +2061,7 @@ export function foldEvents(
         fullThinking: (d as { full_thinking?: string })?.full_thinking,
       fullTranscript: (d as { full_transcript?: string })?.full_transcript,
       judging: (d as { judging?: boolean })?.judging,
+      transcriptBytes: (d as { transcript_bytes?: number })?.transcript_bytes,
       queuedChunks: (d as { queued_chunks?: number })?.queued_chunks,
         phase: d.phase,
         errors: d.errors,
@@ -2108,6 +2114,7 @@ export function foldEvents(
       fullThinking: (d as { full_thinking?: string })?.full_thinking,
       fullTranscript: (d as { full_transcript?: string })?.full_transcript,
       judging: (d as { judging?: boolean })?.judging,
+      transcriptBytes: (d as { transcript_bytes?: number })?.transcript_bytes,
       queuedChunks: (d as { queued_chunks?: number })?.queued_chunks,
       phase: d.phase,
       errors: d.errors,
@@ -2392,6 +2399,7 @@ export function deriveFleet(args: {
       fullThinking: (d as { full_thinking?: string })?.full_thinking,
       fullTranscript: (d as { full_transcript?: string })?.full_transcript,
       judging: (d as { judging?: boolean })?.judging,
+      transcriptBytes: (d as { transcript_bytes?: number })?.transcript_bytes,
       queuedChunks: (d as { queued_chunks?: number })?.queued_chunks,
       lastThinking: d?.last_thinking,
       phase: d?.phase,
