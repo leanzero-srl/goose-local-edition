@@ -102,6 +102,37 @@ remaining space for dynamic text.
   
 - Ink-TrailingMargin: Don't apply `marginBottom` to the last item in a list — it wastes a line and can push content out of the container. Use conditional margins or container `gap`.
 
+## The swarm engine — read before changing it
+
+The swarm builds software by fanning work across 3 local LM Studio nodes. It is the subject of most work
+in this repo and it has a specific set of invariants that produce no compiler error when broken.
+
+**Phases:** `OPEN → ASK → RESEARCH → SYNTHESIS → REVIEW → CONTRACTS → BUILD → INTEGRATE → REPAIR`.
+
+**The four that break silently:**
+
+1. **NO CAPS.** No wall clock, turn ceiling, retry count or volume limit may bound model work — local
+   models are slow and that is expected. Terminators must be progress-based or live in the transport.
+   `effective_idle_budget()` returns uncapped for any input and is tested to.
+2. **`"integrate-verify"` is an exact-equality string test in five live places**, and the join must own
+   NO files — `scheduler.rs:2603` relaxes a dependent through an upstream failure only if it owns
+   nothing, so a file-owning join is cascaded-Failed and the app never binds a port.
+3. **A correction is a PATCH (`plan_patched`), never a re-emission.** Re-emitting whole plans is what
+   burned 3h40m without starting a build.
+4. **The judge NUDGES; it does not kill.** Steer lands at a turn boundary and costs nothing.
+
+**Every worker call has FIVE lane-building paths in the UI and one shared join, `digestStreamFields()`.**
+Never hand-copy a digest field onto a lane; the join diverged twice that way and the failure is invisible
+because the other four paths look correct.
+
+**Rolling vs durable:** the activity digest is a small window the engine REWRITES IN PLACE;
+`<task>.log` and `<task>.think.log` are append-only and complete. Any surface a person reads must prefer
+the durable log.
+
+`.claude/rules/*.md` carry the detail per area and load automatically when you touch a matching file.
+`EXPERIMENTS-LEDGER.md` records what was already tried and what it measured — **read it before proposing
+an engine change**, because several ideas here have been tried twice.
+
 ## Never
 
 - Never: Recreate `ui/desktop/src/api` or add `@hey-api/openapi-ts` to `ui/desktop`
