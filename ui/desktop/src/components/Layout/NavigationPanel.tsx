@@ -139,11 +139,21 @@ interface NavRowProps {
   onClick: () => void;
 }
 
-const NavRow: React.FC<NavRowProps> = ({ item, active, onClick }) => {
+export const NavRow: React.FC<NavRowProps> = ({ item, active, onClick }) => {
   const intl = useIntl();
   const Icon = item.icon;
   return (
-    <button onClick={onClick} className={navItemClass(active)}>
+    <button
+      onClick={onClick}
+      className={navItemClass(active)}
+      // The active view was styled and nothing more: bg-background-tertiary against a transparent
+      // sibling, with no aria-current and no aria-selected anywhere in the panel. So the current view
+      // was visible to a sighted mouse user and invisible to everything else — a screen reader, and any
+      // automated check of "which view am I on". Measured live over CDP on #/benchmark: the Benchmark
+      // row computed rgb(71,78,87) against rgba(0,0,0,0), and a sweep of all 19 nav controls found ZERO
+      // with either attribute set.
+      aria-current={active ? 'page' : undefined}
+    >
       <Icon className="w-5 h-5 flex-shrink-0 text-text-secondary" />
       <span className="text-left flex-1 truncate">{getNavItemLabel(item, intl)}</span>
       {item.getTag && (
