@@ -121,6 +121,38 @@ Verified live over CDP against a growing run: events 3→4, thinking bytes 25→
 
 ---
 
+## NEXT RUN (r1) — what is queued, and what it will settle
+
+### FIXES COMMITTED BUT NOT IN THE RUNNING BINARY (installed build is 13:06)
+
+| commit | fix | why it matters |
+|---|---|---|
+| `02c78cae3` | **drift corroborates instead of being suppressed forever** | r0: 5 DRIFTING verdicts → 1 nudge. `open-coverage-2` hit 21,749 reasoning chars with ZERO tool calls, was diagnosed DRIFTING, and held — "producing" counts reasoning, so a call that reasons and never acts is producing by definition |
+| `8f883757b` | **the thinking path takes the freshest LINE** | I fixed the transcript branch and left this one. OPEN/RESEARCH are pure reasoning, so EVERY lane in them fell through to the broken branch — the tick caught it on `workhorse (slice-boot-wrapper)` |
+| `6ba042ce3` | **the strip shows a node's second lane** | nodes are PARALLEL:2; `open-coverage-1` (68,393 chars) and `open-coverage-2` had **no cell at all** |
+| `aa8e7d90d` | inspector single-column when Output is empty; `YOUR FLEET` badge stops overprinting the row label at low scores | both from Mihai's screenshots |
+| `95f5b7d4e` | **panel defaults generated from Rust, not retyped** | `worker_max_turns` was 40 in the panel against 1,000,000 in Rust, under a test titled "the panel can never write a divergent value" |
+
+### CLAIMS r1 MUST SETTLE
+
+1. **Does the drift fix produce nudges?** r0: 5 drifting → 1 nudge. r1 should show drift delivered on a
+   second look with no action taken. Read `judge_drift_held.drift_streak`.
+2. **Does the strip show every live lane?** r0 hid the two largest lanes in the run.
+3. **Does REVIEW still stop on a no-new-finding round?** r0: `r1:new=4 → r2:new=0`. Once is not twice.
+4. **Does the warden ever fire?** Silent through all of r0 — correct only if no dependency completed
+   hollow, which is unproven either way.
+5. **Do we trip fewer criticals than the target's three?** This is the whole game: the target scored
+   inner **0.7662** and finished at 22% because criticals MULTIPLY. Our engine covers all three of its
+   classes (domain-conventions, wiring, restart-durability at `swarm.rs:20653`) — r1 says whether they fire.
+
+### THE MEASURED WASTE TO ATTACK (from r0's ledger row)
+
+- **research 39m ≈ build 49m.** Research costs as much as building.
+- **266,614 reasoning chars for 110,095 bytes of program.** A 2.4:1 deliberation cost overall, but
+  `review-screen-space-labels` alone ran **38:1** and `synthesis` **11:1**.
+- **brief median 4,789** against the ~1,500 that measured 88.7%.
+- **45 minutes lost to one task's transport drops** — recovered, but on the record.
+
 ## THE HARD RULES (the user's, non-negotiable)
 
 1. **Isolation first, always.** Every fix proven without a run — archived-tree replay, a pure-function
