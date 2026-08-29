@@ -25682,6 +25682,74 @@ fn slugify_slice_id(name: &str) -> String {
     out.trim_end_matches('-').chars().take(48).collect()
 }
 
+/// A DETERMINISTIC CHECK OF WHAT A TASK ACTUALLY DELIVERED.
+///
+/// The omni-judge asks a 27B to INFER from a reasoning tail whether work is going well: 211 calls on run 4,
+/// median 49s, **46% of the whole fleet**, to produce 38 nudges. Meanwhile `python3 -m py_compile app/x.py`
+/// answers "does this parse" definitively, in milliseconds, on no node at all.
+///
+/// This is the free tier of that idea. It reads FILES, never reasoning, and every finding it returns is a
+/// fact rather than an opinion — which is also what makes it safe to act on automatically.
+///
+/// Returns one line per defect, empty when the task delivered what it owned.
+fn verify_owned_files(working_dir: &Path, owned: &[String]) -> Vec<String> {
+    let mut out = Vec::new();
+    for rel in owned {
+        let path = working_dir.join(rel);
+        match std::fs::metadata(&path) {
+            Err(_) => {
+                out.push(format!(
+                    "{rel} does not exist — the task finished without writing the file it owns"
+                ));
+                continue;
+            }
+            Ok(m) if m.len() == 0 => {
+                out.push(format!("{rel} exists but is EMPTY"));
+                continue;
+            }
+            Ok(_) => {}
+        }
+        // A python file that does not parse is a fact, and every task downstream of it is already broken.
+        if rel.ends_with(".py") {
+            let ok = std::process::Command::new("python3")
+                .arg("-m")
+                .arg("py_compile")
+                .arg(&path)
+                .output();
+            if let Ok(o) = ok {
+                if !o.status.success() {
+                    let err = String::from_utf8_lossy(&o.stderr);
+                    let first = err
+                        .lines()
+                        .rev()
+                        .find(|l| !l.trim().is_empty())
+                        .unwrap_or("syntax error");
+                    out.push(format!("{rel} DOES NOT PARSE: {}", first.trim()));
+                }
+            }
+        }
+        // An HTML file that points at a file nobody wrote renders blank, and nothing else notices until
+        // someone opens it — which historically has been nobody until the score comes back.
+        if rel.ends_with(".html") {
+            if let Ok(body) = std::fs::read_to_string(&path) {
+                for cap in body.split(|c| c == '"' || c == '\'') {
+                    let c = cap.trim();
+                    if (c.ends_with(".js") || c.ends_with(".css"))
+                        && !c.starts_with("http")
+                        && !c.is_empty()
+                    {
+                        let target = path.parent().map(|p| p.join(c)).unwrap_or_default();
+                        if !target.exists() {
+                            out.push(format!("{rel} references `{c}`, which does not exist"));
+                        }
+                    }
+                }
+            }
+        }
+    }
+    out
+}
+
 /// Split unowned coverage rows into the ones that PROPOSE WORK and the ones that are only coverage.
 ///
 /// A row whose `slice` is absent is a fact about the request, not a thing anybody builds — the enumerator
@@ -42910,5 +42978,54 @@ mod live_fleet_tests {
             slices.is_empty(),
             "a blank id would become a task with no identity"
         );
+    }
+
+    /// The verifier must be RIGHT, because unlike the judge its findings are facts and will be acted on
+    /// automatically. Every case here is one the swarm has actually shipped.
+    #[test]
+    fn the_verifier_reports_only_real_defects() {
+        let dir = std::env::temp_dir().join(format!("goose-verify-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("app")).unwrap();
+        std::fs::create_dir_all(dir.join("web")).unwrap();
+
+        std::fs::write(dir.join("app/good.py"), "def f():\n    return 1\n").unwrap();
+        std::fs::write(dir.join("app/broken.py"), "def f(:\n").unwrap();
+        std::fs::write(dir.join("app/empty.py"), "").unwrap();
+        std::fs::write(dir.join("web/styles.css"), "body{}").unwrap();
+        std::fs::write(
+            dir.join("web/index.html"),
+            "<link href=\"styles.css\"><script src=\"missing.js\"></script>",
+        )
+        .unwrap();
+
+        let ok = verify_owned_files(&dir, &["app/good.py".into()]);
+        assert!(
+            ok.is_empty(),
+            "a file that exists and parses is not a defect: {ok:?}"
+        );
+
+        let gone = verify_owned_files(&dir, &["app/never_written.py".into()]);
+        assert_eq!(gone.len(), 1);
+        assert!(gone[0].contains("does not exist"), "{gone:?}");
+
+        let empty = verify_owned_files(&dir, &["app/empty.py".into()]);
+        assert_eq!(empty.len(), 1);
+        assert!(empty[0].contains("EMPTY"), "{empty:?}");
+
+        let broken = verify_owned_files(&dir, &["app/broken.py".into()]);
+        assert_eq!(broken.len(), 1, "a syntax error is ONE finding: {broken:?}");
+        assert!(broken[0].contains("DOES NOT PARSE"), "{broken:?}");
+
+        // The html names two assets; only the missing one is a finding.
+        let html = verify_owned_files(&dir, &["web/index.html".into()]);
+        assert_eq!(
+            html.len(),
+            1,
+            "styles.css exists and must not be reported: {html:?}"
+        );
+        assert!(html[0].contains("missing.js"), "{html:?}");
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
