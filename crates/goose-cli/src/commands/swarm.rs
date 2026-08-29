@@ -10066,6 +10066,66 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
     /// mistake available here — so anything it cannot decide from the body must be Unreadable,
     /// never Duplicates.
     #[test]
+    /// THE THREE SENTENCES THAT DEFEATED THE OLD KEY, verbatim from the live run that measured this.
+    /// They must be ONE finding, and the `STILL: ` prefix that produced 9 findings with `repeated: 0`
+    /// on an untouched plan must not create a fourth.
+    #[test]
+    fn one_defect_worded_four_ways_is_one_finding() {
+        let a = "viz-interaction and viz-rendering-engine share the same file (web/viz.js)";
+        let b = "Two tasks write to the same file (web/viz.js)";
+        let c = "viz.js written by two tasks";
+        let d = "STILL: viz-interaction and viz-rendering-engine share the same file (web/viz.js)";
+        let k = review_dedupe_key(a);
+        assert_eq!(review_dedupe_key(b), k, "b rephrased a");
+        assert_eq!(
+            review_dedupe_key(c),
+            k,
+            "c named the file without its directory"
+        );
+        assert_eq!(
+            review_dedupe_key(d),
+            k,
+            "a STILL: prefix is not a new finding"
+        );
+    }
+
+    /// THE EARLY-STOP RISK, which is the one that matters: merging two DIFFERENT findings about the same
+    /// file would end the review before it had finished, and an extra round is much cheaper than that.
+    #[test]
+    fn two_different_claims_about_one_file_stay_separate() {
+        let owned_twice =
+            "viz-interaction and viz-rendering-engine share the same file (web/viz.js)";
+        let never_wired = "web/viz.js is never imported by any task";
+        assert_ne!(
+            review_dedupe_key(owned_twice),
+            review_dedupe_key(never_wired)
+        );
+    }
+
+    #[test]
+    fn different_files_are_different_findings() {
+        let a = "Two tasks write to the same file (web/viz.js)";
+        let b = "Two tasks write to the same file (web/store.js)";
+        assert_ne!(review_dedupe_key(a), review_dedupe_key(b));
+    }
+
+    /// A finding naming nothing extractable keeps the OLD behaviour exactly, so prose findings cannot
+    /// regress into either direction.
+    #[test]
+    fn prose_with_no_identifier_falls_back_to_the_text_key() {
+        let f = "The plan does not explain how the user reaches the running application";
+        assert_eq!(f.to_lowercase(), review_dedupe_key(f));
+        let g = "The plan does not explain how the user reaches the running application at all";
+        assert_ne!(review_dedupe_key(f), review_dedupe_key(g));
+    }
+
+    #[test]
+    fn backticked_identifiers_are_read_even_without_an_extension() {
+        let a = "task `integrate-verify` owns files and will be cascaded on any build failure";
+        let b = "STILL: `integrate-verify` owns files, which cascades it on a build failure";
+        assert_eq!(review_dedupe_key(a), review_dedupe_key(b));
+    }
+
     fn a_repeated_post_is_only_a_finding_when_the_body_actually_proves_duplication() {
         let sync = r#"{"fetched":247,"inserted":247,"total":247}"#;
         assert_eq!(
@@ -27673,6 +27733,99 @@ impl GooseAgentDispatcher {
 /// correction can be a small patch instead of a whole new plan. A task whose slice is unknown keeps
 /// whatever description it has; a slice nobody claimed is appended as its own task rather than being
 /// silently dropped, because a slice that was researched and then lost is work paid for and thrown away.
+
+/// The STRUCTURAL CLAIM a review finding makes, used to tell a genuinely new finding from a rephrasing.
+///
+/// The old key was `trim().to_lowercase().take(120)` — a PREFIX comparison, which any rewording defeats
+/// by construction. Measured on a live run: rounds 1 and 2 reported one defect as "viz-interaction and
+/// viz-rendering-engine share the same file (web/viz.js)", "Two tasks write to the same file
+/// (web/viz.js)" and "viz.js written by two tasks", and all three counted as NEW; a later round simply
+/// prefixed each with `STILL: ` and got 9 findings with `repeated: 0` on a plan nobody had touched. The
+/// stop rule is "a round that surfaces no new finding", so a rephrasing reviewer could never let the
+/// loop settle.
+///
+/// The key is (kind, identifiers) because neither alone is safe:
+///   - identifiers alone would merge "viz.js is owned twice" with "viz.js is never imported" — two real,
+///     different findings about one file. Merging them stops the loop EARLY, which is worse than running
+///     an extra round, so the kind keeps them apart.
+///   - kind alone would merge every ownership finding in the plan into one.
+///
+/// Identifiers are taken only from high-precision positions — backticked tokens and path-like tokens —
+/// and files reduce to their BASENAME, because the same file is named `web/viz.js` in one sentence and
+/// `viz.js` in the next. A finding that yields NO identifier falls back to the old text key, so prose
+/// findings behave exactly as they did before.
+fn review_dedupe_key(finding: &str) -> String {
+    let lower = finding.trim().to_lowercase();
+
+    let kind = if lower.contains("share")
+        || lower.contains("same file")
+        || lower.contains("both own")
+        || lower.contains("two tasks")
+        || lower.contains("duplicate")
+        || lower.contains("written by")
+        || lower.contains("owned by")
+    {
+        "ownership"
+    } else if lower.contains("unowned")
+        || lower.contains("no task")
+        || lower.contains("nobody")
+        || lower.contains("not owned")
+        || lower.contains("missing")
+    {
+        "unowned"
+    } else if lower.contains("depend")
+        || lower.contains("wire")
+        || lower.contains("wired")
+        || lower.contains("import")
+    {
+        "wiring"
+    } else if lower.contains("larger")
+        || lower.contains("too large")
+        || lower.contains("unbalanced")
+        || lower.contains("split")
+    {
+        "size"
+    } else {
+        "other"
+    };
+
+    let mut ids: Vec<String> = Vec::new();
+    let mut push = |tok: &str| {
+        let t = tok.trim_matches(|c: char| {
+            !c.is_alphanumeric() && c != '/' && c != '.' && c != '_' && c != '-'
+        });
+        if t.is_empty() {
+            return;
+        }
+        let base = t.rsplit('/').next().unwrap_or(t);
+        if base.len() >= 3 && !ids.iter().any(|x| x == base) {
+            ids.push(base.to_string());
+        }
+    };
+
+    for seg in lower.split('`').skip(1).step_by(2) {
+        push(seg);
+    }
+    for tok in lower.split_whitespace() {
+        let cleaned = tok.trim_matches(|c: char| "(),.;:\"'".contains(c));
+        let is_pathish = cleaned.contains('/')
+            || [
+                ".py", ".js", ".ts", ".tsx", ".html", ".css", ".json", ".rs", ".md", ".toml",
+            ]
+            .iter()
+            .any(|e| cleaned.ends_with(e));
+        if is_pathish {
+            push(cleaned);
+        }
+    }
+
+    if ids.is_empty() {
+        return lower.chars().take(120).collect();
+    }
+    ids.sort();
+    format!("{kind}|{}", ids.join(","))
+}
+
 fn splice_briefs(plan: &mut serde_json::Value, briefs: &[SliceBrief], lang: TargetLang) {
     let by_id: std::collections::HashMap<&str, &SliceBrief> =
         briefs.iter().map(|b| (b.id.as_str(), b)).collect();
@@ -28139,13 +28292,7 @@ async fn review_until_settled(
                 return plan_json;
             }
         };
-        let norm = |f: &String| {
-            f.trim()
-                .to_lowercase()
-                .chars()
-                .take(120)
-                .collect::<String>()
-        };
+        let norm = |f: &String| review_dedupe_key(f);
         let fresh: Vec<String> = findings
             .iter()
             .filter(|f| !f.trim().is_empty() && !seen.contains(&norm(f)))

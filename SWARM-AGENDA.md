@@ -1879,7 +1879,11 @@ runs several rounds and the gaps arrive in the later ones.
       `test_steer_does_not_interrupt_in_flight_generation`,
       `test_steer_never_lands_on_a_nonterminating_generation`. This supersedes item Y, which I had
       declined on scope; Mihai made the call.
-- [ ] **AD. REVIEW's NO-NEW-FINDING STOP IS DEFEATED BY A REPHRASING REVIEWER — de-dup on the CLAIM, not
+- [x] **AD. DONE 2026-08-29. De-dup now keys on (kind, identifiers), not a 120-char prefix.** The
+      four wordings measured on the live run — including the `STILL: ` prefix — collapse to one key, and
+      two DIFFERENT claims about the same file stay separate (that is the early-stop risk, and it is the
+      one that mattered). Findings naming no identifier keep the old text key exactly. 5 tests.
+      ORIGINAL: REVIEW's no-new-finding stop is defeated by a rephrasing reviewer — de-dup on the CLAIM, not
       the sentence.** MEASURED run 3: round 2 returned 9 findings with `repeated: 0` on a plan nobody had
       touched, because it prefixed each one with `STILL: ` and the de-dup compares a 120-char lowercase
       prefix. A prefix-stripping regex is the wrong fix — the reviewer can rephrase in any direction. The
