@@ -1630,15 +1630,6 @@ export function buildActivity(events: Array<Record<string, unknown>>): {
         });
         break;
       }
-      case 'review_patch_stuck': {
-        verbose({
-          kind: 'plan',
-          tone: 'bad',
-          text: `Review is stuck — its patch was rejected the same way twice`,
-          sub: str(e['diagnostic']),
-        });
-        break;
-      }
       case 'scouts_planned': {
         const lenses = arr(e['lenses']).map(String).join(', ');
         compact({ kind: 'phase', text: 'Planning research', sub: lenses || undefined });
