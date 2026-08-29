@@ -99,11 +99,22 @@ management. The plausible reading is that the length is the cause and the socket
 case the engine is retrying a generation that will drop again for the same reason, forever, having
 classified it as somebody else's problem.
 
-**Not fixed, because the fix is not obvious and the current behaviour protects real work.** The detector
-cannot presently tell "a flaky link" from "this generation is too long to survive a stream", and those
-want opposite responses: retry the first, split or shorten the second. Candidate signal: the same task
-drawing the same transport error on N DISTINCT devices — that is evidence the task is the variable, and
-it needs no clock and no cap. Wanted: a second run showing the same shape before designing on one.
+**RESOLVED THE SAME RUN, against my suspicion — and the existing rule was right.** `app-js` completed on
+its FOURTH attempt at 12:08, and the run went straight to INTEGRATE with 9 of 10 tasks done and code
+bytes jumping 80,966 → 108,682. So the drops were genuinely transient after all: the retry-forever
+behaviour bought a finished task where exhausting would have shipped a partial file and degraded the
+capstone.
+
+Worth keeping precisely because I was about to design against it. The shape "same error, three different
+nodes" LOOKED like proof the task was the variable, and it was not — three nodes on one LAN share enough
+that a fault can follow work around without being caused by it. The lesson is not about transport: it is
+that a suspicious pattern with a plausible mechanism is still not evidence, and a run in flight can
+answer a question faster than a redesign can.
+
+The cost is real and stays on the record: **45 minutes of a 3-node fleet on one task's transport drops**,
+which is roughly the whole of BUILD. If a future run shows the same task failing this way and NOT
+recovering, the candidate signal is the same task drawing the same transport error on N distinct devices
+— it needs no clock and no cap. Until then there is nothing to fix.
 
 ## ALIVE BUT UNPROVEN — measured once, not yet twice
 
