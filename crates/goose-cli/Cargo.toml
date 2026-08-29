@@ -73,6 +73,9 @@ goose-provider-types = { version = "1.41.0", path = "../goose-provider-types" }
 anstream = { version = "1", default-features = false, features = ["wincon"] }
 winapi = { workspace = true }
 
+[target."cfg(unix)".dependencies]
+libc = "0.2.186"
+
 [features]
 default = [
     "code-mode",
