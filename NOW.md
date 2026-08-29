@@ -122,7 +122,7 @@ fresh, no event ≥10m, fleet idle, 0% CPU); a leaked server count > 0.
 and `items`-vs-`data`). **r1** (18:43–20:23) killed at REVIEW round 4 — see RUN-LEDGER, EXPERIMENTS-LEDGER
 and the campaign skill changelog for the full record.
 
-**LANDED during r2, ships in r3 (`2b1e755ac`):** a nudge escalates to a seeded re-stream (conversation wiped in the same session, `judge_restream` event) when a prior steer produced no action or the judge says RESTART — `nudge_delivery()` is pure and tested. r2's opener needed 22 min and five ignored steers to finish; r1's review lane six. First `judge_restream` event in r3 is the live check.
+**LANDED during r2, ships in r3 (`2b1e755ac`):** a nudge escalates to a seeded re-stream (conversation wiped in the same session, `judge_restream` event) when a prior steer produced no action or the judge says RESTART — `nudge_delivery()` is pure and tested. r2's opener needed 22 min and five ignored steers to finish; r1's review lane six. First `judge_restream` event in r3 is the live check. Also for r3: `afa644ddd` — the Benchmark view passes `GOOSE_PROVIDER_READ_TIMEOUT_SECS=1800` (a live PARALLEL:2 slot went 581 s silent on r2; the default 600 s would have cut it).
 
 **Was queued (now done):** when the judge answers RESTART on a call with
 `actions_since_last_look == 0` and the previous steer changed nothing (thinking grew, no action), deliver the
