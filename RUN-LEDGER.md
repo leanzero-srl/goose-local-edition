@@ -10,7 +10,7 @@ DAG is actually parallel). reasoning_chars against answer_chars is the waste.
 
 ## swarm-3node-r0
 
-- **phases**: open → ask → research → synthesis → review
+- **phases**: open → ask → research → synthesis → review → contracts
 - **started**: 17:43:01
 - **tasks**: 0
 - **files_planned**: 0
@@ -19,24 +19,24 @@ DAG is actually parallel). reasoning_chars against answer_chars is the waste.
 - **chain**: 0
 - **startable**: 0
 - **brief_median**: 0
-- **reasoning_chars**: 192380
-- **answer_chars**: 121188
+- **reasoning_chars**: 219562
+- **answer_chars**: 131077
 - **code_files**: 2
 - **code_bytes**: 9621
-- **elapsed_min**: 82
-- **phase_split**: open 22m · ask 2m · research 48m · synthesis 5m · review 3m
+- **elapsed_min**: 88
+- **phase_split**: open 22m · ask 2m · research 48m · synthesis 5m · review 6m · contracts 3m
 - **before_build_min**: 0 (internal diagnosis only — never a cross-run number)
-- **vs_target**: ONLY THE SCORE COMPARES. Target 20.06% (qwen3.8-27b, one cloud agent, same model). Wall clock is NOT comparable — that run is on far faster hardware, so minutes measure the machine. Bytes are NOT a verdict — more code is not better code, and it had no planning phases to spend budget on. Cross-hardware-honest work numbers for THIS run: 9,621B delivered, 192,380 chars reasoned, 0 tasks completed, 0 retried.
+- **vs_target**: ONLY THE SCORE COMPARES. Target 20.06% (qwen3.8-27b, one cloud agent, same model). Wall clock is NOT comparable — that run is on far faster hardware, so minutes measure the machine. Bytes are NOT a verdict — more code is not better code, and it had no planning phases to spend budget on. Cross-hardware-honest work numbers for THIS run: 9,621B delivered, 219,562 chars reasoned, 0 tasks completed, 0 retried.
 - **python_parses**: 0 ok / 0 SYNTAX ERROR / 0 empty
 - **web_files**: test_camera.js, viz_camera.js
 - **tasks_done**: 0/? completed, 0 dispatched, 0 retried
 - **arm**: F (fleet of 3)
 - **fixture_seed**: 5cd47b42e2a7c3e0
-- **plan_patched**: 0
+- **plan_patched**: 1
 - **plan_repaired**: none
 - **plan_loaded**: 0
-- **review_rounds**: none
-- **judge_looks**: 59
+- **review_rounds**: r1:new=9
+- **judge_looks**: 64
 - **judge_nudges**: 5
 - **judge_ended**: 0
 - **drift_held**: 9
