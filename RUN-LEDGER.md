@@ -10,36 +10,35 @@ DAG is actually parallel). reasoning_chars against answer_chars is the waste.
 
 ## swarm-3node-r0
 
-- **phases**: open → ask → research → synthesis → review → contracts → build → integrate → repair → test → rate
-- **started**: 10:07:43
-- **tasks**: 10
-- **files_planned**: 16
+- **phases**: open → ask → research
+- **started**: 15:43:54
+- **tasks**: 0
+- **files_planned**: 0
 - **collisions**: none
-- **sink_owns**: []
-- **chain**: 3
-- **startable**: 8
-- **brief_median**: 4789
-- **reasoning_chars**: 298848
-- **answer_chars**: 137674
-- **code_files**: 20
-- **code_bytes**: 110095
-- **elapsed_min**: 189
-- **phase_split**: open 6m · ask 1m · research 39m · synthesis 5m · review 12m · contracts 4m · build 49m · integrate 30m · repair 0m · test 29m · rate 7m
-- **before_build_min**: 71 (internal diagnosis only — never a cross-run number)
-- **vs_target**: ONLY THE SCORE COMPARES. Target 20.06% (qwen3.8-27b, one cloud agent, same model). Wall clock is NOT comparable — that run is on far faster hardware, so minutes measure the machine. Bytes are NOT a verdict — more code is not better code, and it had no planning phases to spend budget on. Cross-hardware-honest work numbers for THIS run: 110,095B delivered, 298,848 chars reasoned, 10 tasks completed, 3 retried.
-- **python_parses**: 11 ok / 0 SYNTAX ERROR / 0 empty
-- **web_files**: app.js, index.html, styles.css, viz.js
-- **tasks_done**: 10/10 completed, 13 dispatched, 3 retried
-- **plan_patched**: 1
-- **plan_loaded**: 1
-- **review_rounds**: r1:new=4 r2:new=0
-- **judge_looks**: 134
-- **judge_nudges**: 2
+- **sink_owns**: NO SINK
+- **chain**: 0
+- **startable**: 0
+- **brief_median**: 0
+- **reasoning_chars**: 84056
+- **answer_chars**: 104423
+- **code_files**: 1
+- **code_bytes**: 696
+- **elapsed_min**: 38
+- **phase_split**: open 6m · ask 2m · research 28m
+- **before_build_min**: 0 (internal diagnosis only — never a cross-run number)
+- **vs_target**: ONLY THE SCORE COMPARES. Target 20.06% (qwen3.8-27b, one cloud agent, same model). Wall clock is NOT comparable — that run is on far faster hardware, so minutes measure the machine. Bytes are NOT a verdict — more code is not better code, and it had no planning phases to spend budget on. Cross-hardware-honest work numbers for THIS run: 696B delivered, 84,056 chars reasoned, 0 tasks completed, 0 retried.
+- **python_parses**: 0 ok / 0 SYNTAX ERROR / 0 empty
+- **web_files**: NONE — 0.56 of the scoring weight is unreachable without a served page
+- **tasks_done**: 0/? completed, 0 dispatched, 0 retried
+- **plan_patched**: 0
+- **plan_loaded**: 0
+- **review_rounds**: none
+- **judge_looks**: 31
+- **judge_nudges**: 0
 - **judge_ended**: 0
-- **drift_held**: 8
+- **drift_held**: 2
 - **tree_defects**: 0
-- **repair**: delivery_defect_steer=2 brief_defects=1 testgen=1 fix_target_selected=1 complete_verify=1 complete_result=0
-
+- **repair**: delivery_defect_steer=0 brief_defects=1 testgen=0 fix_target_selected=0 complete_verify=0 complete_result=0
 ## swarm-3node-r0-ENDED-29criticals-repair-never-ran-benchmark-forces-proxy-no
 
 - **phases**: open → ask → research → synthesis → review → contracts → build → integrate → repair → test → rate
