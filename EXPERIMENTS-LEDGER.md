@@ -79,6 +79,32 @@ check compares each process's start time against the bundle mtime; the click tic
 
 ---
 
+## OPEN QUESTION — raised by evidence, not yet answered
+
+### Transport drops are excluded from exhaustion. Correct premise, possibly wrong diagnosis.
+
+**The rule:** a `stream decode error (mid-stream body drop)` does not count toward `real_failures`, so a
+task hitting them retries rather than exhausting. **The reasoning is sound and was paid for**: counting
+them let a flaky node DELETE finished-quality modules from a build — r1 lost three tasks, two of which
+never recovered.
+
+**What r0 shows:** `app-js` drew that exact error three times, at 11:30, 11:46 and 11:58, on **three
+different nodes** (gabee → mihai → gabee → workhorse), burning 45 minutes of BUILD while its 4,798-byte
+`web/app.js` sat finished on disk. A fault that follows the task across every node in the fleet is not a
+node fault.
+
+`app-js` is the longest generation in the run — the whole page behaviour: pagination, filtering, custom
+dropdowns, optimistic updates with rollback, polling with degraded states, a drafts panel and role token
+management. The plausible reading is that the length is the cause and the socket is the symptom, in which
+case the engine is retrying a generation that will drop again for the same reason, forever, having
+classified it as somebody else's problem.
+
+**Not fixed, because the fix is not obvious and the current behaviour protects real work.** The detector
+cannot presently tell "a flaky link" from "this generation is too long to survive a stream", and those
+want opposite responses: retry the first, split or shorten the second. Candidate signal: the same task
+drawing the same transport error on N DISTINCT devices — that is evidence the task is the variable, and
+it needs no clock and no cap. Wanted: a second run showing the same shape before designing on one.
+
 ## ALIVE BUT UNPROVEN — measured once, not yet twice
 
 - **Slice-level decomposition (OPEN → RESEARCH → SYNTHESIS).** r0 produced 10 tasks over 16 files with
@@ -90,6 +116,14 @@ check compares each process's start time against the bundle mtime; the click tic
 ---
 
 ## THE STANDING NUMBERS
+
+**ONLY THE SCORE COMPARES US TO THE CLOUD.** Not wall clock — the cloud entrant runs on far faster
+hardware, so minutes measure the machine, not the method. Not bytes — more code is not better code, and
+a single agent has no OPEN/RESEARCH/SYNTHESIS/REVIEW/CONTRACTS to spend budget on, so any
+bytes-at-time comparison silently indicts phases the other run does not possess. What survives a
+hardware difference is WORK (characters reasoned, tool calls, tasks completed, retries) and OUTCOME
+(the score). Phase timings are for diagnosing OUR OWN waste against OUR OWN phases; they are never a
+cross-run number.
 
 **The number to beat is 20.06%, not 0.0273.** Those answer different questions and confusing them lets a
 bad run look like progress. `0.0273` is the local row currently PUBLISHED on leanzero.net — it is what a
