@@ -242,3 +242,30 @@ describe('SwarmWatchRegistry — the push half of the realtime panel', () => {
     expect(w.openCount()).toBe(0);
   });
 });
+
+describe('a watcher that dies is re-armed', () => {
+  it('forgets an errored handle so the next ensure() recreates it', () => {
+    const opened: string[] = [];
+    const errs: Array<() => void> = [];
+    const reg = new SwarmWatchRegistry({
+      watch: (dir, _onChange, onError) => {
+        opened.push(dir);
+        if (onError) errs.push(onError);
+        return { close() {} };
+      },
+      debounceMs: 100,
+    });
+    reg.ensure('1', target(), () => {});
+    expect(opened).toEqual([RUN]);
+
+    // A re-arm while the handle is healthy must NOT open a second watcher on the same directory.
+    reg.ensure('1', target(), () => {});
+    expect(opened).toEqual([RUN]);
+
+    // The watcher dies. arm() skips any directory already in the map, so without the forget it would
+    // never come back — the push for that directory silently gone for the rest of the run.
+    errs[0]();
+    reg.ensure('1', target(), () => {});
+    expect(opened).toEqual([RUN, RUN]);
+  });
+});

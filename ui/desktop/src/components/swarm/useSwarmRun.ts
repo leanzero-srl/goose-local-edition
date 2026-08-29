@@ -2612,6 +2612,14 @@ export function foldSupervision(events: Array<Record<string, unknown>>): Supervi
         break;
       case 'judge_look':
       case 'judge_look_abandoned':
+      // THE THIRD TERMINAL STATE. A look ends three ways, not two: it returns (`judge_look`), the call
+      // it was reading finishes underneath it (`judge_look_abandoned`), or the judge's own model call
+      // fails (`judge_look_failed`, swarm.rs:16454). The last was never folded, so its span stayed open
+      // forever and the fleet strip went on labelling a node "Reading · <task>" — attached to whatever
+      // it picked up next — for the rest of the run. A supervisor that is not reading anything is the
+      // single most misleading thing that strip can say, because it is the label a reader trusts to
+      // explain why a lane looks quiet.
+      case 'judge_look_failed':
         open.delete(`look:${taskId}`);
         break;
       case 'judge_verdict':
