@@ -6556,7 +6556,17 @@ mod tests {
             },
         );
         let build = |pending: &HashMap<String, InflightCall>| {
-            build_worker_digest(&done, &records, pending, &[], 0, 0, "", "m")
+            build_worker_digest(
+                &done,
+                &records,
+                pending,
+                &[],
+                0,
+                0,
+                "",
+                "m",
+                &SaidProvenance::at_dispatch(0),
+            )
         };
         let d = build(&pending);
         let rows = d["inflight"].as_array().expect("inflight is an array");
@@ -6594,6 +6604,123 @@ mod tests {
         let d = build(&pending);
         assert_eq!(d["inflight"], serde_json::json!([]));
         assert_eq!(d["recent"], serde_json::json!(["shell ok"]));
+    }
+
+    /// THE r0 CASE, at the digest-builder level. ledger-core-tests attempt 0 ended in the agent's
+    /// NetworkError text ("Network error: Stream decode error … Please resend your message to try
+    /// again.") and the SAID pane showed it as the live answer for 24+ minutes while attempt 1 ran,
+    /// because the digest could say neither WHOSE text it held nor WHAT KIND. This proves the
+    /// provenance chain end to end: the error is tagged kind=error, the retry's seed marks it
+    /// superseded instead of erasing it, and every subsequent digest write carries it forward.
+    #[test]
+    fn a_retry_marks_the_prior_attempts_transport_error_superseded() {
+        // Attempt 0: the transport error is the ONLY thing on the answer channel (real r0 bytes).
+        let error_text = "Network error: Stream decode error: error decoding response body\n\n\
+                          Please resend your message to try again."
+            .to_string();
+        let mut said0 = SaidProvenance::at_dispatch(0);
+        let mut seen = 0usize;
+        let texts = vec![error_text.clone()];
+        said0.observe_texts(texts.len(), &mut seen);
+        let d0 = build_worker_digest(
+            &[],
+            &[],
+            &HashMap::new(),
+            &texts,
+            0,
+            0,
+            "",
+            "workhorse-qwen",
+            &said0,
+        );
+        assert_eq!(d0["attempt"], 0);
+        assert_eq!(
+            d0["said_kind"], "error",
+            "an agent-authored transport error is not something the model SAID"
+        );
+        assert!(
+            d0["said_at"].as_str().is_some(),
+            "the answer channel advanced, so said_at is stamped"
+        );
+        assert!(d0["dispatched_at"].as_str().is_some());
+        assert_eq!(d0["superseded"], serde_json::json!([]));
+
+        // The retry (task_retry -> attempt 1): the seed folds attempt 0's digest into `superseded`
+        // instead of silently erasing it.
+        let mut said1 = SaidProvenance::at_dispatch(1);
+        said1.superseded = superseded_from_prior(Some(d0.clone()));
+        let seed = seed_worker_digest("workhorse-qwen", &said1);
+        assert_eq!(seed["attempt"], 1);
+        assert_eq!(
+            seed["last_text"], "",
+            "the new attempt has said nothing yet"
+        );
+        assert_eq!(seed["phase"], "processing");
+        let sup = seed["superseded"].as_array().expect("superseded is a list");
+        assert_eq!(sup.len(), 1);
+        assert_eq!(sup[0]["attempt"], 0);
+        assert_eq!(sup[0]["said_kind"], "error");
+        assert_eq!(sup[0]["last_text"].as_str().unwrap(), error_text);
+        assert_eq!(sup[0]["said_at"], d0["said_at"]);
+
+        // Every later digest write of attempt 1 carries the superseded entry (the shared builder is
+        // the point — no write site can drop it).
+        let d1 = build_worker_digest(
+            &[],
+            &[],
+            &HashMap::new(),
+            &[],
+            0,
+            0,
+            "",
+            "workhorse-qwen",
+            &said1,
+        );
+        assert_eq!(d1["attempt"], 1);
+        assert_eq!(d1["superseded"], seed["superseded"]);
+        assert_eq!(
+            d1["said_kind"], "said",
+            "no text yet — nothing to classify as an error"
+        );
+        assert_eq!(d1["said_at"], serde_json::Value::Null);
+
+        // Ordinary model prose is `said`, and all three agent error closers are `error`.
+        assert_eq!(
+            said_kind_of("I've written comprehensive tests for ledger-core."),
+            "said"
+        );
+        assert_eq!(
+            said_kind_of("Ran into this error: x.\n\nPlease retry if you think this is a transient or recoverable error."),
+            "error"
+        );
+        assert_eq!(
+            said_kind_of(
+                "The provider refused this request.\n\nPlease start a new session to continue — \
+                 resending this conversation is likely to be refused again."
+            ),
+            "error"
+        );
+
+        // A LEGACY prior digest (no provenance keys) still supersedes, with attempt unknown.
+        let legacy = serde_json::json!({ "last_text": error_text, "model": "m" });
+        let sup = superseded_from_prior(Some(legacy));
+        assert_eq!(sup.len(), 1);
+        assert_eq!(sup[0]["attempt"], serde_json::Value::Null);
+        assert_eq!(sup[0]["said_kind"], "error");
+
+        // A prior digest that said NOTHING adds no entry — a clean re-dispatch stays clean.
+        assert_eq!(
+            superseded_from_prior(Some(seed_worker_digest(
+                "m",
+                &SaidProvenance::at_dispatch(0)
+            ))),
+            Vec::<serde_json::Value>::new()
+        );
+
+        // The attempt marker round-trips through the UI's split regex shape.
+        let marker = attempt_marker_line(1, &said1.dispatched_at);
+        assert!(marker.starts_with("\n===== swarm attempt 1 · dispatched "));
+        assert!(marker.ends_with(" =====\n"));
     }
 
     #[test]
@@ -14095,6 +14222,162 @@ fn inflight_rows(pending: &HashMap<String, InflightCall>) -> Vec<serde_json::Val
         .collect()
 }
 
+/// The closing sentences of the assistant-authored ERROR texts in agent.rs's provider-error arms —
+/// the refusal, the NetworkError arm, and the generic provider-error arm. These are the ONLY texts
+/// that reach the answer channel without the model having said them, so "does `last_text` end with
+/// one of these" is a deterministic test for "this is a transport/agent error, not the model's
+/// answer". Matched as suffixes because `last_text` is a 400-char TAIL and each of these sentences
+/// is what the agent appends LAST before breaking the stream.
+const AGENT_ERROR_CLOSERS: [&str; 3] = [
+    "Please resend your message to try again.",
+    "Please retry if you think this is a transient or recoverable error.",
+    "resending this conversation is likely to be refused again.",
+];
+
+/// `said` when `last_text` is (the tail of) something the MODEL produced; `error` when it is one of
+/// the agent's own provider-error texts. The distinction exists because r0's `ledger-core-tests`
+/// showed attempt 0's "Network error: Stream decode error … Please resend your message" as the
+/// lane's current answer for 24+ minutes while attempt 1 was running — the pane had no way to say
+/// "this text is a dead attempt's transport error", because the digest never said which kind of
+/// text it was carrying.
+fn said_kind_of(last_text: &str) -> &'static str {
+    let t = last_text.trim_end();
+    if AGENT_ERROR_CLOSERS.iter().any(|c| t.ends_with(c)) {
+        "error"
+    } else {
+        "said"
+    }
+}
+
+/// Provenance of the SAID text: WHICH attempt produced `last_text`, WHEN it was dispatched and when
+/// the answer channel last advanced, and what any PRIOR attempt on this lane key left behind.
+/// Instrumentation only — nothing engine-side reads these fields back (the judge's digest reader is
+/// unknown-key-tolerant and reads only tool_calls/errors/recent/last_text).
+struct SaidProvenance {
+    /// The scheduler's attempt counter for this dispatch (0 on planner-side calls, which never retry
+    /// through the scheduler).
+    attempt: u32,
+    /// RFC3339, stamped once when the call is dispatched — before the first token.
+    dispatched_at: String,
+    /// RFC3339 of the last time the answer channel ADVANCED (a new text chunk landed). `None` until
+    /// the call says anything; accurate to the digest's 400 ms write coalesce, which every consumer
+    /// polls slower than.
+    said_at: Option<String>,
+    /// What a previous attempt (or a previous call reusing this lane key — REVIEW reuses keys every
+    /// round) left in the digest, oldest first. Without this the seed's rewrite silently ERASED the
+    /// old text from the digest while the append-only `<task>.log` silently KEPT it — the two
+    /// halves of the "is this current or already dealt with?" confusion.
+    superseded: Vec<serde_json::Value>,
+}
+
+impl SaidProvenance {
+    fn at_dispatch(attempt: u32) -> Self {
+        Self {
+            attempt,
+            dispatched_at: chrono::Utc::now().to_rfc3339(),
+            said_at: None,
+            superseded: Vec::new(),
+        }
+    }
+
+    /// Stamp `said_at` when the answer channel advanced since the last digest write. Called at every
+    /// digest write site, immediately before the build. A shrink (a judge re-stream starting the
+    /// channel over) resets the watermark without stamping, so the NEXT real chunk stamps again.
+    fn observe_texts(&mut self, texts_len: usize, seen: &mut usize) {
+        if texts_len > *seen {
+            *seen = texts_len;
+            self.said_at = Some(chrono::Utc::now().to_rfc3339());
+        } else if texts_len < *seen {
+            *seen = texts_len;
+        }
+    }
+}
+
+/// How many prior SAID entries a digest carries. A lane that retries more than this keeps the most
+/// recent ones — the pane's superseded list is a provenance trail, not an archive (the append-only
+/// `<task>.log` is the archive).
+const SUPERSEDED_KEEP: usize = 4;
+
+/// Fold the digest a PREVIOUS attempt (or previous call on this lane key) left on disk into the
+/// `superseded` list the new attempt's seed will carry. The old text is marked superseded rather
+/// than silently kept or erased — before this, the seed's rewrite dropped it from the digest while
+/// `<task>.log` kept showing it, which is exactly how a dead attempt's transport error read as the
+/// live answer. `said_kind` is RECOMPUTED from the old text so legacy digests (no provenance keys)
+/// classify correctly.
+fn superseded_from_prior(prior: Option<serde_json::Value>) -> Vec<serde_json::Value> {
+    let Some(prior) = prior else {
+        return Vec::new();
+    };
+    let mut out: Vec<serde_json::Value> = prior
+        .get("superseded")
+        .and_then(|v| v.as_array())
+        .cloned()
+        .unwrap_or_default();
+    let last_text = prior
+        .get("last_text")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    if !last_text.trim().is_empty() {
+        let field = |k: &str| prior.get(k).cloned().unwrap_or(serde_json::Value::Null);
+        out.push(serde_json::json!({
+            "attempt": field("attempt"),
+            "last_text": last_text,
+            "said_kind": said_kind_of(last_text),
+            "said_at": field("said_at"),
+            "model": field("model"),
+        }));
+    }
+    if out.len() > SUPERSEDED_KEEP {
+        let drop = out.len() - SUPERSEDED_KEEP;
+        out.drain(..drop);
+    }
+    out
+}
+
+/// The digest a worker call seeds at DISPATCH, before the first token — the panel's "processing the
+/// prompt…" state. Carries the SAID provenance from birth: the attempt number, when it was
+/// dispatched, and the prior attempt's superseded text, so there is never a digest on disk that
+/// cannot say whose text it holds.
+fn seed_worker_digest(model_id: &str, said: &SaidProvenance) -> serde_json::Value {
+    serde_json::json!({
+        "tool_calls": 0,
+        "errors": 0,
+        "recent": [],
+        "inflight": [],
+        "last_text": "",
+        "model": model_id,
+        "phase": "processing",
+        "attempt": said.attempt,
+        "dispatched_at": said.dispatched_at,
+        "said_at": null,
+        "said_kind": "said",
+        "superseded": said.superseded,
+    })
+}
+
+/// ONE attempt-marker line, appended to `<task>.log` and `<task>.think.log` when a call is seeded.
+/// The transcripts are append-only across attempts (that is their value), so without a boundary the
+/// panel cannot tell attempt 0's final error from attempt 1's first words — the UI splits at the
+/// LAST marker into a LIVE segment plus superseded ones. Legacy logs without markers read as one
+/// live segment, exactly as before.
+fn attempt_marker_line(attempt: u32, dispatched_at: &str) -> String {
+    format!("\n===== swarm attempt {attempt} · dispatched {dispatched_at} =====\n")
+}
+
+fn append_attempt_marker(activity_path: &Path, attempt: u32, dispatched_at: &str) {
+    use std::io::Write;
+    let line = attempt_marker_line(attempt, dispatched_at);
+    for ext in ["log", "think.log"] {
+        if let Ok(mut f) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(activity_path.with_extension(ext))
+        {
+            let _ = f.write_all(line.as_bytes());
+        }
+    }
+}
+
 /// Build the `.swarm/activity/<key>.json` digest a worker/scout/planner call refreshes as it streams. The judge
 /// reads only tool_calls/errors/recent/last_text; every other key is inert to it (unknown-key-tolerant reader) and
 /// powers the desktop panel's live per-node view. Two dev-verbosity additions over the old inline block: (1) each
@@ -14113,6 +14396,7 @@ fn build_worker_digest(
     thinking_chars: usize,
     last_thinking: &str,
     model_id: &str,
+    said: &SaidProvenance,
 ) -> serde_json::Value {
     let errors = tool_calls.iter().filter(|t| t.ok == Some(false)).count();
     let recent: Vec<String> = tool_calls
@@ -14173,6 +14457,14 @@ fn build_worker_digest(
         // run of thinking, not a sliver. The compact line still clamps it; the expand shows the whole thing.
         "last_thinking": tail_chars(last_thinking, 2000),
         "model": model_id,
+        // SAID provenance — which attempt `last_text` belongs to, when it was dispatched, when the
+        // answer channel last advanced, whether the text is the model's or an agent error, and what
+        // a prior attempt left behind. Kept in the shared builder so no write site can drop them.
+        "attempt": said.attempt,
+        "dispatched_at": said.dispatched_at,
+        "said_at": said.said_at,
+        "said_kind": said_kind_of(&last_text),
+        "superseded": said.superseded,
     })
 }
 
@@ -15360,6 +15652,7 @@ impl GooseAgentDispatcher {
             extensions,
             self.planner_timeout_secs,
             activity_key,
+            0,    // planner-side calls never retry through the scheduler
             None, // no assistant prefill on this path
             None, // planner-side calls are never forced to a tool
             temp_override,
@@ -15393,6 +15686,7 @@ impl GooseAgentDispatcher {
             extensions,
             idle_secs,
             activity_key,
+            0,    // generic path: no scheduler attempt counter
             None, // no assistant prefill on this path
             None, // planner-side calls are never forced to a tool
             None,
@@ -15424,6 +15718,10 @@ impl GooseAgentDispatcher {
         // thrashing (many-actions, zero-output) worker by BEHAVIOR instead of waiting on the clock.
         // None for planner-side calls (architect/detailer/scout/judge), which are not judged.
         activity_key: Option<&str>,
+        // The scheduler's attempt counter for this dispatch, stamped into the activity digest as
+        // SAID provenance (0 for planner-side calls, which never retry through the scheduler).
+        // Instrumentation only: nothing branches on it.
+        attempt: u32,
         // Text to PREFILL the assistant turn with (None = today's behaviour, byte-identical).
         //
         // A server that receives a conversation ending in an `assistant` message appends no generation
@@ -15659,6 +15957,10 @@ impl GooseAgentDispatcher {
                 std::fs::create_dir_all(&dir).ok()?;
                 Some(dir.join(format!("{}.json", activity_digest_key(k))))
             });
+        // SAID provenance, born at dispatch and carried through every digest write of this call.
+        let mut said = SaidProvenance::at_dispatch(attempt);
+        // Watermark for `said_at`: how many text chunks the last digest write had seen.
+        let mut said_texts_seen: usize = 0;
         if let Some(p) = &activity_file {
             // Seed the digest the instant the call is DISPATCHED — before the first token — carrying the node
             // (`model`) and phase="processing". LM Studio processes the prompt (often many seconds on a big
@@ -15666,19 +15968,20 @@ impl GooseAgentDispatcher {
             // the node read as "idle — no task" while it was busy prompt-processing. This seed makes the panel
             // show the node + "processing the prompt…" from the start; the first real digest (with tokens)
             // overwrites it with phase gone, flipping the node to generating.
-            let _ = std::fs::write(
-                p,
-                serde_json::json!({
-                    "tool_calls": 0,
-                    "errors": 0,
-                    "recent": [],
-                    "inflight": [],
-                    "last_text": "",
-                    "model": model_id,
-                    "phase": "processing",
-                })
-                .to_string(),
+            //
+            // A PRIOR digest under this key (a retried attempt, or a previous call reusing the lane key)
+            // is folded into `superseded` rather than silently erased: r0's ledger-core-tests showed
+            // attempt 0's transport error as the live answer for 24+ minutes precisely because the erase
+            // here and the append-only `<task>.log` disagreed about whether that text still existed.
+            said.superseded = superseded_from_prior(
+                std::fs::read_to_string(p)
+                    .ok()
+                    .and_then(|s| serde_json::from_str(&s).ok()),
             );
+            let _ = std::fs::write(p, seed_worker_digest(model_id, &said).to_string());
+            // One boundary line per attempt in each append-only transcript, so a reader (human or the
+            // panel's splitter) can tell where the previous attempt's text ends and this one's begins.
+            append_attempt_marker(p, said.attempt, &said.dispatched_at);
             if let Some(m) = &activity_mirror {
                 let _ = std::fs::copy(p, m);
             }
@@ -16716,6 +17019,7 @@ impl GooseAgentDispatcher {
                                                     >= std::time::Duration::from_millis(400)
                                             });
                                         if due {
+                                            said.observe_texts(texts.len(), &mut said_texts_seen);
                                             let mut d = build_worker_digest(
                                                 &tool_calls,
                                                 &call_records,
@@ -16725,6 +17029,7 @@ impl GooseAgentDispatcher {
                                                 thinking_chars,
                                                 &last_thinking,
                                                 model_id,
+                                                &said,
                                             );
                                             d["judging"] = serde_json::Value::Bool(true);
                                             let _ = std::fs::write(p, d.to_string());
@@ -17500,6 +17805,7 @@ impl GooseAgentDispatcher {
                     || last_digest_at
                         .is_none_or(|t| t.elapsed() >= std::time::Duration::from_millis(400));
                 if due {
+                    said.observe_texts(texts.len(), &mut said_texts_seen);
                     let digest = build_worker_digest(
                         &tool_calls,
                         &call_records,
@@ -17509,6 +17815,7 @@ impl GooseAgentDispatcher {
                         thinking_chars,
                         &last_thinking,
                         model_id,
+                        &said,
                     );
                     let _ = std::fs::write(p, digest.to_string());
                     if let Some(m) = &activity_mirror {
@@ -17534,6 +17841,7 @@ impl GooseAgentDispatcher {
         // Guaranteed FINAL digest — the coalesce throttle in the loop may have skipped the last event's state,
         // so write the terminal state exactly once here (pending is drained above → pass an empty map).
         if let Some(p) = &activity_file {
+            said.observe_texts(texts.len(), &mut said_texts_seen);
             let mut digest = build_worker_digest(
                 &tool_calls,
                 &call_records,
@@ -17543,6 +17851,7 @@ impl GooseAgentDispatcher {
                 thinking_chars,
                 &last_thinking,
                 model_id,
+                &said,
             );
             // Mark the terminal digest phase="done" so the panel drops this node out of "working" the instant
             // ITS call ends — not when the whole phase ends. Without it a finished/capped scout kept reading as
@@ -33469,6 +33778,9 @@ impl GooseAgentDispatcher {
                 &self.worker_extensions,
                 self.worker_timeout_secs,
                 Some(&req.task_id),
+                // The scheduler's attempt counter, stamped into the digest as SAID provenance so the
+                // panel can say WHOSE text it is showing (attempt 0's error vs attempt 1's answer).
+                req.attempt,
                 // PRE-CLOSE THE THINKING BLOCK for a worker whose job is to WRITE A FILE.
                 //
                 // The template's generation prompt ends with a literal open `<think>\n`, so generation
