@@ -327,6 +327,10 @@ export interface TurnLane {
   lastThinking?: string;
   /** "processing" while the node is prompt-processing (dispatched, no tokens yet) — shown before generation. */
   phase?: string;
+  /** Which stream the LIVE LINE reads: the one that advanced most recently. A lane key reused call after
+   *  call (REVIEW, every round) keeps its previous answer in `<task>.log` while the new call is still
+   *  thinking, so a fixed transcript-first order shows the OLD answer for the whole of the new call. */
+  liveChannel?: LiveChannel;
   errors?: number;
   elapsedMs?: number;
   /** How many attempts the task took (from task_completed) — surfaced in the status tooltip. */
@@ -2074,6 +2078,64 @@ type Digest = {
   judging?: boolean;
 };
 
+export type LiveChannel = 'thinking' | 'transcript';
+
+/**
+ * WHICH CHANNEL ADVANCED LAST, per lane, across polls.
+ *
+ * MEASURED on r1 (gabee, 19:52, two consecutive ticks): the fleet cell for `review-build-app-meridian-…`
+ * showed round 1's final answer — data-gen-len 2676, unchanged for twenty minutes — while the digest's
+ * thinking_chars climbed past 24,000 with a new call's reasoning behind it. REVIEW reuses the lane key
+ * every round; `<task>.log` is append-only, so the previous answer never goes away; and a live line that
+ * prefers the transcript whenever it is non-empty shows that answer for as long as the new call thinks.
+ *
+ * So the live line follows the channel that GREW in the most recent poll. Growth is measured per signal,
+ * because no single one is reliable alone: `transcript_bytes` / `thinking_bytes` are the true file sizes
+ * but arrive only with a durable log; `full_*.length` stops moving once main.ts clips the tail; and
+ * `thinking_chars` RESETS on a re-stream — it is a counter, not a size. Any signal moving up is that
+ * channel advancing. Ties and silence keep the previous answer; a transcript that only SHRANK is a
+ * different log under the same key (a new run in the same directory) and starts over.
+ *
+ * Module state, like the fold cache: the previous poll's lengths have to live where the next poll can see
+ * them, and neither the carry (rebuilt on a generation change) nor the laneless fleet rows (built outside
+ * the fold) can hold them.
+ */
+interface ChannelSeen {
+  transcript: number[];
+  thinking: number[];
+  channel: LiveChannel;
+}
+const channelMemory = new Map<string, ChannelSeen>();
+
+const grew = (now: number[], before: number[]) => now.some((n, i) => n > before[i]);
+const shrank = (now: number[], before: number[]) => now.some((n, i) => n < before[i]);
+
+function liveChannelFor(key: string, d: Digest | undefined, done: boolean): LiveChannel {
+  const transcript = [d?.transcript_bytes ?? 0, d?.full_transcript?.length ?? 0];
+  const thinking = [d?.thinking_bytes ?? 0, d?.thinking_chars ?? 0, d?.full_thinking?.length ?? 0];
+  const seen = channelMemory.get(key);
+  const firstSight =
+    !seen || (shrank(transcript, seen.transcript) && !grew(transcript, seen.transcript));
+  let channel: LiveChannel;
+  if (firstSight) {
+    channel = transcript.some((n) => n > 0) ? 'transcript' : 'thinking';
+  } else {
+    const transcriptGrew = grew(transcript, seen.transcript);
+    const thinkingGrew = grew(thinking, seen.thinking);
+    channel =
+      transcriptGrew === thinkingGrew ? seen.channel : transcriptGrew ? 'transcript' : 'thinking';
+  }
+  // A finished call's live line is its answer, whichever channel happened to move last.
+  if (done) channel = 'transcript';
+  channelMemory.set(key, { transcript, thinking, channel });
+  return channel;
+}
+
+/** Test seam, cleared with the fold cache: the channel memory is module state keyed by lane. */
+export function resetLiveChannelMemory(): void {
+  channelMemory.clear();
+}
+
 /**
  * EVERY FIELD A DIGEST CONTRIBUTES TO A LANE, IN ONE PLACE.
  *
@@ -2093,6 +2155,7 @@ type Digest = {
  * where the digest is the only source there is.
  */
 export function digestStreamFields(
+  key: string,
   d: Digest | undefined,
   prev?: Partial<TurnLane>
 ): Pick<
@@ -2112,6 +2175,7 @@ export function digestStreamFields(
   | 'transcriptClipped'
   | 'judging'
   | 'phase'
+  | 'liveChannel'
   | 'errors'
 > {
   return {
@@ -2132,6 +2196,9 @@ export function digestStreamFields(
     transcriptClipped: d?.transcript_clipped ?? prev?.transcriptClipped,
     judging: d?.judging ?? prev?.judging,
     phase: d?.phase ?? prev?.phase,
+    // `key` is what the channel memory is kept by: the digest carries no id of its own, and the whole
+    // point is remembering the previous poll of THIS lane.
+    liveChannel: liveChannelFor(key, d, d?.phase === 'done' || prev?.status === 'done'),
     errors: d?.errors ?? prev?.errors,
   };
 }
@@ -2345,7 +2412,7 @@ function finishFold(c: FoldCarry, activity: Record<string, unknown>): FoldedRun 
       //   - the "supervisor reading" badge and the char count were dead
       //   - LaneRow and BoardTaskRow fell back to the 24k full_reasoning CLIP, which is exactly the
       //     truncation I had already declared fixed twice
-      ...digestStreamFields(act, t),
+      ...digestStreamFields(t.taskId, act, t),
     };
   });
 
@@ -2356,7 +2423,7 @@ function finishFold(c: FoldCarry, activity: Record<string, unknown>): FoldedRun 
     return {
       ...t,
       device: canonDevice(t.device),
-      ...digestStreamFields(act, t),
+      ...digestStreamFields(t.taskId, act, t),
     };
   });
 
@@ -2390,7 +2457,7 @@ function finishFold(c: FoldCarry, activity: Record<string, unknown>): FoldedRun 
         // A per-call phase="done" (written when THIS draft's call ends) marks the lane done immediately, so the
         // node stops showing as working the instant its call finishes — not when the whole phase ends.
         status: (d.phase === 'done' || planned ? 'done' : 'running') as TurnStatus,
-        ...digestStreamFields(d),
+        ...digestStreamFields(k, d),
         seq: i,
       };
     })
@@ -2422,7 +2489,7 @@ function finishFold(c: FoldCarry, activity: Record<string, unknown>): FoldedRun 
       // Per-call phase="done" (written when THIS call ends) drops the node out of "working" immediately, so a
       // finished/capped scout stops reading as "Scouting" while the node is actually idle.
       status: (d.phase === 'done' || over ? 'done' : 'running') as TurnStatus,
-      ...digestStreamFields(d),
+      ...digestStreamFields(k, d),
       seq: i,
     };
   };
@@ -2527,10 +2594,12 @@ interface FoldCacheEntry {
 let foldCache: FoldCacheEntry | null = null;
 let foldCounters = { fullFolds: 0, incrementalFolds: 0, eventsFolded: 0 };
 
-/** Test seam: the fold's cache is module state, so a test that cares about it must be able to clear it. */
+/** Test seam: the fold's cache and the per-lane channel memory are module state, so a test that cares
+ *  about either must be able to clear both. */
 export function resetFoldCache(): void {
   foldCache = null;
   foldCounters = { fullFolds: 0, incrementalFolds: 0, eventsFolded: 0 };
+  resetLiveChannelMemory();
 }
 
 /** How much work the fold has actually done — `eventsFolded` is the number a full re-fold per tick inflates. */
@@ -2874,7 +2943,7 @@ export function deriveFleet(args: {
       device,
       model: d?.model,
       status: 'running',
-      ...digestStreamFields(d),
+      ...digestStreamFields(key, d),
       seq: 0,
     });
   }

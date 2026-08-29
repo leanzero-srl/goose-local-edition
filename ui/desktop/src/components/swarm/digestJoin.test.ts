@@ -1,5 +1,5 @@
-import { describe, expect, it } from 'vitest';
-import { deriveFleet, digestsFromThisRun, foldEvents } from './useSwarmRun';
+import { beforeEach, describe, expect, it } from 'vitest';
+import { deriveFleet, digestsFromThisRun, foldEvents, resetFoldCache } from './useSwarmRun';
 import type { TurnLane } from './useSwarmRun';
 
 /**
@@ -48,6 +48,8 @@ const EXPECTED = {
   transcriptClipped: true,
   judging: true,
   phase: 'processing',
+  // Derived by the join, not copied: first sight of a lane with an answer reads the answer channel.
+  liveChannel: 'transcript',
   errors: 2,
 };
 
@@ -59,6 +61,8 @@ const joined = (lane: TurnLane | undefined) => {
 const RUN_STARTED = { event: 'run_started', ts: '2026-08-29T10:00:00Z', pool: [] };
 
 describe('every lane-building path carries the whole digest', () => {
+  beforeEach(() => resetFoldCache());
+
   it('joins it onto a BUILD worker lane', () => {
     const folded = foldEvents(
       [

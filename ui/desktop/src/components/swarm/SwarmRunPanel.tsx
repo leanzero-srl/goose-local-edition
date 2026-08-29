@@ -22,6 +22,7 @@ import {
   resolveActivityPath,
   type TurnStatus,
   type TurnLane,
+  type LiveChannel,
   type SwarmCall,
   type CallMeaning,
   type ActivityItem,
@@ -1015,6 +1016,7 @@ export type StreamLane = {
   lastThinking?: string;
   thinkingChars?: number;
   recent?: string[];
+  liveChannel?: LiveChannel;
 };
 
 export function inspectorOutputText(lane: StreamLane): string {
@@ -1141,6 +1143,15 @@ export function lastSubstantiveLine(text: string): string {
 }
 
 export function laneLiveLine(lane: StreamLane): string {
+  // THE CHANNEL THAT MOVED LAST LEADS. A fixed transcript-first order showed a REVIEW lane's round-1
+  // answer for the whole of round 2's thinking (measured on r1: cell text unchanged across two 10-minute
+  // ticks while thinking_chars climbed past 24,000), because the lane key is reused every round and
+  // `<task>.log` still holds the previous answer. The hook says which channel grew in the latest poll;
+  // when it is the thinking, the freshest thought is the live line and the answer chain is the fallback.
+  if (lane.liveChannel === 'thinking') {
+    const thought = thinkingLiveLine(lane);
+    if (thought) return thought;
+  }
   return (
     lastSubstantiveLine(tailOf(lane.fullTranscript?.trim() ?? '', INLINE_TAIL_CHARS)) ||
     substantiveChunk(lane.reasoning) ||
