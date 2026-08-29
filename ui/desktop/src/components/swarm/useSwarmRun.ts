@@ -1313,6 +1313,56 @@ export function buildActivity(events: Array<Record<string, unknown>>): {
         });
         break;
       }
+      // HOW THE SLICE LIST GROWS. An operator watching a run saw 11 slices at OPEN and 21 at BUILD with
+      // nothing in between explaining it -- the coverage loop's whole job is invisible. These four make it
+      // legible: what was added, what was kept as coverage rather than work, and when the loop closed.
+      //
+      // Placed after a case that ends in `break`, never between a bare `case X:` and the one below it --
+      // a case inserted into a fall-through pair silently steals every event of the first kind.
+      case 'coverage_gap': {
+        const added = arr(e['titles']).map(String).filter(Boolean);
+        if (!added.length) break;
+        verbose({
+          kind: 'plan',
+          tone: 'warn',
+          text: `Coverage found ${added.length} unowned thing${added.length === 1 ? '' : 's'} — adding slices`,
+          sub: added.join(', '),
+        });
+        break;
+      }
+      // Rows the enumerator declined to turn into work. Shown because the engine used to FABRICATE a slice
+      // here from the component's name, which is how a hex colour became a build task.
+      case 'coverage_rows_not_work': {
+        const names = arr(e['names']).map(String).filter(Boolean);
+        if (!names.length) break;
+        verbose({
+          kind: 'plan',
+          tone: 'info',
+          text: `Kept ${names.length} row${names.length === 1 ? '' : 's'} as coverage, not work`,
+          sub: names.join(', '),
+        });
+        break;
+      }
+      case 'coverage_complete': {
+        verbose({
+          kind: 'plan',
+          tone: 'good',
+          text: `Coverage settled — every named component has an owner`,
+          sub: `${num(e['slices']) ?? '?'} slices`,
+        });
+        break;
+      }
+      // The review proposed the same patch and validation refused it the same way twice. Worth surfacing
+      // loudly: it means the plan is going to BUILD with the defect the reviewer just described.
+      case 'review_patch_stuck': {
+        verbose({
+          kind: 'plan',
+          tone: 'bad',
+          text: `Review is stuck — its patch was rejected the same way twice`,
+          sub: str(e['diagnostic']),
+        });
+        break;
+      }
       case 'scouts_planned': {
         const lenses = arr(e['lenses']).map(String).join(', ');
         compact({ kind: 'phase', text: 'Planning research', sub: lenses || undefined });
