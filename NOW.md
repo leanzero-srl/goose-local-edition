@@ -73,6 +73,8 @@ gets a keep/drop verdict against r2's evidence before the rebuild.
 | shortcut fix (workflow) | Mihai 22:00 | his ask | keep |
 | judge sees the owned files (agenda :2486) | r2 camera-system: judge said "ok" while the lane coded at the tree root | ADD, mild (a measurement fed to the judge) | after score |
 | `dynamic_replan: false` (config lever, `arm_config.py --set`, no plumbing) | r2 19:45Z: the replanner spliced `ledger-core-tests` + `vendor-sync-edge-tests` (296/327-char briefs) at the end of BUILD; the B2 claim gate then held INTEGRATE behind them while all 10 plan deps were done; `ledger-core-tests` attempt 0 went over_reading ×3 and died to a mid-stream body drop at 19:57Z (12 min), attempt 1 still running at 20:01Z | KEEP-class lever flip | after score — strong |
+| `GOOSE_SWARM_PREREVIEW=0` (one env line in the Benchmark spawn; dies with any later deletion) | r2 20:00-20:11Z: 9 pre_review calls of 220-340 s on done tasks while the sink waited; `had_findings` sometimes true, no follow-up event ever | env line, not plumbing | after score |
+| `qa: false` (config lever) — its testgen call | r2 20:02Z: one 352 s testgen call on mihai, `landed: None`, "no landable fenced test block" | KEEP-class lever flip | after score |
 | delete coverage lanes / RESEARCH | r2: RESEARCH 48 min, fleet 1/3 for 12+ min behind one coverage call, a slice coding instead of briefing | DELETE — Mihai's call | his word |
 | delete CONTRACTS | r0 sync critical built against a stub; Mihai 22:13 "what the fuck" at the stub nudge | DELETE — Mihai's call | his word |
 Anything not on this table does not go into r3.
