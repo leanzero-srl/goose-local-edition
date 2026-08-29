@@ -1358,8 +1358,9 @@ export function buildActivity(events: Array<Record<string, unknown>>): {
         };
         const t = actions === 0 ? 'Plan needed no repair' : `Plan repaired — ${actions} deterministic fix${actions === 1 ? '' : 'es'}`;
         const sub =
-          `owning nothing ${count(before, 'owning_nothing')}→${count(after, 'owning_nothing')} · ` +
-          `shared files ${count(before, 'collisions')}→${count(after, 'collisions')} · ` +
+          `owning nothing ${count(before, 'tasks_owning_nothing')}→${count(after, 'tasks_owning_nothing')} · ` +
+          `shared files ${count(before, 'shared_files')}→${count(after, 'shared_files')} · ` +
+          `module/package collisions ${count(before, 'module_package_collisions')}→${count(after, 'module_package_collisions')} · ` +
           `unassigned endpoints ${count(before, 'unassigned_endpoints')}→${count(after, 'unassigned_endpoints')}`;
         compact({ kind: 'plan', text: t, tone: actions === 0 ? 'info' : 'good', sub });
         verbose({ kind: 'plan', text: t, tone: actions === 0 ? 'info' : 'good', sub });
