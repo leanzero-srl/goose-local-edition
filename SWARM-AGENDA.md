@@ -397,6 +397,40 @@ it. A problem that turns out to be already owned is left out, but then it was no
 **THIS RUN KEEPS THE DEFECT** — the binary is the old one. Expect 4 features missing from its app, and read
 the score with that in mind rather than as a verdict on the decomposition.
 
+## RUN 5: 19 SLICES AT OPEN — a DIFFERENT over-decomposition, flagged early, 2026-08-29 10:44 EEST
+
+    ledgerd-core · event-ledger · outbox-relay · ledger-api · webhook-handler · approval-workflow ·
+    sse-streaming · notifierd-core · notifier-consumer · notification-materialization · notifier-api ·
+    frontend-structure · frontend-styling · frontend-app-logic · frontend-3d-viz · decisions-doc ·
+    readme-doc · vendor-sync-… (19 total, post-resplit)
+
+**EVERY ONE IS A REAL COMPONENT.** No `background-color-101828`, no `12,288 payments`. The coverage
+fabrication that produced those is not in play here — this is OPEN itself cutting finer.
+
+    run 1  21 slices -> REVIEW cascade, killed
+    run 2  10
+    run 3  13 at OPEN (+5 fabricated = 18)
+    run 4  11 at OPEN (+7+3 fabricated = 21) -> six-way collision, 11 tasks owning nothing
+    run 5  19 AT OPEN, all semantic
+
+**THE CONCERN, WRITTEN BEFORE THE EVIDENCE:** the sb-7 request permits **exactly four frontend files** and
+roughly ten backend modules. Nineteen slices against ~14 available files means several MUST either share a
+path or own nothing. That is the same endgame as run 4 — collision, then fileless tasks — arrived at by a
+different route: honest fine-grained decomposition rather than fabricated rows.
+
+**FOUR FRONTEND SLICES IS RIGHT** (`frontend-structure`, `-styling`, `-app-logic`, `-3d-viz` → index.html,
+styles.css, app.js, viz.js). The pressure is on the backend: eleven backend slices for ~10 modules.
+
+**THE FALSIFIERS, in order of arrival:**
+- `brief_defects` at the END of RESEARCH: if the briefs collide, the fine cut is already too fine.
+- `plan_synthesized.tasks_sharing_a_file` should still be **0** — the ONE FILE, ONE OWNER rule is meant to
+  make synthesis assign rather than duplicate.
+- `tasks_owning_nothing` is the number to watch. If it comes back large, 19 semantic slices is as harmful
+  as 21 fabricated ones, and the fix belongs at OPEN, not in coverage.
+
+**ALSO WORTH RECORDING: ZERO NUDGES ACROSS 10 LOOKS SO FAR.** Run 4 had 40 nudges. Too early to credit
+`judge_drift_held` — it has not fired either, which means DRIFTING has simply not been the verdict yet.
+
 ## RUN 5 LIVE WITH THE VERIFIER REDESIGN — 2026-08-29 10:20 EEST, `build_sha 8386e5c41`
 
 Both artefacts installed and each verified by its own markers:
