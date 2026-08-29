@@ -397,6 +397,37 @@ it. A problem that turns out to be already owned is left out, but then it was no
 **THIS RUN KEEPS THE DEFECT** — the binary is the old one. Expect 4 features missing from its app, and read
 the score with that in mind rather than as a verdict on the decomposition.
 
+## THE OVER-DECOMPOSITION ENDGAME, FULLY VISIBLE — run 4 REVIEW round 2, 08:12 EEST
+
+    round 1  new=11 touches=12  ->  after: 26 tasks, 30 files, sharing 0, owning_nothing [flat-status-colors]
+    round 2  new=1  touches=9   ->  after: 26 tasks, 21 files, sharing 0, owning_nothing (10)
+
+Round 2's single finding: *"Nine frontend tasks own separate files (viz-interaction.js, viz-instances.js,
+viz-heights.js, viz-background.js, viz-digest…)"* — round 1 had resolved the six-way collision by giving
+each task its OWN file, which produced **nine frontend files against a request that permits four**. Round 2
+stripped them, and the tasks became fileless:
+
+    viz-interaction · 12-288-payment-instances · currency-exponent-heights · flat-status-colors ·
+    background-color-101828 · scene-digest-computation · labels-collision-culling · linked-brush ·
+    sse-client · vs7dbg-api
+
+**TEN OF TWENTY-SIX TASKS NOW PRODUCE NOTHING**, and every one traces to a slice `coverage_gap` fabricated
+from a property. The request permits four frontend files, so there was never anywhere to put them: the plan
+could only collide them, invent files the request forbids, or leave them fileless. REVIEW picked the least
+harmful of three bad options and did so correctly, twice.
+
+**REVIEW IS CONVERGING**: 11 findings → 1, both rounds patched and both accepted. The loop is working;
+the input was wrong.
+
+**NOT KILLED.** No checkpoint trips — the plan is valid, `tasks_sharing_a_file` is 0, descriptions run
+2,140-6,957 chars. The 16 file-owning tasks include the whole backend and the four permitted frontend files.
+Killing costs two hours of RESEARCH and REVIEW to re-derive a plan that is otherwise sound, and run 5
+carries `971d33cc4`, which stops these slices existing at all.
+
+**FALSIFIABLE PREDICTION FOR BUILD:** roughly ten tasks will complete having made ZERO tool calls, because
+they own no file to write. If instead they invent files, the four-frontend-file budget breaks and that is a
+different and worse finding.
+
 ## THE PREDICTION HELD IN FULL — THE CHAIN CLOSED, run 4, 2026-08-29 08:05 EEST
 
 Written at 06:35, before the evidence. Every line:
