@@ -2806,6 +2806,10 @@ hold and were dropped.
       Stamped 2026-08-29 23:32 EEST. "Anything that is time related must not exist, because local models suck. Round related maybe works." Inventory every `timeout`, `secs`, `Duration`, `Instant`, stale-after-N in the run path (engine, scheduler, judge, transport) — including the 1800 s provider read window `afa644ddd` — and replace each with a progress/round rule or delete it; the tick's WEDGED reading is the operator-level catch for a dead fleet.
       EVIDENCE: NOW.md ask 4; AGENTS.md invariant 1 (NO CAPS) already forbids wall clocks on model work.
 
+- [ ] **BUILD WITHOUT INTEGRATE — the walking skeleton (Mihai, 2026-08-30 00:16 EEST, asked three times): wiring becomes the FIRST task, the gate runs at every completion, the sink stops being a model call**
+      Stamped 2026-08-30 00:16 EEST. Design PART III (DESIGN-STABILITY-FIRST.md) has the full picture, the measured costs it removes (r0 GET / 404; r2's 50-min invisible sink, 9 pytest re-runs, 13 cross-file edits) and the honest risks. Enters as a re-verdicted row after r2's score; jumps the queue for r3 if the sink finishes badly. Grounded: no prior experiment of this shape exists (skeleton-named machinery is unrelated).
+      EVIDENCE: PART III; r2 run.jsonl integrate 20:22Z→(open); TICK-NOTES 23:41-00:12.
+
 ## HOW TO STAMP AN ENTRY — read `date`, never a remembered clock
 
 Every heading here is stamped by hand, and on 2026-08-29 all 33 of them drifted 1-3 hours ahead of the
