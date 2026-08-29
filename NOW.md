@@ -135,16 +135,21 @@ Verified live over CDP against a growing run: events 3→4, thinking bytes 25→
 `swarm-3node-r0-ENDED-29criticals-repair-never-ran-benchmark-forces-proxy-no`. Its tree is intact and
 still scoreable — that score is the clean PRE-REPAIR baseline.
 
-### THE TWO BUGS r0 FOUND, both unfixed as of this line
+### THE TWO BUGS r0 FOUND — one FIXED, one open
 
 1. **`swarm.rs:37015` — `let proxy_yes = !benchmark() && (round == 0 || last_round_promoted);`**
    Under `GOOSE_SWARM_BENCHMARK=1` the first term is false, so the repair-continue ask can ONLY be
    answered no. **REPAIR has never run in any benchmark.** Every published local number is a pre-repair
-   score. The fix is to drop `!benchmark()`: `last_round_promoted` already refuses the moment a round
-   stops changing the tree, which is the terminator the design specifies, so the anti-infinite-yes
-   property survives without it.
-2. **The engine hangs after that decline instead of exiting.** Writing the answer file it polls for does
-   nothing — it is past the poll.
+   score. **FIXED `a1324c68e`**: benchmark now grants round 0 and nothing after it — one fix wave, no
+   loop — which is exactly what the comment beside that line already promised. Pinned by
+   `benchmark_grants_exactly_one_repair_round`.
+2. **STILL OPEN — the engine hangs after the repair verdict instead of exiting.** 0.0% CPU, main thread
+   in `_pthread_join`, everything frozen. Ruled out: the heartbeat ticker (its Drop never ran, which
+   proves the hang is BEFORE unwinding), `coverage_task` (awaited before SYNTHESIS, completed), the fix
+   progress sampler. NOT root-caused and deliberately not guessed at — a wrong change in the exit path
+   fails silently at the end of a four-hour run.
+   **It costs nothing:** the hang is AFTER the tree and verdict are written, so if r1 hangs the same way,
+   stop it and score the tree directly. See `compare_vs_cloud.py` for the three-column comparison.
 
 ### THE BIGGEST NON-BUG FINDING
 
