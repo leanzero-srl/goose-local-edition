@@ -30,12 +30,29 @@ type TailEntry = { id: FileId; size: number; buf: Buffer };
 type EventsEntry = {
   id: FileId;
   size: number;
+  generation: number;
   events: Record<string, unknown>[];
   decoder: StringDecoder;
   rest: string;
 };
 
 const sameFile = (a: FileId, b: FileId): boolean => a.ino === b.ino && a.birth === b.birth;
+
+/**
+ * THE RENDERER'S CACHE KEY, and the reason it is issued here.
+ *
+ * `readEvents` hands back a GROWING array: the same log, extended, until the moment it is rebuilt (a new
+ * file at the path, or one that shrank). The renderer folds that array incrementally and so must know,
+ * with certainty, whether the array it just received is the previous one extended -- but the array is
+ * structured-cloned across IPC, so reference identity is gone by the time it arrives, and a content
+ * fingerprint answers the question WRONG for two same-length arrays that differ in the middle.
+ *
+ * Here the answer is free and exact. Every rebuild of an entry takes the next number, so an unchanged
+ * generation means an unchanged accumulation. It is global rather than per-path so that two different
+ * paths can never collide on a value, and it is never reset: a number that could be re-served after a
+ * cache clear would be exactly the lie this exists to prevent.
+ */
+let generationCounter = 0;
 
 const tails = new Map<string, TailEntry>();
 const logs = new Map<string, EventsEntry>();
@@ -57,6 +74,11 @@ function touch<V>(m: Map<string, V>, k: string, v: V): void {
     if (oldest === undefined) break;
     m.delete(oldest);
   }
+}
+
+/** The generation of the events currently accumulated for `p` -- read straight after `readEvents(p)`. */
+export function eventsGeneration(p: string): number {
+  return logs.get(p)?.generation ?? 0;
 }
 
 export function resetSwarmReadCache(): void {
@@ -144,7 +166,14 @@ export async function readEvents(p: string): Promise<Record<string, unknown>[]> 
     return entry.events;
   }
   if (!entry || size < entry.size) {
-    entry = { id, size: 0, events: [], decoder: new StringDecoder('utf8'), rest: '' };
+    entry = {
+      id,
+      size: 0,
+      generation: ++generationCounter,
+      events: [],
+      decoder: new StringDecoder('utf8'),
+      rest: '',
+    };
   }
   entry.id = id;
   touch(logs, p, entry);
