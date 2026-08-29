@@ -299,14 +299,22 @@ export interface SwarmConfig {
 export const DEFAULTS: SwarmConfig = {
   endpoint: 'http://localhost:1234', // default_endpoint
   planner_model: 'qwen/qwen3.6-27b', // default_planner
-  worker_max_turns: 40, // default_worker_max_turns
+  // NO TURN CAP. 1_000_000 is the engine's default_worker_max_turns and the stand-in for "unbounded";
+  // the run path additionally hardcodes 100_000 under the words "No turn cap" and never reads this
+  // field. The panel said 40, so "reset to golden" wrote a 40-turn cap into config.yaml that the engine
+  // does not honour -- a file stating a limit that does not exist, one `cfg.worker_max_turns` away from
+  // becoming real. Checked against golden.generated.json, which is written from the Rust struct.
+  worker_max_turns: 1_000_000, // default_worker_max_turns
   max_attempts: 3, // default_max_attempts
   worker_timeout_secs: 900, // default_worker_timeout_secs
   progress_watchdog_secs: 900, // baked
   planner_timeout_secs: 900, // default_planner_timeout_secs
   research_planning: 'on', // ResearchPlanningMode::On
   max_research_questions: 4, // default_max_research
-  max_replans: 2, // default_max_replans
+  // UNBOUNDED. Replan is suppressed while the sink is in flight and refuses when too little of the DAG
+  // is left; both are structural. A count on top of them only decides that the LAST honest replan does
+  // not happen. The panel said 2.
+  max_replans: 4_294_967_295, // default_max_replans (u32::MAX)
   scout_max_lookups: 10, // default_scout_max_lookups
   scout_budget_secs: 900, // default_scout_budget_secs
   best_of_n_skeletons: 1, // default_best_of_n_skeletons
