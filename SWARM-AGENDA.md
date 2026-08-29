@@ -397,6 +397,38 @@ it. A problem that turns out to be already owned is left out, but then it was no
 **THIS RUN KEEPS THE DEFECT** — the binary is the old one. Expect 4 features missing from its app, and read
 the score with that in mind rather than as a verdict on the decomposition.
 
+## THE PREDICTION HELD IN FULL — THE CHAIN CLOSED, run 4, 2026-08-29 08:05 EEST
+
+Written at 06:35, before the evidence. Every line:
+
+    predicted                                   measured
+    shared_files names web/viz.js               YES -- with SIX owners, not two
+    review reports the duplicate ownership      YES -- "Six tasks all own web/viz.js; only
+                                                viz-rendering should own it, others must be fileless"
+    plan_patched FIRES (run 3: 0 all run)       YES -- round 1, replace 8, add 4, remove 0
+    plan_patched.after sharing == 0             YES -- tasks_sharing_a_file: 0, shared_files: []
+
+    "after": {"tasks": 26, "distinct_files": 30, "tasks_sharing_a_file": 0,
+              "shared_files": [], "tasks_owning_nothing": ["flat-status-colors"]}
+
+**A SIX-WAY COLLISION, RESOLVED IN ONE ROUND.** The chain built across this session ran end to end:
+`shared_files` named it with ids → question 6b asked about it → the reviewer diagnosed it correctly →
+`apply_patch` ACCEPTED the patch, because the dangling-dependency strip stopped the rejection that killed
+run 3 three times → `plan_patched.after` **proves** the fix rather than narrating it.
+
+**`plan_patched.after` is what makes this a measurement.** In run 3 the only evidence was the reviewer's own
+sentence saying "merged into viz-interaction", and the plan had in fact never changed. Adding the recomputed
+state was the difference between believing a claim and reading a number.
+
+**BOTH DECOMPOSITION COUNTERS EARNED THEMSELVES IN ONE EVENT.** `tasks_sharing_a_file` went to 0, and
+`tasks_owning_nothing` now names `flat-status-colors` — a junk slice that stopped colliding and started
+owning nothing instead. Neither counter alone would have shown both states.
+
+**AND THE REVIEWER USED THE FILE MANIFEST:** *"app/config.py exists on disk but was not owned by any task —
+assigned to boot-contract"*, and *"flat-status-colors creates web/constants.js but request specifies exactly
+four frontend files"* — it is enforcing the request's own file budget, which is the constraint whose absence
+left the last published local run at 0.0273.
+
 ## CHECKED AND CLEAN: the resplit is not a no-op, and `slices_opened` is post-resplit
 
 Run 4's `slices_opened` reads weights [2,5,4,4,3,3,4,1,1,3,3] — a 5-vs-1 spread — and `open-resplit` had
