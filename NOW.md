@@ -191,6 +191,33 @@ it sends `amount_minor`. The real files were finished on disk when those workers
 - **brief median 4,789** against the ~1,500 that measured 88.7%.
 - **45 minutes lost to one task's transport drops** — recovered, but on the record.
 
+## THE INSTRUMENTS — all of them, current 2026-08-29
+
+```bash
+python3 ~/goose-builds/loop-state/tick.py            # backend: phase, ETA vs LOCAL clock, per-lane DELTAS,
+                                                     # SPEC VOLUME + reasoning:answer ratio, the CLAIMS UNDER
+                                                     # TEST, install drift AND process-vs-bundle zombie check
+node ~/goose-builds/loop-state/tick_ui.mjs           # frontend: realtime, graphical issues, waste, UX
+node ~/goose-builds/loop-state/tick_ui_click.mjs     # frontend: DRIVES the controls — opens a node, closes it
+python3 ~/goose-builds/loop-state/snapshot_run.py    # → RUN-LEDGER.md (the tick runs this automatically)
+python3 ~/goose-builds/loop-state/compare_vs_cloud.py <our-verdict.json>   # the THREE-COLUMN comparison
+~/goose-builds/loop-state/note.sh <kind> "finding"   # → TICK-NOTES.md
+node ~/goose-builds/loop-state/live_s1_check.mjs <dir>  # proves the panel's data path IN THE RUNNING APP
+~/goose-builds/loop-state/review_diff.sh             # invariant check over a large multi-agent diff
+~/goose-builds/loop-state/stop_local_run.sh 9897     # MUST exit 0 — gates on `lms ps`
+```
+
+**Scoring a tree directly** (needed whenever the engine hangs on exit):
+```bash
+python3 evals/swarm-bench/bench/score_sb7.py --tree <run-dir> --json-out verdict.json
+python3 ~/goose-builds/loop-state/compare_vs_cloud.py verdict.json
+```
+
+**The target's scorecard, which reframes everything:** the 20.06% run had **inner 0.7662** — a good app —
+and finished at 22.07% because **three criticals multiplied it by 0.288**. The lever is not "write more
+code"; it is "stop tripping criticals". Our engine covers all three of its classes: `domain-conventions`
+(dst/money), `wiring` (dead primary flow), and the in-run restart-durability check at `swarm.rs:20653`.
+
 ## THE HARD RULES (the user's, non-negotiable)
 
 1. **Isolation first, always.** Every fix proven without a run — archived-tree replay, a pure-function
