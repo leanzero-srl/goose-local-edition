@@ -19,14 +19,14 @@ DAG is actually parallel). reasoning_chars against answer_chars is the waste.
 - **chain**: 2
 - **startable**: 10
 - **brief_median**: 4740
-- **reasoning_chars**: 251890
-- **answer_chars**: 143216
+- **reasoning_chars**: 258934
+- **answer_chars**: 144222
 - **code_files**: 25
-- **code_bytes**: 131221
-- **elapsed_min**: 114
-- **phase_split**: open 22m · ask 2m · research 48m · synthesis 5m · review 6m · contracts 6m · build 22m
+- **code_bytes**: 131065
+- **elapsed_min**: 118
+- **phase_split**: open 22m · ask 2m · research 48m · synthesis 5m · review 6m · contracts 6m · build 26m
 - **before_build_min**: 92 (internal diagnosis only — never a cross-run number)
-- **vs_target**: ONLY THE SCORE COMPARES. Target 20.06% (qwen3.8-27b, one cloud agent, same model). Wall clock is NOT comparable — that run is on far faster hardware, so minutes measure the machine. Bytes are NOT a verdict — more code is not better code, and it had no planning phases to spend budget on. Cross-hardware-honest work numbers for THIS run: 131,221B delivered, 251,890 chars reasoned, 6 tasks completed, 0 retried.
+- **vs_target**: ONLY THE SCORE COMPARES. Target 20.06% (qwen3.8-27b, one cloud agent, same model). Wall clock is NOT comparable — that run is on far faster hardware, so minutes measure the machine. Bytes are NOT a verdict — more code is not better code, and it had no planning phases to spend budget on. Cross-hardware-honest work numbers for THIS run: 131,065B delivered, 258,934 chars reasoned, 6 tasks completed, 0 retried.
 - **python_parses**: 16 ok / 0 SYNTAX ERROR / 0 empty
 - **web_files**: app.js, index.html, styles.css, test_camera.js, viz.js, viz_camera.js
 - **tasks_done**: 6/11 completed, 10 dispatched, 0 retried
@@ -36,12 +36,12 @@ DAG is actually parallel). reasoning_chars against answer_chars is the waste.
 - **plan_repaired**: none
 - **plan_loaded**: 1
 - **review_rounds**: r1:new=9
-- **judge_looks**: 81
+- **judge_looks**: 85
 - **judge_nudges**: 7
 - **judge_ended**: 0
 - **drift_held**: 12
 - **tree_defects**: 0
-- **repair**: delivery_defect_steer=2 brief_defects=2 testgen=0 fix_target_selected=0 complete_verify=0 complete_result=0
+- **repair**: delivery_defect_steer=3 brief_defects=2 testgen=0 fix_target_selected=0 complete_verify=0 complete_result=0
 ## swarm-3node-r0-ENDED-29criticals-repair-never-ran-benchmark-forces-proxy-no
 
 - **phases**: open → ask → research → synthesis → review → contracts → build → integrate → repair → test → rate
