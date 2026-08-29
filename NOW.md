@@ -75,9 +75,13 @@ deleting a layer to gating it; measure the fleet against ONE local node of the s
 
 ## WHAT WE ARE DOING RIGHT NOW
 
-**One sentence: r2 is running under the vigil (both tick halves every 10 min, kill checkpoints armed),
-while a design panel writes `DESIGN-STABILITY-FIRST.md` — the next evolution under STABILITY > SPEED >
-QUALITY — and an agent reconciles SWARM-AGENDA.md / EXPERIMENTS-LEDGER.md with today's commits.**
+**One sentence: r2 is running under the vigil (both tick halves every 10 min, kill checkpoints armed);
+`DESIGN-STABILITY-FIRST.md` (BP-1, the next evolution under STABILITY > SPEED > QUALITY) is WRITTEN and
+REVIEWED, waiting on Mihai's read before any of its 14 steps is implemented.**
+
+**Design §8 arm-S trap — RESOLVED 21:35:** benchmark runs never read config.yaml's `devices:`; the pool
+comes from `lms ps` capped by `GOOSE_SWARM_MAX_NODES` keeping the fastest by `speed_weights`
+(swarm.rs:35016). Arm S = Benchmark view with nodes=1 → workhorse. No config edit, no fleet change.
 
 Between runs, in this order: review the design under fresh eyes → implement what lands before r3 (batch by
 file, isolation-tested) → the queued engine item below → rebuild → install → r3. The "all vs single"

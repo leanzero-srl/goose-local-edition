@@ -206,16 +206,22 @@ never concurrent — two jobs on three nodes make both numbers meaningless (chec
 - **Arm S (single):** BP-1 with ONE device enabled, `weight: 2`, so `live_fleet_slots` (swarm.rs:21770) gives the node's two slots; every fan collapses deterministically (`one_lane_per_host` swarm.rs:21817; the scheduler runs 2 tasks at a time). Pick workhorse by measured decode rate (r0 `fix_target_selected`: 12.7 tok/s vs 8.4 / 8.3) and say so in the row.
 - **Arm R (reference):** plain `goose run -t <the cloud run's prompt>` on the same one node, no engine at all — the local analogue of the 0.2006 run and the honest falsifier of decomposition itself. Needs no code.
 
-**How arm S is produced today, and the trap found while writing this.** The engine reads devices from
-config only (`cfg.devices.iter().filter(|d| d.enabled)` swarm.rs:35089, :36581); env never reaches it
-(launch.sh:140-153). `arm_config.py --set` touches depth-1 levers only and deliberately skips per-device
-`enabled:`/`weight:` (arm_config.py:172-174, 213-215), so arm S needs either a `--devices <id>` switch in
-`arm_config.py` or a hand edit of the devices block in the kill-9 → launch window (the app rewrites
-config.yaml on graceful shutdown, launch.sh:44-51). **Trap:** at 18:20Z `~/.config/goose/config.yaml`
-lists three `qwopus3.6-27b-coder` devices, all `enabled: false`, while `lms ps` shows three
-`qwen3.8-27b-brainwaves` nodes GENERATING for r2 — r2 was launched from the Benchmark view (NOW.md), so
-that path resolves devices from somewhere other than this file. **Find the config r2 actually ran on before
-building arm S**, or arm S measures a different fleet than arm F. Mihai flips the device block; not me.
+**How arm S is produced — RESOLVED 2026-08-29 21:35 local, by reading the engine.** The config.yaml
+`devices:` block is DEAD for benchmark runs. `run_build.py:157-160` launches the engine with
+`GOOSE_SWARM_MAX_NODES=<nodes>` and `GOOSE_SWARM_PLANNER_ALSO_WORKS=0`, and under that env the pool is
+built from `lms ps` (resident, servability-checked) and capped by KEEPING THE FASTEST nodes per
+`cfg.speed_weights` (swarm.rs:35016-35075, test :12119 `a_capped_pool_keeps_the_fastest_nodes_and_stays_deterministic`).
+r2's `pool_resolved` (run.jsonl 17:43:01Z) carries the three resident `*-qwen3.8-27b-brainwaves` devices at
+weight 2 with `planner_pushed: False` — while config.yaml's block lists three DISABLED `qwopus3.6` devices
+(mtime 11:58, untouched since). So the trap is not a trap: **arm S = the Benchmark view with the node
+selector at 1** (`bench_dispatch.mjs 9897 sb-7 1`), which resolves deterministically to `worksmacstudio`
+(`speed_weights: {worksmacstudio: 3, local: 2, gabee: 1}`, config.yaml:203-206) — the same node the decode
+rate would pick — with no planner push (harness forces it off) and NO config edit, NO fleet
+reconfiguration. `arm_config.py --devices` (step 13) is unnecessary; `snapshot_run.py` should tag `arm` from
+`pool_resolved.devices.len()` instead. Residual: `planner_model: workhorse-qwopus3.6-27b-coder-mtp`
+(config.yaml:158) names a non-resident model; r0/r1/r2 planned on the pool regardless, so the fallback is
+live, but the row for arm S must record which device planned (`pool_resolved` + the first `phase` event's
+lane device).
 
 **Verdict rule, pre-registered before any run:** the fan earns its keep only if `score_F ≥ score_S` AND
 `wall_F < wall_S`. `score_S ≥ score_F` means decomposition is not earning and BP-1 ships as a single-node
