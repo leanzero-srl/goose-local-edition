@@ -397,6 +397,28 @@ it. A problem that turns out to be already owned is left out, but then it was no
 **THIS RUN KEEPS THE DEFECT** — the binary is the old one. Expect 4 features missing from its app, and read
 the score with that in mind rather than as a verdict on the decomposition.
 
+## RUN 6 LIVE — the OUTPUT fix shipped, proven by a REFERENCE COUNT, 2026-08-29 11:32 EEST
+
+    installed asar 08:59:02   bin 08:59:02   signature valid   swarm: block intact
+    full_transcript refs in the bundle:  OLD 1  ->  NEW 3
+
+**THAT COUNT IS THE PROOF, and it is better than a marker grep.** The old bundle had exactly ONE reference
+— `main.ts` setting the key — and nothing reading it, which is the bug in a single number. The new bundle
+has three: main.ts plus the two UI paths that now consume it.
+
+**AND A TRAP WORTH KEEPING:** `strings app.asar | grep inspectorOutputText` returned MISSING and I nearly
+reported the fix as absent. **The bundler MINIFIES function names.** Only string LITERALS and property keys
+survive — verify a UI change with a key like `full_transcript`, never with a function name.
+
+**RUN 6 CARRIES EVERYTHING:** the four verifier pieces, the drift-hold, the apply_patch dangling-dep strip,
+`review_patch_stuck`, the one-file-one-owner synthesis rule, and both inspector fixes.
+
+**WATCH LIST, since the UI fixes are the ones Mihai has been burned by:**
+- The OUTPUT pane must ACCUMULATE, not roll. If it still cuts mid-sentence, `fullTranscript` is reaching the
+  lane but the pane is preferring something else.
+- THINKING must show each block ONCE.
+- The header must read `N chars` matching the body, or `N of M` when clipped.
+
 ## THE ROLLING COMPLAINT, FULLY DIAGNOSED AT LAST — 2026-08-29 11:25 EEST
 
 Three wrong answers before the right one, so the chain is worth recording:
