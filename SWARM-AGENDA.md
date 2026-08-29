@@ -397,6 +397,36 @@ it. A problem that turns out to be already owned is left out, but then it was no
 **THIS RUN KEEPS THE DEFECT** — the binary is the old one. Expect 4 features missing from its app, and read
 the score with that in mind rather than as a verdict on the decomposition.
 
+## RUN 5 LIVE WITH THE VERIFIER REDESIGN — 2026-08-29 10:20 EEST, `build_sha 8386e5c41`
+
+Both artefacts installed and each verified by its own markers:
+
+    ENGINE  the task finished without writing · which no task has written · judge_drift_held ·
+            ONE FILE, ONE OWNER
+    UI      delivery_defects · brief_defects · judge_drift_held
+    signature valid · app survived LaunchServices re-registration · `swarm:` block intact
+
+**WHAT RUN 5 IS THE FIRST TO TEST — and every piece was already proven by REPLAY, not by faith:**
+
+    delivery_defects   a task that finishes with a missing / empty / unparseable owned file
+    (tree imports)     a file importing a local module nobody wrote
+    brief_defects      two briefs claiming one path, seen at the END of RESEARCH
+    ONE FILE ONE OWNER synthesis told the rule before it assigns ownership
+    judge_drift_held   DRIFTING suppressed on a producing call -- the 66-minute saving
+
+**THE FALSIFIERS, written before the evidence:**
+- `judge_drift_held` should fire REPEATEDLY. If it never fires, DRIFTING was never the common verdict and
+  the 66-minute figure was misattributed.
+- `tasks_sharing_a_file` at SYNTHESIS should be **0**, or close, without REVIEW having to fix it —
+  the synthesis rule is supposed to prevent the collision rather than let REVIEW unpick it.
+- `coverage_rows_not_work` should fire, naming rows kept as coverage. If the gap still adds a hex colour,
+  the empty-slice fix did not take.
+- Total nudges should fall well below run 4's 40.
+
+**A TRAP RE-CONFIRMED WHILE VERIFYING THE INSTALL:** `strings | grep` on a marker containing an EM-DASH
+returned 0 and I briefly read a good build as missing the verifier. Gotcha 8, third sighting. Grep a
+substring with no punctuation.
+
 ## [BUILT] THE VERIFIER REDESIGN — all four pieces, 2026-08-29 09:50 EEST
 
 Mihai: *"touch all please… make it so that the agent can spend time making findings earlier on as files and
