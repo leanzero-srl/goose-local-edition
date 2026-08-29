@@ -59,6 +59,8 @@ import installExtension, { REACT_DEVELOPER_TOOLS } from 'electron-devtools-insta
 import { BLOCKED_PROTOCOLS, WEB_PROTOCOLS } from './utils/urlSecurity';
 import { buildCSP } from './utils/csp';
 import { hideDevOnlyMenuItems } from './utils/menuPolicy';
+import { isBenchmarkViewUrl, shouldRefuseShortcut } from './utils/shortcutGuard';
+import type { GuardedShortcutAction } from './utils/shortcutGuard';
 
 function shouldSetupUpdater(): boolean {
   // Setup updater if either the flag is enabled OR dev updates are enabled
@@ -1459,8 +1461,10 @@ const createChat = async (
   // in the packaged app no matter what hideDevOnlyMenuItems does to the menu.
   if (!app.isPackaged) {
     mainWindow.webContents.on('before-input-event', (event, input) => {
-      if (input.key === 'r' && input.meta) {
-        mainWindow.reload();
+      if (input.key.toLowerCase() === 'r' && input.meta) {
+        // preventDefault here also stops the menu's live reload role, so a dev build mid-run is as
+        // safe from Cmd+R as the packaged one.
+        if (!refuseShortcutDuringBenchmark('reload', true)) mainWindow.reload();
         event.preventDefault();
       }
 
@@ -3949,6 +3953,57 @@ const focusedWindowWorkingDir = async (): Promise<string | undefined> => {
   }
 };
 
+// Returns true when the caller must NOT act. The refusal is reported to the focused window as a
+// warning toast so a swallowed key chord is never silent.
+const refuseShortcutDuringBenchmark = (
+  action: GuardedShortcutAction,
+  triggeredByAccelerator: boolean
+): boolean => {
+  const focused = BrowserWindow.getFocusedWindow();
+  const refused = shouldRefuseShortcut({
+    action,
+    benchmarkRunning: activeBenchRun !== null,
+    triggeredByAccelerator,
+    onBenchmarkView: focused !== null && isBenchmarkViewUrl(focused.webContents.getURL()),
+  });
+  if (refused) focused?.webContents.send('shortcut-refused', { action });
+  return refused;
+};
+
+// Electron ignores `click` on an item that has a role, so the default Close Window (Cmd+W) and
+// Quit (Cmd+Q) items cannot be guarded in place: each is hidden and disabled, and a click item
+// with the same label and accelerator takes its slot.
+const guardCloseAndQuitAccelerators = (items: MenuItem[]): void => {
+  for (const parent of items) {
+    const submenu = parent.submenu;
+    if (!submenu) continue;
+    for (const item of [...submenu.items]) {
+      const role = item.role?.toLowerCase();
+      const action = role === 'close' ? 'close' : role === 'quit' ? 'quit' : undefined;
+      if (!action) continue;
+      item.visible = false;
+      item.enabled = false;
+      submenu.insert(
+        submenu.items.indexOf(item),
+        new MenuItem({
+          label: item.label,
+          accelerator: item.accelerator ?? (action === 'close' ? 'CmdOrCtrl+W' : 'CmdOrCtrl+Q'),
+          click(_menuItem, _window, event) {
+            if (refuseShortcutDuringBenchmark(action, event.triggeredByAccelerator === true))
+              return;
+            if (action === 'quit') {
+              app.quit();
+              return;
+            }
+            BrowserWindow.getFocusedWindow()?.close();
+          },
+        })
+      );
+    }
+    guardCloseAndQuitAccelerators(submenu.items);
+  }
+};
+
 const focusWindow = () => {
   const windows = BrowserWindow.getAllWindows();
   if (windows.length > 0) {
@@ -4094,7 +4149,10 @@ async function appMain() {
         new MenuItem({
           label: menuT('Settings'),
           accelerator: shortcuts.settings,
-          click() {
+          click(_menuItem, _window, event) {
+            if (refuseShortcutDuringBenchmark('navigate', event.triggeredByAccelerator === true)) {
+              return;
+            }
             const focusedWindow = BrowserWindow.getFocusedWindow();
             if (focusedWindow) focusedWindow.webContents.send('set-view', 'settings');
           },
@@ -4165,7 +4223,10 @@ async function appMain() {
         new MenuItem({
           label: menuT('New Chat'),
           accelerator: shortcuts.newChat,
-          click() {
+          click(_menuItem, _window, event) {
+            if (refuseShortcutDuringBenchmark('navigate', event.triggeredByAccelerator === true)) {
+              return;
+            }
             const focusedWindow = BrowserWindow.getFocusedWindow();
             if (focusedWindow) focusedWindow.webContents.send('set-view', '');
           },
@@ -4179,7 +4240,9 @@ async function appMain() {
         new MenuItem({
           label: menuT('New Chat Window'),
           accelerator: shortcuts.newChatWindow,
-          async click() {
+          async click(_menuItem, _window, event) {
+            if (refuseShortcutDuringBenchmark('spawn', event.triggeredByAccelerator === true))
+              return;
             await createNewWindow(app, await focusedWindowWorkingDir());
           },
         })
@@ -4345,6 +4408,7 @@ async function appMain() {
     // File/Edit/View/Window/Help and submenu items populated by roles) before
     // installing the menu. Called last so the lookups above that match on the
     // English labels still succeed.
+    guardCloseAndQuitAccelerators(menu.items);
     translateMenuLabels(menu.items);
     hideDevOnlyMenuItems(menu.items, app.isPackaged);
     Menu.setApplicationMenu(menu);
