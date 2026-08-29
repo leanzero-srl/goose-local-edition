@@ -121,35 +121,51 @@ Verified live over CDP against a growing run: events 3→4, thinking bytes 25→
 
 ---
 
-## WHERE THINGS STAND — r0 is over, 2026-08-29 ~16:40
+## WHERE THINGS STAND — r0 scored, the hang is root-caused, r1 is being prepared (2026-08-29 ~17:55)
 
-**r0 DID NOT SCORE.** It ran the full pipeline for the first time ever —
-`open → ask → research → synthesis → review → contracts → build → integrate → repair → test → rate` —
-10/10 tasks, a real served-able frontend, 9/9 Python parsing. Then:
+**r0 = 0.0568 hermetic** (inner 0.1789 × crit_mult 0.36; seed `687ff58bfa6b707d`, vendor port 8850,
+playwright node). 28% of the 20.06% target, 2.1× the published 0.0273. Two criticals fired and between
+them they zero almost the whole scorecard:
 
-    ✗ 29 critical defect(s) remain, 2 minor
-    complete: STOPPING at round 0 with 29 critical(s) open — proxy said no
+1. **`GET /` → 404.** The frontend EXISTS (`web/index.html`, `app.js` 25KB, `viz.js` 13KB) and ledgerd
+   does not serve it, so every J/V/P/T/E check is 0 and `j_loads_data` + `j_workflow_journey` trip.
+2. **`sync.py` reads `body.get("items")`; the vendor sends `"data"`.** 0/12288 payments, so B/C/X/R are
+   vacuous and `sync_completeness` trips.
 
-`complete_fix_dispatched: 0`. **REPAIR never ran**, and afterwards the engine **hung on exit** (20+ min at
-0.0% CPU, main thread in `_pthread_join`). Stopped and archived as
-`swarm-3node-r0-ENDED-29criticals-repair-never-ran-benchmark-forces-proxy-no`. Its tree is intact and
-still scoreable — that score is the clean PRE-REPAIR baseline.
+Both are one-line-class fixes in `app/ledgerd.py` and `app/sync.py`. r1's REPAIR round 0 (now reachable
+under benchmark, `a1324c68e`) is aimed at exactly these. Verdicts live in the run dir:
+`verdict-hermetic-seed687ff58b-port8850-0.0568.json`. An earlier 0.0832 was BLIND (hermit node has no
+playwright → 30/99 checks unavailable) and on a FRESH seed — retracted, kept under a name that says so.
 
-### THE TWO BUGS r0 FOUND — one FIXED, one open
+**The scorer gained three refuse-gates today** (`_error_obj`, `--preflight`, `--seed` required, plus a
+held-port probe shared with run_build), so none of those wrong-number mechanisms can recur silently.
 
-1. **`swarm.rs:37015` — `let proxy_yes = !benchmark() && (round == 0 || last_round_promoted);`**
-   Under `GOOSE_SWARM_BENCHMARK=1` the first term is false, so the repair-continue ask can ONLY be
-   answered no. **REPAIR has never run in any benchmark.** Every published local number is a pre-repair
-   score. **FIXED `a1324c68e`**: benchmark now grants round 0 and nothing after it — one fix wave, no
-   loop — which is exactly what the comment beside that line already promised. Pinned by
-   `benchmark_grants_exactly_one_repair_round`.
-2. **STILL OPEN — the engine hangs after the repair verdict instead of exiting.** 0.0% CPU, main thread
-   in `_pthread_join`, everything frozen. Ruled out: the heartbeat ticker (its Drop never ran, which
-   proves the hang is BEFORE unwinding), `coverage_task` (awaited before SYNTHESIS, completed), the fix
-   progress sampler. NOT root-caused and deliberately not guessed at — a wrong change in the exit path
-   fails silently at the end of a four-hour run.
-   **It costs nothing:** the hang is AFTER the tree and verdict are written, so if r1 hangs the same way,
-   stop it and score the tree directly. See `compare_vs_cloud.py` for the three-column comparison.
+### THE TWO BUGS r0 FOUND — both root-caused, one committed, one landing
+
+1. **`swarm.rs:37015` — REPAIR never ran in any benchmark.** FIXED `a1324c68e`.
+2. **The exit hang — ROOT-CAUSED, corroborated by three adversarial refuters and one independent
+   agent.** `boot_invocation` (`swarm.rs:~18934`) spawns `python3 -m app` with piped stdout/stderr,
+   polls 4s, `kill()`s the direct child, then awaits the pipe tails to EOF. The wrapper's `Popen`
+   grandchildren (`ledgerd`, `notifierd`) inherit the pipes and survive the single-pid SIGKILL, so EOF
+   never comes: 0% CPU, heartbeat alive, fleet idle. **Proof:** two orphans with cwd in the run dir,
+   PPID 1, started at the exact second of `fix_criticals`. `main.rs:36` joins a big-stack thread for the
+   whole run, so `_pthread_join` on the main thread was never a finding. **The leak is systemic:** 41
+   orphaned app servers were alive on this machine, 25 from r0 alone — every boot probe / smoke that
+   killed a wrapper leaked its grandchildren, and `boot_probe` refuses to conclude on a pre-bound port.
+   Fix = kill the process group + bounded pipe drain after the kill (not a model cap: the process is
+   dead). Landing via the workflow's single swarm.rs agent, with a regression test.
+
+### NEXT swarm.rs BATCH (after the hang commit; one agent, one file)
+
+- **Phantom endpoints in the deterministic gate** — 5 of r0's 29 "criticals" no app change can close:
+  table row ``| `GET` | `/` + `web/*` |`` yields `` /` ``; the prose regex scrapes the VENDOR's
+  `GET /v3/reversals` (spec line 86); the `notifierd` table (spec §6, rows 350-353) is probed on
+  ledgerd's port. RATE then folded the REAL `GET /` defect into a phantom duplicate.
+- **First source path wins in `extract_file_from_finding`** — D5 "Frontend not served (in
+  `app/ledgerd.py`, `web/index.html`)" shards to `web/index.html`; the fix lives in ledgerd.
+- **`render_node` as a config key** (`swarm.rs:20551` reads env only; `open -n` passes no env) so the
+  engine's own in-run render gate stops being blind under the desktop.
+- **Build sha + binary mtime in `run_started`** so a ledger row names its engine.
 
 ### THE BIGGEST NON-BUG FINDING
 
