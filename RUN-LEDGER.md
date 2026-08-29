@@ -10,7 +10,7 @@ DAG is actually parallel). reasoning_chars against answer_chars is the waste.
 
 ## swarm-3node-r0
 
-- **phases**: open → ask → research → synthesis → review → contracts → build
+- **phases**: open → ask → research → synthesis → review → contracts → build → integrate
 - **started**: 10:07:43
 - **tasks**: 10
 - **files_planned**: 16
@@ -19,17 +19,22 @@ DAG is actually parallel). reasoning_chars against answer_chars is the waste.
 - **chain**: 3
 - **startable**: 8
 - **brief_median**: 4789
-- **reasoning_chars**: 258566
-- **answer_chars**: 113759
-- **code_files**: 15
-- **code_bytes**: 74963
-- **python_parses**: 8 ok / 0 SYNTAX ERROR / 0 empty
+- **reasoning_chars**: 259910
+- **answer_chars**: 120042
+- **code_files**: 19
+- **code_bytes**: 108682
+- **elapsed_min**: 126
+- **phase_split**: open 6m · ask 1m · research 39m · synthesis 5m · review 12m · contracts 4m · build 49m · integrate 5m
+- **before_build_min**: 71 (internal diagnosis only — never a cross-run number)
+- **vs_target**: ONLY THE SCORE COMPARES. Target 20.06% (qwen3.8-27b, one cloud agent, same model). Wall clock is NOT comparable — that run is on far faster hardware, so minutes measure the machine. Bytes are NOT a verdict — more code is not better code, and it had no planning phases to spend budget on. Cross-hardware-honest work numbers for THIS run: 108,682B delivered, 259,910 chars reasoned, 9 tasks completed, 3 retried.
+- **python_parses**: 11 ok / 0 SYNTAX ERROR / 0 empty
 - **web_files**: app.js, index.html, styles.css, viz.js
+- **tasks_done**: 9/10 completed, 13 dispatched, 3 retried
 - **plan_patched**: 1
 - **plan_loaded**: 1
 - **review_rounds**: r1:new=4 r2:new=0
-- **judge_looks**: 91
+- **judge_looks**: 97
 - **judge_nudges**: 2
 - **judge_ended**: 0
-- **drift_held**: 7
+- **drift_held**: 8
 - **tree_defects**: 0

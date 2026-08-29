@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
   GOLDEN,
@@ -67,17 +69,36 @@ describe('swarm golden preset', () => {
     expect(GOLDEN).toBe(DEFAULTS);
   });
 
-  it('DEFAULTS mirrors the engine bake, so the panel can never write a divergent value', () => {
+  it('DEFAULTS matches the values GENERATED from the Rust struct', () => {
+    // GENERATED, NOT RETYPED. This test used to assert hand-copied numbers against other hand-copied
+    // numbers under a title promising the two could never diverge -- and two of them had:
+    // worker_max_turns 40 here against 1_000_000 in Rust, max_replans 2 against u32::MAX. It certified
+    // the divergence it claimed to prevent, which is worse than having no test at all.
+    //
+    // golden.generated.json is written by `swarm_defaults_fixture_is_current` in swarm.rs from
+    // serde_json::to_value(SwarmConfig::default()), so the Rust build fails if it goes stale. Comparing
+    // against it means a value can no longer be wrong in only one place.
+    const generated = JSON.parse(
+      readFileSync(path.join(__dirname, 'golden.generated.json'), 'utf8')
+    ) as Record<string, unknown>;
+    for (const key of PRESET_KEYS) {
+      expect(
+        DEFAULTS[key],
+        `DEFAULTS.${key} disagrees with the Rust default — the panel's "reset to golden" would write a ` +
+          `value the engine does not use into config.yaml`
+      ).toEqual(generated[key as string]);
+    }
+  });
+
+  it('(superseded) the old hand-copied assertions, kept only to show what they claimed', () => {
     // Each of these is the value in `Default for SwarmConfig` (crates/goose-cli/src/commands/swarm.rs).
     // If you re-tune one in Rust and the panel still exposes it, change it HERE in the same commit.
-    expect(DEFAULTS.worker_max_turns).toBe(40);
     expect(DEFAULTS.max_attempts).toBe(3);
     expect(DEFAULTS.worker_timeout_secs).toBe(900);
     expect(DEFAULTS.planner_timeout_secs).toBe(900);
     expect(DEFAULTS.progress_watchdog_secs).toBe(900);
     expect(DEFAULTS.research_planning).toBe('on');
     expect(DEFAULTS.max_research_questions).toBe(4);
-    expect(DEFAULTS.max_replans).toBe(2);
     expect(DEFAULTS.scout_max_lookups).toBe(10);
     expect(DEFAULTS.scout_budget_secs).toBe(900);
     expect(DEFAULTS.best_of_n_skeletons).toBe(1);

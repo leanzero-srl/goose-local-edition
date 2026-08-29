@@ -9230,6 +9230,44 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
         );
     }
 
+    /// THE PANEL'S DEFAULTS ARE GENERATED FROM THIS STRUCT, NOT RETYPED BESIDE IT.
+    ///
+    /// `golden.test.ts` carried a test titled "DEFAULTS mirrors the engine bake, so the panel can never
+    /// write a divergent value" whose body was `expect(DEFAULTS.worker_max_turns).toBe(40)` — while this
+    /// file's default is 1_000_000. It asserted a hand-copied number against another hand-copied number
+    /// and certified the divergence it claimed to prevent. `max_replans` had drifted the same way: 2 in
+    /// the panel against u32::MAX here.
+    ///
+    /// Neither reaches a run today — the run path hardcodes `worker_max_turns = 100_000` under the words
+    /// "No turn cap" and never reads the config field — so nothing was capped. But the panel's "reset to
+    /// golden" WRITES those values into the config.yaml the engine loads, so the file states a 40-turn
+    /// cap that does not exist, and one line reading `cfg.worker_max_turns` would make it real without
+    /// touching anything that looks dangerous.
+    ///
+    /// So the fixture is GENERATED here and compared there. A hand-copied number cannot drift from the
+    /// thing it copies if nothing hand-copies it. Regenerate with `UPDATE_FIXTURES=1 cargo test -p
+    /// goose-cli swarm_defaults_fixture`.
+    #[test]
+    fn swarm_defaults_fixture_is_current() {
+        let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../ui/desktop/src/components/settings/swarm/golden.generated.json");
+        let want = serde_json::to_string_pretty(&SwarmConfig::default())
+            .expect("SwarmConfig derives Serialize")
+            + "\n";
+        if std::env::var("UPDATE_FIXTURES").is_ok() {
+            std::fs::write(&fixture, &want).expect("write fixture");
+            return;
+        }
+        let have = std::fs::read_to_string(&fixture).unwrap_or_default();
+        assert_eq!(
+            have, want,
+            "the panel's generated defaults are stale.\n\
+             Run: UPDATE_FIXTURES=1 cargo test -p goose-cli swarm_defaults_fixture\n\
+             This exists because golden.test.ts hand-copied 40 for worker_max_turns against a Rust \
+             default of 1_000_000, under a comment promising the two could never diverge."
+        );
+    }
+
     /// NO CONFIGURED NUMBER MAY EVER BECOME A WALL CLOCK ON A CALL. Mihai's standing rule, and the one
     /// that has been re-broken most: "All of the caps, all of the timers need to go, local models take a
     /// long time to complete." The live config still carries worker_timeout_secs: 420 and
