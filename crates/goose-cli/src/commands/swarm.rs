@@ -6452,6 +6452,151 @@ mod tests {
     }
 
     #[test]
+    fn inflight_args_preview_names_the_target_and_size_never_the_content() {
+        let body = (1..=83)
+            .map(|i| format!("line {i}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let p = inflight_args_preview(
+            "write",
+            &serde_json::json!({"path": "app/cli.py", "content": body}),
+        );
+        assert_eq!(
+            p,
+            format!("write app/cli.py (83 lines, {} bytes)", body.len())
+        );
+        assert!(
+            !p.contains("line 42"),
+            "content must never ride in the digest"
+        );
+        assert_eq!(
+            inflight_args_preview(
+                "edit",
+                &serde_json::json!({"path": "a.py", "before": "x\ny", "after": "x\ny\nz"})
+            ),
+            "edit a.py (2 lines → 3 lines)"
+        );
+        assert_eq!(
+            inflight_args_preview(
+                "shell",
+                &serde_json::json!({"command": "cd /w && python3 -m pytest -q\n"})
+            ),
+            "shell: cd /w && python3 -m pytest -q"
+        );
+        assert_eq!(
+            inflight_args_preview("tree", &serde_json::json!({"path": "src", "depth": 2})),
+            "tree src"
+        );
+        // The upstream text_editor shape: verb + path.
+        assert_eq!(
+            inflight_args_preview(
+                "developer__text_editor",
+                &serde_json::json!({"command": "view", "path": "a.py"})
+            ),
+            "view a.py"
+        );
+        // No path and no command: the tool name plus the generic summary, never empty.
+        let f = inflight_args_preview(
+            "recipe__final_output",
+            &serde_json::json!({"message": "done"}),
+        );
+        assert!(f.starts_with("recipe__final_output "), "{f}");
+        // Bounded at 240 chars whichever field is overlong.
+        let long_cmd = "x ".repeat(400);
+        let s = inflight_args_preview("shell", &serde_json::json!({"command": long_cmd}));
+        assert!(
+            s.chars().count() <= INFLIGHT_PREVIEW_MAX,
+            "{}",
+            s.chars().count()
+        );
+        assert!(s.ends_with('…'));
+        let long_path = "d/".repeat(300);
+        let w = inflight_args_preview(
+            "write",
+            &serde_json::json!({"path": long_path, "content": "a"}),
+        );
+        assert!(w.chars().count() <= INFLIGHT_PREVIEW_MAX);
+    }
+
+    #[test]
+    fn activity_digest_inflight_rows_track_pending_requests() {
+        let done = vec![ToolCallRecord {
+            name: "shell".into(),
+            is_mcp: false,
+            ok: Some(true),
+            fetched_external: false,
+        }];
+        let records = vec![(
+            "shell".to_string(),
+            "ls".to_string(),
+            Some(true),
+            "a b".to_string(),
+        )];
+        let mut pending: HashMap<String, InflightCall> = HashMap::new();
+        pending.insert(
+            "call_2".into(),
+            InflightCall {
+                name: "write".into(),
+                is_mcp: false,
+                fetched_external: false,
+                summary: "app/cli.py".into(),
+                args_preview: "write app/cli.py (83 lines, 2100 bytes)".into(),
+                since: "2026-08-29T22:40:01+00:00".into(),
+            },
+        );
+        pending.insert(
+            "call_1".into(),
+            InflightCall {
+                name: "shell".into(),
+                is_mcp: false,
+                fetched_external: false,
+                summary: "pytest -q".into(),
+                args_preview: "shell: pytest -q".into(),
+                since: "2026-08-29T22:39:58+00:00".into(),
+            },
+        );
+        let build = |pending: &HashMap<String, InflightCall>| {
+            build_worker_digest(&done, &records, pending, &[], 0, 0, "", "m")
+        };
+        let d = build(&pending);
+        let rows = d["inflight"].as_array().expect("inflight is an array");
+        assert_eq!(rows.len(), 2, "one row per request without a result");
+        // Oldest first, and the exact shape the panel reads.
+        assert_eq!(
+            rows[0],
+            serde_json::json!({
+                "id": "call_1",
+                "tool": "shell",
+                "args": "shell: pytest -q",
+                "since": "2026-08-29T22:39:58+00:00",
+            })
+        );
+        assert_eq!(rows[1]["id"], "call_2");
+        assert_eq!(rows[1]["args"], "write app/cli.py (83 lines, 2100 bytes)");
+        // `recent` is completed calls only — untouched by what is in flight.
+        assert_eq!(d["recent"], serde_json::json!(["shell ok"]));
+        assert_eq!(d["tool_calls"], 1);
+        // The provisional ok:null `calls` rows the panel already renders are still there.
+        let provisional = d["calls"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|c| c["ok"].is_null())
+            .count();
+        assert_eq!(provisional, 2);
+
+        // The result lands: the row is gone, the key stays as an empty array.
+        pending.remove("call_1");
+        let d = build(&pending);
+        assert_eq!(d["inflight"].as_array().unwrap().len(), 1);
+        assert_eq!(d["inflight"][0]["id"], "call_2");
+        pending.remove("call_2");
+        let d = build(&pending);
+        assert_eq!(d["inflight"], serde_json::json!([]));
+        assert_eq!(d["recent"], serde_json::json!(["shell ok"]));
+    }
+
+    #[test]
     fn clip_tail_keeps_the_informative_end() {
         assert_eq!(clip_tail("short output", 400), "short output");
         let long: String = "x".repeat(500);
@@ -13871,16 +14016,98 @@ fn append_reasoning_transcript(activity_path: &Path, texts: &[String], already: 
     texts.len()
 }
 
+/// A tool request whose result has not landed yet, keyed in the worker loop's `pending` map by the
+/// request id the stream will answer with.
+#[derive(Clone, Debug)]
+struct InflightCall {
+    name: String,
+    is_mcp: bool,
+    fetched_external: bool,
+    summary: String,
+    args_preview: String,
+    since: String,
+}
+
+const INFLIGHT_PREVIEW_MAX: usize = 240;
+
+/// What a tool request is ABOUT, readable before its result exists: the path and size of a write,
+/// the shape of an edit, the head of a shell line. Mihai, watching the inspector's WORK pane: *"the
+/// tool calls the writing, reading whatnot in the work is not displayed realtime how they're forming
+/// and what is happening. they're appearing as items only after they're complete."* The engine has
+/// the arguments the instant the request enters the stream; this is the bounded rendering of them.
+/// Content itself is never carried — a write's `content` is the file, and the digest is rewritten on a
+/// hot timer — so sizes stand in for it.
+fn inflight_args_preview(name: &str, args: &serde_json::Value) -> String {
+    let obj = args.as_object();
+    let get = |k: &str| obj.and_then(|o| o.get(k)).and_then(|v| v.as_str());
+    let count = |s: &str| (s.lines().count(), s.len());
+    let raw = match (get("path"), get("command")) {
+        (Some(path), _) if name == "write" || name.ends_with("__write") => match get("content") {
+            Some(content) => {
+                let (lines, bytes) = count(content);
+                format!("write {path} ({lines} lines, {bytes} bytes)")
+            }
+            None => format!("write {path}"),
+        },
+        (Some(path), _) if name == "edit" || name.ends_with("__edit") => {
+            match (get("before"), get("after")) {
+                (Some(before), Some(after)) => format!(
+                    "edit {path} ({} lines → {} lines)",
+                    count(before).0,
+                    count(after).0
+                ),
+                _ => format!("edit {path}"),
+            }
+        }
+        // developer__text_editor shape: `command` is the verb and `path` the target.
+        (Some(path), Some(verb)) => format!("{verb} {path}"),
+        (Some(path), None) => format!("{name} {path}"),
+        (None, Some(command)) => format!("{name}: {}", command.trim()),
+        (None, None) => format!("{name} {}", summarize_tool_call(name, args)),
+    };
+    let flat = raw.split_whitespace().collect::<Vec<_>>().join(" ");
+    if flat.chars().count() > INFLIGHT_PREVIEW_MAX {
+        format!(
+            "{}…",
+            flat.chars()
+                .take(INFLIGHT_PREVIEW_MAX - 1)
+                .collect::<String>()
+        )
+    } else {
+        flat
+    }
+}
+
+/// The `inflight` rows of a digest: one per request without a result, oldest first. The map is
+/// unordered, so sort by arrival or the panel would reshuffle rows on every rewrite.
+fn inflight_rows(pending: &HashMap<String, InflightCall>) -> Vec<serde_json::Value> {
+    let mut rows: Vec<(&String, &InflightCall)> = pending.iter().collect();
+    rows.sort_by(|a, b| a.1.since.cmp(&b.1.since).then_with(|| a.0.cmp(b.0)));
+    rows.into_iter()
+        .map(|(id, c)| {
+            serde_json::json!({
+                "id": id,
+                "tool": c.name,
+                "args": c.args_preview,
+                "since": c.since,
+            })
+        })
+        .collect()
+}
+
 /// Build the `.swarm/activity/<key>.json` digest a worker/scout/planner call refreshes as it streams. The judge
 /// reads only tool_calls/errors/recent/last_text; every other key is inert to it (unknown-key-tolerant reader) and
 /// powers the desktop panel's live per-node view. Two dev-verbosity additions over the old inline block: (1) each
 /// completed call carries `is_mcp` (an honest MCP pill), and (2) the IN-FLIGHT `pending` calls are appended as
 /// provisional records with `ok: null` so the panel shows what a node is CALLING right now, not only what finished.
+/// (3) The same in-flight calls are ALSO the `inflight` array — id, tool, an argument preview and the request
+/// time — which is the row the inspector's WORK pane can show while the tool is still running. Every digest
+/// write site shares this builder, so the key cannot be present on one path and absent on another.
 #[allow(clippy::too_many_arguments)]
 fn build_worker_digest(
     tool_calls: &[ToolCallRecord],
     call_records: &[(String, String, Option<bool>, String)],
-    pending: &std::collections::HashMap<String, (String, bool, bool, String)>,
+    pending: &HashMap<String, InflightCall>,
     texts: &[String],
     malformed: usize,
     thinking_chars: usize,
@@ -13926,9 +14153,9 @@ fn build_worker_digest(
         .collect();
     // In-flight calls (not yet resolved) as provisional records: ok:null → the desktop's classifyCall renders
     // them as "running…" so a node mid-call reads as CALLING, not idle.
-    for (name, is_mcp, _fetched, summary) in pending.values() {
+    for c in pending.values() {
         calls.push(serde_json::json!({
-            "name": name, "summary": summary, "ok": serde_json::Value::Null, "result": "", "is_mcp": is_mcp
+            "name": c.name, "summary": c.summary, "ok": serde_json::Value::Null, "result": "", "is_mcp": c.is_mcp
         }));
     }
     serde_json::json!({
@@ -13936,6 +14163,7 @@ fn build_worker_digest(
         "errors": errors,
         "malformed": malformed,
         "recent": recent,
+        "inflight": inflight_rows(pending),
         "last_text": last_text,
         "calls": calls,
         "reasoning": build_reasoning(texts),
@@ -15389,7 +15617,7 @@ impl GooseAgentDispatcher {
         // loop. This carries the fingerprints the tail throws away.
         let mut recur = RecurrenceMeter::new();
         let mut final_output: Option<String> = None;
-        let mut pending: HashMap<String, (String, bool, bool, String)> = HashMap::new();
+        let mut pending: HashMap<String, InflightCall> = HashMap::new();
         let mut tool_calls: Vec<ToolCallRecord> = Vec::new();
         // Parallel history to tool_calls that keeps, per call: a short summary of its arguments (the shell
         // line, edited path, query…) AND a snippet of its output, so the desktop run panel shows both what
@@ -15444,6 +15672,7 @@ impl GooseAgentDispatcher {
                     "tool_calls": 0,
                     "errors": 0,
                     "recent": [],
+                    "inflight": [],
                     "last_text": "",
                     "model": model_id,
                     "phase": "processing",
@@ -15509,6 +15738,12 @@ impl GooseAgentDispatcher {
         // blocking fs::write + JSON serializes per task × N nodes. Refresh at most ~2.5x/s; a guaranteed final
         // write after the loop keeps the terminal state exact. Every consumer polls slower (judge 15s, panel ≤10Hz).
         let mut last_digest_at: Option<tokio::time::Instant> = None;
+        // A tool request entering or leaving `pending` is a state change the panel must see NOW, not on
+        // the next chunk: a long shell command or a big write emits no stream event until its result,
+        // so under the coalesce alone the request was invisible until it was already finished — which
+        // is exactly what the owner watched. Set by the stream processor, cleared by whichever write
+        // site fires next. Bounded by tool boundaries, never by tokens, so the hot path stays coalesced.
+        let mut flush_digest_now = false;
         // How many text chunks have already reached the append-only transcript beside the digest.
         let mut transcript_at: usize = 0;
         // Thinking produced since the last flush to `<task>.think.log`. The digest keeps only a rolling
@@ -15715,7 +15950,19 @@ impl GooseAgentDispatcher {
                                         .unwrap_or(serde_json::Value::Null);
                                     let summary = summarize_tool_call(&name, &args_val);
                                     let fetched = args_fetch_external_url(&name, &args_val);
-                                    pending.insert(req.id.clone(), (name, mcp, fetched, summary));
+                                    let args_preview = inflight_args_preview(&name, &args_val);
+                                    pending.insert(
+                                        req.id.clone(),
+                                        InflightCall {
+                                            name,
+                                            is_mcp: mcp,
+                                            fetched_external: fetched,
+                                            summary,
+                                            args_preview,
+                                            since: chrono::Utc::now().to_rfc3339(),
+                                        },
+                                    );
+                                    flush_digest_now = true;
                                 }
                                 // MALFORMED CALL. The provider could not parse what the model emitted, so it
                                 // built the request as an Err — response_to_message does this for an invalid
@@ -15744,9 +15991,15 @@ impl GooseAgentDispatcher {
                                 }
                             },
                             MessageContent::ToolResponse(resp) => {
-                                if let Some((name, is_mcp, fetched, summary)) =
-                                    pending.remove(&resp.id)
+                                if let Some(InflightCall {
+                                    name,
+                                    is_mcp,
+                                    fetched_external: fetched,
+                                    summary,
+                                    ..
+                                }) = pending.remove(&resp.id)
                                 {
+                                    flush_digest_now = true;
                                     let ok = resp
                                         .tool_result
                                         .as_ref()
@@ -16457,9 +16710,11 @@ impl GooseAgentDispatcher {
                                     // would have lost every char since the last non-probe tick.
                                     process_stream_event!(ev);
                                     if let Some(p) = &activity_file {
-                                        let due = last_digest_at.is_none_or(|t| {
-                                            t.elapsed() >= std::time::Duration::from_millis(400)
-                                        });
+                                        let due = flush_digest_now
+                                            || last_digest_at.is_none_or(|t| {
+                                                t.elapsed()
+                                                    >= std::time::Duration::from_millis(400)
+                                            });
                                         if due {
                                             let mut d = build_worker_digest(
                                                 &tool_calls,
@@ -16483,6 +16738,7 @@ impl GooseAgentDispatcher {
                                             );
                                             append_thinking_transcript(p, &mut think_unflushed);
                                             last_digest_at = Some(tokio::time::Instant::now());
+                                            flush_digest_now = false;
                                         }
                                     }
                                 }
@@ -17240,8 +17496,9 @@ impl GooseAgentDispatcher {
             };
             process_stream_event!(ev);
             if let Some(p) = &activity_file {
-                let due = last_digest_at
-                    .is_none_or(|t| t.elapsed() >= std::time::Duration::from_millis(400));
+                let due = flush_digest_now
+                    || last_digest_at
+                        .is_none_or(|t| t.elapsed() >= std::time::Duration::from_millis(400));
                 if due {
                     let digest = build_worker_digest(
                         &tool_calls,
@@ -17260,17 +17517,18 @@ impl GooseAgentDispatcher {
                     transcript_at = append_reasoning_transcript(p, &texts, transcript_at);
                     append_thinking_transcript(p, &mut think_unflushed);
                     last_digest_at = Some(tokio::time::Instant::now());
+                    flush_digest_now = false;
                 }
             }
         }
         // Requests with no response (e.g. a max-turns cutoff): record with unknown ok.
-        for (_id, (name, is_mcp, fetched, summary)) in pending {
-            call_records.push((name.clone(), summary, None, String::new()));
+        for (_id, c) in pending {
+            call_records.push((c.name.clone(), c.summary, None, String::new()));
             tool_calls.push(ToolCallRecord {
-                name,
-                is_mcp,
+                name: c.name,
+                is_mcp: c.is_mcp,
                 ok: None,
-                fetched_external: fetched,
+                fetched_external: c.fetched_external,
             });
         }
         // Guaranteed FINAL digest — the coalesce throttle in the loop may have skipped the last event's state,
