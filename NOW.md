@@ -171,10 +171,18 @@ and the campaign skill changelog for the full record.
 the engine's `ask`/`contracts` events no longer map onto Open/Build; contract-* lanes file under CONTRACTS;
 r0 fixture test. Live check in the rebuilt app: Contracts chip active with the node chips under it.
 
-**QUEUED for r3 (desktop + engine, Mihai 22:29): tool calls must show in the inspector WHILE running,
-not after.** Engine half LANDED `156a95957`: the digest carries `inflight: [{id, tool, args, since}]` written at the
-request moment and cleared at the result; the WORK pane must render RUNNING rows from it and flip them. UI half
-waits for the phase-chip agent (same files). Token-level argument streaming
+**LANDED for r3 (desktop + engine, Mihai 22:29): tool calls show in the inspector WHILE running.** Engine
+`156a95957` writes `inflight: [{id, tool, args, since}]` into the digest at the request moment; panel `26612c1a3`
+renders RUNNING rows (amber pill, spinner, ticking seconds, args preview) above finished ones, dedupes by id when
+the result lands, and the fleet cell's live line reads `running: write app/… (…)` during a call — all through
+`digestStreamFields()`. Limit: arguments appear when the request is complete, not token by token (no partial
+tool-call deltas in this branch's provider layer).
+
+**LIVE CHECKS for the first tick of the rebuilt app (r3), over CDP, before trusting any of it:** (1) ribbon shows
+10 chips Open · Ask · Research · Synthesize · Review · Contracts · Build · Integrate · Repair · Done, Contracts
+active during CONTRACTS with the node chips under it; (2) a RUNNING row appears in the inspector the moment a
+write/shell starts, caption "N tool calls · k ok · 1 running", no duplicate when it lands; (3) Cmd+N / Cmd+W /
+Cmd+R / Cmd+Q do nothing destructive while the benchmark runs (per the shortcut workflow's live list). Token-level argument streaming
 is out of scope on this branch (no partial tool-call deltas in the provider layer).
 
 **QUEUED for r3 (desktop, Mihai 22:00): the app must not answer stray shortcuts** — Cmd+Shift+N opened a
