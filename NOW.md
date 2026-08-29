@@ -107,6 +107,11 @@ contract block, REPAIR under benchmark) is in.
 round 1 answers no; (4) the score: does `sync_completeness` close and `GET /` serve? (5) the durable
 logs keep pace with the digests under judge looks (`tick_ui` "EXCEEDS the durable log" must stay quiet).
 
+**r2's OWN fixture seed is `5cd47b42e2a7c3e0`** (header of `runs/build/trace-swarm-3node-r0.jsonl`, mtime
+21:10 — the harness overwrote r0's trace because the run dir name is reused; r0 was `687ff58bfa6b707d`).
+Score r2 with `--seed 5cd47b42e2a7c3e0`, port 8850, nvm node, orphans 0. The ledger row now carries
+`fixture_seed` so the next overwrite cannot lose it.
+
 **Kill checkpoints armed:** a second REVIEW round; a plan re-emission; a clock stop; WEDGED (heartbeat
 fresh, no event ≥10m, fleet idle, 0% CPU); a leaked server count > 0.
 
