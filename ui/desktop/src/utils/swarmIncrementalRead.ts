@@ -13,8 +13,29 @@ import fsp from 'node:fs/promises';
  * new run reusing the path) resets its cache instead of splicing unrelated bytes onto a stale tail.
  */
 
-type TailEntry = { size: number; buf: Buffer };
-type EventsEntry = { size: number; events: Record<string, unknown>[]; decoder: StringDecoder; rest: string };
+/**
+ * A cache entry is only valid for the SAME FILE, and size alone cannot establish that.
+ *
+ * Caching on path+size means a file REPLACED at the same path by a LONGER one reads as an append: the
+ * new file's tail gets spliced onto the old file's head. Proven, not theorised -- 'OLDRUN-AAAA' followed
+ * by a rewrite to 'NEWRUN-BBBBBBBBBBBBBBBB' returned 'OLDRUN-AAAABBBBBBBBBBBB', and readEvents kept the
+ * previous run's events wholesale. That is the panel showing the PREVIOUS run's transcript, and
+ * `.swarm/run.jsonl` under the bench harness is exactly a path that gets replaced run over run.
+ *
+ * Identity is the inode plus the creation time. The inode alone is not enough: filesystems reuse them,
+ * and a fresh file landing on a recycled inode would look identical to the one it replaced.
+ */
+type FileId = { ino: number; birth: number };
+type TailEntry = { id: FileId; size: number; buf: Buffer };
+type EventsEntry = {
+  id: FileId;
+  size: number;
+  events: Record<string, unknown>[];
+  decoder: StringDecoder;
+  rest: string;
+};
+
+const sameFile = (a: FileId, b: FileId): boolean => a.ino === b.ino && a.birth === b.birth;
 
 const tails = new Map<string, TailEntry>();
 const logs = new Map<string, EventsEntry>();
@@ -70,13 +91,17 @@ export async function readTail(
   max: number
 ): Promise<{ text: string; size: number } | null> {
   let size: number;
+  let id: FileId;
   try {
-    size = (await fsp.stat(p)).size;
+    const st = await fsp.stat(p);
+    size = st.size;
+    id = { ino: st.ino, birth: st.birthtimeMs };
   } catch {
     tails.delete(p);
     return null;
   }
-  const prev = tails.get(p);
+  const cached = tails.get(p);
+  const prev = cached && sameFile(cached.id, id) ? cached : undefined;
   if (prev && prev.size === size) {
     touch(tails, p, prev);
     return { text: prev.buf.toString('utf8'), size };
@@ -91,7 +116,7 @@ export async function readTail(
     buf = Buffer.concat([prev.buf, delta]);
     if (buf.length > max) buf = buf.subarray(buf.length - max);
   }
-  touch(tails, p, { size, buf });
+  touch(tails, p, { id, size, buf });
   return { text: buf.toString('utf8'), size };
 }
 
@@ -103,20 +128,25 @@ export async function readTail(
  */
 export async function readEvents(p: string): Promise<Record<string, unknown>[]> {
   let size: number;
+  let id: FileId;
   try {
-    size = (await fsp.stat(p)).size;
+    const st = await fsp.stat(p);
+    size = st.size;
+    id = { ino: st.ino, birth: st.birthtimeMs };
   } catch {
     logs.delete(p);
     return [];
   }
-  let entry = logs.get(p);
+  const cached = logs.get(p);
+  let entry = cached && sameFile(cached.id, id) ? cached : undefined;
   if (entry && entry.size === size) {
     touch(logs, p, entry);
     return entry.events;
   }
   if (!entry || size < entry.size) {
-    entry = { size: 0, events: [], decoder: new StringDecoder('utf8'), rest: '' };
+    entry = { id, size: 0, events: [], decoder: new StringDecoder('utf8'), rest: '' };
   }
+  entry.id = id;
   touch(logs, p, entry);
 
   const delta = await readRange(p, entry.size, size - entry.size);

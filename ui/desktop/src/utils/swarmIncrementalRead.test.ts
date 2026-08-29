@@ -172,3 +172,35 @@ describe('cache bounds', () => {
     expect((await readTail(hot, 1000))!.text).toBe('H');
   });
 });
+
+describe('same-path replacement — the defect size-only caching could not see', () => {
+  it('readTail does not splice a NEW longer file onto the old tail', async () => {
+    const p = path.join(dir, 'run.log');
+    await fsp.writeFile(p, 'OLDRUN-AAAA');
+    expect((await readTail(p, 1_000_000))!.text).toBe('OLDRUN-AAAA');
+    await fsp.rm(p);
+    await fsp.writeFile(p, 'NEWRUN-BBBBBBBBBBBBBBBB');
+    expect((await readTail(p, 1_000_000))!.text).toBe('NEWRUN-BBBBBBBBBBBBBBBB');
+  });
+
+  it('readEvents drops the previous run entirely when the log is replaced', async () => {
+    const p = path.join(dir, 'run.jsonl');
+    await fsp.writeFile(p, '{"event":"old"}\n');
+    expect(await readEvents(p)).toEqual([{ event: 'old' }]);
+    await fsp.rm(p);
+    await fsp.writeFile(p, '{"event":"n1"}\n{"event":"n2"}\n{"event":"n3"}\n');
+    expect(await readEvents(p)).toEqual([
+      { event: 'n1' },
+      { event: 'n2' },
+      { event: 'n3' },
+    ]);
+  });
+
+  it('a plain append is still treated as an append, not a replacement', async () => {
+    const p = path.join(dir, 'append.jsonl');
+    await fsp.writeFile(p, '{"event":"a"}\n');
+    await readEvents(p);
+    await fsp.appendFile(p, '{"event":"b"}\n');
+    expect(await readEvents(p)).toEqual([{ event: 'a' }, { event: 'b' }]);
+  });
+});
