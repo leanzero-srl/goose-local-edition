@@ -397,6 +397,34 @@ it. A problem that turns out to be already owned is left out, but then it was no
 **THIS RUN KEEPS THE DEFECT** — the binary is the old one. Expect 4 features missing from its app, and read
 the score with that in mind rather than as a verdict on the decomposition.
 
+## MY OWN FIX LEAKED: `DO NOT CLASSIFY` MADE SLICES OUT OF FACTS — 2026-08-29 04:52 EEST
+
+The coverage fan's first round on run 3 worked: parts 1/3, 2/3, 3/3 returned 17, 31 and 8 components with
+5, 0 and 1 unowned. Then `coverage_gap` converted the unowned rows into slices:
+
+    app-package · web-directory · tokens-json-file · 12-288-payments · 96-calendar-days
+    "App Package Structure" · "web/ directory" · "tokens JSON file" · "12,288 payments" · "96 calendar days"
+
+**The last two are not components.** 12,288 payments is a VOLUME and 96 calendar days is a SPAN — properties
+the real components must satisfy, which belong in those components' briefs, not in tasks of their own.
+
+**THIS IS MY OWN FIX LEAKING.** `DO NOT CLASSIFY` was added so the table would stop arguing about whether a
+named thing counts, and it worked — recall went up. But the gap conversion turns EVERY unowned row into a
+slice, so improved recall became **manufactured over-decomposition**: 13 slices heading toward 18, against
+the 21 that collapsed the original run. A fix for under-coverage started producing the opposite failure.
+
+**THE FIX SEPARATES THE TWO JOBS.** Keep enumerating every named thing into the TABLE. Propose a `slice`
+only for something that gets CREATED — a file, a service, an endpoint, a workflow, a stored artefact, a
+screen, a document — and leave `slice` empty when you cannot name the file or process it would produce.
+That question is DECIDABLE, unlike the components-versus-implementation-details question the original clause
+removed. `4ac...`
+
+**ALSO CORRECTED THIS TICK:** I read coverage-2's thinking dropping 54,049 -> 2,001 as a re-stream
+discarding its work. It was not. `thinking_total` reset too, meaning a NEW call: the lane had DELIVERED
+(`coverage_enumerated part 2/3, 31 components, 0 unowned`) and a second coverage round had begun. All 12
+nudges this run are `steer`; there have been ZERO re-streams. **A counter reset is not evidence of loss —
+read what happened immediately before it.**
+
 ## RUN 3 DECOMPOSITION — 13 slices, and REVIEW's unowned findings are now OWNED at OPEN
 
 `slices_opened`: **13**, weights [3,5,4,4,4,3,3,2,4,2,1,3,3], 529s. `open-resplit` fired on the 5-vs-1
