@@ -11,3 +11,5 @@ Appended by `loop-state/note.sh`. The tick prints only the newest three; this is
 - `08-29 10:15` **engine** — REVIEW de-dup keyed on a 120-char lowercase PREFIX, so any rewording read as a new finding; now keys on (kind, identifiers) with basename normalisation
 - `08-29 10:18` **engine** — worker_timeout_secs:420 and planner_timeout_secs:900 are still in config.yaml but BOTH are dead — they reach run_agent_in as idle_secs which is ignored; now guarded by effective_idle_budget + a test so re-arming fails the build
 - `08-29 10:25` **ui** — S1 now replayed against a REAL archived run (its run.jsonl grown in 25 appends, every transcript in 15) — synthetic tests alone only prove self-consistency
+- `08-29 10:36` **backend** — disk hit 16GB free of 926; target/debug was 27GB and target/release only 9GB — removing debug alone reclaimed to 42GB and kept the release build incremental
+- `08-29 10:36` **ui** — /Applications/Goose.app/Contents/MacOS/ was EMPTY — the installed app had no binary at all, which is why no UI assessment could ever attach
