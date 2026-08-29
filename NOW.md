@@ -77,7 +77,9 @@ deleting a layer to gating it; measure the fleet against ONE local node of the s
 
 **One sentence: r2 is running under the vigil (both tick halves every 10 min, kill checkpoints armed);
 `DESIGN-STABILITY-FIRST.md` (BP-1, the next evolution under STABILITY > SPEED > QUALITY) is WRITTEN and
-REVIEWED, waiting on Mihai's read before any of its 14 steps is implemented.**
+REVIEWED. Step 1 (PLAN-REPAIR, additive, pure fn + tests on the real r0/r1 plans) is being written in
+swarm.rs by an agent; step 14's fixtures for `plan_repaired` are IN (tick.py, snapshot_run.py, the panel).
+The DELETIONS (REVIEW, CONTRACTS, judge, TEST/RATE) wait on Mihai's read — they are his call.**
 
 **Design §8 arm-S trap — RESOLVED 21:35:** benchmark runs never read config.yaml's `devices:`; the pool
 comes from `lms ps` capped by `GOOSE_SWARM_MAX_NODES` keeping the fastest by `speed_weights`
