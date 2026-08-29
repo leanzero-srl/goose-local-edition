@@ -15,7 +15,8 @@ use crate::dispatch::{
 };
 use crate::event::{EventSink, NullSink, SwarmEvent};
 use crate::judge::{
-    Judge, JudgeConfig, JudgeOutcome, JudgeRequest, PreReviewRequest, PreReviewer, Verdict,
+    skeleton_only, Judge, JudgeConfig, JudgeOutcome, JudgeRequest, PreReviewRequest, PreReviewer,
+    Verdict,
 };
 use crate::replan::{ReplanContext, Replanner};
 use anyhow::{bail, Result};
@@ -331,6 +332,102 @@ fn transient_retry_hint(msg: &str) -> Option<String> {
     None
 }
 
+/// One planned deliverable as the tree warden sees it on disk. Split out from the sweep so the rule
+/// below is testable with no scheduler, no DAG and no filesystem.
+struct DeliveredFile {
+    path: String,
+    /// Present AND non-empty — the same "was this written" predicate `owned_file_written` uses, so
+    /// there is one definition of a written file rather than a second hand-rolled one.
+    present: bool,
+    /// Still the engine's own signature stub, by `skeleton_only` — the SAME predicate the judge uses
+    /// to refuse a false Accept (F884). A stub is what the dispatcher pre-creates, so "the file
+    /// exists" is true at t=0 for every task and means nothing on its own.
+    skeleton: bool,
+}
+
+/// What a COMPLETED dependency has actually left on disk for the task now building on top of it.
+/// `None` when it delivered.
+///
+/// This is the cross-lane question the per-worker judge structurally cannot ask: it inspects ONE
+/// in-flight worker's OWN files, single-flight and cooldown-gated, so a dependency that reported
+/// done while writing nothing — or only the stub the engine pre-created — is discovered by
+/// integrate-verify hours later instead of by the worker importing it right now.
+fn delivered_dependency_defect(dep: &str, files: &[DeliveredFile]) -> Option<String> {
+    let names = |v: Vec<&str>| v.join(", ");
+    let missing: Vec<&str> = files
+        .iter()
+        .filter(|f| !f.present)
+        .map(|f| f.path.as_str())
+        .collect();
+    let stubs: Vec<&str> = files
+        .iter()
+        .filter(|f| f.present && f.skeleton)
+        .map(|f| f.path.as_str())
+        .collect();
+    if missing.is_empty() && stubs.is_empty() {
+        return None;
+    }
+    let mut what: Vec<String> = Vec::new();
+    if !missing.is_empty() {
+        what.push(format!("never wrote {}", names(missing)));
+    }
+    if !stubs.is_empty() {
+        what.push(format!("left {} as an unimplemented stub", names(stubs)));
+    }
+    Some(format!(
+        "dependency '{dep}' reported done but {} — do not assume that behaviour exists: read the \
+         file before you import from it, and build against what is actually there",
+        what.join(" and ")
+    ))
+}
+
+/// Read one deliverable's state. Paths resolve against the run cwd, exactly like
+/// `owned_file_written` and `owned_files_fingerprint` — that is where the workers write.
+fn delivered_file(path: &str) -> DeliveredFile {
+    let present = std::fs::metadata(path)
+        .map(|m| m.len() > 0)
+        .unwrap_or(false);
+    let skeleton = present
+        && std::fs::read_to_string(path)
+            .map(|c| skeleton_only(&c))
+            .unwrap_or(false);
+    DeliveredFile {
+        path: path.to_string(),
+        present,
+        skeleton,
+    }
+}
+
+/// Append a note to whatever hint a task already carries, without repeating a sentence it already
+/// contains. Pure so the merge rule is testable without a live scheduler.
+/// Should the warden state this finding, given what it has already said and what is in the hint now?
+///
+/// DELIVERED ONCE and SAID ONCE are different things, and the difference decides whether a worker ever
+/// hears about a hollow dependency. `prior_hints` holds one string per task and the guided retry and the
+/// judge restart overwrite it wholesale on purpose; with a remembered-forever key, a finding written and
+/// then overwritten before any dispatch was never stated again -- silently, because the dedup could not
+/// tell "already handed over" from "thrown away".
+///
+/// Absence of the finding from the hint is what is ambiguous, and the two readings need opposite
+/// handling: a DISPATCH removes the hint because it delivered it, so it must never repeat; a bare insert
+/// removes it because it clobbered it, so it must. `pending` is cleared at dispatch and only there, so
+/// still-pending-but-absent is exactly the clobbered case.
+fn warden_should_state(seen: bool, pending: bool, in_hint: bool) -> bool {
+    if !seen {
+        return true;
+    }
+    pending && !in_hint
+}
+
+fn appended_hint(existing: Option<&str>, hint: &str) -> String {
+    match existing {
+        None => hint.to_string(),
+        Some(e) if e.trim().is_empty() => hint.to_string(),
+        Some(e) if e.contains(hint) => e.to_string(),
+        Some(e) => format!("{e}; {hint}"),
+    }
+}
+
 /// Is an UNACTED judge verdict still worth carrying to the task's next attempt?
 ///
 /// `apply_judge_outcome` can only re-dispatch while the per-task intervention cap holds, and can only
@@ -624,6 +721,19 @@ pub struct AttemptRecord {
     pub elapsed_ms: u64,
 }
 
+/// How a task ENDED, as handed to `State::emit_completion`. Every terminal path fills this and
+/// nothing else writes a `TaskCompleted`, so a new terminal path cannot forget a field the way the
+/// cascade path forgot the entire event.
+struct Completion {
+    status: &'static str,
+    device: Option<String>,
+    model: Option<String>,
+    attempts: u32,
+    elapsed_ms: u64,
+    error: Option<String>,
+    tool_calls: Vec<ToolCallRecord>,
+}
+
 #[derive(Debug, Serialize, Default, Clone)]
 pub struct DeviceSummary {
     pub dispatched: u32,
@@ -860,6 +970,15 @@ struct State {
     /// files write the REAL tree, which a fix round must never touch except via a graded promote).
     fix_round: bool,
     tail_review_dim: usize,
+    /// TREE WARDEN: fingerprints of the cross-lane findings already routed, so a defect that
+    /// persists across sweeps is stated ONCE. Re-stating it every pass would spam the worker's next
+    /// turn boundary with the same sentence and bury the stream in duplicates.
+    warden_seen: HashSet<u64>,
+    /// Warden findings written into a task's hint but not yet handed to a dispatch, per task.
+    ///
+    /// `warden_seen` alone cannot tell "already delivered" from "written and then overwritten", and the
+    /// two need opposite treatment: a delivered finding must never repeat, a clobbered one must.
+    warden_pending: HashMap<TaskId, Vec<String>>,
 }
 
 impl State {
@@ -903,6 +1022,42 @@ impl State {
             .get(tid)
             .and_then(|a| a.last())
             .and_then(|r| r.error.clone())
+    }
+
+    /// The ONE shape of a terminal task event, taken as a struct so every field is named at the
+    /// call site — the positional list is exactly how the ten fields drifted in the first place.
+    ///
+    /// Six sites hand-wrote this ten-field literal, so every new terminal path had to remember all
+    /// ten — and the CASCADE path did not exist at all: a task failed because its dependency failed
+    /// emitted NOTHING, so a finished run rendered it as a PENDING row and no downstream reader
+    /// could count it as a failure.
+    fn emit_completion(&self, tid: &str, c: Completion) {
+        self.sink.emit(&SwarmEvent::TaskCompleted {
+            task_id: tid.to_string(),
+            salvaged: self.task_salvaged.get(tid).copied().unwrap_or(false),
+            status: c.status.to_string(),
+            device: c.device,
+            model: c.model,
+            attempts: c.attempts,
+            elapsed_ms: c.elapsed_ms,
+            session_id: self.task_session_id(tid),
+            error: c.error,
+            tool_calls: c.tool_calls,
+        });
+    }
+
+    /// Add a corrective note to a task's pending hint instead of CLOBBERING one already there.
+    ///
+    /// `prior_hints` holds one String per task and is REMOVED at the next dispatch, so a bare
+    /// `insert` silently discards whatever a converging failed path — or the tree warden — had
+    /// already written for that same dispatch.
+    ///
+    /// The guided-retry and judge-restart paths deliberately keep `insert`: the retry note is the
+    /// freshest statement of why the last attempt died, and a restart seed replaces the session's
+    /// whole premise, so appending a stale sentence there would fight the newer instruction.
+    fn add_prior_hint(&mut self, tid: &str, hint: &str) {
+        let merged = appended_hint(self.prior_hints.get(tid).map(|s| s.as_str()), hint);
+        self.prior_hints.insert(tid.to_string(), merged);
     }
 
     fn total_in_flight(&self) -> u32 {
@@ -1312,6 +1467,10 @@ impl State {
         all_files.dedup();
         self.held_by.insert(tid.clone(), files);
         let mut prior_hint = self.prior_hints.remove(&tid);
+        // DELIVERED. Anything the warden was still waiting to hand over has now gone out with this
+        // dispatch, so it stops being re-statable; a finding that survives into a later sweep and is
+        // NOT in this list was clobbered rather than delivered.
+        self.warden_pending.remove(&tid);
         // THE SINK INHERITS EVERY JUDGE FINDING, because it is the only task that can act on them and
         // the judge is a source of findings it otherwise cannot see. A task that owns no files and
         // joins the graph is the sink; ordinary workers keep the existing one-shot behaviour.
@@ -1444,8 +1603,7 @@ impl State {
                 // Remembered per task, because the completion event is emitted from six sites and only
                 // one of them is on the path that produced this value.
                 self.task_salvaged.insert(tid.to_string(), salvaged);
-                self.task_session
-                    .insert(tid.to_string(), session_id.clone());
+                self.task_session.insert(tid.to_string(), session_id);
                 self.task_tool_calls
                     .insert(tid.to_string(), tool_calls.clone());
                 self.attempt_log
@@ -1467,18 +1625,18 @@ impl State {
                 }
                 self.ctx.merge(tid, output);
                 let ended_because = self.last_attempt_error(tid);
-                self.sink.emit(&SwarmEvent::TaskCompleted {
-                    task_id: tid.to_string(),
-                    salvaged: self.task_salvaged.get(tid).copied().unwrap_or(false),
-                    status: "done".to_string(),
-                    device: dev_id,
-                    model: model_id,
-                    attempts,
-                    elapsed_ms,
-                    session_id,
-                    error: ended_because,
-                    tool_calls,
-                });
+                self.emit_completion(
+                    tid,
+                    Completion {
+                        status: "done",
+                        device: dev_id,
+                        model: model_id,
+                        attempts,
+                        elapsed_ms,
+                        error: ended_because,
+                        tool_calls,
+                    },
+                );
                 self.relax_dependents(tid);
                 // SPECULATIVE abort-loser: this PRIMARY won -> abort + release any twin still racing this
                 // task. (When the TWIN won, resolve_speculation cleared `speculating` BEFORE calling
@@ -1622,34 +1780,34 @@ impl State {
                         });
                         self.relax_dependents(tid);
                         let ended_because = self.last_attempt_error(tid);
-                        self.sink.emit(&SwarmEvent::TaskCompleted {
-                            task_id: tid.to_string(),
-                            salvaged: self.task_salvaged.get(tid).copied().unwrap_or(false),
-                            status: "done".to_string(),
-                            device: dev_id,
-                            model: model_id,
-                            attempts,
-                            elapsed_ms,
-                            session_id: self.task_session_id(tid),
-                            error: ended_because,
-                            tool_calls: Vec::new(),
-                        });
+                        self.emit_completion(
+                            tid,
+                            Completion {
+                                status: "done",
+                                device: dev_id,
+                                model: model_id,
+                                attempts,
+                                elapsed_ms,
+                                error: ended_because,
+                                tool_calls: Vec::new(),
+                            },
+                        );
                     } else {
                         self.dag.tasks.get_mut(tid).unwrap().state = TaskState::Failed;
                         self.fail_descendants(tid);
                         let ended_because = self.last_attempt_error(tid);
-                        self.sink.emit(&SwarmEvent::TaskCompleted {
-                            task_id: tid.to_string(),
-                            salvaged: self.task_salvaged.get(tid).copied().unwrap_or(false),
-                            status: "failed".to_string(),
-                            device: dev_id,
-                            model: model_id,
-                            attempts,
-                            elapsed_ms,
-                            session_id: self.task_session_id(tid),
-                            error: ended_because,
-                            tool_calls: Vec::new(),
-                        });
+                        self.emit_completion(
+                            tid,
+                            Completion {
+                                status: "failed",
+                                device: dev_id,
+                                model: model_id,
+                                attempts,
+                                elapsed_ms,
+                                error: ended_because,
+                                tool_calls: Vec::new(),
+                            },
+                        );
                     }
                 } else {
                     {
@@ -1695,18 +1853,18 @@ impl State {
                 self.fail_descendants(tid);
                 let attempts = self.attempt_log[tid].len() as u32;
                 let ended_because = self.last_attempt_error(tid);
-                self.sink.emit(&SwarmEvent::TaskCompleted {
-                    task_id: tid.to_string(),
-                    salvaged: self.task_salvaged.get(tid).copied().unwrap_or(false),
-                    status: "failed".to_string(),
-                    device: dev_id,
-                    model: model_id,
-                    attempts,
-                    elapsed_ms,
-                    session_id: self.task_session_id(tid),
-                    error: ended_because,
-                    tool_calls: Vec::new(),
-                });
+                self.emit_completion(
+                    tid,
+                    Completion {
+                        status: "failed",
+                        device: dev_id,
+                        model: model_id,
+                        attempts,
+                        elapsed_ms,
+                        error: ended_because,
+                        tool_calls: Vec::new(),
+                    },
+                );
             }
         }
     }
@@ -1881,6 +2039,7 @@ impl State {
             failed,
             split_count: self.split_generation.get(&tid).copied().unwrap_or(0),
             attempt: self.dag.tasks.get(&tid).map(|n| n.attempts).unwrap_or(0),
+            tree_files: self.tree_file_status(),
         };
         self.judge_running = true;
         // Record the JUDGING node before the call, not after: the verdict emit reads
@@ -2297,18 +2456,18 @@ impl State {
             self.relax_dependents(tid);
             let attempts = self.attempt_log[tid].len() as u32;
             let ended_because = self.last_attempt_error(tid);
-            self.sink.emit(&SwarmEvent::TaskCompleted {
-                task_id: tid.to_string(),
-                salvaged: self.task_salvaged.get(tid).copied().unwrap_or(false),
-                status: "done".to_string(),
-                device,
-                model,
-                attempts,
-                elapsed_ms,
-                session_id: self.task_session_id(tid),
-                error: ended_because,
-                tool_calls: Vec::new(),
-            });
+            self.emit_completion(
+                tid,
+                Completion {
+                    status: "done",
+                    device,
+                    model,
+                    attempts,
+                    elapsed_ms,
+                    error: ended_because,
+                    tool_calls: Vec::new(),
+                },
+            );
             return true;
         }
         // THE JUDGE CAN NO LONGER END ANYTHING.
@@ -2498,18 +2657,18 @@ impl State {
             }
             let attempts = self.attempt_log[tid].len() as u32;
             let ended_because = self.last_attempt_error(tid);
-            self.sink.emit(&SwarmEvent::TaskCompleted {
-                task_id: tid.to_string(),
-                salvaged: self.task_salvaged.get(tid).copied().unwrap_or(false),
-                status: status.to_string(),
-                device,
-                model,
-                attempts,
-                elapsed_ms,
-                session_id: self.task_session_id(tid),
-                error: ended_because,
-                tool_calls: Vec::new(),
-            });
+            self.emit_completion(
+                tid,
+                Completion {
+                    status,
+                    device,
+                    model,
+                    attempts,
+                    elapsed_ms,
+                    error: ended_because,
+                    tool_calls: Vec::new(),
+                },
+            );
             return true;
         }
         if !redispatch {
@@ -2830,26 +2989,148 @@ impl State {
                         id: d.clone(),
                     });
                 }
-                match self.prior_hints.entry(d.clone()) {
-                    std::collections::hash_map::Entry::Occupied(mut e) => {
-                        let v = e.get_mut();
-                        // Converging failed paths must not repeat the same sentence.
-                        if !v.contains(&hint) {
-                            v.push_str("; ");
-                            v.push_str(&hint);
-                        }
-                    }
-                    std::collections::hash_map::Entry::Vacant(e) => {
-                        e.insert(hint);
-                    }
-                }
+                // Converging failed paths must not repeat the same sentence, and must not clobber
+                // each other — both are `add_prior_hint`'s job now.
+                self.add_prior_hint(&d, &hint);
                 continue;
             }
             n.state = TaskState::Failed;
+            // A CASCADE IS A TERMINAL OUTCOME AND MUST SAY SO. This branch used to set the state and
+            // emit nothing at all, so a task killed by its dependency was never dispatched and never
+            // completed: a finished run rendered it as a PENDING row with no reason, and every
+            // downstream failure count silently excluded it.
+            //
+            // Exactly once per task: the Done|Failed guard at the top of the loop means a diamond
+            // (a->b, a->c, b->d, c->d) reaches `d` a second time already Failed and skips it.
+            let attempts = self.attempt_log.get(&d).map(|a| a.len()).unwrap_or(0) as u32;
+            self.emit_completion(
+                &d,
+                Completion {
+                    status: "failed",
+                    device: None,
+                    model: None,
+                    attempts,
+                    elapsed_ms: 0,
+                    error: Some(format!("dependency '{parent}' failed")),
+                    tool_calls: Vec::new(),
+                },
+            );
             for dd in self.dag.dependents.get(&d).cloned().unwrap_or_default() {
                 q.push_back((d.clone(), dd));
             }
         }
+    }
+
+    /// TREE WARDEN (the cadence half): one pass over the union of IN-FLIGHT tasks' completed
+    /// dependencies, reporting what each actually left on disk.
+    ///
+    /// Read-only by construction — it claims no device, spends no model call, and changes no task's
+    /// state or outcome. A finding reaches the build only as a prior hint on the NEXT dispatch of
+    /// the task that has to live with it, which is why it can run every pass without racing
+    /// anything.
+    ///
+    /// Skipped while the sink is in flight: integrate-verify is the one task permitted to edit the
+    /// whole tree, so a file it is part-way through rewriting is not a finding.
+    fn sweep_tree_defects(&self) -> Vec<(TaskId, TaskId, String)> {
+        if self.sink_in_flight() {
+            return Vec::new();
+        }
+        let mut out = Vec::new();
+        for (tid, n) in &self.dag.tasks {
+            if n.state != TaskState::Claimed {
+                continue;
+            }
+            for dep in &n.spec.deps {
+                let Some(dn) = self.dag.tasks.get(dep) else {
+                    continue;
+                };
+                if dn.state != TaskState::Done || dn.spec.owned_files.is_empty() {
+                    continue;
+                }
+                let files: Vec<DeliveredFile> = dn
+                    .spec
+                    .owned_files
+                    .iter()
+                    .map(|f| delivered_file(f))
+                    .collect();
+                if let Some(detail) = delivered_dependency_defect(dep, &files) {
+                    out.push((tid.clone(), dep.clone(), detail));
+                }
+            }
+        }
+        out.sort();
+        out
+    }
+
+    /// True the FIRST time this finding is seen for this task, false every sweep after.
+    fn note_tree_defect(&mut self, tid: &str, detail: &str) -> bool {
+        use std::hash::{Hash, Hasher};
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        tid.hash(&mut h);
+        detail.hash(&mut h);
+        let key = h.finish();
+
+        // SAID ONCE IS NOT THE SAME AS DELIVERED ONCE.
+        //
+        // `prior_hints` holds ONE string per task, and several paths `insert` over it wholesale -- the
+        // guided retry and the judge restart deliberately, because their note is the freshest statement
+        // of why the last attempt died. That is right for them and fatal for the warden: with a
+        // remembered-forever key, a finding written at 12:00 and overwritten at 12:01 was never stated
+        // again, and the worker went on building against the same hollow dependency having never been
+        // told about it once.
+        //
+        // Absence of the hint is ambiguous on its own, though, and the two readings need opposite
+        // handling: DISPATCH removes the hint because it delivered it (never repeat), while a bare
+        // insert removes it because it clobbered it (must repeat). So the pending list is cleared at
+        // dispatch, and only here -- if a detail is still listed as pending but no longer present in
+        // the hint, nothing delivered it and the warden says it again.
+        let seen = self.warden_seen.contains(&key);
+        let pending = self
+            .warden_pending
+            .get(tid)
+            .is_some_and(|v| v.iter().any(|d| d == detail));
+        let in_hint = self
+            .prior_hints
+            .get(tid)
+            .is_some_and(|h| h.contains(detail));
+        if !warden_should_state(seen, pending, in_hint) {
+            return false;
+        }
+        self.warden_seen.insert(key);
+        self.warden_pending
+            .entry(tid.to_string())
+            .or_default()
+            .push(detail.to_string());
+        true
+    }
+
+    /// Every planned deliverable in the run and what is on disk for it right now. The judge was
+    /// handed ONE task's file list, so it could answer "is this worker doing its job" and never "is
+    /// this worker building on something that exists". Sorted, so two consecutive judge prompts
+    /// differ only where the tree differs.
+    fn tree_file_status(&self) -> Vec<String> {
+        let mut out: Vec<String> = self
+            .dag
+            .tasks
+            .values()
+            .flat_map(|n| {
+                let done = n.state == TaskState::Done;
+                n.spec.owned_files.iter().map(move |p| {
+                    let f = delivered_file(p);
+                    let state = match (done, f.present, f.skeleton) {
+                        (_, true, true) => "stub",
+                        (true, true, false) => "delivered",
+                        (true, false, _) => "MISSING",
+                        (false, true, false) => "in progress",
+                        (false, false, _) => "not written yet",
+                    };
+                    format!("{p} [{state}]")
+                })
+            })
+            .collect();
+        out.sort();
+        out.dedup();
+        out
     }
 
     fn build_report(&self) -> RunReport {
@@ -3193,6 +3474,8 @@ impl Scheduler {
             testgen_count: 0,
             fix_round: self.fix_round,
             tail_review_dim: 0,
+            warden_seen: HashSet::new(),
+            warden_pending: HashMap::new(),
         }));
         let notify = Arc::new(Notify::new());
         // Edge-detect pause transitions so run_paused/run_unpaused is emitted once per transition, not per tick.
@@ -3293,6 +3576,25 @@ impl Scheduler {
                     bail!(
                         "scheduler stuck: {remaining} task(s) cannot proceed (blocked by failed deps or file holds)"
                     );
+                }
+            }
+            // TREE WARDEN. The judge sees ONE worker at a time; nothing ever looked at the tree the
+            // whole fan is building ON, so a dependency that reported done having written nothing —
+            // or only the stub the engine pre-created — stayed invisible until integrate-verify.
+            // Runs on the loop's own cadence (no timer, no threshold), holds no device, spends no
+            // model call, and states each finding once.
+            if !paused {
+                let mut s = state.lock().await;
+                for (tid, dep, detail) in s.sweep_tree_defects() {
+                    if !s.note_tree_defect(&tid, &detail) {
+                        continue;
+                    }
+                    s.add_prior_hint(&tid, &detail);
+                    s.sink.emit(&SwarmEvent::TreeDefect {
+                        task_id: tid,
+                        dependency: dep,
+                        detail,
+                    });
                 }
             }
             // Dynamic replan: workers idle while a task is still in flight (e.g. a slow tail) — ask the
@@ -3405,7 +3707,13 @@ impl Scheduler {
                     // The judge is NOT capacity-bounded: it must fire even on a SATURATED fleet to kill a
                     // stuck worker and free a slot (that is unblocking, not idle-node work). It still counts
                     // toward idle_jobs so pre-review (below) knows one slot is taken.
-                    if s.judge_running || s.build_in_flight() == 0 {
+                    // NO nothing-in-flight gate. `build_in_flight() == 0` made supervision
+                    // structurally blind whenever the build devices happened to be empty — and a
+                    // supervisor that can only act while the fleet is busy cannot act on the tail,
+                    // which is exactly where a run's last unresolved work sits. `pick_judge_target`
+                    // is the real filter: it selects only a CLAIMED task and claims no device at all
+                    // when it selects none, so removing this cannot fire a judge with no target.
+                    if s.judge_running {
                         None
                     } else {
                         s.pick_judge_target(&self.judge_cfg)
@@ -4150,5 +4458,138 @@ mod salvage_tests {
                 );
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tree_warden_tests {
+    use super::*;
+
+    fn f(path: &str, present: bool, skeleton: bool) -> DeliveredFile {
+        DeliveredFile {
+            path: path.to_string(),
+            present,
+            skeleton,
+        }
+    }
+
+    #[test]
+    fn a_clobbered_finding_is_said_again_but_a_delivered_one_is_not() {
+        // never seen -> say it
+        assert!(warden_should_state(false, false, false));
+        // said, still sitting in the hint, waiting to go out -> do not repeat
+        assert!(!warden_should_state(true, true, true));
+        // said, still pending, but no longer in the hint: a bare insert overwrote it before any
+        // dispatch could deliver it. THIS is the case that was silently lost.
+        assert!(warden_should_state(true, true, false));
+        // said and delivered: dispatch cleared `pending`, so it must never be repeated.
+        assert!(!warden_should_state(true, false, false));
+        // delivered, and something later re-added the same text: still no repeat from the warden.
+        assert!(!warden_should_state(true, false, true));
+    }
+
+    #[test]
+    fn a_dependency_that_delivered_produces_no_finding() {
+        // The NEGATIVE CONTROL. A sweep that fires on a healthy tree would put a false correction in
+        // every worker's next turn, which is worse than the blindness it replaces.
+        assert!(delivered_dependency_defect(
+            "store",
+            &[f("store.py", true, false), f("model.py", true, false)]
+        )
+        .is_none());
+        assert!(delivered_dependency_defect("store", &[]).is_none());
+    }
+
+    #[test]
+    fn a_missing_or_stub_deliverable_is_named_in_the_finding() {
+        let missing = delivered_dependency_defect("store", &[f("store.py", false, false)])
+            .expect("a dependency that wrote nothing is a finding");
+        assert!(missing.contains("store"), "{missing}");
+        assert!(missing.contains("never wrote store.py"), "{missing}");
+
+        let stub = delivered_dependency_defect("api", &[f("api.py", true, true)])
+            .expect("a delivered stub is a finding");
+        assert!(stub.contains("api.py"), "{stub}");
+        assert!(stub.contains("unimplemented stub"), "{stub}");
+    }
+
+    #[test]
+    fn one_finding_states_both_kinds_and_every_file() {
+        let d = delivered_dependency_defect(
+            "core",
+            &[
+                f("a.py", false, false),
+                f("b.py", true, true),
+                f("c.py", true, false),
+                f("d.py", false, false),
+            ],
+        )
+        .expect("mixed damage is still a finding");
+        for named in ["a.py", "b.py", "d.py"] {
+            assert!(d.contains(named), "{named} missing from: {d}");
+        }
+        assert!(
+            !d.contains("c.py"),
+            "a file that WAS delivered must not be reported: {d}"
+        );
+    }
+
+    #[test]
+    fn the_stub_predicate_is_the_judges_own() {
+        // Not a second hand-written "is this implemented" — the same `skeleton_only` the judge uses
+        // to refuse a false Accept. Pinned so a future edit cannot fork the definition.
+        assert!(skeleton_only("def load(path: str) -> dict:\n    ...\n"));
+        assert!(!skeleton_only(
+            "def load(path: str) -> dict:\n    return {}\n"
+        ));
+    }
+
+    #[test]
+    fn a_hint_is_appended_never_clobbered_and_never_repeated() {
+        // `prior_hints` is ONE string per task, consumed at the next dispatch: a bare insert throws
+        // away whatever was already queued for that same dispatch.
+        assert_eq!(appended_hint(None, "b"), "b");
+        assert_eq!(appended_hint(Some(""), "b"), "b");
+        assert_eq!(appended_hint(Some("   "), "b"), "b");
+        assert_eq!(appended_hint(Some("a"), "b"), "a; b");
+        assert_eq!(
+            appended_hint(Some("a; b"), "b"),
+            "a; b",
+            "converging paths must not repeat a sentence already present"
+        );
+        assert_eq!(
+            appended_hint(Some("a; b"), "c"),
+            "a; b; c",
+            "a third distinct note still lands"
+        );
+    }
+
+    #[test]
+    fn a_deliverable_is_read_off_disk_as_written_missing_or_stub() {
+        let dir = std::env::temp_dir().join(format!(
+            "goose-warden-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let written = dir.join("written.py");
+        let empty = dir.join("empty.py");
+        let stub = dir.join("stub.py");
+        std::fs::write(&written, "def go():\n    return 1\n").unwrap();
+        std::fs::write(&empty, "").unwrap();
+        std::fs::write(&stub, "def go():\n    ...\n").unwrap();
+
+        let w = delivered_file(written.to_str().unwrap());
+        assert!(w.present && !w.skeleton);
+        // An EMPTY file is "never written", the same rule `owned_file_written` applies — a
+        // zero-byte deliverable is not a deliverable.
+        let e = delivered_file(empty.to_str().unwrap());
+        assert!(!e.present && !e.skeleton);
+        let s = delivered_file(stub.to_str().unwrap());
+        assert!(s.present && s.skeleton);
+        let absent = delivered_file(dir.join("nope.py").to_str().unwrap());
+        assert!(!absent.present);
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

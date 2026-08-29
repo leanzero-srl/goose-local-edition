@@ -84,46 +84,48 @@ function makeRegistry(debounceMs = 100) {
 }
 
 describe('SwarmWatchRegistry — the push half of the realtime panel', () => {
-  it('arms the run dir, its events dir and activity/', () => {
+  it('arms the run dir and its events dir, and DELIBERATELY NOT activity/', () => {
     const { reg, w, send } = makeRegistry();
-    reg.ensure(1, target(), send);
-    expect(reg.watchedDirs(1)).toEqual([RUN, path.join(RUN, 'activity')]);
-    expect(w.opened).toContain(path.join(RUN, 'activity'));
+    reg.ensure('1', target(), send);
+    expect(reg.watchedDirs('1')).toEqual([RUN]);
+    // The engine rewrites activity/<task>.json ~2.5x/sec PER LANE. Watching it turned the push into
+    // ~10 deltas/sec against a 2/sec poll, and digests are rewritten in place so the incremental
+    // reader cannot make those reads cheap. Push belongs on the append-only event log.
+    expect(w.opened).not.toContain(path.join(RUN, 'activity'));
   });
 
   it('watches the benchmark layout, where the event log sits beside .swarm', () => {
     const { reg, send } = makeRegistry();
-    reg.ensure(1, target({ eventsDir: '/build' }), send);
-    expect(reg.watchedDirs(1)).toEqual(['/build', RUN, path.join(RUN, 'activity')]);
+    reg.ensure('1', target({ eventsDir: '/build' }), send);
+    expect(reg.watchedDirs('1')).toEqual(['/build', RUN]);
   });
 
   it('announces the first change immediately — a quiet lane must not wait out the debounce', () => {
     const { reg, w, sent, send } = makeRegistry();
-    reg.ensure(1, target(), send);
+    reg.ensure('1', target(), send);
     w.change(RUN);
     expect(sent).toEqual([{ workingDir: '/build', runId: 'r1', source: RUN }]);
   });
 
   it('coalesces a burst but never swallows the LAST change of it', () => {
     const { reg, w, clock, sent, send } = makeRegistry(100);
-    reg.ensure(1, target(), send);
-    const activity = path.join(RUN, 'activity');
+    reg.ensure('1', target({ eventsDir: '/build' }), send);
 
     w.change(RUN); // leading edge
     clock.advance(10);
     for (let i = 0; i < 20; i++) w.change(RUN);
     clock.advance(10);
-    w.change(activity); // the final write of the burst
+    w.change('/build'); // the final write of the burst, on the other watched dir
 
     expect(sent).toHaveLength(1);
     clock.advance(100);
     expect(sent).toHaveLength(2);
-    expect(sent[1].source).toBe(activity);
+    expect(sent[1].source).toBe('/build');
   });
 
   it('rate-limits sustained churn to one delta per window and keeps going', () => {
     const { reg, w, clock, sent, send } = makeRegistry(100);
-    reg.ensure(1, target(), send);
+    reg.ensure('1', target(), send);
     for (let i = 0; i < 10; i++) {
       w.change(RUN);
       clock.advance(30);
@@ -134,32 +136,25 @@ describe('SwarmWatchRegistry — the push half of the realtime panel', () => {
 
   it('carries no run data — a delta is a hint to re-read, never the change itself', () => {
     const { reg, w, sent, send } = makeRegistry();
-    reg.ensure(1, target(), send);
+    reg.ensure('1', target(), send);
     w.change(RUN);
     expect(Object.keys(sent[0]).sort()).toEqual(['runId', 'source', 'workingDir']);
   });
 
-  it('re-arms activity/ on a later ensure — the engine creates it after the run starts', () => {
+  it('does not arm activity/ even once the engine has created it', () => {
     const w = fakeWatch();
     const activity = path.join(RUN, 'activity');
-    let activityExists = false;
-    const reg = new SwarmWatchRegistry({
-      watch: (dir, cb) => (dir === activity && !activityExists ? null : w.factory(dir, cb)),
-      debounceMs: 100,
-    });
-    reg.ensure(1, target(), () => {});
-    expect(reg.watchedDirs(1)).toEqual([RUN]);
-
-    activityExists = true;
-    reg.ensure(1, target(), () => {});
-    expect(reg.watchedDirs(1)).toEqual([RUN, activity]);
+    const reg = new SwarmWatchRegistry({ watch: w.factory, debounceMs: 100 });
+    reg.ensure('1', target(), () => {});
+    reg.ensure('1', target(), () => {});
+    expect(reg.watchedDirs('1')).toEqual([RUN]);
+    expect(w.opened).not.toContain(activity);
   });
 
   it('retargets on a run move, closing the old watchers instead of leaking them', () => {
     const { reg, w, send } = makeRegistry();
-    reg.ensure(1, target(), send);
-    reg.ensure(
-      1,
+    reg.ensure('1', target(), send);
+    reg.ensure('1',
       target({
         workingDir: '/other',
         swarmDir: '/other/.swarm',
@@ -169,15 +164,15 @@ describe('SwarmWatchRegistry — the push half of the realtime panel', () => {
       send
     );
 
-    expect(w.closed).toEqual([RUN, path.join(RUN, 'activity')]);
-    expect(reg.watchedDirs(1)).toEqual(['/other/.swarm', path.join('/other/.swarm', 'activity')]);
-    expect(w.openCount()).toBe(2);
+    expect(w.closed).toEqual([RUN]);
+    expect(reg.watchedDirs('1')).toEqual(['/other/.swarm']);
+    expect(w.openCount()).toBe(1);
   });
 
   it('keeps the same watchers when only the run id rolls, and stamps deltas with the new one', () => {
     const { reg, w, sent, send } = makeRegistry();
-    reg.ensure(1, target(), send);
-    reg.ensure(1, target({ runId: 'r2' }), send);
+    reg.ensure('1', target(), send);
+    reg.ensure('1', target({ runId: 'r2' }), send);
     expect(w.closed).toEqual([]);
     w.change(RUN);
     expect(sent[0].runId).toBe('r2');
@@ -185,19 +180,19 @@ describe('SwarmWatchRegistry — the push half of the realtime panel', () => {
 
   it('reports the first ensure only once, so a teardown hook is registered once per subscriber', () => {
     const { reg, send } = makeRegistry();
-    expect(reg.ensure(1, target(), send)).toBe(true);
-    expect(reg.ensure(1, target(), send)).toBe(false);
-    expect(reg.ensure(2, target(), send)).toBe(true);
+    expect(reg.ensure('1', target(), send)).toBe(true);
+    expect(reg.ensure('1', target(), send)).toBe(false);
+    expect(reg.ensure('2', target(), send)).toBe(true);
   });
 
   it('releases every watcher and pending timer when a renderer goes away', () => {
     const { reg, w, clock, sent, send } = makeRegistry(100);
-    reg.ensure(1, target(), send);
+    reg.ensure('1', target(), send);
     w.change(RUN);
     w.change(RUN); // leaves a trailing timer pending
     expect(clock.pending()).toBe(1);
 
-    reg.release(1);
+    reg.release('1');
     expect(w.openCount()).toBe(0);
     expect(reg.size()).toBe(0);
     expect(clock.pending()).toBe(0);
@@ -214,8 +209,8 @@ describe('SwarmWatchRegistry — the push half of the realtime panel', () => {
       },
       debounceMs: 100,
     });
-    expect(() => reg.ensure(1, target(), () => {})).not.toThrow();
-    expect(reg.watchedDirs(1)).toEqual([path.join(RUN, 'activity')]);
+    expect(() => reg.ensure('1', target({ eventsDir: '/build' }), () => {})).not.toThrow();
+    expect(reg.watchedDirs('1')).toEqual(['/build']);
   });
 
   it('routes each subscriber only its own deltas', () => {
@@ -223,9 +218,8 @@ describe('SwarmWatchRegistry — the push half of the realtime panel', () => {
     const a: SwarmDelta[] = [];
     const b: SwarmDelta[] = [];
     const reg = new SwarmWatchRegistry({ watch: w.factory, debounceMs: 100 });
-    reg.ensure(1, target(), (d) => a.push(d));
-    reg.ensure(
-      2,
+    reg.ensure('1', target(), (d) => a.push(d));
+    reg.ensure('2',
       target({ workingDir: '/other', swarmDir: '/other/.swarm', eventsDir: '/other/.swarm' }),
       (d) => b.push(d)
     );
@@ -238,9 +232,8 @@ describe('SwarmWatchRegistry — the push half of the realtime panel', () => {
 
   it('releaseAll drops every subscriber', () => {
     const { reg, w, send } = makeRegistry();
-    reg.ensure(1, target(), send);
-    reg.ensure(
-      2,
+    reg.ensure('1', target(), send);
+    reg.ensure('2',
       target({ workingDir: '/other', swarmDir: '/other/.swarm', eventsDir: '/other/.swarm' }),
       send
     );

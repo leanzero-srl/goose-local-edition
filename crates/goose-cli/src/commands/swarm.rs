@@ -678,11 +678,6 @@ pub struct SwarmConfig {
     /// dispatch. Default OFF: the borrow changes what an arm measures and must be attributed.
     #[serde(default)]
     pub supervision_pool: bool,
-    /// F790-1 (GOOSE_SWARM_JUDGE_NUDGE env overrides): when the omni-judge corroborates a loop,
-    /// REDIRECT the call in-session with the judge's own hint instead of aborting it — context
-    /// preserved, attempt not burned; bounded redirects, then the abort remains the backstop.
-    #[serde(default)]
-    pub judge_nudge: bool,
     /// F781/#16 (GOOSE_SWARM_FIX_SCHED env overrides): run each multi-file fix round as a REAL
     /// scheduled DAG (fix::r{N}::{file} tasks through a second scheduler run with judge +
     /// tail-review supervision) instead of the hand-rolled fan. Default OFF until the campaign
@@ -1152,19 +1147,6 @@ fn default_scout_budget_secs() -> u64 {
     900
 }
 
-/// A scout's budget: the WORK it may do, and the clock that only exists so a wedged model cannot hang the run.
-///
-/// These travel together because either alone is a trap. A clock alone is what shipped: it guillotined a
-/// scout at 120.023s mid-thought and called the apology a finding. A work cap alone would let one stuck model
-/// hold the fleet forever.
-#[derive(Clone, Copy)]
-struct ScoutBudget {
-    /// Agent turns (≈ tool calls). THE budget — a scout stops when it has looked enough things up.
-    max_lookups: u32,
-    /// Wall-clock backstop ONLY. Set well clear of the work cap so it never stops a healthy scout.
-    backstop_secs: u64,
-}
-
 /// How much WORK a scout may do — the real budget, in agent turns (each turn is at most one tool call).
 ///
 /// 10 per Mihai's ask. This is what should stop a scout: it has looked things up until it had enough, not
@@ -1275,7 +1257,6 @@ impl Default for SwarmConfig {
             answers_win_floor: Some(true),
             cross_module_check: true,
             fix_sched: false,
-            judge_nudge: false,
             supervision_pool: false,
             ask_max_q: Some(3),
             split: Some(true),
@@ -2133,12 +2114,28 @@ async fn handle_cloud(def: &'static CloudDef, cmd: Option<CloudCommand>) -> Resu
 pub async fn handle_swarm(cmd: SwarmCommand) -> Result<()> {
     match cmd {
         SwarmCommand::Verify { dir, owns } => {
+            // OWNERSHIP FIRST, FROM THE RUN'S OWN RECORD. Four of the five detectors iterate the owned
+            // list, so an empty one silently reduces `verify` to the import check alone — and a sweep
+            // that printed "clean" for sixty-three trees was reporting only that.
+            let owns = if owns.is_empty() {
+                owned_files_from_run_log(&dir)
+            } else {
+                owns
+            };
             let mut findings = verify_owned_files(&dir, &owns);
             findings.extend(verify_tree_imports(&dir));
-            if findings.is_empty() {
-                println!("clean: {}", dir.display());
+            // NAME WHAT WAS NOT CHECKED. A verifier that cannot say which detectors it managed to run
+            // makes a false negative indistinguishable from a pass, which is the worse outcome here.
+            let scope = if owns.is_empty() {
+                " (imports only — no owned files given and none recorded in <tree>/.swarm/*.jsonl, so the \
+                 missing / EMPTY / DOES-NOT-PARSE / SKELETON / html-asset checks did NOT run)"
             } else {
-                println!("{} finding(s) in {}", findings.len(), dir.display());
+                ""
+            };
+            if findings.is_empty() {
+                println!("clean: {}{scope}", dir.display());
+            } else {
+                println!("{} finding(s) in {}{scope}", findings.len(), dir.display());
                 for f in &findings {
                     println!("  - {f}");
                 }
@@ -3212,34 +3209,6 @@ fn print_import_summary(s: &ImportSummary) {
     }
 }
 
-/// GOOSE_SWARM_ASK_REPLAN gate. After the user answers the clarify questions, the swarm can either REUSE the
-/// first plan (the answers now reach every worker VERBATIM via DispatchRequest.user_decisions — this
-/// comment previously claimed they rode research_findings, which never leaves the planner)
-/// or RE-PLAN from scratch with the answers folded in. A full re-plan is a ~15-20min tax (skeleton re-draft +
-/// re-detailing every subtask) that only pays off when the answers change the plan STRUCTURE; when the ASK was
-/// about semantics the reused plan is identical in shape and the workers still see the answers. DEFAULT is now
-/// REUSE (skip the re-plan): an A/B on the same ASKING helpdesk spec (UNIQ12 re-plan vs UNIQ12b skip) produced
-/// TWO equally-correct full-win apps while the skip saved ~15min — the re-plan's confidence boost (69->88) did
-/// NOT yield a better app. Opt INTO the re-plan with GOOSE_SWARM_ASK_REPLAN=1 (also on/true/yes). N=1 with a
-/// draft-variance confound (the skip arm reused a higher-confidence 78 plan), so the default stays a knob.
-/// UNREACHABLE FROM THE DESKTOP UNTIL NOW — env-only, and env never arrives (LaunchServices). The SIXTH
-/// member of that family today, and the one a user actually hits: the engine PRINTS "(set
-/// GOOSE_SWARM_ASK_REPLAN=1 to re-plan against them instead)" to a user who has no way to set it.
-///
-/// MEASURED, allon4-replicate, and it is exactly what Mihai saw on screen: agreement 55, clarity 30 ->
-/// min = 30 -> below floor -> ASK (correct: only the user can pin clarity). User answers all 5. Rescore lifts
-/// clarity 30 -> 100, so conf becomes min(55,100) = 55 and AGREEMENT now binds. But ask_replan is off, so the
-/// engine "keeps this plan", the loop never re-enters, THE RETARGET NEVER FIRES — and the run builds at 55
-/// against a floor of 85, on a plan drafted BEFORE the answers existed.
-///
-/// The default stays REUSE. That is evidence-backed (an A/B on the same asking spec produced two equally
-/// correct apps while the skip saved ~15min, and the re-plan's 69->88 confidence bump bought no better app),
-/// and n=1 with a draft-variance confound is not enough to move it. What was wrong is that nobody could
-/// CHOOSE. Now: env > config > false.
-fn ask_replan_enabled(v: Option<String>) -> bool {
-    ask_replan_resolved(v, load_config().ask_replan)
-}
-
 /// The pure precedence, split out so it is testable (the wrapper reads the process env + config).
 fn ask_replan_resolved(env: Option<String>, cfg: Option<bool>) -> bool {
     match env {
@@ -3434,6 +3403,81 @@ const OMNI_JUDGE_INTERVAL_SECS: u64 = 60;
 const JUDGE_WAKE: std::time::Duration = std::time::Duration::from_secs(30);
 
 const OMNI_JUDGE_MIN_CHARS: usize = 2_000;
+
+/// ONE definition of "this call produced something since the judge last looked", used by EVERY judge
+/// gate that asks the question.
+///
+/// It was four hand-written copies of `produced_since_last_look >= OMNI_JUDGE_MIN_CHARS` — the burst-gap
+/// accounting, the tail-similarity veto, the DRIFTING trip and the DRIFTING hold — and all four counted
+/// REASONING CHARACTERS ONLY. A worker whose production is ACTIONS therefore reads as dead in every one
+/// of them: `omni_quiet_secs` climbs monotonically while `omni_longest_gap_secs` stays 0, so
+/// `judge_quiet_within_rhythm` is unreachable after the first look, and DRIFTING fires on the first look
+/// with no corroboration. MEASURED: `apptest-bad-input`, a read-only observer that ran 26 shell commands
+/// and barely narrated, collected EIGHTEEN nudges; over one 8h20m run 138 of 242 looks sat below the
+/// one-char-per-second the judge is told means DEAD STREAM.
+///
+/// A tool call is production the same way a paragraph is. The loop case this widening gives up is still
+/// covered: `recur.recurring()` — the same command, the same bytes back — arms the streak on its own and
+/// never consults this predicate.
+fn produced_since_look(chars: usize, actions: usize) -> bool {
+    chars >= OMNI_JUDGE_MIN_CHARS || actions > 0
+}
+
+/// WHICH ARM produced a nudge, for the artefact. Three distinct triggers reach one emit — a measured
+/// repeat, a DRIFTING verdict, and a LOOPING streak that is itself armed either by measured recurrence
+/// or by tail similarity — and the payload named none of them, so "which trigger produces useful nudges"
+/// could not be answered from any file the engine writes.
+///
+/// Ordered most-factual first: a measured repeat is an engine fact, DRIFTING is a verdict about taste,
+/// and the streak's two arms are told apart by whether the detector could see the recurrence itself.
+fn nudge_arm(repeat_measured: bool, drifting_now: bool, recurring: bool) -> &'static str {
+    if repeat_measured {
+        "measured_repeat"
+    } else if drifting_now {
+        "drifting"
+    } else if recurring {
+        "measured_recurrence"
+    } else {
+        "tail_similarity_streak"
+    }
+}
+
+/// Tool calls made SINCE the supervisor last redirected this call.
+///
+/// The number four separate surfaces claimed was zero. The terminator fires on "no tool call since the
+/// last nudge", never on "no tool call ever" — `judge_out_of_moves` fired on a call with 2 early tool
+/// calls and every message about it said ZERO. `None` means no nudge has landed yet, in which case the
+/// whole call counts.
+fn calls_since_nudge(at_last_nudge: Option<usize>, now: usize) -> usize {
+    at_last_nudge.map_or(now, |n| now.saturating_sub(n))
+}
+
+/// The REVIEW loop's stuck-guard state: a rejection diagnostic is evidence only for as long as the plan
+/// it was raised against is still the plan.
+///
+/// It was a bare `Option<String>` assigned in the rejection arm and cleared NOWHERE, so
+/// reject(D) -> a patch that APPLIES -> reject(D) tripped the guard and ended REVIEW early with findings
+/// outstanding, while both of its messages asserted something that had not happened ("round N-1 was
+/// rejected", "on consecutive rounds with an unchanged plan"). Made a type so the clearing cannot be
+/// forgotten again, and so the rule is testable without driving a review round.
+#[derive(Default)]
+struct RejectMemo {
+    last: Option<String>,
+}
+
+impl RejectMemo {
+    /// Record a rejection; true when the SAME diagnostic already stood against the SAME plan.
+    fn rejected(&mut self, diag: &str) -> bool {
+        let stuck = self.last.as_deref() == Some(diag);
+        self.last = Some(diag.to_string());
+        stuck
+    }
+
+    /// A patch applied, so the plan is not the plan that was rejected.
+    fn plan_changed(&mut self) {
+        self.last = None;
+    }
+}
 /// Cap the looks per call so a very long healthy call cannot spend unbounded judge time.
 // REMOVED: OMNI_JUDGE_MAX_LOOKS (was 6). A cap on how many times the judge may look is a cap on how
 // long a call is supervised, and the judge is now the only thing watching.
@@ -3836,31 +3880,6 @@ fn short_digest(s: &str) -> String {
     format!("{:08x}", h.finish() as u32)
 }
 
-/// #122 detail-memo key: hash of the FULL detailer input so a cache hit means byte-identical LLM input (an
-/// identical prompt deserves an identical spec). MUST include goal + findings — both are in the detailer prompt
-/// and mutate across rounds (re-research / answered-ask append to them), so a narrower key would reuse a stale
-/// detail that ignores a new user decision. Uses the same order the detailer concatenates.
-fn detail_memo_key(goal: &str, id: &str, brief: &str, files: &str, findings: &str) -> String {
-    use std::collections::hash_map::DefaultHasher;
-    use std::hash::{Hash, Hasher};
-    let mut h = DefaultHasher::new();
-    goal.hash(&mut h);
-    0u8.hash(&mut h);
-    id.hash(&mut h);
-    0u8.hash(&mut h);
-    brief.hash(&mut h);
-    0u8.hash(&mut h);
-    files.hash(&mut h);
-    0u8.hash(&mut h);
-    findings.hash(&mut h);
-    format!("{:016x}", h.finish())
-}
-
-/// #122: round-1 cross-draft agreement at/above this skips the backbone-lock round-2 re-draft. Derived from
-/// 29 real runs — the sole round-2 adoption had round-1 conf 85; every run at >= 90 discarded the round. 90
-/// keeps a 5-point margin above the lone adoption so the guard never skips a historically-useful re-draft.
-const BACKBONE_SKIP_CONF_FLOOR: u8 = 90;
-
 // REMOVED: fn detail_budget_secs() and DETAIL_BUDGET_SECS_DEFAULT (75s).
 //
 // This was the cap that wrote a worker's ENTIRE spec in 75 seconds. Its own comment recorded what that
@@ -3868,14 +3887,6 @@ const BACKBONE_SKIP_CONF_FLOOR: u8 = 90;
 // 122-character brief scored 42.7% against 88.7% for the run where it got a 1,497-character spec
 // containing the vendor's /v1 prefix. "The engine was willing to spend 10-19 MINUTES re-drafting a plan
 // and 75 SECONDS writing the specs that plan depends on."
-
-/// #122 pure decision: should the backbone-lock round-2 re-draft actually run? It runs whenever the backbone
-/// lever is on, EXCEPT when the skip lever is on AND round-1 agreement already clears the floor — then the
-/// free drafts share the structure the lock would pin, so the ~250s round can only be discarded (0/11 adopted
-/// at conf >= 90 in real runs). skip_confident OFF => byte-identical to the pre-#122 behavior (always runs).
-fn should_run_backbone_round2(backbone_on: bool, skip_confident: bool, conf1: u8) -> bool {
-    backbone_on && !(skip_confident && conf1 >= BACKBONE_SKIP_CONF_FLOOR)
-}
 
 /// #135: resolve the straggler grace window (seconds). An EXPLICIT env or config value wins and is
 /// used fixed, exactly as before; None means DERIVE it from the round's own timings at arming
@@ -3890,15 +3901,6 @@ fn straggler_grace_secs(cfg: Option<u64>) -> Option<u64> {
     straggler_grace_resolved(std::env::var("GOOSE_SWARM_STRAGGLER_GRACE_SECS").ok(), cfg)
 }
 
-/// G1: the straggler's grace, DERIVED from the round it is in. When the quorum lands at
-/// `quorum_at_secs` (all drafts start together), the straggler has already run that long; it gets
-/// HALF that again — 1.5x the quorum's own time in total — floored at 10s and capped by what
-/// remains of draft_timeout (the hard backstop). Slow rounds get a proportionally patient grace,
-/// fast rounds a tight one; no constant survives to misfit either. Pure/testable.
-fn derived_straggler_grace(quorum_at_secs: u64, draft_timeout: u64) -> u64 {
-    (quorum_at_secs / 2).clamp(10, draft_timeout.saturating_sub(quorum_at_secs).max(10))
-}
-
 /// #135 pure decision: given the number of drafts requested (`n`) and how many have so far returned a VALID
 /// skeleton (`valid`), should the grace timer for the lone straggler be armed now? True only when every draft
 /// but one is in (`valid >= n - 1`) AND we already hold at least 2 valid drafts (agreement needs a pair).
@@ -3906,97 +3908,6 @@ fn derived_straggler_grace(quorum_at_secs: u64, draft_timeout: u64) -> u64 {
 /// diversity while more than one draft is still outstanding. n < 3 can never arm (no lone straggler to stop).
 fn should_arm_straggler_grace(n: usize, valid: usize) -> bool {
     n >= 3 && valid >= 2 && valid >= n - 1
-}
-
-/// G1: how the drafts collector sizes the straggler's grace. Fixed = an explicit env/config value
-/// (pre-G1 behavior, clamped by the caller); Derive = compute at arming from the round's own
-/// clock via `derived_straggler_grace` — the default, because no constant fits calls spanning
-/// 30-900s (a 45s constant structurally degraded best-of-N to N-1 on this fleet).
-#[derive(Clone, Copy)]
-enum StragglerGrace {
-    Fixed(u64),
-    Derive { draft_timeout: u64 },
-}
-
-/// #135 collection loop: drain `js` (one draft future per slot) as drafts resolve. The instant every draft
-/// but one has returned a VALID skeleton (should_arm_straggler_grace) AND the in-hand quorum already
-/// decides the outcome (`quorum_decides`), give the lone straggler only `grace_secs` more, then abort it
-/// and return the quorum. Returns (candidates in completion order, dead count, stopped count, deferred).
-///
-/// `quorum_decides` is the fix for the measured collapse: aborting the third draft cut every round to 2,
-/// and at 2 drafts `best_subset_agreement`'s `n <= k` fallback made the pool-invariant lift arithmetically
-/// unreachable, `consensus_k` dead, and `structural_convergence` a unanimity vote — so the ladder fired on
-/// a harsher metric than a full pool would produce, ~25 min per rung. The asymmetry is deliberate: when the
-/// two in-hand drafts already clear the ask floor, the third cannot trigger a ladder and aborting it keeps
-/// the full speed win; when they are BELOW the floor, the third draft is the cheapest thing that can avert
-/// a rung, so the straggler keeps running (bounded by draft_timeout, the hard backstop). `deferred` reports
-/// that the count condition held while the quorum did not decide — the observable for the registered check.
-async fn collect_drafts_with_straggler_stop<F, Q>(
-    mut js: tokio::task::JoinSet<Option<String>>,
-    n: usize,
-    grace: StragglerGrace,
-    is_valid: F,
-    quorum_decides: Q,
-) -> (Vec<String>, usize, usize, bool)
-where
-    F: Fn(&str) -> bool,
-    Q: Fn(&[String]) -> bool,
-{
-    let round_started = std::time::Instant::now();
-    let mut c: Vec<String> = Vec::new();
-    let mut dead = 0usize;
-    let mut valid = 0usize;
-    let mut stopped = 0usize;
-    let mut deferred = false;
-    // Inert until armed: the `if armed` select guard means this is never awaited to completion before the
-    // quorum lands, at which point it is reset to `grace_secs` from now. A day is far past any real draft
-    // (bounded by draft_timeout) yet nowhere near the std::Instant overflow that a huge sentinel would hit.
-    let grace_timer = tokio::time::sleep(std::time::Duration::from_secs(86_400));
-    tokio::pin!(grace_timer);
-    let mut armed = false;
-    while !js.is_empty() {
-        tokio::select! {
-            biased;
-            joined = js.join_next() => {
-                match joined {
-                    Some(Ok(Some(j))) => {
-                        if is_valid(&j) {
-                            valid += 1;
-                        }
-                        c.push(j);
-                    }
-                    // JoinError (panic/abort) or a slot with no final_output.
-                    Some(_) => dead += 1,
-                    None => break,
-                }
-                if !armed && should_arm_straggler_grace(n, valid) {
-                    if quorum_decides(&c) {
-                        let grace_secs = match grace {
-                            StragglerGrace::Fixed(g) => g,
-                            StragglerGrace::Derive { draft_timeout } => derived_straggler_grace(
-                                round_started.elapsed().as_secs(),
-                                draft_timeout,
-                            ),
-                        };
-                        grace_timer
-                            .as_mut()
-                            .reset(tokio::time::Instant::now() + std::time::Duration::from_secs(grace_secs));
-                        armed = true;
-                    } else {
-                        deferred = true;
-                    }
-                }
-            }
-            _ = &mut grace_timer, if armed => {
-                stopped = js.len();
-                js.abort_all();
-                // Drain the aborted tasks so nothing leaks. A draft that finished in the same instant the
-                // grace expired is discarded (we already hold a quorum) — rare and harmless.
-                while js.join_next().await.is_some() {}
-            }
-        }
-    }
-    (c, dead, stopped, deferred)
 }
 
 /// #135 generic straggler collector for a fleet fanout where EVERY completed task is a usable result and any
@@ -4047,463 +3958,6 @@ where
         }
     }
     (results, stopped)
-}
-
-/// integrate-verify runs the PROGRAM end-to-end; it does NOT need the unit-test subtask, and a FAILING test
-/// must NOT block it. Otherwise the run reports FAILED while integrate-verify never ran to check whether the
-/// app actually works (the dependency-blocked false-negative: observed on UNIQ6, where a failed `tests` task
-/// blocked integrate-verify so the app's real bug went uncaught and the run looked failed for the wrong
-/// reason). Strip test-subtask ids from integrate-verify's `depends_on` so it runs regardless of the tests;
-/// it still depends on the real module/entry subtasks. Returns how many deps were stripped (for logging).
-fn strip_integrate_verify_test_deps(plan: &mut serde_json::Value, lang: TargetLang) -> usize {
-    let Some(arr) = plan.get("subtasks").and_then(|s| s.as_array()) else {
-        return 0;
-    };
-    let is_test_subtask = |s: &serde_json::Value| -> bool {
-        let id = s.get("id").and_then(|i| i.as_str()).unwrap_or("");
-        if id == "integrate-verify" {
-            return false;
-        }
-        let files: Vec<&str> = s
-            .get("files")
-            .and_then(|f| f.as_array())
-            .map(|a| a.iter().filter_map(|x| x.as_str()).collect())
-            .unwrap_or_default();
-        // was `lang.is_test_file(f)` — a FULL PATH into a BASENAME predicate, so every
-        // `tests/test_*.py` read as NOT-a-test. Six sibling sites already used `base_of`.
-        id.contains("test") || (!files.is_empty() && files.iter().all(|f| is_test_path(lang, f)))
-    };
-    let test_ids: std::collections::HashSet<String> = arr
-        .iter()
-        .filter(|s| is_test_subtask(s))
-        .filter_map(|s| s.get("id").and_then(|i| i.as_str()).map(String::from))
-        .collect();
-    if test_ids.is_empty() {
-        return 0;
-    }
-    let mut stripped = 0;
-    if let Some(arr) = plan.get_mut("subtasks").and_then(|s| s.as_array_mut()) {
-        for s in arr.iter_mut() {
-            if s.get("id").and_then(|i| i.as_str()) == Some("integrate-verify") {
-                if let Some(deps) = s.get_mut("depends_on").and_then(|d| d.as_array_mut()) {
-                    let before = deps.len();
-                    deps.retain(|d| d.as_str().map(|x| !test_ids.contains(x)).unwrap_or(true));
-                    stripped += before - deps.len();
-                }
-            }
-        }
-    }
-    stripped
-}
-
-/// GOOSE_SWARM_PARALLEL_TESTS backstop. With per-module tests requested, the weak model sometimes still
-/// leaves a stray `cli`/entry dependency on a leaf-module test, re-serializing it behind the cli build and
-/// erasing the parallelism. This narrowly drops ONLY the cli/entry (and integrate-verify) edge from a test
-/// subtask that UNIQUELY tests a single non-cli module, and PRESERVES every sibling/shared-module dep (so a
-/// test that genuinely imports a shared module is never broken — the failure mode of a naive drop-all). A
-/// monolithic/ambiguous test (spanning modules, or testing the cli itself) is left UNCHANGED. Returns the
-/// number of edges relaxed. Only ever called when the flag is ON; the default path never invokes it.
-fn relax_test_module_deps(plan: &mut serde_json::Value, lang: TargetLang) -> usize {
-    fn base(f: &str) -> String {
-        let name = f.rsplit('/').next().unwrap_or(f);
-        let stem = name.rsplit_once('.').map(|(s, _)| s).unwrap_or(name);
-        stem.strip_prefix("test_").unwrap_or(stem).to_string()
-    }
-    fn id_of(s: &serde_json::Value) -> String {
-        s.get("id")
-            .and_then(|i| i.as_str())
-            .unwrap_or("")
-            .to_string()
-    }
-    fn files_of(s: &serde_json::Value) -> Vec<String> {
-        s.get("files")
-            .and_then(|f| f.as_array())
-            .map(|a| {
-                a.iter()
-                    .filter_map(|x| x.as_str())
-                    .map(String::from)
-                    .collect()
-            })
-            .unwrap_or_default()
-    }
-    fn is_cli_like(s: &serde_json::Value) -> bool {
-        let idl = id_of(s).to_lowercase();
-        if idl.contains("cli") || idl.contains("entry") || idl.contains("main") {
-            return true;
-        }
-        files_of(s).iter().any(|f| {
-            let b = f.rsplit('/').next().unwrap_or(f);
-            b.contains("__main__") || b == "cli.py" || b == "main.py" || b == "cli.js"
-        })
-    }
-    let is_test = |s: &serde_json::Value| -> bool {
-        let id = id_of(s);
-        if id == "integrate-verify" {
-            return false;
-        }
-        let files = files_of(s);
-        // is_test_file takes a BASE name (the Python arm matches the `test_` prefix), so a full path like
-        // `tests/test_core.py` returned FALSE and the file-based branch never fired. The sibling
-        // relax_contracted_module_deps gets this right via base_of; this one did not.
-        id.contains("test")
-            || (!files.is_empty()
-                && files
-                    .iter()
-                    .all(|f| lang.is_test_file(f.rsplit('/').next().unwrap_or(f))))
-    };
-    let Some(arr) = plan.get("subtasks").and_then(|s| s.as_array()) else {
-        return 0;
-    };
-    // The ONLY edges we ever drop: cli/entry subtasks + integrate-verify.
-    let drop_ids: std::collections::HashSet<String> = arr
-        .iter()
-        .filter(|s| is_cli_like(s) || id_of(s) == "integrate-verify")
-        .map(id_of)
-        .collect();
-    // module base-name -> owning NON-test subtask id.
-    let mut owner: std::collections::HashMap<String, String> = std::collections::HashMap::new();
-    for s in arr {
-        if is_test(s) || id_of(s) == "integrate-verify" {
-            continue;
-        }
-        let id = id_of(s);
-        for f in files_of(s) {
-            // Same base-name contract as above: with a full path this returned false for a test file, so a
-            // test file could enter the SOURCE owner map — and because `base` strips the `test_` prefix,
-            // `tests/test_core.py` would claim the key `core` and could shadow the real core module.
-            if !lang.is_test_file(f.rsplit('/').next().unwrap_or(&f)) {
-                owner.entry(base(&f)).or_insert_with(|| id.clone());
-            }
-        }
-    }
-    // Test subtasks that UNIQUELY test a single non-cli module -> safe to relax.
-    let mut relax_ids: std::collections::HashSet<String> = std::collections::HashSet::new();
-    for s in arr {
-        if !is_test(s) || is_cli_like(s) {
-            continue; // leave non-tests + the cli's own test alone
-        }
-        let owners: std::collections::HashSet<&String> = files_of(s)
-            .iter()
-            .filter_map(|f| owner.get(&base(f)))
-            .collect();
-        if owners.len() == 1 {
-            let oid = owners.into_iter().next().unwrap();
-            if !drop_ids.contains(oid) {
-                relax_ids.insert(id_of(s));
-            }
-        }
-    }
-    if relax_ids.is_empty() {
-        return 0;
-    }
-    let mut relaxed = 0;
-    if let Some(arr) = plan.get_mut("subtasks").and_then(|s| s.as_array_mut()) {
-        for s in arr.iter_mut() {
-            if !relax_ids.contains(&id_of(s)) {
-                continue;
-            }
-            if let Some(deps) = s.get_mut("depends_on").and_then(|d| d.as_array_mut()) {
-                let before = deps.len();
-                deps.retain(|d| d.as_str().map(|x| !drop_ids.contains(x)).unwrap_or(true));
-                relaxed += before - deps.len();
-            }
-        }
-    }
-    relaxed
-}
-
-/// GOOSE_SWARM_RELAX_CONTRACTED_DEPS backstop (#130). CONTRACTS injects a FROZEN signature-only interface for
-/// every module into every worker BEFORE it writes code, and no subtask compiles its own files — the per-worker
-/// Rust gate (`rust_compile_error`) no-ops without Cargo.toml and only rejects errors located in a worker's OWN
-/// files, so the whole crate is built only at the integrate-verify sink. A module that merely IMPORTS a sibling
-/// therefore already has its signatures and never needs that sibling's FILES to exist at its own build step; a
-/// `depends_on` a chain-planning architect added for a type/import need is FALSE serialization that idles the
-/// fleet one node at a time. This drops those edges: for every non-sink, non-test subtask it removes every dep
-/// EXCEPT a dep on the sink itself (never legally present — that would be a cycle), making each module a root
-/// while integrate-verify keeps all its incoming edges as the single compile/test join. Test subtasks are left
-/// UNTOUCHED — a per-module test RUNS against its module and the signature-only contract cannot satisfy that.
-/// Removing edges can never cycle or orphan a task (files live in a shared tree, the sink joins everyone), so
-/// the DAG stays valid by construction. Returns the number of edges relaxed. Pure — unit-tested without a model.
-fn relax_contracted_module_deps(plan: &mut serde_json::Value, lang: TargetLang) -> usize {
-    fn id_of(s: &serde_json::Value) -> String {
-        s.get("id")
-            .and_then(|i| i.as_str())
-            .unwrap_or("")
-            .to_string()
-    }
-    fn base_of(f: &str) -> &str {
-        f.rsplit('/').next().unwrap_or(f)
-    }
-    fn files_of(s: &serde_json::Value) -> Vec<String> {
-        s.get("files")
-            .and_then(|f| f.as_array())
-            .map(|a| {
-                a.iter()
-                    .filter_map(|x| x.as_str())
-                    .map(String::from)
-                    .collect()
-            })
-            .unwrap_or_default()
-    }
-    // is_test_file takes a BASE name (the Python arm checks the `test_` prefix), so pass base_of, NOT the full
-    // path — the sibling relax_test_module_deps passes the full path and is silently wrong for `dir/test_x.py`.
-    let is_test = |s: &serde_json::Value| -> bool {
-        let id = id_of(s);
-        if id == "integrate-verify" {
-            return false;
-        }
-        let files = files_of(s);
-        id.contains("test")
-            || (!files.is_empty() && files.iter().all(|f| lang.is_test_file(base_of(f))))
-    };
-    let Some(arr) = plan.get("subtasks").and_then(|s| s.as_array()) else {
-        return 0;
-    };
-    // Modules whose upstream edges we may flatten: every subtask that is neither the sink nor a test.
-    let relax_ids: std::collections::HashSet<String> = arr
-        .iter()
-        .filter(|s| id_of(s) != "integrate-verify" && !is_test(s))
-        .map(id_of)
-        .collect();
-    if relax_ids.is_empty() {
-        return 0;
-    }
-    let mut relaxed = 0;
-    if let Some(arr) = plan.get_mut("subtasks").and_then(|s| s.as_array_mut()) {
-        for s in arr.iter_mut() {
-            if !relax_ids.contains(&id_of(s)) {
-                continue; // never touch the sink or a test subtask
-            }
-            if let Some(deps) = s.get_mut("depends_on").and_then(|d| d.as_array_mut()) {
-                let before = deps.len();
-                // Keep only a dep on the real join (a cycle in practice, so this empties module deps); every
-                // other module->module edge is the false serialization the frozen contract already satisfies.
-                deps.retain(|d| d.as_str() == Some("integrate-verify"));
-                relaxed += before - deps.len();
-            }
-        }
-    }
-    relaxed
-}
-
-/// SINK DECOMPOSITION (Phase-1, GOOSE_SWARM_FAN_VERIFY). Split the monolithic `integrate-verify` sink — which
-/// depends on EVERY module and does ALL verification serially in one model turn-loop on one node (it stalls) —
-/// into a fannable per-module half plus a thin serial join. For every file-owning, non-test module M it adds a
-/// scoped read-only `verify::<M>` task depending only on M (owns no files → co-run race-free, fans across the
-/// fleet exactly like the build tasks that succeed), then rewrites the existing `integrate-verify` sink KEEPING
-/// its exact id (`sink_in_flight` hardcodes it): its module deps are re-pointed onto the matching `verify::<M>`
-/// tasks (non-module deps preserved) and its description becomes the thin whole-program join. The join stays
-/// the SOLE end-to-end oracle.
-///
-/// Only ever called when the flag is ON; the default path never invokes it, so OFF is byte-identical. No-op
-/// (returns 0) when there is no sink, no fannable module, or the split was already applied. Returns the number
-/// of per-module verify tasks created. Pure — unit-tested without a model.
-/// GOOSE_SWARM_SPLIT_FAT (#131, Mihai's finer-slicing): deterministically split a FAT module — a `hard` task owning
-/// MANY source files (the whole package as ONE task) — into one child per cohesive concern (canonical role, with a
-/// file and its `_test` kept together), each getting its OWN small contract stub. A fat task's single whole-package
-/// stub TIMED OUT on the 262k fleet (measured mustsolve-test5/6: `core-miner` produced NO stub → the package's files
-/// diverged on type names → the app did not compile). Runs in the plan-transform pipeline BEFORE contracts +
-/// fan-verify, so each child auto-gets its own detailer spec, contract stub, and `verify::` task — no extra plumbing.
-/// Children carry the parent's EXTERNAL deps and rely on each other's FROZEN CONTRACTS (not files), exactly like
-/// relax_contracted_deps. Only splits a hard module with >= `min_files` source files that fall into >= 2 roles.
-/// Returns the number of parent modules split; OFF (not called) => byte-identical.
-fn split_fat_modules(plan: &mut serde_json::Value, lang: TargetLang, min_files: usize) -> usize {
-    fn id_of(s: &serde_json::Value) -> String {
-        s.get("id")
-            .and_then(|i| i.as_str())
-            .unwrap_or("")
-            .to_string()
-    }
-    fn base_of(f: &str) -> &str {
-        f.rsplit('/').next().unwrap_or(f)
-    }
-    fn files_of(s: &serde_json::Value) -> Vec<String> {
-        s.get("files")
-            .and_then(|f| f.as_array())
-            .map(|a| {
-                a.iter()
-                    .filter_map(|x| x.as_str())
-                    .map(String::from)
-                    .collect()
-            })
-            .unwrap_or_default()
-    }
-    // Group key: canonical role with any `_test` suffix / `test_` prefix stripped, so an impl file and its test
-    // land in the SAME child (a worker owns a concern end-to-end).
-    fn split_key(f: &str) -> String {
-        let r = canonical_role(f);
-        let r = r.strip_suffix("_test").unwrap_or(&r);
-        let r = r.strip_prefix("test_").unwrap_or(r);
-        r.to_string()
-    }
-    let Some(arr) = plan.get("subtasks").and_then(|s| s.as_array()) else {
-        return 0;
-    };
-    struct Fat {
-        id: String,
-        difficulty: String,
-        deps: Vec<serde_json::Value>,
-        groups: Vec<(String, Vec<String>)>,
-    }
-    let mut fats: Vec<Fat> = Vec::new();
-    for s in arr {
-        let id = id_of(s);
-        if id == "integrate-verify" || id.starts_with("verify::") {
-            continue;
-        }
-        if s.get("difficulty").and_then(|d| d.as_str()) != Some("hard") {
-            continue;
-        }
-        let files = files_of(s);
-        let source: Vec<&String> = files
-            .iter()
-            .filter(|f| !lang.is_test_file(base_of(f)))
-            .collect();
-        if source.len() < min_files {
-            continue;
-        }
-        let mut map: std::collections::BTreeMap<String, Vec<String>> =
-            std::collections::BTreeMap::new();
-        for f in &files {
-            map.entry(split_key(f)).or_default().push(f.clone());
-        }
-        if map.len() < 2 {
-            continue; // one cohesive concern — nothing to gain by splitting
-        }
-        let deps = s
-            .get("depends_on")
-            .and_then(|d| d.as_array())
-            .cloned()
-            .unwrap_or_default();
-        fats.push(Fat {
-            id,
-            difficulty: "hard".to_string(),
-            deps,
-            groups: map.into_iter().collect(),
-        });
-    }
-    if fats.is_empty() {
-        return 0;
-    }
-    let split_ids: std::collections::HashSet<String> = fats.iter().map(|f| f.id.clone()).collect();
-    let mut parent_children: std::collections::HashMap<String, Vec<String>> =
-        std::collections::HashMap::new();
-    let mut new_children: Vec<serde_json::Value> = Vec::new();
-    for fat in &fats {
-        let mut kids = Vec::new();
-        for (role, files) in &fat.groups {
-            let cid = format!("{}-{}", fat.id, role);
-            kids.push(cid.clone());
-            new_children.push(serde_json::json!({
-                "id": cid,
-                "description": format!(
-                    "(split of {}) the `{}` concern — own ONLY: {}. Use the FROZEN CONTRACTS of sibling concerns \
-                     for their types/functions; do NOT redefine them. Keep the package's exported names consistent \
-                     with those contracts.",
-                    fat.id, role, files.join(", ")
-                ),
-                "depends_on": fat.deps.clone(),
-                "files": files.clone(),
-                "difficulty": fat.difficulty,
-            }));
-        }
-        parent_children.insert(fat.id.clone(), kids);
-    }
-    if let Some(arr) = plan.get_mut("subtasks").and_then(|s| s.as_array_mut()) {
-        arr.retain(|s| !split_ids.contains(&id_of(s)));
-        for s in arr.iter_mut() {
-            if let Some(deps) = s.get("depends_on").and_then(|d| d.as_array()) {
-                let mut new_deps: Vec<serde_json::Value> = Vec::new();
-                for d in deps {
-                    match d.as_str() {
-                        Some(ds) if parent_children.contains_key(ds) => {
-                            for c in &parent_children[ds] {
-                                new_deps.push(serde_json::json!(c));
-                            }
-                        }
-                        _ => new_deps.push(d.clone()),
-                    }
-                }
-                s["depends_on"] = serde_json::json!(new_deps);
-            }
-        }
-        arr.extend(new_children);
-    }
-    fats.len()
-}
-
-/// Does this subtask id NAME a test task? Word-aware, because the substring check it replaces
-/// (`id.contains("test")`) silently classifies `latest`, `contest`, `attestation` and `fastest-path` as
-/// tests. In fan_verify_split that misfires twice over: such a module gets NO `verify::` task, AND it stays
-/// off the join's re-pointed dep list — so it is verified by nothing at all. Ids are kebab/snake case
-/// (`test-record`, `engine-tests`, `tests-and-readme`), so segment equality is the right test. Pure.
-fn id_names_a_test(id: &str) -> bool {
-    id.split(|c: char| !c.is_ascii_alphanumeric())
-        .any(|seg| seg.eq_ignore_ascii_case("test") || seg.eq_ignore_ascii_case("tests"))
-}
-
-/// The read-only END-TO-END SHARD spec: one slice of the app's advertised commands, checked against the
-/// spec's golden values. Owns nothing and writes nothing, so N of these co-run race-free on one tree.
-/// Deterministically extract the ADVERTISED SURFACE from the operator's frozen spec, as numbered
-/// items an e2e shard can partition without inventing the list itself.
-///
-/// THE DEFECT THIS EXISTS FOR. `e2e_shard_spec` tells each shard to "number them 1,2,3... in the
-/// order the spec gives them, and verify ONLY the ones whose position mod {shards} == {m}" — and the
-/// shard never receives the spec. MEASURED across the shard reports of one run: one shard reported
-/// the spec "advertises only ONE command/usage mode", another "advertises 3 commands/usages", and a
-/// third checked nothing at all, reporting "there is no command whose position satisfies position
-/// mod 3 == 2". A modulo over lists of different lengths is not a partition — coverage was neither
-/// disjoint nor complete, and a shard that enumerated an empty slice returned no findings, which
-/// reads as a pass.
-///
-/// The sibling fan that works does exactly this: `per_module_verify_spec` interpolates
-/// `files.join(", ")`, so the engine names the slice and the model cannot re-derive it. The rule is
-/// that a fan must ENUMERATE ITS ITEMS, not merely supply a selector over them.
-///
-/// Every http(s) URL the spec names, in order, deduped. This is the input to the deterministic doc
-/// fetch, and it exists because a spec can hand the fleet a document nobody is able to open.
-///
-/// MEASURED, three baseline units on an identical config: the one whose plan carried the vendor's
-/// `/v1` path prefix scored 88.7%, and the two whose plans did not scored 50.0% and 42.7% with every
-/// vendor call returning 404. The prefix is stated six times in the document the spec points at and
-/// zero times in the spec itself, so getting it right was a coin flip — and `research_tools`
-/// reported `available: [], can_look_things_up: false` on all three, because the research extensions
-/// are context7 / web-search and both need an API key this machine does not have. The spec said
-/// "Read it before you start"; nothing in the run was able to.
-///
-/// So the fetch is the ENGINE's, not a model's: no key, no extension, no tool call to hallucinate.
-/// A document the engine retrieved is grounded by construction, which is exactly the property
-/// `doc_prefetch` demands. (The parenthetical here used to read `grounded == is_mcp && ok`; that is
-/// stale — grounding is `is_mcp || fetched_external`, so a shell curl grounds too.)
-///
-/// Delimiter discipline is the same one `spec_get_endpoints` had to learn: the URL arrives wrapped in
-/// backticks, so scanning to whitespace captures the closing delimiter and the fetch 404s on a URL
-/// that differs from the real one by one character.
-/// Which grounding a scout is told it has. Extracted as a pure function because the alternative —
-/// an inline three-branch `if` — is exactly the shape that let the ladder's shadow diagnostic and
-/// the branch it mirrored drift apart (F707): a test of the *condition* passes while the *call site*
-/// does something else. Here the call site matches on this value, so a test of this function is a
-/// test of the call site.
-#[derive(Debug, PartialEq, Eq, Clone, Copy)]
-enum ScoutLookup {
-    /// An MCP extension is attached; the lens's own tool hint applies.
-    Mcp,
-    /// No extension, but the SPEC NAMES DOCUMENTS and the scout has a shell to curl them with.
-    SpecDocs,
-    /// Nothing to look up with — ask for calibration instead of lookup.
-    None,
-}
-
-fn scout_lookup(has_mcp: bool, has_docs: bool) -> ScoutLookup {
-    // MCP wins when both are available: it is the channel the lens tool_hints are written for, and
-    // the doc URLs still reach the worker verbatim through `doc_facts` regardless.
-    if has_mcp {
-        ScoutLookup::Mcp
-    } else if has_docs {
-        ScoutLookup::SpecDocs
-    } else {
-        ScoutLookup::None
-    }
 }
 
 /// The fenced example blocks of a fetched document, which is where the wire contract actually lives.
@@ -4764,299 +4218,6 @@ fn repeated_post_verdict(first: &str, second: &str) -> RepeatedPost {
         return RepeatedPost::Unreadable;
     }
     RepeatedPost::Unreadable
-}
-
-fn e2e_shard_spec(lang: TargetLang, shard: usize, shards: usize, oracle: &[String]) -> String {
-    // THE LIST, ENUMERATED BY THE ENGINE. Without it each shard re-derives "the commands the spec
-    // advertises" from whatever spec-shaped artifact is in the tree — the README the build itself
-    // wrote — and MEASURED, three shards of one run derived lists of length 1, 1 and 3. A modulo over
-    // lists of different lengths is not a partition, so coverage was neither disjoint nor complete
-    // and the shard that enumerated an empty slice reported clean. The sibling fan that works,
-    // per_module_verify_spec, interpolates files.join(", ") for exactly this reason.
-    //
-    // Empty oracle => the block is empty and the sentence below is the original, byte for byte, so a
-    // spec with no extractable surface behaves exactly as it does today.
-    let (numbered, selector) = if oracle.is_empty() {
-        (
-            String::new(),
-            "The spec advertises a list of commands/usages: number them 1,2,3... in the order the \
-             spec gives them, and verify ONLY the ones whose position satisfies"
-                .to_string(),
-        )
-    } else {
-        let list = oracle
-            .iter()
-            .enumerate()
-            .map(|(i, item)| format!("  {}. {item}", i + 1))
-            .collect::<Vec<_>>()
-            .join("\n");
-        (
-            format!(
-                "\n\nTHE ADVERTISED SURFACE — this numbered table IS the list, taken verbatim from the \
-                 operator's spec. Do NOT re-derive it from any file in the working directory; a README \
-                 in the tree was written by this build and is not the spec:\n{list}\n\n"
-            ),
-            "Verify ONLY the numbered items above whose position satisfies".to_string(),
-        )
-    };
-    format!(
-        "END-TO-END SHARD {n} OF {shards}. You own NOTHING and must WRITE NO files — this is a read-only \
-         gate that runs in PARALLEL with its sibling shards on the assembled app. BUILD + ACTUALLY RUN the \
-         program's advertised entry point ({entry}). {numbered}{selector} \
-         position mod {shards} == {m} — that is, command {n}, then {n} plus {shards}, and so on. Your \
-         siblings own the others; checking theirs wastes the fleet and checking none of yours leaves a hole. \
-         For EACH command you own do a GOLDEN-VALUE CHECK: feed a concrete input the spec gives or implies \
-         and confirm the ACTUAL output equals the SPECIFIC value the spec implies — not merely exit 0, and \
-         never invent an expected output to make it pass. For a MULTI-OUTPUT command (--count N / a list of \
-         N) confirm all N are correct AND genuinely distinct. INVOCATION: the spec's leading program name is \
-         the program ITSELF, never an argument. REPORT precisely what you ran, what it printed, and what you \
-         expected — do NOT fix anything and do NOT edit files; the integrate-verify join owns repair. If you \
-         own no command (the spec advertises fewer than {shards}), say so and stop.",
-        n = shard + 1,
-        m = (shard + 1) % shards,
-        shards = shards,
-        entry = lang.entry_run_example(),
-    )
-}
-
-/// SINK DECOMPOSITION, second axis. `fan_verify_split` shards verification by MODULE, which leaves the
-/// whole-program end-to-end run as ONE task on ONE node — MEASURED 47% of all node-busy time in h1-treat-4
-/// (26.5 min while two nodes idled). But an app's advertised COMMANDS are embarrassingly parallel: checking
-/// `get` says nothing about checking `compact`, and each only needs the assembled tree, which is read-only.
-///
-/// This adds `verify-e2e::<i>` shards that split the command list round-robin (the JOB sizes the cut —
-/// ~2 commands per shard, capped by slots; F852), each
-/// depending on every `verify::<module>` (so the tree is built) and owning no files (so they co-run
-/// race-free, exactly like the per-module verifies). integrate-verify keeps its id and its role as the sole
-/// REPAIR point and final join, and now gates behind the shards instead of running every command itself.
-///
-/// No-op (0) without a sink, without modules, or when already sharded. Returns the shard count.
-fn fan_e2e_split(
-    plan: &mut serde_json::Value,
-    lang: TargetLang,
-    shards: usize,
-    oracle: &[String],
-) -> usize {
-    // THE JOB DECIDES THE CUT, NOT THE FLEET (F852). The previous rule let the fleet pick the shard
-    // count first (`shards.clamp(2,4)`) with the oracle only capping it — so the SAME 4-command spec
-    // was cut 4 ways on a 6-slot fleet and 2 ways on a 2-slot fleet. MEASURED on the identical spec:
-    // the four 1-command shards cost 1,842-1,856s of fleet task-time (301-758s EACH) while the two
-    // 2-command shards cost 809-870s — and the 4-shard arm's SLOWEST shard (759s) was longer than the
-    // 2-shard arm's (607s). Each shard pays a fixed overhead (read the tree, boot the app) that dwarfs
-    // the per-command work, so more shards is strictly more total work AND no wall gain. The rule that
-    // matches the measured economics: ~two commands per shard (a 1-command remainder shard is allowed;
-    // two 1-command shards at n=2 keep the join lean), fleet-blind DOWNWARD — no fleet size can ever
-    // mint more pieces than commands/2 — and concurrency-capped UPWARD (adversarial-review finding:
-    // a 1-slot fleet must not pay 4 serialized shard overheads on an 8-command oracle; a shard that
-    // cannot run concurrently is pure overhead, so never cut more ways than there are slots to run).
-    // Below two real pieces there is nothing to fan, so the join keeps the end-to-end run itself.
-    let shards = match oracle.len() {
-        0 => shards.clamp(2, 4),
-        n => n.div_ceil(2).clamp(2, 4).min(n).min(shards.max(2)),
-    };
-    if shards < 2 {
-        return 0;
-    }
-    let Some(arr) = plan.get("subtasks").and_then(|s| s.as_array()) else {
-        return 0;
-    };
-    if !arr
-        .iter()
-        .any(|s| s.get("id").and_then(|i| i.as_str()) == Some("integrate-verify"))
-        || arr.iter().any(|s| {
-            s.get("id")
-                .and_then(|i| i.as_str())
-                .map(|i| i.starts_with("verify-e2e::"))
-                .unwrap_or(false)
-        })
-    {
-        return 0;
-    }
-    let verify_ids: Vec<String> = arr
-        .iter()
-        .filter_map(|s| s.get("id").and_then(|i| i.as_str()))
-        .filter(|i| i.starts_with("verify::"))
-        .map(String::from)
-        .collect();
-    if verify_ids.is_empty() {
-        return 0;
-    }
-    let new_tasks: Vec<serde_json::Value> = (0..shards)
-        .map(|i| {
-            serde_json::json!({
-                "id": format!("verify-e2e::{i}"),
-                "description": e2e_shard_spec(lang, i, shards, oracle),
-                "depends_on": verify_ids,
-                "files": [],
-                "difficulty": "hard"
-            })
-        })
-        .collect();
-    if let Some(arr) = plan.get_mut("subtasks").and_then(|s| s.as_array_mut()) {
-        for s in arr.iter_mut() {
-            if s.get("id").and_then(|i| i.as_str()) != Some("integrate-verify") {
-                continue;
-            }
-            let mut deps: Vec<serde_json::Value> = (0..shards)
-                .map(|i| serde_json::json!(format!("verify-e2e::{i}")))
-                .collect();
-            // Keep any non-verify dep the architect put on the sink.
-            if let Some(old) = s.get("depends_on").and_then(|d| d.as_array()) {
-                for d in old {
-                    let keep = d
-                        .as_str()
-                        .map(|x| !x.starts_with("verify::"))
-                        .unwrap_or(true);
-                    if keep && !deps.iter().any(|e| e == d) {
-                        deps.push(d.clone());
-                    }
-                }
-            }
-            s["depends_on"] = serde_json::json!(deps);
-        }
-        arr.extend(new_tasks);
-    }
-    shards
-}
-
-fn fan_verify_split(plan: &mut serde_json::Value, lang: TargetLang) -> usize {
-    fn id_of(s: &serde_json::Value) -> String {
-        s.get("id")
-            .and_then(|i| i.as_str())
-            .unwrap_or("")
-            .to_string()
-    }
-    fn base_of(f: &str) -> &str {
-        f.rsplit('/').next().unwrap_or(f)
-    }
-    fn files_of(s: &serde_json::Value) -> Vec<String> {
-        s.get("files")
-            .and_then(|f| f.as_array())
-            .map(|a| {
-                a.iter()
-                    .filter_map(|x| x.as_str())
-                    .map(String::from)
-                    .collect()
-            })
-            .unwrap_or_default()
-    }
-    let is_test = |s: &serde_json::Value| -> bool {
-        let id = id_of(s);
-        if id == "integrate-verify" {
-            return false;
-        }
-        let files = files_of(s);
-        id_names_a_test(&id)
-            || (!files.is_empty() && files.iter().all(|f| lang.is_test_file(base_of(f))))
-    };
-    let Some(arr) = plan.get("subtasks").and_then(|s| s.as_array()) else {
-        return 0;
-    };
-    // Nothing to thin without a sink; never re-split an already-fanned plan (idempotent).
-    if !arr.iter().any(|s| id_of(s) == "integrate-verify")
-        || arr.iter().any(|s| id_of(s).starts_with("verify::"))
-    {
-        return 0;
-    }
-    // Fannable modules: everything that is neither the sink nor a test AND owns at least one file (a
-    // scaffolding task owning nothing has no isolated surface to verify).
-    //
-    // …at least one file WITH A CHECKABLE SURFACE. The gate's spec is import/build-check language;
-    // a docs-only module (a `readme` task owning README.md) was still fanned, so a 27B was
-    // dispatched to import-check MARKDOWN — a wasted slot and a nonsense task card (operator
-    // report, run 3). Docs are graded by the scorer's docs tier; they have no isolated
-    // import/build surface, so they get no verify:: gate.
-    let is_doc = |f: &str| {
-        let b = base_of(f).to_ascii_lowercase();
-        b.ends_with(".md")
-            || b.ends_with(".txt")
-            || b.ends_with(".rst")
-            || b.ends_with(".adoc")
-            || b == "license"
-            || b == "notice"
-    };
-    let modules: Vec<(String, Vec<String>)> = arr
-        .iter()
-        .filter(|s| id_of(s) != "integrate-verify" && !is_test(s))
-        .map(|s| (id_of(s), files_of(s)))
-        .filter(|(_, files)| !files.is_empty() && !files.iter().all(|f| is_doc(f)))
-        .collect();
-    if modules.is_empty() {
-        return 0;
-    }
-    let module_set: std::collections::HashSet<String> =
-        modules.iter().map(|(id, _)| id.clone()).collect();
-    // A `verify::<M>` depends on M and NOTHING else — in particular never on a test subtask.
-    //
-    // MEASURED (h1-treat-1): a version of this that added an edge onto whichever task writes M's test file
-    // deadlocked the oracle. `test-wal` failed on a SyntaxError, `fail_descendants` cascaded Failed through
-    // `verify::wal` into `integrate-verify`, and the end-to-end gate never ran at all. That is precisely the
-    // invariant `strip_integrate_verify_test_deps` exists to protect ("a failing unit-test subtask must not
-    // BLOCK integrate-verify ... else the run reports FAILED while integrate-verify never ran to confirm
-    // whether the app works") — coupling the sink to tests through verify:: re-introduces it transitively.
-    let new_tasks: Vec<serde_json::Value> = modules
-        .iter()
-        .map(|(id, files)| {
-            serde_json::json!({
-                "id": format!("verify::{id}"),
-                "description": per_module_verify_spec(files),
-                "depends_on": [id],
-                "files": [],
-                "difficulty": "medium"
-            })
-        })
-        .collect();
-    let thin = thin_integrate_verify_spec(lang);
-    if let Some(arr) = plan.get_mut("subtasks").and_then(|s| s.as_array_mut()) {
-        for s in arr.iter_mut() {
-            if id_of(s) != "integrate-verify" {
-                continue;
-            }
-            s["description"] = serde_json::json!(thin);
-            // THE JOIN OWNS NOTHING — and until now the rewrite forgot to say so.
-            //
-            // The `verify::<M>` tasks created a few lines above set `"files": []` explicitly, because a
-            // read-only verification task owns no deliverable. The SINK is the same kind of task after
-            // this rewrite, but whatever the architect happened to put in its `files` survived — and
-            // `thin_integrate_verify_spec` then CONTRADICTS that field, telling it to assemble, run,
-            // read the shards' reports and repair, never to author a file of its own.
-            //
-            // A leftover deliverable is not cosmetic; it arms gates written for implementers. MEASURED
-            // across six cells the architect gave the sink `README.md` once and
-            // `tests/test_integration.py` once — a third of the time — and in the test-file case the
-            // over-read gate armed (`owns_code` is true for a test, false for a doc) and judged the join
-            // OVER_READING -> RE_DISPATCH at 7.2 minutes: a full restart of the join, which is the exact
-            // cost this engine keeps paying for transient faults (F473: 15-44 min per restart).
-            //
-            // It also silently disabled the salvage paths. `degrade_on_stall`'s owns-nothing branch and
-            // the judge's owns-nothing Accept branch both gate on `owned_files.is_empty()`, so in
-            // precisely the cells where the sink was eligible for a re-dispatch, the two mechanisms
-            // meant to prevent one were inert.
-            s["files"] = serde_json::json!([]);
-            let mut new_deps: Vec<serde_json::Value> = Vec::new();
-            if let Some(deps) = s.get("depends_on").and_then(|d| d.as_array()) {
-                for d in deps {
-                    match d.as_str() {
-                        Some(ds) if module_set.contains(ds) => {
-                            new_deps.push(serde_json::json!(format!("verify::{ds}")))
-                        }
-                        _ => new_deps.push(d.clone()),
-                    }
-                }
-            }
-            // Guarantee the join gates behind every per-module verify (a module the architect left off the
-            // sink's deps is still verified before the assembled run).
-            for (id, _) in &modules {
-                let vid = format!("verify::{id}");
-                if !new_deps.iter().any(|x| x.as_str() == Some(vid.as_str())) {
-                    new_deps.push(serde_json::json!(vid));
-                }
-            }
-            s["depends_on"] = serde_json::json!(new_deps);
-        }
-        arr.extend(new_tasks);
-    }
-    modules.len()
 }
 
 #[cfg(test)]
@@ -10081,7 +9242,6 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
     /// gate ever issues, and a false finding against a freshly built app is the most expensive
     /// mistake available here — so anything it cannot decide from the body must be Unreadable,
     /// never Duplicates.
-    #[test]
     /// NO CONFIGURED NUMBER MAY EVER BECOME A WALL CLOCK ON A CALL. Mihai's standing rule, and the one
     /// that has been re-broken most: "All of the caps, all of the timers need to go, local models take a
     /// long time to complete." The live config still carries worker_timeout_secs: 420 and
@@ -10157,6 +9317,9 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
         assert_eq!(review_dedupe_key(a), review_dedupe_key(b));
     }
 
+    /// IT HAD NO `#[test]`, so it never ran — clippy reported it as a plain never-used function among
+    /// eighty others and it was invisible. A test that does not run is not a test.
+    #[test]
     fn a_repeated_post_is_only_a_finding_when_the_body_actually_proves_duplication() {
         let sync = r#"{"fetched":247,"inserted":247,"total":247}"#;
         assert_eq!(
@@ -14350,72 +13513,6 @@ struct RunAgentOut {
     tool_calls: Vec<ToolCallRecord>,
 }
 
-#[derive(Clone)]
-struct ResearchQuestion {
-    id: String,
-    question: String,
-    kind: String,
-}
-
-/// The tool-attempt OUTCOME behind a research finding — the deterministic substrate the preference-vs-
-/// researchable classifier (#94) keys its fallback off. `grounded: bool` flattens four cases the classifier
-/// must separate: no tool call at all, a failed/cut-off lookup, an MCP call that returned nothing usable,
-/// and a real successful MCP lookup. Derived purely from engine tool-call events — no model opinion enters.
-///
-/// Not yet consumed by the routing logic (that is #94's per-decision classifier, deferred): P1 lands the
-/// substrate so the ASK-AWAY interim routing ("CalledEmpty → ask, Errored/NeverCalled → retry") is buildable
-/// without guessing.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum ResearchAttempt {
-    /// No research tool call at all — pure model reasoning.
-    NeverCalled,
-    /// A lookup was attempted and failed or was cut off (`ok == Some(false)` / `ok == None`).
-    Errored,
-    /// A tool ran but grounded nothing usable — only non-MCP calls, or MCP calls returning nothing.
-    CalledEmpty,
-    /// At least one successful MCP lookup (today's `grounded: true`).
-    Grounded,
-}
-
-/// Classify the research tool-call trace into a single `ResearchAttempt`. Pure + deterministic (engine
-/// events only) so it is unit-testable and no model opinion enters. `Grounded` wins over any failure, then
-/// an attempted-but-failed lookup is `Errored`, tools-ran-but-nothing-grounded is `CalledEmpty`, and an
-/// empty trace is `NeverCalled`.
-fn classify_research_attempt(tool_calls: &[ToolCallRecord]) -> ResearchAttempt {
-    if tool_calls.is_empty() {
-        return ResearchAttempt::NeverCalled;
-    }
-    if tool_calls.iter().any(|t| t.ok == Some(true) && t.is_mcp) {
-        return ResearchAttempt::Grounded;
-    }
-    if tool_calls
-        .iter()
-        .any(|t| matches!(t.ok, Some(false) | None))
-    {
-        return ResearchAttempt::Errored;
-    }
-    ResearchAttempt::CalledEmpty
-}
-
-struct ResearchFinding {
-    question: String,
-    kind: String,
-    findings: String,
-    /// PROVENANCE: did the agent actually LOOK THIS UP, or reason it out? A research worker is only given
-    /// research MCP extensions (context7 / web-search / doc-processor, swarm.rs:158), so a SUCCESSFUL MCP
-    /// tool call means it consulted an external source. A finding with none is the model's own reasoning.
-    /// This is the deterministic signal that separates a grounded fact (safe to trust / cache / learn) from
-    /// an invented one (which must never silently close a user's product decision). A tool call is an engine
-    /// event, so no model opinion enters the classification.
-    grounded: bool,
-    /// The tool names that grounded it (for the audit trail — today "N resolved" says nothing about HOW).
-    lookups: Vec<String>,
-    /// The tool-attempt outcome (P1 substrate for #94's classifier fallback). Widens `grounded` into the
-    /// four distinct cases: NeverCalled / Errored / CalledEmpty / Grounded. Not yet routed on.
-    #[allow(dead_code)]
-    attempt: ResearchAttempt,
-}
-
 /// True when the agent consulted an EXTERNAL source — a successful research MCP call (web-search /
 /// context7). Research workers get only research MCP extensions, so `is_mcp && ok` is exactly "looked it up
 /// externally".
@@ -14451,16 +13548,6 @@ fn args_fetch_external_url(name: &str, args: &serde_json::Value) -> bool {
     .iter()
     .any(|p| text.contains(p));
     has_url && has_fetcher
-}
-
-/// The tool calls that GROUND a research finding. A finding backed by none of these is the model's own
-/// recall, which may be good planning context but must never be routed to workers as a verified fact.
-fn research_lookups(tool_calls: &[ToolCallRecord]) -> Vec<String> {
-    tool_calls
-        .iter()
-        .filter(|t| t.ok == Some(true) && (t.is_mcp || t.fetched_external))
-        .map(|t| t.name.clone())
-        .collect()
 }
 
 /// A fixed CORRECTNESS-review angle, fanned one-per-model across the idle fleet in the post-execute
@@ -14791,74 +13878,6 @@ fn pitfall_items() -> Vec<String> {
     items
 }
 
-/// A fixed research angle a SCOUT investigates in parallel (no serial scoping call needed). The
-/// `codebase` lens is amendment-only; it is listed first so it survives a low `max` clamp.
-///
-/// ORDER IS PRIORITY, and for two reasons now, not one. Beyond the `max` clamp above, straggler-stop
-/// sacrifices the LAST lens to finish: `select_lenses` preserves this order, the fan dispatches in it,
-/// and `should_arm_straggler_grace` then gives whichever lens is still outstanding only
-/// `straggler_grace_secs` more. MEASURED on 4 of 4 runs — 1-node and 3-node alike — the dropped scout
-/// was `edge-cases` EVERY time (`scouts_planned` lists three lenses, `research_completed` reports two
-/// findings, and `.swarm/activity/scout-edge-cases.json` never reaches `phase: done`).
-///
-/// That made the sacrifice systematic rather than incidental, and it fell on the worst possible lens:
-/// `edge-cases` is the one asked for "failure modes and the concrete tests that would prove the task
-/// is done correctly", which is exactly what the vendor-contract and robustness checks grade — the
-/// tier that collapsed to 14.3% on the weakest run. The straggler-stop comment at the scout call site
-/// reasons that "dropping the last scout only loses one lens of context"; that is true of a random
-/// lens and false of the same lens every run.
-///
-/// So `edge-cases` now precedes the two lenses whose loss is cheaper: `architecture` largely restates
-/// work the architect does itself from the spec, and `libraries` is near-inert on a spec that forbids
-/// dependencies. Behaviourally inert when straggler-stop is off — with grace 0 the fan awaits all.
-struct ScoutLens {
-    id: &'static str,
-    title: &'static str,
-    brief: &'static str,
-    tool_hint: &'static str,
-    amendment_only: bool,
-}
-
-const SCOUT_LENSES: &[ScoutLens] = &[
-    ScoutLens {
-        id: "codebase",
-        title: "Existing codebase",
-        brief: "Investigate the EXISTING code in the working directory: structure, key files, conventions, and exactly where the requested change must hook in.",
-        tool_hint: "Use the developer shell tools (ls, grep, cat) to read the existing code.",
-        amendment_only: true,
-    },
-    ScoutLens {
-        id: "edge-cases",
-        title: "Edge cases & testing",
-        brief: "Enumerate the tricky edge cases, failure modes, and the concrete tests that would prove the task is done correctly.",
-        tool_hint: "Reason from the task; use web-search for domain specifics if needed.",
-        amendment_only: false,
-    },
-    ScoutLens {
-        id: "architecture",
-        title: "Architecture & data model",
-        brief: "Propose the module/file breakdown, the data model/types, and how the pieces fit — a skeleton the planner can decompose from.",
-        tool_hint: "Reason from the task; use web-search only to confirm conventions.",
-        amendment_only: false,
-    },
-    ScoutLens {
-        id: "libraries",
-        title: "Libraries & APIs",
-        brief: "Identify the key libraries/frameworks this task needs and look up their REAL current API: function/class names, signatures, minimal usage snippets, and gotchas.",
-        tool_hint: "Use the context7 tools (resolve-library-id then get-library-docs) and web-search.",
-        amendment_only: false,
-    },
-];
-
-/// The lenses to run for this task: drop amendment-only lenses on greenfield, then clamp to `max`.
-fn select_lenses(is_amendment: bool, max: u32) -> Vec<&'static ScoutLens> {
-    SCOUT_LENSES
-        .iter()
-        .filter(|l| !l.amendment_only || is_amendment)
-        .take(max.max(1) as usize)
-        .collect()
-}
-
 /// M6 plan confidence via SELF-CONSISTENCY: how much the N drafted skeleton candidates AGREE on shape.
 /// Verbalized self-confidence is overconfident, but agreement across independent drafts is a calibrated
 /// signal — when the drafts diverge, the model doesn't really know how to decompose this (a cue to
@@ -14879,100 +13898,6 @@ pub(crate) struct PlanConf {
     /// never dropped either: the workers still have to make each call and defend it, and the operator must
     /// be able to audit what was chosen. Empty unless the delegated_decisions_ok lever is on.
     delegated_decisions: Vec<String>,
-}
-
-/// Which sub-signal is the binding (lower) constraint on plan confidence — decides the retarget action.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum BindingSignal {
-    Agreement,
-    SpecClarity,
-}
-
-impl PlanConf {
-    /// The lower of the two computed sub-signals; `None` when neither was computed (retarget is then inert).
-    fn binding_signal(&self) -> Option<BindingSignal> {
-        match (self.agreement, self.spec_clarity) {
-            (Some(a), Some(c)) if a < c => Some(BindingSignal::Agreement),
-            (Some(a), Some(c)) if c < a => Some(BindingSignal::SpecClarity),
-            // Tie: spec-clarity binds when the product/decisions are the concern, else agreement.
-            (Some(_), Some(_)) => Some(
-                if !self.product_specified || !self.open_decisions.is_empty() {
-                    BindingSignal::SpecClarity
-                } else {
-                    BindingSignal::Agreement
-                },
-            ),
-            (Some(_), None) => Some(BindingSignal::Agreement),
-            (None, Some(_)) => Some(BindingSignal::SpecClarity),
-            (None, None) => None,
-        }
-    }
-}
-
-/// The dynamic action to raise confidence, routed by the binding signal + `product_specified` (no new
-/// classifier): agreement-bound → re-draft toward convergence (if drafts can still grow); spec-clarity-bound
-/// with a defined product + lookupable open decisions → targeted re-research; else → ask the user.
-#[derive(Clone, Debug, PartialEq, Eq)]
-enum RetargetAction {
-    Redraft,
-    ReResearch(Vec<String>),
-    Ask,
-    None,
-}
-
-/// `can_look_things_up`: does this run have ANY lookup tool (context7 / web-search)?
-///
-/// This is the deterministic half of the preference-vs-lookupable triage. The engine has no way to know
-/// whether "should splits be uneven?" is answerable by search — that needs judgement, and a keyword matcher
-/// would be a guess wearing a rule's clothes. But it knows something simpler and stronger: WITH NO TOOLS,
-/// NOTHING IS LOOKUPABLE. A research round with an empty tool list cannot resolve anything; it can only ask
-/// the model to invent an answer and stamp it settled.
-///
-/// MEASURED (loop-ab-baseline): research_tools {"available":[],"can_look_things_up":false}, and the retarget
-/// still routed 5 open decisions to ReResearch as kind:"web" — whose tool_hint is literally "Use the
-/// web-search tool." The engine told five 27b workers to use a tool that does not exist, then counted their
-/// guesses: "0 actually looked up, 5 counted as settled". Those guesses were appended to the prompt as
-/// "settled defaults, do not re-ask", spec_clarity jumped 30 -> 100, and the ask that finally fired 90
-/// minutes later asked about the engine's OWN INVENTIONS instead of the user's real choice.
-/// 4 of those 5 decisions were product preferences no search could ever answer. The ask resolved them in
-/// 1.8 minutes. Research spent 65 minutes failing to answer what a human answered in under two.
-fn retarget_action(
-    pc: &PlanConf,
-    can_grow_drafts: bool,
-    // may_research: may this run route an open decision to a research round at all? FALSE when the run has
-    // no lookup tools (the deterministic half of the preference-vs-lookupable triage — with no tools nothing
-    // is lookupable) OR when the triage lever is off, in which case the caller passes `true` and the routing
-    // is byte-identical to before the lever existed.
-    may_research: bool,
-) -> RetargetAction {
-    match pc.binding_signal() {
-        Some(BindingSignal::Agreement) => {
-            if can_grow_drafts {
-                RetargetAction::Redraft
-            } else {
-                RetargetAction::Ask
-            }
-        }
-        Some(BindingSignal::SpecClarity) => {
-            if !pc.product_specified {
-                RetargetAction::Ask
-            } else if !pc.open_decisions.is_empty() && may_research {
-                RetargetAction::ReResearch(pc.open_decisions.clone())
-            } else {
-                // No tools => the round could only launder a guess. Ask the human instead, ~90 min sooner,
-                // with the spec still intact (the "settled defaults" text is never appended when nothing
-                // settles), so the questions are about the REAL open choices.
-                RetargetAction::Ask
-            }
-        }
-        None => RetargetAction::None,
-    }
-}
-
-/// The draft wall with GOOSE_SWARM_UNCAPPED applied: a slow deep draft is legitimate work, and
-/// killing it is how both qwen3.8 r0 attempts lost their whole draft pool to the solo fallback.
-fn draft_timeout_eff() -> u64 {
-    UNCAPPED_SECS
 }
 
 /// The turn budget for the `integrate-verify` SINK specifically. `None` = whatever workers get (so the
@@ -15000,26 +13925,6 @@ fn sink_max_turns_resolved(env: Option<String>, cfg: Option<u32>, worker_default
         .clamp(worker_default, 200)
 }
 
-/// How long the spec-clarity probe may take. Default 120s (byte-identical to the hardcoded value it
-/// replaces); env > config; clamped [30, 900].
-///
-/// This budget is the prime SUSPECT for the probe's None returns — the fleet is PARALLEL:1, so the probe
-/// queues behind the best-of-N drafts it runs alongside, and a 27B at 262k context can burn 120s in the queue
-/// without ever being handed to the model. It is a suspect, not a proven cause: `clarity_fail` now records
-/// whether it was actually a timeout, so raising this can be judged on evidence rather than on my hunch.
-fn clarity_probe_secs() -> u64 {
-    return UNCAPPED_SECS;
-    #[allow(unreachable_code)]
-    let cfg = load_config().clarity_probe_secs;
-    std::env::var("GOOSE_SWARM_CLARITY_PROBE_SECS")
-        .ok()
-        .and_then(|v| v.trim().parse::<u64>().ok())
-        .or(cfg)
-        // #123: 120 timed out on a single 27B call at large context; 180 is cheap headroom (still clamped).
-        .unwrap_or(180)
-        .clamp(30, 900)
-}
-
 /// GOOSE_SWARM_RETARGET_ROUNDS: bounded retarget budget. Default 2; clamped [0,4] (0 = OFF). Mirrors
 /// `complete_rounds_from` so a misconfigured value can never spin the fleet forever.
 fn retarget_rounds_from(v: Option<String>) -> u32 {
@@ -15037,261 +13942,6 @@ fn retarget_rounds_resolved(env: Option<String>, cfg: Option<u32>) -> u32 {
     match env {
         Some(v) => retarget_rounds_from(Some(v)),
         None => cfg.map(|v| v.min(4)).unwrap_or(2),
-    }
-}
-
-/// Fail-closed spec-clarity value. A DEAD probe learned NOTHING about the spec, so it must not read as "clear."
-/// 20 is below the default ask floor (70) and every realistic config floor, so `min(agreement, 20)` forces the
-/// ASK. It is also NOT a value `spec_clarity_score` can emit (its outputs are {8,12,18,24,30,36,52,68,84,100}),
-/// so a 20 in the breakdown is an unambiguous "fail-closed clamp," never a real measurement.
-const CLARITY_FAILCLOSED: u8 = 20;
-
-/// Probe-failure reasons that taught us NOTHING about the spec → be cautious (fail-closed = ask). `unparseable`
-/// is EXCLUDED: the model DID answer and DID emit final output, only the JSON didn't fit the schema — as likely
-/// "nothing material to say" as "lost verdict" — so it stays fail-OPEN to avoid a false-ask storm. `starts_with`
-/// because `agent_error`/`unparseable` carry a `: …` detail tail; `timeout`/`no_final_output` are exact.
-fn clarity_reason_is_fail_closed(reason: &str) -> bool {
-    reason.starts_with("timeout")
-        || reason.starts_with("agent_error")
-        || reason.starts_with("no_final_output")
-}
-
-/// Additive `plan_confidence_breakdown` JSON, or `None` when no sub-signal was computed — so the cloud/default
-/// path emits no new key and stays byte-identical.
-/// CONTINUOUS spec-clarity score (0-100) from the two real signals the probe produces: is the product
-/// defined, and how many MATERIAL open decisions remain. Deliberately NOT a handful of magic constants
-/// (earlier every product-undefined spec snapped to a flat 20, which reads as faked) — it varies with the
-/// count so specs differentiate honestly, grounded in real signal (no invented smoothing). Undefined product
-/// = the dominant unknown → always low (≤30, so it asks regardless of draft agreement) but still moves with
-/// how many axes are open; defined product = 100 minus 16 per material decision, floored at 30. The ask
-/// boundary vs a ~70 floor is preserved: defined+0/1 proceed, defined+2 asks, undefined always asks.
-fn spec_clarity_score(product_specified: bool, n_decisions: usize) -> u8 {
-    let n = n_decisions.min(6) as u8;
-    if !product_specified {
-        30u8.saturating_sub(6 * n).max(8)
-    } else {
-        100u8.saturating_sub(16 * n).max(30)
-    }
-}
-
-/// #136 — DELEGATED DECISIONS. A spec that says "your call" has not FAILED to decide; it has decided that the
-/// BUILDER decides. The engine used to read those as unclarity, which is the opposite meaning.
-///
-/// MEASURED 2026-07-20 (run mtp-base, spec gen-logfold-template-miner): the spec carries a section headed
-/// "## Calls I'm leaving to you" whose bullets say "Your call, but be consistent...", "make it and defend it
-/// in a comment", "Pick something honest and tunable". The probe returned those three as material open
-/// decisions, spec_clarity_score(true, 3) = 52, min(agreement 89, 52) = 52 < ask_floor 80, so the ask fired
-/// and three 27b nodes idled waiting on a human for questions the spec had already delegated.
-///
-/// This taxes the BEST specs: the more explicitly an author hands over design authority, the further their
-/// plan confidence is pushed below the floor.
-///
-/// Deterministic on purpose — text over the spec, never a model call. A model opinion may not create or kill
-/// a verdict, and "should this block the fleet" is a verdict.
-const DELEGATION_MARKERS: &[&str] = &[
-    "leaving to you",
-    "leaving it to you",
-    "leave it to you",
-    "leave that to you",
-    "leave this to you",
-    "your call",
-    "up to you",
-    "you decide",
-    "yours to decide",
-    "decide and defend",
-    "designer's choice",
-    "dealer's choice",
-    "either is defensible",
-    "make it and defend",
-    "at your discretion",
-    "i'll leave",
-    "i leave",
-];
-
-/// Phrases by which a spec RESERVES a decision for the user. These OUTRANK a delegation marker in the same
-/// region, so "I'm leaving the styling to you, but do NOT guess the storage backend — ask me" still asks.
-/// Without this, one delegating sentence would silence every question in its neighbourhood.
-const RESERVATION_MARKERS: &[&str] = &[
-    "do not guess",
-    "don't guess",
-    "do not decide",
-    "don't decide",
-    "do not invent",
-    "don't invent",
-    "do not assume",
-    "don't assume",
-    "do not pick",
-    "don't pick",
-    "ask me",
-    "ask first",
-    "must ask",
-    "check with me",
-    "confirm with me",
-];
-
-/// Words too common to carry topical signal when matching a decision to a delegating region.
-const DELEGATION_STOPWORDS: &[&str] = &[
-    "there",
-    "their",
-    "these",
-    "those",
-    "which",
-    "where",
-    "while",
-    "would",
-    "could",
-    "should",
-    "shall",
-    "about",
-    "above",
-    "after",
-    "again",
-    "against",
-    "because",
-    "before",
-    "being",
-    "below",
-    "between",
-    "during",
-    "further",
-    "having",
-    "other",
-    "under",
-    "until",
-    "whether",
-    "decision",
-    "decisions",
-    "choice",
-    "choices",
-    "option",
-    "options",
-    "default",
-    "defaults",
-    "different",
-    "produce",
-    "produces",
-    "behavior",
-    "behaviour",
-    "sensible",
-    "genuinely",
-    "material",
-];
-
-/// Split a spec into regions that DELEGATE. A markdown heading governs its section until the next heading;
-/// paragraphs are regions too, so a delegating sentence in ordinary prose still counts.
-fn delegation_regions(spec: &str) -> Vec<String> {
-    let mut regions: Vec<String> = Vec::new();
-    let mut current = String::new();
-    let flush = |buf: &mut String, out: &mut Vec<String>| {
-        if !buf.trim().is_empty() {
-            let low = buf.to_lowercase();
-            let delegates = DELEGATION_MARKERS.iter().any(|m| low.contains(m));
-            let reserved = RESERVATION_MARKERS.iter().any(|m| low.contains(m));
-            if delegates && !reserved {
-                out.push(std::mem::take(buf));
-                return;
-            }
-        }
-        buf.clear();
-    };
-    for line in spec.lines() {
-        if line.trim_start().starts_with('#') {
-            flush(&mut current, &mut regions);
-        }
-        current.push_str(line);
-        current.push('\n');
-    }
-    flush(&mut current, &mut regions);
-    regions
-}
-
-fn delegation_tokens(s: &str) -> Vec<String> {
-    let mut seen: Vec<String> = Vec::new();
-    for w in s
-        .to_lowercase()
-        .split(|c: char| !c.is_alphanumeric())
-        .filter(|w| w.chars().count() >= 5)
-        .filter(|w| !DELEGATION_STOPWORDS.contains(w))
-    {
-        let w = w.to_string();
-        if !seen.contains(&w) {
-            seen.push(w);
-        }
-    }
-    seen
-}
-
-/// Does a delegating region of the spec cover this decision? Conservative BY DESIGN: a false positive
-/// SILENCES a question the user genuinely needed to answer, which is far worse than an unnecessary ask, so
-/// this demands both an absolute and a proportional overlap and refuses to judge thin decisions at all.
-fn decision_is_delegated(decision: &str, regions: &[String]) -> bool {
-    let toks = delegation_tokens(decision);
-    if toks.len() < 3 {
-        return false;
-    }
-    regions.iter().any(|r| {
-        let low = r.to_lowercase();
-        let hits = toks.iter().filter(|t| low.contains(t.as_str())).count();
-        hits >= 3 && hits * 100 / toks.len() >= 34
-    })
-}
-
-/// Split the probe's decisions into the ones that must still BLOCK and the ones the spec DELEGATED.
-/// Delegated decisions are never dropped — the caller emits them so the workers still have to make the call
-/// and defend it, and the operator can still see what was decided.
-fn partition_delegated_decisions(decisions: &[String], spec: &str) -> (Vec<String>, Vec<String>) {
-    let regions = delegation_regions(spec);
-    if regions.is_empty() {
-        return (decisions.to_vec(), Vec::new());
-    }
-    let mut blocking = Vec::new();
-    let mut delegated = Vec::new();
-    for d in decisions {
-        if decision_is_delegated(d, &regions) {
-            delegated.push(d.clone());
-        } else {
-            blocking.push(d.clone());
-        }
-    }
-    (blocking, delegated)
-}
-
-/// #129: the post-answer re-plan decision under GOOSE_SWARM_ANSWERS_WIN_FLOOR. PURE — no env, no I/O — so
-/// it is unit-testable and foldable into the golden formula. `structural` = a language flip or a product
-/// first defined by the answer (those invalidate the drafted skeleton and ALWAYS re-plan). `post_conf` is
-/// the DETERMINISTICALLY-rescored final confidence; `floor` is the ask floor. With `answers_win_floor`
-/// false this reduces EXACTLY to the prior rule: `ask_replan || structural => Replan, else KeepReuse`.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum PostAnswerAction {
-    /// Rescore met the floor and nothing structural changed: keep the answered plan (fall through to the
-    /// break and ship the rescored plan_conf).
-    KeepRescored,
-    /// Rescore is still below the floor: pin the answered plan as the monotonic `best_plan` floor and
-    /// re-draft to try to beat it. The floor-to-beat only functions when retarget is on (see caller).
-    FloorAndRedraft,
-    /// Re-plan from scratch: the legacy `continue`, and the forced path for any structural trigger.
-    Replan,
-    /// No trigger fired: keep this plan and inject the answers to the workers verbatim (legacy reuse).
-    KeepReuse,
-}
-
-fn post_answer_action(
-    answers_win_floor: bool,
-    ask_replan: bool,
-    structural: bool,
-    post_conf: u8,
-    floor: u8,
-) -> PostAnswerAction {
-    if answers_win_floor && ask_replan && !structural {
-        if post_conf >= floor {
-            PostAnswerAction::KeepRescored
-        } else {
-            PostAnswerAction::FloorAndRedraft
-        }
-    } else if ask_replan || structural {
-        PostAnswerAction::Replan
-    } else {
-        PostAnswerAction::KeepReuse
     }
 }
 
@@ -15315,230 +13965,6 @@ fn breakdown_json(pc: &PlanConf) -> Option<serde_json::Value> {
         out["delegated_decisions"] = serde_json::json!(pc.delegated_decisions);
     }
     Some(out)
-}
-
-/// Canonical ROLE for a source file, used by role-normalized cross-draft agreement: basename, lowercased,
-/// extension stripped, with the UNAMBIGUOUS entry-point synonyms folded to one role. Deliberately
-/// conservative — it does NOT merge distinct compilation stages (lexer/parser/ast stay separate), so it
-/// cannot over-count two genuinely different modules as one.
-fn canonical_role(file: &str) -> String {
-    let base = file
-        .rsplit(['/', '\\'])
-        .next()
-        .unwrap_or(file)
-        .to_lowercase();
-    let stem = base
-        .rsplit_once('.')
-        .map(|(s, _)| s)
-        .unwrap_or(base.as_str());
-    match stem {
-        "__main__" | "main" | "app" | "entry" | "cli" | "run" => "cli".to_string(),
-        s => s.to_string(),
-    }
-}
-
-/// A deterministically-injected or uniform SCAFFOLDING task (the integrate-verify sink, or a test module):
-/// excluded from cross-draft agreement under `converge`, because it reflects the harness (it is injected/
-/// uniform), not the model's decomposition choices — counting it inflates measured divergence.
-fn is_scaffolding_task(t: &goose_swarm::TaskSpec) -> bool {
-    if t.id == "integrate-verify" || t.id.contains("test") {
-        return true;
-    }
-    !t.owned_files.is_empty()
-        && t.owned_files.iter().all(|f| {
-            let b = f.rsplit(['/', '\\']).next().unwrap_or(f).to_lowercase();
-            b.starts_with("test_") || b.ends_with("_test.py") || b == "conftest.py"
-        })
-}
-
-/// Cross-draft plan self-consistency (0-100 + a one-line reason). `converge` (GOOSE_SWARM_CONVERGE) switches
-/// to role-normalized measurement: drop injected scaffolding + compare files by canonical ROLE, so a weak
-/// model's superficial naming/packaging variety no longer reads as real disagreement (fixes "measured
-/// divergence that isn't real"). `converge=false` is byte-identical to the historical metric.
-fn plan_agreement(candidates: &[Vec<goose_swarm::TaskSpec>], converge: bool) -> (u8, String) {
-    if candidates.len() < 2 {
-        return (60, "single draft — no cross-check".to_string());
-    }
-    // Under converge, measure on the SUBSTANTIVE decomposition only (scaffolding dropped).
-    let lists: Vec<Vec<&goose_swarm::TaskSpec>> = candidates
-        .iter()
-        .map(|c| {
-            c.iter()
-                .filter(|t| !converge || !is_scaffolding_task(t))
-                .collect()
-        })
-        .collect();
-    // Subtask-count agreement (tight spread = high).
-    let counts: Vec<usize> = lists.iter().map(Vec::len).collect();
-    let spread = counts.iter().max().unwrap() - counts.iter().min().unwrap();
-    let count_score: u32 = match spread {
-        0 => 40,
-        1 => 28,
-        2..=3 => 14,
-        _ => 0,
-    };
-    // Owned-file-set agreement: mean pairwise Jaccard across candidates, by canonical ROLE under converge.
-    let file_sets: Vec<std::collections::BTreeSet<String>> = lists
-        .iter()
-        .map(|c| {
-            c.iter()
-                .flat_map(|t| t.owned_files.iter())
-                .map(|f| {
-                    if converge {
-                        canonical_role(f)
-                    } else {
-                        f.clone()
-                    }
-                })
-                .collect()
-        })
-        .collect();
-    let mut jsum = 0.0f64;
-    let mut jn = 0u32;
-    for (a, sa) in file_sets.iter().enumerate() {
-        for sb in &file_sets[a + 1..] {
-            let inter = sa.intersection(sb).count();
-            let uni = sa.union(sb).count().max(1);
-            jsum += inter as f64 / uni as f64;
-            jn += 1;
-        }
-    }
-    let jacc = if jn > 0 { jsum / f64::from(jn) } else { 0.0 };
-    let file_score = (jacc * 45.0) as u32;
-    // Independent-task-count agreement (the parallel shape the planner settled on).
-    let indeps: Vec<usize> = lists
-        .iter()
-        .map(|c| c.iter().filter(|t| t.deps.is_empty()).count())
-        .collect();
-    let indep_spread = indeps.iter().max().unwrap() - indeps.iter().min().unwrap();
-    let indep_score: u32 = u32::from(indep_spread <= 1) * 15;
-    let conf = (count_score + file_score + indep_score).min(100) as u8;
-    (
-        conf,
-        format!(
-            "{} drafts agree: count spread {spread}, file-overlap {:.0}%{}",
-            candidates.len(),
-            jacc * 100.0,
-            if converge { " (role-normalized)" } else { "" }
-        ),
-    )
-}
-
-/// Agreement over the best-agreeing k-subset of the drafts — self-consistency's CONSENSUS CLUSTER, not the
-/// full spread. `plan_agreement` uses max−min spread + mean pairwise Jaccard, both of which only worsen (or
-/// hold) as the pool grows: a single outlier draft masks a real majority. Measuring over the tightest k
-/// drafts drops that outlier, so GROWING the pool can only raise (never lower) the reported agreement — the
-/// mechanism the redraft retarget lever relies on to lift confidence WITHOUT a bigger model. Enumerates all
-/// k-subsets (pool is capped at RETARGET_MAX_N=6, so ≤C(6,3)=20 tiny checks). Falls back to the full-set
-/// measure when k ≥ the pool size, so it is inert unless retarget actually grew the pool past k.
-fn best_subset_agreement(
-    candidates: &[Vec<goose_swarm::TaskSpec>],
-    converge: bool,
-    k: usize,
-) -> (u8, String) {
-    let n = candidates.len();
-    let k = k.max(2);
-    if n <= k {
-        return plan_agreement(candidates, converge);
-    }
-    let mut best_conf = 0u8;
-    let mut best_mask = 0u32;
-    for mask in 0u32..(1u32 << n) {
-        if (mask.count_ones() as usize) != k {
-            continue;
-        }
-        let subset: Vec<Vec<goose_swarm::TaskSpec>> = (0..n)
-            .filter(|i| mask & (1 << i) != 0)
-            .map(|i| candidates[i].clone())
-            .collect();
-        let (c, _) = plan_agreement(&subset, converge);
-        if best_mask == 0 || c > best_conf {
-            best_conf = c;
-            best_mask = mask;
-        }
-    }
-    let subset: Vec<Vec<goose_swarm::TaskSpec>> = (0..n)
-        .filter(|i| best_mask & (1 << i) != 0)
-        .map(|i| candidates[i].clone())
-        .collect();
-    let (conf, reason) = plan_agreement(&subset, converge);
-    (conf, format!("{reason} [consensus {k} of {n}]"))
-}
-
-/// The BACKBONE: canonical module ROLES that a STRICT MAJORITY of the valid round-1 drafts independently
-/// landed on. Built from the SAME valid_specs `plan_agreement` measures, with the SAME `canonical_role`
-/// folding + `is_scaffolding_task` exclusion, so the lock pins exactly the substantive modules the metric
-/// treats as the decomposition. One vote per draft per role (per-draft dedup). Sorted for a deterministic
-/// prompt. Empty ⇒ no shared core; the caller additionally requires len ≥ 2 (pinning only the near-universal
-/// folded `cli` entry role is inert). This NEVER fabricates a module — it can only pin what a majority shares.
-fn consensus_backbone(valid_specs: &[Vec<goose_swarm::TaskSpec>]) -> Vec<String> {
-    let n = valid_specs.len();
-    if n < 2 {
-        return Vec::new();
-    }
-    let threshold = n / 2 + 1; // strict majority: 2/2, 2/3, 3/4, 3/5, 4/6
-    let mut votes: std::collections::BTreeMap<String, usize> = std::collections::BTreeMap::new();
-    for specs in valid_specs {
-        let roles: std::collections::BTreeSet<String> = specs
-            .iter()
-            .filter(|t| !is_scaffolding_task(t))
-            .flat_map(|t| t.owned_files.iter())
-            .map(|f| canonical_role(f))
-            .collect();
-        for r in roles {
-            *votes.entry(r).or_insert(0) += 1;
-        }
-    }
-    votes
-        .into_iter()
-        .filter(|(_, c)| *c >= threshold)
-        .map(|(r, _)| r)
-        .collect()
-}
-
-/// role → (votes, n): how many of the n valid round-1 drafts independently landed on each canonical module
-/// ROLE. Generalizes `consensus_backbone`'s tally — it keeps the FULL map instead of filtering to the strict
-/// majority — over the SAME role-space (`canonical_role` folding + `is_scaffolding_task` exclusion + per-draft
-/// dedup), so `votes[r] == n` is exactly "every valid draft has role r". Pure, no model call. The per-module
-/// uncertainty signal for incremental replan (Phase 1).
-fn module_votes(
-    valid_specs: &[Vec<goose_swarm::TaskSpec>],
-) -> std::collections::BTreeMap<String, (usize, usize)> {
-    let n = valid_specs.len();
-    let mut counts: std::collections::BTreeMap<String, usize> = std::collections::BTreeMap::new();
-    for specs in valid_specs {
-        let roles: std::collections::BTreeSet<String> = specs
-            .iter()
-            .filter(|t| !is_scaffolding_task(t))
-            .flat_map(|t| t.owned_files.iter())
-            .map(|f| canonical_role(f))
-            .collect();
-        for r in roles {
-            *counts.entry(r).or_insert(0) += 1;
-        }
-    }
-    counts.into_iter().map(|(r, c)| (r, (c, n))).collect()
-}
-
-/// #133 diverse-plan: STRUCTURAL convergence of a draft set (0-100 + reason). `plan_agreement` penalizes
-/// subtask-COUNT spread, so a genuinely-diverse-but-convergent pair caps at ~74 and can NEVER clear an 80
-/// floor (F1) — it rewards sameness, which contradicts injected diversity. This measures, per draft, the
-/// fraction of its OWN roles that a MAJORITY of drafts also chose, then averages: near-identical drafts → ~100,
-/// a shared backbone with per-draft extras → 80-90 (stop + merge the backbone), fragmented drafts that share
-/// nothing → ~0 (won't stop → escalate). Ignores count-spread, rewards shared structure. Reuses
-/// `module_votes`/`canonical_role`/`is_scaffolding_task` (same role-space). Pure, no model call.
-/// Would diverse-plan's structural measure REPLACE the agreement score and skip the redraft ladder?
-///
-/// ONE predicate, because the enforce branch and the `plan_convergence` event's `would_skip_ladder`
-/// are the same question asked from two places, and this file's recurring defect is exactly that:
-/// two copies of one rule that drift until they disagree. The counterfactual is only worth logging
-/// if it is the SAME condition the lever acts on — a shadow that answers a slightly different
-/// question is worse than no shadow, because it will be believed.
-///
-/// Deliberately does NOT take the lever: the caller ANDs it in. That is what makes the same call
-/// serve both the shadow reading and the live branch.
-fn diverse_plan_would_skip(struct_conv: u8, struct_stop: u8, agreement_conf: u8) -> bool {
-    struct_conv >= struct_stop && struct_conv > agreement_conf
 }
 
 /// REGRESSION (F707): the SHADOW and the BRANCH must be called with the SAME confidence value.
@@ -15578,451 +14004,6 @@ fn shadow_and_branch_agree_on_the_lifted_confidence() {
             );
         }
     }
-}
-
-fn structural_convergence(valid_drafts: &[Vec<goose_swarm::TaskSpec>]) -> (u8, String) {
-    let n = valid_drafts.len();
-    if n < 2 {
-        return (0, "single draft — no structural cross-check".to_string());
-    }
-    let votes = module_votes(valid_drafts);
-    let majority = n / 2 + 1;
-    let mut per_draft: Vec<f64> = Vec::new();
-    for specs in valid_drafts {
-        let roles: std::collections::BTreeSet<String> = specs
-            .iter()
-            .filter(|t| !is_scaffolding_task(t))
-            .flat_map(|t| t.owned_files.iter())
-            .map(|f| canonical_role(f))
-            .collect();
-        if roles.is_empty() {
-            continue;
-        }
-        let mut backed = 0usize;
-        for r in &roles {
-            if let Some(val) = votes.get(r.as_str()) {
-                if val.0 >= majority {
-                    backed += 1;
-                }
-            }
-        }
-        per_draft.push(backed as f64 / roles.len() as f64);
-    }
-    if per_draft.is_empty() {
-        return (0, "no substantive roles across drafts".to_string());
-    }
-    let mean = per_draft.iter().sum::<f64>() / per_draft.len() as f64;
-    let conv = (mean * 100.0).round() as u8;
-    let shared = votes.values().filter(|val| val.0 >= majority).count();
-    (
-        conv,
-        format!(
-            "{conv}% of each draft's structure is majority-shared ({shared} role(s) in >={majority}/{n} drafts)"
-        ),
-    )
-}
-
-/// Partition ONE internally-consistent source draft's substantive tasks into FROZEN (carried verbatim) and
-/// DIRTY (re-drafted) for incremental replan (Phase 1, seam 2). A task freezes iff EVERY canonical role it
-/// owns is UNANIMOUS across the valid drafts (`votes[role] == n`) AND — the P0-1 downward-closure conjunct —
-/// every task it depends on also freezes. The closure is a greatest fixpoint: iterate, dropping any candidate
-/// whose deps include a non-candidate, until stable. This guarantees every intra-frozen dep resolves by
-/// construction (the frozen set is lifted from ONE draft, so its ids are self-consistent, and no frozen task
-/// can dangle off a dirty/re-authored id). Returns (frozen specs verbatim, sorted dirty roles). Pure.
-///
-/// NOTE (Phase 2, deferred): the "no open decision names r" conjunct (§2.3) is NOT applied here yet — the
-/// open-decision→role map does not exist. Until it does, an open decision can only make freezing *looser*, so
-/// the conservative gate (interface validator + strictly-higher-score adoption) is what keeps a wrong freeze
-/// from shipping; this is called out in the deferral note on the feature.
-fn partition_frozen_dirty(
-    votes: &std::collections::BTreeMap<String, (usize, usize)>,
-    source_specs: &[goose_swarm::TaskSpec],
-) -> (Vec<goose_swarm::TaskSpec>, Vec<String>) {
-    let unanimous = |role: &str| matches!(votes.get(role), Some((v, n)) if *n > 0 && v == n);
-    let substantive: Vec<&goose_swarm::TaskSpec> = source_specs
-        .iter()
-        .filter(|t| !is_scaffolding_task(t) && !t.owned_files.is_empty())
-        .collect();
-    // Seed: every substantive task all of whose owned roles are unanimous.
-    let mut candidate_ids: std::collections::BTreeSet<String> = substantive
-        .iter()
-        .filter(|t| t.owned_files.iter().all(|f| unanimous(&canonical_role(f))))
-        .map(|t| t.id.clone())
-        .collect();
-    // Downward-closure fixpoint: a task may stay frozen only if ALL its deps are themselves frozen candidates
-    // (a dep on a dirty module OR on a scaffold/unknown id disqualifies it → fails toward dirty).
-    loop {
-        let snapshot = candidate_ids.clone();
-        let mut changed = false;
-        for t in &substantive {
-            if snapshot.contains(&t.id) && !t.deps.iter().all(|d| snapshot.contains(d)) {
-                candidate_ids.remove(&t.id);
-                changed = true;
-            }
-        }
-        if !changed {
-            break;
-        }
-    }
-    let frozen: Vec<goose_swarm::TaskSpec> = source_specs
-        .iter()
-        .filter(|t| candidate_ids.contains(&t.id))
-        .cloned()
-        .collect();
-    let dirty_roles: std::collections::BTreeSet<String> = substantive
-        .iter()
-        .filter(|t| !candidate_ids.contains(&t.id))
-        .flat_map(|t| t.owned_files.iter())
-        .map(|f| canonical_role(f))
-        .collect();
-    (frozen, dirty_roles.into_iter().collect())
-}
-
-/// True iff the round-2 skeleton actually contains EVERY pinned backbone role (the lock was HONORED, not
-/// merely prompted). Same role-space as `consensus_backbone`. A weak model that drops/renames/merges a
-/// pinned module fails this → the caller keeps round 1 (one wasted round, never a lock-violating plan).
-fn plan_covers_backbone(plan_json: &str, backbone: &[String]) -> bool {
-    let Ok(specs) = goose_swarm::specs_from_plan_json(plan_json) else {
-        return false;
-    };
-    let roles: std::collections::BTreeSet<String> = specs
-        .iter()
-        .filter(|t| !is_scaffolding_task(t))
-        .flat_map(|t| t.owned_files.iter())
-        .map(|f| canonical_role(f))
-        .collect();
-    backbone.iter().all(|r| roles.contains(r))
-}
-
-/// Parse + structurally-score a candidate pool (the round-1 select loop, reusable for round 2), emitting the
-/// same per-candidate diagnostics prefixed by `label`. Returns (best `(score, json)`, valid_specs).
-fn select_best_skeleton(
-    candidates: Vec<String>,
-    worker_count: usize,
-    label: &str,
-) -> (Option<(i64, String)>, Vec<Vec<goose_swarm::TaskSpec>>) {
-    let mut best: Option<(i64, String)> = None;
-    let mut valid_specs: Vec<Vec<goose_swarm::TaskSpec>> = Vec::new();
-    for (i, c) in candidates.into_iter().enumerate() {
-        let specs = match goose_swarm::specs_from_plan_json(&c) {
-            Ok(s) => s,
-            Err(_) => {
-                eprintln!("  · {label}candidate {i}: invalid JSON — skipped");
-                continue;
-            }
-        };
-        match score_skeleton(&specs, worker_count) {
-            Some(score) => {
-                eprintln!(
-                    "  · {label}candidate {i}: score {score} ({} subtasks)",
-                    specs.len()
-                );
-                valid_specs.push(specs);
-                if best.as_ref().map(|(b, _)| score > *b).unwrap_or(true) {
-                    best = Some((score, c));
-                }
-            }
-            None => eprintln!("  · {label}candidate {i}: invalid DAG — skipped"),
-        }
-    }
-    (best, valid_specs)
-}
-
-/// The round-2 architect constraint: pin the consensus module ROLES (not literal filenames — the model picks
-/// the concrete name to fit its chosen layout/language) as a hard FLOOR, naming the four drift modes weak
-/// fine-tunes exhibit (drop / rename-away / merge / split) and whitelisting a genuinely-needed tail so the
-/// lock complements the converge "simplest canonical decomposition" hint rather than fighting it.
-fn backbone_clause(backbone: &[String]) -> String {
-    format!(
-        "BACKBONE LOCK (hard requirement) — an independent first planning pass across the fleet already \
-         AGREED these are the core modules for THIS task, so they are FIXED. Your plan MUST include EACH of \
-         them as its own substantive subtask, one clear responsibility per module: {} (cli = the program's \
-         entry point). Do NOT drop any of them, do NOT rename one away, do NOT merge two of them into one \
-         subtask, and do NOT split one across two subtasks. You choose each module's concrete filename to fit \
-         the layout and language you pick, but every one of these responsibilities MUST be present as its own \
-         module. This is a FLOOR, not a ceiling: you MAY add FURTHER subtasks beyond this set ONLY when the \
-         spec genuinely needs a concern none of these cover — do not pad with filler, and do not drop a real \
-         concern just to match this list. Add the per-module tests and the final integrate-verify subtask ON \
-         TOP of this backbone exactly as instructed above. ",
-        backbone.join(", ")
-    )
-}
-
-/// The incremental-replan round-2 constraint (seam 5): unlike `backbone_clause` (which pins role NAMES and
-/// re-details everything), this emits the FROZEN modules as a hard VERBATIM contract — exact id, files, deps —
-/// so the fleet re-drafts ONLY the residual and wires into a fixed interface. It keeps `backbone_clause`'s
-/// FLOOR-not-ceiling hatch (P2-7: a genuinely-needed new module may be added) AND adds the P1-6 "say so"
-/// clause so the model surfaces a frozen module that must itself change rather than silently working around it.
-fn frozen_backbone_clause(frozen: &[goose_swarm::TaskSpec]) -> String {
-    let modules = frozen
-        .iter()
-        .map(|t| {
-            format!(
-                "{} — files:[{}] — deps:[{}] — {}",
-                t.id,
-                t.owned_files.join(", "),
-                t.deps.join(", "),
-                t.description.trim()
-            )
-        })
-        .collect::<Vec<_>>()
-        .join("\n");
-    format!(
-        "FROZEN MODULES (already decided by an independent first planning pass — reproduce EXACTLY, do NOT \
-         rename/merge/split/re-file them and do NOT change their ids, files, or deps). Design the remaining \
-         TO-DESIGN modules and wire them INTO these: you MAY depend on a frozen module's existing id and \
-         consume its files; you may NOT change a frozen module's id, files, or deps. You MAY add a FURTHER NEW \
-         module ONLY if the spec genuinely needs a concern NONE of these cover — do not pad, do not drop a real \
-         concern. If designing the remaining modules reveals that a FROZEN module must itself change (needs a \
-         new dependency, a new file, or a different interface), SAY SO EXPLICITLY on that module rather than \
-         working around it — do not silently duplicate its logic. Add the per-module tests and the final \
-         integrate-verify subtask ON TOP exactly as instructed above. Frozen modules, verbatim:\n{modules}\n"
-    )
-}
-
-/// Interface gate for the frozen∪dirty splice (seam 6, the LOWEST-confidence piece of the design — R2). This
-/// is a NEW pure validator, NOT an extension of `Dag::splice_specs` (which mutates a LIVE dag with TaskStates
-/// and applies runtime semantics that do not exist at planning time). `frozen` is the COMPLETE carried-verbatim
-/// set (modules AND their own test tasks); `dirty` is the re-drafted residual. Rejects a merge that would let a
-/// broken plan through silently:
-///   (a) merged is a valid DAG — duplicate ids, a dirty→frozen dep that resolves to nothing, and any cycle
-///       through a frozen node are all rejected (same `Dag::from_specs` validity the live path uses);
-///   (b) no dirty task REUSES a frozen id (that would silently rewrite a frozen module);
-///   (c) no dirty file canonicalizes onto a FROZEN role (R4 role-collision merge).
-/// On any violation the caller keeps round 1 — never ships the broken splice.
-fn validate_frozen_interfaces(
-    frozen: &[goose_swarm::TaskSpec],
-    dirty: &[goose_swarm::TaskSpec],
-) -> Result<()> {
-    let frozen_ids: std::collections::BTreeSet<&str> =
-        frozen.iter().map(|t| t.id.as_str()).collect();
-    let frozen_roles: std::collections::BTreeSet<String> = frozen
-        .iter()
-        .filter(|t| !is_scaffolding_task(t))
-        .flat_map(|t| t.owned_files.iter())
-        .map(|f| canonical_role(f))
-        .collect();
-    let mut merged: Vec<goose_swarm::TaskSpec> = frozen.to_vec();
-    merged.extend(dirty.iter().cloned());
-    goose_swarm::Dag::from_specs(merged)?;
-    for d in dirty {
-        if frozen_ids.contains(d.id.as_str()) {
-            bail!("dirty module `{}` reuses a frozen module id", d.id);
-        }
-        if is_scaffolding_task(d) {
-            continue;
-        }
-        for f in &d.owned_files {
-            let r = canonical_role(f);
-            if frozen_roles.contains(&r) {
-                bail!("dirty file `{f}` collides with frozen role `{r}`");
-            }
-        }
-    }
-    Ok(())
-}
-
-/// Serialize a `Vec<TaskSpec>` back to the planner's skeleton JSON (`{"subtasks":[…]}`), the inverse of
-/// `specs_from_plan_json`, so a spliced frozen∪dirty plan can flow out of `parallel_plan` as a skeleton string
-/// exactly like a model-drafted one. Deterministic; used only on the incremental path.
-fn plan_json_from_specs(specs: &[goose_swarm::TaskSpec]) -> String {
-    let subtasks: Vec<serde_json::Value> = specs
-        .iter()
-        .map(|t| {
-            let mut o = serde_json::json!({
-                "id": t.id,
-                "description": t.description,
-                "difficulty": match t.difficulty {
-                    goose_swarm::Difficulty::Hard => "hard",
-                    goose_swarm::Difficulty::Easy => "easy",
-                },
-                "depends_on": t.deps,
-                "files": t.owned_files,
-            });
-            if let Some(m) = &t.preferred_model {
-                o["model"] = serde_json::Value::String(m.clone());
-            }
-            o
-        })
-        .collect();
-    serde_json::to_string(&serde_json::json!({ "subtasks": subtasks })).unwrap_or_default()
-}
-
-/// Score a candidate plan SKELETON for best-of-N selection. Pure-Rust, no LLM. Returns `None` if the
-/// skeleton is not a valid DAG (validity borrowed from the same `Dag::from_specs` the live path uses,
-/// so a scored candidate is guaranteed loadable). Higher = a wider, flatter, less-conflicting plan:
-/// rewards independent (zero-dep) parallel subtasks + adequate count, penalizes deep dependency chains,
-/// overlapping files, and chokepoints (one task most others depend on).
-/// How many subtasks the architect is asked for, as a function of the fleet.
-///
-/// ⚠ EVERY COUNT IN HERE IS DERIVED FROM `worker_count`. NONE IS A LITERAL. The non-convergent clause used
-/// to read "(e.g. ~6-9 for a 3-device fleet)", which was exactly 2x-3x while `worker_count` was
-/// `devices.len()`. `00563c6ea` changed that argument to SLOTS — a 3-device weight-2 fleet is 6 — and left
-/// the worked example behind, so the one sentence then asked for 12-18 and offered ~6-9 as the example of
-/// it. A weak model anchors on the concrete number, and this fork's standing rule is that a directive scales
-/// to the fleet because a swarm is 2 units or 100.
-///
-/// `converge` (retarget) uses a SINGLE target rather than a range so independent drafts cluster on the same
-/// module count; scaffolding (per-module tests + the sink) is added on top and excluded from agreement.
-fn skeleton_count_clause(worker_count: usize, converge: bool) -> String {
-    if converge {
-        format!(
-            "decompose into the FEWEST cohesive module subtasks that FULLY cover the spec — ONE per \
-             distinct concern/responsibility the spec names (e.g. parsing, persistence, the commands/\
-             business logic, reporting, the cli entry), NOT one catch-all module and NOT a separate \
-             subtask per command. Pick the CONVENTIONAL module boundaries a senior engineer would, so \
-             independent drafts converge on the SAME set (target is usually {worker_count} to 2x {worker_count})"
-        )
-    } else {
-        format!(
-            "aim for about 2x to 3x {worker_count} total (about {lo}-{hi} for this fleet), NOT one per command/function",
-            lo = 2 * worker_count,
-            hi = 3 * worker_count
-        )
-    }
-}
-
-/// SPEC-SIZED PLAN (`GOOSE_SWARM_SPEC_SIZED_PLAN`). Size the decomposition to the JOB instead of the FLEET.
-///
-/// BOTH branches of `skeleton_count_clause` derive their target from `worker_count`, which is SLOTS — so the
-/// SAME spec is asked for a different number of modules depending on how many machines happen to be plugged
-/// in. MEASURED on the four post-fix baseline cells: one node (2 slots) is asked for "usually 2 to 4" and
-/// produces 5 and 5; three nodes (6 slots) are asked for "usually 6 to 12" and produce 7 and 6. The ask sits
-/// BELOW what the spec needs on the small fleet and the model overrides it; it sits ABOVE on the big fleet
-/// and the model drifts up into it. So the fleet-scaled number is a floor the model will not go under and a
-/// ceiling it drifts toward, and it only ever binds in the INFLATIONARY direction: +30% modules and +64%
-/// tree bytes on three nodes, for +0.0492 score — one seventh of the replicate spread, i.e. nothing — while
-/// the serial join that must swallow that extra code grew from 20-32% to 36% of the run (F454/F457/F458).
-///
-/// This clause takes NO ARGUMENTS ON PURPOSE. "Sized to the job" means the fleet cannot reach the number, and
-/// a function that cannot see `worker_count` cannot scale with it — the invariant holds by construction
-/// rather than by assertion. The fleet still decides how many of these run AT ONCE; it no longer decides how
-/// many EXIST.
-fn spec_sized_count_clause() -> String {
-    "decompose into the FEWEST cohesive module subtasks that FULLY cover the spec — ONE per distinct \
-     concern/responsibility the spec names (e.g. parsing, persistence, the commands/business logic, \
-     reporting, the cli entry), NOT one catch-all module and NOT a separate subtask per command. Pick the \
-     CONVENTIONAL module boundaries a senior engineer would. HOW MANY MACHINES THE FLEET HAS IS IRRELEVANT \
-     to how many modules this spec has: do NOT add modules to fill idle machines, and do NOT merge distinct \
-     concerns because the fleet is small. The same spec must yield the same decomposition on one machine or \
-     a hundred"
-        .to_string()
-}
-
-fn score_skeleton(specs: &[goose_swarm::TaskSpec], worker_count: usize) -> Option<i64> {
-    goose_swarm::Dag::from_specs(specs.to_vec()).ok()?;
-    let wc = worker_count.max(1) as i64;
-    let n = specs.len() as i64;
-    if n == 0 {
-        return None;
-    }
-    // Parallel width: independent (zero-dep) subtasks, excluding the integrate-verify sink.
-    let independent = specs
-        .iter()
-        .filter(|s| s.deps.is_empty() && s.id != "integrate-verify")
-        .count() as i64;
-    let indep_score = independent.min(wc) * 10;
-    // Longest dependency chain (DAG validated above, so acyclic) — penalize depth beyond 2.
-    let deps_of: std::collections::HashMap<&str, &[String]> = specs
-        .iter()
-        .map(|s| (s.id.as_str(), s.deps.as_slice()))
-        .collect();
-    let mut depth: std::collections::HashMap<&str, i64> =
-        deps_of.keys().map(|k| (*k, 0i64)).collect();
-    for _ in 0..specs.len() {
-        let mut changed = false;
-        for (id, ds) in &deps_of {
-            let d = ds
-                .iter()
-                .filter_map(|x| depth.get(x.as_str()).copied())
-                .max()
-                .map(|m| m + 1)
-                .unwrap_or(0);
-            if d > depth[id] {
-                depth.insert(id, d);
-                changed = true;
-            }
-        }
-        if !changed {
-            break;
-        }
-    }
-    let max_depth = depth.values().copied().max().unwrap_or(0);
-    let depth_pen = (max_depth - 2).max(0) * 5;
-    // File overlap: files claimed by >1 subtask (scheduler serializes them — a quality, not validity, hit).
-    let mut files: std::collections::HashMap<&str, i64> = std::collections::HashMap::new();
-    for s in specs {
-        for f in &s.owned_files {
-            *files.entry(f.as_str()).or_insert(0) += 1;
-        }
-    }
-    let overlap_pen = files.values().filter(|&&c| c > 1).count() as i64 * 3;
-    // Chokepoint: the most-depended-on task. Penalize when it exceeds ~half the fleet width.
-    let mut fan_in: std::collections::HashMap<&str, i64> = std::collections::HashMap::new();
-    for s in specs {
-        for d in &s.deps {
-            *fan_in.entry(d.as_str()).or_insert(0) += 1;
-        }
-    }
-    let max_fan_in = fan_in.values().copied().max().unwrap_or(0);
-    let choke_pen = if max_fan_in > (wc / 2).max(1) {
-        max_fan_in * 2
-    } else {
-        0
-    };
-    // Size sanity: want at least worker_count subtasks to fill the fleet.
-    let size_score = if n >= wc { 5 } else { -(wc - n) * 2 };
-    Some(indep_score + size_score - depth_pen - overlap_pen - choke_pen)
-}
-
-/// True if the working dir already contains source (a marker file or a source-extension file within
-/// ~2 levels) — i.e. an amendment, which is what flips research-planning Auto to on.
-fn working_dir_has_sources(dir: &Path) -> bool {
-    const SRC_EXT: &[&str] = &[
-        "rs", "py", "ts", "tsx", "js", "jsx", "go", "java", "rb", "c", "cpp", "h", "hpp", "cs",
-        "swift", "kt",
-    ];
-    const MARKERS: &[&str] = &[
-        "Cargo.toml",
-        "package.json",
-        "pyproject.toml",
-        "go.mod",
-        "pom.xml",
-    ];
-    const SKIP: &[&str] = &[
-        ".git",
-        "node_modules",
-        "target",
-        ".venv",
-        ".swarm",
-        "__pycache__",
-    ];
-    fn walk(dir: &Path, depth: u32) -> bool {
-        let Ok(rd) = std::fs::read_dir(dir) else {
-            return false;
-        };
-        for entry in rd.flatten() {
-            let p = entry.path();
-            let name = entry.file_name().to_string_lossy().to_string();
-            if p.is_dir() {
-                if depth == 0 || name.starts_with('.') || SKIP.contains(&name.as_str()) {
-                    continue;
-                }
-                if walk(&p, depth - 1) {
-                    return true;
-                }
-            } else if MARKERS.contains(&name.as_str())
-                || p.extension()
-                    .and_then(|e| e.to_str())
-                    .map(|e| SRC_EXT.contains(&e))
-                    .unwrap_or(false)
-            {
-                return true;
-            }
-        }
-        false
-    }
-    walk(dir, 2)
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -16204,14 +14185,6 @@ pub struct GooseAgentDispatcher {
     /// classes that are half of every score lost. The five dimension briefs already existed, wired only
     /// into the never-run sink_review path; rotating them here points the scaling mechanism at the loss.
     prereview_dim: std::sync::atomic::AtomicUsize,
-    /// WHY the spec-clarity probe last returned None — "timeout" / "no_final_output" / "unparseable" /
-    /// "agent_error: …". `None` means it succeeded (or never ran).
-    ///
-    /// The probe's failure is the most consequential silent event in the engine: on None the caller falls back
-    /// to agreement ALONE and asserts product_specified=true, so a probe that DIED is indistinguishable from
-    /// one that said "the spec is perfectly clear". Recording the reason is the prerequisite for fixing it —
-    /// timeout, unparseable and no_final_output each demand an opposite remedy.
-    clarity_fail: Mutex<Option<String>>,
     /// #136 SAFETY: the OPERATOR's spec as it stood before any model wrote into it. `opts.prompt` is APPENDED
     /// TO by model output twice — research findings (swarm.rs:19660) and clarify Q&A (:19799) — and a retarget
     /// round RE-PLANS with that enlarged prompt. Parsing delegation from the live prompt would therefore let
@@ -16246,9 +14219,6 @@ pub struct GooseAgentDispatcher {
     /// done — so the swallowed decode error can no longer produce a silent false-green. Resolved once at
     /// construction (env GOOSE_SWARM_STREAM_RETRY > config.stream_decode_retry > default ON).
     stream_decode_retry: bool,
-    /// #135: when set, plan drafting stops the lone lagging draft once the quorum of valid drafts is in
-    /// (see `should_arm_straggler_grace`). Resolved once at construction (default OFF).
-    straggler_stop: bool,
     /// #135: grace window (seconds, unclamped) for the last lagging draft; clamped to [10, draft_timeout] at
     /// the drafting call site. Resolved once at construction (default 45).
     /// G1: None = derive per round (drafts); Some = explicit env/config, fixed. Non-draft fans
@@ -16257,11 +14227,6 @@ pub struct GooseAgentDispatcher {
     /// #135 degrade: extend straggler-stop to the contracts + detail fanouts (which can change build inputs).
     /// Resolved once at construction (default OFF).
     straggler_stop_degrade: bool,
-    /// #122 DETAIL MEMO: full-input detail key -> detailed spec, reused across retarget/replan rounds so an
-    /// UNCHANGED subtask is not re-detailed (~75s) every round. Empty + never read/written unless
-    /// `detail_memo_on` -> byte-identical when off. Survives across rounds because the dispatcher is a
-    /// persistent Arc across the whole plan loop.
-    detail_memo: Mutex<HashMap<String, String>>,
     /// task id -> the files that task OWNS. Published when a plan loads, read by the omni-judge loop,
     /// which is handed only an `activity_key` and otherwise cannot tell a build task from a planner call.
     ///
@@ -16272,8 +14237,13 @@ pub struct GooseAgentDispatcher {
     /// characters of fresh reasoning after every restart. Empty for planner-side calls, which therefore
     /// keep today's behaviour exactly.
     owned_files_by_task: Mutex<HashMap<String, Vec<String>>>,
-    /// #122: gate for `detail_memo`. Resolved once at construction (env > config > default OFF).
-    detail_memo_on: bool,
+    /// task id -> the delivery defects already PUT TO that task as a supervisor note.
+    ///
+    /// The de-duplication that makes a deterministic finding safe to act on. A defect persists until the
+    /// worker fixes it, so re-sending it on every look would be a message loop against a call that is
+    /// already trying; sending it ONCE is new information. Nothing here can end a task, burn an attempt
+    /// or bound anything — a defect that is never fixed simply stops being mentioned.
+    defects_told: Mutex<HashMap<String, std::collections::HashSet<String>>>,
     /// #136: gate for the repeated-identical-tool-call breaker. Resolved once at construction (default OFF).
     repeat_break: bool,
     /// The run's event stream. The dispatcher is the ONLY place that knows what a worker prompt actually
@@ -16335,10 +14305,8 @@ impl GooseAgentDispatcher {
         allow_model_load: bool,
         sampling: SamplingParams,
         stream_decode_retry: bool,
-        straggler_stop: bool,
         straggler_grace_secs: Option<u64>,
         straggler_stop_degrade: bool,
-        detail_memo_on: bool,
         repeat_break: bool,
     ) -> Result<Self> {
         let provider = goose::providers::create("lmstudio", vec![]).await?;
@@ -16374,18 +14342,15 @@ impl GooseAgentDispatcher {
             judge_seen: Mutex::new(std::collections::HashMap::new()),
             sink_review_findings: Mutex::new(Vec::new()),
             prereview_dim: std::sync::atomic::AtomicUsize::new(0),
-            clarity_fail: Mutex::new(None),
             spec_frozen: Mutex::new(String::new()),
             owner_snapshots: Mutex::new(HashMap::new()),
             judge_prev_thinking: Mutex::new(HashMap::new()),
             judge_prev_calls: Mutex::new(HashMap::new()),
             stream_decode_retry,
-            straggler_stop,
             straggler_grace_secs,
             straggler_stop_degrade,
-            detail_memo: Mutex::new(HashMap::new()),
             owned_files_by_task: Mutex::new(HashMap::new()),
-            detail_memo_on,
+            defects_told: Mutex::new(HashMap::new()),
             repeat_break,
         })
     }
@@ -16677,6 +14642,8 @@ impl GooseAgentDispatcher {
         // produced test-store-core and test-store-edge-cases), and stripping write from a task whose
         // whole job is writing tests would collapse the test tier silently.
         read_only: bool,
+        // See `run_agent_in`. Declared per call site, never defaulted true.
+        may_terminate: bool,
     ) -> Result<RunAgentOut> {
         self.run_agent_in(
             self.working_dir.clone(),
@@ -16693,11 +14660,11 @@ impl GooseAgentDispatcher {
             temp_override,
             None, // planner-side calls own no files
             read_only,
+            may_terminate,
         )
         .await
     }
 
-    #[allow(clippy::too_many_arguments)]
     #[allow(clippy::too_many_arguments)]
     async fn run_agent(
         &self,
@@ -16725,6 +14692,9 @@ impl GooseAgentDispatcher {
             None, // planner-side calls are never forced to a tool
             None,
             None, // generic path: no owned-file repair target
+            false,
+            // The generic path serves the judge probe and every judge/review helper whose Err
+            // propagates. Terminating one of those kills a phase, not a lane.
             false,
         )
         .await
@@ -16779,10 +14749,21 @@ impl GooseAgentDispatcher {
         single_owned_file: Option<String>,
         // See `run_agent_timed_at`. A call that must not write does not get the tools to.
         read_only: bool,
+        // MAY THE ENGINE END THIS CALL when the supervisor has repeated itself verbatim and the call has
+        // taken no action since? Opt-in per call site, and false everywhere it is not stated.
+        //
+        // The terminator's own safety argument (see the `judge_out_of_moves` block below) is written
+        // entirely about the coverage fanout, whose `Err(_) => Vec::new()` "leaves the breakdown as it was
+        // for that part". That argument does not survive being applied to every caller: `run_agent_in` is
+        // the single helper every phase funnels through, and `open`, `synthesis`, `rate`, `proxy-answer`
+        // and the solo plan draft all end in `.await?`. Ending one of those does not degrade a part — it
+        // kills the decomposition. `review_patch_schema` then ADDED review to the `response.is_some()` set,
+        // so the blast radius grew after the terminator shipped.
+        //
+        // Where this is false the state is still measured and still emitted (`judge_call_end_declined`);
+        // only the `Err` is withheld.
+        may_terminate: bool,
     ) -> Result<RunAgentOut> {
-        // Captured before the strings move into the message/session below — feeds the
-        // prefill-aware first-token budget at the watchdog site.
-        let prompt_chars = system_prompt.len() + user_text.len();
         let agent_config = AgentConfig::new(
             self.session_manager.clone(),
             self.permission_manager.clone(),
@@ -17009,7 +14990,15 @@ impl GooseAgentDispatcher {
         //
         // `idle_secs` is therefore ignored. The Duration below exists only because `tokio::time::timeout`
         // needs one; it is never a real bound.
-        let idle = effective_idle_budget(idle_secs);
+        // Nothing reads a budget any more — the wall it fed was deleted. `effective_idle_budget` stays
+        // the ONE guarded entry point for re-arming one (see its doc comment: the sink cap came back once
+        // because a comment cannot fail a build), so it is asserted here rather than left as an unused
+        // binding that the next cleanup would delete along with the guard.
+        debug_assert_eq!(
+            effective_idle_budget(idle_secs).as_secs(),
+            UNCAPPED_SECS,
+            "a configured timeout became a real bound — a cap is back"
+        );
         // PREFILL-AWARE FIRST-TOKEN BUDGET (F905 third catch, r9): prefill streams NOTHING, so a
         // large prompt on a contended node is indistinguishable from a dead stream to this
         // watchdog — r9's completed calls measured 164s TTFT at 14k prompt tokens while the
@@ -17019,13 +15008,9 @@ impl GooseAgentDispatcher {
         // THIS prompt at the run's own worst measured prefill rate for this node (chars/4 ≈
         // tokens — the standard approximation, not a tuned constant; no telemetry yet → no
         // extension, today's budget). From the first event on, the plain idle budget applies.
-        let prefill_grace = telemetry_prefill_floor(model_id)
-            .map(|rate| std::time::Duration::from_secs_f64(prompt_chars as f64 / 4.0 / rate))
-            .unwrap_or_default();
-        let mut first_event_seen = false;
-        // Worker events that arrived while a judge look was in flight, and whether the call finished
-        // during one. See the judge probe below: the supervisor races the stream instead of blocking it.
-        let mut deferred_events = std::collections::VecDeque::new();
+
+        // Whether the call finished while a judge look was in flight. See the judge probe below: the
+        // supervisor races the stream instead of blocking it.
         let mut stream_ended_during_probe = false;
         // EVERYTHING THIS CALL HAS EVER REASONED, across re-streams. `thinking_chars` is reset to 0 by a
         // re-stream so the new stream is judged on its own output, which is right — but the judge's
@@ -17175,6 +15160,161 @@ impl GooseAgentDispatcher {
         // hands it the evidence, because "you ran this six times and got the same answer" is a diagnosis
         // the judge has to make, not a reason to stop.
         let mut repeat_evidence: Option<String> = None;
+        // ONE PROCESSING SITE, EXPANDED AT TWO CALL SITES.
+        //
+        // Events that arrived while a judge probe was in flight used to be pushed RAW onto a
+        // `deferred_events` queue and processed only after the probe returned — deliberately, to avoid
+        // duplicating this block and double-counting every chunk. The cost was that thinking_chars,
+        // texts, tool_calls and the durable transcripts genuinely did not advance for the WHOLE probe,
+        // which is a full model call with no deadline queued on the same saturated fleet and routinely
+        // runs for minutes. MEASURED: three lanes held identical thinking_chars (6014, 6018, 2012)
+        // across a 12s sample while `lms ps` said GENERATING.
+        //
+        // A macro rather than a function because the block mutates fifteen locals of this call's state
+        // and threading them all through a signature is how the ordering bug gets introduced. The
+        // expansion is token-identical at both sites, and the defer queue is GONE — so the double-count
+        // the old comment guarded against is not merely avoided, it has no second site to happen at.
+        macro_rules! process_stream_event {
+            ($ev:expr) => {{
+                let ev = $ev;
+            // The Err arm below `return`s out of the whole call. Expanded inside the judge probe's
+            // `select!` that means a stream error ends the call at once instead of after the probe —
+            // the probe's verdict was discarded on that path anyway.
+            match ev {
+                Ok(AgentEvent::Message(msg)) => {
+                    // PROGRESS WATCHDOG: a message counts as PRODUCTIVE if it carries a real tool call/result
+                    // (incl. final_output) or non-empty non-thinking text. Reasoning-only (Thinking) and
+                    // malformed tool calls are NOT productive, so a thinking/flailing spiral lets the
+                    // thinking_only_budget elapse and get cut.
+                    let mut productive = false;
+                    for content in &msg.content {
+                        if message_content_is_productive(content) {
+                            productive = true;
+                        }
+                        match content {
+                            MessageContent::Text(t) => texts.push(t.text.clone()),
+                            MessageContent::Thinking(t) => {
+                                thinking_chars += t.thinking.chars().count();
+                                thinking_total += t.thinking.chars().count();
+                                // ACCUMULATE a rolling tail, don't overwrite: each streamed Thinking chunk is a
+                                // single token (" the", "ents"), so assigning it made the panel show one word at
+                                // a time. Append and keep a bounded window so the digest's tail_chars(400) shows
+                                // a readable run of the live reasoning instead of the last fragment.
+                                last_thinking.push_str(&t.thinking);
+                                // THE FULL THINKING STREAM, CAPTURED BEFORE IT IS THROWN AWAY.
+                                //
+                                // The window below keeps 2,400 characters, so the panel's THINKING pane
+                                // does not scroll — it CLEARS AND REFILLS as the model streams. Mihai:
+                                // *"the content does not exist, it just clears and adds new content as it
+                                // streams. it's very bad."* Exactly right, and the comment immediately
+                                // below has always said this is the only place the full stream is seen.
+                                // Buffered here and flushed with the digest, so it costs one append per
+                                // 400ms rather than one per token.
+                                think_unflushed.push_str(&t.thinking);
+                                // #F924: fingerprint BEFORE the truncation below discards it —
+                                // this is the only place the full stream is ever seen.
+                                recur.push(&t.thinking);
+                                if last_thinking.chars().count() > 3000 {
+                                    last_thinking = tail_chars(&last_thinking, 2400);
+                                }
+                            }
+                            MessageContent::ToolRequest(req) => match req.tool_call.as_ref() {
+                                Ok(tc) => {
+                                    let name = tc.name.to_string();
+                                    if name == FINAL_OUTPUT_TOOL {
+                                        final_output = Some(
+                                            serde_json::to_string(&tc.arguments)
+                                                .unwrap_or_default(),
+                                        );
+                                    }
+                                    let mcp = is_mcp_tool(&name);
+                                    let args_val = serde_json::to_value(&tc.arguments)
+                                        .unwrap_or(serde_json::Value::Null);
+                                    let summary = summarize_tool_call(&name, &args_val);
+                                    let fetched = args_fetch_external_url(&name, &args_val);
+                                    pending.insert(req.id.clone(), (name, mcp, fetched, summary));
+                                }
+                                // MALFORMED CALL. The provider could not parse what the model emitted, so it
+                                // built the request as an Err — response_to_message does this for an invalid
+                                // function name (INVALID_REQUEST) and for unparseable arguments
+                                // (INVALID_PARAMS). This branch used to be dropped, and because a malformed
+                                // call never reaches a tool there is no ToolResponse to catch it downstream
+                                // either: it was invisible to the digest BY CONSTRUCTION. Every "malformed: 0"
+                                // this instrument ever reported was therefore an artifact, not a measurement —
+                                // which matters because the whole question of whether a weak local model can
+                                // call tools reliably is answered from these digests.
+                                Err(e) => {
+                                    malformed += 1;
+                                    let name = malformed_tool_name(&e.message);
+                                    call_records.push((
+                                        name.clone(),
+                                        e.message.to_string(),
+                                        Some(false),
+                                        format!("MALFORMED CALL — the provider rejected it before any tool ran: {}", e.message),
+                                    ));
+                                    tool_calls.push(ToolCallRecord {
+                                        name,
+                                        is_mcp: false,
+                                        ok: Some(false),
+                                        fetched_external: false,
+                                    });
+                                }
+                            },
+                            MessageContent::ToolResponse(resp) => {
+                                if let Some((name, is_mcp, fetched, summary)) =
+                                    pending.remove(&resp.id)
+                                {
+                                    let ok = resp
+                                        .tool_result
+                                        .as_ref()
+                                        .map(|r| !r.is_error.unwrap_or(false))
+                                        .unwrap_or(false);
+                                    let result = tool_result_text(&resp.tool_result);
+                                    // #136: track consecutive identical (call, result) outcomes. Computed
+                                    // BEFORE the move into call_records. A repeat with a DIFFERENT result is
+                                    // progress, so it resets the run; an EMPTY result is not counted at all
+                                    // (it carries no state, so counting it would silently degrade the key to
+                                    // name+args and could fire on a legitimately repeated no-output call).
+                                    if repeat_break_on {
+                                        if result.trim().is_empty() {
+                                            repeat_hash = None;
+                                            repeat_run = 0;
+                                        } else {
+                                            let h = repeat_call_hash(&name, &summary, ok, &result);
+                                            if repeat_hash == Some(h) {
+                                                repeat_run += 1;
+                                            } else {
+                                                repeat_hash = Some(h);
+                                                repeat_run = 1;
+                                                repeat_run_started = tokio::time::Instant::now();
+                                                repeat_what = summary.chars().take(80).collect();
+                                                // The RESULT, not just the command. The judge cannot work
+                                                // out WHY a call keeps returning the same thing without
+                                                // seeing what it returns.
+                                                repeat_result = result.chars().take(600).collect();
+                                            }
+                                        }
+                                    }
+                                    call_records.push((name.clone(), summary, Some(ok), result));
+                                    tool_calls.push(ToolCallRecord {
+                                        name,
+                                        is_mcp,
+                                        ok: Some(ok),
+                                        fetched_external: fetched,
+                                    });
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                    let _ = productive;
+                }
+                Ok(AgentEvent::McpNotification(_)) => {}
+                Ok(_) => {}
+                Err(e) => return Err(anyhow!("agent stream error: {e}")),
+            }
+            }};
+        }
         loop {
             // #136: cut a REPEATED-IDENTICAL-CALL loop — the same tool call returning the same result N times
             // in a row over at least the time floor. This is the ONLY guard that sees it: each repeat is a
@@ -17255,15 +15395,6 @@ impl GooseAgentDispatcher {
             {
                 let produced_since_last_look =
                     thinking_chars.saturating_sub(omni_thinking_at_last_look);
-                let secs_since_last_look = omni_last_look_at.elapsed().as_secs();
-                // Track the silence BEFORE anything reads it. A look that saw real production ends the
-                // current quiet spell and records how long it turned out to be recoverable for.
-                if produced_since_last_look >= OMNI_JUDGE_MIN_CHARS {
-                    omni_longest_gap_secs = omni_longest_gap_secs.max(omni_quiet_secs);
-                    omni_quiet_secs = 0;
-                } else {
-                    omni_quiet_secs = omni_quiet_secs.saturating_add(secs_since_last_look);
-                }
                 // ACTIONS ARE PRODUCTION TOO, and counting only thinking made the judge blind to that.
                 //
                 // MEASURED over one 8h20m run: 242 looks, MEDIAN rate 0.09 chars/sec, and 138 of them
@@ -17276,8 +15407,23 @@ impl GooseAgentDispatcher {
                 // silent, and it is correct for that. Applied to a tool-using worker it inverts: the
                 // busier the call, the deader it looks. Half the resulting nudges changed nothing (27 vs
                 // 28), and each of the 21 re-streams restarted a call from scratch.
+                //
+                // COMPUTED BEFORE the burst-gap accounting below, which is what reads it first. It used to
+                // be computed fifteen lines LATER, so the accounting could never see an action even after
+                // this comment was written condemning exactly that blindness.
                 let actions_since_last_look =
                     call_records.len().saturating_sub(omni_calls_at_last_look);
+                let produced_anything_since_last_look =
+                    produced_since_look(produced_since_last_look, actions_since_last_look);
+                let secs_since_last_look = omni_last_look_at.elapsed().as_secs();
+                // Track the silence BEFORE anything reads it. A look that saw real production ends the
+                // current quiet spell and records how long it turned out to be recoverable for.
+                if produced_anything_since_last_look {
+                    omni_longest_gap_secs = omni_longest_gap_secs.max(omni_quiet_secs);
+                    omni_quiet_secs = 0;
+                } else {
+                    omni_quiet_secs = omni_quiet_secs.saturating_add(secs_since_last_look);
+                }
                 omni_last_look_at = tokio::time::Instant::now();
                 omni_thinking_at_last_look = thinking_chars;
                 omni_calls_at_last_look = call_records.len();
@@ -17350,8 +15496,12 @@ impl GooseAgentDispatcher {
                 // engine ends a call, and only ever by cancelling a corroborated loop.
                 let mut sys = "You supervise ONE running agent call on a shared multi-agent build. You are \
                      given its goal, what it has produced so far, a measurement of how much its reasoning is \
-                     repeating, a sample of its reasoning from much earlier in the same call, and its recent \
-                     commands.\n\
+                     repeating, a sample of its reasoning from much earlier in the same call, its recent \
+                     commands, and — when the call owns files — the deterministic checks of what it has \
+                     actually written plus the head of the file itself.\n\
+                     THE FILE CHECKS ARE FACTS AND OUTRANK THE REASONING. A call that sounds confident \
+                     while its owned file does not exist, does not parse, or holds nothing but stubs is \
+                     not progressing, whatever its narration says.\n\
                      Decide ONE thing: is this call still making meaningful progress toward its goal?\n\
                      Deep, slow, or repetitive-LOOKING reasoning that is ADVANCING is OK. LOOPING means it is \
                      revisiting the same analysis without adding evidence, resolving a decision, or taking the \
@@ -17567,14 +15717,21 @@ impl GooseAgentDispatcher {
                 // judge cannot tell a build task from a planning call, so it reads "no tool calls, lots
                 // of reasoning" as a call thinking hard -- correct for a planner, and the exact signature
                 // of a build task composing a whole file in its head and never emitting it.
+                let owned = self
+                    .owned_files_by_task
+                    .lock()
+                    .unwrap()
+                    .get(activity_key.unwrap_or(""))
+                    .cloned()
+                    .unwrap_or_default();
+                // Computed ONCE and used twice — in the judge's prompt below, and as a steer in its own
+                // right. See the `delivery_defect_steer` block after this prompt is built.
+                let owned_defects = if owned.is_empty() {
+                    Vec::new()
+                } else {
+                    verify_owned_files(&self.working_dir, &owned)
+                };
                 let owned_block = {
-                    let owned = self
-                        .owned_files_by_task
-                        .lock()
-                        .unwrap()
-                        .get(activity_key.unwrap_or(""))
-                        .cloned()
-                        .unwrap_or_default();
                     if owned.is_empty() {
                         String::new()
                     } else {
@@ -17590,6 +15747,53 @@ impl GooseAgentDispatcher {
                                 format!("  {f} — {state}")
                             })
                             .collect();
+                        // AND WHAT IS ACTUALLY IN THEM. The user's first ask was that the judge read the
+                        // FILES, and it still only ever read a reasoning tail: existence and a byte count
+                        // say nothing about whether the file parses or is a wall of `pass` stubs.
+                        // `verify_owned_files` answers both DETERMINISTICALLY — py_compile and
+                        // `skeleton_only`, on no node at all — and its findings were computed only at task
+                        // completion, which is an hour too late to steer anything.
+                        //
+                        // Scoped to THIS task's owned paths, so the cost is a stat plus one py_compile per
+                        // owned file (typically one to three) at judge cadence. `verify_tree_imports`
+                        // deliberately NOT run here: it walks the whole tree, and a cross-task import gap
+                        // is not this call's to fix.
+                        let defect_block = if owned_defects.is_empty() {
+                            String::new()
+                        } else {
+                            format!(
+                                "\n\nDETERMINISTIC CHECKS OF WHAT IT HAS WRITTEN SO FAR — these are \
+                                 FACTS, not opinions, read off the files a moment ago:\n{}\n\
+                                 If one of these is still true when the call ends, the task has not \
+                                 delivered. Put the FIRST of them into NEXT, naming the exact path.",
+                                owned_defects
+                                    .iter()
+                                    .map(|d| format!("  {d}"))
+                                    .collect::<Vec<_>>()
+                                    .join("\n")
+                            )
+                        };
+                        // A BOUNDED HEAD OF THE FIRST OWNED FILE, so "it wrote something" can be told
+                        // from "it wrote the right thing". Bounded and placed LAST on purpose: this
+                        // prompt's verdict quality rests on the reasoning tail and the recurrence
+                        // evidence, and file bytes must never crowd those out of a 27B's window.
+                        const OWNED_HEAD_BYTES: usize = 1_200;
+                        let head_block = owned
+                            .iter()
+                            .find_map(|f| {
+                                let body = std::fs::read_to_string(self.working_dir.join(f)).ok()?;
+                                if body.trim().is_empty() {
+                                    return None;
+                                }
+                                let head: String =
+                                    body.chars().take(OWNED_HEAD_BYTES).collect();
+                                let cut = if body.len() > head.len() { "\n…" } else { "" };
+                                Some(format!(
+                                    "\n\nThe first {} characters of `{f}` as it stands right now:\n{head}{cut}",
+                                    head.chars().count()
+                                ))
+                            })
+                            .unwrap_or_default();
                         format!(
                             "\n\nTHIS TASK OWNS THESE FILES, and nothing else in the build will write \
                              them:\n{}\n\
@@ -17598,7 +15802,7 @@ impl GooseAgentDispatcher {
                              yet and it has taken no action, it is composing the file in its head and \
                              waiting for it to be perfect — the single most expensive failure this run \
                              can have. Tell it to write a first minimal version of that exact path NOW \
-                             and extend it afterwards.",
+                             and extend it afterwards.{defect_block}{head_block}",
                             listed.join("\n")
                         )
                     }
@@ -17663,6 +15867,63 @@ impl GooseAgentDispatcher {
                     "look": omni_looks,
                     "thinking_chars": thinking_chars,
                 }));
+                // A DEFECT IS A FACT, AND IT SHOULD NOT WAIT FOR AN OPINION.
+                //
+                // The verifier's findings were emitted to the log and consumed by NOTHING: no scheduler
+                // consumer, no steer, no re-dispatch. A file that does not parse, discovered at minute 3,
+                // therefore cost the run nothing at all until INTEGRATE — the exact opposite of why the
+                // check was placed where it is cheapest.
+                //
+                // This closes the other half. The findings become a queued message on the SAME running
+                // session, so the call keeps everything it has built and simply learns a fact about its
+                // own output. It is not the judge's verdict and does not wait for one: `verify_owned_files`
+                // returns facts (does the file exist, does py_compile accept it, is every body a stub),
+                // which is precisely what makes them safe to act on automatically.
+                //
+                // THREE GUARANTEES, and they are what keep this from becoming the next `omni_aborts`:
+                //   * it can never end a task, fail a run, or spend an attempt — a steer is a message;
+                //   * each distinct defect is put to a task ONCE, so a defect the worker cannot fix
+                //     cannot generate a second note, let alone a loop;
+                //   * nothing here is bounded by a clock, a turn count or a volume.
+                if !owned_defects.is_empty() && pending.is_empty() {
+                    let unsent: Vec<String> = {
+                        let mut told = self.defects_told.lock().unwrap();
+                        let seen = told
+                            .entry(activity_key.unwrap_or("").to_string())
+                            .or_default();
+                        owned_defects
+                            .iter()
+                            .filter(|d| seen.insert((*d).clone()))
+                            .cloned()
+                            .collect()
+                    };
+                    if !unsent.is_empty() {
+                        let note = format!(
+                            "DELIVERY DEFECT — this is a MEASUREMENT of the files you own, taken from \
+                             disk just now, not an opinion about your reasoning:\n{}\n\
+                             Fix the first one before anything else, at that exact path. Keep the work \
+                             you have already done.",
+                            unsent
+                                .iter()
+                                .map(|d| format!("  - {d}"))
+                                .collect::<Vec<_>>()
+                                .join("\n")
+                        );
+                        agent
+                            .steer_superseding(
+                                &session_config.id,
+                                Message::user().with_text(note),
+                                "DELIVERY DEFECT",
+                            )
+                            .await;
+                        self.events.write_value(serde_json::json!({
+                            "event": "delivery_defect_steer",
+                            "task_id": activity_key,
+                            "look": omni_looks,
+                            "defects": unsent,
+                        }));
+                    }
+                }
                 // THE SUPERVISOR MUST NEVER STALL THE SUPERVISED.
                 //
                 // MEASURED, run swarm-3node-r0 (archived -KILLED-review-3h-silent-1036): look 8 was
@@ -17694,27 +15955,14 @@ impl GooseAgentDispatcher {
                             r = &mut probe_fut => break r,
                             e = stream.next() => match e {
                                 Some(ev) => {
-                                    deferred_events.push_back(ev);
-                                    // THE LANE MUST STAY OBSERVABLE WHILE THE SUPERVISOR READS IT.
+                                    // PROCESSED WHERE IT ARRIVES, not queued behind the supervisor.
                                     //
-                                    // These events are deliberately NOT processed here -- processing lives
-                                    // in one place, below, and duplicating it would double-count every
-                                    // chunk. But the digest is the ONLY thing the desktop can see, and it
-                                    // is written at the tail of this loop body, which a judge probe does
-                                    // not reach: a probe is a full model call with no deadline, queued on
-                                    // the same saturated fleet, and it routinely runs for MINUTES.
-                                    //
-                                    // MEASURED: three lanes held identical `thinking_chars` (6014, 6018,
-                                    // 2012) across a 12s sample while `lms ps` said GENERATING. The comment
-                                    // at 17583 records the same shape from the previous incarnation --
-                                    // "stayed frozen at exactly 13733, the value look 8 had recorded".
-                                    //
-                                    // So report the TRUTH rather than fake progress: the counters are
-                                    // genuinely stale, and what has changed is that the supervisor is
-                                    // reading and chunks are queueing behind it. `judging` and
-                                    // `queued_chunks` say exactly that, and they keep the staleness
-                                    // detector honest -- a lane whose digest stops moving with
-                                    // `judging: false` is still a dead lane.
+                                    // The counters, the transcripts and the recurrence fingerprints all
+                                    // advance during a probe now, so a lane being judged is a lane whose
+                                    // digest still MOVES. `judging` stays because it is the honest label
+                                    // for "a supervisor is reading this call"; `queued_chunks` is gone
+                                    // because nothing queues any more.
+                                    process_stream_event!(ev);
                                     if let Some(p) = &activity_file {
                                         let due = last_digest_at.is_none_or(|t| {
                                             t.elapsed() >= std::time::Duration::from_millis(400)
@@ -17731,8 +15979,6 @@ impl GooseAgentDispatcher {
                                                 model_id,
                                             );
                                             d["judging"] = serde_json::Value::Bool(true);
-                                            d["queued_chunks"] =
-                                                serde_json::Value::from(deferred_events.len());
                                             let _ = std::fs::write(p, d.to_string());
                                             if let Some(m) = &activity_mirror {
                                                 let _ = std::fs::write(m, d.to_string());
@@ -17867,8 +16113,10 @@ impl GooseAgentDispatcher {
                         // actually means something. The threshold is the existing readiness floor, not a
                         // new number: if a call has generated enough new reasoning to be judged at all
                         // since the last look, it is advancing.
-                        let producing_since_last_look =
-                            produced_since_last_look >= OMNI_JUDGE_MIN_CHARS;
+                        // ACTIONS COUNT. See `produced_since_look`: a tool-using worker that barely
+                        // narrates was classed not-producing here, which armed the tail-similarity streak
+                        // against the healthiest calls in the run.
+                        let producing_since_last_look = produced_anything_since_last_look;
                         // A GAP THIS CALL HAS ALREADY RECOVERED FROM IS NOT EVIDENCE OF DEATH.
                         //
                         // MEASURED 2026-08-28: review-3 was re-streamed at `produced=5` and immediately
@@ -17892,6 +16140,7 @@ impl GooseAgentDispatcher {
                                 "quiet_secs": omni_quiet_secs,
                                 "longest_recovered_gap_secs": omni_longest_gap_secs,
                                 "produced_since_last_look": produced_since_last_look,
+                                "actions_since_last_look": actions_since_last_look,
                             }));
                         }
                         if recur.recurring()
@@ -17950,17 +16199,24 @@ impl GooseAgentDispatcher {
                     // generating gets left alone unless something factual is wrong with what it has
                     // written, which is the verifier's job and not a matter of opinion. LOOPING and a
                     // MEASURED repeat are unchanged: those are claims about a stuck call, not about taste.
+                    //
+                    // AND A CALL THAT IS ACTING IS PRODUCING. The hold was keyed on reasoning characters
+                    // alone, so it protected narrating planner lanes and left a tool-using worker nudged
+                    // on the FIRST DRIFTING look with no corroboration — the same inversion the rate block
+                    // already warns the judge about ("It is WORKING... do not read a low reasoning count
+                    // as a stall") while the engine went on doing it.
                     let drifting_now = omni_outcome.verdict == goose_swarm::Verdict::Drifting
                         && omni_outcome.confidence >= 0.8
-                        && produced_since_last_look < OMNI_JUDGE_MIN_CHARS;
+                        && !produced_anything_since_last_look;
                     if omni_outcome.verdict == goose_swarm::Verdict::Drifting
                         && omni_outcome.confidence >= 0.8
-                        && produced_since_last_look >= OMNI_JUDGE_MIN_CHARS
+                        && produced_anything_since_last_look
                     {
                         self.events.write_value(serde_json::json!({
                             "event": "judge_drift_held",
                             "task_id": activity_key,
                             "produced_since_last_look": produced_since_last_look,
+                            "actions_since_last_look": actions_since_last_look,
                             "detail": "DRIFTING on a producing call -- held, because 33 of 34 such nudges \
                                        changed nothing and cost 66 minutes of worker time",
                         }));
@@ -18028,7 +16284,6 @@ impl GooseAgentDispatcher {
                         //
                         // `pending.is_empty()` remains: a tool request in flight must never be orphaned,
                         // and a tool call IS a boundary, so waiting there costs nothing.
-                        let _acted_since_last_look = actions_since_last_look > 0;
                         let can_steer = pending.is_empty();
                         let nudge_text = format!(
                             "SUPERVISOR NOTE — an independent reviewer read this call's own reasoning.\n\
@@ -18041,6 +16296,12 @@ impl GooseAgentDispatcher {
                                 format!("You have already established: {established}\n")
                             }
                         );
+                        // WHICH ARM FIRED, IN THE ARTEFACT. Three distinct triggers reach this emit —
+                        // a measured repeat, a DRIFTING verdict, and a LOOPING streak (itself armed either
+                        // by measured recurrence or by tail similarity) — and the payload named none of
+                        // them, so "which trigger produces useful nudges" was unanswerable from any log
+                        // the engine writes. The 1-in-34 action rate could be counted and never attributed.
+                        let arm = nudge_arm(repeat_measured, drifting_now, recur.recurring());
                         self.events.write_value(serde_json::json!({
                             "event": "judge_nudge",
                             "task_id": activity_key,
@@ -18051,6 +16312,8 @@ impl GooseAgentDispatcher {
                             "established": established,
                             "next": direction,
                             "delivery": if can_steer { "steer" } else { "restream" },
+                            "arm": arm,
+                            "verdict": omni_outcome.verdict.as_str(),
                         }));
                         eprintln!(
                             "  {} omni-judge (look {omni_looks}, nudge {nudges_used}): redirecting after \
@@ -18115,27 +16378,57 @@ impl GooseAgentDispatcher {
                             // acted SINCE the supervisor started redirecting it. `tool_calls_at_last_nudge`
                             // already records that, and a call that has taken no action across a repeated
                             // direction is not going to take one now.
+                            // "ZERO TOOL CALLS" WAS NEVER WHAT THIS MEASURES, and four surfaces said it
+                            // anyway. The condition is "no tool call SINCE the supervisor started
+                            // redirecting it" — a call with early tool calls is terminable and was being
+                            // described in run.jsonl, on the console and on the desktop card as having
+                            // made none. `calls_since_last_nudge` is the number the sentence is about, so
+                            // it goes in the event and the audit stops reading a false fact.
                             let acted_since_nudge =
                                 tool_calls_at_last_nudge.is_none_or(|n| call_records.len() > n);
+                            let calls_since_last_nudge =
+                                calls_since_nudge(tool_calls_at_last_nudge, call_records.len());
                             if wants_structured_reply && !acted_since_nudge {
-                                self.events.write_value(serde_json::json!({
-                                    "event": "judge_call_ended_unproductive",
-                                    "task_id": activity_key,
-                                    "nudges": nudges_used,
-                                    "thinking_chars": thinking_chars,
-                                    "reason": "owes a structured reply, zero tool calls, direction repeated",
-                                }));
-                                eprintln!(
-                                    "  {} omni-judge: ending {} — {nudges_used} nudges, {thinking_chars} \
-                                     reasoning chars, ZERO tool calls, and the direction has stopped \
-                                     changing. The phase proceeds without this part.",
-                                    style("■").red(),
-                                    activity_key.unwrap_or("call")
-                                );
-                                return Err(anyhow!(
-                                    "call owed a structured reply and never made one: {nudges_used} nudges, \
-                                     {thinking_chars} reasoning chars, 0 tool calls"
-                                ));
+                                // THE STATE IS MEASURED EVERYWHERE; ONLY THE ENDING IS OPT-IN.
+                                //
+                                // A caller that propagates the Err loses its whole phase to a judge-driven
+                                // abort, and planner-side calls make zero tool calls BY DESIGN, so
+                                // `!acted_since_nudge` is their resting state. Emitting the declined case
+                                // keeps the counts that would justify widening the opt-in later.
+                                if !may_terminate {
+                                    self.events.write_value(serde_json::json!({
+                                        "event": "judge_call_end_declined",
+                                        "task_id": activity_key,
+                                        "nudges": nudges_used,
+                                        "thinking_chars": thinking_chars,
+                                        "tool_calls": call_records.len(),
+                                        "calls_since_last_nudge": calls_since_last_nudge,
+                                        "reason": "the caller cannot absorb a lost lane, so the call runs on",
+                                    }));
+                                } else {
+                                    self.events.write_value(serde_json::json!({
+                                        "event": "judge_call_ended_unproductive",
+                                        "task_id": activity_key,
+                                        "nudges": nudges_used,
+                                        "thinking_chars": thinking_chars,
+                                        "tool_calls": call_records.len(),
+                                        "calls_since_last_nudge": calls_since_last_nudge,
+                                        "reason": "owes a structured reply, no tool call since the last nudge, direction repeated",
+                                    }));
+                                    eprintln!(
+                                        "  {} omni-judge: ending {} — {nudges_used} nudges, {thinking_chars} \
+                                         reasoning chars, {calls_since_last_nudge} tool calls since the last \
+                                         nudge, and the direction has stopped changing. The phase proceeds \
+                                         without this part.",
+                                        style("■").red(),
+                                        activity_key.unwrap_or("call")
+                                    );
+                                    return Err(anyhow!(
+                                        "call owed a structured reply and never made one: {nudges_used} nudges, \
+                                         {thinking_chars} reasoning chars, {calls_since_last_nudge} tool calls \
+                                         since the last nudge"
+                                    ));
+                                }
                             }
                         }
                         last_direction = direction.clone();
@@ -18213,6 +16506,28 @@ impl GooseAgentDispatcher {
                             + std::time::Duration::from_secs(OMNI_JUDGE_FIRST_LOOK_SECS);
                         continue;
                     }
+                } else if !stream_ended_during_probe {
+                    // A FAILED PROBE MUST NOT RE-ARM THE BYPASS FOR THE REST OF THE CALL.
+                    //
+                    // `repeat_evidence` is the FIRST disjunct of the judge trigger and it bypasses both
+                    // the readiness floor and the look interval, by design: a call stuck re-running one
+                    // command may have emitted almost no reasoning. It is cleared in exactly one place —
+                    // `repeat_evidence.take()` inside the Ok arm above. So a judge model call that simply
+                    // FAILS (not the abandon path, which is retried by design and guarded by
+                    // `stream_ended_during_probe`) leaves the evidence set, and the next iteration of this
+                    // loop dispatches a fresh full probe immediately, and the next, for the rest of the
+                    // call. That is the shape behind the measured "218 looks dispatched, 213 abandoned".
+                    //
+                    // Clearing it loses the diagnosis for this one look and nothing else: the breaker
+                    // re-arms the moment the command repeats again, so the loop is still caught.
+                    repeat_evidence = None;
+                    self.events.write_value(serde_json::json!({
+                        "event": "judge_look_failed",
+                        "task_id": activity_key,
+                        "look": omni_looks,
+                        "detail": "the judge model call failed; repeat evidence cleared so the trigger \
+                                   does not re-fire on every stream event",
+                    }));
                 }
             }
             // #135: cut a REASONING spiral in ANY phase. Deterministic (a char count). Distinct from
@@ -18303,161 +16618,18 @@ impl GooseAgentDispatcher {
             // break and do not touch the call — we fall through to the judge-look trigger below with
             // whatever the call has produced, and go straight back to awaiting. The judge decides, as it
             // is supposed to; the clock only makes sure it is asked.
-            // Anything the worker produced while the judge was reading it comes first, in order, before
-            // the socket is touched again. `stream_ended_during_probe` records that the call already
-            // finished, so once the backlog is drained the loop leaves rather than awaiting a closed
-            // stream.
-            let ev = if let Some(ev) = deferred_events.pop_front() {
-                first_event_seen = true;
-                Some(ev)
-            } else if stream_ended_during_probe {
+            // `stream_ended_during_probe` records that the call finished while the judge was still
+            // reading it, so the loop leaves rather than awaiting a closed stream. There is no backlog
+            // to drain any more: an event that arrives during a probe is processed where it arrives.
+            if stream_ended_during_probe {
                 break;
-            } else {
-                match tokio::time::timeout(JUDGE_WAKE, stream.next()).await {
-                    Ok(Some(ev)) => {
-                        first_event_seen = true;
-                        Some(ev)
-                    }
-                    Ok(None) => break,
-                    Err(_) => None,
-                }
-            };
-            let Some(ev) = ev else {
-                continue;
-            };
-            match ev {
-                Ok(AgentEvent::Message(msg)) => {
-                    // PROGRESS WATCHDOG: a message counts as PRODUCTIVE if it carries a real tool call/result
-                    // (incl. final_output) or non-empty non-thinking text. Reasoning-only (Thinking) and
-                    // malformed tool calls are NOT productive, so a thinking/flailing spiral lets the
-                    // thinking_only_budget elapse and get cut.
-                    let mut productive = false;
-                    for content in &msg.content {
-                        if message_content_is_productive(content) {
-                            productive = true;
-                        }
-                        match content {
-                            MessageContent::Text(t) => texts.push(t.text.clone()),
-                            MessageContent::Thinking(t) => {
-                                thinking_chars += t.thinking.chars().count();
-                                thinking_total += t.thinking.chars().count();
-                                // ACCUMULATE a rolling tail, don't overwrite: each streamed Thinking chunk is a
-                                // single token (" the", "ents"), so assigning it made the panel show one word at
-                                // a time. Append and keep a bounded window so the digest's tail_chars(400) shows
-                                // a readable run of the live reasoning instead of the last fragment.
-                                last_thinking.push_str(&t.thinking);
-                                // THE FULL THINKING STREAM, CAPTURED BEFORE IT IS THROWN AWAY.
-                                //
-                                // The window below keeps 2,400 characters, so the panel's THINKING pane
-                                // does not scroll — it CLEARS AND REFILLS as the model streams. Mihai:
-                                // *"the content does not exist, it just clears and adds new content as it
-                                // streams. it's very bad."* Exactly right, and the comment immediately
-                                // below has always said this is the only place the full stream is seen.
-                                // Buffered here and flushed with the digest, so it costs one append per
-                                // 400ms rather than one per token.
-                                think_unflushed.push_str(&t.thinking);
-                                // #F924: fingerprint BEFORE the truncation below discards it —
-                                // this is the only place the full stream is ever seen.
-                                recur.push(&t.thinking);
-                                if last_thinking.chars().count() > 3000 {
-                                    last_thinking = tail_chars(&last_thinking, 2400);
-                                }
-                            }
-                            MessageContent::ToolRequest(req) => match req.tool_call.as_ref() {
-                                Ok(tc) => {
-                                    let name = tc.name.to_string();
-                                    if name == FINAL_OUTPUT_TOOL {
-                                        final_output = Some(
-                                            serde_json::to_string(&tc.arguments)
-                                                .unwrap_or_default(),
-                                        );
-                                    }
-                                    let mcp = is_mcp_tool(&name);
-                                    let args_val = serde_json::to_value(&tc.arguments)
-                                        .unwrap_or(serde_json::Value::Null);
-                                    let summary = summarize_tool_call(&name, &args_val);
-                                    let fetched = args_fetch_external_url(&name, &args_val);
-                                    pending.insert(req.id.clone(), (name, mcp, fetched, summary));
-                                }
-                                // MALFORMED CALL. The provider could not parse what the model emitted, so it
-                                // built the request as an Err — response_to_message does this for an invalid
-                                // function name (INVALID_REQUEST) and for unparseable arguments
-                                // (INVALID_PARAMS). This branch used to be dropped, and because a malformed
-                                // call never reaches a tool there is no ToolResponse to catch it downstream
-                                // either: it was invisible to the digest BY CONSTRUCTION. Every "malformed: 0"
-                                // this instrument ever reported was therefore an artifact, not a measurement —
-                                // which matters because the whole question of whether a weak local model can
-                                // call tools reliably is answered from these digests.
-                                Err(e) => {
-                                    malformed += 1;
-                                    let name = malformed_tool_name(&e.message);
-                                    call_records.push((
-                                        name.clone(),
-                                        e.message.to_string(),
-                                        Some(false),
-                                        format!("MALFORMED CALL — the provider rejected it before any tool ran: {}", e.message),
-                                    ));
-                                    tool_calls.push(ToolCallRecord {
-                                        name,
-                                        is_mcp: false,
-                                        ok: Some(false),
-                                        fetched_external: false,
-                                    });
-                                }
-                            },
-                            MessageContent::ToolResponse(resp) => {
-                                if let Some((name, is_mcp, fetched, summary)) =
-                                    pending.remove(&resp.id)
-                                {
-                                    let ok = resp
-                                        .tool_result
-                                        .as_ref()
-                                        .map(|r| !r.is_error.unwrap_or(false))
-                                        .unwrap_or(false);
-                                    let result = tool_result_text(&resp.tool_result);
-                                    // #136: track consecutive identical (call, result) outcomes. Computed
-                                    // BEFORE the move into call_records. A repeat with a DIFFERENT result is
-                                    // progress, so it resets the run; an EMPTY result is not counted at all
-                                    // (it carries no state, so counting it would silently degrade the key to
-                                    // name+args and could fire on a legitimately repeated no-output call).
-                                    if repeat_break_on {
-                                        if result.trim().is_empty() {
-                                            repeat_hash = None;
-                                            repeat_run = 0;
-                                        } else {
-                                            let h = repeat_call_hash(&name, &summary, ok, &result);
-                                            if repeat_hash == Some(h) {
-                                                repeat_run += 1;
-                                            } else {
-                                                repeat_hash = Some(h);
-                                                repeat_run = 1;
-                                                repeat_run_started = tokio::time::Instant::now();
-                                                repeat_what = summary.chars().take(80).collect();
-                                                // The RESULT, not just the command. The judge cannot work
-                                                // out WHY a call keeps returning the same thing without
-                                                // seeing what it returns.
-                                                repeat_result = result.chars().take(600).collect();
-                                            }
-                                        }
-                                    }
-                                    call_records.push((name.clone(), summary, Some(ok), result));
-                                    tool_calls.push(ToolCallRecord {
-                                        name,
-                                        is_mcp,
-                                        ok: Some(ok),
-                                        fetched_external: fetched,
-                                    });
-                                }
-                            }
-                            _ => {}
-                        }
-                    }
-                    let _ = productive;
-                }
-                Ok(AgentEvent::McpNotification(_)) => {}
-                Ok(_) => {}
-                Err(e) => return Err(anyhow!("agent stream error: {e}")),
             }
+            let ev = match tokio::time::timeout(JUDGE_WAKE, stream.next()).await {
+                Ok(Some(ev)) => ev,
+                Ok(None) => break,
+                Err(_) => continue,
+            };
+            process_stream_event!(ev);
             if let Some(p) = &activity_file {
                 let due = last_digest_at
                     .is_none_or(|t| t.elapsed() >= std::time::Duration::from_millis(400));
@@ -18512,7 +16684,7 @@ impl GooseAgentDispatcher {
                 obj.insert("phase".to_string(), serde_json::Value::from("done"));
             }
             let _ = std::fs::write(p, digest.to_string());
-            transcript_at = append_reasoning_transcript(p, &texts, transcript_at);
+            let _ = append_reasoning_transcript(p, &texts, transcript_at);
             append_thinking_transcript(p, &mut think_unflushed);
             // The mirrored copy MUST receive this terminal phase="done" too, or the panel would hold
             // a mirrored fix node at "working" forever — the shadow (and its digest) is deleted the
@@ -18531,510 +16703,6 @@ impl GooseAgentDispatcher {
         })
     }
 
-    /// Ask the planner for a small set of INDEPENDENT research questions to resolve before planning.
-    /// Degrades to an empty list on any error (research is optional, never aborts the run).
-    async fn research_questions(
-        &self,
-        planner_model: &str,
-        user_prompt: &str,
-        max_q: u32,
-        is_amendment: bool,
-    ) -> Result<Vec<ResearchQuestion>> {
-        let codebase = if is_amendment {
-            " You MAY also include \"codebase\" questions to investigate the EXISTING code in the working dir."
-        } else {
-            ""
-        };
-        let system = format!(
-            "You scope a coding task BEFORE planning. Emit AT MOST {max_q} INDEPENDENT research questions whose \
-             answers would MATERIALLY change the plan: \"library_docs\" (look up a library's real API via its docs) \
-             or \"web\" (a fact to look up).{codebase} Ask ONLY what you cannot already answer; if the task is \
-             self-contained, return an EMPTY questions list. Do NOT invent make-work. Then call the final_output tool."
-        );
-        let response = Some(Response {
-            json_schema: Some(research_schema()),
-        });
-        let out = match self
-            .run_agent_timed(
-                planner_model,
-                system,
-                format!("Task: {user_prompt}"),
-                response,
-                8,
-                &[],
-            )
-            .await
-        {
-            Ok(o) => o,
-            Err(_) => return Ok(Vec::new()),
-        };
-        let Some(fo) = out.final_output else {
-            return Ok(Vec::new());
-        };
-        #[derive(serde::Deserialize)]
-        struct Q {
-            id: String,
-            question: String,
-            kind: String,
-        }
-        #[derive(serde::Deserialize)]
-        struct Qs {
-            #[serde(default)]
-            questions: Vec<Q>,
-        }
-        let parsed: Qs = match serde_json::from_str(&fo) {
-            Ok(p) => p,
-            Err(_) => return Ok(Vec::new()),
-        };
-        Ok(parsed
-            .questions
-            .into_iter()
-            .take(max_q as usize)
-            .map(|q| ResearchQuestion {
-                id: q.id,
-                question: q.question,
-                kind: q.kind,
-            })
-            .collect())
-    }
-
-    /// GOOSE_SWARM_ASK: generate crisp INTERROGATIVE clarifying questions to ask the USER when plan
-    /// confidence is low. The answers should change HOW the program is built (scope/IO/formats/acceptance),
-    /// not be make-work. Returns an empty vec on any failure or a self-contained task — the caller falls
-    /// back to a generic question so a below-floor plan ALWAYS asks (never proceeds on a default).
-    async fn clarify_questions(
-        &self,
-        planner_model: &str,
-        user_prompt: &str,
-        plan_json: &str,
-        uncertainties: &str,
-        conf: u8,
-        max_q: u32,
-    ) -> Vec<ClarifyQuestion> {
-        let unc = if uncertainties.trim().is_empty() {
-            "(none stated)".to_string()
-        } else {
-            uncertainties.trim().to_string()
-        };
-        let plan_excerpt: String = plan_json.chars().take(2000).collect();
-        // SPEC-BOUND OPTIONS (#117). The old prompt fought the spec it was shown, in three places at once:
-        //   1. a worked example that is INDEPENDENT of the task — "for a storage question:
-        //      [SQLite file, JSON file, plain-text lines]". A weak model copies the nearest in-context
-        //      demonstration, and this one literally demonstrates answering a storage question with
-        //      SQLite/JSON regardless of what the spec fixed. The live failure was a storage question
-        //      offering JSON/SQLite/CSV against a spec that MANDATED tab-separated.
-        //   2. "the most likely/COMMON answer FIRST" and 3. "the SAFEST/MOST-COMMON default FIRST" — both
-        //      steer toward the popular choice and away from an unusual spec-mandated one.
-        // Against that, the only counterweight was a passing "NOT ... anything already pinned down by the
-        // task". Two instructions pulled one way, one weak clause the other.
-        //
-        // The spec was never missing — it is interpolated verbatim and untruncated into `user` below. So this
-        // is a molding fix, not a plumbing one: make the spec BINDING ON OPTIONS, and make the example
-        // demonstrate obeying a fixed requirement rather than ignoring one.
-        let spec_bound = swarm_gate_cfg_bundle(
-            "GOOSE_SWARM_CLARIFY_SPEC_BOUND",
-            load_config().clarify_spec_bound,
-            false,
-        );
-        let option_rules = if spec_bound {
-            "FOR EACH QUESTION, also provide 2-4 concrete pickable OPTIONS in `options` so the user can just \
-             click a choice (they can still type their own). EVERY OPTION MUST SATISFY EVERY REQUIREMENT THE \
-             TASK ALREADY FIXES. If the task fixes a choice, that choice is NOT a question — do not offer \
-             alternatives to it, and do not ask about it at all. Only when the task leaves something genuinely \
-             open may you offer the common answers for it, most likely FIRST. Options must be short, concrete, \
-             and mutually distinct. Example of the ONLY correct behaviour: if the task says storage MUST be a \
-             tab-separated file, then the storage format is SETTLED — asking \"SQLite / JSON / CSV?\" is WRONG \
-             because every option contradicts the task; ask instead about something the task genuinely left \
-             open. Use an empty options list ONLY when the question is truly open-ended."
-        } else {
-            "FOR EACH QUESTION, also provide 2-4 concrete pickable OPTIONS in `options` — the most \
-             likely/common answer FIRST — so the user can just click a choice (they can still type their own). \
-             Options must be short, concrete, and mutually distinct (e.g. for a storage question: [\"SQLite \
-             file\",\"JSON file\",\"plain-text lines\"]). Use an empty options list ONLY when the question is \
-             truly open-ended."
-        };
-        let default_rule = if spec_bound {
-            "one clear decision per question, mutually-exclusive options, and NEVER ask something the task \
-             already decided or that a competent developer would just pick by default."
-        } else {
-            "one clear decision per question, mutually-exclusive options with the SAFEST/most-common default \
-             FIRST, and NEVER ask something a competent developer would just pick by default."
-        };
-        let system = format!(
-            "A weak local model just drafted a plan for a coding task but its confidence is LOW ({conf}/100). \
-             Ask the USER AT MOST {max_q} crisp, specific, INTERROGATIVE questions whose answers would most \
-             change HOW the program is built — its scope, inputs/outputs, file formats, or acceptance criteria \
-             — NOT trivia or anything already pinned down by the task. Ask ONLY what the USER alone can decide \
-             — do NOT ask facts that can be looked up in docs or on the web (the swarm researches those itself). \
-             Each question must be answerable in one sentence and END WITH '?'. {option_rules} FOR EACH \
-             QUESTION also set `resolves` to the ONE specific open decision it settles (quote it from the \
-             uncertainties above) so the user sees exactly why you're asking. Write like a senior engineer \
-             deciding with a teammate: {default_rule} If the task is \
-             genuinely self-contained and nothing would change the build, return an EMPTY questions list — do \
-             NOT invent make-work. Then call the final_output tool."
-        );
-        let user = format!(
-            "Task: {user_prompt}\n\nThe model's stated uncertainties: {unc}\n\nThe drafted plan (excerpt):\n{plan_excerpt}"
-        );
-        let response = Some(Response {
-            json_schema: Some(clarify_schema()),
-        });
-        let out = match self
-            .run_agent_timed(planner_model, system, user, response, 8, &[])
-            .await
-        {
-            Ok(o) => o,
-            Err(_) => return Vec::new(),
-        };
-        let Some(fo) = out.final_output else {
-            return Vec::new();
-        };
-        #[derive(serde::Deserialize)]
-        struct Qs {
-            #[serde(default)]
-            questions: Vec<ClarifyQuestion>,
-        }
-        let parsed: Qs = match serde_json::from_str(&fo) {
-            Ok(p) => p,
-            Err(_) => return Vec::new(),
-        };
-        parsed
-            .questions
-            .into_iter()
-            .map(|mut q| {
-                q.question = q.question.trim().to_string();
-                q.resolves = q.resolves.trim().to_string();
-                q.options = q
-                    .options
-                    .into_iter()
-                    .map(|o| o.trim().to_string())
-                    .filter(|o| !o.is_empty())
-                    .take(4)
-                    .collect();
-                q
-            })
-            // Enforce the interrogative contract the prompt demands: a real question ends with '?'.
-            // Declarative junk (headers, statements) falls through to the next cascade tier instead of
-            // being surfaced to the user as a "question".
-            .filter(|q| q.question.chars().count() >= 8 && q.question.ends_with('?'))
-            .take(max_q as usize)
-            .collect()
-    }
-
-    /// Run the research questions IN PARALLEL across the fleet (round-robin over worker models), each
-    /// with the research MCP extensions. A failed research worker degrades to a note, never blocks.
-    async fn run_research(
-        self: &Arc<Self>,
-        questions: Vec<ResearchQuestion>,
-        research_extensions: Arc<Vec<ExtensionConfig>>,
-        worker_models: Vec<String>,
-    ) -> Vec<ResearchFinding> {
-        if worker_models.is_empty() {
-            return Vec::new();
-        }
-        let me = self.clone();
-        // One research call per device (work-stealing): a weight-1 node never has a second queued.
-        fanout_over_fleet(worker_models, questions, move |q, model| {
-            let me = me.clone();
-            let exts = research_extensions.clone();
-            async move {
-                let started = std::time::Instant::now();
-                eprintln!(
-                    "  {} research {} ({}) → {}",
-                    style("▸").cyan().bold(),
-                    style(&q.id).bold(),
-                    q.kind,
-                    model
-                );
-                let tool_hint = match q.kind.as_str() {
-                    "library_docs" => "Use the context7 tools (resolve-library-id then get-library-docs).",
-                    "web" => "Use the web-search tool.",
-                    "codebase" => "Use shell/grep to inspect the existing code in the working directory.",
-                    _ => "Use whatever tools fit.",
-                };
-                let system = format!(
-                    "You are a RESEARCH worker. Answer EXACTLY the question below with a concise, factual summary \
-                     (key API names, short snippets, file refs). {tool_hint} Do NOT write or modify any project files."
-                );
-                let (findings, lookups, attempt) = match me
-                    .run_agent_timed(&model, system, q.question.clone(), None, 12, &exts)
-                    .await
-                {
-                    Ok(o) => {
-                        let lookups = research_lookups(&o.tool_calls);
-                        let attempt = classify_research_attempt(&o.tool_calls);
-                        (o.text, lookups, attempt)
-                    }
-                    Err(e) => (
-                        format!("(research failed: {e})"),
-                        Vec::new(),
-                        ResearchAttempt::Errored,
-                    ),
-                };
-                eprintln!(
-                    "  {} research {} ({:.0}s{})",
-                    style("✓").green().bold(),
-                    style(&q.id).bold(),
-                    started.elapsed().as_secs_f64(),
-                    if lookups.is_empty() {
-                        style(" · no lookup").yellow().to_string()
-                    } else {
-                        String::new()
-                    },
-                );
-                ResearchFinding {
-                    question: q.question,
-                    kind: q.kind,
-                    findings,
-                    grounded: !lookups.is_empty(),
-                    lookups,
-                    attempt,
-                }
-            }
-        })
-        .await
-    }
-
-    /// Fan out fixed-lens SCOUTS IN PARALLEL across the fleet — each self-directs its lens with no
-    /// serial scoping call. Returns the same `ResearchFinding` shape as `run_research` so the planner
-    /// and the findings-join are unchanged.
-    async fn run_scouts(
-        self: &Arc<Self>,
-        user_prompt: &str,
-        is_amendment: bool,
-        max_lenses: u32,
-        research_extensions: Arc<Vec<ExtensionConfig>>,
-        worker_models: Vec<String>,
-        budget: ScoutBudget,
-    ) -> Vec<ResearchFinding> {
-        let ScoutBudget {
-            max_lookups,
-            backstop_secs: scout_budget,
-        } = budget;
-        if worker_models.is_empty() {
-            return Vec::new();
-        }
-        let me = self.clone();
-        let prompt = user_prompt.to_string();
-        let lenses = select_lenses(is_amendment, max_lenses);
-        // #135 straggler-stop for scouts, now gated by `straggler_stop_degrade` (default OFF) rather than
-        // `straggler_stop` (default ON) — the same category CONTRACTS and DETAIL already sit in, and for the
-        // same stated reason: these fanouts CAN CHANGE A WORKER'S BUILD INPUTS.
-        //
-        // THE ASYMMETRY THAT WAS MISSED. Plan drafts are REDUNDANT — best-of-N produces N candidates and one
-        // is kept, so aborting the slowest costs nothing. Scout lenses are COMPLEMENTARY — each covers ground
-        // no other lens covers, so aborting the slowest costs that ground outright. A redundancy optimisation
-        // was applied to a complementary fanout.
-        //
-        // MEASURED, on every archived run that reached research: 6 of 6 lost EXACTLY ONE lens, never zero and
-        // never two — 33.3% of planned research discarded by design, on 1-node and 3-node runs alike.
-        //
-        // THIS ALSO REFUTES THE PREVIOUS FIX AT ITS OWN ADDRESS. fb0885328 reordered SCOUT_LENSES to put
-        // `edge-cases` FIRST, reasoning that straggler-stop "sacrifices the LAST lens" and the order is the
-        // dispatch order. It is not positional: `collect_fleet_with_straggler_stop` arms the grace on the
-        // COMPLETION count, so the victim is whichever lens is SLOWEST. Run swarm-20260804-184525912, on a
-        // binary built 2026-08-04 21:42 (the reorder landed 2026-08-01 14:14, so it WAS armed), still lost
-        // `edge-cases` — now first in the order — while architecture and libraries reached `phase: done`.
-        // Edge-cases asks for failure modes and concrete tests, the most generative of the three prompts, so
-        // it is reliably the slowest and reliably the one killed.
-        //
-        // The trade is not close: research ran 297s of a ~7200s unit, so waiting out the straggler costs on
-        // the order of 1% of wall-clock to recover 50% more research, and research feeds every later dispatch.
-        // FALSIFIER: if a run under this change shows `lenses_returned` still short of `scouts_planned`, the
-        // cause is NOT straggler-stop and this comment is wrong.
-        let scout_grace = if self.straggler_stop_degrade {
-            self.straggler_grace_secs
-                .unwrap_or(45)
-                .clamp(10, scout_budget.max(10))
-        } else {
-            0
-        };
-        // THE DOCUMENTS THE SPEC ITSELF NAMES, hoisted out of the per-lens closure so every scout is
-        // told the same truth. `spec_doc_urls` is pure and cheap; computing it per lens would just be
-        // the same parse three times.
-        let (scout_doc_urls, doc_urls) = scout_docs_decision(user_prompt);
-        // One scout per device (work-stealing): a weight-1 node never has a second scout queued.
-        fanout_over_fleet_straggler(one_lane_per_host(worker_models), lenses, scout_grace, "scout", Some(self.events.clone()), move |lens, model| {
-            let me = me.clone();
-            let exts = research_extensions.clone();
-            let prompt = prompt.clone();
-            let doc_urls = doc_urls.clone();
-            async move {
-                let started = std::time::Instant::now();
-                eprintln!(
-                    "  {} scout {} → {}",
-                    style("▸").cyan().bold(),
-                    style(lens.id).bold(),
-                    model
-                );
-                // THE ENGINE ALREADY KNOWS WHETHER IT CAN LOOK ANYTHING UP, AND WAS TELLING THE SCOUT
-                // OTHERWISE.
-                //
-                // `research_tools` is emitted every run as {"available": [], "can_look_things_up": false}
-                // on this fleet — no MCP extensions are attached by default. Yet the `libraries` lens ships
-                // the tool_hint "Use the context7 tools (resolve-library-id then get-library-docs) and
-                // web-search", and the closing line ordered EVERY scout to "spend them on LOOKING THINGS UP".
-                //
-                // Naming tools that do not exist is worse than wasted tokens here. That lens's whole job is
-                // "look up their REAL current API: function/class names, signatures, minimal usage snippets".
-                // Told to look it up, with nothing to look it up WITH, a 27B's only remaining move is to
-                // produce the API from memory — and those invented signatures flow straight into the plan
-                // and then into the frozen contracts. F78 measured the downstream half of this: `grounded`
-                // was 0 on every run, so `doc_facts` — the one verbatim research->worker channel — carried
-                // nothing.
-                //
-                // So when there is nothing attached, say so, and ask for CALIBRATION instead of lookup: what
-                // it is confident of, and what it is NOT, marked. An honest "I am not certain of this
-                // signature" is worth more to the planner than a fluent invention.
-                // ONE BOOLEAN WAS ANSWERING TWO DIFFERENT QUESTIONS, AND GOT THE SECOND ONE WRONG.
-                //
-                // `has_lookup = !exts.is_empty()` is the right test for `tool_hint` — naming context7
-                // when no extension is attached is the falsehood the block above exists to stop. It is
-                // the WRONG test for `lookup_clause`, which asserts the scout "cannot look anything up
-                // on this run". A scout with no MCP extension still has a SHELL, and the spec routinely
-                // names its own documentation URLs.
-                //
-                // MEASURED, and it is not marginal: `research_completed.grounded` averages 2.27/3 with
-                // ZERO runs at 0, and 59 of 77 scouts (77%) fetched a URL while under an explicit
-                // instruction that they could not. `research_lookups` grounds on `is_mcp ||
-                // fetched_external`, and `fetched_external` is set by a shell curl. So the engine both
-                // tells the scout it cannot look anything up AND counts it as grounded when it does.
-                //
-                // The stale comment that justified the old wording claimed `grounded` was 0 on every
-                // run. The corpus refutes it — that reading predates the `is_mcp || fetched_external`
-                // change, which landed 12h43m earlier the same day.
-                let has_mcp = !exts.is_empty();
-                let has_docs = scout_doc_urls && !doc_urls.is_empty();
-                let lookup = scout_lookup(has_mcp, has_docs);
-                let tool_hint = if has_mcp {
-                    lens.tool_hint
-                } else {
-                    "You have NO documentation or web-search tools attached — do not attempt to use \
-                     context7 or web-search, they are not there."
-                };
-                let lookup_clause = if lookup == ScoutLookup::Mcp {
-                    format!(
-                        "You have at most {max_lookups} tool call(s): spend them on LOOKING THINGS UP, not \
-                         on exploring. Stop as soon as you can answer — an early, grounded answer beats a \
-                         long one."
-                    )
-                } else if lookup == ScoutLookup::SpecDocs {
-                    // THE ONLY NEW BRANCH. It fires exactly when the spec named a document and no MCP
-                    // extension is attached — the case the old code described as "you cannot look
-                    // anything up". Everything the scout asserts about the vendor API must now come
-                    // from fetched text or be marked UNVERIFIED, because an invented signature here
-                    // becomes a frozen contract every worker builds against.
-                    format!(
-                        "The spec names these documents: {}. Fetch each one with `curl -s <url>` as \
-                         your FIRST action, and quote it VERBATIM for anything you assert about the \
-                         vendor API. Mark anything NOT present in the fetched text as UNVERIFIED \
-                         rather than guessing a plausible-looking name — a signature you invent here \
-                         becomes a frozen contract every worker builds against.",
-                        doc_urls.join(", ")
-                    )
-                } else {
-                    "You cannot look anything up on this run, so answer from what you already know — and \
-                     CALIBRATE: state plainly which API names and signatures you are CONFIDENT of, and mark \
-                     anything you are unsure of as UNVERIFIED rather than guessing a plausible-looking name. \
-                     A signature you invent here becomes a frozen contract every worker builds against, so \
-                     an honest 'unverified' is far more useful to the planner than a confident invention."
-                        .to_string()
-                };
-                let system = format!(
-                    "You are a SCOUT investigating ONE aspect of a coding task to inform the planner. \
-                     Your lens is \"{}\": {} {} Return a CONCISE, factual brief (key facts, API names, \
-                     short snippets, file refs, and a suggested breakdown for your lens) as your TEXT \
-                     RESPONSE ONLY. You have NO write task: do NOT create, write, or edit ANY file \
-                     (no .md brief, no notes, no scratch) — read-only investigation, then report in your \
-                     message. Do NOT produce the full plan. To read text use `cat`; `python3` not `python`. \
-                     Keep it LEAN: never dump full docs/help()/pydoc text into your context; for \
-                     standard-library modules just name the relevant APIs in one line. A few hundred words \
-                     is plenty — large context is very slow on local models. \
-                     STAY in the current working directory: for a NEW/empty project there is nothing on \
-                     disk to investigate, so reason from the task itself; NEVER `ls`/`cat` parent or \
-                     sibling directories — they are unrelated projects. {lookup_clause}",
-                    lens.title, lens.brief, tool_hint
-                );
-                // Write a per-scout activity digest (.swarm/activity/scout-<lens>.json) so the RESEARCH phase is
-                // no longer a black box — the desktop surfaces each scout's live tool calls + generation per node,
-                // exactly like a worker. Was previously invisible (planner-side calls passed activity_key=None).
-                let scout_key = format!("scout-{}", lens.id);
-                let (findings, lookups, timed_out, errored, attempt) = match tokio::time::timeout(
-                    std::time::Duration::from_secs(scout_budget),
-                    me.run_agent_timed_at(
-                        &model,
-                        system,
-                        format!("Task: {prompt}"),
-                        None,
-                        max_lookups,
-                        &exts,
-                        None,
-                        Some(scout_key.as_str()),
-                false,
-            ),
-                )
-                .await
-                {
-                    Ok(Ok(o)) => {
-                        let lookups = research_lookups(&o.tool_calls);
-                        let attempt = classify_research_attempt(&o.tool_calls);
-                        (o.text, lookups, false, false, attempt)
-                    }
-                    Ok(Err(e)) => (
-                        format!("(scout failed: {e})"),
-                        Vec::new(),
-                        false,
-                        true,
-                        ResearchAttempt::Errored,
-                    ),
-                    Err(_) => (
-                        format!(
-                            "(scout '{}' exceeded {}s budget — skipped to keep the fleet moving)",
-                            lens.id, scout_budget
-                        ),
-                        Vec::new(),
-                        true,
-                        false,
-                        ResearchAttempt::Errored,
-                    ),
-                };
-                // SAY WHAT HAPPENED. The tick used to print OUTSIDE the match, so a scout that timed out at
-                // the budget wall, one that errored, and one that actually looked something up all rendered
-                // an identical green "✓ scout libraries (120s)". MEASURED: research_completed fired at
-                // exactly +120.023s against a 120s budget — a guillotine, to the millisecond — and the
-                // "finding" handed to the planner was the literal string "(scout 'x' exceeded 120s budget —
-                // skipped to keep the fleet moving)". The run still reported "research: 3 findings", because
-                // that count is findings.len() = the LENS count, which is fixed no matter what came back.
-                // A tick that cannot fail is not a status; it is decoration.
-                let outcome = if timed_out {
-                    (style("⏱").yellow().bold(), "timed out at the budget — no finding")
-                } else if errored {
-                    (style("✗").red().bold(), "failed — no finding")
-                } else if lookups.is_empty() {
-                    (style("~").yellow().bold(), "answered from the model's own knowledge, looked nothing up")
-                } else {
-                    (style("✓").green().bold(), "looked things up")
-                };
-                eprintln!(
-                    "  {} scout {} ({:.0}s) — {}",
-                    outcome.0,
-                    style(lens.id).bold(),
-                    started.elapsed().as_secs_f64(),
-                    outcome.1
-                );
-                ResearchFinding {
-                    question: lens.title.to_string(),
-                    kind: lens.id.to_string(),
-                    findings,
-                    grounded: !lookups.is_empty(),
-                    lookups,
-                    attempt,
-                }
-            }
-        })
-        .await
-    }
-
     /// GOOSE_SWARM_CONTRACTS (2b): freeze the contract before EXECUTE. Set once; every worker reads it.
     pub fn set_contracts(&self, bundle: String) {
         let _ = self.contracts.set(bundle);
@@ -19049,22 +16717,6 @@ impl GooseAgentDispatcher {
     /// tree it will have to integrate. Set once; read only at the integrate-verify dispatch.
     pub fn set_sink_tree_files(&self, files: Vec<String>) {
         let _ = self.sink_tree_files.set(files);
-    }
-
-    /// On-disk bytes of the plan's declared owned files, at the moment the sink is dispatched. Missing files
-    /// contribute 0 — a task that never wrote its file leaves the join LESS to integrate, not more, so the
-    /// budget should not grow for it.
-    fn sink_tree_bytes(&self, work_dir: &std::path::Path) -> u64 {
-        self.sink_tree_files
-            .get()
-            .map(|files| {
-                files
-                    .iter()
-                    .filter_map(|f| std::fs::metadata(work_dir.join(f)).ok())
-                    .map(|m| m.len())
-                    .sum()
-            })
-            .unwrap_or(0)
     }
 
     /// GOOSE_SWARM_GOALS (part 1): distill the app's non-negotiable PILLARS from the spec + research + the
@@ -19238,1694 +16890,6 @@ impl GooseAgentDispatcher {
             }
         }
         bundle
-    }
-
-    /// Parallel planning: the 27B drafts a STRUCTURAL SKELETON (brief one-line descriptions) fast, then
-    /// the fleet writes every subtask's implementation-ready spec IN PARALLEL, and we assemble the final
-    /// plan deterministically. Returns the same plan JSON `plan()` would — callers fall back to `plan()`
-    /// on Err. The skeleton itself is a valid plan, so a total detailer failure degrades gracefully.
-    #[allow(clippy::too_many_arguments)]
-    async fn parallel_plan(
-        self: &Arc<Self>,
-        planner_model: &str,
-        worker_models: Vec<String>,
-        user_prompt: &str,
-        plan_schema: serde_json::Value,
-        worker_count: usize,
-        research_findings: &str,
-        best_of_n: usize,
-        homogeneous: bool,
-        need_confidence: bool,
-        // Some(k) (retarget only): measure agreement over the best-agreeing k-subset of the drafted pool
-        // instead of the full spread, so growing best_of_n actually raises the metric. None = full-set
-        // measure (default/cloud path, byte-identical).
-        consensus_k: Option<usize>,
-        // B5: the ask floor, threaded so the straggler-stop only aborts the third draft when the
-        // in-hand quorum already clears it (the third draft cannot change the ladder decision).
-        // None => always-abort, byte-identical to pre-B5.
-        quorum_floor: Option<u8>,
-        // Some(t): draft plan skeletons at temperature t so the weak fleet's independent drafts converge
-        // (raises real agreement — the model's draft variance is the root cause of low/noisy agreement).
-        // None = the server/model default (today's behavior, byte-identical).
-        draft_temp: Option<f32>,
-        // Convergence molding on/off (computed from config+env by the caller). Steers the architect prompt to
-        // one canonical decomposition and role-normalizes the agreement metric.
-        converge: bool,
-        // Two-stage backbone lock: pin the majority-consensus module set and re-draft round 2 as a STRUCTURE
-        // lever (confidence stays the round-1 free-draft agreement — the forced round never touches the ask
-        // gate). false = today, byte-identical.
-        backbone_on: bool,
-        // #122: when true AND backbone_on, SKIP the round-2 re-draft if round-1 agreement >= BACKBONE_SKIP_CONF_
-        // FLOOR. High round-1 agreement => the free drafts already share the structure the lock would pin, so
-        // round 2 cannot beat round 1 (adopted 1/29 in real runs, never at conf >= 90). false = today.
-        backbone_skip_confident: bool,
-        // Incremental replan (Phase 1): freeze the unanimous + downward-closed modules VERBATIM and re-draft
-        // ONLY the dirty residual, adopting the frozen∪dirty splice only when it validates + scores higher.
-        // Takes precedence over `backbone_on` when both are set. false = today, byte-identical.
-        incremental_on: bool,
-        // #133 DIVERSE PLAN: when the parallel drafts STRUCTURALLY converge (>= struct_stop), lift agreement
-        // confidence to skip the sequential retarget ladder. false = today (shadow-log only), byte-identical.
-        diverse_plan_on: bool,
-        struct_stop: u8,
-    ) -> Result<(String, PlanConf, String)> {
-        // GOOSE_SWARM_CONVERGE (Part 0a): the old homogeneous hint literally told the weak model to "split
-        // AGGRESSIVELY … do NOT fear divergence" — self-inflicting the subtask-count + file-set variance that
-        // plan_agreement penalizes. Under converge, steer the fixed weak model toward the SIMPLEST CANONICAL
-        // decomposition so independently-drafted plans converge (higher real + measured agreement). Default
-        // path unchanged. `converge` is a parameter (computed from config+env by the caller).
-        let homo_hint = if converge {
-            "ALL worker nodes run the SAME model, so files produced independently mesh consistently. Commit to \
-             the SIMPLEST CANONICAL decomposition: the FEWEST cohesive modules that fully cover the spec, using \
-             CONVENTIONAL module names and the STANDARD shape another engineer would pick — so independently \
-             drafted plans CONVERGE on the same structure. Do NOT over-split; do NOT invent extra modules. "
-        } else if homogeneous {
-            "ALL worker nodes run the SAME model (identical weights + tokenizer), so files produced \
-             independently on different nodes mesh consistently (same naming priors, same conventions). \
-             Split AGGRESSIVELY into many fine independent subtasks — do NOT fear interface divergence. "
-        } else {
-            ""
-        };
-        let count_clause = if swarm_gate_cfg(
-            "GOOSE_SWARM_SPEC_SIZED_PLAN",
-            // DEFAULT ON (F853). The fleet-scaled ask only ever binds in the inflationary direction
-            // (F457: floor the model won't go under, ceiling it drifts toward — +30% modules / +64%
-            // tree bytes on three nodes for +0.05 score) and the serial join then swallows the extra
-            // code. Task existence is the spec's property; the fleet keeps concurrency only.
-            load_config().spec_sized_plan.unwrap_or(true),
-        ) {
-            spec_sized_count_clause()
-        } else {
-            skeleton_count_clause(worker_count, converge)
-        };
-        let research_block = if research_findings.is_empty() {
-            String::new()
-        } else {
-            format!("## Prior research findings (use these; do NOT re-research)\n{research_findings}\n\n")
-        };
-        let existing_files = existing_files_manifest(&self.working_dir);
-        let lang = detect_language(user_prompt, &existing_files);
-        let lang_directive = lang.directive();
-        let entry_clause = lang.entry_clause();
-        let test_cmd = lang.test_cmd();
-        let no_compile = if lang == TargetLang::Python {
-            "(NOT py_compile) "
-        } else {
-            ""
-        };
-        // GOOSE_SWARM_PARALLEL_TESTS: emit one test subtask PER leaf module (each depends_on only its own
-        // module) so tests become ready early and run in parallel with the cli build, instead of one
-        // monolithic test task serialized behind cli. Default OFF reproduces the original clause verbatim.
-        let tests_directive = if swarm_gate_cfg_bundle(
-            "GOOSE_SWARM_PARALLEL_TESTS",
-            load_config().parallel_tests,
-            true,
-        ) {
-            // Utilization principle, FLEET-RELATIVE (never a fixed count): keep however many identical,
-            // interchangeable units there are busy through the whole run; the planner scales the layout to
-            // the fleet size and decides per app. worker_count is dynamic (a swarm can be 2 units or 100).
-            format!(
-                "and organize the TESTS to keep all {worker_count} identical, interchangeable worker units \
-                 busy. The parallelism comes ENTIRELY from the dependencies, so this is the rule that \
-                 matters: make ONE unit-test subtask PER MODULE, named `test-<module>`, that imports and \
-                 tests ONLY that single module and therefore depends_on ONLY that one module — e.g. a \
-                 `parser` module gets a `test-parser` subtask (files `test_parser`, depends_on [`parser`]). \
-                 Such a test starts the instant its module is built and runs WHILE the other modules and the \
-                 entry-point are still being built; that overlap is the whole point. Do NOT organize tests \
-                 by app-level behavior (no `tests-validation`/`tests-output`/`tests-integration` subtasks) \
-                 and NEVER let a test subtask depend on the entry-point/cli or on the whole app — those can \
-                 only run at the very end while units sit idle, defeating the purpose; end-to-end behavior \
-                 is ALREADY checked by integrate-verify, so you never need a separate integration-test \
-                 subtask. Scale the number of per-module test subtasks to the fleet ({worker_count} units): \
-                 more independent module-tests keep a larger fleet busy; a tiny 1-module app just keeps \
-                 tests in ONE subtask (nothing to parallelize). KEEP EACH TEST SUBTASK SMALL ENOUGH TO \
-                 DESCRIBE IN A FEW LINES: if one module's coverage would need a long brief, SPLIT it into \
-                 focused sibling subtasks (`test-<module>-happy`, `test-<module>-edges`, \
-                 `test-<module>-errors`), each owning its OWN test file and depending on the same single \
-                 module. That is strictly better for the fleet — the siblings are independent, so they run \
-                 CONCURRENTLY instead of one worker grinding through every case serially. \
-                 Make each per-module test THOROUGH: because \
-                 these tests run for FREE in parallel with the rest of the build, spend that capacity on \
-                 QUALITY — cover the module's happy path AND its edge cases, invalid/error inputs and \
-                 boundary conditions, each asserting the concrete expected value (never shape-only), so the \
-                 module is genuinely proven correct, not just imported."
-            )
-        } else {
-            "and related tests into ONE test subtask.".to_string()
-        };
-        let build_system = |backbone_clause: &str| {
-            format!("You are the ARCHITECT on the smart model. {lang_directive}Produce a PLAN SKELETON ONLY — do NOT write code. \
-            You already have any needed research findings — plan DIRECTLY from the task and call final_output FAST; do NOT \
-            explore the filesystem or read other directories (a new project has nothing on disk; never read sibling projects). {homo_hint}{backbone_clause}\n\
-            There are {worker_count} PARALLEL WORKER SLOTS. Decompose into a SMALL number of COHESIVE subtasks — \
-            {count_clause}. GROUP \
-            several related commands or functions into ONE module subtask, {tests_directive} These models \
-            are SLOW (minutes per subtask), so too many tiny subtasks serialize and dominate wall-clock while adding no real \
-            parallelism past the fleet width — a handful of well-scoped subtasks finishes far sooner than 18 micro-ones. Still keep \
-            subtasks INDEPENDENT with NON-OVERLAPPING files and minimal ordering; only add a dependency when a subtask genuinely \
-            needs another's output. AVOID deep chains and chokepoints: keep dependency depth <= 2; if shared types/data-models are \
-            needed, put them in ONE TINY early subtask so dependents unblock fast — never make most subtasks depend on a single big one.\n\
-            A frozen signature-only interface for EVERY module is injected into every worker BEFORE it writes code, so a module that \
-            merely IMPORTS another's types or functions ALREADY HAS them and does NOT need to wait — do NOT add a `depends_on` for a \
-            type/interface/import need. Declare `depends_on` ONLY for a genuine build-ORDER need the frozen interface cannot satisfy \
-            (rare). Default to a FLAT FAN: make every module a root with no deps, and let the final integrate/verify subtask be the \
-            single join that depends on them — a chain (A->B->C->D) leaves the fleet idle one node at a time; a fan keeps every node busy.\n\
-            MODULAR ARCHITECTURE (hard rule) — keep FILES small and single-responsibility. A subtask may (and for any non-trivial \
-            module SHOULD) own SEVERAL small files, ONE concern each (e.g. a parser subtask owns `lexer.py`+`parser.py`+`ast.py`; a \
-            models subtask owns `user.py`+`account.py`), NOT one big catch-all file. NEVER assign a single monolithic file that does \
-            many unrelated things — split by responsibility. Those files must be the SAME KIND: all executable module code, or all \
-            static assets, or all docs — NEVER mixed. Do NOT put a server module and an HTML/CSS/JS asset in one subtask, and do NOT \
-            attach README/docs to a code subtask; they are different concerns however related they feel, they need different skills, \
-            and one worker doing both is the chokepoint another node could have taken. This keeps subtask COUNT low (good for the slow fleet) while the \
-            architecture stays modular and readable. Put any logic used by more than one subtask in the ONE early shared subtask and \
-            have the others IMPORT it — NEVER let two subtasks each implement the same thing; duplicate implementations of one \
-            algorithm are a real defect (two copies drift apart and one silently goes wrong).\n\
-            DELIVER ONLY THE APP: decompose the program's actual FUNCTIONALITY — its logic modules, the runnable entry point, and its \
-            tests, nothing else. Do NOT add project-scaffolding subtasks: NO CI/workflow config, LICENSE, README/docs, \
-            pyproject/setup/packaging, .gitignore, or pre-commit hooks — UNLESS the request explicitly asks for them. They are not the \
-            deliverable, they waste the slow fleet, and the weak model tends to claim such a file done without ever writing it.\n\
-            DECIDE THE LAYOUT FIRST and pick ONE convention, applied to EVERY file — do NOT mix: EITHER a single package \
-            directory `pkgname/` that holds ALL modules AND the cli (imports like `from pkgname.models import X`), with tests \
-            under `tests/`; OR fully FLAT (every .py at the project root, imports like `from models import X`). NEVER put the cli \
-            in a package while its modules sit at the root. Every subtask's `files` and every import MUST match the one chosen \
-            layout exactly.\n\
-            AMENDMENT — if the manifest below already lists project files, you are EDITING an existing app, NOT rebuilding it: to \
-            ADD a feature, EDIT the EXISTING files IN PLACE. Every subtask that touches existing behavior MUST own the EXACT \
-            existing path (e.g. `src/notes/models.py`), and imports MUST match the real modules. NEVER create a PARALLEL renamed \
-            module that duplicates one that already exists (do NOT add `render_ascii.py` beside an existing `renderer.py`, or \
-            `fern.py` beside `ifs.py`), and NEVER rewire the entry point away from the existing modules — that abandons the working \
-            originals as dead/unwired duplicates and breaks the existing tests. NEVER invent a new filename (e.g. `note.py`) for a \
-            module that already exists (e.g. `models.py`). Create NEW files ONLY for genuinely-new functionality the existing \
-            modules do not already provide (plus a test for it).\n\
-            {entry_clause}\n\
-            For each subtask provide: id (kebab-case), description (2-4 lines that STAND ALONE: what to build, in which \
-            file(s), and the ONE check that proves it works — a richer spec is written separately and will REPLACE this, but \
-            write it as if nothing else will arrive, because sometimes nothing does; do NOT write an essay and do NOT restate \
-            the whole goal), difficulty (\"easy\"|\"hard\"), model (\"qwen/qwen3.6-27b\" if hard else \"qwen/qwen3.6-35b-a3b\"), \
-            depends_on (list of ids; empty if independent), files (paths it owns; non-overlapping).\n\
-            UNLESS the task is purely text, ALWAYS add a FINAL subtask id \"integrate-verify\" depending_on EVERY other subtask, \
-            difficulty \"hard\": be EFFICIENT (do not re-read every file; rely on the test run). It RUNS `{test_cmd}` \
-            {no_compile}and fixes EVERY failure until GREEN — INCLUDING a pre-existing test that now fails because this \
-            change intentionally altered behavior (e.g. a new field appears in a serialized dict): in that case EDIT that \
-            existing test to assert the new correct output. Do not stall — make the whole suite pass. Then a GOLDEN-VALUE CHECK: \
-            for EACH command/subcommand the spec advertises (NOT only the default one), run it on a concrete input the spec gives \
-            or directly implies, and verify the ACTUAL output equals the SPECIFIC value the spec implies — not merely that it \
-            starts or exits 0. For a MULTI-OUTPUT command (one with a --count N, or that lists N results) verify ALL N outputs are \
-            correct AND, where the semantics require distinct results (e.g. the NEXT N occurrences of a schedule), that they are \
-            genuinely distinct at the right granularity, not near-duplicates. Derive the expected value from the spec's semantics; \
-            do NOT invent an output just to make the check pass. A green test suite does NOT prove correctness: a real failure mode \
-            is a code path producing WRONG output (wrong constants, off-by-one, wrong granularity) while every shape-only test \
-            passes — fix the ROOT CAUSE if the actual output is wrong. RUN the program \
-            through its BUILT, ADVERTISED entry point — if the language compiles, BUILD it first (e.g. `npm run build` \
-            for TypeScript, `cargo build` for Rust) and run the BUILT artifact (e.g. `node dist/cli.js`), NOT the source \
-            via tsx/ts-node — using the EXACT commands the spec advertises (the SAME subcommands and argument shapes shown \
-            in the goal; do NOT silently redesign the interface into flags). When you run the BUILT entry directly, the \
-            spec LEADING program/bin name is the program ITSELF, never an argument: spec `app build x` runs as \
-            `node dist/cli.js build x` or `python3 -m app build x`, NEVER `node dist/cli.js app build x` (mis-prefixing \
-            the bin name makes a WORKING app look broken). If a build step or a build config the entry \
-            needs (e.g. a tsconfig.json) is MISSING so the advertised entry will not build or run, that is a FAILURE — add it. \
-            ALSO confirm the \
-            spec's HEADLINE deliverable is actually REACHABLE and surfaced through the default command — a feature whose \
-            module exists but is never WIRED into the entry point (so the spec's main ask never appears in the output) is a \
-            FAILURE: wire it. Reports PASS/FAIL honestly. \
-            Its own files must NOT overlap the others. Then call the final_output tool with the plan.")
-        };
-        // Round 1 = today's prompt exactly (empty backbone slot → byte-identical). Round 2 (backbone lock)
-        // re-invokes build_system with the consensus constraint spliced right after homo_hint.
-        let system = build_system("");
-        let user_msg = format!(
-            "{}{research_block}Plan this task: {user_prompt}",
-            existing_files_block(&existing_files)
-        );
-        // Models to draw skeleton drafts from: planner first (so best_of_n=1 == today exactly), then
-        // the fleet workers round-robin.
-        // DEDUP BY MODEL, not by list position. The planner is usually ALSO one of the pool workers, so
-        // `once(planner) ++ workers` yields a list with a repeat in it: on this fleet
-        // [workhorse, gabee, mihai, workhorse] — 4 entries, 3 DISTINCT models.
-        //
-        // That repeat is not cosmetic. Slots are handed out `models[i % len]`, every model is loaded
-        // PARALLEL:1, and a second concurrent request to a busy model does not produce a draft — it queues
-        // behind the first and dies at the 480s timeout, while the round awaits ALL handles. So one duplicate
-        // slot gates the whole round's wall clock and contributes nothing.
-        //
-        // MEASURED (loop-ab-baseline, the natural experiment in its own activity digests): 6 slots requested,
-        // and EXACTLY 3 survived — exactly the distinct-model count. workhorse served 1 of its 3 concurrent
-        // slots, gabee 1 of 2, mihai 1 of 1. Every duplicate died. plandraft-{0,2,5} came back at ~5KB;
-        // plandraft-{1,3,4} at 158B/54B/162B.
-        //
-        // I capped this at draft_models.len() earlier today and it was NOT ENOUGH: len() is 4, so slot 3 still
-        // mapped to models[3] = the planner's model = slot 0's model. My own comment stated the wrong premise
-        // out loud — "draft_models is 4 (planner + 3 workers)" — 4 entries, 3 models, because the planner IS a
-        // worker. Dedup is the fix; a length cap can never be.
-        let draft_models: Vec<String> = {
-            let mut seen = std::collections::HashSet::new();
-            std::iter::once(planner_model.to_string())
-                .chain(worker_models.iter().cloned())
-                .filter(|m| seen.insert(m.clone()))
-                .collect()
-        };
-        // CAP THE FAN-OUT AT THE NUMBER OF DISTINCT MODELS. Slots are handed out round-robin
-        // (`models[i % models.len()]`), so asking for more drafts than there are models issues a SECOND
-        // CONCURRENT request to a model that is already generating. Every model in this fleet is loaded
-        // PARALLEL:1, so that second request does not add a draft — it queues behind the first and usually
-        // times out, contributing a dead slot and ~20 minutes of wall clock.
-        //
-        // MEASURED: draft_models is now 3 DISTINCT models (it was 4 entries with the planner repeated — see the
-        // dedup above) while RETARGET_MAX_N is 6, so the redraft ladder's last THREE rungs could only ever add
-        // duplicates. In the final round 3 of 6 slots returned nothing, and
-        // the one confirmed dead slot was plandraft-4 — exactly models[4 % 4] = models[0], the duplicate.
-        // The ladder was paying full price for drafts that could not exist.
-        let requested_n = best_of_n.max(1);
-        let n = requested_n.min(draft_models.len().max(1));
-        if n < requested_n {
-            eprintln!(
-                "  {} capping plan drafts at {n} (one per distinct model) — {requested_n} was requested but \
-                 extra slots would duplicate a model that is already generating",
-                style("!").yellow()
-            );
-        }
-        if n > 1 {
-            eprintln!(
-                "  drafting {} skeleton candidate(s) IN PARALLEL, picking the structurally-best (deterministic, no LLM judge)",
-                n
-            );
-        }
-        // One parallel draft ROUND across the fleet (planner + workers round-robin), reused verbatim for the
-        // backbone round-2 re-draft. Round 1 (below) is behavior-identical to the previous inline loop.
-        let draft_round = |sys: String, dt: Option<f32>| {
-            let me0 = self.clone();
-            let models = draft_models.clone();
-            let um0 = user_msg.clone();
-            let schema0 = plan_schema.clone();
-            // Resolved ONCE per round, outside the spawn: load_config() reads from disk and this would
-            // otherwise re-read it per draft.
-            let draft_timeout = draft_timeout_eff();
-            // #135 straggler-stop: OFF -> the classic await-all path below runs unchanged.
-            let straggler_stop = self.straggler_stop;
-            let straggler_grace = self.straggler_grace_secs;
-            async move {
-                // One spawnable draft future per slot. Extracted so the OFF (await-all) and ON (JoinSet +
-                // straggler grace) paths share the exact same per-draft work — only the collection differs.
-                let make_draft = |i: usize| {
-                    let me = me0.clone();
-                    let model = models[i % models.len()].clone();
-                    let sys = sys.clone();
-                    let um = um0.clone();
-                    let schema = schema0.clone();
-                    // Surface each parallel draft as a PLAN-phase lane so the panel shows what every model is
-                    // generating while it decomposes the app (previously invisible — planner calls wrote no
-                    // digest). Stable per-slot key so the N draft lanes are consistent across a re-plan.
-                    let akey = format!("plandraft-{i}");
-                    async move {
-                        // Wall-clock cap per skeleton draft. The planner watchdog is IDLE-based (no-progress),
-                        // so a runaway SINGLE generation on a slow local (non-q5) model can stream for 20+ min
-                        // without ever going idle, hanging the whole run before execute starts. On timeout the
-                        // draft is dropped; best-of-N (and the solo-planner fallback) then take over. This is
-                        // the HARD backstop; #135's straggler grace is the SOFTER, earlier stop once a quorum
-                        // of valid drafts is already in.
-                        tokio::time::timeout(
-                            std::time::Duration::from_secs(draft_timeout),
-                            me.run_agent_timed_at(
-                                &model,
-                                sys,
-                                um,
-                                Some(Response {
-                                    json_schema: Some(schema),
-                                }),
-                                12,
-                                &[],
-                                dt,
-                                Some(&akey),
-                                false,
-                            ),
-                        )
-                        .await
-                        .ok()
-                        .and_then(|r| r.ok())
-                        .and_then(|o| o.final_output)
-                    }
-                };
-                // A draft counts toward the straggler quorum only if its JSON parses AND forms a valid DAG —
-                // the SAME validity `select_best_skeleton` requires (specs_from_plan_json + Dag::from_specs).
-                // A JSON-parseable-but-invalid draft must NOT let us abort a still-running good one.
-                let draft_is_valid = |j: &str| {
-                    goose_swarm::specs_from_plan_json(j)
-                        .ok()
-                        .and_then(|s| goose_swarm::Dag::from_specs(s).ok())
-                        .is_some()
-                };
-
-                let mut c: Vec<String> = Vec::new();
-                let mut dead = 0usize;
-                let mut straggler_deferred = false;
-
-                if straggler_stop {
-                    // #135: race the lone lagging draft. Collect drafts as they resolve; once every draft but
-                    // one has returned a VALID skeleton, grant the last one only `grace` seconds, then abort
-                    // it and proceed on the quorum — instead of blocking the whole run on one slow node up to
-                    // the full draft_timeout. Mihai's "if 2 of 3 finish and the 3rd doesn't finish close
-                    // enough, stop it to avoid wasting time". The grace/abort mechanics live in the unit-
-                    // tested collect_drafts_with_straggler_stop.
-                    //
-                    // GATED ON THE QUORUM DECIDING (B5): abort the straggler only when the in-hand valid
-                    // drafts already clear the ask floor. MEASURED collapse this repairs: the unconditional
-                    // abort cut every round to 2 drafts, where the pool-invariant lift, consensus_k and an
-                    // honest structural_convergence are all arithmetically dead — the fleet requested 3 and
-                    // got 2.4, and the ladder it caused costs ~25 min/rung. Below the floor, the third draft
-                    // is the cheapest possible ladder-avoidance; draft_timeout still bounds it. No floor set
-                    // (quorum_floor None) => always-true closure, byte-identical to the pre-B5 behavior.
-                    // G1: an explicit env/config grace stays fixed (clamped exactly as before);
-                    // otherwise the grace is DERIVED at arming from the round's own clock.
-                    let grace = match straggler_grace {
-                        Some(g) => StragglerGrace::Fixed(g.clamp(10, draft_timeout.max(10))),
-                        None => StragglerGrace::Derive { draft_timeout },
-                    };
-                    let quorum_decides = |cands: &[String]| -> bool {
-                        let Some(floor) = quorum_floor else {
-                            return true;
-                        };
-                        let parsed: Vec<Vec<goose_swarm::TaskSpec>> = cands
-                            .iter()
-                            .filter_map(|j| {
-                                goose_swarm::specs_from_plan_json(j)
-                                    .ok()
-                                    .filter(|s| goose_swarm::Dag::from_specs(s.clone()).is_ok())
-                            })
-                            .collect();
-                        if parsed.len() < 2 {
-                            return false;
-                        }
-                        plan_agreement(&parsed, converge).0 >= floor
-                    };
-                    let mut js = tokio::task::JoinSet::new();
-                    for i in 0..n {
-                        js.spawn(make_draft(i));
-                    }
-                    let stopped;
-                    (c, dead, stopped, straggler_deferred) = collect_drafts_with_straggler_stop(
-                        js,
-                        n,
-                        grace,
-                        &draft_is_valid,
-                        quorum_decides,
-                    )
-                    .await;
-                    if stopped > 0 {
-                        eprintln!(
-                            "  {} straggler-stop: {stopped} lagging plan draft(s) aborted after the grace \
-                             — proceeding on {} valid of {n}",
-                            style("↯").yellow(),
-                            c.iter().filter(|j| draft_is_valid(j)).count()
-                        );
-                    }
-                    if straggler_deferred && stopped == 0 {
-                        eprintln!(
-                            "  {} straggler-stop DEFERRED: in-hand drafts below the ask floor — waited for \
-                             the full pool instead of aborting the last draft",
-                            style("↯").green()
-                        );
-                    }
-                } else {
-                    // OFF (byte-identical): spawn all, then await in index order. Tie-breaks in
-                    // select_best_skeleton stay first-seen-by-index, exactly as before.
-                    let mut handles = Vec::new();
-                    for i in 0..n {
-                        handles.push(tokio::spawn(make_draft(i)));
-                    }
-                    for h in handles {
-                        match h.await {
-                            Ok(Some(j)) => c.push(j),
-                            // A DEAD DRAFT SLOT: the model timed out, errored, or emitted prose without ever
-                            // calling recipe__final_output. Until now this was dropped with no log and no
-                            // event, so the drafting loop counted REQUESTS while the confidence metric only
-                            // ever saw ANSWERS — and nothing anywhere revealed the gap.
-                            //
-                            // MEASURED (loop-ab-baseline, final round): 3 of 6 slots returned nothing. The
-                            // pool the metric scored was HALF the pool the engine believed it had asked for,
-                            // which is why growing best_of_n moved the number around at random and cost an
-                            // hour a run. A silent 50% loss is the difference between a signal and noise.
-                            _ => dead += 1,
-                        }
-                    }
-                }
-                if dead > 0 {
-                    eprintln!(
-                        "  {} {dead} of {n} plan drafts returned nothing (timeout/error/no final_output) — \
-                         confidence is measured on {} draft(s)",
-                        style("!").yellow(),
-                        c.len()
-                    );
-                }
-                (c, dead, straggler_deferred)
-            }
-        };
-        // `dead` = slots that produced no draft at all. Carried out of the round because the confidence
-        // metric is only as trustworthy as the pool it scored, and that count is the only thing that says
-        // how big the pool really was.
-        // THE SKELETON DRAFT IS THE LONGEST SILENT WINDOW IN A RUN. MEASURED on a 3-node baseline:
-        // 12 minutes between `levers_resolved` and `confidence_retarget` with NOT ONE event emitted,
-        // inside a planning prefix that phases.py already reports as having no occupancy number at all.
-        // It is also where "does planning use the whole fleet" is decided — `best_of_n` is sized to the
-        // fleet just above, so this fan is the planning phase's answer to goal one, and until now the
-        // only way to know whether it drafted 1 or 3 was to infer it from wall-clock.
-        //
-        // `dead` is the load-bearing half: a slot that returned nothing is a node that did the work and
-        // produced no usable draft, and the confidence metric only ever scores the ANSWERS.
-        let drafts_started = std::time::Instant::now();
-        let (candidates, dead_drafts, straggler_deferred) =
-            draft_round(system.clone(), draft_temp).await;
-        self.events.write_value(serde_json::json!({
-            "event": "skeleton_drafts",
-            "requested": n,
-            // `requested` above is the POST-clamp number, and reading it as the ask is the confound
-            // that makes a CAPABILITY difference look like a BEHAVIOUR difference. One node shows
-            // requested=1 not because the ladder asked for one draft but because `n` is clamped to
-            // DISTINCT MODELS (:14142) — so "one node never ladders" is the clamp, not a choice.
-            // MEASURED: 11 of 11 redraft rungs escalated best_of_n to 4 or 5 and still drafted 3.
-            // Without these three fields that escalation is invisible and the rung reads as normal.
-            "requested_best_of_n": requested_n,
-            // B5 observable: the straggler-stop count condition held while the in-hand drafts were
-            // below the ask floor, so the abort was DEFERRED and the full pool was awaited. The
-            // registered check reads this: rungs with 3 returned drafts must appear where this is true.
-            "straggler_deferred": straggler_deferred,
-            "distinct_draft_models": draft_models.len(),
-            "clamped": n < requested_n,
-            // THE ARITHMETIC MUST CLOSE, and on its first real reading it did not: requested 3,
-            // returned 2, dead 0 — one draft unaccounted for. `dead` counts the non-straggler path's
-            // losses (timeout / error / no final_output). It does NOT count a draft that
-            // `collect_drafts_with_straggler_stop` deliberately ABORTED once a quorum of valid
-            // skeletons had landed, which is a healthy outcome, not a loss.
-            //
-            // Two very different events were therefore indistinguishable in the log: a node that
-            // produced nothing, and a node that was correctly cut short to stop the run waiting on it.
-            // Naming the remainder makes the row self-checking — requested == returned + dead +
-            // straggler_aborted, always.
-            "straggler_aborted": n.saturating_sub(candidates.len() + dead_drafts),
-            "secs": drafts_started.elapsed().as_secs(),
-            "chars": candidates.iter().map(|c| c.chars().count()).collect::<Vec<_>>(),
-            "worker_count": worker_count,
-        }));
-        // Pick the best skeleton with a PURE-RUST structural scorer (validity borrowed from the same
-        // Dag::from_specs the live path uses) — no LLM in the merge/select path. n==1 keeps the old
-        // behavior exactly (use the single draft as-is). On no valid candidate, Err -> solo plan().
-        let (skeleton, agreement_conf, agreement_reason): (String, Option<u8>, String) = if n == 1 {
-            (
-                candidates
-                    .into_iter()
-                    .next()
-                    .ok_or_else(|| anyhow!("architect produced no skeleton"))?,
-                None,
-                String::new(),
-            )
-        } else {
-            // ROUND 1: pick the structurally-best of the genuinely-independent drafts + measure agreement.
-            // M6: plan confidence from cross-draft AGREEMENT (self-consistency is calibrated where verbalized
-            // confidence is overconfident). Low agreement = the model doesn't really know how to decompose
-            // this — a signal to research more before committing (M6 step 3).
-            let (best1, valid1) = select_best_skeleton(candidates, worker_count, "");
-            let (score1, json1) = match best1 {
-                Some(b) => b,
-                None => return Err(anyhow!("no valid skeleton among {n} candidates")),
-            };
-            let (mut conf1, mut reason1) = match consensus_k {
-                Some(k) => best_subset_agreement(&valid1, converge, k),
-                None => plan_agreement(&valid1, converge),
-            };
-            // #133 DIVERSE PLAN: `plan_agreement` penalizes subtask-COUNT spread, so a diverse-but-convergent
-            // draft set caps ~74 and can never clear an 80 floor — that's the bug that makes the SEQUENTIAL
-            // retarget ladder run every time. Measure STRUCTURAL convergence (majority-shared roles, ignoring
-            // count spread). SHADOW (off): logged only, conf unchanged → byte-identical. ENFORCE (on): when the
-            // parallel drafts strongly converge, lift agreement conf past the floor so the ladder is SKIPPED.
-            let (struct_conv, struct_reason) = structural_convergence(&valid1);
-            // A SHADOW MEASUREMENT THAT ONLY REACHES STDERR IS NOT A MEASUREMENT.
-            //
-            // `diverse_plan` runs in shadow when off — it computes `struct_conv` and prints it with a
-            // `[shadow]` marker — and the whole point of a shadow is to answer "would enabling this have
-            // changed anything?" without spending a run on it. That answer went to an eprintln. stderr is
-            // the progress log, the harness does not retain it, and a grep for `struct_conv` across every
-            // archived cell on disk returns NOTHING. So the shadow has been running for its whole life
-            // and has never once been readable.
-            //
-            // This matters now because of what the shadow would have said. Every `confidence_retarget` in
-            // the archive carries `binding_signal: "agreement"`, and the redraft ladder cost 821s / 786s /
-            // 1657s on the 3-node cells against ZERO on the 1-node cell — 40-57% of the 3-node planning
-            // prefix, which is roughly the entire gain the detail fan just bought. The 1-node cell drafted
-            // ONE skeleton (⚠️ CORRECTED from "2" — the cap is distinct MODELS, :14142, and all 11
-            // one-node runs read requested=1/returned=1), so it had NO agreement score to be penalised
-            // by; the 3-node cells drafted 3 and scored 50/52/54. `plan_agreement`
-            // is max-min spread plus MEAN PAIRWISE JACCARD, and `best_subset_agreement`'s own doc says
-            // both "only worsen (or hold) as the pool grows" — so a bigger fleet drafts more, is scored
-            // lower for it, and pays a ladder the smaller fleet never pays.
-            //
-            // `would_skip_ladder` is the counterfactual, computed IDENTICALLY whether or not the lever is
-            // on, so an ordinary shadow run now answers the question for free instead of costing an arm.
-            // WHAT ROUND 1 WOULD HAVE SCORED IF THE POOL SIZE DID NOT COUNT AGAINST IT.
-            //
-            // `best_of_n` is requested from the fleet but CLAMPED to distinct models (:14142), so on
-            // this fleet 1 node drafts 1 and 3 nodes draft 3. The comment there says the extra draft
-            // is free because
-            // drafts run in parallel. It is not free: `plan_agreement` is max-min spread plus mean
-            // pairwise Jaccard, and `best_subset_agreement`'s own doc says both "only worsen (or hold)
-            // as the pool grows". MEASURED: the 1-node cell scored 88 on 2 drafts and paid NO ladder;
-            // the 3-node cells scored 50/52/54 on 3 drafts and paid 786s, 821s and 1657s — 40-57% of
-            // their planning prefix, which is roughly the whole gain their detail fan just bought.
-            //
-            // `best_subset_agreement` exists precisely so a growing pool can only RAISE the metric, and
-            // it is wired in as `consensus_k` — but its own doc says "retarget only". So the invariant
-            // measure is applied only AFTER the ladder has been triggered, never at the round-1 decision
-            // point where the pool-size penalty is what triggers it. That is backwards.
-            //
-            // k=2 is not arbitrary: it is what a 1-node fleet drafts, so this reports every fleet on the
-            // SAME footing. With 2 drafts `best_subset_agreement` falls through to the full-set measure,
-            // so on 1 node this is identically `agreement_conf` and the field is a no-op.
-            //
-            // A run where `agreement_best2` clears `plan_loaded.ask_floor` while `agreement_conf` does
-            // not is a run whose ladder was bought ENTIRELY by having more nodes. Emitted rather than
-            // acted on: the cells that laddered scored 0.9343/0.7147/0.8157 against 0.6030/0.6695 for
-            // the two that did not, so the ladder may be buying the quality and a silent flip here could
-            // spend that. Measure first.
-            let (best2, _) = best_subset_agreement(&valid1, converge, 2);
-            // THE SHADOW MUST ASK THE SAME QUESTION AS THE BRANCH, AND SINCE a9f43543d IT DID NOT.
-            // That commit inserted `if best2 > conf1 { conf1 = best2 }` BETWEEN this emission and the
-            // `diverse_plan_would_skip` branch below, so the shadow was computed on the PRE-lift conf1
-            // while the branch ran on the POST-lift one — precisely the drift
-            // `diverse_plan_would_skip`'s own doc warns about ("a shadow that answers a slightly
-            // different question is worse than no shadow, because it will be believed").
-            //
-            // Fixed by hoisting the value rather than MOVING the emission: the raw `agreement_conf`
-            // and `pool_penalty` are deliberately emitted BEFORE the lift so those two diagnostics
-            // keep their meaning across 24 archived rounds, and relocating the emit would silently
-            // redefine them. Both readings are emitted instead — `would_skip_ladder` matches the
-            // branch, `would_skip_ladder_prelift` preserves continuity with the archived rows.
-            let conf_lifted = conf1.max(best2);
-            self.events.write_value(serde_json::json!({
-                "event": "plan_convergence",
-                "drafts": valid1.len(),
-                "agreement_conf": conf1,
-                "agreement_best2": best2,
-                "pool_penalty": best2.saturating_sub(conf1),
-                "pool_invariant_applied": best2 > conf1,
-                "struct_conv": struct_conv,
-                "struct_stop": struct_stop,
-                "enforced": diverse_plan_on,
-                "would_skip_ladder": diverse_plan_would_skip(struct_conv, struct_stop, conf_lifted),
-                "would_skip_ladder_prelift": diverse_plan_would_skip(struct_conv, struct_stop, conf1),
-                "detail": struct_reason,
-            }));
-            // ACT ON THE POOL-INVARIANT MEASURE AT THE ROUND-1 DECISION POINT — the fix this file already
-            // asked for, now measured. The comment above states the defect: `best_subset_agreement` exists so
-            // a growing pool can only RAISE the metric, but it is wired in as `consensus_k` ("retarget only"),
-            // so the invariant measure never reached the round-1 decision that the pool penalty is what
-            // triggers. "That is backwards."
-            //
-            // The hold was `Measure first`, and the risk named was "the ladder may be buying the quality".
-            // MEASURED 2026-08-08/09 on the deduped corpus: a ladder round costs 24.9-25.4 min of planning by
-            // THREE independent routes agreeing within half a minute, while laddering runs score +0.035 above
-            // non-laddering ones at 0.39 SE — and LOSE on the median (0.7192 vs 0.7426). Non-laddering 3-node
-            // planning is 14.5 min against one-node's 12.8, so the ladder is the ENTIRE three-node planning
-            // tax. Full evidence and its limits: evals/swarm-bench/nodeloop/LADDER-IS-THE-SPEED-DEFICIT.md
-            //
-            // NO-OP AT ONE NODE BY CONSTRUCTION, which is why this cannot regress the single-device path:
-            // ⚠️ CORRECTED: this said "one node drafts 2". It does not — all 11 one-node runs on record
-            // show `skeleton_drafts` requested=1/returned=1, because `n = requested_n.min(distinct
-            // draft models)` and this fleet's planner and worker share a model string. The no-op holds
-            // by a STRONGER route: at n==1 `agreement_conf` is None, so the confidence gate is never
-            // entered at all. The cap is DISTINCT DRAFT MODELS, not node count — a one-node fleet with
-            // a separate planner model WOULD draft two and could ladder. The raw `agreement_conf` and `pool_penalty` are emitted ABOVE, before this
-            // runs, so the diagnostic keeps its old meaning and `pool_invariant_applied` says when it bit.
-            //
-            // ⚠️ WHAT THIS DOES NOT CLAIM: runs are not randomised into laddering — the ladder fires when the
-            // drafts disagree, so laddering runs may be the ones facing a harder decomposition. The evidence
-            // shows where the time GOES, never that removing the ladder RETURNS it. Watch `plan_convergence`
-            // and the arm wall-clock after this lands.
-            if best2 > conf1 {
-                reason1 =
-                    format!("{reason1} [pool-invariant: {conf1} → {best2} on a 1-node footing]");
-                conf1 = best2;
-            }
-            if diverse_plan_on && diverse_plan_would_skip(struct_conv, struct_stop, conf1) {
-                reason1 = format!(
-                    "{reason1} [diverse-plan: struct-converged {struct_conv} ({struct_reason}) → skip ladder]"
-                );
-                conf1 = struct_conv;
-            } else {
-                eprintln!(
-                    "  {} struct_conv {struct_conv}/100 ({struct_reason}){}",
-                    style("·").dim(),
-                    if diverse_plan_on { "" } else { " [shadow]" }
-                );
-            }
-            // SAY HOW BIG THE POOL REALLY WAS, and distinguish the two ways a draft slot fails.
-            //
-            // `n` is how many drafts were REQUESTED. `dead_drafts` never answered at all (timeout, error, or
-            // prose with no final_output). The remainder answered but did not survive parse/DAG validation.
-            // valid1 is what the score was actually computed over. On a measured run these differed by HALF
-            // and nothing said so, so the number read as "6 drafts agree this much" when three of the six had
-            // never spoken. An agreement score without its population is not a measurement.
-            if valid1.len() < n {
-                let unparsed = n - valid1.len() - dead_drafts.min(n - valid1.len());
-                let mut why = Vec::new();
-                if dead_drafts > 0 {
-                    why.push(format!("{dead_drafts} never answered"));
-                }
-                if unparsed > 0 {
-                    why.push(format!("{unparsed} unparseable"));
-                }
-                reason1 = format!(
-                    "{reason1} [scored {} of {n} drafts: {}]",
-                    valid1.len(),
-                    why.join(", ")
-                );
-            }
-            eprintln!(
-                "  {} picked best skeleton (score {score1}) — plan confidence {conf1}/100 ({reason1})",
-                style("✓").green().bold()
-            );
-            // INCREMENTAL REPLAN (Phase 1) — freeze the unanimous + dependency-downward-closed modules VERBATIM
-            // from ONE source draft (the best round-1 skeleton) and re-draft ONLY the dirty residual against
-            // that frozen interface, then splice frozen∪dirty. Adopt ONLY when the splice is a valid DAG that
-            // passes the interface gate AND scores strictly higher than round 1; confidence stays conf1 (the
-            // round-1 free-draft agreement) in EVERY branch, so the freeze fraction can never inflate the ask-
-            // floor number (P0-2). Takes precedence over backbone. Off ⇒ this whole block is skipped, byte-
-            // identical. On any failure it falls back to round 1 — it can never ship a broken/worse plan.
-            if incremental_on && valid1.len() >= 2 {
-                let votes = module_votes(&valid1);
-                let source_specs = goose_swarm::specs_from_plan_json(&json1).unwrap_or_default();
-                let (frozen, dirty_roles) = partition_frozen_dirty(&votes, &source_specs);
-                if frozen.len() >= 2 && !dirty_roles.is_empty() {
-                    eprintln!(
-                        "  {} incremental replan: {} frozen module(s) [{}], {} dirty [{}] — drafting residual",
-                        style("◆").cyan(),
-                        frozen.len(),
-                        frozen
-                            .iter()
-                            .map(|t| t.id.as_str())
-                            .collect::<Vec<_>>()
-                            .join(", "),
-                        dirty_roles.len(),
-                        dirty_roles.join(", ")
-                    );
-                    // Carry each frozen module's OWN scaffolding (its per-module test, whose deps are all frozen
-                    // ids) verbatim too — otherwise freezing a module silently drops its test task.
-                    let frozen_ids: std::collections::BTreeSet<&str> =
-                        frozen.iter().map(|t| t.id.as_str()).collect();
-                    let mut frozen_carry: Vec<goose_swarm::TaskSpec> = frozen.clone();
-                    for t in &source_specs {
-                        if is_scaffolding_task(t)
-                            && t.id != "integrate-verify"
-                            && !t.deps.is_empty()
-                            && t.deps.iter().all(|d| frozen_ids.contains(d.as_str()))
-                        {
-                            frozen_carry.push(t.clone());
-                        }
-                    }
-                    let carry_ids: std::collections::BTreeSet<String> =
-                        frozen_carry.iter().map(|t| t.id.clone()).collect();
-                    let frozen_roles: std::collections::BTreeSet<String> = frozen
-                        .iter()
-                        .flat_map(|t| t.owned_files.iter())
-                        .map(|f| canonical_role(f))
-                        .collect();
-                    let system2 = build_system(&frozen_backbone_clause(&frozen));
-                    // THE SECOND SILENT WINDOW. `skeleton_drafts` is emitted for the FIRST draft round
-                    // only, and this is a SECOND full best-of-N round over the whole fleet with no event
-                    // of its own. MEASURED across the three retargeting cells in the corpus: the gap
-                    // between `plan_convergence` and the first `detail_completed` is 6.6-8.2 minutes with
-                    // ZERO events in it — 6.8/6.7/6.6 on consecutive rounds of one cell — while the first
-                    // detail call in that window self-reports 80s. So ~5.5 min per round is unaccounted,
-                    // roughly 16 minutes of a 58.5-minute prefix.
-                    //
-                    // The engine already learned this lesson once: its own comment reads "THE SKELETON
-                    // DRAFT IS THE LONGEST SILENT WINDOW IN A RUN", measured at 12 minutes with not one
-                    // event, and the fix was to emit `skeleton_drafts` with an arithmetic identity that
-                    // must close. That window is instrumented; this one was not, and it is the same
-                    // function being called a second time.
-                    //
-                    // Emitting rather than asserting is deliberate. The code shows two `draft_round`
-                    // calls here and the timing fits, but stderr is not captured for these cells so I
-                    // cannot confirm WHICH path ran — and naming a mechanism from the shape of the source
-                    // has been wrong twice in one day (a confidence threshold that was the wrong
-                    // variable, a review layer called blind that was merely narrow). Let the measurement
-                    // name its own occupant.
-                    let r2_started = std::time::Instant::now();
-                    let (candidates2, _dead2, _deferred2) = draft_round(system2, draft_temp).await;
-                    self.events.write_value(serde_json::json!({
-                        "event": "skeleton_drafts_round2",
-                        "path": "incremental",
-                        "returned": candidates2.len(),
-                        "dead": _dead2,
-                        "secs": r2_started.elapsed().as_secs(),
-                    }));
-                    let (best2, _valid2) =
-                        select_best_skeleton(candidates2, worker_count, "incremental ");
-                    match best2 {
-                        Some((_score2_raw, json2)) => {
-                            let round2_specs =
-                                goose_swarm::specs_from_plan_json(&json2).unwrap_or_default();
-                            // Keep from round 2 only the RESIDUAL: drop any task that collides with a carried
-                            // frozen id, and drop any substantive task that merely reproduces a frozen module
-                            // (every role it owns is already frozen). What remains = dirty modules + their
-                            // tests + the integrate-verify sink (which references the carried frozen ids).
-                            let dirty_specs: Vec<goose_swarm::TaskSpec> = round2_specs
-                                .into_iter()
-                                .filter(|t| !carry_ids.contains(&t.id))
-                                .filter(|t| {
-                                    is_scaffolding_task(t)
-                                        || t.owned_files.is_empty()
-                                        || t.owned_files
-                                            .iter()
-                                            .any(|f| !frozen_roles.contains(&canonical_role(f)))
-                                })
-                                .collect();
-                            let mut merged = frozen_carry.clone();
-                            merged.extend(dirty_specs.iter().cloned());
-                            let ok =
-                                validate_frozen_interfaces(&frozen_carry, &dirty_specs).is_ok();
-                            match score_skeleton(&merged, worker_count) {
-                                Some(score2) if ok && score2 > score1 => {
-                                    eprintln!(
-                                        "  {} incremental splice adopted (score {score1}→{score2}); confidence unchanged (round-1 free drafts)",
-                                        style("✓").green().bold()
-                                    );
-                                    (
-                                        plan_json_from_specs(&merged),
-                                        Some(conf1),
-                                        format!(
-                                            "{reason1} [incremental: {} frozen, {} dirty; spliced score {score1}->{score2}; confidence from round-1 free drafts]",
-                                            frozen.len(),
-                                            dirty_roles.len()
-                                        ),
-                                    )
-                                }
-                                _ => {
-                                    eprintln!("  · incremental splice not adopted (kept round 1)");
-                                    (json1, Some(conf1), reason1)
-                                }
-                            }
-                        }
-                        None => {
-                            eprintln!(
-                                "  · incremental replan: no valid residual draft (kept round 1)"
-                            );
-                            (json1, Some(conf1), reason1)
-                        }
-                    }
-                } else {
-                    eprintln!("  · incremental replan: no freezable core (kept round 1)");
-                    (json1, Some(conf1), reason1)
-                }
-            // BACKBONE LOCK — a STRUCTURE lever only. When a strict majority of the independent drafts already
-            // agreed on ≥2 core module roles, re-draft the whole fleet with that core PINNED and adopt round 2
-            // ONLY if it is a valid DAG that HONORS the lock AND scores structurally HIGHER than round 1.
-            // Confidence stays conf1 — the round-1 free-draft agreement — in ALL branches, so the forced round
-            // can NEVER inflate the number the ask-floor gate reads (dishonesty eliminated by construction, not
-            // by a tuned guard). Off ⇒ this whole block is skipped, byte-identical.
-            } else if should_run_backbone_round2(backbone_on, backbone_skip_confident, conf1) {
-                let backbone = consensus_backbone(&valid1);
-                if backbone.len() >= 2 {
-                    eprintln!(
-                        "  {} backbone lock: {} consensus module(s) [{}] — re-drafting round 2",
-                        style("◆").cyan(),
-                        backbone.len(),
-                        backbone.join(", ")
-                    );
-                    let system2 = build_system(&backbone_clause(&backbone));
-                    // Second silent window, backbone variant — see the incremental path above for the
-                    // measurement. Both call the same `draft_round` a second time and neither emitted.
-                    let r2_started = std::time::Instant::now();
-                    let (candidates2, _dead2, _deferred2) = draft_round(system2, draft_temp).await;
-                    self.events.write_value(serde_json::json!({
-                        "event": "skeleton_drafts_round2",
-                        "path": "backbone",
-                        "returned": candidates2.len(),
-                        "dead": _dead2,
-                        "secs": r2_started.elapsed().as_secs(),
-                    }));
-                    let (best2, _valid2) =
-                        select_best_skeleton(candidates2, worker_count, "round2 ");
-                    match best2 {
-                        Some((score2, json2))
-                            if score2 > score1 && plan_covers_backbone(&json2, &backbone) =>
-                        {
-                            eprintln!(
-                                "  {} backbone round-2 skeleton adopted (score {score1}→{score2}); confidence unchanged (round-1 free drafts)",
-                                style("✓").green().bold()
-                            );
-                            (
-                                json2,
-                                Some(conf1),
-                                format!(
-                                    "{reason1} [backbone: {} locked modules; round-2 skeleton adopted score {score1}->{score2}; confidence from round-1 free drafts]",
-                                    backbone.len()
-                                ),
-                            )
-                        }
-                        _ => {
-                            eprintln!("  · backbone round 2 not adopted (kept round 1)");
-                            (json1, Some(conf1), reason1)
-                        }
-                    }
-                } else {
-                    eprintln!("  · backbone lock: no shared core (skipping round 2)");
-                    (json1, Some(conf1), reason1)
-                }
-            } else if backbone_on {
-                // #122 skip: round-1 agreement is already high, so the free drafts share the structure the lock
-                // would pin — a round-2 re-draft cannot beat round 1 (0/11 adopted at conf >= 90 in real runs).
-                // Skip the full planner round; the plan + confidence are byte-identical to round 1.
-                eprintln!(
-                    "  {} backbone lock skipped: round-1 agreement {conf1}/100 >= {BACKBONE_SKIP_CONF_FLOOR} (drafts already share the structure) — saved a full planner round",
-                    style("↯").yellow()
-                );
-                (json1, Some(conf1), reason1)
-            } else {
-                (json1, Some(conf1), reason1)
-            }
-        };
-        // Second confidence signal: SPEC CLARITY. Cross-draft agreement measures whether the drafts
-        // CONVERGED, which is noisy — a genuinely ambiguous request ("build something useful") can score high
-        // just because the weak model happened to pick the same interpretation 3× (observed: the same vague
-        // spec scored 51 then 95). So agreement alone is not the right gate for the ASK feature. The old
-        // verbalized self-rating was meant to fix this but a weak model can't calibrate a 0-100 number (usable
-        // in only ~6/102 runs). We instead ENUMERATE the material open product-decisions — a task the model
-        // does reliably — and derive a confidence from the count. Combined with agreement via MIN: the run
-        // proceeds only when BOTH the drafts converged AND the spec pins the product down, so a
-        // vague-but-convergent spec now asks. Only on the best-of-N + ask-floor path (`need_confidence`); the
-        // default/cloud path skips it entirely (plan_conf = agreement_conf), so plan CONTENT is byte-identical.
-        // The enumerated decisions are RETURNED as `uncertainties` and seed the clarify questions.
-        let (plan_conf, uncertainties): (PlanConf, String) = if n > 1 && need_confidence {
-            let clarity = self
-                .spec_clarity_confidence(planner_model, user_prompt, &skeleton)
-                .await;
-            // A DEAD PROBE IS NOT A CLEAR SPEC. The default keeps `product_specified: true` and drops clarity
-            // from the min — an assertion the engine has no evidence for (it is what the probe was supposed to
-            // MEASURE), but changing it would alter the default path, so the failure is recorded and reported.
-            // When `clarity_fail_closed` is ON and the probe died for a reason that taught us nothing (timeout /
-            // agent_error / no_final_output), clamp spec-clarity to CLARITY_FAILCLOSED so the MIN drops below the
-            // ask floor and the run ASKS instead of proceeding on cross-draft agreement alone (which agrees
-            // perfectly on an invented product). OFF short-circuits at swarm_gate_cfg → every value below is
-            // bit-identical to before. `unparseable` is deliberately excluded (see clarity_reason_is_fail_closed).
-            let clarity_fail = self.clarity_fail.lock().unwrap().clone();
-            let fail_closed = clarity.is_none()
-                && clarity_fail
-                    .as_deref()
-                    .is_some_and(clarity_reason_is_fail_closed)
-                && swarm_gate_cfg(
-                    "GOOSE_SWARM_CLARITY_FAIL_CLOSED",
-                    load_config().clarity_fail_closed,
-                );
-            let final_conf = match (agreement_conf, clarity.as_ref()) {
-                // Proceed only when BOTH signals are confident — the lower one governs.
-                (Some(a), Some((c, _, _))) => Some(a.min(*c)),
-                (Some(a), None) => Some(if fail_closed {
-                    a.min(CLARITY_FAILCLOSED)
-                } else {
-                    a
-                }),
-                (None, Some((c, _, _))) => Some(*c),
-                (None, None) => Some(if fail_closed { CLARITY_FAILCLOSED } else { 60 }),
-            };
-            let (spec_clarity, open_decisions, product_specified) = match &clarity {
-                Some((c, d, p)) => (Some(*c), d.clone(), *p),
-                // (delegated split happens below, once, so the None arms stay byte-identical)
-                // Fail-closed: a dead probe reads as LOW clarity (forces the ask), not as an unmeasured skip.
-                None if fail_closed => (Some(CLARITY_FAILCLOSED), Vec::new(), true),
-                None => (None, Vec::new(), true), // probe failed/timed out → no spec-clarity veto
-            };
-            if let Some(reason) = &clarity_fail {
-                eprintln!(
-                    "  {} spec-clarity probe FAILED ({reason}) — proceeding on cross-draft agreement ALONE. \
-                     Agreement measures whether the DRAFTS agree, not whether YOUR SPEC is clear: 3 drafts can \
-                     agree perfectly on an invented product. The ask that protects an under-specified spec \
-                     cannot fire on this run.",
-                    style("!").yellow().bold()
-                );
-            }
-            // #136 — DELEGATION SPLIT. A decision the spec explicitly handed to the builder is a design
-            // choice, not an unclear spec, so it must not lower spec_clarity and must not block the fleet on
-            // a question the author already answered with "you decide". Deterministic text over the spec; a
-            // model opinion may never decide whether to block. Lever OFF => both vectors below are exactly
-            // the probe's output and every downstream value is byte-identical.
-            let (open_decisions, delegated_decisions) =
-                if delegated_decisions_ok(load_config().delegated_decisions_ok) {
-                    // FROZEN spec, never `user_prompt` — see the spec_frozen field comment. Empty (never
-                    // captured) yields no regions, so the partition degrades to "everything blocks", which is
-                    // the safe direction.
-                    let frozen = self.spec_frozen.lock().unwrap().clone();
-                    partition_delegated_decisions(&open_decisions, &frozen)
-                } else {
-                    (open_decisions, Vec::new())
-                };
-            // Rescore off the BLOCKING count only. Without this the number still reads 52 while nothing is
-            // actually blocked, which is the dishonest-confidence class the breakdown exists to prevent.
-            let spec_clarity = match (spec_clarity, delegated_decisions.is_empty()) {
-                (Some(_), false) => {
-                    Some(spec_clarity_score(product_specified, open_decisions.len()))
-                }
-                (other, _) => other,
-            };
-            if !delegated_decisions.is_empty() {
-                eprintln!(
-                    "  {} {} decision(s) are DELEGATED by the spec (\"your call\") — recorded as design \
-                     choices for the workers to make and document, not counted as unclarity and not asked: {}",
-                    style("◆").cyan(),
-                    delegated_decisions.len(),
-                    delegated_decisions.join("; ")
-                );
-            }
-            let unc = open_decisions.join("; ");
-            if let Some((c, _, _)) = &clarity {
-                eprintln!(
-                    "  spec-clarity confidence {c}/100{}",
-                    if unc.is_empty() {
-                        " (no material open decisions)".to_string()
-                    } else {
-                        format!(" — open decisions: {unc}")
-                    }
-                );
-            }
-            if let Some(fc) = final_conf {
-                eprintln!(
-                    "  {} final plan confidence {fc}/100 (min of agreement + spec-clarity)",
-                    style("◆").cyan()
-                );
-            }
-            // A human-readable derivation of the spec-clarity number, so it reads as a computed signal, not a
-            // magic constant (parallels agreement_reason). Shown in the confidence breakdown.
-            let spec_clarity_reason = if let Some(reason) = &clarity_fail {
-                // NEVER claim "product is pinned" off a dead probe. That is what the old code did: the probe
-                // returns None -> open_decisions is empty -> this rendered "product is pinned and only routine
-                // defaults remain" INTO THE UI, telling the user their spec was clear because the check for it
-                // had crashed. An unmeasured signal must read as unmeasured.
-                if fail_closed {
-                    format!("NOT MEASURED — the spec-clarity probe failed ({reason}). Clamped to {CLARITY_FAILCLOSED} (fail-closed) to force the ask rather than proceed on cross-draft agreement, which cannot see whether your spec is under-specified.")
-                } else {
-                    format!("NOT MEASURED — the spec-clarity probe failed ({reason}). This run's confidence is cross-draft agreement only, which cannot see whether your spec is under-specified.")
-                }
-            } else if !product_specified {
-                "the product itself is undefined — clarity stays low until you say what to build"
-                    .to_string()
-            } else if open_decisions.is_empty() && !delegated_decisions.is_empty() {
-                // Do NOT render "only routine defaults remain" here: the spec DID leave real decisions open,
-                // it just delegated them. Saying "routine" would misdescribe the author's spec back at them.
-                format!(
-                    "product is pinned; {} decision(s) the spec delegated to the builder (\"your call\") are \
-                     recorded as design choices rather than counted as unclarity",
-                    delegated_decisions.len()
-                )
-            } else if open_decisions.is_empty() {
-                "product is pinned and only routine defaults remain".to_string()
-            } else if !delegated_decisions.is_empty() {
-                format!(
-                    "product is pinned; {} material open decision(s) still lower clarity ({} more were \
-                     delegated by the spec and are not counted)",
-                    open_decisions.len(),
-                    delegated_decisions.len()
-                )
-            } else {
-                format!(
-                    "product is pinned; {} material open decision(s) still lower clarity",
-                    open_decisions.len()
-                )
-            };
-            let pc = PlanConf {
-                final_conf,
-                agreement: agreement_conf,
-                agreement_reason,
-                spec_clarity,
-                spec_clarity_reason,
-                product_specified,
-                open_decisions,
-                delegated_decisions,
-            };
-            (pc, unc)
-        } else {
-            let pc = PlanConf {
-                final_conf: agreement_conf,
-                agreement: agreement_conf,
-                agreement_reason,
-                spec_clarity: None,
-                spec_clarity_reason: String::new(),
-                product_specified: true,
-                open_decisions: Vec::new(),
-                delegated_decisions: Vec::new(),
-            };
-            (pc, String::new())
-        };
-        let mut v: serde_json::Value = serde_json::from_str(&skeleton)?;
-        // Deterministically ensure a final integrate-verify sink: the weak architect sometimes OMITS it
-        // despite the prompt, and without it nothing smoke-runs the program end-to-end — so a broken entry
-        // point (Click `ctx.obj` None, argparse `dest=` on a positional, a bad import) SHIPS green because
-        // unit tests bypass the CLI. Inject one depending on every other subtask if it is missing.
-        if let Some(arr) = v.get_mut("subtasks").and_then(|s| s.as_array_mut()) {
-            let has_iv = arr
-                .iter()
-                .any(|s| s.get("id").and_then(|i| i.as_str()) == Some("integrate-verify"));
-            if !has_iv && arr.len() > 1 {
-                let ids: Vec<serde_json::Value> =
-                    arr.iter().filter_map(|s| s.get("id").cloned()).collect();
-                let iv_desc = integrate_verify_spec(lang);
-                arr.push(serde_json::json!({
-                    "id": "integrate-verify",
-                    "description": iv_desc,
-                    "depends_on": ids,
-                    "files": [],
-                    "difficulty": "hard",
-                    "model": "qwen/qwen3.6-27b"
-                }));
-                eprintln!("  · injected missing integrate-verify sink (architect omitted it)");
-            }
-        }
-        // A failing unit-test subtask must not BLOCK integrate-verify (it runs the program, not the tests) —
-        // else the run reports FAILED while integrate-verify never ran to confirm whether the app works.
-        let stripped = strip_integrate_verify_test_deps(&mut v, lang);
-        if stripped > 0 {
-            eprintln!(
-                "  · integrate-verify no longer waits on the test subtask(s) ({stripped} dep(s) stripped) — a failing test will not hide whether the app actually runs"
-            );
-        }
-        // GOOSE_SWARM_SPLIT_FAT (#131, finer slicing): split a FAT `hard` module (the whole package as one task)
-        // into per-concern children BEFORE contracts/fan-verify, so each child gets its own SMALL contract stub
-        // (a fat whole-package stub timed out → the package diverged → no compile). Runs first so children flow
-        // through every transform below. OFF => not called => byte-identical.
-        if swarm_gate_cfg("GOOSE_SWARM_SPLIT_FAT", load_config().split_fat) {
-            // Default 3, not 4: the measured fat module is the 3-file web triplet, which the
-            // old threshold let through every time (F873). The >=2-role condition inside the
-            // transform still protects cohesive 3-file single-concern tasks from splitting.
-            let min_files = std::env::var("GOOSE_SWARM_SPLIT_FAT_FILES")
-                .ok()
-                .and_then(|v| v.trim().parse::<usize>().ok())
-                .filter(|&n| n >= 2)
-                .unwrap_or(3);
-            let split = split_fat_modules(&mut v, lang, min_files);
-            if split > 0 {
-                eprintln!(
-                    "  \u{b7} split-fat: split {split} fat module(s) into per-concern child tasks — each gets its \
-                     OWN small contract stub (the whole-package stub was timing out and cascading a divergence)"
-                );
-            }
-        }
-        // GOOSE_SWARM_PARALLEL_TESTS backstop: strip a stray cli/entry (or integrate-verify) edge the weak
-        // model may have left on a per-leaf-module test, so those tests run in parallel with the cli build.
-        // Narrow — only for a test that uniquely maps to one non-cli module; sibling/shared deps are preserved.
-        if swarm_gate_cfg_bundle(
-            "GOOSE_SWARM_PARALLEL_TESTS",
-            load_config().parallel_tests,
-            true,
-        ) {
-            let relaxed = relax_test_module_deps(&mut v, lang);
-            if relaxed > 0 {
-                eprintln!(
-                    "  · parallel-tests: relaxed {relaxed} stray cli/entry dep(s) off per-module test subtask(s)"
-                );
-            }
-        }
-        // GOOSE_SWARM_RELAX_CONTRACTED_DEPS (#130): flatten false-serialization chains between CODE modules into
-        // a flat fan. The frozen contract already gives every importer its siblings' signatures and nothing
-        // compiles until the integrate-verify sink, so a module never needs another's FILES at its own build
-        // step. Every non-test module becomes a root; the sink stays the single join; tests are left untouched.
-        // Gated additionally on CONTRACTS being ON (the premise it relies on). OFF -> block skipped, v untouched.
-        if swarm_gate_cfg("GOOSE_SWARM_CONTRACTS", load_config().contracts)
-            && swarm_gate_cfg(
-                "GOOSE_SWARM_RELAX_CONTRACTED_DEPS",
-                load_config().relax_contracted_deps,
-            )
-        {
-            let relaxed = relax_contracted_module_deps(&mut v, lang);
-            if relaxed > 0 {
-                eprintln!(
-                    "  \u{b7} relax-contracted-deps: flattened {relaxed} inter-module dep edge(s) into roots — the frozen contract satisfies the imports; integrate-verify remains the single join"
-                );
-            }
-        }
-        // SINK DECOMPOSITION (Phase-1, #119): split the monolithic integrate-verify sink — which depends on
-        // every module and does ALL verification serially on one node (it stalls) — into a fannable per-module
-        // `verify::<M>` task each (read-only, owns nothing, fans like the build tasks) PLUS a THIN
-        // integrate-verify join (same id) that does only the irreducible whole-program run. OFF -> byte-identical.
-        // Whether the split ACTUALLY applied matters to the detail fan's filter and the T2 sink-canonicalizer
-        // (which would otherwise overwrite the thin join with the full monolithic spec and silently undo the
-        // split) — both now live in detail_plan, which re-derives the flag from the `verify::` ids the split
-        // installs, so nothing needs threading across the seam.
-        if swarm_gate_cfg("GOOSE_SWARM_FAN_VERIFY", load_config().fan_verify) {
-            let fanned = fan_verify_split(&mut v, lang);
-            if fanned > 0 {
-                // Second axis: shard the END-TO-END run by command across the fleet, so the whole-program
-                // check stops being one task on one node while the rest of the fleet idles.
-                if swarm_gate_cfg("GOOSE_SWARM_FAN_E2E", load_config().fan_e2e) {
-                    // ENGINE-ENUMERATED ORACLE, gated. spec_frozen is the OPERATOR's spec as it
-                    // stood before any model wrote into it (opts.prompt is mutated by retarget), so
-                    // it is the only honest source for "what the spec advertises". OFF, or a spec
-                    // with no extractable endpoint table, yields an empty slice and the shard spec
-                    // is byte-identical to today.
-                    let oracle: Vec<String> = if swarm_gate_cfg(
-                        "GOOSE_SWARM_E2E_ORACLE",
-                        load_config().e2e_oracle.unwrap_or(true),
-                    ) {
-                        spec_advertised_surface(&self.spec_frozen.lock().unwrap().clone())
-                    } else {
-                        Vec::new()
-                    };
-                    let shards = fan_e2e_split(&mut v, lang, worker_count, &oracle);
-                    if shards > 0 {
-                        eprintln!(
-                            "  \u{b7} fan-e2e: split the end-to-end run into {shards} command shard(s) across the fleet — integrate-verify now joins them instead of running every command itself"
-                        );
-                    }
-                }
-                eprintln!(
-                    "  \u{b7} fan-verify: split the sink into {fanned} scoped per-module verify task(s) + a thin integrate-verify join (id kept) — the per-module checks fan across the fleet, the join stays the sole end-to-end gate"
-                );
-            }
-        }
-        // T4: deterministic layout-normalizer (backstop to T3's file manifest). On an AMENDMENT where a package
-        // already exists on disk, force a subtask's BARE module path onto the package ONLY when it COLLIDES with
-        // an existing <pkg>/<name>.py — so a planner that switches package->flat cannot create a duplicate
-        // orphan module (the gradebook-2 split-brain). New files / already-dir-prefixed paths are untouched;
-        // no-op on greenfield (no package yet).
-        if let Some(pkg) = python_package(&self.working_dir) {
-            let existing_pkg_files: std::collections::HashSet<String> =
-                std::fs::read_dir(self.working_dir.join(&pkg))
-                    .into_iter()
-                    .flatten()
-                    .flatten()
-                    .filter_map(|e| {
-                        let p = e.path();
-                        if p.extension().and_then(|x| x.to_str()) == Some("py") {
-                            p.file_name().map(|n| n.to_string_lossy().to_string())
-                        } else {
-                            None
-                        }
-                    })
-                    .collect();
-            let n = normalize_plan_files_to_package(&mut v, &pkg, &existing_pkg_files);
-            if n > 0 {
-                eprintln!(
-                    "  · layout-normalize: pinned {n} bare module path(s) onto the existing {pkg}/ package"
-                );
-            }
-        }
-        Ok((v.to_string(), plan_conf, uncertainties))
-    }
-
-    /// DEFER_DETAIL (speed hunt 2026-08-19): the detail fan, hoisted OUT of `'plan_loop`. It used to run
-    /// at the tail of every parallel_plan call, so each retarget/ask redraft re-bought the whole fan —
-    /// MEASURED baseline-n3-r0: 3× fan = 26 detail_completed with 18/18 same-id rework by round 2, ~11-30
-    /// min per retargeting run, and detail_fallback timeouts hit the hardest modules before dispatch. The
-    /// loop's own machinery (skeleton drafts, agreement, clarity, retarget/ask) reads only prompt +
-    /// skeleton, so the fan now runs exactly ONCE, here, on the plan the loop finally ships: the SAME fan
-    /// (same prompts, same memo, same detail_completed/detail_fallback events, same T2 sink shaping), just
-    /// later. `user_prompt`/`research_findings` are the POST-ask values — the ask's answers are folded into
-    /// both before the loop exits, so specs are written against the answered spec.
-    ///
-    /// Returns the ONLY (plan_json, dag) pair downstream (pillars/contracts/plan_loaded/fill-fan/
-    /// Scheduler::run) may ever see — the single seam. Nothing loop-resident survives past it.
-    async fn detail_plan(
-        self: &Arc<Self>,
-        planner_model: &str,
-        worker_models: Vec<String>,
-        user_prompt: &str,
-        research_findings: &str,
-        plan_json: &str,
-    ) -> Result<(String, Dag)> {
-        let mut v: serde_json::Value = serde_json::from_str(plan_json)?;
-        let existing_files = existing_files_manifest(&self.working_dir);
-        let lang = detect_language(user_prompt, &existing_files);
-        // Re-derived from the plan itself rather than threaded through the loop: `verify::` ids exist
-        // exactly when fan_verify_split split the sink in the round that drafted this plan (the model
-        // never emits them — they are engine-installed), so the plan string is the authoritative carrier
-        // of the flag across the seam.
-        let fan_verify_applied = v
-            .get("subtasks")
-            .and_then(|s| s.as_array())
-            .is_some_and(|a| {
-                a.iter().any(|s| {
-                    s.get("id")
-                        .and_then(|i| i.as_str())
-                        .is_some_and(|i| i.starts_with("verify::"))
-                })
-            });
-        let items: Vec<(usize, String, String, String, bool)> = v
-            .get("subtasks")
-            .and_then(|s| s.as_array())
-            .ok_or_else(|| anyhow!("skeleton has no subtasks array"))?
-            .iter()
-            .enumerate()
-            // A `verify::<M>` task's spec is AUTHORED deterministically by per_module_verify_spec, and its
-            // read-only invariants ("you own NOTHING and must WRITE NO files", "do NOT run the whole program
-            // end-to-end, do NOT verify sibling modules") are the ONLY thing keeping the fanned half scoped.
-            // Detailing it hands those invariants to the weak model to re-word, which can drop them entirely —
-            // and it burns one ~75s fleet call per verify task to do it. Skip them: the authored spec is
-            // already implementation-ready. Only reachable when fan_verify is ON (no such id otherwise), so
-            // the default path is byte-identical.
-            // Both fanned families are AUTHORED deterministically (per_module_verify_spec / e2e_shard_spec)
-            // and carry invariants the detailer would paraphrase away: "you own NOTHING", and — for a shard
-            // — WHICH slice of the command list it owns. A shard whose slice is reworded checks everything
-            // or nothing, which silently undoes the split. `verify-e2e::` does NOT start with `verify::`,
-            // so it needs its own arm; missing it is exactly how the first fan_e2e run got its specs
-            // rewritten.
-            // And the JOIN itself, once fan_verify has split the sink: `fan_verify_split` installs
-            // `thin_integrate_verify_spec` as its description, so from that moment integrate-verify is
-            // authored deterministically exactly like the two families above, and all three reasons apply
-            // unchanged. Detailing it is worse than wasteful here — on a detail fallback the brief written
-            // back IS the thin spec, and T2 below then appends it under the canonical joined spec, so the
-            // join is told "Do NOT re-run that whole sweep; it has happened" and, 1081 characters later,
-            // "run EVERY command/usage the SPEC advertises ... For EACH command do a GOLDEN-VALUE CHECK".
-            // MEASURED: 10 of 11 fan_e2e-shaped runs in ~/goose-builds carry the thin spec appended
-            // VERBATIM — byte-identical across five different app specs, which no model-authored detail
-            // could be — and h1-e2e-4's join then ran 4327s, 63.7% of all node-busy time, WORSE than the
-            // 47% single-sink figure that motivated sharding the e2e run in the first place.
-            // Skipping it also reclaims one detail-budget call from the pre-dispatch critical path.
-            // Only reachable when fan_verify actually split (no thin spec otherwise), so the default path
-            // with fan_verify OFF is byte-identical.
-            .filter(|(_, st)| {
-                let id = st["id"].as_str().unwrap_or("");
-                let authored_deterministically = id.starts_with("verify::")
-                    || id.starts_with("verify-e2e::")
-                    || (fan_verify_applied && id == "integrate-verify");
-                !authored_deterministically
-            })
-            .map(|(i, st)| {
-                // The EXACT paths this subtask owns — passed to the detailer so its spec refers to them
-                // verbatim. Without this the detailer invents a filename that contradicts the owned_files
-                // (e.g. spec says formula_parser.py while the plan owns parser.py); the worker follows the
-                // spec, never writes the owned file, and the task fails its owned-file check every attempt.
-                let files = st["files"]
-                    .as_array()
-                    .map(|a| {
-                        a.iter()
-                            .filter_map(|f| f.as_str())
-                            .collect::<Vec<_>>()
-                            .join(", ")
-                    })
-                    .unwrap_or_default();
-                // S3 i2 (the missing half found during i3's wiring read): only a prompt that ASKS
-                // for the line ever produces one — parser + field without this ask was the F105
-                // dark-mechanism pattern, a consumer whose producer never fires. Hard tasks owning
-                // exactly one .py file are the fill fan's whole domain.
-                let subsplit_ok = st["difficulty"].as_str() == Some("hard")
-                    && st["files"]
-                        .as_array()
-                        .map(|a| a.len() == 1 && a[0].as_str().is_some_and(|f| f.ends_with(".py")))
-                        .unwrap_or(false);
-                (
-                    i,
-                    st["id"].as_str().unwrap_or("").to_string(),
-                    st["description"].as_str().unwrap_or("").to_string(),
-                    files,
-                    subsplit_ok,
-                )
-            })
-            .collect();
-        if items.is_empty() {
-            return Err(anyhow!("skeleton had zero subtasks"));
-        }
-        eprintln!(
-            "  skeleton: {} subtask(s) → detailing IN PARALLEL across the fleet:",
-            items.len()
-        );
-        let wm = if worker_models.is_empty() {
-            vec![planner_model.to_string()]
-        } else {
-            worker_models
-        };
-        let goal = user_prompt.to_string();
-        let findings = research_findings.to_string();
-        // #122 DETAIL MEMO: reuse an already-generated detail for a subtask whose FULL detailer input (goal + id
-        // + brief + owned files + findings) is byte-identical to a previous round, instead of re-detailing it
-        // (~75s LLM call). OFF => `items` passes through and `memo_keys` stays empty and unread => byte-identical.
-        let mut memo_keys: std::collections::HashMap<usize, (String, String)> =
-            std::collections::HashMap::new();
-        let items: Vec<(usize, String, String, String, bool)> = if self.detail_memo_on {
-            let cache = self.detail_memo.lock().unwrap();
-            let mut remaining = Vec::with_capacity(items.len());
-            let mut reused = 0usize;
-            for (idx, id, brief, files, subsplit_ok) in items {
-                let key = detail_memo_key(&goal, &id, &brief, &files, &findings);
-                if let Some(desc) = cache.get(&key) {
-                    v["subtasks"][idx]["description"] = serde_json::Value::String(desc.clone());
-                    reused += 1;
-                } else {
-                    memo_keys.insert(idx, (key, brief.clone()));
-                    remaining.push((idx, id, brief, files, subsplit_ok));
-                }
-            }
-            drop(cache);
-            if reused > 0 {
-                eprintln!(
-                    "  {} detail-memo: reused {reused} unchanged subtask detail(s); re-detailing {} this round",
-                    style("↯").yellow(),
-                    remaining.len()
-                );
-            }
-            remaining
-        } else {
-            items
-        };
-        // #135 degrade-straggler-stop for detail: an aborted detail task keeps its skeleton brief (the existing
-        // `_ => brief` fallback), so stopping the lone lagger only costs one module a richer spec — never
-        // corruption. Usually near-inert: #subtasks > #devices makes it fall back to await-all. grace 0 => OFF.
-        let detail_grace = if self.straggler_stop_degrade {
-            // Was clamp(10, 75) — a second hardcoded 75 that capped the straggler grace far below the
-            // sibling contracts fanout's `worker_timeout_secs.max(10)`. Same call kind, same fleet;
-            // the ceiling now comes from the same place.
-            self.straggler_grace_secs
-                .unwrap_or(45)
-                .clamp(10, self.worker_timeout_secs.max(10))
-        } else {
-            0
-        };
-        let me = self.clone();
-        // One detail call per device (work-stealing): a weight-1 node never has a second detail queued
-        // behind the first. Each item grabs the next free node, so the fleet stays busy without
-        // over-dispatching; on timeout/empty/error we fall back to the architect's brief line.
-        let results =
-            fanout_over_fleet_straggler(one_lane_per_host(wm), items, detail_grace, "detail", Some(self.events.clone()), move |(idx, id, brief, files, subsplit_ok), model| {
-            let me = me.clone();
-            let goal = goal.clone();
-            let findings = findings.clone();
-            async move {
-                let started = std::time::Instant::now();
-                eprintln!(
-                    "  {} detail {} → {}",
-                    style("▸").cyan().bold(),
-                    style(&id).bold(),
-                    model
-                );
-                let fb = if findings.is_empty() {
-                    String::new()
-                } else {
-                    format!("\n\nResearch findings:\n{findings}")
-                };
-                let system = "You are detailing ONE subtask of a larger plan into a precise, implementation-ready \
-                    spec for the worker who will build it: exact function/class names and signatures, key logic, the \
-                    files it owns, edge cases to handle, and what its tests must check. Use the EXACT file paths the \
-                    subtask owns (given below) verbatim — NEVER invent, rename, or pluralize a filename. \
-                    CARRY THROUGH EVERY EXTERNAL LITERAL from the research findings EXACTLY as written — API paths \
-                    and their version prefixes, header names, query parameters, status codes, field names. These \
-                    cannot be re-derived by the worker and a near-miss is a total failure: an endpoint off by a \
-                    `/v1` returns 404 on every call. If the findings give an endpoint, WRITE THE ENDPOINT. Be \
-                    concrete and self-contained, and BRIEF — about 150 words excluding those literals, which are \
-                    never the thing to cut. Output ONLY the spec prose; do NOT write code files or restate the \
-                    whole project."
-                    .to_string();
-                let system = if subsplit_ok {
-                    format!(
-                        "{system}\n\nIf this module naturally decomposes, END your spec with ONE line \
-                         `SUBSPLIT: name1, name2` — 2-4 top-level function/class names, each independently \
-                         implementable against the module's interface; OMIT the line when the module is one \
-                         coherent piece. Never list more than 4."
-                    )
-                } else {
-                    system
-                };
-                let files_line = if files.is_empty() {
-                    String::new()
-                } else {
-                    format!(
-                        "\n\nThis subtask owns EXACTLY these file(s): {files}\nYour spec MUST refer to the \
-                         worker's files by these EXACT paths — do NOT use a different name (e.g. do not write \
-                         formula_parser.py when the owned file is parser.py): a mismatched filename makes the \
-                         worker write the wrong file and the task FAILS its owned-file check on every attempt."
-                    )
-                };
-                let user = format!("Overall goal: {goal}\n\nThis subtask: [{id}] {brief}{files_line}{fb}");
-                // Per-subtask detailer digest so the PLAN-detailing fan-out shows live per-node activity.
-                let detail_key = format!("detail-{id}");
-                // #43: the fallback class is PREFILL, not generation — the modules that time out
-                // every run (api, store, meridian) are exactly the ones whose research-findings
-                // block is largest, and a flat budget cannot see prompt size. Same physics and
-                // same cure as the first-token watchdog: extend THIS call's budget by its own
-                // estimated prefill time at the run's worst measured prefill rate (chars/4 ≈
-                // tokens; prologue calls have already populated the telemetry; none → flat
-                // budget, byte-identical). Measured stake: the 44.2%-vs-90.0% spread across
-                // identical configs traced to which modules kept the one-line brief.
-                let detail_budget = UNCAPPED_SECS;
-                let detail_grace = telemetry_prefill_floor(&model)
-                    .map(|r| ((system.len() + user.len()) as f64 / 4.0 / r) as u64)
-                    .unwrap_or(0);
-                let detail_budget_eff = detail_budget + detail_grace;
-                let (desc, fallback_reason) = match tokio::time::timeout(
-                    std::time::Duration::from_secs(detail_budget_eff),
-                    me.run_agent(
-                        &model,
-                        system,
-                        user,
-                        None,
-                        planner_side_turns(),
-                        &[],
-                        0,
-                        Some(detail_key.as_str()),
-                    ),
-                )
-                .await
-                {
-                    // Accept the detailed spec only if it is a real detail — NOT the agent-loop max-turns
-                    // filler (which a weak worker returns when it exhausts its 6 turns); fall back to the
-                    // proven-good skeleton brief otherwise, so filler never becomes a worker's whole spec.
-                    // A detail SHORTER than its own one-line brief is never a real spec — it is a
-                    // truncated stream (measured: a node restart mid-write left a 146-char fragment
-                    // that sailed through as ledger-server's whole spec) or a lazy stub. The brief
-                    // is the proven-good floor; never ship below it.
-                    Ok(Ok(o))
-                        if !is_agent_loop_filler(&o.text)
-                            && o.text.trim().len() >= brief.trim().len() =>
-                    {
-                        (o.text, "")
-                    }
-                    Ok(Ok(o)) if !is_agent_loop_filler(&o.text) => {
-                        (brief.clone(), "shorter_than_brief")
-                    }
-                    Ok(Ok(_)) => (brief.clone(), "filler"),
-                    Ok(Err(_)) => (brief.clone(), "agent_error"),
-                    Err(_) => (brief.clone(), "timeout"),
-                };
-                // The fallback keeps the architect's ONE-LINE brief as the worker's entire spec. That is
-                // the thinnest instruction the engine can produce, and until now it was indistinguishable
-                // from an architect who simply wrote a short line: no event, and the same green ✓ printed
-                // on the failure path. MEASURED on three runs of an identical config — 2, 1 and 0 tasks
-                // kept the brief, and the builds scored 44.2%, 86.7% and 90.0%. In the 44.2% run the
-                // vendor-client module was dispatched with 95 characters and its tier of the grade
-                // collapsed to 14.3%. That spread was written off as noise precisely because this path
-                // emitted no signal. Both sibling fanouts already report their failures (contracts prints
-                // the per-module reason, the scout fanout splices its budget overrun into the findings);
-                // detail was the only one that failed invisibly.
-                // A TIMEOUT SAYS ">budget" AND NOTHING ELSE, so the log could never say what the
-                // budget should BE — every value was a judgement call. Recording the SUCCESSFUL calls
-                // gives the distribution the ceiling has to clear, and pairs duration with the size of
-                // the spec produced, which is what actually drives the time.
-                if fallback_reason.is_empty() {
-                    me.events.write_value(serde_json::json!({
-                        "event": "detail_completed",
-                        "task_id": id,
-                        "secs": started.elapsed().as_secs_f64().round(),
-                        "spec_chars": desc.len(),
-                        "brief_chars": brief.len(),
-                        "budget_secs": detail_budget_eff,
-                        "prefill_grace_secs": detail_grace,
-                        "subsplit": goose_swarm::extract_subsplit(&desc).len(),
-                    }));
-                }
-                if !fallback_reason.is_empty() {
-                    me.events.write_value(serde_json::json!({
-                        "event": "detail_fallback",
-                        "task_id": id,
-                        "reason": fallback_reason,
-                        "brief_chars": brief.len(),
-                        "budget_secs": detail_budget_eff,
-                        "prefill_grace_secs": detail_grace,
-                    }));
-                    eprintln!(
-                        "  {} detail {} ({:.0}s) — {} at {}s; the worker gets the skeleton line, not a spec",
-                        style("⚠").yellow().bold(),
-                        style(&id).bold(),
-                        started.elapsed().as_secs_f64(),
-                        fallback_reason,
-                        detail_budget_eff,
-                    );
-                } else {
-                    eprintln!(
-                        "  {} detail {} ({:.0}s)",
-                        style("✓").green().bold(),
-                        style(&id).bold(),
-                        started.elapsed().as_secs_f64()
-                    );
-                }
-                (idx, desc)
-            }
-        })
-        .await;
-        for (idx, desc) in results {
-            // #122: cache only a REAL detail. The fanout returns the skeleton `brief` verbatim on
-            // timeout/error/filler (the `_ => brief` fallback), so `desc == brief` means "no real detail this
-            // round" — never cache that, else a transient failure freezes in and later rounds never retry.
-            if self.detail_memo_on {
-                if let Some((key, brief)) = memo_keys.get(&idx) {
-                    if &desc != brief {
-                        self.detail_memo
-                            .lock()
-                            .unwrap()
-                            .insert(key.clone(), desc.clone());
-                    }
-                }
-            }
-            v["subtasks"][idx]["description"] = serde_json::Value::String(desc);
-        }
-        // T2: force the integrate-verify SINK to the canonical golden-value spec regardless of whether the
-        // architect included it in the skeleton (it did in 6/6 runs, so the detailer — high variance — was
-        // authoring the one end-to-end gate). Keep a substantive spec-specific detail as EXTRA checks under it.
-        //
-        // The canonical is the THIN join whenever fan_verify actually split the sink. This block runs ~200
-        // lines AFTER fan_verify_split and unconditionally re-wrote the sink's description, so the thin spec
-        // fan_verify_split installed never survived to a worker: the run got N extra verify tasks AND a
-        // full-fat sink that still ran the whole suite itself. thin_integrate_verify_spec was dead code on
-        // the live path, and fan_verify could not remove any serial time — measured, the sink is 36% of all
-        // node-busy time across the corpus. The thin join keeps the ENTIRE end-to-end oracle (build+run the
-        // advertised entry, per-command golden values, multi-output distinctness, robustness probing,
-        // corrupt/missing store probing); it drops only "run the test suite", which the per-module verify
-        // tasks now own. It remains the SOLE integration gate.
-        let arr_has_e2e_shard = v
-            .get("subtasks")
-            .and_then(|s| s.as_array())
-            .map(|a| {
-                a.iter().any(|s| {
-                    s.get("id")
-                        .and_then(|i| i.as_str())
-                        .map(|i| i.starts_with("verify-e2e::"))
-                        .unwrap_or(false)
-                })
-            })
-            .unwrap_or(false);
-        if let Some(arr) = v.get_mut("subtasks").and_then(|s| s.as_array_mut()) {
-            for s in arr.iter_mut() {
-                if s.get("id").and_then(|i| i.as_str()) == Some("integrate-verify") {
-                    let detailed = s
-                        .get("description")
-                        .and_then(|d| d.as_str())
-                        .unwrap_or("")
-                        .to_string();
-                    let e2e_sharded = fan_verify_applied && arr_has_e2e_shard;
-                    let canonical = if e2e_sharded {
-                        joined_integrate_verify_spec(lang)
-                    } else if fan_verify_applied {
-                        thin_integrate_verify_spec(lang)
-                    } else {
-                        integrate_verify_spec(lang)
-                    };
-                    // `detailed` is a MODEL-authored detail only when the sink actually went
-                    // through the detail fan — and it is EXCLUDED from that fan whenever fan_verify
-                    // applied (see the filter above). So in that branch `detailed` is the engine's
-                    // own thin spec, and appending it under the canonical produces one prompt that
-                    // says both "Do NOT re-run that whole sweep; it has happened" and, ~1,200 chars
-                    // later, "run EVERY command/usage the SPEC advertises ... GOLDEN-VALUE CHECK".
-                    // MEASURED across 43 runs: in 10 of 11 fan_e2e-shaped runs the appended text was
-                    // thin_integrate_verify_spec VERBATIM, byte-identical across five different app
-                    // specs. Excluding the sink from detailing removed the wasted 75s call but NOT
-                    // this, because the description it left behind still passes the >240 test — the
-                    // instance was fixed and the defect was not.
-                    let model_detailed = !fan_verify_applied;
-                    s["description"] = serde_json::Value::String(
-                        if model_detailed
-                            && detailed.trim().len() > 240
-                            && !is_agent_loop_filler(&detailed)
-                        {
-                            format!(
-                                "{canonical}\n\nAlso run these concrete plan-enumerated checks:\n{detailed}"
-                            )
-                        } else {
-                            canonical
-                        },
-                    );
-                }
-            }
-        }
-        let detailed = v.to_string();
-        let dag = Dag::from_planner_json(&detailed)
-            .map_err(|e| anyhow!("detailed plan no longer parses: {e}"))?;
-        // SEAM GUARD: verify:: tasks exist only when fan_verify split the sink, and the T2 canonicaliser
-        // just above then installs the deterministic thin/joined join spec on integrate-verify — a
-        // loop-resident (pre-detail) skeleton still carries a model/injected sink spec instead. If this
-        // fires, the dag about to ship did not pass through this detail step.
-        debug_assert!(
-            !fan_verify_applied
-                || dag.tasks.get("integrate-verify").is_none_or(|n| {
-                    n.spec.description == thin_integrate_verify_spec(lang)
-                        || n.spec.description == joined_integrate_verify_spec(lang)
-                }),
-            "defer_detail seam: verify:: tasks shipped without the detail step's canonical sink shaping"
-        );
-        Ok((detailed, dag))
-    }
-
-    pub(crate) async fn plan(
-        &self,
-        planner_model: &str,
-        user_prompt: &str,
-        plan_schema: serde_json::Value,
-        worker_count: usize,
-        research_findings: &str,
-    ) -> Result<(String, PlanConf, String)> {
-        let existing_files = existing_files_manifest(&self.working_dir);
-        let lang = detect_language(user_prompt, &existing_files);
-        let test_cmd = lang.test_cmd();
-        let system = format!("You are the PLANNER on the smart model. Produce a PLAN ONLY — do NOT write code.\n\
-            There are {worker_count} PARALLEL WORKER SLOTS. Decompose into small INDEPENDENT subtasks \
-            (split by file / module / feature) with NON-OVERLAPPING files and NO ordering dependency, so subtasks can run in parallel. \
-            Size the decomposition to the JOB, never to the fleet: one subtask per distinct concern the spec names — do NOT add \
-            subtasks to fill idle slots, and do NOT merge distinct concerns because the fleet is small. Only add a dependency when a \
-            subtask genuinely needs another's output; an independent set is the goal.\n\
-            For each subtask provide: id (kebab-case), description (a precise self-contained spec), difficulty (\"easy\"|\"hard\"), \
-            model (\"qwen/qwen3.6-27b\" if hard else \"qwen/qwen3.6-35b-a3b\"), depends_on (list of ids; empty if independent), \
-            files (paths it owns; non-overlapping across parallel subtasks).\n\
-            UNLESS the task is purely text with nothing to integrate, ALWAYS add a FINAL subtask id \"integrate-verify\" \
-            that depends_on EVERY other subtask, difficulty \"hard\", model \"qwen/qwen3.6-27b\": it integrates the produced \
-            files, RUNS `{test_cmd}`, and fixes EVERY failure until GREEN — including a pre-existing test that now \
-            fails because the change intentionally altered behavior (EDIT that existing test to assert the new output; do not \
-            stall). Then BUILD + RUN the program's ADVERTISED entry point (build first if it compiles — e.g. `npm run \
-            build` for TypeScript, `cargo build` for Rust — and run the BUILT artifact, NOT the source via tsx/ts-node) \
-            using the EXACT commands the SPEC advertises (the SAME subcommands and argument shapes; do NOT redesign the \
-            interface into flags). When you run the BUILT entry directly, the spec LEADING program/bin name is the \
-            program ITSELF, never an argument: spec `app build x` runs as `node dist/cli.js build x` or `python3 -m \
-            app build x`, NEVER `node dist/cli.js app build x` (mis-prefixing the bin name fails a WORKING app). \
-            GOLDEN-VALUE CHECK each command: feed a spec-given/implied input and confirm the ACTUAL \
-            output equals the SPECIFIC value the spec implies (not just exit 0); for a MULTI-OUTPUT command (--count N / a list) \
-            confirm all N are correct AND distinct at the right granularity where required; do NOT invent an expected output. \
-            FIX wrong output (wrong constants/off-by-one/wrong granularity) at the ROOT CAUSE, and ADD any missing build config \
-            the entry needs (e.g. tsconfig.json). Reports PASS/FAIL; its files must NOT overlap the others.\n\
-            Also produce a short integration note. Then call the final_output tool with the plan.");
-        let response = Some(Response {
-            json_schema: Some(plan_schema),
-        });
-        let research_block = if research_findings.is_empty() {
-            String::new()
-        } else {
-            format!("## Prior research findings (use these; do NOT re-research)\n{research_findings}\n\n")
-        };
-        // "plandraft-solo": the solo planner is the SAME pure-reasoning shape as a parallel plan
-        // draft, and drafts are deliberately DISARMED in spiral_budget_for (healthy deep drafts
-        // measure 57k chars; there is no volume threshold separating deep from looping). Under
-        // run_agent_timed's None key this call fell into the generic 60k worker budget and qwen3.8's
-        // FIRST solo plan died at 60,005 chars — on the run's LAST planning leg, where a kill has no
-        // best-of-N sibling to absorb it, only the single warm retry between the run and a dead engine.
-        let out = self
-            .run_agent_timed_at(
-                planner_model,
-                system,
-                format!(
-                    "{}{research_block}Plan this task: {user_prompt}",
-                    existing_files_block(&existing_files)
-                ),
-                response,
-                15,
-                &[],
-                None,
-                Some("plandraft-solo"),
-                false,
-            )
-            .await?;
-        let plan = out
-            .final_output
-            .ok_or_else(|| anyhow!("planner did not produce a final_output plan"))?;
-        // Solo planner has no cross-draft confidence; the ask gate forces the best-of-N path instead.
-        Ok((plan, PlanConf::default(), String::new()))
     }
 }
 
@@ -22188,111 +18152,6 @@ fn integrate_verify_spec_inner(lang: TargetLang, boundary_probe: bool) -> String
     }
 }
 
-/// SINK DECOMPOSITION (Phase-1). The scoped, read-only verify spec for ONE module — the fannable half of the
-/// monolithic sink. It owns no files and writes nothing, so many of these co-run race-free and fan across the
-/// fleet exactly like the module BUILD tasks that already succeed. It is a pure IMPORT/BUILD gate; the
-/// whole-program end-to-end run is the thin `integrate-verify` join's job, never this one's.
-///
-/// It runs NO test command, deliberately. Two measured reasons:
-///
-/// 1. The whole-suite command it used to issue was a VACUOUS oracle. `verify::<M>` depends only on M, so it
-///    runs while siblings and the test task are still being written; pytest exits 5 ("no tests ran") and the
-///    model reads that as a pass. MEASURED verify-6: `verify::analytics-io` reported "No tests/ directory
-///    exists yet — this is expected for a new project" and the run shipped passed+verified.
-/// 2. Scoping it to the module's OWN test file instead required an edge onto whoever writes that file, and
-///    that edge DEADLOCKED THE ORACLE. MEASURED h1-treat-1: `test-wal` failed on a SyntaxError,
-///    `fail_descendants` cascaded Failed through `verify::wal` into `integrate-verify`, and the end-to-end
-///    gate never ran. `strip_integrate_verify_test_deps` exists to prevent exactly that ("a failing unit-test
-///    subtask must not BLOCK integrate-verify"), and routing the sink's dependency through a verify:: task
-///    re-introduces the coupling transitively.
-///
-/// Per-module TEST coverage is `test-<module>`'s job (GOOSE_SWARM_PARALLEL_TESTS), which owns its file and so
-/// blocks green on its own; the app-level suite is the smoke gate's job (which under `require_tests` now also
-/// refuses an EMPTY suite). Neither belongs in a task that cannot see whether it is running early.
-fn per_module_verify_spec(files: &[String]) -> String {
-    format!(
-        "VERIFY THIS ONE MODULE IN ISOLATION. You own NOTHING and must WRITE NO files — this is a read-only \
-         per-module gate that runs in parallel with its siblings. Import/build-check every file this module \
-         delivers ({owned}) and confirm its public surface imports cleanly, with no ImportError, SyntaxError \
-         or build error, and that the names its spec says it exposes are actually there. Run NO test command \
-         at all: this module's tests are a separate subtask, and the whole suite would execute siblings' \
-         tests that are still being written — a suite that collects nothing exits CLEAN and would prove \
-         NOTHING about this module. Do NOT run the whole program end-to-end, do NOT verify sibling modules, \
-         do NOT redesign the interface — the final integrate-verify join assembles and runs the whole \
-         program. If this module fails to import, REPORT the exact error precisely (which file, which symbol, \
-         the message); do not attempt cross-module fixes from here. Report what you actually ran and what it \
-         printed — never report a check you did not run.",
-        owned = files.join(", "),
-    )
-}
-
-/// SINK DECOMPOSITION (Phase-1). The THIN `integrate-verify` join spec — the irreducible serial half. Derived
-/// from the monolithic spec by dropping the "run the whole test suite" step (the per-module verify tasks now
-/// own it) and reframing as the sole whole-program gate, but keeping the strong build/run/golden-value/
-/// robustness oracle verbatim so coverage is NOT weakened. If the source string ever drifts and a replacement
-/// misses, this fails safe to the full monolithic spec (still a complete gate). Per-module green NEVER
-/// substitutes for this run — it stays the single end-to-end integration oracle.
-/// The JOIN spec used when the end-to-end run is SHARDED by command (`fan_e2e`). The shards already ran
-/// every advertised command with golden-value checks in parallel, so the join stops repeating that sweep —
-/// which is what made it 47% of all node-busy time — and does only what cannot be sharded: assemble, run
-/// the advertised entry once, probe the persisted store, and REPAIR anything the shards reported. It stays
-/// the sole repair point and the final gate; a green shard never substitutes for it.
-fn joined_integrate_verify_spec(lang: TargetLang) -> String {
-    format!(
-        "INTEGRATION JOIN — every module was import/build-checked in isolation upstream, and the app's \
-         advertised commands were just verified IN PARALLEL by the end-to-end shards, each with \
-         golden-value checks. Do NOT re-run that whole sweep; it has happened. Your job is the part that \
-         cannot be sharded. (1) ASSEMBLE the program and BUILD + ACTUALLY RUN its advertised entry point \
-         ({entry}) ONCE, confirming it starts and dispatches. (2) READ the shards' reports and FIX, at the \
-         ROOT CAUSE, every wrong output, crash, missing build config or broken command they found — you are \
-         the ONLY task permitted to edit files here. (3) If the program READS a PERSISTED file or database, \
-         probe it against a MALFORMED/corrupt version AND a MISSING one: a corrupt store must give a CLEAN \
-         error and a missing store must start empty cleanly — never an uncaught traceback. Guard the LOAD \
-         path every read command shares. (4) Re-run ONLY the specific commands you changed, to confirm the \
-         fix. A green shard does NOT prove the ASSEMBLED program runs — THIS is the sole integration gate.",
-        entry = lang.entry_run_example(),
-    )
-}
-
-fn thin_integrate_verify_spec(lang: TargetLang) -> String {
-    let full = integrate_verify_spec(lang);
-    // The sink is the single biggest serialization in the run — MEASURED 47% of ALL node-busy time in
-    // h1-treat-4 (26.5 min on one node while the other two idled). Anything the engine now checks
-    // DETERMINISTICALLY is duplicated work on the critical path, and worse, work whose verdict is a model
-    // self-report where the engine's is not.
-    //
-    // The robustness probe is exactly that: `verify_commands` now invokes every advertised command with a
-    // nonexistent argument and treats a traceback as a finding, so asking the sink to do it again buys a
-    // weaker version of a check that already ran. Dropped only when that probe is ON; the string is left
-    // intact otherwise, and a replacen that misses changes nothing (the clause simply stays).
-    let full = if swarm_gate_cfg("GOOSE_SWARM_VERIFY_COMMANDS", load_config().verify_commands) {
-        match (
-            full.find("Then PROBE ROBUSTNESS"),
-            full.find("If the program READS a PERSISTED"),
-        ) {
-            (Some(a), Some(b)) if b > a => {
-                let mut t = full.clone();
-                t.replace_range(a..b, "");
-                t
-            }
-            _ => full,
-        }
-    } else {
-        full
-    };
-    let suite = format!("run the test suite ({}), then ", lang.test_cmd());
-    let thinned = full.replacen(&suite, "", 1).replacen(
-        "Integrate every module and VERIFY the whole program works end-to-end: ",
-        "INTEGRATION JOIN — every module was already import/build-checked and unit-tested in isolation upstream \
-         (the per-module verify tasks); do the irreducible whole-program gate that cannot be sharded: ",
-        1,
-    );
-    format!(
-        "{thinned} A green per-module verify NEVER proves the ASSEMBLED program runs or is correct — THIS \
-         end-to-end run is the SOLE integration gate and per-module green never substitutes for it."
-    )
-}
-
 /// The existing on-disk .py files (relative to the app root) for the ARCHITECT (T3). On an AMENDMENT the
 /// planner must EDIT these in place and match their layout; without a real manifest the weak model switched a
 /// package dir to flat files, creating duplicate orphan modules (gradebook-2 split-brain). Empty on greenfield.
@@ -22305,21 +18164,6 @@ fn existing_files_manifest(root: &Path) -> Vec<String> {
                 .map(|r| r.to_string_lossy().replace('\\', "/"))
         })
         .collect()
-}
-
-/// Prompt block listing the existing project files so the architect's "if the manifest below already lists
-/// project files" clause is grounded in reality. Empty string on greenfield (no manifest -> build fresh).
-fn existing_files_block(existing: &[String]) -> String {
-    if existing.is_empty() {
-        String::new()
-    } else {
-        format!(
-            "## Existing project files — this is an AMENDMENT: EDIT these in place and MATCH this exact \
-             layout (do NOT switch a package directory to flat files or vice-versa, or you create duplicate \
-             orphan modules):\n{}\n\n",
-            existing.join("\n")
-        )
-    }
 }
 
 /// Output schema for the end-of-run OVERVIEW summary agent. NOTE it has NO verification field — the agent is
@@ -22479,41 +18323,6 @@ fn review_file_excerpt(content: &str) -> String {
         return content.to_string();
     }
     elide_middle(content, 3500, 2500)
-}
-
-/// Extract argparse SUBCOMMAND names from a top-level `--help` output — the `{convert,units}` subparser-choices
-/// block (usually on the usage line). Enables fetching per-subcommand help so a repro-author can supply a
-/// subcommand's REQUIRED args (top-level --help lists the subcommands but NOT their arguments). Returns empty
-/// for a non-subcommand CLI. Tolerant: only clean identifier-ish tokens; a false `{text,json}` choices block
-/// just yields tokens whose sub-help run argparse-errors and is filtered by the caller.
-/// Deterministic layout-normalizer (T4): rewrite a subtask's BARE module path (e.g. `stats.py`) to the existing
-/// package layout (`<pkg>/stats.py`) ONLY when a file of that basename already EXISTS in the package
-/// (`existing_pkg_files`) — so a weak planner that switches an existing package to flat paths cannot create a
-/// duplicate orphan module (the gradebook-2 split-brain). Left UNTOUCHED: a bare name NOT in the package (a
-/// genuinely new module), any already-dir-prefixed path (contains '/'), and non-string entries. Pure +
-/// disk-free for unit testing. Returns the number of paths rewritten.
-fn normalize_plan_files_to_package(
-    v: &mut serde_json::Value,
-    pkg: &str,
-    existing_pkg_files: &std::collections::HashSet<String>,
-) -> usize {
-    let mut changed = 0;
-    let Some(subtasks) = v.get_mut("subtasks").and_then(|s| s.as_array_mut()) else {
-        return 0;
-    };
-    for st in subtasks {
-        let Some(files) = st.get_mut("files").and_then(|f| f.as_array_mut()) else {
-            continue;
-        };
-        for f in files {
-            let Some(path) = f.as_str() else { continue };
-            if !path.contains('/') && existing_pkg_files.contains(path) {
-                *f = serde_json::Value::String(format!("{pkg}/{path}"));
-                changed += 1;
-            }
-        }
-    }
-    changed
 }
 
 /// The Python package dir (one containing `__main__.py`) at `root`, for a `-m <pkg>` invocation. None if absent.
@@ -23103,28 +18912,6 @@ fn spec_python_entry(spec: &str) -> Option<String> {
             "pytest" | "pip" | "venv" | "unittest" | "http.server" | "compileall" | "build"
         )
     })
-}
-
-/// ONE resolution of the scout-docs condition, shared by the per-scout prompt builder and the
-/// F818 scout_docs_mode event — two independent computations of the same condition is the
-/// sink_review_enabled drift class this file documents (adversarial-review finding).
-fn scout_docs_decision(prompt: &str) -> (bool, Vec<String>) {
-    // DEFAULT ON (F864). The ETag/If-None-Match class failed in EVERY product-regime run — the
-    // vendor documents the conditional-fetch protocol and no fact channel carried it to where
-    // the protocol is DECIDED (the detail planner invents a wrong single-ETag scheme and the
-    // implementer faithfully builds it). The scout_doc_urls arm measured 0.782 (2nd-best
-    // mechanism single). Self-gating: a spec that names no doc URLs yields an empty list and
-    // the mechanism is inert; env opts out.
-    //
-    // F870 review: `swarm_gate(name, true)` is ASSURED-BUNDLE membership, not a default — with
-    // GOOSE_SWARM_ASSURED unset (every regime and desktop run) this lever was DEAD despite the
-    // "default ON" intent; the arm that measured 0.782 set the env var explicitly, which is why
-    // F818 found the mechanism unverifiable in regime artifacts. swarm_gate_cfg(_, true) is the
-    // real default-ON with the same env escape hatch.
-    (
-        swarm_gate_cfg("GOOSE_SWARM_SCOUT_DOC_URLS", true),
-        spec_doc_urls(prompt),
-    )
 }
 
 /// The VENDOR the spec tells the builder to integrate against: (docs_url, base_url, api_key).
@@ -25516,8 +21303,7 @@ fn omni_judge_says_looping(reply: &str) -> bool {
 fn parse_judge_eta_mins(s: &str) -> Option<u64> {
     let up = s.to_uppercase();
     let at = up.find("ETA")?;
-    let rest = &up[at + 3..];
-    let rest = rest.trim_start_matches([':', '=', ' ']);
+    let rest = up.get(at + 3..)?.trim_start_matches([':', '=', ' ']);
     let digits: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
     if digits.is_empty() {
         return None; // "ETA=?" and anything unparseable
@@ -25526,7 +21312,6 @@ fn parse_judge_eta_mins(s: &str) -> Option<u64> {
 }
 
 fn parse_judge_reply(s: &str) -> JudgeOutcome {
-    let upper = s.to_uppercase();
     // FOUR fields now: VERDICT|CONFIDENCE|ESTABLISHED|NEXT. Parsing stays deliberately LENIENT, because
     // the fleet is a 27B and the old three-field parser earned that leniency the hard way: qwen-class
     // models echo the field LABELS back (`VERDICT|CONFIDENCE|LOOPING|HIGH|<text>`), drop fields, or answer
@@ -25578,10 +21363,10 @@ fn parse_judge_reply(s: &str) -> JudgeOutcome {
         for i in 0..b.len().saturating_sub(2) {
             if b[i..i + 3].eq_ignore_ascii_case(b"ETA")
                 && l.is_char_boundary(i)
-                && l.is_char_boundary(i + 3)
-                && l[i + 3..].trim_start().starts_with([':', '='])
+                && l.get(i + 3..)
+                    .is_some_and(|r| r.trim_start().starts_with([':', '=']))
             {
-                return l[..i].trim_end().to_string();
+                return l.get(..i).unwrap_or(l).trim_end().to_string();
             }
         }
         l.to_string()
@@ -25826,10 +21611,6 @@ fn paths_in(line: &str) -> Vec<String> {
         .collect()
 }
 
-fn linear_plan_enabled() -> bool {
-    swarm_gate("GOOSE_SWARM_LINEAR_PLAN", false)
-}
-
 /// The opener's contract, deliberately small: no files, no deps, no task ids, no requirement map.
 fn open_schema() -> serde_json::Value {
     serde_json::json!({
@@ -25909,8 +21690,28 @@ fn verify_tree_imports(working_dir: &Path) -> Vec<String> {
         }
     }
     walk(working_dir, &mut py, 0);
-    // The top-level package directories that exist, so `from app.x import y` can be resolved without
-    // guessing at the layout.
+    // THE IMPORT ROOTS. `src/app/store.py` resolves as `app.store`, and a tree laid out that way was
+    // skipped WHOLESALE by the old single-root test — the package directory `app` does not exist beside
+    // the working dir, so every import in a src-layout project was "none of our business".
+    let mut roots: Vec<PathBuf> = vec![working_dir.to_path_buf()];
+    if working_dir.join("src").is_dir() {
+        roots.push(working_dir.join("src"));
+    }
+    // A module resolves either as `<name>.py` or as a package directory holding `__init__.py`.
+    let resolves = |dir: &Path, parts: &[&str]| -> bool {
+        let joined = parts.join("/");
+        dir.join(format!("{joined}.py")).is_file()
+            || dir.join(&joined).join("__init__.py").is_file()
+    };
+    // A NAME IMPORTED FROM A PACKAGE IS NOT NECESSARILY A SUBMODULE. `from app import Ledger` is
+    // perfectly good when `app/__init__.py` defines or re-exports `Ledger`, and reporting it would be a
+    // false positive on a finding class the engine acts on automatically.
+    let reexported = |pkg_dir: &Path, name: &str| -> bool {
+        std::fs::read_to_string(pkg_dir.join("__init__.py")).is_ok_and(|b| {
+            b.split(|c: char| !(c.is_alphanumeric() || c == '_'))
+                .any(|t| t == name)
+        })
+    };
     for f in &py {
         let Ok(body) = std::fs::read_to_string(f) else {
             continue;
@@ -25920,35 +21721,180 @@ fn verify_tree_imports(working_dir: &Path) -> Vec<String> {
             .unwrap_or(f)
             .display()
             .to_string();
+        let mut report = |module: &str| {
+            let msg = format!("{rel} imports `{module}`, which no task has written");
+            if !out.contains(&msg) {
+                out.push(msg);
+            }
+        };
         for line in body.lines().map(str::trim) {
-            let module = if let Some(rest) = line.strip_prefix("from ") {
-                rest.split_whitespace().next().unwrap_or("")
+            if let Some(rest) = line.strip_prefix("from ") {
+                let Some((module_tok, names_tok)) = rest.split_once(" import ") else {
+                    continue;
+                };
+                let module_tok = module_tok.trim();
+                let names: Vec<&str> = names_tok
+                    .trim()
+                    .trim_start_matches('(')
+                    .trim_end_matches('\\')
+                    .trim_end_matches(')')
+                    .split(',')
+                    .map(|n| n.split_whitespace().next().unwrap_or("").trim())
+                    .filter(|n| !n.is_empty() && *n != "*")
+                    .collect();
+                let dots = module_tok.chars().take_while(|c| *c == '.').count();
+                let tail = module_tok.get(dots..).unwrap_or("");
+                let tail_parts: Vec<&str> = tail.split('.').filter(|p| !p.is_empty()).collect();
+                if dots > 0 {
+                    // A RELATIVE IMPORT RESOLVES AGAINST THE IMPORTING FILE'S OWN PACKAGE, which is why
+                    // the old `trim_start_matches('.')` could never check one: it turned `.store` into
+                    // "store", found no dot, and skipped. One leading dot is the file's own directory,
+                    // each further dot is one level up.
+                    let Some(mut base) = f.parent().map(|p| p.to_path_buf()) else {
+                        continue;
+                    };
+                    let mut ok = true;
+                    for _ in 1..dots {
+                        match base.parent() {
+                            Some(p) if p.starts_with(working_dir) => base = p.to_path_buf(),
+                            _ => {
+                                ok = false;
+                                break;
+                            }
+                        }
+                    }
+                    if !ok {
+                        continue;
+                    }
+                    if tail_parts.is_empty() {
+                        // `from . import store` — every NAME is a sibling module (or an `__init__` symbol).
+                        for n in &names {
+                            if !resolves(&base, &[n]) && !reexported(&base, n) {
+                                report(&format!("{module_tok}{n}"));
+                            }
+                        }
+                    } else if !resolves(&base, &tail_parts) {
+                        report(module_tok);
+                    }
+                    continue;
+                }
+                if tail_parts.is_empty() {
+                    continue;
+                }
+                // Only judge imports rooted at a package that EXISTS in this tree; anything else is
+                // stdlib or a dependency and none of our business.
+                let Some(root) = roots.iter().find(|r| r.join(tail_parts[0]).is_dir()) else {
+                    continue;
+                };
+                if tail_parts.len() > 1 && !resolves(root, &tail_parts) {
+                    report(tail);
+                    continue;
+                }
+                // `from app import store` — the shape generated code writes most, and the one the old
+                // `!module.contains('.')` skip made structurally invisible. Only checked when the module
+                // is a DIRECTORY: if it resolved as `app.py` the imported names are attributes of that
+                // module, and deciding whether one exists needs an AST this function deliberately avoids.
+                let pkg_dir = root.join(tail_parts.join("/"));
+                if !pkg_dir.is_dir() {
+                    continue;
+                }
+                // A DIRECTORY WITH NO PYTHON IN IT IS NOT A PACKAGE, whatever it is called. `static/`,
+                // `templates/` and `docs/` sit beside the code in most of these trees, and a name
+                // collision with a third-party import would otherwise manufacture a finding — which is
+                // the one failure this check cannot afford, because its findings are acted on
+                // automatically.
+                let has_python = std::fs::read_dir(&pkg_dir)
+                    .map(|rd| {
+                        rd.flatten()
+                            .any(|e| e.path().extension().and_then(|x| x.to_str()) == Some("py"))
+                    })
+                    .unwrap_or(false);
+                if !has_python {
+                    continue;
+                }
+                for n in &names {
+                    if !resolves(&pkg_dir, &[n]) && !reexported(&pkg_dir, n) {
+                        report(&format!("{tail}.{n}"));
+                    }
+                }
             } else if let Some(rest) = line.strip_prefix("import ") {
-                rest.split([' ', ',']).next().unwrap_or("")
-            } else {
-                continue;
-            };
-            let module = module.trim_start_matches('.');
-            if module.is_empty() || !module.contains('.') {
-                continue;
-            }
-            let parts: Vec<&str> = module.split('.').collect();
-            // Only judge imports rooted at a package that EXISTS in this tree; anything else is stdlib or
-            // a dependency and none of our business.
-            if !working_dir.join(parts[0]).is_dir() {
-                continue;
-            }
-            let as_mod = working_dir.join(format!("{}.py", parts.join("/")));
-            let as_pkg = working_dir.join(parts.join("/")).join("__init__.py");
-            if !as_mod.is_file() && !as_pkg.is_file() {
-                let msg = format!("{rel} imports `{module}`, which no task has written");
-                if !out.contains(&msg) {
-                    out.push(msg);
+                let module = rest.split([' ', ',']).next().unwrap_or("");
+                let parts: Vec<&str> = module.split('.').filter(|p| !p.is_empty()).collect();
+                if parts.len() < 2 {
+                    continue;
+                }
+                let Some(root) = roots.iter().find(|r| r.join(parts[0]).is_dir()) else {
+                    continue;
+                };
+                if !resolves(root, &parts) {
+                    report(module);
                 }
             }
         }
     }
     out
+}
+
+/// Every path any task DECLARED IT OWNS on this run, read back out of the tree's own event log.
+///
+/// `swarm verify` took its ownership list only from a hand-typed `--owns`, so replaying the verifier
+/// over a corpus of archived runs could never reach the four detectors that iterate that list. The
+/// engine now writes a `task_owns` row per dispatch; this reads them back, de-duplicated and sorted,
+/// so a sweep verifies what the run actually built rather than what the operator remembered to type.
+///
+/// Best-effort by construction: an unreadable log, a run from before the event existed, or a tree with
+/// no `.swarm` directory all yield an empty list, and the caller says so rather than printing "clean".
+fn owned_files_from_run_log(working_dir: &Path) -> Vec<String> {
+    let mut out: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    let Ok(rd) = std::fs::read_dir(working_dir.join(".swarm")) else {
+        return Vec::new();
+    };
+    for e in rd.flatten() {
+        let p = e.path();
+        if p.extension().and_then(|x| x.to_str()) != Some("jsonl") {
+            continue;
+        }
+        let Ok(body) = std::fs::read_to_string(&p) else {
+            continue;
+        };
+        for line in body.lines() {
+            let Ok(v) = serde_json::from_str::<serde_json::Value>(line) else {
+                continue;
+            };
+            if v.get("event").and_then(|e| e.as_str()) != Some("task_owns") {
+                continue;
+            }
+            for f in v
+                .get("owned_files")
+                .and_then(|f| f.as_array())
+                .into_iter()
+                .flatten()
+                .filter_map(|f| f.as_str())
+            {
+                out.insert(f.to_string());
+            }
+        }
+    }
+    out.into_iter().collect()
+}
+
+/// An empty `__init__.py` or `py.typed` is a CORRECT, INTENTIONAL file, not a missing deliverable.
+///
+/// ONE rule in ONE place, because it was five hand-written copies and the fifth had already diverged.
+/// The hallucinated-completion guard, the watchdog salvage's acceptance test and the two missing-deliverable
+/// gates all exempt BOTH names; `verify_owned_files` exempted `__init__.py` alone, so an owned empty
+/// `py.typed` cleared every guard that decides whether a task delivered and was then reported by the
+/// verifier as "exists but is EMPTY" — a false positive on a finding class that is acted on automatically.
+/// The comment at the missing-deliverable gate records that flagging exactly this case already burned a
+/// whole fix round re-creating a file that was never wrong.
+///
+/// A BASENAME test, not a suffix test: `ends_with("__init__.py")` also matches `pkg__init__.py`.
+///
+/// NOT the same rule as `scheduler.rs`'s `looks_like_manifest_file`, which decides whether a salvaged
+/// deliverable is too trivial to count. Merging them would put two different questions on one predicate.
+fn is_intentional_empty_marker(path: &str) -> bool {
+    let base = path.rsplit('/').next().unwrap_or(path);
+    base == "__init__.py" || base == "py.typed"
 }
 
 /// A DETERMINISTIC CHECK OF WHAT A TASK ACTUALLY DELIVERED.
@@ -25977,7 +21923,7 @@ fn verify_owned_files(working_dir: &Path, owned: &[String]) -> Vec<String> {
             // before this ever reached a run: the first sweep reported four findings across the three
             // SCORED local runs and every one was an empty `__init__.py`.
             Ok(m) if m.len() == 0 => {
-                if !rel.ends_with("__init__.py") {
+                if !is_intentional_empty_marker(rel) {
                     out.push(format!("{rel} exists but is EMPTY"));
                 }
                 continue;
@@ -26025,7 +21971,7 @@ fn verify_owned_files(working_dir: &Path, owned: &[String]) -> Vec<String> {
         // someone opens it — which historically has been nobody until the score comes back.
         if rel.ends_with(".html") {
             if let Ok(body) = std::fs::read_to_string(&path) {
-                for cap in body.split(|c| c == '"' || c == '\'') {
+                for cap in body.split(['"', '\'']) {
                     let c = cap.trim();
                     if (c.ends_with(".js") || c.ends_with(".css"))
                         && !c.starts_with("http")
@@ -26065,17 +22011,57 @@ fn coverage_rows_to_slices(rows: Vec<CoverageComponent>) -> (Vec<OpenSlice>, Vec
     )
 }
 
+/// OBEYING THE PROMPT MUST NOT DISCARD THE TABLE.
+///
+/// The enumerator is told TWICE to "LEAVE `slice` EMPTY" for a row that is a fact about the request
+/// rather than a thing somebody builds. Omitting the key works. The two obvious literal readings do not:
+/// `"slice": {}` fails with "missing field `id`" (OpenSlice.id has no serde default) and `"slice": ""`
+/// fails on type. `components` is ONE document, so a single obedient row used to fail the whole part's
+/// parse — `unwrap_or_default().components` yields ZERO rows, `coverage_enumerated` logs `components: 0`,
+/// the lane returns an empty Vec, and the section is then marked permanently SETTLED because "a section
+/// that found nothing missing is DONE". The model complied and the engine forgot the section.
+///
+/// An id-less object routes to None rather than to a blank-id slice, because a blank id cannot key a task
+/// (see `a_proposed_slice_with_a_blank_id_is_not_work`).
+fn deserialize_lenient_slice<'de, D>(d: D) -> Result<Option<OpenSlice>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let v = <Option<serde_json::Value> as serde::Deserialize>::deserialize(d)?;
+    Ok(match v {
+        None | Some(serde_json::Value::Null) => None,
+        Some(other) => serde_json::from_value::<OpenSlice>(other)
+            .ok()
+            .filter(|s| !s.id.trim().is_empty()),
+    })
+}
+
+/// One row of the coverage table, tolerant of a row that cannot be read at all.
+///
+/// Same amplifier as the field above, one level out: with a strict element type a single unreadable row
+/// costs the WHOLE part. Untagged with a `Value` fallback makes one bad row cost one row, and the raw
+/// value is reported rather than swallowed so "the model wrote something odd" never looks like "the model
+/// found nothing".
+#[derive(serde::Deserialize)]
+#[serde(untagged)]
+pub(crate) enum CoverageRow {
+    Read(Box<CoverageComponent>),
+    Unreadable(serde_json::Value),
+}
+
 #[derive(serde::Deserialize, Default)]
 pub(crate) struct CoverageComponent {
     #[serde(default)]
     name: String,
+    /// The words in the request this row was taken FROM. Reported in `coverage_enumerated` so a reader
+    /// can check the enumerator against the request rather than taking the row's name on trust.
     #[serde(default)]
     named_in_request: String,
     #[serde(default)]
     owner_slice_id: String,
     #[serde(default)]
     owner_evidence: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_lenient_slice")]
     slice: Option<OpenSlice>,
 }
 
@@ -26094,7 +22080,22 @@ fn coverage_row_is_owned(
 #[derive(serde::Deserialize, Default)]
 pub(crate) struct CoverageOutput {
     #[serde(default)]
-    components: Vec<CoverageComponent>,
+    components: Vec<CoverageRow>,
+}
+
+impl CoverageOutput {
+    /// (rows that were read, rows that were not).
+    fn rows(self) -> (Vec<CoverageComponent>, Vec<serde_json::Value>) {
+        let mut read = Vec::new();
+        let mut unreadable = Vec::new();
+        for r in self.components {
+            match r {
+                CoverageRow::Read(c) => read.push(*c),
+                CoverageRow::Unreadable(v) => unreadable.push(v),
+            }
+        }
+        (read, unreadable)
+    }
 }
 
 /// Cut a request into `n` portions of roughly equal CHARACTER COUNT, in order, never splitting a paragraph.
@@ -26106,6 +22107,7 @@ pub(crate) struct CoverageOutput {
 ///   - `DeviceCfg.speed_weight`  routing preference — how fast a host is relative to its siblings
 ///   - `swarm.speed_weights`     the substring map that feeds the above
 ///   - `OpenSlice.weight`        the opener's own 1-5 estimate of how big a slice is
+///
 /// This is none of them. It decides only where the cuts fall in a string.
 ///
 /// The fans cut by paragraph COUNT, and measured on the 2026-08-28 run that put 72 components in part 1
@@ -26526,6 +22528,7 @@ impl GooseAgentDispatcher {
                 None,
                 Some("open"),
                 true,
+                false,
             )
             .await?;
         let raw = out.final_output.clone().unwrap_or_else(|| out.text.clone());
@@ -26672,6 +22675,7 @@ impl GooseAgentDispatcher {
                             None,
                             Some(&format!("apptest-{key}")),
                 true,
+                false,
             )
                         .await
                     {
@@ -26760,6 +22764,7 @@ impl GooseAgentDispatcher {
                 None,
                 Some("rate"),
                 true,
+                false,
             )
             .await
         {
@@ -26820,6 +22825,7 @@ impl GooseAgentDispatcher {
                 None,
                 Some("proxy-answer"),
                 true,
+                false,
             )
             .await?;
         // One answer per question, in order. A model that returns prose still yields usable lines, and a
@@ -27004,14 +23010,19 @@ impl GooseAgentDispatcher {
                             None,
                             Some(&format!("open-coverage-{}", i + 1)),
                             true,
+                            // A part nobody could read leaves the breakdown as it was for that part
+                            // (`Err(_) => Vec::new()` at the match below), so ending a wedged lane costs
+                            // completeness and never the phase. This is the ONE fanout the terminator's
+                            // safety argument was actually written about.
+                            true,
                         )
                         .await
                     {
                         Ok(o) => {
                             let raw = o.final_output.clone().unwrap_or_else(|| o.text.clone());
-                            let table = parse_json_lenient::<CoverageOutput>(&raw)
+                            let (table, unreadable) = parse_json_lenient::<CoverageOutput>(&raw)
                                 .unwrap_or_default()
-                                .components;
+                                .rows();
                             // OWNERSHIP MUST BE PROVEN, not asserted. A row counts as owned only when it
                             // names a slice that actually exists AND quotes that slice's own words. An
                             // unquoted claim is the generous match this table was built to catch.
@@ -27024,10 +23035,16 @@ impl GooseAgentDispatcher {
                                 "of": total,
                                 "components": table.len(),
                                 "unowned": table.iter().filter(|c| !owned(c)).count(),
+                                // A ROW THE PARSER COULD NOT READ IS NOT A ROW THAT WAS NOT WRITTEN.
+                                // Silence here is what let one bad row read as "this part found nothing",
+                                // which settles the section for the rest of the run.
+                                "unreadable_rows": unreadable.len(),
+                                "unreadable": unreadable,
                                 "table": table
                                     .iter()
                                     .map(|c| serde_json::json!({
                                         "name": c.name,
+                                        "named_in_request": c.named_in_request,
                                         "owner": if owned(c) { c.owner_slice_id.clone() } else { String::new() },
                                     }))
                                     .collect::<Vec<_>>(),
@@ -27093,72 +23110,6 @@ impl GooseAgentDispatcher {
             .collect()
     }
 
-    pub(crate) async fn cover_slices(
-        &self,
-        planner_model: &str,
-        user_prompt: &str,
-        slices: &[OpenSlice],
-    ) -> Result<Vec<OpenSlice>> {
-        let listing = slices
-            .iter()
-            .map(|s| format!("- {} — {}: {}", s.id, s.title, s.objective))
-            .collect::<Vec<_>>()
-            .join("\n");
-        let system = "You are checking a work breakdown for COVERAGE, and nothing else. Do not improve \
-             it, do not re-balance it, do not rename anything.\n\n\
-             Work through the REQUEST section by section — its numbered parts, its headings, the \
-             components it names by name. For each one, find the slice that owns it. Then return ONLY \
-             the sections that NO slice owns, as new slices in the same shape.\n\n\
-             What makes this worth doing: a part nobody was asked to build is simply absent from the \
-             finished program, and no later phase can notice. The builders build the list, the reviewer \
-             reviews the list, and the missing part is never mentioned again by anyone.\n\n\
-             The shape of the mistake you are looking for is a breakdown that reads like the LAYERS OF A \
-             PROGRAM — client, store, html, css, js, entry point, docs — rather than like the request. \
-             Those are the layers of any program at all, so such a list looks complete while naming \
-             nothing the request actually asked for. If you see that shape, the request's own named \
-             components are what is missing.\n\n\
-             If every section already has an owner, return an empty slice list. That is a good answer and \
-             the common one — do not invent work to look useful."
-            .to_string();
-        let out = self
-            .run_agent_timed_at(
-                planner_model,
-                system,
-                format!("## The request\n{user_prompt}\n\n## The slices so far\n{listing}"),
-                Some(Response {
-                    json_schema: Some(open_schema()),
-                }),
-                planner_side_turns(),
-                &[],
-                None,
-                Some("open-coverage"),
-                true,
-            )
-            .await?;
-        let raw = out.final_output.clone().unwrap_or_else(|| out.text.clone());
-        let parsed: OpenOutput = parse_json_lenient(&raw)
-            .ok_or_else(|| anyhow!("coverage pass returned nothing parseable"))?;
-        // Never let it re-add something that already exists under another name it happens to prefer.
-        // De-duped against the EXISTING slices AND against itself, and empty ids dropped.
-        //
-        // `have` was built once and never updated as the batch was consumed, so two additions sharing an
-        // id both survived — and a slice id becomes a brief id verbatim, which becomes a TASK id
-        // verbatim, so Dag::from_planner_json bails "duplicate task id". The flat fallback is built from
-        // the same duplicated briefs and fails identically, ending the run with "even the flat fallback
-        // will not load" after OPEN, ASK and RESEARCH are all paid for. The re-split path does this
-        // correctly with an inserting set; this did not.
-        let mut have: std::collections::HashSet<String> =
-            slices.iter().map(|s| s.id.to_lowercase()).collect();
-        Ok(parsed
-            .slices
-            .into_iter()
-            .filter(|s| {
-                let id = s.id.trim().to_lowercase();
-                !id.is_empty() && have.insert(id)
-            })
-            .collect())
-    }
-
     pub(crate) async fn resplit_slice(
         &self,
         planner_model: &str,
@@ -27201,6 +23152,7 @@ impl GooseAgentDispatcher {
                 None,
                 Some("open-resplit"),
                 true,
+                false,
             )
             .await?;
         let raw = out.final_output.clone().unwrap_or_else(|| out.text.clone());
@@ -27273,6 +23225,7 @@ impl GooseAgentDispatcher {
                         None,
                         Some(&key),
                 true,
+                false,
             )
                     .await;
                 let brief = match res {
@@ -27371,7 +23324,7 @@ impl GooseAgentDispatcher {
 /// mirrors the code it is testing passes for the wrong reason, which is worse than having none.
 /// One defect's triage: how bad, where it lives, and whether it is the same thing as an earlier one.
 #[derive(Clone, Debug, PartialEq)]
-struct RatedFinding {
+pub(crate) struct RatedFinding {
     critical: bool,
     files: Vec<String>,
     /// Zero-based index of the defect this one merely restates, when the rater says so.
@@ -27427,8 +23380,26 @@ fn parse_rating_reply(out: &str, count: usize) -> Vec<RatedFinding> {
         // DUPLICATE is checked FIRST: a duplicate line still names a severity in its six words
         // ("DUPLICATE 2 — same critical render failure"), and reading that as the verdict would rate
         // the restatement instead of recording it.
-        let dup_of = u.find("DUPLICATE").and_then(|i| {
-            l[i + "DUPLICATE".len()..]
+        // AN OFFSET FOUND IN AN UPPERCASED COPY MAY NOT BE USED TO SLICE THE ORIGINAL.
+        //
+        // `to_uppercase()` CHANGES BYTE LENGTH (ß -> SS, ﬁ -> FI, ı -> I), so `u.find(..)` returns a
+        // byte offset into a DIFFERENT string. Slicing `l` with it is wrong at best and lands mid-UTF-8
+        // at worst — a live panic ("byte index N is not a char boundary") on the REVIEW findings-rating
+        // path. `.min(l.len())` bounds the length and says nothing about boundaries. Two sibling parsers
+        // in this file were already fixed for exactly this (`parse_judge_reply`'s `cut_eta`, and the
+        // verdict scan above it); this one was missed. Same shape as those: an ASCII byte scan over the
+        // ORIGINAL with `eq_ignore_ascii_case`.
+        let find_ascii = |hay: &str, needle: &str| -> Option<usize> {
+            let b = hay.as_bytes();
+            let n = needle.as_bytes();
+            if n.is_empty() || b.len() < n.len() {
+                return None;
+            }
+            (0..=b.len() - n.len()).find(|&i| b[i..i + n.len()].eq_ignore_ascii_case(n))
+        };
+        let dup_of = find_ascii(l, "DUPLICATE").and_then(|i| {
+            l.get(i + "DUPLICATE".len()..)
+                .unwrap_or("")
                 .split(|c: char| !c.is_ascii_digit())
                 .find(|t| !t.is_empty())
                 .and_then(|t| t.parse::<usize>().ok())
@@ -27447,8 +23418,8 @@ fn parse_rating_reply(out: &str, count: usize) -> Vec<RatedFinding> {
         // Same lenient shape as the defect parser, and for the same reason: a 27B writes FILES:,
         // **FILES**:, `files:` or drops the label entirely, and a strict parse would return nothing
         // at all — which is the state this change exists to leave behind.
-        let files = match u.find("FILES") {
-            Some(i) => paths_in(&l[i.min(l.len())..]),
+        let files = match find_ascii(l, "FILES") {
+            Some(i) => paths_in(l.get(i..).unwrap_or(l)),
             None => paths_in(l),
         };
         let idx = l
@@ -27508,7 +23479,7 @@ fn parse_observed_defects(reply: &str) -> Vec<String> {
         })?;
         Some(rest.trim_start_matches([':', '*', ' ']).trim().to_string())
     };
-    let mut flush = |cur: &mut Option<String>, files: &str, out: &mut Vec<String>| {
+    let flush = |cur: &mut Option<String>, files: &str, out: &mut Vec<String>| {
         if let Some(text) = cur.take() {
             if text.is_empty() {
                 return;
@@ -27586,7 +23557,7 @@ fn extract_first_json_object(s: &str) -> Option<String> {
             b'}' => {
                 depth -= 1;
                 if depth == 0 {
-                    return Some(s[start..=i].to_string());
+                    return s.get(start..=i).map(str::to_string);
                 }
             }
             _ => {}
@@ -27747,6 +23718,7 @@ impl GooseAgentDispatcher {
                 None,
                 Some("synthesis"),
                 true,
+                false,
             )
             .await?;
         let raw = out.final_output.clone().unwrap_or_else(|| out.text.clone());
@@ -27756,13 +23728,6 @@ impl GooseAgentDispatcher {
         Ok(v.to_string())
     }
 }
-
-/// THE SPLICE. Each owner's brief goes into its task's `description` VERBATIM.
-///
-/// This is why the synthesis model never has to reproduce the researched detail, and therefore why a
-/// correction can be a small patch instead of a whole new plan. A task whose slice is unknown keeps
-/// whatever description it has; a slice nobody claimed is appended as its own task rather than being
-/// silently dropped, because a slice that was researched and then lost is work paid for and thrown away.
 
 /// The STRUCTURAL CLAIM a review finding makes, used to tell a genuinely new finding from a rephrasing.
 ///
@@ -27856,6 +23821,12 @@ fn review_dedupe_key(finding: &str) -> String {
     format!("{kind}|{}", ids.join(","))
 }
 
+/// THE SPLICE. Each owner's brief goes into its task's `description` VERBATIM.
+///
+/// This is why the synthesis model never has to reproduce the researched detail, and therefore why a
+/// correction can be a small patch instead of a whole new plan. A task whose slice is unknown keeps
+/// whatever description it has; a slice nobody claimed is appended as its own task rather than being
+/// silently dropped, because a slice that was researched and then lost is work paid for and thrown away.
 fn splice_briefs(plan: &mut serde_json::Value, briefs: &[SliceBrief], lang: TargetLang) {
     let by_id: std::collections::HashMap<&str, &SliceBrief> =
         briefs.iter().map(|b| (b.id.as_str(), b)).collect();
@@ -27949,8 +23920,18 @@ impl GooseAgentDispatcher {
         user_prompt: &str,
         plan_json: &str,
     ) -> Result<(goose_swarm::PlanPatch, Vec<String>)> {
-        self.review_plan_part(planner_model, user_prompt, plan_json, None, "review", &[])
-            .await
+        // A LONE REVIEW LANE IS THE ROUND. Its Err propagates to the caller, so the engine terminator
+        // must not be able to end it.
+        self.review_plan_part(
+            planner_model,
+            user_prompt,
+            plan_json,
+            None,
+            "review",
+            &[],
+            false,
+        )
+        .await
     }
 
     /// REVIEW, fanned across the fleet — one portion of the request per lane, each against the WHOLE plan.
@@ -28005,6 +23986,10 @@ impl GooseAgentDispatcher {
                         Some((title, i + 1, total)),
                         &key,
                         &prior,
+                        // `.ok()` below: a lane that errors contributes nothing and the round proceeds
+                        // on the others, which is exactly the tolerance the terminator's safety argument
+                        // requires.
+                        true,
                     )
                     .await
                     .ok()
@@ -28038,6 +24023,7 @@ impl GooseAgentDispatcher {
         Ok((patch, findings))
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn review_plan_part(
         &self,
         planner_model: &str,
@@ -28046,6 +24032,9 @@ impl GooseAgentDispatcher {
         part: Option<(String, usize, usize)>,
         activity_key: &str,
         already_reported: &[String],
+        // See `run_agent_in`. TRUE only from the fan, whose caller does `.ok()` on this Result and
+        // proceeds on the surviving lanes; FALSE from `review_plan`, whose Err ends the round.
+        may_terminate: bool,
     ) -> Result<(goose_swarm::PlanPatch, Vec<String>)> {
         // The plan WITHOUT descriptions: the reviewer is asked about structure, and showing it the
         // briefs would both blow up the prompt and tempt it to rewrite them.
@@ -28191,6 +24180,7 @@ impl GooseAgentDispatcher {
                 None,
                 Some(activity_key),
                 true,
+                may_terminate,
             )
             .await?;
         let raw = out.final_output.clone().unwrap_or_else(|| out.text.clone());
@@ -28267,18 +24257,38 @@ fn decomposition_of(plan_json: &str) -> serde_json::Value {
         .filter_map(|t| t.get("id").and_then(|i| i.as_str()))
         .filter(|id| *id != "integrate-verify")
         .collect();
+    // A MODULE SHADOWED BY A PACKAGE IS DEAD CODE, and path equality cannot see it. `app/viz.py` and
+    // `app/viz/layout.py` are different strings and the same import path; Python loads the package and
+    // the file is unreachable. MEASURED on the first run to reach BUILD: viz-records-endpoint wrote
+    // 1,796 bytes into `app/viz.py` that nothing could import, because viz-layout-transforms had created
+    // `app/viz/`.
+    //
+    // It lived ONLY in the inline second copy of these counters, which is read at SYNTHESIS and never
+    // again — so a shadow INTRODUCED BY A REVIEW PATCH was invisible in the only reading taken after the
+    // patch, which is exactly the defect that killed the first run to reach BUILD.
+    let dirs: std::collections::HashSet<String> = owner_count
+        .keys()
+        .filter_map(|f| f.rsplit_once('/').map(|(d, _)| d.to_string()))
+        .collect();
+    let mut shadowed_modules: Vec<String> = owner_count
+        .keys()
+        .filter(|f| f.ends_with(".py"))
+        .filter(|f| dirs.contains(f.trim_end_matches(".py")))
+        .cloned()
+        .collect();
+    shadowed_modules.sort();
     serde_json::json!({
         "tasks": tasks.len(),
         "distinct_files": owner_count.len(),
         "tasks_sharing_a_file": owner_count.values().filter(|n| **n > 1).count(),
         "shared_files": shared,
         "tasks_owning_nothing": owning_nothing,
+        "module_package_collisions": shadowed_modules,
     })
 }
 
 async fn review_until_settled(
     dispatcher: &Arc<GooseAgentDispatcher>,
-    planner_model: &str,
     worker_models: Vec<String>,
     user_prompt: &str,
     mut plan_json: String,
@@ -28293,8 +24303,8 @@ async fn review_until_settled(
     // that no further round can do anything the previous ones did not.
     let mut plan_states: std::collections::HashSet<u64> = std::collections::HashSet::new();
     // The previous round's rejection diagnostic, so an identical failure on an unchanged plan can end the
-    // loop. See the rejection branch below.
-    let mut last_reject_diag: Option<String> = None;
+    // loop. See the rejection branch below, and `RejectMemo` for why this is a type.
+    let mut reject_memo = RejectMemo::default();
     let plan_hash = |p: &str| -> u64 {
         use std::hash::{Hash, Hasher};
         let mut h = std::collections::hash_map::DefaultHasher::new();
@@ -28418,6 +24428,17 @@ async fn review_until_settled(
                         "after": decomposition_of(&next),
                     }));
                     plan_json = next;
+                    // THE PLAN CHANGED, SO THE PREVIOUS REJECTION IS NO LONGER EVIDENCE OF ANYTHING.
+                    //
+                    // The diagnostic was assigned in the Err arm and cleared NOWHERE, so
+                    // reject(D) -> a patch that APPLIES -> reject(D) tripped `review_patch_stuck` and
+                    // ended REVIEW early with findings outstanding. Both of that guard's messages then
+                    // asserted something that did not happen: the console says round-1 "was rejected"
+                    // when round-1 succeeded, and the event detail claims "an unchanged plan" when the
+                    // plan demonstrably changed. The neighbouring oscillation terminator keys on
+                    // `plan_hash` and gets this right; this is the same rule, kept semantic and with no
+                    // round counter.
+                    reject_memo.plan_changed();
                     // THE REVIEW IS CYCLING, AND THAT IS A PROOF, NOT A HEURISTIC.
                     //
                     // The loop ends when a round asks for NO change. That rule assumes a fixed point
@@ -28475,21 +24496,30 @@ async fn review_until_settled(
                     // An identical diagnostic on an unchanged plan means the reviewer will keep proposing
                     // the patch it just proposed and validation will keep refusing it for the reason it
                     // just gave. Semantic, no counter: the SAME failure, not the Nth.
-                    if last_reject_diag.as_deref() == Some(diag.as_str()) {
+                    if reject_memo.rejected(&diag) {
+                        // Adjacent literals, NOT one wrapped string: rustfmt re-joins a long literal by
+                        // baking the wrap's indentation into it, and the run of spaces then ships to the
+                        // console and to run.jsonl. Two other messages in this file carried the same scar.
                         eprintln!(
-                            "  {} review is STUCK — round {round} was rejected for exactly the reason                              round {} was, and the plan never changed. No later round can differ.",
+                            concat!(
+                                "  {} review is STUCK — round {} was rejected for exactly the reason ",
+                                "round {} was, and the plan never changed. No later round can differ.",
+                            ),
                             style("!").yellow().bold(),
+                            round,
                             round - 1
                         );
                         sink.write_value(serde_json::json!({
                             "event": "review_patch_stuck",
                             "round": round,
                             "diagnostic": diag,
-                            "detail": "the same patch failed validation the same way on consecutive                                        rounds with an unchanged plan",
+                            "detail": concat!(
+                                "the same patch failed validation the same way on consecutive ",
+                                "rounds with an unchanged plan",
+                            ),
                         }));
                         return plan_json;
                     }
-                    last_reject_diag = Some(diag);
                 }
             }
         }
@@ -28670,10 +24700,10 @@ async fn run_linear_plan(
     // It is still a patch loop that ends the first time it adds nothing, with no round ceiling — a
     // request naming twelve components should get twelve. Only its position changed.
     let coverage_task = {
-        let d = Arc::clone(&dispatcher);
+        let d = Arc::clone(dispatcher);
         let models = worker_models.clone();
         let prompt = opts.prompt.clone();
-        let sk = Arc::clone(&sink);
+        let sk = Arc::clone(sink);
         let mut known = opened.slices.clone();
         tokio::spawn(async move {
             let mut late: Vec<OpenSlice> = Vec::new();
@@ -28937,7 +24967,7 @@ async fn run_linear_plan(
         "one node wires the researched slices into a task DAG",
     );
     sink.write_value(serde_json::json!({"event": "phase", "phase": "synthesis"}));
-    let mut plan_json = match dispatcher
+    let plan_json = match dispatcher
         .synthesize_plan(&cfg.planner_model, &opts.prompt, &briefs, &tree_at_start)
         .await
     {
@@ -28979,115 +25009,63 @@ async fn run_linear_plan(
             .ok()
             .and_then(|v| v.get("subtasks").and_then(|t| t.as_array()).cloned())
             .unwrap_or_default();
-        // Computed BEFORE the macro: `serde_json::json!` cannot parse a block containing `let` in a
-        // value position, and the error it gives ("comparison operators cannot be chained") points at
-        // the turbofish rather than the real cause.
-        let mut owner_count: std::collections::HashMap<String, usize> =
-            std::collections::HashMap::new();
-        for t in &tasks {
-            for f in t
-                .get("files")
-                .and_then(|f| f.as_array())
-                .into_iter()
-                .flatten()
-            {
-                if let Some(f) = f.as_str() {
-                    *owner_count.entry(f.to_string()).or_default() += 1;
-                }
-            }
-        }
-        let distinct_files = owner_count.len();
-        let tasks_sharing_a_file = owner_count.values().filter(|n| **n > 1).count();
-        // NAME THE COLLISION, do not just count it. MEASURED: this event reported
-        // `tasks_sharing_a_file: 1` on an otherwise excellent 11-task plan and there was no way to learn
-        // WHICH file or WHICH tasks from the log — so the one defect in the plan could be seen and not
-        // acted on. A detector that cannot name the thing it found sends the next session to re-derive it.
-        let mut shared_files: Vec<serde_json::Value> = owner_count
-            .iter()
-            .filter(|(_, n)| **n > 1)
-            .map(|(f, _)| {
-                let owners: Vec<&str> = tasks
+        // ONE RULE IN ONE PLACE, AS `decomposition_of`'s OWN DOC COMMENT ALREADY CLAIMED.
+        //
+        // These five numbers were recomputed inline here, verbatim, against the same
+        // `id != "integrate-verify"` filter — the second copy that comment says "would drift and the
+        // drift would be invisible, because each side would look internally consistent". It had already
+        // drifted: only the inline copy carried `module_package_collisions`, so the shadow detector was
+        // absent from the reading taken after every REVIEW patch.
+        //
+        // The event shape is unchanged: the keys come out of `decomposition_of` spelled exactly as they
+        // were, and the four arrays that belong only to this event are inserted alongside them.
+        let mut ev = decomposition_of(&plan_json);
+        if let Some(o) = ev.as_object_mut() {
+            o.insert(
+                "event".to_string(),
+                serde_json::Value::from("plan_synthesized"),
+            );
+            o.insert(
+                "ids".to_string(),
+                serde_json::json!(tasks
                     .iter()
-                    .filter(|t| {
-                        t.get("files")
-                            .and_then(|v| v.as_array())
-                            .is_some_and(|a| a.iter().any(|x| x.as_str() == Some(f.as_str())))
-                    })
                     .filter_map(|t| t.get("id").and_then(|i| i.as_str()))
-                    .collect();
-                serde_json::json!({ "file": f, "tasks": owners })
-            })
-            .collect();
-        shared_files.sort_by_key(|v| v["file"].as_str().unwrap_or("").to_string());
-        // A TASK THAT OWNS NO FILES AND IS NOT THE SINK IS A TASK THAT CANNOT PRODUCE ANYTHING.
-        //
-        // `integrate-verify` owns nothing BY DESIGN -- a file-owning join is cascaded Failed by any build
-        // failure. Every other task must own something, or it is a slice that should never have existed.
-        //
-        // MEASURED 2026-08-29: `coverage_gap` converted five unowned coverage rows into slices, and two
-        // were `12-288-payments` ("12,288 payments") and `96-calendar-days` ("96 calendar days") -- a
-        // volume and a span. Nobody can be assigned those, they name no file, and they pushed a 13-slice
-        // plan to 18 against the 21 that collapsed under its own decomposition. The prompt now refuses to
-        // propose them; this counts the ones that get through anyway, because a prompt rule with no
-        // measurement is a rule that quietly stops working.
-        let tasks_owning_nothing: Vec<&str> = tasks
-            .iter()
-            .filter(|t| {
-                t.get("files")
-                    .and_then(|f| f.as_array())
-                    .is_none_or(|a| a.is_empty())
-            })
-            .filter_map(|t| t.get("id").and_then(|i| i.as_str()))
-            .filter(|id| *id != "integrate-verify")
-            .collect();
-        let dirs: std::collections::HashSet<String> = owner_count
-            .keys()
-            .filter_map(|f| f.rsplit_once('/').map(|(d, _)| d.to_string()))
-            .collect();
-        let shadowed_modules: Vec<String> = owner_count
-            .keys()
-            .filter(|f| f.ends_with(".py"))
-            .filter(|f| dirs.contains(f.trim_end_matches(".py")))
-            .cloned()
-            .collect();
-        sink.write_value(serde_json::json!({
-            "event": "plan_synthesized",
-            "tasks": tasks.len(),
-            "ids": tasks.iter().filter_map(|t| t.get("id").and_then(|i| i.as_str())).collect::<Vec<_>>(),
-            "description_chars": tasks
-                .iter()
-                .map(|t| t.get("description").and_then(|d| d.as_str()).unwrap_or("").chars().count())
-                .collect::<Vec<_>>(),
-            "files_per_task": tasks
-                .iter()
-                .map(|t| t.get("files").and_then(|f| f.as_array()).map_or(0, |a| a.len()))
-                .collect::<Vec<_>>(),
-            "deps_per_task": tasks
-                .iter()
-                .map(|t| t.get("depends_on").and_then(|f| f.as_array()).map_or(0, |a| a.len()))
-                .collect::<Vec<_>>(),
-            // THE OVER-DECOMPOSITION NUMBER, so the next run can be COMPARED rather than argued about.
-            //
-            // Two tasks owning the same file cannot build at the same time — the scheduler holds the file
-            // — so the second buys no parallelism and costs a research pass, a contract and a review pass
-            // to gain nothing. MEASURED 2026-08-28: a 21-slice plan had FIVE slices describing one file
-            // (`viz.js`) and four describing endpoints of one service, against the NINE files a single
-            // engineer produced from the same request.
-            //
-            // `distinct_files` vs `tasks` is the ratio that matters: at 1.0 every task owns its own file
-            // and the fan is real; well under 1.0 means slices are competing for the same file and the
-            // extra ones are pure overhead.
-            "distinct_files": distinct_files,
-            "tasks_sharing_a_file": tasks_sharing_a_file,
-            "shared_files": shared_files,
-            "tasks_owning_nothing": tasks_owning_nothing,
-            // A MODULE SHADOWED BY A PACKAGE IS DEAD CODE, and path equality cannot see it.
-            // `app/viz.py` and `app/viz/layout.py` are different strings and the same import path;
-            // Python loads the package and the file is unreachable. MEASURED on the first run to reach
-            // BUILD: viz-records-endpoint wrote 1,796 bytes into `app/viz.py` that nothing could import,
-            // because viz-layout-transforms had created `app/viz/`.
-            "module_package_collisions": shadowed_modules,
-        }));
+                    .collect::<Vec<_>>()),
+            );
+            o.insert(
+                "description_chars".to_string(),
+                serde_json::json!(tasks
+                    .iter()
+                    .map(|t| t
+                        .get("description")
+                        .and_then(|d| d.as_str())
+                        .unwrap_or("")
+                        .chars()
+                        .count())
+                    .collect::<Vec<_>>()),
+            );
+            o.insert(
+                "files_per_task".to_string(),
+                serde_json::json!(tasks
+                    .iter()
+                    .map(|t| t
+                        .get("files")
+                        .and_then(|f| f.as_array())
+                        .map_or(0, |a| a.len()))
+                    .collect::<Vec<_>>()),
+            );
+            o.insert(
+                "deps_per_task".to_string(),
+                serde_json::json!(tasks
+                    .iter()
+                    .map(|t| t
+                        .get("depends_on")
+                        .and_then(|f| f.as_array())
+                        .map_or(0, |a| a.len()))
+                    .collect::<Vec<_>>()),
+            );
+        }
+        sink.write_value(ev);
     }
 
     // ---- REVIEW -----------------------------------------------------------------------------
@@ -29098,7 +25076,6 @@ async fn run_linear_plan(
     sink.write_value(serde_json::json!({"event": "phase", "phase": "review"}));
     let mut plan_json = review_until_settled(
         dispatcher,
-        &cfg.planner_model,
         worker_models.clone(),
         &opts.prompt,
         plan_json,
@@ -29269,15 +25246,34 @@ async fn run_linear_plan(
 }
 
 /// One task per slice, deps stripped, plus the sink. Always validates.
+///
+/// EACH TASK OWNS THE FILES ITS OWN BRIEF DECLARES. This hardcoded `"files": []`, so on either fallback
+/// path — synthesis failed, or the synthesised plan will not load as a DAG — every task owned nothing:
+/// the scheduler had no file ownership to serialise on, `smoke_all_files` was empty, the decomposition
+/// counters reported the whole plan as `tasks_owning_nothing`, and `require_advertised_entry_files`
+/// degenerated (its last-resort pick is the first task owning anything, and none did), so the
+/// package-entry guarantee added after two runs shipped packages with no `__main__.py` did not run at all.
+/// `SliceBrief.files` is populated by `files_from_brief` precisely so ownership is not invented.
+///
+/// FIRST CLAIMANT WINS, so ownership stays disjoint: two briefs naming the same path is the expected case
+/// (it is what `brief_defects` already measures), and a plan where two tasks own one file is a plan the
+/// scheduler must serialise rather than parallelise.
 fn flat_plan_from_briefs(briefs: &[SliceBrief], lang: TargetLang) -> String {
+    let mut claimed: std::collections::HashSet<String> = std::collections::HashSet::new();
     let mut tasks: Vec<serde_json::Value> = briefs
         .iter()
         .map(|b| {
+            let files: Vec<String> = b
+                .files
+                .iter()
+                .filter(|f| claimed.insert((*f).clone()))
+                .cloned()
+                .collect();
             serde_json::json!({
                 "id": b.id,
                 "slice": b.id,
                 "difficulty": "hard",
-                "files": [],
+                "files": files,
                 "depends_on": [],
                 "description": b.brief,
             })
@@ -29328,125 +25324,6 @@ impl GooseAgentDispatcher {
         let json = text.get(start..=end)?;
         let children: Vec<ChildSpec> = serde_json::from_str(json).ok()?;
         (children.len() >= 2).then_some(children)
-    }
-
-    /// M6 step2: a deliberately HARSH self-rating of the chosen plan. Verbalized confidence is systematically
-    /// overconfident, so the prompt pushes the model to subtract for anything unverified; the caller weights
-    /// this BELOW the calibrated cross-draft agreement. Returns (0–100, semicolon-joined uncertainties) or
-    /// None on call/parse failure.
-    /// Detect whether the SPEC (not the plan structure) leaves a MATERIAL product decision to guesswork — the
-    /// signal that actually warrants asking the user. A weak local model cannot calibrate a 0-100 self-rating
-    /// (the old verbalized approach parsed in only ~6% of runs); ENUMERATING the open decisions is a task it
-    /// does reliably. Confidence-to-PROCEED is derived from the count: a spec that fully determines the product
-    /// yields an empty list (100 = no veto); each genuinely-unknowable, no-sensible-default decision pulls it
-    /// down. The returned string is the decision list, reused to SEED the clarify questions. Combined with
-    /// structural cross-draft agreement via MIN at the call site, so a run proceeds only when BOTH the spec is
-    /// clear AND the drafts converged — a vague-but-convergent spec (high agreement, low clarity) now asks.
-    /// Returns `(confidence, decisions, product_specified)`: the decisions Vec + the product flag are exposed
-    /// (for the confidence breakdown); the caller rebuilds the joined `uncertainties` string byte-identically.
-    async fn spec_clarity_confidence(
-        &self,
-        model: &str,
-        goal: &str,
-        plan_json: &str,
-    ) -> Option<(u8, Vec<String>, bool)> {
-        let system = "You judge whether a coding request pins down WHAT to build, or leaves it to guesswork. \
-            First: `product_specified` — TRUE only if the request names a specific tool with a specific \
-            purpose (e.g. \"a CLI markdown-to-HTML renderer\"); FALSE if it leaves the core product open (e.g. \
-            \"build something useful\", \"a handy utility\", \"pick a tool\") so you'd have to invent what it \
-            even is. Then: `material_open_decisions` — the SECONDARY decisions where the user's intent is \
-            genuinely unknowable, no sensible default exists, and guessing wrong builds the WRONG behavior. Do \
-            NOT list routine choices a competent developer would just default (which library, file layout, \
-            minor flags, output styling, common formats, error wording) — those are NOT material. If the \
-            request fixes the product and only routine defaults remain, set product_specified TRUE and return \
-            an EMPTY list. Then call the final_output tool."
-            .to_string();
-        let plan: String = plan_json.chars().take(1800).collect();
-        let user = format!(
-            "REQUEST: {goal}\n\nOne interpretation a planner inferred (skeleton, for context only):\n{plan}\n\n\
-             Judge product_specified, then list the MATERIAL open decisions (empty if only routine defaults remain)."
-        );
-        let response = Some(Response {
-            json_schema: Some(ambiguity_schema()),
-        });
-        // Enumeration is fast; cap at 120s (NOT the 900s planner budget) so a hung weak model can't stall
-        // planning — but generous enough that a busy fleet doesn't time the probe out and default to
-        // product_specified=true (which silently SKIPS the vague-product ask this signal exists to trigger).
-        // On timeout we fall back to the calibrated cross-draft agreement score (the primary signal).
-        // WHY IT FAILED, not just THAT it failed.
-        //
-        // These three `?`s were silent and identical, and their consequence is the worst in the engine:
-        // returning None makes the caller fall back to agreement ALONE and assert product_specified=TRUE — so
-        // a probe that DIED is indistinguishable from a probe that said "the spec is perfectly clear".
-        // MEASURED across 14 runs: 2 came back None, and BOTH then reported conf 93-95 with asked=0 on the
-        // very same py-splitwise spec whose 5 open decisions made the other runs report conf 30 and ask all
-        // five. One of those two is a proven false green. The difference between "goose asks you 5 questions"
-        // and "goose invents your product and calls it 95% confident" is this Option.
-        //
-        // Timeout vs no-final_output vs unparseable JSON demand OPPOSITE fixes (a longer budget vs molding the
-        // prompt vs a schema retry), and until the reason is recorded, any fix is a guess. `self.clarity_fail`
-        // is read by the caller, which owns the sink.
-        let out = match tokio::time::timeout(
-            std::time::Duration::from_secs(clarity_probe_secs()),
-            self.run_agent(model, system, user, response, 4, &[], 0, None),
-        )
-        .await
-        {
-            Err(_) => {
-                *self.clarity_fail.lock().unwrap() = Some("timeout".to_string());
-                return None;
-            }
-            Ok(Err(e)) => {
-                let msg = e.to_string();
-                *self.clarity_fail.lock().unwrap() =
-                    Some(format!("agent_error: {}", tail_chars(&msg, 160)));
-                return None;
-            }
-            Ok(Ok(o)) => o,
-        };
-        let Some(fo) = out.final_output else {
-            *self.clarity_fail.lock().unwrap() = Some("no_final_output".to_string());
-            return None;
-        };
-        #[derive(serde::Deserialize)]
-        struct Amb {
-            #[serde(default = "default_true")]
-            product_specified: bool,
-            #[serde(default)]
-            material_open_decisions: Vec<String>,
-        }
-        let parsed: Amb = match serde_json::from_str(&fo) {
-            Ok(p) => p,
-            Err(e) => {
-                *self.clarity_fail.lock().unwrap() =
-                    Some(format!("unparseable: {}", tail_chars(&e.to_string(), 120)));
-                return None;
-            }
-        };
-        let decisions: Vec<String> = parsed
-            .material_open_decisions
-            .into_iter()
-            .map(|d| d.trim().to_string())
-            .filter(|d| d.chars().count() >= 4)
-            .collect();
-        // Confidence-to-PROCEED — a CONTINUOUS function of the real signals (product defined? how many
-        // material open decisions?), not a handful of magic constants, so it VARIES honestly across specs
-        // (earlier every product-undefined spec snapped to a flat 20, which reads as faked). Grounded, not
-        // smoothed: the only inputs are the LLM's product_specified bool + its count of genuine unknowables.
-        // Boundary vs a ~70 ask-floor is preserved: 0-1 open decisions proceed, 2+ ask; undefined always asks.
-        let conf = spec_clarity_score(parsed.product_specified, decisions.len());
-        // When the product itself is open, make that the leading uncertainty so the clarify questions ask it.
-        let decisions_out = if !parsed.product_specified {
-            let mut d = vec![
-                "what the tool should actually be (the request leaves the product open)"
-                    .to_string(),
-            ];
-            d.extend(decisions);
-            d
-        } else {
-            decisions
-        };
-        Some((conf, decisions_out, parsed.product_specified))
     }
 }
 
@@ -29854,25 +25731,6 @@ fn complete_cap_fitting_rounds(resolved: u64, rounds: u64, fix_cap: u64, default
     }
 }
 
-/// Structured-output schema for the spec-ambiguity probe. `product_specified` is the strongest signal —
-/// false means the request never says WHAT to build (the whole product is open), which a weak model tends to
-/// report as a single consolidated decision even though it should force the ask. `material_open_decisions`
-/// lists the secondary decisions that lack a sensible default (empty when only routine defaults remain).
-fn ambiguity_schema() -> serde_json::Value {
-    serde_json::json!({
-        "type": "object",
-        "additionalProperties": false,
-        "required": ["product_specified", "material_open_decisions"],
-        "properties": {
-            "product_specified": {"type": "boolean"},
-            "material_open_decisions": {
-                "type": "array",
-                "items": {"type": "string"}
-            }
-        }
-    })
-}
-
 /// Record WHY the judge passed without a semantic review. Without this every pass looks identical in
 /// the log and the one number that matters — how often the supervisor actually formed a judgement —
 /// cannot be attributed to a cause.
@@ -29882,6 +25740,64 @@ fn me_events_skip(events: &Arc<dyn EventSink>, task_id: &str, reason: &str) {
         "task_id": task_id,
         "reason": reason,
     }));
+}
+
+/// The whole-run deliverable census for the SUPERVISOR prompt, one `path [state]` line each.
+///
+/// The per-task file list can only answer "is this worker doing its job". A worker importing from a
+/// dependency that reported done and left a stub — or nothing — behind is healthy by every per-task
+/// signal, so the only way the supervisor can see that class is to be shown what the REST of the
+/// tree actually put on disk. Empty string when the scheduler has no census, so a run without one
+/// produces a byte-identical prompt.
+fn judge_tree_block(tree_files: &[String]) -> String {
+    if tree_files.is_empty() {
+        return String::new();
+    }
+    let lines = tree_files
+        .iter()
+        .map(|f| format!("    - {f}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    format!("\n  every planned deliverable in this run, and what is on disk for it now:\n{lines}")
+}
+
+#[cfg(test)]
+mod judge_tree_block_tests {
+    use super::judge_tree_block;
+
+    /// A run whose scheduler produced no census must yield a byte-identical supervisor prompt, so the
+    /// block has to vanish entirely rather than render an empty heading.
+    #[test]
+    fn an_empty_census_adds_nothing_to_the_prompt() {
+        assert_eq!(judge_tree_block(&[]), "");
+    }
+
+    /// The states are written by the scheduler's `tree_file_status` and READ by the supervisor system
+    /// prompt, which names `[MISSING]` and `[stub]` as the defect it must flag. The two vocabularies
+    /// are one rule in two crates, so the block must pass the marker through untouched.
+    #[test]
+    fn the_census_reaches_the_prompt_with_its_states_intact() {
+        let census = vec![
+            "core/store.py [delivered]".to_string(),
+            "core/api.py [MISSING]".to_string(),
+            "web/app.js [stub]".to_string(),
+        ];
+        let block = judge_tree_block(&census);
+        for entry in &census {
+            assert!(
+                block.contains(entry),
+                "{entry} was dropped from the supervisor prompt"
+            );
+        }
+        assert_eq!(
+            block.lines().filter(|l| l.contains(" - ")).count(),
+            census.len()
+        );
+        assert!(
+            block.starts_with('\n'),
+            "the block must open its own line in RUN STATE"
+        );
+    }
 }
 
 #[async_trait]
@@ -30182,14 +26098,15 @@ impl Judge for GooseAgentDispatcher {
         };
         let system = "You are the SUPERVISOR of one worker on a shared multi-agent code build, running on \
             a spare node. You are given the overall GOAL, the high-level state of the whole run (what is \
-            already done, still running, and failed), the worker's own SUBTASK spec, the file(s) it has \
+            already done, still running, and failed, and every planned deliverable with what is on disk \
+            for it right now), the worker's own SUBTASK spec, the file(s) it has \
             produced so far, and its live ACTIVITY LOG (recent actions, how many errored, its last \
             reasoning). Use ALL of it plus your own judgement to decide ONE thing: is this worker on a \
             healthy path to finish its subtask and move the goal forward, or has it gone wrong? Mid-write, \
             incomplete code is NORMAL — never flag merely-unfinished work. Flag ONLY a clear problem you \
             can SEE evidence for: code that cannot satisfy the spec, repeating the same failing \
-            action/error, exploring without producing, re-doing a task already DONE, or depending on a \
-            FAILED task. Give a concrete CORRECTION the worker can act on. BE CONSERVATIVE — a wrong kill \
+            action/error, exploring without producing, re-doing a task already DONE, depending on a \
+            FAILED task, or building on a dependency whose planned file is listed [MISSING] or [stub]. Give a concrete CORRECTION the worker can act on. BE CONSERVATIVE — a wrong kill \
             wastes real work, so when unsure say OK. Reply with EXACTLY one line `VERDICT|CONFIDENCE|hint`: \
             VERDICT one of OK, BROKEN_CODE, LOOPING, SPEC_DRIFT; CONFIDENCE one of HIGH or LOW (HIGH only \
             when you are sure and can point to the evidence); hint = for a NON-OK verdict, the concrete \
@@ -30241,13 +26158,14 @@ impl Judge for GooseAgentDispatcher {
             ),
         };
         let user = format!(
-            "GOAL: {goal}{pillars_block}\n\nRUN STATE:\n  done:\n{done}\n  still running: {rem}\n  failed: {fail}\n\n\
+            "GOAL: {goal}{pillars_block}\n\nRUN STATE:\n  done:\n{done}\n  still running: {rem}\n  failed: {fail}{tree}\n\n\
              THIS WORKER's subtask: {desc}\n  owns files: {owns}\n\nFiles produced so far:\n{files}\n\n\
              Worker activity log:\n{trace}{instruments}\n\nYour one-line verdict:",
             goal = req.goal,
             done = done_block,
             rem = remaining_str,
             fail = failed_str,
+            tree = judge_tree_block(&req.tree_files),
             desc = req.description,
             owns = owns_str,
             files = files_block,
@@ -32204,8 +28122,13 @@ fn parse_cross_module_drift(stdout: &str) -> DriftResult {
                                 .join(", ")
                         })
                         .unwrap_or_default();
+                    // `concat!` rather than one wrapped literal: rustfmt bakes a wrap's indentation
+                    // INTO the string, and this text is a finding a worker is asked to act on.
                     format!(
-                        "{}:{} reads `{}`, but `{}` (defined in {}) has no such field. It has: {}.                          One of the two modules is wrong — make them agree.",
+                        concat!(
+                            "{}:{} reads `{}`, but `{}` (defined in {}) has no such field. ",
+                            "It has: {}. One of the two modules is wrong — make them agree.",
+                        ),
                         g("file"),
                         line,
                         g("expr"),
@@ -33110,29 +29033,6 @@ impl TargetLang {
         )
     }
 
-    /// The runnable-entry-point mandate, language-specific. The Python text is the original verbatim.
-    fn entry_clause(self) -> &'static str {
-        match self {
-            TargetLang::Python => "If the request is a CLI / command-line tool (says 'CLI', 'command', 'command-line'), you MUST include a subtask that \
-            writes the RUNNABLE ENTRY POINT — a `cli.py` (argparse or click) that wires the logic modules into actual commands \
-            AND a `__main__.py` so `python3 -m <pkg> ...` runs it. The logic modules + tests ALONE are NOT a usable CLI; never \
-            omit the entry point.",
-            TargetLang::TypeScript => "If the request is a CLI / command-line tool, you MUST include a subtask that writes the RUNNABLE ENTRY POINT — a \
-            `src/index.ts` (or `src/cli.ts`) using a real argument parser (commander/yargs, or `process.argv`) wired into actual \
-            commands, PLUS a `package.json` with a `bin` and/or `scripts` entry so the CLI runs from the shell (e.g. \
-            `npx tsx src/index.ts ...`). The logic modules + tests ALONE are NOT a usable CLI; never omit the entry point.",
-            TargetLang::Rust => "If the request is a CLI / command-line tool, you MUST include a subtask that writes the RUNNABLE ENTRY POINT — a \
-            `src/main.rs` with a real argument parser (clap, or std::env::args) wired into actual commands, PLUS the `Cargo.toml` \
-            `[[bin]]`/deps so `cargo run -- ...` runs it. The library modules + tests ALONE are NOT a usable CLI; never omit it.",
-            TargetLang::Go => "If the request is a CLI / command-line tool, you MUST include a subtask that writes the RUNNABLE ENTRY POINT — a \
-            `main.go` (package main, with the `flag` package or os.Args) wired into actual commands so `go run . ...` runs it. The \
-            packages + tests ALONE are NOT a usable CLI; never omit the entry point.",
-            TargetLang::Other => "If the request is a CLI / command-line tool, you MUST include a subtask that writes the RUNNABLE ENTRY POINT in the \
-            target language — the idiomatic executable that wires the logic modules into actual shell commands. The logic modules + \
-            tests ALONE are NOT a usable program; never omit the entry point.",
-        }
-    }
-
     /// The command the integrate-verify subtask runs to execute the test suite.
     fn test_cmd(self) -> &'static str {
         match self {
@@ -33503,10 +29403,8 @@ struct DispatcherRecipe {
     allow_model_load: bool,
     sampling: SamplingParams,
     stream_decode_retry: bool,
-    straggler_stop: bool,
     straggler_grace_secs: Option<u64>,
     straggler_stop_degrade: bool,
-    detail_memo_on: bool,
     repeat_break: bool,
 }
 
@@ -33528,10 +29426,8 @@ async fn build_swarm_dispatcher(
             r.allow_model_load,
             r.sampling,
             r.stream_decode_retry,
-            r.straggler_stop,
             r.straggler_grace_secs,
             r.straggler_stop_degrade,
-            r.detail_memo_on,
             r.repeat_break,
         )
         .await?,
@@ -34625,6 +30521,58 @@ impl GooseAgentDispatcher {
 
     /// The ordinary task body — everything run() did after kind-normalization, extracted verbatim
     /// (F781/#16 c3) so the fix path can wrap it in a cap and a grade epilogue.
+    /// VERIFY WHAT A TASK ACTUALLY DELIVERED, THE MOMENT IT SAYS IT IS DONE, on EVERY path that says so.
+    ///
+    /// Cheapest possible placement: the files are on disk, the answer is a fact, and no node is involved.
+    /// This is the check that would have caught `viz-camera-picking-interaction` completing with ZERO tool
+    /// calls, and every task that "finished" without writing the file it owns. The omni-judge cannot see
+    /// any of this — it reads a reasoning tail.
+    ///
+    /// EMITTED, NEVER USED TO FAIL THE TASK: the scheduler owns that decision and a finding must not
+    /// silently change a task's outcome. What it changes is that the defect is KNOWN at minute 3 rather
+    /// than at INTEGRATE.
+    ///
+    /// One function because there are two returns that mean "done" — the normal completion and the
+    /// progress-watchdog salvage — and only the first ever ran it.
+    fn emit_delivery_defects(
+        &self,
+        task_id: &str,
+        owned_files: &[String],
+        root: &Path,
+        salvaged: bool,
+    ) {
+        if owned_files.is_empty() {
+            return;
+        }
+        let mut defects = verify_owned_files(root, owned_files);
+        // AND THE CROSS-TASK CHECK, on the same free pass. A task can deliver its own file perfectly and
+        // still leave the tree unrunnable by importing something nobody wrote. Run it here rather than on
+        // a cadence: a task completing is exactly when the tree changed, so there is nothing to schedule
+        // and nothing to poll.
+        for d in verify_tree_imports(root) {
+            if !defects.contains(&d) {
+                defects.push(d);
+            }
+        }
+        if defects.is_empty() {
+            return;
+        }
+        self.events.write_value(serde_json::json!({
+            "event": "delivery_defects",
+            "task_id": task_id,
+            "owned_files": owned_files,
+            "defects": defects,
+            "salvaged": salvaged,
+        }));
+        for d in &defects {
+            eprintln!(
+                "  {} {} delivered a defect: {d}",
+                style("!").red().bold(),
+                style(task_id).bold()
+            );
+        }
+    }
+
     async fn run_task_inner(&self, req: DispatchRequest) -> Result<TaskRunOutput, DispatchError> {
         // Detect the target language from this subtask's manifest (extensions are language-correct after the
         // architect plans them) + its description. Python (the no-cue / .py default) keeps every prompt arm
@@ -35878,6 +31826,10 @@ impl GooseAgentDispatcher {
                 // weak model omitted, instead of the tool erroring and burning a turn.
                 (req.owned_files.len() == 1).then(|| req.owned_files[0].clone()),
                 false,
+                // A WORKER PASSES NO `response`, so `wants_structured_reply` is false and the terminator
+                // is unreachable here whatever this says. False states the intent rather than relying on
+                // that: the scheduler owns a worker's fate, through retry and salvage, not this helper.
+                false,
             )
             .await;
         let secs = started.elapsed().as_secs_f64();
@@ -35954,8 +31906,7 @@ impl GooseAgentDispatcher {
                             Err(_) => true,
                             Ok(m) => {
                                 if m.len() == 0 {
-                                    return !(f.ends_with("__init__.py")
-                                        || f.ends_with("py.typed"));
+                                    return !is_intentional_empty_marker(f);
                                 }
                                 // F884: the engine PRE-CREATES owned files as signature skeletons,
                                 // so "exists and non-empty" is true before the worker's first
@@ -36063,43 +32014,7 @@ impl GooseAgentDispatcher {
                         guard.insert(f, (req.task_id.clone(), b));
                     }
                 }
-                // (1) VERIFY WHAT THIS TASK ACTUALLY DELIVERED, THE MOMENT IT SAYS IT IS DONE.
-                //
-                // Cheapest possible placement: the files are on disk, the answer is a fact, and no node is
-                // involved. This is the check that would have caught `viz-camera-picking-interaction`
-                // completing with ZERO tool calls, and every task that "finished" without writing the file
-                // it owns. The omni-judge cannot see any of this -- it reads a reasoning tail.
-                //
-                // Emitted, never used to fail the task here: the scheduler owns that decision and a
-                // finding must not silently change a task's outcome. What it changes is that the defect is
-                // KNOWN at minute 3 rather than at INTEGRATE.
-                if !req.owned_files.is_empty() {
-                    let mut defects = verify_owned_files(&root, &req.owned_files);
-                    // (2) AND THE CROSS-TASK CHECK, on the same free pass. A task can deliver its own file
-                    // perfectly and still leave the tree unrunnable by importing something nobody wrote.
-                    // Run it here rather than on a cadence: a task completing is exactly when the tree
-                    // changed, so there is nothing to schedule and nothing to poll.
-                    for d in verify_tree_imports(&root) {
-                        if !defects.contains(&d) {
-                            defects.push(d);
-                        }
-                    }
-                    if !defects.is_empty() {
-                        self.events.write_value(serde_json::json!({
-                            "event": "delivery_defects",
-                            "task_id": req.task_id,
-                            "owned_files": req.owned_files,
-                            "defects": defects,
-                        }));
-                        for d in &defects {
-                            eprintln!(
-                                "  {} {} delivered a defect: {d}",
-                                style("!").red().bold(),
-                                style(&req.task_id).bold()
-                            );
-                        }
-                    }
-                }
+                self.emit_delivery_defects(&req.task_id, &req.owned_files, &root, false);
                 Ok(TaskRunOutput {
                     output,
                     session_id: Some(out.session_id),
@@ -36141,8 +32056,7 @@ impl GooseAgentDispatcher {
                             .all(|f| match cwd.join(f).metadata() {
                                 Ok(m) => {
                                     if m.len() == 0 {
-                                        return f.ends_with("__init__.py")
-                                            || f.ends_with("py.typed");
+                                        return is_intentional_empty_marker(f);
                                     }
                                     // F884: an untouched engine skeleton is not a finished
                                     // deliverable — salvaging it as done would replay the
@@ -36160,6 +32074,12 @@ impl GooseAgentDispatcher {
                             req.device_id,
                             secs
                         );
+                        // THE ONE PATH THAT RETURNED "DONE" WITHOUT EVER RUNNING THE VERIFIER — and the
+                        // path most likely to be holding junk, because it fires on a worker cut mid-spiral.
+                        // Its own acceptance test above is strictly weaker than the verifier: exists,
+                        // non-empty except the intentional markers, not a skeleton. No py_compile parse
+                        // check, no HTML asset check, and no cross-task import check at all.
+                        self.emit_delivery_defects(&req.task_id, &req.owned_files, &root, true);
                         return Ok(TaskRunOutput {
                             output: "(progress-watchdog: thinking-only spiral stopped; owned files already written)".to_string(),
                             session_id: None,
@@ -36195,6 +32115,20 @@ impl TaskDispatcher for GooseAgentDispatcher {
                 .lock()
                 .unwrap()
                 .insert(req.task_id.clone(), req.owned_files.clone());
+            // AND INTO THE RUN LOG, so an archived run can be RE-VERIFIED.
+            //
+            // `verify_owned_files` iterates the owned list, so an empty list makes four of its five
+            // detectors (missing / EMPTY / DOES-NOT-PARSE / SKELETON / html-asset) unreachable. In-engine
+            // that list comes from `req.owned_files`; a corpus sweep has only `--owns`, typed by hand.
+            // MEASURED: `grep -c owned_files` over every archived run-swarm-2026082*.jsonl returns 0, so
+            // a "63/63 clean" sweep meant only "63 trees passed the import check" — the one detector that
+            // needs no ownership. This is the record that makes the other four replayable.
+            self.events.write_value(serde_json::json!({
+                "event": "task_owns",
+                "task_id": req.task_id,
+                "owned_files": req.owned_files,
+                "attempt": req.attempt,
+            }));
         }
         // S3 FILL FAN (GOOSE_SWARM_FILL_FAN): the two DETERMINISTIC task kinds and the fill
         // normalization. Gate first so a coincidentally-named plan task can never trip these
@@ -36574,54 +32508,6 @@ struct ClarifyQuestion {
     /// rationale. Optional (empty omitted from the wire) so old consumers are unaffected.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     resolves: String,
-}
-
-fn clarify_schema() -> serde_json::Value {
-    serde_json::json!({
-        "type": "object",
-        "additionalProperties": false,
-        "required": ["questions"],
-        "properties": {
-            "questions": {
-                "type": "array",
-                "items": {
-                    "type": "object",
-                    "additionalProperties": false,
-                    "required": ["question", "options"],
-                    "properties": {
-                        "question": {"type": "string"},
-                        // 2-4 concrete pickable answers (a common default first), or [] if truly open.
-                        "options": {"type": "array", "items": {"type": "string"}},
-                        // the ONE open decision this question settles (verbatim from the uncertainties), for the panel rationale.
-                        "resolves": {"type": "string"}
-                    }
-                }
-            }
-        }
-    })
-}
-
-fn research_schema() -> serde_json::Value {
-    serde_json::json!({
-        "type": "object",
-        "additionalProperties": false,
-        "required": ["questions"],
-        "properties": {
-            "questions": {
-                "type": "array",
-                "items": {
-                    "type": "object",
-                    "additionalProperties": false,
-                    "required": ["id", "question", "kind"],
-                    "properties": {
-                        "id": {"type": "string"},
-                        "question": {"type": "string"},
-                        "kind": {"type": "string", "enum": ["library_docs", "web", "codebase"]}
-                    }
-                }
-            }
-        }
-    })
 }
 
 fn plan_schema() -> serde_json::Value {
@@ -37273,10 +33159,16 @@ fn supervision_pool_on() -> bool {
     )
 }
 
-/// F790-1: the judge-nudge lever. Default OFF — the arm attributes it before any flip.
-fn judge_nudge_on() -> bool {
-    swarm_gate_cfg("GOOSE_SWARM_JUDGE_NUDGE", load_config().judge_nudge)
-}
+// REMOVED: `judge_nudge_on()` and the `judge_nudge` config field / GOOSE_SWARM_JUDGE_NUDGE env var.
+//
+// The lever GATED NOTHING. Its only consumer was the levers echo in the run manifest, so every
+// run.jsonl stamped `judge_nudge: false` while the judge was nudging and ending calls, and any A/B
+// attribution reading that field was reading a lie. Nudging is the intended unconditional behaviour —
+// the nudge/steer/supersede block consults no gate and never did.
+//
+// The config field is gone rather than kept-and-ignored: every field on the config struct carries
+// `#[serde(default)]` and the struct does not deny unknown fields, so an existing config.yaml still
+// carrying `judge_nudge:` deserialises exactly as before, with the key ignored.
 
 // REMOVED: JUDGE_NUDGE_MAX (was 2, "before the abort backstop"). Redirects are unbounded now and there
 // is no abort backstop: the judge escalates on EVIDENCE — it is shown its own prior direction and whether
@@ -37792,62 +33684,6 @@ fn telemetry_node_rates(path: &Path) -> std::collections::HashMap<String, f64> {
         .collect()
 }
 
-/// The run's worst MEASURED prefill rate (tokens/sec) for a model's node, from the telemetry
-/// file — the first-token watchdog budget derives from it. Rates are computed ONLY from
-/// samples whose prompt is at or above the run's median prompt size: a small prompt's TTFT is
-/// dominated by queue wait, not prefill, and one such sample would yield an absurdly low rate
-/// that inflates every budget. Big-prompt samples measure what the budget must survive — the
-/// slowest prefill this node has actually completed this run. None until samples exist.
-fn telemetry_prefill_floor(model_id: &str) -> Option<f64> {
-    let path = std::env::var("GOOSE_SWARM_TELEMETRY_FILE").ok()?;
-    let text = std::fs::read_to_string(path).ok()?;
-    let mut rows: Vec<(String, f64, f64)> = Vec::new();
-    for line in text.lines() {
-        let Ok(v) = serde_json::from_str::<serde_json::Value>(line) else {
-            continue;
-        };
-        if v.get("usage").and_then(|x| x.as_bool()) != Some(true) {
-            continue;
-        }
-        let (Some(node), Some(pt), Some(ttft)) = (
-            v.get("node").and_then(|x| x.as_str()),
-            v.get("prompt_tokens").and_then(|x| x.as_f64()),
-            v.get("ttft_ms").and_then(|x| x.as_f64()),
-        ) else {
-            continue;
-        };
-        if pt > 0.0 && ttft > 0.0 {
-            rows.push((node.to_string(), pt, ttft / 1000.0));
-        }
-    }
-    if rows.is_empty() {
-        return None;
-    }
-    let mut sizes: Vec<f64> = rows.iter().map(|(_, pt, _)| *pt).collect();
-    sizes.sort_by(|a, b| a.total_cmp(b));
-    let median_size = sizes[sizes.len() / 2];
-    let node_rates: Vec<f64> = rows
-        .iter()
-        .filter(|(n, pt, _)| {
-            *pt >= median_size
-                && model_id
-                    .strip_prefix(n.as_str())
-                    .is_some_and(|rest| rest.starts_with('-'))
-        })
-        .map(|(_, pt, ttft)| pt / ttft)
-        .collect();
-    let pool = if node_rates.is_empty() {
-        // No big-prompt samples for THIS node yet — the fleet-wide floor still beats nothing.
-        rows.iter()
-            .filter(|(_, pt, _)| *pt >= median_size)
-            .map(|(_, pt, ttft)| pt / ttft)
-            .collect::<Vec<f64>>()
-    } else {
-        node_rates
-    };
-    pool.into_iter().min_by(|a, b| a.total_cmp(b))
-}
-
 /// The measured rate for a device: the telemetry node key must equal the device/model id or be
 /// a '-'-bounded prefix of it (the fleet's node identity is the model-id prefix, "gabee-…").
 /// The boundary requirement is load-bearing: a bare starts_with would let a one-letter key
@@ -38012,10 +33848,7 @@ async fn one_ruler_grade(
             .filter(|f| {
                 lang.is_source_file(f) && !lang.is_test_file(f.rsplit('/').next().unwrap_or(f))
             })
-            .filter(|f| {
-                let base = f.rsplit('/').next().unwrap_or(f);
-                base != "__init__.py" && base != "py.typed"
-            })
+            .filter(|f| !is_intentional_empty_marker(f))
             .filter(|f| {
                 !root
                     .join(f)
@@ -38807,10 +34640,8 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             repeat_penalty: swarm_repeat_penalty_resolved(cfg.repeat_penalty),
         },
         stream_decode_retry: stream_decode_retry_enabled(cfg.stream_decode_retry),
-        straggler_stop: straggler_stop_enabled(cfg.straggler_stop),
         straggler_grace_secs: straggler_grace_secs(cfg.straggler_grace_secs),
         straggler_stop_degrade: straggler_stop_degrade_enabled(cfg.straggler_stop_degrade),
-        detail_memo_on: detail_memo_enabled(cfg.detail_memo),
         repeat_break: repeat_break_enabled(cfg.repeat_break),
     };
     let dispatcher = build_swarm_dispatcher(dispatcher_recipe.clone(), sink.clone()).await?;
@@ -39148,7 +34979,6 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             // variant here is a PURE function of this gate, so the gate's value plus a low_confidence_ask
             // in the same log is a complete mechanism proof.
             "fix_sched": fix_sched(),
-            "judge_nudge": judge_nudge_on(),
             "qa": goose_swarm::qa_enabled(),
             "supervision_pool": supervision_pool_on(),
             "clarify_spec_bound": swarm_gate_cfg_bundle(
@@ -40392,10 +36222,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                 // __init__.py empty (0 bytes) — every run. This gate flagged that as "marked done without
                 // writing it" and burned a whole fix round re-creating a file that was never wrong. The
                 // owned-file salvage path already exempts these two names; this now matches it.
-                .filter(|f| {
-                    let base = f.rsplit('/').next().unwrap_or(f);
-                    base != "__init__.py" && base != "py.typed"
-                })
+                .filter(|f| !is_intentional_empty_marker(f))
                 .filter(|f| !cwd.join(f).metadata().map(|meta| meta.len() > 0).unwrap_or(false))
                 .map(|f| {
                     format!(
@@ -43404,7 +39231,7 @@ mod live_fleet_tests {
     /// has an answer.
     #[test]
     fn a_cloud_device_is_never_judged_by_lm_studio_residency() {
-        let devices = vec![
+        let devices = [
             dev("local", "gabee-qwen3.8", 2, false),
             dev("zai", "glm-5.3-flash", 1, true),
         ];
@@ -43700,5 +39527,2628 @@ mod live_fleet_tests {
             empty.is_empty(),
             "a review that found nothing must produce an empty patch"
         );
+    }
+}
+
+// ================================================================================================
+// RETAINED FOR THE TESTS THAT PIN THEM — NOT SHIPPED.
+//
+// These are the last survivors of the plan-vote / old-planner machinery the linear OPEN -> ASK ->
+// RESEARCH -> SYNTHESIS -> REVIEW flow superseded. Nothing in the engine calls them any more, which is
+// why `cargo clippy --all-targets -- -D warnings` was red on every commit: the file carried 83
+// never-used items and AGENTS.md names that command as a merge gate.
+//
+// The rest were DELETED. These four are kept because tests pin their behaviour, and a test may not be
+// deleted to make a warning go away. Under `#[cfg(test)]` they cost the shipped binary nothing and the
+// pinned rules stay executable; if a caller ever returns, the definition moves back out.
+// ================================================================================================
+
+#[cfg(test)]
+/// Which sub-signal is the binding (lower) constraint on plan confidence — decides the retarget action.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum BindingSignal {
+    Agreement,
+    SpecClarity,
+}
+
+#[cfg(test)]
+impl PlanConf {
+    /// The lower of the two computed sub-signals; `None` when neither was computed (retarget is then inert).
+    fn binding_signal(&self) -> Option<BindingSignal> {
+        match (self.agreement, self.spec_clarity) {
+            (Some(a), Some(c)) if a < c => Some(BindingSignal::Agreement),
+            (Some(a), Some(c)) if c < a => Some(BindingSignal::SpecClarity),
+            // Tie: spec-clarity binds when the product/decisions are the concern, else agreement.
+            (Some(_), Some(_)) => Some(
+                if !self.product_specified || !self.open_decisions.is_empty() {
+                    BindingSignal::SpecClarity
+                } else {
+                    BindingSignal::Agreement
+                },
+            ),
+            (Some(_), None) => Some(BindingSignal::Agreement),
+            (None, Some(_)) => Some(BindingSignal::SpecClarity),
+            (None, None) => None,
+        }
+    }
+}
+
+#[cfg(test)]
+/// #129: the post-answer re-plan decision under GOOSE_SWARM_ANSWERS_WIN_FLOOR. PURE — no env, no I/O — so
+/// it is unit-testable and foldable into the golden formula. `structural` = a language flip or a product
+/// first defined by the answer (those invalidate the drafted skeleton and ALWAYS re-plan). `post_conf` is
+/// the DETERMINISTICALLY-rescored final confidence; `floor` is the ask floor. With `answers_win_floor`
+/// false this reduces EXACTLY to the prior rule: `ask_replan || structural => Replan, else KeepReuse`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum PostAnswerAction {
+    /// Rescore met the floor and nothing structural changed: keep the answered plan (fall through to the
+    /// break and ship the rescored plan_conf).
+    KeepRescored,
+    /// Rescore is still below the floor: pin the answered plan as the monotonic `best_plan` floor and
+    /// re-draft to try to beat it. The floor-to-beat only functions when retarget is on (see caller).
+    FloorAndRedraft,
+    /// Re-plan from scratch: the legacy `continue`, and the forced path for any structural trigger.
+    Replan,
+    /// No trigger fired: keep this plan and inject the answers to the workers verbatim (legacy reuse).
+    KeepReuse,
+}
+
+#[cfg(test)]
+impl TargetLang {
+    /// The runnable-entry-point mandate, language-specific. The Python text is the original verbatim.
+    fn entry_clause(self) -> &'static str {
+        match self {
+            TargetLang::Python => "If the request is a CLI / command-line tool (says 'CLI', 'command', 'command-line'), you MUST include a subtask that \
+            writes the RUNNABLE ENTRY POINT — a `cli.py` (argparse or click) that wires the logic modules into actual commands \
+            AND a `__main__.py` so `python3 -m <pkg> ...` runs it. The logic modules + tests ALONE are NOT a usable CLI; never \
+            omit the entry point.",
+            TargetLang::TypeScript => "If the request is a CLI / command-line tool, you MUST include a subtask that writes the RUNNABLE ENTRY POINT — a \
+            `src/index.ts` (or `src/cli.ts`) using a real argument parser (commander/yargs, or `process.argv`) wired into actual \
+            commands, PLUS a `package.json` with a `bin` and/or `scripts` entry so the CLI runs from the shell (e.g. \
+            `npx tsx src/index.ts ...`). The logic modules + tests ALONE are NOT a usable CLI; never omit the entry point.",
+            TargetLang::Rust => "If the request is a CLI / command-line tool, you MUST include a subtask that writes the RUNNABLE ENTRY POINT — a \
+            `src/main.rs` with a real argument parser (clap, or std::env::args) wired into actual commands, PLUS the `Cargo.toml` \
+            `[[bin]]`/deps so `cargo run -- ...` runs it. The library modules + tests ALONE are NOT a usable CLI; never omit it.",
+            TargetLang::Go => "If the request is a CLI / command-line tool, you MUST include a subtask that writes the RUNNABLE ENTRY POINT — a \
+            `main.go` (package main, with the `flag` package or os.Args) wired into actual commands so `go run . ...` runs it. The \
+            packages + tests ALONE are NOT a usable CLI; never omit the entry point.",
+            TargetLang::Other => "If the request is a CLI / command-line tool, you MUST include a subtask that writes the RUNNABLE ENTRY POINT in the \
+            target language — the idiomatic executable that wires the logic modules into actual shell commands. The logic modules + \
+            tests ALONE are NOT a usable program; never omit the entry point.",
+        }
+    }
+}
+
+#[cfg(test)]
+/// #122: round-1 cross-draft agreement at/above this skips the backbone-lock round-2 re-draft. Derived from
+/// 29 real runs — the sole round-2 adoption had round-1 conf 85; every run at >= 90 discarded the round. 90
+/// keeps a 5-point margin above the lone adoption so the guard never skips a historically-useful re-draft.
+const BACKBONE_SKIP_CONF_FLOOR: u8 = 90;
+
+#[cfg(test)]
+/// Fail-closed spec-clarity value. A DEAD probe learned NOTHING about the spec, so it must not read as "clear."
+/// 20 is below the default ask floor (70) and every realistic config floor, so `min(agreement, 20)` forces the
+/// ASK. It is also NOT a value `spec_clarity_score` can emit (its outputs are {8,12,18,24,30,36,52,68,84,100}),
+/// so a 20 in the breakdown is an unambiguous "fail-closed clamp," never a real measurement.
+const CLARITY_FAILCLOSED: u8 = 20;
+
+#[cfg(test)]
+/// The tool-attempt OUTCOME behind a research finding — the deterministic substrate the preference-vs-
+/// researchable classifier (#94) keys its fallback off. `grounded: bool` flattens four cases the classifier
+/// must separate: no tool call at all, a failed/cut-off lookup, an MCP call that returned nothing usable,
+/// and a real successful MCP lookup. Derived purely from engine tool-call events — no model opinion enters.
+///
+/// Not yet consumed by the routing logic (that is #94's per-decision classifier, deferred): P1 lands the
+/// substrate so the ASK-AWAY interim routing ("CalledEmpty → ask, Errored/NeverCalled → retry") is buildable
+/// without guessing.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ResearchAttempt {
+    /// No research tool call at all — pure model reasoning.
+    NeverCalled,
+    /// A lookup was attempted and failed or was cut off (`ok == Some(false)` / `ok == None`).
+    Errored,
+    /// A tool ran but grounded nothing usable — only non-MCP calls, or MCP calls returning nothing.
+    CalledEmpty,
+    /// At least one successful MCP lookup (today's `grounded: true`).
+    Grounded,
+}
+
+#[cfg(test)]
+/// The dynamic action to raise confidence, routed by the binding signal + `product_specified` (no new
+/// classifier): agreement-bound → re-draft toward convergence (if drafts can still grow); spec-clarity-bound
+/// with a defined product + lookupable open decisions → targeted re-research; else → ask the user.
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum RetargetAction {
+    Redraft,
+    ReResearch(Vec<String>),
+    Ask,
+    None,
+}
+
+#[cfg(test)]
+/// The read-only END-TO-END SHARD spec: one slice of the app's advertised commands, checked against the
+/// spec's golden values. Owns nothing and writes nothing, so N of these co-run race-free on one tree.
+/// Deterministically extract the ADVERTISED SURFACE from the operator's frozen spec, as numbered
+/// items an e2e shard can partition without inventing the list itself.
+///
+/// THE DEFECT THIS EXISTS FOR. `e2e_shard_spec` tells each shard to "number them 1,2,3... in the
+/// order the spec gives them, and verify ONLY the ones whose position mod {shards} == {m}" — and the
+/// shard never receives the spec. MEASURED across the shard reports of one run: one shard reported
+/// the spec "advertises only ONE command/usage mode", another "advertises 3 commands/usages", and a
+/// third checked nothing at all, reporting "there is no command whose position satisfies position
+/// mod 3 == 2". A modulo over lists of different lengths is not a partition — coverage was neither
+/// disjoint nor complete, and a shard that enumerated an empty slice returned no findings, which
+/// reads as a pass.
+///
+/// The sibling fan that works does exactly this: `per_module_verify_spec` interpolates
+/// `files.join(", ")`, so the engine names the slice and the model cannot re-derive it. The rule is
+/// that a fan must ENUMERATE ITS ITEMS, not merely supply a selector over them.
+///
+/// Every http(s) URL the spec names, in order, deduped. This is the input to the deterministic doc
+/// fetch, and it exists because a spec can hand the fleet a document nobody is able to open.
+///
+/// MEASURED, three baseline units on an identical config: the one whose plan carried the vendor's
+/// `/v1` path prefix scored 88.7%, and the two whose plans did not scored 50.0% and 42.7% with every
+/// vendor call returning 404. The prefix is stated six times in the document the spec points at and
+/// zero times in the spec itself, so getting it right was a coin flip — and `research_tools`
+/// reported `available: [], can_look_things_up: false` on all three, because the research extensions
+/// are context7 / web-search and both need an API key this machine does not have. The spec said
+/// "Read it before you start"; nothing in the run was able to.
+///
+/// So the fetch is the ENGINE's, not a model's: no key, no extension, no tool call to hallucinate.
+/// A document the engine retrieved is grounded by construction, which is exactly the property
+/// `doc_prefetch` demands. (The parenthetical here used to read `grounded == is_mcp && ok`; that is
+/// stale — grounding is `is_mcp || fetched_external`, so a shell curl grounds too.)
+///
+/// Delimiter discipline is the same one `spec_get_endpoints` had to learn: the URL arrives wrapped in
+/// backticks, so scanning to whitespace captures the closing delimiter and the fetch 404s on a URL
+/// that differs from the real one by one character.
+/// Which grounding a scout is told it has. Extracted as a pure function because the alternative —
+/// an inline three-branch `if` — is exactly the shape that let the ladder's shadow diagnostic and
+/// the branch it mirrored drift apart (F707): a test of the *condition* passes while the *call site*
+/// does something else. Here the call site matches on this value, so a test of this function is a
+/// test of the call site.
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+enum ScoutLookup {
+    /// An MCP extension is attached; the lens's own tool hint applies.
+    Mcp,
+    /// No extension, but the SPEC NAMES DOCUMENTS and the scout has a shell to curl them with.
+    SpecDocs,
+    /// Nothing to look up with — ask for calibration instead of lookup.
+    None,
+}
+
+#[cfg(test)]
+/// G1: how the drafts collector sizes the straggler's grace. Fixed = an explicit env/config value
+/// (pre-G1 behavior, clamped by the caller); Derive = compute at arming from the round's own
+/// clock via `derived_straggler_grace` — the default, because no constant fits calls spanning
+/// 30-900s (a 45s constant structurally degraded best-of-N to N-1 on this fleet).
+#[allow(dead_code)]
+#[derive(Clone, Copy)]
+enum StragglerGrace {
+    Fixed(u64),
+    Derive { draft_timeout: u64 },
+}
+
+#[cfg(test)]
+/// GOOSE_SWARM_ASK_REPLAN gate. After the user answers the clarify questions, the swarm can either REUSE the
+/// first plan (the answers now reach every worker VERBATIM via DispatchRequest.user_decisions — this
+/// comment previously claimed they rode research_findings, which never leaves the planner)
+/// or RE-PLAN from scratch with the answers folded in. A full re-plan is a ~15-20min tax (skeleton re-draft +
+/// re-detailing every subtask) that only pays off when the answers change the plan STRUCTURE; when the ASK was
+/// about semantics the reused plan is identical in shape and the workers still see the answers. DEFAULT is now
+/// REUSE (skip the re-plan): an A/B on the same ASKING helpdesk spec (UNIQ12 re-plan vs UNIQ12b skip) produced
+/// TWO equally-correct full-win apps while the skip saved ~15min — the re-plan's confidence boost (69->88) did
+/// NOT yield a better app. Opt INTO the re-plan with GOOSE_SWARM_ASK_REPLAN=1 (also on/true/yes). N=1 with a
+/// draft-variance confound (the skip arm reused a higher-confidence 78 plan), so the default stays a knob.
+/// UNREACHABLE FROM THE DESKTOP UNTIL NOW — env-only, and env never arrives (LaunchServices). The SIXTH
+/// member of that family today, and the one a user actually hits: the engine PRINTS "(set
+/// GOOSE_SWARM_ASK_REPLAN=1 to re-plan against them instead)" to a user who has no way to set it.
+///
+/// MEASURED, allon4-replicate, and it is exactly what Mihai saw on screen: agreement 55, clarity 30 ->
+/// min = 30 -> below floor -> ASK (correct: only the user can pin clarity). User answers all 5. Rescore lifts
+/// clarity 30 -> 100, so conf becomes min(55,100) = 55 and AGREEMENT now binds. But ask_replan is off, so the
+/// engine "keeps this plan", the loop never re-enters, THE RETARGET NEVER FIRES — and the run builds at 55
+/// against a floor of 85, on a plan drafted BEFORE the answers existed.
+///
+/// The default stays REUSE. That is evidence-backed (an A/B on the same asking spec produced two equally
+/// correct apps while the skip saved ~15min, and the re-plan's 69->88 confidence bump bought no better app),
+/// and n=1 with a draft-variance confound is not enough to move it. What was wrong is that nobody could
+/// CHOOSE. Now: env > config > false.
+fn ask_replan_enabled(v: Option<String>) -> bool {
+    ask_replan_resolved(v, load_config().ask_replan)
+}
+
+#[cfg(test)]
+/// Agreement over the best-agreeing k-subset of the drafts — self-consistency's CONSENSUS CLUSTER, not the
+/// full spread. `plan_agreement` uses max−min spread + mean pairwise Jaccard, both of which only worsen (or
+/// hold) as the pool grows: a single outlier draft masks a real majority. Measuring over the tightest k
+/// drafts drops that outlier, so GROWING the pool can only raise (never lower) the reported agreement — the
+/// mechanism the redraft retarget lever relies on to lift confidence WITHOUT a bigger model. Enumerates all
+/// k-subsets (pool is capped at RETARGET_MAX_N=6, so ≤C(6,3)=20 tiny checks). Falls back to the full-set
+/// measure when k ≥ the pool size, so it is inert unless retarget actually grew the pool past k.
+fn best_subset_agreement(
+    candidates: &[Vec<goose_swarm::TaskSpec>],
+    converge: bool,
+    k: usize,
+) -> (u8, String) {
+    let n = candidates.len();
+    let k = k.max(2);
+    if n <= k {
+        return plan_agreement(candidates, converge);
+    }
+    let mut best_conf = 0u8;
+    let mut best_mask = 0u32;
+    for mask in 0u32..(1u32 << n) {
+        if (mask.count_ones() as usize) != k {
+            continue;
+        }
+        let subset: Vec<Vec<goose_swarm::TaskSpec>> = (0..n)
+            .filter(|i| mask & (1 << i) != 0)
+            .map(|i| candidates[i].clone())
+            .collect();
+        let (c, _) = plan_agreement(&subset, converge);
+        if best_mask == 0 || c > best_conf {
+            best_conf = c;
+            best_mask = mask;
+        }
+    }
+    let subset: Vec<Vec<goose_swarm::TaskSpec>> = (0..n)
+        .filter(|i| best_mask & (1 << i) != 0)
+        .map(|i| candidates[i].clone())
+        .collect();
+    let (conf, reason) = plan_agreement(&subset, converge);
+    (conf, format!("{reason} [consensus {k} of {n}]"))
+}
+
+#[cfg(test)]
+/// Canonical ROLE for a source file, used by role-normalized cross-draft agreement: basename, lowercased,
+/// extension stripped, with the UNAMBIGUOUS entry-point synonyms folded to one role. Deliberately
+/// conservative — it does NOT merge distinct compilation stages (lexer/parser/ast stay separate), so it
+/// cannot over-count two genuinely different modules as one.
+fn canonical_role(file: &str) -> String {
+    let base = file
+        .rsplit(['/', '\\'])
+        .next()
+        .unwrap_or(file)
+        .to_lowercase();
+    let stem = base
+        .rsplit_once('.')
+        .map(|(s, _)| s)
+        .unwrap_or(base.as_str());
+    match stem {
+        "__main__" | "main" | "app" | "entry" | "cli" | "run" => "cli".to_string(),
+        s => s.to_string(),
+    }
+}
+
+#[cfg(test)]
+/// Probe-failure reasons that taught us NOTHING about the spec → be cautious (fail-closed = ask). `unparseable`
+/// is EXCLUDED: the model DID answer and DID emit final output, only the JSON didn't fit the schema — as likely
+/// "nothing material to say" as "lost verdict" — so it stays fail-OPEN to avoid a false-ask storm. `starts_with`
+/// because `agent_error`/`unparseable` carry a `: …` detail tail; `timeout`/`no_final_output` are exact.
+fn clarity_reason_is_fail_closed(reason: &str) -> bool {
+    reason.starts_with("timeout")
+        || reason.starts_with("agent_error")
+        || reason.starts_with("no_final_output")
+}
+
+#[cfg(test)]
+/// Classify the research tool-call trace into a single `ResearchAttempt`. Pure + deterministic (engine
+/// events only) so it is unit-testable and no model opinion enters. `Grounded` wins over any failure, then
+/// an attempted-but-failed lookup is `Errored`, tools-ran-but-nothing-grounded is `CalledEmpty`, and an
+/// empty trace is `NeverCalled`.
+fn classify_research_attempt(tool_calls: &[ToolCallRecord]) -> ResearchAttempt {
+    if tool_calls.is_empty() {
+        return ResearchAttempt::NeverCalled;
+    }
+    if tool_calls.iter().any(|t| t.ok == Some(true) && t.is_mcp) {
+        return ResearchAttempt::Grounded;
+    }
+    if tool_calls
+        .iter()
+        .any(|t| matches!(t.ok, Some(false) | None))
+    {
+        return ResearchAttempt::Errored;
+    }
+    ResearchAttempt::CalledEmpty
+}
+
+#[cfg(test)]
+/// #135 collection loop: drain `js` (one draft future per slot) as drafts resolve. The instant every draft
+/// but one has returned a VALID skeleton (should_arm_straggler_grace) AND the in-hand quorum already
+/// decides the outcome (`quorum_decides`), give the lone straggler only `grace_secs` more, then abort it
+/// and return the quorum. Returns (candidates in completion order, dead count, stopped count, deferred).
+///
+/// `quorum_decides` is the fix for the measured collapse: aborting the third draft cut every round to 2,
+/// and at 2 drafts `best_subset_agreement`'s `n <= k` fallback made the pool-invariant lift arithmetically
+/// unreachable, `consensus_k` dead, and `structural_convergence` a unanimity vote — so the ladder fired on
+/// a harsher metric than a full pool would produce, ~25 min per rung. The asymmetry is deliberate: when the
+/// two in-hand drafts already clear the ask floor, the third cannot trigger a ladder and aborting it keeps
+/// the full speed win; when they are BELOW the floor, the third draft is the cheapest thing that can avert
+/// a rung, so the straggler keeps running (bounded by draft_timeout, the hard backstop). `deferred` reports
+/// that the count condition held while the quorum did not decide — the observable for the registered check.
+async fn collect_drafts_with_straggler_stop<F, Q>(
+    mut js: tokio::task::JoinSet<Option<String>>,
+    n: usize,
+    grace: StragglerGrace,
+    is_valid: F,
+    quorum_decides: Q,
+) -> (Vec<String>, usize, usize, bool)
+where
+    F: Fn(&str) -> bool,
+    Q: Fn(&[String]) -> bool,
+{
+    let round_started = std::time::Instant::now();
+    let mut c: Vec<String> = Vec::new();
+    let mut dead = 0usize;
+    let mut valid = 0usize;
+    let mut stopped = 0usize;
+    let mut deferred = false;
+    // Inert until armed: the `if armed` select guard means this is never awaited to completion before the
+    // quorum lands, at which point it is reset to `grace_secs` from now. A day is far past any real draft
+    // (bounded by draft_timeout) yet nowhere near the std::Instant overflow that a huge sentinel would hit.
+    let grace_timer = tokio::time::sleep(std::time::Duration::from_secs(86_400));
+    tokio::pin!(grace_timer);
+    let mut armed = false;
+    while !js.is_empty() {
+        tokio::select! {
+            biased;
+            joined = js.join_next() => {
+                match joined {
+                    Some(Ok(Some(j))) => {
+                        if is_valid(&j) {
+                            valid += 1;
+                        }
+                        c.push(j);
+                    }
+                    // JoinError (panic/abort) or a slot with no final_output.
+                    Some(_) => dead += 1,
+                    None => break,
+                }
+                if !armed && should_arm_straggler_grace(n, valid) {
+                    if quorum_decides(&c) {
+                        let grace_secs = match grace {
+                            StragglerGrace::Fixed(g) => g,
+                            StragglerGrace::Derive { draft_timeout } => derived_straggler_grace(
+                                round_started.elapsed().as_secs(),
+                                draft_timeout,
+                            ),
+                        };
+                        grace_timer
+                            .as_mut()
+                            .reset(tokio::time::Instant::now() + std::time::Duration::from_secs(grace_secs));
+                        armed = true;
+                    } else {
+                        deferred = true;
+                    }
+                }
+            }
+            _ = &mut grace_timer, if armed => {
+                stopped = js.len();
+                js.abort_all();
+                // Drain the aborted tasks so nothing leaks. A draft that finished in the same instant the
+                // grace expired is discarded (we already hold a quorum) — rare and harmless.
+                while js.join_next().await.is_some() {}
+            }
+        }
+    }
+    (c, dead, stopped, deferred)
+}
+
+#[cfg(test)]
+/// The BACKBONE: canonical module ROLES that a STRICT MAJORITY of the valid round-1 drafts independently
+/// landed on. Built from the SAME valid_specs `plan_agreement` measures, with the SAME `canonical_role`
+/// folding + `is_scaffolding_task` exclusion, so the lock pins exactly the substantive modules the metric
+/// treats as the decomposition. One vote per draft per role (per-draft dedup). Sorted for a deterministic
+/// prompt. Empty ⇒ no shared core; the caller additionally requires len ≥ 2 (pinning only the near-universal
+/// folded `cli` entry role is inert). This NEVER fabricates a module — it can only pin what a majority shares.
+fn consensus_backbone(valid_specs: &[Vec<goose_swarm::TaskSpec>]) -> Vec<String> {
+    let n = valid_specs.len();
+    if n < 2 {
+        return Vec::new();
+    }
+    let threshold = n / 2 + 1; // strict majority: 2/2, 2/3, 3/4, 3/5, 4/6
+    let mut votes: std::collections::BTreeMap<String, usize> = std::collections::BTreeMap::new();
+    for specs in valid_specs {
+        let roles: std::collections::BTreeSet<String> = specs
+            .iter()
+            .filter(|t| !is_scaffolding_task(t))
+            .flat_map(|t| t.owned_files.iter())
+            .map(|f| canonical_role(f))
+            .collect();
+        for r in roles {
+            *votes.entry(r).or_insert(0) += 1;
+        }
+    }
+    votes
+        .into_iter()
+        .filter(|(_, c)| *c >= threshold)
+        .map(|(r, _)| r)
+        .collect()
+}
+
+#[cfg(test)]
+/// Does a delegating region of the spec cover this decision? Conservative BY DESIGN: a false positive
+/// SILENCES a question the user genuinely needed to answer, which is far worse than an unnecessary ask, so
+/// this demands both an absolute and a proportional overlap and refuses to judge thin decisions at all.
+fn decision_is_delegated(decision: &str, regions: &[String]) -> bool {
+    let toks = delegation_tokens(decision);
+    if toks.len() < 3 {
+        return false;
+    }
+    regions.iter().any(|r| {
+        let low = r.to_lowercase();
+        let hits = toks.iter().filter(|t| low.contains(t.as_str())).count();
+        hits >= 3 && hits * 100 / toks.len() >= 34
+    })
+}
+
+#[cfg(test)]
+/// Split a spec into regions that DELEGATE. A markdown heading governs its section until the next heading;
+/// paragraphs are regions too, so a delegating sentence in ordinary prose still counts.
+fn delegation_regions(spec: &str) -> Vec<String> {
+    let mut regions: Vec<String> = Vec::new();
+    let mut current = String::new();
+    let flush = |buf: &mut String, out: &mut Vec<String>| {
+        if !buf.trim().is_empty() {
+            let low = buf.to_lowercase();
+            let delegates = DELEGATION_MARKERS.iter().any(|m| low.contains(m));
+            let reserved = RESERVATION_MARKERS.iter().any(|m| low.contains(m));
+            if delegates && !reserved {
+                out.push(std::mem::take(buf));
+                return;
+            }
+        }
+        buf.clear();
+    };
+    for line in spec.lines() {
+        if line.trim_start().starts_with('#') {
+            flush(&mut current, &mut regions);
+        }
+        current.push_str(line);
+        current.push('\n');
+    }
+    flush(&mut current, &mut regions);
+    regions
+}
+
+#[cfg(test)]
+/// G1: the straggler's grace, DERIVED from the round it is in. When the quorum lands at
+/// `quorum_at_secs` (all drafts start together), the straggler has already run that long; it gets
+/// HALF that again — 1.5x the quorum's own time in total — floored at 10s and capped by what
+/// remains of draft_timeout (the hard backstop). Slow rounds get a proportionally patient grace,
+/// fast rounds a tight one; no constant survives to misfit either. Pure/testable.
+fn derived_straggler_grace(quorum_at_secs: u64, draft_timeout: u64) -> u64 {
+    (quorum_at_secs / 2).clamp(10, draft_timeout.saturating_sub(quorum_at_secs).max(10))
+}
+
+#[cfg(test)]
+/// #122 detail-memo key: hash of the FULL detailer input so a cache hit means byte-identical LLM input (an
+/// identical prompt deserves an identical spec). MUST include goal + findings — both are in the detailer prompt
+/// and mutate across rounds (re-research / answered-ask append to them), so a narrower key would reuse a stale
+/// detail that ignores a new user decision. Uses the same order the detailer concatenates.
+fn detail_memo_key(goal: &str, id: &str, brief: &str, files: &str, findings: &str) -> String {
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+    let mut h = DefaultHasher::new();
+    goal.hash(&mut h);
+    0u8.hash(&mut h);
+    id.hash(&mut h);
+    0u8.hash(&mut h);
+    brief.hash(&mut h);
+    0u8.hash(&mut h);
+    files.hash(&mut h);
+    0u8.hash(&mut h);
+    findings.hash(&mut h);
+    format!("{:016x}", h.finish())
+}
+
+#[cfg(test)]
+/// #133 diverse-plan: STRUCTURAL convergence of a draft set (0-100 + reason). `plan_agreement` penalizes
+/// subtask-COUNT spread, so a genuinely-diverse-but-convergent pair caps at ~74 and can NEVER clear an 80
+/// floor (F1) — it rewards sameness, which contradicts injected diversity. This measures, per draft, the
+/// fraction of its OWN roles that a MAJORITY of drafts also chose, then averages: near-identical drafts → ~100,
+/// a shared backbone with per-draft extras → 80-90 (stop + merge the backbone), fragmented drafts that share
+/// nothing → ~0 (won't stop → escalate). Ignores count-spread, rewards shared structure. Reuses
+/// `module_votes`/`canonical_role`/`is_scaffolding_task` (same role-space). Pure, no model call.
+/// Would diverse-plan's structural measure REPLACE the agreement score and skip the redraft ladder?
+///
+/// ONE predicate, because the enforce branch and the `plan_convergence` event's `would_skip_ladder`
+/// are the same question asked from two places, and this file's recurring defect is exactly that:
+/// two copies of one rule that drift until they disagree. The counterfactual is only worth logging
+/// if it is the SAME condition the lever acts on — a shadow that answers a slightly different
+/// question is worse than no shadow, because it will be believed.
+///
+/// Deliberately does NOT take the lever: the caller ANDs it in. That is what makes the same call
+/// serve both the shadow reading and the live branch.
+fn diverse_plan_would_skip(struct_conv: u8, struct_stop: u8, agreement_conf: u8) -> bool {
+    struct_conv >= struct_stop && struct_conv > agreement_conf
+}
+
+#[cfg(test)]
+fn e2e_shard_spec(lang: TargetLang, shard: usize, shards: usize, oracle: &[String]) -> String {
+    // THE LIST, ENUMERATED BY THE ENGINE. Without it each shard re-derives "the commands the spec
+    // advertises" from whatever spec-shaped artifact is in the tree — the README the build itself
+    // wrote — and MEASURED, three shards of one run derived lists of length 1, 1 and 3. A modulo over
+    // lists of different lengths is not a partition, so coverage was neither disjoint nor complete
+    // and the shard that enumerated an empty slice reported clean. The sibling fan that works,
+    // per_module_verify_spec, interpolates files.join(", ") for exactly this reason.
+    //
+    // Empty oracle => the block is empty and the sentence below is the original, byte for byte, so a
+    // spec with no extractable surface behaves exactly as it does today.
+    let (numbered, selector) = if oracle.is_empty() {
+        (
+            String::new(),
+            "The spec advertises a list of commands/usages: number them 1,2,3... in the order the \
+             spec gives them, and verify ONLY the ones whose position satisfies"
+                .to_string(),
+        )
+    } else {
+        let list = oracle
+            .iter()
+            .enumerate()
+            .map(|(i, item)| format!("  {}. {item}", i + 1))
+            .collect::<Vec<_>>()
+            .join("\n");
+        (
+            format!(
+                "\n\nTHE ADVERTISED SURFACE — this numbered table IS the list, taken verbatim from the \
+                 operator's spec. Do NOT re-derive it from any file in the working directory; a README \
+                 in the tree was written by this build and is not the spec:\n{list}\n\n"
+            ),
+            "Verify ONLY the numbered items above whose position satisfies".to_string(),
+        )
+    };
+    format!(
+        "END-TO-END SHARD {n} OF {shards}. You own NOTHING and must WRITE NO files — this is a read-only \
+         gate that runs in PARALLEL with its sibling shards on the assembled app. BUILD + ACTUALLY RUN the \
+         program's advertised entry point ({entry}). {numbered}{selector} \
+         position mod {shards} == {m} — that is, command {n}, then {n} plus {shards}, and so on. Your \
+         siblings own the others; checking theirs wastes the fleet and checking none of yours leaves a hole. \
+         For EACH command you own do a GOLDEN-VALUE CHECK: feed a concrete input the spec gives or implies \
+         and confirm the ACTUAL output equals the SPECIFIC value the spec implies — not merely exit 0, and \
+         never invent an expected output to make it pass. For a MULTI-OUTPUT command (--count N / a list of \
+         N) confirm all N are correct AND genuinely distinct. INVOCATION: the spec's leading program name is \
+         the program ITSELF, never an argument. REPORT precisely what you ran, what it printed, and what you \
+         expected — do NOT fix anything and do NOT edit files; the integrate-verify join owns repair. If you \
+         own no command (the spec advertises fewer than {shards}), say so and stop.",
+        n = shard + 1,
+        m = (shard + 1) % shards,
+        shards = shards,
+        entry = lang.entry_run_example(),
+    )
+}
+
+#[cfg(test)]
+/// SINK DECOMPOSITION, second axis. `fan_verify_split` shards verification by MODULE, which leaves the
+/// whole-program end-to-end run as ONE task on ONE node — MEASURED 47% of all node-busy time in h1-treat-4
+/// (26.5 min while two nodes idled). But an app's advertised COMMANDS are embarrassingly parallel: checking
+/// `get` says nothing about checking `compact`, and each only needs the assembled tree, which is read-only.
+///
+/// This adds `verify-e2e::<i>` shards that split the command list round-robin (the JOB sizes the cut —
+/// ~2 commands per shard, capped by slots; F852), each
+/// depending on every `verify::<module>` (so the tree is built) and owning no files (so they co-run
+/// race-free, exactly like the per-module verifies). integrate-verify keeps its id and its role as the sole
+/// REPAIR point and final join, and now gates behind the shards instead of running every command itself.
+///
+/// No-op (0) without a sink, without modules, or when already sharded. Returns the shard count.
+fn fan_e2e_split(
+    plan: &mut serde_json::Value,
+    lang: TargetLang,
+    shards: usize,
+    oracle: &[String],
+) -> usize {
+    // THE JOB DECIDES THE CUT, NOT THE FLEET (F852). The previous rule let the fleet pick the shard
+    // count first (`shards.clamp(2,4)`) with the oracle only capping it — so the SAME 4-command spec
+    // was cut 4 ways on a 6-slot fleet and 2 ways on a 2-slot fleet. MEASURED on the identical spec:
+    // the four 1-command shards cost 1,842-1,856s of fleet task-time (301-758s EACH) while the two
+    // 2-command shards cost 809-870s — and the 4-shard arm's SLOWEST shard (759s) was longer than the
+    // 2-shard arm's (607s). Each shard pays a fixed overhead (read the tree, boot the app) that dwarfs
+    // the per-command work, so more shards is strictly more total work AND no wall gain. The rule that
+    // matches the measured economics: ~two commands per shard (a 1-command remainder shard is allowed;
+    // two 1-command shards at n=2 keep the join lean), fleet-blind DOWNWARD — no fleet size can ever
+    // mint more pieces than commands/2 — and concurrency-capped UPWARD (adversarial-review finding:
+    // a 1-slot fleet must not pay 4 serialized shard overheads on an 8-command oracle; a shard that
+    // cannot run concurrently is pure overhead, so never cut more ways than there are slots to run).
+    // Below two real pieces there is nothing to fan, so the join keeps the end-to-end run itself.
+    let shards = match oracle.len() {
+        0 => shards.clamp(2, 4),
+        n => n.div_ceil(2).clamp(2, 4).min(n).min(shards.max(2)),
+    };
+    if shards < 2 {
+        return 0;
+    }
+    let Some(arr) = plan.get("subtasks").and_then(|s| s.as_array()) else {
+        return 0;
+    };
+    if !arr
+        .iter()
+        .any(|s| s.get("id").and_then(|i| i.as_str()) == Some("integrate-verify"))
+        || arr.iter().any(|s| {
+            s.get("id")
+                .and_then(|i| i.as_str())
+                .map(|i| i.starts_with("verify-e2e::"))
+                .unwrap_or(false)
+        })
+    {
+        return 0;
+    }
+    let verify_ids: Vec<String> = arr
+        .iter()
+        .filter_map(|s| s.get("id").and_then(|i| i.as_str()))
+        .filter(|i| i.starts_with("verify::"))
+        .map(String::from)
+        .collect();
+    if verify_ids.is_empty() {
+        return 0;
+    }
+    let new_tasks: Vec<serde_json::Value> = (0..shards)
+        .map(|i| {
+            serde_json::json!({
+                "id": format!("verify-e2e::{i}"),
+                "description": e2e_shard_spec(lang, i, shards, oracle),
+                "depends_on": verify_ids,
+                "files": [],
+                "difficulty": "hard"
+            })
+        })
+        .collect();
+    if let Some(arr) = plan.get_mut("subtasks").and_then(|s| s.as_array_mut()) {
+        for s in arr.iter_mut() {
+            if s.get("id").and_then(|i| i.as_str()) != Some("integrate-verify") {
+                continue;
+            }
+            let mut deps: Vec<serde_json::Value> = (0..shards)
+                .map(|i| serde_json::json!(format!("verify-e2e::{i}")))
+                .collect();
+            // Keep any non-verify dep the architect put on the sink.
+            if let Some(old) = s.get("depends_on").and_then(|d| d.as_array()) {
+                for d in old {
+                    let keep = d
+                        .as_str()
+                        .map(|x| !x.starts_with("verify::"))
+                        .unwrap_or(true);
+                    if keep && !deps.iter().any(|e| e == d) {
+                        deps.push(d.clone());
+                    }
+                }
+            }
+            s["depends_on"] = serde_json::json!(deps);
+        }
+        arr.extend(new_tasks);
+    }
+    shards
+}
+
+#[cfg(test)]
+fn fan_verify_split(plan: &mut serde_json::Value, lang: TargetLang) -> usize {
+    fn id_of(s: &serde_json::Value) -> String {
+        s.get("id")
+            .and_then(|i| i.as_str())
+            .unwrap_or("")
+            .to_string()
+    }
+    fn base_of(f: &str) -> &str {
+        f.rsplit('/').next().unwrap_or(f)
+    }
+    fn files_of(s: &serde_json::Value) -> Vec<String> {
+        s.get("files")
+            .and_then(|f| f.as_array())
+            .map(|a| {
+                a.iter()
+                    .filter_map(|x| x.as_str())
+                    .map(String::from)
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+    let is_test = |s: &serde_json::Value| -> bool {
+        let id = id_of(s);
+        if id == "integrate-verify" {
+            return false;
+        }
+        let files = files_of(s);
+        id_names_a_test(&id)
+            || (!files.is_empty() && files.iter().all(|f| lang.is_test_file(base_of(f))))
+    };
+    let Some(arr) = plan.get("subtasks").and_then(|s| s.as_array()) else {
+        return 0;
+    };
+    // Nothing to thin without a sink; never re-split an already-fanned plan (idempotent).
+    if !arr.iter().any(|s| id_of(s) == "integrate-verify")
+        || arr.iter().any(|s| id_of(s).starts_with("verify::"))
+    {
+        return 0;
+    }
+    // Fannable modules: everything that is neither the sink nor a test AND owns at least one file (a
+    // scaffolding task owning nothing has no isolated surface to verify).
+    //
+    // …at least one file WITH A CHECKABLE SURFACE. The gate's spec is import/build-check language;
+    // a docs-only module (a `readme` task owning README.md) was still fanned, so a 27B was
+    // dispatched to import-check MARKDOWN — a wasted slot and a nonsense task card (operator
+    // report, run 3). Docs are graded by the scorer's docs tier; they have no isolated
+    // import/build surface, so they get no verify:: gate.
+    let is_doc = |f: &str| {
+        let b = base_of(f).to_ascii_lowercase();
+        b.ends_with(".md")
+            || b.ends_with(".txt")
+            || b.ends_with(".rst")
+            || b.ends_with(".adoc")
+            || b == "license"
+            || b == "notice"
+    };
+    let modules: Vec<(String, Vec<String>)> = arr
+        .iter()
+        .filter(|s| id_of(s) != "integrate-verify" && !is_test(s))
+        .map(|s| (id_of(s), files_of(s)))
+        .filter(|(_, files)| !files.is_empty() && !files.iter().all(|f| is_doc(f)))
+        .collect();
+    if modules.is_empty() {
+        return 0;
+    }
+    let module_set: std::collections::HashSet<String> =
+        modules.iter().map(|(id, _)| id.clone()).collect();
+    // A `verify::<M>` depends on M and NOTHING else — in particular never on a test subtask.
+    //
+    // MEASURED (h1-treat-1): a version of this that added an edge onto whichever task writes M's test file
+    // deadlocked the oracle. `test-wal` failed on a SyntaxError, `fail_descendants` cascaded Failed through
+    // `verify::wal` into `integrate-verify`, and the end-to-end gate never ran at all. That is precisely the
+    // invariant `strip_integrate_verify_test_deps` exists to protect ("a failing unit-test subtask must not
+    // BLOCK integrate-verify ... else the run reports FAILED while integrate-verify never ran to confirm
+    // whether the app works") — coupling the sink to tests through verify:: re-introduces it transitively.
+    let new_tasks: Vec<serde_json::Value> = modules
+        .iter()
+        .map(|(id, files)| {
+            serde_json::json!({
+                "id": format!("verify::{id}"),
+                "description": per_module_verify_spec(files),
+                "depends_on": [id],
+                "files": [],
+                "difficulty": "medium"
+            })
+        })
+        .collect();
+    let thin = thin_integrate_verify_spec(lang);
+    if let Some(arr) = plan.get_mut("subtasks").and_then(|s| s.as_array_mut()) {
+        for s in arr.iter_mut() {
+            if id_of(s) != "integrate-verify" {
+                continue;
+            }
+            s["description"] = serde_json::json!(thin);
+            // THE JOIN OWNS NOTHING — and until now the rewrite forgot to say so.
+            //
+            // The `verify::<M>` tasks created a few lines above set `"files": []` explicitly, because a
+            // read-only verification task owns no deliverable. The SINK is the same kind of task after
+            // this rewrite, but whatever the architect happened to put in its `files` survived — and
+            // `thin_integrate_verify_spec` then CONTRADICTS that field, telling it to assemble, run,
+            // read the shards' reports and repair, never to author a file of its own.
+            //
+            // A leftover deliverable is not cosmetic; it arms gates written for implementers. MEASURED
+            // across six cells the architect gave the sink `README.md` once and
+            // `tests/test_integration.py` once — a third of the time — and in the test-file case the
+            // over-read gate armed (`owns_code` is true for a test, false for a doc) and judged the join
+            // OVER_READING -> RE_DISPATCH at 7.2 minutes: a full restart of the join, which is the exact
+            // cost this engine keeps paying for transient faults (F473: 15-44 min per restart).
+            //
+            // It also silently disabled the salvage paths. `degrade_on_stall`'s owns-nothing branch and
+            // the judge's owns-nothing Accept branch both gate on `owned_files.is_empty()`, so in
+            // precisely the cells where the sink was eligible for a re-dispatch, the two mechanisms
+            // meant to prevent one were inert.
+            s["files"] = serde_json::json!([]);
+            let mut new_deps: Vec<serde_json::Value> = Vec::new();
+            if let Some(deps) = s.get("depends_on").and_then(|d| d.as_array()) {
+                for d in deps {
+                    match d.as_str() {
+                        Some(ds) if module_set.contains(ds) => {
+                            new_deps.push(serde_json::json!(format!("verify::{ds}")))
+                        }
+                        _ => new_deps.push(d.clone()),
+                    }
+                }
+            }
+            // Guarantee the join gates behind every per-module verify (a module the architect left off the
+            // sink's deps is still verified before the assembled run).
+            for (id, _) in &modules {
+                let vid = format!("verify::{id}");
+                if !new_deps.iter().any(|x| x.as_str() == Some(vid.as_str())) {
+                    new_deps.push(serde_json::json!(vid));
+                }
+            }
+            s["depends_on"] = serde_json::json!(new_deps);
+        }
+        arr.extend(new_tasks);
+    }
+    modules.len()
+}
+
+#[cfg(test)]
+/// The incremental-replan round-2 constraint (seam 5): unlike `backbone_clause` (which pins role NAMES and
+/// re-details everything), this emits the FROZEN modules as a hard VERBATIM contract — exact id, files, deps —
+/// so the fleet re-drafts ONLY the residual and wires into a fixed interface. It keeps `backbone_clause`'s
+/// FLOOR-not-ceiling hatch (P2-7: a genuinely-needed new module may be added) AND adds the P1-6 "say so"
+/// clause so the model surfaces a frozen module that must itself change rather than silently working around it.
+fn frozen_backbone_clause(frozen: &[goose_swarm::TaskSpec]) -> String {
+    let modules = frozen
+        .iter()
+        .map(|t| {
+            format!(
+                "{} — files:[{}] — deps:[{}] — {}",
+                t.id,
+                t.owned_files.join(", "),
+                t.deps.join(", "),
+                t.description.trim()
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    format!(
+        "FROZEN MODULES (already decided by an independent first planning pass — reproduce EXACTLY, do NOT \
+         rename/merge/split/re-file them and do NOT change their ids, files, or deps). Design the remaining \
+         TO-DESIGN modules and wire them INTO these: you MAY depend on a frozen module's existing id and \
+         consume its files; you may NOT change a frozen module's id, files, or deps. You MAY add a FURTHER NEW \
+         module ONLY if the spec genuinely needs a concern NONE of these cover — do not pad, do not drop a real \
+         concern. If designing the remaining modules reveals that a FROZEN module must itself change (needs a \
+         new dependency, a new file, or a different interface), SAY SO EXPLICITLY on that module rather than \
+         working around it — do not silently duplicate its logic. Add the per-module tests and the final \
+         integrate-verify subtask ON TOP exactly as instructed above. Frozen modules, verbatim:\n{modules}\n"
+    )
+}
+
+#[cfg(test)]
+/// Does this subtask id NAME a test task? Word-aware, because the substring check it replaces
+/// (`id.contains("test")`) silently classifies `latest`, `contest`, `attestation` and `fastest-path` as
+/// tests. In fan_verify_split that misfires twice over: such a module gets NO `verify::` task, AND it stays
+/// off the join's re-pointed dep list — so it is verified by nothing at all. Ids are kebab/snake case
+/// (`test-record`, `engine-tests`, `tests-and-readme`), so segment equality is the right test. Pure.
+fn id_names_a_test(id: &str) -> bool {
+    id.split(|c: char| !c.is_ascii_alphanumeric())
+        .any(|seg| seg.eq_ignore_ascii_case("test") || seg.eq_ignore_ascii_case("tests"))
+}
+
+#[cfg(test)]
+/// SINK DECOMPOSITION (Phase-1). The THIN `integrate-verify` join spec — the irreducible serial half. Derived
+/// from the monolithic spec by dropping the "run the whole test suite" step (the per-module verify tasks now
+/// own it) and reframing as the sole whole-program gate, but keeping the strong build/run/golden-value/
+/// robustness oracle verbatim so coverage is NOT weakened. If the source string ever drifts and a replacement
+/// misses, this fails safe to the full monolithic spec (still a complete gate). Per-module green NEVER
+/// substitutes for this run — it stays the single end-to-end integration oracle.
+/// The JOIN spec used when the end-to-end run is SHARDED by command (`fan_e2e`). The shards already ran
+/// every advertised command with golden-value checks in parallel, so the join stops repeating that sweep —
+/// which is what made it 47% of all node-busy time — and does only what cannot be sharded: assemble, run
+/// the advertised entry once, probe the persisted store, and REPAIR anything the shards reported. It stays
+/// the sole repair point and the final gate; a green shard never substitutes for it.
+fn joined_integrate_verify_spec(lang: TargetLang) -> String {
+    format!(
+        "INTEGRATION JOIN — every module was import/build-checked in isolation upstream, and the app's \
+         advertised commands were just verified IN PARALLEL by the end-to-end shards, each with \
+         golden-value checks. Do NOT re-run that whole sweep; it has happened. Your job is the part that \
+         cannot be sharded. (1) ASSEMBLE the program and BUILD + ACTUALLY RUN its advertised entry point \
+         ({entry}) ONCE, confirming it starts and dispatches. (2) READ the shards' reports and FIX, at the \
+         ROOT CAUSE, every wrong output, crash, missing build config or broken command they found — you are \
+         the ONLY task permitted to edit files here. (3) If the program READS a PERSISTED file or database, \
+         probe it against a MALFORMED/corrupt version AND a MISSING one: a corrupt store must give a CLEAN \
+         error and a missing store must start empty cleanly — never an uncaught traceback. Guard the LOAD \
+         path every read command shares. (4) Re-run ONLY the specific commands you changed, to confirm the \
+         fix. A green shard does NOT prove the ASSEMBLED program runs — THIS is the sole integration gate.",
+        entry = lang.entry_run_example(),
+    )
+}
+
+#[cfg(test)]
+/// role → (votes, n): how many of the n valid round-1 drafts independently landed on each canonical module
+/// ROLE. Generalizes `consensus_backbone`'s tally — it keeps the FULL map instead of filtering to the strict
+/// majority — over the SAME role-space (`canonical_role` folding + `is_scaffolding_task` exclusion + per-draft
+/// dedup), so `votes[r] == n` is exactly "every valid draft has role r". Pure, no model call. The per-module
+/// uncertainty signal for incremental replan (Phase 1).
+fn module_votes(
+    valid_specs: &[Vec<goose_swarm::TaskSpec>],
+) -> std::collections::BTreeMap<String, (usize, usize)> {
+    let n = valid_specs.len();
+    let mut counts: std::collections::BTreeMap<String, usize> = std::collections::BTreeMap::new();
+    for specs in valid_specs {
+        let roles: std::collections::BTreeSet<String> = specs
+            .iter()
+            .filter(|t| !is_scaffolding_task(t))
+            .flat_map(|t| t.owned_files.iter())
+            .map(|f| canonical_role(f))
+            .collect();
+        for r in roles {
+            *counts.entry(r).or_insert(0) += 1;
+        }
+    }
+    counts.into_iter().map(|(r, c)| (r, (c, n))).collect()
+}
+
+#[cfg(test)]
+/// Extract argparse SUBCOMMAND names from a top-level `--help` output — the `{convert,units}` subparser-choices
+/// block (usually on the usage line). Enables fetching per-subcommand help so a repro-author can supply a
+/// subcommand's REQUIRED args (top-level --help lists the subcommands but NOT their arguments). Returns empty
+/// for a non-subcommand CLI. Tolerant: only clean identifier-ish tokens; a false `{text,json}` choices block
+/// just yields tokens whose sub-help run argparse-errors and is filtered by the caller.
+/// Deterministic layout-normalizer (T4): rewrite a subtask's BARE module path (e.g. `stats.py`) to the existing
+/// package layout (`<pkg>/stats.py`) ONLY when a file of that basename already EXISTS in the package
+/// (`existing_pkg_files`) — so a weak planner that switches an existing package to flat paths cannot create a
+/// duplicate orphan module (the gradebook-2 split-brain). Left UNTOUCHED: a bare name NOT in the package (a
+/// genuinely new module), any already-dir-prefixed path (contains '/'), and non-string entries. Pure +
+/// disk-free for unit testing. Returns the number of paths rewritten.
+fn normalize_plan_files_to_package(
+    v: &mut serde_json::Value,
+    pkg: &str,
+    existing_pkg_files: &std::collections::HashSet<String>,
+) -> usize {
+    let mut changed = 0;
+    let Some(subtasks) = v.get_mut("subtasks").and_then(|s| s.as_array_mut()) else {
+        return 0;
+    };
+    for st in subtasks {
+        let Some(files) = st.get_mut("files").and_then(|f| f.as_array_mut()) else {
+            continue;
+        };
+        for f in files {
+            let Some(path) = f.as_str() else { continue };
+            if !path.contains('/') && existing_pkg_files.contains(path) {
+                *f = serde_json::Value::String(format!("{pkg}/{path}"));
+                changed += 1;
+            }
+        }
+    }
+    changed
+}
+
+#[cfg(test)]
+/// Split the probe's decisions into the ones that must still BLOCK and the ones the spec DELEGATED.
+/// Delegated decisions are never dropped — the caller emits them so the workers still have to make the call
+/// and defend it, and the operator can still see what was decided.
+fn partition_delegated_decisions(decisions: &[String], spec: &str) -> (Vec<String>, Vec<String>) {
+    let regions = delegation_regions(spec);
+    if regions.is_empty() {
+        return (decisions.to_vec(), Vec::new());
+    }
+    let mut blocking = Vec::new();
+    let mut delegated = Vec::new();
+    for d in decisions {
+        if decision_is_delegated(d, &regions) {
+            delegated.push(d.clone());
+        } else {
+            blocking.push(d.clone());
+        }
+    }
+    (blocking, delegated)
+}
+
+#[cfg(test)]
+/// Partition ONE internally-consistent source draft's substantive tasks into FROZEN (carried verbatim) and
+/// DIRTY (re-drafted) for incremental replan (Phase 1, seam 2). A task freezes iff EVERY canonical role it
+/// owns is UNANIMOUS across the valid drafts (`votes[role] == n`) AND — the P0-1 downward-closure conjunct —
+/// every task it depends on also freezes. The closure is a greatest fixpoint: iterate, dropping any candidate
+/// whose deps include a non-candidate, until stable. This guarantees every intra-frozen dep resolves by
+/// construction (the frozen set is lifted from ONE draft, so its ids are self-consistent, and no frozen task
+/// can dangle off a dirty/re-authored id). Returns (frozen specs verbatim, sorted dirty roles). Pure.
+///
+/// NOTE (Phase 2, deferred): the "no open decision names r" conjunct (§2.3) is NOT applied here yet — the
+/// open-decision→role map does not exist. Until it does, an open decision can only make freezing *looser*, so
+/// the conservative gate (interface validator + strictly-higher-score adoption) is what keeps a wrong freeze
+/// from shipping; this is called out in the deferral note on the feature.
+fn partition_frozen_dirty(
+    votes: &std::collections::BTreeMap<String, (usize, usize)>,
+    source_specs: &[goose_swarm::TaskSpec],
+) -> (Vec<goose_swarm::TaskSpec>, Vec<String>) {
+    let unanimous = |role: &str| matches!(votes.get(role), Some((v, n)) if *n > 0 && v == n);
+    let substantive: Vec<&goose_swarm::TaskSpec> = source_specs
+        .iter()
+        .filter(|t| !is_scaffolding_task(t) && !t.owned_files.is_empty())
+        .collect();
+    // Seed: every substantive task all of whose owned roles are unanimous.
+    let mut candidate_ids: std::collections::BTreeSet<String> = substantive
+        .iter()
+        .filter(|t| t.owned_files.iter().all(|f| unanimous(&canonical_role(f))))
+        .map(|t| t.id.clone())
+        .collect();
+    // Downward-closure fixpoint: a task may stay frozen only if ALL its deps are themselves frozen candidates
+    // (a dep on a dirty module OR on a scaffold/unknown id disqualifies it → fails toward dirty).
+    loop {
+        let snapshot = candidate_ids.clone();
+        let mut changed = false;
+        for t in &substantive {
+            if snapshot.contains(&t.id) && !t.deps.iter().all(|d| snapshot.contains(d)) {
+                candidate_ids.remove(&t.id);
+                changed = true;
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
+    let frozen: Vec<goose_swarm::TaskSpec> = source_specs
+        .iter()
+        .filter(|t| candidate_ids.contains(&t.id))
+        .cloned()
+        .collect();
+    let dirty_roles: std::collections::BTreeSet<String> = substantive
+        .iter()
+        .filter(|t| !candidate_ids.contains(&t.id))
+        .flat_map(|t| t.owned_files.iter())
+        .map(|f| canonical_role(f))
+        .collect();
+    (frozen, dirty_roles.into_iter().collect())
+}
+
+#[cfg(test)]
+/// Cross-draft plan self-consistency (0-100 + a one-line reason). `converge` (GOOSE_SWARM_CONVERGE) switches
+/// to role-normalized measurement: drop injected scaffolding + compare files by canonical ROLE, so a weak
+/// model's superficial naming/packaging variety no longer reads as real disagreement (fixes "measured
+/// divergence that isn't real"). `converge=false` is byte-identical to the historical metric.
+fn plan_agreement(candidates: &[Vec<goose_swarm::TaskSpec>], converge: bool) -> (u8, String) {
+    if candidates.len() < 2 {
+        return (60, "single draft — no cross-check".to_string());
+    }
+    // Under converge, measure on the SUBSTANTIVE decomposition only (scaffolding dropped).
+    let lists: Vec<Vec<&goose_swarm::TaskSpec>> = candidates
+        .iter()
+        .map(|c| {
+            c.iter()
+                .filter(|t| !converge || !is_scaffolding_task(t))
+                .collect()
+        })
+        .collect();
+    // Subtask-count agreement (tight spread = high).
+    let counts: Vec<usize> = lists.iter().map(Vec::len).collect();
+    let spread = counts.iter().max().unwrap() - counts.iter().min().unwrap();
+    let count_score: u32 = match spread {
+        0 => 40,
+        1 => 28,
+        2..=3 => 14,
+        _ => 0,
+    };
+    // Owned-file-set agreement: mean pairwise Jaccard across candidates, by canonical ROLE under converge.
+    let file_sets: Vec<std::collections::BTreeSet<String>> = lists
+        .iter()
+        .map(|c| {
+            c.iter()
+                .flat_map(|t| t.owned_files.iter())
+                .map(|f| {
+                    if converge {
+                        canonical_role(f)
+                    } else {
+                        f.clone()
+                    }
+                })
+                .collect()
+        })
+        .collect();
+    let mut jsum = 0.0f64;
+    let mut jn = 0u32;
+    for (a, sa) in file_sets.iter().enumerate() {
+        for sb in &file_sets[a + 1..] {
+            let inter = sa.intersection(sb).count();
+            let uni = sa.union(sb).count().max(1);
+            jsum += inter as f64 / uni as f64;
+            jn += 1;
+        }
+    }
+    let jacc = if jn > 0 { jsum / f64::from(jn) } else { 0.0 };
+    let file_score = (jacc * 45.0) as u32;
+    // Independent-task-count agreement (the parallel shape the planner settled on).
+    let indeps: Vec<usize> = lists
+        .iter()
+        .map(|c| c.iter().filter(|t| t.deps.is_empty()).count())
+        .collect();
+    let indep_spread = indeps.iter().max().unwrap() - indeps.iter().min().unwrap();
+    let indep_score: u32 = u32::from(indep_spread <= 1) * 15;
+    let conf = (count_score + file_score + indep_score).min(100) as u8;
+    (
+        conf,
+        format!(
+            "{} drafts agree: count spread {spread}, file-overlap {:.0}%{}",
+            candidates.len(),
+            jacc * 100.0,
+            if converge { " (role-normalized)" } else { "" }
+        ),
+    )
+}
+
+#[cfg(test)]
+/// True iff the round-2 skeleton actually contains EVERY pinned backbone role (the lock was HONORED, not
+/// merely prompted). Same role-space as `consensus_backbone`. A weak model that drops/renames/merges a
+/// pinned module fails this → the caller keeps round 1 (one wasted round, never a lock-violating plan).
+fn plan_covers_backbone(plan_json: &str, backbone: &[String]) -> bool {
+    let Ok(specs) = goose_swarm::specs_from_plan_json(plan_json) else {
+        return false;
+    };
+    let roles: std::collections::BTreeSet<String> = specs
+        .iter()
+        .filter(|t| !is_scaffolding_task(t))
+        .flat_map(|t| t.owned_files.iter())
+        .map(|f| canonical_role(f))
+        .collect();
+    backbone.iter().all(|r| roles.contains(r))
+}
+
+#[cfg(test)]
+/// Serialize a `Vec<TaskSpec>` back to the planner's skeleton JSON (`{"subtasks":[…]}`), the inverse of
+/// `specs_from_plan_json`, so a spliced frozen∪dirty plan can flow out of `parallel_plan` as a skeleton string
+/// exactly like a model-drafted one. Deterministic; used only on the incremental path.
+fn plan_json_from_specs(specs: &[goose_swarm::TaskSpec]) -> String {
+    let subtasks: Vec<serde_json::Value> = specs
+        .iter()
+        .map(|t| {
+            let mut o = serde_json::json!({
+                "id": t.id,
+                "description": t.description,
+                "difficulty": match t.difficulty {
+                    goose_swarm::Difficulty::Hard => "hard",
+                    goose_swarm::Difficulty::Easy => "easy",
+                },
+                "depends_on": t.deps,
+                "files": t.owned_files,
+            });
+            if let Some(m) = &t.preferred_model {
+                o["model"] = serde_json::Value::String(m.clone());
+            }
+            o
+        })
+        .collect();
+    serde_json::to_string(&serde_json::json!({ "subtasks": subtasks })).unwrap_or_default()
+}
+
+#[cfg(test)]
+fn post_answer_action(
+    answers_win_floor: bool,
+    ask_replan: bool,
+    structural: bool,
+    post_conf: u8,
+    floor: u8,
+) -> PostAnswerAction {
+    if answers_win_floor && ask_replan && !structural {
+        if post_conf >= floor {
+            PostAnswerAction::KeepRescored
+        } else {
+            PostAnswerAction::FloorAndRedraft
+        }
+    } else if ask_replan || structural {
+        PostAnswerAction::Replan
+    } else {
+        PostAnswerAction::KeepReuse
+    }
+}
+
+#[cfg(test)]
+/// GOOSE_SWARM_RELAX_CONTRACTED_DEPS backstop (#130). CONTRACTS injects a FROZEN signature-only interface for
+/// every module into every worker BEFORE it writes code, and no subtask compiles its own files — the per-worker
+/// Rust gate (`rust_compile_error`) no-ops without Cargo.toml and only rejects errors located in a worker's OWN
+/// files, so the whole crate is built only at the integrate-verify sink. A module that merely IMPORTS a sibling
+/// therefore already has its signatures and never needs that sibling's FILES to exist at its own build step; a
+/// `depends_on` a chain-planning architect added for a type/import need is FALSE serialization that idles the
+/// fleet one node at a time. This drops those edges: for every non-sink, non-test subtask it removes every dep
+/// EXCEPT a dep on the sink itself (never legally present — that would be a cycle), making each module a root
+/// while integrate-verify keeps all its incoming edges as the single compile/test join. Test subtasks are left
+/// UNTOUCHED — a per-module test RUNS against its module and the signature-only contract cannot satisfy that.
+/// Removing edges can never cycle or orphan a task (files live in a shared tree, the sink joins everyone), so
+/// the DAG stays valid by construction. Returns the number of edges relaxed. Pure — unit-tested without a model.
+fn relax_contracted_module_deps(plan: &mut serde_json::Value, lang: TargetLang) -> usize {
+    fn id_of(s: &serde_json::Value) -> String {
+        s.get("id")
+            .and_then(|i| i.as_str())
+            .unwrap_or("")
+            .to_string()
+    }
+    fn base_of(f: &str) -> &str {
+        f.rsplit('/').next().unwrap_or(f)
+    }
+    fn files_of(s: &serde_json::Value) -> Vec<String> {
+        s.get("files")
+            .and_then(|f| f.as_array())
+            .map(|a| {
+                a.iter()
+                    .filter_map(|x| x.as_str())
+                    .map(String::from)
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+    // is_test_file takes a BASE name (the Python arm checks the `test_` prefix), so pass base_of, NOT the full
+    // path — the sibling relax_test_module_deps passes the full path and is silently wrong for `dir/test_x.py`.
+    let is_test = |s: &serde_json::Value| -> bool {
+        let id = id_of(s);
+        if id == "integrate-verify" {
+            return false;
+        }
+        let files = files_of(s);
+        id.contains("test")
+            || (!files.is_empty() && files.iter().all(|f| lang.is_test_file(base_of(f))))
+    };
+    let Some(arr) = plan.get("subtasks").and_then(|s| s.as_array()) else {
+        return 0;
+    };
+    // Modules whose upstream edges we may flatten: every subtask that is neither the sink nor a test.
+    let relax_ids: std::collections::HashSet<String> = arr
+        .iter()
+        .filter(|s| id_of(s) != "integrate-verify" && !is_test(s))
+        .map(id_of)
+        .collect();
+    if relax_ids.is_empty() {
+        return 0;
+    }
+    let mut relaxed = 0;
+    if let Some(arr) = plan.get_mut("subtasks").and_then(|s| s.as_array_mut()) {
+        for s in arr.iter_mut() {
+            if !relax_ids.contains(&id_of(s)) {
+                continue; // never touch the sink or a test subtask
+            }
+            if let Some(deps) = s.get_mut("depends_on").and_then(|d| d.as_array_mut()) {
+                let before = deps.len();
+                // Keep only a dep on the real join (a cycle in practice, so this empties module deps); every
+                // other module->module edge is the false serialization the frozen contract already satisfies.
+                deps.retain(|d| d.as_str() == Some("integrate-verify"));
+                relaxed += before - deps.len();
+            }
+        }
+    }
+    relaxed
+}
+
+#[cfg(test)]
+/// GOOSE_SWARM_PARALLEL_TESTS backstop. With per-module tests requested, the weak model sometimes still
+/// leaves a stray `cli`/entry dependency on a leaf-module test, re-serializing it behind the cli build and
+/// erasing the parallelism. This narrowly drops ONLY the cli/entry (and integrate-verify) edge from a test
+/// subtask that UNIQUELY tests a single non-cli module, and PRESERVES every sibling/shared-module dep (so a
+/// test that genuinely imports a shared module is never broken — the failure mode of a naive drop-all). A
+/// monolithic/ambiguous test (spanning modules, or testing the cli itself) is left UNCHANGED. Returns the
+/// number of edges relaxed. Only ever called when the flag is ON; the default path never invokes it.
+fn relax_test_module_deps(plan: &mut serde_json::Value, lang: TargetLang) -> usize {
+    fn base(f: &str) -> String {
+        let name = f.rsplit('/').next().unwrap_or(f);
+        let stem = name.rsplit_once('.').map(|(s, _)| s).unwrap_or(name);
+        stem.strip_prefix("test_").unwrap_or(stem).to_string()
+    }
+    fn id_of(s: &serde_json::Value) -> String {
+        s.get("id")
+            .and_then(|i| i.as_str())
+            .unwrap_or("")
+            .to_string()
+    }
+    fn files_of(s: &serde_json::Value) -> Vec<String> {
+        s.get("files")
+            .and_then(|f| f.as_array())
+            .map(|a| {
+                a.iter()
+                    .filter_map(|x| x.as_str())
+                    .map(String::from)
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+    fn is_cli_like(s: &serde_json::Value) -> bool {
+        let idl = id_of(s).to_lowercase();
+        if idl.contains("cli") || idl.contains("entry") || idl.contains("main") {
+            return true;
+        }
+        files_of(s).iter().any(|f| {
+            let b = f.rsplit('/').next().unwrap_or(f);
+            b.contains("__main__") || b == "cli.py" || b == "main.py" || b == "cli.js"
+        })
+    }
+    let is_test = |s: &serde_json::Value| -> bool {
+        let id = id_of(s);
+        if id == "integrate-verify" {
+            return false;
+        }
+        let files = files_of(s);
+        // is_test_file takes a BASE name (the Python arm matches the `test_` prefix), so a full path like
+        // `tests/test_core.py` returned FALSE and the file-based branch never fired. The sibling
+        // relax_contracted_module_deps gets this right via base_of; this one did not.
+        id.contains("test")
+            || (!files.is_empty()
+                && files
+                    .iter()
+                    .all(|f| lang.is_test_file(f.rsplit('/').next().unwrap_or(f))))
+    };
+    let Some(arr) = plan.get("subtasks").and_then(|s| s.as_array()) else {
+        return 0;
+    };
+    // The ONLY edges we ever drop: cli/entry subtasks + integrate-verify.
+    let drop_ids: std::collections::HashSet<String> = arr
+        .iter()
+        .filter(|s| is_cli_like(s) || id_of(s) == "integrate-verify")
+        .map(id_of)
+        .collect();
+    // module base-name -> owning NON-test subtask id.
+    let mut owner: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+    for s in arr {
+        if is_test(s) || id_of(s) == "integrate-verify" {
+            continue;
+        }
+        let id = id_of(s);
+        for f in files_of(s) {
+            // Same base-name contract as above: with a full path this returned false for a test file, so a
+            // test file could enter the SOURCE owner map — and because `base` strips the `test_` prefix,
+            // `tests/test_core.py` would claim the key `core` and could shadow the real core module.
+            if !lang.is_test_file(f.rsplit('/').next().unwrap_or(&f)) {
+                owner.entry(base(&f)).or_insert_with(|| id.clone());
+            }
+        }
+    }
+    // Test subtasks that UNIQUELY test a single non-cli module -> safe to relax.
+    let mut relax_ids: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for s in arr {
+        if !is_test(s) || is_cli_like(s) {
+            continue; // leave non-tests + the cli's own test alone
+        }
+        let owners: std::collections::HashSet<&String> = files_of(s)
+            .iter()
+            .filter_map(|f| owner.get(&base(f)))
+            .collect();
+        if owners.len() == 1 {
+            let oid = owners.into_iter().next().unwrap();
+            if !drop_ids.contains(oid) {
+                relax_ids.insert(id_of(s));
+            }
+        }
+    }
+    if relax_ids.is_empty() {
+        return 0;
+    }
+    let mut relaxed = 0;
+    if let Some(arr) = plan.get_mut("subtasks").and_then(|s| s.as_array_mut()) {
+        for s in arr.iter_mut() {
+            if !relax_ids.contains(&id_of(s)) {
+                continue;
+            }
+            if let Some(deps) = s.get_mut("depends_on").and_then(|d| d.as_array_mut()) {
+                let before = deps.len();
+                deps.retain(|d| d.as_str().map(|x| !drop_ids.contains(x)).unwrap_or(true));
+                relaxed += before - deps.len();
+            }
+        }
+    }
+    relaxed
+}
+
+#[cfg(test)]
+/// The tool calls that GROUND a research finding. A finding backed by none of these is the model's own
+/// recall, which may be good planning context but must never be routed to workers as a verified fact.
+fn research_lookups(tool_calls: &[ToolCallRecord]) -> Vec<String> {
+    tool_calls
+        .iter()
+        .filter(|t| t.ok == Some(true) && (t.is_mcp || t.fetched_external))
+        .map(|t| t.name.clone())
+        .collect()
+}
+
+#[cfg(test)]
+/// `can_look_things_up`: does this run have ANY lookup tool (context7 / web-search)?
+///
+/// This is the deterministic half of the preference-vs-lookupable triage. The engine has no way to know
+/// whether "should splits be uneven?" is answerable by search — that needs judgement, and a keyword matcher
+/// would be a guess wearing a rule's clothes. But it knows something simpler and stronger: WITH NO TOOLS,
+/// NOTHING IS LOOKUPABLE. A research round with an empty tool list cannot resolve anything; it can only ask
+/// the model to invent an answer and stamp it settled.
+///
+/// MEASURED (loop-ab-baseline): research_tools {"available":[],"can_look_things_up":false}, and the retarget
+/// still routed 5 open decisions to ReResearch as kind:"web" — whose tool_hint is literally "Use the
+/// web-search tool." The engine told five 27b workers to use a tool that does not exist, then counted their
+/// guesses: "0 actually looked up, 5 counted as settled". Those guesses were appended to the prompt as
+/// "settled defaults, do not re-ask", spec_clarity jumped 30 -> 100, and the ask that finally fired 90
+/// minutes later asked about the engine's OWN INVENTIONS instead of the user's real choice.
+/// 4 of those 5 decisions were product preferences no search could ever answer. The ask resolved them in
+/// 1.8 minutes. Research spent 65 minutes failing to answer what a human answered in under two.
+fn retarget_action(
+    pc: &PlanConf,
+    can_grow_drafts: bool,
+    // may_research: may this run route an open decision to a research round at all? FALSE when the run has
+    // no lookup tools (the deterministic half of the preference-vs-lookupable triage — with no tools nothing
+    // is lookupable) OR when the triage lever is off, in which case the caller passes `true` and the routing
+    // is byte-identical to before the lever existed.
+    may_research: bool,
+) -> RetargetAction {
+    match pc.binding_signal() {
+        Some(BindingSignal::Agreement) => {
+            if can_grow_drafts {
+                RetargetAction::Redraft
+            } else {
+                RetargetAction::Ask
+            }
+        }
+        Some(BindingSignal::SpecClarity) => {
+            if !pc.product_specified {
+                RetargetAction::Ask
+            } else if !pc.open_decisions.is_empty() && may_research {
+                RetargetAction::ReResearch(pc.open_decisions.clone())
+            } else {
+                // No tools => the round could only launder a guess. Ask the human instead, ~90 min sooner,
+                // with the spec still intact (the "settled defaults" text is never appended when nothing
+                // settles), so the questions are about the REAL open choices.
+                RetargetAction::Ask
+            }
+        }
+        None => RetargetAction::None,
+    }
+}
+
+#[cfg(test)]
+fn score_skeleton(specs: &[goose_swarm::TaskSpec], worker_count: usize) -> Option<i64> {
+    goose_swarm::Dag::from_specs(specs.to_vec()).ok()?;
+    let wc = worker_count.max(1) as i64;
+    let n = specs.len() as i64;
+    if n == 0 {
+        return None;
+    }
+    // Parallel width: independent (zero-dep) subtasks, excluding the integrate-verify sink.
+    let independent = specs
+        .iter()
+        .filter(|s| s.deps.is_empty() && s.id != "integrate-verify")
+        .count() as i64;
+    let indep_score = independent.min(wc) * 10;
+    // Longest dependency chain (DAG validated above, so acyclic) — penalize depth beyond 2.
+    let deps_of: std::collections::HashMap<&str, &[String]> = specs
+        .iter()
+        .map(|s| (s.id.as_str(), s.deps.as_slice()))
+        .collect();
+    let mut depth: std::collections::HashMap<&str, i64> =
+        deps_of.keys().map(|k| (*k, 0i64)).collect();
+    for _ in 0..specs.len() {
+        let mut changed = false;
+        for (id, ds) in &deps_of {
+            let d = ds
+                .iter()
+                .filter_map(|x| depth.get(x.as_str()).copied())
+                .max()
+                .map(|m| m + 1)
+                .unwrap_or(0);
+            if d > depth[id] {
+                depth.insert(id, d);
+                changed = true;
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
+    let max_depth = depth.values().copied().max().unwrap_or(0);
+    let depth_pen = (max_depth - 2).max(0) * 5;
+    // File overlap: files claimed by >1 subtask (scheduler serializes them — a quality, not validity, hit).
+    let mut files: std::collections::HashMap<&str, i64> = std::collections::HashMap::new();
+    for s in specs {
+        for f in &s.owned_files {
+            *files.entry(f.as_str()).or_insert(0) += 1;
+        }
+    }
+    let overlap_pen = files.values().filter(|&&c| c > 1).count() as i64 * 3;
+    // Chokepoint: the most-depended-on task. Penalize when it exceeds ~half the fleet width.
+    let mut fan_in: std::collections::HashMap<&str, i64> = std::collections::HashMap::new();
+    for s in specs {
+        for d in &s.deps {
+            *fan_in.entry(d.as_str()).or_insert(0) += 1;
+        }
+    }
+    let max_fan_in = fan_in.values().copied().max().unwrap_or(0);
+    let choke_pen = if max_fan_in > (wc / 2).max(1) {
+        max_fan_in * 2
+    } else {
+        0
+    };
+    // Size sanity: want at least worker_count subtasks to fill the fleet.
+    let size_score = if n >= wc { 5 } else { -(wc - n) * 2 };
+    Some(indep_score + size_score - depth_pen - overlap_pen - choke_pen)
+}
+
+#[cfg(test)]
+fn scout_lookup(has_mcp: bool, has_docs: bool) -> ScoutLookup {
+    // MCP wins when both are available: it is the channel the lens tool_hints are written for, and
+    // the doc URLs still reach the worker verbatim through `doc_facts` regardless.
+    if has_mcp {
+        ScoutLookup::Mcp
+    } else if has_docs {
+        ScoutLookup::SpecDocs
+    } else {
+        ScoutLookup::None
+    }
+}
+
+#[cfg(test)]
+/// The lenses to run for this task: drop amendment-only lenses on greenfield, then clamp to `max`.
+fn select_lenses(is_amendment: bool, max: u32) -> Vec<&'static ScoutLens> {
+    SCOUT_LENSES
+        .iter()
+        .filter(|l| !l.amendment_only || is_amendment)
+        .take(max.max(1) as usize)
+        .collect()
+}
+
+#[cfg(test)]
+/// #122 pure decision: should the backbone-lock round-2 re-draft actually run? It runs whenever the backbone
+/// lever is on, EXCEPT when the skip lever is on AND round-1 agreement already clears the floor — then the
+/// free drafts share the structure the lock would pin, so the ~250s round can only be discarded (0/11 adopted
+/// at conf >= 90 in real runs). skip_confident OFF => byte-identical to the pre-#122 behavior (always runs).
+fn should_run_backbone_round2(backbone_on: bool, skip_confident: bool, conf1: u8) -> bool {
+    backbone_on && !(skip_confident && conf1 >= BACKBONE_SKIP_CONF_FLOOR)
+}
+
+#[cfg(test)]
+/// Score a candidate plan SKELETON for best-of-N selection. Pure-Rust, no LLM. Returns `None` if the
+/// skeleton is not a valid DAG (validity borrowed from the same `Dag::from_specs` the live path uses,
+/// so a scored candidate is guaranteed loadable). Higher = a wider, flatter, less-conflicting plan:
+/// rewards independent (zero-dep) parallel subtasks + adequate count, penalizes deep dependency chains,
+/// overlapping files, and chokepoints (one task most others depend on).
+/// How many subtasks the architect is asked for, as a function of the fleet.
+///
+/// ⚠ EVERY COUNT IN HERE IS DERIVED FROM `worker_count`. NONE IS A LITERAL. The non-convergent clause used
+/// to read "(e.g. ~6-9 for a 3-device fleet)", which was exactly 2x-3x while `worker_count` was
+/// `devices.len()`. `00563c6ea` changed that argument to SLOTS — a 3-device weight-2 fleet is 6 — and left
+/// the worked example behind, so the one sentence then asked for 12-18 and offered ~6-9 as the example of
+/// it. A weak model anchors on the concrete number, and this fork's standing rule is that a directive scales
+/// to the fleet because a swarm is 2 units or 100.
+///
+/// `converge` (retarget) uses a SINGLE target rather than a range so independent drafts cluster on the same
+/// module count; scaffolding (per-module tests + the sink) is added on top and excluded from agreement.
+fn skeleton_count_clause(worker_count: usize, converge: bool) -> String {
+    if converge {
+        format!(
+            "decompose into the FEWEST cohesive module subtasks that FULLY cover the spec — ONE per \
+             distinct concern/responsibility the spec names (e.g. parsing, persistence, the commands/\
+             business logic, reporting, the cli entry), NOT one catch-all module and NOT a separate \
+             subtask per command. Pick the CONVENTIONAL module boundaries a senior engineer would, so \
+             independent drafts converge on the SAME set (target is usually {worker_count} to 2x {worker_count})"
+        )
+    } else {
+        format!(
+            "aim for about 2x to 3x {worker_count} total (about {lo}-{hi} for this fleet), NOT one per command/function",
+            lo = 2 * worker_count,
+            hi = 3 * worker_count
+        )
+    }
+}
+
+#[cfg(test)]
+/// Additive `plan_confidence_breakdown` JSON, or `None` when no sub-signal was computed — so the cloud/default
+/// path emits no new key and stays byte-identical.
+/// CONTINUOUS spec-clarity score (0-100) from the two real signals the probe produces: is the product
+/// defined, and how many MATERIAL open decisions remain. Deliberately NOT a handful of magic constants
+/// (earlier every product-undefined spec snapped to a flat 20, which reads as faked) — it varies with the
+/// count so specs differentiate honestly, grounded in real signal (no invented smoothing). Undefined product
+/// = the dominant unknown → always low (≤30, so it asks regardless of draft agreement) but still moves with
+/// how many axes are open; defined product = 100 minus 16 per material decision, floored at 30. The ask
+/// boundary vs a ~70 floor is preserved: defined+0/1 proceed, defined+2 asks, undefined always asks.
+fn spec_clarity_score(product_specified: bool, n_decisions: usize) -> u8 {
+    let n = n_decisions.min(6) as u8;
+    if !product_specified {
+        30u8.saturating_sub(6 * n).max(8)
+    } else {
+        100u8.saturating_sub(16 * n).max(30)
+    }
+}
+
+#[cfg(test)]
+/// SPEC-SIZED PLAN (`GOOSE_SWARM_SPEC_SIZED_PLAN`). Size the decomposition to the JOB instead of the FLEET.
+///
+/// BOTH branches of `skeleton_count_clause` derive their target from `worker_count`, which is SLOTS — so the
+/// SAME spec is asked for a different number of modules depending on how many machines happen to be plugged
+/// in. MEASURED on the four post-fix baseline cells: one node (2 slots) is asked for "usually 2 to 4" and
+/// produces 5 and 5; three nodes (6 slots) are asked for "usually 6 to 12" and produce 7 and 6. The ask sits
+/// BELOW what the spec needs on the small fleet and the model overrides it; it sits ABOVE on the big fleet
+/// and the model drifts up into it. So the fleet-scaled number is a floor the model will not go under and a
+/// ceiling it drifts toward, and it only ever binds in the INFLATIONARY direction: +30% modules and +64%
+/// tree bytes on three nodes, for +0.0492 score — one seventh of the replicate spread, i.e. nothing — while
+/// the serial join that must swallow that extra code grew from 20-32% to 36% of the run (F454/F457/F458).
+///
+/// This clause takes NO ARGUMENTS ON PURPOSE. "Sized to the job" means the fleet cannot reach the number, and
+/// a function that cannot see `worker_count` cannot scale with it — the invariant holds by construction
+/// rather than by assertion. The fleet still decides how many of these run AT ONCE; it no longer decides how
+/// many EXIST.
+fn spec_sized_count_clause() -> String {
+    "decompose into the FEWEST cohesive module subtasks that FULLY cover the spec — ONE per distinct \
+     concern/responsibility the spec names (e.g. parsing, persistence, the commands/business logic, \
+     reporting, the cli entry), NOT one catch-all module and NOT a separate subtask per command. Pick the \
+     CONVENTIONAL module boundaries a senior engineer would. HOW MANY MACHINES THE FLEET HAS IS IRRELEVANT \
+     to how many modules this spec has: do NOT add modules to fill idle machines, and do NOT merge distinct \
+     concerns because the fleet is small. The same spec must yield the same decomposition on one machine or \
+     a hundred"
+        .to_string()
+}
+
+#[cfg(test)]
+/// SINK DECOMPOSITION (Phase-1, GOOSE_SWARM_FAN_VERIFY). Split the monolithic `integrate-verify` sink — which
+/// depends on EVERY module and does ALL verification serially in one model turn-loop on one node (it stalls) —
+/// into a fannable per-module half plus a thin serial join. For every file-owning, non-test module M it adds a
+/// scoped read-only `verify::<M>` task depending only on M (owns no files → co-run race-free, fans across the
+/// fleet exactly like the build tasks that succeed), then rewrites the existing `integrate-verify` sink KEEPING
+/// its exact id (`sink_in_flight` hardcodes it): its module deps are re-pointed onto the matching `verify::<M>`
+/// tasks (non-module deps preserved) and its description becomes the thin whole-program join. The join stays
+/// the SOLE end-to-end oracle.
+///
+/// Only ever called when the flag is ON; the default path never invokes it, so OFF is byte-identical. No-op
+/// (returns 0) when there is no sink, no fannable module, or the split was already applied. Returns the number
+/// of per-module verify tasks created. Pure — unit-tested without a model.
+/// GOOSE_SWARM_SPLIT_FAT (#131, Mihai's finer-slicing): deterministically split a FAT module — a `hard` task owning
+/// MANY source files (the whole package as ONE task) — into one child per cohesive concern (canonical role, with a
+/// file and its `_test` kept together), each getting its OWN small contract stub. A fat task's single whole-package
+/// stub TIMED OUT on the 262k fleet (measured mustsolve-test5/6: `core-miner` produced NO stub → the package's files
+/// diverged on type names → the app did not compile). Runs in the plan-transform pipeline BEFORE contracts +
+/// fan-verify, so each child auto-gets its own detailer spec, contract stub, and `verify::` task — no extra plumbing.
+/// Children carry the parent's EXTERNAL deps and rely on each other's FROZEN CONTRACTS (not files), exactly like
+/// relax_contracted_deps. Only splits a hard module with >= `min_files` source files that fall into >= 2 roles.
+/// Returns the number of parent modules split; OFF (not called) => byte-identical.
+fn split_fat_modules(plan: &mut serde_json::Value, lang: TargetLang, min_files: usize) -> usize {
+    fn id_of(s: &serde_json::Value) -> String {
+        s.get("id")
+            .and_then(|i| i.as_str())
+            .unwrap_or("")
+            .to_string()
+    }
+    fn base_of(f: &str) -> &str {
+        f.rsplit('/').next().unwrap_or(f)
+    }
+    fn files_of(s: &serde_json::Value) -> Vec<String> {
+        s.get("files")
+            .and_then(|f| f.as_array())
+            .map(|a| {
+                a.iter()
+                    .filter_map(|x| x.as_str())
+                    .map(String::from)
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+    // Group key: canonical role with any `_test` suffix / `test_` prefix stripped, so an impl file and its test
+    // land in the SAME child (a worker owns a concern end-to-end).
+    fn split_key(f: &str) -> String {
+        let r = canonical_role(f);
+        let r = r.strip_suffix("_test").unwrap_or(&r);
+        let r = r.strip_prefix("test_").unwrap_or(r);
+        r.to_string()
+    }
+    let Some(arr) = plan.get("subtasks").and_then(|s| s.as_array()) else {
+        return 0;
+    };
+    struct Fat {
+        id: String,
+        difficulty: String,
+        deps: Vec<serde_json::Value>,
+        groups: Vec<(String, Vec<String>)>,
+    }
+    let mut fats: Vec<Fat> = Vec::new();
+    for s in arr {
+        let id = id_of(s);
+        if id == "integrate-verify" || id.starts_with("verify::") {
+            continue;
+        }
+        if s.get("difficulty").and_then(|d| d.as_str()) != Some("hard") {
+            continue;
+        }
+        let files = files_of(s);
+        let source: Vec<&String> = files
+            .iter()
+            .filter(|f| !lang.is_test_file(base_of(f)))
+            .collect();
+        if source.len() < min_files {
+            continue;
+        }
+        let mut map: std::collections::BTreeMap<String, Vec<String>> =
+            std::collections::BTreeMap::new();
+        for f in &files {
+            map.entry(split_key(f)).or_default().push(f.clone());
+        }
+        if map.len() < 2 {
+            continue; // one cohesive concern — nothing to gain by splitting
+        }
+        let deps = s
+            .get("depends_on")
+            .and_then(|d| d.as_array())
+            .cloned()
+            .unwrap_or_default();
+        fats.push(Fat {
+            id,
+            difficulty: "hard".to_string(),
+            deps,
+            groups: map.into_iter().collect(),
+        });
+    }
+    if fats.is_empty() {
+        return 0;
+    }
+    let split_ids: std::collections::HashSet<String> = fats.iter().map(|f| f.id.clone()).collect();
+    let mut parent_children: std::collections::HashMap<String, Vec<String>> =
+        std::collections::HashMap::new();
+    let mut new_children: Vec<serde_json::Value> = Vec::new();
+    for fat in &fats {
+        let mut kids = Vec::new();
+        for (role, files) in &fat.groups {
+            let cid = format!("{}-{}", fat.id, role);
+            kids.push(cid.clone());
+            new_children.push(serde_json::json!({
+                "id": cid,
+                "description": format!(
+                    "(split of {}) the `{}` concern — own ONLY: {}. Use the FROZEN CONTRACTS of sibling concerns \
+                     for their types/functions; do NOT redefine them. Keep the package's exported names consistent \
+                     with those contracts.",
+                    fat.id, role, files.join(", ")
+                ),
+                "depends_on": fat.deps.clone(),
+                "files": files.clone(),
+                "difficulty": fat.difficulty,
+            }));
+        }
+        parent_children.insert(fat.id.clone(), kids);
+    }
+    if let Some(arr) = plan.get_mut("subtasks").and_then(|s| s.as_array_mut()) {
+        arr.retain(|s| !split_ids.contains(&id_of(s)));
+        for s in arr.iter_mut() {
+            if let Some(deps) = s.get("depends_on").and_then(|d| d.as_array()) {
+                let mut new_deps: Vec<serde_json::Value> = Vec::new();
+                for d in deps {
+                    match d.as_str() {
+                        Some(ds) if parent_children.contains_key(ds) => {
+                            for c in &parent_children[ds] {
+                                new_deps.push(serde_json::json!(c));
+                            }
+                        }
+                        _ => new_deps.push(d.clone()),
+                    }
+                }
+                s["depends_on"] = serde_json::json!(new_deps);
+            }
+        }
+        arr.extend(new_children);
+    }
+    fats.len()
+}
+
+#[cfg(test)]
+/// integrate-verify runs the PROGRAM end-to-end; it does NOT need the unit-test subtask, and a FAILING test
+/// must NOT block it. Otherwise the run reports FAILED while integrate-verify never ran to check whether the
+/// app actually works (the dependency-blocked false-negative: observed on UNIQ6, where a failed `tests` task
+/// blocked integrate-verify so the app's real bug went uncaught and the run looked failed for the wrong
+/// reason). Strip test-subtask ids from integrate-verify's `depends_on` so it runs regardless of the tests;
+/// it still depends on the real module/entry subtasks. Returns how many deps were stripped (for logging).
+fn strip_integrate_verify_test_deps(plan: &mut serde_json::Value, lang: TargetLang) -> usize {
+    let Some(arr) = plan.get("subtasks").and_then(|s| s.as_array()) else {
+        return 0;
+    };
+    let is_test_subtask = |s: &serde_json::Value| -> bool {
+        let id = s.get("id").and_then(|i| i.as_str()).unwrap_or("");
+        if id == "integrate-verify" {
+            return false;
+        }
+        let files: Vec<&str> = s
+            .get("files")
+            .and_then(|f| f.as_array())
+            .map(|a| a.iter().filter_map(|x| x.as_str()).collect())
+            .unwrap_or_default();
+        // was `lang.is_test_file(f)` — a FULL PATH into a BASENAME predicate, so every
+        // `tests/test_*.py` read as NOT-a-test. Six sibling sites already used `base_of`.
+        id.contains("test") || (!files.is_empty() && files.iter().all(|f| is_test_path(lang, f)))
+    };
+    let test_ids: std::collections::HashSet<String> = arr
+        .iter()
+        .filter(|s| is_test_subtask(s))
+        .filter_map(|s| s.get("id").and_then(|i| i.as_str()).map(String::from))
+        .collect();
+    if test_ids.is_empty() {
+        return 0;
+    }
+    let mut stripped = 0;
+    if let Some(arr) = plan.get_mut("subtasks").and_then(|s| s.as_array_mut()) {
+        for s in arr.iter_mut() {
+            if s.get("id").and_then(|i| i.as_str()) == Some("integrate-verify") {
+                if let Some(deps) = s.get_mut("depends_on").and_then(|d| d.as_array_mut()) {
+                    let before = deps.len();
+                    deps.retain(|d| d.as_str().map(|x| !test_ids.contains(x)).unwrap_or(true));
+                    stripped += before - deps.len();
+                }
+            }
+        }
+    }
+    stripped
+}
+
+#[cfg(test)]
+fn structural_convergence(valid_drafts: &[Vec<goose_swarm::TaskSpec>]) -> (u8, String) {
+    let n = valid_drafts.len();
+    if n < 2 {
+        return (0, "single draft — no structural cross-check".to_string());
+    }
+    let votes = module_votes(valid_drafts);
+    let majority = n / 2 + 1;
+    let mut per_draft: Vec<f64> = Vec::new();
+    for specs in valid_drafts {
+        let roles: std::collections::BTreeSet<String> = specs
+            .iter()
+            .filter(|t| !is_scaffolding_task(t))
+            .flat_map(|t| t.owned_files.iter())
+            .map(|f| canonical_role(f))
+            .collect();
+        if roles.is_empty() {
+            continue;
+        }
+        let mut backed = 0usize;
+        for r in &roles {
+            if let Some(val) = votes.get(r.as_str()) {
+                if val.0 >= majority {
+                    backed += 1;
+                }
+            }
+        }
+        per_draft.push(backed as f64 / roles.len() as f64);
+    }
+    if per_draft.is_empty() {
+        return (0, "no substantive roles across drafts".to_string());
+    }
+    let mean = per_draft.iter().sum::<f64>() / per_draft.len() as f64;
+    let conv = (mean * 100.0).round() as u8;
+    let shared = votes.values().filter(|val| val.0 >= majority).count();
+    (
+        conv,
+        format!(
+            "{conv}% of each draft's structure is majority-shared ({shared} role(s) in >={majority}/{n} drafts)"
+        ),
+    )
+}
+
+#[cfg(test)]
+fn thin_integrate_verify_spec(lang: TargetLang) -> String {
+    let full = integrate_verify_spec(lang);
+    // The sink is the single biggest serialization in the run — MEASURED 47% of ALL node-busy time in
+    // h1-treat-4 (26.5 min on one node while the other two idled). Anything the engine now checks
+    // DETERMINISTICALLY is duplicated work on the critical path, and worse, work whose verdict is a model
+    // self-report where the engine's is not.
+    //
+    // The robustness probe is exactly that: `verify_commands` now invokes every advertised command with a
+    // nonexistent argument and treats a traceback as a finding, so asking the sink to do it again buys a
+    // weaker version of a check that already ran. Dropped only when that probe is ON; the string is left
+    // intact otherwise, and a replacen that misses changes nothing (the clause simply stays).
+    let full = if swarm_gate_cfg("GOOSE_SWARM_VERIFY_COMMANDS", load_config().verify_commands) {
+        match (
+            full.find("Then PROBE ROBUSTNESS"),
+            full.find("If the program READS a PERSISTED"),
+        ) {
+            (Some(a), Some(b)) if b > a => {
+                let mut t = full.clone();
+                t.replace_range(a..b, "");
+                t
+            }
+            _ => full,
+        }
+    } else {
+        full
+    };
+    let suite = format!("run the test suite ({}), then ", lang.test_cmd());
+    let thinned = full.replacen(&suite, "", 1).replacen(
+        "Integrate every module and VERIFY the whole program works end-to-end: ",
+        "INTEGRATION JOIN — every module was already import/build-checked and unit-tested in isolation upstream \
+         (the per-module verify tasks); do the irreducible whole-program gate that cannot be sharded: ",
+        1,
+    );
+    format!(
+        "{thinned} A green per-module verify NEVER proves the ASSEMBLED program runs or is correct — THIS \
+         end-to-end run is the SOLE integration gate and per-module green never substitutes for it."
+    )
+}
+
+#[cfg(test)]
+/// Interface gate for the frozen∪dirty splice (seam 6, the LOWEST-confidence piece of the design — R2). This
+/// is a NEW pure validator, NOT an extension of `Dag::splice_specs` (which mutates a LIVE dag with TaskStates
+/// and applies runtime semantics that do not exist at planning time). `frozen` is the COMPLETE carried-verbatim
+/// set (modules AND their own test tasks); `dirty` is the re-drafted residual. Rejects a merge that would let a
+/// broken plan through silently:
+///   (a) merged is a valid DAG — duplicate ids, a dirty→frozen dep that resolves to nothing, and any cycle
+///       through a frozen node are all rejected (same `Dag::from_specs` validity the live path uses);
+///   (b) no dirty task REUSES a frozen id (that would silently rewrite a frozen module);
+///   (c) no dirty file canonicalizes onto a FROZEN role (R4 role-collision merge).
+/// On any violation the caller keeps round 1 — never ships the broken splice.
+fn validate_frozen_interfaces(
+    frozen: &[goose_swarm::TaskSpec],
+    dirty: &[goose_swarm::TaskSpec],
+) -> Result<()> {
+    let frozen_ids: std::collections::BTreeSet<&str> =
+        frozen.iter().map(|t| t.id.as_str()).collect();
+    let frozen_roles: std::collections::BTreeSet<String> = frozen
+        .iter()
+        .filter(|t| !is_scaffolding_task(t))
+        .flat_map(|t| t.owned_files.iter())
+        .map(|f| canonical_role(f))
+        .collect();
+    let mut merged: Vec<goose_swarm::TaskSpec> = frozen.to_vec();
+    merged.extend(dirty.iter().cloned());
+    goose_swarm::Dag::from_specs(merged)?;
+    for d in dirty {
+        if frozen_ids.contains(d.id.as_str()) {
+            bail!("dirty module `{}` reuses a frozen module id", d.id);
+        }
+        if is_scaffolding_task(d) {
+            continue;
+        }
+        for f in &d.owned_files {
+            let r = canonical_role(f);
+            if frozen_roles.contains(&r) {
+                bail!("dirty file `{f}` collides with frozen role `{r}`");
+            }
+        }
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+/// #136 — DELEGATED DECISIONS. A spec that says "your call" has not FAILED to decide; it has decided that the
+/// BUILDER decides. The engine used to read those as unclarity, which is the opposite meaning.
+///
+/// MEASURED 2026-07-20 (run mtp-base, spec gen-logfold-template-miner): the spec carries a section headed
+/// "## Calls I'm leaving to you" whose bullets say "Your call, but be consistent...", "make it and defend it
+/// in a comment", "Pick something honest and tunable". The probe returned those three as material open
+/// decisions, spec_clarity_score(true, 3) = 52, min(agreement 89, 52) = 52 < ask_floor 80, so the ask fired
+/// and three 27b nodes idled waiting on a human for questions the spec had already delegated.
+///
+/// This taxes the BEST specs: the more explicitly an author hands over design authority, the further their
+/// plan confidence is pushed below the floor.
+///
+/// Deterministic on purpose — text over the spec, never a model call. A model opinion may not create or kill
+/// a verdict, and "should this block the fleet" is a verdict.
+const DELEGATION_MARKERS: &[&str] = &[
+    "leaving to you",
+    "leaving it to you",
+    "leave it to you",
+    "leave that to you",
+    "leave this to you",
+    "your call",
+    "up to you",
+    "you decide",
+    "yours to decide",
+    "decide and defend",
+    "designer's choice",
+    "dealer's choice",
+    "either is defensible",
+    "make it and defend",
+    "at your discretion",
+    "i'll leave",
+    "i leave",
+];
+
+#[cfg(test)]
+/// Phrases by which a spec RESERVES a decision for the user. These OUTRANK a delegation marker in the same
+/// region, so "I'm leaving the styling to you, but do NOT guess the storage backend — ask me" still asks.
+/// Without this, one delegating sentence would silence every question in its neighbourhood.
+const RESERVATION_MARKERS: &[&str] = &[
+    "do not guess",
+    "don't guess",
+    "do not decide",
+    "don't decide",
+    "do not invent",
+    "don't invent",
+    "do not assume",
+    "don't assume",
+    "do not pick",
+    "don't pick",
+    "ask me",
+    "ask first",
+    "must ask",
+    "check with me",
+    "confirm with me",
+];
+
+#[cfg(test)]
+const SCOUT_LENSES: &[ScoutLens] = &[
+    ScoutLens {
+        id: "codebase",
+        title: "Existing codebase",
+        brief: "Investigate the EXISTING code in the working directory: structure, key files, conventions, and exactly where the requested change must hook in.",
+        tool_hint: "Use the developer shell tools (ls, grep, cat) to read the existing code.",
+        amendment_only: true,
+    },
+    ScoutLens {
+        id: "edge-cases",
+        title: "Edge cases & testing",
+        brief: "Enumerate the tricky edge cases, failure modes, and the concrete tests that would prove the task is done correctly.",
+        tool_hint: "Reason from the task; use web-search for domain specifics if needed.",
+        amendment_only: false,
+    },
+    ScoutLens {
+        id: "architecture",
+        title: "Architecture & data model",
+        brief: "Propose the module/file breakdown, the data model/types, and how the pieces fit — a skeleton the planner can decompose from.",
+        tool_hint: "Reason from the task; use web-search only to confirm conventions.",
+        amendment_only: false,
+    },
+    ScoutLens {
+        id: "libraries",
+        title: "Libraries & APIs",
+        brief: "Identify the key libraries/frameworks this task needs and look up their REAL current API: function/class names, signatures, minimal usage snippets, and gotchas.",
+        tool_hint: "Use the context7 tools (resolve-library-id then get-library-docs) and web-search.",
+        amendment_only: false,
+    },
+];
+
+#[cfg(test)]
+/// A fixed research angle a SCOUT investigates in parallel (no serial scoping call needed). The
+/// `codebase` lens is amendment-only; it is listed first so it survives a low `max` clamp.
+///
+/// ORDER IS PRIORITY, and for two reasons now, not one. Beyond the `max` clamp above, straggler-stop
+/// sacrifices the LAST lens to finish: `select_lenses` preserves this order, the fan dispatches in it,
+/// and `should_arm_straggler_grace` then gives whichever lens is still outstanding only
+/// `straggler_grace_secs` more. MEASURED on 4 of 4 runs — 1-node and 3-node alike — the dropped scout
+/// was `edge-cases` EVERY time (`scouts_planned` lists three lenses, `research_completed` reports two
+/// findings, and `.swarm/activity/scout-edge-cases.json` never reaches `phase: done`).
+///
+/// That made the sacrifice systematic rather than incidental, and it fell on the worst possible lens:
+/// `edge-cases` is the one asked for "failure modes and the concrete tests that would prove the task
+/// is done correctly", which is exactly what the vendor-contract and robustness checks grade — the
+/// tier that collapsed to 14.3% on the weakest run. The straggler-stop comment at the scout call site
+/// reasons that "dropping the last scout only loses one lens of context"; that is true of a random
+/// lens and false of the same lens every run.
+///
+/// So `edge-cases` now precedes the two lenses whose loss is cheaper: `architecture` largely restates
+/// work the architect does itself from the spec, and `libraries` is near-inert on a spec that forbids
+/// dependencies. Behaviourally inert when straggler-stop is off — with grace 0 the fan awaits all.
+#[allow(dead_code)]
+struct ScoutLens {
+    id: &'static str,
+    title: &'static str,
+    brief: &'static str,
+    tool_hint: &'static str,
+    amendment_only: bool,
+}
+
+#[cfg(test)]
+fn delegation_tokens(s: &str) -> Vec<String> {
+    let mut seen: Vec<String> = Vec::new();
+    for w in s
+        .to_lowercase()
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|w| w.chars().count() >= 5)
+        .filter(|w| !DELEGATION_STOPWORDS.contains(w))
+    {
+        let w = w.to_string();
+        if !seen.contains(&w) {
+            seen.push(w);
+        }
+    }
+    seen
+}
+
+#[cfg(test)]
+/// A deterministically-injected or uniform SCAFFOLDING task (the integrate-verify sink, or a test module):
+/// excluded from cross-draft agreement under `converge`, because it reflects the harness (it is injected/
+/// uniform), not the model's decomposition choices — counting it inflates measured divergence.
+fn is_scaffolding_task(t: &goose_swarm::TaskSpec) -> bool {
+    if t.id == "integrate-verify" || t.id.contains("test") {
+        return true;
+    }
+    !t.owned_files.is_empty()
+        && t.owned_files.iter().all(|f| {
+            let b = f.rsplit(['/', '\\']).next().unwrap_or(f).to_lowercase();
+            b.starts_with("test_") || b.ends_with("_test.py") || b == "conftest.py"
+        })
+}
+
+#[cfg(test)]
+/// SINK DECOMPOSITION (Phase-1). The scoped, read-only verify spec for ONE module — the fannable half of the
+/// monolithic sink. It owns no files and writes nothing, so many of these co-run race-free and fan across the
+/// fleet exactly like the module BUILD tasks that already succeed. It is a pure IMPORT/BUILD gate; the
+/// whole-program end-to-end run is the thin `integrate-verify` join's job, never this one's.
+///
+/// It runs NO test command, deliberately. Two measured reasons:
+///
+/// 1. The whole-suite command it used to issue was a VACUOUS oracle. `verify::<M>` depends only on M, so it
+///    runs while siblings and the test task are still being written; pytest exits 5 ("no tests ran") and the
+///    model reads that as a pass. MEASURED verify-6: `verify::analytics-io` reported "No tests/ directory
+///    exists yet — this is expected for a new project" and the run shipped passed+verified.
+/// 2. Scoping it to the module's OWN test file instead required an edge onto whoever writes that file, and
+///    that edge DEADLOCKED THE ORACLE. MEASURED h1-treat-1: `test-wal` failed on a SyntaxError,
+///    `fail_descendants` cascaded Failed through `verify::wal` into `integrate-verify`, and the end-to-end
+///    gate never ran. `strip_integrate_verify_test_deps` exists to prevent exactly that ("a failing unit-test
+///    subtask must not BLOCK integrate-verify"), and routing the sink's dependency through a verify:: task
+///    re-introduces the coupling transitively.
+///
+/// Per-module TEST coverage is `test-<module>`'s job (GOOSE_SWARM_PARALLEL_TESTS), which owns its file and so
+/// blocks green on its own; the app-level suite is the smoke gate's job (which under `require_tests` now also
+/// refuses an EMPTY suite). Neither belongs in a task that cannot see whether it is running early.
+fn per_module_verify_spec(files: &[String]) -> String {
+    format!(
+        "VERIFY THIS ONE MODULE IN ISOLATION. You own NOTHING and must WRITE NO files — this is a read-only \
+         per-module gate that runs in parallel with its siblings. Import/build-check every file this module \
+         delivers ({owned}) and confirm its public surface imports cleanly, with no ImportError, SyntaxError \
+         or build error, and that the names its spec says it exposes are actually there. Run NO test command \
+         at all: this module's tests are a separate subtask, and the whole suite would execute siblings' \
+         tests that are still being written — a suite that collects nothing exits CLEAN and would prove \
+         NOTHING about this module. Do NOT run the whole program end-to-end, do NOT verify sibling modules, \
+         do NOT redesign the interface — the final integrate-verify join assembles and runs the whole \
+         program. If this module fails to import, REPORT the exact error precisely (which file, which symbol, \
+         the message); do not attempt cross-module fixes from here. Report what you actually ran and what it \
+         printed — never report a check you did not run.",
+        owned = files.join(", "),
+    )
+}
+
+#[cfg(test)]
+/// Words too common to carry topical signal when matching a decision to a delegating region.
+const DELEGATION_STOPWORDS: &[&str] = &[
+    "there",
+    "their",
+    "these",
+    "those",
+    "which",
+    "where",
+    "while",
+    "would",
+    "could",
+    "should",
+    "shall",
+    "about",
+    "above",
+    "after",
+    "again",
+    "against",
+    "because",
+    "before",
+    "being",
+    "below",
+    "between",
+    "during",
+    "further",
+    "having",
+    "other",
+    "under",
+    "until",
+    "whether",
+    "decision",
+    "decisions",
+    "choice",
+    "choices",
+    "option",
+    "options",
+    "default",
+    "defaults",
+    "different",
+    "produce",
+    "produces",
+    "behavior",
+    "behaviour",
+    "sensible",
+    "genuinely",
+    "material",
+];
+
+#[cfg(test)]
+#[allow(dead_code)]
+struct ResearchFinding {
+    question: String,
+    kind: String,
+    findings: String,
+    /// PROVENANCE: did the agent actually LOOK THIS UP, or reason it out? A research worker is only given
+    /// research MCP extensions (context7 / web-search / doc-processor, swarm.rs:158), so a SUCCESSFUL MCP
+    /// tool call means it consulted an external source. A finding with none is the model's own reasoning.
+    /// This is the deterministic signal that separates a grounded fact (safe to trust / cache / learn) from
+    /// an invented one (which must never silently close a user's product decision). A tool call is an engine
+    /// event, so no model opinion enters the classification.
+    grounded: bool,
+    /// The tool names that grounded it (for the audit trail — today "N resolved" says nothing about HOW).
+    lookups: Vec<String>,
+    /// The tool-attempt outcome (P1 substrate for #94's classifier fallback). Widens `grounded` into the
+    /// four distinct cases: NeverCalled / Errored / CalledEmpty / Grounded. Not yet routed on.
+    #[allow(dead_code)]
+    attempt: ResearchAttempt,
+}
+
+// ================================================================================================
+// REGRESSIONS FOR THE 2026-08-29 AUDIT PASS.
+//
+// One test per behavioural change made in that pass. Every one of these defects reached HEAD because
+// the rule it breaks lived only in a comment, or in four hand-written copies that had drifted apart.
+// ================================================================================================
+#[cfg(test)]
+mod audit_regressions {
+    use super::*;
+
+    fn tmp(tag: &str) -> PathBuf {
+        let d = std::env::temp_dir().join(format!(
+            "goose-audit-{tag}-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        d
+    }
+
+    /// THE INVERSION THAT COST EIGHTEEN NUDGES ON ONE READ-ONLY OBSERVER.
+    ///
+    /// Every judge gate asked "did it produce?" by counting REASONING CHARACTERS ALONE, so a worker
+    /// whose production is ACTIONS read as dead in all of them: the burst-gap accounting never reset its
+    /// quiet spell, `judge_quiet_within_rhythm` became unreachable after the first look, the
+    /// tail-similarity streak stayed armed, and DRIFTING fired on the first look with no corroboration.
+    #[test]
+    fn a_call_that_acts_without_narrating_is_producing() {
+        assert!(
+            produced_since_look(3, 1),
+            "26 shell commands and three characters of prose is a WORKING call, not a dead one"
+        );
+        assert!(
+            produced_since_look(OMNI_JUDGE_MIN_CHARS, 0),
+            "a narrating lane still clears the floor on reasoning alone"
+        );
+        assert!(
+            !produced_since_look(OMNI_JUDGE_MIN_CHARS - 1, 0),
+            "silence on BOTH channels is the only silence"
+        );
+        assert!(
+            produced_since_look(0, 5),
+            "actions alone are production — there is no reasoning floor to clear as well"
+        );
+    }
+
+    /// The loop case the widening above gives up must still be caught, or the fix trades one blindness
+    /// for another. A call repeating ONE tool call reads as producing now — and the measured-recurrence
+    /// arm never consults this predicate, which is why it stays covered.
+    #[test]
+    fn the_measured_recurrence_arm_does_not_consult_production() {
+        assert_eq!(
+            nudge_arm(false, false, true),
+            "measured_recurrence",
+            "a measured recurrence arms on its own, whatever the production predicate says"
+        );
+        assert_eq!(nudge_arm(true, true, true), "measured_repeat");
+        assert_eq!(nudge_arm(false, true, false), "drifting");
+        assert_eq!(nudge_arm(false, false, false), "tail_similarity_streak");
+    }
+
+    /// `judge_out_of_moves` fired on a call with TWO early tool calls and every surface said ZERO.
+    #[test]
+    fn calls_since_a_nudge_is_not_calls_ever() {
+        assert_eq!(
+            calls_since_nudge(Some(2), 2),
+            0,
+            "two calls made BEFORE the first nudge are not calls made since it"
+        );
+        assert_eq!(calls_since_nudge(Some(2), 5), 3);
+        assert_eq!(
+            calls_since_nudge(None, 7),
+            7,
+            "with no nudge yet, the whole call counts"
+        );
+        assert_eq!(
+            calls_since_nudge(Some(9), 4),
+            0,
+            "a re-stream can reset the record below the mark; that is zero, not a panic"
+        );
+    }
+
+    /// reject(D) -> a patch that APPLIES -> reject(D) is NOT a stuck review, and the guard said it was
+    /// while printing two statements that were false.
+    #[test]
+    fn a_rejection_stops_being_evidence_once_the_plan_changes() {
+        let mut memo = RejectMemo::default();
+        assert!(!memo.rejected("unknown task `viz-rendering-core`"));
+        assert!(
+            memo.rejected("unknown task `viz-rendering-core`"),
+            "the same diagnostic twice on an unchanged plan IS the terminator's case"
+        );
+
+        let mut memo = RejectMemo::default();
+        assert!(!memo.rejected("unknown task `viz-rendering-core`"));
+        memo.plan_changed();
+        assert!(
+            !memo.rejected("unknown task `viz-rendering-core`"),
+            "a patch applied in between, so the plan the first rejection judged is gone"
+        );
+    }
+
+    /// FIVE COPIES OF ONE RULE, AND THE VERIFIER WAS THE ONE THAT HAD DRIFTED. An owned empty `py.typed`
+    /// cleared every completion guard and was then reported as a defect by the verifier.
+    #[test]
+    fn an_intentional_empty_marker_is_recognised_by_basename() {
+        assert!(is_intentional_empty_marker("app/__init__.py"));
+        assert!(is_intentional_empty_marker("__init__.py"));
+        assert!(is_intentional_empty_marker("pkg/py.typed"));
+        assert!(!is_intentional_empty_marker("app/store.py"));
+        assert!(
+            !is_intentional_empty_marker("app/pkg__init__.py"),
+            "a BASENAME test, not a suffix test — `ends_with` matched this one"
+        );
+    }
+
+    #[test]
+    fn an_empty_owned_py_typed_is_not_a_defect() {
+        let dir = tmp("marker");
+        std::fs::create_dir_all(dir.join("app")).unwrap();
+        std::fs::write(dir.join("app/py.typed"), "").unwrap();
+        assert!(
+            verify_owned_files(&dir, &["app/py.typed".into()]).is_empty(),
+            "the hallucinated-completion guard and both missing-deliverable gates already exempt this; \
+             the verifier reported it and its findings are acted on automatically"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// THE DEFECT MOST EASILY MISTAKEN FOR SUCCESS: the file exists, is non-empty, and PARSES, and it
+    /// does nothing. The verifier's own test never wrote one, so nothing proved this branch fires.
+    #[test]
+    fn a_stubs_only_file_that_parses_is_reported_as_a_skeleton() {
+        let dir = tmp("skeleton");
+        std::fs::create_dir_all(dir.join("app")).unwrap();
+        // MUST PARSE, or the DOES-NOT-PARSE branch returns first and the assertion passes for the
+        // wrong reason — the parse check `continue`s so one broken file is never two findings.
+        std::fs::write(
+            dir.join("app/store.py"),
+            "class Store:\n    def get(self, k):\n        pass\n\n    def put(self, k, v):\n        ...\n",
+        )
+        .unwrap();
+        let found = verify_owned_files(&dir, &["app/store.py".into()]);
+        assert_eq!(found.len(), 1, "one file, one finding: {found:?}");
+        assert!(found[0].contains("SKELETON"), "{found:?}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// `from app import store` is the shape generated code writes most, and `!module.contains('.')`
+    /// made it structurally invisible — along with every relative import.
+    #[test]
+    fn the_tree_check_sees_the_import_shapes_it_was_blind_to() {
+        let dir = tmp("imports");
+        std::fs::create_dir_all(dir.join("app")).unwrap();
+        std::fs::write(dir.join("app/__init__.py"), "").unwrap();
+        std::fs::write(dir.join("app/common.py"), "x = 1\n").unwrap();
+
+        std::fs::write(
+            dir.join("app/ledgerd.py"),
+            "from app import common\nfrom app import store\n",
+        )
+        .unwrap();
+        let found = verify_tree_imports(&dir);
+        assert_eq!(found.len(), 1, "only the missing one: {found:?}");
+        assert!(found[0].contains("app.store"), "{found:?}");
+
+        std::fs::write(
+            dir.join("app/ledgerd.py"),
+            "from .common import x\nfrom .store import y\n",
+        )
+        .unwrap();
+        let found = verify_tree_imports(&dir);
+        assert_eq!(found.len(), 1, "a relative import resolves too: {found:?}");
+        assert!(found[0].contains(".store"), "{found:?}");
+
+        std::fs::write(dir.join("app/ledgerd.py"), "from . import common, store\n").unwrap();
+        let found = verify_tree_imports(&dir);
+        assert_eq!(found.len(), 1, "`from . import x` too: {found:?}");
+        assert!(found[0].contains("store"), "{found:?}");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// FALSE POSITIVES ARE THE REAL DANGER: these findings are acted on automatically, and a name
+    /// re-exported from a package's `__init__.py` is NOT a submodule.
+    #[test]
+    fn a_reexported_name_and_a_plain_module_attribute_are_never_flagged() {
+        let dir = tmp("reexport");
+        std::fs::create_dir_all(dir.join("app")).unwrap();
+        std::fs::write(dir.join("app/__init__.py"), "Ledger = object()\n").unwrap();
+        std::fs::write(dir.join("app/main.py"), "from app import Ledger\n").unwrap();
+        assert!(
+            verify_tree_imports(&dir).is_empty(),
+            "a symbol defined in __init__.py is a legitimate import, not a missing module"
+        );
+
+        // `helpers` is a MODULE, not a package, so `thing` is one of its attributes and this check
+        // deliberately has no AST with which to judge it.
+        std::fs::write(dir.join("helpers.py"), "thing = 1\n").unwrap();
+        std::fs::write(dir.join("app/main.py"), "from helpers import thing\n").unwrap();
+        assert!(
+            verify_tree_imports(&dir).is_empty(),
+            "an attribute of a module is not a submodule of a package"
+        );
+
+        std::fs::write(
+            dir.join("app/main.py"),
+            "from typing import List\nimport os\n",
+        )
+        .unwrap();
+        assert!(
+            verify_tree_imports(&dir).is_empty(),
+            "stdlib must never be reported — crying wolf makes the whole check ignorable"
+        );
+
+        // A DIRECTORY IS NOT A PACKAGE just because it shares a name with an import. `static/` sits
+        // beside the code in most of these trees and holds no Python at all.
+        std::fs::create_dir_all(dir.join("static")).unwrap();
+        std::fs::write(dir.join("static/app.css"), "body{}").unwrap();
+        std::fs::write(dir.join("app/main.py"), "from static import files\n").unwrap();
+        assert!(
+            verify_tree_imports(&dir).is_empty(),
+            "an asset directory must never manufacture an import finding"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A src-layout tree was skipped WHOLESALE: the package root test looked beside the working dir only.
+    #[test]
+    fn a_src_layout_tree_is_checked_rather_than_skipped() {
+        let dir = tmp("srclayout");
+        std::fs::create_dir_all(dir.join("src/app")).unwrap();
+        std::fs::write(dir.join("src/app/__init__.py"), "").unwrap();
+        std::fs::write(dir.join("src/app/common.py"), "x = 1\n").unwrap();
+        std::fs::write(
+            dir.join("src/app/ledgerd.py"),
+            "from app.common import x\nfrom app.store import y\n",
+        )
+        .unwrap();
+        let found = verify_tree_imports(&dir);
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert!(found[0].contains("app.store"), "{found:?}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// OBEYING THE PROMPT MUST NOT DISCARD THE TABLE. The enumerator is told twice to "LEAVE `slice`
+    /// EMPTY"; both literal readings failed a strict `Option<OpenSlice>`, and because the components are
+    /// one document, one obedient row yielded ZERO rows for the whole part — after which the request
+    /// section was marked permanently settled.
+    #[test]
+    fn a_row_that_obeys_leave_slice_empty_does_not_discard_the_part() {
+        let out: CoverageOutput = serde_json::from_str(
+            r#"{"components":[
+                 {"name":"empty object","owner_slice_id":"","owner_evidence":"","slice":{}},
+                 {"name":"empty string","owner_slice_id":"","owner_evidence":"","slice":""},
+                 {"name":"null","owner_slice_id":"","owner_evidence":"","slice":null},
+                 {"name":"omitted","owner_slice_id":"","owner_evidence":""},
+                 {"name":"real","owner_slice_id":"","owner_evidence":"",
+                  "slice":{"id":"sse-stream","title":"t","objective":"o","questions":[],"weight":3}}
+               ]}"#,
+        )
+        .expect("a part whose rows obey the prompt must still parse");
+        let (rows, unreadable) = out.rows();
+        assert_eq!(rows.len(), 5, "every row survives");
+        assert!(unreadable.is_empty());
+        let (slices, coverage) = coverage_rows_to_slices(rows);
+        assert_eq!(
+            slices.len(),
+            1,
+            "only the real proposal is work: {slices:?}"
+        );
+        assert_eq!(slices[0].id, "sse-stream");
+        assert_eq!(coverage.len(), 4);
+    }
+
+    /// An id-less slice object routes to None rather than to a blank-id slice, which cannot key a task.
+    #[test]
+    fn an_id_less_slice_object_is_coverage_not_a_nameless_task() {
+        let c: CoverageComponent =
+            serde_json::from_str(r#"{"name":"x","slice":{"title":"t","objective":"o"}}"#).unwrap();
+        assert!(c.slice.is_none());
+    }
+
+    /// One unreadable row costs one row, not the part.
+    #[test]
+    fn one_unreadable_row_does_not_cost_the_table() {
+        let out: CoverageOutput = serde_json::from_str(
+            r#"{"components":[
+                 {"name":"good","owner_slice_id":"","owner_evidence":""},
+                 "a bare string the model should not have written",
+                 42
+               ]}"#,
+        )
+        .expect("a bad row must not fail the document");
+        let (rows, unreadable) = out.rows();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(
+            unreadable.len(),
+            2,
+            "reported, not swallowed — silence here reads as 'this part found nothing'"
+        );
+    }
+
+    fn brief(id: &str, files: &[&str]) -> SliceBrief {
+        SliceBrief {
+            id: id.to_string(),
+            title: id.to_string(),
+            objective: String::new(),
+            files: files.iter().map(|f| f.to_string()).collect(),
+            brief: format!("spec for {id}"),
+        }
+    }
+
+    /// The fallback plan hardcoded `"files": []`, so on either fallback path every task owned NOTHING:
+    /// no ownership for the scheduler to serialise on, an empty `smoke_all_files`, and
+    /// `require_advertised_entry_files` degenerating to nothing at all.
+    #[test]
+    fn the_fallback_plan_gives_each_task_the_files_its_brief_declared() {
+        let plan = flat_plan_from_briefs(
+            &[
+                brief("store", &["app/store.py"]),
+                brief("api", &["app/api.py", "app/store.py"]),
+            ],
+            TargetLang::Python,
+        );
+        let v: serde_json::Value = serde_json::from_str(&plan).unwrap();
+        let tasks = v["subtasks"].as_array().unwrap();
+        let files = |id: &str| -> Vec<String> {
+            tasks.iter().find(|t| t["id"] == id).unwrap()["files"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|f| f.as_str().unwrap().to_string())
+                .collect()
+        };
+        assert_eq!(files("store"), vec!["app/store.py".to_string()]);
+        assert_eq!(
+            files("api"),
+            vec!["app/api.py".to_string()],
+            "FIRST CLAIMANT WINS — two tasks owning one file is a plan the scheduler cannot parallelise"
+        );
+        let d = decomposition_of(&plan);
+        assert!(
+            d["tasks_owning_nothing"].as_array().unwrap().is_empty(),
+            "the whole point: the fallback plan is no longer a plan of tasks that own nothing"
+        );
+    }
+
+    /// `decomposition_of`'s doc comment claims ONE rule in ONE place; there were two, and only the
+    /// inline copy carried the module/package shadow detector — so a shadow introduced by a REVIEW patch
+    /// was invisible in the only reading taken after the patch.
+    #[test]
+    fn the_decomposition_counters_carry_the_shadow_detector() {
+        let plan = r#"{"subtasks":[
+            {"id":"viz-records","files":["app/viz.py"]},
+            {"id":"viz-layout","files":["app/viz/layout.py"]},
+            {"id":"integrate-verify","files":[]}
+        ]}"#;
+        let d = decomposition_of(plan);
+        assert_eq!(
+            d["module_package_collisions"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|v| v.as_str().unwrap())
+                .collect::<Vec<_>>(),
+            vec!["app/viz.py"],
+            "app/viz.py is unreachable once app/viz/ exists — this killed the first run to reach BUILD"
+        );
+        assert!(
+            d["tasks_owning_nothing"].as_array().unwrap().is_empty(),
+            "integrate-verify owns nothing BY DESIGN and must stay exempt"
+        );
+    }
+
+    /// A LIVE PANIC: two lookups took a byte offset from an UPPERCASED copy and sliced the ORIGINAL.
+    /// `to_uppercase()` changes byte length (ß -> SS), so the offset can land mid-UTF-8. Two sibling
+    /// parsers in this file were already fixed for exactly this; this one was missed.
+    #[test]
+    fn rating_a_reply_containing_non_ascii_does_not_panic_or_misparse() {
+        let reply = "1. Straße — CRITICAL FILES: app/store.py\n\
+                     2. ﬁle handling — MINOR FILES: app/api.py\n\
+                     3. DUPLICATE 1 — ıdentical render failure\n";
+        let out = parse_rating_reply(reply, 3);
+        assert_eq!(out.len(), 3);
+        assert!(out[0].critical);
+        assert_eq!(out[0].files, vec!["app/store.py".to_string()]);
+        assert!(!out[1].critical);
+        assert_eq!(out[1].files, vec!["app/api.py".to_string()]);
+        assert_eq!(
+            out[2].duplicate_of,
+            Some(0),
+            "the duplicate still resolves after a ß, a ﬁ ligature and a dotless ı"
+        );
+    }
+
+    /// Four of the verifier's five detectors iterate the owned list, so a corpus sweep with no `--owns`
+    /// could only ever run the import check — and printed the flat word "clean".
+    #[test]
+    fn the_owned_files_a_run_declared_can_be_read_back_out_of_its_log() {
+        let dir = tmp("runlog");
+        std::fs::create_dir_all(dir.join(".swarm")).unwrap();
+        std::fs::write(
+            dir.join(".swarm/run.jsonl"),
+            "{\"event\":\"phase\",\"phase\":\"build\"}\n\
+             {\"event\":\"task_owns\",\"task_id\":\"store\",\"owned_files\":[\"app/store.py\"]}\n\
+             {\"event\":\"task_owns\",\"task_id\":\"store\",\"owned_files\":[\"app/store.py\"]}\n\
+             {\"event\":\"task_owns\",\"task_id\":\"api\",\"owned_files\":[\"app/api.py\"]}\n\
+             not json at all\n",
+        )
+        .unwrap();
+        assert_eq!(
+            owned_files_from_run_log(&dir),
+            vec!["app/api.py".to_string(), "app/store.py".to_string()],
+            "de-duplicated, sorted, and unbothered by a truncated line"
+        );
+        assert!(
+            owned_files_from_run_log(&tmp("runlog-empty")).is_empty(),
+            "a tree with no .swarm directory yields nothing, and the caller must SAY so"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

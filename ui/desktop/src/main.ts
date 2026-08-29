@@ -3252,14 +3252,19 @@ ipcMain.handle('read-swarm-run', async (event, workingDir: string) => {
     // the facts still come from the incremental reader below, and the poll stays as the net for the
     // updates fs.watch drops.
     const sender = event.sender;
+    // Keyed by SUBSCRIPTION, not by window: one renderer mounts several useSwarmRun hooks on different
+    // working dirs (BaseChat and NavigationPanel can both be live), and keying on sender.id alone made
+    // them overwrite each other's watch target — whichever read last won, and tearing one down released
+    // the watch out from under the other.
+    const subscriberKey = `${sender.id}::${workingDir}`;
     const first = swarmWatchers.ensure(
-      sender.id,
+      subscriberKey,
       { workingDir, swarmDir, eventsDir: path.dirname(runFilePath), runId },
       (delta) => {
         if (!sender.isDestroyed()) sender.send('swarm:delta', delta);
       }
     );
-    if (first) sender.once('destroyed', () => swarmWatchers.release(sender.id));
+    if (first) sender.once('destroyed', () => swarmWatchers.release(subscriberKey));
 
     // APPEND-ONLY, so parse only what is new. This used to re-read and re-parse the whole log from byte
     // 0 on every 500ms poll -- 68KB per poll on a real run, forever, to learn about one appended line.

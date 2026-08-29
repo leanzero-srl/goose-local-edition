@@ -20,7 +20,7 @@ beforeEach(async () => {
   await fs.writeFile(path.join(swarmDir, 'run-r1.jsonl'), '{"event":"start"}\n');
   sent = [];
   reg = new SwarmWatchRegistry({ debounceMs: 20 });
-  reg.ensure(1, { workingDir: root, swarmDir, eventsDir: swarmDir, runId: 'r1' }, (d) =>
+  reg.ensure('1', { workingDir: root, swarmDir, eventsDir: swarmDir, runId: 'r1' }, (d) =>
     sent.push(d)
   );
   // MEASURED on macOS: a write in the first ~100ms after fs.watch returns is never delivered — the
@@ -51,13 +51,14 @@ describe('SwarmWatchRegistry against a real filesystem', () => {
     expect(sent[0]).toMatchObject({ workingDir: root, runId: 'r1' });
   });
 
-  it('pushes when a worker rewrites its activity digest', async () => {
+  it('does NOT push for an activity digest rewrite — that churn belongs to the poll', async () => {
+    // The engine rewrites these ~2.5x/sec per lane. Pushing on them drove the main process from a
+    // fixed 2 reads/sec to roughly 10, and each read re-parses every digest in full because digests
+    // are rewritten in place rather than appended — the incremental reader has nothing to skip.
+    // A digest change is therefore left to the 500ms poll, which already bounds its cost.
     await fs.writeFile(path.join(activityDir, 'slice-store.json'), '{"last_text":"hello"}');
-    await waitForDelta(1);
-    // macOS attributes a write inside activity/ to the parent watcher as readily as to its own, so
-    // `source` is diagnostic only — which watcher noticed is not something a receiver may act on.
-    expect([swarmDir, activityDir]).toContain(sent[0].source);
-    expect(sent[0]).toMatchObject({ workingDir: root, runId: 'r1' });
+    await new Promise((r) => setTimeout(r, 400));
+    expect(sent).toHaveLength(0);
   });
 
   it('pushes again after the first delta, so a run keeps streaming', async () => {
@@ -69,7 +70,7 @@ describe('SwarmWatchRegistry against a real filesystem', () => {
   });
 
   it('goes silent once released — no handle survives the renderer', async () => {
-    reg.release(1);
+    reg.release('1');
     expect(reg.size()).toBe(0);
     await fs.appendFile(path.join(swarmDir, 'run-r1.jsonl'), '{"event":"after"}\n');
     await new Promise((r) => setTimeout(r, 200));

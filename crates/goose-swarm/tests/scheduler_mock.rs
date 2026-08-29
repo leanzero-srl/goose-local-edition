@@ -1965,3 +1965,216 @@ async fn an_unsaturated_fleet_never_asks_for_another_node() {
         "no queued work was ever blocked on a full fleet"
     );
 }
+
+// ---------------------------------------------------------------------------------------------
+// A CASCADE IS A TERMINAL OUTCOME. `fail_descendants` used to set `TaskState::Failed` and emit
+// nothing at all: a task killed by its dependency was never dispatched and never completed, so a
+// finished run rendered it as a PENDING row with no reason and every downstream failure count
+// silently excluded it.
+// ---------------------------------------------------------------------------------------------
+
+#[tokio::test]
+async fn a_cascade_failed_task_reports_its_outcome_once_and_says_which_dependency_died() {
+    // A DIAMOND: root -> left, root -> right, both -> join. `join` is reachable by two failed
+    // paths and must be reported EXACTLY ONCE — a second report would double-count the failure.
+    let specs = vec![
+        spec("root", &[], &["root.rs"]),
+        spec("left", &["root"], &["left.rs"]),
+        spec("right", &["root"], &["right.rs"]),
+        spec("join", &["left", "right"], &["join.rs"]),
+        spec("solo", &[], &["solo.rs"]),
+    ];
+    let dag = Dag::from_specs(specs).unwrap();
+    let rec = Arc::new(Mutex::new(Recorder::default()));
+    let disp = Arc::new(MockDispatcher {
+        rec: rec.clone(),
+        delay: Duration::from_millis(5),
+        fail_transient_first: HashSet::new(),
+        terminal: HashSet::from(["root".to_string()]),
+        slow: HashSet::new(),
+    });
+    let events = Arc::new(EventLog::default());
+    let report = Scheduler::new(vec![dev("d1", "m-1", 2)], 3)
+        .with_sink(events.clone())
+        .run(dag, disp, String::new())
+        .await
+        .unwrap();
+    assert_eq!(
+        report.failed.iter().cloned().collect::<HashSet<_>>(),
+        HashSet::from([
+            "root".to_string(),
+            "left".to_string(),
+            "right".to_string(),
+            "join".to_string()
+        ]),
+        "the whole write-owning cone fails"
+    );
+
+    let completions = events.named("task_completed");
+    for cascaded in ["left", "right", "join"] {
+        let mine: Vec<_> = completions
+            .iter()
+            .filter(|v| v["task_id"] == cascaded)
+            .collect();
+        assert_eq!(
+            mine.len(),
+            1,
+            "{cascaded} must report its terminal outcome exactly once: {mine:?}"
+        );
+        assert_eq!(mine[0]["status"], "failed", "{cascaded}");
+        let why = mine[0]["error"].as_str().unwrap_or_default();
+        assert!(
+            why.starts_with("dependency '") && why.ends_with("' failed"),
+            "a failed row must say WHY, naming its DIRECT failed dependency. got: {why:?}"
+        );
+    }
+    let root = completions
+        .iter()
+        .find(|v| v["task_id"] == "root")
+        .expect("the task that actually failed still reports");
+    assert_eq!(root["status"], "failed");
+    assert_eq!(
+        root["error"], "boom",
+        "the dispatched failure keeps its own error, not a cascade reason"
+    );
+    let join_why = completions.iter().find(|v| v["task_id"] == "join").unwrap()["error"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert!(
+        join_why.contains("'left'") || join_why.contains("'right'"),
+        "the reason names the DIRECT dependency, not the BFS root. got: {join_why:?}"
+    );
+    assert!(
+        completions
+            .iter()
+            .any(|v| v["task_id"] == "solo" && v["status"] == "done"),
+        "an independent task is untouched"
+    );
+}
+
+// ---------------------------------------------------------------------------------------------
+// THE TREE WARDEN. The judge inspects ONE in-flight worker's own files, single-flight and
+// cooldown-gated, so a dependency that reported done while writing nothing — or only the stub the
+// engine pre-created — was invisible to the whole fan building on top of it until integrate-verify.
+// ---------------------------------------------------------------------------------------------
+
+/// One dispatch as the probe saw it: which task, which attempt, and what hint it carried.
+struct SeenDispatch {
+    task: String,
+    attempt: u32,
+    hint: Option<String>,
+}
+
+struct HintRecordingDispatcher {
+    seen: Arc<Mutex<Vec<SeenDispatch>>>,
+    transient_first: HashSet<String>,
+}
+
+#[async_trait]
+impl TaskDispatcher for HintRecordingDispatcher {
+    async fn run(&self, req: DispatchRequest) -> Result<TaskRunOutput, DispatchError> {
+        self.seen.lock().unwrap().push(SeenDispatch {
+            task: req.task_id.clone(),
+            attempt: req.attempt,
+            hint: req.prior_hint.clone(),
+        });
+        if req.attempt == 0 && self.transient_first.contains(&req.task_id) {
+            return Err(DispatchError::Transient("Model is unloaded".into()));
+        }
+        Ok(format!("out-{}", req.task_id).into())
+    }
+}
+
+#[tokio::test]
+async fn the_warden_reports_a_hollow_dependency_and_routes_it_to_the_next_dispatch() {
+    // `core` is marked done having written nothing. `feature` builds on it and, on its retry, must
+    // be TOLD — that is the whole point: a finding nobody routes is a finding nobody acts on.
+    let dag = Dag::from_specs(vec![
+        spec("core", &[], &["warden_core_never_written.rs"]),
+        spec("feature", &["core"], &["warden_feature.rs"]),
+    ])
+    .unwrap();
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    let disp = Arc::new(HintRecordingDispatcher {
+        seen: seen.clone(),
+        transient_first: HashSet::from(["feature".to_string()]),
+    });
+    let events = Arc::new(EventLog::default());
+    let report = Scheduler::new(vec![dev("d1", "m-1", 1)], 3)
+        .with_sink(events.clone())
+        .run(dag, disp, String::new())
+        .await
+        .unwrap();
+    assert_eq!(report.done.len(), 2, "the warden never changes an outcome");
+
+    let found = events.named("tree_defect");
+    assert_eq!(
+        found.len(),
+        1,
+        "one finding, stated ONCE however many sweeps see it: {found:?}"
+    );
+    assert_eq!(found[0]["task_id"], "feature");
+    assert_eq!(found[0]["dependency"], "core");
+    let detail = found[0]["detail"].as_str().unwrap();
+    assert!(
+        detail.contains("warden_core_never_written.rs"),
+        "the finding names the file: {detail}"
+    );
+
+    let seen = seen.lock().unwrap();
+    let retry = seen
+        .iter()
+        .find(|d| d.task == "feature" && d.attempt == 1)
+        .expect("feature must be re-dispatched");
+    let hint = retry.hint.clone().unwrap_or_default();
+    assert!(
+        hint.contains("warden_core_never_written.rs"),
+        "the warden's finding must REACH the worker that has to live with it. got: {hint:?}"
+    );
+}
+
+#[tokio::test]
+async fn the_warden_is_silent_when_the_dependency_actually_delivered() {
+    // THE NEGATIVE CONTROL, on the same shape and the same sweep: an empty finding list must mean
+    // "the tree is fine", not "the sweep cannot see this dependency". The test above is the
+    // positive control that proves it can.
+    let dir = std::env::temp_dir().join(format!("goose-warden-ok-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let delivered = dir.join("core_delivered.rs");
+    std::fs::write(&delivered, "pub fn go() -> u32 { 1 }\n").unwrap();
+
+    let dag = Dag::from_specs(vec![
+        spec("core", &[], &[delivered.to_str().unwrap()]),
+        spec("feature", &["core"], &["warden_feature2.rs"]),
+    ])
+    .unwrap();
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    let disp = Arc::new(HintRecordingDispatcher {
+        seen: seen.clone(),
+        transient_first: HashSet::from(["feature".to_string()]),
+    });
+    let events = Arc::new(EventLog::default());
+    let report = Scheduler::new(vec![dev("d1", "m-1", 1)], 3)
+        .with_sink(events.clone())
+        .run(dag, disp, String::new())
+        .await
+        .unwrap();
+    assert_eq!(report.done.len(), 2);
+    assert!(
+        events.named("tree_defect").is_empty(),
+        "a healthy tree must produce no finding: {:?}",
+        events.named("tree_defect")
+    );
+    let seen = seen.lock().unwrap();
+    let retry = seen
+        .iter()
+        .find(|d| d.task == "feature" && d.attempt == 1)
+        .expect("feature must be re-dispatched");
+    assert_eq!(
+        retry.hint, None,
+        "and no correction is put in the worker's mouth: {:?}",
+        retry.hint
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}

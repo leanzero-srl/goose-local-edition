@@ -163,26 +163,6 @@ pub fn apply_patch(plan_json: &str, patch: &PlanPatch) -> Result<String, String>
             .any(|r| t.get("id").and_then(|v| v.as_str()) == Some(r.as_str()))
     });
 
-    // A REMOVED TASK CANNOT REMAIN A DEPENDENCY, AND LEAVING IT ONE COSTS THE WHOLE PATCH.
-    //
-    // MEASURED, run swarm-3node-r0 REVIEW round 1: the reviewer correctly found three duplicate-file
-    // collisions and merged `viz-rendering-core` into `viz-interaction`. `integrate-verify` depends on
-    // every producer, so the merge left it depending on a task that no longer existed, validation failed
-    // with "task `integrate-verify` depends on unknown task `viz-rendering-core`", and the ENTIRE
-    // six-task patch was dropped -- including the two collision fixes that were perfectly valid.
-    //
-    // Stripping the dangling reference is not a repair of the model's intent, it IS the intent: a task
-    // that is gone cannot be waited on. Doing it here rather than asking the reviewer to remember also
-    // means the rule holds for every future patch, instead of depending on a prompt clause holding.
-    for t in subtasks.iter_mut() {
-        if let Some(deps) = t.get_mut("depends_on").and_then(|d| d.as_array_mut()) {
-            deps.retain(|d| {
-                d.as_str()
-                    .is_none_or(|id| !patch.remove.iter().any(|r| r == id))
-            });
-        }
-    }
-
     for a in &patch.add {
         let mut m = Map::new();
         m.insert("id".into(), Value::from(a.id.clone()));
@@ -196,6 +176,32 @@ pub fn apply_patch(plan_json: &str, patch: &PlanPatch) -> Result<String, String>
         m.insert("files".into(), Value::from(a.files.clone()));
         m.insert("depends_on".into(), Value::from(a.depends_on.clone()));
         subtasks.push(Value::Object(m));
+    }
+
+    // A REMOVED TASK CANNOT REMAIN A DEPENDENCY, AND LEAVING IT ONE COSTS THE WHOLE PATCH.
+    //
+    // MEASURED, run swarm-3node-r0 REVIEW round 1: the reviewer correctly found three duplicate-file
+    // collisions and merged `viz-rendering-core` into `viz-interaction`. `integrate-verify` depends on
+    // every producer, so the merge left it depending on a task that no longer existed, validation failed
+    // with "task `integrate-verify` depends on unknown task `viz-rendering-core`", and the ENTIRE
+    // six-task patch was dropped -- including the two collision fixes that were perfectly valid.
+    //
+    // Stripping the dangling reference is not a repair of the model's intent, it IS the intent: a task
+    // that is gone cannot be waited on. Doing it here rather than asking the reviewer to remember also
+    // means the rule holds for every future patch, instead of depending on a prompt clause holding.
+    //
+    // IT RUNS AFTER THE `add` PUSH, NOT BEFORE. Remove-and-replace (drop a task, add the successors that
+    // split it) is the commonest reviewer shape, and those added tasks name the removed id in their own
+    // `depends_on`. A strip that ran over the pre-existing tasks only left exactly the dangling reference
+    // it exists to remove, and `Dag::from_specs` below then threw away the whole patch -- the original
+    // failure reproduced one call site over.
+    for t in subtasks.iter_mut() {
+        if let Some(deps) = t.get_mut("depends_on").and_then(|d| d.as_array_mut()) {
+            deps.retain(|d| {
+                d.as_str()
+                    .is_none_or(|id| !patch.remove.iter().any(|r| r == id))
+            });
+        }
     }
 
     let out = serde_json::to_string(&plan).map_err(|e| e.to_string())?;
@@ -251,6 +257,74 @@ mod tests {
             iv["depends_on"].as_array().unwrap().len(),
             1,
             "the join keeps its surviving dependency"
+        );
+    }
+
+    /// THE SAME FAILURE, ONE CALL SITE OVER. Remove-and-replace is the commonest reviewer shape: drop a
+    /// task, add the successors that split it — and those added tasks still name the removed id. While the
+    /// strip ran before the `add` push it never saw them, so the dangling reference survived and the DAG
+    /// check threw away the entire patch, collision fixes included.
+    #[test]
+    fn an_added_task_cannot_depend_on_a_task_the_same_patch_removes() {
+        let plan = r#"{"subtasks":[
+            {"id":"viz-rendering-core","files":["web/viz.js"],"depends_on":[]},
+            {"id":"integrate-verify","files":[],"depends_on":["viz-rendering-core"]}
+        ]}"#;
+        let patch = PlanPatch {
+            replace: vec![TaskEdit {
+                id: "integrate-verify".into(),
+                files: None,
+                depends_on: Some(vec![
+                    "viz-rendering-core".into(),
+                    "viz-render".into(),
+                    "viz-interaction".into(),
+                ]),
+            }],
+            add: vec![
+                TaskAdd {
+                    id: "viz-render".into(),
+                    description: "draw the chart".into(),
+                    files: vec!["web/render.js".into()],
+                    depends_on: vec!["viz-rendering-core".into()],
+                    ..Default::default()
+                },
+                TaskAdd {
+                    id: "viz-interaction".into(),
+                    description: "hover and zoom".into(),
+                    files: vec!["web/interact.js".into()],
+                    depends_on: vec!["viz-render".into(), "viz-rendering-core".into()],
+                    ..Default::default()
+                },
+            ],
+            remove: vec!["viz-rendering-core".to_string()],
+        };
+        let out = apply_patch(plan, &patch)
+            .expect("a split must not be rejected for naming the task it splits");
+        let v: Value = serde_json::from_str(&out).unwrap();
+        let tasks = v["subtasks"].as_array().unwrap();
+        assert_eq!(
+            tasks.len(),
+            3,
+            "the removed task is gone, both successors are in"
+        );
+        for t in tasks {
+            let deps: Vec<&str> = t["depends_on"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|d| d.as_str().unwrap())
+                .collect();
+            assert!(
+                !deps.contains(&"viz-rendering-core"),
+                "task {} still waits on a task that no longer exists: {deps:?}",
+                t["id"]
+            );
+        }
+        let inter = tasks.iter().find(|t| t["id"] == "viz-interaction").unwrap();
+        assert_eq!(
+            inter["depends_on"].as_array().unwrap(),
+            &vec![Value::from("viz-render")],
+            "only the dangling half of an added task's deps is dropped"
         );
     }
 
