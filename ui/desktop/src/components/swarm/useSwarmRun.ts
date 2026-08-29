@@ -210,6 +210,10 @@ export interface TurnLane {
   thinkingChars?: number;
   /** The WHOLE reasoning channel from `<task>.think.log` — the digest only keeps a 2,400-char window. */
   fullThinking?: string;
+  /// The durable `<task>.log` — every chunk of the ANSWER channel, appended, with no clip. `lastText` is
+  /// the digest's ROLLING view of the same stream, which is why the OUTPUT pane appeared to scroll away
+  /// its own beginning. main.ts has been supplying this all along and nothing read it.
+  fullTranscript?: string;
   lastThinking?: string;
   /** "processing" while the node is prompt-processing (dispatched, no tokens yet) — shown before generation. */
   phase?: string;
@@ -1994,6 +1998,8 @@ export function foldEvents(
       // 2,400-char rolling window. The pane WAS truncated -- just not where anyone was looking.
       fullThinking:
         (act as { full_thinking?: string } | undefined)?.full_thinking ?? t.fullThinking,
+      fullTranscript:
+        (act as { full_transcript?: string } | undefined)?.full_transcript ?? t.fullTranscript,
       errors: act?.errors ?? t.errors,
     };
   });
@@ -2040,6 +2046,7 @@ export function foldEvents(
         lastThinking: d.last_thinking,
         // Same source for the count and the body -- see the note on the merge site.
         fullThinking: (d as { full_thinking?: string })?.full_thinking,
+      fullTranscript: (d as { full_transcript?: string })?.full_transcript,
         phase: d.phase,
         errors: d.errors,
         seq: i,
@@ -2089,6 +2096,7 @@ export function foldEvents(
       // See the note below: the header and the body must read the SAME source, or the count says
       // 22,150 chars while the pane shows the digest's 2,400-char rolling window.
       fullThinking: (d as { full_thinking?: string })?.full_thinking,
+      fullTranscript: (d as { full_transcript?: string })?.full_transcript,
       phase: d.phase,
       errors: d.errors,
       seq: i,
@@ -2370,6 +2378,7 @@ export function deriveFleet(args: {
       toolCalls: d?.tool_calls,
       thinkingChars: d?.thinking_chars,
       fullThinking: (d as { full_thinking?: string })?.full_thinking,
+      fullTranscript: (d as { full_transcript?: string })?.full_transcript,
       lastThinking: d?.last_thinking,
       phase: d?.phase,
       errors: d?.errors,

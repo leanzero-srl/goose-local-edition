@@ -907,6 +907,26 @@ const NodeExpandBox: React.FC<{ text: string; fill?: boolean }> = ({ text, fill 
 ///
 /// `fullThinking` is the durable `<task>.think.log`. `lastThinking` is the digest's 2,400-char ROLLING
 /// WINDOW over that same stream — a suffix of the log by construction. They must never be joined.
+/// WHAT THE OUTPUT PANE SHOWS. The mirror of `inspectorThinkingText`, and the same bug in the other
+/// channel: `fullTranscript` is the durable `<task>.log` — every chunk of the ANSWER channel, appended,
+/// no clip — while `lastText` is the digest's ROLLING view of that same stream.
+///
+/// Mihai, on `approval-workflow`: the OUTPUT pane ended mid-sentence at "currency", having scrolled away
+/// its own beginning. `main.ts` had been supplying `full_transcript` on every digest the whole time and
+/// NOTHING in the UI read it — zero references outside main.ts.
+///
+/// Tool-call summaries (`recent`) are a DIFFERENT channel and are still prepended: they are what the model
+/// DID, and the transcript is what it SAID.
+export function inspectorOutputText(lane: {
+  fullTranscript?: string;
+  recent?: string[];
+  lastText?: string;
+}): string {
+  const durable = lane.fullTranscript?.trim() ?? '';
+  const said = durable || (lane.lastText?.trim() ?? '');
+  return [...(lane.recent ?? []), said].filter(Boolean).join('\n\n');
+}
+
 export function inspectorThinkingText(lane: {
   fullThinking?: string;
   fullReasoning?: string;
@@ -953,9 +973,7 @@ const NodeInspector: React.FC<{
   // The window is only a FALLBACK, for a lane whose durable log has not appeared yet.
   const thinkText = collapseRepeats(inspectorThinkingText(lane ?? {}));
   const calls = lane?.calls ?? [];
-  const outText = [...(lane?.recent ?? []), lane?.lastText?.trim() ?? '']
-    .filter(Boolean)
-    .join('\n\n');
+  const outText = inspectorOutputText(lane ?? {});
 
   const Pane: React.FC<{ title: string; count: string; body: string; empty: string }> = ({
     title,
