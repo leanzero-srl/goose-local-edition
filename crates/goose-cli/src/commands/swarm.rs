@@ -25669,6 +25669,28 @@ fn slugify_slice_id(name: &str) -> String {
     out.trim_end_matches('-').chars().take(48).collect()
 }
 
+/// Split unowned coverage rows into the ones that PROPOSE WORK and the ones that are only coverage.
+///
+/// A row whose `slice` is absent is a fact about the request, not a thing anybody builds — the enumerator
+/// is told to leave the field empty for exactly that case. This used to be `unwrap_or_else`, which
+/// FABRICATED a slice from the component's name and so produced a build task precisely when the model had
+/// obeyed. Run 4 shipped `background-color-101828` ("Background color #101828") into a 21-slice plan that
+/// way, and ten of its twenty-six tasks ended up owning no files at all.
+///
+/// Returns (slices to add, names kept as coverage only).
+fn coverage_rows_to_slices(rows: Vec<CoverageComponent>) -> (Vec<OpenSlice>, Vec<String>) {
+    let (proposed, coverage_only): (Vec<_>, Vec<_>) =
+        rows.into_iter().partition(|c| c.slice.is_some());
+    (
+        proposed
+            .into_iter()
+            .filter_map(|c| c.slice)
+            .filter(|sl| !sl.id.trim().is_empty())
+            .collect(),
+        coverage_only.into_iter().map(|c| c.name).collect(),
+    )
+}
+
 #[derive(serde::Deserialize, Default)]
 pub(crate) struct CoverageComponent {
     #[serde(default)]
@@ -26602,26 +26624,18 @@ impl GooseAgentDispatcher {
                             // The fallback made sense when the prompt said "write the slice that SHOULD own
                             // it" and an empty field meant the model had failed to comply. It gives "empty"
                             // a meaning now, so the engine has to honour it.
-                            let (proposed, coverage_only): (Vec<_>, Vec<_>) = table
-                                .into_iter()
-                                .filter(|c| !owned(c))
-                                .partition(|c| c.slice.is_some());
+                            let (slices, coverage_only) = coverage_rows_to_slices(
+                                table.into_iter().filter(|c| !owned(c)).collect(),
+                            );
                             if !coverage_only.is_empty() {
                                 me.events.write_value(serde_json::json!({
                                     "event": "coverage_rows_not_work",
                                     "part": i + 1,
                                     "dropped": coverage_only.len(),
-                                    "names": coverage_only
-                                        .iter()
-                                        .map(|c| c.name.clone())
-                                        .collect::<Vec<_>>(),
+                                    "names": coverage_only,
                                 }));
                             }
-                            proposed
-                                .into_iter()
-                                .filter_map(|c| c.slice)
-                                .filter(|sl| !sl.id.trim().is_empty())
-                                .collect::<Vec<_>>()
+                            slices
                         }
                         // A part nobody could read leaves the breakdown as it was for that part.
                         Err(_) => Vec::new(),
@@ -42835,5 +42849,53 @@ mod live_fleet_tests {
         assert_eq!(d["tasks"], 0);
         assert_eq!(d["tasks_sharing_a_file"], 0);
         assert!(d["shared_files"].as_array().unwrap().is_empty());
+    }
+
+    /// The exact rows run 4 turned into build tasks. A hex colour and a payment volume are FACTS about the
+    /// request; the enumerator marks them by leaving `slice` empty, and the engine used to fabricate a
+    /// slice from the name anyway -- so obeying the instruction produced a task.
+    #[test]
+    fn a_row_with_no_slice_is_coverage_and_never_becomes_work() {
+        let rows: Vec<CoverageComponent> = serde_json::from_str(
+            r##"[
+              {"name":"Background color #101828","named_in_request":"#101828",
+               "owner_slice_id":"","owner_evidence":""},
+              {"name":"12,288 payment instances","named_in_request":"12,288",
+               "owner_slice_id":"","owner_evidence":""},
+              {"name":"SSE stream endpoint /api/stream","named_in_request":"GET /api/stream",
+               "owner_slice_id":"","owner_evidence":"",
+               "slice":{"id":"sse-stream","title":"SSE stream","objective":"serve /api/stream",
+                        "questions":[],"weight":3}}
+            ]"##,
+        )
+        .expect("fixture parses");
+        let (slices, coverage) = coverage_rows_to_slices(rows);
+        assert_eq!(
+            slices.len(),
+            1,
+            "only the row that PROPOSED a slice becomes work: {:?}",
+            slices.iter().map(|s| &s.id).collect::<Vec<_>>()
+        );
+        assert_eq!(slices[0].id, "sse-stream");
+        assert_eq!(
+            coverage,
+            vec!["Background color #101828", "12,288 payment instances"],
+            "the facts are reported as coverage, not silently dropped"
+        );
+    }
+
+    /// A proposed slice with a blank id cannot key a task, so it is not work either.
+    #[test]
+    fn a_proposed_slice_with_a_blank_id_is_not_work() {
+        let rows: Vec<CoverageComponent> = serde_json::from_str(
+            r#"[{"name":"nameless","named_in_request":"x","owner_slice_id":"","owner_evidence":"",
+                 "slice":{"id":"  ","title":"t","objective":"o","questions":[],"weight":3}}]"#,
+        )
+        .unwrap();
+        let (slices, _) = coverage_rows_to_slices(rows);
+        assert!(
+            slices.is_empty(),
+            "a blank id would become a task with no identity"
+        );
     }
 }
