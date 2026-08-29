@@ -1399,6 +1399,19 @@ runs several rounds and the gaps arrive in the later ones.
       `test_steer_does_not_interrupt_in_flight_generation`,
       `test_steer_never_lands_on_a_nonterminating_generation`. This supersedes item Y, which I had
       declined on scope; Mihai made the call.
+- [ ] **AD. REVIEW's NO-NEW-FINDING STOP IS DEFEATED BY A REPHRASING REVIEWER — de-dup on the CLAIM, not
+      the sentence.** MEASURED run 3: round 2 returned 9 findings with `repeated: 0` on a plan nobody had
+      touched, because it prefixed each one with `STILL: ` and the de-dup compares a 120-char lowercase
+      prefix. A prefix-stripping regex is the wrong fix — the reviewer can rephrase in any direction. The
+      right unit is the STRUCTURAL claim the finding makes: for a duplicate-ownership finding that is
+      (file, sorted owning task ids); for an unowned-component finding it is the component name. Findings
+      that make no structural claim stay text-de-duped.
+      **NOT URGENT, because the patch-based stop already holds** — a round asking for no change ends the
+      loop whatever prose it wrapped that in — and `review_patch_stuck` (`f4dd887f7`) now ends the rejected
+      path. This is about the loop running longer than it needs to, not about it never ending.
+      CONFIDENCE: MEDIUM. The claim extraction has to survive a reviewer that words a finding freely, and
+      getting it wrong makes the loop stop EARLY, which is worse than running an extra round.
+
 - [ ] **Q. qwen3.8-flash — DIRECT TOKEN PLAN, manifest PREFLIGHT-PASSED, BLOCKED ON A CLOUD BINARY THAT
       MUST BE BUILT FROM `codex/salvage-benchmarks`, NOT `local-edition`.**
       MEASURED 2026-08-28: the fresh `local-edition` release binary is REJECTED by the harness —
@@ -1573,7 +1586,7 @@ runs several rounds and the gaps arrive in the later ones.
       on ling with longcat and laguna blocked behind it forever.
       REMAINING: longcat-2.0 (pinned), laguna-s-2.1. Budget $28.76.
 
-- [ ] **X. CLOUD QUEUE — 7 campaigns chained, unattended. `~/goose-builds/loop-state/cloud_chain.py`,
+- [x] **X. DONE — CLOUD QUEUE DRAINED 2026-08-29.** All entrants processed: deepseek-v4-flash-vision-exp PUBLISHED 67.53% (board leader), qwen3.8-27b 20.06%, and four dropped — seed-2-1-turbo (exploring not building), seed-2.0-code and laguna-s-2.1 (both the terminal-finish-reason guard), hy4-preview (smoke ATTENTION twice). longcat-2.0 built a complete working app and was voided by ONE ambiguous request in 102. Originally: 7 campaigns chained, unattended. `~/goose-builds/loop-state/cloud_chain.py`,
       pid in `cloud_chain.pid`, log `cloud_chain.log`.** Order: deepseek-vision → hy4-preview →
       seed-2-1-turbo → seed-2.0-code → ling-3.0-flash → longcat-2.0 → laguna-s-2.1. All seven are
       REGISTERED on the website (22 entrants, model-id regex passes) and each manifest is generated from
@@ -1588,7 +1601,7 @@ runs several rounds and the gaps arrive in the later ones.
       **RISK: 5 of the 6 have exactly ONE endpoint** (only ling-3.0-flash has 2), which is the qwen-flash
       shape — no failover, and one upstream 429 is terminal at zero retries. Expect at least one re-run.
       All six support tool calling and carry 262k-1M context, so none is disqualified on capability.
-- [ ] **Y. DECIDED: NOT IMPLEMENTING. Diagnosis stands; the change does not belong to me.**
+- [x] **Y. CLOSED AS A DECISION, NOT OPEN WORK. NOT IMPLEMENTING.** Diagnosis stands; the change does not belong to me.**
       This is not a confidence problem — I am confident in both the diagnosis and the fix shape. It is a
       SCOPE problem. `Agent::steer` is `crates/goose/src/agents/agent.rs`, so changing when a queued
       message lands changes behaviour for EVERY goose session, not the swarm. The current behaviour is
@@ -1621,7 +1634,7 @@ runs several rounds and the gaps arrive in the later ones.
       every goose session, not just swarm. Cancelling mid-tool-call also aborts in-flight tool futures;
       `fix_messages` repairs the pairing but whether every provider accepts the repaired history is not
       determinable from code. NOT implemented unilaterally — Mihai's call.
-- [ ] **Z. DECIDED: NOT IMPLEMENTING the `live_fleet_slots` node RE-ADD.** A node absent at boot that
+- [x] **Z. CLOSED AS A DECISION, NOT OPEN WORK. NOT IMPLEMENTING the `live_fleet_slots` node RE-ADD.**** A node absent at boot that
       returns mid-run stays idle through RESEARCH/REVIEW/TEST/FIX. Real, but: it needs the CONFIGURED
       device list, and `live_fleet_slots(devices)` is fed a function PARAMETER — the full config is not in
       scope at either call site (swarm.rs:27161, :38351), so the fix is threading a second list through
