@@ -93,6 +93,11 @@ a measurement, never an error).**
    synthesis + two refuters); its output lands as PART II of DESIGN-STABILITY-FIRST.md. Engine code waits for
    r2's score; the two desktop items (2, 3) may go first once the research says how.
 
+**r2's HERMETIC SCORE: 0.0396** (inner 0.125 × crit 0.36; 10 criticals — `sync_completeness` and
+`j_workflow_journey` both AGAIN; scratchpad/score-r2/verdict.json). Worse than r0's 0.0568, as a
+killed-at-INTEGRATE tree must be: wiring unfinished, REPAIR never ran. The number is a floor, not a
+measurement of the design.
+
 **r2 IS OVER — KILLED BY MY OWN REAP, 2026-08-30 01:44 EEST.** At 01:31 the leaked-server checkpoint fired (3 PPID-1
 app servers from the sink's dead attempt 0 — the task_retry/body-drop path skips `kill_app_tree`). I reaped
 them with `killpg`; the bare-spawn leak path never calls `setsid`, so their group WAS the engine's, and the
