@@ -397,6 +397,33 @@ it. A problem that turns out to be already owned is left out, but then it was no
 **THIS RUN KEEPS THE DEFECT** — the binary is the old one. Expect 4 features missing from its app, and read
 the score with that in mind rather than as a verdict on the decomposition.
 
+## RUN 4 LIVE ON A FULLY REBUILT APP — 2026-08-29 06:20 EEST, `build_sha c2d23ccc2`
+
+**FIRST TIME TONIGHT THAT BOTH ARTEFACTS ARE CURRENT.** The fleet went idle after the run-3 kill, which was
+the window I had been waiting for, so `just make-ui` ran and the whole bundle was reinstalled with `ditto`
+rather than the binary alone.
+
+    /Applications/Goose.app/Contents/Resources/app.asar   05:11:23
+    /Applications/Goose.app/Contents/Resources/bin/goose  05:11:24
+    UI      PRESENT  judge_notes_superseded · think.log
+    ENGINE  PRESENT  judge_call_ended_unproductive · tasks_owning_nothing
+    bundle signature valid · app survived the LaunchServices re-registration
+
+So the desktop can finally render tonight's events, and the node inspector can read `<task>.think.log` —
+Mihai's *"the output rolls and does not save into a cohesive unit"*, live in the app at last rather than
+only in git.
+
+**WHAT RUN 4 IS TESTING, all of it shipped tonight:**
+
+    apply_patch strips dangling deps    the exact merge that was rejected 3x now validates
+    plan_patched.after                  the post-patch decomposition, so a fix is proved not narrated
+    tasks_owning_nothing                over-decomposition counter
+    coverage: slice vs fact             no more "12,288 payments" as a build task
+    coverage: settled-section skip      stop re-enumerating a section that found nothing
+    judge_call_ended_unproductive       the engine ends a call that owes a structured reply
+    steer_superseding                   newest direction replaces the judge's own stale ones
+    judge_look calibration              quiet_secs + longest_recovered_gap_secs on every look
+
 ## RUN 3 KILLED — REVIEW COULD NEVER CHANGE THE PLAN, 2026-08-29 06:10 EEST
 
     round 1   new=8  repeated=0  patch_touches=6   -> rejected
