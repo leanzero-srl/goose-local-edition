@@ -1037,12 +1037,28 @@ export function laneLiveLine(lane: StreamLane): string {
   return (
     lastSubstantiveLine(tailOf(lane.fullTranscript?.trim() ?? '', INLINE_TAIL_CHARS)) ||
     substantiveChunk(lane.reasoning) ||
-    fleetThinkingLine(lane) ||
+    // THE THINKING PATH NEEDED THE SAME TREATMENT AND DID NOT GET IT.
+    //
+    // The transcript branch above was changed to the freshest LINE; this one still handed
+    // `fleetThinkingLine`'s 2,400-character BLOCK to a single-line row, which renders its beginning. And
+    // this is the branch that matters: OPEN and RESEARCH are pure reasoning, so every lane in them has
+    // no transcript at all and falls through to here. Caught by the tick on a named lane -- "workhorse
+    // (slice-boot-wrapper): its digest ADVANCED and its cell text did NOT" -- which is the complaint
+    // itself, still live in the half of the fix I did not apply.
+    thinkingLiveLine(lane) ||
     substantiveChunk(lane.lastText) ||
     (lane.recent && lane.recent.length > 0
       ? substantiveChunk(lane.recent[lane.recent.length - 1])
       : '')
   );
+}
+
+/// The reasoning run reduced to ONE line, for the inline surfaces. `fleetThinkingLine` keeps returning
+/// the whole block because the expand box wants all of it; a row that shows one line must not be handed
+/// a block and left to render whichever end it happens to render.
+export function thinkingLiveLine(lane: StreamLane | undefined): string {
+  const last = lane ? lastSubstantiveLine(laneThinkingRun(lane)) : '';
+  return last ? `💭 ${last}` : '';
 }
 
 /// THE FLEET CELL'S THINKING LINE — the reasoning run, marked as reasoning.
