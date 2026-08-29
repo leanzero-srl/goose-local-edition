@@ -55,6 +55,18 @@ implied, the summary was wrong and the sources win.
 
 ## The goal, unchanged
 
+**PART II LANDED (`3a09bf427` + amendments `55cd200d6`, DESIGN-STABILITY-FIRST.md:300-560): the stateful
+harness — capture → `.swarm/ledger` → read-before-act message; a semantic dispatch-time sink description
+built from the run's real artefacts (worked example from r2); don't-repeat as INPUT; the time inventory
+with per-mechanism replacements (the 600 s read cut and the 420 s stopwatch both provably decided model
+work WRONG in r2 → progress/lms-ps replacements); SAID provenance chips; the forming line (LM Studio arg
+streaming honestly UNMEASURED — measure before building); Claude Code patterns mirrored with doc cites.
+II.7 = a 15-row ordered r3 list in TWO TRACKS: desktop row 10 (SAID) may start now; row 11 (forming) after
+its LM Studio measurement; ALL engine rows only after run_finished + the r2 score, re-verdicted per row.
+Nine refuter amendments applied (min_age_secs was itself a wall clock; the K-counter needed the lms-ps
+guard and r2-derived K; the early gate run kept inside sink formation; the 1800 s extension expiry returns
+a measurement, never an error).**
+
 **MIHAI'S STEER, 2026-08-29 23:32 EEST — decomposed into seven asks (his words in TICK-NOTES; memory
 `stateless-models-harness-forms-the-message`):**
 1. **Wait for r2's score before deciding anything about r3.** If it fails or scores badly "we still need to figure
