@@ -142,13 +142,54 @@ export async function readTail(
   return { text: buf.toString('utf8'), size };
 }
 
+type Events = Record<string, unknown>[];
+
+/**
+ * READS OF ONE LOG ARE SERIALISED PER PATH, and this is not belt-and-braces.
+ *
+ * `readOnce` advances `entry.size` only AFTER its `await readRange(...)`, and carries the engine's
+ * half-written trailing line in `entry.rest`. Two calls in flight on the same path therefore both start
+ * from the SAME stale offset: every line in the overlap is parsed and pushed TWICE (the panel's feed
+ * renders each entry twice), and an overlapped PARTIAL line is concatenated with itself into
+ * `{"event":"task_dis{"event":"task_dispatched",...}` — unparseable, swallowed by the catch below, and
+ * unrecoverable, because the offset has already moved past those bytes. A dispatched task then never
+ * appears in the panel at all, for the life of that generation.
+ *
+ * The overlap is ordinary, not exotic. `useSwarmRun` polls with `setInterval(() => void tick(), 500)`
+ * and never awaits the previous tick, `ipcMain.handle('read-swarm-run')` does not serialise, and the
+ * hook is mounted at four sites — the chat and the navigation panel can both be live on one workingDir,
+ * which makes the concurrency unconditional rather than a matter of a slow tick.
+ *
+ * Advancing `entry.size` before the await would not be enough: `rest` and the `StringDecoder` are
+ * stateful too, and splitting the delta across two readers desynchronises both. One writer at a time per
+ * path is the only thing that keeps the accumulation faithful to the file. Different paths stay
+ * concurrent, so the handler's per-lane reads are unaffected.
+ *
+ * `readTail` needs no such chain: it snapshots `prev` before its await and publishes a WHOLE new entry,
+ * so concurrent calls each compute a self-consistent tail and the last write is correct either way.
+ */
+const inFlight = new Map<string, Promise<Events>>();
+
 /**
  * Every event in an append-only JSONL log, parsing only the lines that are new.
  *
  * A trailing partial line (the engine mid-write) is CARRIED to the next call rather than discarded, so a
  * line split across two polls is parsed once, whole, instead of being dropped as unparseable.
  */
-export async function readEvents(p: string): Promise<Record<string, unknown>[]> {
+export function readEvents(p: string): Promise<Events> {
+  const prev = inFlight.get(p);
+  const run = () => readOnce(p);
+  // Both handlers, so one caller's failure cannot strand the queue behind a rejected promise.
+  const next = prev ? prev.then(run, run) : run();
+  inFlight.set(p, next);
+  const settle = () => {
+    if (inFlight.get(p) === next) inFlight.delete(p);
+  };
+  void next.then(settle, settle);
+  return next;
+}
+
+async function readOnce(p: string): Promise<Events> {
   let size: number;
   let id: FileId;
   try {
