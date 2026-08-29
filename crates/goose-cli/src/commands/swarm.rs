@@ -42782,4 +42782,58 @@ mod live_fleet_tests {
             .collect();
         assert_eq!(live.len(), 3, "weight is capacity, not one slot per device");
     }
+
+    /// These three numbers decide whether a plan is over-decomposed, under-decomposed, or fine, and they
+    /// are read at SYNTHESIS and again after every REVIEW patch. A wrong answer here misleads every future
+    /// run silently, because each side would look internally consistent.
+    #[test]
+    fn decomposition_names_the_sharers_and_excludes_the_sink() {
+        let plan = r#"{"subtasks":[
+            {"id":"viz-rendering","files":["web/viz.js"],"depends_on":[]},
+            {"id":"viz-interaction","files":["web/viz.js"],"depends_on":[]},
+            {"id":"ledgerd","files":["app/ledgerd.py"],"depends_on":[]},
+            {"id":"background-color","files":[],"depends_on":[]},
+            {"id":"integrate-verify","files":[],"depends_on":["ledgerd"]}
+        ]}"#;
+        let d = decomposition_of(plan);
+        assert_eq!(d["tasks"], 5);
+        assert_eq!(d["distinct_files"], 2, "web/viz.js and app/ledgerd.py");
+        assert_eq!(
+            d["tasks_sharing_a_file"], 1,
+            "only web/viz.js has two owners"
+        );
+        let shared = d["shared_files"].as_array().unwrap();
+        assert_eq!(shared.len(), 1);
+        assert_eq!(shared[0]["file"], "web/viz.js");
+        let owners: Vec<&str> = shared[0]["tasks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v.as_str().unwrap())
+            .collect();
+        assert!(
+            owners.contains(&"viz-rendering") && owners.contains(&"viz-interaction"),
+            "the collision must name BOTH owners, not just count them: {owners:?}"
+        );
+        let nothing: Vec<&str> = d["tasks_owning_nothing"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v.as_str().unwrap())
+            .collect();
+        assert_eq!(
+            nothing,
+            vec!["background-color"],
+            "integrate-verify owns nothing BY DESIGN and must never be flagged: {nothing:?}"
+        );
+    }
+
+    /// A plan that cannot be parsed must read as empty rather than panicking mid-run.
+    #[test]
+    fn decomposition_of_a_broken_plan_is_empty_not_a_panic() {
+        let d = decomposition_of("not json at all");
+        assert_eq!(d["tasks"], 0);
+        assert_eq!(d["tasks_sharing_a_file"], 0);
+        assert!(d["shared_files"].as_array().unwrap().is_empty());
+    }
 }
