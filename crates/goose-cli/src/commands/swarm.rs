@@ -16406,11 +16406,21 @@ impl GooseAgentDispatcher {
                                 Some(ev) => {
                                     // PROCESSED WHERE IT ARRIVES, not queued behind the supervisor.
                                     //
-                                    // The counters, the transcripts and the recurrence fingerprints all
-                                    // advance during a probe now, so a lane being judged is a lane whose
-                                    // digest still MOVES. `judging` stays because it is the honest label
-                                    // for "a supervisor is reading this call"; `queued_chunks` is gone
-                                    // because nothing queues any more.
+                                    // The counters and the recurrence fingerprints advance during a
+                                    // probe, so a lane being judged is a lane whose digest still MOVES.
+                                    // `judging` stays because it is the honest label for "a supervisor
+                                    // is reading this call"; `queued_chunks` is gone because nothing
+                                    // queues any more.
+                                    //
+                                    // THE TRANSCRIPTS MUST ADVANCE HERE TOO. This branch wrote the digest
+                                    // and nothing else, while the comment above claimed the transcripts
+                                    // moved with it. MEASURED r1 (2026-08-29 t+21m): open-coverage-1's
+                                    // digest went 26,524 -> 27,802 chars in 32s while its .think.log sat
+                                    // at 21,462, mtime 155s behind and growing -- a lane under
+                                    // back-to-back judge looks lives in this branch, so its durable
+                                    // record froze for minutes. The inspector prefers the durable log,
+                                    // so the biggest lanes showed stale reasoning, and a hard kill
+                                    // would have lost every char since the last non-probe tick.
                                     process_stream_event!(ev);
                                     if let Some(p) = &activity_file {
                                         let due = last_digest_at.is_none_or(|t| {
@@ -16432,6 +16442,12 @@ impl GooseAgentDispatcher {
                                             if let Some(m) = &activity_mirror {
                                                 let _ = std::fs::write(m, d.to_string());
                                             }
+                                            transcript_at = append_reasoning_transcript(
+                                                p,
+                                                &texts,
+                                                transcript_at,
+                                            );
+                                            append_thinking_transcript(p, &mut think_unflushed);
                                             last_digest_at = Some(tokio::time::Instant::now());
                                         }
                                     }
