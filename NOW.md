@@ -77,8 +77,9 @@ deleting a layer to gating it; measure the fleet against ONE local node of the s
 
 **One sentence: r2 is running under the vigil (both tick halves every 10 min, kill checkpoints armed);
 `DESIGN-STABILITY-FIRST.md` (BP-1, the next evolution under STABILITY > SPEED > QUALITY) is WRITTEN and
-REVIEWED. Step 1 (PLAN-REPAIR, additive, pure fn + tests on the real r0/r1 plans) is being written in
-swarm.rs by an agent; step 14's fixtures for `plan_repaired` are IN (tick.py, snapshot_run.py, the panel).
+REVIEWED. Step 1 (PLAN-REPAIR) LANDED `ee0cbfe73` — `repair_plan_flags` + `finalize_plan_before_dag`, 8 tests
+on the real r0/r1 plans, a non-sink owns-nothing task is REFUSED at the plan boundary; step 14's fixtures
+for `plan_repaired` are IN (tick.py, snapshot_run.py, the panel). Ships in the r3 binary.
 The DELETIONS (REVIEW, CONTRACTS, judge, TEST/RATE) wait on Mihai's read — they are his call.**
 
 **Design §8 arm-S trap — RESOLVED 21:35:** benchmark runs never read config.yaml's `devices:`; the pool
