@@ -59,6 +59,11 @@ ui/desktop/            # Electron app
 ```
 
 ### Run these only if the user has asked you to build/test your changes:
+<!-- EXCEPTION, so the two instructions do not contradict: for SWARM work
+     (crates/goose-cli/src/commands/swarm.rs, crates/goose-swarm/*, ui/desktop/src/components/swarm/*)
+     the gates in .claude/rules/swarm-engine.md are MANDATORY before every commit, asked for or not --
+     a scoped `clippy -p` reports pass while the workspace gate is red, and `cargo test | tail -3` shows
+     one binary of five. -->
 ```
 # 1. cargo build
 # 2. cargo test -p <crate>
@@ -108,6 +113,13 @@ The swarm builds software by fanning work across 3 local LM Studio nodes. It is 
 in this repo and it has a specific set of invariants that produce no compiler error when broken.
 
 **Phases:** `OPEN → ASK → RESEARCH → SYNTHESIS → REVIEW → CONTRACTS → BUILD → INTEGRATE → REPAIR`.
+
+**These four are repeated here ON PURPOSE.** The detail lives in `.claude/rules/swarm-engine.md`, but
+path-scoped rules arm only on the **Read** tool — `cat`, `sed`, `grep`, Grep and Glob do NOT trigger
+them (measured against Claude Code 2.1.247). Since the fast way to open a 42,165-line file is
+`grep -n` then `sed -n 'A,Bp'`, an agent can work in `swarm.rs` for a whole session and never load that
+rules file. AGENTS.md loads at session start unconditionally, so the invariants that must never be
+broken live HERE, and the rules files carry the detail for whoever does hit them.
 
 **The four that break silently:**
 
