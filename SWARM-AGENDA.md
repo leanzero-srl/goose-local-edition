@@ -472,10 +472,22 @@ whole design and it is preserved.
 
 Emits `judge_call_ended_unproductive {task_id, nudges, thinking_chars, reason}`.
 
-**AND THE OTHER HALF OF THE DIAGNOSIS — `40c231152`:** `Agent::steer` appends to an UNBOUNDED queue, and a
-pure-reasoning call never reaches a turn boundary, so nothing drains. `open-coverage-2` accumulated
-**FIFTEEN queued nudges**. When it finally takes a turn it receives all fifteen at once — 55 rows, then 80,
-then variants. **The judge was not being ignored; it was about to be delivered fifteen times over.**
+**AND THE OTHER HALF OF THE DIAGNOSIS — `40c231152` — WAS WRONG, CORRECTED 2026-08-29 04:40 EEST.**
+
+I claimed `open-coverage-2` had accumulated **FIFTEEN queued nudges** because `Agent::steer` appends to an
+unbounded `VecDeque` and a pure-reasoning call never reaches a turn boundary. **I read `steer()` in
+isolation and ignored the wake path I had shipped MYSELF earlier the same night.** `agent.rs:2140/2147`
+breaks the stream on `steer_arrived` whenever no tool request is in flight — so a toolless call IS
+interrupted at the next chunk boundary, the turn ends, and the queue DRAINS. That is item AC working.
+
+**THE MEASUREMENT THAT SETTLES IT:** run 3 emitted `judge_notes_superseded` **0 times** across four nudges
+on a zero-tool-call lane. `dropped` is 0 every time, which means the queue was EMPTY at each nudge. The
+notes were never piling up.
+
+The fix is not harmful and is not useless — when a tool request IS in flight the break is disabled
+(`saw_tool_request_in_turn`), so steers genuinely can queue there, and superseding is right for that case.
+But **the diagnosis I gave for the disobedience was an inference presented as a measurement, and it was
+wrong.** The call ignoring a maximally concrete direction is still unexplained.
 `steer_superseding` drops only messages carrying the caller's own marker, so a USER's queued message is
 never collapsed — pinned by a test that queues a human message beside two supervisor notes and asserts the
 human's survives in place while only the newest note remains.
