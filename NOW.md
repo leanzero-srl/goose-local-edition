@@ -63,63 +63,28 @@ for the whole swarm thesis: three nodes of a model must beat one node of it, or 
 earning its cost. The published local row is 0.0273 — that is the floor a new result replaces, not the
 target, and clearing it only means the run finished.
 
-**The unfalsified claim:** the swarm's whole thesis is that parallel BUILD beats serial build, and
-**we have never reached BUILD**. Until a run does, no mechanism here is proven either way.
+**THE PRIORITY ORDER, set by Mihai 2026-08-29 after ~13 weeks: STABILITY > SPEED > QUALITY, lexicographic.**
+The adoption case is fast + stable + some extra quality, in that order. Every stability failure measured
+today lived in an LLM-in-the-loop layer that assumed convergence; the deterministic plumbing is what
+worked. Design work lives in `DESIGN-STABILITY-FIRST.md` (panel output, 2026-08-29 evening). Prefer
+deleting a layer to gating it; measure the fleet against ONE local node of the same engine ("all vs single").
+
+**BUILD has been reached once (r0, 2026-08-29). REPAIR has never yet run to a verdict under benchmark.**
 
 ---
 
 ## WHAT WE ARE DOING RIGHT NOW
 
-**One sentence: real-time streaming in the desktop panel — the panel has never actually streamed, it
-polls, and that is the user's longest-standing complaint. All four steps below are now CODE COMPLETE in
-the working tree; what is left is committing them and WATCHING THE PANEL STREAM IN THE RUNNING APP,
-because compiling and passing tests is not evidence that a UI change works.**
+**One sentence: r2 is running under the vigil (both tick halves every 10 min, kill checkpoints armed),
+while a design panel writes `DESIGN-STABILITY-FIRST.md` — the next evolution under STABILITY > SPEED >
+QUALITY — and an agent reconciles SWARM-AGENDA.md / EXPERIMENTS-LEDGER.md with today's commits.**
 
-Everything below is under a hard rule the user set: **no run starts until each fix is proven in
-ISOLATION; only then one holistic run.** Runs cost 3-4 hours and were being spent to discover things a
-2-minute test could have shown.
+Between runs, in this order: review the design under fresh eyes → implement what lands before r3 (batch by
+file, isolation-tested) → the queued engine item below → rebuild → install → r3. The "all vs single"
+control (the same engine on ONE local node, same seed and scorer) is part of that plan.
 
-### The realtime thread — `DESIGN-REALTIME-UI.md` — **COMPLETE**
-
-All four steps landed and are verified in the RUNNING app, not just in tests.
-
-| step | what it is | state |
-|---|---|---|
-| **S1** | read the run log and transcripts from a byte offset | **done** — `utils/swarmIncrementalRead.ts`; identity is inode+birthtime (a same-path replacement spliced the old file's head onto the new one's tail); reads are serialised per path with `inFlight` (overlapping 500ms polls raced the offset and *permanently lost* a `task_dispatched`); LRU-bounded at 64 paths |
-| **S3** | `foldEvents` folds only what was appended | **done** — `foldEventsIncremental`, keyed on `(runId, generation)` issued by main, not a content fingerprint |
-| **S4** | say why a lane is quiet | **done** — and simplified: the engine no longer buffers during a probe, so counters keep moving and `queued_chunks` was deleted on both sides |
-| **S2** | `fs.watch` push instead of waiting for the poll | **done** — `utils/swarmWatch.ts` → `main.ts` `sender.send('swarm:delta')` → `preload` `onSwarmDelta` → renderer; the 500ms poll stays as the safety net |
-
-**S2 watches the EVENT LOG ONLY, never `activity/`.** The engine rewrites `activity/<task>.json` ~2.5×/s
-per lane; watching it produced ~10 deltas/s against a 2/s poll, and digests are rewritten in place so the
-incremental reader cannot make those reads cheap. Push on the append-only log; poll the digests.
-
-Verified live over CDP against a growing run: events 3→4, thinking bytes 25→50, `fullThinking` holding
-**both** chunks rather than rolling, `generation` correctly stable across an append.
-
-### The other live threads
-
-- **The judge as a NUDGER, not a terminator.** The user: *"it looks more harming than anything else…
-  I was hoping the judge is not only a terminator but rather a NUDGER of good quality."* **Run 4,
-  measured 2026-08-29 09:05 EEST: 211 looks dispatched, 38 nudges, 222 node-min judging = 46% of the
-  fleet watching rather than working — and delivery was STEER, zero re-streams.** The destructive
-  re-stream is FIXED, not current: `let can_steer = pending.is_empty();` (`swarm.rs:18032`) makes steer
-  the default and re-streams only while a tool request is in flight. The "141 looks, 13 nudges, every
-  one a re-stream" reading is **2026-08-28, the BEFORE picture** — quoting it as current states the
-  engine's behaviour exactly backwards. What is still negative is OVER-steering: of 34 nudges with a
-  follow-up look, 33 produced no action, costing **66 minutes of WORKER time**. Fuller ledger, and the
-  copy to trust: `SWARM-AGENDA.md` :568 and :599. Snapshot counts of the same run differ by the minute
-  they were taken (211/38 at 09:05, 214/40 later), so cite the timestamp; never reconcile them. Open: the
-  judge running **outside the phase machinery**, checking files and plans **as they are created**, using
-  idle nodes — *"workers follow phases, judges should live outside of this and run constant checks."*
-- **The complacency audit.** A workflow found ~20 confirmed places where a fix was applied at one call
-  site when several existed. Most are **not yet applied**.
-- **Agenda item AD** — REVIEW's no-new-finding stop is defeated by a reviewer that merely rephrases;
-  de-dup must key on the structural CLAIM, not the sentence.
-- **Agenda item D** — 41 never-used functions measured; deletion deferred while workflows hold line
-  numbers in `swarm.rs`.
-
----
+The desktop streaming thread that used to live here (S1 incremental reads, S2 freshest line, S3 log
+folding) SHIPPED and was verified live on 2026-08-29; its fixes are in the table below.
 
 ## r2 IS LIVE — launched 2026-08-29 20:42:59 from the Benchmark view, engine `a80c1fa98`
 
@@ -139,125 +104,29 @@ logs keep pace with the digests under judge looks (`tick_ui` "EXCEEDS the durabl
 **Kill checkpoints armed:** a second REVIEW round; a plan re-emission; a clock stop; WEDGED (heartbeat
 fresh, no event ≥10m, fleet idle, 0% CPU); a leaked server count > 0.
 
-## r1 KILLED at REVIEW round 4 (20:23) — REVIEW diverged; r2 launches with a ONE-ROUND REVIEW
+## FIXED TODAY (2026-08-29) — all in the r2 binary `a80c1fa98`
 
-**r1 (engine `d748a7d3e`, 18:43 → 20:23, 98 min) never reached BUILD.** OPEN 7m → ASK proxied → RESEARCH
-32m (two coverage passes; the coverage loop ADDED `frontend-serving`, `reversals-fetch`, `sse-stream-endpoint`
-— r0's `GET /` 404 got an owner before build) → SYNTHESIS 6m (16 tasks, 26 files, 0 shared, chain 1) →
-**REVIEW 51m and counting: rounds surfaced 8 → 4 → 9 NEW findings**, 209k reasoning chars, round 4 started.
-The no-new-finding stop never comes because an LLM reviewer always finds another "not explicitly owned"
-concern. Round 1 caught the one real defect (viz-engine owned nothing) — which SYNTHESIS had already
-flagged deterministically in `plan_synthesized.tasks_owning_nothing`. Kill checkpoint from the plan tripped
-("a third round still surfacing new findings"); archived as
-`swarm-3node-r1-KILLED-review-diverged-8-4-9-new-findings-4-rounds-51min-vs-r0-12min`.
+| commit | what | proof |
+|---|---|---|
+| `a1324c68e` | REPAIR runs under benchmark (`proxy_yes`) | `benchmark_grants_exactly_one_repair_round` |
+| `44b2ad6cd` | exit hang: process groups + drain on group liveness at six spawn sites | two tests; `swarm gate` replay: old binary leaked 2, new 0; r1 ran 98 min with 0 orphans |
+| `133bf3bec` | contract block: a stub is a signature; read the real file | `the_contract_block_licenses_a_targeted_read_of_the_real_file` |
+| `0d5ac740d` | no phantom endpoints in the gate (backtick cell, vendor prose, notifierd rows) | real-spec test; r0 tree 10 → 4 findings, real `GET /` appears |
+| `d748a7d3e` | first source path wins in attribution | `an_authored_finding_shards_to_the_first_file…` |
+| `c3b211582` | judge-probe branch appends both transcripts | measured lag 155 s → the branch flushes |
+| `5173eab67` | REVIEW is one round, MUST-FIX flags injected | r1 8→4→9; three new tests |
+| `3ecdbed9d` `2dd046553` | UI: named fields, reasons on disabled, also-row buttons, live line follows the freshest channel | 13 + 6 tests red→green; verified live 20:50 |
+| `70486d959` `3dcf528bb` `af9dc6f3d` `b7ae6f4e1` `93280cc9c` | scorer/harness gates: string bodies, `--preflight`, `--seed` required, held-port probe, exit reaping | tests; r0 rescored 0.0568 comparable |
 
-**What r1 proved before it was stopped:** the process-group fix holds on a real run (0 leaked servers
-through the run AND after the kill); REPAIR-under-benchmark is wired (`levers.benchmark=true`); every
-plan correction was a PATCH (3 rounds, 0 re-emissions); the strip shows a node's second lane; the judge
-nudged 6× and killed 0×. What it also found: a reasoning-only looping call receives `steer` (which
-interrupts at a chunk boundary) and ignored it 6 times; the caption showed the previous round's answer
-while the new call thought (fixed in `2dd046553`); the durable logs froze under a judge look (fixed
-`c3b211582`).
-
-**THE DIFFERENT FIX (in flight, one swarm.rs agent):** REVIEW = exactly one round (agenda REDESIGN B),
-with SYNTHESIS's deterministic flags (`tasks_owning_nothing`, `module_package_collisions`,
-`shared_files`) injected into that round's prompt as MUST-FIX. Phase structure like OPEN/SYNTHESIS, not
-a cap on any call. Then: `just make-ui` → `ditto` → relaunch → `first_tick_r1.sh <new sha>`.
+**r0 = 0.0568 comparable** (seed 687ff58bfa6b707d, port 8850, playwright node; two criticals: `GET /` 404
+and `items`-vs-`data`). **r1** (18:43–20:23) killed at REVIEW round 4 — see RUN-LEDGER, EXPERIMENTS-LEDGER
+and the campaign skill changelog for the full record.
 
 **Queued for the batch AFTER r2 (engine, swarm.rs):** when the judge answers RESTART on a call with
 `actions_since_last_look == 0` and the previous steer changed nothing (thinking grew, no action), deliver the
 re-stream — a steer cannot be obeyed by a call that never reaches a turn boundary. r1 measured six steers
 ignored on one looping review lane (`judge_out_of_moves` is the greppable state).
 
-**r2 also carries:** the UI fixes from r1's ticks (`3ecdbed9d` named fields/reasons/also-row buttons,
-`2dd046553` live line follows the freshest channel) and the judge-probe transcript flush (`c3b211582`).
-
-## WHERE THINGS STAND — r0 scored, the hang is root-caused, r1 is being prepared (2026-08-29 ~17:55)
-
-**r0 = 0.0568 hermetic** (inner 0.1789 × crit_mult 0.36; seed `687ff58bfa6b707d`, vendor port 8850,
-playwright node). 28% of the 20.06% target, 2.1× the published 0.0273. Two criticals fired and between
-them they zero almost the whole scorecard:
-
-1. **`GET /` → 404.** The frontend EXISTS (`web/index.html`, `app.js` 25KB, `viz.js` 13KB) and ledgerd
-   does not serve it, so every J/V/P/T/E check is 0 and `j_loads_data` + `j_workflow_journey` trip.
-2. **`sync.py` reads `body.get("items")`; the vendor sends `"data"`.** 0/12288 payments, so B/C/X/R are
-   vacuous and `sync_completeness` trips.
-
-Both are one-line-class fixes in `app/ledgerd.py` and `app/sync.py`. r1's REPAIR round 0 (now reachable
-under benchmark, `a1324c68e`) is aimed at exactly these. Verdicts live in the run dir:
-`verdict-hermetic-seed687ff58b-port8850-0.0568.json`. An earlier 0.0832 was BLIND (hermit node has no
-playwright → 30/99 checks unavailable) and on a FRESH seed — retracted, kept under a name that says so.
-
-**The scorer gained three refuse-gates today** (`_error_obj`, `--preflight`, `--seed` required, plus a
-held-port probe shared with run_build), so none of those wrong-number mechanisms can recur silently.
-
-### THE TWO BUGS r0 FOUND — both root-caused, one committed, one landing
-
-1. **`swarm.rs:37015` — REPAIR never ran in any benchmark.** FIXED `a1324c68e`.
-2. **The exit hang — ROOT-CAUSED, corroborated by three adversarial refuters and one independent
-   agent.** `boot_invocation` (`swarm.rs:~18934`) spawns `python3 -m app` with piped stdout/stderr,
-   polls 4s, `kill()`s the direct child, then awaits the pipe tails to EOF. The wrapper's `Popen`
-   grandchildren (`ledgerd`, `notifierd`) inherit the pipes and survive the single-pid SIGKILL, so EOF
-   never comes: 0% CPU, heartbeat alive, fleet idle. **Proof:** two orphans with cwd in the run dir,
-   PPID 1, started at the exact second of `fix_criticals`. `main.rs:36` joins a big-stack thread for the
-   whole run, so `_pthread_join` on the main thread was never a finding. **The leak is systemic:** 41
-   orphaned app servers were alive on this machine, 25 from r0 alone — every boot probe / smoke that
-   killed a wrapper leaked its grandchildren, and `boot_probe` refuses to conclude on a pre-bound port.
-   **FIXED `44b2ad6cd`**: every app spawn leads its own process group; `kill_app_tree` SIGKILLs the
-   group; the pipe drain releases on GROUP liveness, not EOF. Applied at six spawn sites. Two regression
-   tests (`boot_invocation_returns_when_a_grandchild_holds_the_pipe`, `..._escaped_the_group`);
-   609 lib tests, clippy clean. Isolation proof in flight: `goose swarm verify` over r0's tree hangs on
-   the old binary and must return on the new one.
-
-### NEXT swarm.rs BATCH (after the hang commit; one agent, one file)
-
-- **Phantom endpoints in the deterministic gate** — 5 of r0's 29 "criticals" no app change can close:
-  table row ``| `GET` | `/` + `web/*` |`` yields `` /` ``; the prose regex scrapes the VENDOR's
-  `GET /v3/reversals` (spec line 86); the `notifierd` table (spec §6, rows 350-353) is probed on
-  ledgerd's port. RATE then folded the REAL `GET /` defect into a phantom duplicate.
-- **First source path wins in `extract_file_from_finding`** — D5 "Frontend not served (in
-  `app/ledgerd.py`, `web/index.html`)" shards to `web/index.html`; the fix lives in ledgerd.
-- ~~`render_node` config key~~ and ~~build sha in `run_started`~~ — REFUTED by r0's own events: `spec_contract.render_gate = "ran (rows=0, console_errors=2)"` with screenshots, and `levers_resolved.build_sha` already exists. The desktop's `resolveBenchNode` ladder does the job.
-
-### THE BIGGEST NON-BUG FINDING
-
-**Workers get their dependency's SIGNATURE and never its BEHAVIOUR.** CONTRACTS freezes a stub; the
-read-the-real-file instruction (`swarm.rs:25603`) fires only when a stub fails to PARSE. Measured:
-`boot-wrapper` depends on two services and made **0 tool calls, 0 reads**. r0's own defects prove the
-cost — `sync.py` reads `body.get("items")` where the vendor returns `"data"`, and parses `amount` where
-it sends `amount_minor`. The real files were finished on disk when those workers ran.
-
-## NEXT RUN (r1) — what is queued, and what it will settle
-
-### FIXES COMMITTED BUT NOT IN THE RUNNING BINARY (installed build is 13:06)
-
-| commit | fix | why it matters |
-|---|---|---|
-| `02c78cae3` | **drift corroborates instead of being suppressed forever** | r0: 5 DRIFTING verdicts → 1 nudge. `open-coverage-2` hit 21,749 reasoning chars with ZERO tool calls, was diagnosed DRIFTING, and held — "producing" counts reasoning, so a call that reasons and never acts is producing by definition |
-| `8f883757b` | **the thinking path takes the freshest LINE** | I fixed the transcript branch and left this one. OPEN/RESEARCH are pure reasoning, so EVERY lane in them fell through to the broken branch — the tick caught it on `workhorse (slice-boot-wrapper)` |
-| `6ba042ce3` | **the strip shows a node's second lane** | nodes are PARALLEL:2; `open-coverage-1` (68,393 chars) and `open-coverage-2` had **no cell at all** |
-| `aa8e7d90d` | inspector single-column when Output is empty; `YOUR FLEET` badge stops overprinting the row label at low scores | both from Mihai's screenshots |
-| `95f5b7d4e` | **panel defaults generated from Rust, not retyped** | `worker_max_turns` was 40 in the panel against 1,000,000 in Rust, under a test titled "the panel can never write a divergent value" |
-
-### CLAIMS r1 MUST SETTLE
-
-1. **Does the drift fix produce nudges?** r0: 5 drifting → 1 nudge. r1 should show drift delivered on a
-   second look with no action taken. Read `judge_drift_held.drift_streak`.
-2. **Does the strip show every live lane?** r0 hid the two largest lanes in the run.
-3. **Does REVIEW still stop on a no-new-finding round?** r0: `r1:new=4 → r2:new=0`. Once is not twice.
-4. **Does the warden ever fire?** Silent through all of r0 — correct only if no dependency completed
-   hollow, which is unproven either way.
-5. **Do we trip fewer criticals than the target's three?** This is the whole game: the target scored
-   inner **0.7662** and finished at 22% because criticals MULTIPLY. Our engine covers all three of its
-   classes (domain-conventions, wiring, restart-durability at `swarm.rs:20653`) — r1 says whether they fire.
-
-### THE MEASURED WASTE TO ATTACK (from r0's ledger row)
-
-- **research 39m ≈ build 49m.** Research costs as much as building.
-- **266,614 reasoning chars for 110,095 bytes of program.** A 2.4:1 deliberation cost overall, but
-  `review-screen-space-labels` alone ran **38:1** and `synthesis` **11:1**.
-- **brief median 4,789** against the ~1,500 that measured 88.7%.
-- **45 minutes lost to one task's transport drops** — recovered, but on the record.
 
 ## THE INSTRUMENTS — all of them, current 2026-08-29
 
