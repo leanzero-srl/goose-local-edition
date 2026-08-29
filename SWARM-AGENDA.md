@@ -2782,6 +2782,10 @@ hold and were dropped.
       Stamped 2026-08-29 22:00 EEST. The run survived because the engine is a detached child of the main process, but the app must not spawn windows, reload the renderer, close the run's window or quit on a key combo nobody meant. Defaults: `newChatWindow: 'CommandOrControl+N'` (settings.ts:61), a renderer Cmd+N handler (App.tsx:473), and every Electron default role accelerator (reload, force-reload, devtools, close, minimize, hide, quit) that the post-processed application menu keeps. Fix = enumerate every combo the app answers to (menu accelerators, globalShortcut, renderer keydown, default roles), remove the ones that spawn/reload/close, and guard the rest while a benchmark is live; verify in the RUNNING app over CDP after r2 (no reinstall over a live run).
       EVIDENCE: CDP /json/list showed two page targets on #/benchmark at 21:58 EEST; TICK-NOTES 21:58; run_build.py 99381 -> goose swarm run 99391 alive throughout.
 
+- [ ] **Every engine phase must be visible in the desktop app as ITS OWN phase — CONTRACTS is shown under Build (Mihai, 2026-08-29 22:27 EEST)**
+      Stamped 2026-08-29 22:27 EEST. "If contracts is a phase why is it not in the visuals of the desktop app. So all phases should be clearly displayed in the desktop app. Contracts is somehow in build.... shouldn't be." The engine emits `phase` events open → ask → research → synthesis → review → contracts → (pillars) → build → integrate → repair; the panel's chips/phase list must carry each one, sourced from the engine's `phase` event, with the contract-* lanes under CONTRACTS, not BUILD. Verify with a fixture cut from r2's run.jsonl and live over CDP in the rebuilt app after r2.
+      EVIDENCE: r2 run.jsonl `phase` events 17:43:01 open … 19:08:17 contracts … 19:14:35 build; the panel at 22:13 showed the contract-* lanes with no CONTRACTS phase chip.
+
 ## HOW TO STAMP AN ENTRY — read `date`, never a remembered clock
 
 Every heading here is stamped by hand, and on 2026-08-29 all 33 of them drifted 1-3 hours ahead of the
