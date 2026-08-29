@@ -38,6 +38,23 @@ const DIGEST = {
     },
   ],
   errors: 2,
+  // SAID provenance — the five fields the engine stamps together from its shared builder. A path
+  // that drops any of them re-creates the r0 failure (a dead attempt's error shown as current with
+  // no way to say whose text it is), so they ride this test like every other digest field.
+  attempt: 1,
+  dispatched_at: '2026-08-29T23:31:02+00:00',
+  said_at: '2026-08-29T23:55:10+00:00',
+  said_kind: 'said',
+  superseded: [
+    {
+      attempt: 0,
+      last_text:
+        'Network error: Stream decode error: error decoding response body\n\nPlease resend your message to try again.',
+      said_kind: 'error',
+      said_at: '2026-08-29T23:30:40+00:00',
+      model: 'mihai-qwen',
+    },
+  ],
 };
 
 const EXPECTED = {
@@ -67,6 +84,20 @@ const EXPECTED = {
   // Derived by the join, not copied: first sight of a lane with an answer reads the answer channel.
   liveChannel: 'transcript',
   errors: 2,
+  attempt: 1,
+  dispatchedAt: '2026-08-29T23:31:02+00:00',
+  saidAt: '2026-08-29T23:55:10+00:00',
+  saidKind: 'said',
+  superseded: [
+    {
+      attempt: 0,
+      last_text:
+        'Network error: Stream decode error: error decoding response body\n\nPlease resend your message to try again.',
+      said_kind: 'error',
+      said_at: '2026-08-29T23:30:40+00:00',
+      model: 'mihai-qwen',
+    },
+  ],
 };
 
 const joined = (lane: TurnLane | undefined) => {

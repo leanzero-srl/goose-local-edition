@@ -42,6 +42,10 @@ import {
   type RunOverview as RunOverviewData,
   cleanTaskTitle,
   isPlanningDigestKey,
+  saidKindOf,
+  splitTranscriptAttempts,
+  type SaidKind,
+  type SupersededSaid,
 } from './useSwarmRun';
 import { ZoneHeader, ZONE_HUES } from './ZoneHeader';
 import { SWARM_LOG_MODES, useSwarmLogMode, type SwarmLogMode } from './useVerboseSwarm';
@@ -391,8 +395,17 @@ const LaneRow: React.FC<{
   const reasoning = rawReasoning.length >= 8 && /[a-zA-Z]{3,}/.test(rawReasoning) ? rawReasoning : '';
   const failLike = lane.status === 'error' || interrupted;
   const laneError = failLike && lane.error ? lane.error.trim() : '';
+  // SAID provenance on the card: the same chips the inspector's SAID surface shows, so a retried
+  // lane says "from attempt N · superseded"/"error → retried" here too instead of passing a dead
+  // attempt's text off as current. Chips only — the expandable superseded bodies live in the inspector.
+  const said = laneSaidState(lane);
+  const saidChips = said.superseded.length > 0 || said.live.kind === 'error';
   const hasBody =
-    reasoning.length > 0 || calls.length > 0 || (lane.recent?.length ?? 0) > 0 || laneError.length > 0;
+    reasoning.length > 0 ||
+    calls.length > 0 ||
+    (lane.recent?.length ?? 0) > 0 ||
+    laneError.length > 0 ||
+    saidChips;
   // The first call NEEDING ATTENTION auto-expands so the reason is zero clicks away. One definition —
   // this site used `c.ok === false`, which opens on productive app-errors (the worker testing), while the
   // board row two thousand lines down used the classifier. Two rules for one question is how they drift.
@@ -553,6 +566,28 @@ const LaneRow: React.FC<{
             ) : null
           ) : (
             <>
+              {saidChips ? (
+                <div className="flex items-center gap-2 flex-wrap" data-testid="lane-said-chips">
+                  {said.live.attempt != null ? (
+                    <SaidChip
+                      kind={said.live.kind}
+                      bg={said.live.kind === 'error' ? SWARM_STATUS.solidError : SWARM_STATUS.solidDone}
+                    >
+                      {`${attemptLabel(said.live.attempt)} · ${said.live.kind === 'error' ? 'error' : 'live'}`}
+                    </SaidChip>
+                  ) : null}
+                  {said.superseded.map((seg, i) => (
+                    <SaidChip
+                      key={`${seg.attempt ?? 'x'}-${i}`}
+                      kind={seg.kind}
+                      bg={seg.kind === 'error' ? SWARM_STATUS.solidError : SWARM_STATUS.solidStopped}
+                      title={seg.retried ? `retried: ${seg.retried}` : undefined}
+                    >
+                      {`from ${attemptLabel(seg.attempt)} · ${seg.kind === 'error' ? 'error → retried' : 'superseded'}`}
+                    </SaidChip>
+                  ))}
+                </div>
+              ) : null}
               {reasoning && (
                 <ReasoningBlock
                   text={reasoning}
@@ -1032,8 +1067,86 @@ export function inflightLiveLine(running: InflightCall[] | undefined): string {
   return `running: ${newest.args}${running.length > 1 ? ` +${running.length - 1}` : ''}`;
 }
 
+/**
+ * The LIVE attempt's slice of the durable answer log — never a superseded attempt's text.
+ *
+ * `<task>.log` is append-only ACROSS attempts, so after a retry its tail is still the dead attempt's
+ * final words. Measured on r0's ledger-core-tests: attempt 0's "Network error … Please resend your
+ * message" stood as the pane's current answer for 24+ minutes while attempt 1 was thinking. The engine
+ * now writes an attempt-marker line at every dispatch; everything before the last marker belongs to a
+ * previous attempt and is rendered as SUPERSEDED (SaidSection), never as the live body. A legacy log
+ * with no markers comes back whole, exactly as before.
+ */
+function liveTranscript(lane: { fullTranscript?: string }): string {
+  return splitTranscriptAttempts(lane.fullTranscript).live.text.trim();
+}
+
 export function inspectorOutputText(lane: StreamLane): string {
-  return lane.fullTranscript?.trim() || lane.lastText?.trim() || '';
+  return liveTranscript(lane) || lane.lastText?.trim() || '';
+}
+
+/** One attempt's SAID text as the pane renders it. */
+export interface SaidSegmentView {
+  attempt: number | null;
+  text: string;
+  kind: SaidKind;
+  /** The task_retry failure text that followed this segment's attempt, when known. */
+  retried?: string;
+}
+
+/** What the SAID surface shows: the live attempt plus everything a retry superseded. */
+export interface SaidState {
+  live: SaidSegmentView;
+  superseded: SaidSegmentView[];
+}
+
+/**
+ * SAID provenance for a lane, from BOTH channels: the durable log split at its attempt markers
+ * (preferred — full text), falling back to the digest's `superseded` list (a mirror lane has no log
+ * twin; main.ts's 200k tail read can clip an old attempt's marker away). The error/said classification
+ * is the same deterministic rule the engine stamps (`saidKindOf`), so a legacy digest with no
+ * `said_kind` still classifies its transport errors correctly.
+ */
+export function laneSaidState(lane: {
+  fullTranscript?: string;
+  lastText?: string;
+  attempt?: number;
+  saidKind?: SaidKind;
+  superseded?: SupersededSaid[];
+  error?: string;
+}): SaidState {
+  const split = splitTranscriptAttempts(lane.fullTranscript);
+  const liveText = split.live.text.trim() || lane.lastText?.trim() || '';
+  const liveAttempt = split.live.attempt ?? lane.attempt ?? null;
+  // A superseded segment with the SAME attempt number as the live one is a previous CALL on a reused
+  // lane key (REVIEW reuses keys every round, always at attempt 0) — "from attempt 1" beside
+  // "attempt 1 · live" would read as a contradiction, so it renders as "earlier call" instead.
+  const sameAsLive = (n: number | null | undefined): number | null =>
+    n != null && n === liveAttempt ? null : (n ?? null);
+  const fromTranscript: SaidSegmentView[] = split.superseded.map((s) => ({
+    attempt: sameAsLive(s.attempt),
+    text: s.text.trim(),
+    kind: saidKindOf(s.text),
+  }));
+  const fromDigest: SaidSegmentView[] = (lane.superseded ?? [])
+    .filter((s) => (s.last_text ?? '').trim().length > 0)
+    .map((s) => ({
+      attempt: sameAsLive(s.attempt),
+      text: (s.last_text ?? '').trim(),
+      kind: s.said_kind ?? saidKindOf(s.last_text),
+    }));
+  const superseded = fromTranscript.length > 0 ? fromTranscript : fromDigest;
+  if (superseded.length > 0 && lane.error) {
+    superseded[superseded.length - 1].retried = lane.error;
+  }
+  return {
+    live: {
+      attempt: liveAttempt,
+      text: liveText,
+      kind: saidKindOf(liveText),
+    },
+    superseded,
+  };
 }
 
 /**
@@ -1172,7 +1285,7 @@ export function laneLiveLine(lane: StreamLane): string {
     if (thought) return thought;
   }
   return (
-    lastSubstantiveLine(tailOf(lane.fullTranscript?.trim() ?? '', INLINE_TAIL_CHARS)) ||
+    lastSubstantiveLine(tailOf(liveTranscript(lane), INLINE_TAIL_CHARS)) ||
     substantiveChunk(lane.reasoning) ||
     // THE THINKING PATH NEEDED THE SAME TREATMENT AND DID NOT GET IT.
     //
@@ -1230,14 +1343,14 @@ export function fleetThinkingLine(lane: StreamLane | undefined): string {
 ///
 /// A THINKING-ONLY model must never produce an unclickable row: that is the node you most need to open.
 export function fleetExpandText(lane: StreamLane | undefined): string {
-  const said = lane?.fullTranscript?.trim() || lane?.fullReasoning?.trim() || '';
+  const said = (lane ? liveTranscript(lane) : '') || lane?.fullReasoning?.trim() || '';
   return [said, fleetThinkingLine(lane)].filter(Boolean).join('\n\n');
 }
 
 /** The narration a ROW renders in its expanded body: the durable answer channel, then the clipped digests. */
 export function laneNarrative(lane: StreamLane): string {
   return (
-    lane.fullTranscript?.trim() ||
+    liveTranscript(lane) ||
     lane.fullReasoning?.trim() ||
     lane.reasoning?.trim() ||
     lane.lastText?.trim() ||
@@ -1321,7 +1434,7 @@ export function taskGenReasoning(digest: Record<string, unknown>): string {
   };
   // BOTH DURABLE LOGS OUTRANK EVERY CLIPPED VIEW. Taking the inspector's chain whole would put
   // `full_reasoning` — the clip this card is here to stop showing — ahead of `full_transcript`.
-  const durable = lane.fullThinking?.trim() || lane.fullTranscript?.trim() || '';
+  const durable = lane.fullThinking?.trim() || liveTranscript(lane) || '';
   const text = durable || inspectorThinkingText(lane) || laneNarrative(lane);
   return tailOf(text, CARD_TAIL_CHARS);
 }
@@ -1446,16 +1559,139 @@ const InflightRows: React.FC<{ running: InflightCall[] }> = ({ running }) => {
  * planning lane has no calls and 30 KB of prose, so it renders as prose. The window cannot guess wrong
  * because it never guesses.
  */
+/** The solid provenance chip of the SAID surface — same register as the header's "being reviewed" chip.
+ *  Solid saturated fill, white text; never a tint, never a left accent stripe. */
+const SaidChip: React.FC<{ bg: string; kind: SaidKind; title?: string; children: React.ReactNode }> = ({
+  bg,
+  kind,
+  title,
+  children,
+}) => (
+  <span
+    className="px-2 py-0.5 text-[10px] font-mono uppercase tracking-wider font-bold text-white"
+    style={{ borderRadius: CHIP_RADIUS, background: bg }}
+    title={title}
+    data-said-kind={kind}
+  >
+    {children}
+  </span>
+);
+
+/** 1-based for humans, matching the event feed's "(attempt N)" convention (`attempt + 1` at the
+ *  task_dispatched verbose line). `null` is text with no marker — an earlier call on a reused lane key,
+ *  or bytes that predate the provenance fields. */
+const attemptLabel = (n: number | null): string => (n == null ? 'earlier call' : `attempt ${n + 1}`);
+
+/** One retried attempt's text: a solid chip saying WHOSE it is and HOW it ended, the retry's failure
+ *  text when known, and the body collapsed behind a custom toggle (it is context, not the answer). */
+const SupersededSaidBlock: React.FC<{ seg: SaidSegmentView }> = ({ seg }) => {
+  const [open, setOpen] = useState(false);
+  const isError = seg.kind === 'error';
+  return (
+    <div className="mt-2" data-testid="superseded-said" data-said-kind={seg.kind}>
+      <div className="flex items-center gap-2 flex-wrap">
+        <SaidChip
+          kind={seg.kind}
+          bg={isError ? SWARM_STATUS.solidError : SWARM_STATUS.solidStopped}
+          title={
+            isError
+              ? 'This attempt ended in a transport/agent error — not something the model said — and was retried.'
+              : 'A newer attempt superseded this text; it is kept here as history.'
+          }
+        >
+          {`from ${attemptLabel(seg.attempt)} · ${isError ? 'error → retried' : 'superseded'}`}
+        </SaidChip>
+        {seg.retried ? (
+          <span className="text-[10px] font-mono" style={{ color: SWARM_STATUS.error }}>
+            retried: {seg.retried}
+          </span>
+        ) : null}
+        <button
+          type="button"
+          className="text-[10px] underline text-text-secondary hover:text-text-primary"
+          onClick={() => setOpen((o) => !o)}
+        >
+          {open ? 'hide' : 'show'}
+        </button>
+      </div>
+      {open ? (
+        <div
+          className="mt-1 font-mono text-[11px] leading-relaxed whitespace-pre-wrap break-words"
+          style={isError ? { color: SWARM_STATUS.error } : undefined}
+        >
+          {squeezeBlankRuns(seg.text)}
+        </div>
+      ) : null}
+    </div>
+  );
+};
+
+/**
+ * THE SAID SURFACE WITH ITS STATE. The owner, watching r0's ledger-core-tests: attempt 0's "Network
+ * error … Please resend your message" stood in this pane for 24+ minutes while attempt 1 ran — "I can't
+ * see if it's current or happened and resolved, there's no state to any of this." So the pane now says
+ * WHOSE text it is showing: a LIVE chip for the current attempt (red when the text is an agent error,
+ * green otherwise), an explicit "processing the prompt…" body while the new attempt has said nothing —
+ * never the dead attempt's error — and each superseded attempt collapsed below with its own chip. A lane
+ * with no provenance (a legacy run) renders exactly the old body, chipless.
+ */
+export const SaidSection: React.FC<{ said: SaidState; narration: string; processing: boolean }> = ({
+  said,
+  narration,
+  processing,
+}) => {
+  const hasProvenance = said.live.attempt != null || said.superseded.length > 0;
+  const liveIsError = said.live.kind === 'error';
+  return (
+    <div data-testid="said-section">
+      {hasProvenance ? (
+        <div className="flex items-center gap-2 mb-1">
+          <SaidChip
+            kind={said.live.kind}
+            bg={liveIsError ? SWARM_STATUS.solidError : SWARM_STATUS.solidDone}
+            title={
+              liveIsError
+                ? 'The current attempt ended in a transport/agent error — this text is not the model’s answer.'
+                : 'This text belongs to the attempt that is live right now.'
+            }
+          >
+            {`${attemptLabel(said.live.attempt)} · ${liveIsError ? 'error' : 'live'}`}
+          </SaidChip>
+        </div>
+      ) : null}
+      {narration.length > 0 ? (
+        <div
+          className={`font-mono text-[11px] leading-relaxed whitespace-pre-wrap break-words${liveIsError ? '' : ' text-text-secondary'}`}
+          style={liveIsError ? { color: SWARM_STATUS.error } : undefined}
+        >
+          {narration}
+        </div>
+      ) : processing && hasProvenance ? (
+        <div className="text-[11px] italic text-text-secondary">processing the prompt…</div>
+      ) : null}
+      {said.superseded.map((seg, i) => (
+        <SupersededSaidBlock key={`${seg.attempt ?? 'x'}-${i}`} seg={seg} />
+      ))}
+    </div>
+  );
+};
+
 const WorkPane: React.FC<{
   calls: SwarmCall[];
   running: InflightCall[];
   toolCalls?: number;
   narration: string;
-}> = ({ calls, running, toolCalls, narration }) => {
+  said: SaidState;
+  processing: boolean;
+}> = ({ calls, running, toolCalls, narration, said, processing }) => {
   const meta = callRowMeta(calls, toolCalls);
   const attention = firstCallNeedingAttention(calls);
+  const hasSaid = narration.length > 0 || said.superseded.length > 0 || said.live.attempt != null;
   return (
-    <FollowScroll dep={`${running.length}:${calls.length}:${narration.length}`} className="px-3 py-2">
+    <FollowScroll
+      dep={`${running.length}:${calls.length}:${narration.length}:${said.superseded.length}`}
+      className="px-3 py-2"
+    >
       {calls.length > 0 || running.length > 0 ? (
         <div>
           <InflightRows running={running} />
@@ -1469,16 +1705,14 @@ const WorkPane: React.FC<{
           ))}
         </div>
       ) : null}
-      {narration.length > 0 ? (
+      {hasSaid ? (
         <div>
           {calls.length > 0 || running.length > 0 ? (
             <div className="mt-3 pt-2 border-t border-border-primary text-[10px] font-bold uppercase tracking-[0.12em] text-text-secondary">
               Said
             </div>
           ) : null}
-          <div className="font-mono text-[11px] leading-relaxed text-text-secondary whitespace-pre-wrap break-words">
-            {narration}
-          </div>
+          <SaidSection said={said} narration={narration} processing={processing} />
         </div>
       ) : null}
     </FollowScroll>
@@ -1525,10 +1759,16 @@ const NodeInspector: React.FC<{
   const { completed: calls, running, tallies } = workRows(lane?.calls, lane?.inflight);
   const rawNarration = inspectorOutputText(lane ?? {});
   const narration = squeezeBlankRuns(rawNarration);
+  // SAID provenance: whose text the pane is showing, and what a retry superseded. A retried lane whose
+  // new attempt has said nothing yet has narration === '' AND a superseded list — the pane must render
+  // the list (with the old attempt's error labeled as such), not collapse.
+  const said = laneSaidState(lane ?? {});
+  const saidProcessing = !!lane && lane.status === 'running';
   // THE PREDICATE HAD TO MOVE IN THE SAME COMMIT AS THE `recent` REMOVAL. With `recent` gone from
   // `inspectorOutputText`, the measured lane (60 calls, last_text one character) yields narration === '',
   // and the old `outText` grid predicate would collapse the column and take all 60 calls with it.
-  const hasWork = calls.length > 0 || running.length > 0 || narration.length > 0;
+  const hasWork =
+    calls.length > 0 || running.length > 0 || narration.length > 0 || said.superseded.length > 0;
 
   return createPortal(
     <>
@@ -1639,7 +1879,14 @@ const NodeInspector: React.FC<{
             }
             isEmpty={!hasWork}
           >
-            <WorkPane calls={calls} running={running} toolCalls={lane?.toolCalls} narration={narration} />
+            <WorkPane
+              calls={calls}
+              running={running}
+              toolCalls={lane?.toolCalls}
+              narration={narration}
+              said={said}
+              processing={saidProcessing}
+            />
           </InspectorPane>
         </div>
       </div>

@@ -388,6 +388,13 @@ export interface TurnLane {
   attempts?: number;
   /** The last retry's failure text, so a failed/interrupted lane can say WHY (was silently dropped before). */
   error?: string;
+  /** SAID provenance — see the Digest fields of the same names. `attempt` is the CURRENT attempt
+   *  (task_dispatched / the digest), distinct from `attempts` above (the terminal count). */
+  attempt?: number;
+  dispatchedAt?: string;
+  saidAt?: string | null;
+  saidKind?: SaidKind;
+  superseded?: SupersededSaid[];
   seq: number;
 }
 
@@ -2144,7 +2151,86 @@ type Digest = {
   transcript_clipped?: boolean;
   /// Engine-written, unlike the fields above it: swarm.rs:15981 stamps it into the digest JSON itself.
   judging?: boolean;
+  /** SAID provenance (engine-written, all five together from the shared builder): which ATTEMPT produced
+   *  `last_text`, when the call was dispatched, when the answer channel last advanced, and whether the
+   *  text is the model's (`said`) or an agent transport error (`error`). r0's ledger-core-tests showed
+   *  attempt 0's "Network error … Please resend your message" as the live answer for 24+ minutes while
+   *  attempt 1 ran — these fields are what lets the pane say WHOSE text it is showing. */
+  attempt?: number;
+  dispatched_at?: string;
+  said_at?: string | null;
+  said_kind?: SaidKind;
+  /** What a previous attempt (or a previous call reusing this lane key) left behind — folded in by the
+   *  new attempt's seed instead of being silently erased. Oldest first. */
+  superseded?: SupersededSaid[];
 };
+
+export type SaidKind = 'said' | 'error';
+
+/** One prior attempt's SAID text, carried in the digest so a retry never silently erases it. */
+export interface SupersededSaid {
+  /** null on an entry folded from a legacy digest that predates the provenance keys. */
+  attempt?: number | null;
+  last_text?: string;
+  said_kind?: SaidKind;
+  said_at?: string | null;
+  model?: string | null;
+}
+
+/** The agent-authored closers of the three provider-error texts (agent.rs) — the ONLY strings that reach
+ *  the answer channel without the model having said them. MIRRORS swarm.rs `AGENT_ERROR_CLOSERS`; used to
+ *  classify transcript segments and legacy digests that carry no `said_kind`. */
+const AGENT_ERROR_CLOSERS = [
+  'Please resend your message to try again.',
+  'Please retry if you think this is a transient or recoverable error.',
+  'resending this conversation is likely to be refused again.',
+];
+
+/** `error` when the text is (the tail of) an agent transport-error message, `said` otherwise. */
+export function saidKindOf(text: string | undefined): SaidKind {
+  const t = (text ?? '').trimEnd();
+  return AGENT_ERROR_CLOSERS.some((c) => t.endsWith(c)) ? 'error' : 'said';
+}
+
+/** One attempt's slice of an append-only transcript, cut at the engine's attempt-marker lines. */
+export interface TranscriptAttempt {
+  /** null for text that predates the first marker (a legacy log, or a resumed run's earlier bytes). */
+  attempt: number | null;
+  dispatchedAt?: string;
+  text: string;
+}
+
+/** The boundary line `append_attempt_marker` (swarm.rs) writes into `<task>.log`/`.think.log` at every
+ *  dispatch: `===== swarm attempt N · dispatched <rfc3339> =====`. */
+const ATTEMPT_MARKER_RE = /^===== swarm attempt (\d+) · dispatched (\S+) =====$/gm;
+
+/**
+ * Split an append-only transcript at its attempt markers: the LIVE segment (after the last marker) plus
+ * every superseded one before it. The transcripts deliberately survive retries — that is their value as
+ * the durable record — but rendering the whole file as "what the model says" is exactly how attempt 0's
+ * transport error read as the live answer for 24+ minutes while attempt 1 was still thinking. A legacy
+ * log with no markers comes back whole as the live segment, so old runs read exactly as before.
+ */
+export function splitTranscriptAttempts(text: string | undefined): {
+  live: TranscriptAttempt;
+  superseded: TranscriptAttempt[];
+} {
+  const whole = text ?? '';
+  const segments: TranscriptAttempt[] = [];
+  let cursor = 0;
+  let current: TranscriptAttempt = { attempt: null, text: '' };
+  for (const m of whole.matchAll(ATTEMPT_MARKER_RE)) {
+    current.text = whole.slice(cursor, m.index);
+    segments.push(current);
+    current = { attempt: Number(m[1]), dispatchedAt: m[2], text: '' };
+    cursor = (m.index ?? 0) + m[0].length;
+  }
+  current.text = whole.slice(cursor);
+  segments.push(current);
+  const live = segments[segments.length - 1];
+  const superseded = segments.slice(0, -1).filter((s) => s.text.trim().length > 0);
+  return { live, superseded };
+}
 
 export type LiveChannel = 'thinking' | 'transcript';
 
@@ -2246,11 +2332,21 @@ export function digestStreamFields(
   | 'phase'
   | 'liveChannel'
   | 'errors'
+  | 'attempt'
+  | 'dispatchedAt'
+  | 'saidAt'
+  | 'saidKind'
+  | 'superseded'
 > {
+  // ATTEMPT-KEYED CARRY (the measured 24m30s failure). A carried `lastText` belongs to the attempt
+  // that produced it; when the digest names a NEWER attempt, that carry is a dead attempt's text —
+  // now living, labeled, in the digest's own `superseded` list — and must not masquerade as the new
+  // attempt's answer. When either side lacks an attempt (legacy digests), today's carry stands.
+  const carryIsStale = d?.attempt != null && prev?.attempt != null && d.attempt > prev.attempt;
   return {
     // `||`, not `??`: an empty `last_text` is a digest that has produced no answer text yet, and the
     // carried value is better than blanking the lane. Every other field distinguishes absent from empty.
-    lastText: d?.last_text || prev?.lastText,
+    lastText: d?.last_text || (carryIsStale ? undefined : prev?.lastText),
     recent: d?.recent ?? prev?.recent,
     reasoning: d?.reasoning ?? prev?.reasoning,
     fullReasoning: d?.full_reasoning ?? prev?.fullReasoning,
@@ -2270,6 +2366,11 @@ export function digestStreamFields(
     // point is remembering the previous poll of THIS lane.
     liveChannel: liveChannelFor(key, d, d?.phase === 'done' || prev?.status === 'done'),
     errors: d?.errors ?? prev?.errors,
+    attempt: d?.attempt ?? prev?.attempt,
+    dispatchedAt: d?.dispatched_at ?? prev?.dispatchedAt,
+    saidAt: d?.said_at ?? prev?.saidAt,
+    saidKind: d?.said_kind ?? prev?.saidKind,
+    superseded: d?.superseded ?? prev?.superseded,
   };
 }
 
@@ -2413,6 +2514,12 @@ function absorbEvent(c: FoldCarry, e: Record<string, unknown>): void {
       device: String(e['device'] ?? prev?.device ?? '?'),
       model: e['model'] ? String(e['model']) : prev?.model,
       status: 'running',
+      // The scheduler's attempt counter — the event-side half of the SAID provenance, so the
+      // attempt-keyed lastText carry works even before the new attempt's first digest lands.
+      attempt: typeof e['attempt'] === 'number' ? e['attempt'] : prev?.attempt,
+      // A re-dispatch after a retry keeps the retry's failure text: it is the WHY behind the
+      // superseded chip ("retried: <reason>") until the task terminally completes.
+      error: prev?.error,
       seq: c.seq++,
     });
   } else if (type === 'task_retry') {
@@ -2425,6 +2532,7 @@ function absorbEvent(c: FoldCarry, e: Record<string, unknown>): void {
       // Keep the retry's failure text so a lane that ultimately fails/stalls can explain why.
       error: e['error'] ? String(e['error']) : prev?.error,
       attempts: prev?.attempts,
+      attempt: prev?.attempt,
       seq: c.seq++,
     });
   } else if (type === 'task_completed') {

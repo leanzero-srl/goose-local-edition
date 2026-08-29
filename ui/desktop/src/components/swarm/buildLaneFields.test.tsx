@@ -43,6 +43,22 @@ const DIGEST = {
   ],
   errors: 1,
   model: 'mihai-qwen',
+  // SAID provenance — stamped together by the engine's shared builder; a path dropping any of the
+  // five re-creates the r0 case (a dead attempt's error shown as current, unlabeled).
+  attempt: 1,
+  dispatched_at: '2026-08-29T23:31:02+00:00',
+  said_at: '2026-08-29T23:55:10+00:00',
+  said_kind: 'said',
+  superseded: [
+    {
+      attempt: 0,
+      last_text:
+        'Network error: Stream decode error: error decoding response body\n\nPlease resend your message to try again.',
+      said_kind: 'error',
+      said_at: '2026-08-29T23:30:40+00:00',
+      model: 'mihai-qwen',
+    },
+  ],
 };
 
 // Written out by hand, deliberately. Deriving this from the join the paths share would make the test
@@ -75,6 +91,20 @@ const EXPECTED: Record<string, unknown> = {
   // Derived by the join, not copied: first sight of a lane with an answer reads the answer channel.
   liveChannel: 'transcript',
   errors: 1,
+  attempt: 1,
+  dispatchedAt: '2026-08-29T23:31:02+00:00',
+  saidAt: '2026-08-29T23:55:10+00:00',
+  saidKind: 'said',
+  superseded: [
+    {
+      attempt: 0,
+      last_text:
+        'Network error: Stream decode error: error decoding response body\n\nPlease resend your message to try again.',
+      said_kind: 'error',
+      said_at: '2026-08-29T23:30:40+00:00',
+      model: 'mihai-qwen',
+    },
+  ],
 };
 
 const digestFieldsOf = (lane: TurnLane | undefined): Record<string, unknown> => {
