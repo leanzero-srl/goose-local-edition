@@ -14,9 +14,11 @@ describe('formation phase truth', () => {
   it('draws the pipeline the rewritten engine actually runs', () => {
     expect(FORMATION_PHASES.map((phase) => phase.label)).toEqual([
       'Open',
+      'Ask',
       'Research',
       'Synthesize',
       'Review',
+      'Contracts',
       'Build',
       'Integrate',
       'Repair',
@@ -37,25 +39,27 @@ describe('formation phase truth', () => {
 
   it('maps every engine phase onto its own step', () => {
     expect(formationPhaseIndex('open')).toBe(0);
-    expect(formationPhaseIndex('research')).toBe(1);
-    expect(formationPhaseIndex('synthesize')).toBe(2);
-    expect(formationPhaseIndex('review')).toBe(3);
-    expect(formationPhaseIndex('build')).toBe(4);
-    expect(formationPhaseIndex('integrate')).toBe(5);
-    expect(formationPhaseIndex('repair')).toBe(6);
-    expect(formationPhaseIndex('done')).toBe(7);
+    expect(formationPhaseIndex('ask')).toBe(1);
+    expect(formationPhaseIndex('research')).toBe(2);
+    expect(formationPhaseIndex('synthesize')).toBe(3);
+    expect(formationPhaseIndex('review')).toBe(4);
+    expect(formationPhaseIndex('contracts')).toBe(5);
+    expect(formationPhaseIndex('build')).toBe(6);
+    expect(formationPhaseIndex('integrate')).toBe(7);
+    expect(formationPhaseIndex('repair')).toBe(8);
+    expect(formationPhaseIndex('done')).toBe(9);
   });
 
   it('marks only earlier phases complete and the engine phase active', () => {
-    expect(formationPhaseState('build', 3)).toBe('complete');
-    expect(formationPhaseState('build', 4)).toBe('active');
-    expect(formationPhaseState('build', 5)).toBe('upcoming');
+    expect(formationPhaseState('build', 5)).toBe('complete');
+    expect(formationPhaseState('build', 6)).toBe('active');
+    expect(formationPhaseState('build', 7)).toBe('upcoming');
   });
 
   it('never back-fills a stage the engine did not emit', () => {
     const straightToBuild = { open: true, research: true, synthesize: true, review: false };
-    expect(formationPhaseState('build', 3, straightToBuild)).toBe('skipped');
-    expect(formationPhaseState('build', 2, straightToBuild)).toBe('complete');
+    expect(formationPhaseState('build', 4, straightToBuild)).toBe('skipped');
+    expect(formationPhaseState('build', 3, straightToBuild)).toBe('complete');
   });
 
   it('marks the conditional Integrate and Repair skipped at Done without evidence', () => {
@@ -68,9 +72,9 @@ describe('formation phase truth', () => {
       integrate: false,
       repair: false,
     };
-    expect(formationPhaseState('done', 5, noSink)).toBe('skipped');
-    expect(formationPhaseState('done', 6, noSink)).toBe('skipped');
-    expect(formationPhaseState('done', 4, noSink)).toBe('complete');
+    expect(formationPhaseState('done', 7, noSink)).toBe('skipped');
+    expect(formationPhaseState('done', 8, noSink)).toBe('skipped');
+    expect(formationPhaseState('done', 6, noSink)).toBe('complete');
   });
 
   // Each ramp hue carries its OWN ink for exactly this reason: white clears AA on the blue (6.7:1) and

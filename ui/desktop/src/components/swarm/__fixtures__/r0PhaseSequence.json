@@ -1,0 +1,591 @@
+{
+ "source": "benchmark/runs/build/swarm-3node-r0/run.jsonl, cut 2026-08-29 (phase / ask / contracts / plan / dispatch lines only, trimmed)",
+ "events": [
+  {
+   "event": "run_started",
+   "ts": "2026-08-29T17:43:01.754148+00:00",
+   "seq": 0,
+   "prompt": "# Build `app` \u2014 Meridian Payments Console",
+   "pool": [
+    {
+     "id": "mac-gabee-qwen3.8-27b-brainwaves",
+     "model_id": "gabee-qwen3.8-27b-brainwaves-mxfp8-mlx",
+     "weight": 2
+    },
+    {
+     "id": "local-mihai-qwen3.8-27b-brainwaves",
+     "model_id": "mihai-qwen3.8-27b-brainwaves-mxfp8-mlx",
+     "weight": 2
+    },
+    {
+     "id": "worksmacstudio-workhorse-qwen3.8-27b-brainw",
+     "model_id": "workhorse-qwen3.8-27b-brainwaves-mxfp8-mlx",
+     "weight": 2
+    }
+   ]
+  },
+  {
+   "event": "pool_resolved",
+   "ts": "2026-08-29T17:43:01.754443+00:00",
+   "seq": 1,
+   "devices": [
+    {
+     "id": "mac-gabee-qwen3.8-27b-brainwaves",
+     "model_id": "gabee-qwen3.8-27b-brainwaves-mxfp8-mlx",
+     "weight": 2
+    },
+    {
+     "id": "local-mihai-qwen3.8-27b-brainwaves",
+     "model_id": "mihai-qwen3.8-27b-brainwaves-mxfp8-mlx",
+     "weight": 2
+    },
+    {
+     "id": "worksmacstudio-workhorse-qwen3.8-27b-brainw",
+     "model_id": "workhorse-qwen3.8-27b-brainwaves-mxfp8-mlx",
+     "weight": 2
+    }
+   ],
+   "worker_count": 3
+  },
+  {
+   "event": "phase",
+   "ts": "2026-08-29T17:43:01.976999+00:00",
+   "seq": 4,
+   "phase": "open"
+  },
+  {
+   "event": "slices_opened",
+   "ts": "2026-08-29T18:05:12.172484+00:00",
+   "seq": 64,
+   "count": 9,
+   "weights": [
+    3,
+    4,
+    5,
+    4,
+    5,
+    4,
+    1,
+    3,
+    2
+   ],
+   "slices": [
+    "service-boot",
+    "vendor-sync",
+    "approval-workflow",
+    "api-endpoints",
+    "ledger-core",
+    "notification-engine",
+    "documentation",
+    "webhook-receiver",
+    "webhook-processing"
+   ],
+   "secs": 1330
+  },
+  {
+   "event": "phase",
+   "ts": "2026-08-29T18:05:12.172496+00:00",
+   "seq": 65,
+   "phase": "ask"
+  },
+  {
+   "event": "clarify_proxy_armed",
+   "ts": "2026-08-29T18:05:12.172502+00:00",
+   "seq": 66,
+   "mode": "immediate",
+   "wait_secs": 0,
+   "questions": 3
+  },
+  {
+   "event": "low_confidence_ask",
+   "ts": "2026-08-29T18:05:12.172706+00:00",
+   "seq": 67,
+   "questions": [
+    {
+     "question": "D1: Does the brush survive a streamed mutation of a brushed "
+    },
+    {
+     "question": "D2: Is a rejected draft terminal, or resubmittable?"
+    },
+    {
+     "question": "D3: Before the first sync completes, does the table render e"
+    }
+   ],
+   "ask_floor": null
+  },
+  {
+   "event": "low_confidence_answered",
+   "ts": "2026-08-29T18:07:27.221755+00:00",
+   "seq": 74,
+   "answers": 0
+  },
+  {
+   "event": "phase",
+   "ts": "2026-08-29T18:07:27.221863+00:00",
+   "seq": 75,
+   "phase": "research"
+  },
+  {
+   "event": "research_completed",
+   "ts": "2026-08-29T18:55:47.662273+00:00",
+   "seq": 166,
+   "slices": 16,
+   "brief_chars": [
+    3865,
+    4676,
+    4740,
+    7983,
+    9250,
+    6146,
+    2132,
+    6872,
+    6041,
+    6735,
+    3756,
+    5592,
+    4612,
+    4480,
+    4482,
+    4122
+   ],
+   "secs": 2900
+  },
+  {
+   "event": "phase",
+   "ts": "2026-08-29T18:55:47.662325+00:00",
+   "seq": 167,
+   "phase": "synthesis"
+  },
+  {
+   "event": "plan_synthesized",
+   "ts": "2026-08-29T19:01:30.523148+00:00",
+   "seq": 178,
+   "tasks": 17,
+   "distinct_files": 20,
+   "tasks_sharing_a_file": 0
+  },
+  {
+   "event": "phase",
+   "ts": "2026-08-29T19:01:30.523200+00:00",
+   "seq": 179,
+   "phase": "review"
+  },
+  {
+   "event": "review_findings",
+   "ts": "2026-08-29T19:08:17.914433+00:00",
+   "seq": 204,
+   "round": 1,
+   "new": 9,
+   "repeated": 0,
+   "patch_touches": 10
+  },
+  {
+   "event": "plan_patched",
+   "ts": "2026-08-29T19:08:17.914872+00:00",
+   "seq": 205,
+   "round": 1,
+   "replace": 4,
+   "add": 0,
+   "remove": 6
+  },
+  {
+   "event": "phase",
+   "ts": "2026-08-29T19:08:17.916720+00:00",
+   "seq": 207,
+   "phase": "contracts"
+  },
+  {
+   "event": "contracts",
+   "ts": "2026-08-29T19:14:35.534676+00:00",
+   "seq": 221,
+   "modules": 8,
+   "frozen": true,
+   "injected": 8,
+   "injected_modules": [
+    "webhook-processing",
+    "api-endpoints",
+    "notification-engine",
+    "approval-workflow",
+    "sse-endpoint",
+    "ledger-core",
+    "service-boot",
+    "vendor-sync"
+   ]
+  },
+  {
+   "event": "plan_loaded",
+   "ts": "2026-08-29T19:14:35.534757+00:00",
+   "seq": 222,
+   "task_count": 11,
+   "plan_confidence": null,
+   "ask_floor": 75,
+   "tasks": [
+    {
+     "id": "webhook-processing",
+     "files": [
+      "app/webhook.py"
+     ],
+     "deps": [],
+     "description": "\n\n## Answers to Slice Questions\n\n**Out-of-order delivery (v+"
+    },
+    {
+     "id": "api-endpoints",
+     "files": [
+      "app/api.py",
+      "app/ledgerd/server.py",
+      "app/ledgerd/__main__.py"
+     ],
+     "deps": [],
+     "description": "\n\n**Slice questions answered:**\n\n1. **Error envelope format:"
+    },
+    {
+     "id": "documentation",
+     "files": [
+      "DECISIONS.md",
+      "README.md"
+     ],
+     "deps": [],
+     "description": "\n\n## Slice Questions Answered\n\n**Run commands to document:**"
+    },
+    {
+     "id": "notification-engine",
+     "files": [
+      "app/notifierd/server.py",
+      "app/notifierd/__main__.py"
+     ],
+     "deps": [],
+     "description": "\n\n## Questions answered\n\n**How to deduplicate by event seq?*"
+    },
+    {
+     "id": "approval-workflow",
+     "files": [
+      "app/auth.py",
+      "app/drafts.py",
+      "app/routes/drafts.py"
+     ],
+     "deps": [],
+     "description": "\n\n**Q1: How to enforce four-eyes rule?** Store `submitted_by"
+    },
+    {
+     "id": "sse-endpoint",
+     "files": [
+      "app/stream.py"
+     ],
+     "deps": [],
+     "description": "\n\n## Answers to slice questions\n\n**How to handle subscriber "
+    },
+    {
+     "id": "integrate-verify",
+     "files": [],
+     "deps": [
+      "service-boot",
+      "vendor-sync",
+      "approval-workflow",
+      "api-endpoints",
+      "ledger-core",
+      "notification-engine",
+      "documentation",
+      "webhook-processing",
+      "frontend-ui",
+      "sse-endpoint"
+     ],
+     "description": "Integrate every module and VERIFY the whole program works en"
+    },
+    {
+     "id": "frontend-ui",
+     "files": [
+      "web/app.js",
+      "web/index.html",
+      "web/styles.css",
+      "web/viz.js"
+     ],
+     "deps": [],
+     "description": "\n\n## Answers to slice questions\n\n**How to render 12,288 inst"
+    },
+    {
+     "id": "ledger-core",
+     "files": [
+      "app/ledger_core.py"
+     ],
+     "deps": [],
+     "description": "\n\n## Slice Questions\n\n**How to ensure contiguous seq numbers"
+    },
+    {
+     "id": "service-boot",
+     "files": [
+      "app/__init__.py",
+      "app/cli.py",
+      "app/ledgerd/__init__.py",
+      "app/notifierd/__init__.py",
+      "app/__main__.py"
+     ],
+     "deps": [],
+     "description": "\n\n\n\n\n\n## Questions answered\n\n**How to handle service restart"
+    },
+    {
+     "id": "vendor-sync",
+     "files": [
+      "app/vendor_sync.py"
+     ],
+     "deps": [],
+     "description": "\n\n\n\n\n\n\n\n\n\n## Answers to slice questions\n\n**Dropped connectio"
+    }
+   ]
+  },
+  {
+   "event": "phase",
+   "ts": "2026-08-29T19:14:35.534919+00:00",
+   "seq": 223,
+   "phase": "build"
+  },
+  {
+   "event": "task_dispatched",
+   "ts": "2026-08-29T19:14:35.830682+00:00",
+   "seq": 224,
+   "task_id": "api-endpoints",
+   "device": "worksmacstudio-workhorse-qwen3.8-27b-brainw",
+   "model": "workhorse-qwen3.8-27b-brainwaves-mxfp8-mlx",
+   "attempt": 0,
+   "deps": [],
+   "owned_files": [
+    "app/api.py",
+    "app/ledgerd/server.py",
+    "app/ledgerd/__main__.py"
+   ]
+  },
+  {
+   "event": "task_dispatched",
+   "ts": "2026-08-29T19:14:35.830702+00:00",
+   "seq": 225,
+   "task_id": "approval-workflow",
+   "device": "local-mihai-qwen3.8-27b-brainwaves",
+   "model": "mihai-qwen3.8-27b-brainwaves-mxfp8-mlx",
+   "attempt": 0,
+   "deps": [],
+   "owned_files": [
+    "app/auth.py",
+    "app/drafts.py",
+    "app/routes/drafts.py"
+   ]
+  },
+  {
+   "event": "task_dispatched",
+   "ts": "2026-08-29T19:14:35.830710+00:00",
+   "seq": 226,
+   "task_id": "documentation",
+   "device": "mac-gabee-qwen3.8-27b-brainwaves",
+   "model": "gabee-qwen3.8-27b-brainwaves-mxfp8-mlx",
+   "attempt": 0,
+   "deps": [],
+   "owned_files": [
+    "DECISIONS.md",
+    "README.md"
+   ]
+  },
+  {
+   "event": "task_dispatched",
+   "ts": "2026-08-29T19:14:35.830718+00:00",
+   "seq": 227,
+   "task_id": "frontend-ui",
+   "device": "worksmacstudio-workhorse-qwen3.8-27b-brainw",
+   "model": "workhorse-qwen3.8-27b-brainwaves-mxfp8-mlx",
+   "attempt": 0,
+   "deps": [],
+   "owned_files": [
+    "web/app.js",
+    "web/index.html",
+    "web/styles.css",
+    "web/viz.js"
+   ]
+  },
+  {
+   "event": "task_dispatched",
+   "ts": "2026-08-29T19:14:35.830725+00:00",
+   "seq": 228,
+   "task_id": "ledger-core",
+   "device": "local-mihai-qwen3.8-27b-brainwaves",
+   "model": "mihai-qwen3.8-27b-brainwaves-mxfp8-mlx",
+   "attempt": 0,
+   "deps": [],
+   "owned_files": [
+    "app/ledger_core.py"
+   ]
+  },
+  {
+   "event": "task_dispatched",
+   "ts": "2026-08-29T19:14:35.830731+00:00",
+   "seq": 229,
+   "task_id": "notification-engine",
+   "device": "mac-gabee-qwen3.8-27b-brainwaves",
+   "model": "gabee-qwen3.8-27b-brainwaves-mxfp8-mlx",
+   "attempt": 0,
+   "deps": [],
+   "owned_files": [
+    "app/notifierd/server.py",
+    "app/notifierd/__main__.py"
+   ]
+  },
+  {
+   "event": "task_completed",
+   "ts": "2026-08-29T19:22:32.169977+00:00",
+   "seq": 270,
+   "task_id": "approval-workflow",
+   "device": "local-mihai-qwen3.8-27b-brainwaves",
+   "status": "done"
+  },
+  {
+   "event": "task_dispatched",
+   "ts": "2026-08-29T19:22:32.172465+00:00",
+   "seq": 271,
+   "task_id": "service-boot",
+   "device": "local-mihai-qwen3.8-27b-brainwaves",
+   "model": "mihai-qwen3.8-27b-brainwaves-mxfp8-mlx",
+   "attempt": 0,
+   "deps": [],
+   "owned_files": [
+    "app/__init__.py",
+    "app/cli.py",
+    "app/ledgerd/__init__.py",
+    "app/notifierd/__init__.py",
+    "app/__main__.py"
+   ]
+  },
+  {
+   "event": "task_completed",
+   "ts": "2026-08-29T19:23:37.998126+00:00",
+   "seq": 280,
+   "task_id": "documentation",
+   "device": "mac-gabee-qwen3.8-27b-brainwaves",
+   "status": "done"
+  },
+  {
+   "event": "task_completed",
+   "ts": "2026-08-29T19:24:46.295585+00:00",
+   "seq": 285,
+   "task_id": "notification-engine",
+   "device": "mac-gabee-qwen3.8-27b-brainwaves",
+   "status": "done"
+  },
+  {
+   "event": "task_dispatched",
+   "ts": "2026-08-29T19:24:46.295625+00:00",
+   "seq": 286,
+   "task_id": "sse-endpoint",
+   "device": "mac-gabee-qwen3.8-27b-brainwaves",
+   "model": "gabee-qwen3.8-27b-brainwaves-mxfp8-mlx",
+   "attempt": 0,
+   "deps": [],
+   "owned_files": [
+    "app/stream.py"
+   ]
+  },
+  {
+   "event": "task_completed",
+   "ts": "2026-08-29T19:25:33.259997+00:00",
+   "seq": 294,
+   "task_id": "ledger-core",
+   "device": "local-mihai-qwen3.8-27b-brainwaves",
+   "status": "done"
+  },
+  {
+   "event": "task_dispatched",
+   "ts": "2026-08-29T19:25:33.260024+00:00",
+   "seq": 295,
+   "task_id": "vendor-sync",
+   "device": "local-mihai-qwen3.8-27b-brainwaves",
+   "model": "mihai-qwen3.8-27b-brainwaves-mxfp8-mlx",
+   "attempt": 0,
+   "deps": [],
+   "owned_files": [
+    "app/vendor_sync.py"
+   ]
+  },
+  {
+   "event": "task_dispatched",
+   "ts": "2026-08-29T19:28:03.280065+00:00",
+   "seq": 303,
+   "task_id": "webhook-processing",
+   "device": "mac-gabee-qwen3.8-27b-brainwaves",
+   "model": "gabee-qwen3.8-27b-brainwaves-mxfp8-mlx",
+   "attempt": 0,
+   "deps": [],
+   "owned_files": [
+    "app/webhook.py"
+   ]
+  },
+  {
+   "event": "task_completed",
+   "ts": "2026-08-29T19:30:58.889053+00:00",
+   "seq": 317,
+   "task_id": "sse-endpoint",
+   "device": "mac-gabee-qwen3.8-27b-brainwaves",
+   "status": "done"
+  },
+  {
+   "event": "task_completed",
+   "ts": "2026-08-29T19:33:03.408335+00:00",
+   "seq": 326,
+   "task_id": "vendor-sync",
+   "device": "local-mihai-qwen3.8-27b-brainwaves",
+   "status": "done"
+  }
+ ],
+ "activity": {
+  "contract-api-endpoints": {
+   "model": "mihai-qwen3.8-27b-brainwaves-mxfp8-mlx",
+   "phase": "done",
+   "tool_calls": 0,
+   "thinking_chars": 2257,
+   "last_text": "ce on its documented port.\"\"\"\n    ...\n\nif __name__ == \"__main__\":\n    main()\n```"
+  },
+  "contract-approval-workflow": {
+   "model": "workhorse-qwen3.8-27b-brainwaves-mxfp8-mlx",
+   "phase": "done",
+   "tool_calls": 0,
+   "thinking_chars": 2168,
+   "last_text": "ts?state=<s> \u2014 list drafts with optional state filter (any role).\"\"\"\n    ...\n```"
+  },
+  "contract-ledger-core": {
+   "model": "workhorse-qwen3.8-27b-brainwaves-mxfp8-mlx",
+   "phase": "done",
+   "tool_calls": 0,
+   "thinking_chars": 1465,
+   "last_text": "d TEXT NOT NULL, delivered INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL)"
+  },
+  "contract-notification-engine": {
+   "model": "workhorse-qwen3.8-27b-brainwaves-mxfp8-mlx",
+   "phase": "done",
+   "tool_calls": 0,
+   "thinking_chars": 1678,
+   "last_text": " None: ...\n```\n\n# app/notifierd/__main__.py\n```python\ndef run() -> None: ...\n```"
+  },
+  "contract-service-boot": {
+   "model": "mihai-qwen3.8-27b-brainwaves-mxfp8-mlx",
+   "phase": "done",
+   "tool_calls": 0,
+   "thinking_chars": 6127,
+   "last_text": "fierd args, start NotifierServer.\"\"\"\n\n\nif __name__ == \"__main__\":\n    main()\n```"
+  },
+  "contract-sse-endpoint": {
+   "model": "gabee-qwen3.8-27b-brainwaves-mxfp8-mlx",
+   "phase": "done",
+   "tool_calls": 0,
+   "thinking_chars": 1310,
+   "last_text": "e:\n    \"\"\"Stop the flusher thread and disconnect all subscribers.\"\"\"\n    ...\n```"
+  },
+  "contract-vendor-sync": {
+   "model": "gabee-qwen3.8-27b-brainwaves-mxfp8-mlx",
+   "phase": "done",
+   "tool_calls": 0,
+   "thinking_chars": 961,
+   "last_text": "with Idempotency-Key header; returns created payment or None.\"\"\"\n        ...\n```"
+  },
+  "contract-webhook-processing": {
+   "model": "gabee-qwen3.8-27b-brainwaves-mxfp8-mlx",
+   "phase": "done",
+   "tool_calls": 0,
+   "thinking_chars": 1514,
+   "last_text": "action group part. Returns True if group is complete and applied.\"\"\"\n    ...\n```"
+  }
+ }
+}

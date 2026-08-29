@@ -149,15 +149,29 @@ describe('SwarmRunPanel — the named-zone view actually renders', () => {
   it('renders the rewritten pipeline: the ribbon phase, the slice fan, the proxy answer, and the known bugs', async () => {
     const { findByText, findByTestId, container } = render(<SwarmRunPanel workingDir="/tmp/build" />);
 
-    // The RIBBON draws the engine's eight phases and lights the one the engine is actually in — read from
-    // the events, never from a label. The newest lifecycle event here is defects_rated, so it is Repair.
+    // The RIBBON draws every phase the engine announces, in engine order, and lights the one it is actually
+    // in — read from the events, never from a label. The newest lifecycle event here is defects_rated, so
+    // it is Repair.
     const ribbon = await findByTestId('formation-ribbon');
     expect(ribbon).toHaveAttribute('data-active-phase', 'repair');
-    for (const step of ['Open', 'Research', 'Synthesize', 'Review', 'Build', 'Integrate', 'Repair']) {
-      expect(ribbon.textContent).toContain(step);
-    }
-    // The stages this engine no longer runs must not appear as ribbon steps.
-    expect(ribbon.textContent).not.toContain('Contracts');
+    const steps = [
+      'Open',
+      'Ask',
+      'Research',
+      'Synthesize',
+      'Review',
+      'Contracts',
+      'Build',
+      'Integrate',
+      'Repair',
+      'Done',
+    ];
+    const text = ribbon.textContent ?? '';
+    const positions = steps.map((step) => text.indexOf(step));
+    expect(positions.every((at) => at >= 0)).toBe(true);
+    expect([...positions].sort((a, b) => a - b)).toEqual(positions);
+    // The deleted Plan stage must not reappear as a ribbon step.
+    expect(text).not.toContain('Plan ');
 
     // KNOWN ACTIVE BUGS: green does not mean flawless, and the imperfections have their own surface.
     await findByText('Known active bugs');

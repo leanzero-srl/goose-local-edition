@@ -26,9 +26,9 @@ const SYNTHESIS = { event: 'phase', phase: 'synthesis' };
 const REVIEW = { event: 'phase', phase: 'review' };
 
 describe('foldRunPhase — the ribbon reads the engine, never a label', () => {
-  it('maps each phase event onto its own step, with ask folded into Open', () => {
+  it('maps each phase event onto its own step — ask included', () => {
     expect(foldRunPhase([OPEN]).phase).toBe('open');
-    expect(foldRunPhase([OPEN, SLICES, ASK]).phase).toBe('open');
+    expect(foldRunPhase([OPEN, SLICES, ASK]).phase).toBe('ask');
     expect(foldRunPhase([OPEN, ASK, RESEARCH]).phase).toBe('research');
     expect(foldRunPhase([OPEN, RESEARCH, SYNTHESIS]).phase).toBe('synthesize');
     expect(foldRunPhase([OPEN, RESEARCH, SYNTHESIS, REVIEW]).phase).toBe('review');
@@ -106,7 +106,7 @@ describe('buildPhaseTodo — the new phases are populated from the new events', 
       ASK,
       { event: 'clarify_proxy_armed', mode: 'immediate', wait_secs: 0, questions: 2 },
     ];
-    expect(labels(armedImmediate, 'open', true).join('\n')).toContain(
+    expect(labels(armedImmediate, 'ask', true).join('\n')).toContain(
       'unattended run — goose is answering these'
     );
 
@@ -116,7 +116,7 @@ describe('buildPhaseTodo — the new phases are populated from the new events', 
       ASK,
       { event: 'clarify_proxy_armed', mode: 'after_wait', wait_secs: 300, questions: 2 },
     ];
-    expect(labels(armedWaiting, 'open', true).join('\n')).toContain('goose answers in 5 min');
+    expect(labels(armedWaiting, 'ask', true).join('\n')).toContain('goose answers in 5 min');
 
     const answered = [
       ...armedWaiting,
@@ -127,7 +127,7 @@ describe('buildPhaseTodo — the new phases are populated from the new events', 
         source: 'proxy',
       },
     ];
-    expect(labels(answered, 'open').join('\n')).toContain('answered by goose — you did not reply');
+    expect(labels(answered, 'ask').join('\n')).toContain('answered by goose — you did not reply');
   });
 
   // An OLD run has no phase event and no slices. Its ask lived under the new-engine branch, which made it
@@ -138,7 +138,7 @@ describe('buildPhaseTodo — the new phases are populated from the new events', 
         { event: 'run_started', pool: [] },
         { event: 'low_confidence_ask', questions: [{ question: 'a' }, { question: 'b' }] },
       ],
-      'open'
+      'ask'
     );
     expect(rows.join('\n')).toContain('Asked you 2 questions');
   });
@@ -440,13 +440,19 @@ describe('foldRunPhase — no phase event is read and discarded', () => {
     }
   });
 
-  it('lights Build for the pre-EXECUTE contract freeze rather than leaving Review lit', () => {
-    // CONTRACTS fans stub generation across the whole fleet. Holding the ribbon on Review through it is
-    // the same class of lie the label-matching ribbon told: a stage asserted over nodes doing other work.
-    expect(
-      foldRunPhase([OPEN, RESEARCH, SYNTHESIS, REVIEW, { event: 'phase', phase: 'contracts' }])
-        .phase
-    ).toBe('build');
+  it('lights Contracts for the pre-EXECUTE contract freeze — its own step, not Build', () => {
+    // CONTRACTS fans stub generation across the whole fleet. It used to map onto Build, so three nodes
+    // writing interface stubs rendered under a lit Build chip: "Contracts is somehow in build".
+    const { phase, observed } = foldRunPhase([
+      OPEN,
+      RESEARCH,
+      SYNTHESIS,
+      REVIEW,
+      { event: 'phase', phase: 'contracts' },
+    ]);
+    expect(phase).toBe('contracts');
+    expect(observed.contracts).toBe(true);
+    expect(observed.build).toBeUndefined();
   });
 
   it('does not claim Repair on a run that verified green the first time', () => {

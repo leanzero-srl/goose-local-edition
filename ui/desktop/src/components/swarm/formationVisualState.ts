@@ -4,8 +4,10 @@ import { useEffect, useState } from 'react';
  * The run pipeline the Formation Ribbon draws, and the mapping from ENGINE TRUTH onto it.
  *
  * The load-bearing decision here is that the active step comes from the engine's own
- * `{"event":"phase","phase":"open"|"ask"|"research"|"synthesis"|"review"}` plus the task lifecycle —
- * NEVER from pattern-matching a human phase label. The label version defaulted an unrecognised string to
+ * `{"event":"phase","phase":"open"|"ask"|"research"|"synthesis"|"review"|"contracts"|"build"|…}` plus the
+ * task lifecycle — NEVER from pattern-matching a human phase label. Every phase the engine emits is a step
+ * of its own: ASK used to be folded into Open and CONTRACTS into Build, and a fleet generating interface
+ * stubs for six minutes rendered as "Build active" — the owner's words: "Contracts is somehow in build". The label version defaulted an unrecognised string to
  * Build, so a run sitting on "Paused" (or "Starting…", or any label added later) rendered as "Build active"
  * — the ribbon asserting work was happening while every node was deliberately idle.
  *
@@ -14,9 +16,11 @@ import { useEffect, useState } from 'react';
  */
 export type RunPhase =
   | 'open'
+  | 'ask'
   | 'research'
   | 'synthesize'
   | 'review'
+  | 'contracts'
   | 'build'
   | 'integrate'
   | 'repair'
@@ -27,6 +31,11 @@ export const FORMATION_PHASES: ReadonlyArray<{ key: RunPhase; label: string; tip
     key: 'open',
     label: 'Open',
     tip: 'One node splits the request into balanced semantic slices, and names the decisions it cannot make alone.',
+  },
+  {
+    key: 'ask',
+    label: 'Ask',
+    tip: 'The opener named decisions it could not make alone. The run pauses for your answer, or goose answers from the spec.',
   },
   {
     key: 'research',
@@ -42,6 +51,11 @@ export const FORMATION_PHASES: ReadonlyArray<{ key: RunPhase; label: string; tip
     key: 'review',
     label: 'Review',
     tip: 'An idle node reads the ORIGINAL request against the plan and patches what is missing. It stops when it asks for no change.',
+  },
+  {
+    key: 'contracts',
+    label: 'Contracts',
+    tip: 'Every node freezes a signature-only interface for one module, so the builders code against the same contract before anything is written.',
   },
   { key: 'build', label: 'Build', tip: 'Worker nodes build the planned tasks across the fleet.' },
   {
