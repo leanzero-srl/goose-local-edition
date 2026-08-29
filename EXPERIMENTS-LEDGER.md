@@ -91,10 +91,26 @@ check compares each process's start time against the bundle mtime; the click tic
 
 ## THE STANDING NUMBERS
 
-| | value | where |
+**The number to beat is 20.06%, not 0.0273.** Those answer different questions and confusing them lets a
+bad run look like progress. `0.0273` is the local row currently PUBLISHED on leanzero.net — it is what a
+new result would replace, and it is a floor, not a target. **20.06% is `qwen3.8-27b` — the SAME MODEL this
+fleet runs — scored as ONE cloud agent with no planning, no decomposition, no judge and no fan.**
+
+That is the honest falsifier for the entire swarm thesis. Three nodes of a model must beat one node of
+that model, or the decomposition, the contracts, the supervision and the fan are costing more than they
+return. Everything in this repo exists to clear 20.06%; clearing 0.0273 only means the run finished.
+
+| | value | what it is |
 |---|---|---|
-| local score to beat | **0.0273** | `brun-fleet-qwen38-brainwaves-sb70` on leanzero.net |
-| cloud board leader | **67.53%** | deepseek-v4-flash-vision-exp, single agent |
-| a single qwen3.8-27b, no planning | 106 min, 9 files, 163,962 B | beat the whole 3-node fleet |
-| spec written before any code, last full run | **140,680 chars** | 86% of the winner's finished codebase |
-| brief size that scored 88.7% | **~1,500 chars** | vs 6,443 median then, 4,789 on r0 |
+| **THE TARGET** | **20.06%** | `qwen3.8-27b` via OpenRouter, ONE agent, no planning — the same model as the fleet |
+| local published row | 0.0273 | `brun-fleet-qwen38-brainwaves-sb70` — the floor a new result replaces |
+| cloud board leader | 67.53% | deepseek-v4-flash-vision-exp, single agent — a different, stronger model |
+| a single qwen3.8-27b, measured | 106 min, 9 files, 163,962 B incl. the whole frontend | beat the 3-node fleet on wall clock AND product |
+| glm-5.3-flash, single agent | 41.59% | 72.5 min, 14 files |
+| spec written before any code, last full run | 140,680 chars | 86% of the winner's finished codebase |
+| brief size that scored 88.7% | ~1,500 chars | vs 6,443 median then, 4,789 on r0 |
+
+**Why the single agent wins, mechanically:** it writes `ledgerd.py`, then writes `notifierd.py` HAVING
+SEEN `ledgerd.py`. Coherence is free because there is one context. Parallelism destroys that coherence,
+so the fleet spends its whole budget rebuilding it IN ADVANCE, in prose — and prose can never be as good
+as looking at the code. r0 spent 258,566 characters of reasoning to write 74,963 bytes of program.

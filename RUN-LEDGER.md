@@ -19,14 +19,16 @@ DAG is actually parallel). reasoning_chars against answer_chars is the waste.
 - **chain**: 3
 - **startable**: 8
 - **brief_median**: 4789
-- **reasoning_chars**: 256405
-- **answer_chars**: 112652
-- **code_files**: 14
-- **code_bytes**: 55071
+- **reasoning_chars**: 258566
+- **answer_chars**: 113759
+- **code_files**: 15
+- **code_bytes**: 74963
+- **python_parses**: 8 ok / 0 SYNTAX ERROR / 0 empty
+- **web_files**: app.js, index.html, styles.css, viz.js
 - **plan_patched**: 1
 - **plan_loaded**: 1
 - **review_rounds**: r1:new=4 r2:new=0
-- **judge_looks**: 88
+- **judge_looks**: 91
 - **judge_nudges**: 2
 - **judge_ended**: 0
 - **drift_held**: 7
