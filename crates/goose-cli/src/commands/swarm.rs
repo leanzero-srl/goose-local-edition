@@ -17913,7 +17913,20 @@ impl GooseAgentDispatcher {
                             // while blocking on it costs the whole run. The doctrine that the JUDGE may
                             // never request termination is intact -- the judge asked for a redirect; the
                             // ENGINE ended the call on a deterministic condition it measured itself.
-                            if wants_structured_reply && call_records.is_empty() {
+                            // ZERO TOOL CALLS EVER WAS TOO NARROW, AND IT LET A REAL LOOP RUN.
+                            //
+                            // MEASURED, run 4 `review-6-notifierd-the-ide`: `judge_out_of_moves` fired at
+                            // TWELVE nudges with the direction repeating verbatim, and the call carried on
+                            // -- because it had made 2 tool calls early in its life, so `call_records` was
+                            // not empty. Mihai read the event log and said it looks like looping. It was.
+                            //
+                            // The question is not whether the call has EVER acted, it is whether it has
+                            // acted SINCE the supervisor started redirecting it. `tool_calls_at_last_nudge`
+                            // already records that, and a call that has taken no action across a repeated
+                            // direction is not going to take one now.
+                            let acted_since_nudge =
+                                tool_calls_at_last_nudge.is_none_or(|n| call_records.len() > n);
+                            if wants_structured_reply && !acted_since_nudge {
                                 self.events.write_value(serde_json::json!({
                                     "event": "judge_call_ended_unproductive",
                                     "task_id": activity_key,
