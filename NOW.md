@@ -146,6 +146,11 @@ with SYNTHESIS's deterministic flags (`tasks_owning_nothing`, `module_package_co
 `shared_files`) injected into that round's prompt as MUST-FIX. Phase structure like OPEN/SYNTHESIS, not
 a cap on any call. Then: `just make-ui` → `ditto` → relaunch → `first_tick_r1.sh <new sha>`.
 
+**Queued for the batch AFTER r2 (engine, swarm.rs):** when the judge answers RESTART on a call with
+`actions_since_last_look == 0` and the previous steer changed nothing (thinking grew, no action), deliver the
+re-stream — a steer cannot be obeyed by a call that never reaches a turn boundary. r1 measured six steers
+ignored on one looping review lane (`judge_out_of_moves` is the greppable state).
+
 **r2 also carries:** the UI fixes from r1's ticks (`3ecdbed9d` named fields/reasons/also-row buttons,
 `2dd046553` live line follows the freshest channel) and the judge-probe transcript flush (`c3b211582`).
 
