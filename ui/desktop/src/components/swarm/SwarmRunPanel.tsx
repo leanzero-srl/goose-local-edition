@@ -362,9 +362,18 @@ const LaneRow: React.FC<{
   const iconColor = interrupted ? CALL_PENDING : STATUS_COLOR[lane.status];
 
   const calls = lane.calls ?? [];
-  // Prefer the FULL narration; fall back to the short digest, then last_text. fullReasoning is real prose,
-  // so no length/regex gate is needed — show whatever substantive text the worker produced.
-  const rawReasoning = lane.fullReasoning?.trim() || lane.reasoning?.trim() || lane.lastText?.trim() || '';
+  // THE DURABLE TRANSCRIPT FIRST. `fullTranscript` is `<task>.log` -- every chunk of the answer channel,
+  // appended, no clip. `fullReasoning` is a 24,000-char CLIP and `reasoning` a last-few-chunks digest, so
+  // preferring either loses the beginning of any real narration.
+  //
+  // This is the SAME defect the node inspector had, in a second place: a workflow audit found it here
+  // after I fixed the inspector and reported the bug closed.
+  const rawReasoning =
+    lane.fullTranscript?.trim() ||
+    lane.fullReasoning?.trim() ||
+    lane.reasoning?.trim() ||
+    lane.lastText?.trim() ||
+    '';
   const reasoning = rawReasoning.length >= 8 && /[a-zA-Z]{3,}/.test(rawReasoning) ? rawReasoning : '';
   const failLike = lane.status === 'error' || interrupted;
   const laneError = failLike && lane.error ? lane.error.trim() : '';
@@ -1076,7 +1085,14 @@ const NodeInspector: React.FC<{
           />
           <Pane
             title="Output"
-            count={`${calls.length} tool call${calls.length === 1 ? '' : 's'}`}
+            // SAY WHEN THE TRANSCRIPT IS A TAIL. main.ts reads only the last 200,000 chars of
+            // `<task>.log` and has always attached `transcript_bytes`, the true on-disk size, which
+            // nothing read. Without it a clipped pane is indistinguishable from a complete one.
+            count={
+              (lane?.transcriptBytes ?? 0) > outText.length + 1024
+                ? `${calls.length} tool call${calls.length === 1 ? '' : 's'} · tail of ${Math.round((lane?.transcriptBytes ?? 0) / 1024).toLocaleString()}KB`
+                : `${calls.length} tool call${calls.length === 1 ? '' : 's'}`
+            }
             body={outText}
             empty="Nothing emitted yet — reasoning, but no tool call and no text."
           />
@@ -2088,7 +2104,9 @@ const BoardTaskRow: React.FC<{
   const idx = row.device ? deviceIndex(row.device, deviceOrder) : -1;
   const lane = row.lane;
   const calls = lane?.calls ?? [];
-  const reasoning = lane?.fullReasoning?.trim() || lane?.reasoning?.trim() || '';
+  // Durable transcript first -- see the note on the other task card. Same defect, same fix.
+  const reasoning =
+    lane?.fullTranscript?.trim() || lane?.fullReasoning?.trim() || lane?.reasoning?.trim() || '';
   const failLike = row.state === 'failed' || row.state === 'judge_failed' || interrupted;
   const laneError = failLike && lane?.error ? lane.error.trim() : '';
   const hasDetail = !!(
