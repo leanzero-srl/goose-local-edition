@@ -93,6 +93,19 @@ a measurement, never an error).**
    synthesis + two refuters); its output lands as PART II of DESIGN-STABILITY-FIRST.md. Engine code waits for
    r2's score; the two desktop items (2, 3) may go first once the research says how.
 
+**r2 IS OVER — KILLED BY MY OWN REAP, 2026-08-30 01:44 EEST.** At 01:31 the leaked-server checkpoint fired (3 PPID-1
+app servers from the sink's dead attempt 0 — the task_retry/body-drop path skips `kill_app_tree`). I reaped
+them with `killpg`; the bare-spawn leak path never calls `setsid`, so their group WAS the engine's, and the
+engine died with them at INTEGRATE minute 139 (heartbeat frozen 22:32:20Z, the reap minute). Owned: memory
+`kill-pids-never-killpg`, skill §7 reaping rule, tick.py comment; launch.sh's per-pid reaper was always the
+right tool. CONSEQUENCES: claims (2) completion/no-hang and (3) REPAIR never got settled by r2 — r3's first
+run settles them on the new binary; NO re-run of the old binary (4 h for evidence about code r3 replaces).
+run_build.py is auto-scoring the killed tree now; when it exits: hermetic score of the tree AS-IS labeled
+KILLED, archive the dir truthfully (`…-KILLED-by-operator-killpg-reap-INTEGRATE-139m`), launch the
+assessment workflow (its forensic lens gets my kill as a first-class event), then the build-everything
+campaign. r2's evidence haul stands: one-round REVIEW ✅, BUILD 10/10 ✅, two body drops (~52 min), the B2
+sink hold, the tail_review machine-gun (470+), the retry-path leak, gabee's dropout, the forming gap.
+
 **FULL AUTONOMY (Mihai, 2026-08-30 00:21): "don't wait on me for anything - go at it unattended. I will ask
 questions if need be."** No decision waits on him — including the deletions; the adversarial reviews are the
 authority. Short reports continue every tick.
