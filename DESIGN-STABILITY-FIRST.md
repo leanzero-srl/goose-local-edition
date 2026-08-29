@@ -302,13 +302,20 @@ r2 actually used, found and written down (§8).
 Builds on §0 and §9; not a second design. §0's binding reading stands: code MEASURES and hands the measurement to a model
 call — never a stop, a cap, a refusal. Models are stateless; the harness is the state and must FORM each task's message from
 captured facts. Verdict on every Part I step: **kept unchanged** 1 (done), 3, 6, 7, 8, 9, 11, 12, 13, 14. **Changed**: step
-2 (GATE→sink prepend) is SUBSUMED by §II.2's dispatch-time formation — same seam, same "before r3", strictly more facts;
-step 5's ASK-proxy and coverage deletions are REVERSED on r2 evidence (ASK proxy: 2m15s, 3 answers, 18:07:24Z; coverage_gap:
-+7 slices, unowned 10→0 — r2's plan owns the page/SSE surface r0 404'd on), its resplit deletion is CONFIRMED (the resplit
-manufactured the webhook collision REVIEW paid to remove), and coverage-gap slices dispatch per `coverage_enumerated` part,
-not at `coverage_complete` (~20 of RESEARCH's 48 min at 1/6 occupancy); step 10's env block gains `GOOSE_SWARM_TESTGEN=0`
-(live r2 had `=1`). **Dropped**: nothing. Step 4 (delete CONTRACTS) is unaffected: the ledger's exports table reads
-`extract_signatures` on the live tree (swarm.rs:32806), never the contracts event.
+2 (GATE→sink prepend) is SUBSUMED by §II.2's dispatch-time formation — same seam, same "before r3" — WITH step 2's early
+gate run KEPT inside it (§II.2 WRITERS, gate {round: 0}): pre-sink, §II.2 otherwise runs only collect-only + static spec
+parsers, so dropping that run would drop the one fact class step 2 uniquely delivered — the live boot probe, the r0
+replay's real `GET / 404` (TICK-NOTES.md:65) — and "strictly more facts" would be false; step 5's ASK-proxy deletion is
+REVERSED on r2 evidence (ASK proxy: 2m15s, 3 answers, 18:07:24Z); step 5's coverage deletion is OWNER-GATED, not reversed —
+NOW's table records it "DELETE — Mihai's call — his word" and closes "Anything not on this table does not go into r3"; r2
+measured BOTH sides: coverage_gap +7 slices, unowned 10→0 (one event, 18:24:23Z, incl. sse-endpoint — the surface r0 404'd
+on) AGAINST 2 of 3 nodes idle ≥8 min, fleet at 1/3 for ~12 min serialized behind one coverage call (TICK-NOTES 08-29
+21:36/21:42); both go to Mihai side by side and until his word the table's DELETE stands; its resplit deletion is CONFIRMED
+(the resplit manufactured the webhook collision REVIEW paid to remove); IF coverage is kept, its slices dispatch per
+`coverage_enumerated` part, not at `coverage_complete` (~20 of RESEARCH's 48 min at 1/6 occupancy — row 13, same owner
+gate, never run); step 10's env block gains `GOOSE_SWARM_TESTGEN=0` (live r2 had `=1`). **Dropped**: nothing. Step 4
+(delete CONTRACTS) is unaffected: the ledger's exports table reads `extract_signatures` on the live tree (swarm.rs:32806),
+never the contracts event.
 
 ## II.1 r2's good parts, kept; r2's measured waste, dropped
 
@@ -336,7 +343,7 @@ same PARALLEL:2 slots.
 CAPTURED ALREADY (exists, unread downstream): per-task digest `.swarm/activity/<key>.json` — `calls[]` last 60 {name,
 summary, ok, result}, errors, last_text, last_thinking (build_worker_digest swarm.rs:14107-14182; write sites :16719,
 :17503, :17537) — rewritten in place, lost on re-dispatch; delivery_defects at every completion (emit_delivery_defects
-:32229, called :33709/:33774) — emitted then thrown away (the 20:22:20.860932Z event named the sink's whole problem 0.24 s
+:32229, called :33709/:33774) — emitted then thrown away (the 20:22:20.860932Z event named the sink's whole problem 0.24 ms
 before the sink was dispatched without it); judge `established` (judge_nudge :17104-17116); gate findings
 (SpecContractResult :19627, assembled :38014-38293); the append-only `<task>.log`/`.think.log` pair (:13967-13995).
 
@@ -356,9 +363,11 @@ judge_established (provenance: judge, ranked below measurements)}. Roll-up adds:
 open defects (re-stat'd at render so fixed ones vanish), gate {round, findings[], verified, inconclusive[]}, repair.rounds[]
 {round, shard, findings_assigned, verdicts, promoted, baseline}. WRITERS (in goose-cli beside the prompts they feed;
 best-effort — a write failure never disturbs a run): `write_task_ledger` at :33709 (done), :33774 (salvaged) and the Err
-arm; `write_gate_ledger` where verdict.findings is final (after the dedupe :38297) AND in `goose swarm gate` (handle_gate
-:1889) so a sink prompt reproduces offline from an archived tree; `write_repair_ledger` at run_fix_task's epilogue
-:32206-32224, with `parse_finding_verdicts(output)` as a pure, tested fn beside smoke_fix_description :31219 — the shard
+arm; `write_gate_ledger` where verdict.findings is final (after the dedupe :38297), AND at last-producer completion —
+Part I step 2's early gate run, kept: run_spec_contract (spawn_grouped, the existing probe list) persisted as gate
+{round: 0}, so sections (3) and (7) below carry live boot/endpoint findings at the sink's FIRST dispatch — AND in
+`goose swarm gate` (handle_gate :1889) so a sink prompt reproduces offline from an archived tree; `write_repair_ledger`
+at run_fix_task's epilogue :32206-32224, with `parse_finding_verdicts(output)` as a pure, tested fn beside smoke_fix_description :31219 — the shard
 prompt already demands "FINDING n: FIXED/NOT FIXED/NOT REAL" lines and NOTHING parses them today. REFRESHED at three
 moments: task completion, gate verdict, repair round end. Events `ledger_written`/`ledger_delivered` prove capture and
 delivery from run.jsonl (the pitfalls_delivered pattern :32936).
@@ -418,9 +427,17 @@ a starved-not-dead worker; replacement: keep `.connect_timeout(30)`, read window
 reads `lms ps` for the worker's node (parser exists, tick.py:197-202): no bytes ≥1 look AND node IDLE/absent ⇒ re-stream
 (drop(stream) :17309, judge_restream); GENERATING/PROCESSINGPROMPT ⇒ hold, "queued behind a sibling" in the look event. (2)
 the 420 s × attempt stopwatch (judge.rs:579-584, :746-749, :849-853) — 3 false verdicts whose text threads into the next
-dispatch as prior_hint; replacement: the behavioural over-read gate (judge.rs:497-503) plus "K consecutive looks with
-produced_since_look()==false" — counts of looks, never seconds. (3) FIX_STILLBORN_SECS=300 + the fix_cap deadline
-(swarm.rs:32109-32135, :34776) — replacement: zero tool calls after K zero-production looks. (4) the inert UNCAPPED timeout
+dispatch as prior_hint; replacement: the behavioural over-read gate (judge.rs:497-503) PURGED of its own seconds input —
+judge.rs:498 (twin :528) conditions OverReading on `elapsed_secs >= min_age_secs` (90, :320), a wall clock still deciding
+model work: replace it with a minimum count of judge looks, or drop it (`over_read_tool_calls >= 16`, :327, is the
+behavioural evidence) — plus "K consecutive looks with produced_since_look()==false" — counts of looks, never seconds.
+(3) FIX_STILLBORN_SECS=300 + the fix_cap deadline (swarm.rs:32109-32135, :34776) — replacement: zero tool calls after K
+zero-production looks. BOTH K counters gate each look behind the same lms-ps read as (1): a zero-production look counts
+toward K only when the node reads IDLE/absent; GENERATING/PROCESSINGPROMPT ⇒ hold, "queued behind a sibling" in the look
+event — ungated, r2's measured failure (3 false over_reading verdicts on a slot-starved worker producing zero bytes behind
+a sibling) recurs by count exactly as it did by clock, and row 7's PARALLEL:2 blind spot then errs toward holding, never a
+false verdict; K derives from r2's healthy inter-delta gap distribution before arming — until then, summons only, no
+verdict. (4) the inert UNCAPPED timeout
 wrappers (planner_wall, stub_budget, fix_cap at :17710, :26947, :27839, :27939, :28082, :28215, :34067, :39065…) — DELETE,
 not park: dead time code is how caps returned twice, and GOOSE_SWARM_RUN_DEADLINE_UNIX_MS (:37697) re-arms a real wall. (5)
 levers_resolved stops printing worker/planner/scout timeout numbers nothing reads. MAY STAY (bound transport, subprocesses,
@@ -429,9 +446,15 @@ look cadence (volume cut per Part I step 10; interval-only looks skip when the l
 identical results — evidence, not time); the 400 ms digest flush; phase stopwatches (telemetry only); ask-answer polls
 (bound the human; proxy answers); app-under-test subprocess bounds (cargo 120 s, smoke/scan/port probes) where timeout ⇒
 inconclusive, never a finding. Flagged to the owner, not silently kept: §II.2's dispatch-time collect-only run inherits
-collect_only_import_health's 20 s instrument bound (:31897), and GOOSE_DEFAULT_EXTENSION_TIMEOUT=1800 stays only because a
-spawned server that never exits has no non-time signal. Ledger rule: timestamps are provenance only — never an input to
-rendering or order.
+collect_only_import_health's 20 s instrument bound (:31897). GOOSE_DEFAULT_EXTENSION_TIMEOUT=1800 (swarm.rs:36031-36032)
+does NOT stay as an error path: on expiry the model's call receives a MEASUREMENT — "command still running after N s;
+listening on port P (or: no port); stdout tail: …" — with the process detached via spawn_grouped and tracked for
+kill_app_tree (invariant 5), mirroring the timeout ⇒ inconclusive rule above; the clock bounds the transport wait, never
+the verdict on the model's work. Named verdict, so a KEEP-class row is not overruled silently: `afa644ddd`
+(GOOSE_PROVIDER_READ_TIMEOUT_SECS=1800, NOW's table: KEEP-class, after score) — SUPERSEDED by (1)'s read-window-off; the
+581 s silent live slot (TICK-NOTES 08-29 21:23) is the measurement both the widening and the deletion answer; delete the
+env line main.ts:2808 in the same change so the Benchmark view carries no dead plumbing. Ledger rule: timestamps are
+provenance only — never an input to rendering or order.
 
 ## II.5 Desktop: the forming line and the SAID pane
 
@@ -472,30 +495,32 @@ proof-of-delivery events for every injection (pitfalls_delivered precedent). DEL
 PreToolUse `updatedInput` rewriting the model's command (a deterministic mutation of model work — §0 says mild, not gated);
 a "must read the ledger first" tool gate (the injection IS the gate).
 
-## II.7 The ordered r3 list (r2 binary + evidence + owner asks; nothing time-based, nothing stops model work)
+## II.7 The ordered r3 list — desktop track now, engine track after r2's score (r2 binary + evidence + owner asks; nothing time-based, nothing stops model work)
 
-| # | what | answers | verb | conf | blast radius | isolation test | gating |
+| # | what | answers | verb | conf | blast radius | isolation test | gating (— = engine track: after r2's score) |
 |---|---|---|---|---|---|---|---|
 | 1 | `<task>.calls.jsonl` + pytest-summary parser + fs_delta + completion snapshot | digest reset erased attempt 0; ok=true on failing suites | ADD | high | 2 digest write sites + 1 pure fn; zero behaviour | parser unit tests on r2's real result strings ("32 failed, 46 passed"; collect ImportError) | — |
 | 2 | ledger writers (task :33709/:33774, gate after :38297 + handle_gate :1889, repair :32206) + parse_finding_verdicts | delivery_defects measured then thrown away; FINDING lines have no consumer | ADD | high | 3 call sites + pure fns; best-effort writes | `goose swarm gate <archived r2 tree>` writes .swarm/ledger.json; second pass a no-op | — |
 | 3 | sink dispatch-time formation (render_ledger_block + semantic statement + oracle suffix) at :33386; sink rules arm :33090/:33152 | owner asks #5/#6; the 3,668-char zero-fact template; subsumes Part I step 2 | ADD (changes Part I 2) | high | sink prompt only; ≤7,000 chars | unit render from r2's archived activity/*.json + manifest asserts the three facts the live sink re-derived (drafts.py is the approval module; root tests' bad imports; suite ran 22×) | owner ask |
 | 4 | shard splice (≤3,500) + `history` param on smoke_fix_description :31219 | round N+1 shards re-try what round N tried (prompt comment :31205) | ADD | high | shard prompts; fresh-Scheduler context loss covered on disk | fixture: round-0 NOT FIXED verdict appears in round-1 shard text | owner ask |
 | 5 | testgen: read-only run_agent (the :15565 path) + file paths in bundle headers :17756 — or gone with Part I step 4 | 0/3 landed while writing 2 poisoned root files past the guard | DELETE (env =0 in r3) | high | one call site; env line dies with Part I step 11 | replay: no root writes; land_generated_tests remains sole landing | — |
-| 6 | bonus tasks out of the join's claim gate (scheduler.rs:1204-1212, :1396-1406); no invented tasks in the BUILD tail | sink held 32m38s for tasks the plan never asked for | CHANGE | medium | join claim predicate | mock DAG: sink claims when plan deps done; bonus completes after, verified by REPAIR | — |
+| 6 | bonus tasks out of the join's claim gate (scheduler.rs:1204-1212, :1396-1406); no invented tasks in the BUILD tail | sink held 32m38s for tasks the plan never asked for | CHANGE | medium | join claim predicate | mock DAG: sink claims when plan deps done; bonus completes after, verified by REPAIR | conditional on dynamic_replan (NOW: KEEP-class flip, after score — strong): lever off ⇒ row DROPPED, no bonus tasks exist and the finding is answered upstream; replanner kept ⇒ goes to Mihai as a table addition — not on NOW's table today |
 | 7 | delete the 600 s read cut + the 420 s stopwatch; lms-ps liveness + looks-based summons | both provably decided model work wrong in r2 | DELETE | high (cuts) / medium (liveness — lms ps is per-node; the PARALLEL:2 blind spot is real) | api_client.rs, judge.rs; re-stream actuator exists | replay: starved-sibling fixture holds; IDLE fixture re-streams | owner rule |
 | 8 | re-dispatch "previous attempt" block via prior_hint on transient retries | attempt 1 started blind after 12 min of work | ADD | medium | prior_hint seam only | render from a pre-reset snapshot fixture | — |
 | 9 | delivery_defects formed from the DAG ("owned by <task>, state: …"); steer never says "finished" to a running call | 5 of 6 r2 events blamed the wrong task | CHANGE | medium | message text only | unit: app/ledgerd/server.py→app.stream names sse-endpoint, not documentation | — |
 | 10 | SAID provenance (attempt/said_kind/marker/chips) | 24m30s of a dead attempt's error shown as the live answer | ADD | med-high | digest fields, 4 call sites, 3 UI files, via digestStreamFields only | real ledger-core-tests.log bytes as fixture; legacy no-marker path | owner ask |
 | 11 | forming line (task-local observer → forming.json → amber row; judge_observed gains forming) | 312 s invisible write; 3 wasted looks | ADD | medium — LM Studio arg streaming UNMEASURED | listed in §II.5 | decoder unit test with chunked SSE fixture; then ONE live forced-write call | owner ask; measure first |
 | 12 | research writes quarantined to .swarm/research-writes/ (idempotent, no-op when clean) | slice-camera-system wrote viz_camera.js/test_camera.js at root | ADD | medium | pre-BUILD pass only | fixture tree with strays moves them; clean tree untouched | — |
-| 13 | coverage dispatches per enumerated part (amends Part I step 5) | ~20 min at 1/6 occupancy behind coverage_complete | CHANGE | medium | research loop :26464 region | fake-dispatcher: gap slice dispatched at part landing | — |
+| 13 | coverage dispatches per enumerated part (amends Part I step 5) | ~20 min at 1/6 occupancy behind coverage_complete | CHANGE | medium | research loop :26464 region | fake-dispatcher: gap slice dispatched at part landing | owner-gated with §II.0's coverage verdict — the table's DELETE stands until Mihai's word; never run |
 | 14 | context_slice: KEEP beside the ledger; measure sink first-call prompt_tokens + pytest re-runs vs r2's 29,762 / 8 | no r2 evidence either way | KEEP | medium | none in r3 | the r3 run's own telemetry | waits for r2 score |
 | 15 | pre_review: keep only off build-lane nodes (scheduler.rs:1893-1935) | 2/10 findings landed and reached the sink; its calls starved the lane the run waited on | KEEP (constrained) | medium | supervision placement | placement unit test | waits for r2 score |
 
 Owner's explicit asks: rows 3, 4 (semantic message, don't-repeat), 10, 11 (the two desktop asks), 7 (the no-time rule).
-Waiting on r2's score (per ask #1, every keep/drop is conditional on beating r0's 0.0568): 14, 15, and Part I step 10's
-supervision-off arm. Everything else rests on measurements already in hand. Landing order by confidence: 1, 2, 3, 4, 5, 7,
-then Part I's 1-4/14 batch, then 6, 8, 9, 10, 12, 13; 11 after its measurement.
+TWO TRACKS (asks #1 and #7 — "Engine code waits for r2's score; the two desktop items (2, 3) may go first"): DESKTOP —
+row 10 now, row 11 after its LM Studio measurement — may start immediately; ENGINE — rows 1-9, 12, 13 and the Part I batch
+— lands only after run_finished + the r2 score, each row re-verdicted against the score first (ask #1 and the scope rule
+condition the ENTIRE list on r2's results; rows 14, 15 and the supervision-off arm additionally wait on beating r0's
+0.0568). Engine order by confidence once gated: 1, 2, 3, 4, 5, 7, then Part I's 1-4/14 batch, then 6, 8, 9, 12, 13.
 
 ## II.8 Confidence, honestly, per section
 
