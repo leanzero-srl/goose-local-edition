@@ -26187,6 +26187,59 @@ fn cut_request_into_portions(text: &str, n: usize) -> Vec<String> {
 /// model must list every component its part names, say which slice owns each, and QUOTE the words in that
 /// slice's objective that prove it. A claim it cannot quote is not ownership. The engine then takes the
 /// unowned rows — it no longer depends on the model volunteering that something is missing.
+/// The REVIEW patch schema, and it must stay PERMISSIVE.
+///
+/// Review was the ONLY planner-side call passing `response: None`, and that had three consequences it
+/// took an adversarial audit to find:
+///   1. `wants_structured_reply` is `response.is_some()`, so the engine terminator for a call that owes
+///      a structured reply and never makes one was UNREACHABLE for every review lane -- the exact lane
+///      it was written for.
+///   2. The judge's `structured_block` ("your deliverable is a single structured reply, call the output
+///      tool NOW") is gated on the same flag, so review was never even told.
+///   3. Without a `Response`, `apply_recipe_components` never calls `add_final_output_tool`, so
+///      `recipe__final_output` DOES NOT EXIST on that agent. The judge spent twelve nudges telling
+///      `review-6-notifierd-the-ide` to "call `final_output` immediately" -- naming a tool the lane did
+///      not have. That is the whole of what Mihai saw in the event log.
+///
+/// PERMISSIVE IS LOAD-BEARING. The review prompt tells the model to "return empty lists for all four
+/// keys" when the plan needs no change, and `validate_json_output` REJECTS a non-conforming argument.
+/// A `required` on the top level, or on `description`/`difficulty` inside `add`, would make a clean
+/// no-change review fail validation, leave `final_output` empty, and then be ended by the very
+/// terminator this arms -- turning a lane that used to contribute findings into one that contributes
+/// nothing. Mirror `PlanPatch`'s serde defaults exactly: only `id` is ever required.
+fn review_patch_schema() -> serde_json::Value {
+    let task_add = serde_json::json!({
+        "type": "object",
+        "required": ["id"],
+        "properties": {
+            "id": {"type": "string"},
+            "description": {"type": "string"},
+            "difficulty": {"type": "string"},
+            "model": {"type": "string"},
+            "files": {"type": "array", "items": {"type": "string"}},
+            "depends_on": {"type": "array", "items": {"type": "string"}},
+        },
+    });
+    let task_edit = serde_json::json!({
+        "type": "object",
+        "required": ["id"],
+        "properties": {
+            "id": {"type": "string"},
+            "files": {"type": "array", "items": {"type": "string"}},
+            "depends_on": {"type": "array", "items": {"type": "string"}},
+        },
+    });
+    serde_json::json!({
+        "type": "object",
+        "properties": {
+            "findings": {"type": "array", "items": {"type": "string"}},
+            "replace": {"type": "array", "items": task_edit},
+            "add": {"type": "array", "items": task_add},
+            "remove": {"type": "array", "items": {"type": "string"}},
+        },
+    })
+}
+
 fn coverage_schema() -> serde_json::Value {
     serde_json::json!({
         "type": "object",
@@ -27918,7 +27971,16 @@ impl GooseAgentDispatcher {
                         serde_json::to_string_pretty(&skeleton).unwrap_or_default()
                     ),
                 },
-                None,
+                // DECLARE THE DELIVERABLE. Review was the only planner-side call passing `None` here,
+                // which left `wants_structured_reply` false and took three things with it: the engine
+                // terminator could never fire on a review lane, the judge's "call your output tool"
+                // block was never shown to one, and -- the one that explains the event log -- no
+                // `recipe__final_output` tool was ever added to the agent, so twelve nudges told a lane
+                // to call a tool it did not have. See `review_patch_schema` for why it must be
+                // permissive.
+                Some(Response {
+                    json_schema: Some(review_patch_schema()),
+                }),
                 planner_side_turns(),
                 &[],
                 None,
@@ -43376,5 +43438,68 @@ mod live_fleet_tests {
             "the finding must clear when the file appears"
         );
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// THE SCHEMA MUST ACCEPT A NO-CHANGE REVIEW, AND THAT IS AN INVARIANT, NOT A STYLE CHOICE.
+    ///
+    /// The review prompt tells the model to return empty lists when the plan needs no change, and
+    /// `validate_json_output` (goose/src/agents/final_output_tool.rs:94) REJECTS a non-conforming
+    /// argument. A `required` on the top level -- or on `description` inside `add` -- would make a clean
+    /// review fail validation, leave `final_output` empty, and then be ended by the terminator that
+    /// declaring this schema just armed. A lane that used to contribute findings would contribute
+    /// nothing, and the failure would look like the model's fault.
+    ///
+    /// Asserted structurally rather than with a validator: `jsonschema` is a dependency of `goose`, not
+    /// of this crate, and the invariant worth pinning is exactly "what is required", not "does a
+    /// validator agree with itself".
+    #[test]
+    fn the_review_schema_never_requires_more_than_an_id() {
+        let schema = review_patch_schema();
+        assert!(
+            schema.get("required").is_none(),
+            "a top-level `required` rejects the no-change review the prompt explicitly asks for: {schema}"
+        );
+        for key in ["add", "replace"] {
+            let req = schema["properties"][key]["items"]["required"]
+                .as_array()
+                .unwrap_or_else(|| panic!("{key} items must state what they require"));
+            assert_eq!(
+                req.len(),
+                1,
+                "{key} may require ONLY `id` -- PlanPatch defaults every other field: {req:?}"
+            );
+            assert_eq!(req[0], "id");
+        }
+        for key in ["findings", "remove"] {
+            assert_eq!(
+                schema["properties"][key]["type"], "array",
+                "{key} must be an array"
+            );
+        }
+    }
+
+    /// The schema and the type the engine actually parses must agree, or a patch validates and then
+    /// fails to deserialize -- which reads as the reviewer returning nothing.
+    #[test]
+    fn a_patch_matching_the_schema_deserializes_into_planpatch() {
+        let real = serde_json::json!({
+            "findings": ["duplicate ownership of web/viz.js"],
+            "replace": [{ "id": "viz-interaction", "files": ["web/viz.js"] }],
+            "add": [{ "id": "sse-stream", "files": ["app/sse.py"], "depends_on": [] }],
+            "remove": ["viz-rendering"],
+        });
+        let parsed: goose_swarm::PlanPatch =
+            serde_json::from_value(real).expect("the schema and PlanPatch must agree");
+        assert_eq!(parsed.remove, vec!["viz-rendering".to_string()]);
+        assert_eq!(parsed.add.len(), 1);
+        assert_eq!(parsed.replace.len(), 1);
+
+        // And the no-change shape must deserialize to an EMPTY patch, not an error.
+        let empty: goose_swarm::PlanPatch =
+            serde_json::from_value(serde_json::json!({ "findings": [] })).expect("empty is valid");
+        assert!(
+            empty.is_empty(),
+            "a review that found nothing must produce an empty patch"
+        );
     }
 }
