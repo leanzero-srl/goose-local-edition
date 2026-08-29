@@ -27567,6 +27567,69 @@ impl GooseAgentDispatcher {
 /// finds something. So each round's findings are de-duped against the previous round's and the loop
 /// ends on the first round that surfaces no new one. That is the stall-guard predicate this repo
 /// already uses and already tests; it is semantic, and it is neither a counter nor a clock.
+/// The three decomposition numbers, computed from a plan's own JSON.
+///
+/// ONE rule in ONE place. It is emitted at SYNTHESIS and again after every REVIEW patch, and those two
+/// readings are only comparable if the same code produces them — a second copy would drift and the drift
+/// would be invisible, because each side would look internally consistent.
+///
+/// `tasks_sharing_a_file` counts over-collision, `tasks_owning_nothing` counts over-decomposition, and
+/// `shared_files` names the offenders so a reader is not left re-deriving the ownership map by hand.
+fn decomposition_of(plan_json: &str) -> serde_json::Value {
+    let tasks: Vec<serde_json::Value> = serde_json::from_str::<serde_json::Value>(plan_json)
+        .ok()
+        .and_then(|v| v.get("subtasks").and_then(|t| t.as_array()).cloned())
+        .unwrap_or_default();
+    let mut owner_count: std::collections::HashMap<String, usize> =
+        std::collections::HashMap::new();
+    for t in &tasks {
+        for f in t
+            .get("files")
+            .and_then(|f| f.as_array())
+            .into_iter()
+            .flatten()
+        {
+            if let Some(f) = f.as_str() {
+                *owner_count.entry(f.to_string()).or_default() += 1;
+            }
+        }
+    }
+    let mut shared: Vec<serde_json::Value> = owner_count
+        .iter()
+        .filter(|(_, n)| **n > 1)
+        .map(|(f, _)| {
+            let owners: Vec<&str> = tasks
+                .iter()
+                .filter(|t| {
+                    t.get("files")
+                        .and_then(|v| v.as_array())
+                        .is_some_and(|a| a.iter().any(|x| x.as_str() == Some(f.as_str())))
+                })
+                .filter_map(|t| t.get("id").and_then(|i| i.as_str()))
+                .collect();
+            serde_json::json!({ "file": f, "tasks": owners })
+        })
+        .collect();
+    shared.sort_by_key(|v| v["file"].as_str().unwrap_or("").to_string());
+    let owning_nothing: Vec<&str> = tasks
+        .iter()
+        .filter(|t| {
+            t.get("files")
+                .and_then(|f| f.as_array())
+                .is_none_or(|a| a.is_empty())
+        })
+        .filter_map(|t| t.get("id").and_then(|i| i.as_str()))
+        .filter(|id| *id != "integrate-verify")
+        .collect();
+    serde_json::json!({
+        "tasks": tasks.len(),
+        "distinct_files": owner_count.len(),
+        "tasks_sharing_a_file": owner_count.values().filter(|n| **n > 1).count(),
+        "shared_files": shared,
+        "tasks_owning_nothing": owning_nothing,
+    })
+}
+
 async fn review_until_settled(
     dispatcher: &Arc<GooseAgentDispatcher>,
     planner_model: &str,
@@ -27705,6 +27768,11 @@ async fn review_until_settled(
                         "replace": patch.replace.len(),
                         "add": patch.add.len(),
                         "remove": patch.remove.len(),
+                        // THE STATE THE PATCH PRODUCED, not just its size. Without this the only evidence
+                        // that a collision was actually resolved is the reviewer's own prose -- run 3's
+                        // finding read "merged into viz-interaction" and nothing in the log could confirm
+                        // the plan agreed. Follow a finding to a CHANGE, never to the event reporting it.
+                        "after": decomposition_of(&next),
                     }));
                     plan_json = next;
                     // THE REVIEW IS CYCLING, AND THAT IS A PROOF, NOT A HEURISTIC.
