@@ -155,6 +155,24 @@ node    ~/goose-builds/loop-state/tick_ui.mjs      # frontend: CDP on 9897 — r
 directory name. The name blacklist was one marker behind twice (`-ENDED-`, then `-STOPPED-`), and the
 second time it reported a run dead for hours as live, with an ETA.
 
+## THE TICK, both halves, every 10 minutes
+
+```bash
+python3 ~/goose-builds/loop-state/tick.py           # backend: phase, ETA vs the LOCAL clock, per-lane
+                                                    # DELTAS, spec volume, the claims under test, install drift
+node ~/goose-builds/loop-state/tick_ui.mjs          # frontend: realtime, graphical issues, waste, UX
+node ~/goose-builds/loop-state/tick_ui_click.mjs    # frontend: DRIVES the controls — opens a node, closes it
+~/goose-builds/loop-state/note.sh <kind> "finding"  # append to TICK-NOTES.md
+python3 ~/goose-builds/loop-state/snapshot_run.py   # run into RUN-LEDGER.md (the tick does this automatically)
+```
+
+**At end of run: implement every fix, test each in ISOLATION, then start the run and verify holistically.**
+
+**Kill checkpoints are deliberately narrow — slowness is NOT a kill.** A long phase, idle nodes while a
+fanned straggler finishes, and an outstanding judge probe have each caused a WRONG kill. Kill only on a
+proven wedge — no new event AND no digest mtime movement, sampled ≥3 times over ≥90s, AND `lms ps` idle
+— or a named-field defect from the table in `SWARM-AGENDA.md`.
+
 ## HOW TO ISOLATION-TEST
 
 Run from the repo root, and **never as a bare `goose`**: on this machine `which goose` is
