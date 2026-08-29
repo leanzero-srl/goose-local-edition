@@ -3329,19 +3329,6 @@ fn sink_lean_prefill_enabled(cfg: Option<bool>) -> bool {
     straggler_stop_resolved(std::env::var("GOOSE_SWARM_SINK_LEAN_PREFILL").ok(), cfg)
 }
 
-/// #122 backbone-skip-confident gate: env GOOSE_SWARM_BACKBONE_SKIP_CONFIDENT wins, else config, else OFF.
-fn backbone_skip_confident_enabled(cfg: Option<bool>) -> bool {
-    straggler_stop_resolved(
-        std::env::var("GOOSE_SWARM_BACKBONE_SKIP_CONFIDENT").ok(),
-        cfg,
-    )
-}
-
-/// #122 detail-memo gate: env GOOSE_SWARM_DETAIL_MEMO wins, else config, else default OFF.
-fn detail_memo_enabled(cfg: Option<bool>) -> bool {
-    straggler_stop_resolved(std::env::var("GOOSE_SWARM_DETAIL_MEMO").ok(), cfg)
-}
-
 /// #136 repeat-breaker gate: env GOOSE_SWARM_REPEAT_BREAK wins, else config, else default OFF.
 fn repeat_break_enabled(cfg: Option<bool>) -> bool {
     straggler_stop_resolved(std::env::var("GOOSE_SWARM_REPEAT_BREAK").ok(), cfg)
@@ -3350,11 +3337,6 @@ fn repeat_break_enabled(cfg: Option<bool>) -> bool {
 /// #135 omni-judge gate: env GOOSE_SWARM_OMNI_JUDGE wins, else config, else default OFF.
 fn omni_judge_enabled(cfg: Option<bool>) -> bool {
     straggler_stop_resolved(std::env::var("GOOSE_SWARM_OMNI_JUDGE").ok(), cfg)
-}
-
-/// #136: treat a spec-DELEGATED decision as a design choice for the workers, not as spec unclarity.
-fn delegated_decisions_ok(cfg: Option<bool>) -> bool {
-    straggler_stop_resolved(std::env::var("GOOSE_SWARM_DELEGATED_OK").ok(), cfg)
 }
 
 /// #135 omni-judge cadence. Mihai: "you don't need to wait for anything like 10-20k, you will see it
@@ -3804,13 +3786,6 @@ fn planner_wall(_planner_timeout_secs: u64) -> u64 {
     // No wall. A planner-side call ends when the model finishes, when the judge redirects it, or when
     // the socket dies.
     UNCAPPED_SECS
-}
-
-fn spiral_break_chars(_cfg: Option<usize>) -> usize {
-    // OFF, permanently. A volume threshold cannot tell a deep call from a stuck one: healthy plan drafts
-    // reach 57,443 chars, from runs that scored 100/100. Reading the reasoning is the only thing that can,
-    // and that is the judge's job.
-    0
 }
 
 // REMOVED with the spiral break: the per-kind budget table, its 12,000-char floor, and the compile-time
@@ -7418,14 +7393,6 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
     }
 
     #[test]
-    fn delegation_lever_defaults_off_and_env_overrides_config() {
-        // Default OFF, and the resolver precedence matches every other lever (env beats config beats default).
-        assert!(!delegated_decisions_ok(None));
-        assert!(delegated_decisions_ok(Some(true)));
-        assert!(!delegated_decisions_ok(Some(false)));
-    }
-
-    #[test]
     fn spec_clarity_score_is_continuous_not_a_constant() {
         // Defined product: continuous, decreasing with each material open decision (NOT the old 100/72/50/30
         // buckets); floored at 30 so a very-open-but-defined spec still reads "low, ask".
@@ -8949,41 +8916,10 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
         assert!(!ask_replan_resolved(Some("maybe".into()), Some(true)));
     }
 
-    #[test]
-    fn retarget_rounds_clamps() {
-        assert_eq!(retarget_rounds_from(None), 2);
-        assert_eq!(retarget_rounds_from(Some("0".into())), 0);
-        assert_eq!(retarget_rounds_from(Some("3".into())), 3);
-        assert_eq!(retarget_rounds_from(Some("9".into())), 4);
-        assert_eq!(retarget_rounds_from(Some("abc".into())), 2);
-    }
-
     /// The retarget budget was env-ONLY, and the env NEVER REACHES THE ENGINE (LaunchServices hands the
     /// desktop app its own environment — proven with a probe var + `ps eww`). So the campaign's documented
     /// invariant "HELD CONSTANT every arm: ROUNDS=4" was never true on a single run: every one silently used
     /// the default 2. config.yaml is the only channel that reaches the engine.
-    #[test]
-    fn retarget_rounds_reads_config_because_the_env_never_arrives() {
-        // The whole point: with no env, the CONFIG decides.
-        assert_eq!(retarget_rounds_resolved(None, Some(4)), 4);
-        assert_eq!(retarget_rounds_resolved(None, Some(0)), 0);
-
-        // Unset on both channels keeps the historical default — byte-identical for anyone not using this.
-        assert_eq!(retarget_rounds_resolved(None, None), 2);
-
-        // Env still wins where it CAN arrive (the CLI, where it is inherited normally).
-        assert_eq!(retarget_rounds_resolved(Some("1".into()), Some(4)), 1);
-
-        // The clamp must hold on BOTH paths. A config field carrying 9 can spin a 3-node fleet for hours just
-        // as easily as an env var can; the two channels must not disagree about what 9 means.
-        assert_eq!(retarget_rounds_resolved(Some("9".into()), None), 4);
-        assert_eq!(retarget_rounds_resolved(None, Some(9)), 4);
-        assert_eq!(
-            retarget_rounds_resolved(None, Some(99)),
-            retarget_rounds_resolved(Some("99".into()), None)
-        );
-    }
-
     #[test]
     /// The FOUR-field contract, and the leniency it has to keep.
     ///
@@ -13923,26 +13859,6 @@ fn sink_max_turns_resolved(env: Option<String>, cfg: Option<u32>, worker_default
         .or(cfg)
         .unwrap_or(worker_default)
         .clamp(worker_default, 200)
-}
-
-/// GOOSE_SWARM_RETARGET_ROUNDS: bounded retarget budget. Default 2; clamped [0,4] (0 = OFF). Mirrors
-/// `complete_rounds_from` so a misconfigured value can never spin the fleet forever.
-fn retarget_rounds_from(v: Option<String>) -> u32 {
-    v.and_then(|s| s.trim().parse::<u32>().ok())
-        .unwrap_or(2)
-        .min(4)
-}
-
-/// The retarget budget, resolved env > config > default 2, and clamped [0,4] on EVERY path.
-///
-/// The clamp must not live only on the env path: a config field is just as capable of carrying `9` and
-/// spinning a 3-node fleet for hours. `retarget_rounds_from` already clamps env; this clamps config with the
-/// same `.min(4)` so the two channels cannot disagree about what 9 means.
-fn retarget_rounds_resolved(env: Option<String>, cfg: Option<u32>) -> u32 {
-    match env {
-        Some(v) => retarget_rounds_from(Some(v)),
-        None => cfg.map(|v| v.min(4)).unwrap_or(2),
-    }
 }
 
 fn breakdown_json(pc: &PlanConf) -> Option<serde_json::Value> {
@@ -34887,10 +34803,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
     // default OFF so the ask-only path is byte-identical. `best_plan` keeps the highest-confidence plan seen so
     // a re-draft that diverges can never ship worse than the best already measured.
     let retarget_on = swarm_gate_cfg("GOOSE_SWARM_RETARGET", cfg.retarget) && ask_floor.is_some();
-    let retarget_cap = retarget_rounds_resolved(
-        std::env::var("GOOSE_SWARM_RETARGET_ROUNDS").ok(),
-        cfg.retarget_rounds,
-    );
+    // `retarget_cap` deleted with its manifest echo: it computed a .min(4) cap in order to print it.
     // EVERY LEVER'S RESOLVED VALUE, FROM THE ENGINE'S OWN MOUTH — and the build that resolved it.
     //
     // A lever's value is decided by a precedence chain (env > config.yaml > assured bundle > default)
@@ -35000,16 +34913,21 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                 .iter()
                 .map(|(_, m)| m.clone())
                 .collect::<Vec<_>>(),
-            // The RESOLVED budget, not the config field — the campaign spent weeks believing this was 4 while
-            // every run used 2. A run must be able to state what it actually spent.
-            "retarget_rounds": retarget_cap,
-            "backbone": swarm_gate_cfg("GOOSE_SWARM_BACKBONE", load_config().backbone),
-            "backbone_skip_confident": backbone_skip_confident_enabled(load_config().backbone_skip_confident),
-            "detail_memo": detail_memo_enabled(load_config().detail_memo),
+            // REMOVED FROM THE MANIFEST: retarget_rounds, backbone, backbone_skip_confident, detail_memo,
+            // spiral_break_chars, delegated_decisions_ok.
+            //
+            // Every one of them GATED NOTHING. Their only consumer was this echo, so each run stamped a
+            // resolved value for a lever no code reads — and `retarget_rounds` was the worst of them,
+            // because `retarget_rounds_resolved` computes a `.min(4)` CAP that is then used for exactly
+            // one thing: printing itself. A manifest that states levers nobody applies is not merely
+            // noise, it is the thing an A/B reads to attribute a result, and it was attributing to
+            // settings that could not have changed anything.
+            //
+            // This is the same defect as `judge_nudge`, which stamped `false` on every run while the
+            // judge nudged throughout. That one was found by reading the code; these six were found by
+            // asking, of every key here, which non-test caller consumes it. Six of fourteen did not.
             "repeat_break": repeat_break_enabled(load_config().repeat_break),
-            "spiral_break_chars": spiral_break_chars(load_config().spiral_break_chars),
             "omni_judge": omni_judge_enabled(load_config().omni_judge),
-            "delegated_decisions_ok": delegated_decisions_ok(load_config().delegated_decisions_ok),
             "incremental_replan": swarm_gate_cfg("GOOSE_SWARM_INCREMENTAL_REPLAN", load_config().incremental_replan),
             "retarget_stall_guard": swarm_gate_cfg("GOOSE_SWARM_RETARGET_STALL_GUARD", load_config().retarget_stall_guard),
             "no_tools_means_ask": swarm_gate_cfg("GOOSE_SWARM_NO_TOOLS_MEANS_ASK", load_config().no_tools_means_ask),
