@@ -238,7 +238,9 @@ tool-call deltas in this branch's provider layer).
 **LIVE CHECKS for the first tick of the rebuilt app (r3), over CDP, before trusting any of it:** (1) ribbon shows
 10 chips Open · Ask · Research · Synthesize · Review · Contracts · Build · Integrate · Repair · Done, Contracts
 active during CONTRACTS with the node chips under it; (2) a RUNNING row appears in the inspector the moment a
-write/shell starts, caption "N tool calls · k ok · 1 running", no duplicate when it lands; (3) on `#/benchmark` with
+write/shell starts, caption "N tool calls · k ok · 1 running", no duplicate when it lands; (2b) a retried
+lane shows the SAID chips (attempt N · live / superseded / error→retried) and "processing the prompt…", the
+archived r0 run renders chipless, new runs' <task>.log files begin with an attempt-marker line; (3) on `#/benchmark` with
 the run live, Cmd+N / Cmd+W / Cmd+Q / Cmd+T / Cmd+, each show the warning toast and do nothing, mouse clicks on the
 same menu items still act; Cmd+R / Cmd+Shift+R / Cmd+Alt+I do nothing and the View menu shows no Reload items;
 without a run, Cmd+N opens a sibling window on the focused directory and Cmd+W / Cmd+Q behave as before. Token-level argument streaming
