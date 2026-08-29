@@ -2720,6 +2720,9 @@ export function deriveFleet(args: {
 }): {
   devices: string[];
   workingByDevice: Map<string, TurnLane>;
+  /** A node's live lanes BEYOND the one in `workingByDevice`. Nodes run PARALLEL: 2, so this is
+   *  routinely non-empty and dropping it hid the largest lanes in a run entirely. */
+  alsoRunningByDevice: Map<string, TurnLane[]>;
   /** Open supervision spans that could not be pinned to a busy node — still real work; the panel
    *  shows them as an unattributed supervision line rather than dropping them. */
   unattributed: SupervisionSpan[];
@@ -2728,6 +2731,8 @@ export function deriveFleet(args: {
     new Set([...args.pool, ...args.laneSources.map((l) => l.device)])
   ).sort();
   const workingByDevice = new Map<string, TurnLane>();
+  /** The node's OTHER live lanes — see the PARALLEL: 2 note below. */
+  const alsoRunningByDevice = new Map<string, TurnLane[]>();
   // A lane the engine OPENED and never closed is a claim, not an observation. It stays 'running'
   // through a re-stream that produced nothing, and through a kill that never got to write a closing
   // event -- so on its own it renders a dead node as working for as long as the panel is open.
@@ -2750,9 +2755,26 @@ export function deriveFleet(args: {
     const age = args.now - (args.digestMtimes[l.taskId] ?? 0);
     return age > (callOpen ? DIGEST_OPEN_CALL_FRESH_MS : DIGEST_FRESH_MS);
   };
+  // EVERY node runs PARALLEL: 2, so a node routinely has TWO live lanes and this map holds one.
+  //
+  // Measured on run swarm-20260829-100743413: gabee was running open-coverage-1 (68,393 reasoning
+  // characters) alongside slice-index-html, and mihai was running open-coverage-2 (45,712) alongside
+  // slice-styles-css. Five live lanes, three cells, and the two BIGGEST lanes in the run had no cell at
+  // all -- the fleet strip structurally could not show them, whatever they did. That is the "I cannot
+  // see what the nodes are doing" complaint with a mechanism behind it.
+  //
+  // The primary stays first-wins so the cell's identity is stable between polls; the rest are carried
+  // beside it rather than dropped, and the strip renders them under their node.
   for (const l of args.laneSources) {
-    if (l.status === 'running' && !workingByDevice.has(l.device) && !laneLooksDead(l)) {
+    if (l.status !== 'running' || laneLooksDead(l)) continue;
+    if (!workingByDevice.has(l.device)) {
       workingByDevice.set(l.device, l);
+    } else if (workingByDevice.get(l.device)?.taskId !== l.taskId) {
+      const also = alsoRunningByDevice.get(l.device) ?? [];
+      if (!also.some((x) => x.taskId === l.taskId)) {
+        also.push(l);
+        alsoRunningByDevice.set(l.device, also);
+      }
     }
   }
   // A lane the LIFECYCLE closed (task_completed / fix completed) is over even if its digest predates
@@ -2812,7 +2834,7 @@ export function deriveFleet(args: {
       seq: 0,
     });
   }
-  return { devices, workingByDevice, unattributed };
+  return { devices, workingByDevice, alsoRunningByDevice, unattributed };
 }
 
 // Derive the per-phase TODO from the engine's deterministic event stream. Every checkbox is flipped by a
