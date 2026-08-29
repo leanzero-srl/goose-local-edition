@@ -1,0 +1,30 @@
+{
+  "_why": "Cut from the REAL r0 run's .swarm/activity/ledger-core-tests.{json,log} (swarm-3node-r0). Attempt 0 produced ONLY the transport error below and was retried; attempt 1 then ran 24+ minutes while the SAID pane kept showing that error as if current — the owner's 2026-08-29 23:30 report. log_legacy is the file as the r0 engine wrote it (both attempts, no markers, blank runs shortened); log_mid_retry is the same bytes as the NEW engine writes them, frozen at the moment the owner was looking: attempt 0's marker + its error, then attempt 1's marker with NOTHING after it yet. digest_mid_retry is the seed the new engine writes at attempt 1's dispatch, its superseded entry folded from attempt 0's real digest. answer_tail is the real final last_text of attempt 1.",
+  "error_text": "\n\n\n\nNetwork error: Stream decode error: error decoding response body\n\nPlease resend your message to try again.",
+  "answer_tail": " that the implementation has thread-safety issues (sqlite3 `InterfaceError` when connection is used from multiple threads simultaneously) and a bug in `upsert_reversal` (tries to SELECT `seq` from reversals table which doesn't have that column). These are implementation bugs that the tests are correctly catching.",
+  "log_legacy": "\n\n\n\nNetwork error: Stream decode error: error decoding response body\n\nPlease resend your message to try again.\n\n\nI've written comprehensive tests for ledger-core covering:\n\n1. **Schema migration on restart** - verifies tables are created on first open and preserved across reopens\n2. **Upsert idempotency** - same payment inserted twice results in count of 1; lower versions ignored; higher versions update\n3. **Event log seq integrity** - seq numbers are contiguous with no gaps under both sequential and concurrent writes\n4. **Optimistic concurrency** - version conflicts detected (stale writes ignored); sequential updates work correctly\n5. **Edge cases** - empty collections return empty results; pagination l",
+  "log_mid_retry": "\n===== swarm attempt 0 · dispatched 2026-08-29T22:45:12.000000+00:00 =====\n\n\n\n\nNetwork error: Stream decode error: error decoding response body\n\nPlease resend your message to try again.\n\n===== swarm attempt 1 · dispatched 2026-08-29T23:31:02.000000+00:00 =====\n",
+  "digest_mid_retry": {
+    "tool_calls": 0,
+    "errors": 0,
+    "recent": [],
+    "inflight": [],
+    "last_text": "",
+    "model": "workhorse-qwen3.8-27b-brainwaves-mxfp8-mlx",
+    "phase": "processing",
+    "attempt": 1,
+    "dispatched_at": "2026-08-29T23:31:02.000000+00:00",
+    "said_at": null,
+    "said_kind": "said",
+    "superseded": [
+      {
+        "attempt": 0,
+        "last_text": "\n\n\n\nNetwork error: Stream decode error: error decoding response body\n\nPlease resend your message to try again.",
+        "said_kind": "error",
+        "said_at": "2026-08-29T23:30:40.000000+00:00",
+        "model": "workhorse-qwen3.8-27b-brainwaves-mxfp8-mlx"
+      }
+    ]
+  },
+  "retry_error": "Network error: Stream decode error: error decoding response body"
+}

@@ -24,9 +24,11 @@ describe('node inspector layout', () => {
   // collapses the column on precisely the lane that has 60 tool calls to show.
   it('gives the work column its space whenever there is EITHER a call or narration', () => {
     expect(SRC).toMatch(/hasWork \? 'grid-cols-1 lg:grid-cols-2' : 'grid-cols-1'/);
-    // A request still running is a call too: the column must not collapse while the only work is in flight.
+    // A request still running is a call too: the column must not collapse while the only work is in
+    // flight. And a retried lane whose new attempt has said nothing yet still has a SUPERSEDED list to
+    // show — collapsing the column there would hide the very state chips the retry case exists for.
     expect(SRC).toMatch(
-      /const hasWork = calls\.length > 0 \|\| running\.length > 0 \|\| narration\.length > 0;/
+      /const hasWork =\s*\n?\s*calls\.length > 0 \|\| running\.length > 0 \|\| narration\.length > 0 \|\| said\.superseded\.length > 0;/
     );
   });
 
