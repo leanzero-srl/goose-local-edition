@@ -397,6 +397,50 @@ it. A problem that turns out to be already owned is left out, but then it was no
 **THIS RUN KEEPS THE DEFECT** — the binary is the old one. Expect 4 features missing from its app, and read
 the score with that in mind rather than as a verdict on the decomposition.
 
+## THE JUDGE COSTS 46% OF THE FLEET — measured on run 4, 2026-08-29 09:05 EEST
+
+    judge_look_dispatched   211      each one a MODEL CALL occupying a node
+    judge_look returned     186
+    judge_look_abandoned     24      dispatched, dropped, paid for anyway
+    judge_nudge              38      <- 5.5 supervision calls per intervention
+    median judge call        49s     max 221s
+    TOTAL node-time judging 222 min  of 480 node-min available in 160 min wall-clock
+    ============================================================================
+    46.3% OF THE FLEET WAS WATCHING, NOT WORKING.
+
+**AND IT IS READING THE WRONG THING.** Every one of those 211 calls asks a 27B to INFER, from a 2,400-char
+reasoning tail, whether a call is going well. Meanwhile `python -c "import app"` answers "does this compile"
+definitively, in under a second, for free.
+
+## THE REDESIGN — Mihai's, 2026-08-29. THE VERIFIER IS THE LINCHPIN
+
+His words: *"the judge is not only a terminator but rather a NUDGER of good quality… why not use the idle
+node to check the files that have already been produced… this would reduce the Review and Repair… compile
+errors can be seen early on."*
+
+**A CONTINUOUS ARTIFACT VERIFIER, on whatever node is idle.** It reads FILES, not reasoning:
+does it parse · does it import · does the advertised endpoint answer · is an owned file still empty · does
+the frontend reference a file nobody wrote. Findings become queued messages to the owning task — the steer
+path already proven at 36-for-36 on run 4 — or become new work.
+
+**RECOMMENDED ORDER, and the order is the recommendation:**
+
+    1. VERIFIER FIRST   additive, cheap, immediately useful, and it makes the other two SAFE.
+                        Nothing is removed yet, so a regression costs nothing.
+    2. THEN (A)         dispatch a slice the moment its brief lands, not after the plan settles.
+                        Only safe once something is watching the tree, which is step 1.
+    3. THEN (B)         shrink REVIEW to one pass. Only safe once the verifier is demonstrably
+                        catching what REVIEW was catching -- measured, not assumed.
+
+**A AND B ARE NOT ALTERNATIVES, THEY ARE THE SAME MOVE FROM BOTH ENDS:** A starts building earlier, B stops
+planning later, and the verifier is what makes the gap between them safe to close. Doing B without the
+verifier removes the only thing currently catching structural defects. Doing A without it lets a bad slice
+write files nobody checks until INTEGRATE.
+
+**AND THE JUDGE'S LOOK BUDGET MUST FALL AS THE VERIFIER RISES.** The 211 calls exist because reading
+reasoning is the only evidence it has. Give it artifacts and most of those looks stop being necessary --
+that 46% is the headroom that pays for everything above.
+
 ## THE ANSWER TO "HOW DID CLOUD GET 20% WHEN WE CANNOT BEAT 2.7%" — measured 2026-08-29 08:55 EEST
 
 **IT IS NOT THE JUDGE. IT IS THAT WE PLAN FOR HOURS AND BUILD FOR MINUTES.**
