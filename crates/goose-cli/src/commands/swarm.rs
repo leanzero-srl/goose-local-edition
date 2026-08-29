@@ -26950,6 +26950,57 @@ impl GooseAgentDispatcher {
             }
         })
         .await;
+        // (3) CHECK THE PLAN AS IT IS CREATED, NOT AN HOUR LATER.
+        //
+        // Every brief declares the files its slice will create. Two briefs naming the same path is a
+        // COLLISION, and it is knowable HERE -- the moment RESEARCH ends -- instead of at SYNTHESIS, and
+        // then only after REVIEW spends rounds repairing it.
+        //
+        // MEASURED, run 4: `web/viz.js` was claimed by SIX tasks. SYNTHESIS created that collision, REVIEW
+        // took two rounds and 74 minutes to unpick it, and the repair left 11 tasks owning nothing. The
+        // information needed to prevent all of it existed 74 minutes earlier, in these briefs.
+        let mut owners: std::collections::HashMap<String, Vec<String>> =
+            std::collections::HashMap::new();
+        for b in &out {
+            for f in &b.files {
+                owners.entry(f.clone()).or_default().push(b.id.clone());
+            }
+        }
+        let mut collisions: Vec<serde_json::Value> = owners
+            .iter()
+            .filter(|(_, ids)| ids.len() > 1)
+            .map(|(f, ids)| serde_json::json!({ "file": f, "slices": ids }))
+            .collect();
+        collisions.sort_by_key(|v| v["file"].as_str().unwrap_or("").to_string());
+        let no_files: Vec<&str> = out
+            .iter()
+            .filter(|b| b.files.is_empty())
+            .map(|b| b.id.as_str())
+            .collect();
+        if !collisions.is_empty() || !no_files.is_empty() {
+            self.events.write_value(serde_json::json!({
+                "event": "brief_defects",
+                "collisions": collisions,
+                "slices_declaring_no_files": no_files,
+                "briefs": out.len(),
+            }));
+            for c in &collisions {
+                eprintln!(
+                    "  {} `{}` is claimed by {} slices: {}",
+                    style("!").yellow().bold(),
+                    c["file"].as_str().unwrap_or("?"),
+                    c["slices"].as_array().map_or(0, |a| a.len()),
+                    c["slices"]
+                        .as_array()
+                        .map(|a| a
+                            .iter()
+                            .filter_map(|x| x.as_str())
+                            .collect::<Vec<_>>()
+                            .join(", "))
+                        .unwrap_or_default()
+                );
+            }
+        }
         out
     }
 }
@@ -27300,6 +27351,15 @@ impl GooseAgentDispatcher {
              - slice: the slice id it implements (exactly as given)\n\
              - difficulty: \"easy\" or \"hard\"\n\
              - files: the paths that task owns, taken from its slice's FILES section\n\
+             ONE FILE, ONE OWNER, WITH NO EXCEPTIONS. If two slices name the same path, decide HERE \
+             which single task owns it and give the others `files: []` — do not hand the same path to \
+             both and do not invent a second path to keep them apart. MEASURED: `web/viz.js` was handed \
+             to SIX tasks in one plan. The review then spent two rounds and seventy-four minutes \
+             unpicking it, first by inventing nine frontend files against a request that permits four, \
+             then by stripping them again, and the run reached BUILD with eleven tasks owning nothing. \
+             A task with `files: []` is legitimate and cheap; two tasks holding one path is neither.\n\
+             AND A SLICE WHOSE BRIEF DECLARES NO FILES GETS `files: []`. Do not invent a path for it. \
+             If it names nothing to create, it is not work — it is a note, and the review will remove it.\n\
              - depends_on: task ids it needs\n\n\
              DEPENDENCIES ARE EXPENSIVE — every one of them idles a machine. Add one ONLY when a task \
              literally cannot compile or run without another's file already existing. Needing to know a \
