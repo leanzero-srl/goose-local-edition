@@ -70,7 +70,9 @@ export function ranNothing(result: string | undefined | null): boolean {
 
 /** Best-effort filename out of a call summary (write/edit/read args or a path in a shell command). */
 function pathHint(summary: string): string {
-  const m = summary.match(/(?:^|[\s"'`(=])((?:[\w.-]+\/)*[\w.-]+\.(?:py|ts|tsx|js|rs|go|toml|json|md|txt|cfg|ya?ml))/);
+  const m = summary.match(
+    /(?:^|[\s"'`(=])((?:[\w.-]+\/)*[\w.-]+\.(?:py|ts|tsx|js|rs|go|toml|json|md|txt|cfg|ya?ml))/
+  );
   return m ? m[1] : '';
 }
 
@@ -113,7 +115,9 @@ export function classifyCall(call: SwarmCall): CallMeaning {
     if (/\b(pytest|cargo test|npm test|jest|vitest|go test|unittest|-m pytest)\b/.test(low)) {
       icon = 'test';
       action = 'Ran the tests';
-    } else if (/\b(cargo build|tsc|npm run build|npm run make|go build|make\b|pnpm build)\b/.test(low)) {
+    } else if (
+      /\b(cargo build|tsc|npm run build|npm run make|go build|make\b|pnpm build)\b/.test(low)
+    ) {
       icon = 'build';
       action = 'Built the project';
     } else if (/--help|python3? -m |node (dist|build)|cargo run|\.\/|bin\//.test(low)) {
@@ -145,7 +149,12 @@ export function classifyCall(call: SwarmCall): CallMeaning {
     // Exit 0 is not proof of work: a `| head` pipe reports the pipe's exit, not the command's. When the
     // output itself says nothing ran, the row must never read plain green.
     if (ranNothing(call.result)) {
-      return { kind: 'ran-nothing', icon, action, outcome: 'exit 0, but the output shows nothing ran' };
+      return {
+        kind: 'ran-nothing',
+        icon,
+        action,
+        outcome: 'exit 0, but the output shows nothing ran',
+      };
     }
     return { kind: 'ok', icon, action, outcome: 'done' };
   }
@@ -160,16 +169,23 @@ export function classifyCall(call: SwarmCall): CallMeaning {
   }
   // productive app-error — the command ran and reported an issue (the worker is testing/iterating)
   let outcome = 'the command reported an error — the worker is iterating';
-  if (/traceback|panic|exception|\bthrow\b/.test(res)) outcome = 'hit a runtime error while testing — iterating';
-  else if (/\bfailed\b|assert|\d+ failed|test result: FAILED|error\[/i.test(res)) outcome = 'found a failing test/check — iterating';
-  else if (/no such file|not found|cannot find|does not exist/.test(res)) outcome = 'a referenced file/target is not there yet';
+  if (/traceback|panic|exception|\bthrow\b/.test(res))
+    outcome = 'hit a runtime error while testing — iterating';
+  else if (/\bfailed\b|assert|\d+ failed|test result: FAILED|error\[/i.test(res))
+    outcome = 'found a failing test/check — iterating';
+  else if (/no such file|not found|cannot find|does not exist/.test(res))
+    outcome = 'a referenced file/target is not there yet';
   else if (/already exists/.test(res)) outcome = 'the target already existed';
   else if (/permission denied/.test(res)) outcome = 'a permission error';
   return { kind: 'app-error', icon, action, outcome };
 }
 
 /** Roll a lane's calls into honest counts: genuine tool slips vs productive app-errors vs successes. */
-export function callTallies(calls: SwarmCall[]): { ok: number; appError: number; malformed: number } {
+export function callTallies(calls: SwarmCall[]): {
+  ok: number;
+  appError: number;
+  malformed: number;
+} {
   let ok = 0;
   let appError = 0;
   let malformed = 0;
@@ -210,18 +226,33 @@ export interface TurnLane {
   thinkingChars?: number;
   /** The WHOLE reasoning channel from `<task>.think.log` — the digest only keeps a 2,400-char window. */
   fullThinking?: string;
+  /// The TRUE size of `<task>.think.log` on disk. main.ts reads only its last 400,000 bytes, so without
+  /// this a CLIPPED thinking pane is indistinguishable from a complete one — the exact bug
+  /// `transcriptBytes` was added to fix on the other channel, left open on this one.
+  thinkingBytes?: number;
   /// The durable `<task>.log` — every chunk of the ANSWER channel, appended, with no clip. `lastText` is
   /// the digest's ROLLING view of the same stream, which is why the OUTPUT pane appeared to scroll away
   /// its own beginning. main.ts has been supplying this all along and nothing read it.
   fullTranscript?: string;
-  /// True while an omni-judge probe is in flight for this lane. The engine buffers the worker's stream
-  /// during a probe rather than processing it, so every counter is frozen at the value the look recorded.
-  /// Without this the panel cannot tell "the supervisor is reading" from "this worker died".
   /// The TRUE size of `<task>.log` on disk. main.ts has attached this to every digest all along and
   /// nothing read it, so a pane could show a clipped tail with no way to say how much was dropped.
   transcriptBytes?: number;
+  /// main.ts's OWN answer to "is `fullTranscript` only the tail?" — it compares the file size against the
+  /// byte budget it read with, which is the only place both numbers exist. The panel must never re-derive
+  /// this by comparing bytes against a rendered string's length: that compares bytes to UTF-16 units.
+  transcriptClipped?: boolean;
+  /// True while an omni-judge probe is in flight for this lane, written into the digest by the ENGINE
+  /// (swarm.rs:15981), not attached by main.ts.
+  ///
+  /// It no longer means the lane is frozen. The engine used to BUFFER the worker's stream during a probe,
+  /// so every counter stopped at the value the look recorded and a judged lane was indistinguishable from
+  /// a dead one; it now processes each event where it arrives, so counters, transcripts and recurrence
+  /// fingerprints all keep advancing while a probe runs. `judging` survives as the honest label for "a
+  /// supervisor is reading this call" — useful context, no longer an explanation for frozen numbers.
+  ///
+  /// `queuedChunks` went with the buffering. Nothing queues any more, the engine stopped writing the
+  /// field, and a type that outlives its producer is a badge that can never render.
   judging?: boolean;
-  queuedChunks?: number;
   lastThinking?: string;
   /** "processing" while the node is prompt-processing (dispatched, no tokens yet) — shown before generation. */
   phase?: string;
@@ -550,7 +581,12 @@ export interface SwarmRunState {
    *  to answer clarifying questions (via the run panel's clarify prompt, written to answerPath). */
   clarify: {
     pending: boolean;
-    questions: Array<{ question: string; options: string[]; rationale?: string; resolves?: string }>;
+    questions: Array<{
+      question: string;
+      options: string[];
+      rationale?: string;
+      resolves?: string;
+    }>;
     planConfidence?: number;
     confidence?: ConfidenceBreakdown | null;
     answerPath: string;
@@ -800,7 +836,10 @@ export function cleanTaskTitle(desc: string | undefined, id: string): string {
   // TRIM first: the architect's descriptions start with "\n\n", which would make the "\n\s*\n" cut match at
   // index 0 and get skipped — leaving the whole wall. Strip md emphasis/fences (NOT underscores — they occur
   // in filenames like test_projects.py), then cut at the first section marker or blank line.
-  let s = desc.replace(/[*`#>]+/g, ' ').replace(/\r/g, '').trim();
+  let s = desc
+    .replace(/[*`#>]+/g, ' ')
+    .replace(/\r/g, '')
+    .trim();
   const cut = s.search(
     /\b(Owned files?|Files? owned|Implementation spec|Files?\s*:|Depends on|Acceptance|Contract|Deliverable)\b|\n\s*\n/i
   );
@@ -818,10 +857,7 @@ export function cleanTaskTitle(desc: string | undefined, id: string): string {
 /** A clean TITLE from a task id: "store-hash-validation" -> "Store hash validation". Stable handle, always
  *  readable — unlike the description, which can be a wall of markdown or raw code. */
 export function humanizeTaskId(id: string): string {
-  const s = id
-    .replace(/[-_]+/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
+  const s = id.replace(/[-_]+/g, ' ').replace(/\s+/g, ' ').trim();
   if (!s) return id;
   return s.charAt(0).toUpperCase() + s.slice(1);
 }
@@ -879,23 +915,49 @@ function judgeTone(verdict: string): ActivityTone {
   return verdict === 'ok' || verdict === '' ? 'good' : 'warn';
 }
 
-/** The engine's phase key for each `{"event":"phase","phase":"…"}` value. `ask` is deliberately absent: it
- *  is a pause INSIDE Open, and the clarify card — not a ribbon step — is where a pending question belongs. */
+/**
+ * EVERY `{"event":"phase","phase":"…"}` value the engine emits, mapped onto a ribbon step.
+ *
+ * The engine writes eleven of these; this table understood five, and the other six were read and dropped on
+ * the floor by `foldRunPhase`. `build` and `repair` survived that by accident — they are re-derived from the
+ * task lifecycle below — but CONTRACTS, TEST, RATE and FIX had no representation at all, so the fleet could
+ * fan contract stubs across three nodes or grind a fix wave for hours while the ribbon still lit the
+ * previous stage. Keep this exhaustive against the `"event": "phase"` sites in swarm.rs.
+ *
+ * The mappings that are not one-to-one, and why:
+ *   ask       a pause INSIDE Open — the clarify card, not a ribbon step, is where a pending question lives.
+ *   contracts pre-EXECUTE interface freezing, fanned across the whole fleet. The ribbon deliberately has no
+ *             Contracts step (pinned by FormationRibbon.test.tsx), and leaving Review lit while every node
+ *             generates stubs is the same lie the label-matching ribbon used to tell.
+ *   repair    the engine names the WHOLE complete loop `repair`, and that loop OPENS by verifying. Only
+ *             findings turn it into a repair — the identical rule `complete_verify` already applies below —
+ *             so a first-time-green run must not light Repair and claim a stage it never ran.
+ *   test      the three-node test fan is verification, not repair, for the same reason.
+ */
 const ENGINE_PHASE: Record<string, RunPhase> = {
   open: 'open',
   ask: 'open',
   research: 'research',
   synthesis: 'synthesize',
   review: 'review',
+  contracts: 'build',
+  build: 'build',
+  repair: 'integrate',
+  test: 'integrate',
+  rate: 'repair',
+  fix: 'repair',
 };
 
 /**
  * The run's CURRENT phase, from the engine's own events — never from parsing a human label.
  *
  * The previous ribbon regex-matched the friendly `phase` string and returned Build for anything it did not
- * recognise, so a Paused run rendered "Build active" while every node was deliberately idle. The engine now
- * emits a first-class `phase` event for the four planning stages; BUILD onward has no phase event, so those
- * come from the task lifecycle, which is equally deterministic. Last write wins, so the answer always
+ * recognise, so a Paused run rendered "Build active" while every node was deliberately idle. The engine
+ * emits a first-class `phase` event for every stage it runs — ELEVEN of them, not the four planning ones
+ * this comment used to claim — and ENGINE_PHASE above maps all of them. The task lifecycle stays as a
+ * SECOND, equally deterministic source for Build/Integrate/Repair, because it is finer grained than the
+ * once-per-phase event: only `task_dispatched` can tell the sink's integrate-verify from a worker task,
+ * and only `complete_verify` knows whether a round found anything. Last write wins, so the answer always
  * reflects the newest thing the engine actually did.
  *
  * `observed` records which phases were seen at all, so the ribbon can mark a stage SKIPPED instead of
@@ -1105,14 +1167,16 @@ export function buildActivity(events: Array<Record<string, unknown>>): {
         const answers = arr(e['answers']).map(String);
         proxy.answered = { questions, answers };
         const sub =
-          questions.map((q, i) => `${i + 1}. ${q}\n   → ${answers[i] ?? ''}`).join('\n') || undefined;
+          questions.map((q, i) => `${i + 1}. ${q}\n   → ${answers[i] ?? ''}`).join('\n') ||
+          undefined;
         compact({ kind: 'plan', text: 'Answered by goose — you did not reply', tone: 'warn', sub });
         verbose({ kind: 'plan', text: 'Answered by goose — you did not reply', tone: 'warn', sub });
         break;
       }
       case 'clarify_proxy_failed': {
         proxy.failed = str(e['error']);
-        const text = 'The proxy answer failed — goose took the most conventional option and carried on';
+        const text =
+          'The proxy answer failed — goose took the most conventional option and carried on';
         compact({ kind: 'plan', text, tone: 'warn' });
         verbose({ kind: 'plan', text, tone: 'warn', sub: proxy.failed || undefined });
         break;
@@ -1238,7 +1302,11 @@ export function buildActivity(events: Array<Record<string, unknown>>): {
           critical === 0
             ? `Every critical defect closed — shipping with ${minor} known active bug${minor === 1 ? '' : 's'}`
             : `${critical} critical defect${critical === 1 ? '' : 's'} remain · ${minor} minor`;
-        compact({ kind: critical === 0 ? 'review' : 'fail', text: t, tone: critical === 0 ? 'good' : 'bad' });
+        compact({
+          kind: critical === 0 ? 'review' : 'fail',
+          text: t,
+          tone: critical === 0 ? 'good' : 'bad',
+        });
         verbose({
           kind: critical === 0 ? 'review' : 'fail',
           text: t,
@@ -1324,16 +1392,33 @@ export function buildActivity(events: Array<Record<string, unknown>>): {
       case 'judge_call_ended_unproductive': {
         const endedTask = str(e['task_id']) || 'a call';
         const endedChars = num(e['thinking_chars']);
+        // NOT "zero tool calls", and not "never called its output tool". The engine terminator fires on
+        // "no tool call SINCE the last nudge" — a call with tool calls earlier in its life is terminable,
+        // and this card asserted the opposite about it. `calls_since_last_nudge` is the number the
+        // sentence is actually about; archived runs predate the field, so it falls back to '?'.
+        const sinceNudge = num(e['calls_since_last_nudge']);
         verbose({
           kind: 'judge-act',
           tone: 'bad',
-          text: `Ended ${endedTask} — it never called its output tool`,
+          text: `Ended ${endedTask} — it owed a structured reply and stopped acting`,
           sub: [
-            `${num(e['nudges']) ?? '?'} nudges, ${endedChars === null ? '?' : endedChars.toLocaleString()} reasoning chars, 0 tool calls`,
+            `${num(e['nudges']) ?? '?'} nudges, ${endedChars === null ? '?' : endedChars.toLocaleString()} reasoning chars, ${sinceNudge === null ? '?' : sinceNudge} tool calls since the last nudge`,
             str(e['reason']),
           ]
             .filter(Boolean)
             .join('\n'),
+        });
+        break;
+      }
+      // The same state, on a lane whose caller cannot absorb a lost result. Measured and reported, never
+      // acted on — see `may_terminate` in swarm.rs.
+      case 'judge_call_end_declined': {
+        const declinedTask = str(e['task_id']) || 'a call';
+        verbose({
+          kind: 'judge',
+          tone: 'warn',
+          text: `${declinedTask} is out of moves — left running`,
+          sub: str(e['reason']) ?? '',
         });
         break;
       }
@@ -1361,7 +1446,7 @@ export function buildActivity(events: Array<Record<string, unknown>>): {
           kind: 'judge',
           tone: 'info',
           text: `Replaced ${droppedN} undelivered note${droppedN === 1 ? '' : 's'} to ${str(e['task_id']) || 'a call'}`,
-          sub: 'the newest direction supersedes the judge\'s own stale ones, so only it lands',
+          sub: "the newest direction supersedes the judge's own stale ones, so only it lands",
         });
         break;
       }
@@ -1506,7 +1591,11 @@ export function buildActivity(events: Array<Record<string, unknown>>): {
       }
       case 'low_confidence_answered': {
         compact({ kind: 'plan', text: 'Got your answers — re-planning', tone: 'good' });
-        verbose({ kind: 'plan', text: 'Answers received — re-planning with your input', tone: 'good' });
+        verbose({
+          kind: 'plan',
+          text: 'Answers received — re-planning with your input',
+          tone: 'good',
+        });
         break;
       }
       case 'confidence_rescored': {
@@ -1526,7 +1615,9 @@ export function buildActivity(events: Array<Record<string, unknown>>): {
         }
         if (typeof after === 'number') setConf(after);
         const sub =
-          clarityBefore != null && clarityAfter != null ? `spec clarity ${clarityBefore} → ${clarityAfter}` : undefined;
+          clarityBefore != null && clarityAfter != null
+            ? `spec clarity ${clarityBefore} → ${clarityAfter}`
+            : undefined;
         compact({ kind: 'retarget', text: 'Re-scored after your answers', tone: 'good', sub });
         verbose({
           kind: 'retarget',
@@ -1557,7 +1648,11 @@ export function buildActivity(events: Array<Record<string, unknown>>): {
           }
         }
         const label =
-          signal === 'spec_clarity' ? 'spec clarity' : signal === 'agreement' ? 'agreement' : 'confidence';
+          signal === 'spec_clarity'
+            ? 'spec clarity'
+            : signal === 'agreement'
+              ? 'agreement'
+              : 'confidence';
         const actionLabel =
           action === 'redraft'
             ? 're-drafting a consensus plan'
@@ -1612,10 +1707,22 @@ export function buildActivity(events: Array<Record<string, unknown>>): {
           difficulty: str(t['difficulty']),
         }));
         const n = num(e['task_count']) ?? tasks.length;
-        compact({ kind: 'plan', text: `Plan ready — ${n} task${n === 1 ? '' : 's'}`, sub: plan.map((t) => t.id).join(', ') });
-        verbose({ kind: 'plan', text: `Plan ready — ${n} task${n === 1 ? '' : 's'}`, tone: 'info' });
+        compact({
+          kind: 'plan',
+          text: `Plan ready — ${n} task${n === 1 ? '' : 's'}`,
+          sub: plan.map((t) => t.id).join(', '),
+        });
+        verbose({
+          kind: 'plan',
+          text: `Plan ready — ${n} task${n === 1 ? '' : 's'}`,
+          tone: 'info',
+        });
         for (const t of plan) {
-          const bits = [t.difficulty && `${t.difficulty}`, t.deps.length && `after ${t.deps.join(', ')}`, t.files.length && t.files.join(', ')]
+          const bits = [
+            t.difficulty && `${t.difficulty}`,
+            t.deps.length && `after ${t.deps.join(', ')}`,
+            t.files.length && t.files.join(', '),
+          ]
             .filter(Boolean)
             .join(' · ');
           verbose({ kind: 'plan', text: `· ${t.id}`, sub: bits || undefined });
@@ -1698,13 +1805,15 @@ export function buildActivity(events: Array<Record<string, unknown>>): {
         compact({
           kind: 'note',
           text: `Your note${n === 1 ? '' : `s (${n})`} reached ${str(e['task_id'])}`,
-          sub: dropped > 0 ? `${dropped} older note(s) left out to keep the prompt small` : undefined,
+          sub:
+            dropped > 0 ? `${dropped} older note(s) left out to keep the prompt small` : undefined,
           tone: 'good',
         });
         verbose({
           kind: 'note',
           text: `Your note${n === 1 ? '' : `s (${n})`} reached ${str(e['task_id'])}`,
-          sub: dropped > 0 ? `${dropped} older note(s) left out to keep the prompt small` : undefined,
+          sub:
+            dropped > 0 ? `${dropped} older note(s) left out to keep the prompt small` : undefined,
           tone: 'good',
         });
         break;
@@ -1723,9 +1832,23 @@ export function buildActivity(events: Array<Record<string, unknown>>): {
         const task = str(e['task_id']);
         const secs = num(e['elapsed_ms']);
         const nCalls = arr(e['tool_calls']).length;
-        compact({ kind: failed ? 'fail' : 'done', text: `${task} ${failed ? 'failed' : 'done'}`, tone: failed ? 'bad' : 'good' });
-        const detail = [secs != null && `${Math.round(secs / 1000)}s`, nCalls && `${nCalls} tool calls`].filter(Boolean).join(' · ');
-        verbose({ kind: failed ? 'fail' : 'done', text: `${task} ${failed ? 'failed' : 'done'}`, sub: detail || undefined, tone: failed ? 'bad' : 'good' });
+        compact({
+          kind: failed ? 'fail' : 'done',
+          text: `${task} ${failed ? 'failed' : 'done'}`,
+          tone: failed ? 'bad' : 'good',
+        });
+        const detail = [
+          secs != null && `${Math.round(secs / 1000)}s`,
+          nCalls && `${nCalls} tool calls`,
+        ]
+          .filter(Boolean)
+          .join(' · ');
+        verbose({
+          kind: failed ? 'fail' : 'done',
+          text: `${task} ${failed ? 'failed' : 'done'}`,
+          sub: detail || undefined,
+          tone: failed ? 'bad' : 'good',
+        });
         break;
       }
       case 'smoke': {
@@ -1868,7 +1991,79 @@ type Digest = {
   /** Set to "processing" on the seed digest written at dispatch (before the first token) so the node shows as
    *  prompt-processing rather than idle; cleared once real tokens arrive. */
   phase?: string;
+  /** The durable append-only logs beside the digest, attached by main.ts as it reads — NOT written by the
+   *  engine into the JSON. They were typed nowhere, so every reader cast the digest inline and each cast
+   *  was free to name a different field. (`judging` below is the exception and is marked as such.) */
+  full_thinking?: string;
+  thinking_bytes?: number;
+  full_transcript?: string;
+  transcript_bytes?: number;
+  transcript_clipped?: boolean;
+  /// Engine-written, unlike the fields above it: swarm.rs:15981 stamps it into the digest JSON itself.
+  judging?: boolean;
 };
+
+/**
+ * EVERY FIELD A DIGEST CONTRIBUTES TO A LANE, IN ONE PLACE.
+ *
+ * This join was copy-pasted into FIVE lane-building paths, each free to diverge, and it did — twice.
+ * `fullThinking` reached one path while `thinkingChars` reached four, so the inspector's header counted a
+ * transcript its body was not showing. Extracting only the nine STREAM fields left the other eight still
+ * hand-copied, and the sixth omission was already sitting in that remainder: the repair-twin path set
+ * `errors` and not `phase`, so a node prompt-processing a fix read idle in the fleet strip
+ * (`phase === 'processing'` is the only thing that says WORKING before the first token) and a twin whose
+ * digest stamped `phase: 'done'` never dropped out of running.
+ *
+ * So the whole join lives here. A path that spreads this cannot be half-wired, and a new digest field is
+ * one edit rather than five.
+ *
+ * `prev` is the lane's carried event-derived value, kept when a digest has not (yet) supplied one. It is
+ * absent on the paths built FROM a digest (plan drafts, scouts, contracts, the fleet strip's laneless rows),
+ * where the digest is the only source there is.
+ */
+export function digestStreamFields(
+  d: Digest | undefined,
+  prev?: Partial<TurnLane>
+): Pick<
+  TurnLane,
+  | 'lastText'
+  | 'recent'
+  | 'reasoning'
+  | 'fullReasoning'
+  | 'calls'
+  | 'toolCalls'
+  | 'thinkingChars'
+  | 'lastThinking'
+  | 'fullThinking'
+  | 'thinkingBytes'
+  | 'fullTranscript'
+  | 'transcriptBytes'
+  | 'transcriptClipped'
+  | 'judging'
+  | 'phase'
+  | 'errors'
+> {
+  return {
+    // `||`, not `??`: an empty `last_text` is a digest that has produced no answer text yet, and the
+    // carried value is better than blanking the lane. Every other field distinguishes absent from empty.
+    lastText: d?.last_text || prev?.lastText,
+    recent: d?.recent ?? prev?.recent,
+    reasoning: d?.reasoning ?? prev?.reasoning,
+    fullReasoning: d?.full_reasoning ?? prev?.fullReasoning,
+    calls: d?.calls ?? prev?.calls,
+    toolCalls: d?.tool_calls ?? prev?.toolCalls,
+    thinkingChars: d?.thinking_chars ?? prev?.thinkingChars,
+    lastThinking: d?.last_thinking ?? prev?.lastThinking,
+    fullThinking: d?.full_thinking ?? prev?.fullThinking,
+    thinkingBytes: d?.thinking_bytes ?? prev?.thinkingBytes,
+    fullTranscript: d?.full_transcript ?? prev?.fullTranscript,
+    transcriptBytes: d?.transcript_bytes ?? prev?.transcriptBytes,
+    transcriptClipped: d?.transcript_clipped ?? prev?.transcriptClipped,
+    judging: d?.judging ?? prev?.judging,
+    phase: d?.phase ?? prev?.phase,
+    errors: d?.errors ?? prev?.errors,
+  };
+}
 
 /** What the panel reads off one fold of the run log plus the activity digests. */
 export interface FoldedRun {
@@ -2064,16 +2259,9 @@ function finishFold(c: FoldCarry, activity: Record<string, unknown>): FoldedRun 
       ...t,
       device: canonDevice(t.device),
       description: cleanTaskTitle(c.descriptions.get(t.taskId) ?? t.description, t.taskId),
-      lastText: act?.last_text || t.lastText,
-      recent: act?.recent ?? t.recent,
-      reasoning: act?.reasoning ?? t.reasoning,
-      fullReasoning: act?.full_reasoning ?? t.fullReasoning,
-      calls: act?.calls ?? t.calls,
-      toolCalls: act?.tool_calls ?? t.toolCalls,
-      errors: act?.errors ?? t.errors,
       // THE BUILD LANE IS THE FIFTH PATH, AND IT WINS.
       //
-      // A comment further down says these fields are "set on all four of these paths". There are FIVE.
+      // The digest fields were once believed to be "set on all four of these paths". There are FIVE.
       // This one -- the BUILD worker lane -- was never counted, and it is first in `laneSources`, so it
       // is what BOTH the fleet strip and the inspector receive for a build node. The whole of BUILD,
       // which is where a run spends its hours, therefore had every one of these undefined.
@@ -2086,18 +2274,7 @@ function finishFold(c: FoldCarry, activity: Record<string, unknown>): FoldedRun 
       //   - the "supervisor reading" badge and the char count were dead
       //   - LaneRow and BoardTaskRow fell back to the 24k full_reasoning CLIP, which is exactly the
       //     truncation I had already declared fixed twice
-      thinkingChars: act?.thinking_chars ?? t.thinkingChars,
-      lastThinking: act?.last_thinking ?? t.lastThinking,
-      fullThinking:
-        (act as { full_thinking?: string } | undefined)?.full_thinking ?? t.fullThinking,
-      fullTranscript:
-        (act as { full_transcript?: string } | undefined)?.full_transcript ?? t.fullTranscript,
-      transcriptBytes:
-        (act as { transcript_bytes?: number } | undefined)?.transcript_bytes ?? t.transcriptBytes,
-      judging: (act as { judging?: boolean } | undefined)?.judging ?? t.judging,
-      queuedChunks:
-        (act as { queued_chunks?: number } | undefined)?.queued_chunks ?? t.queuedChunks,
-      phase: (act as { phase?: string } | undefined)?.phase ?? t.phase,
+      ...digestStreamFields(act, t),
     };
   });
 
@@ -2108,29 +2285,7 @@ function finishFold(c: FoldCarry, activity: Record<string, unknown>): FoldedRun 
     return {
       ...t,
       device: canonDevice(t.device),
-      lastText: act?.last_text || t.lastText,
-      recent: act?.recent ?? t.recent,
-      reasoning: act?.reasoning ?? t.reasoning,
-      fullReasoning: act?.full_reasoning ?? t.fullReasoning,
-      calls: act?.calls ?? t.calls,
-      toolCalls: act?.tool_calls ?? t.toolCalls,
-      thinkingChars: act?.thinking_chars ?? t.thinkingChars,
-      lastThinking: act?.last_thinking ?? t.lastThinking,
-      // THE DURABLE TRANSCRIPT, ON EVERY LANE-BUILDING PATH.
-      //
-      // `thinkingChars` was set on all four of these paths and `fullThinking` on only one, so the
-      // inspector's header counted the real transcript while its body fell back to the digest's
-      // 2,400-char rolling window. The pane WAS truncated -- just not where anyone was looking.
-      fullThinking:
-        (act as { full_thinking?: string } | undefined)?.full_thinking ?? t.fullThinking,
-      fullTranscript:
-        (act as { full_transcript?: string } | undefined)?.full_transcript ?? t.fullTranscript,
-      judging: (act as { judging?: boolean } | undefined)?.judging ?? t.judging,
-      transcriptBytes:
-        (act as { transcript_bytes?: number } | undefined)?.transcript_bytes ?? t.transcriptBytes,
-      queuedChunks:
-        (act as { queued_chunks?: number } | undefined)?.queued_chunks ?? t.queuedChunks,
-      errors: act?.errors ?? t.errors,
+      ...digestStreamFields(act, t),
     };
   });
 
@@ -2164,22 +2319,7 @@ function finishFold(c: FoldCarry, activity: Record<string, unknown>): FoldedRun 
         // A per-call phase="done" (written when THIS draft's call ends) marks the lane done immediately, so the
         // node stops showing as working the instant its call finishes — not when the whole phase ends.
         status: (d.phase === 'done' || planned ? 'done' : 'running') as TurnStatus,
-        lastText: d.last_text,
-        recent: d.recent,
-        reasoning: d.reasoning,
-        fullReasoning: d.full_reasoning,
-        calls: d.calls,
-        toolCalls: d.tool_calls,
-        thinkingChars: d.thinking_chars,
-        lastThinking: d.last_thinking,
-        // Same source for the count and the body -- see the note on the merge site.
-        fullThinking: (d as { full_thinking?: string })?.full_thinking,
-        fullTranscript: (d as { full_transcript?: string })?.full_transcript,
-        judging: (d as { judging?: boolean })?.judging,
-        transcriptBytes: (d as { transcript_bytes?: number })?.transcript_bytes,
-        queuedChunks: (d as { queued_chunks?: number })?.queued_chunks,
-        phase: d.phase,
-        errors: d.errors,
+        ...digestStreamFields(d),
         seq: i,
       };
     })
@@ -2211,23 +2351,7 @@ function finishFold(c: FoldCarry, activity: Record<string, unknown>): FoldedRun 
       // Per-call phase="done" (written when THIS call ends) drops the node out of "working" immediately, so a
       // finished/capped scout stops reading as "Scouting" while the node is actually idle.
       status: (d.phase === 'done' || over ? 'done' : 'running') as TurnStatus,
-      lastText: d.last_text,
-      recent: d.recent,
-      reasoning: d.reasoning,
-      fullReasoning: d.full_reasoning,
-      calls: d.calls,
-      toolCalls: d.tool_calls,
-      thinkingChars: d.thinking_chars,
-      lastThinking: d.last_thinking,
-      // See the note below: the header and the body must read the SAME source, or the count says
-      // 22,150 chars while the pane shows the digest's 2,400-char rolling window.
-      fullThinking: (d as { full_thinking?: string })?.full_thinking,
-      fullTranscript: (d as { full_transcript?: string })?.full_transcript,
-      judging: (d as { judging?: boolean })?.judging,
-      transcriptBytes: (d as { transcript_bytes?: number })?.transcript_bytes,
-      queuedChunks: (d as { queued_chunks?: number })?.queued_chunks,
-      phase: d.phase,
-      errors: d.errors,
+      ...digestStreamFields(d),
       seq: i,
     };
   };
@@ -2391,9 +2515,42 @@ export const DIGEST_FRESH_MS = 120_000;
 // as long as a legitimate single tool call can run; the run-level heartbeat still catches a dead engine.
 export const DIGEST_OPEN_CALL_FRESH_MS = 900_000;
 
+/**
+ * THE DIGESTS THIS RUN ACTUALLY WROTE.
+ *
+ * `.swarm/activity/` is not cleared when a run starts — the engine truncates only `.swarm/prereview` — and
+ * main globs the whole directory, so a SECOND run in the same working directory inherits every digest the
+ * previous one left behind. Those carry a task id, a model and a `phase` that never reaches 'done' on a
+ * killed run, so they mint lanes, claim nodes in the fleet strip and stamp a checklist row for work that
+ * belongs to a run that is over. Nothing downstream can tell them apart: a digest names no run.
+ *
+ * The mtime can, and it is the one signal that needs no engine change. A digest written by THIS run cannot
+ * predate this run's first event, so anything older is another run's leftover.
+ *
+ * Two deliberate non-rules. An UNKNOWN mtime is kept: an older main supplies none, and blanking every lane
+ * beats nothing at all only if the gate is certain. And an unknown `startedAtMs` gates nothing — a stream
+ * with no parseable timestamp cannot say when the run began, and a floor guessed from the clock would drop
+ * live digests.
+ */
+export function digestsFromThisRun<T>(
+  digests: Record<string, T>,
+  mtimes: Record<string, number>,
+  startedAtMs: number | null
+): Record<string, T> {
+  if (startedAtMs == null) return digests;
+  const kept: Record<string, T> = {};
+  for (const [key, value] of Object.entries(digests)) {
+    const mtime = mtimes[key];
+    if (typeof mtime === 'number' && mtime < startedAtMs) continue;
+    kept[key] = value;
+  }
+  return kept;
+}
+
 /** An OPEN supervision generation — engine work that creates no task lane. */
 export interface SupervisionSpan {
-  kind: 'judge';
+  /** `judge` is the post-task verdict; `look` is the omni-judge's MID-STREAM probe of a running call. */
+  kind: 'judge' | 'look';
   /** The task being supervised (NOT the node doing the supervising — the events never name it at start). */
   taskId: string;
   /** Honest row label, e.g. "Judging · verify::meridian". */
@@ -2411,30 +2568,62 @@ export const JUDGE_SPAN_MAX_MS = 600_000;
  *
  * MEASURED (swarm-3node-r0, live): workhorse read "idle — no task" while LM Studio showed it processing 2
  * requests; the log tail was task_completed verify::web → pre_review web-js → judge_verdict verify::web →
- * judge_observed verify::meridian. The node's real work was SUPERVISION generations. Of that family, only
- * the judge has a derivable lifecycle PAIR: `judge_observed` opens (emitted on every judge invocation,
- * before any early return) and `judge_verdict` / `judge_skipped` for the same task closes (Δ = the semantic
- * review's 50–175s generation when a verdict names a judge_node). pre_review / testgen / sink_review emit
- * a SINGLE end-stamped event (verified in swarm.rs) — no open span is derivable for them, which is why a
- * busy-but-unexplained node still needs the LM Studio join (see deriveFleet). A task's completion also
- * closes its span: a verdict on finished work never arrives.
+ * judge_observed verify::meridian. The node's real work was SUPERVISION generations.
+ *
+ * TWO of that family have a derivable lifecycle PAIR, and both are folded here:
+ *   judge  `judge_observed` opens (emitted on every judge invocation, before any early return) and
+ *          `judge_verdict` / `judge_skipped` closes (Δ = the semantic review's 50–175s generation).
+ *   look   `judge_look_dispatched` opens the omni-judge's MID-STREAM probe of a still-running call, and
+ *          `judge_look` / `judge_look_abandoned` closes it. This half was emitted by the engine and read
+ *          by nobody, which is precisely the state it exists to make visible: a look that is dispatched
+ *          and never returns is a supervisor that died while supervising — measured once as 2h56m of
+ *          engine silence with two of three nodes idle — and with only the CLOSING event folded, the
+ *          span it opened had no representation at all until it came back.
+ *
+ * They are keyed separately: a task can be probed mid-stream and judged afterwards, and one map key would
+ * let the probe's close silently retire the verdict's span.
+ *
+ * pre_review / testgen / sink_review emit a SINGLE end-stamped event (verified in swarm.rs) — no open span
+ * is derivable for them, which is why a busy-but-unexplained node still needs the LM Studio join (see
+ * deriveFleet). A task's completion closes both of its spans: neither a verdict nor a look on finished work
+ * ever arrives.
  */
 export function foldSupervision(events: Array<Record<string, unknown>>): SupervisionSpan[] {
   const open = new Map<string, SupervisionSpan>();
+  const start = (kind: SupervisionSpan['kind'], taskId: string, label: string, ts: unknown) => {
+    const ms = typeof ts === 'string' ? Date.parse(ts) : NaN;
+    open.set(`${kind}:${taskId}`, {
+      kind,
+      taskId,
+      label,
+      sinceMs: Number.isNaN(ms) ? null : ms,
+    });
+  };
   for (const e of events) {
     const t = String(e['event'] ?? '');
     const taskId = str(e['task_id']);
     if (!taskId) continue;
-    if (t === 'judge_observed') {
-      const ts = typeof e['ts'] === 'string' ? Date.parse(e['ts'] as string) : NaN;
-      open.set(taskId, {
-        kind: 'judge',
-        taskId,
-        label: `Judging · ${taskId}`,
-        sinceMs: Number.isNaN(ts) ? null : ts,
-      });
-    } else if (t === 'judge_verdict' || t === 'judge_skipped' || t === 'task_completed') {
-      open.delete(taskId);
+    switch (t) {
+      case 'judge_observed':
+        start('judge', taskId, `Judging · ${taskId}`, e['ts']);
+        break;
+      case 'judge_look_dispatched':
+        start('look', taskId, `Reading · ${taskId}`, e['ts']);
+        break;
+      case 'judge_look':
+      case 'judge_look_abandoned':
+        open.delete(`look:${taskId}`);
+        break;
+      case 'judge_verdict':
+      case 'judge_skipped':
+        open.delete(`judge:${taskId}`);
+        break;
+      case 'task_completed':
+        open.delete(`judge:${taskId}`);
+        open.delete(`look:${taskId}`);
+        break;
+      default:
+        break;
     }
   }
   return [...open.values()];
@@ -2584,21 +2773,7 @@ export function deriveFleet(args: {
       device,
       model: d?.model,
       status: 'running',
-      lastText: d?.last_text,
-      recent: d?.recent,
-      reasoning: d?.reasoning,
-      fullReasoning: d?.full_reasoning,
-      calls: d?.calls,
-      toolCalls: d?.tool_calls,
-      thinkingChars: d?.thinking_chars,
-      fullThinking: (d as { full_thinking?: string })?.full_thinking,
-      fullTranscript: (d as { full_transcript?: string })?.full_transcript,
-      judging: (d as { judging?: boolean })?.judging,
-      transcriptBytes: (d as { transcript_bytes?: number })?.transcript_bytes,
-      queuedChunks: (d as { queued_chunks?: number })?.queued_chunks,
-      lastThinking: d?.last_thinking,
-      phase: d?.phase,
-      errors: d?.errors,
+      ...digestStreamFields(d),
       seq: 0,
     });
   }
@@ -2662,7 +2837,8 @@ export function buildPhaseTodo(
   const replans: number[] = [];
   let schedulerStuck: number | null = null;
   const reportFailed = new Set<string>();
-  let completeResult: { passed: boolean; verified: boolean; remaining?: number | null } | null = null;
+  let completeResult: { passed: boolean; verified: boolean; remaining?: number | null } | null =
+    null;
   let completeRan = false;
   // THE ENGINE'S OWN RETRACTION OF ITS GREEN, and the only event allowed to make one.
   //
@@ -2691,7 +2867,8 @@ export function buildPhaseTodo(
   let proxyFailed = false;
   let sinkRenamedFrom: string | null = null;
   let synthesisFallback: number | null = null;
-  const reviewRounds: Array<{ round: number; fresh: number; touches: number; rejected: boolean }> = [];
+  const reviewRounds: Array<{ round: number; fresh: number; touches: number; rejected: boolean }> =
+    [];
   let defects: { critical: number; minor: number; forced: number } | null = null;
   let fixWaves = 0;
   // Canonical node names throughout — a raw pool id stored here reaches the node chip and mis-keys its
@@ -2744,8 +2921,7 @@ export function buildPhaseTodo(
         briefChars = chars;
         researchSecs = num(e['secs']);
       } else researchDone = num(e['findings']) ?? 0;
-    }
-    else if (t === 'pillars') pillarsN = num(e['count']) ?? arr(e['pillars']).length;
+    } else if (t === 'pillars') pillarsN = num(e['count']) ?? arr(e['pillars']).length;
     else if (t === 'confidence_retarget')
       retargets.push({ round: num(e['round']) ?? 0, action: str(e['action']) });
     else if (t === 'low_confidence_ask') askedQ = arr(e['questions']).length;
@@ -2768,7 +2944,8 @@ export function buildPhaseTodo(
       if (id) tstate.set(id, { state: 'running', device: nodeOf(str(e['device'])) });
     } else if (t === 'task_retry') {
       const id = str(e['task_id']);
-      if (id) tstate.set(id, { ...(tstate.get(id) ?? { state: 'running' }), error: str(e['error']) });
+      if (id)
+        tstate.set(id, { ...(tstate.get(id) ?? { state: 'running' }), error: str(e['error']) });
     } else if (t === 'task_completed') {
       const id = str(e['task_id']);
       if (id) {
@@ -2776,7 +2953,16 @@ export function buildPhaseTodo(
         const rawDev = str(e['device']);
         const dev = rawDev ? nodeOf(rawDev) : cur?.device;
         if (str(e['status']) === 'failed')
-          tstate.set(id, { device: dev, state: judgeFailed.has(id) ? 'judge_failed' : 'failed' });
+          // CARRY THE REASON. The engine now says WHY a task failed -- `fail_descendants` emits
+          // `error: "dependency 'x' failed"` -- and this handler was dropping it on the floor, so the
+          // row at :3246 (`else if (s.error) detail = ...`) had nothing to render and a cascade-failed
+          // task read as a bare red row with no explanation. `cur?.error` is the fallback so a reason
+          // already recorded from an earlier attempt is not erased by a later completion event.
+          tstate.set(id, {
+            device: dev,
+            state: judgeFailed.has(id) ? 'judge_failed' : 'failed',
+            error: str(e['error']) || cur?.error,
+          });
         // BUILT but UNVERIFIED — the worker loop returned + passed a syntax gate; the app was NOT run.
         else tstate.set(id, { device: dev, state: 'unverified' });
       }
@@ -2818,8 +3004,7 @@ export function buildPhaseTodo(
         evidence: arr(e['evidence']).map(String),
       };
       if (completeResult) completeResult.verified = completeRevision.verified;
-    }
-    else if (t === 'smoke' || t === 'smoke_after_fix') {
+    } else if (t === 'smoke' || t === 'smoke_after_fix') {
       const r = (e['result'] ?? {}) as Record<string, unknown>;
       const tests = (r['tests'] ?? {}) as Record<string, unknown>;
       smoke = { ran: r['ran'] === true, kind: str(tests['kind']) };
@@ -2831,7 +3016,8 @@ export function buildPhaseTodo(
   }
 
   // Second pass: task_completed(failed) may precede its judge_verdict in some orderings — reconcile.
-  for (const [id, s] of tstate) if (s.state === 'failed' && judgeFailed.has(id)) s.state = 'judge_failed';
+  for (const [id, s] of tstate)
+    if (s.state === 'failed' && judgeFailed.has(id)) s.state = 'judge_failed';
 
   // Once the engine's OWN end-to-end verify passes green (deterministic complete_result — not a model claim),
   // the built tasks it exercised are verified. Promote 'unverified' -> 'done' so the Build checklist stops
@@ -2869,9 +3055,7 @@ export function buildPhaseTodo(
           `Request cut into ${sliceIds.length} slice${sliceIds.length === 1 ? '' : 's'}`,
           'done',
           [
-            sliceIds
-              .map((id, i) => `${id} (w${sliceWeights[i] ?? 1})`)
-              .join(', '),
+            sliceIds.map((id, i) => `${id} (w${sliceWeights[i] ?? 1})`).join(', '),
             // An uneven cut costs queue time — one node finishes early and waits. Worth saying, never a failure.
             lopsided ? 'uneven — the heaviest slice is more than twice the lightest' : '',
             openSecs != null ? `${openSecs}s` : '',
@@ -2926,10 +3110,7 @@ export function buildPhaseTodo(
         'r-specs',
         `Slice specs written — ${briefChars.length} of ${sliceIds.length || briefChars.length}`,
         'done',
-        [
-          `${total.toLocaleString()} chars of spec`,
-          researchSecs != null ? `${researchSecs}s` : '',
-        ]
+        [`${total.toLocaleString()} chars of spec`, researchSecs != null ? `${researchSecs}s` : '']
           .filter(Boolean)
           .join(' · ')
       )
@@ -2939,7 +3120,11 @@ export function buildPhaseTodo(
     const empty = briefChars.filter((c) => c === 0).length;
     if (empty > 0)
       research.push(
-        it('r-empty', `${empty} slice${empty === 1 ? '' : 's'} came back with no spec`, 'unverified')
+        it(
+          'r-empty',
+          `${empty} slice${empty === 1 ? '' : 's'} came back with no spec`,
+          'unverified'
+        )
       );
   } else if (phasesSeen.has('research')) {
     research.push(
@@ -2950,7 +3135,8 @@ export function buildPhaseTodo(
       )
     );
   } else if (legacyResearch) {
-    if (scoutsN != null) research.push(it('r-scouts', `Scouts dispatched — ${scoutsN} lenses`, 'done'));
+    if (scoutsN != null)
+      research.push(it('r-scouts', `Scouts dispatched — ${scoutsN} lenses`, 'done'));
     else if (researchQ != null)
       research.push(it('r-q', `Research questions scoped — ${researchQ}`, 'done'));
     if (researchDone != null)
@@ -2981,11 +3167,21 @@ export function buildPhaseTodo(
   // measured 07:04:52 phase=synthesis -> 07:08:27 phase=review, strictly sequential.
   else if (phasesSeen.has('review') && !planLoaded)
     synthesis.push(
-      it('s-wired', 'Slices wired into a DAG', 'done', 'review is still patching it, so the task count lands with the plan')
+      it(
+        's-wired',
+        'Slices wired into a DAG',
+        'done',
+        'review is still patching it, so the task count lands with the plan'
+      )
     );
   if (sinkRenamedFrom)
     synthesis.push(
-      it('s-sink', `Sink renamed from \`${sinkRenamedFrom}\``, 'done', 'so the engine’s own sink checks keep matching')
+      it(
+        's-sink',
+        `Sink renamed from \`${sinkRenamedFrom}\``,
+        'done',
+        'so the engine’s own sink checks keep matching'
+      )
     );
   if (planLoaded) synthesis.push(it('s-done', `Plan wired — ${taskCount ?? 0} tasks`, 'done'));
   // Legacy plan-phase evidence (candidate drafts, the confidence score, retarget rounds) has no phase of its
@@ -2999,8 +3195,7 @@ export function buildPhaseTodo(
         planned ? 'done' : 'running'
       )
     );
-  if (planConf != null)
-    synthesis.push(it('s-conf', `Confidence scored — ${planConf}/100`, 'done')); // the NUMBER, never a verdict
+  if (planConf != null) synthesis.push(it('s-conf', `Confidence scored — ${planConf}/100`, 'done')); // the NUMBER, never a verdict
   for (const r of retargets)
     synthesis.push(it(`s-rt-${r.round}`, `Retarget round ${r.round} — ${r.action}`, 'done'));
   if (pillarsN != null)
@@ -3047,7 +3242,8 @@ export function buildPhaseTodo(
       state = s.state;
       // 'done' in Build only ever means "promoted after the green e2e verify" (build tasks never self-complete
       // to green). Say so honestly — the verification was at the app level, not this unit grading itself.
-      if (state === 'done') detail = salvaged.has(id) ? 'salvaged · verified end-to-end' : 'verified end-to-end';
+      if (state === 'done')
+        detail = salvaged.has(id) ? 'salvaged · verified end-to-end' : 'verified end-to-end';
       else if (state === 'unverified' && salvaged.has(id)) detail = 'salvaged — judge cut a loop';
       // SAY WHAT IT IS WAITING FOR. 'unverified' is a pipeline STAGE, not a failure: the worker returned
       // and the file passed a syntax gate, but nobody has RUN the app yet. Mihai read a board of them as
@@ -3089,7 +3285,9 @@ export function buildPhaseTodo(
     if (!plannedIds.has(id) && id !== 'integrate-verify') build.push(buildRow(id));
   for (const n of replans) build.push(it(`b-replan-${n}`, `Re-planned +${n} tasks`, 'done'));
   if (schedulerStuck != null)
-    build.push(it('b-stuck', `Scheduler blocked — ${schedulerStuck} task(s) unschedulable`, 'blocked'));
+    build.push(
+      it('b-stuck', `Scheduler blocked — ${schedulerStuck} task(s) unschedulable`, 'blocked')
+    );
 
   // ---- INTEGRATE ---- (the sink assembles the modules, runs the suite, boots what the request advertises)
   const integrate: PhaseTodoItem[] = [];
@@ -3105,11 +3303,7 @@ export function buildPhaseTodo(
     let vs: TodoState;
     let vdetail: string | undefined;
     if (completeResult) {
-      vs = completeResult.passed
-        ? completeResult.verified
-          ? 'done'
-          : 'unverified'
-        : 'failed';
+      vs = completeResult.passed ? (completeResult.verified ? 'done' : 'unverified') : 'failed';
       vdetail = completeResult.passed
         ? completeResult.verified
           ? 'app runs — verified end-to-end'
@@ -3154,10 +3348,15 @@ export function buildPhaseTodo(
   }
   if (fixWaves > 0)
     repair.push(it('x-waves', `Repair wave${fixWaves === 1 ? '' : 's'} — ${fixWaves}`, 'done'));
-  if (repro != null) repair.push(it('v-repro', `Repro gate — ${repro} findings reproduced`, 'done'));
+  if (repro != null)
+    repair.push(it('v-repro', `Repro gate — ${repro} findings reproduced`, 'done'));
   if (reviewFix)
     repair.push(
-      it('v-fix', `Review fixes — ${reviewFix.accepted} accepted / ${reviewFix.reproduced} reproduced`, 'done')
+      it(
+        'v-fix',
+        `Review fixes — ${reviewFix.accepted} accepted / ${reviewFix.reproduced} reproduced`,
+        'done'
+      )
     );
   if (astReview != null)
     repair.push(it('v-ast', `Unwired-module review — ${astReview} new findings`, 'done'));
@@ -3165,7 +3364,8 @@ export function buildPhaseTodo(
   // ---- DONE ----
   const done: PhaseTodoItem[] = [];
   const finishedEvent = events.some((e) => e['event'] === 'run_finished');
-  if (schedulerStuck != null) done.push(it('d-blocked', 'Run blocked — scheduler deadlocked', 'blocked'));
+  if (schedulerStuck != null)
+    done.push(it('d-blocked', 'Run blocked — scheduler deadlocked', 'blocked'));
   else if (finishedEvent) {
     // 'failed' is the DETERMINISTIC-BLOCK lane — a file-owning task the engine failed. 'judge_failed' is the
     // model JUDGE (owns-nothing integrate-verify sink) and is INFORMATIONAL: it never counts as a hard fail.
@@ -3196,7 +3396,11 @@ export function buildPhaseTodo(
       done.push(
         it(
           'd-outcome',
-          green ? 'Finished — app verified' : anyHardFail ? 'Finished — with failures' : 'Finished — unverified',
+          green
+            ? 'Finished — app verified'
+            : anyHardFail
+              ? 'Finished — with failures'
+              : 'Finished — unverified',
           green ? 'done' : anyHardFail ? 'failed' : 'unverified'
         )
       );
@@ -3218,7 +3422,9 @@ export function buildPhaseTodo(
     // (On a crashed/stale run the panel relabels a 'running' phase to 'interrupted' separately.)
     const anyActive = real.some((i) => i.state === 'running' || i.state === 'pending');
     if (!finishedEvent && anyActive) return 'running';
-    if (real.some((i) => i.state === 'failed' || i.state === 'judge_failed' || i.state === 'blocked'))
+    if (
+      real.some((i) => i.state === 'failed' || i.state === 'judge_failed' || i.state === 'blocked')
+    )
       return 'failed';
     if (real.some((i) => i.state === 'running')) return 'running';
     if (real.every((i) => i.state === 'skipped')) return 'skipped';
@@ -3278,7 +3484,8 @@ export function boardTitle(id: string): string {
   if (id === 'integrate-verify') return 'Integrate & verify';
   if (id.startsWith('verify-e2e::')) return `End-to-end verify ${id.slice('verify-e2e::'.length)}`;
   if (id.startsWith('verify::')) return `Verify ${id.slice('verify::'.length)}`;
-  if (id.startsWith('complete-fix::twin')) return `Repair twin ${id.slice('complete-fix::twin'.length)}`;
+  if (id.startsWith('complete-fix::twin'))
+    return `Repair twin ${id.slice('complete-fix::twin'.length)}`;
   return humanizeTaskId(id);
 }
 
@@ -3406,8 +3613,7 @@ export function deriveTaskBoard(args: {
   // parents, verify verdict rows) sink to the end. QUEUED keeps plan order — that IS the plan.
   running.sort((a, b) => (a.lane?.seq ?? 0) - (b.lane?.seq ?? 0));
   done.sort(
-    (a, b) =>
-      (a.lane?.seq ?? Number.MAX_SAFE_INTEGER) - (b.lane?.seq ?? Number.MAX_SAFE_INTEGER)
+    (a, b) => (a.lane?.seq ?? Number.MAX_SAFE_INTEGER) - (b.lane?.seq ?? Number.MAX_SAFE_INTEGER)
   );
   return {
     running,
@@ -3421,7 +3627,11 @@ export function deriveTaskBoard(args: {
 /** A human name for WHAT this run is building — the RUN HEADER's identity. From the brief's first heading
  *  ('# Build `vendorsync`' -> 'vendorsync'), else the run directory's basename. Pure + exported for tests. */
 export function runAppName(prompt: string | undefined, runDir: string | null | undefined): string {
-  const line = (prompt ?? '').split('\n').find((l) => l.trim().length > 0)?.trim() ?? '';
+  const line =
+    (prompt ?? '')
+      .split('\n')
+      .find((l) => l.trim().length > 0)
+      ?.trim() ?? '';
   const heading = line.match(/^#+\s*(?:build\s+)?(.+)$/i)?.[1] ?? '';
   const name = heading.replace(/[`*_"']/g, '').trim();
   if (name) return name.length > 48 ? name.slice(0, 45).trimEnd() + '…' : name;
@@ -3441,7 +3651,7 @@ export function useSwarmRun(workingDir: string | undefined, pollMs = 500): Swarm
     }
     let alive = true;
 
-    const tick = async () => {
+    const read = async () => {
       try {
         const data = await window.electron.readSwarmRun(workingDir);
         if (!alive) return;
@@ -3450,28 +3660,6 @@ export function useSwarmRun(workingDir: string | undefined, pollMs = 500): Swarm
           lastRunId.current = null;
           return;
         }
-        const {
-          lanes,
-          totals,
-          planLanes,
-          scoutLanes,
-          contractLanes,
-          detailLanes,
-          sliceLanes,
-          planningLanes,
-          fixLanes,
-        } = foldEventsIncremental(
-          data.events,
-          data.activity,
-          // main's key, never a fingerprint the renderer computed for itself: with the same runId and the
-          // same generation the array IS the previous one extended, so only the appended events are folded.
-          typeof data.generation === 'number'
-            ? { runId: data.runId, generation: data.generation }
-            : null
-        );
-        const phaseTodo = buildPhaseTodo(data.events, data.activity, {
-          clarifyPending: !!data.clarify?.pending,
-        });
         const {
           activity,
           verbose,
@@ -3494,6 +3682,33 @@ export function useSwarmRun(workingDir: string | undefined, pollMs = 500): Swarm
           synthesisFallback,
           knownActiveBugs,
         } = buildActivity(data.events);
+        // Gated BEFORE the fold, so a previous run's leftover digest cannot mint a lane, claim a node or
+        // stamp a checklist row anywhere downstream. Every consumer below reads the gated pair.
+        const rawMtimes = data.activityMtimes ?? {};
+        const digests = digestsFromThisRun(data.activity, rawMtimes, startedAt);
+        const digestMtimes = digestsFromThisRun(rawMtimes, rawMtimes, startedAt);
+        const {
+          lanes,
+          totals,
+          planLanes,
+          scoutLanes,
+          contractLanes,
+          detailLanes,
+          sliceLanes,
+          planningLanes,
+          fixLanes,
+        } = foldEventsIncremental(
+          data.events,
+          digests,
+          // main's key, never a fingerprint the renderer computed for itself: with the same runId and the
+          // same generation the array IS the previous one extended, so only the appended events are folded.
+          typeof data.generation === 'number'
+            ? { runId: data.runId, generation: data.generation }
+            : null
+        );
+        const phaseTodo = buildPhaseTodo(data.events, digests, {
+          clarifyPending: !!data.clarify?.pending,
+        });
         const { phase: runPhase, observed: runPhasesObserved } = foldRunPhase(data.events);
         lastRunId.current = data.runId;
         // Engine-truth hold state: replay the pause events; the last run_paused with no later run_unpaused
@@ -3521,8 +3736,8 @@ export function useSwarmRun(workingDir: string | undefined, pollMs = 500): Swarm
           overview,
           totals,
           activity,
-          activityDigests: data.activity,
-          activityMtimes: data.activityMtimes ?? {},
+          activityDigests: digests,
+          activityMtimes: digestMtimes,
           verboseActivity: verbose,
           meta,
           plan,
@@ -3565,11 +3780,47 @@ export function useSwarmRun(workingDir: string | undefined, pollMs = 500): Swarm
       }
     };
 
+    // Deltas arrive far faster than a read completes, so reads never stack: one in flight, at most one
+    // queued behind it. Dropping the extra instead of queueing it would lose the run's LAST delta.
+    //
+    // SINGLE-FLIGHT IS ALSO THE ORDERING GUARANTEE, and that is the half that must not be optimised away.
+    // `read` awaits an IPC round trip and then setStates what it read; with two reads in flight the older
+    // one can resolve LAST, and the panel then regresses — done rows back to running, a lane count back
+    // down, the ribbon back a stage — off data that was already stale when it landed. With one in flight
+    // resolution order IS start order, so no such regression is representable. `missed` keeps that from
+    // costing liveness: the queued tick runs the moment the current read returns, so a coalesced burst
+    // still ends on the newest state rather than skipping it.
+    let reading = false;
+    let missed = false;
+    const tick = async () => {
+      if (reading) {
+        missed = true;
+        return;
+      }
+      reading = true;
+      try {
+        await read();
+      } finally {
+        reading = false;
+      }
+      if (missed && alive) {
+        missed = false;
+        void tick();
+      }
+    };
+
     void tick();
+    // The interval is the SAFETY NET, not the transport: main fs.watches the run directory and pushes
+    // a hint the moment the engine writes, but fs.watch coalesces and on some filesystems drops an
+    // update outright, and a dropped one must not freeze the panel until the run ends.
     const iv = setInterval(() => void tick(), pollMs);
+    const offDelta = window.electron.onSwarmDelta((delta) => {
+      if (alive && delta.workingDir === workingDir) void tick();
+    });
     return () => {
       alive = false;
       clearInterval(iv);
+      offDelta();
     };
   }, [workingDir, pollMs]);
 

@@ -211,7 +211,6 @@ const ACTIVITY: Record<string, unknown> = {
     last_thinking: 'the escape rules are the tricky part',
     full_thinking: 'the escape rules are the tricky part, and the nesting',
     judging: false,
-    queued_chunks: 0,
   },
   store: { tool_calls: 5, errors: 2, recent: ['Ran a shell command'], thinking_chars: 900 },
   'integrate-verify': {
@@ -220,7 +219,6 @@ const ACTIVITY: Record<string, unknown> = {
     last_text: 'Entry point runs.',
     phase: 'processing',
     judging: true,
-    queued_chunks: 7,
   },
   'complete-fix::twin0': { tool_calls: 3, last_text: 'Patched the missing store write.' },
   'complete-fix::twin1': { tool_calls: 2, thinking_chars: 1500 },
@@ -386,7 +384,6 @@ describe('the incremental fold — only the EVENT half is cached, never the dige
   it('re-joins the digests on a cache hit, so a lane that moved while the log did not still moves', () => {
     const events = reparse(EVENTS);
     const before = foldEventsIncremental(events, ACTIVITY, src('run-a', 7));
-    expect(before.lanes.find((l) => l.taskId === 'integrate-verify')?.queuedChunks).toBe(7);
     expect(before.lanes.find((l) => l.taskId === 'integrate-verify')?.judging).toBe(true);
 
     const moved = {
@@ -394,7 +391,6 @@ describe('the incremental fold — only the EVENT half is cached, never the dige
       'integrate-verify': {
         ...(ACTIVITY['integrate-verify'] as Record<string, unknown>),
         judging: false,
-        queued_chunks: 0,
         last_text: 'The end-to-end run is green.',
         tool_calls: 44,
       },
@@ -407,7 +403,6 @@ describe('the incremental fold — only the EVENT half is cached, never the dige
     expect(foldStats().incrementalFolds).toBe(1);
     const lane = after.lanes.find((l) => l.taskId === 'integrate-verify');
     expect(lane?.judging).toBe(false);
-    expect(lane?.queuedChunks).toBe(0);
     expect(lane?.lastText).toBe('The end-to-end run is green.');
     expect(lane?.toolCalls).toBe(44);
     expect(after).toStrictEqual(foldEvents(EVENTS, moved));

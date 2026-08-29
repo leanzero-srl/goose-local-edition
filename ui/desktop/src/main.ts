@@ -21,6 +21,8 @@ import { Buffer } from 'node:buffer';
 import fs from 'node:fs/promises';
 import fsSync from 'node:fs';
 import { eventsGeneration, readEvents, readTail } from './utils/swarmIncrementalRead';
+import { resolveSwarmDir } from './utils/swarmRunDir';
+import { SwarmWatchRegistry } from './utils/swarmWatch';
 import started from 'electron-squirrel-startup';
 import path from 'node:path';
 import os from 'node:os';
@@ -3198,36 +3200,14 @@ ipcMain.handle(
   }
 );
 
-ipcMain.handle('read-swarm-run', async (_event, workingDir: string) => {
+// One watch set per renderer, armed by that renderer's own reads and dropped when it goes away.
+const swarmWatchers = new SwarmWatchRegistry();
+
+ipcMain.handle('read-swarm-run', async (event, workingDir: string) => {
   try {
     if (!workingDir || typeof workingDir !== 'string') return null;
-    // The engine writes .swarm/current-run.json {run_id, dir} at the START of every run, in the directory
-    // we spawned it in. FOLLOW IT rather than guessing. Guessing "newest run-*.jsonl in this dir" had two
-    // failure modes: it re-rendered a FINISHED run from hours ago as the live panel the moment a new turn
-    // began (a 4h-old stopped run shown with its whole checklist), and it could not see a run at all once
-    // the engine redirected the build out of the spawn dir (it refuses to treat $HOME as an app tree).
-    // Absent breadcrumb = a run older than this mechanism, so fall back to the previous behaviour.
-    const spawnSwarmDir = path.join(expandTilde(workingDir), '.swarm');
-    let swarmDir = spawnSwarmDir;
-    let pinnedRunFile: string | null = null;
-    let pinnedRunId: string | null = null;
-    let hadBreadcrumb = false;
-    try {
-      const ptr = JSON.parse(
-        await fs.readFile(path.join(spawnSwarmDir, 'current-run.json'), 'utf8')
-      ) as { run_id?: string; dir?: string };
-      hadBreadcrumb = true;
-      if (ptr?.dir) {
-        const dir = path.join(expandTilde(ptr.dir), '.swarm');
-        if (await fs.stat(dir).then(() => true, () => false)) swarmDir = dir;
-      }
-      if (ptr?.run_id) {
-        pinnedRunId = ptr.run_id;
-        pinnedRunFile = `run-${ptr.run_id}.jsonl`;
-      }
-    } catch {
-      /* no breadcrumb (older run, or the engine has not written it yet) — fall through */
-    }
+    const { swarmDir, pinnedRunFile, pinnedRunId, hadBreadcrumb } =
+      await resolveSwarmDir(workingDir);
 
     const entries = await fs.readdir(swarmDir).catch(() => [] as string[]);
     const runFiles = entries.filter((f) => f.startsWith('run-') && f.endsWith('.jsonl'));
@@ -3265,6 +3245,21 @@ ipcMain.handle('read-swarm-run', async (_event, workingDir: string) => {
       runId = chosen.f.replace(/^run-/, '').replace(/\.jsonl$/, '');
       mtime = chosen.m;
     }
+
+    // PUSH, so the panel does not wait for the next poll. The renderer's poll is what arms this — it
+    // re-states the target on every read, which is also what re-arms `activity/` once the engine
+    // creates it and what re-targets the watch when a run moves. The delta is a hint to read again;
+    // the facts still come from the incremental reader below, and the poll stays as the net for the
+    // updates fs.watch drops.
+    const sender = event.sender;
+    const first = swarmWatchers.ensure(
+      sender.id,
+      { workingDir, swarmDir, eventsDir: path.dirname(runFilePath), runId },
+      (delta) => {
+        if (!sender.isDestroyed()) sender.send('swarm:delta', delta);
+      }
+    );
+    if (first) sender.once('destroyed', () => swarmWatchers.release(sender.id));
 
     // APPEND-ONLY, so parse only what is new. This used to re-read and re-parse the whole log from byte
     // 0 on every 500ms poll -- 68KB per poll on a real run, forever, to learn about one appended line.

@@ -75,6 +75,14 @@ interface SaveDialogResponse {
   filePath?: string;
 }
 
+/** A swarm run directory changed. A hint to re-read — never the change itself (see onSwarmDelta). */
+interface SwarmDelta {
+  /** The workingDir the delta belongs to, verbatim as it was passed to readSwarmRun. */
+  workingDir: string;
+  runId: string;
+  source: string;
+}
+
 /** Per-run sampling knobs (mirrors components/swarm/sampling.ts — unset = model/config default). */
 interface SwarmSampling {
   temperature?: number;
@@ -195,6 +203,10 @@ type ElectronAPI = {
     pauseRequested: boolean;
   } | null>;
   writeFile: (directory: string, content: string) => Promise<boolean>;
+  /** Subscribe to the main process's fs.watch push for swarm run directories. The delta is a CHANGE
+   *  HINT carrying no run data — read through readSwarmRun when it arrives. fs.watch can drop an
+   *  update, so a subscriber must keep polling as well. Returns its own unsubscribe. */
+  onSwarmDelta: (callback: (delta: SwarmDelta) => void) => () => void;
   /** Queue a note for a RUNNING swarm build. Creates .swarm/inbox/ — nothing else does. */
   swarmAddNote: (workingDir: string, text: string) => Promise<boolean>;
   swarmSetPaused: (workingDir: string, paused: boolean) => Promise<boolean>;
@@ -345,6 +357,11 @@ const electronAPI: ElectronAPI = {
   getBinaryPath: (binaryName: string) => ipcRenderer.invoke('get-binary-path', binaryName),
   readFile: (filePath: string) => ipcRenderer.invoke('read-file', filePath),
   readSwarmRun: (workingDir: string) => ipcRenderer.invoke('read-swarm-run', workingDir),
+  onSwarmDelta: (callback: (delta: SwarmDelta) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, delta: SwarmDelta) => callback(delta);
+    ipcRenderer.on('swarm:delta', handler);
+    return () => ipcRenderer.removeListener('swarm:delta', handler);
+  },
   benchmarkRead: () => ipcRenderer.invoke('benchmark-read'),
   benchmarkRun: (nodes: number, tier?: string, sampling?: SwarmSampling) =>
     ipcRenderer.invoke('benchmark-run', nodes, tier, sampling),
