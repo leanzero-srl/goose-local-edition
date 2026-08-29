@@ -10,28 +10,46 @@ than none.
 
 ---
 
-## ⚠️ FIRST THING AFTER A COMPACTION — RE-MINE, DO NOT RESUME FROM THE SUMMARY
+## ⚠️ FIRST THING AFTER A COMPACTION — RE-MINE, ON A BUDGET
 
 A compaction summary keeps the *shape* of the work and loses the *thread*. Resuming from one has already
-sent me onto the wrong task while the real thread sat untouched. So, before the first tool call that
-changes anything:
+sent me onto the wrong task while the real thread sat untouched.
+
+**But recovery must be CHEAP.** Mihai: *"we can't afford for eg. after a compaction to overconsume and
+get to 50% right off the bat but we should be holding persistent 200k context all the time so the
+sessions are alive and sharp."* A recovery that costs half the window is not a recovery, it is the next
+compaction. **Budget: ~10k tokens. Never more.**
+
+The rule that makes it cheap: **anything that requires reading a LOT is delegated, and only the
+conclusion comes back.** A subagent burns its own context, not mine. I never grep 46MB of transcript
+into my own window.
 
 ```bash
-# 1. the current thread, then the record, then the durable memory
+# ~2k tokens, and it is usually enough on its own
 cat ~/Projects/goose/NOW.md
-grep -n '^- \[ \]' ~/Projects/goose/SWARM-AGENDA.md          # what is genuinely open
-sed -n '1,80p' ~/.agents/skills/goose-swarm-campaign/SKILL.md
-
-# 2. re-mine the RAW transcript for what the summary dropped -- grep it, never read it whole
-T=~/.claude/projects/-Users-mihaiperdum-Projects-goose/<session>.jsonl
-grep -o '"type":"user".\{0,4000\}' "$T" | tail -40                 # the user's own recent words
-grep -oiE '.{0,300}(always|never|must be respected|not joking|stop starting|isolation).{0,300}' "$T" | tail -60
+grep -n '^- \[ \]' ~/Projects/goose/SWARM-AGENDA.md | cut -c1-160   # open items only, never the file
+sed -n '1,60p' ~/.agents/skills/goose-swarm-campaign/SKILL.md          # the header, not all 707 lines
+tail -5 ~/Projects/goose/TICK-NOTES.md                                 # newest findings
+git -C ~/Projects/goose log --oneline -12
 ```
 
-3. **State the current thread in one line before continuing.** If it does not match what the summary
-   implied, the summary was wrong and the sources win.
-4. On a large or contested recovery, fan a workflow across transcript + agenda + skill + code + git in
-   parallel and verify every recovered claim against the repo. Do not read serially and hope.
+Then, ONLY if the thread is still unclear, spend one Explore subagent on the raw transcript:
+
+> Read `~/.claude/projects/-Users-mihaiperdum-Projects-goose/<session>.jsonl` (tens of MB, one JSON per
+> line — grep it, never read it whole). Return **under 400 words**: the user's last 5 instructions
+> verbatim, any mandate phrased as always/never/must-be-respected, and what work was mid-flight.
+
+**State the current thread in one line before continuing.** If it does not match what the summary
+implied, the summary was wrong and the sources win.
+
+### Staying sharp during normal work, not just after a compaction
+
+- **Delegate reading, keep conclusions.** Any question answered by sweeping many files goes to a
+  subagent or a workflow. The finding lands in my context; the file dumps do not.
+- **Read ranges, not files.** `sed -n '3200,3300p'` over `cat`. Never re-read a file I just edited.
+- **The durable files ARE the memory** — `NOW.md`, `SWARM-AGENDA.md`, `TICK-NOTES.md`, the skill. Write
+  a finding down and it costs nothing to carry; hold it in context and it costs on every single turn.
+- **Keep NOW.md short.** If it grows past ~120 lines the detail belongs in the agenda, not here.
 
 ---
 
