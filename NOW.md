@@ -122,7 +122,9 @@ fresh, no event ≥10m, fleet idle, 0% CPU); a leaked server count > 0.
 and `items`-vs-`data`). **r1** (18:43–20:23) killed at REVIEW round 4 — see RUN-LEDGER, EXPERIMENTS-LEDGER
 and the campaign skill changelog for the full record.
 
-**Queued for the batch AFTER r2 (engine, swarm.rs):** when the judge answers RESTART on a call with
+**LANDED during r2, ships in r3 (`2b1e755ac`):** a nudge escalates to a seeded re-stream (conversation wiped in the same session, `judge_restream` event) when a prior steer produced no action or the judge says RESTART — `nudge_delivery()` is pure and tested. r2's opener needed 22 min and five ignored steers to finish; r1's review lane six. First `judge_restream` event in r3 is the live check.
+
+**Was queued (now done):** when the judge answers RESTART on a call with
 `actions_since_last_look == 0` and the previous steer changed nothing (thinking grew, no action), deliver the
 re-stream — a steer cannot be obeyed by a call that never reaches a turn boundary. r1 measured six steers
 ignored on one looping review lane (`judge_out_of_moves` is the greppable state).
