@@ -19,24 +19,24 @@ DAG is actually parallel). reasoning_chars against answer_chars is the waste.
 - **chain**: 0
 - **startable**: 0
 - **brief_median**: 0
-- **reasoning_chars**: 108367
-- **answer_chars**: 131467
+- **reasoning_chars**: 140357
+- **answer_chars**: 136323
 - **code_files**: 1
 - **code_bytes**: 696
-- **elapsed_min**: 79
-- **phase_split**: open 6m · ask 2m · research 32m · synthesis 5m · review 32m
+- **elapsed_min**: 97
+- **phase_split**: open 6m · ask 2m · research 32m · synthesis 5m · review 50m
 - **before_build_min**: 0 (internal diagnosis only — never a cross-run number)
-- **vs_target**: ONLY THE SCORE COMPARES. Target 20.06% (qwen3.8-27b, one cloud agent, same model). Wall clock is NOT comparable — that run is on far faster hardware, so minutes measure the machine. Bytes are NOT a verdict — more code is not better code, and it had no planning phases to spend budget on. Cross-hardware-honest work numbers for THIS run: 696B delivered, 108,367 chars reasoned, 0 tasks completed, 0 retried.
+- **vs_target**: ONLY THE SCORE COMPARES. Target 20.06% (qwen3.8-27b, one cloud agent, same model). Wall clock is NOT comparable — that run is on far faster hardware, so minutes measure the machine. Bytes are NOT a verdict — more code is not better code, and it had no planning phases to spend budget on. Cross-hardware-honest work numbers for THIS run: 696B delivered, 140,357 chars reasoned, 0 tasks completed, 0 retried.
 - **python_parses**: 0 ok / 0 SYNTAX ERROR / 0 empty
 - **web_files**: NONE — 0.56 of the scoring weight is unreachable without a served page
 - **tasks_done**: 0/? completed, 0 dispatched, 0 retried
-- **plan_patched**: 2
+- **plan_patched**: 3
 - **plan_loaded**: 0
-- **review_rounds**: r1:new=8 r2:new=4
-- **judge_looks**: 79
+- **review_rounds**: r1:new=8 r2:new=4 r3:new=9
+- **judge_looks**: 104
 - **judge_nudges**: 6
 - **judge_ended**: 0
-- **drift_held**: 8
+- **drift_held**: 10
 - **tree_defects**: 0
 - **repair**: delivery_defect_steer=0 brief_defects=1 testgen=0 fix_target_selected=0 complete_verify=0 complete_result=0
 ## swarm-3node-r0-ENDED-29criticals-repair-never-ran-benchmark-forces-proxy-no
@@ -71,3 +71,35 @@ DAG is actually parallel). reasoning_chars against answer_chars is the waste.
 - **tree_defects**: 0
 - **repair**: delivery_defect_steer=2 brief_defects=1 testgen=1 fix_target_selected=1 complete_verify=1 complete_result=0
 - **score**: **0.0568** hermetic — seed 687ff58bfa6b707d (the run's own), vendor port 8850, playwright node (inner 0.1789 × crit_mult 0.36). TWO criticals: `sync_completeness` 0/12288 (the `items`-vs-`data` key) and `j_workflow_journey` (the frontend, graded for the first time). vs target 0.2006: 28%. vs published local 0.0273: 2.1×. An earlier 0.0832 was BLIND (no playwright, 30/99 checks unavailable) and on a FRESH seed — retracted, kept as `verdict-BLIND-fresh-seed-NOT-COMPARABLE-0.0832.json`. Comparable verdict: `verdict-hermetic-seed687ff58b-port8850-0.0568.json` in the run dir.
+
+## swarm-3node-r1-KILLED-review-diverged-8-4-9-new-findings-4-rounds-51min-vs-r0-12min
+
+- **phases**: open → ask → research → synthesis → review
+- **started**: 15:43:54
+- **tasks**: 0
+- **files_planned**: 0
+- **collisions**: none
+- **sink_owns**: NO SINK
+- **chain**: 0
+- **startable**: 0
+- **brief_median**: 0
+- **reasoning_chars**: 144276
+- **answer_chars**: 136323
+- **code_files**: 1
+- **code_bytes**: 696
+- **elapsed_min**: 98
+- **phase_split**: open 6m · ask 2m · research 32m · synthesis 5m · review 51m
+- **before_build_min**: 0 (internal diagnosis only — never a cross-run number)
+- **vs_target**: ONLY THE SCORE COMPARES. Target 20.06% (qwen3.8-27b, one cloud agent, same model). Wall clock is NOT comparable — that run is on far faster hardware, so minutes measure the machine. Bytes are NOT a verdict — more code is not better code, and it had no planning phases to spend budget on. Cross-hardware-honest work numbers for THIS run: 696B delivered, 144,276 chars reasoned, 0 tasks completed, 0 retried.
+- **python_parses**: 0 ok / 0 SYNTAX ERROR / 0 empty
+- **web_files**: NONE — 0.56 of the scoring weight is unreachable without a served page
+- **tasks_done**: 0/? completed, 0 dispatched, 0 retried
+- **plan_patched**: 3
+- **plan_loaded**: 0
+- **review_rounds**: r1:new=8 r2:new=4 r3:new=9
+- **judge_looks**: 105
+- **judge_nudges**: 6
+- **judge_ended**: 0
+- **drift_held**: 11
+- **tree_defects**: 0
+- **repair**: delivery_defect_steer=0 brief_defects=1 testgen=0 fix_target_selected=0 complete_verify=0 complete_result=0
