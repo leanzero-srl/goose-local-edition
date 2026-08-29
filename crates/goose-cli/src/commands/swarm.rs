@@ -4007,9 +4007,52 @@ fn spec_doc_urls(spec: &str) -> Vec<String> {
 /// the caller emits today's string byte-for-byte.
 fn spec_advertised_surface(spec: &str) -> Vec<String> {
     let unwrap_cell = |c: &str| c.trim().trim_matches('`').trim().to_string();
+    // THE PATH IS THE FIRST BACKTICKED TOKEN when the cell opens with a backtick, else the first
+    // whitespace token. sb-7's row `| `GET` | `/` + `web/*` | …` stripped by `unwrap_cell` to
+    // "/` + `web/*"; every consumer then took its first whitespace token, "/`", and the gate curled
+    // an endpoint that exists nowhere — r0's "GET /` returned 404". The REAL `/` was never emitted
+    // at all, so the frontend row went unprobed while its phantom twin blocked green.
+    let path_cell = |c: &str| -> String {
+        let c = c.trim();
+        match c.strip_prefix('`') {
+            Some(rest) => rest.split('`').next().unwrap_or("").trim().to_string(),
+            None => c.split_whitespace().next().unwrap_or("").to_string(),
+        }
+    };
+    // ONE SERVICE'S SURFACE, NOT THE WHOLE DOCUMENT'S. sb-7 documents two services: §3 `ledgerd`,
+    // whose table the gate boots and probes, and §6 `notifierd`, whose /notify/* and /health rows
+    // are served on notifierd's OWN port. Every consumer of this list — the GET prober, the POST
+    // prober, the unprobed disclosure, the tester angle and the fix worker — addresses ONE port, so
+    // notifierd's rows probed on ledgerd's port were three of r0's phantom 404s. The nearest
+    // heading's backticked name is a row's service; the FIRST endpoint table's service is the
+    // primary; a row named for another service is not emitted. Only headings AT THAT LEVEL OR
+    // DEEPER denote services: sb-7's title is "# Build `app`", and letting an unnamed section
+    // inherit from it made §5's drafts rows (`### 5. The approval workflow`, no name) belong to
+    // `app` rather than to ledgerd and dropped them. Ancestors above the first table's named
+    // heading are the document, not a service; an unnamed sibling section is the primary's.
+    // The notifier port IS known to the gate (`spec_run_argv_v2` fills it second), so a future
+    // prober can address those rows there; today nothing does, and probing them here is a lie.
+    let mut service_by_level: [Option<String>; 7] = Default::default();
+    let mut first_row_seen = false;
+    let mut primary: Option<(usize, String)> = None;
+    let mut in_fence = false;
     let mut out = Vec::new();
     for line in spec.lines() {
         let line = line.trim();
+        if line.starts_with("```") {
+            in_fence = !in_fence;
+            continue;
+        }
+        if !in_fence && line.starts_with('#') {
+            let level = line.chars().take_while(|c| *c == '#').count();
+            if level <= 6 && line.get(level..).is_some_and(|rest| rest.starts_with(' ')) {
+                for slot in service_by_level.iter_mut().skip(level) {
+                    *slot = None;
+                }
+                service_by_level[level] = heading_service_name(line);
+            }
+            continue;
+        }
         if !line.starts_with('|') {
             continue;
         }
@@ -4024,9 +4067,26 @@ fn spec_advertised_surface(spec: &str) -> Vec<String> {
         ) {
             continue; // header row, separator row, or a table that is not an endpoint table
         }
-        let path = unwrap_cell(cells[1]);
+        let path = path_cell(cells[1]);
         if !path.starts_with('/') {
             continue;
+        }
+        if !first_row_seen {
+            first_row_seen = true;
+            primary = service_by_level
+                .iter()
+                .enumerate()
+                .rev()
+                .find_map(|(level, s)| s.as_ref().map(|s| (level, s.clone())));
+        }
+        if let Some((level, name)) = &primary {
+            let service = service_by_level[*level..]
+                .iter()
+                .rev()
+                .find_map(|s| s.clone());
+            if service.is_some_and(|s| &s != name) {
+                continue;
+            }
         }
         let expected = unwrap_cell(cells[2]);
         out.push(if expected.is_empty() {
@@ -4036,6 +4096,16 @@ fn spec_advertised_surface(spec: &str) -> Vec<String> {
         });
     }
     out
+}
+
+/// The backticked service a section heading names — `### 3. `ledgerd` — …` is `ledgerd`,
+/// `### 3. `vendorsync/api.py` — the HTTP backend` is `vendorsync/api.py`. None for an unnamed
+/// heading (`#### Endpoints`) and for a backticked PATH (`### GET `/api/health``), which names an
+/// endpoint rather than the thing serving it.
+fn heading_service_name(heading: &str) -> Option<String> {
+    let name = heading.split('`').nth(1)?.trim();
+    (!name.is_empty() && !name.starts_with('/') && !name.contains(char::is_whitespace))
+        .then(|| name.to_string())
 }
 
 /// Advertised endpoints that MUTATE, as bare paths. `spec_advertised_surface` returns display
@@ -9789,6 +9859,198 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
         // A markdown table that is not an endpoint table must not be mistaken for one.
         assert!(
             spec_advertised_surface("| Name | Type |\n|---|---|\n| `id` | `str` |\n").is_empty()
+        );
+    }
+
+    /// PHANTOM (a): the sb-7 row `| `GET` | `/` + `web/*` | …` — a path cell holding TWO backticked
+    /// tokens joined by prose. Stripping the cell's outer backticks left "/` + `web/*", the
+    /// consumers' split_whitespace took "/`", and the gate curled an endpoint that exists nowhere:
+    /// r0's "GET /` returned 404". Worse, the REAL `/` was never emitted, so the one GET a person
+    /// would try first went unprobed while its phantom twin blocked green. The path is the FIRST
+    /// backticked token when the cell opens with a backtick, else the first whitespace token.
+    #[test]
+    fn a_path_cell_with_two_backticked_tokens_yields_the_first_one() {
+        let spec = "| Method | Path | Response |\n|---|---|---|\n\
+                    | `GET` | `/` + `web/*` | the frontend files, correct content types |\n\
+                    | `GET` | `/api/health` | shape below |\n";
+        let items = spec_advertised_surface(spec);
+        assert_eq!(items.len(), 2, "{items:?}");
+        assert!(
+            items[0].starts_with("GET / -> EXPECT the frontend files"),
+            "{:?}",
+            items[0]
+        );
+        assert!(
+            !items.iter().any(|i| i.contains('`')),
+            "no delimiter may survive into a path: {items:?}"
+        );
+        let gets = spec_get_endpoints(spec);
+        assert!(
+            gets.contains(&"/".to_string()),
+            "the root is the most probeable GET there is: {gets:?}"
+        );
+        assert!(gets.contains(&"/api/health".to_string()), "{gets:?}");
+        assert!(!gets.iter().any(|g| g.contains('`')), "{gets:?}");
+        // An unbackticked cell still takes its first whitespace token.
+        let bare = "| Method | Path | Response |\n|---|---|---|\n\
+                    | GET | /api/summary (totals) | shape |\n";
+        assert_eq!(spec_get_endpoints(bare), vec!["/api/summary".to_string()]);
+    }
+
+    /// PHANTOM (b): sb-7 line 86 — "also fetches `GET /v3/reversals`" — is the VENDOR's endpoint,
+    /// described in prose inside the ledgerd section. The prose regex scraped it and the gate probed
+    /// it on the app: r0's "GET /v3/reversals returned 404". When the spec has an endpoint TABLE the
+    /// table is the authority and prose contributes nothing; a prose-only spec keeps the scraper.
+    #[test]
+    fn prose_contributes_no_endpoints_once_the_spec_has_a_table() {
+        let prose =
+            "A sync walks the vendor's paginated payments list (192 pages of 64 at fixture \
+                     count), upserting\ninto `ledger.db`, and also fetches `GET /v3/reversals` (a \
+                     small collection) so reversal truth\nsurvives a webhook outage.\n";
+        assert_eq!(
+            spec_get_endpoints(prose),
+            vec!["/v3/reversals".to_string()],
+            "a prose-only spec still scrapes its prose"
+        );
+        let with_table = format!(
+            "{prose}\n#### Endpoints\n\n| Method | Path | Response |\n|---|---|---|\n\
+             | `GET` | `/api/health` | shape below |\n"
+        );
+        let gets = spec_get_endpoints(&with_table);
+        assert_eq!(
+            gets,
+            vec!["/api/health".to_string()],
+            "the table is the authority, prose adds nothing: {gets:?}"
+        );
+    }
+
+    /// PHANTOM (c): sb-7 §6 is `notifierd`'s table — /notify/events, /health, /notify/processed,
+    /// /notify/notifications — served on notifierd's port, and the gate probed all of them on
+    /// ledgerd's: r0's "GET /health returned 404", "GET /notify/processed?after=1 returned 404",
+    /// "GET /notify/notifications?limit=&offset= returned 404". Rows under a heading that names a
+    /// different service than the first endpoint table's heading are not the primary surface; an
+    /// UNNAMED heading (§5, the approval workflow) inherits, so its drafts rows stay ledgerd's.
+    #[test]
+    fn a_second_services_table_is_not_the_primary_services_surface() {
+        let spec = "\
+### 3. `ledgerd` — vendor sync, event ledger, API, UI host\n\n\
+#### Endpoints\n\n\
+| Method | Path | Response |\n|---|---|---|\n\
+| `GET` | `/api/health` | shape below |\n\
+| `POST` | `/api/sync` | `{\"fetched\": <int>, \"inserted\": <int>, \"updated\": <int>, \"total\": <int>}` |\n\n\
+### 5. The approval workflow — maker, checker, admin\n\n\
+| Method | Path | Role | Effect |\n|---|---|---|---|\n\
+| `GET` | `/api/drafts?state=` | any role | `{\"data\": [...], \"total\": <int>}`, filtered by state |\n\n\
+### 6. `notifierd` — the idempotent consumer\n\n\
+| Method | Path | Response |\n|---|---|---|\n\
+| `POST` | `/notify/events` | `{\"events\": [...]}` → `{\"accepted\": [<seq>...], \"duplicate\": [<seq>...]}` |\n\
+| `GET` | `/health` | `{\"status\": \"ok\", \"received\": <int>, \"applied\": <int>, \"duplicate\": <int>, \"notifications\": <int>}` |\n\
+| `GET` | `/notify/processed?after=<seq>` | `{\"processed\": [{\"seq\": <int>, \"type\": <str>}...], \"latest_seq\": <int>}` — durable |\n\
+| `GET` | `/notify/notifications?limit=&offset=` | `{\"data\": [...], \"total\": <int>}` newest first |\n";
+        let items = spec_advertised_surface(spec);
+        let joined = items.join("\n");
+        assert!(joined.contains("GET /api/health"), "{items:?}");
+        assert!(joined.contains("POST /api/sync"), "{items:?}");
+        assert!(
+            joined.contains("GET /api/drafts?state="),
+            "a section with no service in its heading is the primary service's: {items:?}"
+        );
+        for other in [
+            "/notify/events",
+            "/health",
+            "/notify/processed",
+            "/notify/notifications",
+        ] {
+            assert!(
+                !items.iter().any(|i| i.contains(&format!(" {other}"))),
+                "{other} is notifierd's row, not ledgerd's: {items:?}"
+            );
+        }
+        let gets = spec_get_endpoints(spec);
+        assert!(
+            !gets
+                .iter()
+                .any(|g| g == "/health" || g.starts_with("/notify/")),
+            "{gets:?}"
+        );
+        assert!(
+            !spec_post_endpoints(spec)
+                .iter()
+                .any(|p| p.starts_with("/notify/")),
+            "the POST prober must not fire at notifierd's endpoint on ledgerd's port"
+        );
+        // The FIRST endpoint table decides which service is primary — the same rows with the
+        // notifierd section in front make /health the surface and drop /api/health.
+        let (head, tail) = spec.split_once("### 6.").unwrap();
+        let swapped = format!("### 6.{tail}\n{head}");
+        let gets = spec_get_endpoints(&swapped);
+        assert!(gets.contains(&"/health".to_string()), "{gets:?}");
+        assert!(!gets.contains(&"/api/health".to_string()), "{gets:?}");
+    }
+
+    /// THE REAL sb-7 SPEC, read at test time, so the list the gate probes is pinned against the
+    /// document the fleet actually builds from rather than a fragment of it. Skips cleanly when the
+    /// checkout has no evals tree. The positive controls are `/` and ledgerd's own /api/* rows.
+    #[test]
+    fn the_real_sb7_spec_yields_only_ledgerds_own_table_endpoints() {
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../evals/swarm-bench/spec-build-sb7.md"
+        );
+        let Ok(spec) = std::fs::read_to_string(path) else {
+            eprintln!("skipping: {path} is not in this checkout");
+            return;
+        };
+        let gets = spec_get_endpoints(&spec);
+        eprintln!("spec_get_endpoints(sb7) = {gets:#?}");
+        for phantom in [
+            "/`",
+            "/v3/reversals",
+            "/health",
+            "/notify/processed?after=1",
+            "/notify/notifications?limit=&offset=",
+        ] {
+            assert!(
+                !gets.contains(&phantom.to_string()),
+                "phantom {phantom} must not be probed: {gets:?}"
+            );
+        }
+        assert!(
+            !gets
+                .iter()
+                .any(|g| g.contains('`') || g.starts_with("/notify/") || g.starts_with("/v3/")),
+            "{gets:?}"
+        );
+        for real in [
+            "/",
+            "/api/health",
+            "/api/summary",
+            "/api/buckets",
+            "/api/payments?limit=1&offset=1&status=1&currency=1&sort=1",
+            "/api/events?after=1&limit=1",
+            "/api/outbox/status",
+            "/api/notifications?limit=&offset=",
+            "/api/viz/records",
+            "/api/stream",
+            "/api/drafts?state=",
+        ] {
+            assert!(
+                gets.contains(&real.to_string()),
+                "{real} is ledgerd's own advertised GET and must be probed: {gets:?}"
+            );
+        }
+        let posts = spec_post_endpoints(&spec);
+        assert!(posts.contains(&"/api/sync".to_string()), "{posts:?}");
+        assert!(
+            !posts.iter().any(|p| p.starts_with("/notify/")),
+            "POST /notify/events is notifierd's: {posts:?}"
+        );
+        let unprobed = spec_unprobed_advertised(&spec);
+        assert!(
+            !unprobed
+                .iter()
+                .any(|u| u.contains("/notify/") || u.contains(" /health")),
+            "{unprobed:?}"
         );
     }
 
@@ -19472,14 +19734,57 @@ fn post_reports_acquired(body: &str) -> Option<i64> {
 }
 
 fn spec_get_endpoints(spec: &str) -> Vec<String> {
+    let mut seen = std::collections::BTreeSet::new();
+    let mut out = Vec::new();
+    // THE TABLE IS THE AUTHORITY, AND WHEN IT SPEAKS THE PROSE IS SILENT.
+    //
+    // `spec_advertised_surface` parses the endpoint table; the prose regex below matches "GET /path"
+    // in running text. They were MERGED — prose first, then table — so a prose-written spec kept
+    // working. But prose in a spec that HAS a table is not a second list of the app's endpoints:
+    // sb-7 line 86 says the sync "also fetches `GET /v3/reversals`" — the VENDOR's endpoint, in the
+    // ledgerd section — and the merge probed it on the app: r0's "GET /v3/reversals returned 404".
+    // The same prose re-emitted `/api/payments` and `/api/notifications` bare, duplicating their
+    // table rows minus the documented query. So: table rows when there are any, prose only when the
+    // spec has no table at all (the shape the regex was written for, pinned by the prose-only
+    // cases in `spec_get_endpoints_does_not_scrape_across_a_backtick`).
+    for adv in spec_advertised_surface(spec) {
+        let mut it = adv.split_whitespace();
+        let (Some(method), Some(raw_path)) = (it.next(), it.next()) else {
+            continue;
+        };
+        if !method.eq_ignore_ascii_case("GET") {
+            continue;
+        }
+        let path = raw_path.trim_end_matches([';', ',', ')', '.', '/']);
+        // THE ROOT SURVIVES ITS OWN TRIM. Stripping a trailing `/` normalises `/api/health/`, but
+        // reduces `/` — the row that says the frontend is served — to nothing, so the one GET a
+        // person would try first was never probed while its phantom twin "/`" was.
+        let path = if path.is_empty() && raw_path.starts_with('/') {
+            "/".to_string()
+        } else {
+            path.to_string()
+        };
+        if path.is_empty() || !path.starts_with('/') {
+            continue;
+        }
+        // Same param'd-PATH exclusion as the prose branch; a templated query string is filled and
+        // kept (Q2a).
+        let Some(path) = probeable_get_path(&path) else {
+            continue;
+        };
+        if seen.insert(path.clone()) {
+            out.push(path);
+        }
+    }
+    if !out.is_empty() {
+        return out;
+    }
     // Capture the WHOLE path token (up to whitespace) so a param'd route's delimiter is INCLUDED and can be
     // excluded below — a narrower char-class would stop before `<`/`{`/`:` and wrongly keep the base path.
     let re = match regex::Regex::new(r"(?i)\bGET\s+(/\S*)") {
         Ok(r) => r,
         Err(_) => return Vec::new(),
     };
-    let mut seen = std::collections::BTreeSet::new();
-    let mut out = Vec::new();
     for c in re.captures_iter(spec) {
         // CUT AT THE FIRST MARKDOWN DELIMITER. `\S*` happily runs THROUGH a closing backtick, so
         // "served by the backend at `GET /`." captured "/`." — a path that exists nowhere. It was not
@@ -19522,35 +19827,10 @@ fn spec_get_endpoints(spec: &str) -> Vec<String> {
     // (/api/health, /api/payments, /api/summary, POST /api/sync).
     //
     // So `spec_contract` — the check that gates green on "does the app implement what the spec
-    // advertises" — has NEVER seen a real endpoint on this bench. Before F32 it saw the phantom and
-    // fabricated a 404; after F32 it sees nothing and honestly reports CHECKED NOTHING. Neither state
-    // verifies anything.
-    //
-    // `spec_advertised_surface` in this same file already parses the table — it was written for the
-    // e2e oracle. F64's shape again: two siblings, one solved the problem, the other never got the
-    // fix. MERGED rather than replaced, so a prose-written spec keeps working exactly as before.
-    for adv in spec_advertised_surface(spec) {
-        let mut it = adv.split_whitespace();
-        let (Some(method), Some(raw_path)) = (it.next(), it.next()) else {
-            continue;
-        };
-        if !method.eq_ignore_ascii_case("GET") {
-            continue;
-        }
-        let path = raw_path
-            .trim_end_matches([';', ',', ')', '.', '/'])
-            .to_string();
-        if path.is_empty() || !path.starts_with('/') {
-            continue;
-        }
-        // Same param'd-PATH exclusion as above; a templated query string is filled and kept (Q2a).
-        let Some(path) = probeable_get_path(&path) else {
-            continue;
-        };
-        if seen.insert(path.clone()) {
-            out.push(path);
-        }
-    }
+    // advertises" — had NEVER seen a real endpoint on this bench. Before F32 it saw the phantom and
+    // fabricated a 404; after F32 it saw nothing and honestly reported CHECKED NOTHING. That is why
+    // the table pass now runs FIRST, above, and this prose pass runs only when the table found
+    // nothing.
     out
 }
 
