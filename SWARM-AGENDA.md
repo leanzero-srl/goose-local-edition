@@ -397,6 +397,28 @@ it. A problem that turns out to be already owned is left out, but then it was no
 **THIS RUN KEEPS THE DEFECT** — the binary is the old one. Expect 4 features missing from its app, and read
 the score with that in mind rather than as a verdict on the decomposition.
 
+## RUN 3 DECOMPOSITION — 13 slices, and REVIEW's unowned findings are now OWNED at OPEN
+
+`slices_opened`: **13**, weights [3,5,4,4,4,3,3,2,4,2,1,3,3], 529s. `open-resplit` fired on the 5-vs-1
+spread. Clarify proxy armed immediate on 3 questions.
+
+    ledgerd-core · vendor-sync · webhook-handler · event-ledger-outbox · approval-workflow ·
+    payments-api · notifierd-service · frontend-html-css · frontend-app-js · sse-streaming ·
+    documentation · viz-rendering-core · viz-interaction
+
+**`sse-streaming` HAS ITS OWN SLICE.** In run 2, REVIEW reported *"SSE streaming endpoint (GET /api/stream)
+with batch numbering not explicitly owned by any task"* as one of four unowned features — and patched
+nothing. This run allocates it at OPEN, before REVIEW is ever consulted. That is the coverage work paying
+off one phase earlier than the fix that was built for it.
+
+**THE THING TO WATCH: `viz-rendering-core` and `viz-interaction`.** That is the same split that became
+`viz-scene-rendering` + `viz-camera-picking-interaction` in run 1 and collided on `web/viz.js`, turning the
+second task into a zero-tool-call no-op. `plan_synthesized.shared_files` will now NAME the pair if it
+recurs, and REVIEW question 6b will be asked to give the file one owner. **This run is the test of both.**
+
+13 slices against run 2's 10 is more decomposition, not less — worth watching, but the over-decomposition
+failure was 21, and slice count is meant to be a property of the request.
+
 ## RUN 2 KILLED ON A CHECKPOINT — 2026-08-29 03:58 EEST, and the kill is the DESIGNED outcome
 
 `open-coverage-2`, sampled three times over 70 seconds: **thinking_chars 70969 -> 70969 -> 70970**. One
