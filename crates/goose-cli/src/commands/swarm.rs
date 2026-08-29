@@ -9178,6 +9178,58 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
     /// gate ever issues, and a false finding against a freshly built app is the most expensive
     /// mistake available here — so anything it cannot decide from the body must be Unreadable,
     /// never Duplicates.
+    /// DRIFT CORROBORATES; IT DOES NOT SUPPRESS FOREVER.
+    ///
+    /// DRIFTING on a producing call is held, because 33 of 34 such nudges changed nothing and cost 66
+    /// minutes of worker time. But the old rule held it whatever happened next, so a call could reach
+    /// 21,749 reasoning characters with zero tool calls, be diagnosed DRIFTING, and never be told --
+    /// measured live on run swarm-20260829-100743413, where five DRIFTING verdicts produced one nudge.
+    ///
+    /// LOOPING already acts on the SECOND agreeing look rather than the first. This is the same rule:
+    /// one DRIFTING is noise, a second with STILL no action taken is the judge saying the same thing
+    /// twice about a call that did nothing about it. Acting resets the streak, because acting is the
+    /// outcome the nudge exists to cause.
+    #[test]
+    fn drift_is_delivered_on_the_second_look_that_still_sees_no_action() {
+        // (drift_verdict, actions_since_last_look) -> (streak, delivered_when_producing)
+        let step = |streak: &mut u32, drift: bool, actions: usize| -> bool {
+            if drift && actions == 0 {
+                *streak += 1;
+            } else if actions > 0 || !drift {
+                *streak = 0;
+            }
+            drift && *streak >= 2
+        };
+
+        let mut streak = 0u32;
+        assert!(
+            !step(&mut streak, true, 0),
+            "the FIRST drifting is held — that is the 33/34 evidence"
+        );
+        assert!(
+            step(&mut streak, true, 0),
+            "a SECOND drifting with no action is corroborated"
+        );
+
+        // A call that ACTS has done the thing the nudge wanted; the case starts over.
+        let mut streak = 0u32;
+        step(&mut streak, true, 0);
+        assert!(
+            !step(&mut streak, true, 3),
+            "acting resets — this look must not deliver"
+        );
+        assert_eq!(streak, 0, "and the streak is cleared, not merely skipped");
+
+        // An OK verdict between two DRIFTINGs is disagreement, not corroboration.
+        let mut streak = 0u32;
+        step(&mut streak, true, 0);
+        step(&mut streak, false, 0);
+        assert!(
+            !step(&mut streak, true, 0),
+            "a non-drift look breaks the streak"
+        );
+    }
+
     /// NO CONFIGURED NUMBER MAY EVER BECOME A WALL CLOCK ON A CALL. Mihai's standing rule, and the one
     /// that has been re-broken most: "All of the caps, all of the timers need to go, local models take a
     /// long time to complete." The live config still carries worker_timeout_secs: 420 and
@@ -15056,6 +15108,11 @@ impl GooseAgentDispatcher {
         // Consecutive LOOPING verdicts on the SAME content. One is not enough, and two on DIFFERENT
         // content is a slow-starting call misread twice, not a loop — see the abort site.
         let mut omni_looping_streak: u32 = 0;
+        // CONSECUTIVE DRIFTING VERDICTS ON A CALL THAT HAS NOT ACTED. See the hold below: DRIFTING on a
+        // producing call is suppressed, correctly, because 33 of 34 such nudges changed nothing. But
+        // suppression with no way back is not the same as caution, and LOOPING already shows the right
+        // shape -- it corroborates with a second look rather than acting on the first.
+        let mut omni_drift_streak: u32 = 0;
         // THIS CALL'S OWN BURST RHYTHM. These models do not stream evenly — they emit in ~2000/4000
         // character bursts with quiet gaps between, and a judge look that lands in a gap sees
         // `produced_since_last_look` of single digits and reads a healthy call as dead.
@@ -16134,20 +16191,41 @@ impl GooseAgentDispatcher {
                     // on the FIRST DRIFTING look with no corroboration — the same inversion the rate block
                     // already warns the judge about ("It is WORKING... do not read a low reasoning count
                     // as a stall") while the engine went on doing it.
-                    let drifting_now = omni_outcome.verdict == goose_swarm::Verdict::Drifting
-                        && omni_outcome.confidence >= 0.8
-                        && !produced_anything_since_last_look;
-                    if omni_outcome.verdict == goose_swarm::Verdict::Drifting
-                        && omni_outcome.confidence >= 0.8
-                        && produced_anything_since_last_look
-                    {
+                    //
+                    // BUT A HOLD WITH NO WAY BACK IS NOT CAUTION, IT IS BLINDNESS. Measured on this very
+                    // run: open-coverage-2 reached 21,749 reasoning characters with ZERO tool calls, was
+                    // diagnosed DRIFTING, and was held -- and nothing in the old rule could ever deliver
+                    // it, however far it went, because "producing" was true forever. Its sibling
+                    // open-coverage-1 sat at 17,710 in the same state. Five DRIFTING verdicts across the
+                    // run produced one nudge.
+                    //
+                    // LOOPING already has the right shape and DRIFTING did not: LOOPING acts on the
+                    // SECOND look that agrees, never the first. So drift corroborates the same way. One
+                    // DRIFTING on a producing call is the noise the 33-of-34 measurement describes; a
+                    // second DRIFTING with STILL no action taken in between is the judge saying the same
+                    // thing twice about a call that has done nothing about it, and that is evidence, not
+                    // taste. A call that ACTS resets the streak, because acting is the outcome the nudge
+                    // was trying to cause.
+                    let drift_verdict = omni_outcome.verdict == goose_swarm::Verdict::Drifting
+                        && omni_outcome.confidence >= 0.8;
+                    if drift_verdict && actions_since_last_look == 0 {
+                        omni_drift_streak += 1;
+                    } else if actions_since_last_look > 0 || !drift_verdict {
+                        omni_drift_streak = 0;
+                    }
+                    let drift_corroborated = drift_verdict && omni_drift_streak >= 2;
+                    let drifting_now =
+                        drift_verdict && (!produced_anything_since_last_look || drift_corroborated);
+                    if drift_verdict && produced_anything_since_last_look && !drift_corroborated {
                         self.events.write_value(serde_json::json!({
                             "event": "judge_drift_held",
                             "task_id": activity_key,
                             "produced_since_last_look": produced_since_last_look,
                             "actions_since_last_look": actions_since_last_look,
-                            "detail": "DRIFTING on a producing call -- held, because 33 of 34 such nudges \
-                                       changed nothing and cost 66 minutes of worker time",
+                            "drift_streak": omni_drift_streak,
+                            "detail": "DRIFTING on a producing call -- held for one look, because 33 of 34 \
+                                       such nudges changed nothing and cost 66 minutes of worker time. A \
+                                       second DRIFTING with no action taken since will be delivered.",
                         }));
                     }
                     // A MEASURED repeat needs no corroboration from a second look. The streak exists to
