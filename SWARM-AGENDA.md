@@ -397,6 +397,23 @@ it. A problem that turns out to be already owned is left out, but then it was no
 **THIS RUN KEEPS THE DEFECT** — the binary is the old one. Expect 4 features missing from its app, and read
 the score with that in mind rather than as a verdict on the decomposition.
 
+## REVIEW ROUND 3 — the trend is now one tick line
+
+    round 1: 11 new -> 12 touches | sharing 0 / nothing  1 / files 30
+    round 2:  1 new ->  9 touches | sharing 0 / nothing 10 / files 21
+    round 3:  4 new ->  3 touches | sharing 0 / nothing 11 / files 21
+
+**All three rounds PATCHED and ACCEPTED** — the thing run 3 could never do once. Findings are not monotone
+(11 → 1 → 4), which is expected: each patch changes the plan, so the next round reviews a different object.
+
+`tasks_sharing_a_file` has held at **0** since round 1. The cost is carried entirely by
+`tasks_owning_nothing`, climbing 1 → 10 → 11.
+
+**NOT ADDING A TERMINATOR ON THAT TREND.** Growth in owning-nothing is not inherently wrong — round 2's
+growth was CORRECT, stripping files from nine frontend tasks against a four-file budget. A terminator on a
+metric I cannot confidently interpret is exactly the mistake I made twice tonight with the burst-gap
+detector. BUILD will say whether 11 fileless tasks are harmful; the prediction is already written.
+
 ## THE OVER-DECOMPOSITION ENDGAME, FULLY VISIBLE — run 4 REVIEW round 2, 08:12 EEST
 
     round 1  new=11 touches=12  ->  after: 26 tasks, 30 files, sharing 0, owning_nothing [flat-status-colors]
