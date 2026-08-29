@@ -55,6 +55,17 @@ implied, the summary was wrong and the sources win.
 
 ## The goal, unchanged
 
+**DESIGN STEER (Mihai, 2026-08-29 22:30, binding for every step from here): "let's avoid making it overly
+too deterministic and gated, be very mild with this, we've done deterministic and plumbing a lot and it
+didn't work because of how unpredictable these models are."** Code MEASURES and feeds the measurement to a
+model call; it does not refuse, abort, cap or hard-limit model work. A deterministic pass may exist only as
+an idempotent safety net that is a no-op when the model already did the job, and it never ends a run.
+Terminators are lenient and progress-based (stop when nothing improves), never "exactly one round".
+Supervision that redirects is the mild tool for unpredictability — cut its cost, do not replace it with
+rules. Concretely: the plan-boundary REFUSAL that landed in `ee0cbfe73` becomes a warning; the design's
+"exactly one repair wave" becomes "repair while it improves"; REVIEW (one round, worked in r2) stays.
+
+
 Make the swarm **build better software** on 3 local LM Studio nodes.
 
 **THE NUMBER TO BEAT IS 20.06%** — `qwen3.8-27b` scored as ONE cloud agent with no planning, no
