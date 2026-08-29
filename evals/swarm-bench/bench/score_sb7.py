@@ -1260,13 +1260,26 @@ def _(c: Ctx):
              "one unresponsive vendor call hangs the boot with no recovery")
 
 
+
+def _error_obj(body) -> dict:
+    """The `error` envelope of a response body, or {} when there is none.
+
+    An app may answer {"error": "Not found"} -- a STRING, not an envelope. Every site that did
+    `(body.get("error") or {}).get(...)` crashed on that shape with AttributeError, and a scorer that
+    crashes reports nothing. r0 hit it twice in one run (the validation matrix and d_peer_absence)
+    after one site had already been fixed in isolation. This is the single rule; use it everywhere.
+    """
+    if not isinstance(body, dict):
+        return {}
+    err = body.get("error")
+    return err if isinstance(err, dict) else {}
+
 @check("d_peer_absence", "D")
 def _(c: Ctx):
     st, body = c.notifications_proxy_down
     parts = {
         "proxy_502": st == 502,
-        "envelope_code": isinstance(body, dict)
-        and ((body.get("error") or {}).get("code") == "notifier_unreachable"),
+        "envelope_code": _error_obj(body).get("code") == "notifier_unreachable",
         "ledgerd_alive_through_partition": bool((c.b7_result or {}).get("ledger_alive")),
         "notifierd_alive_through_ledger_kill": bool(c.notifier_alive_during_kill),
     }
@@ -4011,8 +4024,8 @@ def gather(root: Path, vendor_port: int, db_dir: Path, trace_path: Path,
             c.expected_total_at_load = N_FROZEN + 1
 
         def _envelope_ok(body) -> bool:
-            e = (body or {}).get("error") if isinstance(body, dict) else None
-            return isinstance(e, dict) and isinstance(e.get("code"), str) \
+            e = _error_obj(body)
+            return bool(e) and isinstance(e.get("code"), str) \
                 and isinstance(e.get("message"), str)
 
         for path, want_status, expects_fe in [
@@ -4035,8 +4048,7 @@ def gather(root: Path, vendor_port: int, db_dir: Path, trace_path: Path,
             #
             # This changes no verdict. A string error genuinely carries no field_errors, so fe stays None
             # and paths_ok stays False, which is the failing reading it always should have been.
-            _err = body.get("error") if isinstance(body, dict) else None
-            fe = _err.get("field_errors") if isinstance(_err, dict) else None
+            fe = _error_obj(body).get("field_errors")
             paths_ok = bool(fe) and all(
                 isinstance(x, dict) and isinstance(x.get("path"), str)
                 and isinstance(x.get("code"), str) for x in fe)
@@ -4070,9 +4082,7 @@ def gather(root: Path, vendor_port: int, db_dir: Path, trace_path: Path,
         c.envelope_cases.append({"path": "/api/drafts[invalid]",
                                  "envelope_ok": _envelope_ok(body_bad),
                                  "expects_field_errors": True,
-                                 "field_paths_ok": bool(((body_bad or {}).get("error") or {})
-                                                        .get("field_errors"))
-                                 if isinstance(body_bad, dict) else False})
+                                 "field_paths_ok": bool(_error_obj(body_bad).get("field_errors"))})
         for jp in ("/api/payments?limit=1", "/api/summary", "/api/buckets",
                    "/api/outbox/status", "/api/nope", "/api/payments?limit=-1"):
             stj, _bj, rawj, hj = _get(f"{base}{jp}")
