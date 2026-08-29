@@ -640,20 +640,60 @@ const shortNode = (s: string): string => s.match(/^([^-/]+)/)?.[1] ?? s;
  * prefix IS the node name — so every rendered node label goes through this one map. Pure + exported so the
  * mapping is unit-testable against the measured pool shapes.
  */
-export function nodeLabeler(events: Array<Record<string, unknown>>): (device: string) => string {
-  const canon: Record<string, string> = {};
-  for (const src of ['pool', 'devices'] as const) {
-    const ev = events.find((e) => e['event'] === (src === 'pool' ? 'run_started' : 'pool_resolved'));
-    for (const p of arr(ev?.[src])) {
-      const rec = p as Record<string, unknown>;
-      const id = str(rec['id']);
-      const modelId = str(rec['model_id']);
-      const label = shortNode(modelId) || shortNode(id);
-      if (id) canon[id] = label;
-      if (modelId) canon[modelId] = label;
-    }
+/**
+ * The accumulator behind `nodeLabeler`, so the incremental fold can build the SAME map one event at a
+ * time instead of re-scanning the whole log on every 500ms tick.
+ *
+ * `pool` and `devices` are kept APART rather than merged as they arrive: the resolved pool must override
+ * run_started's, which the two `find()`s got for free by reading 'pool' first and 'devices' second. Only
+ * the FIRST run_started and the FIRST pool_resolved count — that is `find()` semantics, and the `seen`
+ * flags are what preserve it when the events arrive one at a time.
+ */
+type NodeCanon = {
+  pool: Record<string, string>;
+  devices: Record<string, string>;
+  poolSeen: boolean;
+  devicesSeen: boolean;
+};
+
+const emptyNodeCanon = (): NodeCanon => ({
+  pool: {},
+  devices: {},
+  poolSeen: false,
+  devicesSeen: false,
+});
+
+function absorbNodeCanon(canon: NodeCanon, e: Record<string, unknown>): void {
+  const type = e['event'];
+  const src =
+    type === 'run_started' && !canon.poolSeen
+      ? 'pool'
+      : type === 'pool_resolved' && !canon.devicesSeen
+        ? 'devices'
+        : null;
+  if (!src) return;
+  if (src === 'pool') canon.poolSeen = true;
+  else canon.devicesSeen = true;
+  const into = canon[src];
+  for (const p of arr(e[src])) {
+    const rec = p as Record<string, unknown>;
+    const id = str(rec['id']);
+    const modelId = str(rec['model_id']);
+    const label = shortNode(modelId) || shortNode(id);
+    if (id) into[id] = label;
+    if (modelId) into[modelId] = label;
   }
-  return (device: string) => canon[device] ?? shortNode(device);
+}
+
+const nodeCanonLabeler = (canon: NodeCanon): ((device: string) => string) => {
+  const merged = { ...canon.pool, ...canon.devices };
+  return (device: string) => merged[device] ?? shortNode(device);
+};
+
+export function nodeLabeler(events: Array<Record<string, unknown>>): (device: string) => string {
+  const canon = emptyNodeCanon();
+  for (const e of events) absorbNodeCanon(canon, e);
+  return nodeCanonLabeler(canon);
 }
 
 /**
@@ -1830,10 +1870,8 @@ type Digest = {
   phase?: string;
 };
 
-export function foldEvents(
-  events: Array<Record<string, unknown>>,
-  activity: Record<string, unknown>
-): {
+/** What the panel reads off one fold of the run log plus the activity digests. */
+export interface FoldedRun {
   lanes: TurnLane[];
   totals: SwarmRunTotals;
   planLanes: TurnLane[];
@@ -1843,137 +1881,189 @@ export function foldEvents(
   sliceLanes: TurnLane[];
   planningLanes: TurnLane[];
   fixLanes: TurnLane[];
-} {
-  const tasks = new Map<string, TurnLane>();
-  // THE JUDGE'S OWN ETA, kept per task. It is asked for an `ETA=<n>m` on every look and it answers — the
-  // live run shows open-coverage-2 estimating 5, 5, 3, 3, 2 as it converged. Nothing consumed it, so the
-  // only "time left" on screen was the panel's own extrapolation from item counts. The last look wins:
-  // the judge revises as it reads more, and an older estimate is strictly worse information.
-  const judgeEta = new Map<string, number>();
-  for (const e of events) {
-    if (e['event'] !== 'judge_look') continue;
-    const id = typeof e['task_id'] === 'string' ? e['task_id'] : '';
-    const eta = e['eta_mins'];
-    if (id && typeof eta === 'number' && Number.isFinite(eta)) judgeEta.set(id, eta);
-  }
+}
+
+/**
+ * Everything the fold derives from the EVENT STREAM ALONE, carried between ticks so an appended event is
+ * folded once instead of the whole log being re-folded twice a second.
+ *
+ * The activity digests are deliberately absent: they are re-joined from scratch on every call, because a
+ * digest is REWRITTEN in place (~2.5x/s while a node streams) rather than appended, so nothing about it
+ * can be carried. What is carried here is only what an append-only log can produce.
+ */
+interface FoldCarry {
+  tasks: Map<string, TurnLane>;
+  fixTasks: Map<string, TurnLane>;
+  descriptions: Map<string, string>;
+  judgeEta: Map<string, number>;
+  canon: NodeCanon;
+  seq: number;
+  planned: boolean;
+  researchOver: boolean;
+  contractsOver: boolean;
+}
+
+const newFoldCarry = (): FoldCarry => ({
+  tasks: new Map(),
   // The verify REPAIR WAVE dispatches fix twins via complete_fix_dispatched / complete_fix_completed —
   // NOT the task_dispatched lifecycle — so for its whole duration (10-18 min per twin, measured) no lane
   // existed and every busy node read "idle — no task". Kept separate from `tasks` so the header's task
   // totals stay engine-task counts.
-  const fixTasks = new Map<string, TurnLane>();
-  const descriptions = new Map<string, string>();
-  let seq = 0;
+  fixTasks: new Map(),
+  descriptions: new Map(),
+  // THE JUDGE'S OWN ETA, kept per task. It is asked for an `ETA=<n>m` on every look and it answers — the
+  // live run shows open-coverage-2 estimating 5, 5, 3, 3, 2 as it converged. Nothing consumed it, so the
+  // only "time left" on screen was the panel's own extrapolation from item counts. The last look wins:
+  // the judge revises as it reads more, and an older estimate is strictly worse information.
+  judgeEta: new Map(),
+  canon: emptyNodeCanon(),
+  seq: 0,
+  planned: false,
+  researchOver: false,
+  contractsOver: false,
+});
 
-  for (const e of events) {
-    const type = String(e['event'] ?? '');
-    if (type === 'plan_loaded') {
-      const ts = Array.isArray(e['tasks']) ? (e['tasks'] as Array<Record<string, unknown>>) : [];
-      for (const t of ts) {
-        const d = t['description'] ? String(t['description']) : '';
-        if (d) descriptions.set(String(t['id'] ?? ''), d);
-      }
-      continue;
-    }
-    if (type === 'spec_repair_wave' || type === 'complete_result' || type === 'run_finished') {
-      // The wave (or the run) is over — no twin may keep spinning past it, even if its own
-      // complete_fix_completed was lost (early close).
-      for (const [k, t] of fixTasks)
-        if (t.status === 'running') fixTasks.set(k, { ...t, status: 'done', seq: seq++ });
-      continue;
-    }
-    let taskId = String(e['task_id'] ?? '');
-    // The race/fan arms' completed events historically carried twin/shard but NO task_id, so a
-    // finished twin's lane stayed "running" until the wave's end event — a completed node showed
-    // "Repairing…" for 10+ minutes while actually idle (caught on screen against the live event
-    // stream). The engine now emits task_id everywhere; this fallback reconstructs it for streams
-    // recorded before that, using the same id scheme the dispatch events use.
-    if (!taskId && (type === 'complete_fix_completed' || type === 'fix_attempt_progress')) {
-      const twin = num(e['twin']);
-      const shard = e['shard'] ? String(e['shard']) : '';
-      if (twin != null) taskId = `complete-fix::twin${twin}`;
-      else if (shard && shard !== '(cross-file)') taskId = `complete-fix::${shard}`;
-      else if (shard) taskId = 'complete-fix::cross-file';
-    }
-    if (!taskId) continue;
-
-    if (type === 'complete_fix_dispatched') {
-      const model = str(e['model']);
-      fixTasks.set(taskId, {
-        taskId,
-        description: `Repairing verify findings (round ${num(e['round']) ?? 0})`,
-        device: model || '?',
-        model: model || undefined,
-        status: 'running',
-        seq: seq++,
-      });
-      continue;
-    }
-    if (type === 'complete_fix_completed') {
-      const prev = fixTasks.get(taskId);
-      if (prev) fixTasks.set(taskId, { ...prev, status: 'done', seq: seq++ });
-      continue;
-    }
-
-    if (type === 'task_dispatched') {
-      const prev = tasks.get(taskId);
-      tasks.set(taskId, {
-        taskId,
-        device: String(e['device'] ?? prev?.device ?? '?'),
-        model: e['model'] ? String(e['model']) : prev?.model,
-        status: 'running',
-        seq: seq++,
-      });
-    } else if (type === 'task_retry') {
-      const prev = tasks.get(taskId);
-      tasks.set(taskId, {
-        taskId,
-        device: String(e['from_device'] ?? prev?.device ?? '?'),
-        model: prev?.model,
-        status: 'running',
-        // Keep the retry's failure text so a lane that ultimately fails/stalls can explain why.
-        error: e['error'] ? String(e['error']) : prev?.error,
-        attempts: prev?.attempts,
-        seq: seq++,
-      });
-    } else if (type === 'task_completed') {
-      const prev = tasks.get(taskId);
-      const statusStr = String(e['status'] ?? '').toLowerCase();
-      const status: TurnStatus =
-        statusStr.includes('fail') || statusStr.includes('error') ? 'error' : 'done';
-      const toolCalls = Array.isArray(e['tool_calls'])
-        ? (e['tool_calls'] as unknown[]).length
-        : prev?.toolCalls;
-      tasks.set(taskId, {
-        taskId,
-        device: String(e['device'] ?? prev?.device ?? '?'),
-        model: e['model'] ? String(e['model']) : prev?.model,
-        status,
-        toolCalls,
-        elapsedMs: typeof e['elapsed_ms'] === 'number' ? (e['elapsed_ms'] as number) : undefined,
-        attempts: typeof e['attempts'] === 'number' ? (e['attempts'] as number) : prev?.attempts,
-        // A failed completion keeps the last retry's reason; a clean one clears it.
-        error: status === 'error' ? prev?.error : undefined,
-        seq: seq++,
-      });
-    } else if (type === 'judge_verdict' && str(e['action']) === 'split') {
-      // The judge decomposed this task into freshly-dispatched children. The parent gets no task_completed, so
-      // its lane would spin forever. Drop it — the children have their own lanes and the split stays in the feed.
-      tasks.delete(taskId);
-    }
-  }
+/**
+ * One event onto the carried state. This is the ONLY place the event stream is interpreted — the
+ * from-scratch fold and the incremental fold both run exactly this, which is what makes
+ * "prefix then remainder === whole" true by construction rather than by two implementations agreeing.
+ */
+function absorbEvent(c: FoldCarry, e: Record<string, unknown>): void {
+  const type = String(e['event'] ?? '');
 
   // The engine reports a device by its POOL id ('mac-qwen3.6-27b') for worker tasks but by its MODEL id
-  // ('gabee-qwen/qwen3.6-27b') for scouts/plan drafts, so the SAME physical node showed up twice — 6 rows for 3
-  // machines. nodeLabeler ties them via run_started.pool / pool_resolved and is the ONE canonical map every
-  // rendered node label goes through (the feed included — see buildActivity).
-  const canonDevice = nodeLabeler(events);
+  // ('gabee-qwen/qwen3.6-27b') for scouts/plan drafts, so the SAME physical node showed up twice — 6 rows
+  // for 3 machines. nodeLabeler ties them via run_started.pool / pool_resolved and is the ONE canonical map
+  // every rendered node label goes through (the feed included — see buildActivity).
+  absorbNodeCanon(c.canon, e);
 
-  const lanes = [...tasks.values()].map((t) => {
+  // The phase flags were `events.some(...)` scans of the whole array. Latched here instead: once true they
+  // never go back, which is what `.some()` means for an append-only log.
+  if (type === 'plan_loaded' || type === 'task_dispatched') {
+    c.planned = true;
+    c.researchOver = true;
+  }
+  if (type === 'research_completed') c.researchOver = true;
+  if (type === 'task_dispatched') c.contractsOver = true;
+
+  if (type === 'judge_look') {
+    const id = typeof e['task_id'] === 'string' ? e['task_id'] : '';
+    const eta = e['eta_mins'];
+    if (id && typeof eta === 'number' && Number.isFinite(eta)) c.judgeEta.set(id, eta);
+  }
+
+  if (type === 'plan_loaded') {
+    const ts = Array.isArray(e['tasks']) ? (e['tasks'] as Array<Record<string, unknown>>) : [];
+    for (const t of ts) {
+      const d = t['description'] ? String(t['description']) : '';
+      if (d) c.descriptions.set(String(t['id'] ?? ''), d);
+    }
+    return;
+  }
+  if (type === 'spec_repair_wave' || type === 'complete_result' || type === 'run_finished') {
+    // The wave (or the run) is over — no twin may keep spinning past it, even if its own
+    // complete_fix_completed was lost (early close).
+    for (const [k, t] of c.fixTasks)
+      if (t.status === 'running') c.fixTasks.set(k, { ...t, status: 'done', seq: c.seq++ });
+    return;
+  }
+  let taskId = String(e['task_id'] ?? '');
+  // The race/fan arms' completed events historically carried twin/shard but NO task_id, so a
+  // finished twin's lane stayed "running" until the wave's end event — a completed node showed
+  // "Repairing…" for 10+ minutes while actually idle (caught on screen against the live event
+  // stream). The engine now emits task_id everywhere; this fallback reconstructs it for streams
+  // recorded before that, using the same id scheme the dispatch events use.
+  if (!taskId && (type === 'complete_fix_completed' || type === 'fix_attempt_progress')) {
+    const twin = num(e['twin']);
+    const shard = e['shard'] ? String(e['shard']) : '';
+    if (twin != null) taskId = `complete-fix::twin${twin}`;
+    else if (shard && shard !== '(cross-file)') taskId = `complete-fix::${shard}`;
+    else if (shard) taskId = 'complete-fix::cross-file';
+  }
+  if (!taskId) return;
+
+  if (type === 'complete_fix_dispatched') {
+    const model = str(e['model']);
+    c.fixTasks.set(taskId, {
+      taskId,
+      description: `Repairing verify findings (round ${num(e['round']) ?? 0})`,
+      device: model || '?',
+      model: model || undefined,
+      status: 'running',
+      seq: c.seq++,
+    });
+    return;
+  }
+  if (type === 'complete_fix_completed') {
+    const prev = c.fixTasks.get(taskId);
+    if (prev) c.fixTasks.set(taskId, { ...prev, status: 'done', seq: c.seq++ });
+    return;
+  }
+
+  if (type === 'task_dispatched') {
+    const prev = c.tasks.get(taskId);
+    c.tasks.set(taskId, {
+      taskId,
+      device: String(e['device'] ?? prev?.device ?? '?'),
+      model: e['model'] ? String(e['model']) : prev?.model,
+      status: 'running',
+      seq: c.seq++,
+    });
+  } else if (type === 'task_retry') {
+    const prev = c.tasks.get(taskId);
+    c.tasks.set(taskId, {
+      taskId,
+      device: String(e['from_device'] ?? prev?.device ?? '?'),
+      model: prev?.model,
+      status: 'running',
+      // Keep the retry's failure text so a lane that ultimately fails/stalls can explain why.
+      error: e['error'] ? String(e['error']) : prev?.error,
+      attempts: prev?.attempts,
+      seq: c.seq++,
+    });
+  } else if (type === 'task_completed') {
+    const prev = c.tasks.get(taskId);
+    const statusStr = String(e['status'] ?? '').toLowerCase();
+    const status: TurnStatus =
+      statusStr.includes('fail') || statusStr.includes('error') ? 'error' : 'done';
+    const toolCalls = Array.isArray(e['tool_calls'])
+      ? (e['tool_calls'] as unknown[]).length
+      : prev?.toolCalls;
+    c.tasks.set(taskId, {
+      taskId,
+      device: String(e['device'] ?? prev?.device ?? '?'),
+      model: e['model'] ? String(e['model']) : prev?.model,
+      status,
+      toolCalls,
+      elapsedMs: typeof e['elapsed_ms'] === 'number' ? (e['elapsed_ms'] as number) : undefined,
+      attempts: typeof e['attempts'] === 'number' ? (e['attempts'] as number) : prev?.attempts,
+      // A failed completion keeps the last retry's reason; a clean one clears it.
+      error: status === 'error' ? prev?.error : undefined,
+      seq: c.seq++,
+    });
+  } else if (type === 'judge_verdict' && str(e['action']) === 'split') {
+    // The judge decomposed this task into freshly-dispatched children. The parent gets no task_completed, so
+    // its lane would spin forever. Drop it — the children have their own lanes and the split stays in the feed.
+    c.tasks.delete(taskId);
+  }
+}
+
+/**
+ * The carried event state joined to the CURRENT activity digests.
+ *
+ * Every field a digest contributes is read fresh here on every call, and every lane is a new object — the
+ * carry is never mutated by this join. That is the whole reason a stale digest can never be served: only
+ * the event-derived half is cached, and this half is rebuilt each tick.
+ */
+function finishFold(c: FoldCarry, activity: Record<string, unknown>): FoldedRun {
+  const canonDevice = nodeCanonLabeler(c.canon);
+
+  const lanes = [...c.tasks.values()].map((t) => {
     const act = activity[t.taskId] as Digest | undefined;
     return {
       ...t,
       device: canonDevice(t.device),
-      description: cleanTaskTitle(descriptions.get(t.taskId) ?? t.description, t.taskId),
+      description: cleanTaskTitle(c.descriptions.get(t.taskId) ?? t.description, t.taskId),
       lastText: act?.last_text || t.lastText,
       recent: act?.recent ?? t.recent,
       reasoning: act?.reasoning ?? t.reasoning,
@@ -1998,7 +2088,8 @@ export function foldEvents(
       //     truncation I had already declared fixed twice
       thinkingChars: act?.thinking_chars ?? t.thinkingChars,
       lastThinking: act?.last_thinking ?? t.lastThinking,
-      fullThinking: (act as { full_thinking?: string } | undefined)?.full_thinking ?? t.fullThinking,
+      fullThinking:
+        (act as { full_thinking?: string } | undefined)?.full_thinking ?? t.fullThinking,
       fullTranscript:
         (act as { full_transcript?: string } | undefined)?.full_transcript ?? t.fullTranscript,
       transcriptBytes:
@@ -2012,7 +2103,7 @@ export function foldEvents(
 
   // Repair-wave twins, canonicalized + joined to any digest they wrote — the fleet strip folds these in
   // so a node grinding a fix twin reads WORKING, not idle.
-  const fixLanes = [...fixTasks.values()].map((t) => {
+  const fixLanes = [...c.fixTasks.values()].map((t) => {
     const act = activity[t.taskId] as Digest | undefined;
     return {
       ...t,
@@ -2059,9 +2150,7 @@ export function foldEvents(
   // reasoning). Surface them as their OWN group so you can see what every model generated while decomposing
   // the app — the reasoning that was invisible before. NOT build tasks, so they're excluded from `totals`.
   // Running until the plan is chosen (plan_loaded / first dispatch), then done (kept, collapsed, for review).
-  const planned = events.some(
-    (e) => e['event'] === 'plan_loaded' || e['event'] === 'task_dispatched'
-  );
+  const planned = c.planned;
   const planLanes: TurnLane[] = Object.keys(activity)
     .filter((k) => /^plandraft-\d+$/.test(k))
     .sort()
@@ -2085,10 +2174,10 @@ export function foldEvents(
         lastThinking: d.last_thinking,
         // Same source for the count and the body -- see the note on the merge site.
         fullThinking: (d as { full_thinking?: string })?.full_thinking,
-      fullTranscript: (d as { full_transcript?: string })?.full_transcript,
-      judging: (d as { judging?: boolean })?.judging,
-      transcriptBytes: (d as { transcript_bytes?: number })?.transcript_bytes,
-      queuedChunks: (d as { queued_chunks?: number })?.queued_chunks,
+        fullTranscript: (d as { full_transcript?: string })?.full_transcript,
+        judging: (d as { judging?: boolean })?.judging,
+        transcriptBytes: (d as { transcript_bytes?: number })?.transcript_bytes,
+        queuedChunks: (d as { queued_chunks?: number })?.queued_chunks,
         phase: d.phase,
         errors: d.errors,
         seq: i,
@@ -2109,19 +2198,14 @@ export function foldEvents(
   // longer a black box. Surface them as lanes, mirroring planLanes — but KEEP a lane that has TOOL CALLS even
   // before any narration (a scout/contract emits calls before it writes prose, so a text-only filter would hide a
   // live node mid-lookup). Running until the phase's next stage begins.
-  const researchOver = events.some(
-    (e) =>
-      e['event'] === 'research_completed' ||
-      e['event'] === 'plan_loaded' ||
-      e['event'] === 'task_dispatched'
-  );
-  const contractsOver = events.some((e) => e['event'] === 'task_dispatched');
+  const researchOver = c.researchOver;
+  const contractsOver = c.contractsOver;
   const laneFromDigest = (k: string, desc: string, over: boolean, i: number): TurnLane => {
     const d = (activity[k] ?? {}) as Digest & { model?: string };
     return {
       taskId: k,
       description: desc,
-      judgeEtaMins: judgeEta.get(k),
+      judgeEtaMins: c.judgeEta.get(k),
       device: canonDevice(d.model ?? 'planner'),
       model: d.model,
       // Per-call phase="done" (written when THIS call ends) drops the node out of "working" immediately, so a
@@ -2209,6 +2293,91 @@ export function foldEvents(
     planningLanes,
     fixLanes,
   };
+}
+
+export function foldEvents(
+  events: Array<Record<string, unknown>>,
+  activity: Record<string, unknown>
+): FoldedRun {
+  const carry = newFoldCarry();
+  for (const e of events) absorbEvent(carry, e);
+  return finishFold(carry, activity);
+}
+
+/**
+ * WHICH LOG these events came from, and WHICH GENERATION of it — the whole cache key, straight from main.
+ *
+ * The events array is structured-cloned across IPC, so the renderer never sees the same object twice and
+ * reference identity cannot answer "is this the same log, extended?". A content fingerprint (first/middle/
+ * last event + length) can and does answer it WRONG: two arrays of the same length differing in the middle
+ * fingerprint identically, and the fold would then serve a carry that never saw the differing event.
+ *
+ * main knows the answer for free. `readEvents` accumulates one array per file and rebuilds it only when the
+ * file's IDENTITY changes (inode + birthtime) or it shrank; `generation` is bumped on exactly those rebuilds.
+ * So: same runId + same generation + a length that did not go backwards IS an append, exactly, with no
+ * heuristic. Anything else refolds from scratch, which is today's behaviour and always correct.
+ */
+export interface FoldSource {
+  runId: string;
+  generation: number;
+}
+
+interface FoldCacheEntry {
+  runId: string;
+  generation: number;
+  length: number;
+  carry: FoldCarry;
+}
+
+let foldCache: FoldCacheEntry | null = null;
+let foldCounters = { fullFolds: 0, incrementalFolds: 0, eventsFolded: 0 };
+
+/** Test seam: the fold's cache is module state, so a test that cares about it must be able to clear it. */
+export function resetFoldCache(): void {
+  foldCache = null;
+  foldCounters = { fullFolds: 0, incrementalFolds: 0, eventsFolded: 0 };
+}
+
+/** How much work the fold has actually done — `eventsFolded` is the number a full re-fold per tick inflates. */
+export function foldStats(): { fullFolds: number; incrementalFolds: number; eventsFolded: number } {
+  return { ...foldCounters };
+}
+
+/**
+ * `foldEvents`, folding only what was appended since the last call for the same log.
+ *
+ * `source` null (or a generation main could not supply) means no key, so no reuse — a full fold, every
+ * time. Losing the optimisation is not a defect; serving a carry that does not match the array is.
+ */
+export function foldEventsIncremental(
+  events: Array<Record<string, unknown>>,
+  activity: Record<string, unknown>,
+  source: FoldSource | null | undefined
+): FoldedRun {
+  const key = source && Number.isFinite(source.generation) ? source : null;
+  const reuse =
+    key !== null &&
+    foldCache !== null &&
+    foldCache.runId === key.runId &&
+    foldCache.generation === key.generation &&
+    events.length >= foldCache.length
+      ? foldCache
+      : null;
+  const carry = reuse ? reuse.carry : newFoldCarry();
+  const from = reuse ? reuse.length : 0;
+  // DROP THE CACHE BEFORE TOUCHING THE CARRY. An event that throws half way through leaves a carry that
+  // holds part of a tick — a task dispatched but not completed, a seq that skipped. Serving that on the
+  // next call would render a run that never happened, and it would look plausible. With the slot already
+  // null, nothing can reach the damaged carry: the next call starts from scratch.
+  foldCache = null;
+  for (let i = from; i < events.length; i++) absorbEvent(carry, events[i]);
+  foldCounters.eventsFolded += events.length - from;
+  if (reuse) foldCounters.incrementalFolds++;
+  else foldCounters.fullFolds++;
+  if (key) {
+    foldCache = { runId: key.runId, generation: key.generation, length: events.length, carry };
+  }
+  return finishFold(carry, activity);
 }
 
 // How long a digest may go unwritten and still count as a live open call. A streaming worker rewrites
@@ -3291,7 +3460,15 @@ export function useSwarmRun(workingDir: string | undefined, pollMs = 500): Swarm
           sliceLanes,
           planningLanes,
           fixLanes,
-        } = foldEvents(data.events, data.activity);
+        } = foldEventsIncremental(
+          data.events,
+          data.activity,
+          // main's key, never a fingerprint the renderer computed for itself: with the same runId and the
+          // same generation the array IS the previous one extended, so only the appended events are folded.
+          typeof data.generation === 'number'
+            ? { runId: data.runId, generation: data.generation }
+            : null
+        );
         const phaseTodo = buildPhaseTodo(data.events, data.activity, {
           clarifyPending: !!data.clarify?.pending,
         });

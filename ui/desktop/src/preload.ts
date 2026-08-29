@@ -172,6 +172,8 @@ type ElectronAPI = {
     /** The heartbeat file reads `EXITED:` — the engine tore itself down rather than being hard-killed. */
     heartbeatExited: boolean;
     events: Array<Record<string, unknown>>;
+    /** Which accumulation `events` is. Same runId + same generation => the same append-only log, extended. */
+    generation: number;
     activity: Record<string, unknown>;
     /** Per-digest file mtimes (ms), keyed like `activity` — the per-node realtime signal. */
     activityMtimes?: Record<string, number>;

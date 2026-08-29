@@ -20,7 +20,7 @@ import { pathToFileURL, format as formatUrl, URLSearchParams } from 'node:url';
 import { Buffer } from 'node:buffer';
 import fs from 'node:fs/promises';
 import fsSync from 'node:fs';
-import { readEvents, readTail } from './utils/swarmIncrementalRead';
+import { eventsGeneration, readEvents, readTail } from './utils/swarmIncrementalRead';
 import started from 'electron-squirrel-startup';
 import path from 'node:path';
 import os from 'node:os';
@@ -3271,6 +3271,11 @@ ipcMain.handle('read-swarm-run', async (_event, workingDir: string) => {
     // A partial trailing line is carried to the next poll instead of discarded, so a line split across
     // two polls is parsed once, whole.
     const events = await readEvents(runFilePath);
+    // WHICH accumulation this array is, so the renderer can fold only what was appended. It changes
+    // exactly when readEvents rebuilds -- a new file at this path, or one that shrank -- and on nothing
+    // else, so an unchanged (runId, generation) pair IS the promise that the array is the previous one
+    // extended. Anything the renderer could compute from the array's CONTENT instead is a guess.
+    const generation = eventsGeneration(runFilePath);
 
     const activityDir = path.join(swarmDir, 'activity');
     const actEntries = await fs.readdir(activityDir).catch(() => [] as string[]);
@@ -3479,6 +3484,7 @@ ipcMain.handle('read-swarm-run', async (_event, workingDir: string) => {
       heartbeat,
       heartbeatExited,
       events,
+      generation,
       activity,
       activityMtimes,
       clarify,

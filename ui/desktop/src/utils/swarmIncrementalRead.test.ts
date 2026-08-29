@@ -3,6 +3,7 @@ import fsp from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import {
+  eventsGeneration,
   readTail,
   readEvents,
   resetSwarmReadCache,
@@ -202,5 +203,81 @@ describe('same-path replacement — the defect size-only caching could not see',
     await readEvents(p);
     await fsp.appendFile(p, '{"event":"b"}\n');
     expect(await readEvents(p)).toEqual([{ event: 'a' }, { event: 'b' }]);
+  });
+});
+
+/**
+ * THE GENERATION, which is the renderer's whole cache key.
+ *
+ * The panel folds this array incrementally and must know whether what it just received is the previous
+ * array extended. It cannot answer that from the array itself: IPC structured-clones it, so reference
+ * identity is gone, and a content fingerprint reports two same-length arrays that differ in the middle as
+ * the same array. The generation is the answer from the only place that has it — it must therefore hold
+ * still across every append and move on every rebuild, which is what these prove.
+ */
+describe('eventsGeneration — the same number for the same accumulation, a new one for a new log', () => {
+  it('does not move while the log is only ever appended to', async () => {
+    const p = path.join(dir, 'run.jsonl');
+    await fsp.writeFile(p, '{"event":"a"}\n');
+    await readEvents(p);
+    const gen = eventsGeneration(p);
+    expect(gen).toBeGreaterThan(0);
+
+    await fsp.appendFile(p, '{"event":"b"}\n');
+    await readEvents(p);
+    expect(eventsGeneration(p)).toBe(gen);
+
+    // An unchanged file (the common poll) must not move it either.
+    await readEvents(p);
+    expect(eventsGeneration(p)).toBe(gen);
+  });
+
+  it('moves when the log is REPLACED at the same path — the bench harness reuses run.jsonl', async () => {
+    const p = path.join(dir, 'run.jsonl');
+    await fsp.writeFile(p, '{"event":"old"}\n');
+    await readEvents(p);
+    const gen = eventsGeneration(p);
+
+    await fsp.rm(p);
+    await fsp.writeFile(p, '{"event":"n1"}\n{"event":"n2"}\n');
+    await readEvents(p);
+    expect(eventsGeneration(p)).toBeGreaterThan(gen);
+  });
+
+  it('moves when the log SHRANK', async () => {
+    const p = path.join(dir, 'run.jsonl');
+    await fsp.writeFile(p, '{"event":"a"}\n{"event":"b"}\n');
+    await readEvents(p);
+    const gen = eventsGeneration(p);
+
+    await fsp.truncate(p, 0);
+    await fsp.appendFile(p, '{"event":"c"}\n');
+    await readEvents(p);
+    expect(eventsGeneration(p)).toBeGreaterThan(gen);
+  });
+
+  it('never re-serves a number after the cache is cleared', async () => {
+    const p = path.join(dir, 'run.jsonl');
+    await fsp.writeFile(p, '{"event":"a"}\n');
+    await readEvents(p);
+    const gen = eventsGeneration(p);
+    resetSwarmReadCache();
+    expect(eventsGeneration(p)).toBe(0);
+    await readEvents(p);
+    expect(eventsGeneration(p)).toBeGreaterThan(gen);
+  });
+
+  it('gives two different logs two different numbers', async () => {
+    const a = path.join(dir, 'run-a.jsonl');
+    const b = path.join(dir, 'run-b.jsonl');
+    await fsp.writeFile(a, '{"event":"a"}\n');
+    await fsp.writeFile(b, '{"event":"b"}\n');
+    await readEvents(a);
+    await readEvents(b);
+    expect(eventsGeneration(a)).not.toBe(eventsGeneration(b));
+  });
+
+  it('is 0 for a log that is not there', async () => {
+    expect(eventsGeneration(path.join(dir, 'nothing.jsonl'))).toBe(0);
   });
 });
