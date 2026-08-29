@@ -55,9 +55,13 @@ implied, the summary was wrong and the sources win.
 
 ## The goal, unchanged
 
-Make the swarm **build better software** on 3 local LM Studio nodes, then beat the published local
-result `brun-fleet-qwen38-brainwaves-sb70` (**0.0273**) on leanzero.net. The cloud board leader is a
-single-agent deepseek run at **67.53%**. Numbers follow from the product, not the other way round.
+Make the swarm **build better software** on 3 local LM Studio nodes.
+
+**THE NUMBER TO BEAT IS 20.06%** — `qwen3.8-27b` scored as ONE cloud agent with no planning, no
+decomposition, no judge and no fan. That is the SAME MODEL this fleet runs, so it is the honest falsifier
+for the whole swarm thesis: three nodes of a model must beat one node of it, or none of the machinery is
+earning its cost. The published local row is 0.0273 — that is the floor a new result replaces, not the
+target, and clearing it only means the run finished.
 
 **The unfalsified claim:** the swarm's whole thesis is that parallel BUILD beats serial build, and
 **we have never reached BUILD**. Until a run does, no mechanism here is proven either way.
