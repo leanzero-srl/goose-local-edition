@@ -25711,6 +25711,84 @@ fn slugify_slice_id(name: &str) -> String {
     out.trim_end_matches('-').chars().take(48).collect()
 }
 
+/// THE CROSS-TASK CHECK: a file that imports something nobody wrote.
+///
+/// `verify_owned_files` asks whether ONE task delivered its own files. It cannot see the defect that
+/// actually sinks a build — `app/ledgerd.py` importing `app.store`, which the task that owned `app/store.py`
+/// never wrote. Each task looks fine alone; the tree does not run.
+///
+/// Deterministic and node-free: read the imports, check the paths. No model is asked whether the code
+/// "looks right", because that question is what costs 46% of the fleet and is answered wrongly.
+///
+/// Scoped to LOCAL imports only — a missing stdlib or third-party module is a different problem and this
+/// must not cry wolf about `json` or `sqlite3`.
+fn verify_tree_imports(working_dir: &Path) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut py: Vec<PathBuf> = Vec::new();
+    fn walk(dir: &Path, py: &mut Vec<PathBuf>, depth: usize) {
+        if depth > 6 {
+            return;
+        }
+        let Ok(rd) = std::fs::read_dir(dir) else {
+            return;
+        };
+        for e in rd.flatten() {
+            let p = e.path();
+            let name = e.file_name();
+            let name = name.to_string_lossy();
+            if name.starts_with('.') || name == "__pycache__" || name == "node_modules" {
+                continue;
+            }
+            if p.is_dir() {
+                walk(&p, py, depth + 1);
+            } else if name.ends_with(".py") {
+                py.push(p);
+            }
+        }
+    }
+    walk(working_dir, &mut py, 0);
+    // The top-level package directories that exist, so `from app.x import y` can be resolved without
+    // guessing at the layout.
+    for f in &py {
+        let Ok(body) = std::fs::read_to_string(f) else {
+            continue;
+        };
+        let rel = f
+            .strip_prefix(working_dir)
+            .unwrap_or(f)
+            .display()
+            .to_string();
+        for line in body.lines().map(str::trim) {
+            let module = if let Some(rest) = line.strip_prefix("from ") {
+                rest.split_whitespace().next().unwrap_or("")
+            } else if let Some(rest) = line.strip_prefix("import ") {
+                rest.split([' ', ',']).next().unwrap_or("")
+            } else {
+                continue;
+            };
+            let module = module.trim_start_matches('.');
+            if module.is_empty() || !module.contains('.') {
+                continue;
+            }
+            let parts: Vec<&str> = module.split('.').collect();
+            // Only judge imports rooted at a package that EXISTS in this tree; anything else is stdlib or
+            // a dependency and none of our business.
+            if !working_dir.join(parts[0]).is_dir() {
+                continue;
+            }
+            let as_mod = working_dir.join(format!("{}.py", parts.join("/")));
+            let as_pkg = working_dir.join(parts.join("/")).join("__init__.py");
+            if !as_mod.is_file() && !as_pkg.is_file() {
+                let msg = format!("{rel} imports `{module}`, which no task has written");
+                if !out.contains(&msg) {
+                    out.push(msg);
+                }
+            }
+        }
+    }
+    out
+}
+
 /// A DETERMINISTIC CHECK OF WHAT A TASK ACTUALLY DELIVERED.
 ///
 /// The omni-judge asks a 27B to INFER from a reasoning tail whether work is going well: 211 calls on run 4,
@@ -35639,7 +35717,16 @@ impl GooseAgentDispatcher {
                 // finding must not silently change a task's outcome. What it changes is that the defect is
                 // KNOWN at minute 3 rather than at INTEGRATE.
                 if !req.owned_files.is_empty() {
-                    let defects = verify_owned_files(&root, &req.owned_files);
+                    let mut defects = verify_owned_files(&root, &req.owned_files);
+                    // (2) AND THE CROSS-TASK CHECK, on the same free pass. A task can deliver its own file
+                    // perfectly and still leave the tree unrunnable by importing something nobody wrote.
+                    // Run it here rather than on a cadence: a task completing is exactly when the tree
+                    // changed, so there is nothing to schedule and nothing to poll.
+                    for d in verify_tree_imports(&root) {
+                        if !defects.contains(&d) {
+                            defects.push(d);
+                        }
+                    }
                     if !defects.is_empty() {
                         self.events.write_value(serde_json::json!({
                             "event": "delivery_defects",
@@ -43143,6 +43230,47 @@ mod live_fleet_tests {
         );
         assert!(html[0].contains("missing.js"), "{html:?}");
 
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The defect that sinks a build and that no per-task check can see: each task delivered its own file,
+    /// and the tree still does not run.
+    #[test]
+    fn the_tree_check_finds_an_import_nobody_wrote() {
+        let dir = std::env::temp_dir().join(format!("goose-tree-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("app")).unwrap();
+        std::fs::write(dir.join("app/__init__.py"), "").unwrap();
+        // ledgerd imports a sibling that exists, a sibling that does NOT, and stdlib.
+        std::fs::write(
+            dir.join("app/ledgerd.py"),
+            "import json\nimport sqlite3\nfrom app.common import x\nfrom app.store import y\n",
+        )
+        .unwrap();
+        std::fs::write(dir.join("app/common.py"), "x = 1\n").unwrap();
+
+        let found = verify_tree_imports(&dir);
+        assert_eq!(
+            found.len(),
+            1,
+            "exactly the missing local import: {found:?}"
+        );
+        assert!(found[0].contains("app.store"), "{found:?}");
+        assert!(
+            !found.iter().any(|f| f.contains("json") || f.contains("sqlite3")),
+            "stdlib must never be reported -- crying wolf here would make the whole check ignorable: {found:?}"
+        );
+        assert!(
+            !found.iter().any(|f| f.contains("app.common")),
+            "a sibling that EXISTS is not a defect: {found:?}"
+        );
+
+        // Once the missing module lands, the tree is clean.
+        std::fs::write(dir.join("app/store.py"), "y = 2\n").unwrap();
+        assert!(
+            verify_tree_imports(&dir).is_empty(),
+            "the finding must clear when the file appears"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
