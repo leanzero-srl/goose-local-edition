@@ -26,8 +26,17 @@ describe('FormationRibbon', () => {
       'data-state',
       'upcoming'
     );
-    // The deleted stages must not reappear as labels on a ribbon that no longer runs them.
-    expect(within(phases).queryByText('Contracts')).not.toBeInTheDocument();
+    // Every phase the engine announces is a step: CONTRACTS sits between Review and Build and is BEHIND
+    // Build here, never folded into it. The deleted Plan stage must not reappear.
+    const labels = within(phases)
+      .getAllByRole('listitem')
+      .map((li) => li.textContent?.trim());
+    expect(labels.indexOf('Contracts')).toBe(labels.indexOf('Build') - 1);
+    expect(within(phases).getByText('Contracts').closest('li')).toHaveAttribute(
+      'data-state',
+      'complete'
+    );
+    expect(within(phases).getByText('Ask').closest('li')).toHaveAttribute('data-state', 'complete');
     expect(within(phases).queryByText('Plan')).not.toBeInTheDocument();
 
     const nodes = screen.getAllByTestId('formation-node');

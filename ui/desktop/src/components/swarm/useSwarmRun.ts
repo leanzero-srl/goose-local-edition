@@ -371,15 +371,19 @@ export interface SwarmRunTotals {
 // a built task is 'unverified' (the worker's loop returned + passed a syntax gate; the app was NOT run), and
 // only Verify's complete_result.passed&&verified earns a green 'done'. Advisory items (LLM reviewers) are
 // info, never checks. See the phase-todo design workflow (2026-07-15).
-// The engine's pipeline, one key per phase it actually runs: OPEN (balanced semantic slices) -> ASK ->
-// RESEARCH (one slice per node, each owner writes that module's spec) -> SYNTHESIS (wire the slices into a
-// task DAG) -> REVIEW (structural patches until it asks for no change) -> BUILD -> INTEGRATE -> REPAIR.
-// ASK has no phase of its own: it is a pause inside OPEN, and the clarify card is where it is legible.
+// The engine's pipeline, one key per phase it actually runs: OPEN (balanced semantic slices) -> ASK (the
+// opener's open decisions, answered by you or by goose) -> RESEARCH (one slice per node, each owner writes
+// that module's spec) -> SYNTHESIS (wire the slices into a task DAG) -> REVIEW (one round of structural
+// patches) -> CONTRACTS (signature-only module interfaces frozen across the fleet) -> BUILD -> INTEGRATE ->
+// REPAIR. Every phase the engine emits a `phase` event for is a key here. ASK used to be a row inside Open
+// and CONTRACTS a row inside Synthesize, so the checklist could never show either as the thing happening NOW.
 export type PhaseKey =
   | 'open'
+  | 'ask'
   | 'research'
   | 'synthesis'
   | 'review'
+  | 'contracts'
   | 'build'
   | 'integrate'
   | 'repair'
@@ -1000,22 +1004,22 @@ function judgeTone(verdict: string): ActivityTone {
  * previous stage. Keep this exhaustive against the `"event": "phase"` sites in swarm.rs.
  *
  * The mappings that are not one-to-one, and why:
- *   ask       a pause INSIDE Open — the clarify card, not a ribbon step, is where a pending question lives.
- *   contracts pre-EXECUTE interface freezing, fanned across the whole fleet. The ribbon deliberately has no
- *             Contracts step (pinned by FormationRibbon.test.tsx), and leaving Review lit while every node
- *             generates stubs is the same lie the label-matching ribbon used to tell.
  *   repair    the engine names the WHOLE complete loop `repair`, and that loop OPENS by verifying. Only
  *             findings turn it into a repair — the identical rule `complete_verify` already applies below —
  *             so a first-time-green run must not light Repair and claim a stage it never ran.
  *   test      the three-node test fan is verification, not repair, for the same reason.
+ *
+ * `ask` and `contracts` used to collapse onto Open and Build. CONTRACTS is the whole fleet generating
+ * interface stubs for minutes, and it rendered as "Build active" with three nodes parked under Build — the
+ * owner's words: "Contracts is somehow in build". A phase the engine announces gets its own step.
  */
 const ENGINE_PHASE: Record<string, RunPhase> = {
   open: 'open',
-  ask: 'open',
+  ask: 'ask',
   research: 'research',
   synthesis: 'synthesize',
   review: 'review',
-  contracts: 'build',
+  contracts: 'contracts',
   build: 'build',
   repair: 'integrate',
   test: 'integrate',
@@ -1201,6 +1205,7 @@ export function buildActivity(events: Array<Record<string, unknown>>): {
           research: 'Researching',
           synthesis: 'Synthesizing',
           review: 'Reviewing the plan',
+          contracts: 'Freezing contracts',
         };
         const p = str(e['phase']);
         if (label[p]) phase = label[p];
@@ -2288,7 +2293,10 @@ function absorbEvent(c: FoldCarry, e: Record<string, unknown>): void {
     c.researchOver = true;
   }
   if (type === 'research_completed') c.researchOver = true;
-  if (type === 'task_dispatched') c.contractsOver = true;
+  // The BUILD phase event is the engine's own end-of-contracts mark; task_dispatched stays for runs that
+  // predate it, and for the contract lane a node is still writing when the first worker starts.
+  if (type === 'task_dispatched' || (type === 'phase' && e['phase'] === 'build'))
+    c.contractsOver = true;
 
   if (type === 'judge_look') {
     const id = typeof e['task_id'] === 'string' ? e['task_id'] : '';
@@ -3246,40 +3254,45 @@ export function buildPhaseTodo(
         )
       );
     } else open.push(it('o-run', 'Cutting the request into slices…', 'running'));
-    if (proxyArmed) {
-      // A QUESTION IS ALWAYS ANSWERED — by you, or by goose from the spec. Which of those happened is the
-      // fact the checklist must carry: a run that answered itself is not a run someone steered.
-      const answeredByProxy = proxyAnswered > 0 || proxyFailed;
-      open.push(
-        it(
-          'o-ask',
-          `${proxyArmed.questions} open decision${proxyArmed.questions === 1 ? '' : 's'}`,
-          opts.clarifyPending && !answeredByProxy ? 'running' : 'done',
-          answeredByProxy
-            ? proxyFailed
-              ? 'the proxy answer failed — goose took the most conventional option'
-              : 'answered by goose — you did not reply'
-            : opts.clarifyPending
-              ? proxyArmed.mode === 'immediate'
-                ? 'unattended run — goose is answering these'
-                : `waiting on you — goose answers in ${Math.round(proxyArmed.waitSecs / 60)} min`
-              : 'answered by you'
-        )
-      );
-    }
   } else if (!planned) open.push(it('o-start', 'Fleet configured, run started', 'done'));
-  // An OLD run has no phase event and no slices, so it never enters the branch above — its ask must be
-  // surfaced from outside it or it drops off the checklist entirely. (It did: nesting this under `openRan`
-  // made it dead code for exactly the runs it exists to serve.)
-  if (!proxyArmed && askedQ != null)
-    open.push(
+
+  // ---- ASK ---- (the opener's own open decisions; the engine emits the phase only when there are any)
+  const ask: PhaseTodoItem[] = [];
+  if (proxyArmed) {
+    // A QUESTION IS ALWAYS ANSWERED — by you, or by goose from the spec. Which of those happened is the
+    // fact the checklist must carry: a run that answered itself is not a run someone steered.
+    const answeredByProxy = proxyAnswered > 0 || proxyFailed;
+    ask.push(
       it(
-        'o-ask-legacy',
+        'a-ask',
+        `${proxyArmed.questions} open decision${proxyArmed.questions === 1 ? '' : 's'}`,
+        opts.clarifyPending && !answeredByProxy ? 'running' : 'done',
+        answeredByProxy
+          ? proxyFailed
+            ? 'the proxy answer failed — goose took the most conventional option'
+            : 'answered by goose — you did not reply'
+          : opts.clarifyPending
+            ? proxyArmed.mode === 'immediate'
+              ? 'unattended run — goose is answering these'
+              : `waiting on you — goose answers in ${Math.round(proxyArmed.waitSecs / 60)} min`
+            : 'answered by you'
+      )
+    );
+  } else if (askedQ != null)
+    // An OLD run has no phase event and no proxy — its ask is the bare low_confidence_ask.
+    ask.push(
+      it(
+        'a-ask-legacy',
         `Asked you ${askedQ} question${askedQ === 1 ? '' : 's'}`,
         opts.clarifyPending ? 'running' : 'done',
         opts.clarifyPending ? 'waiting on your answer' : undefined
       )
     );
+  else if (phasesSeen.has('ask')) ask.push(it('a-run', 'Naming the open decisions…', 'running'));
+  // The engine skips ASK outright when the opener has no open decisions, so a run past Open with no ask
+  // event did not ask — say that, rather than leaving a gap the ribbon marks skipped and the list omits.
+  else if (openRan && (phasesSeen.has('research') || planned))
+    ask.push(it('a-none', 'No open decisions — nothing to ask', 'skipped'));
 
   // ---- RESEARCH ---- (one slice per node: answer its questions, then write that module's full spec)
   const legacyResearch = scoutsN != null || researchQ != null || researchDone != null;
@@ -3379,10 +3392,6 @@ export function buildPhaseTodo(
   if (planConf != null) synthesis.push(it('s-conf', `Confidence scored — ${planConf}/100`, 'done')); // the NUMBER, never a verdict
   for (const r of retargets)
     synthesis.push(it(`s-rt-${r.round}`, `Retarget round ${r.round} — ${r.action}`, 'done'));
-  if (pillarsN != null)
-    synthesis.push(it('s-pillars', `Quality pillars distilled — ${pillarsN}`, 'done'));
-  if (contractsModules != null)
-    synthesis.push(it('s-contracts', `Frozen interfaces — ${contractsModules} modules`, 'done'));
 
   // ---- REVIEW ---- (structural patches only; it stops when it requests no change)
   const review: PhaseTodoItem[] = [];
@@ -3407,6 +3416,26 @@ export function buildPhaseTodo(
   }
   if (reviewRounds.length === 0 && phasesSeen.has('review') && !planLoaded)
     review.push(it('rv-run', 'Reading the request against the plan…', 'running'));
+
+  // ---- CONTRACTS ---- (every node freezes one module's signature-only interface before anything is built;
+  // the pillars distillation runs in the same pre-EXECUTE gap and has no phase event of its own)
+  const contracts: PhaseTodoItem[] = [];
+  if (contractsModules != null)
+    contracts.push(it('c-frozen', `Frozen interfaces — ${contractsModules} modules`, 'done'));
+  else if (phasesSeen.has('contracts'))
+    contracts.push(it('c-run', 'Every node freezing one module’s interface…', 'running'));
+  // The engine emits no contracts phase when the plan owns no source files — the step was skipped, and
+  // the checklist says so instead of leaving the ribbon's "skipped" chip unexplained.
+  else if (planned) contracts.push(it('c-skip', 'No source modules to freeze', 'skipped'));
+  if (pillarsN != null)
+    contracts.push(
+      it(
+        'c-pillars',
+        `Quality pillars distilled — ${pillarsN}`,
+        'done',
+        'injected into every worker before Build'
+      )
+    );
 
   // ---- BUILD ---- (per plan task — surfaces PENDING + BLOCKED tasks lanes can't show)
   const build: PhaseTodoItem[] = [];
@@ -3640,11 +3669,14 @@ export function buildPhaseTodo(
       total: items.filter((i) => i.state !== 'advisory' && i.state !== 'skipped').length,
     },
   });
+  // ENGINE ORDER — the list is read as a sequence, and it must carry every phase the engine announces.
   const phases: PhaseTodo[] = [
     mk('open', 'Open', open),
+    mk('ask', 'Ask', ask),
     mk('research', 'Research', research),
     mk('synthesis', 'Synthesize', synthesis),
     mk('review', 'Review', review),
+    mk('contracts', 'Contracts', contracts),
     mk('build', 'Build', build),
     mk('integrate', 'Integrate', integrate),
     mk('repair', 'Repair', repair),

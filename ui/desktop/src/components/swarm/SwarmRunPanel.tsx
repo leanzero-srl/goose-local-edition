@@ -48,6 +48,7 @@ import { Tooltip, TooltipTrigger, TooltipContent } from '../ui/Tooltip';
 import InlineMarkdown from './InlineMarkdown';
 import StructuredContent, { CodeBlock } from './StructuredContent';
 import FormationRibbon from './FormationRibbon';
+import { isPlanningPhase, planningLanesFor, type PhaseLaneGroup } from './phaseList';
 import {
   CHIP_RADIUS,
   EYEBROW_CLASS,
@@ -3335,11 +3336,13 @@ const PlanningZone: React.FC<{
   /** Who answers the open decisions — you, or goose from the spec (see ProxyNotice). */
   proxy: ClarifyProxy;
   plan: PlanTask[];
-  /** The planning-history phases only: open, research, synthesis, review. */
+  /** The planning-history phases only (see PLANNING_PHASE_KEYS). */
   phases: PhaseTodo[];
   planLanes: TurnLane[];
   /** RESEARCH's per-slice lanes — one node per slice, each writing that module's spec. */
   sliceLanes: TurnLane[];
+  /** CONTRACTS' per-module lanes — one node per module, each freezing that module's interface. */
+  contractLanes: TurnLane[];
   /** The single-node planning calls: open / open-resplit / proxy-answer / synthesis / review / rate. */
   planningLanes: TurnLane[];
   deviceOrder: string[];
@@ -3360,6 +3363,7 @@ const PlanningZone: React.FC<{
   phases,
   planLanes,
   sliceLanes,
+  contractLanes,
   planningLanes,
   deviceOrder,
   stale,
@@ -3372,14 +3376,49 @@ const PlanningZone: React.FC<{
   const [openOverride, setOpenOverride] = useState<boolean | null>(null);
   const [laneOpen, setLaneOpen] = useState<Record<string, boolean>>({});
   const clarifyPending = !!clarify?.pending;
-  const shownPhases = phases.filter((p) => p.items.length > 0);
-  // Every planning generation, grouped by what it IS. The slice fan is the interesting one — it is the
-  // whole fleet writing specs in parallel, and it had no surface at all before.
+  // A phase's own fan (the slice fan under RESEARCH, the contract fan under CONTRACTS) renders under that
+  // phase, so the lanes say WHEN they ran; a phase with lanes but no checklist row yet still shows.
+  const fanOf = (key: PhaseTodo['key']): PhaseLaneGroup | null => {
+    const group = planningLanesFor(key, { sliceLanes, contractLanes });
+    return group && group.lanes.length > 0 ? group : null;
+  };
+  const shownPhases = phases.filter((p) => p.items.length > 0 || fanOf(p.key) != null);
+  // The generations that belong to no single phase, grouped by what they ARE.
   const laneGroups: Array<{ key: string; label: string; lanes: TurnLane[] }> = [
-    { key: 'slices', label: 'Slice specs', lanes: sliceLanes },
     { key: 'planning', label: 'Planning calls', lanes: planningLanes },
     { key: 'drafts', label: 'Candidate drafts', lanes: planLanes },
   ].filter((g) => g.lanes.length > 0);
+  const laneGroupBlock = (key: string, label: string, lanes: TurnLane[]) => (
+    <div key={key} className="mt-1">
+      <div className="px-3 pt-1 pb-0.5 flex items-center gap-1.5">
+        <Braces className="h-3 w-3" style={{ color: ZONE_HUES.planning }} />
+        <span className={`${EYEBROW_CLASS} text-text-secondary`}>
+          {label} · {lanes.length} lane{lanes.length === 1 ? '' : 's'}
+          {lanes.some((l) => l.status === 'running') ? ' · thinking…' : ''}
+        </span>
+      </div>
+      <div className="divide-y divide-border-primary">
+        {lanes.map((lane) => {
+          const defaultOpen = lane.status === 'running';
+          const isOpen = laneOpen[lane.taskId] ?? defaultOpen;
+          return (
+            <LaneRow
+              key={lane.taskId}
+              lane={lane}
+              deviceOrder={deviceOrder}
+              stale={stale}
+              open={isOpen}
+              mode={mode}
+              dev={dev}
+              onToggle={() =>
+                setLaneOpen((o) => ({ ...o, [lane.taskId]: !(o[lane.taskId] ?? defaultOpen) }))
+              }
+            />
+          );
+        })}
+      </div>
+    </div>
+  );
   const hasBody =
     clarifyPending ||
     !!conf ||
@@ -3449,64 +3488,38 @@ const PlanningZone: React.FC<{
                 />
               </div>
             ) : null}
-            {shownPhases.map((p) => (
-              <div key={p.key}>
-                <div className="px-3 pt-1 pb-0.5 flex items-center gap-1.5">
-                  <span className="text-[10px] font-bold uppercase tracking-[0.12em] text-text-secondary">
-                    {p.label}
-                  </span>
-                  {p.counts.total > 0 ? (
-                    <span className="text-[10px] tabular-nums text-text-secondary">
-                      {p.counts.done}/{p.counts.total}
+            {shownPhases.map((p) => {
+              const fan = fanOf(p.key);
+              return (
+                <div key={p.key} data-testid={`planning-phase-${p.key}`} data-phase-state={p.state}>
+                  <div className="px-3 pt-1 pb-0.5 flex items-center gap-1.5">
+                    <span className="text-[10px] font-bold uppercase tracking-[0.12em] text-text-secondary">
+                      {p.label}
                     </span>
-                  ) : null}
-                </div>
-                <div className="px-3 pl-4 space-y-0">
-                  {p.items.map((item) => (
-                    <PhaseTodoRow
-                      key={item.id}
-                      item={item}
-                      deviceOrder={deviceOrder}
-                      stale={stale}
-                      activity={activity}
-                      plan={plan}
-                      workingDir={workingDir}
-                    />
-                  ))}
-                </div>
-              </div>
-            ))}
-            {laneGroups.map((group) => (
-              <div key={group.key} className="mt-1">
-                <div className="px-3 pt-1 pb-0.5 flex items-center gap-1.5">
-                  <Braces className="h-3 w-3" style={{ color: ZONE_HUES.planning }} />
-                  <span className={`${EYEBROW_CLASS} text-text-secondary`}>
-                    {group.label} · {group.lanes.length} lane{group.lanes.length === 1 ? '' : 's'}
-                    {group.lanes.some((l) => l.status === 'running') ? ' · thinking…' : ''}
-                  </span>
-                </div>
-                <div className="divide-y divide-border-primary">
-                  {group.lanes.map((lane) => {
-                    const defaultOpen = lane.status === 'running';
-                    const isOpen = laneOpen[lane.taskId] ?? defaultOpen;
-                    return (
-                      <LaneRow
-                        key={lane.taskId}
-                        lane={lane}
+                    {p.counts.total > 0 ? (
+                      <span className="text-[10px] tabular-nums text-text-secondary">
+                        {p.counts.done}/{p.counts.total}
+                      </span>
+                    ) : null}
+                  </div>
+                  <div className="px-3 pl-4 space-y-0">
+                    {p.items.map((item) => (
+                      <PhaseTodoRow
+                        key={item.id}
+                        item={item}
                         deviceOrder={deviceOrder}
                         stale={stale}
-                        open={isOpen}
-                        mode={mode}
-                        dev={dev}
-                        onToggle={() =>
-                          setLaneOpen((o) => ({ ...o, [lane.taskId]: !(o[lane.taskId] ?? defaultOpen) }))
-                        }
+                        activity={activity}
+                        plan={plan}
+                        workingDir={workingDir}
                       />
-                    );
-                  })}
+                    ))}
+                  </div>
+                  {fan ? laneGroupBlock(`${p.key}-fan`, fan.label, fan.lanes) : null}
                 </div>
-              </div>
-            ))}
+              );
+            })}
+            {laneGroups.map((group) => laneGroupBlock(group.key, group.label, group.lanes))}
           </div>
         )
       ) : null}
@@ -3909,11 +3922,8 @@ export const SwarmRunPanel: React.FC<{
     lanes: run.lanes,
     fixLanes: run.fixLanes,
   });
-  // The four planning phases live in the PLANNING zone; build / integrate / repair ARE the work board.
-  const planningPhases = run.phaseTodo.filter(
-    (p) =>
-      p.key === 'open' || p.key === 'research' || p.key === 'synthesis' || p.key === 'review'
-  );
+  // The planning phases live in the PLANNING zone; build / integrate / repair ARE the work board.
+  const planningPhases = run.phaseTodo.filter((p) => isPlanningPhase(p.key));
   // Engine truth, not a parsed label: the run is past planning once the plan is loaded (runPhase) or a task
   // has been dispatched.
   const buildStarted =
@@ -4195,6 +4205,7 @@ export const SwarmRunPanel: React.FC<{
         phases={planningPhases}
         planLanes={run.planLanes}
         sliceLanes={run.sliceLanes}
+        contractLanes={run.contractLanes}
         planningLanes={run.planningLanes}
         deviceOrder={deviceOrder}
         stale={stale}

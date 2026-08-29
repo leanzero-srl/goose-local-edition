@@ -19,12 +19,16 @@ export type FormationRibbonNode = {
   working: boolean;
 };
 
+/** One column per engine phase. Tailwind's `grid-cols-N` is a static class, so it silently stayed at eight
+ *  when the ribbon's phase list grew; deriving the template from the list is what keeps them equal. */
+const PHASE_COLUMNS = `repeat(${FORMATION_PHASES.length}, minmax(0, 1fr))`;
+
 function shortDeviceName(device: string): string {
   return device.match(/^([^-]+)/)?.[1] ?? device;
 }
 
 /**
- * The run's route and its real fleet in ONE band: which of the engine's eight phases is live, which are
+ * The run's route and its real fleet in ONE band: which of the engine's phases is live, which are
  * behind it, and which nodes are working under the live one. `phase` is the engine's own phase key (see
  * formationVisualState) — a null phase lights nothing, which is the honest rendering of a held run.
  */
@@ -49,12 +53,16 @@ export function FormationRibbon({
       data-testid="formation-ribbon"
       data-active-phase={phase ?? 'none'}
     >
-      <div className="min-w-[720px]">
+      <div className="min-w-[900px]">
         <div className="mb-2 flex min-h-5 items-center justify-between gap-3">
           <span className={`${EYEBROW_CLASS} text-text-secondary`}>Formation</span>
           {metrics}
         </div>
-        <ol className="grid grid-cols-8 gap-1" aria-label="Run phases">
+        <ol
+          className="grid gap-1"
+          style={{ gridTemplateColumns: PHASE_COLUMNS }}
+          aria-label="Run phases"
+        >
           {FORMATION_PHASES.map((step, index) => {
             const state = formationPhaseState(phase, index, evidence);
             const color =
@@ -93,7 +101,11 @@ export function FormationRibbon({
           })}
         </ol>
 
-        <div className="mt-1 grid min-h-8 grid-cols-8 gap-1" aria-label="Fleet formation">
+        <div
+          className="mt-1 grid min-h-8 gap-1"
+          style={{ gridTemplateColumns: PHASE_COLUMNS }}
+          aria-label="Fleet formation"
+        >
           {FORMATION_PHASES.map((step, index) => (
             <div
               key={step.key}
