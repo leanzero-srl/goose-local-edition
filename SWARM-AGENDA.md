@@ -397,6 +397,30 @@ it. A problem that turns out to be already owned is left out, but then it was no
 **THIS RUN KEEPS THE DEFECT** — the binary is the old one. Expect 4 features missing from its app, and read
 the score with that in mind rather than as a verdict on the decomposition.
 
+## CORRECTION: THE DIGESTS ARE NOT FROZEN — I MISREAD MY OWN MEASUREMENT, 2026-08-29 11:15 EEST
+
+I sampled `readSwarmRun` twice, 12 seconds apart, saw identical `thinking_chars` on three lanes while
+`lms ps` said GENERATING, and told Mihai the engine had stopped writing digests. **That was wrong.**
+
+    swarm.rs:18325   let due = last_digest_at.is_none_or(|t| t.elapsed() >= 400ms)   <- the throttle IS 400ms
+    swarm.rs:18205   thinking_chars += t.thinking.chars().count()                    <- per Thinking chunk
+
+**WHAT THE ARCHIVE SHOWS:** `open-coverage-3` was `phase=done` — it had finished, which is why it vanished
+between my two samples. `open-coverage-2` ended at **6025** while both my samples read **6018**: it WAS
+advancing, by about seven characters over several minutes.
+
+**THE REAL CAUSE:** a 27B on a large context sits in **PROMPT PROCESSING** for minutes, emitting no tokens.
+`lms ps` says `PROCESSINGPROMPT`, the engine holds the call open, and the digest legitimately cannot change
+because there is nothing to write.
+
+**SO THE COMPLAINT IS STILL REAL, AND THE FIX IS IN THE UI:** the panel renders GENERATING for both
+"processing a huge prompt" and "stalled", and a frozen lane in either state looks identical. Surface the
+`lms ps` state per node, or time-since-first-token, so a node chewing a 50k prompt does not read as dead.
+
+**AND THE MEASUREMENT LESSON:** two points 12s apart cannot separate FROZEN from SLOW, and I sliced the
+first four keys of an object whose key order changes between polls — so I compared different lanes. Sample
+the SAME NAMED lanes, three times, over a span longer than the phenomenon.
+
 ## RUN 5: 19 SLICES AT OPEN — a DIFFERENT over-decomposition, flagged early, 2026-08-29 10:44 EEST
 
     ledgerd-core · event-ledger · outbox-relay · ledger-api · webhook-handler · approval-workflow ·
