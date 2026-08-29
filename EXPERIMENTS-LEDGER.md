@@ -48,7 +48,8 @@ round.
 round's by `review_dedupe_key`; the loop ended on the first round with no NEW finding, with a plan-state
 cycle detector (`review_oscillating`) and a same-rejection detector (`review_patch_stuck`, `RejectMemo`)
 as terminators for when that never came. No round cap, by design.
-**Measured:** r1, run dir `swarm-3node-r0`: round 1 new=8 → `plan_patched` replace 3 remove 1; round 2
+**Measured:** r1 (run dir `swarm-3node-r0` at the time, archived as
+`swarm-3node-r1-KILLED-review-diverged-8-4-9-new-findings-4-rounds-51min-vs-r0-12min`): round 1 new=8 → `plan_patched` replace 3 remove 1; round 2
 new=4 → replace 1; round 3 new=9 repeated=2 → replace 3; round 4 started. 51 minutes and 209,110
 reasoning characters in REVIEW, against r0's whole REVIEW of 12 minutes in two rounds. Round 1 caught the
 one real structural defect — `viz-engine` owned no files — and SYNTHESIS had ALREADY flagged it,
@@ -105,6 +106,27 @@ check compares each process's start time against the bundle mtime; the click tic
 `role="button"`.
 
 ---
+
+### Scoring under hermit's node, or without `--seed` (2026-08-29, r0)
+**Tried:** scoring r0's tree with whatever `node` was on PATH (hermit's v24) and without passing the seed
+the run was fed. Twice.
+**Measured:** 0.0832 — a number that looked comparable and was not. hermit's node has no playwright, so
+the browser probe crashed on every J/V/P/T/E check: 30 of 99 checks came back PROBE-UNAVAILABLE, the means
+quietly excluded them, and the frontend r0 built was never graded. Both scores also drew a FRESH seed at
+port 8899 while the run had been fed `687ff58bfa6b707d` at 8850, so every fixture-derived expectation was
+for a different dataset. A second `'str' object has no attribute 'get'` crash (`d_peer_absence`) was the
+same class as one already fixed at one site. Rescored correctly: **0.0568**, with a second critical the
+blind run could not see.
+**Why it is not coming back — the scorer REFUSES instead of guessing** (`evals/swarm-bench/bench/score_sb7.py`):
+`--seed` is REQUIRED (16 hex, from the vendor trace header; `--fresh-seed` only on purpose) — exit 2
+without it; `_probe_preflight()` runs the probe script with `--preflight` under `GOOSE_SWARM_RENDER_NODE`
+and refuses when playwright cannot load (`--allow-blind-probe` is the only way past, and the verdict says
+so); `_port_holder(port)` names the process holding the vendor port before bind instead of dying with a
+traceback (shared with `run_build.py`); `_error_obj(body)` is the ONE predicate for the error envelope,
+so a str-vs-dict body cannot crash a check site again. `loop-state/compare_vs_cloud.py` reads the
+verdict's `score` field rather than recomputing inner × crit (it had overstated 0.0568 as 6.44%).
+**Rule now:** score serially, hermetically, at the advertised port, with the run's seed and a node that
+passes preflight — anything else is a number about the scorer, not the run.
 
 ## THE TARGET'S SCORECARD — read before designing anything (2026-08-29)
 
@@ -183,30 +205,58 @@ recovering, the candidate signal is the same task drawing the same transport err
 - **The tree warden** (`sweep_tree_defects`). Built, tested, has not yet fired on a real hollow
   dependency because nothing had reached BUILD until r0.
 - **S1/S3/S2 realtime path.** Verified end-to-end in the running app; not yet watched through a full run.
+- **The coverage loop (`coverage_gap` → second pass) — MEASURED on r1, 2026-08-29.** It EARNED its place: the gap pass
+  ADDED `frontend-serving`, `reversals-fetch` and `sse-stream-endpoint` (12 → 15 slices; `coverage_gap` at 16:15:43Z,
+  `coverage_late_slices researched_after_the_first_wave=true`), so r0's `GET /` 404 — the 0.56-weight loss — had an OWNER
+  before BUILD, and the re-enumeration after the add found 0 unowned. What it COST: the second pass ran under the same
+  lane key, SERIALLY, on ONE node while two idled (`open-coverage-1` restarted 41k → 13k chars at 16:18:51Z), stretching
+  RESEARCH to 32 min against a 19 min median (r0: 39 min); that lane reached 41,239 reasoning chars with 0 tool calls and
+  was judged OK on every look. Not a kill and not a cap: the waste to attack is that coverage is bounded by a judge that
+  reads reasoning as production rather than by PROGRESS (a table row landed), and that a second pass has no reason to be
+  serial. One run.
 
 ---
 
-## OPEN BUG — the engine hangs after the repair verdict, NOT root-caused (2026-08-29, r0)
+## FIXED — the engine hung after the repair verdict; root-caused and closed (2026-08-29, r0 → `44b2ad6cd`)
 
-**Symptom.** After `complete: STOPPING at round 0 …` the process sat 20+ minutes at **0.0% CPU**, main
-thread blocked in `_pthread_join` → `__ulock_wait`. `run.jsonl` frozen at 589 events, every activity
-digest mtime frozen, fleet 0 generating, `run_build.py` still alive waiting on it. Writing the
-`fix_criticals-answer.json` it polls for changed nothing — it is past the poll.
+**Symptom.** After `complete: STOPPING at round 0 …` the process sat 20+ minutes at **0.0% CPU**,
+`run.jsonl` frozen at 589 events, fleet idle, `run_build.py` waiting on it. The tree and the verdict were
+already on disk — only the exit was stuck.
 
-**What is ruled out**, checked rather than assumed:
-- the heartbeat ticker has a Drop guard that aborts it — and the heartbeat file was EMPTY, meaning that
-  Drop **never ran**, so the hang is BEFORE unwinding.
-- `coverage_task` is awaited in `run_linear_plan` before SYNTHESIS, not at exit, and it completed.
-- `spawn_fix_progress_sampler` is documented as aborted when its attempt ends.
+**Root cause — proven, not guessed.** `boot_invocation` (the post-verdict epilogue, via `boot_probe`)
+spawns `python3 -m app` with piped stdout/stderr, polls, `kill()`s the ONE direct pid, then awaits the
+pipe tails to EOF. The wrapper's `Popen` grandchildren (`ledgerd`, `notifierd`) inherit the write-ends and
+survive a single-pid SIGKILL, so EOF never comes and `run_swarm` parks forever. Proof: pids 11519/11520,
+cwd in the r0 run dir, PPID 1, started at 16:16:22 local — the exact second `fix_criticals` was logged.
+Corroborated by three adversarial refuters and one independent agent.
 
-**Not fixed, and deliberately not guessed at.** The exit path is the wrong place to try a speculative
-change: a wrong fix there fails silently at the end of a four-hour run, which is the most expensive place
-in the system to be wrong. It needs the remaining `tokio::spawn` sites walked with the run in this state,
-which requires reproducing it.
+**Corrections to the first write-up of this entry.** `_pthread_join` on the main thread was NEVER a
+finding: `main.rs:36` joins a big-stack thread for the whole run, so the main thread sits in
+`_pthread_join` from start to finish, hang or no hang. "The heartbeat was empty so Drop never ran" read a
+file that does not exist — the heartbeat lives at the tree root beside `run.jsonl`, not `.swarm/heartbeat`,
+and it live-ticked for 20 minutes with no `EXITED:` sentinel, i.e. the tokio runtime was alive throughout.
+This was not a runtime-shutdown deadlock, and `swarm.rs` has no `spawn_blocking`/`thread::spawn`/`.join()`
+to walk.
 
-**Mitigation that needs no fix:** the hang happens AFTER the tree and verdict are written, so nothing is
-lost — the run's product is complete on disk and can be scored directly. The r0 tree is archived at
-`swarm-3node-r0-ENDED-29criticals-repair-never-ran-benchmark-forces-proxy-no` and is still scoreable.
+**The leak was systemic, not just the exit.** 41 orphaned app servers (PPID 1) were alive on the machine,
+~25 from r0 alone, spawned all through INTEGRATE/TEST/RATE: every boot probe or smoke that killed a wrapper
+leaked its grandchildren holding ports and RAM, and `boot_probe` refuses to conclude on a pre-bound port,
+so one probe's leak poisoned the next.
+
+**Fix `44b2ad6cd`.** Every app spawn leads its own process group (`process_group(0)`); `kill_app_tree`
+SIGKILLs the group; the pipe drain is released on GROUP liveness (`kill(-pgid, 0)`) rather than EOF — a
+drain-after-kill on an already-dead non-model process, not a model cap. Applied at all six spawn sites
+(`boot_invocation`, `run_spec_contract`'s server and its restart-durability reboot, `run_repro_once`, the
+pytest `--collect-only` in `land_generated_tests`). Regression tests
+`boot_invocation_returns_when_a_grandchild_holds_the_pipe` (hung under a 20 s alarm on the old code, exit
+142) and `boot_invocation_returns_when_the_grandchild_escaped_the_group`, both ~4 s.
+
+**Isolation proof, no run needed.** `goose swarm gate <r0 clone> --spec evals/swarm-bench/spec-build-sb7.md`
+— NOT `swarm verify`, which never boots the app and prints "clean" in 3 s — on the OLD 16:52 binary
+returned its findings but LEAKED 2 app servers in under a minute; on the NEW binary (`d748a7d3e`) it
+returned in 2.6 s with 4 real findings and 0 leaked servers. r1 then ran 98 minutes with 0 orphans through
+the run and after the kill; r2's gate replay: 4 findings, 0 leaks. `tick.py` counts orphaned app servers
+every tick, so a regression is visible at the next tick rather than the next hang.
 
 ## REPAIR HAS NEVER RUN IN A BENCHMARK — found 2026-08-29 on r0
 
@@ -243,6 +293,10 @@ been dark every time we looked.
 **The fix is one term**, and it must keep the anti-loop property: `round == 0 || last_round_promoted`
 already refuses the moment a round stops changing the tree, which is exactly the terminator the design
 asks for. Removing `!benchmark()` restores the phase without restoring the infinite-yes.
+
+**FIXED `a1324c68e` (16:44).** The `!benchmark()` term is gone; `round == 0 || last_round_promoted` is the whole guard. r1 launched
+with `levers_resolved.levers.benchmark=true` and REPAIR round 0 reachable; r2's claim (3) is the first measurement of the phase
+under a benchmark.
 
 ## THE GUTTING — measured on r0, 2026-08-29. This is the mechanism, not a metaphor.
 
@@ -347,6 +401,8 @@ return. Everything in this repo exists to clear 20.06%; clearing 0.0273 only mea
 |---|---|---|
 | **THE TARGET** | **20.06%** | `qwen3.8-27b` via OpenRouter, ONE agent, no planning — the same model as the fleet |
 | local published row | 0.0273 | `brun-fleet-qwen38-brainwaves-sb70` — the floor a new result replaces |
+| **r0, 2026-08-29 — the comparable score** | **0.0568** | hermetic: inner 0.1789 × crit_mult 0.36, seed `687ff58bfa6b707d` (the run's own), vendor port 8850, playwright node. 28% of the target, 2.1× the published row. TWO criticals gate it: `sync_completeness` 0/12288 (`sync.py` reads `items`; the vendor sends `data`) and `j_workflow_journey` (`GET /` 404 — the frontend exists and is unserved). `verdict-hermetic-seed687ff58b-port8850-0.0568.json` in the run dir |
+| ~~r0 first score~~ | ~~0.0832~~ | **RETRACTED** — BLIND (hermit node, no playwright: 30/99 checks PROBE-UNAVAILABLE, the frontend never graded) AND on a FRESH seed at port 8899. Kept as `verdict-BLIND-fresh-seed-NOT-COMPARABLE-0.0832.json`; never cite it |
 | cloud board leader | 67.53% | deepseek-v4-flash-vision-exp, single agent — a different, stronger model |
 | a single qwen3.8-27b, measured | 106 min, 9 files, 163,962 B incl. the whole frontend | beat the 3-node fleet on wall clock AND product |
 | glm-5.3-flash, single agent | 41.59% | 72.5 min, 14 files |
