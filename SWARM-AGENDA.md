@@ -397,6 +397,37 @@ it. A problem that turns out to be already owned is left out, but then it was no
 **THIS RUN KEEPS THE DEFECT** — the binary is the old one. Expect 4 features missing from its app, and read
 the score with that in mind rather than as a verdict on the decomposition.
 
+## WHAT THE STEERING ADDED — the over-steering cost, measured on run 4, 2026-08-29 09:25 EEST
+
+Mihai's refinement, and it is the right one: *"if we have many idle moments it's ok to use the judge. What
+is not ok is for the Judge to add too much over-steering or add too much extra work."*
+
+For every nudge, the NEXT look on that same lane says whether the call acted on it
+(`actions_since_last_look`). Across 34 nudges with a measurable follow-up:
+
+    the call ACTED afterwards          1   (3%)
+    the call took NO action            33  (97%)
+    reasoning burned after those    43,842 chars
+    WORKER time burned after those      66 MINUTES
+
+**66 minutes of WORKER time — not idle judge time.** The worker read a supervisor note, re-reasoned, and did
+nothing. That is on top of the 222 node-minutes of judging, and unlike the judging it cannot be excused as
+"using idle capacity": this is the working node, doing extra work, because it was interrupted.
+
+**THE CAVEAT, stated because it would otherwise flatter the number:** for a planning lane the desired
+outcome is emitting its structured reply, which IS a tool call in this engine (`final_output`) and so counts
+as an action. A nudge that successfully got a lane to deliver would score as ACTED. One did.
+
+**SO THE HONEST LEDGER FOR RUN 4:**
+
+    judging          222 node-min   46% of fleet    mostly on idle nodes -- acceptable per Mihai
+    over-steering     66 worker-min  97% no-action   NOT acceptable, this is stolen work time
+    interventions      1 useful action out of 34
+
+**AND THIS IS WHY THE VERIFIER MATTERS:** a `py_compile` failure is a fact the worker cannot argue with and
+does not need to re-reason about. The 97% no-action rate is what happens when you interrupt a model with an
+opinion about its reasoning instead of a fact about its output.
+
 ## THE JUDGE COSTS 46% OF THE FLEET — measured on run 4, 2026-08-29 09:05 EEST
 
     judge_look_dispatched   211      each one a MODEL CALL occupying a node

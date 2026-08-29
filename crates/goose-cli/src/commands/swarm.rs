@@ -35539,6 +35539,34 @@ impl GooseAgentDispatcher {
                         guard.insert(f, (req.task_id.clone(), b));
                     }
                 }
+                // (1) VERIFY WHAT THIS TASK ACTUALLY DELIVERED, THE MOMENT IT SAYS IT IS DONE.
+                //
+                // Cheapest possible placement: the files are on disk, the answer is a fact, and no node is
+                // involved. This is the check that would have caught `viz-camera-picking-interaction`
+                // completing with ZERO tool calls, and every task that "finished" without writing the file
+                // it owns. The omni-judge cannot see any of this -- it reads a reasoning tail.
+                //
+                // Emitted, never used to fail the task here: the scheduler owns that decision and a
+                // finding must not silently change a task's outcome. What it changes is that the defect is
+                // KNOWN at minute 3 rather than at INTEGRATE.
+                if !req.owned_files.is_empty() {
+                    let defects = verify_owned_files(&root, &req.owned_files);
+                    if !defects.is_empty() {
+                        self.events.write_value(serde_json::json!({
+                            "event": "delivery_defects",
+                            "task_id": req.task_id,
+                            "owned_files": req.owned_files,
+                            "defects": defects,
+                        }));
+                        for d in &defects {
+                            eprintln!(
+                                "  {} {} delivered a defect: {d}",
+                                style("!").red().bold(),
+                                style(&req.task_id).bold()
+                            );
+                        }
+                    }
+                }
                 Ok(TaskRunOutput {
                     output,
                     session_id: Some(out.session_id),
