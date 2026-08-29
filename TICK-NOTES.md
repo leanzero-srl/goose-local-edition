@@ -16,3 +16,4 @@ Appended by `loop-state/note.sh`. The tick prints only the newest three; this is
 - `08-29 10:51` **ui** — the active nav row was styled-only — bg-background-tertiary vs transparent, ZERO of 19 controls carried aria-current/aria-selected; found by probing the RUNNING app over CDP, not by reading code
 - `08-29 10:53` **ui** — static UX audit found: 7x duplicate paint of one long string, 2 of 86 controls with no accessible name (both real, unfixed)
 - `08-29 11:15` **ui** — S1+S3 VERIFIED IN THE RUNNING APP: readSwarmRun across a live append gave events 3->4, thinkBytes 25->50, fullThinking accumulated BOTH chunks (no rolling window), generation stable at 1
+- `08-29 11:35` **ui** — SCHEDULED behind the triage workflow: BenchmarkView.tsx:818 sets aria-invalid with no aria-describedby/aria-errormessage — the field turns red and says nothing
