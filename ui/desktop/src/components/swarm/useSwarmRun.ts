@@ -1298,6 +1298,21 @@ export function buildActivity(events: Array<Record<string, unknown>>): {
         });
         break;
       }
+      // The judge replaced its own un-delivered notes. Only shown when it actually dropped something,
+      // because that is the interesting case: a pure-reasoning call never reaches a turn boundary, so
+      // nudges QUEUE, and open-coverage-2 once had fifteen waiting to land at once. A reader seeing many
+      // nudges and a still-silent lane needs to know the stale ones are no longer on their way.
+      case 'judge_notes_superseded': {
+        const droppedN = num(e['dropped']) ?? 0;
+        if (droppedN <= 0) break;
+        verbose({
+          kind: 'judge',
+          tone: 'info',
+          text: `Replaced ${droppedN} undelivered note${droppedN === 1 ? '' : 's'} to ${str(e['task_id']) || 'a call'}`,
+          sub: 'the newest direction supersedes the judge\'s own stale ones, so only it lands',
+        });
+        break;
+      }
       case 'scouts_planned': {
         const lenses = arr(e['lenses']).map(String).join(', ');
         compact({ kind: 'phase', text: 'Planning research', sub: lenses || undefined });
