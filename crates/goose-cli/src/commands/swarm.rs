@@ -4011,6 +4011,23 @@ fn spec_doc_urls(spec: &str) -> Vec<String> {
 /// so a build order cannot survive extraction into a read-only shard's prompt. An empty result means
 /// the caller emits today's string byte-for-byte.
 fn spec_advertised_surface(spec: &str) -> Vec<String> {
+    let SpecSurface { primary, rows } = spec_surface_rows(spec);
+    rows.into_iter()
+        .filter(|(service, _)| primary.is_none() || *service == primary)
+        .map(|(_, row)| row)
+        .collect()
+}
+
+/// Every endpoint-table row in the spec, each tagged with the service whose section it sits in, plus
+/// the primary service's name. `spec_advertised_surface` is the primary's rows and nothing else; the
+/// plan repair's rule (d) needs the OTHER services' rows too, addressed to their own entry owners, and a
+/// second table parser would drift from this one the way the inline decomposition counters did.
+struct SpecSurface {
+    primary: Option<String>,
+    rows: Vec<(Option<String>, String)>,
+}
+
+fn spec_surface_rows(spec: &str) -> SpecSurface {
     let unwrap_cell = |c: &str| c.trim().trim_matches('`').trim().to_string();
     // THE PATH IS THE FIRST BACKTICKED TOKEN when the cell opens with a backtick, else the first
     // whitespace token. sb-7's row `| `GET` | `/` + `web/*` | …` stripped by `unwrap_cell` to
@@ -4026,22 +4043,23 @@ fn spec_advertised_surface(spec: &str) -> Vec<String> {
     };
     // ONE SERVICE'S SURFACE, NOT THE WHOLE DOCUMENT'S. sb-7 documents two services: §3 `ledgerd`,
     // whose table the gate boots and probes, and §6 `notifierd`, whose /notify/* and /health rows
-    // are served on notifierd's OWN port. Every consumer of this list — the GET prober, the POST
-    // prober, the unprobed disclosure, the tester angle and the fix worker — addresses ONE port, so
-    // notifierd's rows probed on ledgerd's port were three of r0's phantom 404s. The nearest
-    // heading's backticked name is a row's service; the FIRST endpoint table's service is the
-    // primary; a row named for another service is not emitted. Only headings AT THAT LEVEL OR
-    // DEEPER denote services: sb-7's title is "# Build `app`", and letting an unnamed section
-    // inherit from it made §5's drafts rows (`### 5. The approval workflow`, no name) belong to
-    // `app` rather than to ledgerd and dropped them. Ancestors above the first table's named
-    // heading are the document, not a service; an unnamed sibling section is the primary's.
+    // are served on notifierd's OWN port. Every consumer of `spec_advertised_surface` — the GET
+    // prober, the POST prober, the unprobed disclosure, the tester angle and the fix worker —
+    // addresses ONE port, so notifierd's rows probed on ledgerd's port were three of r0's phantom
+    // 404s. The nearest heading's backticked name is a row's service; the FIRST endpoint table's
+    // service is the primary; a row named for another service is tagged with that name and the
+    // primary-only consumer drops it. Only headings AT THAT LEVEL OR DEEPER denote services: sb-7's
+    // title is "# Build `app`", and letting an unnamed section inherit from it made §5's drafts rows
+    // (`### 5. The approval workflow`, no name) belong to `app` rather than to ledgerd and dropped
+    // them. Ancestors above the first table's named heading are the document, not a service; an
+    // unnamed sibling section is the primary's.
     // The notifier port IS known to the gate (`spec_run_argv_v2` fills it second), so a future
-    // prober can address those rows there; today nothing does, and probing them here is a lie.
+    // prober can address those rows there; today nothing does, and probing them there is a lie.
     let mut service_by_level: [Option<String>; 7] = Default::default();
     let mut first_row_seen = false;
     let mut primary: Option<(usize, String)> = None;
     let mut in_fence = false;
-    let mut out = Vec::new();
+    let mut rows = Vec::new();
     for line in spec.lines() {
         let line = line.trim();
         if line.starts_with("```") {
@@ -4084,23 +4102,27 @@ fn spec_advertised_surface(spec: &str) -> Vec<String> {
                 .rev()
                 .find_map(|(level, s)| s.as_ref().map(|s| (level, s.clone())));
         }
-        if let Some((level, name)) = &primary {
-            let service = service_by_level[*level..]
+        let service = primary.as_ref().map(|(level, name)| {
+            service_by_level[*level..]
                 .iter()
                 .rev()
-                .find_map(|s| s.clone());
-            if service.is_some_and(|s| &s != name) {
-                continue;
-            }
-        }
-        let expected = unwrap_cell(cells[2]);
-        out.push(if expected.is_empty() {
-            format!("{method} {path}")
-        } else {
-            format!("{method} {path} -> EXPECT {expected}")
+                .find_map(|s| s.clone())
+                .unwrap_or_else(|| name.clone())
         });
+        let expected = unwrap_cell(cells[2]);
+        rows.push((
+            service,
+            if expected.is_empty() {
+                format!("{method} {path}")
+            } else {
+                format!("{method} {path} -> EXPECT {expected}")
+            },
+        ));
     }
-    out
+    SpecSurface {
+        primary: primary.map(|(_, name)| name),
+        rows,
+    }
 }
 
 /// The backticked service a section heading names — `### 3. `ledgerd` — …` is `ledgerd`,
@@ -8061,12 +8083,14 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
             {"id":"wire-app","depends_on":["store","cli"],"files":[]}
         ]}"#;
 
-        // BUILD FIRST — the shipped order. The DAG never sees the pin.
-        let unpinned = goose_swarm::Dag::from_planner_json(raw).expect("valid dag");
-        assert!(
-            !unpinned.tasks.contains_key(goose_swarm::SINK_ID),
-            "building before pinning leaves the model's join name in the DAG"
+        // BUILD FIRST — the shipped order. The DAG never sees the pin. It used to load under the
+        // model's name and every exact-equality consumer read false in silence; since the plan
+        // boundary refuses a file-less task that is not `integrate-verify`, the same order is a
+        // refusal that names the join.
+        let unpinned = goose_swarm::Dag::from_planner_json(raw).expect_err(
+            "an unpinned file-less join must be refused, not loaded under the model's name",
         );
+        assert!(unpinned.to_string().contains("wire-app"), "{unpinned}");
 
         // PIN FIRST — the fixed order.
         let mut v: serde_json::Value = serde_json::from_str(raw).unwrap();
@@ -20263,6 +20287,59 @@ fn spec_python_invocations(spec: &str) -> Vec<String> {
         .collect()
 }
 
+/// The task best placed to write a package's entry: most files under the package dir, else most under
+/// its parent package, else the first task owning anything. ONE pick, shared by the entry injection
+/// and by the plan repair's rule (d): the task told to serve an endpoint must be the task that receives
+/// the `__main__.py`, and two copies of this choice would agree only by luck.
+fn entry_owner_pick(subtasks: &[serde_json::Value], dir: &str) -> Option<usize> {
+    let count_under = |st: &serde_json::Value, pre: &str| {
+        st.get("files")
+            .and_then(|f| f.as_array())
+            .map(|a| {
+                a.iter()
+                    .filter(|f| f.as_str().is_some_and(|s| s.starts_with(pre)))
+                    .count()
+            })
+            .unwrap_or(0)
+    };
+    let prefix = format!("{dir}/");
+    let parent_prefix = dir.rsplit_once('/').map(|(p, _)| format!("{p}/"));
+    let best_by = |pre: &str| {
+        subtasks
+            .iter()
+            .enumerate()
+            .max_by_key(|(_, st)| count_under(st, pre))
+            .filter(|(_, st)| count_under(st, pre) > 0)
+            .map(|(i, _)| i)
+    };
+    best_by(&prefix)
+        .or_else(|| parent_prefix.as_deref().and_then(best_by))
+        .or_else(|| {
+            subtasks.iter().position(|st| {
+                st.get("files")
+                    .and_then(|f| f.as_array())
+                    .is_some_and(|a| !a.is_empty())
+            })
+        })
+}
+
+/// The task that owns an advertised invocation's entry — `X/__main__.py` or the module form `X.py` —
+/// else the task `entry_owner_pick` would hand the entry to.
+fn entry_owner_index(subtasks: &[serde_json::Value], invocation: &str) -> Option<usize> {
+    let dir = invocation.replace('.', "/");
+    let entry = format!("{dir}/__main__.py");
+    let module = format!("{dir}.py");
+    subtasks
+        .iter()
+        .position(|st| {
+            st.get("files").and_then(|f| f.as_array()).is_some_and(|a| {
+                a.iter()
+                    .any(|f| f.as_str() == Some(&entry) || f.as_str() == Some(&module))
+            })
+        })
+        .or_else(|| entry_owner_pick(subtasks, &dir))
+}
+
 /// PACKAGE-ENTRY TRUTH (sb-7 r1+r3 forensics): a `python -m X` the spec advertises boots ONLY through
 /// `X/__main__.py` when X is a package — and in both fleet runs the shipped service packages had none,
 /// so two of three advertised invocations could never boot regardless of code quality, zeroing every
@@ -20287,16 +20364,6 @@ fn require_advertised_entry_files(v: &mut serde_json::Value, spec: &str) -> Vec<
         .flatten()
         .filter_map(|f| f.as_str().map(str::to_string))
         .collect();
-    let count_under = |st: &serde_json::Value, pre: &str| {
-        st.get("files")
-            .and_then(|f| f.as_array())
-            .map(|a| {
-                a.iter()
-                    .filter(|f| f.as_str().is_some_and(|s| s.starts_with(pre)))
-                    .count()
-            })
-            .unwrap_or(0)
-    };
     let mut added = Vec::new();
     for inv in invocations {
         let dir = inv.replace('.', "/");
@@ -20306,25 +20373,9 @@ fn require_advertised_entry_files(v: &mut serde_json::Value, spec: &str) -> Vec<
             continue;
         }
         let prefix = format!("{dir}/");
-        let parent_prefix = dir.rsplit_once('/').map(|(p, _)| format!("{p}/"));
-        let best_by = |pre: &str| {
-            subtasks
-                .iter()
-                .enumerate()
-                .max_by_key(|(_, st)| count_under(st, pre))
-                .filter(|(_, st)| count_under(st, pre) > 0)
-                .map(|(i, _)| i)
+        let Some(ti) = entry_owner_pick(subtasks, &dir) else {
+            continue;
         };
-        let pick = best_by(&prefix)
-            .or_else(|| parent_prefix.as_deref().and_then(best_by))
-            .or_else(|| {
-                subtasks.iter().position(|st| {
-                    st.get("files")
-                        .and_then(|f| f.as_array())
-                        .is_some_and(|a| !a.is_empty())
-                })
-            });
-        let Some(ti) = pick else { continue };
         let fresh_package = !owned.iter().any(|f| f.starts_with(&prefix));
         let st = &mut subtasks[ti];
         let Some(files) = st.get_mut("files").and_then(|f| f.as_array_mut()) else {
@@ -25151,6 +25202,491 @@ fn review_must_fix_block(plan_json: &str) -> String {
     block
 }
 
+/// What the plan repair did: the measured flags before and after, and one line per change. An empty
+/// `actions` on a plan that has already been repaired is the idempotence proof, and a test asserts it.
+struct PlanRepairs {
+    before: serde_json::Value,
+    after: serde_json::Value,
+    actions: Vec<String>,
+}
+
+impl PlanRepairs {
+    fn is_noop(&self) -> bool {
+        self.actions.is_empty()
+    }
+
+    fn event(&self) -> serde_json::Value {
+        serde_json::json!({
+            "event": "plan_repaired",
+            "before": self.before,
+            "after": self.after,
+            "actions": self.actions,
+        })
+    }
+}
+
+/// `decomposition_of`'s own keys plus the advertised endpoints no service brief mentions, so
+/// `plan_repaired.before/after` read exactly like `plan_synthesized` and `plan_patched.after`.
+fn plan_flags(plan: &serde_json::Value, spec: &str) -> serde_json::Value {
+    let mut flags = decomposition_of(&plan.to_string());
+    if let Some(o) = flags.as_object_mut() {
+        o.insert(
+            "unassigned_endpoints".to_string(),
+            serde_json::json!(unassigned_endpoints(plan, spec)
+                .iter()
+                .map(|e| format!("{} {}", e.method, e.path))
+                .collect::<Vec<_>>()),
+        );
+    }
+    flags
+}
+
+/// Fix the plan's MEASURED structural defects deterministically, in this order:
+///
+/// (b) a file two tasks claim stays with the FIRST claimant in plan order;
+/// (c) a module shadowed by a package — `X.py` beside `X/` — becomes `X/__init__.py` under the
+///     package's owner (or is simply dropped when that file already has an owner);
+/// (a) a task that owns nothing after (b) and (c) is removed and every dependent is re-pointed at
+///     what it depended on, transitively, so no dependency dangles — the join is exempt and keeps
+///     owning nothing by design;
+/// (d) an advertised endpoint that no brief of a task owning service code mentions is appended to the
+///     brief of the task owning that service's entry file.
+///
+/// (a) runs AFTER (b) and (c) because both of them can empty a task, and it is the emptied task that
+/// must go. (d) runs last so it never addresses a task (a) is about to remove.
+///
+/// MEASURED, r1 2026-08-29: REVIEW spent 51 minutes and 209k reasoning characters, and the one
+/// structural defect it fixed — `viz-engine` owned nothing — was named by `plan_synthesized` before
+/// the round began; the two module/package collisions it never fixed survived all three patches.
+/// r0 shipped `GET /` as a 404 because the frontend task's brief mentioned serving `/` and no backend
+/// task's did. Every one of these is computable from the plan's JSON, and a rule that is computed is
+/// applied here rather than handed to a model to rediscover.
+///
+/// Pure. The flags it reads are the ones `decomposition_of` reports — one rule in one place — so what
+/// it repairs is exactly what `plan_synthesized` measures, and applying it twice is a no-op.
+fn repair_plan_flags(plan: &mut serde_json::Value, spec: &str) -> PlanRepairs {
+    let before = plan_flags(plan, spec);
+    let mut actions = Vec::new();
+    if plan.get("subtasks").and_then(|s| s.as_array()).is_some() {
+        repair_shared_files(plan, &mut actions);
+        repair_module_package_collisions(plan, &mut actions);
+        repair_owning_nothing(plan, &mut actions);
+        repair_unassigned_endpoints(plan, spec, &mut actions);
+    }
+    let after = plan_flags(plan, spec);
+    PlanRepairs {
+        before,
+        after,
+        actions,
+    }
+}
+
+fn repair_shared_files(plan: &mut serde_json::Value, actions: &mut Vec<String>) {
+    let Some(subtasks) = plan.get_mut("subtasks").and_then(|s| s.as_array_mut()) else {
+        return;
+    };
+    let mut claimed: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+    for t in subtasks.iter_mut() {
+        let id = t
+            .get("id")
+            .and_then(|i| i.as_str())
+            .unwrap_or_default()
+            .to_string();
+        let Some(files) = t.get_mut("files").and_then(|f| f.as_array_mut()) else {
+            continue;
+        };
+        files.retain(|f| {
+            let Some(path) = f.as_str() else {
+                return true;
+            };
+            match claimed.get(path) {
+                Some(first) => {
+                    actions.push(format!(
+                        "shared file `{path}`: kept by `{first}` (first claimant), dropped from `{id}`"
+                    ));
+                    false
+                }
+                None => {
+                    claimed.insert(path.to_string(), id.clone());
+                    true
+                }
+            }
+        });
+    }
+}
+
+fn repair_module_package_collisions(plan: &mut serde_json::Value, actions: &mut Vec<String>) {
+    let collisions = string_list(&decomposition_of(&plan.to_string())["module_package_collisions"]);
+    let Some(subtasks) = plan.get_mut("subtasks").and_then(|s| s.as_array_mut()) else {
+        return;
+    };
+    let owns = |st: &serde_json::Value, path: &str| {
+        st.get("files")
+            .and_then(|f| f.as_array())
+            .is_some_and(|a| a.iter().any(|f| f.as_str() == Some(path)))
+    };
+    let id_at = |subtasks: &[serde_json::Value], i: usize| {
+        subtasks[i]
+            .get("id")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default()
+            .to_string()
+    };
+    for module in collisions {
+        let dir = module.trim_end_matches(".py").to_string();
+        let prefix = format!("{dir}/");
+        let init = format!("{dir}/__init__.py");
+        let Some(module_owner) = subtasks.iter().position(|st| owns(st, &module)) else {
+            continue;
+        };
+        // Ties go to the earliest task, so the outcome depends on plan order and nothing else.
+        let mut package_owner: Option<(usize, usize)> = None;
+        for (i, st) in subtasks.iter().enumerate() {
+            let n = st.get("files").and_then(|f| f.as_array()).map_or(0, |a| {
+                a.iter()
+                    .filter(|f| f.as_str().is_some_and(|s| s.starts_with(&prefix)))
+                    .count()
+            });
+            if n > 0 && package_owner.is_none_or(|(_, best)| n > best) {
+                package_owner = Some((i, n));
+            }
+        }
+        let Some((package_owner, _)) = package_owner else {
+            continue;
+        };
+        let module_owner_id = id_at(subtasks, module_owner);
+        let package_owner_id = id_at(subtasks, package_owner);
+        if let Some(files) = subtasks[module_owner]
+            .get_mut("files")
+            .and_then(|f| f.as_array_mut())
+        {
+            files.retain(|f| f.as_str() != Some(module.as_str()));
+        }
+        match subtasks.iter().position(|st| owns(st, &init)) {
+            Some(init_owner) => actions.push(format!(
+                "module `{module}` shadowed by package `{prefix}`: dropped from `{module_owner_id}` \
+                 (`{init}` is already owned by `{}`)",
+                id_at(subtasks, init_owner)
+            )),
+            None => {
+                if let Some(files) = subtasks[package_owner]
+                    .get_mut("files")
+                    .and_then(|f| f.as_array_mut())
+                {
+                    files.push(serde_json::Value::String(init.clone()));
+                }
+                actions.push(format!(
+                    "module `{module}` shadowed by package `{prefix}`: became `{init}` under \
+                     `{package_owner_id}` (was `{module_owner_id}`)"
+                ));
+            }
+        }
+    }
+}
+
+fn repair_owning_nothing(plan: &mut serde_json::Value, actions: &mut Vec<String>) {
+    let removed_ids = string_list(&decomposition_of(&plan.to_string())["tasks_owning_nothing"]);
+    if removed_ids.is_empty() {
+        return;
+    }
+    let Some(subtasks) = plan.get_mut("subtasks").and_then(|s| s.as_array_mut()) else {
+        return;
+    };
+    let id_of = |st: &serde_json::Value| {
+        st.get("id")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default()
+            .to_string()
+    };
+    let removed_deps: std::collections::HashMap<String, Vec<String>> = subtasks
+        .iter()
+        .filter(|st| removed_ids.contains(&id_of(st)))
+        .map(|st| (id_of(st), string_list(&st["depends_on"])))
+        .collect();
+    subtasks.retain(|st| !removed_deps.contains_key(&id_of(st)));
+    for id in &removed_ids {
+        actions.push(format!(
+            "removed `{id}`: it owned no files (only `{}` may)",
+            goose_swarm::SINK_ID
+        ));
+    }
+    for st in subtasks.iter_mut() {
+        let id = id_of(st);
+        let Some(deps) = st.get_mut("depends_on").and_then(|d| d.as_array_mut()) else {
+            continue;
+        };
+        let old: Vec<String> = deps
+            .iter()
+            .filter_map(|d| d.as_str().map(str::to_string))
+            .collect();
+        if !old.iter().any(|d| removed_deps.contains_key(d)) {
+            continue;
+        }
+        let mut seen = std::collections::HashSet::new();
+        let mut next = Vec::new();
+        for d in &old {
+            repoint_dependency(d, &removed_deps, &mut seen, &mut next);
+        }
+        next.retain(|d| *d != id);
+        actions.push(format!(
+            "`{id}` depended on removed {:?}: now depends on {next:?}",
+            old.iter()
+                .filter(|d| removed_deps.contains_key(*d))
+                .collect::<Vec<_>>()
+        ));
+        *deps = next.into_iter().map(serde_json::Value::from).collect();
+    }
+}
+
+/// A dependency on a removed task becomes dependencies on what THAT task depended on, all the way up
+/// the removed chain; `seen` stops a cycle among removed tasks and drops duplicates.
+fn repoint_dependency(
+    dep: &str,
+    removed: &std::collections::HashMap<String, Vec<String>>,
+    seen: &mut std::collections::HashSet<String>,
+    out: &mut Vec<String>,
+) {
+    if !seen.insert(dep.to_string()) {
+        return;
+    }
+    match removed.get(dep) {
+        Some(upstream) => {
+            for u in upstream {
+                repoint_dependency(u, removed, seen, out);
+            }
+        }
+        None => out.push(dep.to_string()),
+    }
+}
+
+fn string_list(v: &serde_json::Value) -> Vec<String> {
+    v.as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|x| x.as_str().map(str::to_string))
+        .collect()
+}
+
+struct AdvertisedEndpoint {
+    service: Option<String>,
+    method: String,
+    path: String,
+    expect: Option<String>,
+}
+
+/// The spec's endpoint rows that no brief of a task owning service code mentions.
+///
+/// "Service code" is any file under a `python -m` invocation's top-level package (the module form
+/// `X.py` included), and with no invocation in the spec, any file at all. That restriction is the whole
+/// finding from r0: `index-html`'s brief said the page is served at `/` and the sink's brief said to
+/// probe it, and neither task can serve anything — `GET /` was mentioned twice and implemented nowhere.
+fn unassigned_endpoints(plan: &serde_json::Value, spec: &str) -> Vec<AdvertisedEndpoint> {
+    let SpecSurface { rows, .. } = spec_surface_rows(spec);
+    if rows.is_empty() {
+        return Vec::new();
+    }
+    let Some(subtasks) = plan.get("subtasks").and_then(|s| s.as_array()) else {
+        return Vec::new();
+    };
+    let roots: Vec<String> = spec_python_invocations(spec)
+        .iter()
+        .map(|inv| inv.split('.').next().unwrap_or(inv).to_string())
+        .collect();
+    let serves = |file: &str| {
+        roots.is_empty()
+            || roots
+                .iter()
+                .any(|r| file.starts_with(&format!("{r}/")) || file == format!("{r}.py"))
+    };
+    let serving_briefs: Vec<&str> = subtasks
+        .iter()
+        .filter(|st| {
+            st.get("files")
+                .and_then(|f| f.as_array())
+                .is_some_and(|a| a.iter().any(|f| f.as_str().is_some_and(serves)))
+        })
+        .filter_map(|st| st.get("description").and_then(|d| d.as_str()))
+        .collect();
+    let mut seen = std::collections::HashSet::new();
+    rows.into_iter()
+        .filter_map(|(service, row)| {
+            let mut it = row.splitn(3, ' ');
+            let (method, path) = (it.next()?.to_string(), it.next()?.to_string());
+            let expect = it
+                .next()
+                .and_then(|rest| rest.strip_prefix("-> EXPECT "))
+                .map(str::to_string);
+            seen.insert(format!("{method} {path}"))
+                .then_some(AdvertisedEndpoint {
+                    service,
+                    method,
+                    path,
+                    expect,
+                })
+        })
+        .filter(|e| {
+            !serving_briefs
+                .iter()
+                .any(|d| brief_mentions_path(d, &e.path))
+        })
+        .collect()
+}
+
+/// Whether a brief names an advertised path: `/api/payments` inside a longer path (`/api/payments/x`,
+/// `app/api/payments`) does not count, a parameter segment (`<id>`, `{id}`, `:id`) matches any one
+/// segment, a query string is ignored, and a lone `/` counts only when it is spelled the way the
+/// endpoint table spells it — backticked, after an HTTP method, or closing a URL — because a slash
+/// between two words is punctuation.
+fn brief_mentions_path(brief: &str, path: &str) -> bool {
+    let path = path.split('?').next().unwrap_or(path);
+    let is_path_char = |c: char| c.is_ascii_alphanumeric() || matches!(c, '_' | '.' | '/' | '-');
+    let is_param = |seg: &str| seg.contains(['<', '{', ':']);
+    let segments: Vec<&str> = path.split('/').skip(1).collect();
+    let from = |pos: usize| brief.get(pos..).unwrap_or("");
+    let last_before = |pos: usize| brief.get(..pos).and_then(|s| s.chars().next_back());
+    for (start, _) in brief.match_indices('/') {
+        let prev = last_before(start);
+        if prev.is_some_and(|c| is_path_char(c) && !c.is_ascii_digit()) {
+            continue;
+        }
+        let mut pos = start;
+        let mut matched = true;
+        for seg in &segments {
+            if !from(pos).starts_with('/') {
+                matched = false;
+                break;
+            }
+            pos += 1;
+            if is_param(seg) {
+                let n = from(pos)
+                    .chars()
+                    .take_while(|c| {
+                        !matches!(c, '/' | '`' | '"' | '\'' | ')' | ']' | ',' | '?' | '#')
+                            && !c.is_whitespace()
+                    })
+                    .map(char::len_utf8)
+                    .sum::<usize>();
+                if n == 0 {
+                    matched = false;
+                    break;
+                }
+                pos += n;
+            } else if from(pos).starts_with(seg) {
+                pos += seg.len();
+            } else {
+                matched = false;
+                break;
+            }
+        }
+        if !matched {
+            continue;
+        }
+        if from(pos).chars().next().is_some_and(is_path_char) {
+            continue;
+        }
+        if path == "/" {
+            let before = brief.get(..start).unwrap_or("").trim_end();
+            let word = before
+                .trim_end_matches(|c: char| !c.is_ascii_alphabetic())
+                .rsplit(|c: char| !c.is_ascii_alphabetic())
+                .next()
+                .unwrap_or_default()
+                .to_ascii_uppercase();
+            let standalone_tick = prev == Some('`')
+                && from(pos).starts_with('`')
+                && last_before(start - 1).is_none_or(|c| c.is_whitespace() || c == '(');
+            let anchored = standalone_tick
+                || prev.is_some_and(|c| c.is_ascii_digit())
+                || matches!(
+                    word.as_str(),
+                    "GET" | "POST" | "PUT" | "PATCH" | "DELETE" | "HEAD"
+                );
+            if !anchored {
+                continue;
+            }
+        }
+        return true;
+    }
+    false
+}
+
+fn repair_unassigned_endpoints(
+    plan: &mut serde_json::Value,
+    spec: &str,
+    actions: &mut Vec<String>,
+) {
+    let missing = unassigned_endpoints(plan, spec);
+    if missing.is_empty() {
+        return;
+    }
+    let invocations = spec_python_invocations(spec);
+    let Some(subtasks) = plan.get_mut("subtasks").and_then(|s| s.as_array_mut()) else {
+        return;
+    };
+    // A row's service is the invocation whose last segment is the service's name (`ledgerd` ->
+    // `app.ledgerd`); a service the spec boots under another name falls to the first invocation.
+    let invocation_for = |service: Option<&str>| -> Option<&String> {
+        service
+            .and_then(|name| {
+                invocations
+                    .iter()
+                    .find(|inv| inv.rsplit('.').next() == Some(name))
+            })
+            .or(invocations.first())
+    };
+    let mut by_task: Vec<(usize, String, Vec<AdvertisedEndpoint>)> = Vec::new();
+    for ep in missing {
+        let Some(inv) = invocation_for(ep.service.as_deref()) else {
+            continue;
+        };
+        let Some(ti) = entry_owner_index(subtasks, inv) else {
+            continue;
+        };
+        match by_task.iter_mut().find(|(i, _, _)| *i == ti) {
+            Some((_, _, eps)) => eps.push(ep),
+            None => by_task.push((ti, inv.clone(), vec![ep])),
+        }
+    }
+    for (ti, inv, eps) in by_task {
+        let st = &mut subtasks[ti];
+        let id = st
+            .get("id")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default()
+            .to_string();
+        let Some(desc) = st
+            .get_mut("description")
+            .and_then(|d| d.as_str().map(str::to_string))
+        else {
+            continue;
+        };
+        let rows: Vec<String> = eps
+            .iter()
+            .map(|e| match &e.expect {
+                Some(x) => format!("- `{} {}` -> EXPECT {x}", e.method, e.path),
+                None => format!("- `{} {}`", e.method, e.path),
+            })
+            .collect();
+        let note = format!(
+            "\n\nADVERTISED SURFACE (engine-required): the spec's endpoint table lists these on this \
+             service and no brief of a task owning service code mentions them, so as planned they \
+             would ship as 404s. This task owns the entry of `python -m {inv}`, so it serves each \
+             one exactly as the table says:\n{}",
+            rows.join("\n")
+        );
+        st["description"] = serde_json::Value::String(format!("{desc}{note}"));
+        actions.push(format!(
+            "`{id}` (entry of `{inv}`): appended {} advertised endpoint(s) no service brief \
+             mentioned: {}",
+            eps.len(),
+            eps.iter()
+                .map(|e| format!("{} {}", e.method, e.path))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ));
+    }
+}
+
 /// What one review lane is handed: the request (or the lane's own sections of it), the plan with each
 /// task's brief reduced to a summary line, the MUST-FIX block when the plan has one, and the layout on
 /// disk. A free function so the prompt can be asserted on without a model.
@@ -25991,33 +26527,7 @@ async fn run_linear_plan(
     // never became any task's owned_files and never entered smoke_all_files, both of which come from the
     // dag. Applying both here makes the plan and the DAG agree by construction. The later call is now
     // idempotent — pin_sink_id returns None when the join is already named correctly.
-    if let Ok(mut v) = serde_json::from_str::<serde_json::Value>(&plan_json) {
-        let pinned = goose_swarm::pin_sink_id(&mut v);
-        let added = require_advertised_entry_files(&mut v, &opts.prompt);
-        if pinned.is_some() || !added.is_empty() {
-            if let Some(old) = &pinned {
-                eprintln!(
-                    "  {} the plan's join was named `{old}` — pinned to `{}` before the DAG is built",
-                    style("·").cyan(),
-                    goose_swarm::SINK_ID
-                );
-                sink.write_value(serde_json::json!({
-                    "event": "sink_id_pinned",
-                    "from": old,
-                    "to": goose_swarm::SINK_ID,
-                    "where": "pre-dag",
-                }));
-            }
-            if !added.is_empty() {
-                sink.write_value(serde_json::json!({
-                    "event": "entry_files_required",
-                    "files": added,
-                    "where": "pre-dag",
-                }));
-            }
-            plan_json = v.to_string();
-        }
-    }
+    plan_json = finalize_plan_before_dag(plan_json, &opts.prompt, sink);
 
     // AN INVALID DAG FALLS BACK. It used to `?` out of the run — AFTER research had been paid for.
     //
@@ -26039,8 +26549,11 @@ async fn run_linear_plan(
                 "  {} the synthesised plan will not load ({e}) — one task per slice instead",
                 style("!").yellow().bold()
             );
-            plan_json =
-                flat_plan_from_briefs(&briefs, detect_language(&opts.prompt, &tree_at_start));
+            plan_json = finalize_plan_before_dag(
+                flat_plan_from_briefs(&briefs, detect_language(&opts.prompt, &tree_at_start)),
+                &opts.prompt,
+                sink,
+            );
             Dag::from_planner_json(&plan_json)
                 .map_err(|e2| anyhow!("even the flat fallback will not load: {e2}"))?
         }
@@ -26049,6 +26562,61 @@ async fn run_linear_plan(
     // the whole point. The detail fan exists to turn a one-line brief into a spec in 75 seconds; here
     // there is no one-line brief to expand.
     Ok((plan_json, dag, PlanConf::default()))
+}
+
+/// The plan the DAG is built from, in the one order the three passes can run: the sink is pinned
+/// first so the repair's join exemption sees the engine's name; the measured flags are repaired
+/// second, BEFORE the entry injection, because rule (c) turns `app/ledgerd.py` into
+/// `app/ledgerd/__init__.py` and only an injection that runs afterwards can see that
+/// `python -m app.ledgerd` is now without its `__main__.py`; the injection runs last. Rule (d) picks
+/// the entry owner with the injection's own helper on the same plan, so the task told to serve an
+/// endpoint is the task that receives the entry file.
+///
+/// `plan_repaired` is emitted every time, actions or none, so a checkpoint can read `after` on a clean
+/// plan instead of inferring cleanliness from silence.
+fn finalize_plan_before_dag(plan_json: String, spec: &str, sink: &Arc<dyn EventSink>) -> String {
+    let Ok(mut v) = serde_json::from_str::<serde_json::Value>(&plan_json) else {
+        return plan_json;
+    };
+    let pinned = goose_swarm::pin_sink_id(&mut v);
+    if let Some(old) = &pinned {
+        eprintln!(
+            "  {} the plan's join was named `{old}` — pinned to `{}` before the DAG is built",
+            style("·").cyan(),
+            goose_swarm::SINK_ID
+        );
+        sink.write_value(serde_json::json!({
+            "event": "sink_id_pinned",
+            "from": old,
+            "to": goose_swarm::SINK_ID,
+            "where": "pre-dag",
+        }));
+    }
+    let repairs = repair_plan_flags(&mut v, spec);
+    if !repairs.is_noop() {
+        eprintln!(
+            "  {} plan repaired before the DAG is built — {} change(s):",
+            style("·").cyan(),
+            repairs.actions.len()
+        );
+        for a in &repairs.actions {
+            eprintln!("      {a}");
+        }
+    }
+    sink.write_value(repairs.event());
+    let added = require_advertised_entry_files(&mut v, spec);
+    if !added.is_empty() {
+        sink.write_value(serde_json::json!({
+            "event": "entry_files_required",
+            "files": added,
+            "where": "pre-dag",
+        }));
+    }
+    if pinned.is_some() || !repairs.is_noop() || !added.is_empty() {
+        v.to_string()
+    } else {
+        plan_json
+    }
 }
 
 /// One task per slice, deps stripped, plus the sink. Always validates.
@@ -40208,6 +40776,447 @@ mod live_fleet_tests {
         assert_eq!(d["tasks"], 0);
         assert_eq!(d["tasks_sharing_a_file"], 0);
         assert!(d["shared_files"].as_array().unwrap().is_empty());
+    }
+
+    /// The r1 plan's measured shape — `plan_synthesized` seq 122 of the archived run: 16 tasks, 26 files,
+    /// no shared file, `viz-engine` owning nothing, and `app/ledgerd.py` / `app/notifierd.py` shadowed by
+    /// their own packages. r1 was killed in REVIEW and never emitted `plan_loaded`, so the log carries
+    /// the counts and not the paths; the paths here reproduce those counts exactly and the first
+    /// assertions prove it.
+    const R1_SHAPED_PLAN: &str = r#"{"subtasks":[
+        {"id":"service-boot","files":["app/__init__.py","app/__main__.py","app/cli.py","app/ledgerd.py","app/notifierd.py"],"depends_on":[],"description":"Boot both services from one wrapper."},
+        {"id":"ledger-core","files":["app/ledgerd/ledger.py","app/ledgerd/db.py","app/ledgerd/sync.py","app/ledgerd/outbox.py","app/ledgerd/envelope.py","app/ledgerd/models.py","app/ledgerd/state.py"],"depends_on":[],"description":"The event ledger and vendor sync."},
+        {"id":"ledger-api","files":["app/ledgerd/api.py"],"depends_on":["ledger-core"],"description":"The HTTP API."},
+        {"id":"webhook-handler","files":["app/ledgerd/webhooks.py"],"depends_on":["ledger-core"],"description":"Vendor webhooks."},
+        {"id":"approval-workflow","files":["app/ledgerd/drafts.py","app/ledgerd/roles.py","app/ledgerd/approvals.py"],"depends_on":["ledger-api"],"description":"Maker, checker, admin."},
+        {"id":"notifier-service","files":["app/notifierd/service.py"],"depends_on":[],"description":"The idempotent consumer."},
+        {"id":"frontend-html","files":["web/index.html"],"depends_on":[],"description":"The page."},
+        {"id":"frontend-css","files":["web/styles.css"],"depends_on":[],"description":"The styles."},
+        {"id":"frontend-app","files":["web/app.js"],"depends_on":[],"description":"The table and drafts UI."},
+        {"id":"decisions-doc","files":["DECISIONS.md"],"depends_on":[],"description":"Three corners decided."},
+        {"id":"viz-engine","files":[],"depends_on":[],"description":"Instanced rendering, pick buffer, camera."},
+        {"id":"viz-ui","files":["web/viz.js"],"depends_on":[],"description":"The 3D field."},
+        {"id":"reversals-fetch","files":["app/ledgerd/reversals.py"],"depends_on":["ledger-core"],"description":"GET /v3/reversals from the vendor."},
+        {"id":"frontend-serving","files":["app/ledgerd/static.py"],"depends_on":[],"description":"Serve web/ files."},
+        {"id":"sse-stream-endpoint","files":["app/ledgerd/stream.py"],"depends_on":["viz-engine"],"description":"SSE diffs."},
+        {"id":"integrate-verify","files":[],"depends_on":["service-boot","ledger-core","ledger-api","webhook-handler","approval-workflow","notifier-service","frontend-html","frontend-css","frontend-app","decisions-doc","viz-engine","viz-ui","reversals-fetch","frontend-serving","sse-stream-endpoint"],"description":"Boot and verify."}
+    ]}"#;
+
+    /// The r0 plan as SYNTHESIS produced it, mined from the archived run: `plan_loaded.raw_plan_json`
+    /// carries the post-review ids, files and dependencies verbatim, and `plan_synthesized` seq 159
+    /// says what REVIEW then removed — `viz-interaction`, owning nothing, one dependency, and the
+    /// sink's tenth — which is restored here. Each description is cut to the real sentences that name
+    /// an advertised endpoint, so what a brief mentions is what r0's brief mentioned.
+    const R0_PLAN_PRE_REVIEW: &str = r##"{
+ "subtasks": [
+  {
+   "id": "ledgerd-service",
+   "files": [
+    "app/api.py",
+    "app/ledger.py",
+    "app/ledgerd.py",
+    "app/outbox.py",
+    "app/sync.py",
+    "app/webhooks.py"
+   ],
+   "depends_on": [],
+   "description": "handle_health(db_path: Path, webhook_stats: dict) -> tuple # GET /api/health  def handle_payments_get(params: dict, db_path: Path) -> tuple # GET /api/payments?limit=&offset=&status=&currency=&sort=\nhandle_payment_get(payment_id: str, db_path: Path) -> tuple # GET /api/payments/<id>  def handle_summary(db_path: Path) -> tuple # GET /api/summary — per-currency counts/totals,\nreversals block  def handle_buckets(db_path: Path) -> tuple # GET /api/buckets — 96 Berlin days × 4 statuses, instant-based bucketing  def handle_sync_post(vendor_url: str,\nhandle_sync_post(vendor_url: str, api_key: str, db_path: Path) -> tuple # POST /api/sync — triggers walk_vendor in background thread  def handle_note_post(payment_id: str, body: dict,\nvendor_url: str, api_key: str, db_path: Path) -> tuple # POST /api/payments/<id>/note — If-Match optimistic concurrency, retry once on 412  def handle_webhook_post(headers: dict,\nhandle_webhook_post(headers: dict, raw_body: bytes, db_path: Path) -> tuple # POST /api/webhooks/meridian — verify signature, apply event, update counters  def handle_events_get(params: dict, token:\nhandle_events_get(params: dict, token: str|None, db_path: Path) -> tuple # GET /api/events?after=&limit= — requires bearer token (any role)  def handle_outbox_status(db_path: Path, notifier_url: str) -> tuple\nhandle_outbox_status(db_path: Path, notifier_url: str) -> tuple # GET /api/outbox/status — pending/delivered counts, notifier up/down  def handle_notifications_proxy(params: dict,\nhandle_notifications_proxy(params: dict, notifier_url: str) -> tuple # GET /api/notifications — proxied to notifierd; 502 if unreachable  def handle_viz_records(db_path: Path) -> tuple # GET /api/viz/records\nthread-safe list of active subscriber connections. Each `GET /api/stream` request spawns its own handler thread that stays open, writing events as they arrive via\nhandle_drafts_post(body: dict, token: str, db_path: Path) -> tuple # POST /api/drafts — maker/checker creates draft  def handle_draft_action(draft_id: str, action: str, token:\nstr, action: str, token: str, db_path: Path) -> tuple # POST /api/drafts/<id>/submit|approve|reject — four-eyes check, state machine ```  **Ledger (ledger.py):** ```python def\nReturns background thread that batches up to 50 events, POST /notify/events, # retries with backoff capped at 2s, marks delivered on 200  def stop_relay(thread: threading.Thread)\n4. CONSUMES - `notifierd` at `http://127.0.0.1:<port>` — POST /notify/events, GET /health - Meridian API at `--vendor` URL — all v3 endpoints per docs - No other"
+  },
+  {
+   "id": "notifierd-service",
+   "files": [
+    "app/notifier.py",
+    "app/notifierd.py"
+   ],
+   "depends_on": [],
+   "description": "8082): port to bind on `127.0.0.1`  **HTTP endpoints:**  ``` POST /notify/events Request: {\"events\": [{\"seq\": int, \"type\": str, ...}, ...]} Response 200: {\"accepted\": [int...],\n200: {\"accepted\": [int...], \"duplicate\": [int...]} ```  ``` GET /health Response 200: {\"status\": \"ok\", \"received\": int, \"applied\": int,                \"duplicate\":\n\"duplicate\": int, \"notifications\": int} ```  ``` GET /notify/processed?after=<seq> Response 200: {\"processed\": [{\"seq\": int, \"type\": str}...],                \"latest_seq\": int}\n\"type\": str}...],                \"latest_seq\": int} ```  ``` GET /notify/notifications?limit=<int>&offset=<int> Response 200: {\"data\": [{\"id\": str, \"event_seq\": int, \"kind\": str,"
+  },
+  {
+   "id": "boot-wrapper",
+   "files": [
+    "app/__init__.py",
+    "app/__main__.py"
+   ],
+   "depends_on": [
+    "ledgerd-service",
+    "notifierd-service"
+   ],
+   "description": ""
+  },
+  {
+   "id": "index-html",
+   "files": [
+    "web/index.html"
+   ],
+   "depends_on": [],
+   "description": ""
+  },
+  {
+   "id": "styles-css",
+   "files": [
+    "web/styles.css"
+   ],
+   "depends_on": [],
+   "description": ""
+  },
+  {
+   "id": "app-js",
+   "files": [
+    "web/app.js"
+   ],
+   "depends_on": [],
+   "description": "bearer token from #role-token input   syncing: false,        // sync in-flight flag };  async function fetchPayments() -> void       // GET /api/payments with current filters/sort/page async function fetchSummary() -> void\nfilters/sort/page async function fetchSummary() -> void        // GET /api/summary, update #summary DOM async function triggerSync() -> void         // POST /api/sync,\nthe cell and set `row.dataset.state = \"saving\"`. Fire `POST /api/payments/<id>/note` with the current version in `If-Match`. On success, update the stored payment object's note\nNotifications use a dedicated 5-second interval poller that fetches `/api/notifications`, updates the feed DOM, and transitions `#notifications` between `data-state=\"live\"` and `data-state=\"degraded\"`\nhuman-readable async function fetchDrafts() -> void                       // GET /api/drafts with token async function createDraft(data) -> void                  // POST /api/drafts\n/api/drafts async function submitDraft(id) -> void                    // POST /api/drafts/<id>/submit async function approveDraft(id) -> void                   // POST /api/drafts/<id>/approve\n/api/drafts/<id>/approve async function rejectDraft(id) -> void                    // POST /api/drafts/<id>/reject function renderTable() -> void                            // rebuild table rows from"
+  },
+  {
+   "id": "decisions-md",
+   "files": [
+    "DECISIONS.md"
+   ],
+   "depends_on": [],
+   "description": ""
+  },
+  {
+   "id": "readme-md",
+   "files": [
+    "README.md"
+   ],
+   "depends_on": [],
+   "description": "\\   --tokens-file tokens.json  # Open the console open http://127.0.0.1:8080/ ```  ## Services Separately  **Ledgerd (sync + API + UI):** ```bash python\nbutton in the summary panel.  ## API Endpoints (ledgerd)  - `GET /api/health` — service health and webhook counters - `GET /api/payments?limit=50&offset=0&status=settled&currency=EUR`\n/api/payments?limit=50&offset=0&status=settled&currency=EUR` — paginated payments - `GET /api/summary` — per-currency totals and reversals (never cross-currency) - `GET /api/buckets` — day × status\nnotifierd service |  ## Trigger a Sync  ```bash curl -X POST http://127.0.0.1:8080/api/sync ```  Returns: `{\"fetched\": 12288, \"inserted\": 0, \"updated\": 0, \"total\": 12288}`\n`GET /api/buckets` — day × status grid for the 3D field - `POST /api/drafts` — create payment draft (maker/checker) - `GET /api/events?after=0&limit=50` — event ledger (requires bearer token)\n/api/events?after=0&limit=50` — event ledger (requires bearer token) - `GET /api/stream` — SSE stream of payment changes  ## Architecture  ``` ledgerd (port 8080)          notifierd\nnotifierd (port 8081) ├── HTTP API + UI host       ├── POST /notify/events (idempotent by seq) ├── Vendor sync engine       └── Durable processed set in notifier.db"
+  },
+  {
+   "id": "viz-core",
+   "files": [
+    "web/viz.js"
+   ],
+   "depends_on": [],
+   "description": ""
+  },
+  {
+   "id": "viz-interaction",
+   "files": [],
+   "depends_on": [
+    "viz-core"
+   ],
+   "description": "Camera orbit, pick buffer, linked brush over the instances viz-core renders."
+  },
+  {
+   "id": "integrate-verify",
+   "files": [],
+   "depends_on": [
+    "ledgerd-service",
+    "notifierd-service",
+    "boot-wrapper",
+    "index-html",
+    "styles-css",
+    "app-js",
+    "decisions-md",
+    "readme-md",
+    "viz-core",
+    "viz-interaction"
+   ],
+   "description": "Integrate every module and VERIFY the whole program works end-to-end: run the test suite (python3 -m pytest), then BUILD"
+  }
+ ]
+}"##;
+
+    fn task<'a>(v: &'a serde_json::Value, id: &str) -> &'a serde_json::Value {
+        v["subtasks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|t| t["id"] == id)
+            .unwrap_or_else(|| panic!("no task `{id}`"))
+    }
+
+    fn strings(v: &serde_json::Value) -> Vec<String> {
+        string_list(v)
+    }
+
+    /// Rules (b), (c) and (a) on r1's real shape, with the outcome REVIEW spent 51 minutes reaching and
+    /// then only partly: `viz-engine` gone with its dependent re-pointed, both shadowed modules folded
+    /// into their packages, and a plan the DAG loads.
+    #[test]
+    fn plan_repair_r1_truth_table() {
+        let measured = decomposition_of(R1_SHAPED_PLAN);
+        assert_eq!(measured["tasks"], 16);
+        assert_eq!(measured["distinct_files"], 26);
+        assert_eq!(measured["tasks_sharing_a_file"], 0);
+        assert_eq!(strings(&measured["tasks_owning_nothing"]), ["viz-engine"]);
+        assert_eq!(
+            strings(&measured["module_package_collisions"]),
+            ["app/ledgerd.py", "app/notifierd.py"]
+        );
+
+        let mut v: serde_json::Value = serde_json::from_str(R1_SHAPED_PLAN).unwrap();
+        let r = repair_plan_flags(&mut v, "");
+        assert_eq!(
+            r.before["tasks_owning_nothing"],
+            measured["tasks_owning_nothing"]
+        );
+        assert_eq!(r.after["tasks"], 15);
+        assert_eq!(
+            r.after["distinct_files"], 26,
+            "a merge renames, it never loses a file"
+        );
+        assert!(strings(&r.after["tasks_owning_nothing"]).is_empty());
+        assert!(strings(&r.after["module_package_collisions"]).is_empty());
+        assert!(r.after["shared_files"].as_array().unwrap().is_empty());
+
+        let ids: Vec<String> = v["subtasks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|t| t["id"].as_str().unwrap().to_string())
+            .collect();
+        assert!(!ids.contains(&"viz-engine".to_string()));
+        assert!(ids.contains(&"integrate-verify".to_string()));
+        assert!(
+            task(&v, "integrate-verify")["files"]
+                .as_array()
+                .unwrap()
+                .is_empty(),
+            "the sink keeps owning nothing"
+        );
+        assert!(
+            strings(&task(&v, "sse-stream-endpoint")["depends_on"]).is_empty(),
+            "viz-engine had no dependencies, so its dependent now has none"
+        );
+        let sink_deps = strings(&task(&v, "integrate-verify")["depends_on"]);
+        assert_eq!(sink_deps.len(), 14);
+        assert!(!sink_deps.contains(&"viz-engine".to_string()));
+
+        let boot = strings(&task(&v, "service-boot")["files"]);
+        assert_eq!(boot, ["app/__init__.py", "app/__main__.py", "app/cli.py"]);
+        assert!(strings(&task(&v, "ledger-core")["files"])
+            .contains(&"app/ledgerd/__init__.py".to_string()));
+        assert!(strings(&task(&v, "notifier-service")["files"])
+            .contains(&"app/notifierd/__init__.py".to_string()));
+        assert_eq!(r.actions.len(), 5, "{:?}", r.actions);
+        goose_swarm::Dag::from_planner_json(&v.to_string()).expect("the repaired plan loads");
+    }
+
+    /// Rule (d) on r0's real briefs against the real sb-7 spec. r0 shipped `GET /` as a 404: the
+    /// frontend task's brief and the sink's brief were the only ones to mention the root, and neither
+    /// owns a line of the service. After repair the ledgerd entry owner is told to serve it, and
+    /// nothing else is told anything.
+    #[test]
+    fn plan_repair_r0_plan_assigns_the_root_to_the_ledgerd_entry_task() {
+        let spec = include_str!("../../../../evals/swarm-bench/spec-build-sb7.md");
+        let mut v: serde_json::Value = serde_json::from_str(R0_PLAN_PRE_REVIEW).unwrap();
+        let r = repair_plan_flags(&mut v, spec);
+        // `approve` and `reject` are real: r0's ledgerd brief wrote the three draft actions as
+        // `POST /api/drafts/<id>/submit|approve|reject`, a shorthand the rule does not read, and the
+        // cost of that is one redundant line in the brief rather than a route nobody was told to serve.
+        assert_eq!(
+            strings(&r.before["unassigned_endpoints"]),
+            [
+                "GET /",
+                "POST /api/drafts/<id>/approve",
+                "POST /api/drafts/<id>/reject"
+            ]
+        );
+        assert_eq!(
+            strings(&r.before["tasks_owning_nothing"]),
+            ["viz-interaction"]
+        );
+        let ledgerd = task(&v, "ledgerd-service")["description"].as_str().unwrap();
+        assert!(ledgerd.contains("ADVERTISED SURFACE"), "{ledgerd}");
+        assert!(ledgerd.contains("`GET /`"), "{ledgerd}");
+        assert!(
+            ledgerd.contains("`POST /api/drafts/<id>/approve`"),
+            "{ledgerd}"
+        );
+        assert!(ledgerd.contains("python -m app.ledgerd"), "{ledgerd}");
+        let told: Vec<&str> = v["subtasks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|t| {
+                t["description"]
+                    .as_str()
+                    .unwrap_or("")
+                    .contains("ADVERTISED SURFACE")
+            })
+            .map(|t| t["id"].as_str().unwrap())
+            .collect();
+        assert_eq!(told, ["ledgerd-service"]);
+        assert!(strings(&r.after["unassigned_endpoints"]).is_empty());
+        assert!(strings(&r.after["tasks_owning_nothing"]).is_empty());
+        let sink_deps = strings(&task(&v, "integrate-verify")["depends_on"]);
+        assert!(!sink_deps.contains(&"viz-interaction".to_string()));
+        assert!(sink_deps.contains(&"viz-core".to_string()));
+        assert_eq!(sink_deps.len(), 9);
+        goose_swarm::Dag::from_planner_json(&v.to_string()).expect("the repaired plan loads");
+    }
+
+    /// The second application is a no-op: identical JSON, no actions, and `before == after` — on both
+    /// real plans and on a plan that was clean to begin with.
+    #[test]
+    fn plan_repair_is_idempotent() {
+        let spec = include_str!("../../../../evals/swarm-bench/spec-build-sb7.md");
+        for (plan, spec) in [(R1_SHAPED_PLAN, ""), (R0_PLAN_PRE_REVIEW, spec)] {
+            let mut v: serde_json::Value = serde_json::from_str(plan).unwrap();
+            let first = repair_plan_flags(&mut v, spec);
+            assert!(!first.is_noop());
+            let once = v.to_string();
+            let second = repair_plan_flags(&mut v, spec);
+            assert!(second.is_noop(), "{:?}", second.actions);
+            assert_eq!(v.to_string(), once);
+            assert_eq!(second.before, second.after);
+            assert_eq!(second.before, first.after);
+        }
+        let clean = r#"{"subtasks":[
+            {"id":"a","files":["app/a.py"],"depends_on":[],"description":"a"},
+            {"id":"integrate-verify","files":[],"depends_on":["a"],"description":"verify"}
+        ]}"#;
+        let mut v: serde_json::Value = serde_json::from_str(clean).unwrap();
+        let r = repair_plan_flags(&mut v, "build a CLI tool");
+        assert!(r.is_noop());
+        assert_eq!(r.before, r.after);
+        assert_eq!(
+            v,
+            serde_json::from_str::<serde_json::Value>(clean).unwrap(),
+            "a clean plan is untouched"
+        );
+    }
+
+    /// (b) keeps a shared file with its FIRST claimant, and (a) re-points through a CHAIN of removed
+    /// tasks — and through a cycle among them — so no dependency dangles.
+    #[test]
+    fn plan_repair_first_claimant_keeps_the_file_and_removed_chains_repoint_transitively() {
+        let plan = r#"{"subtasks":[
+            {"id":"a","files":["x.py"],"depends_on":[],"description":"a"},
+            {"id":"b","files":["x.py","y.py"],"depends_on":[],"description":"b"},
+            {"id":"c","files":[],"depends_on":["a"],"description":"c"},
+            {"id":"d","files":[],"depends_on":["c"],"description":"d"},
+            {"id":"e","files":["z.py"],"depends_on":["d","b"],"description":"e"},
+            {"id":"f","files":[],"depends_on":["g"],"description":"f"},
+            {"id":"g","files":[],"depends_on":["f"],"description":"g"},
+            {"id":"h","files":["h.py"],"depends_on":["f"],"description":"h"},
+            {"id":"integrate-verify","files":[],"depends_on":["a","b","c","d","e","f","g","h"],"description":"v"}
+        ]}"#;
+        let mut v: serde_json::Value = serde_json::from_str(plan).unwrap();
+        let r = repair_plan_flags(&mut v, "");
+        assert_eq!(strings(&task(&v, "a")["files"]), ["x.py"]);
+        assert_eq!(strings(&task(&v, "b")["files"]), ["y.py"]);
+        assert_eq!(strings(&task(&v, "e")["depends_on"]), ["a", "b"]);
+        assert!(
+            strings(&task(&v, "h")["depends_on"]).is_empty(),
+            "a removed cycle resolves to nothing"
+        );
+        assert_eq!(
+            strings(&task(&v, "integrate-verify")["depends_on"]),
+            ["a", "b", "e", "h"]
+        );
+        assert_eq!(v["subtasks"].as_array().unwrap().len(), 5);
+        assert!(
+            r.actions.iter().any(|a| a.contains("first claimant")),
+            "{:?}",
+            r.actions
+        );
+        assert!(strings(&r.after["tasks_owning_nothing"]).is_empty());
+        goose_swarm::Dag::from_planner_json(&v.to_string()).expect("loads");
+    }
+
+    /// (c) when the package already has an `__init__.py`: the shadowed module is dropped rather than
+    /// duplicated, and a module whose owner is also the package's owner is renamed in place.
+    #[test]
+    fn plan_repair_module_merge_never_creates_a_second_owner() {
+        let plan = r#"{"subtasks":[
+            {"id":"boot","files":["app/ledgerd.py","app/notifierd.py","app/notifierd/x.py"],"depends_on":[],"description":"boot"},
+            {"id":"core","files":["app/ledgerd/__init__.py","app/ledgerd/core.py"],"depends_on":[],"description":"core"},
+            {"id":"integrate-verify","files":[],"depends_on":["boot","core"],"description":"v"}
+        ]}"#;
+        let mut v: serde_json::Value = serde_json::from_str(plan).unwrap();
+        let r = repair_plan_flags(&mut v, "");
+        assert_eq!(
+            strings(&task(&v, "boot")["files"]),
+            ["app/notifierd/x.py", "app/notifierd/__init__.py"]
+        );
+        assert_eq!(
+            strings(&task(&v, "core")["files"]),
+            ["app/ledgerd/__init__.py", "app/ledgerd/core.py"]
+        );
+        assert_eq!(r.after["distinct_files"], 4);
+        assert!(r.after["shared_files"].as_array().unwrap().is_empty());
+        assert!(strings(&r.after["module_package_collisions"]).is_empty());
+    }
+
+    #[test]
+    fn plan_repair_brief_mentions_path_truth_table() {
+        let yes = [
+            ("serve `GET /` from web/", "/"),
+            ("the page at http://127.0.0.1:8080/ loads", "/"),
+            ("the table says `/` is the frontend", "/"),
+            (
+                "fetch `/api/payments?limit=5`",
+                "/api/payments?limit=<int>&offset=<int>",
+            ),
+            (
+                "`/api/payments/{id}/note` with If-Match",
+                "/api/payments/<id>/note",
+            ),
+            ("POST /api/payments/:id/note", "/api/payments/<id>/note"),
+            ("GET /api/health returns", "/api/health"),
+            ("(see /api/health)", "/api/health"),
+        ];
+        for (brief, path) in yes {
+            assert!(
+                brief_mentions_path(brief, path),
+                "{brief:?} should mention {path}"
+            );
+        }
+        let no = [
+            ("`.cur-total`/`.rev-total` elements", "/"),
+            ("`except:`/`except: pass`", "/"),
+            ("maker / checker", "/"),
+            ("GET /api/payments/<id>", "/api/payments"),
+            ("app/api/payments", "/api/payments"),
+            ("/api/payments/<id>", "/api/payments/<id>/note"),
+            ("/api/v12", "/api/v1"),
+            ("/api/healthz", "/api/health"),
+        ];
+        for (brief, path) in no {
+            assert!(
+                !brief_mentions_path(brief, path),
+                "{brief:?} must not mention {path}"
+            );
+        }
+    }
+
+    /// `spec_surface_rows` tags every row with its service and `spec_advertised_surface` is its
+    /// primary-only view — the notifierd rows the gate must not probe on ledgerd's port are still
+    /// enumerated, under their own name, for the repair to address to notifierd's entry owner.
+    #[test]
+    fn spec_surface_rows_tags_every_service_and_the_primary_view_is_unchanged() {
+        let spec = include_str!("../../../../evals/swarm-bench/spec-build-sb7.md");
+        let SpecSurface { primary, rows } = spec_surface_rows(spec);
+        assert_eq!(primary.as_deref(), Some("ledgerd"));
+        let notifierd: Vec<&str> = rows
+            .iter()
+            .filter(|(s, _)| s.as_deref() == Some("notifierd"))
+            .map(|(_, r)| r.as_str())
+            .collect();
+        assert_eq!(notifierd.len(), 4, "{notifierd:?}");
+        assert!(notifierd[0].starts_with("POST /notify/events"));
+        let primary_rows: Vec<String> = rows
+            .iter()
+            .filter(|(s, _)| *s == primary)
+            .map(|(_, r)| r.clone())
+            .collect();
+        assert_eq!(primary_rows, spec_advertised_surface(spec));
+        assert!(
+            primary_rows
+                .iter()
+                .any(|r| r == "GET / -> EXPECT the frontend files, correct content types"),
+            "{primary_rows:?}"
+        );
+        assert!(
+            primary_rows
+                .iter()
+                .any(|r| r.starts_with("POST /api/drafts ")),
+            "§5's unnamed section belongs to the primary"
+        );
     }
 
     /// The exact rows run 4 turned into build tasks. A hex colour and a payment volume are FACTS about the
