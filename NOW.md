@@ -152,6 +152,11 @@ fresh, no event ≥10m, fleet idle, 0% CPU); a leaked server count > 0.
 and `items`-vs-`data`). **r1** (18:43–20:23) killed at REVIEW round 4 — see RUN-LEDGER, EXPERIMENTS-LEDGER
 and the campaign skill changelog for the full record.
 
+**QUEUED for r3 (desktop + engine, Mihai 22:29): tool calls must show in the inspector WHILE running,
+not after.** Engine writes `inflight[]` into the digest at request time; the WORK pane renders RUNNING
+rows and flips them. UI half waits for the phase-chip agent (same files). Token-level argument streaming
+is out of scope on this branch (no partial tool-call deltas in the provider layer).
+
 **QUEUED for r3 (desktop, Mihai 22:00): the app must not answer stray shortcuts** — Cmd+Shift+N opened a
 second window on the Benchmark view mid-run. Enumerate every combo (menu accelerators, globalShortcut,
 renderer keydown, Electron default roles), remove the spawn/reload/close ones, guard the rest while a
