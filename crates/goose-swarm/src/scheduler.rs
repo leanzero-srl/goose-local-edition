@@ -240,8 +240,18 @@ fn owned_files_fingerprint(owned_files: &[String]) -> u64 {
     h.finish()
 }
 
+/// WAS THIS FILE WRITTEN? Present on disk and non-empty.
+///
+/// One definition, because there were two: `owned_file_written` had it as a closure and `delivered_file`
+/// hand-rolled the identical expression, while the doc on `DeliveredFile::present` claimed they shared a
+/// predicate "so there is one definition of a written file rather than a second hand-rolled one". They
+/// did not, and a comment asserting a shared rule is exactly how two copies drift apart unnoticed.
+fn file_written(f: &str) -> bool {
+    std::fs::metadata(f).map(|m| m.len() > 0).unwrap_or(false)
+}
+
 fn owned_file_written(owned_files: &[String]) -> bool {
-    let nonempty = |f: &str| std::fs::metadata(f).map(|m| m.len() > 0).unwrap_or(false);
+    let nonempty = file_written;
     if salvage_require_critical() {
         let critical: Vec<&String> = owned_files
             .iter()
@@ -336,8 +346,9 @@ fn transient_retry_hint(msg: &str) -> Option<String> {
 /// below is testable with no scheduler, no DAG and no filesystem.
 struct DeliveredFile {
     path: String,
-    /// Present AND non-empty — the same "was this written" predicate `owned_file_written` uses, so
-    /// there is one definition of a written file rather than a second hand-rolled one.
+    /// Present AND non-empty, via `file_written` — genuinely the same predicate `owned_file_written`
+    /// uses now, rather than a second copy of the same expression as it was when this comment first
+    /// claimed it.
     present: bool,
     /// Still the engine's own signature stub, by `skeleton_only` — the SAME predicate the judge uses
     /// to refuse a false Accept (F884). A stub is what the dispatcher pre-creates, so "the file
@@ -384,9 +395,7 @@ fn delivered_dependency_defect(dep: &str, files: &[DeliveredFile]) -> Option<Str
 /// Read one deliverable's state. Paths resolve against the run cwd, exactly like
 /// `owned_file_written` and `owned_files_fingerprint` — that is where the workers write.
 fn delivered_file(path: &str) -> DeliveredFile {
-    let present = std::fs::metadata(path)
-        .map(|m| m.len() > 0)
-        .unwrap_or(false);
+    let present = file_written(path);
     let skeleton = present
         && std::fs::read_to_string(path)
             .map(|c| skeleton_only(&c))
@@ -1064,9 +1073,13 @@ impl State {
         self.devices.iter().map(|d| d.in_flight).sum()
     }
 
-    /// In-flight on BUILD devices only. The stuck-bail and the judge's nothing-running gate must
-    /// key on this: a supervision device grinding a review while the DAG is blocked would
-    /// otherwise mask the stall (the reader's constraint — a masked stall never bails).
+    /// In-flight on BUILD devices only. The STUCK-BAIL keys on this: a supervision device grinding a
+    /// review while the DAG is blocked would otherwise mask the stall, and a masked stall never bails.
+    ///
+    /// The judge's nothing-running gate is NO LONGER a caller — it was deleted, because requiring an
+    /// idle fleet to look at a call meant the judge could not supervise the tail, which is where a
+    /// stuck call actually happens. This doc kept naming it, which is how a reader concludes the gate
+    /// still exists and reasons about a control flow that is not there.
     fn build_in_flight(&self) -> u32 {
         self.devices
             .iter()
@@ -3115,14 +3128,22 @@ impl State {
             .values()
             .flat_map(|n| {
                 let done = n.state == TaskState::Done;
+                // A FAILED task is not "in progress". The census keyed on done/not-done, so every
+                // deliverable of a dead task was reported to the supervisor as being actively produced
+                // -- and the whole point of handing it this census is to let it see what a worker is
+                // building ON. Told a file is in progress, it waits for something that will never come.
+                let failed = n.state == TaskState::Failed;
                 n.spec.owned_files.iter().map(move |p| {
                     let f = delivered_file(p);
-                    let state = match (done, f.present, f.skeleton) {
-                        (_, true, true) => "stub",
-                        (true, true, false) => "delivered",
-                        (true, false, _) => "MISSING",
-                        (false, true, false) => "in progress",
-                        (false, false, _) => "not written yet",
+                    let state = match (done, failed, f.present, f.skeleton) {
+                        (_, _, true, true) => "stub",
+                        (true, _, true, false) => "delivered",
+                        (true, _, false, _) => "MISSING",
+                        // Failed and something is on disk: a partial nobody will finish.
+                        (false, true, true, false) => "ABANDONED, partial",
+                        (false, true, false, _) => "ABANDONED, never written",
+                        (false, false, true, false) => "in progress",
+                        (false, false, false, _) => "not written yet",
                     };
                     format!("{p} [{state}]")
                 })

@@ -10920,6 +10920,19 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
 
     #[test]
     fn target_lang_profile_python_is_unchanged_others_translate() {
+        // NOTE ON `entry_clause`: it is `#[cfg(test)]` and has NO production caller. It carried the
+        // "you MUST include a subtask that writes the RUNNABLE ENTRY POINT" mandate into the old
+        // planner's prompt, and that planner is gone. The mandate itself is NOT lost -- it moved to
+        // where a model judges it rather than where a string was pasted: the REVIEW `wiring` dimension
+        // ("a spec deliverable is BUILT but never imported/wired into the program's entry point, so the
+        // advertised behaviour is unreachable at runtime") and the PILLARS prompt, which asks for the
+        // entry point among the invariants that make modules agree.
+        //
+        // So these four assertions pin WORDING that no run emits. They are kept because the wording is
+        // the reference for what the mandate has to say in each language, and deleting them would leave
+        // nothing stating that; they are NOT evidence that any run tells a worker this. Read them as a
+        // fixture, not as coverage.
+        //
         // Python keeps the exact original scaffolding and an EMPTY directive (prompt byte-identical).
         assert!(TargetLang::Python.directive().is_empty());
         assert!(TargetLang::Python.entry_clause().contains("cli.py"));
@@ -21800,7 +21813,9 @@ fn owned_files_from_run_log(working_dir: &Path) -> Vec<String> {
 /// The hallucinated-completion guard, the watchdog salvage's acceptance test and the two missing-deliverable
 /// gates all exempt BOTH names; `verify_owned_files` exempted `__init__.py` alone, so an owned empty
 /// `py.typed` cleared every guard that decides whether a task delivered and was then reported by the
-/// verifier as "exists but is EMPTY" — a false positive on a finding class that is acted on automatically.
+/// verifier as "exists but is EMPTY" — a false positive on a finding class that is fed straight back to
+/// the worker as a DELIVERY DEFECT steer, so a wrong one costs a real turn arguing with the model about
+/// a file that was correct all along.
 /// The comment at the missing-deliverable gate records that flagging exactly this case already burned a
 /// whole fix round re-creating a file that was never wrong.
 ///
