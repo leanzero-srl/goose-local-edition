@@ -19,14 +19,14 @@ DAG is actually parallel). reasoning_chars against answer_chars is the waste.
 - **chain**: 0
 - **startable**: 0
 - **brief_median**: 0
-- **reasoning_chars**: 150476
-- **answer_chars**: 105983
+- **reasoning_chars**: 156549
+- **answer_chars**: 115182
 - **code_files**: 2
-- **code_bytes**: 8893
-- **elapsed_min**: 60
-- **phase_split**: open 22m · ask 2m · research 35m
+- **code_bytes**: 9621
+- **elapsed_min**: 69
+- **phase_split**: open 22m · ask 2m · research 45m
 - **before_build_min**: 0 (internal diagnosis only — never a cross-run number)
-- **vs_target**: ONLY THE SCORE COMPARES. Target 20.06% (qwen3.8-27b, one cloud agent, same model). Wall clock is NOT comparable — that run is on far faster hardware, so minutes measure the machine. Bytes are NOT a verdict — more code is not better code, and it had no planning phases to spend budget on. Cross-hardware-honest work numbers for THIS run: 8,893B delivered, 150,476 chars reasoned, 0 tasks completed, 0 retried.
+- **vs_target**: ONLY THE SCORE COMPARES. Target 20.06% (qwen3.8-27b, one cloud agent, same model). Wall clock is NOT comparable — that run is on far faster hardware, so minutes measure the machine. Bytes are NOT a verdict — more code is not better code, and it had no planning phases to spend budget on. Cross-hardware-honest work numbers for THIS run: 9,621B delivered, 156,549 chars reasoned, 0 tasks completed, 0 retried.
 - **python_parses**: 0 ok / 0 SYNTAX ERROR / 0 empty
 - **web_files**: test_camera.js, viz_camera.js
 - **tasks_done**: 0/? completed, 0 dispatched, 0 retried
@@ -35,10 +35,10 @@ DAG is actually parallel). reasoning_chars against answer_chars is the waste.
 - **plan_repaired**: none
 - **plan_loaded**: 0
 - **review_rounds**: none
-- **judge_looks**: 44
+- **judge_looks**: 50
 - **judge_nudges**: 5
 - **judge_ended**: 0
-- **drift_held**: 5
+- **drift_held**: 9
 - **tree_defects**: 0
 - **repair**: delivery_defect_steer=0 brief_defects=1 testgen=0 fix_target_selected=0 complete_verify=0 complete_result=0
 ## swarm-3node-r0-ENDED-29criticals-repair-never-ran-benchmark-forces-proxy-no
