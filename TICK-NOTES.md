@@ -22,3 +22,5 @@ Appended by `loop-state/note.sh`. The tick prints only the newest three; this is
 - `08-29 11:45` **engine** — the diff's '-fn strip_integrate_verify_test_deps' etc were a MOVE not a deletion — all four still exist, now cfg(test)-gated. A -fn line in a diff is not evidence of removal.
 - `08-29 11:59` **backend** — agenda reconciled: 106 -> 44 open. 33 DROPPED with evidence, 26 IMPLEMENTED matched by title, 2 verified by hand (thinking_bytes rendered; ENGINE_PHASE maps 11). The rest need per-item verification — title matching is not proof.
 - `08-29 12:03` **backend** — TRAP CONFIRMED REAL: 'which goose' is 1.38.0 from June with NO swarm subcommand; the documented 'goose swarm verify' was unrunnable. Use ./target/release/goose (1.41.0).
+- `08-29 12:55` **ui** — VERIFIED in the fresh app: aria-current works — 'no control marks the current view' is gone. It had reported for hours only because the running process was a 2h-old zombie the bundle check could not see.
+- `08-29 12:55` **ui** — NEW on current code: 1 of 72 controls has NO accessible name; 1 disabled control gives no reason; duplicate paint of 2 long strings
