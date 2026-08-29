@@ -18801,23 +18801,24 @@ async fn smoke_typescript(root: &Path) -> SmokeResult {
 
 /// Run ONE repro command in `cwd` with a hard timeout, capturing combined stdout+stderr and success. A
 /// timeout or spawn error yields `("", false)` — NOT a crash (empty output has no traceback), so a hang is
-/// never mistaken for a reproduced defect.
+/// never mistaken for a reproduced defect. The repro runs as its own process group and the whole group is
+/// killed with it, so a repro that spawns children cannot outlive us — the old `timeout(output())` dropped
+/// the `Child` on expiry, which kills ONE pid and leaked the rest. The timeout is on the repro command,
+/// which is not a model.
 async fn run_repro_once(argv: &[String], cwd: &Path) -> (String, bool) {
     let mut c = tokio::process::Command::new(&argv[0]);
-    c.args(&argv[1..])
-        .current_dir(cwd)
-        .stdin(std::process::Stdio::null())
-        .kill_on_drop(true);
-    // Own process group so a repro that spawns children can be reaped as a unit and cannot outlive us.
-    #[cfg(unix)]
-    c.process_group(0);
-    match tokio::time::timeout(std::time::Duration::from_secs(30), c.output()).await {
-        Ok(Ok(o)) => {
-            let mut s = String::from_utf8_lossy(&o.stdout).into_owned();
-            s.push_str(&String::from_utf8_lossy(&o.stderr));
-            (s, o.status.success())
-        }
-        _ => (String::new(), false),
+    c.args(&argv[1..]).current_dir(cwd);
+    let Ok(mut app) = spawn_grouped(&mut c) else {
+        return (String::new(), false);
+    };
+    let status = tokio::time::timeout(std::time::Duration::from_secs(30), app.child.wait())
+        .await
+        .ok()
+        .and_then(|s| s.ok());
+    let out = app.kill_tree().await;
+    match status {
+        Some(st) => (out, st.success()),
+        None => (String::new(), false),
     }
 }
 
@@ -18925,12 +18926,170 @@ async fn boot_probe(root: &Path, spec: &str) -> Option<Option<String>> {
     Some(boot_invocation(root, &pkg, &argv, &probe_ports, &scratch).await)
 }
 
+/// Spawn an app entry as the LEADER of its own process group, so everything it forks — r0's
+/// wrapper `Popen`'d ledgerd and notifierd with inherited stdio — can be killed as one unit.
+fn own_process_group(cmd: &mut tokio::process::Command) {
+    #[cfg(unix)]
+    cmd.process_group(0);
+    #[cfg(not(unix))]
+    let _ = cmd;
+}
+
+/// Whether anything in the group still exists (signal 0 is the existence check). No group id, or
+/// a platform without process groups, counts as gone: there is nothing left to wait for.
+fn process_group_alive(pgid: Option<i32>) -> bool {
+    #[cfg(unix)]
+    {
+        pgid.is_some_and(|g| unsafe { libc::kill(-g, 0) } == 0)
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = pgid;
+        false
+    }
+}
+
+/// SIGKILL the child's whole process group (pgid == pid under `own_process_group`), then reap the
+/// child. tokio's `Child::kill` signals ONE pid: the wrapper dies and the services it `Popen`'d
+/// with inherited stdio survive it, each holding our pipe write-ends open and its port bound —
+/// which is how one probe's leak poisoned the next probe's "port already bound" refusal.
+async fn kill_app_tree(child: &mut tokio::process::Child, pgid: Option<i32>) {
+    #[cfg(unix)]
+    if let Some(g) = pgid {
+        unsafe { libc::kill(-g, libc::SIGKILL) };
+    }
+    #[cfg(not(unix))]
+    let _ = pgid;
+    let _ = child.kill().await;
+    let _ = child.wait().await;
+}
+
+/// Read one of a child's pipes on its own task, keeping the last 8-16 KiB in `buf`. The buffer
+/// is shared rather than returned so a reader aborted mid-stream still yields what it captured.
+fn spawn_pipe_tail(
+    stream: Option<impl tokio::io::AsyncRead + Unpin + Send + 'static>,
+    buf: Arc<Mutex<Vec<u8>>>,
+) -> tokio::task::JoinHandle<()> {
+    tokio::spawn(async move {
+        use tokio::io::AsyncReadExt;
+        let Some(mut s) = stream else {
+            return;
+        };
+        let mut chunk = [0u8; 4096];
+        while let Ok(n) = s.read(&mut chunk).await {
+            if n == 0 {
+                break;
+            }
+            let mut b = buf.lock().unwrap_or_else(|e| e.into_inner());
+            b.extend_from_slice(&chunk[..n]);
+            if b.len() > 16384 {
+                let cut = b.len() - 8192;
+                b.drain(..cut);
+            }
+        }
+    })
+}
+
+fn captured(buf: &Mutex<Vec<u8>>) -> String {
+    String::from_utf8_lossy(&buf.lock().unwrap_or_else(|e| e.into_inner())).into_owned()
+}
+
+/// Kill the child's group, reap it, then release its pipe readers on the GROUP's liveness.
+///
+/// DRAIN AFTER THE KILL — this is not a model cap: the process is already dead. Its whole group
+/// is SIGKILLed and the child reaped before the loop starts; all that is bounded is how long we
+/// keep reading pipes nothing of ours can still write to. Pipe EOF arrives only when the LAST
+/// write-end closes, and every write-end we can reach closes with the group — so the wait is on
+/// group liveness, never on EOF: a member that left the group (`setsid`, a double-forked daemon)
+/// can hold the write-end forever and no signal we send will close it. An EOF-only wait is
+/// exactly what parked r0's run for good after its verdict was in. The 50ms cadence is the one
+/// the bind poll already uses; no new time constant.
+async fn kill_app_tree_and_drain(
+    child: &mut tokio::process::Child,
+    pgid: Option<i32>,
+    readers: [tokio::task::JoinHandle<()>; 2],
+) {
+    kill_app_tree(child, pgid).await;
+    let mut ticks_after_group_gone = 0u8;
+    while !readers.iter().all(|r| r.is_finished()) {
+        if !process_group_alive(pgid) {
+            // One more tick lets the readers take what the kernel already buffered (a pipe holds
+            // at most 64 KiB; one wake drains it). After that, whoever still holds the write-end
+            // is not ours to wait for.
+            ticks_after_group_gone += 1;
+            if ticks_after_group_gone > 1 {
+                for r in &readers {
+                    r.abort();
+                }
+                break;
+            }
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+    for r in readers {
+        let _ = r.await;
+    }
+}
+
+/// A child running as its own group leader with both pipes tailed into shared buffers.
+struct GroupedChild {
+    child: tokio::process::Child,
+    pgid: Option<i32>,
+    out: Arc<Mutex<Vec<u8>>>,
+    err: Arc<Mutex<Vec<u8>>>,
+    readers: [tokio::task::JoinHandle<()>; 2],
+}
+
+impl GroupedChild {
+    /// Kill the group, reap the child, release the readers on group liveness, and hand back the
+    /// combined stdout+stderr tail — whatever was captured, even if a reader had to be released.
+    async fn kill_tree(self) -> String {
+        let GroupedChild {
+            mut child,
+            pgid,
+            out,
+            err,
+            readers,
+        } = self;
+        kill_app_tree_and_drain(&mut child, pgid, readers).await;
+        format!("{}{}", captured(&out), captured(&err))
+    }
+}
+
+/// Spawn `cmd` with null stdin and piped, tailed stdout/stderr as the leader of its own process
+/// group. The one way to start anything that may fork: `Command::output()` reads to EOF, and
+/// EOF never comes while a grandchild holds the inherited write-end.
+fn spawn_grouped(cmd: &mut tokio::process::Command) -> std::io::Result<GroupedChild> {
+    cmd.stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .kill_on_drop(true);
+    own_process_group(cmd);
+    let mut child = cmd.spawn()?;
+    let pgid = child.id().map(|p| p as i32);
+    let out = Arc::new(Mutex::new(Vec::new()));
+    let err = Arc::new(Mutex::new(Vec::new()));
+    let readers = [
+        spawn_pipe_tail(child.stdout.take(), Arc::clone(&out)),
+        spawn_pipe_tail(child.stderr.take(), Arc::clone(&err)),
+    ];
+    Ok(GroupedChild {
+        child,
+        pgid,
+        out,
+        err,
+        readers,
+    })
+}
+
 /// Spawn ONE `python3 -m pkg argv` and decide bind-or-die: `None` = some probe port bound
 /// (alive), `Some(tail)` = it never bound, with the normalized output tail as evidence. The
 /// shared core of the boot floor AND the gate's every-advertised-invocation check (F910
 /// defect 2). Pipes are drained during the poll (an undrained pipe wedges a chatty child at
-/// ~64KB and misreads as dead); per-probe randomness (ports, scratch paths) is normalized
-/// OUT of the tail so the repair loop's identical-traceback stop can actually stop.
+/// ~64KB and misreads as dead) and released on the PROCESS GROUP's liveness after the kill,
+/// never on pipe EOF — `kill_app_tree_and_drain` carries the r0 hang that rule comes from.
+/// Per-probe randomness (ports, scratch paths) is normalized OUT of the tail so the repair
+/// loop's identical-traceback stop can actually stop.
 async fn boot_invocation(
     root: &Path,
     pkg: &str,
@@ -18942,38 +19101,11 @@ async fn boot_invocation(
     cmd.args(["-m", pkg])
         .args(argv)
         .current_dir(root)
-        .env("PYTHONPATH", "src")
-        .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .kill_on_drop(true);
-    let mut child = match cmd.spawn() {
-        Ok(c) => c,
+        .env("PYTHONPATH", "src");
+    let app = match spawn_grouped(&mut cmd) {
+        Ok(a) => a,
         Err(e) => return Some(format!("spawn failed: {e}")),
     };
-    async fn pipe_tail(
-        stream: Option<impl tokio::io::AsyncRead + Unpin + Send + 'static>,
-    ) -> String {
-        use tokio::io::AsyncReadExt;
-        let Some(mut s) = stream else {
-            return String::new();
-        };
-        let mut buf: Vec<u8> = Vec::new();
-        let mut chunk = [0u8; 4096];
-        while let Ok(n) = s.read(&mut chunk).await {
-            if n == 0 {
-                break;
-            }
-            buf.extend_from_slice(&chunk[..n]);
-            if buf.len() > 16384 {
-                let cut = buf.len() - 8192;
-                buf.drain(..cut);
-            }
-        }
-        String::from_utf8_lossy(&buf).into_owned()
-    }
-    let stdout_task = tokio::spawn(pipe_tail(child.stdout.take()));
-    let stderr_task = tokio::spawn(pipe_tail(child.stderr.take()));
     let mut up = false;
     'poll: for _ in 0..80 {
         for p in probe_ports {
@@ -18987,13 +19119,7 @@ async fn boot_invocation(
         }
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
     }
-    let _ = child.kill().await;
-    let _ = child.wait().await;
-    let combined = format!(
-        "{}{}",
-        stdout_task.await.unwrap_or_default(),
-        stderr_task.await.unwrap_or_default()
-    );
+    let combined = app.kill_tree().await;
     if up {
         return None;
     }
@@ -19013,6 +19139,138 @@ async fn boot_invocation(
         Some("no output captured".to_string())
     } else {
         Some(tail)
+    }
+}
+
+#[cfg(test)]
+mod boot_invocation_tests {
+    use super::*;
+
+    /// A fake app with EXACTLY r0's wrapper shape: it `Popen`s a grandchild with no `stdout=`/
+    /// `stderr=` kwargs, so the grandchild inherits the pipe write-ends `boot_invocation` is
+    /// reading, prints the grandchild's pid so the test can check it died, and never binds a port.
+    /// `popen_kwargs` lets one test move the grandchild out of the process group. The sleeps are
+    /// a test-fixture bound on a fake app, not model work.
+    fn fake_app(name: &str, popen_kwargs: &str) -> PathBuf {
+        let root =
+            std::env::temp_dir().join(format!("goose_bootinv_{}_{name}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("fakeapp")).unwrap();
+        std::fs::write(root.join("fakeapp/__init__.py"), "").unwrap();
+        std::fs::write(
+            root.join("fakeapp/__main__.py"),
+            format!(
+                "import subprocess, sys, time\n\
+                 p = subprocess.Popen([sys.executable, \"-c\", \"import time; time.sleep(60)\"]{popen_kwargs})\n\
+                 print(f\"grandchild={{p.pid}}\", flush=True)\n\
+                 time.sleep(60)\n"
+            ),
+        )
+        .unwrap();
+        root
+    }
+
+    fn have_python3() -> bool {
+        std::process::Command::new("python3")
+            .arg("--version")
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false)
+    }
+
+    /// A port nobody will bind during the test: taken from the kernel and released at once.
+    fn never_bound_port() -> u16 {
+        std::net::TcpListener::bind("127.0.0.1:0")
+            .unwrap()
+            .local_addr()
+            .unwrap()
+            .port()
+    }
+
+    fn pid_alive(pid: i32) -> bool {
+        std::process::Command::new("kill")
+            .args(["-0", &pid.to_string()])
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false)
+    }
+
+    fn grandchild_pid(tail: &str) -> i32 {
+        tail.split("grandchild=")
+            .nth(1)
+            .and_then(|s| s.split_whitespace().next())
+            .and_then(|s| s.parse().ok())
+            .unwrap_or_else(|| panic!("no grandchild pid in the captured tail: {tail:?}"))
+    }
+
+    /// The probe against the fake app, under a TEST-HARNESS bound: the fake app never binds, so
+    /// the 80x50ms bind poll ends in ~4s and anything past 30s is the hang itself. Not a model cap.
+    async fn probe(root: &Path, port: u16) -> Result<Option<String>, tokio::time::error::Elapsed> {
+        let scratch = root.join("scratch");
+        tokio::time::timeout(
+            std::time::Duration::from_secs(30),
+            boot_invocation(root, "fakeapp", &[], &[port], &scratch),
+        )
+        .await
+    }
+
+    /// THE r0 EXIT HANG. The wrapper was SIGKILLed after the bind poll, but the services it
+    /// `Popen`'d with inherited stdio outlived tokio's one-pid kill and held the pipe write-ends
+    /// open, so the readers never saw EOF and `stdout_task.await` parked the whole run — the
+    /// heartbeat ticked, CPU sat at 0%, and no result was ever emitted. The probe must return once
+    /// its child is dead, and the grandchild must die with it.
+    #[tokio::test]
+    async fn boot_invocation_returns_when_a_grandchild_holds_the_pipe() {
+        if !have_python3() {
+            return;
+        }
+        let root = fake_app("inherits", "");
+        let res = probe(&root, never_bound_port()).await;
+        let tail = res
+            .expect("boot_invocation must return once the child is killed even though a grandchild inherited the pipe")
+            .expect("the fake app never binds, so this must be Some(tail)");
+        assert!(
+            tail.contains("grandchild="),
+            "the wrapper's own output must survive the group kill: {tail}"
+        );
+        let pid = grandchild_pid(&tail);
+        // `kill -0` still succeeds on a zombie until launchd reaps it, so give it a moment.
+        for _ in 0..40 {
+            if !pid_alive(pid) {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
+        let leaked = pid_alive(pid);
+        let _ = std::process::Command::new("kill")
+            .args(["-9", &pid.to_string()])
+            .status();
+        let _ = std::fs::remove_dir_all(&root);
+        assert!(
+            !leaked,
+            "grandchild {pid} outlived the probe — the process group was not killed"
+        );
+    }
+
+    /// The other half of the guarantee, independent of the group kill: a grandchild that left the
+    /// group (`setsid`, a double-forked daemon) cannot be reached by any signal we send and holds
+    /// the write-end for as long as it likes. The probe must STILL return, because the wait is on
+    /// the group's liveness and never on pipe EOF.
+    #[tokio::test]
+    async fn boot_invocation_returns_when_the_grandchild_escaped_the_group() {
+        if !have_python3() {
+            return;
+        }
+        let root = fake_app("escapes", ", start_new_session=True");
+        let res = probe(&root, never_bound_port()).await;
+        let tail = res
+            .expect("boot_invocation must return once its process group is gone even though an escaped grandchild still holds the pipe")
+            .expect("the fake app never binds, so this must be Some(tail)");
+        let pid = grandchild_pid(&tail);
+        let _ = std::process::Command::new("kill")
+            .args(["-9", &pid.to_string()])
+            .status();
+        let _ = std::fs::remove_dir_all(&root);
     }
 }
 
@@ -19910,6 +20168,7 @@ async fn run_spec_contract(root: &Path, spec: &str, lang: TargetLang) -> SpecCon
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
         .kill_on_drop(true);
+    own_process_group(&mut server);
     let Ok(mut child) = server.spawn() else {
         inconclusive.push(format!("spec-contract: could not spawn `python3 -m {pkg}`"));
         return SpecContractResult {
@@ -19920,6 +20179,7 @@ async fn run_spec_contract(root: &Path, spec: &str, lang: TargetLang) -> SpecCon
             render_gate: "not-reached (gate exits before the entry spawn)".to_string(),
         };
     };
+    let pgid = child.id().map(|p| p as i32);
     let mut up = false;
     for _ in 0..80 {
         if tokio::net::TcpStream::connect(("127.0.0.1", port))
@@ -19949,7 +20209,7 @@ async fn run_spec_contract(root: &Path, spec: &str, lang: TargetLang) -> SpecCon
     // licenses a conclusion about OUR app, prove OUR app is what opened it. The cheap proof is that
     // the port was CLOSED before the spawn — checked here rather than inferred.
     if up && !port_was_free_before_spawn {
-        let _ = child.kill().await;
+        kill_app_tree(&mut child, pgid).await;
         inconclusive.push(format!(
             "spec-contract: port {port} was ALREADY BOUND before `python3 -m {pkg}` started, so the server answering there is NOT this app — probing it would blame the app for another process's responses. Most likely the spec's first port literal belongs to an external dependency (a documented vendor/API base URL) rather than to the app."
         ));
@@ -19962,7 +20222,7 @@ async fn run_spec_contract(root: &Path, spec: &str, lang: TargetLang) -> SpecCon
         };
     }
     if !up {
-        let _ = child.kill().await;
+        kill_app_tree(&mut child, pgid).await;
         // WHEN WE USED THE SPEC'S OWN INVOCATION, "IT NEVER BOUND" IS A FINDING, NOT AMBIGUITY.
         //
         // This was unconditionally `inconclusive`, and that was RIGHT before the advertised-argv path
@@ -20719,7 +20979,10 @@ async fn run_spec_contract(root: &Path, spec: &str, lang: TargetLang) -> SpecCon
             }
         }
     }
-    let _ = child.kill().await;
+    // The WHOLE tree dies here, not just the wrapper. Until it did, the services the wrapper
+    // forked kept the same ports bound, the respawn below could never bind, and the durability
+    // probe was answered by the orphan of the first spawn — the check passed trivially.
+    kill_app_tree(&mut child, pgid).await;
     // RESTART DURABILITY (contract-gap work order rank 7): when the documented argv carries a
     // db path and the app held rows, respawn the SAME argv on the SAME db and recount. Rows
     // lost across kill+restart, or an app that never comes back against its own database, is
@@ -20744,11 +21007,13 @@ async fn run_spec_contract(root: &Path, spec: &str, lang: TargetLang) -> SpecCon
                 .stdout(std::process::Stdio::null())
                 .stderr(std::process::Stdio::null())
                 .kill_on_drop(true);
+            own_process_group(&mut reboot);
             match reboot.spawn() {
                 Err(_) => inconclusive.push(
                     "restart-durability: respawn failed to start — nothing proven".to_string(),
                 ),
                 Ok(mut child2) => {
+                    let pgid2 = child2.id().map(|p| p as i32);
                     let mut up2 = false;
                     for _ in 0..80 {
                         if tokio::net::TcpStream::connect(("127.0.0.1", port))
@@ -20809,7 +21074,7 @@ async fn run_spec_contract(root: &Path, spec: &str, lang: TargetLang) -> SpecCon
                             ),
                         }
                     }
-                    let _ = child2.kill().await;
+                    kill_app_tree(&mut child2, pgid2).await;
                 }
             }
         }
@@ -33416,26 +33681,34 @@ async fn land_generated_tests(
         std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
     }
     std::fs::write(&abs, body).map_err(|e| e.to_string())?;
-    let collect = tokio::process::Command::new("python3")
+    // Collection IMPORTS the module. A generated test that starts the app at import time leaves a
+    // grandchild holding the inherited pipe, and a plain `output()` would then wait for an EOF that
+    // never comes; so the collector runs as a group and the tree is killed once pytest itself exits.
+    // No bound on pytest: it is waited for however long it takes.
+    let mut collect = tokio::process::Command::new("python3");
+    collect
         .args(["-m", "pytest", "--collect-only", "-q", &rel])
-        .current_dir(root)
-        .output()
-        .await;
-    let ok = collect.as_ref().is_ok_and(|o| o.status.success());
-    if ok {
+        .current_dir(root);
+    let collected = match spawn_grouped(&mut collect) {
+        Err(e) => Err(e.to_string()),
+        Ok(mut app) => {
+            let status = app.child.wait().await;
+            let out = app.kill_tree().await;
+            status
+                .map(|st| (st.success(), out))
+                .map_err(|e| e.to_string())
+        }
+    };
+    if matches!(collected, Ok((true, _))) {
         Ok(rel)
     } else {
-        let why = match &collect {
-            Ok(o) => {
-                let out = String::from_utf8_lossy(&o.stdout);
-                let err = String::from_utf8_lossy(&o.stderr);
-                out.lines()
-                    .chain(err.lines())
-                    .rfind(|l| !l.trim().is_empty())
-                    .unwrap_or("collection failed")
-                    .to_string()
-            }
-            Err(e) => e.to_string(),
+        let why = match &collected {
+            Ok((_, out)) => out
+                .lines()
+                .rfind(|l| !l.trim().is_empty())
+                .unwrap_or("collection failed")
+                .to_string(),
+            Err(e) => e.clone(),
         };
         let _ = std::fs::remove_file(&abs);
         Err(why)
