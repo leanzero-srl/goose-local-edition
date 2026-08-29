@@ -19,8 +19,21 @@ const SRC = readFileSync(
 );
 
 describe('node inspector layout', () => {
-  it('gives Output a column only when Output has something in it', () => {
-    expect(SRC).toMatch(/outText \? 'grid-cols-1 lg:grid-cols-2' : 'grid-cols-1'/);
+  // The predicate moved from `outText` to `hasWork` in the same commit that removed `recent` from
+  // `inspectorOutputText`. A tool lane's narration is ~1 character, so an `outText`-shaped predicate now
+  // collapses the column on precisely the lane that has 60 tool calls to show.
+  it('gives the work column its space whenever there is EITHER a call or narration', () => {
+    expect(SRC).toMatch(/hasWork \? 'grid-cols-1 lg:grid-cols-2' : 'grid-cols-1'/);
+    expect(SRC).toMatch(/const hasWork = calls\.length > 0 \|\| narration\.length > 0;/);
+  });
+
+  // A component declared in a render body is a new type every render, so React remounts the whole subtree
+  // at the 500ms poll — which reset `follow` and re-fired the jump-to-bottom twice a second. The panes must
+  // be declared at module scope.
+  it('declares the panes at module scope, not inside the inspector body', () => {
+    expect(SRC).toMatch(/^const InspectorPane: React\.FC</m);
+    expect(SRC).toMatch(/^const WorkPane: React\.FC</m);
+    expect(SRC).not.toMatch(/^ {2}const Pane: React\.FC</m);
   });
 
   it('never hard-codes the two-column grid on the pane container', () => {
