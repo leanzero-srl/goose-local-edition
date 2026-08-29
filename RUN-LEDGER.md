@@ -106,3 +106,38 @@ DAG is actually parallel). reasoning_chars against answer_chars is the waste.
 - **drift_held**: 11
 - **tree_defects**: 0
 - **repair**: delivery_defect_steer=0 brief_defects=1 testgen=0 fix_target_selected=0 complete_verify=0 complete_result=0
+
+## swarm-3node-r2-KILLED-by-operator-killpg-reap-INTEGRATE-139m
+
+- **phases**: open → ask → research → synthesis → review → contracts → build → integrate
+- **started**: 17:43:01
+- **tasks**: 11
+- **files_planned**: 23
+- **collisions**: none
+- **sink_owns**: []
+- **chain**: 2
+- **startable**: 10
+- **brief_median**: 4740
+- **reasoning_chars**: 281376
+- **answer_chars**: 152004
+- **code_files**: 41
+- **code_bytes**: 873076
+- **elapsed_min**: 289
+- **phase_split**: open 22m · ask 2m · research 48m · synthesis 5m · review 6m · contracts 6m · build 67m · integrate 129m
+- **before_build_min**: 92 (internal diagnosis only — never a cross-run number)
+- **vs_target**: ONLY THE SCORE COMPARES. Target 20.06% (qwen3.8-27b, one cloud agent, same model). Wall clock is NOT comparable — that run is on far faster hardware, so minutes measure the machine. Bytes are NOT a verdict — more code is not better code, and it had no planning phases to spend budget on. Cross-hardware-honest work numbers for THIS run: 873,076B delivered, 281,376 chars reasoned, 12 tasks completed, 2 retried.
+- **python_parses**: 29 ok / 0 SYNTAX ERROR / 0 empty
+- **web_files**: app.js, index.html, styles.css, test_camera.js, viz.js, viz_camera.js
+- **tasks_done**: 12/11 completed, 15 dispatched, 2 retried
+- **arm**: F (fleet of 3)
+- **fixture_seed**: unknown (no trace file)
+- **plan_patched**: 1
+- **plan_repaired**: none
+- **plan_loaded**: 1
+- **review_rounds**: r1:new=9
+- **judge_looks**: 110
+- **judge_nudges**: 7
+- **judge_ended**: 0
+- **drift_held**: 14
+- **tree_defects**: 0
+- **repair**: delivery_defect_steer=3 brief_defects=2 testgen=3 fix_target_selected=0 complete_verify=0 complete_result=0
