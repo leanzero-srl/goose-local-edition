@@ -397,6 +397,28 @@ it. A problem that turns out to be already owned is left out, but then it was no
 **THIS RUN KEEPS THE DEFECT** — the binary is the old one. Expect 4 features missing from its app, and read
 the score with that in mind rather than as a verdict on the decomposition.
 
+## [VERIFIED IN THE RUNNING APP] THE THINKING TRANSCRIPT IS LIVE — 2026-08-29 06:44 EEST
+
+Measured through the app's own IPC over CDP, the same way the defect was found:
+
+    BEFORE the bundle rebuild   full_thinking_bytes: 0 on every lane
+                                (while open-coverage-1.think.log was 55,573 bytes on disk)
+    AFTER                       open-coverage-1  think 18,363   full_thinking_bytes 18,495
+                                open-coverage-2  think  6,012   full_thinking_bytes  6,032
+
+**Mihai's complaint is fixed in the RUNNING APP, not just in git.** *"not really just scroll but rather
+rolls! so the content does not exist, it just clear and adds new content as it streams."* The engine keeps a
+2,400-char rolling window in the digest; the panel now reads `<task>.think.log`, which has no clip, so the
+inspector accumulates instead of clearing and refilling.
+
+`full_transcript_bytes: 0` on `open-coverage-2` is CORRECT, not a second defect: a pure-reasoning lane has
+emitted no assistant TEXT yet, so `<task>.log` is legitimately empty while `<task>.think.log` fills. The two
+channels are separate and both now behave.
+
+**THE LOOP THIS CLOSES:** the fix was committed hours earlier and was dead in the app the whole time, because
+`bin/goose` and `app.asar` are two artefacts with two build steps. It took asking the running app for the
+data the panel consumes — not a screenshot, not a test — to see it.
+
 ## RUN 4'S PREDICTION, WRITTEN BEFORE THE EVIDENCE — 2026-08-29 06:35 EEST
 
 `slices_opened`: **11**, weights [2,5,4,4,3,3,4,1,1,3,3], 524s.
