@@ -27646,6 +27646,9 @@ async fn review_until_settled(
     // EVERY PLAN STATE THIS REVIEW HAS ALREADY PRODUCED. A repeat is a CYCLE, and a cycle is a proof
     // that no further round can do anything the previous ones did not.
     let mut plan_states: std::collections::HashSet<u64> = std::collections::HashSet::new();
+    // The previous round's rejection diagnostic, so an identical failure on an unchanged plan can end the
+    // loop. See the rejection branch below.
+    let mut last_reject_diag: Option<String> = None;
     let plan_hash = |p: &str| -> u64 {
         use std::hash::{Hash, Hasher};
         let mut h = std::collections::hash_map::DefaultHasher::new();
@@ -27817,6 +27820,36 @@ async fn review_until_settled(
                         "round": round,
                         "diagnostic": diag,
                     }));
+                    // THE SAME PATCH FAILING THE SAME WAY IS A CYCLE, AND THIS PATH HAD NO TERMINATOR.
+                    //
+                    // The plan-state cycle check lives in the `Ok` branch above, so it only runs when a
+                    // patch APPLIES. A plan that never changes BECAUSE every patch is rejected is exactly
+                    // the case that needs it, and it was the one case that skipped it.
+                    //
+                    // MEASURED, run swarm-3node-r0: rounds 1 and 2 were both rejected with `task
+                    // `integrate-verify` depends on unknown task `viz-rendering-core``, verbatim. The plan
+                    // was untouched, the reviewer re-reported the same collisions prefixed `STILL:`, the
+                    // text de-dup counted them as new because the prefix moved, and round 3 began. The
+                    // loop had nothing that could stop it.
+                    //
+                    // An identical diagnostic on an unchanged plan means the reviewer will keep proposing
+                    // the patch it just proposed and validation will keep refusing it for the reason it
+                    // just gave. Semantic, no counter: the SAME failure, not the Nth.
+                    if last_reject_diag.as_deref() == Some(diag.as_str()) {
+                        eprintln!(
+                            "  {} review is STUCK — round {round} was rejected for exactly the reason                              round {} was, and the plan never changed. No later round can differ.",
+                            style("!").yellow().bold(),
+                            round - 1
+                        );
+                        sink.write_value(serde_json::json!({
+                            "event": "review_patch_stuck",
+                            "round": round,
+                            "diagnostic": diag,
+                            "detail": "the same patch failed validation the same way on consecutive                                        rounds with an unchanged plan",
+                        }));
+                        return plan_json;
+                    }
+                    last_reject_diag = Some(diag);
                 }
             }
         }
