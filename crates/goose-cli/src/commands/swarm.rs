@@ -3434,6 +3434,37 @@ fn calls_since_nudge(at_last_nudge: Option<usize>, now: usize) -> usize {
     at_last_nudge.map_or(now, |n| now.saturating_sub(n))
 }
 
+/// HOW a nudge is delivered: `(steer, reason)`. Escalation on measured non-obedience, never a counter.
+///
+/// A steer wakes the in-flight stream at its next chunk and KEEPS the partial (agent.rs:2140), so it
+/// costs nothing and is always the first move. MEASURED on r1 (`review-build-app-meridian`: six steers,
+/// zero actions after any of them, 42k -> 53k reasoning chars) and r2 (the OPEN call: three steers, zero
+/// actions, 38k -> 47k): a looping reasoning-only call reads the note and re-enters its loop, because the
+/// kept partial IS the anchor it loops on. The re-stream is the one delivery that removes the anchor, so
+/// it is taken the moment the call has proven a steer changes nothing — a prior nudge with no tool call
+/// since — or the judge has said outright that a fresh attempt would beat continuing.
+///
+/// `prior_nudge_calls` is the tool-call count at the previous nudge (`None` before the first), so
+/// "obeyed" is measured on the call's own record, not inferred from what the judge hoped.
+fn nudge_delivery(
+    pending_empty: bool,
+    prior_nudge_calls: Option<usize>,
+    calls_now: usize,
+    verdict: &goose_swarm::Verdict,
+) -> (bool, &'static str) {
+    if !pending_empty {
+        return (false, "tool request in flight");
+    }
+    if *verdict == goose_swarm::Verdict::Restart {
+        return (false, "judge said restart");
+    }
+    match prior_nudge_calls {
+        None => (true, "first nudge"),
+        Some(n) if calls_now > n => (true, "acted since the previous nudge"),
+        Some(_) => (false, "steer ignored: no action since the previous nudge"),
+    }
+}
+
 /// Cap the looks per call so a very long healthy call cannot spend unbounded judge time.
 // REMOVED: OMNI_JUDGE_MAX_LOOKS (was 6). A cap on how many times the judge may look is a cap on how
 // long a call is supervised, and the judge is now the only thing watching.
@@ -15304,7 +15335,9 @@ impl GooseAgentDispatcher {
         agent.apply_recipe_components(response, true).await;
         agent.override_system_prompt(system_prompt).await;
 
-        let user_message = Message::user().with_text(user_text);
+        // `user_text` outlives this message: a judge re-stream re-sends the original task as the head of
+        // its seed, in a wiped conversation.
+        let user_message = Message::user().with_text(user_text.clone());
         let session_config = SessionConfig {
             id: session_id.clone(),
             schedule_id: None,
@@ -15570,10 +15603,9 @@ impl GooseAgentDispatcher {
         // The judge's last NEXT, fed back to it verbatim so it can tell "it ignored me" from "it tried".
         let mut last_direction = String::new();
         // Tool-call count at the moment of the last nudge. Two jobs: it tells the judge whether the call
-        // acted on the previous direction, and it decides HOW the next nudge is delivered — a call that has
-        // taken an action since will hit a turn boundary, so a steer lands there losing nothing; a call
-        // that has not is inside one provider round-trip, where a steer is provably inert (the drain at
-        // agent.rs:1954 is gated on a flag set only at :2603, after the stream closes).
+        // acted on the previous direction, and it decides HOW the next nudge is delivered — a call that
+        // has taken an action since obeyed its steer and gets another; a call that has not has proven a
+        // steer changes nothing, and the next delivery is the re-stream (`nudge_delivery`).
         let mut tool_calls_at_last_nudge: Option<usize> = None;
         let mut repeat_hash: Option<u64> = None;
         let mut repeat_run: usize = 0usize;
@@ -16745,7 +16777,31 @@ impl GooseAgentDispatcher {
                         //
                         // `pending.is_empty()` remains: a tool request in flight must never be orphaned,
                         // and a tool call IS a boundary, so waiting there costs nothing.
-                        let can_steer = pending.is_empty();
+                        //
+                        // THE STEER LANDS, AND A LOOPING CALL IGNORES IT ANYWAY.
+                        //
+                        // Delivery is proven: `Agent::steer` wakes the in-flight select (agent.rs:2140),
+                        // the stream breaks at its next chunk, the outer loop drains the note as the next
+                        // user message, and the partial is kept. MEASURED on r1
+                        // (`review-build-app-meridian`, recur 0.41-0.53, LOOPING x6 / RESTART x2 over
+                        // looks 13-22): six `judge_nudge` events, every one `delivery: steer`, zero tool
+                        // calls after any of them, 42k -> 53k reasoning chars. r2 (the OPEN call, looks
+                        // 12-15, recur 0.42-0.48): three steers, no action, 38k -> 47k. The model reads
+                        // the SUPERVISOR NOTE and re-enters its loop, because the kept partial — the very
+                        // thing a steer preserves — is the anchor it loops on. Keeping it is right for a
+                        // call that is working and wrong for one that has demonstrated it is not.
+                        //
+                        // So delivery escalates on EVIDENCE, with no counter: the first nudge on a call is
+                        // a steer; a later nudge with no tool call since the previous one, or a RESTART
+                        // verdict, takes the re-stream — which drops the socket, wipes the anchor and
+                        // seeds a fresh attempt with what the judge established (the restream arm below).
+                        // A call that obeyed a steer, i.e. acted since it, keeps getting steers.
+                        let (can_steer, delivery_reason) = nudge_delivery(
+                            pending.is_empty(),
+                            tool_calls_at_last_nudge,
+                            call_records.len(),
+                            &omni_outcome.verdict,
+                        );
                         let nudge_text = format!(
                             "SUPERVISOR NOTE — an independent reviewer read this call's own reasoning.\n\
                              {}Do this next: {direction}\n\
@@ -16773,6 +16829,7 @@ impl GooseAgentDispatcher {
                             "established": established,
                             "next": direction,
                             "delivery": if can_steer { "steer" } else { "restream" },
+                            "reason": delivery_reason,
                             "arm": arm,
                             "verdict": omni_outcome.verdict.as_str(),
                         }));
@@ -16924,14 +16981,78 @@ impl GooseAgentDispatcher {
                             omni_looping_streak = 0;
                             omni_prior_looping_tails.clear();
                         } else {
+                            // THE RE-STREAM IS A FRESH ATTEMPT, NOT THE SAME CONVERSATION CONTINUED.
+                            //
+                            // `Agent::reply` appends the new user message and then sends the session's
+                            // WHOLE persisted conversation to the provider (agent.rs:1798-1806) — which,
+                            // after a steer, includes the kept partial that anchors the loop. Re-driving
+                            // into the same history brought the anchor straight back. The history is
+                            // wiped rather than the session replaced: provider name and model config
+                            // (agent.rs:3080-3084), enabled-extension state (persisted at agent.rs:1304,
+                            // read back at :3186) and the working dir all hang off THIS session id, and
+                            // a fresh id would need each re-created — miss one and the attempt silently
+                            // runs on the global default model or without its tools. Ids are
+                            // storage-assigned (session_manager.rs:1340), so a derived name is not on
+                            // offer either.
+                            //
+                            // The seed is the original task, then what the judge established, then the
+                            // direction, with the abandonment stated plainly so the model does not go
+                            // looking for reasoning it can no longer see.
+                            let abandoned_thinking_chars = thinking_chars;
+                            let abandoned_tool_calls =
+                                call_records.len().saturating_sub(calls_at_stream_start);
+                            let restream_text = format!(
+                                "{user_text}\n\n\
+                                 SUPERVISOR NOTE — {}\
+                                 Your previous attempt at this task was abandoned: an independent reviewer \
+                                 read its reasoning and found it looping, restating the same ground without \
+                                 acting. None of that reasoning is in front of you now, on purpose. Do not \
+                                 re-derive what is established above and do not explain a plan.\n\
+                                 Do this next: {direction}\n\
+                                 {}",
+                                if established.is_empty() {
+                                    String::new()
+                                } else {
+                                    format!("you have already established: {established}\n")
+                                },
+                                if wants_structured_reply {
+                                    "Your reply must be the required structured output now, built from \
+                                     what is established above."
+                                } else {
+                                    "Take the next concrete action on your owned files now."
+                                }
+                            );
+                            // Socket first, so the node is not asked for a second generation while the
+                            // abandoned one still holds its slot; then the queue, so a stale note cannot
+                            // interrupt the fresh attempt at its first chunk.
+                            drop(stream);
+                            agent.discard_pending_steers(&session_config.id).await;
+                            self.session_manager
+                                .replace_conversation(
+                                    &session_config.id,
+                                    &goose::conversation::Conversation::empty(),
+                                )
+                                .await
+                                .map_err(|e| {
+                                    anyhow!("wipe conversation for judge re-stream: {e}")
+                                })?;
+                            self.events.write_value(serde_json::json!({
+                                "event": "judge_restream",
+                                "task_id": activity_key,
+                                "nudge": nudges_used,
+                                "reason": delivery_reason,
+                                "abandoned_thinking_chars": abandoned_thinking_chars,
+                                "abandoned_tool_calls": abandoned_tool_calls,
+                                "established_chars": established.len(),
+                            }));
                             stream = agent
                                 .reply(
-                                    Message::user().with_text(nudge_text),
+                                    Message::user().with_text(restream_text),
                                     session_config.clone(),
                                     None,
                                 )
                                 .await
-                                .map_err(|e| anyhow!("agent.reply (judge nudge): {e}"))?;
+                                .map_err(|e| anyhow!("agent.reply (judge re-stream): {e}"))?;
                             thinking_chars = 0;
                             last_thinking.clear();
                             omni_looks = 0;
@@ -42577,6 +42698,38 @@ mod audit_regressions {
             calls_since_nudge(Some(9), 4),
             0,
             "a re-stream can reset the record below the mark; that is zero, not a panic"
+        );
+    }
+
+    /// r1 delivered six steers to a looping review call and r2 three to the OPEN call; every one landed,
+    /// none was obeyed, and the re-stream was never reached. Delivery escalates on that evidence alone.
+    #[test]
+    fn nudge_delivery_escalates_on_measured_non_obedience() {
+        use goose_swarm::Verdict;
+        assert_eq!(
+            nudge_delivery(true, None, 0, &Verdict::Looping),
+            (true, "first nudge"),
+            "the first nudge on a call is a steer: it keeps the partial and costs nothing"
+        );
+        assert_eq!(
+            nudge_delivery(true, Some(3), 3, &Verdict::Looping),
+            (false, "steer ignored: no action since the previous nudge"),
+            "a prior nudge with no tool call since is measured non-obedience, so the anchor goes"
+        );
+        assert_eq!(
+            nudge_delivery(true, Some(3), 5, &Verdict::Looping),
+            (true, "acted since the previous nudge"),
+            "a call that obeyed its steer keeps getting steers"
+        );
+        assert_eq!(
+            nudge_delivery(true, None, 4, &Verdict::Restart),
+            (false, "judge said restart"),
+            "RESTART is the judge saying a fresh attempt beats continuing, even on the first nudge"
+        );
+        assert_eq!(
+            nudge_delivery(false, None, 0, &Verdict::Looping),
+            (false, "tool request in flight"),
+            "a tool request in flight is never steered around"
         );
     }
 
