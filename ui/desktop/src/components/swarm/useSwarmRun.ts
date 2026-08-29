@@ -1346,6 +1346,25 @@ export function buildActivity(events: Array<Record<string, unknown>>): {
         });
         break;
       }
+      case 'plan_repaired': {
+        // The deterministic pass (DESIGN-STABILITY-FIRST.md step 1) that fixes what the measured plan flags
+        // name, without a model round: it fires ONCE per plan and its before/after is the whole story.
+        const actions = Array.isArray(e['actions']) ? (e['actions'] as unknown[]).length : 0;
+        const before = (e['before'] ?? {}) as Record<string, unknown>;
+        const after = (e['after'] ?? {}) as Record<string, unknown>;
+        const count = (o: Record<string, unknown>, k: string) => {
+          const v = o[k];
+          return Array.isArray(v) ? v.length : (num(v) ?? 0);
+        };
+        const t = actions === 0 ? 'Plan needed no repair' : `Plan repaired — ${actions} deterministic fix${actions === 1 ? '' : 'es'}`;
+        const sub =
+          `owning nothing ${count(before, 'owning_nothing')}→${count(after, 'owning_nothing')} · ` +
+          `shared files ${count(before, 'collisions')}→${count(after, 'collisions')} · ` +
+          `unassigned endpoints ${count(before, 'unassigned_endpoints')}→${count(after, 'unassigned_endpoints')}`;
+        compact({ kind: 'plan', text: t, tone: actions === 0 ? 'info' : 'good', sub });
+        verbose({ kind: 'plan', text: t, tone: actions === 0 ? 'info' : 'good', sub });
+        break;
+      }
       case 'plan_patch_rejected': {
         const round = num(e['round']) ?? 0;
         const diagnostic = str(e['diagnostic']);
