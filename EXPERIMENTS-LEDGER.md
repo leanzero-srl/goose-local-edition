@@ -194,11 +194,27 @@ writes `notifierd.py` HAVING SEEN `ledgerd.py` — coherence is free because the
 worker writes it having seen a 4,789-character ENGLISH DESCRIPTION of it. Prose cannot be as good as
 looking at the code, and we spend 266,614 reasoning characters manufacturing the prose.
 
-**The fix direction, not yet designed:** a dependency's real file exists on disk by the time a dependent
-is dispatched — the DAG guarantees it. A worker that is told to read its dependencies' files before
-writing gets the coherence for one tool call instead of 4,789 characters of brief. That is a change to
-what the worker is INSTRUCTED to do, not to the architecture, and it is the highest-value candidate the
-run has produced. It needs a design and a run to prove it.
+**THE PRECISE SHAPE, found by reading the prompt rather than guessing at it.** The workers are not
+careless; they are doing exactly what they are told. CONTRACTS freezes each module's interface into a
+signature stub, and the worker prompt hands a dependent those stubs under the banner *"build against
+these EXACTLY"*. There IS a read-the-real-file instruction — at `swarm.rs:25603` — but it fires ONLY in
+the failure case, when a stub could not be parsed: *"Its real interface exists only in its source file.
+If you must call this module, read that ONE file directly before writing the call."*
+
+So in the normal case a dependent receives its dependency's **SIGNATURE** and never its **BEHAVIOUR** —
+what it actually does with bad input, what shape the data really has, which error it raises, what it
+writes to disk. And by BUILD time the real file EXISTS: the DAG will not dispatch a dependent until its
+dependencies are Done. The engine is withholding a file that is sitting on disk, finished, three
+directories away.
+
+That is defensible for parallel work in general — a stub lets you build before the dependency lands —
+but it is exactly wrong for a task whose dependencies have ALREADY completed, which is every task with a
+`depends_on` in a DAG the scheduler is honouring.
+
+**The candidate change:** when a dependent's dependencies are Done, tell it the real files are on disk
+and to read them before writing. It buys the single agent's coherence for one tool call rather than for
+4,789 characters of brief. It is an instruction change, not an architecture change, and it is the
+highest-value candidate r0 produced. It needs a design and a run.
 
 ## THE STANDING NUMBERS
 
