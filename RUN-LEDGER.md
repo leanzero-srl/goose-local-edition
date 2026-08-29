@@ -10,7 +10,7 @@ DAG is actually parallel). reasoning_chars against answer_chars is the waste.
 
 ## swarm-3node-r0
 
-- **phases**: open → ask → research
+- **phases**: open → ask → research → synthesis → review
 - **started**: 15:43:54
 - **tasks**: 0
 - **files_planned**: 0
@@ -19,24 +19,24 @@ DAG is actually parallel). reasoning_chars against answer_chars is the waste.
 - **chain**: 0
 - **startable**: 0
 - **brief_median**: 0
-- **reasoning_chars**: 84056
-- **answer_chars**: 104423
+- **reasoning_chars**: 156552
+- **answer_chars**: 127657
 - **code_files**: 1
 - **code_bytes**: 696
-- **elapsed_min**: 38
-- **phase_split**: open 6m · ask 2m · research 28m
+- **elapsed_min**: 67
+- **phase_split**: open 6m · ask 2m · research 32m · synthesis 5m · review 20m
 - **before_build_min**: 0 (internal diagnosis only — never a cross-run number)
-- **vs_target**: ONLY THE SCORE COMPARES. Target 20.06% (qwen3.8-27b, one cloud agent, same model). Wall clock is NOT comparable — that run is on far faster hardware, so minutes measure the machine. Bytes are NOT a verdict — more code is not better code, and it had no planning phases to spend budget on. Cross-hardware-honest work numbers for THIS run: 696B delivered, 84,056 chars reasoned, 0 tasks completed, 0 retried.
+- **vs_target**: ONLY THE SCORE COMPARES. Target 20.06% (qwen3.8-27b, one cloud agent, same model). Wall clock is NOT comparable — that run is on far faster hardware, so minutes measure the machine. Bytes are NOT a verdict — more code is not better code, and it had no planning phases to spend budget on. Cross-hardware-honest work numbers for THIS run: 696B delivered, 156,552 chars reasoned, 0 tasks completed, 0 retried.
 - **python_parses**: 0 ok / 0 SYNTAX ERROR / 0 empty
 - **web_files**: NONE — 0.56 of the scoring weight is unreachable without a served page
 - **tasks_done**: 0/? completed, 0 dispatched, 0 retried
-- **plan_patched**: 0
+- **plan_patched**: 1
 - **plan_loaded**: 0
-- **review_rounds**: none
-- **judge_looks**: 31
+- **review_rounds**: r1:new=8
+- **judge_looks**: 62
 - **judge_nudges**: 0
 - **judge_ended**: 0
-- **drift_held**: 2
+- **drift_held**: 7
 - **tree_defects**: 0
 - **repair**: delivery_defect_steer=0 brief_defects=1 testgen=0 fix_target_selected=0 complete_verify=0 complete_result=0
 ## swarm-3node-r0-ENDED-29criticals-repair-never-ran-benchmark-forces-proxy-no
