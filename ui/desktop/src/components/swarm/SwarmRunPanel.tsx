@@ -1014,10 +1014,28 @@ export function laneThinkingRun(lane: StreamLane): string {
  *
  * The SUBSTANCE gate stays: the text channel emits single-token fragments ("m", ".", " with"), and a busy
  * node rendered as one meaningless letter is worse than falling through to the next source.
+ *
+ * THE FRESHEST LINE, NOT THE FRESHEST BLOCK. This took `tailOf(..., 2400)` and handed the whole 2,400-char
+ * block to a single-line row, which renders its BEGINNING — so the live line showed narration from 2,400
+ * characters ago and only advanced when the whole block rolled past. That is "the output rolls" again, in
+ * the two surfaces a reader looks at first, after it had been fixed in the expanded view. The tail bound
+ * stays (it is what keeps this cheap on a megabyte transcript); the last substantive LINE within it is
+ * what a live line actually means.
  */
+export function lastSubstantiveLine(text: string): string {
+  const lines = text.split('\n');
+  for (let i = lines.length - 1; i >= 0; i -= 1) {
+    const chunk = substantiveChunk(lines[i]);
+    if (chunk) return chunk;
+  }
+  // No line clears the substance gate on its own — a single unbroken run of output, or pure fragments.
+  // Fall back to the tail of the whole block rather than showing nothing.
+  return substantiveChunk(text);
+}
+
 export function laneLiveLine(lane: StreamLane): string {
   return (
-    substantiveChunk(tailOf(lane.fullTranscript?.trim() ?? '', INLINE_TAIL_CHARS)) ||
+    lastSubstantiveLine(tailOf(lane.fullTranscript?.trim() ?? '', INLINE_TAIL_CHARS)) ||
     substantiveChunk(lane.reasoning) ||
     fleetThinkingLine(lane) ||
     substantiveChunk(lane.lastText) ||
@@ -1084,6 +1102,36 @@ export function isClippedTail(durable?: string, bytes?: number, clipped?: boolea
 export function streamTailNote(durable?: string, bytes?: number, clipped?: boolean): string {
   if (!isClippedTail(durable, bytes, clipped)) return '';
   return ` · tail of ${Math.round((bytes ?? 0) / 1024).toLocaleString()}KB`;
+}
+
+/**
+ * THE THINKING CAPTION, including the case where there is NO durable log.
+ *
+ * `streamTailNote` goes silent when it cannot prove a clip, which is right for the Output pane but wrong
+ * here: a lane with no `<task>.think.log` yet is rendering the digest's ROLLING 2,400-char window, and
+ * captioning that as a bare "2,400 chars" states that the reader is seeing everything. They are seeing
+ * the newest 2,400 characters of a stream that may be twenty times that, with the rest already
+ * overwritten. That is the same truncation lie this pane has now shipped twice, just with the count
+ * telling it instead of the body.
+ *
+ * `thinkingChars` is not a size — it is the engine's per-stream counter and it RESETS on a re-stream —
+ * but it is a lower bound on what the stream has produced, so when it exceeds what is on screen it is
+ * enough to say the window is partial. `thinkingBytes` (the real file size) is preferred whenever the
+ * durable log exists.
+ */
+export function thinkingCaption(
+  shown: string,
+  durable?: string,
+  bytes?: number,
+  engineChars?: number
+): string {
+  const n = shown.length.toLocaleString();
+  const note = streamTailNote(durable, bytes);
+  if (note) return `${n} chars${note}`;
+  if (!durable && typeof engineChars === 'number' && engineChars > shown.length) {
+    return `${n} of ${engineChars.toLocaleString()} chars · rolling window, no durable log yet`;
+  }
+  return `${n} chars`;
 }
 
 /**
@@ -1242,7 +1290,12 @@ const NodeInspector: React.FC<{
             // `thinkingChars` IS NOT THE DENOMINATOR. It is the engine's per-stream counter and resets on
             // a re-stream, so it says nothing about the size of `<task>.think.log`; the only number that
             // does is `thinkingBytes`, which main.ts has attached to every digest and nothing has read.
-            count={`${thinkText.length.toLocaleString()} chars${streamTailNote(lane?.fullThinking, lane?.thinkingBytes)}`}
+            count={thinkingCaption(
+              thinkText,
+              lane?.fullThinking,
+              lane?.thinkingBytes,
+              lane?.thinkingChars
+            )}
             body={thinkText}
             empty="Nothing on the reasoning channel yet."
           />
