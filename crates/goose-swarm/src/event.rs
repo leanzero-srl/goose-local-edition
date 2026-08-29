@@ -145,9 +145,14 @@ pub enum SwarmEvent {
     /// A CROSS-LANE defect the tree warden found: `task_id` is building on `dependency`, which
     /// reported done and left `detail` on disk (a file never written, or only the engine's stub).
     ///
-    /// Read-only: no task's state or outcome changes. The finding is routed to `task_id`'s NEXT
-    /// dispatch as a prior hint, and is emitted once per (task, finding) — never once per sweep, or
-    /// a defect that survives the whole build would fill the log with one repeated sentence.
+    /// Read-only: no task's state or outcome changes. The finding is appended to `task_id`'s pending
+    /// hint, which its next dispatch carries — usually. A guided CONTENT retry and a judge restart both
+    /// REPLACE that hint wholesale rather than appending, because their note is the freshest statement
+    /// of why the last attempt died; when that happens the warden's finding is dropped before delivery,
+    /// and it is re-stated on a later sweep rather than lost (see `warden_should_state`).
+    ///
+    /// Emitted once per (task, finding) while it is pending or delivered — never once per sweep, or a
+    /// defect that survives the whole build would fill the log with one repeated sentence.
     TreeDefect {
         task_id: String,
         dependency: String,
