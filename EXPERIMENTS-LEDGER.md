@@ -159,6 +159,28 @@ recovering, the candidate signal is the same task drawing the same transport err
 
 ---
 
+## OPEN BUG — the engine hangs after the repair verdict, NOT root-caused (2026-08-29, r0)
+
+**Symptom.** After `complete: STOPPING at round 0 …` the process sat 20+ minutes at **0.0% CPU**, main
+thread blocked in `_pthread_join` → `__ulock_wait`. `run.jsonl` frozen at 589 events, every activity
+digest mtime frozen, fleet 0 generating, `run_build.py` still alive waiting on it. Writing the
+`fix_criticals-answer.json` it polls for changed nothing — it is past the poll.
+
+**What is ruled out**, checked rather than assumed:
+- the heartbeat ticker has a Drop guard that aborts it — and the heartbeat file was EMPTY, meaning that
+  Drop **never ran**, so the hang is BEFORE unwinding.
+- `coverage_task` is awaited in `run_linear_plan` before SYNTHESIS, not at exit, and it completed.
+- `spawn_fix_progress_sampler` is documented as aborted when its attempt ends.
+
+**Not fixed, and deliberately not guessed at.** The exit path is the wrong place to try a speculative
+change: a wrong fix there fails silently at the end of a four-hour run, which is the most expensive place
+in the system to be wrong. It needs the remaining `tokio::spawn` sites walked with the run in this state,
+which requires reproducing it.
+
+**Mitigation that needs no fix:** the hang happens AFTER the tree and verdict are written, so nothing is
+lost — the run's product is complete on disk and can be scored directly. The r0 tree is archived at
+`swarm-3node-r0-ENDED-29criticals-repair-never-ran-benchmark-forces-proxy-no` and is still scoreable.
+
 ## REPAIR HAS NEVER RUN IN A BENCHMARK — found 2026-08-29 on r0
 
 ```rust
