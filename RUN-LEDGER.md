@@ -71,3 +71,4 @@ DAG is actually parallel). reasoning_chars against answer_chars is the waste.
 - **drift_held**: 8
 - **tree_defects**: 0
 - **repair**: delivery_defect_steer=2 brief_defects=1 testgen=1 fix_target_selected=1 complete_verify=1 complete_result=0
+- **score**: **0.0832** hermetic (inner 0.1567 × crit_mult 0.6). ONE critical fired: `sync_completeness` 0/12288 payments — the `body.get("items")`-vs-`"data"` defect — and it made 7 money/durability checks VACUOUS (0, not failed). 30/99 checks PROBE-UNAVAILABLE (browser probe crashed; excluded from means, the frontend was never graded). `serves_page` GET / → 404 (0.2). vs target 0.2006: 41%. vs published local 0.0273: 3.0×. Verdict copied to the run dir as `verdict-hermetic-0.0832.json`.
