@@ -3526,6 +3526,23 @@ mod tests {
                 provider.chunks_emitted()
             );
 
+            // AND IT STOPPED BEFORE THE STEER WENT OUT, not merely by the time the test looked.
+            // `chunks_emitted()` above is a total read after the fact, which a generation that ran to
+            // completion and only THEN got interrupted would also satisfy. This is the count captured at
+            // the instant the second request was made, so it is the only assertion here that actually
+            // orders the interruption before the delivery.
+            //
+            // The provider has recorded this since the test was written and nothing ever read it, which
+            // is why `cargo clippy --all-targets -- -D warnings` -- the merge gate AGENTS.md names --
+            // was failing on `chunks_emitted_at_call is never used`. The evidence was being collected
+            // and thrown away; deleting the accessor would have cleared the warning and kept the hole.
+            assert!(
+                provider.chunks_emitted_at_call(1) < CHUNKS,
+                "the interruption must precede the steer-carrying request \
+                 ({} of {CHUNKS} chunks had been emitted when it was made)",
+                provider.chunks_emitted_at_call(1)
+            );
+
             assert_eq!(
                 provider.calls(),
                 2,
