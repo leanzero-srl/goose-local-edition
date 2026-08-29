@@ -397,6 +397,29 @@ it. A problem that turns out to be already owned is left out, but then it was no
 **THIS RUN KEEPS THE DEFECT** — the binary is the old one. Expect 4 features missing from its app, and read
 the score with that in mind rather than as a verdict on the decomposition.
 
+## COVERAGE IS CONVERGING, AND IT WAS PAYING FULL PRICE FOR THE PROOF — `67f98c574`
+
+Run 3's coverage loop, read end to end:
+
+    round 1   part 1/3  17 components,  5 unowned
+              part 3/3   8 components,  1 unowned
+              part 2/3  31 components,  0 unowned
+    gap       +5 slices (13 -> 18)
+    round 2   part 3/3  14 components,  0 unowned
+              part 2/3  34 components,  0 unowned      <-- part 1 still running
+
+**It converges.** Round 2 produced NO gap, which is the loop's own stop condition working — it ends the
+first round that adds nothing, with no round ceiling and no clock.
+
+**But parts 2 and 3 were re-enumerated for nothing.** Part 2 returned 0 unowned in round 1 and 0 unowned in
+round 2 — about twenty minutes and a node for a result that **could not have differed**. A section with
+nothing unowned cannot acquire something unowned: the slice list only GROWS between rounds, so every
+component that had an owner still has one, and the section's own text never changed.
+
+**FIX:** results come back in item order, so an EMPTY result marks that section settled and later rounds
+skip it. The settled set lives across rounds at the call site, which is the only place it means anything.
+No heuristic, no threshold — a section either found something or it did not.
+
 ## MY OWN FIX LEAKED: `DO NOT CLASSIFY` MADE SLICES OUT OF FACTS — 2026-08-29 04:52 EEST
 
 The coverage fan's first round on run 3 worked: parts 1/3, 2/3, 3/3 returned 17, 31 and 8 components with
