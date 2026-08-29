@@ -1255,16 +1255,17 @@ const NodeInspector: React.FC<{
               {nodeState === 'processingPrompt' ? 'processing prompt' : nodeState}
             </span>
           )}
-          {/* THE SUPERVISOR IS READING THIS LANE. While an omni-judge probe is in flight the engine
-              buffers the worker's stream instead of processing it, so the counters below are genuinely
-              frozen and the lane is NOT dead. Saying so is the difference between a panel that looks
-              broken and one that is telling the truth. */}
+          {/* A SECOND MODEL IS READING THIS CALL. It used to also mean "the counters below are frozen",
+              because the engine buffered the worker's stream during a probe — it no longer does, so the
+              lane keeps moving while this is up and the badge is context, not an excuse for stillness.
+              Next to GENERATING it read as a contradiction; it says who is doing what now. */}
           {lane?.judging && (
             <span
               className="px-2 py-0.5 text-[10px] font-mono uppercase tracking-wider font-bold text-white"
               style={{ borderRadius: CHIP_RADIUS, background: SWARM_STATUS.running }}
+              title="A supervisor model is reading this call's reasoning to decide whether to redirect it. The worker keeps running."
             >
-              {'supervisor reading'}
+              {'being reviewed'}
             </span>
           )}
           {lane?.description && (
@@ -1279,7 +1280,17 @@ const NodeInspector: React.FC<{
           </button>
         </div>
 
-        <div className="flex-1 min-h-0 grid grid-cols-1 lg:grid-cols-2 gap-3 p-3">
+        {/* ONE PANE WHEN THERE IS ONE THING TO SHOW.
+            A fixed 50/50 split meant the whole OPEN and RESEARCH stretch -- where the model does nothing
+            but reason -- rendered half this modal as a dead box captioned "Nothing emitted yet", while
+            the reasoning it WAS producing was squeezed into the other half. Mihai, having opened it to
+            watch a node work: "what is generating cause I can't see shit in it". Output earns its column
+            when it has something in it. */}
+        <div
+          className={`flex-1 min-h-0 grid gap-3 p-3 ${
+            outText ? 'grid-cols-1 lg:grid-cols-2' : 'grid-cols-1'
+          }`}
+        >
           <Pane
             title="Thinking"
             // COUNT WHAT IS ON SCREEN, and say so when it is a clipped tail. The header used to report
@@ -1297,7 +1308,7 @@ const NodeInspector: React.FC<{
               lane?.thinkingChars
             )}
             body={thinkText}
-            empty="Nothing on the reasoning channel yet."
+            empty="Nothing on the reasoning channel yet — the node has been dispatched but has not produced a token."
           />
           <Pane
             title="Output"
@@ -1305,7 +1316,11 @@ const NodeInspector: React.FC<{
             // that knows both the file size and the budget it read with. See streamTailNote.
             count={`${calls.length} tool call${calls.length === 1 ? '' : 's'}${streamTailNote(lane?.fullTranscript, lane?.transcriptBytes, lane?.transcriptClipped)}`}
             body={outText}
-            empty="Nothing emitted yet — reasoning, but no tool call and no text."
+            empty={
+              thinkText
+                ? 'Still thinking — this fills with tool calls and written text once it starts acting.'
+                : 'Nothing yet on either channel.'
+            }
           />
         </div>
       </div>
