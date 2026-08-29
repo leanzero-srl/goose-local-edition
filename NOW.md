@@ -55,6 +55,13 @@ implied, the summary was wrong and the sources win.
 
 ## The goal, unchanged
 
+**r3 SCOPE RULE (Mihai, 2026-08-29 22:35): "depending on r2's results maybe don't modify the next build as per
+your entire list of changes — bring on only what would definitely help."** r3 is the r2 binary plus ONLY the
+changes r2's own evidence says would definitely help (each one must name the r2 finding it answers). The
+14-step list is a menu, not a queue. Already in the tree since r2 launched: `2b1e755ac` re-stream escalation,
+`afa644ddd` 1800 s read window, `ee0cbfe73` PLAN-REPAIR (now warning-only), the panel/instrument rows. Each
+gets a keep/drop verdict against r2's evidence before the rebuild.
+
 **DESIGN STEER (Mihai, 2026-08-29 22:30, binding for every step from here): "let's avoid making it overly
 too deterministic and gated, be very mild with this, we've done deterministic and plumbing a lot and it
 didn't work because of how unpredictable these models are."** Code MEASURES and feeds the measurement to a
