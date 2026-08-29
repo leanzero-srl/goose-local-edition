@@ -142,6 +142,17 @@ pub enum SwarmEvent {
         /// uses, and the one `pool_resolved.worker_count` no longer describes.
         build_devices: usize,
     },
+    /// A CROSS-LANE defect the tree warden found: `task_id` is building on `dependency`, which
+    /// reported done and left `detail` on disk (a file never written, or only the engine's stub).
+    ///
+    /// Read-only: no task's state or outcome changes. The finding is routed to `task_id`'s NEXT
+    /// dispatch as a prior hint, and is emitted once per (task, finding) — never once per sweep, or
+    /// a defect that survives the whole build would fill the log with one repeated sentence.
+    TreeDefect {
+        task_id: String,
+        dependency: String,
+        detail: String,
+    },
     /// A mid-run device offer was REFUSED, with why. Emitted rather than silently dropped: the
     /// whole point of admission is that a returning node stops being invisible, and a rejection is
     /// exactly as informative as an acceptance.

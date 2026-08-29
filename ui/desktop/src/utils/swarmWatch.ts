@@ -1,5 +1,4 @@
 import fsSync from 'node:fs';
-import path from 'node:path';
 
 /** What a subscriber is currently looking at. Re-stated on every read; the registry diffs it. */
 export interface SwarmWatchTarget {
@@ -70,7 +69,7 @@ export interface SwarmWatchOptions {
  * reconciling net for the updates fs.watch drops.
  */
 export class SwarmWatchRegistry {
-  private readonly entries = new Map<number, Entry>();
+  private readonly entries = new Map<string, Entry>();
   private readonly watch: WatchFactory;
   private readonly debounceMs: number;
   private readonly now: () => number;
@@ -87,11 +86,16 @@ export class SwarmWatchRegistry {
 
   /**
    * Point `subscriber` at `target`, arming any directory not already watched. Idempotent, and called
-   * on every read: that is what re-arms `activity/` once the engine creates it, and what re-targets
-   * the watch when the run moves. Returns true only the first time a subscriber is seen, so the
-   * caller registers its teardown hook exactly once.
+   * on every read, which is what re-targets the watch when the run moves. Returns true only the first
+   * time a subscriber is seen, so the caller registers its teardown hook exactly once.
+   *
+   * `subscriber` must identify the SUBSCRIPTION, not the window. One renderer routinely mounts several
+   * useSwarmRun hooks on different working dirs -- BaseChat and NavigationPanel can both be live -- and
+   * keying on the webContents id alone made them overwrite each other's target: whichever read last
+   * won, the other silently stopped receiving deltas, and a torn-down hook released the watch out from
+   * under a live one. Callers pass `${webContentsId}::${workingDir}`.
    */
-  ensure(subscriber: number, target: SwarmWatchTarget, send: (delta: SwarmDelta) => void): boolean {
+  ensure(subscriber: string, target: SwarmWatchTarget, send: (delta: SwarmDelta) => void): boolean {
     const existing = this.entries.get(subscriber);
     if (!existing) {
       const entry: Entry = {
@@ -114,7 +118,7 @@ export class SwarmWatchRegistry {
 
   /** Drop a subscriber's watchers. Without it every window close, and every run switch, leaks a
    *  file handle per watched directory for the life of the process. */
-  release(subscriber: number): void {
+  release(subscriber: string): void {
     const entry = this.entries.get(subscriber);
     if (!entry) return;
     for (const w of entry.watchers.values()) closeQuietly(w);
@@ -129,7 +133,7 @@ export class SwarmWatchRegistry {
   }
 
   /** Directories currently armed for a subscriber — the leak check's only honest witness. */
-  watchedDirs(subscriber: number): string[] {
+  watchedDirs(subscriber: string): string[] {
     return [...(this.entries.get(subscriber)?.watchers.keys() ?? [])].sort();
   }
 
@@ -137,13 +141,26 @@ export class SwarmWatchRegistry {
     return this.entries.size;
   }
 
+  /**
+   * THE EVENT LOG ONLY — deliberately NOT `activity/`.
+   *
+   * Watching the activity directory made the push counterproductive. The engine rewrites
+   * `activity/<task>.json` roughly 2.5 times a second PER LANE, so a nine-lane run generates ~22
+   * changes/sec; debounced at 100ms that is 10 deltas/sec, each one triggering a full read. The poll it
+   * was meant to improve on runs at 2/sec, so the push made the main process do five times the work.
+   *
+   * And it is work the incremental reader cannot make cheap. Digests are REWRITTEN IN PLACE, not
+   * appended, so `readTail`/`readEvents` have nothing to skip: every delta re-reads and re-parses every
+   * digest in full. The run log is the opposite — append-only, low frequency, and the thing whose
+   * latency actually matters, because a task starting or finishing is what the panel is waiting to
+   * show. So push on the event stream and leave the digests to the 500ms poll, which already bounds
+   * their cost and was never the reason the panel felt slow.
+   */
   private wantedDirs(target: SwarmWatchTarget): string[] {
-    return [
-      ...new Set([target.swarmDir, target.eventsDir, path.join(target.swarmDir, 'activity')]),
-    ];
+    return [...new Set([target.swarmDir, target.eventsDir])];
   }
 
-  private arm(subscriber: number, entry: Entry): void {
+  private arm(subscriber: string, entry: Entry): void {
     const wanted = this.wantedDirs(entry.target);
     for (const [dir, w] of entry.watchers) {
       if (!wanted.includes(dir)) {
@@ -171,7 +188,7 @@ export class SwarmWatchRegistry {
    * would swallow the LAST write of a run — exactly the delta that says the run ended — and leave
    * the panel showing a lane mid-flight until the next poll.
    */
-  private schedule(subscriber: number, dir: string): void {
+  private schedule(subscriber: string, dir: string): void {
     const entry = this.entries.get(subscriber);
     if (!entry) return;
     entry.pendingSource = dir;

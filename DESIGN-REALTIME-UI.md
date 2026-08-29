@@ -62,7 +62,8 @@ killed run goes stale, so **no unconditional touch, ever.**
 
 **Every fix is proven in ISOLATION before any run starts, and only then under a full run.**
 
-    isolation for engine checks   `goose swarm verify <tree>` against ~30 archived trees + positive control
+    isolation for engine checks   `./target/release/goose swarm verify <tree>` against ~30 archived trees + positive control
+                                  NEVER a bare `goose` -- that resolves to a June build with no `swarm` subcommand
     isolation for UI folding      pure-function tests (inspectorThinkingText / inspectorOutputText shape)
     isolation for main-process    a temp dir, files appended by the test, deltas asserted
     holistic                      ONE run, after all of the above pass

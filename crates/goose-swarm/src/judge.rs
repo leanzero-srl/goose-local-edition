@@ -392,6 +392,14 @@ pub struct JudgeRequest {
     /// Which attempt of this task is running (0 = first). The nothing-written deadline scales with it —
     /// see `no_output_deadline_secs`.
     pub attempt: u32,
+    /// EVERY planned deliverable in the run with what is on disk for it right now — `path
+    /// [delivered]`, `[MISSING]`, `[stub]`, `[in progress]`, `[not written yet]` — not just this
+    /// worker's own files.
+    ///
+    /// The judge was handed one task's file list, so it could only ever answer "is this worker doing
+    /// its job", never "is this worker building on something that exists". A worker importing from a
+    /// dependency that shipped a stub is invisible in the per-task view.
+    pub tree_files: Vec<String>,
 }
 
 /// Inspects one in-flight worker and returns a verdict. Implemented in goose-cli by gathering evidence
