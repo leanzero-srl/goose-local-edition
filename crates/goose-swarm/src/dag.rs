@@ -191,7 +191,9 @@ impl Dag {
     /// Callers that can answer "does this module's stub parse" expand via
     /// `from_planner_json_with` AFTER the contracts freeze; this bare form parses only.
     pub fn from_planner_json(json: &str) -> Result<Self> {
-        Dag::from_specs(specs_from_plan_json(json)?)
+        let specs = specs_from_plan_json(json)?;
+        refuse_owning_nothing(&specs)?;
+        Dag::from_specs(specs)
     }
 
     /// F804/F809: parse AND expand, with each module's slots taken FROM ITS OWN STUB. The
@@ -204,7 +206,9 @@ impl Dag {
         json: &str,
         stub_slots: &dyn Fn(&str) -> Option<Vec<String>>,
     ) -> Result<Self> {
-        let specs = specs_from_plan_json(json)?
+        let parsed = specs_from_plan_json(json)?;
+        refuse_owning_nothing(&parsed)?;
+        let specs = parsed
             .into_iter()
             .map(|mut t| {
                 if !t.subsplit.is_empty() {
@@ -343,6 +347,27 @@ impl Dag {
         }
         Ok(newly_ready)
     }
+}
+
+/// A task that owns no files is dispatched with nothing to write and completes having built nothing,
+/// so a plan carrying one is refused where a MODEL's plan enters the engine. Only the join owns nothing
+/// by design. `from_specs` stays permissive on purpose: the scheduler's mock tests build file-less
+/// specs by construction to exercise scheduling, and a REVIEW patch is validated through it before the
+/// plan repair has had its turn.
+pub fn refuse_owning_nothing(specs: &[TaskSpec]) -> Result<()> {
+    let offenders: Vec<&str> = specs
+        .iter()
+        .filter(|s| s.owned_files.is_empty() && s.id != crate::patch::SINK_ID)
+        .map(|s| s.id.as_str())
+        .collect();
+    if offenders.is_empty() {
+        return Ok(());
+    }
+    bail!(
+        "task(s) own no files: {} (only the join `{}` may)",
+        offenders.join(", "),
+        crate::patch::SINK_ID
+    )
 }
 
 /// Parse the planner's `{ "subtasks": [...] }` JSON into specs (shared by the initial plan + replans).
@@ -635,5 +660,44 @@ mod expand_tests {
             "store's stub does not parse -> ordinary serial task"
         );
         std::env::remove_var("GOOSE_SWARM_FILL_FAN");
+    }
+}
+
+#[cfg(test)]
+mod ownership_tests {
+    use super::*;
+
+    #[test]
+    fn a_non_join_task_owning_nothing_is_refused_at_the_plan_boundary() {
+        let plan = r#"{"subtasks":[
+            {"id":"core","files":["app/core.py"],"depends_on":[]},
+            {"id":"viz-engine","files":[],"depends_on":[]},
+            {"id":"integrate-verify","files":[],"depends_on":["core","viz-engine"]}
+        ]}"#;
+        let err = Dag::from_planner_json(plan)
+            .expect_err("a file-less task that is not the join must not load")
+            .to_string();
+        assert!(err.contains("own no files: viz-engine ("), "{err}");
+        assert!(
+            Dag::from_planner_json_with(plan, &|_| None).is_err(),
+            "the fill-fan entry point is the same boundary"
+        );
+
+        let ok = r#"{"subtasks":[
+            {"id":"core","files":["app/core.py"],"depends_on":[]},
+            {"id":"integrate-verify","files":[],"depends_on":["core"]}
+        ]}"#;
+        Dag::from_planner_json(ok).expect("the join owns nothing by design");
+
+        let fileless = TaskSpec {
+            id: "x".into(),
+            description: String::new(),
+            difficulty: Difficulty::Easy,
+            preferred_model: None,
+            owned_files: Vec::new(),
+            deps: Vec::new(),
+            subsplit: Vec::new(),
+        };
+        Dag::from_specs(vec![fileless]).expect("from_specs stays permissive for the mock harness");
     }
 }
