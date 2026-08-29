@@ -1354,6 +1354,51 @@ export function buildActivity(events: Array<Record<string, unknown>>): {
       }
       // The review proposed the same patch and validation refused it the same way twice. Worth surfacing
       // loudly: it means the plan is going to BUILD with the defect the reviewer just described.
+      // THE VERIFIER'S FINDINGS. These are FACTS about files on disk -- a missing file, an empty file, a
+      // syntax error, an import nobody wrote -- not the judge's opinion about a reasoning tail. They are
+      // the highest-signal thing on the board and must never be buried.
+      case 'delivery_defects': {
+        const defects = arr(e['defects']).map(String).filter(Boolean);
+        if (!defects.length) break;
+        verbose({
+          kind: 'fail',
+          tone: 'bad',
+          text: `${str(e['task_id']) || 'a task'} finished with ${defects.length} broken deliverable${defects.length === 1 ? '' : 's'}`,
+          sub: defects.join('\n'),
+        });
+        break;
+      }
+      // Two slices claiming one path, seen at the END of RESEARCH instead of after REVIEW has spent rounds
+      // unpicking it.
+      case 'brief_defects': {
+        const cols = arr(e['collisions']);
+        const nofiles = arr(e['slices_declaring_no_files']).map(String);
+        const bits: string[] = [];
+        for (const c of cols) {
+          const o = c as Record<string, unknown>;
+          bits.push(`${String(o['file'])} claimed by ${arr(o['slices']).map(String).join(', ')}`);
+        }
+        if (nofiles.length) bits.push(`declaring no files: ${nofiles.join(', ')}`);
+        if (!bits.length) break;
+        verbose({
+          kind: 'plan',
+          tone: 'warn',
+          text: `Briefs collide before synthesis even runs`,
+          sub: bits.join('\n'),
+        });
+        break;
+      }
+      // A nudge the judge WANTED to send and did not, because the call was producing. Shown so the saving
+      // is visible rather than assumed -- 33 of 34 such nudges changed nothing and cost 66 minutes.
+      case 'judge_drift_held': {
+        verbose({
+          kind: 'judge',
+          tone: 'info',
+          text: `Held a drift nudge on ${str(e['task_id']) || 'a call'} — it is producing`,
+          sub: `${num(e['produced_since_last_look']) ?? '?'} chars since the last look`,
+        });
+        break;
+      }
       case 'review_patch_stuck': {
         verbose({
           kind: 'plan',
