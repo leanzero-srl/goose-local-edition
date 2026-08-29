@@ -1262,6 +1262,42 @@ export function buildActivity(events: Array<Record<string, unknown>>): {
         });
         break;
       }
+      // THE ENGINE ENDED A CALL. The most consequential thing the supervisor path can do, and until now
+      // it happened with nothing on screen: a lane would simply stop and the phase would move on. An
+      // operator needs to see it as it happens, because it is the difference between "a lane finished"
+      // and "a lane was given up on".
+      //
+      // Placed AFTER the judge_nudge case on purpose: `case 'judge_look':` FALLS THROUGH into it, so a
+      // case inserted between the two silently steals every look.
+      case 'judge_call_ended_unproductive': {
+        const endedTask = str(e['task_id']) || 'a call';
+        const endedChars = num(e['thinking_chars']);
+        verbose({
+          kind: 'judge-act',
+          tone: 'bad',
+          text: `Ended ${endedTask} — it never called its output tool`,
+          sub: [
+            `${num(e['nudges']) ?? '?'} nudges, ${endedChars === null ? '?' : endedChars.toLocaleString()} reasoning chars, 0 tool calls`,
+            str(e['reason']),
+          ]
+            .filter(Boolean)
+            .join('\n'),
+        });
+        break;
+      }
+      // The supervisor repeated itself verbatim: escalation has hit its floor. Worth showing because it is
+      // the warning that precedes an ending, and on a lane that recovers it explains a long stretch of
+      // nudges that changed nothing.
+      case 'judge_out_of_moves': {
+        const stuckTask = str(e['task_id']) || 'a call';
+        verbose({
+          kind: 'judge',
+          tone: 'warn',
+          text: `Judge out of moves on ${stuckTask}`,
+          sub: `same direction repeated after ${num(e['nudges']) ?? '?'} nudges: ${str(e['repeated_direction'])}`,
+        });
+        break;
+      }
       case 'scouts_planned': {
         const lenses = arr(e['lenses']).map(String).join(', ');
         compact({ kind: 'phase', text: 'Planning research', sub: lenses || undefined });
