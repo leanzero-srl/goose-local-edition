@@ -142,8 +142,11 @@ logs keep pace with the digests under judge looks (`tick_ui` "EXCEEDS the durabl
 
 **r2's OWN fixture seed is `5cd47b42e2a7c3e0`** (header of `runs/build/trace-swarm-3node-r0.jsonl`, mtime
 21:10 — the harness overwrote r0's trace because the run dir name is reused; r0 was `687ff58bfa6b707d`).
-Score r2 with `--seed 5cd47b42e2a7c3e0`, port 8850, nvm node, orphans 0. The ledger row now carries
-`fixture_seed` so the next overwrite cannot lose it.
+Score r2 with ONE command once `run_finished` lands: `~/goose-builds/loop-state/score_run.sh "<run dir>"` —
+it refuses while the run is live or a server leaks a port, waits for run_build.py, stops only the vendor,
+clones the tree, scores under the playwright node at 8850 with the run's OWN seed (`5cd47b42e2a7c3e0`, from
+the ledger row) and prints the cloud comparison. The ledger row carries `fixture_seed` so the next overwrite
+cannot lose it.
 
 **Kill checkpoints armed:** a second REVIEW round; a plan re-emission; a clock stop; WEDGED (heartbeat
 fresh, no event ≥10m, fleet idle, 0% CPU); a leaked server count > 0.
