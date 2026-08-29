@@ -32,13 +32,26 @@ export interface WatchHandle {
   close(): void;
 }
 
-export type WatchFactory = (dir: string, onChange: () => void) => WatchHandle | null;
+export type WatchFactory = (
+  dir: string,
+  onChange: () => void,
+  onError?: () => void
+) => WatchHandle | null;
 
-const defaultWatch: WatchFactory = (dir, onChange) => {
+const defaultWatch: WatchFactory = (dir, onChange, onError) => {
   const w = fsSync.watch(dir, { persistent: false }, () => onChange());
-  // A watcher that errors (the directory was removed, the descriptor limit was hit) must not take the
-  // process with it; the poll is the net that keeps the panel moving without it.
-  w.on('error', () => closeQuietly(w));
+  // A watcher that errors -- the directory was removed, the descriptor limit was hit -- must not take
+  // the process with it; the poll is the net that keeps the panel moving without it.
+  //
+  // But closing it is not enough. `arm()` skips any directory already present in the entry's map, so a
+  // handle that was closed and LEFT there is never re-created: the watcher is dead, the map says it is
+  // live, and the push for that directory is gone for the rest of the run while the comment above arm()
+  // promises "the next read re-arms it". `onError` is how the registry learns to forget it, so the next
+  // read genuinely does.
+  w.on('error', () => {
+    closeQuietly(w);
+    onError?.();
+  });
   return w;
 };
 
@@ -174,7 +187,14 @@ export class SwarmWatchRegistry {
       // descriptors — is skipped, never fatal: the next read re-arms it, and until then the poll
       // covers it. One unwatchable directory must not cost the others their push.
       try {
-        const handle = this.watch(dir, () => this.schedule(subscriber, dir));
+        const handle = this.watch(
+          dir,
+          () => this.schedule(subscriber, dir),
+          () => {
+            // Forget the dead handle so the next ensure() re-arms this directory.
+            if (this.entries.get(subscriber) === entry) entry.watchers.delete(dir);
+          }
+        );
         if (handle) entry.watchers.set(dir, handle);
       } catch {
         /* re-armed on the next ensure */

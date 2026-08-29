@@ -9,48 +9,60 @@ import { useLocation, useNavigate } from 'react-router-dom';
  * flight behind it. Mihai, on finding exactly that: "when I opened the desktop app the benchmark tab was
  * not even selected. Why?"
  *
- * A run can begin on either side of this component's mount, so there are two arrivals and they are not
- * interchangeable:
- *   - already running when the renderer mounted -> the one status probe below. It runs ONCE per mount:
- *     re-probing on every arrival at '/' is what used to drag a user who had deliberately walked back to
- *     the chat view out of it again, over and over, for the whole length of a multi-hour run.
- *   - started while the renderer was already sitting on '/' -> the 'benchmark-started' event. The mount
- *     probe structurally cannot see this one, and it is the case the redirect was written for.
+ * A run can begin on either side of this component's mount, so there are two arrivals and neither one
+ * covers the other:
+ *   - already running when the renderer arrives at '/' -> the status probe.
+ *   - started while the renderer was already sitting on '/' -> the 'benchmark-started' event, which the
+ *     probe structurally cannot see.
  *
- * Both arrivals redirect only FROM the default route, read at the moment the redirect would happen, so a
- * deliberate navigation is never overridden -- not even by a probe that resolves after the user has moved.
+ * ONCE PER SESSION, NOT ONCE PER MOUNT. `fired` is what stops this dragging a user who has deliberately
+ * walked back to the chat view out of it again for the whole length of a multi-hour run -- and it is
+ * sufficient on its own, which matters because an earlier version replaced it with a mount-only probe on
+ * the grounds that re-probing "used to" yank repeatedly. It could not have: the guard has always made
+ * the redirect fire at most once. What the mount-only version DID lose is the window that boots on a
+ * non-default route -- a restored session, a deep link -- where the probe resolves while the user is
+ * elsewhere, is correctly discarded, and then never runs again however long they sit on '/' afterwards.
+ *
+ * So the probe is keyed on arrival at '/' and guarded by `fired`: it can catch a late return to the
+ * default route, and it still cannot fire twice.
  */
 export default function BenchmarkAutoOpen() {
   const navigate = useNavigate();
   const location = useLocation();
-  // Held in a ref, not in the deps: an effect keyed on either one re-runs on every navigation, which is
-  // exactly how the mount-only probe turned into a poll that fought the user.
-  const latest = useRef({ pathname: location.pathname, navigate });
-  latest.current = { pathname: location.pathname, navigate };
+  const fired = useRef(false);
+  // The event listener is mounted once; only the probe is keyed on the route. Keeping the callback in a
+  // ref means re-keying the probe does not tear down and re-register the subscription.
+  const openRef = useRef<() => void>(() => {});
+
+  openRef.current = () => {
+    if (fired.current || location.pathname !== '/') return;
+    fired.current = true;
+    navigate('/benchmark');
+  };
 
   useEffect(() => {
-    let alive = true;
-    const openBenchmark = () => {
-      if (!alive || latest.current.pathname !== '/') return;
-      latest.current.navigate('/benchmark');
-    };
+    const onStarted = () => openRef.current();
+    window.electron.on?.('benchmark-started', onStarted);
+    return () => window.electron.off?.('benchmark-started', onStarted);
+  }, []);
 
+  useEffect(() => {
+    if (fired.current || location.pathname !== '/') return;
+    let alive = true;
     void (async () => {
       try {
         const st = await window.electron.benchmarkStatus();
-        if (st?.running) openBenchmark();
+        // Re-read the route through the ref rather than closing over it: the probe is async, and a user
+        // who navigated away while it was in flight must not be yanked back by its result.
+        if (alive && st?.running) openRef.current();
       } catch {
         /* no benchmark bridge in this build */
       }
     })();
-
-    const onStarted = () => openBenchmark();
-    window.electron.on?.('benchmark-started', onStarted);
     return () => {
       alive = false;
-      window.electron.off?.('benchmark-started', onStarted);
     };
-  }, []);
+  }, [location.pathname]);
 
   return null;
 }
