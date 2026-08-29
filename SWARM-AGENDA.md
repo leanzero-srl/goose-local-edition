@@ -397,6 +397,35 @@ it. A problem that turns out to be already owned is left out, but then it was no
 **THIS RUN KEEPS THE DEFECT** — the binary is the old one. Expect 4 features missing from its app, and read
 the score with that in mind rather than as a verdict on the decomposition.
 
+## EVERY UI CHANGE I MADE TONIGHT IS NOT IN THE RUNNING APP — found 2026-08-29 05:25 EEST
+
+I have been replacing `/Applications/Goose.app/Contents/Resources/bin/goose` — the RUST ENGINE — and never
+rebuilding the Electron bundle. Measured on the installed app:
+
+    app.asar        built 2026-08-28 23:04
+    bin/goose       built 2026-08-29 03:00
+    judge_call_ended_unproductive   MISSING from app.asar
+    judge_out_of_moves              MISSING
+    judge_notes_superseded          MISSING
+    think.log                       MISSING
+    full_transcript                 in bundle   (it predates tonight, which is why it works)
+
+**HOW IT SURFACED, and it is the reason the check was worth doing:** `readSwarmRun` returns
+`full_transcript_bytes: 25438` per lane but `full_thinking_bytes: 0` — while `open-coverage-1.think.log` is
+**55,573 bytes on disk**. The engine writes the thinking transcript; the shipped JS has never heard of it.
+That is Mihai's *"the output rolls and does not save into a cohesive unit"* complaint, still live in the app
+despite the fix being committed hours ago.
+
+**SO: the engine fixes are live and the UI fixes are not.** Every one of tonight's event mappings, the
+de-duplication pass and the transcript reader exist only in git.
+
+**NOT REBUILDING NOW.** A run is live on 3 busy nodes and I have already destroyed one run tonight through
+carelessness. `just make-ui` at the next fleet-idle window, then re-verify the same way — through
+`readSwarmRun` over CDP, against the bytes on disk.
+
+**THE RULE THIS EARNS:** `bin/goose` and `app.asar` are TWO artefacts with TWO build steps. Verifying a
+string in the binary proves the ENGINE half only. A UI change needs `strings app.asar` or it is not shipped.
+
 ## COVERAGE IS CONVERGING, AND IT WAS PAYING FULL PRICE FOR THE PROOF — `67f98c574`
 
 Run 3's coverage loop, read end to end:
