@@ -25835,8 +25835,14 @@ fn verify_owned_files(working_dir: &Path, owned: &[String]) -> Vec<String> {
                 ));
                 continue;
             }
+            // AN EMPTY `__init__.py` IS CORRECT PYTHON, not a defect — it is how a package is marked, and
+            // flagging it would make the verifier cry wolf on every well-formed tree. CAUGHT BY REPLAY
+            // before this ever reached a run: the first sweep reported four findings across the three
+            // SCORED local runs and every one was an empty `__init__.py`.
             Ok(m) if m.len() == 0 => {
-                out.push(format!("{rel} exists but is EMPTY"));
+                if !rel.ends_with("__init__.py") {
+                    out.push(format!("{rel} exists but is EMPTY"));
+                }
                 continue;
             }
             Ok(_) => {}
@@ -25857,6 +25863,24 @@ fn verify_owned_files(working_dir: &Path, owned: &[String]) -> Vec<String> {
                         .find(|l| !l.trim().is_empty())
                         .unwrap_or("syntax error");
                     out.push(format!("{rel} DOES NOT PARSE: {}", first.trim()));
+                    // One defect per file: a file that does not parse must not ALSO be reported as a
+                    // skeleton, whose message claims it "exists and parses". Two findings for one broken
+                    // file is noise, and the wrong one of the two is a lie.
+                    continue;
+                }
+            }
+        }
+        // A FILE THAT EXISTS AND IS ONLY STUBS IS NOT A DELIVERABLE, and it is the defect most likely to
+        // be mistaken for success: it exists, it is non-empty, it parses, and it does nothing. The engine
+        // already refuses to salvage one of these as "done" at the watchdog path (`skeleton_only`,
+        // judge.rs:66) — the same test belongs here, where it is cheap and early rather than at the end.
+        if rel.ends_with(".py") {
+            if let Ok(body) = std::fs::read_to_string(&path) {
+                if goose_swarm::judge::skeleton_only(&body) {
+                    out.push(format!(
+                        "{rel} is a SKELETON — it exists and parses, but every body is a stub"
+                    ));
+                    continue;
                 }
             }
         }
@@ -43227,6 +43251,14 @@ mod live_fleet_tests {
             "<link href=\"styles.css\"><script src=\"missing.js\"></script>",
         )
         .unwrap();
+
+        // An empty __init__.py is correct Python and must never be a finding. This is the false positive
+        // the first archived-tree replay caught, on all three SCORED runs, before it reached a live run.
+        std::fs::write(dir.join("app/__init__.py"), "").unwrap();
+        assert!(
+            verify_owned_files(&dir, &["app/__init__.py".into()]).is_empty(),
+            "an empty __init__.py marks a package -- flagging it cries wolf on every well-formed tree"
+        );
 
         let ok = verify_owned_files(&dir, &["app/good.py".into()]);
         assert!(
