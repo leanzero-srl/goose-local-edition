@@ -139,6 +139,19 @@ second window on the Benchmark view mid-run. Enumerate every combo (menu acceler
 renderer keydown, Electron default roles), remove the spawn/reload/close ones, guard the rest while a
 benchmark is live; verify over CDP in the rebuilt app after r2. Agenda item stamped.
 
+**NO THROWAWAY WORK (Mihai, 22:20: "if something gets deleted and redone what's the point of doing it to
+begin with?").** Nothing gets built for a layer the design deletes — no config fields, no gates, no
+levers rows for pre-review / tail idle-fill / idle-model judge / prereview dims. For r3 they are switched
+off by four `=0` lines in the Benchmark view's spawn env (main.ts `benchmark-run`, beside
+`GOOSE_SWARM_BENCHMARK`), which die with step 11; the tick proves the state by the absence of their events.
+The step-10 config-plumbing agent was STOPPED before it changed a line. Rule for every step from here:
+implement what the design KEEPS or ADDS; for what it DELETES, delete or leave — never plumb.
+
+**QUEUED for r3 (desktop, Mihai 22:00): the app must not answer stray shortcuts** — Cmd+Shift+N opened a
+second window on the Benchmark view mid-run. Enumerate every combo (menu accelerators, globalShortcut,
+renderer keydown, Electron default roles), remove the spawn/reload/close ones, guard the rest while a
+benchmark is live; verify over CDP in the rebuilt app after r2. Agenda item stamped.
+
 **QUEUED for r3, behind the step-1 agent (same file, so not concurrent) — design step 10 measured 21:50:**
 four supervision layers are ENV-ONLY and ON by default, so a packaged app cannot switch them off and
 `levers_resolved` cannot prove their state: `GOOSE_SWARM_PREREVIEW` (swarm.rs:36724),
