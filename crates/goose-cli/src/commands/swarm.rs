@@ -1436,6 +1436,18 @@ pub enum SwarmCommand {
         #[arg(long = "best-of-n")]
         best_of_n: Option<usize>,
     },
+    /// Run the artifact verifier over a tree WITHOUT a run — the archived-tree replay.
+    ///
+    /// A fix to the verifier gets its empirical proof in SECONDS against ~30 archived trees, instead of
+    /// waiting 3-4 hours for a live run to reach BUILD. The corpus already on this machine includes runs
+    /// that scored (0.8029, 0.8342, 0.7676), the cloud board leader, and every killed run's partial tree.
+    Verify {
+        /// The tree to check (a run's working dir, or a cloud entrant's `tree/`).
+        dir: PathBuf,
+        /// Also treat these paths as files a task claimed to own, and report ones that are missing.
+        #[arg(long = "owns")]
+        owns: Vec<String>,
+    },
     /// View and manage the swarm device pool (interactive menu when no subcommand is given).
     Pool {
         #[command(subcommand)]
@@ -2120,6 +2132,19 @@ async fn handle_cloud(def: &'static CloudDef, cmd: Option<CloudCommand>) -> Resu
 
 pub async fn handle_swarm(cmd: SwarmCommand) -> Result<()> {
     match cmd {
+        SwarmCommand::Verify { dir, owns } => {
+            let mut findings = verify_owned_files(&dir, &owns);
+            findings.extend(verify_tree_imports(&dir));
+            if findings.is_empty() {
+                println!("clean: {}", dir.display());
+            } else {
+                println!("{} finding(s) in {}", findings.len(), dir.display());
+                for f in &findings {
+                    println!("  - {f}");
+                }
+            }
+            Ok(())
+        }
         SwarmCommand::Run {
             prompt,
             output_format,
