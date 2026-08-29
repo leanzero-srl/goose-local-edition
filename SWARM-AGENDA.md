@@ -2123,6 +2123,24 @@ runs several rounds and the gaps arrive in the later ones.
       "boot pool" or a failed `lms` probe would dispatch to a permanently dead node — WORSE than the bug.
       Departure is already handled (`is_cloud`-exempt residency filter). Revisit only if a node actually
       rejoins mid-run and is measured sitting idle.
+- [ ] **D-MEASURED 2026-08-29 12:20. The gate opened (no run live) and the sweep was RUN, not deleted.**
+      `cargo clippy -p goose-cli --lib`: **54 warnings, 41 of them `never used`.** The dead set is the
+      plan-vote machinery the linear-plan rewrite replaced and never removed:
+      `best_subset_agreement` · `consensus_backbone` · `plan_agreement` · `plan_covers_backbone` ·
+      `module_votes` · `select_best_skeleton` · `score_skeleton` · `skeleton_count_clause` ·
+      `diverse_plan_would_skip` · `backbone_clause` · `frozen_backbone_clause` · `plan_json_from_specs` ·
+      `normalize_plan_files_to_package` · `spec_sized_count_clause` · `research_schema` ·
+      `clarify_schema` · `ambiguity_schema` · `partition_delegated_decisions` · `delegation_regions` ·
+      `delegation_tokens` · `decision_is_delegated` · `per_module_verify_spec` ·
+      `joined_integrate_verify_spec` · `is_scaffolding_task` · `existing_files_block` ·
+      `canonical_role` · `post_answer_action` · `scout_docs_decision` · `linear_plan_enabled` … (41)
+      **DELETION DEFERRED ON PURPOSE, not forgotten:** two workflows are auditing `swarm.rs` right now and
+      hold LINE NUMBERS in it. Deleting functions mid-audit invalidates every finding they return. Delete
+      after both land, in one commit, with `cargo test -p goose-cli` and `-p goose-swarm` as the gate.
+      **NOTE `linear_plan_enabled` IS DEAD** — the `GOOSE_SWARM_LINEAR_PLAN` flag the plan describes as
+      gating the new flow reads as never used, which means the new path is unconditional. Worth
+      confirming before deleting, because if true the plan document is stale on that point.
+
 - [ ] **D. Dead-code sweep — DEFERRED UNTIL NO LOCAL RUN IS LIVE.** `cargo clippy` starves the fleet:
       with the sweep running, judge probe latency went 16s -> 18s -> 27s -> **117s**, clippy-driver at
       55%+30% CPU. I was degrading my own run to tidy code. Ordering also matters and cost one aborted
