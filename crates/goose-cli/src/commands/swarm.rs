@@ -26493,7 +26493,18 @@ impl GooseAgentDispatcher {
                          event ledger, a second service and a 3D field — six of the nine things its \
                          request named.\n\n\
                          For every component with no owner, write the slice that SHOULD own it, in the \
-                         slice shape, in the `slice` field.\n\n\
+                         slice shape, in the `slice` field.\n\
+                         BUT LEAVE `slice` EMPTY WHEN THE ROW IS A FACT ABOUT THE REQUEST RATHER THAN A \
+                         THING SOMEBODY BUILDS. The table wants every named thing, so keep enumerating \
+                         them — but a slice is WORK, and nobody can be assigned \"12,288 payments\" or \
+                         \"96 calendar days\". Those are a volume and a span: they are properties the \
+                         real components must satisfy, and they belong in those components' briefs, not \
+                         in a task of their own. MEASURED: five gap rows became five slices and two of \
+                         them were exactly those, pushing a 13-slice plan toward the 21 that collapsed \
+                         under its own decomposition. Propose a slice only for something that gets \
+                         CREATED — a file, a service, an endpoint, a workflow, a stored artefact, a \
+                         screen, a document. If you cannot name the file or process it would produce, \
+                         leave `slice` empty and let the row stand as coverage.\n\n\
                          Return EVERY component you found, owned and unowned alike. The owned rows are \
                          not wasted work — they are how anyone can check you actually enumerated rather \
                          than skimmed. A part nobody was asked to build is simply absent from the \
