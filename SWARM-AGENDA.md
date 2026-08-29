@@ -397,6 +397,36 @@ it. A problem that turns out to be already owned is left out, but then it was no
 **THIS RUN KEEPS THE DEFECT** — the binary is the old one. Expect 4 features missing from its app, and read
 the score with that in mind rather than as a verdict on the decomposition.
 
+## RUN 3 KILLED — REVIEW COULD NEVER CHANGE THE PLAN, 2026-08-29 06:10 EEST
+
+    round 1   new=8  repeated=0  patch_touches=6   -> rejected
+    round 2   new=9  repeated=0  patch_touches=7   -> rejected, IDENTICAL reason
+    round 3   started
+    plan_patched events in the entire run: 0
+
+Both rejections read *"task `integrate-verify` depends on unknown task `viz-rendering-core`"* — the same
+dangling reference from the same correct merge, every round. **The plan was provably unable to change.**
+
+**AND THE REVIEWER KNEW.** Round 2's findings are prefixed **`STILL:`** — *"STILL: web/viz.js owned by both
+viz-rendering-core and viz-interaction"*. It was right, and the engine counted every one as **new** because
+the de-dup compares a 120-char lowercase prefix and `STILL: Duplicate file ownership: …` differs from
+`Duplicate file ownership: …`. **So the no-new-finding stop cannot fire against a reviewer that rephrases**,
+and round 3 began — which is the checkpoint *"REVIEW runs a third round still surfacing new findings"*.
+
+**KILLED ON THE PROTOCOL**, not on impatience: three double-owned files, a module/package collision, two
+junk tasks owning invented files, and a repair path that cannot land. Stopped with the three documented
+patterns, engine and app confirmed gone, `swarm:` block intact, **fleet confirmed 0 GENERATING before
+archiving**.
+
+**RUN 4 CARRIES THE FIX** (`df22dc12c`): `apply_patch` strips removed ids from every remaining
+`depends_on`, so the exact merge that failed three times now validates. Plus, from tonight:
+`decomposition_of` on `plan_patched.after` · `tasks_owning_nothing` · the coverage slice-vs-fact rule ·
+the settled-section skip · the engine terminator.
+
+**RECORDED, NOT FIXED — the rephrasing hazard.** A reviewer that restates a finding differently defeats a
+prefix-based de-dup. The right answer is probably to de-dup on the STRUCTURAL claim (file + owning task ids)
+rather than the sentence, but that is a design decision and it deserves daylight, not a 06:10 commit.
+
 ## [FIXED] THE CHAIN WORKED AND THEN THREW ITS OWN RESULT AWAY — `df22dc12c`
 
 REVIEW round 1 did everything right: 8 findings, `patch_touches: 6`, all three duplicate-file collisions
