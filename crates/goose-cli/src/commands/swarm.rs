@@ -26434,11 +26434,24 @@ impl GooseAgentDispatcher {
     /// The split is at paragraph boundaries and knows nothing about the content: it does not look for
     /// headings, requirements or keywords, and it makes no decision about what matters. Every judgement
     /// about what is missing is still a model's, made against the slices it is shown.
+    /// `settled` carries the request-section indices that already returned ZERO unowned components, and
+    /// they are SKIPPED on later rounds.
+    ///
+    /// A section with nothing unowned cannot acquire something unowned: the slice list only ever GROWS
+    /// between rounds, so every component that had an owner still has one and no new component appears in
+    /// a section whose text did not change. Re-enumerating it is a full model call that is guaranteed to
+    /// find nothing.
+    ///
+    /// MEASURED 2026-08-29: round 1 returned part 2/3 with 31 components and 0 unowned; round 2 re-ran the
+    /// same section and returned 34 components and 0 unowned, ~20 minutes and a node for a result that
+    /// could not have differed. Part 3 did the same. The loop was already correct -- it ends the first
+    /// round that adds nothing -- it was simply paying full price for the proof.
     pub(crate) async fn cover_slices_fanned(
         self: &Arc<Self>,
         worker_models: Vec<String>,
         user_prompt: &str,
         slices: &[OpenSlice],
+        settled: &mut std::collections::HashSet<usize>,
     ) -> Vec<OpenSlice> {
         let lanes = one_lane_per_host(worker_models);
         if lanes.is_empty() {
@@ -26455,9 +26468,19 @@ impl GooseAgentDispatcher {
         let known_ids: Vec<String> = slices.iter().map(|s| s.id.trim().to_lowercase()).collect();
         let total = parts.len();
         let me = self.clone();
+        // ONLY THE SECTIONS THAT CAN STILL FIND SOMETHING. A section that already enumerated with zero
+        // unowned components cannot acquire one: the slice list only GROWS between rounds, so everything
+        // that had an owner still has one and the section's own text never changed. Results come back in
+        // item order, so an EMPTY result marks that section settled for every later round.
+        let items: Vec<(usize, (String, String))> = parts
+            .into_iter()
+            .enumerate()
+            .filter(|(i, _)| !settled.contains(i))
+            .collect();
+        let order: Vec<usize> = items.iter().map(|(i, _)| *i).collect();
         let out = fanout_over_fleet(
             lanes,
-            parts.into_iter().enumerate().collect::<Vec<_>>(),
+            items,
             move |(i, (title, part)): (usize, (String, String)), model: String| {
                 let listing = listing.clone();
                 let known_ids = known_ids.clone();
@@ -26586,6 +26609,15 @@ impl GooseAgentDispatcher {
             },
         )
         .await;
+        // A section that found nothing missing is DONE, permanently. Recorded before the flatten, while
+        // the per-section shape is still intact.
+        for (j, res) in out.iter().enumerate() {
+            if res.is_empty() {
+                if let Some(idx) = order.get(j) {
+                    settled.insert(*idx);
+                }
+            }
+        }
         // Union, de-duped against the existing slices AND against each other — two parts naming the
         // same missing component is the expected case, not an error.
         let mut have: std::collections::HashSet<String> =
@@ -27904,8 +27936,13 @@ async fn run_linear_plan(
         let mut known = opened.slices.clone();
         tokio::spawn(async move {
             let mut late: Vec<OpenSlice> = Vec::new();
+            // Request sections that have already come back with nothing unowned. Carried ACROSS rounds --
+            // that is the whole point; within a round it would be empty every time.
+            let mut settled: std::collections::HashSet<usize> = std::collections::HashSet::new();
             loop {
-                let missing = d.cover_slices_fanned(models.clone(), &prompt, &known).await;
+                let missing = d
+                    .cover_slices_fanned(models.clone(), &prompt, &known, &mut settled)
+                    .await;
                 if missing.is_empty() {
                     sk.write_value(serde_json::json!({
                         "event": "coverage_complete",
