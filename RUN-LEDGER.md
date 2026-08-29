@@ -19,14 +19,14 @@ DAG is actually parallel). reasoning_chars against answer_chars is the waste.
 - **chain**: 2
 - **startable**: 10
 - **brief_median**: 4740
-- **reasoning_chars**: 280115
-- **answer_chars**: 150076
+- **reasoning_chars**: 280649
+- **answer_chars**: 150579
 - **code_files**: 38
-- **code_bytes**: 201348
-- **elapsed_min**: 242
-- **phase_split**: open 22m · ask 2m · research 48m · synthesis 5m · review 6m · contracts 6m · build 67m · integrate 82m
+- **code_bytes**: 202448
+- **elapsed_min**: 269
+- **phase_split**: open 22m · ask 2m · research 48m · synthesis 5m · review 6m · contracts 6m · build 67m · integrate 109m
 - **before_build_min**: 92 (internal diagnosis only — never a cross-run number)
-- **vs_target**: ONLY THE SCORE COMPARES. Target 20.06% (qwen3.8-27b, one cloud agent, same model). Wall clock is NOT comparable — that run is on far faster hardware, so minutes measure the machine. Bytes are NOT a verdict — more code is not better code, and it had no planning phases to spend budget on. Cross-hardware-honest work numbers for THIS run: 201,348B delivered, 280,115 chars reasoned, 12 tasks completed, 2 retried.
+- **vs_target**: ONLY THE SCORE COMPARES. Target 20.06% (qwen3.8-27b, one cloud agent, same model). Wall clock is NOT comparable — that run is on far faster hardware, so minutes measure the machine. Bytes are NOT a verdict — more code is not better code, and it had no planning phases to spend budget on. Cross-hardware-honest work numbers for THIS run: 202,448B delivered, 280,649 chars reasoned, 12 tasks completed, 2 retried.
 - **python_parses**: 29 ok / 0 SYNTAX ERROR / 0 empty
 - **web_files**: app.js, index.html, styles.css, test_camera.js, viz.js, viz_camera.js
 - **tasks_done**: 12/11 completed, 15 dispatched, 2 retried
