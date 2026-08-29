@@ -159,6 +159,47 @@ recovering, the candidate signal is the same task drawing the same transport err
 
 ---
 
+## THE GUTTING — measured on r0, 2026-08-29. This is the mechanism, not a metaphor.
+
+Mihai: *"check if the model isn't gutted by something. Clearly the cloud model shows us that it's very
+possible to do much better."* It is not gutted by a cap, by sampling, by context or by the thinking
+prefill — all four were checked and cleared:
+
+- sampling is entirely `null` in config: temperature, top_p, top_k, min_p, repeat_penalty. The model uses
+  its own defaults.
+- the `<think>` pre-close SUPPRESSES deliberation but is correctly scoped: off by default, and otherwise
+  only on a RETRY of a task whose owned file is still missing. The first attempt keeps full deliberation.
+- no cap bounds a call (`effective_idle_budget` is tested to return uncapped for any input).
+- context is 262,144 on two nodes and 135,936 on gabee — an asymmetry worth fixing, but not binding on a
+  ~22k-character prompt.
+
+**What IS gutting it is that BUILD workers do not LOOK at anything.** Measured, per lane, from the
+digests' own `calls` records:
+
+| worker | tool calls | reads |
+|---|---|---|
+| `boot-wrapper` — depends on ledgerd AND notifierd | **0** | **0** |
+| `styles-css` | 0 | 0 |
+| `notifierd-service` | 4 | **0** |
+| `viz-core` | 3 | 1 |
+| `app-js` | 3 | 1 |
+| `ledgerd-service` | 8 | 2 |
+| `integrate-verify` | 60 | 23 |
+
+`boot-wrapper` wrote the code that wires both services together **without reading either service**.
+`notifierd-service` never read the ledger it has to integrate with. Only the sink behaves like an agent.
+
+**This is exactly the difference the agenda names and it is now quantified.** The cloud single agent
+writes `notifierd.py` HAVING SEEN `ledgerd.py` — coherence is free because there is one context. Our
+worker writes it having seen a 4,789-character ENGLISH DESCRIPTION of it. Prose cannot be as good as
+looking at the code, and we spend 266,614 reasoning characters manufacturing the prose.
+
+**The fix direction, not yet designed:** a dependency's real file exists on disk by the time a dependent
+is dispatched — the DAG guarantees it. A worker that is told to read its dependencies' files before
+writing gets the coherence for one tool call instead of 4,789 characters of brief. That is a change to
+what the worker is INSTRUCTED to do, not to the architecture, and it is the highest-value candidate the
+run has produced. It needs a design and a run to prove it.
+
 ## THE STANDING NUMBERS
 
 **ONLY THE SCORE COMPARES US TO THE CLOUD.** Not wall clock — the cloud entrant runs on far faster
