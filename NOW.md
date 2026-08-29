@@ -75,19 +75,23 @@ Everything below is under a hard rule the user set: **no run starts until each f
 ISOLATION; only then one holistic run.** Runs cost 3-4 hours and were being spent to discover things a
 2-minute test could have shown.
 
-### The realtime thread — `DESIGN-REALTIME-UI.md`
+### The realtime thread — `DESIGN-REALTIME-UI.md` — **COMPLETE**
 
-Measured, not assumed: the renderer polls `readSwarmRun()` every 500ms; main **re-reads the whole run
-directory on every call**; push channels from main to renderer for run data: **zero**. Per poll, twice
-a second, for a 9-lane run: 9 activity JSONs re-parsed, 68KB `run.jsonl` re-parsed from byte 0, up to
-600KB of transcript tails re-read. All three of those files are **append-only**.
+All four steps landed and are verified in the RUNNING app, not just in tests.
 
 | step | what it is | state |
 |---|---|---|
-| **S1** | read `run.jsonl` and both transcripts from a byte offset, return only the delta | **done** — `swarmIncrementalRead.ts` wired into `main.ts:23` (`eventsGeneration`/`readEvents`/`readTail`), covered by `swarmIncrementalRead.test.ts` + `.replay.test.ts` |
-| **S4** | say WHY a lane is quiet (`judging` + `queued_chunks` → "supervisor reading · N chunks queued") | **done**, 14 references in `useSwarmRun.ts` |
-| **S3** | `foldEvents` takes accumulated state + new events instead of rebuilding from the full array | **done** — `foldEventsIncremental` (`useSwarmRun.ts:2352`), called at :3463, covered by `foldIncremental.test.ts` |
-| **S2** | `fs.watch` on `.swarm/` + `.swarm/activity/`, debounced ~100ms, `webContents.send('swarm:delta')`; the 500ms poll stays as a SAFETY NET only | **code complete, UNCOMMITTED and NOT yet seen working in the app** — `SwarmWatchRegistry` (`main.ts:3204`, sends at :3259), `onSwarmDelta` (`preload.ts:360`), consumed at `useSwarmRun.ts:3627` with the poll kept at :3626; tests `swarmWatch.test.ts` |
+| **S1** | read the run log and transcripts from a byte offset | **done** — `utils/swarmIncrementalRead.ts`; identity is inode+birthtime (a same-path replacement spliced the old file's head onto the new one's tail); reads are serialised per path with `inFlight` (overlapping 500ms polls raced the offset and *permanently lost* a `task_dispatched`); LRU-bounded at 64 paths |
+| **S3** | `foldEvents` folds only what was appended | **done** — `foldEventsIncremental`, keyed on `(runId, generation)` issued by main, not a content fingerprint |
+| **S4** | say why a lane is quiet | **done** — and simplified: the engine no longer buffers during a probe, so counters keep moving and `queued_chunks` was deleted on both sides |
+| **S2** | `fs.watch` push instead of waiting for the poll | **done** — `utils/swarmWatch.ts` → `main.ts` `sender.send('swarm:delta')` → `preload` `onSwarmDelta` → renderer; the 500ms poll stays as the safety net |
+
+**S2 watches the EVENT LOG ONLY, never `activity/`.** The engine rewrites `activity/<task>.json` ~2.5×/s
+per lane; watching it produced ~10 deltas/s against a 2/s poll, and digests are rewritten in place so the
+incremental reader cannot make those reads cheap. Push on the append-only log; poll the digests.
+
+Verified live over CDP against a growing run: events 3→4, thinking bytes 25→50, `fullThinking` holding
+**both** chunks rather than rolling, `generation` correctly stable across an append.
 
 ### The other live threads
 
