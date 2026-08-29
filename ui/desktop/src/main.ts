@@ -58,6 +58,7 @@ import type { GooseApp } from './types/apps';
 import installExtension, { REACT_DEVELOPER_TOOLS } from 'electron-devtools-installer';
 import { BLOCKED_PROTOCOLS, WEB_PROTOCOLS } from './utils/urlSecurity';
 import { buildCSP } from './utils/csp';
+import { hideDevOnlyMenuItems } from './utils/menuPolicy';
 
 function shouldSetupUpdater(): boolean {
   // Setup updater if either the flag is enabled OR dev updates are enabled
@@ -1453,18 +1454,22 @@ const createChat = async (
     }
   }
 
-  // Set up local keyboard shortcuts that only work when the window is focused
-  mainWindow.webContents.on('before-input-event', (event, input) => {
-    if (input.key === 'r' && input.meta) {
-      mainWindow.reload();
-      event.preventDefault();
-    }
+  // Development builds only. This duplicates the menu's reload / toggleDevTools accelerators, and
+  // because before-input-event runs ahead of menu shortcuts it would keep Cmd+R and Cmd+Alt+I live
+  // in the packaged app no matter what hideDevOnlyMenuItems does to the menu.
+  if (!app.isPackaged) {
+    mainWindow.webContents.on('before-input-event', (event, input) => {
+      if (input.key === 'r' && input.meta) {
+        mainWindow.reload();
+        event.preventDefault();
+      }
 
-    if (input.key === 'i' && input.alt && input.meta) {
-      mainWindow.webContents.openDevTools();
-      event.preventDefault();
-    }
-  });
+      if (input.key === 'i' && input.alt && input.meta) {
+        mainWindow.webContents.openDevTools();
+        event.preventDefault();
+      }
+    });
+  }
 
   mainWindow.on('app-command', (e, cmd) => {
     if (cmd === 'browser-backward') {
@@ -4341,6 +4346,7 @@ async function appMain() {
     // installing the menu. Called last so the lookups above that match on the
     // English labels still succeed.
     translateMenuLabels(menu.items);
+    hideDevOnlyMenuItems(menu.items, app.isPackaged);
     Menu.setApplicationMenu(menu);
   }
 
