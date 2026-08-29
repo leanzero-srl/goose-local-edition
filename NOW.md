@@ -163,9 +163,7 @@ held-port probe shared with run_build), so none of those wrong-number mechanisms
   ledgerd's port. RATE then folded the REAL `GET /` defect into a phantom duplicate.
 - **First source path wins in `extract_file_from_finding`** — D5 "Frontend not served (in
   `app/ledgerd.py`, `web/index.html`)" shards to `web/index.html`; the fix lives in ledgerd.
-- **`render_node` as a config key** (`swarm.rs:20551` reads env only; `open -n` passes no env) so the
-  engine's own in-run render gate stops being blind under the desktop.
-- **Build sha + binary mtime in `run_started`** so a ledger row names its engine.
+- ~~`render_node` config key~~ and ~~build sha in `run_started`~~ — REFUTED by r0's own events: `spec_contract.render_gate = "ran (rows=0, console_errors=2)"` with screenshots, and `levers_resolved.build_sha` already exists. The desktop's `resolveBenchNode` ladder does the job.
 
 ### THE BIGGEST NON-BUG FINDING
 
