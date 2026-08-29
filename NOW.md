@@ -55,6 +55,32 @@ implied, the summary was wrong and the sources win.
 
 ## The goal, unchanged
 
+**MIHAI'S STEER, 2026-08-29 23:32 EEST — decomposed into seven asks (his words in TICK-NOTES; memory
+`stateless-models-harness-forms-the-message`):**
+1. **Wait for r2's score before deciding anything about r3.** If it fails or scores badly "we still need to figure
+   stuff out" — but NEVER redesign from scratch: keep r2's good parts, add what the research noted, throw away
+   what r2 showed was waste. Maintain the ledgers and skills so no mistake is made twice.
+2. **Inspector WORK pane: a tool call must be visible as it FORMS** — "a line that is loading and generating" —
+   not only once done. (`156a95957`+`26612c1a3` show the call the instant its request is complete, with a
+   spinner; the FORMING part — while the model still generates the arguments — needs the provider stream's
+   argument deltas. Research lens R4.)
+3. **SAID pane has no state:** it kept showing attempt 0's "Network error: Stream decode error" while attempt 1
+   ran — nothing says current vs. superseded, which attempt, when. Needs provenance + an error state.
+4. **No time-related mechanism anywhere** — "local models suck". Round/progress-related may stay with r2
+   evidence. This puts the 1800 s provider read window (`afa644ddd`) on the table too: a time cap on silence.
+5. **The integrate task is "hilariously generic" — "INTEGRATE EVERY MODULE"**: it must be a SEMANTIC, specific
+   task built from this run's artefacts (which modules exist, entry points, what already ran and passed).
+   "The models are poised to think more the less specific something is."
+6. **BUILD runs tests, then INTEGRATE runs tests again.** The good deterministic thing: CAPTURE tool calls and
+   outcomes per task into mini-ledgers, and let CODE form the next task's message from them ("don't run the
+   tests again — they ran 22 times, here is what failed"). Read-before-act is the only acceptable gate — the
+   ledger is injected so the model cannot start without it. Models are stateless; the harness forms the
+   message for the next turn. Read Claude Code's own mechanisms (memory files, notes-as-you-go, hooks,
+   compaction) and mirror what transfers.
+7. **"Decompose, research, synthesize, bring to fruition"** — a research workflow is running now (five lenses +
+   synthesis + two refuters); its output lands as PART II of DESIGN-STABILITY-FIRST.md. Engine code waits for
+   r2's score; the two desktop items (2, 3) may go first once the research says how.
+
 **r3 SCOPE RULE (Mihai, 2026-08-29 22:35): "depending on r2's results maybe don't modify the next build as per
 your entire list of changes — bring on only what would definitely help."** r3 is the r2 binary plus ONLY the
 changes r2's own evidence says would definitely help (each one must name the r2 finding it answers). The
