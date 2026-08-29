@@ -397,6 +397,33 @@ it. A problem that turns out to be already owned is left out, but then it was no
 **THIS RUN KEEPS THE DEFECT** — the binary is the old one. Expect 4 features missing from its app, and read
 the score with that in mind rather than as a verdict on the decomposition.
 
+## [FIXED] THE CHAIN WORKED AND THEN THREW ITS OWN RESULT AWAY — `df22dc12c`
+
+REVIEW round 1 did everything right: 8 findings, `patch_touches: 6`, all three duplicate-file collisions
+named and the viz pair merged. Then:
+
+    review patch rejected (patched plan is not a valid DAG:
+      task `integrate-verify` depends on unknown task `viz-rendering-core`); dropped, plan unchanged
+
+`plan_patched` events in the whole run: **0**. The merge removed `viz-rendering-core`; `integrate-verify`
+depends on every producer and still named it; validation refused the plan; and **the entire six-task patch
+was discarded — including the two collision fixes that were perfectly valid.**
+
+**SO THE FULL CHAIN FIRED AND CHANGED NOTHING.** `shared_files` named the collisions, question 6b asked
+about them by name, the reviewer found and fixed all three — and the plan went to CONTRACTS untouched, with
+`app/ledgerd.py`, `app/notifierd.py` and `web/viz.js` still double-owned. Everything I built tonight worked
+except the last link.
+
+**THE FIX IS IN `apply_patch`, NOT IN THE PROMPT.** After removals, dangling references to removed ids are
+stripped from every remaining `depends_on`. That is not repairing the model's intent, it IS the intent — a
+task that is gone cannot be waited on. Putting it in the code means the rule holds for every future patch
+instead of depending on a reviewer remembering to update the join. Pinned by a regression test built from
+the exact plan shape that failed.
+
+**AND AN ALL-OR-NOTHING PATCH IS ITS OWN HAZARD** — one invalid edit discarded five good ones. Recorded, not
+changed: partial application needs care about which half of a merge landed, and that decision deserves
+daylight rather than a 06:00 commit.
+
 ## `shared_files` EARNED ITSELF — IT NAMED THE PREDICTED COLLISION, 2026-08-29 05:34 EEST
 
 `plan_synthesized` on run 3:
