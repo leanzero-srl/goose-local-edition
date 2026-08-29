@@ -516,7 +516,7 @@ a "must read the ledger first" tool gate (the injection IS the gate).
 | 15 | pre_review: keep only off build-lane nodes (scheduler.rs:1893-1935) | 2/10 findings landed and reached the sink; its calls starved the lane the run waited on | KEEP (constrained) | medium | supervision placement | placement unit test | waits for r2 score |
 
 Owner's explicit asks: rows 3, 4 (semantic message, don't-repeat), 10, 11 (the two desktop asks), 7 (the no-time rule).
-TWO TRACKS (asks #1 and #7 — "Engine code waits for r2's score; the two desktop items (2, 3) may go first"): DESKTOP —
+SUPERSEDED 2026-08-30 00:19 EEST — everything into r3 after the r2 assessment; reviews cull, REFUSED.md records. (Was:) TWO TRACKS: DESKTOP —
 row 10 now, row 11 after its LM Studio measurement — may start immediately; ENGINE — rows 1-9, 12, 13 and the Part I batch
 — lands only after run_finished + the r2 score, each row re-verdicted against the score first (ask #1 and the scope rule
 condition the ENTIRE list on r2's results; rows 14, 15 and the supervision-off arm additionally wait on beating r0's
@@ -574,7 +574,6 @@ beats a stub that sits (the owner's 22:13 reaction; Part I step 4 already delete
 
 ## III.4 When
 
-An engine-shape change: it enters ONLY as a re-verdicted row after r2's score (the owner's scope rule).
-If r2's sink finishes badly (hangs, ships broken wiring, or the score shows the integrate tier dead), this
-jumps the queue for r3; otherwise it is the r4 arm measured against the r3 baseline. No seconds-based
+SUPERSEDED 2026-08-30 00:19 EEST: everything — Parts I, II and III — is built into r3 after r2's thorough
+assessment; the culling is the adversarial review of each change, and what dies lands in REFUSED.md. No seconds-based
 anything anywhere in it: the gate is event-driven (task completion), the skeleton is a task like any other.

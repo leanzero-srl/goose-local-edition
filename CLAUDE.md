@@ -21,6 +21,7 @@ These you should open yourself:
 - **`RUN-LEDGER.md`** — one row per run, in comparable numbers, so runs are judged by measurement rather
   than recollection.
 - **`TICK-NOTES.md`** — every finding, newest last.
+- **`REFUSED.md`** — items culled by review, kept for revival. **Check before proposing something new.**
 - **`DESIGN-STABILITY-FIRST.md`** — the next evolution (BP-1, STABILITY > SPEED > QUALITY): what is
   deleted, what is kept, the 14 ranked steps and the all-vs-single control. **Read before implementing
   anything in the planner or REPAIR tail**; it supersedes the plan-mode file for those areas.
