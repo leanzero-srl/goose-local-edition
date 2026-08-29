@@ -93,6 +93,15 @@ a measurement, never an error).**
    synthesis + two refuters); its output lands as PART II of DESIGN-STABILITY-FIRST.md. Engine code waits for
    r2's score; the two desktop items (2, 3) may go first once the research says how.
 
+**THE r3 BUILD CAMPAIGN IS RUNNING (from 02:30).** The assessment produced 43 candidates → 32 build / 11
+refuse (+1 transcribed): refusals live in REFUSED.md with revival conditions; the amended queue (10 refuter
+amendments folded) is `scratchpad/r3-queue-amended.json`. Lanes by file: swarm.rs serial (A-1+II-1 first —
+invariant 5 completed: kill_app_tree on the retry path AND own-group app spawns; then II-2..II-5, P1-4/5,
+III-1 skeleton, P1-9 tail, the rest); scheduler.rs (P1-7; A-3 only after II-7); api_client+judge (II-7 time
+purge incl. min_age_secs and detach-registration); harness/instruments (P1-14, MISSING-TRACE); desktop
+(G-2, II-11 measurement, N-4 live verification last).Every batch: isolation tests + gates + adversarial
+review; then rebuild, install, launch r3, live checks.
+
 **r2's HERMETIC SCORE: 0.0396** (inner 0.125 × crit 0.36; 10 criticals — `sync_completeness` and
 `j_workflow_journey` both AGAIN; scratchpad/score-r2/verdict.json). Worse than r0's 0.0568, as a
 killed-at-INTEGRATE tree must be: wiring unfinished, REPAIR never ran. The number is a floor, not a
