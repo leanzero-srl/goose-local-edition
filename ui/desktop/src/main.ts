@@ -20,6 +20,7 @@ import { pathToFileURL, format as formatUrl, URLSearchParams } from 'node:url';
 import { Buffer } from 'node:buffer';
 import fs from 'node:fs/promises';
 import fsSync from 'node:fs';
+import { readEvents, readTail } from './utils/swarmIncrementalRead';
 import started from 'electron-squirrel-startup';
 import path from 'node:path';
 import os from 'node:os';
@@ -3265,18 +3266,11 @@ ipcMain.handle('read-swarm-run', async (_event, workingDir: string) => {
       mtime = chosen.m;
     }
 
-    const raw = await fs.readFile(runFilePath, 'utf8').catch(() => '');
-    const events = raw
-      .split('\n')
-      .filter((l) => l.trim().length > 0)
-      .map((l) => {
-        try {
-          return JSON.parse(l) as Record<string, unknown>;
-        } catch {
-          return null; // tolerate a partial last line while the run is writing
-        }
-      })
-      .filter((e): e is Record<string, unknown> => e !== null);
+    // APPEND-ONLY, so parse only what is new. This used to re-read and re-parse the whole log from byte
+    // 0 on every 500ms poll -- 68KB per poll on a real run, forever, to learn about one appended line.
+    // A partial trailing line is carried to the next poll instead of discarded, so a line split across
+    // two polls is parsed once, whole.
+    const events = await readEvents(runFilePath);
 
     const activityDir = path.join(swarmDir, 'activity');
     const actEntries = await fs.readdir(activityDir).catch(() => [] as string[]);
@@ -3317,36 +3311,21 @@ ipcMain.handle('read-swarm-run', async (_event, workingDir: string) => {
             // accumulate. The engine now appends every thinking chunk to `<task>.think.log`.
             try {
               const tPath = p.replace(/\.json$/, '.think.log');
-              const tst = await fs.stat(tPath);
-              const TMAX = 400_000;
-              const tstart = Math.max(0, tst.size - TMAX);
-              const tfh = await fs.open(tPath, 'r');
-              try {
-                const tbuf = Buffer.alloc(Math.min(tst.size, TMAX));
-                await tfh.read(tbuf, 0, tbuf.length, tstart);
-                (parsed as Record<string, unknown>).full_thinking = tbuf.toString('utf8');
-                (parsed as Record<string, unknown>).thinking_bytes = tst.size;
-              } finally {
-                await tfh.close();
-              }
+              const t = await readTail(tPath, 400_000);
+              if (!t) throw new Error('no thinking transcript');
+              (parsed as Record<string, unknown>).full_thinking = t.text;
+              (parsed as Record<string, unknown>).thinking_bytes = t.size;
             } catch {
               // No thinking transcript (pre-fix engine, or a call that has not reasoned yet).
             }
             try {
               const logPath = p.replace(/\.json$/, '.log');
-              const lst = await fs.stat(logPath);
               const MAX = 200_000;
-              const start = Math.max(0, lst.size - MAX);
-              const fh = await fs.open(logPath, 'r');
-              try {
-                const buf = Buffer.alloc(Math.min(lst.size, MAX));
-                await fh.read(buf, 0, buf.length, start);
-                (parsed as Record<string, unknown>).full_transcript = buf.toString('utf8');
-                (parsed as Record<string, unknown>).transcript_bytes = lst.size;
-                (parsed as Record<string, unknown>).transcript_clipped = lst.size > MAX;
-              } finally {
-                await fh.close();
-              }
+              const l = await readTail(logPath, MAX);
+              if (!l) throw new Error('no transcript');
+              (parsed as Record<string, unknown>).full_transcript = l.text;
+              (parsed as Record<string, unknown>).transcript_bytes = l.size;
+              (parsed as Record<string, unknown>).transcript_clipped = l.size > MAX;
             } catch {
               // No transcript yet (a pre-fix engine, or a call that has produced nothing). The digest's
               // clipped field remains the fallback — never worse than before.
