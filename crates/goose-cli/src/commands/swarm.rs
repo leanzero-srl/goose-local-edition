@@ -26583,22 +26583,43 @@ impl GooseAgentDispatcher {
                                     }))
                                     .collect::<Vec<_>>(),
                             }));
-                            table
+                            // AN EMPTY `slice` MEANS "THIS IS COVERAGE, NOT WORK" -- AND THE ENGINE USED
+                            // TO OVERRULE IT.
+                            //
+                            // The prompt tells the enumerator to leave `slice` EMPTY when a row is a fact
+                            // about the request rather than a thing somebody builds. This code then called
+                            // `unwrap_or_else` and FABRICATED a slice from the component's name, so
+                            // obeying the instruction produced a slice anyway -- named after the fact.
+                            //
+                            // MEASURED, run 4 round 1: the gap added seven slices and five were properties
+                            // -- `12-288-payment-instances`, `berlin-day-positions`,
+                            // `currency-exponent-heights`, `flat-status-colors`, and
+                            // `background-color-101828` ("Background color #101828"). A HEX COLOUR became
+                            // a build task. Run 3 produced the same shape with "12,288 payments" and
+                            // "96 calendar days", and I answered it with a prompt clause that this
+                            // fallback was quietly cancelling.
+                            //
+                            // The fallback made sense when the prompt said "write the slice that SHOULD own
+                            // it" and an empty field meant the model had failed to comply. It gives "empty"
+                            // a meaning now, so the engine has to honour it.
+                            let (proposed, coverage_only): (Vec<_>, Vec<_>) = table
                                 .into_iter()
                                 .filter(|c| !owned(c))
-                                .map(|c| {
-                                    c.slice.unwrap_or_else(|| OpenSlice {
-                                        id: slugify_slice_id(&c.name),
-                                        title: c.name.clone(),
-                                        objective: if c.named_in_request.trim().is_empty() {
-                                            c.name.clone()
-                                        } else {
-                                            c.named_in_request.clone()
-                                        },
-                                        questions: Vec::new(),
-                                        weight: 3,
-                                    })
-                                })
+                                .partition(|c| c.slice.is_some());
+                            if !coverage_only.is_empty() {
+                                me.events.write_value(serde_json::json!({
+                                    "event": "coverage_rows_not_work",
+                                    "part": i + 1,
+                                    "dropped": coverage_only.len(),
+                                    "names": coverage_only
+                                        .iter()
+                                        .map(|c| c.name.clone())
+                                        .collect::<Vec<_>>(),
+                                }));
+                            }
+                            proposed
+                                .into_iter()
+                                .filter_map(|c| c.slice)
                                 .filter(|sl| !sl.id.trim().is_empty())
                                 .collect::<Vec<_>>()
                         }
