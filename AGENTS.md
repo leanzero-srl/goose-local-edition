@@ -114,14 +114,14 @@ in this repo and it has a specific set of invariants that produce no compiler er
 
 **Phases:** `OPEN → ASK → RESEARCH → SYNTHESIS → REVIEW → CONTRACTS → BUILD → INTEGRATE → REPAIR`.
 
-**These four are repeated here ON PURPOSE.** The detail lives in `.claude/rules/swarm-engine.md`, but
+**These six are repeated here ON PURPOSE.** The detail lives in `.claude/rules/swarm-engine.md`, but
 path-scoped rules arm only on the **Read** tool — `cat`, `sed`, `grep`, Grep and Glob do NOT trigger
 them (measured against Claude Code 2.1.247). Since the fast way to open a 42,165-line file is
 `grep -n` then `sed -n 'A,Bp'`, an agent can work in `swarm.rs` for a whole session and never load that
 rules file. AGENTS.md loads at session start unconditionally, so the invariants that must never be
 broken live HERE, and the rules files carry the detail for whoever does hit them.
 
-**The four that break silently:**
+**The six that break silently:**
 
 1. **NO CAPS.** No wall clock, turn ceiling, retry count or volume limit may bound model work — local
    models are slow and that is expected. Terminators must be progress-based or live in the transport.
@@ -131,15 +131,30 @@ broken live HERE, and the rules files carry the detail for whoever does hit them
    nothing, so a file-owning join is cascaded-Failed and the app never binds a port.
 3. **A correction is a PATCH (`plan_patched`), never a re-emission.** Re-emitting whole plans is what
    burned 3h40m without starting a build.
-4. **The judge NUDGES; it does not kill.** Steer lands at a turn boundary and costs nothing.
+4. **The judge NUDGES; it does not kill.** A steer interrupts the stream at a chunk boundary and keeps the
+   partial — but MEASURED on r1 a reasoning-only looping call ignored six of them; the RESTART verdict is
+   what must reach such a call (re-stream), and that wiring is still open.
+5. **Every app-under-test spawn goes through `spawn_grouped` / `kill_app_tree` (process groups).** A bare
+   `tokio::process::Command` with piped stdio and `kill()` reaches ONE pid; the wrapper's `Popen`
+   grandchildren keep the pipe write-ends and a reader awaiting EOF parks forever — r0 hung 20 minutes
+   after its verdict, and 41 leaked servers were found holding ports. Proof without a run:
+   `goose swarm gate <archived tree> --spec evals/swarm-bench/spec-build-sb7.md` must return and leave
+   `tick.py` at `orphans: 0`.
+6. **REVIEW is ONE round (`review_once`); no planning phase loops on an LLM's own novelty.** r1's REVIEW
+   surfaced 8 → 4 → 9 new findings across three rounds, 51 minutes and 209k reasoning chars, because a
+   27B reviewer always finds another "not explicitly owned" concern. The measured plan flags
+   (`tasks_owning_nothing`, `module_package_collisions`, `shared_files`) are injected as MUST-FIX instead.
+   A terminator that waits for an LLM to find nothing is not a terminator.
 
 **Every worker call has FIVE lane-building paths in the UI and one shared join, `digestStreamFields()`.**
 Never hand-copy a digest field onto a lane; the join diverged twice that way and the failure is invisible
 because the other four paths look correct.
 
 **Rolling vs durable:** the activity digest is a small window the engine REWRITES IN PLACE;
-`<task>.log` and `<task>.think.log` are append-only and complete. Any surface a person reads must prefer
-the durable log.
+`<task>.log` and `<task>.think.log` are append-only and complete — the worker loop has TWO digest write
+sites (the main loop and the judge-probe branch) and both must append the transcripts; the probe branch
+did not until `c3b211582`, and the biggest lanes' logs froze under looks. Any surface a person reads must
+prefer the durable log, and the panel's live line follows whichever channel advanced last.
 
 `.claude/rules/*.md` carry the detail per area and load automatically when you touch a matching file.
 `EXPERIMENTS-LEDGER.md` records what was already tried and what it measured — **read it before proposing

@@ -3,7 +3,7 @@ paths:
   - "crates/goose-cli/src/commands/swarm.rs"
 ---
 
-# swarm.rs — the engine. 42,000 lines, and four ways to break it silently.
+# swarm.rs — the engine. 42,000 lines, and six ways to break it silently.
 
 Read `EXPERIMENTS-LEDGER.md` before proposing a change here. Most obvious improvements have been tried.
 
@@ -54,6 +54,46 @@ the diff.
 A regex/brace matcher written to remove one function deleted **34,827 lines** in one pass. It was
 recovered only because the previous step was committed. Edit by explicit line range, verify with
 `cargo build` before writing anything else, and commit before attempting the next removal.
+
+## Every app-under-test spawn is a PROCESS GROUP (`44b2ad6cd`)
+
+`own_process_group` → `spawn_grouped` → `kill_app_tree` / `kill_app_tree_and_drain` (grep the names). The
+old shape — `tokio::process::Command` with piped stdio, `kill()`, then await the pipe readers to EOF —
+parked `run_swarm` forever when the wrapper's `Popen` grandchildren kept the write-ends (r0, 20 min at 0%
+CPU after its verdict; 41 leaked `ledgerd`/`notifierd` found). The drain now releases on GROUP liveness,
+not EOF; that bound is on a process we already killed, never on a model. Applied at `boot_invocation`,
+`run_spec_contract` and its kill sites, the restart reboot, `run_repro_once`, `land_generated_tests`.
+Isolation proof: `./target/release/goose swarm gate <archived tree> --spec evals/swarm-bench/spec-build-sb7.md`
+returns in seconds and `tick.py` prints `orphans: 0`. **`swarm verify` does NOT boot the app** — it only
+checks imports/owned files — so it can prove neither a hang nor a phantom endpoint.
+
+## REVIEW is one round (`5173eab67`)
+
+`review_once`; the loop, `review_oscillating`, `review_patch_stuck`, `RejectMemo` are deleted. The
+measured flags from `decomposition_of` are rendered by `review_must_fix_block` into the prompt. r1's
+three rounds (8 → 4 → 9 new, 51 min, 209k chars) are the reason; `review_dedupe_key` now de-dupes lane
+rephrasings WITHIN the round so `review_findings.new` counts distinct findings.
+
+## The deterministic gate probes ledgerd's OWN table (`0d5ac740d`)
+
+`spec_advertised_surface`: a path cell's path is the first backticked token (row 115 `\`/\` + \`web/*\``
+used to yield "/`"); rows under a heading naming another service (`### 6. \`notifierd\``) are dropped;
+`spec_get_endpoints` ignores prose once a table exists (the vendor's `GET /v3/reversals` in line 86 was
+being probed on the app). Test `the_real_sb7_spec_yields_only_ledgerds_own_table_endpoints` reads the
+real spec. Five of r0's 29 "criticals" were these phantoms.
+
+## Two digest write sites, both append the transcripts (`c3b211582`)
+
+The main loop (~`:17104`) and the judge-probe branch (~`:16416`) each write the digest on a 400 ms
+coalesce; both must call `append_reasoning_transcript` and `append_thinking_transcript`. The probe branch
+did not, so a lane under back-to-back looks had its `.think.log` frozen 155 s behind its digest.
+
+## Findings attribute to the FIRST authored source path (`d748a7d3e`)
+
+`extract_file_from_finding`: backticked/authored paths first-wins ("Frontend not served (in
+`app/ledgerd.py`, `web/index.html`)" → ledgerd); pytest tracebacks keep last-wins (the failing frame is
+last). Tests `an_authored_finding_shards_to_the_first_file_in_its_attribution_list`,
+`a_traceback_still_shards_to_its_last_owned_frame`.
 
 ## Before committing
 
