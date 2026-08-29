@@ -397,6 +397,32 @@ it. A problem that turns out to be already owned is left out, but then it was no
 **THIS RUN KEEPS THE DEFECT** — the binary is the old one. Expect 4 features missing from its app, and read
 the score with that in mind rather than as a verdict on the decomposition.
 
+## RUN 4'S PREDICTION, WRITTEN BEFORE THE EVIDENCE — 2026-08-29 06:35 EEST
+
+`slices_opened`: **11**, weights [2,5,4,4,3,3,4,1,1,3,3], 524s.
+
+    boot-contract · ledgerd-service · webhooks-handler · approval-workflow · outbox-pattern ·
+    notifierd-service · frontend-app · decisions-doc · readme-docs · viz-rendering · viz-interaction
+
+11 against run 1's **21**, run 2's 10, run 3's 13. And **`viz-rendering` + `viz-interaction` are split for
+the THIRD consecutive run** — OPEN reliably separates rendering from interaction, and SYNTHESIS then gives
+both the same `web/viz.js`.
+
+**SO THE PREDICTION, AND IT IS FALSIFIABLE:**
+
+    plan_synthesized     tasks_sharing_a_file >= 1, shared_files names web/viz.js
+                         with [viz-rendering, viz-interaction]
+    review_findings      reports the duplicate ownership (question 6b)
+    plan_patched         FIRES -- in run 3 it never did, 0 events across the whole run
+    plan_patched.after   tasks_sharing_a_file == 0
+
+**If `plan_patched` fires, `apply_patch`'s dangling-dependency strip worked** and the merge that was
+rejected three times now validates. **If `after` shows 0, the collision is fixed rather than described** —
+which is the whole point of adding it, since run 3's only evidence was the reviewer's prose.
+
+**If instead `review_patch_stuck` fires, the terminator worked** and the run settles instead of looping to
+round 3 as run 3 did. Either outcome is informative; a third round of "STILL:" findings is not.
+
 ## RUN 4 LIVE ON A FULLY REBUILT APP — 2026-08-29 06:20 EEST, `build_sha c2d23ccc2`
 
 **FIRST TIME TONIGHT THAT BOTH ARTEFACTS ARE CURRENT.** The fleet went idle after the run-3 kill, which was
