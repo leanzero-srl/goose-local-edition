@@ -362,18 +362,10 @@ const LaneRow: React.FC<{
   const iconColor = interrupted ? CALL_PENDING : STATUS_COLOR[lane.status];
 
   const calls = lane.calls ?? [];
-  // THE DURABLE TRANSCRIPT FIRST. `fullTranscript` is `<task>.log` -- every chunk of the answer channel,
-  // appended, no clip. `fullReasoning` is a 24,000-char CLIP and `reasoning` a last-few-chunks digest, so
-  // preferring either loses the beginning of any real narration.
-  //
-  // This is the SAME defect the node inspector had, in a second place: a workflow audit found it here
-  // after I fixed the inspector and reported the bug closed.
-  const rawReasoning =
-    lane.fullTranscript?.trim() ||
-    lane.fullReasoning?.trim() ||
-    lane.reasoning?.trim() ||
-    lane.lastText?.trim() ||
-    '';
+  // THE DURABLE TRANSCRIPT FIRST — see `laneNarrative`, which is the one copy of this chain. It was
+  // written out here and again on the board row, and the board's copy had already lost its `lastText`
+  // fallback, which is how a rule with N copies reads on the day someone edits N-1 of them.
+  const rawReasoning = laneNarrative(lane);
   const reasoning = rawReasoning.length >= 8 && /[a-zA-Z]{3,}/.test(rawReasoning) ? rawReasoning : '';
   const failLike = lane.status === 'error' || interrupted;
   const laneError = failLike && lane.error ? lane.error.trim() : '';
@@ -769,6 +761,28 @@ const ActivityLine: React.FC<{ it: ActivityItem; wrap?: boolean; workingDir?: st
 // toward the latest snapshot at a steady rate, so the text flows between polls. When the snapshot APPENDS (the
 // common case — the model still generating), we keep typing the new chars; when it changes shape (a new tool
 // call, or the tail window slid past what we've shown), we resync to the longest shared prefix and continue.
+/**
+ * TYPE THE NEW TEXT; NEVER CHASE A BACKLOG.
+ *
+ * The reveal only ever appends, so a target that arrives far ahead of what is shown is typed out from the
+ * beginning at 110 chars/sec — a strip cell fed the durable log's 2,400-char tail would sit twenty seconds
+ * behind the model on its very first frame, and a node's freshest line is the whole point of the cell.
+ * Past one poll's worth of text the reveal SNAPS, so smoothing keeps only the case it was written for:
+ * the handful of characters that landed between two polls.
+ */
+export const MAX_REVEAL_BACKLOG_CHARS = 240;
+
+export function revealStep(args: {
+  target: string;
+  current: string;
+  charsPerSec: number;
+  deltaSeconds: number;
+  reduceMotion: boolean;
+}): string {
+  if (args.target.length - args.current.length > MAX_REVEAL_BACKLOG_CHARS) return args.target;
+  return nextRevealedText(args);
+}
+
 function useSmoothText(target: string, charsPerSec = 110): string {
   const [shown, setShown] = useState('');
   const reduceMotion = usePrefersReducedMotion();
@@ -791,7 +805,7 @@ function useSmoothText(target: string, charsPerSec = 110): string {
       const dt = Math.min(0.1, (now - last) / 1000);
       last = now;
       const tgt = targetRef.current || '';
-      const cur = nextRevealedText({
+      const cur = revealStep({
         target: tgt,
         current: shownRef.current,
         charsPerSec,
@@ -823,6 +837,7 @@ const NodeLiveText: React.FC<{ text: string; lines: number }> = ({ text, lines }
   return (
     <div
       ref={ref}
+      data-testid="fleet-node-gen"
       className="mt-0.5 break-words whitespace-pre-wrap"
       style={{ maxHeight: lines * 16, lineHeight: '16px', overflow: 'hidden', color: GEN_TEXT }}
     >
@@ -910,12 +925,6 @@ const NodeExpandBox: React.FC<{ text: string; fill?: boolean }> = ({ text, fill 
  * Both panes reuse NodeExpandBox, so each follows the newest text like a terminal while a scroll-up to
  * read stays where it was put.
  */
-/// WHICH TEXT THE INSPECTOR SHOWS. Exported so the rule can be tested without rendering, because this pane
-/// has now been wrong twice: once truncated (the header counted the real transcript while the body fell
-/// back to the rolling window) and once DOUBLED (the log and the window concatenated).
-///
-/// `fullThinking` is the durable `<task>.think.log`. `lastThinking` is the digest's 2,400-char ROLLING
-/// WINDOW over that same stream — a suffix of the log by construction. They must never be joined.
 /// WHAT THE OUTPUT PANE SHOWS. The mirror of `inspectorThinkingText`, and the same bug in the other
 /// channel: `fullTranscript` is the durable `<task>.log` — every chunk of the ANSWER channel, appended,
 /// no clip — while `lastText` is the digest's ROLLING view of that same stream.
@@ -926,25 +935,179 @@ const NodeExpandBox: React.FC<{ text: string; fill?: boolean }> = ({ text, fill 
 ///
 /// Tool-call summaries (`recent`) are a DIFFERENT channel and are still prepended: they are what the model
 /// DID, and the transcript is what it SAID.
-export function inspectorOutputText(lane: {
+/**
+ * The stream fields of a lane, as every renderer needs them.
+ *
+ * `TurnLane` satisfies it and a raw activity digest can be mapped onto it, which is the point: the rules
+ * below are written ONCE against this shape instead of being re-typed inline at each render site, where
+ * they diverged into a strip that read only the rolling windows and a card that read only the 24k clip.
+ */
+export type StreamLane = {
   fullTranscript?: string;
-  recent?: string[];
+  fullThinking?: string;
+  fullReasoning?: string;
+  reasoning?: string;
   lastText?: string;
-}): string {
+  lastThinking?: string;
+  thinkingChars?: number;
+  recent?: string[];
+};
+
+export function inspectorOutputText(lane: StreamLane): string {
   const durable = lane.fullTranscript?.trim() ?? '';
   const said = durable || (lane.lastText?.trim() ?? '');
   return [...(lane.recent ?? []), said].filter(Boolean).join('\n\n');
 }
 
-export function inspectorThinkingText(lane: {
-  fullThinking?: string;
-  fullReasoning?: string;
-  reasoning?: string;
-  lastThinking?: string;
-}): string {
+/// WHICH TEXT THE INSPECTOR SHOWS. Exported so the rule can be tested without rendering, because this pane
+/// has now been wrong twice: once truncated (the header counted the real transcript while the body fell
+/// back to the rolling window) and once DOUBLED (the log and the window concatenated).
+///
+/// `fullThinking` is the durable `<task>.think.log`. `lastThinking` is the digest's 2,400-char ROLLING
+/// WINDOW over that same stream — a suffix of the log by construction. They must never be joined.
+export function inspectorThinkingText(lane: StreamLane): string {
   const durable =
     lane.fullThinking?.trim() || lane.fullReasoning?.trim() || lane.reasoning?.trim() || '';
   return durable || (lane.lastThinking?.trim() ?? '');
+}
+
+/**
+ * How much of a durable log an INLINE surface takes.
+ *
+ * The logs are unbounded (main.ts hands over up to 400,000 chars); a two-line strip cell rendering all of
+ * it makes the typewriter reveal chase a multi-KB backlog and makes every poll re-parse a novel. The tail
+ * is the end a reader is following, and 2,400 matches the rolling window it replaces, so the strip shows
+ * no less than it did — it just stops CLEARING between polls.
+ */
+export const INLINE_TAIL_CHARS = 2400;
+
+/** The preview cards show a lot more than a strip cell, but still not a whole log — this is the same
+ *  volume the old 24,000-char `full_reasoning` clip put on screen, now taken from the durable log. */
+export const CARD_TAIL_CHARS = 24_000;
+
+export function tailOf(text: string, max: number): string {
+  return text.length > max ? text.slice(-max) : text;
+}
+
+/**
+ * THE REASONING RUN A NODE IS ON, for any inline surface.
+ *
+ * Prefers the durable `<task>.think.log`; the digest's `lastThinking` is a ROLLING WINDOW the engine
+ * rewrites ~2.5x a second, which is why a cell fed from it clears and refills instead of advancing.
+ * The window is still the fallback for a lane whose log has not appeared yet, and it keeps its
+ * `thinkingChars` gate: without a live counter behind it the window may be a stale leftover.
+ */
+export function laneThinkingRun(lane: StreamLane): string {
+  const durable = lane.fullThinking?.trim() ?? '';
+  const windowed = (lane.thinkingChars ?? 0) > 0 ? (lane.lastThinking?.trim() ?? '') : '';
+  return collapseRepeats(tailOf(durable || windowed, INLINE_TAIL_CHARS));
+}
+
+/**
+ * THE ONE LIVE LINE — what this node is saying RIGHT NOW — shared by the fleet strip and the task board.
+ *
+ * Both used to compute it themselves off `reasoning` / `lastThinking` / `lastText`, every one of which is
+ * a digest window rewritten in place, and the board's copy had already diverged to two branches. So the
+ * expanded lane view was fixed to read the durable logs and the two surfaces a reader looks at FIRST were
+ * left rolling. The durable transcript leads here, tail-bounded; the digest fields remain as fallbacks for
+ * a lane with no log yet.
+ *
+ * The SUBSTANCE gate stays: the text channel emits single-token fragments ("m", ".", " with"), and a busy
+ * node rendered as one meaningless letter is worse than falling through to the next source.
+ */
+export function laneLiveLine(lane: StreamLane): string {
+  return (
+    substantiveChunk(tailOf(lane.fullTranscript?.trim() ?? '', INLINE_TAIL_CHARS)) ||
+    substantiveChunk(lane.reasoning) ||
+    fleetThinkingLine(lane) ||
+    substantiveChunk(lane.lastText) ||
+    (lane.recent && lane.recent.length > 0
+      ? substantiveChunk(lane.recent[lane.recent.length - 1])
+      : '')
+  );
+}
+
+/// THE FLEET CELL'S THINKING LINE — the reasoning run, marked as reasoning.
+///
+/// It was written out twice inline, once for the visible line and once for the expandable text, so the
+/// two could disagree about whether a cell has thinking at all.
+export function fleetThinkingLine(lane: StreamLane | undefined): string {
+  const think = lane ? laneThinkingRun(lane) : '';
+  return think ? `💭 ${think}` : '';
+}
+
+/// WHAT A FLEET CELL CAN EXPAND, and therefore whether its row is clickable at all: the durable narration
+/// plus the thinking line. Exported, and mirrored onto the cell as `data-gen-len`/`data-expandable`, so an
+/// out-of-repo instrument reads the rule's OUTPUT instead of re-deriving it — tick_ui.mjs declared a row
+/// unclickable whenever `full_transcript` was empty, so it called every thinking-only lane dead and every
+/// silent transcript-holder live.
+///
+/// A THINKING-ONLY model must never produce an unclickable row: that is the node you most need to open.
+export function fleetExpandText(lane: StreamLane | undefined): string {
+  const said = lane?.fullTranscript?.trim() || lane?.fullReasoning?.trim() || '';
+  return [said, fleetThinkingLine(lane)].filter(Boolean).join('\n\n');
+}
+
+/** The narration a ROW renders in its expanded body: the durable answer channel, then the clipped digests. */
+export function laneNarrative(lane: StreamLane): string {
+  return (
+    lane.fullTranscript?.trim() ||
+    lane.fullReasoning?.trim() ||
+    lane.reasoning?.trim() ||
+    lane.lastText?.trim() ||
+    ''
+  );
+}
+
+/// A tail read that cut a multi-byte character in half costs at most three bytes of the decoded text, so a
+/// log within this of its own file size has not been clipped.
+const TAIL_DECODE_SLACK_BYTES = 8;
+
+const utf8Bytes = (text: string): number => new TextEncoder().encode(text).length;
+
+/**
+ * IS THE PANE SHOWING ONLY THE END OF A LONGER LOG? One rule, both channels.
+ *
+ * main.ts reads a bounded tail of each durable log and knows the byte budget it read with, so where it has
+ * already answered the question (`transcript_clipped`) that answer wins. Where it has not, the comparison
+ * is made in BYTES against the durable text — never against what is on screen, which is counted in UTF-16
+ * units and may have been collapsed or prefixed by another channel first. The OUTPUT caption did exactly
+ * that (`transcriptBytes > outText.length + 1024`) and would call a complete non-ASCII log a tail.
+ */
+export function isClippedTail(durable?: string, bytes?: number, clipped?: boolean): boolean {
+  if (typeof clipped === 'boolean') return clipped;
+  if (typeof bytes !== 'number' || !durable) return false;
+  return utf8Bytes(durable) + TAIL_DECODE_SLACK_BYTES < bytes;
+}
+
+/** The caption suffix that admits a pane is a tail — silence when it is showing the whole log. */
+export function streamTailNote(durable?: string, bytes?: number, clipped?: boolean): string {
+  if (!isClippedTail(durable, bytes, clipped)) return '';
+  return ` · tail of ${Math.round((bytes ?? 0) / 1024).toLocaleString()}KB`;
+}
+
+/**
+ * The text the per-task LIVE GENERATION card shows.
+ *
+ * It reached for `full_reasoning` — the engine's 24,000-char TAIL CLIP — first, and never looked at the
+ * durable logs sitting unread in the same digest object, so this surface still showed a clipped
+ * transcript after every other reader had been moved onto the append-only logs.
+ */
+export function taskGenReasoning(digest: Record<string, unknown>): string {
+  const str = (k: string) => (typeof digest[k] === 'string' ? (digest[k] as string) : undefined);
+  const lane: StreamLane = {
+    fullThinking: str('full_thinking'),
+    fullReasoning: str('full_reasoning'),
+    reasoning: str('reasoning'),
+    lastThinking: str('last_thinking'),
+    fullTranscript: str('full_transcript'),
+    lastText: str('last_text'),
+  };
+  // BOTH DURABLE LOGS OUTRANK EVERY CLIPPED VIEW. Taking the inspector's chain whole would put
+  // `full_reasoning` — the clip this card is here to stop showing — ahead of `full_transcript`.
+  const durable = lane.fullThinking?.trim() || lane.fullTranscript?.trim() || '';
+  const text = durable || inspectorThinkingText(lane) || laneNarrative(lane);
+  return tailOf(text, CARD_TAIL_CHARS);
 }
 
 const NodeInspector: React.FC<{
@@ -1053,7 +1216,7 @@ const NodeInspector: React.FC<{
               className="px-2 py-0.5 text-[10px] font-mono uppercase tracking-wider font-bold text-white"
               style={{ borderRadius: CHIP_RADIUS, background: SWARM_STATUS.running }}
             >
-              {`supervisor reading${lane.queuedChunks ? ` · ${lane.queuedChunks} chunks queued` : ''}`}
+              {'supervisor reading'}
             </span>
           )}
           {lane?.description && (
@@ -1075,24 +1238,19 @@ const NodeInspector: React.FC<{
             // the engine's `thinkingChars` while the body rendered something else entirely, so a pane
             // showing 2,000 characters could be captioned 22,150 — which reads as "the UI is hiding
             // things" and, before the lane-path fix, actually was.
-            count={
-              thinkText.length < (lane?.thinkingChars ?? 0)
-                ? `${thinkText.length.toLocaleString()} of ${(lane?.thinkingChars ?? 0).toLocaleString()} chars`
-                : `${thinkText.length.toLocaleString()} chars`
-            }
+            //
+            // `thinkingChars` IS NOT THE DENOMINATOR. It is the engine's per-stream counter and resets on
+            // a re-stream, so it says nothing about the size of `<task>.think.log`; the only number that
+            // does is `thinkingBytes`, which main.ts has attached to every digest and nothing has read.
+            count={`${thinkText.length.toLocaleString()} chars${streamTailNote(lane?.fullThinking, lane?.thinkingBytes)}`}
             body={thinkText}
             empty="Nothing on the reasoning channel yet."
           />
           <Pane
             title="Output"
-            // SAY WHEN THE TRANSCRIPT IS A TAIL. main.ts reads only the last 200,000 chars of
-            // `<task>.log` and has always attached `transcript_bytes`, the true on-disk size, which
-            // nothing read. Without it a clipped pane is indistinguishable from a complete one.
-            count={
-              (lane?.transcriptBytes ?? 0) > outText.length + 1024
-                ? `${calls.length} tool call${calls.length === 1 ? '' : 's'} · tail of ${Math.round((lane?.transcriptBytes ?? 0) / 1024).toLocaleString()}KB`
-                : `${calls.length} tool call${calls.length === 1 ? '' : 's'}`
-            }
+            // SAY WHEN THE TRANSCRIPT IS A TAIL — main.ts already computed the answer, in the one place
+            // that knows both the file size and the budget it read with. See streamTailNote.
+            count={`${calls.length} tool call${calls.length === 1 ? '' : 's'}${streamTailNote(lane?.fullTranscript, lane?.transcriptBytes, lane?.transcriptClipped)}`}
             body={outText}
             empty="Nothing emitted yet — reasoning, but no tool call and no text."
           />
@@ -1128,41 +1286,30 @@ const FleetStrip: React.FC<{
         const ink = FORMATION_INK[i % FORMATION_INK.length];
         const letter = String.fromCharCode(65 + (i % 26));
         const lane = runningByDevice.get(device);
-        // The ephemeral generation — the last chunk of text/reasoning the model has streamed on this node,
-        // updated every turn from the activity digest. This is the "what is it generating right now" that was
-        // only ever visible by expanding a lane; surface it inline per node.
-        // Prefer SUBSTANCE over the last raw token. These coder models stream their reasoning in the <think>
-        // channel while the text channel emits tiny fragments (".", " with", "(group"); showing last_text first
-        // made the line flicker one word at a time. So: substantive narration (reasoning) → the readable
-        // thinking run → only then a text fragment → processing marker.
-        // A looping model repeats the same block; collapse it so the box says '⟲ ×3' instead of
-        // pasting it three times (measured: a scout tail was one paragraph repeated 3x).
-        const think = collapseRepeats(lane?.lastThinking?.trim() ?? '');
-        // SUBSTANCE GATE. The text channel emits single-token fragments ("m", ".", " with"), so an
-        // ungated fallback renders a busy node as one meaningless letter — observed live: a node
-        // mid-generation displaying just "m". A fragment is not worth a line; fall through to the recent
-        // activity or the processing marker instead. Same test the expanded reasoning already applies.
-        const substantive = substantiveChunk;
+        // WHAT THIS NODE IS GENERATING RIGHT NOW. The chain lives in `laneLiveLine`, which reads the
+        // DURABLE logs first: this row was built from `reasoning`/`lastThinking`/`lastText`, every one of
+        // them a digest window the engine rewrites in place, so the cell CLEARED AND REFILLED instead of
+        // advancing — Mihai's "the output rolls", fixed in the expanded lane view and left standing in
+        // the surface he looks at first. The markers below stay here: they are lane STATE, not stream text.
         const liveGen =
-          substantive(lane?.reasoning) ||
-          (think && (lane?.thinkingChars ?? 0) > 0 ? `💭 ${think}` : '') ||
-          substantive(lane?.lastText) ||
-          (lane?.recent && lane.recent.length > 0
-            ? substantive(lane.recent[lane.recent.length - 1])
-            : '') ||
+          (lane ? laneLiveLine(lane) : '') ||
           (lane?.phase === 'processing' ? 'processing the prompt…' : '') ||
           (lane?.status === 'running' ? 'generating…' : '');
-        // The full generation for the expandable detail: the whole narration + the recent thinking run.
-        const fullGen = [
-          lane?.fullReasoning?.trim(),
-          think && (lane?.thinkingChars ?? 0) > 0 ? `💭 ${think}` : '',
-        ]
-          .filter(Boolean)
-          .join('\n\n');
+        const fullGen = fleetExpandText(lane);
         const canExpand = !!lane && fullGen.length > 0;
         return (
+          // THE INSTRUMENT'S ANCHOR. The per-tick frontend check reads the RENDERED lane text and the
+          // RENDERED clickability off these attributes; without them it fell back to re-deriving both
+          // from the IPC payload and reported a healthy render path while the renderer was dropping
+          // every field. `data-task` is what joins a cell to its digest on the SAME object, so the
+          // instrument compares a lane against its own data and never against a neighbour's.
           <div
             key={device}
+            data-testid="fleet-node"
+            data-device={device}
+            data-task={lane?.taskId ?? ''}
+            data-expandable={canExpand ? 'true' : 'false'}
+            data-gen-len={fullGen.length}
             className="border border-border-primary px-2 py-1.5"
             style={{ borderRadius: CHIP_RADIUS }}
           >
@@ -1295,6 +1442,7 @@ const FleetStrip: React.FC<{
                       // HISTORICAL/DEAD run: the last frozen snapshot, static + dimmed — NEVER animated, so an
                       // old session no longer looks like it is still streaming.
                       <div
+                        data-testid="fleet-node-gen"
                         className="text-text-secondary whitespace-pre-wrap break-words mt-0.5"
                         style={{
                           display: '-webkit-box',
@@ -1905,7 +2053,7 @@ const TaskGenDetail: React.FC<{ digest: Record<string, unknown> }> = ({ digest }
   const thinking = num('thinking_chars');
   const errors = num('errors');
   const malformed = num('malformed');
-  const reasoning = str('full_reasoning') || str('reasoning') || str('last_thinking') || str('last_text');
+  const reasoning = taskGenReasoning(digest);
   const breakdown = Object.entries(byName)
     .map(([n, c]) => `${c} ${n}`)
     .join(' · ');
@@ -2104,9 +2252,7 @@ const BoardTaskRow: React.FC<{
   const idx = row.device ? deviceIndex(row.device, deviceOrder) : -1;
   const lane = row.lane;
   const calls = lane?.calls ?? [];
-  // Durable transcript first -- see the note on the other task card. Same defect, same fix.
-  const reasoning =
-    lane?.fullTranscript?.trim() || lane?.fullReasoning?.trim() || lane?.reasoning?.trim() || '';
+  const reasoning = lane ? laneNarrative(lane) : '';
   const failLike = row.state === 'failed' || row.state === 'judge_failed' || interrupted;
   const laneError = failLike && lane?.error ? lane.error.trim() : '';
   const hasDetail = !!(
@@ -2129,7 +2275,7 @@ const BoardTaskRow: React.FC<{
   // The live line: what this row's node is DOING right now — the latest tool call, else the freshest
   // substantive narration. Only for RUNNING rows; everything else states its outcome instead.
   const lastCall = calls.length ? calls[calls.length - 1] : undefined;
-  const liveGen = substantiveChunk(lane?.reasoning) || substantiveChunk(lane?.lastText);
+  const liveGen = lane ? laneLiveLine(lane) : '';
   const secs = typeof row.elapsedMs === 'number' ? Math.round(row.elapsedMs / 1000) : null;
   const revealFile = (rel: string) => {
     if (!workingDir) return;

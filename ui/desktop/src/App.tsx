@@ -34,6 +34,7 @@ import SessionsView from './components/sessions/SessionsView';
 import SchedulesView from './components/schedule/SchedulesView';
 import LoopView from './components/loop/LoopView';
 import BenchmarkView from './components/benchmark/BenchmarkView';
+import BenchmarkAutoOpen from './components/benchmark/BenchmarkAutoOpen';
 import ProviderSettings from './components/settings/providers/ProviderSettingsPage';
 import { AppLayout } from './components/Layout/AppLayout';
 import { ChatProvider, DEFAULT_CHAT_TITLE } from './contexts/ChatContext';
@@ -319,40 +320,6 @@ const ExtensionsRoute = () => {
     />
   );
 };
-
-/**
- * OPEN ON THE RUN THAT IS ALREADY GOING.
- *
- * A benchmark started headlessly -- via the `benchmark-run` IPC, which is how the harness and the loop
- * start one -- never touches the renderer, so the window opens on the chat view with a three-node run in
- * flight behind it. Mihai, on finding exactly that: "when I opened the desktop app the benchmark tab was
- * not even selected. Why?"
- *
- * Redirects only from the DEFAULT route and only once, so it can never fight a deliberate navigation.
- */
-function BenchmarkAutoOpen() {
-  const navigate = useNavigate();
-  const location = useLocation();
-  const done = useRef(false);
-  useEffect(() => {
-    if (done.current || location.pathname !== '/') return;
-    let alive = true;
-    void (async () => {
-      try {
-        const st = await window.electron.benchmarkStatus();
-        if (!alive || done.current || !st?.running) return;
-        done.current = true;
-        navigate('/benchmark');
-      } catch {
-        /* no benchmark bridge in this build */
-      }
-    })();
-    return () => {
-      alive = false;
-    };
-  }, [location.pathname, navigate]);
-  return null;
-}
 
 export function AppInner() {
   const [fatalError, setFatalError] = useState<string | null>(null);
@@ -711,7 +678,7 @@ export function AppInner() {
               <Route path="schedules" element={<SchedulesRoute />} />
               <Route path="recipes" element={<RecipesRoute />} />
               <Route path="loop" element={<LoopRoute />} />
-            <Route path="benchmark" element={<BenchmarkRoute />} />
+              <Route path="benchmark" element={<BenchmarkRoute />} />
               <Route path="skills" element={<SkillsRoute />} />
               <Route path="memories" element={<MemoriesRoute />} />
               <Route path="permission" element={<PermissionRoute />} />

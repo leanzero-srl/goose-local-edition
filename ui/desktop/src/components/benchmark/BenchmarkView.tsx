@@ -328,8 +328,10 @@ export default function BenchmarkView() {
   const [scored, setScored] = useState(false);
   const [now, setNow] = useState(() => Date.now());
 
-  // Live engine truth for the active run — drives the phase strip (present/finished), while the
-  // full SwarmRunPanel below renders the same dir with its own poller.
+  // Live engine truth for the active run — the ONE poller on this route. It drives the phase strip
+  // (present/finished) and is handed to SwarmRunPanel as `run`, so the panel renders from this state
+  // instead of mounting a second 500ms poller on the same dir: two pollers doubled the IPC and let
+  // the two copies disagree about the phase for a poll at a time.
   const swarm = useSwarmRun(activeWorkdir ?? undefined);
   const saveDefaults = useSaveSamplingDefaults();
 
@@ -655,7 +657,7 @@ export default function BenchmarkView() {
                 lastLine={lastLine}
                 elapsedMs={runStartedAt ? now - runStartedAt : 0}
               />
-              <SwarmRunPanel workingDir={activeWorkdir ?? undefined} />
+              <SwarmRunPanel workingDir={activeWorkdir ?? undefined} run={swarm} />
             </section>
           )}
 

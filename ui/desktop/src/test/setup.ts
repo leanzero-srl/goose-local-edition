@@ -88,5 +88,6 @@ Object.defineProperty(window, 'electron', {
     getIsFullScreen: vi.fn(() => Promise.resolve(false)),
     on: vi.fn(),
     off: vi.fn(),
+    onSwarmDelta: vi.fn(() => () => {}),
   },
 });

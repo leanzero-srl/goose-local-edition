@@ -412,3 +412,89 @@ describe("the judge's own ETA reaches the panel", () => {
     expect(folded.planningLanes.find((l) => l.taskId === 'open')?.judgeEtaMins).toBeUndefined();
   });
 });
+
+/**
+ * THE ENGINE EMITS ELEVEN PHASE EVENTS. The map understood five and dropped the rest on the floor, so a
+ * fleet fanning contract stubs, a three-node test fan and an hours-long fix wave all left the ribbon lit on
+ * whichever stage happened to come before them. This list is the `{"event": "phase"}` sites in
+ * crates/goose-cli/src/commands/swarm.rs, in the order a run emits them.
+ */
+const ENGINE_PHASE_EVENTS = [
+  'open',
+  'ask',
+  'research',
+  'synthesis',
+  'review',
+  'contracts',
+  'build',
+  'repair',
+  'test',
+  'rate',
+  'fix',
+] as const;
+
+describe('foldRunPhase — no phase event is read and discarded', () => {
+  it('maps every phase value the engine writes onto a step', () => {
+    for (const phase of ENGINE_PHASE_EVENTS) {
+      expect(foldRunPhase([{ event: 'phase', phase }]).phase, phase).not.toBeNull();
+    }
+  });
+
+  it('lights Build for the pre-EXECUTE contract freeze rather than leaving Review lit', () => {
+    // CONTRACTS fans stub generation across the whole fleet. Holding the ribbon on Review through it is
+    // the same class of lie the label-matching ribbon told: a stage asserted over nodes doing other work.
+    expect(
+      foldRunPhase([OPEN, RESEARCH, SYNTHESIS, REVIEW, { event: 'phase', phase: 'contracts' }])
+        .phase
+    ).toBe('build');
+  });
+
+  it('does not claim Repair on a run that verified green the first time', () => {
+    // The engine names its whole COMPLETE loop `repair`, but the loop OPENS by verifying. Taking that name
+    // literally would back-fill a green check on a Repair stage a clean run never entered.
+    const { phase, observed } = foldRunPhase([
+      OPEN,
+      RESEARCH,
+      SYNTHESIS,
+      REVIEW,
+      { event: 'plan_loaded', tasks: [] },
+      { event: 'phase', phase: 'build' },
+      { event: 'phase', phase: 'repair' },
+      { event: 'phase', phase: 'test', round: 0 },
+      { event: 'complete_verify', round: 0, findings: 0 },
+      { event: 'run_finished', report: {} },
+    ]);
+    expect(phase).toBe('done');
+    expect(observed.integrate).toBe(true);
+    expect(observed.repair).toBeUndefined();
+  });
+
+  it('collapses the per-round test/rate/fix events onto Integrate and Repair, never a third stage', () => {
+    // These three repeat once per repair round, so a mapping that gave each its own step would walk the
+    // ribbon backwards through three stages on every round of a run that repairs for hours.
+    const loop = [
+      OPEN,
+      RESEARCH,
+      SYNTHESIS,
+      REVIEW,
+      { event: 'plan_loaded', tasks: [] },
+      { event: 'phase', phase: 'build' },
+      { event: 'phase', phase: 'repair' },
+      { event: 'phase', phase: 'test', round: 0 },
+      { event: 'complete_verify', round: 0, findings: 3 },
+      { event: 'phase', phase: 'rate', round: 0 },
+      { event: 'phase', phase: 'fix', round: 0 },
+      { event: 'phase', phase: 'test', round: 1 },
+      { event: 'complete_verify', round: 1, findings: 0 },
+    ];
+    const visited = new Set(
+      loop
+        .slice(6)
+        .map((_, i) => foldRunPhase(loop.slice(0, 7 + i)).phase)
+        .filter((p): p is NonNullable<typeof p> => p != null)
+    );
+    expect([...visited].sort()).toEqual(['integrate', 'repair']);
+    expect(foldRunPhase(loop.slice(0, 10)).phase).toBe('repair');
+    expect(foldRunPhase(loop).phase).toBe('integrate');
+  });
+});
