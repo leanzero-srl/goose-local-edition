@@ -536,3 +536,45 @@ condition the ENTIRE list on r2's results; rows 14, 15 and the supervision-off a
 
 Fastest confidence raisers: r2's score (gates rows 14-15 and the supervision arm); the LM Studio streaming measurement
 (gates row 11); the render-from-archive unit test in row 3 (proves the harness offline, no fleet).
+
+# PART III — BUILD WITHOUT INTEGRATE: the walking skeleton (Mihai, 2026-08-30 00:16 EEST)
+
+*"What if build didn't require integration? … a lighter version, one that does not require such a massive
+sink."* Asked three times before; grounded now: nothing named "skeleton" in the engine is this idea
+(`best_of_n_skeletons` was plan-draft voting, deleted; `skeleton::` is the per-module fill fan;
+`sink_prebuild` only switches the sink's prompt rules), and EXPERIMENTS-LEDGER has no dead entry for it.
+
+## III.1 Why the sink exists, and how each reason dies
+
+| the sink's job today | measured cost | what removes the job |
+|---|---|---|
+| wiring was nobody's job (r0: `GET /` 404, no task owned serving; 2 of 3 sb-6 apps never bound a port) | the whole 0.52-weight journey tier | **wiring becomes the FIRST build task**: a small, fully semantic skeleton task — entry point + boot + config + EVERY advertised route pre-registered serving a 501 stub — its content assembled by code from the plan's module list and the spec's endpoint table (`spec_get_endpoints`; PLAN-REPAIR rule (d) already lands endpoints on the entry owner). The app boots and answers every route before any module is built. |
+| seams diverge during the parallel fan and are reconciled at the end | r2: the sink's 13 cross-file edits to producers' files; 50+ min invisible generation | **seams never open**: modules fill INTO the booting app; the deterministic GATE (boot + spec contract, 2.6 s replay scale) runs at EVERY task completion, so a broken seam is caught at the task that broke it, blast radius one task, finding attributed to its owner (Part I step 3) with the Part II ledger block. No end-loaded discovery, no "going back". |
+| end-of-run verification | r2: the sink re-ran pytest 9× after BUILD ran it 20+× | the GATE is the verification; the don't-repeat facts (II.3) carry the test history. |
+
+## III.2 The shape
+
+OPEN → SYNTHESIS (+ plan repair) → **SKELETON** (1 small task, deterministic inputs, ~100 lines) →
+BUILD (parallel fills, gate-on-completion) → GATE → shard repair (existing) → ship.
+
+The DAG join keeps the load-bearing `integrate-verify` id (five exact-equality consumers) and still owns
+nothing — but it stops being a MODEL CALL: it is the point where CODE runs the gate and dispatches shards.
+CONTRACTS becomes redundant by construction: the executable skeleton IS the contract, and a stub that runs
+beats a stub that sits (the owner's 22:13 reaction; Part I step 4 already deletes CONTRACTS).
+
+## III.3 Honest risks
+
+1. A wrong skeleton seam propagates to every module — but the skeleton is built from DETERMINISTIC inputs
+   (spec table, plan module list), is ~100 lines, and a seam fix is a one-file shard, not an integration.
+2. Two tasks wanting to edit the skeleton file — avoided: ALL routes are pre-registered from the spec
+   table, so modules never touch it; the ownership fence keeps it single-owner.
+3. Import-name mismatches from local models — caught at that module's FIRST completion by the gate, with a
+   specific finding ("import app.ledger_core failed"), not at the end by a mega-task.
+4. One more serial task at the start — the cost is one small call; r2 paid 50+ min for the sink.
+
+## III.4 When
+
+An engine-shape change: it enters ONLY as a re-verdicted row after r2's score (the owner's scope rule).
+If r2's sink finishes badly (hangs, ships broken wiring, or the score shows the integrate tier dead), this
+jumps the queue for r3; otherwise it is the r4 arm measured against the r3 baseline. No seconds-based
+anything anywhere in it: the gate is event-driven (task completion), the skeleton is a task like any other.
