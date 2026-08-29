@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useId } from 'react';
 import { createPortal } from 'react-dom';
 import {
   Check, X, Loader2, CircleSlash, ChevronRight, ChevronDown, Wrench,
@@ -38,6 +38,7 @@ import {
   type ClarifyProxy,
   type RunOverview as RunOverviewData,
   cleanTaskTitle,
+  isPlanningDigestKey,
 } from './useSwarmRun';
 import { ZoneHeader, ZONE_HUES } from './ZoneHeader';
 import { SWARM_LOG_MODES, useSwarmLogMode, type SwarmLogMode } from './useVerboseSwarm';
@@ -1159,6 +1160,21 @@ export function laneLiveLine(lane: StreamLane): string {
   );
 }
 
+/// THE COMPACT SIBLING LINE NAMES THE LANE; THE BOARD DESCRIBES IT.
+///
+/// A planning digest label is an identity plus a caption — "Coverage 1 · what the request names that
+/// nothing owns" — and the WORK board paints the whole of it on that lane's own row, where it has the
+/// width. Under a fleet cell the same string was painted again into 40% of a row, so every coverage lane
+/// read "Coverage 1 · what the request na…" beside its live text: the caption cost the live line its
+/// space and said nothing the board had not (measured live, 2026-08-29: three lanes, six paints). The
+/// identity is the join a reader needs here.
+export function laneSiblingTitle(lane: Pick<TurnLane, 'taskId' | 'description'>): string {
+  const title = cleanTaskTitle(lane.description ?? lane.taskId, lane.taskId);
+  if (!isPlanningDigestKey(lane.taskId)) return title;
+  const cut = title.indexOf(' · ');
+  return cut > 0 ? title.slice(0, cut) : title;
+}
+
 /// The reasoning run reduced to ONE line, for the inline surfaces. `fleetThinkingLine` keeps returning
 /// the whole block because the expand box wants all of it; a row that shows one line must not be handed
 /// a block and left to render whichever end it happens to render.
@@ -1414,6 +1430,7 @@ const NodeInspector: React.FC<{
         role="dialog"
         aria-modal="true"
         aria-label={`Node ${letter}, ${device}`}
+        data-task={lane?.taskId ?? ''}
         className="fixed z-50 inset-4 md:inset-8 flex flex-col bg-background-primary border border-border-primary shadow-2xl"
         style={{ borderRadius: CHIP_RADIUS }}
       >
@@ -1548,7 +1565,10 @@ const FleetStrip: React.FC<{
 }) => {
   // The full stream opens in a MODAL. Inline it was clipped by whatever height the row happened to have,
   // which made the panel least readable exactly when a node was busiest.
-  const [inspect, setInspect] = useState<string | null>(null);
+  // WHICH LANE, not just which node. A node runs PARALLEL: 2, so "open gabee" is ambiguous — the primary
+  // cell and the sibling row under it each open the inspector on THEIR task (measured r1 t+20m: the run's
+  // largest lane, open-coverage-1 at 23,975 reasoning chars, sat under gabee's cell and could not be opened).
+  const [inspect, setInspect] = useState<{ device: string; taskId: string } | null>(null);
   if (deviceOrder.length === 0) return null;
   const shortName = (device: string): string => device.match(/^([^-]+)/)?.[1] ?? device;
   return (
@@ -1592,13 +1612,13 @@ const FleetStrip: React.FC<{
               role={canExpand ? 'button' : undefined}
               tabIndex={canExpand ? 0 : undefined}
               aria-label={canExpand ? `Open the full stream from ${shortName(device)}` : undefined}
-              onClick={canExpand ? () => setInspect(device) : undefined}
+              onClick={canExpand && lane ? () => setInspect({ device, taskId: lane.taskId }) : undefined}
               onKeyDown={
-                canExpand
+                canExpand && lane
                   ? (e: React.KeyboardEvent) => {
                       if (e.key === 'Enter' || e.key === ' ') {
                         e.preventDefault();
-                        setInspect(device);
+                        setInspect({ device, taskId: lane.taskId });
                       }
                     }
                   : undefined
@@ -1728,30 +1748,6 @@ const FleetStrip: React.FC<{
                       </div>
                     )
                   ) : null}
-                  {/* THE NODE'S OTHER LIVE LANES. Every node runs PARALLEL: 2, so this is routinely
-                      non-empty and the strip used to drop it: measured live, gabee ran open-coverage-1
-                      at 68,393 reasoning characters alongside slice-index-html and only the second had
-                      a cell. The two LARGEST lanes in the run were invisible — "I cannot see what the
-                      nodes are doing" with a mechanism behind it.
-
-                      Compact sibling lines rather than full cells: the point is that nothing a node is
-                      doing is missing, not that every lane gets equal estate. */}
-                  {(alsoRunningByDevice.get(device) ?? []).map((extra) => (
-                    <div
-                      key={extra.taskId}
-                      data-testid="fleet-node-also"
-                      data-task={extra.taskId}
-                      className="mt-1 flex items-baseline gap-2 text-[11px] text-text-secondary"
-                    >
-                      <span className="shrink-0 font-mono font-bold" style={{ color: hue }}>
-                        +
-                      </span>
-                      <span className="shrink-0 truncate max-w-[40%] text-text-primary">
-                        {cleanTaskTitle(extra.description ?? extra.taskId, extra.taskId)}
-                      </span>
-                      <span className="truncate">{laneLiveLine(extra)}</span>
-                    </div>
-                  ))}
                 </div>
               ) : (() => {
                   // No lane, no span — but LM Studio's own status may still say the node is generating.
@@ -1773,30 +1769,108 @@ const FleetStrip: React.FC<{
                   );
                 })()}
             </div>
+            {/* THE NODE'S OTHER LIVE LANES. Every node runs PARALLEL: 2, so this is routinely non-empty
+                and the strip used to drop it: measured live, gabee ran open-coverage-1 at 68,393 reasoning
+                characters alongside slice-index-html and only the second had a cell. The two LARGEST lanes
+                in the run were invisible — "I cannot see what the nodes are doing" with a mechanism behind
+                it. Compact sibling lines rather than full cells: the point is that nothing a node is doing
+                is missing, not that every lane gets equal estate.
+
+                SIBLINGS OF THE PRIMARY BUTTON, NOT CHILDREN. They used to sit inside it, where a click
+                bubbled up and opened the PRIMARY lane's inspector, and where a nested role="button" is
+                presentational to assistive tech. Each row is now its own control that opens the inspector
+                on ITS task, with the same anchors (`data-task`, `data-expandable`, `data-gen-len`) the
+                per-tick instrument reads off the primary cell, computed the same way. */}
+            {lane
+              ? (alsoRunningByDevice.get(device) ?? []).map((extra) => {
+                  const extraFull = fleetExpandText(extra);
+                  const extraCanExpand = extraFull.length > 0;
+                  const title = laneSiblingTitle(extra);
+                  const openExtra = () => setInspect({ device, taskId: extra.taskId });
+                  return (
+                    <div
+                      key={extra.taskId}
+                      data-testid="fleet-node-also"
+                      data-task={extra.taskId}
+                      data-expandable={extraCanExpand ? 'true' : 'false'}
+                      data-gen-len={extraFull.length}
+                      className="mt-1 flex items-baseline gap-2 text-[11px] text-text-secondary"
+                      style={{ cursor: extraCanExpand ? 'pointer' : 'default' }}
+                      role={extraCanExpand ? 'button' : undefined}
+                      tabIndex={extraCanExpand ? 0 : undefined}
+                      aria-label={
+                        extraCanExpand
+                          ? `Open the full stream of ${title} on ${shortName(device)}`
+                          : undefined
+                      }
+                      onClick={extraCanExpand ? openExtra : undefined}
+                      onKeyDown={
+                        extraCanExpand
+                          ? (e: React.KeyboardEvent) => {
+                              if (e.key === 'Enter' || e.key === ' ') {
+                                e.preventDefault();
+                                openExtra();
+                              }
+                            }
+                          : undefined
+                      }
+                    >
+                      <span
+                        className="shrink-0 font-mono font-bold text-center"
+                        style={{ width: 16, color: hue }}
+                      >
+                        +
+                      </span>
+                      <span className="shrink-0 truncate max-w-[40%] text-text-primary">{title}</span>
+                      <span className="min-w-0 truncate">{laneLiveLine(extra)}</span>
+                      {extraCanExpand ? (
+                        <ChevronRight size={12} className="shrink-0 self-center text-text-secondary" />
+                      ) : null}
+                    </div>
+                  );
+                })
+              : null}
           </div>
         );
       })}
-      {live &&
-        unattributed.map((s) => (
-          // A judge span with no busy node to pin it to — real work, shown unattributed rather than dropped.
-          <div key={`sup-${s.taskId}`} className="flex items-center gap-2 text-xs">
-            <span className="shrink-0" style={{ width: 16 }} />
-            <Gavel size={12} className="shrink-0" style={{ color: FORMATION_RAMP[2] }} />
-            <span style={{ color: FORMATION_RAMP[2], fontWeight: 600 }}>{s.label}</span>
-            <span className="text-text-secondary">— on an idle node (the verdict names it when it lands)</span>
-          </div>
-        ))}
+      {live && unattributed.length > 0 ? (
+        // Judge spans with no busy node to pin them to — real work, shown unattributed rather than dropped.
+        // ONE line for all of them: the caption is a fact about the class, not about each span, and a row
+        // per span painted the same 54 characters four times in a column (measured live, 2026-08-29).
+        <div data-testid="fleet-unattributed" className="flex items-start gap-2 text-xs">
+          <span className="shrink-0" style={{ width: 16 }} />
+          <Gavel size={12} className="shrink-0 mt-[2px]" style={{ color: FORMATION_RAMP[2] }} />
+          <span className="min-w-0">
+            {unattributed.map((s, i) => (
+              <React.Fragment key={`sup-${s.kind}-${s.taskId}`}>
+                {i > 0 ? <span className="text-text-secondary"> · </span> : null}
+                <span style={{ color: FORMATION_RAMP[2], fontWeight: 600 }}>{s.label}</span>
+              </React.Fragment>
+            ))}
+            <span className="text-text-secondary">
+              {unattributed.length === 1
+                ? ' — on an idle node (the verdict names it when it lands)'
+                : ' — on idle nodes (each verdict names its node when it lands)'}
+            </span>
+          </span>
+        </div>
+      ) : null}
       {inspect
         ? (() => {
-            const i = Math.max(deviceOrder.indexOf(inspect), 0);
+            const i = Math.max(deviceOrder.indexOf(inspect.device), 0);
+            const primary = runningByDevice.get(inspect.device);
+            const lane =
+              [primary, ...(alsoRunningByDevice.get(inspect.device) ?? [])].find(
+                (l) => l?.taskId === inspect.taskId
+              ) ?? primary;
             return (
               <NodeInspector
-                device={inspect}
+                device={inspect.device}
                 letter={String.fromCharCode(65 + (i % 26))}
                 hue={FORMATION_RAMP[i % FORMATION_RAMP.length]}
                 ink={FORMATION_INK[i % FORMATION_INK.length]}
-                lane={runningByDevice.get(inspect)}
-                nodeState={nodeStatus[shortName(inspect)]}
+                lane={lane}
+                nodeState={nodeStatus[shortName(inspect.device)]}
                 onClose={() => setInspect(null)}
               />
             );
@@ -2892,6 +2966,12 @@ const NoteBox: React.FC<{ workingDir: string }> = ({ workingDir }) => {
   const [sent, setSent] = React.useState(0);
   const [busy, setBusy] = React.useState(false);
   const [failed, setFailed] = React.useState(false);
+  const sendWhyId = useId();
+  const sendWhy = busy
+    ? 'Sending…'
+    : text.trim()
+      ? 'Send this note — it lands at the next task boundary'
+      : 'Type a note to send';
 
   const send = async () => {
     const t = text.trim();
@@ -2931,11 +3011,16 @@ const NoteBox: React.FC<{ workingDir: string }> = ({ workingDir }) => {
           type="button"
           onClick={() => void send()}
           disabled={!text.trim() || busy}
+          title={sendWhy}
+          aria-describedby={sendWhyId}
           className="shrink-0 px-2.5 py-1 text-xs font-semibold text-white disabled:opacity-40"
           style={{ backgroundColor: SWARM_STATUS.action, borderRadius: CHIP_RADIUS }}
         >
           {busy ? 'Sending…' : 'Send'}
         </button>
+        <span id={sendWhyId} className="sr-only">
+          {sendWhy}
+        </span>
       </div>
       {failed ? (
         <div className="text-[11px] mt-1" style={{ color: STATUS_COLOR.error }}>
@@ -3035,6 +3120,7 @@ const ClarifyPrompt: React.FC<{
   const [sent, setSent] = useState(false);
   const [error, setError] = useState(false);
   const [busy, setBusy] = useState(false);
+  const uid = useId();
 
   const setAnswer = (i: number, v: string) => setAnswers((a) => a.map((x, j) => (j === i ? v : x)));
 
@@ -3062,6 +3148,11 @@ const ClarifyPrompt: React.FC<{
   }
 
   const canSend = answers.some((a) => a.trim().length > 0) || guidance.trim().length > 0;
+  const sendWhy = busy
+    ? 'Sending…'
+    : canSend
+      ? 'Send these answers and start the build'
+      : 'Type an answer to at least one question, or some guidance, to send';
   return (
     <div className="border-b border-border-primary">
       <div className="flex items-center gap-2 px-3 py-2 text-white" style={{ backgroundColor: AMBER }}>
@@ -3119,7 +3210,9 @@ const ClarifyPrompt: React.FC<{
 
         {clarify.questions.map((q, i) => (
           <div key={i} className="space-y-1.5">
-            <div className="text-xs text-text-primary font-medium">
+            {/* The question IS the answer box's name: a placeholder vanishes on the first keystroke, and
+                three boxes named "your answer…" are three boxes named nothing. */}
+            <div id={`${uid}-q${i}`} className="text-xs text-text-primary font-medium">
               {i + 1}. <InlineMarkdown content={q.question} />
             </div>
             {q.resolves ? (
@@ -3159,6 +3252,7 @@ const ClarifyPrompt: React.FC<{
             ) : null}
             <input
               type="text"
+              aria-labelledby={`${uid}-q${i}`}
               value={q.options.includes(answers[i]) ? '' : answers[i]}
               onChange={(e) => setAnswer(i, e.target.value)}
               placeholder={q.options.length > 0 ? 'or type your own…' : 'your answer…'}
@@ -3169,8 +3263,11 @@ const ClarifyPrompt: React.FC<{
         ))}
 
         <div className="space-y-1">
-          <div className="text-xs text-text-primary font-medium">Anything else? (optional)</div>
+          <label htmlFor={`${uid}-guidance`} className="block text-xs text-text-primary font-medium">
+            Anything else? (optional)
+          </label>
           <textarea
+            id={`${uid}-guidance`}
             value={guidance}
             onChange={(e) => setGuidance(e.target.value)}
             rows={2}
@@ -3191,13 +3288,16 @@ const ClarifyPrompt: React.FC<{
             type="button"
             onClick={send}
             disabled={busy || !canSend}
+            title={sendWhy}
+            aria-describedby={`${uid}-send-why`}
             className="flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 text-white disabled:opacity-50 transition-opacity"
             style={{ backgroundColor: BLUE, borderRadius: CHIP_RADIUS }}
           >
             {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />}
             Send answers &amp; build
           </button>
-          <span className="text-[11px] text-text-secondary">
+          <span id={`${uid}-send-why`} className="text-[11px] text-text-secondary">
+            {canSend ? '' : `${sendWhy}. `}
             {proxy.armed
               ? 'Your answers guide every worker; the plan shape stays as drafted. Goose answers for you if you leave this.'
               : 'The build is paused until you respond. Your answers guide every worker; the plan shape stays as drafted.'}

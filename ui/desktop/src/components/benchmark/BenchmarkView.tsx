@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useId, useMemo, useState } from 'react';
 import { Gauge, Play, Upload, Loader2, XCircle, BadgeCheck } from 'lucide-react';
 import { MainPanelLayout } from '../Layout/MainPanelLayout';
 import {
@@ -30,6 +30,20 @@ import { ConfirmationModal } from '../ui/ConfirmationModal';
 
 const NODE_CHOICES = [1, 2, 3] as const;
 type NodeChoice = (typeof NODE_CHOICES)[number];
+
+const MODEL_MIN_CHARS = 8;
+const MODEL_MAX_CHARS = 120;
+
+/** Why the Model field cannot be published as typed, or null when it can. The one rule the input's
+ *  aria-invalid, its visible hint and the Publish button's tooltip all read from — the three used to
+ *  each restate "8–120 characters" and the input carried aria-invalid with no message linked to it. */
+export function modelFieldProblem(model: string): string | null {
+  const n = model.trim().length;
+  if (n === 0) return 'Required — the exact model id your fleet ran.';
+  if (n < MODEL_MIN_CHARS) return `Too short — ${n} of at least ${MODEL_MIN_CHARS} characters.`;
+  if (n > MODEL_MAX_CHARS) return `Too long — ${n} of at most ${MODEL_MAX_CHARS} characters.`;
+  return null;
+}
 
 /** The stored result row — the v1 chart fields plus the v2 publisher inputs main.ts persists. */
 interface MineRow extends BenchmarkRow {
@@ -534,8 +548,15 @@ export default function BenchmarkView() {
   }, [mine, title, model]);
 
   const publishable = mine != null && mine.runMeta != null;
-  const modelValid = model.trim().length >= 8 && model.trim().length <= 120;
+  const modelProblem = modelFieldProblem(model);
+  const modelValid = modelProblem === null;
   const mineFinished = fmtWhen(mine?.runMeta?.finishedAt);
+  const uid = useId();
+  const lockedId = `${uid}-locked`;
+  const modelId = `${uid}-model`;
+  const modelHintId = `${uid}-model-hint`;
+  const titleId = `${uid}-title`;
+  const lockedWhy = 'Locked while a run is live — the tier and node count are fixed at launch';
 
   return (
     <MainPanelLayout>
@@ -587,13 +608,14 @@ export default function BenchmarkView() {
                   onClick={() => setTier(t)}
                   disabled={running}
                   aria-pressed={tier === t}
-                  title={
+                  aria-describedby={running ? lockedId : undefined}
+                  title={`${
                     t === 'sb-7'
                       ? 'Meridian Payments Console — the current tier: full web console, 3D scene, concurrency and resilience under seeded SIGKILL (scorer sb-7.0-rc, UNCALIBRATED)'
                       : t === 'sb-6'
                         ? 'VendorSync Pro — the hard tier: raw-WebGL 3D, webhooks, optimistic concurrency (scorer sb-6.0)'
                         : 'VendorSync — the standard tier (scorer sb-5.3)'
-                  }
+                  }${running ? `. ${lockedWhy}` : ''}`}
                   className={`px-4 py-2 text-sm font-bold transition-colors ${
                     tier === t
                       ? 'bg-[var(--color-node-5)] text-white'
@@ -613,6 +635,8 @@ export default function BenchmarkView() {
                   onClick={() => setNodes(n)}
                   disabled={running}
                   aria-pressed={nodes === n}
+                  aria-describedby={running ? lockedId : undefined}
+                  title={running ? lockedWhy : `Run on ${n} node${n === 1 ? '' : 's'}`}
                   className={`px-4 py-2 text-sm font-semibold tabular-nums transition-colors ${
                     nodes === n
                       ? 'bg-[var(--color-block-teal)] text-white'
@@ -623,12 +647,18 @@ export default function BenchmarkView() {
                 </button>
               ))}
             </div>
+            {running && (
+              <span id={lockedId} className="text-xs font-semibold text-text-secondary">
+                locked while the run is live
+              </span>
+            )}
 
             {running ? (
               <button
                 type="button"
                 onClick={() => setConfirmCancel(true)}
                 disabled={cancelling}
+                title={cancelling ? 'Cancelling — the engine, the vendor sim and the scorer are being stopped' : 'Stop this run'}
                 className="ml-auto flex items-center gap-2 rounded bg-background-danger px-4 py-2 text-sm font-semibold text-white disabled:opacity-50"
               >
                 {cancelling ? (
@@ -806,35 +836,51 @@ export default function BenchmarkView() {
               </p>
               <div className="mt-3 flex flex-col gap-3">
                 <div className="max-w-[560px]">
-                  <label className="mb-1 block text-xs font-bold uppercase tracking-wider text-text-secondary">
+                  <label
+                    htmlFor={modelId}
+                    className="mb-1 block text-xs font-bold uppercase tracking-wider text-text-secondary"
+                  >
                     Model <span style={{ color: '#e5484d' }}>*</span>
                   </label>
                   <Input
+                    id={modelId}
                     value={model}
-                    onChange={(e) => setModel(e.target.value.slice(0, 120))}
-                    maxLength={120}
+                    onChange={(e) => setModel(e.target.value.slice(0, MODEL_MAX_CHARS))}
+                    maxLength={MODEL_MAX_CHARS}
                     placeholder="The exact model your fleet ran — e.g. qwen3.6-27b-…-mtp"
                     disabled={publishing}
+                    title={publishing ? 'Locked while publishing' : undefined}
                     aria-invalid={!modelValid}
+                    aria-describedby={modelHintId}
                   />
-                  <p className="mt-1 text-[11px] text-text-secondary">
+                  <p id={modelHintId} className="mt-1 text-[11px] text-text-secondary">
                     Prefilled from the run's own pool — edit it if that is not the exact model.
-                    {!modelValid && (
+                    {modelProblem && (
                       <span className="ml-1 font-bold" style={{ color: '#e5484d' }}>
-                        Required, 8–120 characters.
+                        {modelProblem}
                       </span>
                     )}
                   </p>
                 </div>
-                <div className="flex flex-wrap items-center gap-3">
-                  <Input
-                    value={title}
-                    onChange={(e) => setTitle(e.target.value.slice(0, 80))}
-                    maxLength={80}
-                    placeholder="Optional title — e.g. My M4 fleet first run"
-                    className="max-w-[360px]"
-                    disabled={publishing}
-                  />
+                <div className="flex flex-wrap items-end gap-3">
+                  <div className="w-full max-w-[360px]">
+                    <label
+                      htmlFor={titleId}
+                      className="mb-1 block text-xs font-bold uppercase tracking-wider text-text-secondary"
+                    >
+                      Title{' '}
+                      <span className="font-medium normal-case tracking-normal">(optional)</span>
+                    </label>
+                    <Input
+                      id={titleId}
+                      value={title}
+                      onChange={(e) => setTitle(e.target.value.slice(0, 80))}
+                      maxLength={80}
+                      placeholder="e.g. My M4 fleet first run"
+                      disabled={publishing}
+                      title={publishing ? 'Locked while publishing' : undefined}
+                    />
+                  </div>
                   <button
                     type="button"
                     onClick={publish}
@@ -842,9 +888,11 @@ export default function BenchmarkView() {
                     title={
                       !publishable
                         ? 'Run the benchmark (v2) first'
-                        : !modelValid
-                          ? 'Set the Model field first (8–120 characters)'
-                          : 'Publish this result to leanzero.net'
+                        : running
+                          ? 'Publishing waits for the run in progress to finish'
+                          : modelProblem
+                            ? `Model: ${modelProblem}`
+                            : 'Publish this result to leanzero.net'
                     }
                     className="flex items-center gap-2 rounded bg-[var(--color-block-teal)] px-4 py-2 text-sm font-semibold text-white disabled:opacity-40"
                   >
