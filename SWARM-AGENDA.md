@@ -397,6 +397,31 @@ it. A problem that turns out to be already owned is left out, but then it was no
 **THIS RUN KEEPS THE DEFECT** — the binary is the old one. Expect 4 features missing from its app, and read
 the score with that in mind rather than as a verdict on the decomposition.
 
+## [WORKED, MEASURED] THE SETTLED-SECTION SKIP — run 4, 2026-08-29 07:30 EEST
+
+    round 1   part 3/3   6 components, 0 unowned   -> SETTLED
+              part 1/3  24 components, 1 unowned
+              part 2/3  32 components, 6 unowned   -> gap +7
+    round 2   part 1/3   4 components, 4 unowned            (part 3 SKIPPED)
+              part 2/3  62 components, 0 unowned   -> SETTLED, gap +3
+    round 3   part 1/3  62 components, 0 unowned            (parts 2 AND 3 SKIPPED)
+              coverage_complete
+
+**Three full model calls saved** — part 3 skipped twice, part 2 once — and each was provably incapable of
+finding anything, because the slice list only grows and a section with nothing unowned cannot acquire
+something unowned. In run 3 those same three calls ran and returned exactly what they had returned before.
+
+**BUT: `coverage_complete: slices 21`.** 11 at OPEN + 7 + 3. **That is the same 21 that collapsed run 1** in
+a REVIEW cascade, and the round-1 gap is the one that added `background-color-101828`,
+`12-288-payment-instances` and three more properties. **The empty-slice fix (`971d33cc4`) landed AFTER this
+run started, so this binary still fabricates a slice whenever the model correctly leaves the field empty.**
+
+`coverage_rows_not_work` never fired, which confirms it: the fix is not in this run.
+
+**SO RUN 4 GOES TO SYNTHESIS AT 21 SLICES WITH AT LEAST FIVE JUNK.** Expect collisions and a REVIEW load.
+The difference from run 1 is that REVIEW can now actually patch — `apply_patch` strips dangling deps, and
+`review_patch_stuck` ends the loop if it cannot.
+
 ## HYPOTHESIS TESTED AND NOT SUPPORTED: coverage payload size does NOT explain the blocking
 
 A coverage lane has blocked RESEARCH in FOUR consecutive runs, always the same shape — tens of thousands of
