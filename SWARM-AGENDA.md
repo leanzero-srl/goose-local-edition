@@ -397,6 +397,33 @@ it. A problem that turns out to be already owned is left out, but then it was no
 **THIS RUN KEEPS THE DEFECT** — the binary is the old one. Expect 4 features missing from its app, and read
 the score with that in mind rather than as a verdict on the decomposition.
 
+## THE ROLLING COMPLAINT, FULLY DIAGNOSED AT LAST — 2026-08-29 11:25 EEST
+
+Three wrong answers before the right one, so the chain is worth recording:
+
+    WRONG 1  "the pane is truncated"        -> fixed fullThinking on 3 of 4 lane paths. Real bug, wrong
+                                               half: it fixed THINKING and left OUTPUT alone.
+    WRONG 2  "the model is looping"          -> gabee's identical block twice was the pane CONCATENATING
+                                               fullThinking with lastThinking, a rolling window over the
+                                               same stream. Engine had one copy, recur_rate 0.0.
+    WRONG 3  "the engine froze the digests"  -> measurement error. The 400ms throttle works; I sampled a
+                                               done lane and a lane advancing 7 chars in minutes.
+    RIGHT    OUTPUT renders `lastText`, the digest's ROLLING view, while `main.ts` had been supplying
+             `full_transcript` (the durable `<task>.log`) that NO component referenced.
+
+**THE PROOF IT IS THE RIGHT ANSWER:** in Mihai's `approval-workflow` screenshot the badge reads GENERATING
+— and that badge is driven by `lms ps` via `useFleetStatus`, which renders **"processing prompt"** when the
+node is in `PROCESSINGPROMPT`. It said GENERATING, so the node WAS emitting tokens into the answer channel.
+Tokens flowing + a pane showing a clipped tail cut mid-word at "currency" = the rolling view, exactly.
+
+**AND "IT DOESN'T UPDATE IN REALTIME" IS THE SAME BUG.** A rolling window REPLACES its contents as new text
+arrives, so the pane changes without ever growing — which reads as static, or as scrolling away what you
+were reading. The durable log accumulates. That is the whole difference.
+
+**WHAT WAS ACTUALLY MISSING FROM THE UI:** nothing about node state. `useFleetStatus` polls `lms ps` every
+1.5s and the inspector already renders `processing prompt` in a distinct colour. That half was fine and I
+nearly "fixed" it twice.
+
 ## CORRECTION: THE DIGESTS ARE NOT FROZEN — I MISREAD MY OWN MEASUREMENT, 2026-08-29 11:15 EEST
 
 I sampled `readSwarmRun` twice, 12 seconds apart, saw identical `thinking_chars` on three lanes while
