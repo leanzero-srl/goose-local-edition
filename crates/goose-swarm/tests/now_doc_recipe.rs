@@ -97,15 +97,24 @@ fn judge_measurements_name_the_run_they_came_from() {
     }
 }
 
-/// NOW.md cites `swarm.rs` for the claim that steer, not re-stream, is the current delivery. A citation
-/// to a line that no longer says what was cited is the same staleness class this file exists to catch.
+/// NOW.md cites `swarm.rs` for how a judge verdict is delivered. A citation to a symbol that no longer
+/// exists is the same staleness class this file exists to catch. The cited mechanism has already moved
+/// once: `let can_steer = pending.is_empty();` (steer-only) became `nudge_delivery()` in 2b1e755ac,
+/// which escalates a measured non-obedient steer to a seeded re-stream — and this test kept asserting the
+/// old line for a day. It now asserts the symbol NOW.md names, and NOW.md must name it.
 #[test]
 fn the_cited_steer_default_still_exists_in_the_engine() {
     let engine = read("crates/goose-cli/src/commands/swarm.rs");
+    let doc = read("NOW.md");
     assert!(
-        engine.contains("let can_steer = pending.is_empty();"),
-        "NOW.md cites `let can_steer = pending.is_empty();` as the reason the judge's destructive \
-         re-stream is fixed. That line is gone from swarm.rs, so the doc's delivery claim must be \
-         re-measured rather than left standing."
+        doc.contains("nudge_delivery"),
+        "NOW.md no longer names `nudge_delivery` — if delivery moved again, cite the new symbol here and \
+         in the doc together"
+    );
+    assert!(
+        engine.contains("fn nudge_delivery("),
+        "NOW.md cites `nudge_delivery()` as the judge's delivery decision (steer vs seeded re-stream). \
+         That fn is gone from swarm.rs, so the doc's delivery claim must be re-measured rather than left \
+         standing."
     );
 }
