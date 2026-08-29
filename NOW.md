@@ -128,6 +128,14 @@ fresh, no event ≥10m, fleet idle, 0% CPU); a leaked server count > 0.
 and `items`-vs-`data`). **r1** (18:43–20:23) killed at REVIEW round 4 — see RUN-LEDGER, EXPERIMENTS-LEDGER
 and the campaign skill changelog for the full record.
 
+**QUEUED for r3, behind the step-1 agent (same file, so not concurrent) — design step 10 measured 21:50:**
+four supervision layers are ENV-ONLY and ON by default, so a packaged app cannot switch them off and
+`levers_resolved` cannot prove their state: `GOOSE_SWARM_PREREVIEW` (swarm.rs:36724),
+`GOOSE_SWARM_TAIL_REVIEW` (scheduler.rs:59 — the LIVE idle-fill; `sink_review` is the dead one),
+`GOOSE_SWARM_JUDGE` (:36712, the idle-model judge, not the omni), `GOOSE_SWARM_PREREVIEW_DIMS` (:27190).
+Each needs a `SwarmConfig` field + a `levers_resolved` row. The rest switch off in one command:
+`arm_config.py --set omni_judge=false dynamic_replan=false incremental_replan=false goals=false sink_review=false supervision_pool=false retarget=false benchmark=true`.
+
 **LANDED during r2, ships in r3 (`2b1e755ac`):** a nudge escalates to a seeded re-stream (conversation wiped in the same session, `judge_restream` event) when a prior steer produced no action or the judge says RESTART — `nudge_delivery()` is pure and tested. r2's opener needed 22 min and five ignored steers to finish; r1's review lane six. First `judge_restream` event in r3 is the live check. Also for r3: `afa644ddd` — the Benchmark view passes `GOOSE_PROVIDER_READ_TIMEOUT_SECS=1800` (a live PARALLEL:2 slot went 581 s silent on r2; the default 600 s would have cut it).
 
 **Was queued (now done):** when the judge answers RESTART on a call with
