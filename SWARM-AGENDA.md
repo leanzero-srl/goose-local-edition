@@ -397,6 +397,33 @@ it. A problem that turns out to be already owned is left out, but then it was no
 **THIS RUN KEEPS THE DEFECT** — the binary is the old one. Expect 4 features missing from its app, and read
 the score with that in mind rather than as a verdict on the decomposition.
 
+## HYPOTHESIS TESTED AND NOT SUPPORTED: coverage payload size does NOT explain the blocking
+
+A coverage lane has blocked RESEARCH in FOUR consecutive runs, always the same shape — tens of thousands of
+reasoning chars, zero tool calls, other lanes finished, nodes idle. The obvious hypothesis: the coverage
+schema demands four required strings per row (two of them QUOTES) and parts return 60-78 components, so the
+structured emission is simply too large for a 27B to land.
+
+**Measured across every archived run, components-per-part against nudges-per-coverage-lane:**
+
+    parts 16/21/12   ->  1 nudge per lane
+    parts 15/44/20   ->  3, 1
+    parts 24/62/6    ->  3, 2, 2
+    parts 76/34/14   ->  5, 8, 2
+    parts 78/77/12   ->  5, 1
+    parts 22/–/6     ->  **30 nudges**, and part 2 NEVER EMITTED A COUNT AT ALL
+
+**There is a rough size trend — and the CATASTROPHIC case defeats it.** The 30-nudge lane, the one that made
+me kill run 3, is the run whose part 2 never produced a component count. Whatever stopped it, it was not
+the size of a table it never emitted.
+
+**SO THE SCHEMA CHANGE IS NOT SHIPPED.** A suggestive trend with the worst case unexplained is not grounds
+for narrowing an audit trail that exists to prove enumeration happened. Recorded so the next session does
+not re-derive the hypothesis and act on it without the counter-example.
+
+**WHAT IS ACTUALLY COVERED:** `judge_call_ended_unproductive` ends the extreme case regardless of cause, and
+it is semantic — owes a structured reply, zero tool calls, direction stopped changing.
+
 ## MY PROMPT FIX COULD NEVER HAVE WORKED — THE ENGINE WAS CANCELLING IT, 2026-08-29 07:05 EEST
 
 Run 4's coverage gap, the first test of the slice-vs-fact clause:
