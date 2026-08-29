@@ -1,0 +1,100 @@
+# EXPERIMENTS LEDGER — what was tried, what it cost, and why it is not coming back
+
+**Read this before proposing a change to the swarm engine.** Most of what looks like an obvious
+improvement here has been tried. Several ideas in this file were tried *twice*, because the first
+attempt's failure lived only in a conversation that was compacted away.
+
+Each entry states the idea, what it actually did when measured, and the rule that replaced it. An entry
+is only removed if new evidence overturns it — and then the overturning evidence goes in its place.
+
+Companion files: `RUN-LEDGER.md` (per-run numbers), `NOW.md` (the current thread), `SWARM-AGENDA.md`
+(open work), and the `goose-swarm-campaign` skill (durable procedure).
+
+---
+
+## DEAD — do not revive without new measurement
+
+### Caps, timers and deterministic gates on model work
+**Tried:** wall-clock timeouts, turn ceilings, retry counts, volume limits — ~35 of them.
+**Measured:** V25 died to a file named `…active-semantic-openers-cut-by-900s-idle-watchdog`. The sink
+cap cut `integrate-verify` at exactly 1800s, after 23 shell calls and 2 edits, and the run logged it
+`status=done` — a truncated call and a finished one written identically into the row every verdict is
+read from. `worker_timeout` replaced a worker carrying a stale hint from its own kill.
+**Rule now:** every terminator is progress-based or lives in the transport. `effective_idle_budget()`
+returns uncapped for any input and has a test that says so. A configured number may never bound a call.
+
+### The multi-draft plan vote (best-of-N, backbone round, redraft ladder)
+**Tried:** N nodes each draft a whole plan; a Rust scorer picks a winner; extra full-redraft rounds.
+**Measured:** the backbone round was discarded 28 of 29 times. The ladder measured 84→84→70→70 and
+shipped 52 — each round made the plan *worse*. Codex's variant re-emitted six whole plans in 3h40m and
+never started building, with the planner compacting at 53,902 bytes.
+**Rule now:** one plan, corrected by targeted PATCHES (`plan_patched`), never re-emitted. A round that
+surfaces no new finding ends REVIEW.
+
+### De-duplicating review findings on the sentence
+**Tried:** cross-round de-dup on `trim().to_lowercase().take(120)`.
+**Measured:** one defect reported three ways — "viz-interaction and viz-rendering-engine share the same
+file (web/viz.js)", "Two tasks write to the same file (web/viz.js)", "viz.js written by two tasks" — all
+counted NEW. A later round prefixed everything `STILL: ` and produced 9 findings with `repeated: 0` on an
+untouched plan. The stop rule is "a round with no new finding", so a rephrasing reviewer defeated it by
+construction.
+**Rule now:** `review_dedupe_key` keys on (kind, identifiers) with basename normalisation. Verified live
+2026-08-29: `r1:new=4 → r2:new=0`, stopped correctly.
+
+### Personas and roleplay for workers
+**Tried:** "You are a WORKER on a local AI swarm", supervisor/subordinate framing.
+**Measured:** role-as-identity is null on this model class (Zheng et al., 162 personas × 2,410 questions
+on Qwen2.5-Instruct; none beat the no-persona control). A LOW-STATUS role — exactly the "worker who obeys
+the supervisor" register — measurably COSTS: 51.6 / 45.3 against 53.5 for no role.
+**Rule now:** ownership and duty lines, not identity. `kind_prompt` SUBTRACTS rules; it never adds a
+persona. Instruction density is the mechanism that pays.
+
+### Killing a spiralling call
+**Tried:** the judge ends an unproductive call; re-stream on drift.
+**Measured:** every one of 13 nudges in one run was a re-stream that discarded the call's work — one
+review lane fell from 27,297 characters to 2,004. The judge's net contribution that run was NEGATIVE.
+**Rule now:** the judge NUDGES. Steer lands at a turn boundary and costs nothing; cancel keeps the
+partial. `may_terminate` is false at 12 of 14 call sites — only the coverage fan and the review fan can
+absorb a lost lane.
+
+### Suppressing DRIFTING on any producing call
+**Tried:** hold DRIFTING whenever the call is producing, because 33 of 34 such nudges changed nothing and
+cost 66 minutes of worker time. The measurement is real and the hold was right.
+**Measured:** "producing" counts reasoning characters, so a call that reasons and never acts is producing
+by definition — which is the pathology DRIFTING exists to name. Live 2026-08-29: `open-coverage-1` reached
+68,393 reasoning characters with ZERO tool calls, was diagnosed DRIFTING, and was held. Five DRIFTING
+verdicts across the run produced one nudge.
+**Rule now:** drift corroborates like LOOPING — held once, delivered on a second DRIFTING with still no
+action taken. Acting resets it.
+
+### Checking the neighbour of the thing you mean
+**Tried, three times in one day, all in instruments:** run-directory NAMES for liveness; the installed
+BUNDLE for whether the running app is current; the outer cell WRAPPER for whether a control is clickable.
+**Measured:** a run dead for hours reported as live with an ETA; a two-hour-old zombie app serving CDP
+while the check said "current with HEAD", so every UI verdict for a morning was about old code; and an
+instrument reporting "clicking a node cell opened nothing" about an inspector that opens fine.
+**Rule now:** assert on the property itself. Liveness reads `.swarm/heartbeat` and `pgrep`; the install
+check compares each process's start time against the bundle mtime; the click tick clicks the
+`role="button"`.
+
+---
+
+## ALIVE BUT UNPROVEN — measured once, not yet twice
+
+- **Slice-level decomposition (OPEN → RESEARCH → SYNTHESIS).** r0 produced 10 tasks over 16 files with
+  zero collisions and chain depth 3 — the best plan this project has made. One run.
+- **The tree warden** (`sweep_tree_defects`). Built, tested, has not yet fired on a real hollow
+  dependency because nothing had reached BUILD until r0.
+- **S1/S3/S2 realtime path.** Verified end-to-end in the running app; not yet watched through a full run.
+
+---
+
+## THE STANDING NUMBERS
+
+| | value | where |
+|---|---|---|
+| local score to beat | **0.0273** | `brun-fleet-qwen38-brainwaves-sb70` on leanzero.net |
+| cloud board leader | **67.53%** | deepseek-v4-flash-vision-exp, single agent |
+| a single qwen3.8-27b, no planning | 106 min, 9 files, 163,962 B | beat the whole 3-node fleet |
+| spec written before any code, last full run | **140,680 chars** | 86% of the winner's finished codebase |
+| brief size that scored 88.7% | **~1,500 chars** | vs 6,443 median then, 4,789 on r0 |
