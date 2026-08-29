@@ -128,7 +128,10 @@ broken live HERE, and the rules files carry the detail for whoever does hit them
    `effective_idle_budget()` returns uncapped for any input and is tested to.
 2. **`"integrate-verify"` is an exact-equality string test in five live places**, and the join must own
    NO files — `scheduler.rs:2603` relaxes a dependent through an upstream failure only if it owns
-   nothing, so a file-owning join is cascaded-Failed and the app never binds a port.
+   nothing, so a file-owning join is cascaded-Failed and the app never binds a port. Since `ee0cbfe73`
+   the plan is REPAIRED by code before the DAG exists (`finalize_plan_before_dag`: pin sink → repair →
+   entry files) and a NON-sink task that owns nothing is REFUSED at the plan-JSON boundary — a planner
+   change that reintroduces owns-nothing workers fails there, by name, not in BUILD.
 3. **A correction is a PATCH (`plan_patched`), never a re-emission.** Re-emitting whole plans is what
    burned 3h40m without starting a build.
 4. **The judge NUDGES; it does not kill.** A steer interrupts the stream at a chunk boundary and keeps the
