@@ -397,6 +397,21 @@ it. A problem that turns out to be already owned is left out, but then it was no
 **THIS RUN KEEPS THE DEFECT** — the binary is the old one. Expect 4 features missing from its app, and read
 the score with that in mind rather than as a verdict on the decomposition.
 
+## CHECKED AND CLEAN: the resplit is not a no-op, and `slices_opened` is post-resplit
+
+Run 4's `slices_opened` reads weights [2,5,4,4,3,3,4,1,1,3,3] — a 5-vs-1 spread — and `open-resplit` had
+already run and completed. That looks like a re-cut that did nothing.
+
+**It is not.** `slices_opened` is emitted at line 28099; the resplit runs at 27991, so the weights are
+POST-resplit and the numbers reported all night are the final ones. `resplit_discarded` did not fire, so the
+cut landed. A residual 5-vs-1 is accepted behaviour by design — *"ONE targeted re-cut… a patch, never a
+re-open: if it declines, we proceed, because an uneven slice costs queue time and `weight` is a model
+estimate, not truth."*
+
+**Recorded as a NEGATIVE RESULT** so the next session does not spend a tick re-deriving it. Second
+hypothesis killed by measurement today, after the coverage-payload one — both would have been plausible
+changes to ship and both were wrong.
+
 ## THE JUNK-SLICE LEAK'S TRUE CONSEQUENCE: SIX TASKS OWN `web/viz.js` — run 4, 07:40 EEST
 
 `plan_synthesized`: 22 tasks, 20 distinct files, `tasks_sharing_a_file: 2`.
