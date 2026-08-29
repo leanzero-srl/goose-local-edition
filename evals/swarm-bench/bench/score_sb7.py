@@ -4025,8 +4025,18 @@ def gather(root: Path, vendor_port: int, db_dir: Path, trace_path: Path,
         ]:
             st, body, _raw, _hh = _get(f"{base}{path}")
             c.val_matrix.append((path, st, st == want_status))
-            fe = ((body or {}).get("error") or {}).get("field_errors") \
-                if isinstance(body, dict) else None
+            # A STRING ERROR BODY MUST SCORE, NOT CRASH.
+            #
+            # The isinstance guard covered `body` and not `body["error"]`, so an app answering
+            # {"error": "Not found"} -- an entirely ordinary shape, and exactly what r0 returned from
+            # GET / -- reached "Not found".get("field_errors") and killed the whole scoring run with an
+            # AttributeError. A tree that cannot be scored is worse than a tree that scores zero: the
+            # first tells you nothing and the second is a measurement.
+            #
+            # This changes no verdict. A string error genuinely carries no field_errors, so fe stays None
+            # and paths_ok stays False, which is the failing reading it always should have been.
+            _err = body.get("error") if isinstance(body, dict) else None
+            fe = _err.get("field_errors") if isinstance(_err, dict) else None
             paths_ok = bool(fe) and all(
                 isinstance(x, dict) and isinstance(x.get("path"), str)
                 and isinstance(x.get("code"), str) for x in fe)
