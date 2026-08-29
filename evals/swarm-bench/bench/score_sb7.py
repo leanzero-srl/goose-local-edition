@@ -382,6 +382,47 @@ def _probe(scenario: str, base: str, *flags: str, env: Optional[Dict] = None,
         return {"_probe_error": f"{scenario}: {type(e).__name__}: {e}"[:300]}
 
 
+def _port_holder(port: int) -> Optional[str]:
+    """Who holds `port` on 127.0.0.1, or None when it is free.
+
+    Both the scorer and run_build bind the vendor mock with a bare ThreadingHTTPServer and no
+    try/except: a held port is a Python traceback and nothing else. On 2026-08-29 an archive
+    rescore held 8850 -- the port the desktop harness serves the vendor on -- and a launch at that
+    moment would have died at bind with the traceback in a shell nobody was reading. Ask first,
+    and name the holder, so the operator knows what to stop.
+    """
+    import socket
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        try:
+            sock.bind(("127.0.0.1", port))
+            return None
+        except OSError:
+            pass
+    try:
+        out = subprocess.run(["lsof", "-nP", f"-iTCP:{port}", "-sTCP:LISTEN", "-Fpc"],
+                             capture_output=True, text=True, timeout=10).stdout
+        pid = next((l[1:] for l in out.splitlines() if l.startswith("p")), "?")
+        cmd = next((l[1:] for l in out.splitlines() if l.startswith("c")), "?")
+        return f"port {port} is held by pid {pid} ({cmd})"
+    except Exception:
+        return f"port {port} is held (lsof unavailable to name the holder)"
+
+
+_LIVE_APP_PROCS: list = []
+
+
+def _reap_live_app_procs(*_a) -> None:
+    """Kill every app process this scorer started, on ANY exit -- normal, SIGINT or SIGTERM.
+
+    An interrupted scorer used to leave its ledgerd/notifierd alive (two from this session's own
+    first scoring were still polling the vendor port an hour later). They are process-group leaders
+    (start_new_session=True), so killpg reaches their children too.
+    """
+    while _LIVE_APP_PROCS:
+        _kill(_LIVE_APP_PROCS.pop())
+
+
 def _probe_preflight() -> Optional[str]:
     """Why the probe cannot run under the configured node, or None when it can.
 
@@ -3393,20 +3434,24 @@ def _kill(proc) -> None:
 
 def _spawn_ledgerd(c: Ctx, env: Dict, db_dir: Path, port: int, nport: int,
                    vendor_url: str, tokens_file: Path):
-    return subprocess.Popen(
+    proc = subprocess.Popen(
         [sys.executable, "-m", "app.ledgerd", "--db-dir", str(db_dir),
          "--port", str(port), "--notifier", f"http://127.0.0.1:{nport}",
          "--vendor", vendor_url, "--tokens-file", str(tokens_file)],
         cwd=c.root, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
         text=True, start_new_session=True)
+    _LIVE_APP_PROCS.append(proc)
+    return proc
 
 
 def _spawn_notifierd(c: Ctx, env: Dict, db_dir: Path, port: int):
-    return subprocess.Popen(
+    proc = subprocess.Popen(
         [sys.executable, "-m", "app.notifierd", "--db-dir", str(db_dir),
          "--port", str(port)],
         cwd=c.root, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
         text=True, start_new_session=True)
+    _LIVE_APP_PROCS.append(proc)
+    return proc
 
 
 def _wait_status(url: str, secs: float, proc=None) -> Optional[float]:
@@ -4704,6 +4749,16 @@ def main() -> int:
                           and all(ch in "0123456789abcdefABCDEF" for ch in args.seed)):
         print(f"REFUSED: --seed must be 16 hex chars (got {args.seed!r})", file=sys.stderr)
         return 2
+
+    held = _port_holder(args.port)
+    if held:
+        print(f"REFUSED: {held}. The vendor mock binds it with no try/except and dies with a "
+              f"traceback. Stop the holder, or pass --port <free port>.", file=sys.stderr)
+        return 2
+    import atexit
+    atexit.register(_reap_live_app_procs)
+    for _sig in (signal.SIGINT, signal.SIGTERM):
+        signal.signal(_sig, lambda *_a: (_reap_live_app_procs(), sys.exit(130)))
 
     if not args.allow_blind_probe:
         why = _probe_preflight()
