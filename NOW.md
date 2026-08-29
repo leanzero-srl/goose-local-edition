@@ -66,8 +66,10 @@ single-agent deepseek run at **67.53%**. Numbers follow from the product, not th
 
 ## WHAT WE ARE DOING RIGHT NOW
 
-**One sentence: implementing real-time streaming in the desktop panel (S1→S3→S2), because the panel has
-never actually streamed — it polls — and that is the user's longest-standing complaint.**
+**One sentence: real-time streaming in the desktop panel — the panel has never actually streamed, it
+polls, and that is the user's longest-standing complaint. All four steps below are now CODE COMPLETE in
+the working tree; what is left is committing them and WATCHING THE PANEL STREAM IN THE RUNNING APP,
+because compiling and passing tests is not evidence that a UI change works.**
 
 Everything below is under a hard rule the user set: **no run starts until each fix is proven in
 ISOLATION; only then one holistic run.** Runs cost 3-4 hours and were being spent to discover things a
@@ -82,17 +84,24 @@ a second, for a 9-lane run: 9 activity JSONs re-parsed, 68KB `run.jsonl` re-pars
 
 | step | what it is | state |
 |---|---|---|
-| **S1** | read `run.jsonl` and both transcripts from a byte offset, return only the delta | **in progress** — `ui/desktop/src/utils/swarmIncrementalRead.ts` written, NOT yet wired into `main.ts`, NOT yet tested |
+| **S1** | read `run.jsonl` and both transcripts from a byte offset, return only the delta | **done** — `swarmIncrementalRead.ts` wired into `main.ts:23` (`eventsGeneration`/`readEvents`/`readTail`), covered by `swarmIncrementalRead.test.ts` + `.replay.test.ts` |
 | **S4** | say WHY a lane is quiet (`judging` + `queued_chunks` → "supervisor reading · N chunks queued") | **done**, 14 references in `useSwarmRun.ts` |
-| **S3** | `foldEvents` takes accumulated state + new events instead of rebuilding from the full array | **not started** — prerequisite for S2 |
-| **S2** | `fs.watch` on `.swarm/` + `.swarm/activity/`, debounced ~100ms, `webContents.send('swarm:delta')`; the 500ms poll stays as a SAFETY NET only | **not started** — last, because it is the only piece that can DROP an update |
+| **S3** | `foldEvents` takes accumulated state + new events instead of rebuilding from the full array | **done** — `foldEventsIncremental` (`useSwarmRun.ts:2352`), called at :3463, covered by `foldIncremental.test.ts` |
+| **S2** | `fs.watch` on `.swarm/` + `.swarm/activity/`, debounced ~100ms, `webContents.send('swarm:delta')`; the 500ms poll stays as a SAFETY NET only | **code complete, UNCOMMITTED and NOT yet seen working in the app** — `SwarmWatchRegistry` (`main.ts:3204`, sends at :3259), `onSwarmDelta` (`preload.ts:360`), consumed at `useSwarmRun.ts:3627` with the poll kept at :3626; tests `swarmWatch.test.ts` |
 
 ### The other live threads
 
 - **The judge as a NUDGER, not a terminator.** The user: *"it looks more harming than anything else…
-  I was hoping the judge is not only a terminator but rather a NUDGER of good quality."* Measured on the
-  last full run: **141 looks, 13 nudges, every one a re-stream that discarded the call's work — net
-  contribution NEGATIVE.** Two fixes landed (burst-gap rhythm; steer-lands-mid-generation). Open: the
+  I was hoping the judge is not only a terminator but rather a NUDGER of good quality."* **Run 4,
+  measured 2026-08-29 09:05 EEST: 211 looks dispatched, 38 nudges, 222 node-min judging = 46% of the
+  fleet watching rather than working — and delivery was STEER, zero re-streams.** The destructive
+  re-stream is FIXED, not current: `let can_steer = pending.is_empty();` (`swarm.rs:18032`) makes steer
+  the default and re-streams only while a tool request is in flight. The "141 looks, 13 nudges, every
+  one a re-stream" reading is **2026-08-28, the BEFORE picture** — quoting it as current states the
+  engine's behaviour exactly backwards. What is still negative is OVER-steering: of 34 nudges with a
+  follow-up look, 33 produced no action, costing **66 minutes of WORKER time**. Fuller ledger, and the
+  copy to trust: `SWARM-AGENDA.md` :568 and :599. Snapshot counts of the same run differ by the minute
+  they were taken (211/38 at 09:05, 214/40 later), so cite the timestamp; never reconcile them. Open: the
   judge running **outside the phase machinery**, checking files and plans **as they are created**, using
   idle nodes — *"workers follow phases, judges should live outside of this and run constant checks."*
 - **The complacency audit.** A workflow found ~20 confirmed places where a fix was applied at one call
@@ -140,8 +149,15 @@ second time it reported a run dead for hours as live, with an ETA.
 
 ## HOW TO ISOLATION-TEST
 
+Run from the repo root, and **never as a bare `goose`**: on this machine `which goose` is
+`~/.local/bin/goose`, a June build that answers `error: unrecognized subcommand 'swarm'`. The repo
+binary is the only one with the verifier, and it is only as current as the last release build.
+
 ```bash
-goose swarm verify <tree> --owns <files>     # engine checks against ~30 archived trees + positive control
+cargo build --release -p goose-cli                           # the verifier is only as new as this
+# NOT bare `goose`: `which goose` is ~/.local/bin/goose, version 1.38.0 from JUNE, with NO swarm
+# subcommand at all. The documented command was unrunnable as written. Use the built binary by path.
+./target/release/goose swarm verify <tree> --owns <files>    # ~30 archived trees + positive control
 cd ui/desktop && pnpm test                   # UI pure functions (inspectorThinkingText/inspectorOutputText)
 cargo test -p goose-swarm && cargo test -p goose-cli swarm
 ```
