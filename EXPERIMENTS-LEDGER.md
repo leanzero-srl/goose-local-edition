@@ -211,6 +211,29 @@ That is defensible for parallel work in general — a stub lets you build before
 but it is exactly wrong for a task whose dependencies have ALREADY completed, which is every task with a
 `depends_on` in a DAG the scheduler is honouring.
 
+**AND r0's OWN DEFECTS PROVE IT.** TEST found 12 defects. Five of them are the signature-without-
+behaviour failure, verbatim:
+
+1. `app/sync.py` reads `body.get("items", [])` **but the vendor API returns `"data"`** — sync never loads
+   a single payment.
+2. Health endpoint returns the wrong shape.
+3. Summary endpoint returns `{"data": []}` instead of `{count, last_sync, oldest, newest, by_currency,
+   reversals}`.
+4. Buckets endpoint returns the wrong shape.
+6. Sync parses **`amount` instead of `amount_minor`** — so nothing persists.
+
+A worker that had READ the vendor's actual responses, or the ledger's real code, could not have written
+`items` for `data` or `amount` for `amount_minor`. These are not reasoning failures; the model never had
+the information. It had a signature and 4,789 characters of English about a signature.
+
+And defect 5 is the whole 0.0273 failure again: **`GET /` returns `{"error": "Not found"}`** — the
+frontend files EXIST and are self-consistent (index.html references styles.css/app.js/viz.js and all
+three are on disk) but nothing serves them. That is `j_workflow_journey`, the critical that cost the
+cloud run 40% of its score, and roughly 0.56 of the scoring weight is unreachable without a served page.
+
+The remaining six are missing input validation — a different class, and the one place where more prose
+in the brief might genuinely have helped.
+
 **The candidate change:** when a dependent's dependencies are Done, tell it the real files are on disk
 and to read them before writing. It buys the single agent's coherence for one tool call rather than for
 4,789 characters of brief. It is an instruction change, not an architecture change, and it is the
