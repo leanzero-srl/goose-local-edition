@@ -397,6 +397,39 @@ it. A problem that turns out to be already owned is left out, but then it was no
 **THIS RUN KEEPS THE DEFECT** — the binary is the old one. Expect 4 features missing from its app, and read
 the score with that in mind rather than as a verdict on the decomposition.
 
+## THE ANSWER TO "HOW DID CLOUD GET 20% WHEN WE CANNOT BEAT 2.7%" — measured 2026-08-29 08:55 EEST
+
+**IT IS NOT THE JUDGE. IT IS THAT WE PLAN FOR HOURS AND BUILD FOR MINUTES.**
+
+    LOCAL run 4        open 8 · ask 2 · research 67 · synthesis 3 · review 74 (still going)
+                       = 154 MINUTES, and 3 app files on disk. BUILD has not started.
+
+    CLOUD deepseek     1,984 seconds TOTAL = 33 MINUTES, 104 requests
+                       14 files: app/{ledgerd,notifierd,vendor,common,__main__}.py
+                       + app/web/{index.html,styles.css,viz.js,app.js} + README + DECISIONS
+                       SCORE 67.53%
+
+**The cloud entrant spent 33 minutes BUILDING. We have spent 154 minutes PLANNING and built nothing.** Even
+a perfect plan arriving at minute 155 has already lost to a mediocre one that started writing files at
+minute 2.
+
+**THE JUDGE IS NOT THE BOTTLENECK, AND THE DATA SAYS SO:** 36 nudges on run 4, **36 steers, 0 re-streams**.
+Queued messages land mid-generation and nothing is discarded — both of those were real defects and both are
+fixed. The judge is doing its job well on calls that should not exist.
+
+**WHERE THE 141 MINUTES WENT:** RESEARCH wrote briefs for 21 slices, five of which were fabricated from
+FACTS (`background-color-101828`, `12,288 payment instances`). REVIEW then spent 74 minutes repairing the
+collisions those junk slices caused — a six-way collision on `web/viz.js`, then nine frontend files against
+a four-file budget, then 11 tasks left owning nothing. **Every minute of REVIEW is damage control for
+`coverage_gap` fabricating slices**, which is fixed in `971d33cc4` and is not in this binary.
+
+**THE STRUCTURAL QUESTION THIS RAISES, and it is Mihai's to answer:** the swarm's planning machinery
+(OPEN → ASK → RESEARCH → SYNTHESIS → REVIEW) costs 2.5 hours before a single app file exists. A single
+model with tools produced a 67.53% app in 33 minutes. **The decomposition has to earn that 2.5 hours back,
+and right now it does not.** Options worth weighing: cap nothing but START BUILDING EARLIER (dispatch a
+slice the moment its brief lands, rather than after the whole plan settles), or shrink the planning phases
+to the two that measurably pay — OPEN and one REVIEW round.
+
 ## REVIEW ROUND 3 — the trend is now one tick line
 
     round 1: 11 new -> 12 touches | sharing 0 / nothing  1 / files 30
