@@ -397,6 +397,31 @@ it. A problem that turns out to be already owned is left out, but then it was no
 **THIS RUN KEEPS THE DEFECT** — the binary is the old one. Expect 4 features missing from its app, and read
 the score with that in mind rather than as a verdict on the decomposition.
 
+## THE JUNK-SLICE LEAK'S TRUE CONSEQUENCE: SIX TASKS OWN `web/viz.js` — run 4, 07:40 EEST
+
+`plan_synthesized`: 22 tasks, 20 distinct files, `tasks_sharing_a_file: 2`.
+
+    app/ledgerd.py  <- [ledgerd-service, sse-stream-endpoint]
+    web/viz.js      <- [viz-rendering, viz-interaction, 12-288-payment-instances,
+                        currency-exponent-heights, background-color-101828, scene-digest-computation]
+
+**SIX TASKS OWN ONE FILE.** SYNTHESIS could not invent a file for "Background color #101828" or
+"12,288 payment instances", so it assigned every fabricated property-slice to `web/viz.js` — the one file
+they all vaguely relate to. Run 3's version of this was a 2-way collision; the leak compounds.
+
+**AND `tasks_owning_nothing` IS EMPTY**, which is the useful surprise. I added that counter expecting
+over-decomposition to show up as tasks owning nothing. It does not — SYNTHESIS always finds *a* file to
+hand a junk task, so the symptom is COLLISION, not emptiness. **Both numbers are needed and neither is
+sufficient**, exactly as recorded, and this run is the proof.
+
+**IT ALSO SETTLES THE VALUE OF `shared_files`.** `tasks_sharing_a_file: 2` is nearly useless here; "six
+tasks own `web/viz.js`, and four of them are properties that should never have been slices" is a complete
+diagnosis. A count says a problem exists; the identities say what to fix.
+
+**The 06:35 prediction held**: `shared_files` named `web/viz.js` with `viz-rendering` + `viz-interaction`.
+The rest — `plan_patched` firing and `after` reading 0 — now rests on REVIEW resolving a SIX-way collision,
+which is a far harder ask than the 2-way one it was designed against.
+
 ## [WORKED, MEASURED] THE SETTLED-SECTION SKIP — run 4, 2026-08-29 07:30 EEST
 
     round 1   part 3/3   6 components, 0 unowned   -> SETTLED
