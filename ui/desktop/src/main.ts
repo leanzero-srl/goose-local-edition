@@ -2790,6 +2790,13 @@ ipcMain.handle('benchmark-run', async (event, nodes: number, tier?: string, samp
           // before a node answers, and those 5 minutes are three idle machines.
           GOOSE_SWARM_BENCHMARK: '1',
           GOOSE_SWARM_RENDER_NODE: benchNode,
+          // The provider's inactivity window defaults to 600 s (goose-providers api_client.rs). On this
+          // fleet a PARALLEL:2 slot went 581 s without a byte and then delivered a complete, valid
+          // result (r2, open-coverage-2, 2026-08-29) while its sibling on the same node generated 18k
+          // chars. Twenty seconds more and the transport would have cut a live call as a dead stream.
+          // A dead stream is caught sooner by the judge (no production → re-stream), so the transport
+          // window is the last resort and must exceed the longest silence a live slot shows.
+          GOOSE_PROVIDER_READ_TIMEOUT_SECS: process.env.GOOSE_PROVIDER_READ_TIMEOUT_SECS ?? '1800',
           // The render gate is inert without the probe path, and without the gate there are no
           // repair rounds and no screenshots — the product story of the run.
           GOOSE_SWARM_RENDER_PROBE: path.join(
