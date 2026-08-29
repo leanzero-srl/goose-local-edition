@@ -2790,6 +2790,22 @@ hold and were dropped.
       Stamped 2026-08-29 22:29 EEST. "the tool calls the writing, reading whatnot in the work is not displayed realtime how they're forming and what is happening. they're appearing as items only after they're complete." THINKING streams; WORK does not. The engine knows a tool request (name + args) when it inserts it into the per-call `pending` map and only writes the digest row when the result lands. Engine half: write an `inflight[]` row (tool, args preview, since) into the activity digest at request time and clear it at result time. UI half: `digestStreamFields()` carries it, the WORK pane renders RUNNING rows (with the path / size the args already name) above the completed ones, and flips them in place. Token-level streaming of the arguments themselves needs partial tool-call deltas the provider layer on this branch does not expose — out of scope, say so in the row.
       EVIDENCE: screenshot 22:29 EEST, lane service-boot on mihai: WORK "2 tool calls · 2 ok" while a third write was in flight and invisible.
 
+- [ ] **SAID pane has no state — it showed attempt 0's "Network error: Stream decode error" as if current while attempt 1 ran (Mihai, 2026-08-29 23:32 EEST, screenshot)**
+      Stamped 2026-08-29 23:32 EEST. The pane must say WHICH attempt a text belongs to, WHEN it was said, whether it is the live attempt's or superseded by a retry, and render transport errors as an error state with the retry that followed — never as "said". Depends on digest provenance (attempt, ts) reaching `digestStreamFields()`.
+      EVIDENCE: lane ledger-core-tests, task_retry 19:57:50Z (mid-stream body drop), SAID still showing the error at 23:25 local with attempt 1 at 22 tool calls.
+
+- [ ] **A tool call must be visible as it FORMS — "a line that is loading and generating" (Mihai, 2026-08-29 23:32 EEST)**
+      Stamped 2026-08-29 23:32 EEST. `156a95957`+`26612c1a3` show a RUNNING row the instant the request is complete; the forming phase (the model still emitting the arguments, often the whole file body) shows nothing. Research lens R4: where goose-providers accumulates tool-call argument deltas and the cheapest signal (tool name, bytes so far, arg prefix) that can reach the digest without the 1,100-line provider surgery the earlier plan dropped.
+      EVIDENCE: screenshot 23:25 local; NOW.md ask 2.
+
+- [ ] **The integrate task is generic ("INTEGRATE EVERY MODULE") and re-runs the tests BUILD already ran — capture tool calls into ledgers and FORM the next task's message from them (Mihai, 2026-08-29 23:32 EEST)**
+      Stamped 2026-08-29 23:32 EEST. "One truly good deterministic thing: capture tool specificity and their calls so that when the next task is formed it can clearly say: don't run tests anymore." The digest already records `calls[]` per task; nothing turns it into the sink's or the repair shard's prompt. Design: a per-run ledger assembled by code (files that exist, exports, commands run, pass/fail, retries) injected as a read-before-act block — the only acceptable gate — and a semantic, run-specific integrate description instead of the template. Mirror Claude Code's memory/notes/hooks patterns (read the docs).
+      EVIDENCE: screenshot 23:25 (22 tool calls, most `pytest`, on one lane); NOW.md asks 5-6; r2 sink description = the template.
+
+- [ ] **No time-related mechanism may decide anything about model work — inventory and remove (Mihai, 2026-08-29 23:32 EEST)**
+      Stamped 2026-08-29 23:32 EEST. "Anything that is time related must not exist, because local models suck. Round related maybe works." Inventory every `timeout`, `secs`, `Duration`, `Instant`, stale-after-N in the run path (engine, scheduler, judge, transport) — including the 1800 s provider read window `afa644ddd` — and replace each with a progress/round rule or delete it; the tick's WEDGED reading is the operator-level catch for a dead fleet.
+      EVIDENCE: NOW.md ask 4; AGENTS.md invariant 1 (NO CAPS) already forbids wall clocks on model work.
+
 ## HOW TO STAMP AN ENTRY — read `date`, never a remembered clock
 
 Every heading here is stamped by hand, and on 2026-08-29 all 33 of them drifted 1-3 hours ahead of the
