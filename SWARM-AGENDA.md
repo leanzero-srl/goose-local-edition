@@ -397,6 +397,37 @@ it. A problem that turns out to be already owned is left out, but then it was no
 **THIS RUN KEEPS THE DEFECT** — the binary is the old one. Expect 4 features missing from its app, and read
 the score with that in mind rather than as a verdict on the decomposition.
 
+## [BUILT] THE VERIFIER REDESIGN — all four pieces, 2026-08-29 09:50 EEST
+
+Mihai: *"touch all please… make it so that the agent can spend time making findings earlier on as files and
+as plans get created."* Built, tested, committed:
+
+    1  verify_owned_files      DID THIS TASK DELIVER? missing · empty · .py does not parse (py_compile,
+                               real error line) · .html references a script nobody wrote
+    2  verify_tree_imports     DOES THE TREE RUN? a local import rooted at a package that exists but
+                               resolves to no file. Scoped to LOCAL imports so stdlib is never reported.
+       -> both run on TASK COMPLETION, which is exactly when the tree changed. No cadence, no polling,
+          no node, no model. `delivery_defects` carries the findings.
+    3  brief_defects           two briefs claiming one path, seen at the END OF RESEARCH -- and SYNTHESIS
+                               is now TOLD the rule before it assigns ownership: one file, one owner, and
+                               a slice declaring no files gets `files: []` rather than an invented path.
+    4  judge_drift_held        DRIFTING now fires only on a call that is NOT producing.
+
+**WHY 4 IS THE BIG ONE.** Of 34 nudges with a follow-up look on run 4, **one** was followed by an action.
+The other 33 burned 43,842 characters and **66 minutes of WORKER time**. They were overwhelmingly DRIFTING
+at `produced` 4,000-4,005 — a call generating four thousand fresh characters, told it was working on the
+wrong thing. LOOPING and measured repeats are untouched: those are claims about a stuck call, not taste.
+
+**THE PRINCIPLE THE WHOLE REDESIGN RESTS ON:** a `py_compile` failure is a FACT the worker cannot argue
+with and need not re-reason about. The 97% no-action rate is what interrupting a model with an OPINION
+about its reasoning produces. Every verifier finding is a fact; that is what makes it safe to act on.
+
+All three events render in the desktop (`delivery_defects` bad-toned, `brief_defects`, `judge_drift_held`)
+— 708 UI tests green, 296 engine tests green.
+
+**NOT YET DONE:** removing anything from REVIEW or REPAIR. That happens only once the verifier is
+MEASURABLY catching what they caught, and run 5 is the first measurement.
+
 ## WHAT THE STEERING ADDED — the over-steering cost, measured on run 4, 2026-08-29 09:25 EEST
 
 Mihai's refinement, and it is the right one: *"if we have many idle moments it's ok to use the judge. What
