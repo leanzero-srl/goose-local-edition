@@ -28,8 +28,8 @@ returns uncapped for any input and has a test that says so. A configured number 
 **Measured:** the backbone round was discarded 28 of 29 times. The ladder measured 84→84→70→70 and
 shipped 52 — each round made the plan *worse*. Codex's variant re-emitted six whole plans in 3h40m and
 never started building, with the planner compacting at 53,902 bytes.
-**Rule now:** one plan, corrected by targeted PATCHES (`plan_patched`), never re-emitted. A round that
-surfaces no new finding ends REVIEW.
+**Rule now:** one plan, corrected by targeted PATCHES (`plan_patched`), never re-emitted — in ONE review
+round (see "Looping REVIEW until a round surfaces no new finding", below).
 
 ### De-duplicating review findings on the sentence
 **Tried:** cross-round de-dup on `trim().to_lowercase().take(120)`.
@@ -39,7 +39,34 @@ counted NEW. A later round prefixed everything `STILL: ` and produced 9 findings
 untouched plan. The stop rule is "a round with no new finding", so a rephrasing reviewer defeated it by
 construction.
 **Rule now:** `review_dedupe_key` keys on (kind, identifiers) with basename normalisation. Verified live
-2026-08-29: `r1:new=4 → r2:new=0`, stopped correctly.
+2026-08-29: `r1:new=4 → r2:new=0`, stopped correctly — and then r1 (next entry) showed that a correct key
+does not make the loop converge. The key survives to collapse one defect raised by two lanes of the ONE
+round.
+
+### Looping REVIEW until a round surfaces no new finding (2026-08-29, r1)
+**Tried:** REVIEW as a loop of review rounds. Each round's findings were de-duped against every earlier
+round's by `review_dedupe_key`; the loop ended on the first round with no NEW finding, with a plan-state
+cycle detector (`review_oscillating`) and a same-rejection detector (`review_patch_stuck`, `RejectMemo`)
+as terminators for when that never came. No round cap, by design.
+**Measured:** r1, run dir `swarm-3node-r0`: round 1 new=8 → `plan_patched` replace 3 remove 1; round 2
+new=4 → replace 1; round 3 new=9 repeated=2 → replace 3; round 4 started. 51 minutes and 209,110
+reasoning characters in REVIEW, against r0's whole REVIEW of 12 minutes in two rounds. Round 1 caught the
+one real structural defect — `viz-engine` owned no files — and SYNTHESIS had ALREADY flagged it,
+deterministically, in `plan_synthesized.tasks_owning_nothing=['viz-engine']` before the round began; the
+reviewer spent ~25,000 characters rediscovering it. Rounds 2 and 3 found dependency tweaks and "X is not
+explicitly owned" cross-cutting concerns (error envelope, webhook URL registration).
+**Why it is not coming back:** an LLM reviewer's novelty never converges. Asked "what is missing?", it
+always finds something, and de-duping harder (the sentence key, then the (kind, identifiers) key) only
+changes WHICH rephrasing counts as new — it cannot make the stop arrive. The real signal was the
+deterministic flags the engine already computes, and the loop paid a model to recompute them slowly and
+then kept paying.
+**Rule now:** REVIEW is ONE round (`review_once`) — phase structure, like OPEN and SYNTHESIS being one call
+each, not a cap; the one call stays uncapped. SYNTHESIS's measured flags — `tasks_owning_nothing`,
+`shared_files`, `module_package_collisions` — go into that round's prompt as a MUST-FIX block
+(`review_must_fix_block`, omitted when the plan is clean), so the round is aimed at the structural defects
+instead of rediscovering them. Findings and patch are applied exactly as before (`review_findings`,
+`plan_patched` with `round: 1`; the one patch demand for findings-without-a-patch stays, as a follow-up
+inside the round). `review_oscillating`, `review_patch_stuck` and `RejectMemo` went with the loop.
 
 ### Personas and roleplay for workers
 **Tried:** "You are a WORKER on a local AI swarm", supervisor/subordinate framing.
