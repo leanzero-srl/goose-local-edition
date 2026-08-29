@@ -294,3 +294,220 @@ What would raise the confidence fastest, in order: r2 reaching `run_finished` wi
 the `goose swarm repair` replay on the r0 tree promoting a shard for `GET /` (§7 first critical); the
 vendor-probe test producing `data`/`amount_minor` in a worker prompt (§7 second critical); and the config
 r2 actually used, found and written down (§8).
+
+---
+
+# PART II — THE STATEFUL HARNESS (Mihai, 2026-08-29 23:30): capture → ledger → message
+
+Builds on §0 and §9; not a second design. §0's binding reading stands: code MEASURES and hands the measurement to a model
+call — never a stop, a cap, a refusal. Models are stateless; the harness is the state and must FORM each task's message from
+captured facts. Verdict on every Part I step: **kept unchanged** 1 (done), 3, 6, 7, 8, 9, 11, 12, 13, 14. **Changed**: step
+2 (GATE→sink prepend) is SUBSUMED by §II.2's dispatch-time formation — same seam, same "before r3", strictly more facts;
+step 5's ASK-proxy and coverage deletions are REVERSED on r2 evidence (ASK proxy: 2m15s, 3 answers, 18:07:24Z; coverage_gap:
++7 slices, unowned 10→0 — r2's plan owns the page/SSE surface r0 404'd on), its resplit deletion is CONFIRMED (the resplit
+manufactured the webhook collision REVIEW paid to remove), and coverage-gap slices dispatch per `coverage_enumerated` part,
+not at `coverage_complete` (~20 of RESEARCH's 48 min at 1/6 occupancy); step 10's env block gains `GOOSE_SWARM_TESTGEN=0`
+(live r2 had `=1`). **Dropped**: nothing. Step 4 (delete CONTRACTS) is unaffected: the ledger's exports table reads
+`extract_signatures` on the live tree (swarm.rs:32806), never the contracts event.
+
+## II.1 r2's good parts, kept; r2's measured waste, dropped
+
+KEPT (measurement each): one-round REVIEW patch — 17→11 tasks, all three flags cleared, 6m47s (plan_patched 19:08:17Z; r1's
+three rounds diverged 8→4→9 over 51 min). ASK proxy and coverage_gap — above. BUILD plan work — 10/10 done, 0 failures, 1
+transport retry, ~35 min (19:22:32-19:49:42Z). The prereview channel — `.swarm/prereview/*.json` → `read_prereview_findings`
+swarm.rs:26979-27030 delivered 2 real findings (README `--port` vs `--ledger-port`; vendor_sync `limit=100`) into the sink's
+prompt: the proven injection mechanic §II.2 reuses. The deterministic gate (collect-only, `pytest -q`, `--help`,
+spec-contract, swarm.rs:18585-21184) — the idempotent net §0 keeps. Transport-drop retry, process groups, the DAG/ownership
+plumbing.
+
+DROPPED (cost each): testgen — 0/3 landed ("no landable fenced test block", swarm.rs:28225) while its calls WROTE
+test_app_contracts.py/test_interfaces.py at the tree root via developer tools (mtimes 17-30 s before each `landed: null`),
+bypassing `land_generated_tests`' collect-only guard (:34955) — the files import task ids as modules and became the sink's
+dominant work item (17 of its first 26 calls, 6 phantom shim modules written). The sink hold — the B2 claim gate
+(scheduler.rs:1204-1212, :1396-1406) held integrate-verify 32m38s for two replanner-invented test tasks (296/327-char
+template descriptions, swarm.rs:34083-34105): 48% of BUILD's wall. The 420 s stopwatch (judge.rs:579-584) — 3 false
+`over_reading` verdicts on a slot-starved worker. The 600 s provider read cut (api_client.rs:17) — 764 s of work discarded
+while the node served its sibling the whole window. The template sink description — 3,668 chars, ZERO run-specific tokens
+(desc_sha e33fa63f), the owner's named anti-pattern. Idle-fill volume — 140 supervisory generations vs ~48 work calls on the
+same PARALLEL:2 slots.
+
+## II.2 The stateful harness: capture → ledger → message
+
+CAPTURED ALREADY (exists, unread downstream): per-task digest `.swarm/activity/<key>.json` — `calls[]` last 60 {name,
+summary, ok, result}, errors, last_text, last_thinking (build_worker_digest swarm.rs:14107-14182; write sites :16719,
+:17503, :17537) — rewritten in place, lost on re-dispatch; delivery_defects at every completion (emit_delivery_defects
+:32229, called :33709/:33774) — emitted then thrown away (the 20:22:20.860932Z event named the sink's whole problem 0.24 s
+before the sink was dispatched without it); judge `established` (judge_nudge :17104-17116); gate findings
+(SpecContractResult :19627, assembled :38014-38293); the append-only `<task>.log`/`.think.log` pair (:13967-13995).
+
+ADDED CAPTURE (all code, no model calls): (a) `<task>.calls.jsonl` appended at the TWO digest write sites (main loop +
+judge-probe branch, the AGENTS.md invariant pair), so calls survive the digest reset that erased ledger-core-tests attempt
+0; (b) a pure pytest-summary parser ("N failed, M passed" / collect error) beside digest_failed_calls_block :31866 — today a
+failing suite behind `| tail` records `ok: true` ("32 failed, 46 passed", ok=true in the live sink digest) and reaches no
+consumer; (c) fs_delta: files appeared/changed outside `all_files`, attributed by window — what catches the testgen root
+tests an engine self-report denied; every row is a stat, a digest call record, or a gate probe, never a self-report alone;
+(d) a digest snapshot at the completion sites BEFORE re-dispatch can reset it.
+
+THE PER-RUN LEDGER: `.swarm/ledger/<activity_digest_key(task)>.json` per task + `.swarm/ledger.json` roll-up rebuilt from
+the minis on every write — the `.swarm/prereview/` file mechanics. Per-task schema: {task_id, attempts, status, salvaged,
+owned_files with bytes-on-disk (verify_owned_files :23089 re-run at write), delivery_defects, commands[]: {class
+test|import|boot|other, count, ok, 300-char tail of the LAST failure per class}, final_text ≤400, fs_delta,
+judge_established (provenance: judge, ranked below measurements)}. Roll-up adds: tests_run_total, last whole-suite outcome,
+open defects (re-stat'd at render so fixed ones vanish), gate {round, findings[], verified, inconclusive[]}, repair.rounds[]
+{round, shard, findings_assigned, verdicts, promoted, baseline}. WRITERS (in goose-cli beside the prompts they feed;
+best-effort — a write failure never disturbs a run): `write_task_ledger` at :33709 (done), :33774 (salvaged) and the Err
+arm; `write_gate_ledger` where verdict.findings is final (after the dedupe :38297) AND in `goose swarm gate` (handle_gate
+:1889) so a sink prompt reproduces offline from an archived tree; `write_repair_ledger` at run_fix_task's epilogue
+:32206-32224, with `parse_finding_verdicts(output)` as a pure, tested fn beside smoke_fix_description :31219 — the shard
+prompt already demands "FINDING n: FIXED/NOT FIXED/NOT REAL" lines and NOTHING parses them today. REFRESHED at three
+moments: task completion, gate verdict, repair round end. Events `ledger_written`/`ledger_delivered` prove capture and
+delivery from run.jsonl (the pitfalls_delivered pattern :32936).
+
+MESSAGE FORMATION — the read-before-act block. One renderer, `render_ledger_block(root, task_id, deps, all_files, budget)`,
+pure over the JSON, line-boundary truncation (F196 pattern :32820-32832). SINK: spliced into `worker_user_text` at
+swarm.rs:33386 AHEAD of `req.description` — the seam where `prior_hint` already renders "SUPERVISOR NOTE …" (:33386-33391),
+so the model cannot reach the task text without the facts having been in context; the injection IS the gate, nothing
+refuses. Budget ≤7,000 chars (half a dep_block; ≈1,750 tokens = +6% on the sink's measured 29,762-token first call, 1.3% of
+the smallest context 135,936). Exact content, in order: (1) package + entry files (`spec_python_entry` :20031;
+entry_files_required event); (2) module→path→exports one-liners (`extract_signatures` :32806, names only); (3) the test
+table — every test file on disk, runs so far per owning lane (ledger commands[]), last outcome, plus ONE engine-run `python3
+-m pytest --collect-only -q` (the gate's own command :18585, via spawn_grouped) whose ImportErrors become the "fails at
+import" line; (4) out-of-manifest files and the imports no task owns (fs_delta + delivery_defects); (5) the literal boot
+argv from `spec_run_argv_v2` :20941 — the SAME argv run_spec_contract will spawn; (6) advertised endpoints + documented
+response keys (`spec_get_endpoints` :20226, `spec_post_endpoints` :4140, `spec_documented_keys` :20140 — the gate's own
+parsers); (7) open defects. The template's oracle clauses (golden checks, robustness probe, one-port rule) stay as a short
+suffix; the CLI/JSON-store paragraph drops when spec_get_endpoints is non-empty. SHARDS: same splice gated by
+`fix_mode_applies` :31846, budget ≤3,500 (one dep-file): this round's gate row, repair.rounds[] verdicts for the shard's
+findings ("round 0, app/api.py: FINDING 2 NOT FIXED — tried …"), and the ledger rows of the tasks owning the shard's files;
+`smoke_fix_description` :31219 gains a `history` parameter so findings and prior attempts arrive in ONE message — the fresh
+per-round Scheduler (:39221-39290) discards its SharedContext, and the on-disk repair ledger is what survives it. Overflow
+drop order: judge_established, then ok-only command classes, then final_text — never a defect, a gate finding, or a NOT
+FIXED verdict. New rules arm at :33090/:33152 for the sink: reading rule "the test table above IS the suite's state"
+replacing "read AT MOST the ONE file you will edit"; stopping rule is run-and-report, not "stop when green".
+
+WORKED EXAMPLE — the semantic INTEGRATE description assembled from r2's real artefacts (every clause from a source named
+above): "Package `app`; entry files app/__main__.py, app/ledgerd/__main__.py, app/notifierd/__main__.py. Modules: app/api.py
++ app/ledgerd/server.py (create_server, handle_request, payments_list…), app/auth.py + app/drafts.py
+(approve_draft…validate_bearer), app/ledger_core.py, app/stream.py, app/webhook.py, app/vendor_sync.py, app/cli.py. Tests:
+tests/test_ledger_core.py + tests/test_ledger_concurrency.py — 19 passed / 7 failed; tests/test_vendor_sync_edge.py +
+tests/test_sync_resilience.py — 17 passed; test_app_contracts.py and test_interfaces.py FAIL AT IMPORT — they import
+app.approval_workflow, app.webhook_processing, app.api_endpoints, app.sse_endpoint, app.service_boot,
+app.notification_engine: TASK IDS, not modules; fix the imports to the real modules above or delete the two files — do NOT
+add re-export shims. Boot exactly: python3 -m app --db-dir <dir> --ledger-port <P> --notifier-port <Q> --vendor
+http://127.0.0.1:8850 --tokens-file <T> (README says --port; the spec says --ledger-port). Then GET /api/health,
+/api/payments?limit=50 → {data,total,limit,offset}, /api/stream (SSE), POST /api/sync → {fetched,inserted,updated,total};
+notifierd GET /health. Known defects: vendor_sync.py sends limit=100 (spec: server-fixed 64)." The live sink re-derived all
+of this with 3 whole-suite runs, 5 single reruns and 17 discovery calls, then wrote 6 phantom modules.
+
+## II.3 "Do not repeat" facts as INPUT — never a block
+
+Measured duplication: 22 test invocations across 7 lanes before the sink's 8th call; 4 collected zero tests; the sink re-ran
+the whole suite 3×; 5 of 15 source files were read by more than one lane. The answer is a FACT, not a gate: the sink block
+carries "python3 -m pytest ran 22 times across 7 lanes before this dispatch; last full run: 14 failed / 64 passed — the
+failing names are in the table above. Do not re-run the suite to learn its state; run a single test only after an edit that
+targets its failure. `pytest --collect-only` has already been run; its import errors are listed." Files already read arrive
+the same way (dep excerpts, Part I step 6). NO tool is blocked, NO retry refused — an empty or unreadable ledger renders an
+empty string and the dispatch proceeds byte-identical. The gate still re-runs the suite afterwards: cheap CPU, the
+idempotent net; the waste was the MODEL re-running it at ~79 s a turn, fixed by handing it the table (owner ask #6, verbatim
+mechanism).
+
+## II.4 Time-related mechanisms: verdicts and replacements
+
+MUST GO (each decided model work in r2 or can): (1) the 600 s provider inactivity read cut (api_client.rs:17, :56-59) — cut
+a starved-not-dead worker; replacement: keep `.connect_timeout(30)`, read window off, and the judge's dead-stream decision
+reads `lms ps` for the worker's node (parser exists, tick.py:197-202): no bytes ≥1 look AND node IDLE/absent ⇒ re-stream
+(drop(stream) :17309, judge_restream); GENERATING/PROCESSINGPROMPT ⇒ hold, "queued behind a sibling" in the look event. (2)
+the 420 s × attempt stopwatch (judge.rs:579-584, :746-749, :849-853) — 3 false verdicts whose text threads into the next
+dispatch as prior_hint; replacement: the behavioural over-read gate (judge.rs:497-503) plus "K consecutive looks with
+produced_since_look()==false" — counts of looks, never seconds. (3) FIX_STILLBORN_SECS=300 + the fix_cap deadline
+(swarm.rs:32109-32135, :34776) — replacement: zero tool calls after K zero-production looks. (4) the inert UNCAPPED timeout
+wrappers (planner_wall, stub_budget, fix_cap at :17710, :26947, :27839, :27939, :28082, :28215, :34067, :39065…) — DELETE,
+not park: dead time code is how caps returned twice, and GOOSE_SWARM_RUN_DEADLINE_UNIX_MS (:37697) re-arms a real wall. (5)
+levers_resolved stops printing worker/planner/scout timeout numbers nothing reads. MAY STAY (bound transport, subprocesses,
+cadence, humans — never model work): connect 30 s; JUDGE_WAKE 30 s (summons, never cuts — :17446-17490's own rule); judge
+look cadence (volume cut per Part I step 10; interval-only looks skip when the last look saw production); REPEAT_BREAK (6
+identical results — evidence, not time); the 400 ms digest flush; phase stopwatches (telemetry only); ask-answer polls
+(bound the human; proxy answers); app-under-test subprocess bounds (cargo 120 s, smoke/scan/port probes) where timeout ⇒
+inconclusive, never a finding. Flagged to the owner, not silently kept: §II.2's dispatch-time collect-only run inherits
+collect_only_import_health's 20 s instrument bound (:31897), and GOOSE_DEFAULT_EXTENSION_TIMEOUT=1800 stays only because a
+spawned server that never exits has no non-time signal. Ledger rule: timestamps are provenance only — never an input to
+rendering or order.
+
+## II.5 Desktop: the forming line and the SAID pane
+
+FORMING LINE (owner ask #1). Cheapest real signal: the OpenAI-compatible decoder buffers tool-call args in a local String
+and yields nothing until finish_reason (openai.rs:1121-1200, accumulation :1169) — a 12,930-char write was invisible 312 s
+while the judge burned three looks on "unchanged". Seam: a `tokio::task_local!` observer in goose-provider-types (report at
+:1128 first delta, then every 2 KB at :1169), scoped around `run_agent_in`'s future (swarm.rs :15331 path), writing
+`<key>.forming.json` beside the digest; main.ts:3343 attaches it like `.log`; ONE join line in `digestStreamFields()`
+(useSwarmRun.ts:2225, never a hand-copied lane field); InflightRows (SwarmRunPanel.tsx:1461) renders it first — solid amber
+chip "generating", "write tests/test_ledger_core.py — 6.4 KB" — upgrading in place to the spinner when the ToolRequest
+lands. Blast radius: openai.rs (+1 struct, +1 task_local, 3 call sites in one fn), a tokio `rt` feature flag, swarm.rs
+(scope wrapper, 2 unlink sites, 1 judge_observed field), main.ts, useSwarmRun.ts, SwarmRunPanel.tsx — nothing else in goose
+sees it. HONEST "needs X": whether LM Studio streams `arguments` incrementally for the qwen fleet is UNMEASURED — one
+forced-`write` live call after r2 settles it; if buffered, the signal collapses to one end-of-call report and the ask cannot
+be met at this layer. No synthetic heartbeat, no AgentEvent variant, no Provider-trait method, no timer state.
+
+SAID PANE (owner ask #2). Fields: digest gains `attempt` (threaded into run_agent_in — 4 call sites), `dispatched_at`,
+`said_at`, `said_kind: said|error` (deterministic off the two agent error sentences, agent.rs:2666/2677); the seed appends
+ONE attempt-marker line to `<task>.log`/`.think.log` (append-only preserved; legacy runs read as before). UI: the `lastText`
+carry becomes attempt-keyed (useSwarmRun.ts:2253 — attempt 0's error no longer masquerades as attempt 1's answer, the
+measured 24m30s failure); the transcript splits at the last marker → LIVE segment + superseded[]. Three chips: LIVE (solid
+green, "attempt N · on <node>"); SUPERSEDED (solid grey, collapsed, expandable); ERROR → RETRIED (solid red, caption from
+task_retry.error); an empty new attempt shows "processing the prompt…", never the old error as body. No per-attempt log
+files, no stale-after-N-s pane logic.
+
+## II.6 Claude Code patterns mirrored, and not
+
+MIRRORED (doc cite → swarm seam): short run-specific always-loaded preamble — "delivered as a user message", "target under
+200 lines" (code.claude.com/docs/en/memory) → the rules/pitfalls budget filled with THIS run's facts; index + topic files —
+MEMORY.md one line each, detail on demand (memory doc) → ledger roll-up injected, `<task>.calls.jsonl` on disk;
+injection-before-first-token — UserPromptSubmit "before Claude processes the prompt" (hooks doc) → the splice at :33386; the
+parent WRITES the delegation prompt from its own state (sub-agents doc) → here CODE writes it from ledgers, because the
+parent has no context; measured-tool-result feedback — PostToolUse additionalContext, the docs' own pytest-grep example
+(costs doc) → the pytest-summary parse; what survives a reset — compaction re-reads CLAUDE.md/MEMORY.md/5 recent files
+(context-window doc) → the re-dispatch "previous attempt" block via prior_hint, set on transient retries too;
+proof-of-delivery events for every injection (pitfalls_delivered precedent). DELIBERATELY NOT MIRRORED: the Stop-hook
+8-consecutive-blocks ceiling, hook timeouts, and BASH_MAX_OUTPUT-style ceilings (caps on model work — owner rule);
+PreToolUse `updatedInput` rewriting the model's command (a deterministic mutation of model work — §0 says mild, not gated);
+a "must read the ledger first" tool gate (the injection IS the gate).
+
+## II.7 The ordered r3 list (r2 binary + evidence + owner asks; nothing time-based, nothing stops model work)
+
+| # | what | answers | verb | conf | blast radius | isolation test | gating |
+|---|---|---|---|---|---|---|---|
+| 1 | `<task>.calls.jsonl` + pytest-summary parser + fs_delta + completion snapshot | digest reset erased attempt 0; ok=true on failing suites | ADD | high | 2 digest write sites + 1 pure fn; zero behaviour | parser unit tests on r2's real result strings ("32 failed, 46 passed"; collect ImportError) | — |
+| 2 | ledger writers (task :33709/:33774, gate after :38297 + handle_gate :1889, repair :32206) + parse_finding_verdicts | delivery_defects measured then thrown away; FINDING lines have no consumer | ADD | high | 3 call sites + pure fns; best-effort writes | `goose swarm gate <archived r2 tree>` writes .swarm/ledger.json; second pass a no-op | — |
+| 3 | sink dispatch-time formation (render_ledger_block + semantic statement + oracle suffix) at :33386; sink rules arm :33090/:33152 | owner asks #5/#6; the 3,668-char zero-fact template; subsumes Part I step 2 | ADD (changes Part I 2) | high | sink prompt only; ≤7,000 chars | unit render from r2's archived activity/*.json + manifest asserts the three facts the live sink re-derived (drafts.py is the approval module; root tests' bad imports; suite ran 22×) | owner ask |
+| 4 | shard splice (≤3,500) + `history` param on smoke_fix_description :31219 | round N+1 shards re-try what round N tried (prompt comment :31205) | ADD | high | shard prompts; fresh-Scheduler context loss covered on disk | fixture: round-0 NOT FIXED verdict appears in round-1 shard text | owner ask |
+| 5 | testgen: read-only run_agent (the :15565 path) + file paths in bundle headers :17756 — or gone with Part I step 4 | 0/3 landed while writing 2 poisoned root files past the guard | DELETE (env =0 in r3) | high | one call site; env line dies with Part I step 11 | replay: no root writes; land_generated_tests remains sole landing | — |
+| 6 | bonus tasks out of the join's claim gate (scheduler.rs:1204-1212, :1396-1406); no invented tasks in the BUILD tail | sink held 32m38s for tasks the plan never asked for | CHANGE | medium | join claim predicate | mock DAG: sink claims when plan deps done; bonus completes after, verified by REPAIR | — |
+| 7 | delete the 600 s read cut + the 420 s stopwatch; lms-ps liveness + looks-based summons | both provably decided model work wrong in r2 | DELETE | high (cuts) / medium (liveness — lms ps is per-node; the PARALLEL:2 blind spot is real) | api_client.rs, judge.rs; re-stream actuator exists | replay: starved-sibling fixture holds; IDLE fixture re-streams | owner rule |
+| 8 | re-dispatch "previous attempt" block via prior_hint on transient retries | attempt 1 started blind after 12 min of work | ADD | medium | prior_hint seam only | render from a pre-reset snapshot fixture | — |
+| 9 | delivery_defects formed from the DAG ("owned by <task>, state: …"); steer never says "finished" to a running call | 5 of 6 r2 events blamed the wrong task | CHANGE | medium | message text only | unit: app/ledgerd/server.py→app.stream names sse-endpoint, not documentation | — |
+| 10 | SAID provenance (attempt/said_kind/marker/chips) | 24m30s of a dead attempt's error shown as the live answer | ADD | med-high | digest fields, 4 call sites, 3 UI files, via digestStreamFields only | real ledger-core-tests.log bytes as fixture; legacy no-marker path | owner ask |
+| 11 | forming line (task-local observer → forming.json → amber row; judge_observed gains forming) | 312 s invisible write; 3 wasted looks | ADD | medium — LM Studio arg streaming UNMEASURED | listed in §II.5 | decoder unit test with chunked SSE fixture; then ONE live forced-write call | owner ask; measure first |
+| 12 | research writes quarantined to .swarm/research-writes/ (idempotent, no-op when clean) | slice-camera-system wrote viz_camera.js/test_camera.js at root | ADD | medium | pre-BUILD pass only | fixture tree with strays moves them; clean tree untouched | — |
+| 13 | coverage dispatches per enumerated part (amends Part I step 5) | ~20 min at 1/6 occupancy behind coverage_complete | CHANGE | medium | research loop :26464 region | fake-dispatcher: gap slice dispatched at part landing | — |
+| 14 | context_slice: KEEP beside the ledger; measure sink first-call prompt_tokens + pytest re-runs vs r2's 29,762 / 8 | no r2 evidence either way | KEEP | medium | none in r3 | the r3 run's own telemetry | waits for r2 score |
+| 15 | pre_review: keep only off build-lane nodes (scheduler.rs:1893-1935) | 2/10 findings landed and reached the sink; its calls starved the lane the run waited on | KEEP (constrained) | medium | supervision placement | placement unit test | waits for r2 score |
+
+Owner's explicit asks: rows 3, 4 (semantic message, don't-repeat), 10, 11 (the two desktop asks), 7 (the no-time rule).
+Waiting on r2's score (per ask #1, every keep/drop is conditional on beating r0's 0.0568): 14, 15, and Part I step 10's
+supervision-off arm. Everything else rests on measurements already in hand. Landing order by confidence: 1, 2, 3, 4, 5, 7,
+then Part I's 1-4/14 batch, then 6, 8, 9, 10, 12, 13; 11 after its measurement.
+
+## II.8 Confidence, honestly, per section
+
+| section | confidence | why |
+|---|---|---|
+| II.1 keeps/drops | high | every item carries an event, a digest, an mtime, or a file:line read this session; testgen authorship is PLAUSIBLE (17-30 s mtime gaps), not confirmed — the drop stands on 0/3 landed alone |
+| II.2 harness | high on capture and seams (all read); medium on budgets (7,000/3,500 derived from the engine's own proportions, not measured on a 27B model) and on the dep_block-truncation claim (derived from the 14,000/3,500 constants; the sink's prompt is not persisted) |
+| II.3 as-input | high | a string prepend at a proven seam; the behaviour claim (fewer re-runs) is the r3 measurement itself |
+| II.4 time | high on the inventory (lines read; two mechanisms provably misfired); medium on the lms-ps liveness replacement (per-node, not per-request) |
+| II.5 desktop | med-high on SAID (seams read, fixture exists); medium on forming — hinges on the unmeasured LM Studio streaming behaviour, honestly flagged |
+| II.6 patterns | high | every mirrored pattern carries a doc cite and a named swarm seam; nothing transferred carries a cap |
+| II.7 order | high for rows 1-5, 7; medium for 6, 8-13 (large regions, some unread in full); r2-score conditionality stated per row |
+
+Fastest confidence raisers: r2's score (gates rows 14-15 and the supervision arm); the LM Studio streaming measurement
+(gates row 11); the render-from-archive unit test in row 3 (proves the harness offline, no fleet).
