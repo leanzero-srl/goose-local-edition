@@ -121,6 +121,39 @@ Verified live over CDP against a growing run: events 3→4, thinking bytes 25→
 
 ---
 
+## WHERE THINGS STAND — r0 is over, 2026-08-29 ~16:40
+
+**r0 DID NOT SCORE.** It ran the full pipeline for the first time ever —
+`open → ask → research → synthesis → review → contracts → build → integrate → repair → test → rate` —
+10/10 tasks, a real served-able frontend, 9/9 Python parsing. Then:
+
+    ✗ 29 critical defect(s) remain, 2 minor
+    complete: STOPPING at round 0 with 29 critical(s) open — proxy said no
+
+`complete_fix_dispatched: 0`. **REPAIR never ran**, and afterwards the engine **hung on exit** (20+ min at
+0.0% CPU, main thread in `_pthread_join`). Stopped and archived as
+`swarm-3node-r0-ENDED-29criticals-repair-never-ran-benchmark-forces-proxy-no`. Its tree is intact and
+still scoreable — that score is the clean PRE-REPAIR baseline.
+
+### THE TWO BUGS r0 FOUND, both unfixed as of this line
+
+1. **`swarm.rs:37015` — `let proxy_yes = !benchmark() && (round == 0 || last_round_promoted);`**
+   Under `GOOSE_SWARM_BENCHMARK=1` the first term is false, so the repair-continue ask can ONLY be
+   answered no. **REPAIR has never run in any benchmark.** Every published local number is a pre-repair
+   score. The fix is to drop `!benchmark()`: `last_round_promoted` already refuses the moment a round
+   stops changing the tree, which is the terminator the design specifies, so the anti-infinite-yes
+   property survives without it.
+2. **The engine hangs after that decline instead of exiting.** Writing the answer file it polls for does
+   nothing — it is past the poll.
+
+### THE BIGGEST NON-BUG FINDING
+
+**Workers get their dependency's SIGNATURE and never its BEHAVIOUR.** CONTRACTS freezes a stub; the
+read-the-real-file instruction (`swarm.rs:25603`) fires only when a stub fails to PARSE. Measured:
+`boot-wrapper` depends on two services and made **0 tool calls, 0 reads**. r0's own defects prove the
+cost — `sync.py` reads `body.get("items")` where the vendor returns `"data"`, and parses `amount` where
+it sends `amount_minor`. The real files were finished on disk when those workers ran.
+
 ## NEXT RUN (r1) — what is queued, and what it will settle
 
 ### FIXES COMMITTED BUT NOT IN THE RUNNING BINARY (installed build is 13:06)
