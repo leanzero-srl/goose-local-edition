@@ -2123,6 +2123,28 @@ runs several rounds and the gaps arrive in the later ones.
       "boot pool" or a failed `lms` probe would dispatch to a permanently dead node — WORSE than the bug.
       Departure is already handled (`is_cloud`-exempt residency filter). Revisit only if a node actually
       rejoins mid-run and is measured sitting idle.
+## THE PLAN DOCUMENT IS STALE: `GOOSE_SWARM_LINEAR_PLAN` GATES NOTHING — confirmed 2026-08-29 12:30
+
+    swarm.rs:25739  fn linear_plan_enabled() -> bool { swarm_gate("GOOSE_SWARM_LINEAR_PLAN", false) }
+    callers of linear_plan_enabled():  NONE
+
+The function is defined and never called, which clippy reports as dead and a grep confirms. **So the new
+OPEN -> ASK -> RESEARCH -> SYNTHESIS -> REVIEW flow is UNCONDITIONAL.**
+
+**THAT MAKES TWO STEPS OF THE PLAN'S OWN ORDER OF WORK STALE** (§12): step 9 *"New flow behind
+`GOOSE_SWARM_LINEAR_PLAN`, default OFF"* and step 12 *"Flip the default ON, old path still present; one
+real run side by side"*. Neither is true — the flag was removed from the call path and the side-by-side
+comparison the plan called for never happened, or happened and the gate was deleted without the document
+being updated.
+
+**WHY IT MATTERS BEYOND TIDINESS:** the plan says a fallback exists. It does not. There is no way to run
+the old planning path for comparison, so any regression in the new flow cannot be A/B'd against it — and
+§13's falsifier *"if node occupancy regresses, the answer is a sharper REVIEW question, not the rewrites
+back"* is the only remaining recourse, because the rewrites are no longer reachable.
+
+Found while measuring item D. Recorded rather than deleted: `linear_plan_enabled` is dead code, but
+deleting it silently would erase the evidence that the flag ever existed.
+
 - [ ] **D-MEASURED 2026-08-29 12:20. The gate opened (no run live) and the sweep was RUN, not deleted.**
       `cargo clippy -p goose-cli --lib`: **54 warnings, 41 of them `never used`.** The dead set is the
       plan-vote machinery the linear-plan rewrite replaced and never removed:
