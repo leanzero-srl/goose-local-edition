@@ -64,6 +64,31 @@ with runs of 13. `squeezeBlankRuns` collapses them and trims TRAILING blanks spe
 scrolls to the end and landing the viewport on 13 blank lines is the other half of "it does not show what
 is being generated".
 
+## THE LIVE LINE FOLLOWS THE CHANNEL THAT ADVANCED LAST (`2dd046553`)
+
+REVIEW reuses one lane key per round, so the durable transcript still holds the PREVIOUS round's answer
+while the new call thinks. A fixed priority (transcript over thinking) showed round 1's final JSON in the
+cell for twenty minutes while round 2 reasoned 25k chars — measured on r1 by two consecutive ticks. The
+hook keeps each lane's previous transcript/thinking sizes and derives `liveChannel` = whichever grew this
+poll (ties keep the last value; `done` → transcript); `digestStreamFields()` exposes it; `laneLiveLine`
+shows the thinking line when it is `'thinking'`. Never reintroduce a fixed channel order.
+
+## THE ALSO-ROW IS A CONTROL, NOT A CAPTION (`3ecdbed9d`)
+
+A node's second lane (`data-testid="fleet-node-also"`, with `data-task`) is its own `role="button"`,
+keyboard-operable, opening the inspector for ITS task. Nested inside the primary button it was
+presentational to assistive tech and its clicks bubbled to the primary — the largest lane of a run
+(coverage-1, 24k chars) could not be opened at all.
+
+## A PLACEHOLDER IS NOT A NAME; A DISABLED CONTROL SAYS WHY; `aria-invalid` LINKS ITS REASON
+
+Measured live: six controls named only by a placeholder (the clarify answers, the plan textarea, the
+publish form), one `aria-invalid` with no message, four disabled buttons with no reason. Fixed with
+`aria-labelledby`/`<label>`, one `modelFieldProblem()` rule linked by `aria-describedby`, and
+`title` + described-by on every disabled control. The audit that finds regressions:
+`node ~/goose-builds/loop-state/ui_controls_dump.mjs 9897` (names each offender); `tick_ui.mjs` counts
+them every tick and now includes the also-lanes when judging what is on screen.
+
 ## Verify in the RUNNING app, never only in vitest
 
 Two committed UI changes were dead on arrival. `strings app.asar` cannot settle it either — the bundler
