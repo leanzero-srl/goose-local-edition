@@ -19,9 +19,32 @@ type EventsEntry = { size: number; events: Record<string, unknown>[]; decoder: S
 const tails = new Map<string, TailEntry>();
 const logs = new Map<string, EventsEntry>();
 
+/**
+ * A desktop session outlives many runs, and each run contributes a run log plus two transcripts per
+ * lane -- roughly 19 paths, each holding up to 400KB of tail or a whole parsed event array. Caching
+ * without eviction would turn a pure I/O win into an unbounded leak after a few runs, so the caches are
+ * bounded and evict least-recently-used. A Map preserves insertion order, so re-inserting on every hit
+ * makes the oldest key the least recently used one.
+ */
+const MAX_CACHED_PATHS = 64;
+
+function touch<V>(m: Map<string, V>, k: string, v: V): void {
+  m.delete(k);
+  m.set(k, v);
+  while (m.size > MAX_CACHED_PATHS) {
+    const oldest = m.keys().next().value as string | undefined;
+    if (oldest === undefined) break;
+    m.delete(oldest);
+  }
+}
+
 export function resetSwarmReadCache(): void {
   tails.clear();
   logs.clear();
+}
+
+export function swarmReadCacheSize(): { tails: number; logs: number } {
+  return { tails: tails.size, logs: logs.size };
 }
 
 async function readRange(p: string, start: number, len: number): Promise<Buffer> {
@@ -54,7 +77,10 @@ export async function readTail(
     return null;
   }
   const prev = tails.get(p);
-  if (prev && prev.size === size) return { text: prev.buf.toString('utf8'), size };
+  if (prev && prev.size === size) {
+    touch(tails, p, prev);
+    return { text: prev.buf.toString('utf8'), size };
+  }
 
   let buf: Buffer;
   if (!prev || size < prev.size) {
@@ -65,7 +91,7 @@ export async function readTail(
     buf = Buffer.concat([prev.buf, delta]);
     if (buf.length > max) buf = buf.subarray(buf.length - max);
   }
-  tails.set(p, { size, buf });
+  touch(tails, p, { size, buf });
   return { text: buf.toString('utf8'), size };
 }
 
@@ -84,11 +110,14 @@ export async function readEvents(p: string): Promise<Record<string, unknown>[]> 
     return [];
   }
   let entry = logs.get(p);
-  if (entry && entry.size === size) return entry.events;
+  if (entry && entry.size === size) {
+    touch(logs, p, entry);
+    return entry.events;
+  }
   if (!entry || size < entry.size) {
     entry = { size: 0, events: [], decoder: new StringDecoder('utf8'), rest: '' };
-    logs.set(p, entry);
   }
+  touch(logs, p, entry);
 
   const delta = await readRange(p, entry.size, size - entry.size);
   const chunk = entry.rest + entry.decoder.write(delta);
