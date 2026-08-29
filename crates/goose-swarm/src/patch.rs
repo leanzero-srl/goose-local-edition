@@ -225,7 +225,8 @@ mod tests {
             add: vec![],
             remove: vec!["viz-rendering-core".to_string()],
         };
-        let out = apply_patch(plan, &patch).expect("a merge must not be rejected for its own removal");
+        let out =
+            apply_patch(plan, &patch).expect("a merge must not be rejected for its own removal");
         let v: Value = serde_json::from_str(&out).unwrap();
         let tasks = v["subtasks"].as_array().unwrap();
         assert_eq!(tasks.len(), 2, "the removed task is gone");
@@ -242,7 +243,10 @@ mod tests {
                 t["id"]
             );
         }
-        let iv = tasks.iter().find(|t| t["id"] == "integrate-verify").unwrap();
+        let iv = tasks
+            .iter()
+            .find(|t| t["id"] == "integrate-verify")
+            .unwrap();
         assert_eq!(
             iv["depends_on"].as_array().unwrap().len(),
             1,
