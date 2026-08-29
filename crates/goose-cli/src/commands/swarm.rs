@@ -9167,17 +9167,36 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
         );
     }
 
-    /// THE 44%-OF-REMAINING-LOSS CHECK, and every way it must refuse to fire.
+    /// A STUB IS A SIGNATURE, NOT A BEHAVIOUR — the contract block must say so.
     ///
-    /// Measured across the four best 3-node cells on the current binary: `vendor_conditional` and
-    /// `resync_conditional_ratio` together are 44% of ALL remaining weighted score loss, and both
-    /// are the spec's own "a second sync must be cheap and must not duplicate rows". The engine
-    /// never checked it because `run_spec_contract` issues only bare GETs.
-    ///
-    /// The FAIL-OPEN rows matter more than the positive one. This is the first WRITE the contract
-    /// gate ever issues, and a false finding against a freshly built app is the most expensive
-    /// mistake available here — so anything it cannot decide from the body must be Unreadable,
-    /// never Duplicates.
+    /// r0's five worst defects were all this gap: `sync.py` read `body.get("items")` where the vendor
+    /// returns `"data"`, and parsed `amount` where it sends `amount_minor`. The worker had the
+    /// signature and never the data shape, and the real file was finished on disk when it ran —
+    /// `boot-wrapper` depends on two services and made ZERO tool calls.
+    #[test]
+    fn the_contract_block_licenses_a_targeted_read_of_the_real_file() {
+        let block = frozen_interfaces_block("### module: ledger\ndef load(path): ...\n");
+        assert!(
+            block.contains("A STUB IS A SIGNATURE, NOT A BEHAVIOUR"),
+            "the worker must be told the stub is not the whole truth"
+        );
+        assert!(
+            block.contains("ALREADY WRITTEN and on disk"),
+            "and that the file it needs exists — the DAG guarantees it"
+        );
+        // TARGETED, because the same prompt correctly warns that whole-file dumps degrade local models.
+        assert!(block.contains("grep") && block.contains("sed -n"));
+        assert!(
+            block.contains("never `cat` of a whole file"),
+            "permission to read is not permission to hoover up the tree"
+        );
+        // The original contract must survive intact — this ADDS, it does not replace.
+        assert!(block.contains("build against these EXACTLY"));
+        assert!(block.contains("### module: ledger"));
+        // And an empty bundle still yields nothing at all, so a run with no contracts is unchanged.
+        assert!(frozen_interfaces_block("").is_empty());
+    }
+
     /// A BENCHMARK MUST GET ITS ONE FIX WAVE.
     ///
     /// `!benchmark() && (round == 0 || last_round_promoted)` is false for EVERY round under benchmark, so
@@ -9383,6 +9402,17 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
         assert_eq!(review_dedupe_key(a), review_dedupe_key(b));
     }
 
+    /// THE 44%-OF-REMAINING-LOSS CHECK, and every way it must refuse to fire.
+    ///
+    /// Measured across the four best 3-node cells on the current binary: `vendor_conditional` and
+    /// `resync_conditional_ratio` together are 44% of ALL remaining weighted score loss, and both
+    /// are the spec's own "a second sync must be cheap and must not duplicate rows". The engine
+    /// never checked it because `run_spec_contract` issues only bare GETs.
+    ///
+    /// The FAIL-OPEN rows matter more than the positive one. This is the first WRITE the contract
+    /// gate ever issues, and a false finding against a freshly built app is the most expensive
+    /// mistake available here — so anything it cannot decide from the body must be Unreadable,
+    /// never Duplicates.
     /// IT HAD NO `#[test]`, so it never ran — clippy reported it as a plain never-used function among
     /// eighty others and it was invisible. A test that does not run is not a test.
     #[test]
@@ -29756,12 +29786,40 @@ fn frozen_interfaces_block(bundle: &str) -> String {
     if bundle.trim().is_empty() {
         return String::new();
     }
+    // A SIGNATURE IS NOT A BEHAVIOUR, and r0 paid for the difference.
+    //
+    // This block is the whole of what a worker knew about its dependencies, and the prompt around it
+    // says "REUSE the modules whose API is injected below" — presenting the stub as sufficient. It is
+    // not: a stub carries names and types, never the SHAPE OF THE DATA that actually flows. Measured
+    // on r0, five of twelve defects were exactly that gap — `sync.py` read `body.get("items")` where
+    // the vendor returns `"data"`, and parsed `amount` where it sends `amount_minor`; the health,
+    // summary and buckets endpoints all returned the wrong shape. No amount of deliberation fixes
+    // those: the model never had the information.
+    //
+    // And it was ON DISK. The DAG does not dispatch a dependent until its dependencies are Done, so
+    // every file a worker needs is finished and sitting three directories away. `boot-wrapper`
+    // depends on two services and made ZERO tool calls.
+    //
+    // So the block now says the stub is a signature and names the one read that closes the gap. It is
+    // deliberately bounded to `grep`/`sed -n` rather than `cat`: the same prompt warns that dumping
+    // whole files is slow on local models and degrades quality, and that warning is correct — the fix
+    // is a TARGETED read, not permission to hoover up the tree.
     format!(
         "\n## FROZEN MODULE INTERFACES — the agreed contract (build against these EXACTLY)\n\
          These are the signature-only stubs every sibling module WILL expose. Import and call them with \
          these EXACT names + signatures, and keep shared data shapes identical; do NOT invent a different \
          signature or re-shape a shared value. A mismatch here is the #1 cause of passing-unit-tests but a \
-         broken end-to-end integration.\n{bundle}\n"
+         broken end-to-end integration.\n\
+         \n\
+         A STUB IS A SIGNATURE, NOT A BEHAVIOUR. It cannot tell you the KEY NAMES in a dict a module \
+         returns, the units it uses, which error it raises, or what an upstream API actually sends. Those \
+         live only in the real source, and every module you depend on is ALREADY WRITTEN and on disk right \
+         now — nothing dispatched you until it finished. Before you write a call that consumes another \
+         module's data, or that parses a response, READ THE REAL FILE for the exact field names: \
+         `grep -n 'def <symbol>' <path>` then `sed -n '<start>,<end>p' <path>`, or `grep -n '\\[\"' <path>` \
+         to see the keys it reads and writes. Keep it TARGETED — `grep`/`sed -n`, never `cat` of a whole \
+         file. Guessing a field name is the single most expensive mistake available to you: it passes \
+         every unit test you write and breaks the program end to end.\n{bundle}\n"
     )
 }
 
