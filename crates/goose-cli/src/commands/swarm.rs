@@ -23356,7 +23356,19 @@ fn slugify_slice_id(name: &str) -> String {
 /// Scoped to LOCAL imports only — a missing stdlib or third-party module is a different problem and this
 /// must not cry wolf about `json` or `sqlite3`.
 fn verify_tree_imports(working_dir: &Path) -> Vec<String> {
-    let mut out = Vec::new();
+    tree_import_gaps(working_dir)
+        .into_iter()
+        .map(|(rel, module)| format!("{rel} imports `{module}`, which no task has written"))
+        .collect()
+}
+
+/// The same scan, returning (importing file, unresolved module) PAIRS instead of formatted lines.
+///
+/// Split out for II-9: `emit_delivery_defects` must attribute a cross-import gap to the task that
+/// OWNS the missing module — which means it needs the module as DATA, not re-parsed out of a
+/// message string. `verify_tree_imports` stays as the formatter every existing caller reads.
+fn tree_import_gaps(working_dir: &Path) -> Vec<(String, String)> {
+    let mut out: Vec<(String, String)> = Vec::new();
     let mut py: Vec<PathBuf> = Vec::new();
     fn walk(dir: &Path, py: &mut Vec<PathBuf>, depth: usize) {
         if depth > 6 {
@@ -23412,9 +23424,9 @@ fn verify_tree_imports(working_dir: &Path) -> Vec<String> {
             .display()
             .to_string();
         let mut report = |module: &str| {
-            let msg = format!("{rel} imports `{module}`, which no task has written");
-            if !out.contains(&msg) {
-                out.push(msg);
+            let pair = (rel.clone(), module.to_string());
+            if !out.contains(&pair) {
+                out.push(pair);
             }
         };
         for line in body.lines().map(str::trim) {
@@ -23525,6 +23537,93 @@ fn verify_tree_imports(working_dir: &Path) -> Vec<String> {
     out
 }
 
+/// II-9: charge a cross-import gap to the task the DAG says is responsible, not to whichever task
+/// happened to complete last.
+///
+/// `emit_delivery_defects` runs the whole-tree import scan on every completion, and its event
+/// carries the COMPLETING task's id — so on r2, 5 of 6 `delivery_defects` events blamed the wrong
+/// task (seq 293 charged `ledger-core` with `app/notifierd/*` and `app/ledgerd/*` gaps), and the
+/// mis-attribution buried exactly the signal the ledger now delivers to repair. The DAG already
+/// knows the owner: an unresolved `app.stream` is a missing `app/stream.py`, and some task owns
+/// that path.
+///
+/// Three cases, in order of usefulness:
+///   * a task owns the file that would RESOLVE the module — name it, with its state, because
+///     "owned by sse-endpoint, state: running" means the import is an in-flight dependency, not a
+///     defect anyone should act on yet;
+///   * nobody owns the module but a task owns the IMPORTING file — the import references something
+///     the plan never assigned, so fixing the import line belongs to that owner;
+///   * neither is owned — keep the unattributed line; there is no DAG fact to add.
+///
+/// Pure over its inputs so the r2 shape is testable without a dispatcher.
+fn attribute_import_gap(
+    rel: &str,
+    module: &str,
+    ownership: &HashMap<String, Vec<String>>,
+    states: &HashMap<String, String>,
+) -> String {
+    let state_of = |task: &str| -> String {
+        states
+            .get(task)
+            .cloned()
+            // Dispatched but no ledger row yet: the attempt has not reached a terminal
+            // transition, so the honest state is "still running".
+            .unwrap_or_else(|| "running".to_string())
+    };
+    // A module resolves as `<m>.py` or `<m>/__init__.py`, at the tree root or under src/ — the
+    // same two roots `tree_import_gaps` checks. Relative modules (leading dot) resolve against
+    // the importing file's package and are left to the importing-file-owner case below.
+    if !module.starts_with('.') {
+        let joined = module.replace('.', "/");
+        let candidates = [
+            format!("{joined}.py"),
+            format!("{joined}/__init__.py"),
+            format!("src/{joined}.py"),
+            format!("src/{joined}/__init__.py"),
+        ];
+        for cand in &candidates {
+            if let Some(task) = ownership
+                .iter()
+                .find(|(_, files)| files.iter().any(|f| f == cand))
+                .map(|(t, _)| t)
+            {
+                return format!(
+                    "{rel} imports `{module}` — unresolved; {cand} is owned by {task}, state: {}",
+                    state_of(task)
+                );
+            }
+        }
+    }
+    if let Some(task) = ownership
+        .iter()
+        .find(|(_, files)| files.iter().any(|f| f == rel))
+        .map(|(t, _)| t)
+    {
+        return format!(
+            "{rel} imports `{module}`, which no task owns — the import line is {task}'s to fix (state: {})",
+            state_of(task)
+        );
+    }
+    format!("{rel} imports `{module}`, which no task has written")
+}
+
+/// Per-task terminal state as the ledger minis recorded it ("done" / "retrying" / "failed").
+/// A task absent here has no terminal row yet — `attribute_import_gap` reads that as "running".
+/// Best-effort: no ledger, no states, and every gap simply attributes with state "running".
+fn ledger_task_states(root: &Path) -> HashMap<String, String> {
+    let mut out = HashMap::new();
+    if let Some(rollup) = read_ledger_rollup(root) {
+        if let Some(tasks) = rollup.get("tasks").and_then(|t| t.as_object()) {
+            for (id, row) in tasks {
+                if let Some(status) = row.get("status").and_then(|s| s.as_str()) {
+                    out.insert(id.clone(), status.to_string());
+                }
+            }
+        }
+    }
+    out
+}
+
 /// Every path any task DECLARED IT OWNS on this run, read back out of the tree's own event log.
 ///
 /// `swarm verify` took its ownership list only from a hand-typed `--owns`, so replaying the verifier
@@ -23605,8 +23704,13 @@ fn verify_owned_files(working_dir: &Path, owned: &[String]) -> Vec<String> {
         let path = working_dir.join(rel);
         match std::fs::metadata(&path) {
             Err(_) => {
+                // Tense-neutral ON PURPOSE (II-9): this exact string reaches two audiences — the
+                // completion-time `delivery_defects` event, where "finished without writing" was
+                // true, and the judge's mid-run defect steer, where the same words told a call
+                // that was STILL RUNNING that it had finished. A steer may never claim "finished"
+                // to a live call, so the fact is stated without a tense claim.
                 out.push(format!(
-                    "{rel} does not exist — the task finished without writing the file it owns"
+                    "{rel} does not exist — this task owns it and nothing has written it"
                 ));
                 continue;
             }
@@ -32948,9 +33052,21 @@ impl GooseAgentDispatcher {
         // still leave the tree unrunnable by importing something nobody wrote. Run it here rather than on
         // a cadence: a task completing is exactly when the tree changed, so there is nothing to schedule
         // and nothing to poll.
-        for d in verify_tree_imports(root) {
-            if !defects.contains(&d) {
-                defects.push(d);
+        //
+        // II-9: each gap is ATTRIBUTED from the DAG before it enters the event. The scan fires on
+        // whichever task completes, so without attribution the event's task_id charges the whole
+        // tree's gaps to that task — on r2, 5 of 6 events blamed the wrong one. The line itself now
+        // names the owner and its state, so a reader (and the ledger) gets "owned by sse-endpoint,
+        // state: running" instead of a defect pinned on the last task through the door.
+        let gaps = tree_import_gaps(root);
+        if !gaps.is_empty() {
+            let ownership = self.owned_files_by_task.lock().unwrap().clone();
+            let states = ledger_task_states(root);
+            for (rel, module) in gaps {
+                let d = attribute_import_gap(&rel, &module, &ownership, &states);
+                if !defects.contains(&d) {
+                    defects.push(d);
+                }
             }
         }
         if defects.is_empty() {
@@ -41691,6 +41807,59 @@ mod live_fleet_tests {
             "the finding must clear when the file appears"
         );
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// II-9, the r2 shape: `app/ledgerd/server.py` imports `app.stream`, the scan fires because
+    /// `documentation` completed last — and the defect must name `sse-endpoint`, the task the DAG
+    /// says owns `app/stream.py`, never the task that happened to trigger the scan. On r2, 5 of 6
+    /// `delivery_defects` events charged the wrong task exactly this way (seq 293).
+    #[test]
+    fn a_cross_import_gap_charges_the_owner_not_the_last_task_through_the_door() {
+        let mut ownership: HashMap<String, Vec<String>> = HashMap::new();
+        ownership.insert("sse-endpoint".into(), vec!["app/stream.py".into()]);
+        ownership.insert("documentation".into(), vec!["README.md".into()]);
+        ownership.insert(
+            "ledgerd-server".into(),
+            vec!["app/ledgerd/server.py".into()],
+        );
+        // sse-endpoint has no terminal ledger row: it is dispatched and still running.
+        let mut states: HashMap<String, String> = HashMap::new();
+        states.insert("documentation".into(), "done".into());
+
+        let line = attribute_import_gap("app/ledgerd/server.py", "app.stream", &ownership, &states);
+        assert!(line.contains("sse-endpoint"), "{line}");
+        assert!(
+            line.contains("state: running"),
+            "a task with no terminal row is running, and the reader must see the import may yet resolve: {line}"
+        );
+        assert!(
+            !line.contains("documentation"),
+            "the completing task must never be charged with a gap it does not own: {line}"
+        );
+
+        // A module resolving as a package: app/stream/__init__.py is the same ownership fact.
+        ownership.insert("sse-endpoint".into(), vec!["app/stream/__init__.py".into()]);
+        let pkg = attribute_import_gap("app/ledgerd/server.py", "app.stream", &ownership, &states);
+        assert!(pkg.contains("sse-endpoint"), "{pkg}");
+
+        // Nobody owns the module: the import line itself is the importer's owner's to fix.
+        let unowned =
+            attribute_import_gap("app/ledgerd/server.py", "app.ghost", &ownership, &states);
+        assert!(unowned.contains("ledgerd-server"), "{unowned}");
+        assert!(unowned.contains("no task owns"), "{unowned}");
+
+        // Neither end is owned: no DAG fact to add, keep the unattributed line.
+        let bare = attribute_import_gap("scripts/tool.py", "app.ghost", &ownership, &states);
+        assert_eq!(
+            bare,
+            "scripts/tool.py imports `app.ghost`, which no task has written"
+        );
+
+        // A terminal state is reported as the ledger recorded it.
+        states.insert("sse-endpoint".into(), "failed".into());
+        let failed =
+            attribute_import_gap("app/ledgerd/server.py", "app.stream", &ownership, &states);
+        assert!(failed.contains("state: failed"), "{failed}");
     }
 
     /// THE SCHEMA MUST ACCEPT A NO-CHANGE REVIEW, AND THAT IS AN INVARIANT, NOT A STYLE CHOICE.
