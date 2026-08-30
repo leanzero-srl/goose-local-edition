@@ -180,9 +180,13 @@ fn the_banned_integrate_template_only_shrinks() {
 /// their 8 tests) moved verbatim to commands/swarm/fleet_order.rs (-383), ahead of the r5
 /// repair-node-selection fix that resolves speed weights per device instead of matching the
 /// substring map against slot model ids.
+/// Tightened to 44,511: the r5 fix itself — `measured_rate_for` and its test moved to
+/// fleet_order.rs beside the new weight resolution (`config_speed_weights`,
+/// `publish_fleet_speed_weights`, `rank_fix_target`), paying for the publish call, the
+/// pool_resolved weight echo and the weight-primary re-rank wiring (-7 net).
 #[test]
 fn swarm_rs_line_count_only_decreases() {
-    const SWARM_RS_LINE_BASELINE: usize = 44_518;
+    const SWARM_RS_LINE_BASELINE: usize = 44_511;
     let text = read("crates/goose-cli/src/commands/swarm.rs");
     let n = text.lines().count();
     assert!(

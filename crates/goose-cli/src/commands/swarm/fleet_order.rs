@@ -26,6 +26,164 @@ pub(super) fn configured_speed_weight(
         .unwrap_or(1)
 }
 
+/// The routing weight for every model the CONFIG can field, resolved ONCE against the ids the
+/// operator actually wrote — never re-derived from raw slot strings at a fan.
+///
+/// Same precedence chain the run-start pool builder uses per device: the node's own explicit
+/// `speed_weight` wins, else the `speed_weights` substring map matched against the DEVICE id
+/// (the id the map's fragments were written for), else 1. The planner model gets the same
+/// resolution the planner-also-works push gives it (matched against the model id, since the
+/// pushed device's id is the literal "planner").
+///
+/// Keyed by MODEL id because that is what the fan pools carry (`fleet_slot_models` /
+/// `live_fleet_slots` flat_map `d.model_id`); on a model_id shared by two configured devices
+/// the first wins, matching the pool builder's first-host-wins dedupe.
+pub(super) fn config_speed_weights(
+    cfg: &super::SwarmConfig,
+) -> std::collections::HashMap<String, u32> {
+    let mut map = std::collections::HashMap::new();
+    for d in cfg.devices.iter().filter(|d| d.enabled) {
+        let w = d
+            .speed_weight
+            .unwrap_or_else(|| configured_speed_weight(&cfg.speed_weights, &d.id));
+        map.entry(d.model_id.clone()).or_insert(w);
+    }
+    map.entry(cfg.planner_model.clone())
+        .or_insert_with(|| configured_speed_weight(&cfg.speed_weights, &cfg.planner_model));
+    map
+}
+
+/// The RUN's resolved pool weights, published once at pool resolve. Config resolution alone is
+/// not enough: r5's pool was reconciled from `lms ps` ("auto-use what's loaded") while every
+/// configured device sat disabled on a stale model generation, so the run's real model ids
+/// existed in no config entry and a config-only map would have resolved the whole wave to the
+/// same all-tie 1 the substring mismatch did. The published map IS the run-start resolution the
+/// scheduler routes by (`DeviceCfg.speed_weight`), generated ids and explicit overrides
+/// included.
+static PUBLISHED_FLEET_WEIGHTS: std::sync::OnceLock<
+    std::sync::RwLock<std::collections::HashMap<String, u32>>,
+> = std::sync::OnceLock::new();
+
+/// model_id → resolved routing weight for a RESOLVED pool. `DeviceCfg.speed_weight` already
+/// carries the full precedence (explicit override, else the substring map vs the device id,
+/// else 1) — this only re-keys it by the model ids the fan pools carry. First host wins on a
+/// shared model_id, matching the pool builder's dedupe.
+pub(super) fn fleet_weights_of(devices: &[DeviceCfg]) -> std::collections::HashMap<String, u32> {
+    let mut map = std::collections::HashMap::new();
+    for d in devices {
+        map.entry(d.model_id.clone()).or_insert(d.speed_weight);
+    }
+    map
+}
+
+/// Publish the run's pool weights so every later fan orders by the SAME resolution the
+/// scheduler routes by. Called once per run, at the `pool_resolved` site, after the planner
+/// push — the last point the full `Vec<DeviceCfg>` exists before it moves into the scheduler.
+pub(super) fn publish_fleet_speed_weights(devices: &[DeviceCfg]) {
+    let map = fleet_weights_of(devices);
+    let lock = PUBLISHED_FLEET_WEIGHTS.get_or_init(Default::default);
+    match lock.write() {
+        Ok(mut g) => *g = map,
+        Err(poisoned) => *poisoned.into_inner() = map,
+    }
+}
+
+/// What a fan orders by: the config resolution as the floor, overlaid by the run's published
+/// pool — the run's own resolution wins wherever both name a model, because it is the one the
+/// ROUTING already honors (and the only one that exists for a reconciled pool).
+pub(super) fn resolved_fleet_speed_weights(
+    cfg: &super::SwarmConfig,
+) -> std::collections::HashMap<String, u32> {
+    let mut map = config_speed_weights(cfg);
+    if let Some(lock) = PUBLISHED_FLEET_WEIGHTS.get() {
+        let published = match lock.read() {
+            Ok(g) => g,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        for (k, v) in published.iter() {
+            map.insert(k.clone(), *v);
+        }
+    }
+    map
+}
+
+/// The `speed_weights` map keys that matched NOTHING in the run's resolved pool — neither a
+/// device id (what the fragments are written for) nor a model id (what the planner push and the
+/// telemetry keys use). Emitted in `pool_resolved` so a key/id mismatch is VISIBLE instead of
+/// silently resolving every miss to 1: r5's `{local, worksmacstudio}` matched no model id at the
+/// fan, and nothing anywhere said so.
+pub(super) fn unmatched_speed_weight_patterns(
+    weights: &std::collections::HashMap<String, u32>,
+    devices: &[DeviceCfg],
+) -> Vec<String> {
+    let mut out: Vec<String> = weights
+        .keys()
+        .filter(|pat| {
+            !devices
+                .iter()
+                .any(|d| d.id.contains(pat.as_str()) || d.model_id.contains(pat.as_str()))
+        })
+        .cloned()
+        .collect();
+    out.sort();
+    out
+}
+
+/// The measured rate for a device: the telemetry node key must equal the device/model id or be
+/// a '-'-bounded prefix of it (the fleet's node identity is the model-id prefix, "gabee-…").
+/// The boundary requirement is load-bearing: a bare starts_with would let a one-letter key
+/// claim every device. Pure/testable.
+pub(super) fn measured_rate_for(
+    rates: &std::collections::HashMap<String, f64>,
+    dev_id: &str,
+    model_id: &str,
+) -> Option<f64> {
+    rates.iter().find_map(|(k, r)| {
+        let matches = |s: &str| {
+            s == k
+                || s.strip_prefix(k.as_str())
+                    .is_some_and(|rest| rest.starts_with('-'))
+        };
+        (matches(model_id) || matches(dev_id)).then_some(*r)
+    })
+}
+
+/// The COMPLETE-phase fix target: the operator's resolved routing weight is PRIMARY; the run's
+/// own median decode rate breaks ties only WITHIN equal weights. Returns the chosen
+/// (device_id, model_id) and the honest basis string for `fix_target_selected`.
+///
+/// The median-first version this replaces trusted a confounded measurement over the operator —
+/// r5 measured: rates {gabee: 12.654, mihai: 12.566, workhorse: 8.208} because workhorse's
+/// samples were the 93-minute sink call at huge context (decode collapses as KV grows) while
+/// gabee idled through BUILD and sampled light calls. The per-node median measures the WORKLOAD
+/// each node got, not the node, so it overrode the correct weight-3 target (workhorse) with the
+/// weight-1 gabee for every serialized repair dispatch.
+///
+/// Callers prove every candidate measured before consulting rates (mixed comparisons lie); a
+/// missing rate here can therefore only be a tie that resolves to the later candidate, same as
+/// `max_by`'s last-maximum rule for exact-equal rates.
+pub(super) fn rank_fix_target(
+    candidates: &[(String, String, u32)],
+    rates: &std::collections::HashMap<String, f64>,
+) -> Option<((String, String), &'static str)> {
+    let best = candidates.iter().max_by(|a, b| {
+        a.2.cmp(&b.2).then_with(|| {
+            let ra = measured_rate_for(rates, &a.0, &a.1).unwrap_or(0.0);
+            let rb = measured_rate_for(rates, &b.0, &b.1).unwrap_or(0.0);
+            ra.total_cmp(&rb)
+        })
+    })?;
+    let top_weight_shared = candidates.iter().filter(|c| c.2 == best.2).count() > 1;
+    Some((
+        (best.0.clone(), best.1.clone()),
+        if top_weight_shared {
+            "speed_weight+measured_tiebreak"
+        } else {
+            "speed_weight"
+        },
+    ))
+}
+
 /// One entry per SLOT the fleet can actually run, not one per device.
 ///
 /// `fanout_over_fleet` sizes its permits from the list it is given, so a caller that collapses each
@@ -114,12 +272,20 @@ pub(super) fn one_lane_per_host(models: Vec<String>) -> Vec<String> {
         .collect()
 }
 
-/// Order a fan's device pool by DESCENDING configured speed weight (stable: ties keep
+/// Order a fan's device pool by DESCENDING resolved speed weight (stable: ties keep
 /// discovery order). Every fan pops devices from the FRONT of its queue, so front == the
 /// node that gets the first (and, when items < devices, the ONLY) work. MEASURED (r13,
 /// operator screenshot): pool order is discovery order — gabee, mihai, workhorse — so the
 /// weight-4 host was structurally LAST in line for every scout/detail fan and sat
 /// READY while the weight-1 host prefilled. One rule, one place: every fan site inherits it.
+///
+/// `weights` is the RESOLVED model_id → weight map from `resolved_fleet_speed_weights`, looked
+/// up EXACTLY — never the raw `speed_weights` substring map. The slot strings here are MODEL
+/// ids, and matching the free-form map against them is the r5 defect (swarm-20260830-083847650):
+/// the operator's `{local: 2, gabee: 1, worksmacstudio: 3}` is keyed by DEVICE-id fragments, so
+/// against `workhorse-qwen3.8-27b`/`mihai-qwen3.8-27b`/`gabee-qwen3.8-27b` only "gabee" matched,
+/// the misses all defaulted to 1, the all-tie sort kept config order (gabee first), and round
+/// 0's two-shard fix wave rode gabee+mihai while the weight-3 workhorse idled.
 pub(super) fn order_fleet_by_speed(
     devices: Vec<String>,
     weights: &std::collections::HashMap<String, u32>,
@@ -139,7 +305,12 @@ pub(super) fn order_fleet_by_speed(
             groups.push((d, 1));
         }
     }
-    groups.sort_by_key(|(id, _)| std::cmp::Reverse(configured_speed_weight(weights, id)));
+    // 1 is the documented precedence floor for a model the resolver never saw (a device outside
+    // the config, e.g. a pool reconciled from `lms ps` with a stale config) — the same "default
+    // 1 = equal share" the substring resolution always had, never a silent swallow of a resolver
+    // failure: unmatched map keys are reported by `unmatched_speed_weight_patterns` in
+    // `pool_resolved`.
+    groups.sort_by_key(|(id, _)| std::cmp::Reverse(weights.get(id).copied().unwrap_or(1)));
     let max_lanes = groups.iter().map(|(_, n)| *n).max().unwrap_or(0);
     let mut out = Vec::new();
     for lane in 0..max_lanes {
@@ -157,10 +328,11 @@ mod fan_order_tests {
 
     #[test]
     fn the_fastest_host_is_first_in_every_fan_pool() {
+        // The RESOLVED map: exact model-id keys, as resolved_fleet_speed_weights builds it.
         let weights: std::collections::HashMap<String, u32> = [
-            ("gabee".to_string(), 1),
-            ("mihai".to_string(), 2),
-            ("workhorse".to_string(), 4),
+            ("gabee-qwen3.6-27b".to_string(), 1),
+            ("mihai-qwen3.6-27b".to_string(), 2),
+            ("workhorse-qwen3.6-27b".to_string(), 4),
         ]
         .into_iter()
         .collect();
@@ -189,9 +361,9 @@ mod fan_order_tests {
         // (slow-host-first, and fast-host stacked while a whole node idles) are lane order.
         // A 3-item fan on this pool must touch all three hosts, fastest first.
         let weights: std::collections::HashMap<String, u32> = [
-            ("gabee".to_string(), 1),
-            ("mihai".to_string(), 2),
-            ("workhorse".to_string(), 4),
+            ("gabee-q".to_string(), 1),
+            ("mihai-q".to_string(), 2),
+            ("workhorse-q".to_string(), 4),
         ]
         .into_iter()
         .collect();
@@ -233,6 +405,190 @@ mod fan_order_tests {
             vec!["a-q", "b-q"],
             "prologue fans run ONE call per host"
         );
+    }
+
+    /// r5 (swarm-20260830-083847650) verbatim: the operator's substring map is keyed by
+    /// DEVICE-id fragments while the wave pool carries MODEL ids. Resolution must happen against
+    /// the device ids, ONCE, and the wave orders by the result — never by re-matching the raw
+    /// map against slot strings, where only "gabee" matched, every miss defaulted to 1, and the
+    /// all-tie sort kept config order (gabee first) while the weight-3 workhorse idled.
+    #[test]
+    fn the_wave_pool_orders_by_weights_resolved_against_device_ids() {
+        use super::super::{SwarmConfig, SwarmDevice};
+        let dev = |id: &str, model: &str| SwarmDevice {
+            id: id.to_string(),
+            model_id: model.to_string(),
+            weight: 1,
+            enabled: true,
+            instances: 1,
+            host: None,
+            provider: None,
+            speed_weight: None,
+            supervision: None,
+        };
+        let cfg = SwarmConfig {
+            // Config order lists gabee FIRST, exactly as r5's config.yaml did — the order the
+            // all-tie sort used to preserve straight into the wave.
+            devices: vec![
+                dev("mac-gabee-lmstudio", "gabee-qwen3.8-27b"),
+                dev("local-mihai-lmstudio", "mihai-qwen3.8-27b"),
+                dev("worksmacstudio-workhorse-lmstudio", "workhorse-qwen3.8-27b"),
+            ],
+            speed_weights: [
+                ("local".to_string(), 2),
+                ("gabee".to_string(), 1),
+                ("worksmacstudio".to_string(), 3),
+            ]
+            .into_iter()
+            .collect(),
+            ..Default::default()
+        };
+        let resolved = config_speed_weights(&cfg);
+        assert_eq!(resolved["workhorse-qwen3.8-27b"], 3);
+        assert_eq!(resolved["mihai-qwen3.8-27b"], 2);
+        assert_eq!(resolved["gabee-qwen3.8-27b"], 1);
+        let pool = order_fleet_by_speed(
+            vec![
+                "gabee-qwen3.8-27b".to_string(),
+                "mihai-qwen3.8-27b".to_string(),
+                "workhorse-qwen3.8-27b".to_string(),
+            ],
+            &resolved,
+        );
+        assert_eq!(
+            pool,
+            vec![
+                "workhorse-qwen3.8-27b",
+                "mihai-qwen3.8-27b",
+                "gabee-qwen3.8-27b"
+            ],
+            "r5's round-0 wave (complete_fix_dispatched seq 415/416) popped gabee+mihai while \
+             the weight-3 workhorse idled — the pool must lead with the operator's fastest host"
+        );
+    }
+
+    /// r5's ACTUAL pool shape: every configured device DISABLED on a stale model generation,
+    /// the run's pool reconciled from `lms ps` with generated ids the config never named — so
+    /// config-only resolution sees nothing. The pool's own `DeviceCfg.speed_weight` (resolved
+    /// at run start against the generated DEVICE ids, where the map's fragments do match) is
+    /// what `publish_fleet_speed_weights` hands the fans, re-keyed by model id.
+    #[test]
+    fn a_reconciled_pool_hands_the_wave_its_run_start_resolution() {
+        let dev = |id: &str, model: &str, sw: u32| DeviceCfg {
+            id: id.to_string(),
+            model_id: model.to_string(),
+            weight: 2,
+            enabled: true,
+            speed_weight: sw,
+            supervision: false,
+            is_cloud: false,
+        };
+        // The r5 pool_resolved devices verbatim, with the run-start resolution the substring
+        // map produced against their generated ids: gabee 1, local(mihai) 2, worksmacstudio 3.
+        let devices = [
+            dev("mac-gabee-qwen3.8-27b", "gabee-qwen3.8-27b", 1),
+            dev("local-mihai-qwen3.8-27b", "mihai-qwen3.8-27b", 2),
+            dev(
+                "worksmacstudio-workhorse-qwen3.8-27b",
+                "workhorse-qwen3.8-27b",
+                3,
+            ),
+        ];
+        let map = fleet_weights_of(&devices);
+        let pool = order_fleet_by_speed(
+            vec![
+                "gabee-qwen3.8-27b".to_string(),
+                "mihai-qwen3.8-27b".to_string(),
+                "workhorse-qwen3.8-27b".to_string(),
+            ],
+            &map,
+        );
+        assert_eq!(
+            pool,
+            vec![
+                "workhorse-qwen3.8-27b",
+                "mihai-qwen3.8-27b",
+                "gabee-qwen3.8-27b"
+            ],
+            "the wave must ride the run's own resolution even when the config names none of it"
+        );
+    }
+
+    /// r5's fix_target_selected (seq 403) verbatim: every candidate measured, but workhorse's
+    /// median came from the 93-minute sink call at huge context while gabee sampled light calls
+    /// — the median measured the WORKLOAD, not the node, and overrode the weight-3 target with
+    /// the weight-1 gabee. The operator's weight is primary; distinct weights leave nothing for
+    /// the rate to decide.
+    #[test]
+    fn the_fix_target_keeps_the_operators_weight_over_a_confounded_median() {
+        let rates: std::collections::HashMap<String, f64> = [
+            ("gabee".to_string(), 12.654),
+            ("mihai".to_string(), 12.566),
+            ("workhorse".to_string(), 8.208),
+        ]
+        .into_iter()
+        .collect();
+        let candidates = vec![
+            (
+                "mac-gabee-lmstudio".to_string(),
+                "gabee-qwen3.8-27b".to_string(),
+                1u32,
+            ),
+            (
+                "local-mihai-lmstudio".to_string(),
+                "mihai-qwen3.8-27b".to_string(),
+                2,
+            ),
+            (
+                "worksmacstudio-workhorse-lmstudio".to_string(),
+                "workhorse-qwen3.8-27b".to_string(),
+                3,
+            ),
+        ];
+        let ((id, model), basis) = rank_fix_target(&candidates, &rates).unwrap();
+        assert_eq!(
+            id, "worksmacstudio-workhorse-lmstudio",
+            "the weight-3 host stays the repair target; gabee's 12.654 median never outranks it"
+        );
+        assert_eq!(model, "workhorse-qwen3.8-27b");
+        assert_eq!(
+            basis, "speed_weight",
+            "distinct weights: the operator decided, and the basis says so honestly"
+        );
+    }
+
+    /// Two equal-weight hosts: the run's own median is exactly the right tiebreak, and the
+    /// basis admits the measurement decided.
+    #[test]
+    fn equal_weights_let_the_measured_median_break_the_tie() {
+        let rates: std::collections::HashMap<String, f64> =
+            [("gabee".to_string(), 12.654), ("mihai".to_string(), 12.566)]
+                .into_iter()
+                .collect();
+        let candidates = vec![
+            ("d-mihai".to_string(), "mihai-q".to_string(), 2u32),
+            ("d-gabee".to_string(), "gabee-q".to_string(), 2),
+        ];
+        let ((id, _), basis) = rank_fix_target(&candidates, &rates).unwrap();
+        assert_eq!(id, "d-gabee", "higher median wins WITHIN an equal weight");
+        assert_eq!(basis, "speed_weight+measured_tiebreak");
+    }
+
+    #[test]
+    fn rate_lookup_requires_a_dash_bounded_prefix() {
+        let rates: std::collections::HashMap<String, f64> =
+            [("gabee".to_string(), 13.2)].into_iter().collect();
+        assert_eq!(
+            measured_rate_for(&rates, "dev0", "gabee-qwen3.6-27b"),
+            Some(13.2)
+        );
+        assert_eq!(
+            measured_rate_for(&rates, "gabee", "other-model"),
+            Some(13.2)
+        );
+        // "gabee" is NOT a '-'-bounded prefix of "gabeexl-…" — a loose starts_with would lie here.
+        assert_eq!(measured_rate_for(&rates, "dev1", "gabeexl-qwen"), None);
+        assert_eq!(measured_rate_for(&rates, "dev2", "mihai-qwen"), None);
     }
 }
 
@@ -375,6 +731,29 @@ mod fleet_slot_tests {
             supervision: false,
             is_cloud,
         }
+    }
+
+    /// FALLBACK-GATE visibility: a `speed_weights` key that matches nothing in the pool must be
+    /// REPORTED, never silently resolved to 1 for everything it was meant to rank.
+    #[test]
+    fn a_map_key_matching_no_device_is_reported_unmatched() {
+        let weights: std::collections::HashMap<String, u32> = [
+            ("gabee".to_string(), 1),
+            ("legacybox".to_string(), 5),
+            ("workhorse".to_string(), 3),
+        ]
+        .into_iter()
+        .collect();
+        let devices = [
+            dev("mac-gabee-lmstudio", "gabee-qwen3.8-27b", 1, false),
+            // Matched via the MODEL id (the planner-push shape: device id is literally "planner").
+            dev("planner", "workhorse-qwen3.8-27b", 1, false),
+        ];
+        assert_eq!(
+            unmatched_speed_weight_patterns(&weights, &devices),
+            vec!["legacybox".to_string()],
+            "only the key that matched neither a device id nor a model id is unmatched"
+        );
     }
 
     /// THE DEFECT THIS GUARDS. The first version of the residency refresh filtered every device by
