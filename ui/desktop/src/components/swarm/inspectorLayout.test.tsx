@@ -27,8 +27,10 @@ describe('node inspector layout', () => {
     // A request still running is a call too: the column must not collapse while the only work is in
     // flight. And a retried lane whose new attempt has said nothing yet still has a SUPERSEDED list to
     // show — collapsing the column there would hide the very state chips the retry case exists for.
+    // A FORMING call (II-11c) is work in exactly the same way: the model is generating the call's
+    // arguments right now, and collapsing the column paints "Still thinking" over that generation.
     expect(SRC).toMatch(
-      /const hasWork =\s*\n?\s*calls\.length > 0 \|\| running\.length > 0 \|\| narration\.length > 0 \|\| said\.superseded\.length > 0;/
+      /const hasWork =\s*\n?\s*calls\.length > 0 \|\|\s*\n?\s*running\.length > 0 \|\|\s*\n?\s*\(lane\?\.forming\?\.length \?\? 0\) > 0 \|\|\s*\n?\s*narration\.length > 0 \|\|\s*\n?\s*said\.superseded\.length > 0;/
     );
   });
 

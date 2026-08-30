@@ -184,6 +184,80 @@ describe('nothing clears on phase end', () => {
   });
 });
 
+describe('the WORK pane show-all control — the symmetric twin of the thinking one', () => {
+  it('offers "show all" on a clipped transcript and swaps in the whole durable answer log', async () => {
+    mockRun({
+      activity: {
+        open: OPEN_DONE_DIGEST,
+        store: {
+          ...STORE_LIVE_DIGEST,
+          full_transcript: 'live tail of the store answer',
+          transcript_bytes: 300_000,
+          transcript_clipped: true,
+        },
+      },
+    });
+    electron().readSwarmActivityLog = vi.fn(async (_dir: string, _key: string, channel: string) =>
+      channel === 'transcript'
+        ? { text: 'THE ANSWER LOG FROM THE VERY START … THE END', bytes: 300_000 }
+        : null
+    );
+    mount();
+    await openInspector();
+    const btn = await screen.findByLabelText(/Show the whole 300,000-byte answer log/);
+    expect(btn.textContent).toContain('show all 293 KB');
+    fireEvent.click(btn);
+    // The caption is the workCaption law on a full read: ALL the bytes, counted as what is shown.
+    expect(await screen.findByText(/all 300,000 bytes/)).toBeInTheDocument();
+    expect(screen.getByText(/THE ANSWER LOG FROM THE VERY START/)).toBeInTheDocument();
+    expect(electron().readSwarmActivityLog).toHaveBeenCalledWith('/tmp/build', 'store', 'transcript');
+    // And the way back to the live structured view is a real, named control.
+    const back = screen.getByLabelText(/Back to the live view of the answer channel/);
+    fireEvent.click(back);
+    // The narration also paints in the fleet cell and the lane header, so count, don't get-one.
+    await waitFor(() =>
+      expect(screen.getAllByText('live tail of the store answer').length).toBeGreaterThan(0)
+    );
+    expect(screen.queryByText(/THE ANSWER LOG FROM THE VERY START/)).toBeNull();
+  });
+});
+
+describe('jump-to-start on full-log views — "it cuts the BEGINNING" gets a way back to it', () => {
+  it('the show-all view lands following the end, offers a named start jump, and a named way back', async () => {
+    mockRun();
+    electron().readSwarmActivityLog = vi.fn(async () => ({
+      text: 'FULL THINK LOG FROM THE VERY START',
+      bytes: 500_000,
+    }));
+    mount();
+    await openInspector();
+    // The LIVE tail never offers the jump: its beginning is not on disk in this view.
+    expect(screen.queryByLabelText('Jump to the start of this log')).toBeNull();
+    fireEvent.click(await screen.findByLabelText(/Show the whole 500,000-byte reasoning log/));
+    await screen.findByText(/all 500,000 bytes/);
+    const start = await screen.findByLabelText('Jump to the start of this log');
+    fireEvent.click(start);
+    // Leaving the end is a state, not a scroll accident: the way back is its own named control.
+    const end = await screen.findByLabelText('Back to the end of this log');
+    fireEvent.click(end);
+    await waitFor(() => expect(screen.queryByLabelText('Back to the end of this log')).toBeNull());
+  });
+
+  it('an expanded history entry (a whole durable file) carries the same start jump', async () => {
+    mockRun();
+    electron().readSwarmActivityLog = vi.fn(async (_dir: string, _key: string, channel: string) =>
+      channel === 'thinking'
+        ? { text: 'THE VERY BEGINNING of the opener reasoning … THE END', bytes: 128_270 }
+        : null
+    );
+    mount();
+    await openInspector();
+    fireEvent.click(await screen.findByTestId('node-history-row'));
+    await screen.findByText(/all 128,270 bytes/);
+    expect(screen.getAllByLabelText('Jump to the start of this log').length).toBeGreaterThan(0);
+  });
+});
+
 describe('the live pane show-all control', () => {
   it('offers "show all" when the durable log outsizes the tail, and swaps in the whole file', async () => {
     mockRun();

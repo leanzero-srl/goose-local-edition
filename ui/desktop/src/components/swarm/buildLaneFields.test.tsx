@@ -59,8 +59,17 @@ const DIGEST = {
       model: 'mihai-qwen',
     },
   ],
-  // II-11b: a named call whose argument body is still buffering (from `<key>.forming.json`).
-  forming: [{ id: 'call_11', name: 'developer__write_file', since_ms: 1756500000000 }],
+  // II-11b/c: a named call whose argument body is still streaming (from `<key>.forming.json`),
+  // with the live byte progress and bounded preview the II-11c engine writes.
+  forming: [
+    {
+      id: 'call_11',
+      name: 'developer__write_file',
+      since_ms: 1756500000000,
+      args_bytes: 12_288,
+      args_preview: '"content": "def apply(payment):\\n    ledger.append(payment)',
+    },
+  ],
 };
 
 // Written out by hand, deliberately. Deriving this from the join the paths share would make the test
@@ -107,7 +116,15 @@ const EXPECTED: Record<string, unknown> = {
       model: 'mihai-qwen',
     },
   ],
-  forming: [{ id: 'call_11', name: 'developer__write_file', since_ms: 1756500000000 }],
+  forming: [
+    {
+      id: 'call_11',
+      name: 'developer__write_file',
+      since_ms: 1756500000000,
+      args_bytes: 12_288,
+      args_preview: '"content": "def apply(payment):\\n    ledger.append(payment)',
+    },
+  ],
 };
 
 const digestFieldsOf = (lane: TurnLane | undefined): Record<string, unknown> => {

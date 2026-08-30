@@ -3366,13 +3366,16 @@ ipcMain.handle('read-swarm-run', async (event, workingDir: string) => {
             const c = await fs.readFile(p, 'utf8');
             const key = f.replace(/\.json$/, '');
             const parsed = JSON.parse(c);
-            // THE FORMING SIDECAR (II-11b): `<key>.forming.json` holds {forming:[{id,name,since_ms}]}
-            // while the provider stream has named a tool call whose argument body is still buffering
-            // server-side (LM Studio ships ALL args in one terminal delta after minutes of silence —
-            // measured, 3/3 runs). The engine removes the file the moment the call completes or the
-            // scope exits, so ABSENT means nothing is forming. A torn read (the writer rewrites it at
-            // decode time) parses as garbage for one 500ms poll and self-heals on the next — treated
-            // as absent rather than surfaced, which is the honest reading of a file mid-rewrite.
+            // THE FORMING SIDECAR (II-11b/c): `<key>.forming.json` holds
+            // {forming:[{id,name,since_ms,args_bytes?,args_preview?}]} while the provider stream has
+            // named a tool call whose argument body is still streaming. Since II-11c (0fd574002) the
+            // engine writes it for EVERY keyed call — planner lanes included — and args_bytes /
+            // args_preview (≤240 chars, present only when args_bytes > 0) carry live byte progress as
+            // the JSON forms. The engine removes the file the moment the call completes or the scope
+            // exits, so ABSENT means nothing is forming. The writer is tmp+rename now, so THIS engine
+            // can never be caught mid-rewrite; the tolerant catch below stays for the runs OLD
+            // binaries wrote — an archived tree may hold a partial write frozen at the kill, and
+            // treating it as absent is the honest reading of a file that never finished.
             try {
               const fPath = p.replace(/\.json$/, '.forming.json');
               const fc = await fs.readFile(fPath, 'utf8');
@@ -3381,7 +3384,7 @@ ipcMain.handle('read-swarm-run', async (event, workingDir: string) => {
                 (parsed as Record<string, unknown>).forming = fj.forming;
               }
             } catch {
-              // absent or mid-rewrite — nothing is forming on this lane
+              // absent, or an old binary's partial write in an archived run — nothing is forming
             }
             // THE UNCLIPPED NARRATION, from the append-only transcript beside the digest.
             //
