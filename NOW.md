@@ -64,7 +64,11 @@ demoted to tiebreak; wave pool was ordering gabee-first via a model-id/device-id
 QUEUED next surgeon (swarm.rs, after node-weights): PRIORITIES — findings gain provenance+severity
 (the engine_critical partition mis-tiered the dead 3D scene as MINOR), waves ordered by severity,
 briefs say fix-first, panel ranks. Then: r6 build (source bin/activate-hermit; fmt/build --release;
-just make-ui; verify bundled sha) -> pkill Goose -> Benchmark view launch -> bench_dispatch.mjs.
+just make-ui; verify bundled sha) -> pkill Goose -> Benchmark view launch -> bench_dispatch.mjs
+-> AND start terminal_closure.py against the live run (author a frozen config for the r6 build
+sha first — the controller attaches to a running run, seals through natural exit, scores at
+18970, and is the ONLY chain the flagship publisher accepts; r5 was unpublishable to the
+flagship row precisely because it ran without this).
 tick.py now prints PURPOSE per fix shard (delivered-vs-diagnosed, loud gap flag).
 
 ## THE PRIOR THREAD (2026-08-30 21:10)
