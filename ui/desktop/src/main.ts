@@ -2799,13 +2799,21 @@ ipcMain.handle('benchmark-run', async (event, nodes: number, tier?: string, samp
           // before a node answers, and those 5 minutes are three idle machines.
           GOOSE_SWARM_BENCHMARK: '1',
           GOOSE_SWARM_RENDER_NODE: benchNode,
-          // The provider's inactivity window defaults to 600 s (goose-providers api_client.rs). On this
-          // fleet a PARALLEL:2 slot went 581 s without a byte and then delivered a complete, valid
-          // result (r2, open-coverage-2, 2026-08-29) while its sibling on the same node generated 18k
-          // chars. Twenty seconds more and the transport would have cut a live call as a dead stream.
-          // A dead stream is caught sooner by the judge (no production → re-stream), so the transport
-          // window is the last resort and must exceed the longest silence a live slot shows.
-          GOOSE_PROVIDER_READ_TIMEOUT_SECS: process.env.GOOSE_PROVIDER_READ_TIMEOUT_SECS ?? '1800',
+          // r3 supervision-off arm (P1-10). These layers are env-only and DEFAULT ON in the engine,
+          // so a packaged run can only switch them off here; the lines die with the r4 deletion, and
+          // the tick proves the state by the ABSENCE of their events.
+          // WHY off — r2: 474 of 481 tail_review events in one hour, 477 with had_findings=false
+          // (median 7 s "whole-tree reviews" that were transport failures reading as clean).
+          GOOSE_SWARM_TAIL_REVIEW: '0',
+          // WHY off — r2: 9 pre_review calls of 220-340 s on already-done tasks, incl. a 7,535 s call
+          // holding gabee through the 11-minute retry starvation (seq 530).
+          GOOSE_SWARM_PREREVIEW: '0',
+          // WHY off — rides with PREREVIEW: the dims rotation only shapes the pre-review prompt, and a
+          // half-armed layer (dims on, layer off) is the stale-config class measured on 34359b8b7.
+          GOOSE_SWARM_PREREVIEW_DIMS: '0',
+          // WHY off — the IDLE-MODEL judge only, NOT the omni judge (config omni_judge /
+          // GOOSE_SWARM_OMNI_JUDGE, which stays ON for r3 with its cost cut — P1-10's arm resolution).
+          GOOSE_SWARM_JUDGE: '0',
           // The render gate is inert without the probe path, and without the gate there are no
           // repair rounds and no screenshots — the product story of the run.
           GOOSE_SWARM_RENDER_PROBE: path.join(
@@ -2834,7 +2842,10 @@ ipcMain.handle('benchmark-run', async (event, nodes: number, tier?: string, samp
           GOOSE_SWARM_PROBE_ADVERTISED_POST: '1',
           GOOSE_SWARM_FIX_SCHED: '1',
           GOOSE_SWARM_SHIP_BEST: '1',
-          GOOSE_SWARM_TESTGEN: '1',
+          // WHY '0' — r2: testgen calls wrote poisoned root files past the guard (test_interfaces.py
+          // mtime 20:02:25Z imports task ids as modules), 0/3 generated suites landed, and the sink
+          // burned 17 of its first 26 calls on them (II-5/P1-10). Reader survives until the r4 deletion.
+          GOOSE_SWARM_TESTGEN: '0',
           // Env pin: a stale saved config.yaml carried split_fat:false and silently
           // shadowed the baked default (measured live — run 4 planned ONE web task).
           // Env beats config, so the benchmark regime is immune to config shadows.
