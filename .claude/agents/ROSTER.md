@@ -87,6 +87,8 @@ it on mechanism. Mihai 14:35: "isn't build supposed to fan out?"
 
 ## Live queue (small items, fold into the next matching brief)
 
+- verify_tree_imports false positive: 'app.httpapi — no task owns' while app/httpapi.py IS owned
+  (module-path -> file-path resolution miss) — next swarm-surgeon batch.
 SURGEON #9 (dispatch when #8 lands — swarm.rs): (0) DECISIONS-INTO-FAN, refuter-amended:
 timed-out/unanswered open decisions ride the fan (one structured call each, "answer strictly from
 the spec; where silent name the conventional choice and say so"); REWRITE the :27561 quarantine pin
