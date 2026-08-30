@@ -28,6 +28,21 @@ fn run_path_files() -> Vec<(String, String)> {
         "crates/goose-cli/src/commands/swarm.rs".to_string(),
         read("crates/goose-cli/src/commands/swarm.rs"),
     )];
+    // The incremental-split law moves engine code into commands/swarm/<area>.rs siblings; those
+    // modules are the SAME run path and must not leave the scanned set by moving.
+    let split = root.join("crates/goose-cli/src/commands/swarm");
+    let mut split_names: Vec<_> = std::fs::read_dir(&split)
+        .unwrap_or_else(|e| panic!("{} unreadable: {e}", split.display()))
+        .filter_map(|e| e.ok())
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .filter(|n| n.ends_with(".rs"))
+        .collect();
+    split_names.sort();
+    for n in split_names {
+        let rel = format!("crates/goose-cli/src/commands/swarm/{n}");
+        let text = read(&rel);
+        files.push((rel, text));
+    }
     let src = root.join("crates/goose-swarm/src");
     let mut names: Vec<_> = std::fs::read_dir(&src)
         .unwrap_or_else(|e| panic!("{} unreadable: {e}", src.display()))
