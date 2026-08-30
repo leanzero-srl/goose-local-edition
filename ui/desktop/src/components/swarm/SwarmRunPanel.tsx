@@ -22,6 +22,7 @@ import {
   elapsedSince,
   substantiveChunk,
   resolveActivityPath,
+  supervisionRollingCaption,
   type TurnStatus,
   type TurnLane,
   type LiveChannel,
@@ -324,7 +325,10 @@ const ReasoningBlock: React.FC<{
   forceOpen?: boolean;
   label?: string;
   live?: boolean;
-}> = ({ text, forceOpen, label, live }) => {
+  /** Honest provenance beside the label — e.g. REASONING_CLIP_NOTE when the body is the digest's
+   *  24k-clipped tail rather than a durable log. */
+  note?: string;
+}> = ({ text, forceOpen, label, live, note }) => {
   const [expandedState, setExpanded] = useState(false);
   const expanded = expandedState || !!forceOpen;
   const words = text.split(/\s+/).filter(Boolean).length;
@@ -355,6 +359,7 @@ const ReasoningBlock: React.FC<{
             live
           </span>
         ) : null}
+        {note ? <span className="text-[9px] text-text-secondary">{note}</span> : null}
       </div>
       <div
         ref={bodyRef}
@@ -617,6 +622,7 @@ const LaneRow: React.FC<{
                   forceOpen={dev || live}
                   // Developer: name the model so it's unmistakable WHOSE generation this is.
                   label={dev ? `${live ? 'Generating' : 'Reasoning'} · ${lane.model ?? lane.device}` : undefined}
+                  note={narrativeClipNote(lane) ?? undefined}
                 />
               )}
               {calls.length > 0 || running.length > 0 || (lane.forming?.length ?? 0) > 0 ? (
@@ -1531,6 +1537,41 @@ export function taskGenReasoning(digest: Record<string, unknown>): string {
   return tailOf(text, CARD_TAIL_CHARS);
 }
 
+/** The honest words for a body that is `full_reasoning` — the digest's 24,000-char clipped tail. */
+export const REASONING_CLIP_NOTE = 'last 24k chars — archived digest; full log unavailable';
+
+/**
+ * THE FALLBACK STAYS; THE CAPTION CLOSES THE ITEM (agenda item V's residue). Archived runs whose
+ * durable logs are gone still carry `full_reasoning` in the digest — a 24k TAIL CLIP — and every
+ * surface that falls back to it used to present the clip as the whole record. These predicates say,
+ * per chain, whether the body a surface is about to show IS that clip, so the caption can say so.
+ *
+ * `narrativeClipNote` matches laneNarrative's chain (transcript first, then the clip);
+ * `taskGenClipNote` matches taskGenReasoning's (both durable logs outrank it).
+ */
+export function narrativeClipNote(lane: StreamLane): string | null {
+  return !liveTranscript(lane) && (lane.fullReasoning?.trim() ?? '') ? REASONING_CLIP_NOTE : null;
+}
+
+export function taskGenClipNote(digest: Record<string, unknown>): string | null {
+  const str = (k: string) => (typeof digest[k] === 'string' ? (digest[k] as string) : undefined);
+  const lane: StreamLane = {
+    fullThinking: str('full_thinking'),
+    fullReasoning: str('full_reasoning'),
+    fullTranscript: str('full_transcript'),
+  };
+  if (lane.fullThinking?.trim() || liveTranscript(lane)) return null;
+  return lane.fullReasoning?.trim() ? REASONING_CLIP_NOTE : null;
+}
+
+/** The inspector THINKING pane's variant: its chain (inspectorThinkingText) reaches the clip only
+ *  when the durable think.log is absent. Returned pre-joined for the pane's `count` caption. */
+export function thinkingClipNote(lane: StreamLane): string {
+  return !lane.fullThinking?.trim() && (lane.fullReasoning?.trim() ?? '')
+    ? ` · ${REASONING_CLIP_NOTE}`
+    : '';
+}
+
 /**
  * ONE PANE OF THE INSPECTOR — declared at MODULE SCOPE, and that is the whole point.
  *
@@ -2041,17 +2082,32 @@ const NodeHistoryRow: React.FC<{ entry: NodeHistoryEntry; runDir: string }> = ({
           className="px-1.5 py-0.5 text-[9px] font-mono uppercase tracking-wider font-bold text-white shrink-0"
           style={{
             borderRadius: CHIP_RADIUS,
-            background: lane.status === 'error' ? CALL_ERR : CALL_OK,
+            // INTERRUPTED is not FAILED: the digest went quiet without a completion stamp — a liveness
+            // fact, not an engine verdict — and painting it as a failure would claim a verdict nobody
+            // reached. Amber, its own word.
+            background: lane.interrupted ? CALL_PENDING : lane.status === 'error' ? CALL_ERR : CALL_OK,
           }}
         >
-          {lane.status === 'error' ? 'failed' : 'finished'}
+          {lane.interrupted ? 'interrupted' : lane.status === 'error' ? 'failed' : 'finished'}
         </span>
         <span className="min-w-0 flex-1 truncate text-text-primary">{title}</span>
-        {priorCalls > 0 ? (
-          <span className="shrink-0 text-[10px] text-text-secondary">
-            {priorCalls + 1} calls on this lane
+        {lane.interrupted ? (
+          <span className="shrink-0 text-[10px]" style={{ color: CALL_PENDING }}>
+            went quiet mid-call — no completion stamp
           </span>
         ) : null}
+        {(() => {
+          // The judge's ROLLING lane: superseded entries are its earlier LOOKS, so "N calls on this
+          // lane" would be true but say less than the honest rolling caption.
+          const rolling = supervisionRollingCaption(lane);
+          if (rolling)
+            return <span className="shrink-0 text-[10px] text-text-secondary">{rolling}</span>;
+          return priorCalls > 0 ? (
+            <span className="shrink-0 text-[10px] text-text-secondary">
+              {priorCalls + 1} calls on this lane
+            </span>
+          ) : null;
+        })()}
         {durationLabel ? (
           <span className="shrink-0 text-[10px] tabular-nums text-text-secondary">{durationLabel}</span>
         ) : null}
@@ -2292,6 +2348,28 @@ const NodeInspector: React.FC<{
               {lane.status === 'done' ? 'finished' : 'failed'}
             </span>
           )}
+          {/* An r6 supervision lane says so — the class's solid violet, and for the judge's rolling
+              lane the honest semantics: look N (1-based), earlier looks folded into superseded. */}
+          {lane?.supervision === true && (
+            <span
+              data-testid="inspector-supervision"
+              className="px-2 py-0.5 text-[10px] font-mono uppercase tracking-wider font-bold text-white shrink-0"
+              style={{ borderRadius: CHIP_RADIUS, background: FORMATION_RAMP[2] }}
+            >
+              supervision
+            </span>
+          )}
+          {(() => {
+            const rolling = lane ? supervisionRollingCaption(lane) : null;
+            return rolling ? (
+              <span
+                className="text-xs shrink-0"
+                style={{ color: FORMATION_RAMP[2], fontWeight: 600 }}
+              >
+                {rolling}
+              </span>
+            ) : null;
+          })()}
           {lane?.description && (
             <span className="text-xs text-text-secondary truncate">{lane.description}</span>
           )}
@@ -2335,7 +2413,7 @@ const NodeInspector: React.FC<{
                     lane?.fullThinking,
                     lane?.thinkingBytes,
                     lane?.thinkingChars
-                  )}${squeezeNote(rawThink, thinkText)}`
+                  )}${thinkingClipNote(lane ?? {})}${squeezeNote(rawThink, thinkText)}`
             }
             action={
               showingFullThink ? (
@@ -2603,10 +2681,12 @@ const FleetStrip: React.FC<{
                         interrupted marker instead of a fake spinner — this is why opening an old session used to
                         look like it was still streaming. */}
                     {(() => {
-                      // SUPERVISION work (a judge generation with no task lane) is visually its own class:
-                      // a solid violet gavel, never the amber build spinner — a supervising node says what
-                      // it is really doing instead of reading "idle — no task".
-                      const supervising = lane.phase === 'supervision';
+                      // SUPERVISION work is visually its own class: a solid violet gavel, never the
+                      // amber build spinner — a supervising node says what it is really doing instead
+                      // of reading "idle — no task". Two shapes land here: the span-derived pseudo-lane
+                      // (phase 'supervision', pre-r6 streams) and the r6 engine's REAL supervision
+                      // lanes, whose digests stamp `supervision: true` and ride the one join.
+                      const supervising = lane.phase === 'supervision' || lane.supervision === true;
                       if (!live)
                         return <CircleSlash size={12} className="shrink-0" style={{ color: STOPPED }} />;
                       if (supervising)
@@ -2620,11 +2700,11 @@ const FleetStrip: React.FC<{
                       );
                     })()}
                     <span
-                      className={`truncate ${live && lane.phase !== 'supervision' ? 'text-text-primary' : ''}`}
+                      className={`truncate ${live && !(lane.phase === 'supervision' || lane.supervision === true) ? 'text-text-primary' : ''}`}
                       style={
                         !live
                           ? { color: STOPPED }
-                          : lane.phase === 'supervision'
+                          : lane.phase === 'supervision' || lane.supervision === true
                             ? { color: FORMATION_RAMP[2], fontWeight: 600 }
                             : undefined
                       }
@@ -2633,6 +2713,13 @@ const FleetStrip: React.FC<{
                       {lane.phase === 'supervision' && typeof lane.elapsedMs === 'number'
                         ? ` · ${Math.round(lane.elapsedMs / 1000)}s`
                         : ''}
+                      {(() => {
+                        // The judge lane is ROLLING — one lane per supervised task, each look reseeding
+                        // the digest — and the caption owes the reader that fact (look N, 1-based;
+                        // earlier looks folded into superseded). Null everywhere else, pre-r6 included.
+                        const rolling = supervisionRollingCaption(lane);
+                        return rolling ? ` · ${rolling}` : '';
+                      })()}
                     </span>
                     {canExpand ? (
                       <ChevronRight
@@ -2690,17 +2777,19 @@ const FleetStrip: React.FC<{
                 </div>
               ) : (() => {
                   // No lane, no span — but LM Studio's own status may still say the node is generating.
-                  // The engine's pre-review / test-gen / sink-review calls report ONLY on completion
-                  // (verified in swarm.rs), so a busy node here is running exactly that class of call.
-                  // Saying "idle — no task" while LM Studio shows requests in flight was the lie Mihai
-                  // caught live; name the work class honestly instead.
+                  // The old text here GUESSED the work class ("review/test-gen call in flight") — a
+                  // hardcoded label that misattributed a 43m52s replan call on r5. Since efa2014ab
+                  // every supervision call mints a real lane at dispatch (judge-<task>, replan-rN,
+                  // prereview-<task>, tail-review-<dim>), so a busy node normally renders that lane
+                  // above, labeled from its key, and this branch is only the seed-write gap or an
+                  // older engine's keyless call. Say what is KNOWN, no more.
                   const st = nodeStatus[shortName(device)];
                   const busy = live && (st === 'generating' || st === 'processingPrompt');
                   return busy ? (
-                    <Tip label="LM Studio reports this node generating. The engine's supervision calls (pre-review, test-gen, sink review) log only when they finish — the result lands in the event log.">
+                    <Tip label="LM Studio reports this node generating, but no lane digest is on disk for the call. Current engines write a lane for every call — supervision included — at dispatch; older engines ran supervision calls keyless, leaving only the event log.">
                       <span style={{ color: FORMATION_RAMP[2], fontWeight: 600 }} className="flex items-center gap-1.5">
                         <Eye size={12} className="shrink-0" />
-                        supervising — review/test-gen call in flight
+                        generating — no lane on disk for this call yet
                       </span>
                     </Tip>
                   ) : (
@@ -2760,7 +2849,17 @@ const FleetStrip: React.FC<{
                       >
                         +
                       </span>
-                      <span className="shrink-0 truncate max-w-[40%] text-text-primary">{title}</span>
+                      {/* An r6 supervision lane riding beside the worker lane keeps the class's solid
+                          violet accent here too, so a node's second row says WHAT KIND of work it is. */}
+                      {extra.supervision === true ? (
+                        <Gavel size={11} className="shrink-0 self-center" style={{ color: FORMATION_RAMP[2] }} />
+                      ) : null}
+                      <span
+                        className={`shrink-0 truncate max-w-[40%] ${extra.supervision === true ? '' : 'text-text-primary'}`}
+                        style={extra.supervision === true ? { color: FORMATION_RAMP[2], fontWeight: 600 } : undefined}
+                      >
+                        {title}
+                      </span>
                       <span className="min-w-0 truncate">{laneLiveLine(extra)}</span>
                       {extraCanExpand ? (
                         <ChevronRight size={12} className="shrink-0 self-center text-text-secondary" />
@@ -3404,7 +3503,20 @@ const TaskGenDetail: React.FC<{ digest: Record<string, unknown> }> = ({ digest }
           </span>
         ) : null}
       </div>
-      {reasoning.trim() ? <ReasoningBlock text={reasoning} label="Model reasoning (live)" /> : null}
+      {reasoning.trim()
+        ? (() => {
+            // ITEM 2's residue: when both durable logs are absent this card's body IS the digest's
+            // 24k clip — an archived run's leftover — and calling that "(live)" was the lie.
+            const clip = taskGenClipNote(digest);
+            return (
+              <ReasoningBlock
+                text={reasoning}
+                label={clip ? 'Model reasoning' : 'Model reasoning (live)'}
+                note={clip ?? undefined}
+              />
+            );
+          })()
+        : null}
     </div>
   );
 };
@@ -3797,6 +3909,7 @@ const BoardTaskRow: React.FC<{
               live={row.state === 'running' && !interrupted}
               forceOpen={dev}
               label={row.state === 'running' ? 'Generating' : 'Reasoning'}
+              note={(lane && narrativeClipNote(lane)) ?? undefined}
             />
           ) : null}
           {calls.length > 0 || running.length > 0 || (lane?.forming?.length ?? 0) > 0 ? (
@@ -4297,8 +4410,10 @@ const PlanningZone: React.FC<{
   /** The planning-history phases only (see PLANNING_PHASE_KEYS). */
   phases: PhaseTodo[];
   planLanes: TurnLane[];
-  /** RESEARCH's per-slice lanes — one node per slice, each writing that module's spec. */
+  /** RESEARCH's per-slice lanes — one node per slice, each writing that module's spec (v1, archived). */
   sliceLanes: TurnLane[];
+  /** The v2 research fan (research-<slice>-q<n>) — the live engine's Research work, one question each. */
+  researchLanes: TurnLane[];
   /** CONTRACTS' per-module lanes — one node per module, each freezing that module's interface. */
   contractLanes: TurnLane[];
   /** The single-node planning calls: open / open-resplit / proxy-answer / synthesis / review / rate. */
@@ -4321,6 +4436,7 @@ const PlanningZone: React.FC<{
   phases,
   planLanes,
   sliceLanes,
+  researchLanes,
   contractLanes,
   planningLanes,
   deviceOrder,
@@ -4344,7 +4460,7 @@ const PlanningZone: React.FC<{
   // A phase's own fan (the slice fan under RESEARCH, the contract fan under CONTRACTS) renders under that
   // phase, so the lanes say WHEN they ran; a phase with lanes but no checklist row yet still shows.
   const fanOf = (key: PhaseTodo['key']): PhaseLaneGroup | null => {
-    const group = planningLanesFor(key, { sliceLanes, contractLanes });
+    const group = planningLanesFor(key, { sliceLanes, contractLanes, researchLanes });
     return group && group.lanes.length > 0 ? group : null;
   };
   const shownPhases = phases.filter((p) => p.items.length > 0 || fanOf(p.key) != null);
@@ -4937,10 +5053,11 @@ export const SwarmRunPanel: React.FC<{
     ...run.scoutLanes,
     ...run.contractLanes,
     ...run.detailLanes,
-    // The rewritten pipeline's own lanes: the slice fan (one node per slice, RESEARCH) and the
-    // single-node planning calls (open / synthesis / review / proxy-answer / rate). Without them the
-    // Fleet zone reads "idle — no task" for the entire planning half of the run.
+    // The rewritten pipeline's own lanes: the slice fan (one node per slice, RESEARCH), the v2
+    // research fan, and the single-node planning calls (open / synthesis / review / rate). Without
+    // them the Fleet zone reads "idle — no task" for the entire planning half of the run.
     ...run.sliceLanes,
+    ...run.researchLanes,
     ...run.planningLanes,
     ...run.fixLanes,
   ];
@@ -4969,6 +5086,9 @@ export const SwarmRunPanel: React.FC<{
     laneSources,
     digests: run.activityDigests,
     digestMtimes: run.activityMtimes,
+    // The interrupted-row liveness test reads the clock; per-render is exactly the cadence the
+    // deriveFleet call above already accepts.
+    now: Date.now(),
     scope: workingDir,
   });
   const deviceOrder: string[] = fleet.devices;
@@ -5316,6 +5436,7 @@ export const SwarmRunPanel: React.FC<{
         phases={planningPhases}
         planLanes={run.planLanes}
         sliceLanes={run.sliceLanes}
+        researchLanes={run.researchLanes}
         contractLanes={run.contractLanes}
         planningLanes={run.planningLanes}
         deviceOrder={deviceOrder}
