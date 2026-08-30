@@ -3230,6 +3230,7 @@ ipcMain.handle(
 // One watch set per renderer, armed by that renderer's own reads and dropped when it goes away.
 const swarmWatchers = new SwarmWatchRegistry();
 
+let lastSwarmReadErrorLogMs = 0;
 ipcMain.handle('read-swarm-run', async (event, workingDir: string) => {
   try {
     if (!workingDir || typeof workingDir !== 'string') return null;
@@ -3423,9 +3424,17 @@ ipcMain.handle('read-swarm-run', async (event, workingDir: string) => {
       planConfidence?: number;
       confidence?: ConfBreakdown | null;
       answerPath: string;
+      /** When the questions file was written. The engine never deletes clarify-questions.json (it
+       *  clears only the stale ANSWERS file at ask time), so a previous run's unanswered ask
+       *  survives into the next run in the same directory — this mtime is what lets the renderer
+       *  gate the file against the CURRENT run's start, exactly as digestsFromThisRun gates the
+       *  activity digests. main.ts cannot gate here: startedAt is derived from the run stream's
+       *  first event, which only the renderer folds. */
+      mtime: number | null;
     } | null = null;
     try {
-      const qraw = await fs.readFile(path.join(swarmDir, 'clarify-questions.json'), 'utf8');
+      const clarifyQPath = path.join(swarmDir, 'clarify-questions.json');
+      const qraw = await fs.readFile(clarifyQPath, 'utf8');
       const q = JSON.parse(qraw) as {
         questions?: unknown;
         plan_confidence?: unknown;
@@ -3479,6 +3488,12 @@ ipcMain.handle('read-swarm-run', async (event, workingDir: string) => {
           planConfidence: typeof q.plan_confidence === 'number' ? q.plan_confidence : undefined,
           confidence,
           answerPath: path.join(swarmDir, 'clarify-answers.json'),
+          mtime: await fs
+            .stat(clarifyQPath)
+            .then((s) => s.mtimeMs)
+            // An unreadable stat means the mtime is UNKNOWN, not zero — the renderer keeps an
+            // unknown-mtime clarify (same non-rule as digestsFromThisRun) rather than dropping it.
+            .catch(() => null),
         };
       }
     } catch {
@@ -3544,8 +3559,19 @@ ipcMain.handle('read-swarm-run', async (event, workingDir: string) => {
       clarify,
       pauseRequested,
     };
-  } catch {
-    return null;
+  } catch (err) {
+    // A FAILED read is not "no run". `return null` here laundered every unexpected exception (a torn
+    // current-run.json read, an EMFILE out of readRange) into the renderer's no-run branch, which reset
+    // the whole live panel to the empty placeholder — a healthy run flashing away with no trace, contra
+    // the loud-absence rule. Rethrow instead: the invoke rejects, and useSwarmRun's catch keeps the
+    // last state on screen. The genuine no-run branches above still return null. Logged rate-limited so
+    // a persistent failure is visible in the main log without a 2Hz flood.
+    const nowMs = Date.now();
+    if (nowMs - lastSwarmReadErrorLogMs > 30_000) {
+      lastSwarmReadErrorLogMs = nowMs;
+      console.error('[read-swarm-run] poll failed (renderer keeps its last state):', err);
+    }
+    throw err;
   }
 });
 
