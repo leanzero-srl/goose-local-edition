@@ -53,7 +53,21 @@ implied, the summary was wrong and the sources win.
 
 ---
 
-## THE CURRENT THREAD (2026-08-30 21:10)
+## THE CURRENT THREAD (2026-08-30 23:35)
+
+**r5 FINISHED — PASSED/verified at 20:30:52Z, 7 known active bugs, 10/10 tasks done.** The repair
+farce is PROVEN from the calls file: attempt-1 EDITED the right handler files (httpapi.py +
+ledgerd/__init__.py x3) in its shadow and promote-only-owned-files DELETED the fixes — the model
+fixed the bugs, the engine discarded the work. Endgame in flight: hermetic score (bench-scorer),
+verdict-visibility panel fix (panel-surgeon), node-weights fix (surgeon — weights primary, median
+demoted to tiebreak; wave pool was ordering gabee-first via a model-id/device-id key mismatch).
+QUEUED next surgeon (swarm.rs, after node-weights): PRIORITIES — findings gain provenance+severity
+(the engine_critical partition mis-tiered the dead 3D scene as MINOR), waves ordered by severity,
+briefs say fix-first, panel ranks. Then: r6 build (source bin/activate-hermit; fmt/build --release;
+just make-ui; verify bundled sha) -> pkill Goose -> Benchmark view launch -> bench_dispatch.mjs.
+tick.py now prints PURPOSE per fix shard (delivered-vs-diagnosed, loud gap flag).
+
+## THE PRIOR THREAD (2026-08-30 21:10)
 
 **r5 IS IN REPAIR — the first-ever full run of it.** INTEGRATE completed done/attempt-1 at 92.9m; the
 sink root-caused its own gate failure (validate_tokens fatal on an existing-but-empty tokens file) and
