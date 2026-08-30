@@ -106,11 +106,21 @@ describe('swarm golden preset', () => {
     expect(DEFAULTS.planner_weight).toBe(1);
     expect(DEFAULTS.homogeneous_models).toBe(false);
     expect(DEFAULTS.allow_model_load).toBe(false);
-    // The consult levers: baked ON so a fresh install asks instead of guessing (+5 weak-planner bump -> 85).
+    // The consult lever: baked ON so a fresh install asks instead of guessing (+5 weak-planner bump -> 85).
     expect(DEFAULTS.ask_floor).toBe(80);
-    expect(DEFAULTS.ask_max_q).toBe(3);
     // The one OPTIONAL extra check, baked OFF — the panel must show it off, not on.
     expect(DEFAULTS.review).toBe(false);
+  });
+
+  it('ask_max_q is retired: no default, no reset key, and a config carrying it round-trips untouched', () => {
+    // The engine reads ask_max_q NOWHERE since the truncation kill (cfcd32908) — the ASK handshake asks
+    // EVERY open decision. The panel therefore must not offer it, must not reset it, and must not strip
+    // it from a config.yaml that still carries it (the section writes the whole cfg object back).
+    expect(DEFAULTS.ask_max_q).toBeUndefined();
+    expect(PRESET_KEYS).not.toContain('ask_max_q');
+    const carried: SwarmConfig = { ...DEFAULTS, ask_max_q: 5 };
+    const next = { ...carried, ...presetPatch(GOLDEN) };
+    expect(next.ask_max_q).toBe(5);
   });
 
   it('every key the panel can reset is one the engine baseline actually defines', () => {

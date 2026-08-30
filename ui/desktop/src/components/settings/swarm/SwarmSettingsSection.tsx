@@ -928,17 +928,9 @@ export default function SwarmSettingsSection() {
                 onChange={(v) => set({ ask_floor: v ? 80 : 0 })}
               />
             </Row>
-            {(cfg.ask_floor ?? 80) > 0 ? (
-              <Row
-                label="How many questions it may ask"
-                hint="goose asks at most this many at once — and anything it does not ask, it decides for you. One build turned up five choices only you could make; it asked about three and quietly picked the rest. Raise this and it asks instead of picking."
-              >
-                <NumberField
-                  value={cfg.ask_max_q}
-                  onCommit={(v) => set({ ask_max_q: v ?? 3 })}
-                />
-              </Row>
-            ) : null}
+            {/* ask_max_q is GONE: the engine asks EVERY open decision since the truncation kill
+                (cfcd32908) and reads the key nowhere — the control was inert. The measured harm the
+                old hint described (3 of 5 asked, 2 guessed silently) is exactly what the kill fixed. */}
           </div>
 
           <div className="text-xs text-text-secondary pt-1">
