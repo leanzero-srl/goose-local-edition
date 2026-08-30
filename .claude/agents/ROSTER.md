@@ -140,6 +140,14 @@ and lever_check.py consume it; the ask event's twin field was confirmed dead 0/0
    — add one fixture each.
 
 ## Grading log (newest first — one line per delegation; move closed items to the per-agent notes)
+- 2026-08-30 swarm-surgeon #8 (judge context + attribution + mirror, d93d7ca77..e6c620749):
+  CLEAN PASS, with the day's best honesty move — found ITEM 1 ALREADY CLOSED by ef23d728e and
+  said so instead of re-implementing or claiming it; honored the brief's module direction
+  retroactively by making that exact cluster the split law's FIRST module (−274 lines, ratchet
+  tightened 47,150→46,936), and extended run_path_files to scan swarm/*.rs so the split cannot
+  dodge the fallback/specificity ratchets. Extended the attribution fix to all four look
+  lifecycle events (brief named two) with the reasoning declared. Agenda 2486 checked off by
+  orchestrator. No charter gap.
 - 2026-08-30 design fan #3 + refuter (judge desk): CLEAN — the fan produced the desk/receiver
   split with real mechanism (replayed RecurrenceMeter proven chunk-boundary-independent; the
   IdleSlotGuard ride; epoch-matched verdicts), and the refuter's 10 objections included one FATAL
