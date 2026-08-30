@@ -677,11 +677,11 @@ pub struct SwarmConfig {
     /// Run the repro oracle: try to PROVE a reported crash by running it twice in a clean snapshot.
     /// Was env-only (GOOSE_SWARM_REVIEW_REPRO) and therefore unreachable from the desktop app, which is
     /// launched via `open` and never receives the caller's environment. None = the previous behaviour
-    /// How many clarifying questions the run may put to the user at once. Default 3.
-    /// MEASURED: a run's probe found FIVE material open decisions, every one on the spec's explicit
-    /// "do NOT guess them" list, and the cap of 3 meant two were guessed regardless — silently. Raising
-    /// this is the difference between asking about the user's product and inventing part of it.
-    /// Was env-only (GOOSE_SWARM_ASK_MAXQ) and therefore unreachable from the desktop app.
+    /// DEAD LEVER, kept only so existing desktop configs round-trip. The truncation it fed is
+    /// KILLED: the planner's ASK path now puts EVERY open decision to the user (one prompt costs
+    /// the same for 5 as for 3). MEASURED before the kill: r5's probe found FIVE material open
+    /// decisions, every one on the spec's explicit "do NOT guess them" list, and the cap of 3
+    /// meant two were guessed regardless — silently. Nothing reads this any more.
     #[serde(default)]
     pub ask_max_q: Option<usize>,
     /// ⚠️ BAKED ON — the golden formula sets this in `Default for SwarmConfig` (F393).
@@ -931,8 +931,9 @@ pub struct SwarmConfig {
     /// ASK-AWAY (Concept A, #94-family): replace the one-shot clarify latch with a BOUNDED multi-round ask
     /// loop. While the plan is below the ask floor AND material open decisions remain, keep asking the next
     /// batch (re-derived from the TRIMMED open_decisions each round) instead of asking exactly one batch and
-    /// proceeding at a low cap — the arithmetic pin where a spec with more open decisions than `ask_max_q` is
-    /// mathematically stuck below the floor after a single round. Batches INLINE within one below-floor visit
+    /// proceeding at a low cap — the arithmetic pin where a spec with more open decisions than the
+    /// since-killed `ask_max_q` truncation allowed was mathematically stuck below the floor after a single
+    /// round (the one-shot path now asks every open decision). Batches INLINE within one below-floor visit
     /// (no re-draft between batches, per #129); a STRUCTURAL answer (language flip / product first defined)
     /// still forces a re-plan. Bounded by `ask_rounds_max`. OFF by default = byte-identical to today.
     /// GOOSE_SWARM_ASK_AWAY env overrides.
@@ -8883,10 +8884,11 @@ mod tests {
     /// THE RESCORE MUST NEVER FLATTER A RUN.
     ///
     /// When the user answers, spec-clarity is re-scored deterministically with the SAME pure function the
-    /// first score used — over (open - ANSWERED), never over 0. `ask_max_q` truncates the question list
-    /// with a `.take()`, so a run with 8 open decisions that asked 5 still has 3 the user never saw and
-    /// goose will guess. Snapping to zero there would raise a number the run did not earn — precisely the
-    /// failure the low score exists to prevent (before it, research INVENTED 5 decisions and reported 96).
+    /// first score used — over (open - ANSWERED), never over 0. Every open decision is now asked (the
+    /// ask_max_q truncation is killed), but a user can still leave questions unanswered, and each of
+    /// those goose will guess. Snapping to zero there would raise a number the run did not earn —
+    /// precisely the failure the low score exists to prevent (before it, research INVENTED 5 decisions
+    /// and reported 96).
     #[test]
     fn rescore_credits_only_what_was_actually_answered() {
         // The measured case: 5 open, all 5 asked and answered -> the spec really is pinned.
@@ -27149,7 +27151,6 @@ async fn run_linear_plan(
     user_decisions: &mut String,
     devices: &[DeviceCfg],
     cwd_for_ask: &std::path::Path,
-    ask_max_q: usize,
     ask_wait_secs: u64,
 ) -> Result<(String, Dag, PlanConf)> {
     let worker_models: Vec<String> = live_fleet_slots(devices);
@@ -27257,10 +27258,13 @@ async fn run_linear_plan(
     // 93-96 and asked nothing, while the arm with levers actually live scored 30 and asked once.
     if !opened.open_decisions.is_empty() {
         sink.write_value(serde_json::json!({"event": "phase", "phase": "ask"}));
+        // EVERY open decision is asked. The ask_max_q=3 truncation is KILLED on this path:
+        // asking 5 costs the same one prompt as 3, and the guess-the-rest overflow was a silent
+        // fallback — r5 asked 3 of 5 decisions, all 5 on the spec's "do NOT guess them" list,
+        // and invented the other 2 without a trace.
         let questions: Vec<ClarifyQuestion> = opened
             .open_decisions
             .iter()
-            .take(ask_max_q.max(1))
             .map(|d| ClarifyQuestion {
                 question: d.clone(),
                 options: Vec::new(),
@@ -27278,7 +27282,7 @@ async fn run_linear_plan(
             &questions,
             cwd_for_ask,
             None,
-            None,
+            &opened.open_decisions,
             ask_wait_secs,
             None,
             sink.as_ref(),
@@ -37460,7 +37464,11 @@ async fn ask_clarifying_questions(
     // renders any number as a red `conf N` chip, so every run displayed "conf 0" — reading as "the planner
     // has no confidence in this plan at all". It was a placeholder sitting there looking like a verdict.
     plan_conf: Option<u8>,
-    breakdown: Option<serde_json::Value>,
+    // The opener's OWN list of open decisions, so the ask can report itself honestly. The old
+    // `breakdown: Option<serde_json::Value>` arg was DEAD — the only live call site passed None,
+    // so open_decisions_total/not_asked read 0/0 forever and the GUESSED warning below was
+    // unreachable while r5 asked 3 of 5 decisions and silently guessed 2.
+    open_decisions: &[String],
     wait_secs: u64,
     proxy: Option<tokio::task::JoinHandle<()>>,
     sink: &dyn EventSink,
@@ -37474,15 +37482,12 @@ async fn ask_clarifying_questions(
     let qpath = dir.join("clarify-questions.json");
     let apath = dir.join("clarify-answers.json");
     let _ = std::fs::remove_file(&apath); // never read a stale answer from a previous gate
-    let mut file_obj = serde_json::json!({
+    let file_obj = serde_json::json!({
         "plan_confidence": plan_conf,  // null when unmeasured — never a fabricated 0
         "questions": questions,
         "answer_file": ".swarm/clarify-answers.json",
         "how_to_answer": "Write {\"answers\":[...one string per question, same order; pick an option or your own words...], \"guidance\":\"...free-form: anything else to change about the plan...\"} to answer_file (a bare JSON array of answers also works). The swarm is BLOCKED on it and will re-plan with your answers + guidance.",
     });
-    if let Some(b) = &breakdown {
-        file_obj["plan_confidence_breakdown"] = b.clone();
-    }
     if let Err(e) = std::fs::write(
         &qpath,
         serde_json::to_string_pretty(&file_obj).unwrap_or_default(),
@@ -37492,18 +37497,14 @@ async fn ask_clarifying_questions(
             qpath.display()
         );
     }
-    // NAME WHAT WAS DROPPED. `ask_max_q` (default 3) truncates the question list with `.take()`, and every
-    // decision that does not make the cut is GUESSED — the exact outcome no_tools_means_ask exists to
-    // prevent. MEASURED: a run's probe found 5 material open decisions, all 5 on the spec's explicit
-    // "do NOT guess them" list, and 3 were asked. The other 2 were invented in silence, and the only way to
-    // notice was to diff the breakdown's open_decisions against the questions by hand. A cap that is not
-    // reported reads as "we asked about everything".
-    let open_n = breakdown
-        .as_ref()
-        .and_then(|b| b.get("open_decisions"))
-        .and_then(|d| d.as_array())
-        .map(|a| a.len())
-        .unwrap_or(0);
+    // NAME WHAT WAS DROPPED. Every open decision that is not asked is GUESSED — the exact outcome
+    // no_tools_means_ask exists to prevent. MEASURED: r5's probe found 5 material open decisions,
+    // all 5 on the spec's explicit "do NOT guess them" list, and 3 were asked (the since-killed
+    // ask_max_q truncation). The other 2 were invented in silence, and the only way to notice was
+    // to diff the opener's open_decisions against the questions by hand. The live planner path now
+    // asks every open decision (one prompt costs the same for 5 as for 3), so not_asked is 0 there;
+    // this reporting is the tripwire that names the drop, verbatim, if any caller truncates again.
+    let open_n = open_decisions.len();
     let not_asked = open_n.saturating_sub(questions.len());
     let mut ask_evt = serde_json::json!({
         "event": "low_confidence_ask",
@@ -37512,13 +37513,23 @@ async fn ask_clarifying_questions(
         "open_decisions_total": open_n,
         "open_decisions_not_asked": not_asked,
     });
-    if let Some(b) = &breakdown {
-        ask_evt["plan_confidence_breakdown"] = b.clone();
+    if not_asked > 0 {
+        // The decisions that will be guessed, VERBATIM — a count alone forces the by-hand diff
+        // this reporting exists to end. Exact for the planner path, where each question's text
+        // IS its decision verbatim; a caller that rephrases would list every unmatched text,
+        // which is still the honest read ("these decision texts were never asked as written").
+        let asked: std::collections::HashSet<&str> =
+            questions.iter().map(|q| q.question.as_str()).collect();
+        let guessed: Vec<&String> = open_decisions
+            .iter()
+            .filter(|d| !asked.contains(d.as_str()))
+            .collect();
+        ask_evt["open_decisions_not_asked_detail"] = serde_json::json!(guessed);
     }
     sink.write_value(ask_evt);
     if not_asked > 0 {
         eprintln!(
-            "  {} asking {} of {} open decision(s) — the other {} will be GUESSED (raise swarm.ask_max_q)",
+            "  {} asking {} of {} open decision(s) — the other {} will be GUESSED",
             style("!").yellow().bold(),
             questions.len(),
             open_n,
@@ -39141,18 +39152,11 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             f
         }
     });
-    // How many clarifying questions the run may put to the user at once. MEASURED (real-all-on, the first
-    // arm whose levers actually reached the engine): the probe found FIVE material open decisions — every
-    // one of them on the spec's explicit "DELIBERATELY NOT DECIDED — do NOT guess them" list — and this cap
-    // let only THREE be asked. The other two were guessed anyway, which is the exact behaviour
-    // no_tools_means_ask exists to stop. The cap half-defeats the lever it sits behind.
-    // Was env-only, so a desktop user could not raise it at all (the app never receives the environment).
-    let ask_max_q: usize = std::env::var("GOOSE_SWARM_ASK_MAXQ")
-        .ok()
-        .and_then(|v| v.trim().parse::<usize>().ok())
-        .or_else(|| load_config().ask_max_q)
-        .unwrap_or(3)
-        .max(1);
+    // ask_max_q is GONE from this path: the ASK handshake asks EVERY open decision (one prompt
+    // costs the same for 5 as for 3), so there is no question-count lever left to resolve — and
+    // no levers_resolved row for it, because a row for a lever that decides nothing is the
+    // "levers_resolved lies" class (gate 1, suspect #2). The config field survives only for
+    // desktop config round-trip.
     let ask_wait_secs: u64 = std::env::var("GOOSE_SWARM_ASK_WAIT_SECS")
         .ok()
         .and_then(|v| v.trim().parse::<u64>().ok())
@@ -39251,7 +39255,6 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             // was correctly set and live, and there was no way to prove it from run.jsonl.
             "benchmark": benchmark(),
             "ask_floor": ask_floor,
-            "ask_max_q": ask_max_q,
             // P1-9: `fix_sched` and `spec_repair` rows are GONE, with their mechanisms — the
             // fresh-scheduler fix DAG and the twin race were deleted; a lever line for a deleted
             // mechanism reads exactly like a live lever resolved to its default.
@@ -39607,7 +39610,6 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             &mut user_decisions,
             &devices,
             &cwd_for_ask,
-            ask_max_q,
             ask_wait_secs,
         )
         .await?
@@ -41972,7 +41974,7 @@ mod clarify_proxy_tests {
             &[q("storage: sqlite or a json file?")],
             dir.path(),
             None,
-            None,
+            &["storage: sqlite or a json file?".to_string()],
             1,
             Some(proxy),
             &NullSink,
@@ -41993,7 +41995,7 @@ mod clarify_proxy_tests {
             &[q("storage: sqlite or a json file?")],
             dir.path(),
             None,
-            None,
+            &["storage: sqlite or a json file?".to_string()],
             1,
             Some(proxy),
             &NullSink,
@@ -42011,13 +42013,93 @@ mod clarify_proxy_tests {
             &[q("storage: sqlite or a json file?")],
             dir.path(),
             None,
-            None,
+            &["storage: sqlite or a json file?".to_string()],
             0,
             None,
             &NullSink,
         )
         .await;
         assert!(out.is_empty(), "got {out:?}");
+    }
+
+    /// ASK-TRUTH, through the PRIMARY computation. The emitter's old `breakdown` arg was passed
+    /// None at the only live site, so open_decisions_total/not_asked were 0/0 forever and r5's
+    /// "asked 3 of 5, guessed 2" was invisible — and every test here passed None too, so the
+    /// counting code had ZERO coverage. This test feeds 5 real decisions and 3 questions and
+    /// reads the event a run would write: total 5, not_asked 2, the guessed two named VERBATIM.
+    #[tokio::test(start_paused = true)]
+    async fn the_ask_event_counts_every_open_decision_and_names_the_guessed() {
+        #[derive(Default)]
+        struct ValueSink(Mutex<Vec<serde_json::Value>>);
+        impl EventSink for ValueSink {
+            fn emit(&self, _event: &SwarmEvent) {}
+            fn write_value(&self, value: serde_json::Value) {
+                self.0.lock().unwrap().push(value);
+            }
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let decisions: Vec<String> = [
+            "storage: sqlite or a json file?",
+            "auth: sessions or tokens?",
+            "currency: integer cents or Decimal?",
+            "ids: uuid or sequential?",
+            "timestamps: utc iso or epoch?",
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+        let questions: Vec<ClarifyQuestion> = decisions.iter().take(3).map(|d| q(d)).collect();
+        let sink = ValueSink::default();
+        let out =
+            ask_clarifying_questions(&questions, dir.path(), None, &decisions, 0, None, &sink)
+                .await;
+        assert!(out.is_empty(), "nothing answered; got {out:?}");
+        let events = sink.0.lock().unwrap();
+        let ask = events
+            .iter()
+            .find(|e| e.get("event").and_then(|v| v.as_str()) == Some("low_confidence_ask"))
+            .expect("the ask event is written");
+        assert_eq!(
+            ask.get("open_decisions_total").and_then(|v| v.as_u64()),
+            Some(5),
+            "the real count, not the dead-arg 0"
+        );
+        assert_eq!(
+            ask.get("open_decisions_not_asked").and_then(|v| v.as_u64()),
+            Some(2)
+        );
+        let named: Vec<&str> = ask["open_decisions_not_asked_detail"]
+            .as_array()
+            .expect("the guessed decisions are named, never only counted")
+            .iter()
+            .filter_map(|v| v.as_str())
+            .collect();
+        assert_eq!(
+            named,
+            vec!["ids: uuid or sequential?", "timestamps: utc iso or epoch?"],
+            "verbatim, so no one has to diff by hand"
+        );
+        // And when every decision is asked — the live planner path since the truncation kill —
+        // the event says 0 guessed and carries no detail key.
+        drop(events);
+        let all_asked: Vec<ClarifyQuestion> = decisions.iter().map(|d| q(d)).collect();
+        let sink2 = ValueSink::default();
+        let _ = ask_clarifying_questions(&all_asked, dir.path(), None, &decisions, 0, None, &sink2)
+            .await;
+        let events2 = sink2.0.lock().unwrap();
+        let ask2 = events2
+            .iter()
+            .find(|e| e.get("event").and_then(|v| v.as_str()) == Some("low_confidence_ask"))
+            .expect("the ask event is written");
+        assert_eq!(
+            ask2.get("open_decisions_not_asked")
+                .and_then(|v| v.as_u64()),
+            Some(0)
+        );
+        assert!(
+            ask2.get("open_decisions_not_asked_detail").is_none(),
+            "no absent-decision detail when nothing was dropped"
+        );
     }
 }
 
