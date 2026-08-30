@@ -58,7 +58,7 @@ mod spec_sets;
 mod transcripts;
 use transcripts::{
     append_attempt_marker, append_calls_jsonl, append_calls_row, append_reasoning_transcript,
-    append_thinking_transcript, read_calls_capture,
+    append_thinking_transcript, build_task_ledger_row, read_calls_capture,
 };
 mod desk;
 use desk::{spawn_shadow_desk, RecurrenceMeter, RECURRENCE_MIN_SPAN};
@@ -4446,7 +4446,7 @@ mod tests {
             "app/api.py".to_string(),
             "app/ledgerd/server.py".to_string(),
         ];
-        write_task_ledger(root, "api-endpoints", "done", false, &owned, 1).unwrap();
+        write_task_ledger(root, "api-endpoints", "done", false, &owned, 1, None).unwrap();
         write_gate_ledger(
             root,
             0,
@@ -4521,7 +4521,7 @@ mod tests {
 
         // Idempotence: the same writes again produce the same roll-up bytes.
         let first = std::fs::read_to_string(root.join(".swarm/ledger.json")).unwrap();
-        write_task_ledger(root, "api-endpoints", "done", false, &owned, 1).unwrap();
+        write_task_ledger(root, "api-endpoints", "done", false, &owned, 1, None).unwrap();
         write_gate_ledger(
             root,
             0,
@@ -4665,6 +4665,7 @@ mod tests {
                 "tests/test_ledger_concurrency.py".to_string(),
             ],
             0,
+            None,
         )
         .unwrap();
         write_task_ledger(
@@ -4677,9 +4678,10 @@ mod tests {
                 "tests/test_sync_resilience.py".to_string(),
             ],
             0,
+            None,
         )
         .unwrap();
-        write_task_ledger(dir.path(), "integrate-verify", "done", false, &[], 0).unwrap();
+        write_task_ledger(dir.path(), "integrate-verify", "done", false, &[], 0, None).unwrap();
         write_gate_ledger(
             dir.path(),
             0,
@@ -4724,6 +4726,7 @@ mod tests {
             "ledger-core-tests",
             &["tests/test_ledger_core.py".to_string()],
             0,
+            None,
         )
         .expect("a capture with fs_delta and pytest rows renders facts");
         assert!(
@@ -4740,7 +4743,7 @@ mod tests {
         );
         let bare = tempfile::tempdir().unwrap();
         assert!(
-            render_completed_output_from_ledger(bare.path(), "ghost", &[], 0).is_none(),
+            render_completed_output_from_ledger(bare.path(), "ghost", &[], 0, None).is_none(),
             "no capture, no facts — an honest None, never a stub"
         );
     }
@@ -8253,26 +8256,6 @@ mod tests {
         // python-only tasks and the OFF gate stay byte-identical.
         assert!(web_vocab_note(&["pkg/store.py".into()], true).is_empty());
         assert!(web_vocab_note(&["web/styles.css".into()], false).is_empty());
-    }
-
-    #[test]
-    fn multifile_stub_note_fires_only_for_multifile_non_entry() {
-        // Multi-file non-entry module (the plan-shopping case) -> stub-first note; entry, single-file, and
-        // disabled -> empty.
-        let note = multifile_stub_note(
-            &["recipes/plan.py".into(), "recipes/shopping.py".into()],
-            true,
-        );
-        assert!(note.contains("STUB-FIRST") && note.contains("COMPILING STUB"));
-        // A file set that includes the entry is covered by skeleton_note -> empty here.
-        assert!(multifile_stub_note(&["pkg/cli.py".into(), "pkg/util.py".into()], true).is_empty());
-        assert!(
-            multifile_stub_note(&["pkg/__main__.py".into(), "pkg/x.py".into()], true).is_empty()
-        );
-        // Single-file -> empty (skeleton-first was a wash on simple single-file tasks).
-        assert!(multifile_stub_note(&["pkg/only.py".into()], true).is_empty());
-        // Disabled -> empty.
-        assert!(multifile_stub_note(&["a.py".into(), "b.py".into()], false).is_empty());
     }
 
     #[test]
@@ -32158,36 +32141,6 @@ fn cli_contract_note(has_entry_file: bool, enabled: bool) -> String {
         .to_string()
 }
 
-/// Non-entry MULTI-FILE modules are the other over-read failure class (verified UNIQ13 plan-shopping, which owns
-/// plan.py + shopping.py and needs 4 sibling modules: across 3 attempts it ran ls/tree/find/cat exploring the
-/// layout + reading deps but NEVER wrote an owned file, so the no-write over-read timeout killed each attempt and
-/// cascade-failed the run — 2nd instance after the UNIQ9 tests-writer). The entry gets skeleton_note; give non-entry
-/// multi-file owners the same MECHANICAL fix: write a COMPILING STUB of each owned file FIRST (which flips
-/// any_owned_written true and exempts the over-read timeout), then read deps + fill. Scoped to multi-file only —
-/// single-file skeleton-first was a same-spec-A/B WASH. Empty when an owned file is the entry (skeleton_note covers
-/// it). Gated on GOOSE_SWARM_SKELETON_FIRST (passed in as `enabled`). Pure + unit-tested.
-fn multifile_stub_note(owned_files: &[String], enabled: bool) -> String {
-    let is_entry = |f: &str| {
-        f.ends_with("cli.py")
-            || f.ends_with("__main__.py")
-            || f.ends_with("main.rs")
-            || f.ends_with("index.ts")
-            || f.ends_with("cli.ts")
-            || f.ends_with("main.go")
-    };
-    if !enabled || owned_files.len() <= 1 || owned_files.iter().any(|f| is_entry(f.as_str())) {
-        return String::new();
-    }
-    "\nSTUB-FIRST (you own MULTIPLE non-entry files): do NOT run ls/tree/find or read every dependency before \
-     producing — a weak worker that explores first burns its budget and is KILLED for over-reading before it \
-     writes anything (a whole task lost). Your FIRST actions must be a `write` for EACH owned file emitting a \
-     COMPILING STUB: the imports it needs plus every public function/class with its real signature and a `pass` \
-     body. Once the files EXIST you are exempt from the over-read timeout — THEN read only the specific dependency \
-     APIs you need (injected below under 'API of …') and fill each body with a focused `edit`. Never finish with a \
-     `pass`/stub body still in place."
-        .to_string()
-}
-
 /// WEB-TRIPLET VOCABULARY (F870, the authoring-time half). swarm-3node-r0's css worker
 /// designed 36 class rules, its html worker wrote id-only markup, and its js worker invented
 /// a third vocabulary for generated rows — three honest workers, zero shared names, an
@@ -32449,163 +32402,6 @@ fn write_ledger_mini(
     Some(path)
 }
 
-/// The per-task ledger row, from what the run already captured: the append-only
-/// `<key>.calls.jsonl` (per-call rows + `attempt_end` snapshots with fs_delta), the live digest's
-/// `last_text`, and a fresh `verify_owned_files` stat — a re-run, not a copy, so a defect fixed
-/// since completion vanishes instead of being re-litigated.
-fn build_task_ledger_row(
-    root: &Path,
-    task_id: &str,
-    status: &str,
-    salvaged: bool,
-    owned_files: &[String],
-    attempt: u32,
-) -> serde_json::Value {
-    let key = activity_digest_key(task_id);
-    let activity = root
-        .join(".swarm")
-        .join("activity")
-        .join(format!("{key}.json"));
-    #[derive(Default)]
-    struct Class {
-        count: u64,
-        last_ok: Option<bool>,
-        last_failure_tail: String,
-    }
-    let mut classes: std::collections::BTreeMap<&'static str, Class> =
-        std::collections::BTreeMap::new();
-    let mut attempts_seen: u32 = attempt;
-    let mut last_full_suite: Option<serde_json::Value> = None;
-    let mut last_pytest: Option<serde_json::Value> = None;
-    let mut last_pytest_filewide: Option<serde_json::Value> = None;
-    let mut fs_appeared: std::collections::BTreeSet<String> = Default::default();
-    let mut fs_changed: std::collections::BTreeSet<String> = Default::default();
-    let mut fs_outside: std::collections::BTreeSet<String> = Default::default();
-    if let Ok(text) = std::fs::read_to_string(activity.with_extension("calls.jsonl")) {
-        for line in text.lines() {
-            let Ok(v) = serde_json::from_str::<serde_json::Value>(line) else {
-                continue;
-            };
-            if let Some(a) = v.get("attempt").and_then(|a| a.as_u64()) {
-                attempts_seen = attempts_seen.max(a as u32);
-            }
-            if v.get("kind").and_then(|k| k.as_str()) == Some("attempt_end") {
-                if let Some(d) = v.get("fs_delta") {
-                    let take = |key: &str, into: &mut std::collections::BTreeSet<String>| {
-                        for p in d.get(key).and_then(|x| x.as_array()).unwrap_or(&Vec::new()) {
-                            if let Some(s) = p.as_str() {
-                                into.insert(s.to_string());
-                            }
-                        }
-                    };
-                    take("appeared", &mut fs_appeared);
-                    take("changed", &mut fs_changed);
-                    take("outside_manifest", &mut fs_outside);
-                }
-                continue;
-            }
-            if v.get("name").and_then(|n| n.as_str()) != Some("shell") {
-                continue;
-            }
-            let cmd = v.get("summary").and_then(|s| s.as_str()).unwrap_or("");
-            let class = classify_command(cmd);
-            let ok = v.get("ok").and_then(|o| o.as_bool());
-            let entry = classes.entry(class).or_default();
-            entry.count += 1;
-            entry.last_ok = ok;
-            let py = v.get("pytest");
-            let failed_pytest = py
-                .and_then(|p| p.get("failed"))
-                .and_then(|f| f.as_u64())
-                .unwrap_or(0)
-                > 0;
-            if ok == Some(false) || failed_pytest {
-                entry.last_failure_tail = tail_chars(
-                    &format!(
-                        "{cmd}: {}",
-                        v.get("result_tail").and_then(|r| r.as_str()).unwrap_or("")
-                    ),
-                    300,
-                );
-            }
-            if let Some(py) = py {
-                last_pytest = Some(serde_json::json!({ "cmd": cmd, "summary": py }));
-                // A `::node` re-run answers one test; the lane's file-wide outcome is what the
-                // test table reports, or a targeted 1-failed would shadow a 7-failed suite state.
-                if !cmd.contains("::") {
-                    last_pytest_filewide = Some(serde_json::json!({ "cmd": cmd, "summary": py }));
-                }
-                if pytest_runs_whole_suite(cmd) {
-                    last_full_suite = Some(serde_json::json!({
-                        "cmd": cmd,
-                        "summary": py,
-                        "task_id": task_id,
-                        "ts": v.get("ts").cloned().unwrap_or(serde_json::Value::Null),
-                    }));
-                }
-            }
-        }
-    }
-    let commands: serde_json::Map<String, serde_json::Value> = classes
-        .into_iter()
-        .map(|(class, c)| {
-            (
-                class.to_string(),
-                serde_json::json!({
-                    "count": c.count,
-                    "ok": c.last_ok,
-                    "last_failure_tail": c.last_failure_tail,
-                }),
-            )
-        })
-        .collect();
-    // This head reaches a model: the ledger block's "WHAT EACH LANE SAID IT DELIVERED" renders
-    // `tail_chars(final_text, 200)` into dependents' prompts, so what matters is that the STRING
-    // ENDS at a sentence — a hard 400-char cut hands the tail a mid-sentence ending, the r5
-    // truncation tax (one cut sentence, four opener re-litigations).
-    let final_text: String = head_to_sentence_end(
-        &std::fs::read_to_string(&activity)
-            .ok()
-            .and_then(|c| serde_json::from_str::<serde_json::Value>(&c).ok())
-            .and_then(|d| {
-                d.get("last_text")
-                    .and_then(|t| t.as_str())
-                    .map(String::from)
-            })
-            .unwrap_or_default(),
-        400,
-    );
-    let owned: Vec<serde_json::Value> = owned_files
-        .iter()
-        .map(|f| {
-            serde_json::json!({
-                "path": f,
-                "bytes": std::fs::metadata(root.join(f)).map(|m| m.len()).unwrap_or(0),
-            })
-        })
-        .collect();
-    serde_json::json!({
-        "kind": "task",
-        "task_id": task_id,
-        "status": status,
-        "salvaged": salvaged,
-        "attempts": u64::from(attempts_seen) + 1,
-        "owned_files": owned,
-        "delivery_defects": verify_owned_files(root, owned_files),
-        "commands": commands,
-        "last_full_suite": last_full_suite,
-        "last_pytest": last_pytest,
-        "last_pytest_filewide": last_pytest_filewide,
-        "final_text": final_text,
-        "fs_delta": {
-            "appeared": fs_appeared,
-            "changed": fs_changed,
-            "outside_manifest": fs_outside,
-        },
-        "ts": chrono::Utc::now().to_rfc3339(),
-    })
-}
-
 /// GEN-3 (fallback rule): the honest replacement for the "(task X completed)" stub that used to
 /// occupy every dependent's "relevant context" slot when a worker finished with no final text.
 /// What the task DID is already recorded — its calls capture holds the fs_delta and the pytest
@@ -32617,8 +32413,17 @@ fn render_completed_output_from_ledger(
     task_id: &str,
     owned_files: &[String],
     attempt: u32,
+    calls_mirror_dir: Option<PathBuf>,
 ) -> Option<String> {
-    let row = build_task_ledger_row(root, task_id, "done", false, owned_files, attempt);
+    let row = build_task_ledger_row(
+        root,
+        task_id,
+        "done",
+        false,
+        owned_files,
+        attempt,
+        calls_mirror_dir,
+    );
     let mut wrote: Vec<String> = Vec::new();
     for key in ["appeared", "changed"] {
         for p in row
@@ -32678,8 +32483,17 @@ fn write_task_ledger(
     salvaged: bool,
     owned_files: &[String],
     attempt: u32,
+    calls_mirror_dir: Option<PathBuf>,
 ) -> Option<std::path::PathBuf> {
-    let row = build_task_ledger_row(root, task_id, status, salvaged, owned_files, attempt);
+    let row = build_task_ledger_row(
+        root,
+        task_id,
+        status,
+        salvaged,
+        owned_files,
+        attempt,
+        calls_mirror_dir,
+    );
     write_ledger_mini(
         root,
         &format!("{}.json", activity_digest_key(task_id)),
@@ -33858,6 +33672,7 @@ impl GooseAgentDispatcher {
             salvaged,
             &req.owned_files,
             req.attempt,
+            self.fix_shard_mirror_dir(&req.task_id, root),
         ) {
             self.events.write_value(serde_json::json!({
                 "event": "ledger_written",
@@ -34235,7 +34050,8 @@ impl GooseAgentDispatcher {
                     req.owned_files.iter().any(|f| is_entry_file(f)),
                     cli_contract_enabled(),
                 );
-                let multifile_note = multifile_stub_note(&req.owned_files, skeleton_first);
+                let multifile_note =
+                    briefs::multifile_stub_note(&req.owned_files, skeleton_first, repairing);
                 let web_note = web_vocab_note(
                     &req.owned_files,
                     swarm_gate_cfg("GOOSE_SWARM_WEB_VOCAB", true),
@@ -35498,6 +35314,7 @@ impl GooseAgentDispatcher {
                         &req.task_id,
                         &req.owned_files,
                         req.attempt,
+                        self.fix_shard_mirror_dir(&req.task_id, &root),
                     ) {
                         Some(facts) => facts,
                         None => {

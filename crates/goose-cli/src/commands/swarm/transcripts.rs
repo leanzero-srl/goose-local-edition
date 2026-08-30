@@ -214,6 +214,175 @@ pub(super) fn read_calls_capture(primary: &Path, mirror: Option<PathBuf>) -> Opt
     read(primary).or_else(|| mirror.as_deref().and_then(read))
 }
 
+/// The per-task ledger row, from what the run already captured: the append-only
+/// `<key>.calls.jsonl` (per-call rows + `attempt_end` snapshots with fs_delta), the live digest's
+/// `last_text`, and a fresh `verify_owned_files` stat — a re-run, not a copy, so a defect fixed
+/// since completion vanishes instead of being re-litigated.
+///
+/// II-8's second root-relative-calls-read (the 0dc8c297f RESIDUAL): a FIX SHARD's fresh shadow
+/// skips `.swarm`, so reading `<key>.calls.jsonl` from `root` alone under-counts PRIOR attempts
+/// whose rows were mirrored into the real tree. `calls_mirror_dir` is the ONE existing predicate
+/// (`fix_shard_mirror_dir`, never a re-derived prefix test), consulted through
+/// `read_calls_capture` only when the root file is missing/empty — honest recovery of rows that
+/// EXIST; both empty keeps the empty-row behavior byte-identical. Every normal caller passes
+/// `None` and behaves exactly as before.
+pub(super) fn build_task_ledger_row(
+    root: &Path,
+    task_id: &str,
+    status: &str,
+    salvaged: bool,
+    owned_files: &[String],
+    attempt: u32,
+    calls_mirror_dir: Option<PathBuf>,
+) -> serde_json::Value {
+    let key = super::activity_digest_key(task_id);
+    let activity = root
+        .join(".swarm")
+        .join("activity")
+        .join(format!("{key}.json"));
+    #[derive(Default)]
+    struct Class {
+        count: u64,
+        last_ok: Option<bool>,
+        last_failure_tail: String,
+    }
+    let mut classes: std::collections::BTreeMap<&'static str, Class> =
+        std::collections::BTreeMap::new();
+    let mut attempts_seen: u32 = attempt;
+    let mut last_full_suite: Option<serde_json::Value> = None;
+    let mut last_pytest: Option<serde_json::Value> = None;
+    let mut last_pytest_filewide: Option<serde_json::Value> = None;
+    let mut fs_appeared: std::collections::BTreeSet<String> = Default::default();
+    let mut fs_changed: std::collections::BTreeSet<String> = Default::default();
+    let mut fs_outside: std::collections::BTreeSet<String> = Default::default();
+    if let Some(text) = read_calls_capture(
+        &activity.with_extension("calls.jsonl"),
+        calls_mirror_dir.map(|d| d.join(format!("{key}.calls.jsonl"))),
+    ) {
+        for line in text.lines() {
+            let Ok(v) = serde_json::from_str::<serde_json::Value>(line) else {
+                continue;
+            };
+            if let Some(a) = v.get("attempt").and_then(|a| a.as_u64()) {
+                attempts_seen = attempts_seen.max(a as u32);
+            }
+            if v.get("kind").and_then(|k| k.as_str()) == Some("attempt_end") {
+                if let Some(d) = v.get("fs_delta") {
+                    let take = |key: &str, into: &mut std::collections::BTreeSet<String>| {
+                        for p in d.get(key).and_then(|x| x.as_array()).unwrap_or(&Vec::new()) {
+                            if let Some(s) = p.as_str() {
+                                into.insert(s.to_string());
+                            }
+                        }
+                    };
+                    take("appeared", &mut fs_appeared);
+                    take("changed", &mut fs_changed);
+                    take("outside_manifest", &mut fs_outside);
+                }
+                continue;
+            }
+            if v.get("name").and_then(|n| n.as_str()) != Some("shell") {
+                continue;
+            }
+            let cmd = v.get("summary").and_then(|s| s.as_str()).unwrap_or("");
+            let class = super::classify_command(cmd);
+            let ok = v.get("ok").and_then(|o| o.as_bool());
+            let entry = classes.entry(class).or_default();
+            entry.count += 1;
+            entry.last_ok = ok;
+            let py = v.get("pytest");
+            let failed_pytest = py
+                .and_then(|p| p.get("failed"))
+                .and_then(|f| f.as_u64())
+                .unwrap_or(0)
+                > 0;
+            if ok == Some(false) || failed_pytest {
+                entry.last_failure_tail = super::tail_chars(
+                    &format!(
+                        "{cmd}: {}",
+                        v.get("result_tail").and_then(|r| r.as_str()).unwrap_or("")
+                    ),
+                    300,
+                );
+            }
+            if let Some(py) = py {
+                last_pytest = Some(serde_json::json!({ "cmd": cmd, "summary": py }));
+                // A `::node` re-run answers one test; the lane's file-wide outcome is what the
+                // test table reports, or a targeted 1-failed would shadow a 7-failed suite state.
+                if !cmd.contains("::") {
+                    last_pytest_filewide = Some(serde_json::json!({ "cmd": cmd, "summary": py }));
+                }
+                if super::pytest_runs_whole_suite(cmd) {
+                    last_full_suite = Some(serde_json::json!({
+                        "cmd": cmd,
+                        "summary": py,
+                        "task_id": task_id,
+                        "ts": v.get("ts").cloned().unwrap_or(serde_json::Value::Null),
+                    }));
+                }
+            }
+        }
+    }
+    let commands: serde_json::Map<String, serde_json::Value> = classes
+        .into_iter()
+        .map(|(class, c)| {
+            (
+                class.to_string(),
+                serde_json::json!({
+                    "count": c.count,
+                    "ok": c.last_ok,
+                    "last_failure_tail": c.last_failure_tail,
+                }),
+            )
+        })
+        .collect();
+    // This head reaches a model: the ledger block's "WHAT EACH LANE SAID IT DELIVERED" renders
+    // `tail_chars(final_text, 200)` into dependents' prompts, so what matters is that the STRING
+    // ENDS at a sentence — a hard 400-char cut hands the tail a mid-sentence ending, the r5
+    // truncation tax (one cut sentence, four opener re-litigations).
+    let final_text: String = super::head_to_sentence_end(
+        &std::fs::read_to_string(&activity)
+            .ok()
+            .and_then(|c| serde_json::from_str::<serde_json::Value>(&c).ok())
+            .and_then(|d| {
+                d.get("last_text")
+                    .and_then(|t| t.as_str())
+                    .map(String::from)
+            })
+            .unwrap_or_default(),
+        400,
+    );
+    let owned: Vec<serde_json::Value> = owned_files
+        .iter()
+        .map(|f| {
+            serde_json::json!({
+                "path": f,
+                "bytes": std::fs::metadata(root.join(f)).map(|m| m.len()).unwrap_or(0),
+            })
+        })
+        .collect();
+    serde_json::json!({
+        "kind": "task",
+        "task_id": task_id,
+        "status": status,
+        "salvaged": salvaged,
+        "attempts": u64::from(attempts_seen) + 1,
+        "owned_files": owned,
+        "delivery_defects": super::verify_owned_files(root, owned_files),
+        "commands": commands,
+        "last_full_suite": last_full_suite,
+        "last_pytest": last_pytest,
+        "last_pytest_filewide": last_pytest_filewide,
+        "final_text": final_text,
+        "fs_delta": {
+            "appeared": fs_appeared,
+            "changed": fs_changed,
+            "outside_manifest": fs_outside,
+        },
+        "ts": chrono::Utc::now().to_rfc3339(),
+    })
+}
+
 /// ONE attempt-marker line, appended to `<task>.log` and `<task>.think.log` when a call is seeded.
 /// The transcripts are append-only across attempts (that is their value), so without a boundary the
 /// panel cannot tell attempt 0's final error from attempt 1's first words — the UI splits at the
@@ -450,5 +619,131 @@ mod tests {
         assert_eq!(lines[0]["attempt"], 0);
         assert_eq!(lines[0]["pytest"]["failed"], 7);
         assert_eq!(lines[1]["attempt"], 1);
+    }
+
+    /// The 0dc8c297f RESIDUAL, closed: `build_task_ledger_row` was the second root-relative
+    /// calls-read. The r5 round-1 shape — a re-dispatched fix shard in a FRESH shadow whose
+    /// `copy_tree_excluding` skipped `.swarm` while the real tree's mirror holds every prior
+    /// row — must recover the mirrored history; a normal task (mirror `None`) must not consult
+    /// it and reads exactly what its root holds (nothing here).
+    #[test]
+    fn a_fix_shards_ledger_row_recovers_mirror_rows_the_fresh_shadow_lost() {
+        let shadow = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(shadow.path().join(".swarm/activity")).unwrap();
+        let mirror = tempfile::tempdir().unwrap();
+        let key = crate::commands::swarm::activity_digest_key("complete-fix::app/sync.py");
+        // Rows cut from the r5 mirror's real shapes (16 rows, all attempt 0): a boot, an
+        // import probe, and the attempt_end whose fs_delta names the one changed file.
+        let rows = [
+            serde_json::json!({"ts":"2026-08-30T18:01:01Z","attempt":0,"name":"shell",
+                "summary":"nohup python3 -m app.ledgerd --db-dir /tmp/ldv-sync --port 8090 &",
+                "ok":true,"result_tail":"listening on 8090"}),
+            serde_json::json!({"ts":"2026-08-30T18:02:02Z","attempt":0,"name":"shell",
+                "summary":"python3 -m pytest --collect-only -q 2>&1 | tail -3","ok":true,
+                "result_tail":"401 tests collected"}),
+            serde_json::json!({"kind":"attempt_end","ts":"2026-08-30T18:03:00Z","attempt":0,
+                "fs_delta":{"appeared":[],"changed":["app/sync.py"],"outside_manifest":[]}}),
+        ];
+        std::fs::write(
+            mirror.path().join(format!("{key}.calls.jsonl")),
+            rows.iter().map(|r| format!("{r}\n")).collect::<String>(),
+        )
+        .unwrap();
+        let owned = vec!["app/sync.py".to_string()];
+        let row = build_task_ledger_row(
+            shadow.path(),
+            "complete-fix::app/sync.py",
+            "done",
+            false,
+            &owned,
+            1,
+            Some(mirror.path().to_path_buf()),
+        );
+        assert_eq!(row["commands"]["boot"]["count"], 1);
+        assert_eq!(row["commands"]["import"]["count"], 1);
+        assert_eq!(
+            row["attempts"], 2,
+            "the mirrored attempt-0 rows count under the round-1 dispatch"
+        );
+        assert_eq!(
+            row["fs_delta"]["changed"],
+            serde_json::json!(["app/sync.py"])
+        );
+        // A NORMAL task never consults the mirror: same missing root file, mirror None — the
+        // row is honestly empty, exactly the pre-conversion bytes.
+        let bare = build_task_ledger_row(
+            shadow.path(),
+            "complete-fix::app/sync.py",
+            "done",
+            false,
+            &owned,
+            1,
+            None,
+        );
+        assert_eq!(bare["commands"], serde_json::json!({}));
+        assert_eq!(bare["fs_delta"]["changed"], serde_json::json!([]));
+        // And through the one live shadow-rooted caller: the GEN-3 completion facts.
+        let facts = crate::commands::swarm::render_completed_output_from_ledger(
+            shadow.path(),
+            "complete-fix::app/sync.py",
+            &owned,
+            1,
+            Some(mirror.path().to_path_buf()),
+        )
+        .expect("mirror-only rows render the wrote-line");
+        assert!(facts.contains("wrote: app/sync.py"), "{facts}");
+        assert!(
+            crate::commands::swarm::render_completed_output_from_ledger(
+                shadow.path(),
+                "complete-fix::app/sync.py",
+                &owned,
+                1,
+                None,
+            )
+            .is_none(),
+            "no mirror, no facts — the absent behavior is unchanged"
+        );
+    }
+
+    /// The mirror is SECOND, never first: a primary with rows wins outright (a speculative twin
+    /// keeps reading its own shadow; a fix shard whose current attempt already captured calls
+    /// reads those, not history) — `read_calls_capture`'s contract, pinned at the row builder.
+    #[test]
+    fn a_ledger_row_prefers_the_primary_capture_over_the_mirror() {
+        let root = tempfile::tempdir().unwrap();
+        let act = root.path().join(".swarm/activity");
+        std::fs::create_dir_all(&act).unwrap();
+        let mirror = tempfile::tempdir().unwrap();
+        let key = crate::commands::swarm::activity_digest_key("complete-fix::app/sync.py");
+        let primary_row = serde_json::json!({"ts":"2026-08-30T19:00:00Z","attempt":1,
+            "name":"shell","summary":"python3 -m pytest tests/ -q","ok":true,
+            "result_tail":"3 passed","pytest":{"failed":0,"passed":3,"errors":0,"raw":"3 passed"}});
+        std::fs::write(
+            act.join(format!("{key}.calls.jsonl")),
+            format!("{primary_row}\n"),
+        )
+        .unwrap();
+        let mirror_row = serde_json::json!({"ts":"2026-08-30T18:00:00Z","attempt":0,
+            "name":"shell","summary":"python3 -m app --help","ok":true,"result_tail":"usage"});
+        std::fs::write(
+            mirror.path().join(format!("{key}.calls.jsonl")),
+            format!("{mirror_row}\n"),
+        )
+        .unwrap();
+        let row = build_task_ledger_row(
+            root.path(),
+            "complete-fix::app/sync.py",
+            "done",
+            false,
+            &[],
+            1,
+            Some(mirror.path().to_path_buf()),
+        );
+        assert_eq!(row["commands"]["test"]["count"], 1);
+        assert_eq!(
+            row["commands"].get("boot"),
+            None,
+            "a non-empty primary is read alone; the mirror's boot row must not leak in"
+        );
     }
 }

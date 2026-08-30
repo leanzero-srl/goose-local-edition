@@ -173,8 +173,18 @@ pub(super) fn attribute_gate_finding_ranked(
                 .count()
         };
         type RankKey = (usize, usize, usize, usize); // (stripped b, stripped raw, raw b, raw raw)
+                                                     // A DATA OR DOC FILE NEVER OUTRANKS SOURCE — extract_file_from_finding's take()-side rule
+                                                     // (swarm.rs, same wording), which the grep side never got: the WINNER slot had no
+                                                     // source-ext filter, only the runner-up did, so a README.md spelling an endpoint often
+                                                     // enough would take the shard and aim a code fix at documentation. `best`/`second` now
+                                                     // rank SOURCE-ext candidates only (existing RankKey ordering unchanged within the class);
+                                                     // a non-source candidate wins only when NO source-ext candidate greps a nonzero stripped
+                                                     // count — FINDING_PATH_EXTS deliberately admits .md/.json so a finding ABOUT those files
+                                                     // stays attributable, and that case still lands on them.
+        let is_source = |f: &str| super::FINDING_SOURCE_EXTS.iter().any(|e| f.ends_with(e));
         let mut best: Option<(RankKey, usize)> = None;
         let mut second: Option<(RankKey, usize)> = None;
+        let mut best_other: Option<(RankKey, usize)> = None;
         for (i, f) in all_files.iter().enumerate() {
             let Some(full) = read_source(f) else { continue };
             let src = strip_comments_for_evidence(&full, f);
@@ -188,6 +198,12 @@ pub(super) fn attribute_gate_finding_ranked(
                 boundary_hits(&full),
                 full.matches(lit.as_str()).count(),
             );
+            if !is_source(f) {
+                if best_other.map(|(bk, _)| key > bk).unwrap_or(true) {
+                    best_other = Some((key, i));
+                }
+                continue;
+            }
             if best.map(|(bk, _)| key > bk).unwrap_or(true) {
                 second = best;
                 best = Some((key, i));
@@ -195,7 +211,7 @@ pub(super) fn attribute_gate_finding_ranked(
                 second = Some((key, i));
             }
         }
-        if let Some((_, i)) = best {
+        if let Some((_, i)) = best.or(best_other) {
             let runner_up = second
                 .filter(|((sb, _, _, _), _)| *sb >= 1)
                 .map(|(_, j)| all_files[j].clone())
@@ -463,6 +479,49 @@ mod tests {
             attribute_gate_finding(f2, &all, &read3).as_deref(),
             Some("web/app.js"),
             "zero verbatim greps fall back to the prefix form"
+        );
+    }
+
+    /// A DATA OR DOC FILE NEVER OUTRANKS SOURCE — the grep side of the rule
+    /// `extract_file_from_finding` has carried on the take() side since the FINDING_PATH_EXTS
+    /// broadening. The r5 manifest ships README.md and DECISIONS.md beside the code (measured:
+    /// both in the run's task_owns), so a README spelling an endpoint often enough used to take
+    /// the winner slot and aim a code fix shard at documentation.
+    #[test]
+    fn a_doc_file_never_outgreps_source_for_the_winner_slot() {
+        let all = vec!["README.md".to_string(), "app/httpapi.py".to_string()];
+        // README out-greps the handler 3 boundary hits to 1 — the handler still wins.
+        let read = |f: &str| -> Option<String> {
+            match f {
+                "README.md" => Some(
+                    "## API\nPOST /api/sync\nPOST /api/sync twice is cheap\ncurl -X POST /api/sync\n"
+                        .into(),
+                ),
+                "app/httpapi.py" => Some("        if path == \"/api/sync\":\n".into()),
+                _ => None,
+            }
+        };
+        assert_eq!(
+            attribute_gate_finding("POST /api/sync is not CHEAP on a repeat run", &all, &read)
+                .as_deref(),
+            Some("app/httpapi.py"),
+            "a non-source file must not WIN attribution while any source candidate greps"
+        );
+        // A finding whose ONLY greppable candidate is the doc file still lands on it —
+        // FINDING_PATH_EXTS admits .md/.json precisely so findings ABOUT those files stay
+        // attributable, and this arm keeps that alive.
+        let read_docs_only = |f: &str| -> Option<String> {
+            (f == "README.md").then(|| "POST /api/sync — documented here only\n".to_string())
+        };
+        assert_eq!(
+            attribute_gate_finding(
+                "POST /api/sync is not CHEAP on a repeat run",
+                &all,
+                &read_docs_only
+            )
+            .as_deref(),
+            Some("README.md"),
+            "no source candidate greps: the doc file may win, never silently drop to known bugs"
         );
     }
 
