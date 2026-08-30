@@ -191,9 +191,14 @@ fn the_banned_integrate_template_only_shrinks() {
 /// tags at every authoring push site, the severity sort, the wave's severest-first group
 /// order, the shard fix-first note and the severity arrays on complete_verify / known_bugs /
 /// complete_result.
+/// Tightened to 43,933: `elide_middle` and its elision test moved verbatim to
+/// commands/swarm/findings.rs beside its primary consumers (`finding_texts` /
+/// `inconclusive_reasons`, whose 400-char head-cut defect motivated it), paying for the
+/// green-round clear of known_active_bugs(+severities) and handle_repair's
+/// PYTHONDONTWRITEBYTECODE guard.
 #[test]
 fn swarm_rs_line_count_only_decreases() {
-    const SWARM_RS_LINE_BASELINE: usize = 43_982;
+    const SWARM_RS_LINE_BASELINE: usize = 43_933;
     let text = read("crates/goose-cli/src/commands/swarm.rs");
     let n = text.lines().count();
     assert!(
