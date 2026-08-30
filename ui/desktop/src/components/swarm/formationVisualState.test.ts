@@ -69,11 +69,12 @@ describe('formation phase truth', () => {
     expect(formationPhaseIndex('done')).toBe(9);
   });
 
-  // RESEARCH and CONTRACTS are deleted from the engine (P1-5/P1-4). A new run must not be offered
-  // either as a stage — it would sit forever "skipped", claiming a route that no longer exists — but
-  // an ARCHIVED run whose events prove it ran them keeps its historical chips.
+  // CONTRACTS is deleted from the engine (P1-4). A new run must not be offered it as a stage — it
+  // would sit forever "skipped", claiming a route that no longer exists — but an ARCHIVED run whose
+  // events prove it ran keeps its historical chip. RESEARCH is LIVE again (the v2 fan), so it is
+  // always offered: a run whose opener raises no questions marks it skipped, honestly.
   it('offers no retired phase without evidence, and keeps it for an archived run that ran it', () => {
-    const live = ['open', 'ask', 'synthesize', 'review', 'build', 'integrate', 'repair', 'done'];
+    const live = ['open', 'ask', 'research', 'synthesize', 'review', 'build', 'integrate', 'repair', 'done'];
     expect(formationPhasesFor(undefined).map((s) => s.key)).toEqual(live);
     expect(formationPhasesFor({ open: true, build: true }).map((s) => s.key)).toEqual(live);
     expect(
@@ -81,10 +82,10 @@ describe('formation phase truth', () => {
     ).toEqual(['open', 'ask', 'research', 'synthesize', 'review', 'contracts', 'build', 'integrate', 'repair', 'done']);
     // Index and state hold against the run's OWN list, where 'build' is no longer at 6.
     const steps = formationPhasesFor(undefined);
-    expect(formationPhaseIndex('build', steps)).toBe(4);
-    expect(formationPhaseState('build', 3, undefined, steps)).toBe('complete');
-    expect(formationPhaseState('build', 4, undefined, steps)).toBe('active');
-    expect(formationPhaseState('build', 5, undefined, steps)).toBe('upcoming');
+    expect(formationPhaseIndex('build', steps)).toBe(5);
+    expect(formationPhaseState('build', 4, undefined, steps)).toBe('complete');
+    expect(formationPhaseState('build', 5, undefined, steps)).toBe('active');
+    expect(formationPhaseState('build', 6, undefined, steps)).toBe('upcoming');
   });
 
   it('marks only earlier phases complete and the engine phase active', () => {

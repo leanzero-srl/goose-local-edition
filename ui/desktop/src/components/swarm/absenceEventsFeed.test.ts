@@ -396,3 +396,81 @@ describe('finding 4 — a tree defect annotates the board without repainting eng
     expect(row?.sub).toBe('app/ledger.py holds only the engine stub');
   });
 });
+
+describe('the r6 fan-era absence twins render — a lost lane must not look like a ran lane', () => {
+  it('lane_panicked names the fan and folds honestly as a warn line in both feeds', () => {
+    const { activity, verbose } = buildActivity([
+      START,
+      { event: 'lane_panicked', context: 'research', error: 'task 42 panicked' },
+    ]);
+    for (const feed of [activity, verbose]) {
+      const row = feed.find(
+        (r) =>
+          r.text === 'A research lane crashed — its slot is folded as a failure; the other lanes stand'
+      );
+      expect(row?.tone).toBe('warn');
+      expect(row?.sub).toBe('task 42 panicked');
+    }
+  });
+
+  it('forming_write_failed says which call went blind and whether an update was held', () => {
+    const { activity } = buildActivity([
+      START,
+      { event: 'forming_write_failed', key: 'ledgerd-core', error: 'ENOSPC', held_unflushed: true },
+    ]);
+    const row = activity.find((r) => r.text === 'Forming stopped persisting for ledgerd-core');
+    expect(row?.tone).toBe('warn');
+    expect(row?.sub).toBe('ENOSPC · an update was held unflushed');
+  });
+
+  it('slice_claimed_section_unmatched quotes the claimed heading — the r5 typo, loud', () => {
+    const { activity } = buildActivity([
+      START,
+      { event: 'slice_claimed_section_unmatched', slice: 'boot', claimed: 'Boot & Startup' },
+    ]);
+    const row = activity.find((r) =>
+      r.text.startsWith('Slice boot claimed a spec section that matched no heading')
+    );
+    expect(row?.text).toContain('"Boot & Startup"');
+    expect(row?.tone).toBe('warn');
+  });
+});
+
+describe('low_confidence_ask names the guessed decisions — the real fields, null-tolerantly', () => {
+  const ask = (extra: Record<string, unknown>) => ({
+    event: 'low_confidence_ask',
+    questions: [{ question: 'Which storage format?' }, { question: 'Which port?' }],
+    ...extra,
+  });
+
+  it('not_asked > 0 renders a loud line listing every guessed decision verbatim', () => {
+    const { activity } = buildActivity([
+      START,
+      ask({
+        open_decisions_total: 5,
+        open_decisions_not_asked: 2,
+        open_decisions_not_asked_detail: ['auth scheme for the admin routes', 'currency rounding'],
+      }),
+    ]);
+    const row = activity.find((r) =>
+      r.text.startsWith('2 of 5 open decisions never asked — goose will guess them')
+    );
+    expect(row?.tone).toBe('warn');
+    expect(row?.sub).toBe('1. auth scheme for the admin routes\n2. currency rounding');
+  });
+
+  it('the archived dead 0/0 shape renders nothing extra', () => {
+    const { activity } = buildActivity([
+      START,
+      ask({ open_decisions_total: 0, open_decisions_not_asked: 0 }),
+    ]);
+    expect(activity.some((r) => r.text.includes('never asked'))).toBe(false);
+  });
+
+  it('a log without the fields at all renders nothing extra either', () => {
+    const { activity } = buildActivity([START, ask({})]);
+    expect(activity.some((r) => r.text.includes('never asked'))).toBe(false);
+    // The ask line itself still renders.
+    expect(activity.some((r) => r.text.startsWith('Paused — asking you 2 questions'))).toBe(true);
+  });
+});

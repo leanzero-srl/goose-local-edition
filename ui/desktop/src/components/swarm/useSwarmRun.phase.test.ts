@@ -367,11 +367,13 @@ describe('planning lanes include the calls that FAN', () => {
    *  open-coverage-* lanes were running — the heaviest work in OPEN. They showed in FLEET, which reads
    *  node state, so the two halves of the same screen disagreed. A fixed key list cannot describe a phase
    *  whose lane count is a property of the fleet. */
-  it('recognises coverage and review fan lanes, not just the fixed keys', () => {
+  it('recognises coverage, review and research fan lanes, not just the fixed keys', () => {
     expect(isPlanningDigestKey('open')).toBe(true);
     expect(isPlanningDigestKey('open-coverage-1')).toBe(true);
     expect(isPlanningDigestKey('open-coverage-3')).toBe(true);
     expect(isPlanningDigestKey('review-2')).toBe(true);
+    // RESEARCH FAN v2: `research-<slice>-q<n>` (the engine's activity_key), one lane per question.
+    expect(isPlanningDigestKey('research-store-layer-q2')).toBe(true);
   });
 
   it('does not swallow lanes that belong to other phases', () => {
