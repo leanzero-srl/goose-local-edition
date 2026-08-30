@@ -66,7 +66,7 @@ sync.py (mihai — found the REAL F1 mechanism: dict(err.headers) is original-ca
 misses X-Collection-Generation, 304 never matches, full refetch) and __main__.py (gabee —
 reproduce-first, booting its own instance; it structurally cannot land the 6 handler findings:
 shard owns one file, promote-only-owned-files). Degradation lens: both lanes CLEAN, disciplined words.
-THREE r6 fixes from this: (1) endpoint_literal_of cut-at-first-disallowed-char + attribution.rs
+THE r6 FIX STACK from REPAIR-r0 reading (all traced + independently verified): attribution clean()-cut + attribution.rs (7d1ae2f0e), probe sources[] (0eb7a09ea), transcript mirror (fce592811), runner-up ownership + comment-strip + honest 3-pair suffix + loud calls (6585f0845), redispatch reader + verbatim <id> literal + briefs.rs (0dc8c297f); in flight: ledger-row mirror sibling + source-ext winner preference. Original list: (1) endpoint_literal_of cut-at-first-disallowed-char + attribution.rs
 extraction (surgeon in flight); (2) probe consoleErrors.sources + engine " (in `file`)" suffix
 (bench-scorer in flight); (3) QUEUED behind the surgeon: repair-shard durable transcripts die with the
 shadow — mirror the four appends (log/think.log/marker/calls.jsonl) through fix_shard_mirror_dir like
