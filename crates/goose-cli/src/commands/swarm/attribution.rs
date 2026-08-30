@@ -6,7 +6,7 @@
 //! possessive-apostrophe cut in `clean` (r5: `/api/drafts's` kept its apostrophe, the tree grep
 //! hit zero files, and 6 of 8 round-0 findings misrouted to the entry file).
 
-use super::FileGroup;
+use super::findings::FileGroup;
 
 /// P1-3, half one: the ENDPOINT LITERAL FORMS a gate finding names, most specific first. The
 /// deterministic gate's own emitters write `GET <path> returned <code>` / `POST <path> …`, so
@@ -279,7 +279,7 @@ pub(super) fn attribute_findings(
     Vec<String>,
     std::collections::HashMap<String, String>,
 ) {
-    let (mut groups, unassigned) = super::group_findings_by_file(findings, all_files);
+    let (mut groups, unassigned) = super::findings::group_findings_by_file(findings, all_files);
     let mut known_bugs: Vec<String> = Vec::new();
     let mut runner_ups: std::collections::HashMap<String, String> =
         std::collections::HashMap::new();
@@ -355,7 +355,7 @@ pub(super) fn console_error_source(v: &serde_json::Value) -> Option<(usize, &str
 
 #[cfg(test)]
 mod tests {
-    use super::super::extract_file_from_finding;
+    use super::super::findings::extract_file_from_finding;
     use super::*;
 
     /// P1-3: the endpoint literal a gate finding names, straight from the gate's own emitter
