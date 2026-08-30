@@ -17359,7 +17359,9 @@ impl GooseAgentDispatcher {
                          because that IS the shape it was asked for, and is working perfectly. Read the \
                          objective above, then decide: are the repeating windows ADVANCING through new \
                          material (new rows, new names, new sections), or is it re-emitting the same \
-                         content it already produced? Only the second is a loop.",
+                         content it already produced? Only the second is a loop — and a list ADVANCES \
+                         through NEW items; the same ten items with the same verdicts a second time is \
+                         a loop wearing a list's shape.",
                         recur.span(),
                         recur.rate() * 100.0
                     )
@@ -17527,7 +17529,15 @@ impl GooseAgentDispatcher {
                 let earlier_block = match recur.earlier() {
                     Some(e) => format!(
                         "\n\nReasoning from EARLIER in this same call (tens of thousands of characters \
-                         ago):\n{e}"
+                         ago):\n{e}\n\
+                         COMPARE this earlier span with the 'Most recent reasoning' below — that \
+                         comparison is why you are shown both. If the call is walking the SAME items to \
+                         the SAME conclusions again — however coherent each sentence reads on its own — \
+                         it is re-emitting, not advancing: the verdict is LOOPING, and NEXT names the \
+                         exit (call the output tool with what it already has). MEASURED (r4b): a \
+                         reviewer cycled one ten-item checklist verbatim for 24 minutes and every \
+                         2k-char window of it read as coherent checking; only the two windows side by \
+                         side showed the loop.",
                     ),
                     None => String::new(),
                 };
@@ -17973,7 +17983,13 @@ impl GooseAgentDispatcher {
                     } else if actions_since_last_look > 0 || !drift_verdict {
                         omni_drift_streak = 0;
                     }
-                    let drift_corroborated = drift_verdict && omni_drift_streak >= 2;
+                    // Measured recurrence corroborates on its own: a DRIFTING verdict on a stream the
+                    // meter reads as recurring is evidence agreeing with measurement, not taste — the
+                    // same standing the tool-repeat evidence already has. r4b's one correct direction
+                    // ("call the output tool NOW") was held at streak 1 and the OK looks that followed
+                    // reset the streak; the loop ran 24 minutes.
+                    let drift_corroborated =
+                        drift_verdict && (omni_drift_streak >= 2 || recur.recurring());
                     let drifting_now =
                         drift_verdict && (!produced_anything_since_last_look || drift_corroborated);
                     if drift_verdict && produced_anything_since_last_look && !drift_corroborated {
@@ -25430,7 +25446,13 @@ impl GooseAgentDispatcher {
              `findings` is for PROBLEMS ONLY — things that need changing. Do NOT list what is correct, do \
              NOT confirm the plan is sound, do NOT summarise it back. If the plan needs no change, return \
              empty lists for all four keys and say nothing else. Saying \"the plan is sound\" as a finding \
-             is the same as saying nothing, and it costs the fleet's whole round to say it."
+             is the same as saying nothing, and it costs the fleet's whole round to say it.\n\n\
+             THE EXIT RAMP — read this twice. The seven questions above are your WHOLE checklist. The \
+             moment you have walked them once, CALL THE final_output TOOL with what you have. Do not \
+             \"check if there are any other issues\": there is no eighth question, and walking the list \
+             again on a clean plan produces the identical answers — a reviewer was measured doing exactly \
+             that, verbatim, for 24 minutes, its review complete after the first pass and its exit never \
+             taken. One pass, then the tool."
             .to_string();
         // Question 7 asks whether the plan's paths match what is on disk. Handing over that list is what
         // makes it answerable. MEASURED 2026-08-28: without it the reviewer shelled out looking for the
