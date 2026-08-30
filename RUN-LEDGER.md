@@ -188,14 +188,14 @@ DAG is actually parallel). reasoning_chars against answer_chars is the waste.
 - **chain**: 0
 - **startable**: 0
 - **brief_median**: 0
-- **reasoning_chars**: 8400
-- **answer_chars**: 5471
+- **reasoning_chars**: 28672
+- **answer_chars**: 7334
 - **code_files**: 0
 - **code_bytes**: 0
-- **elapsed_min**: 18
-- **phase_split**: open 17m
+- **elapsed_min**: 28
+- **phase_split**: open 27m
 - **before_build_min**: 0 (internal diagnosis only — never a cross-run number)
-- **vs_target**: ONLY THE SCORE COMPARES. Target 20.06% (qwen3.8-27b, one cloud agent, same model). Wall clock is NOT comparable — that run is on far faster hardware, so minutes measure the machine. Bytes are NOT a verdict — more code is not better code, and it had no planning phases to spend budget on. Cross-hardware-honest work numbers for THIS run: 0B delivered, 8,400 chars reasoned, 0 tasks completed, 0 retried.
+- **vs_target**: ONLY THE SCORE COMPARES. Target 20.06% (qwen3.8-27b, one cloud agent, same model). Wall clock is NOT comparable — that run is on far faster hardware, so minutes measure the machine. Bytes are NOT a verdict — more code is not better code, and it had no planning phases to spend budget on. Cross-hardware-honest work numbers for THIS run: 0B delivered, 28,672 chars reasoned, 0 tasks completed, 0 retried.
 - **python_parses**: 0 ok / 0 SYNTAX ERROR / 0 empty
 - **web_files**: NONE — 0.56 of the scoring weight is unreachable without a served page
 - **tasks_done**: 0/? completed, 0 dispatched, 0 retried
@@ -204,10 +204,10 @@ DAG is actually parallel). reasoning_chars against answer_chars is the waste.
 - **plan_patched**: 0
 - **plan_loaded**: 0
 - **review_rounds**: none
-- **judge_looks**: 5
+- **judge_looks**: 7
 - **judge_nudges**: 2
 - **judge_ended**: 0
-- **drift_held**: 2
+- **drift_held**: 3
 - **tree_defects**: 0
 - **repair**: delivery_defect_steer=0 brief_defects=0 testgen=0 fix_target_selected=0 complete_verify=0 complete_result=0
 - **plan_repaired**: 3 actions, owning-nothing 0->0, unassigned endpoints 0->0
