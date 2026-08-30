@@ -391,3 +391,10 @@ research_request_block's armed-no-claimed-sections arm wording.
   armed. Mechanism verification: the finder-tracer's walk stands as the independent read; I verified
   the implementation hunks directly. swarm.rs 45,265→44,901 across the pair. Trap recorded: the
   DOMAIN_PITFALLS trailing-backslash fusion (tripwired by pitfall_items_match_triggers). Charter gap: none.
+- 2026-08-31 00:55 panel-surgeon (verdict surface + endgame visibility, 33deb8d39): CLEAN+. Split
+  HEAD-already-had from added per defect; proved r5's invisible tail was the stale binary (HEAD's
+  reflect lane already streams) rather than inventing an engine key; verdict state rides the one
+  reducer (digest-join law held); fixed the KnownActiveBugs caption lying when the verdict is
+  retracted; corrected my brief's "10 tasks" to the real 11. Unbriefed find worth doing: a
+  drift-guard test pinning the panel's supervisionLaneKind mirror to the engine's fixtures — the
+  doc said EXACTLY while five kinds behind; queue with the priorities surgeon batch.
