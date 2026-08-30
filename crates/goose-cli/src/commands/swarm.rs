@@ -4906,6 +4906,108 @@ mod tests {
         assert!(dep < stranger, "dependency rows render first");
     }
 
+    /// II-3 acceptance, on the REAL sb-7 spec and the r2 archive's shapes: the sink's dispatch
+    /// is a semantic description carrying the facts the live r2 sink re-derived by hand — the
+    /// approval module's real exports, the root tests' task-id imports, the suite's run count —
+    /// and the zero-fact template line is GONE from it.
+    #[test]
+    fn sink_semantic_description_replaces_the_template_with_r2s_facts() {
+        let dir = r2_cut_ledger_fixture();
+        let root = dir.path();
+        // The approval module's real surface, cut from the r2 archive's app/drafts.py.
+        std::fs::write(
+            root.join("app/drafts.py"),
+            "def approve_draft(db, draft_id: str, approved_by: str) -> dict:\n    return {}\n\n\
+             def reject_draft(db, draft_id: str, rejected_by: str) -> dict:\n    return {}\n\n\
+             def create_draft(db, amount_minor: int, currency: str) -> dict:\n    return {}\n",
+        )
+        .unwrap();
+        std::fs::write(
+            root.join("app/stream.py"),
+            "def sse_handler(request):\n    return None\n",
+        )
+        .unwrap();
+        let spec = include_str!("../../../../evals/swarm-bench/spec-build-sb7.md");
+        // The r2 plan's declared manifest (task_owns union from the archived run.jsonl).
+        let all_files: Vec<String> = [
+            "app/auth.py",
+            "app/drafts.py",
+            "app/ledger_core.py",
+            "app/api.py",
+            "app/stream.py",
+            "app/vendor_sync.py",
+            "app/webhook.py",
+            "app/cli.py",
+            "app/__main__.py",
+            "app/ledgerd/__main__.py",
+            "app/notifierd/__main__.py",
+            "tests/test_ledger_core.py",
+            "tests/test_ledger_concurrency.py",
+            "tests/test_vendor_sync_edge.py",
+            "tests/test_sync_resilience.py",
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+        let desc = sink_semantic_description(
+            root,
+            "integrate-verify",
+            &[],
+            &all_files,
+            spec,
+            TargetLang::Python,
+            Some("ImportError: cannot import name 'approve' from 'app.approval_workflow'"),
+        )
+        .expect("a populated ledger arms the semantic description");
+        assert!(
+            !desc.contains("Integrate every module and VERIFY"),
+            "the zero-fact template line must be gone"
+        );
+        assert!(
+            desc.contains("app/drafts.py: approve_draft"),
+            "drafts.py is named the approval module by its own exports:\n{desc}"
+        );
+        assert!(
+            desc.contains("imports `app.approval_workflow`"),
+            "the root tests' task-id import is carried as a defect:\n{desc}"
+        );
+        assert!(
+            desc.contains("pytest already ran 4 time(s) across 3 lane(s)"),
+            "the suite's run count arrives as input, not as a blocked tool:\n{desc}"
+        );
+        assert!(
+            desc.contains("--ledger-port") && desc.contains("BOOT exactly"),
+            "the literal boot argv shape is quoted from the spec:\n{desc}"
+        );
+        assert!(
+            desc.contains("GET /api/payments") && desc.contains("POST /api/sync"),
+            "the advertised endpoints come from the gate's own parsers:\n{desc}"
+        );
+        assert!(
+            desc.contains("do NOT write re-export shims"),
+            "the r2 phantom-shim class is named at the moment it would recur"
+        );
+        assert!(
+            !desc.contains("READS a PERSISTED file"),
+            "the CLI/JSON-store paragraph drops when the spec advertises endpoints"
+        );
+        // The arming rule: no ledger, no replacement — the dispatch stays byte-identical.
+        let bare = tempfile::tempdir().unwrap();
+        assert!(
+            sink_semantic_description(
+                bare.path(),
+                "integrate-verify",
+                &[],
+                &all_files,
+                spec,
+                TargetLang::Python,
+                None,
+            )
+            .is_none(),
+            "an empty/unreadable ledger must leave the template dispatch untouched"
+        );
+    }
+
     /// II-2b: an absent or unreadable ledger renders EMPTY — the dispatch proceeds
     /// byte-identical, which is the never-gates rule in executable form.
     #[test]
@@ -33721,7 +33823,6 @@ fn read_ledger_rollup(root: &Path) -> Option<serde_json::Value> {
 /// F196-style truncation for the ledger block: cut on a LINE boundary and say so. A block cut
 /// mid-line reads as a complete fact that is wrong; the never-drop content is rendered at the
 /// top precisely so a tail cut can only eat the droppable end.
-#[allow(dead_code)] // wired at the dispatch seam in II-3 (next commit); fixture-tested now
 fn truncate_block_at_line(s: &str, budget: usize) -> String {
     if s.chars().count() <= budget {
         return s.to_string();
@@ -33742,7 +33843,6 @@ fn truncate_block_at_line(s: &str, budget: usize) -> String {
 /// per-class failure tails, and only then the droppables — ok-only command classes and each
 /// lane's final_text, removed in that order when over budget, with a line-boundary truncation
 /// as the last resort. No time value orders or gates anything here.
-#[allow(dead_code)] // wired at the dispatch seam in II-3 (next commit); fixture-tested now
 fn render_ledger_block(
     root: &Path,
     task_id: &str,
@@ -34044,6 +34144,186 @@ fn render_ledger_block(
         return bare;
     }
     truncate_block_at_line(&bare, budget)
+}
+
+/// The spec's own boot invocation for `pkg`, verbatim with its placeholders — the SHAPE of the
+/// argv `run_spec_contract` will spawn. `spec_run_argv_v2` fills the same backtick span, but
+/// calling it at dispatch would bind real ephemeral ports and create scratch dirs just to print
+/// a prompt string, so the span is quoted as the spec wrote it instead.
+fn spec_boot_line(spec: &str, pkg: &str) -> Option<String> {
+    let needle = format!("-m {pkg}");
+    let span = spec.split('`').find(|s| s.contains(&needle))?;
+    Some(span.trim().to_string())
+}
+
+/// II-3, the SINK's semantic description — the replacement for the 3,668-char zero-fact
+/// template (desc_sha e33fa63f) the r2 sink was dispatched with, after which it re-derived the
+/// tree's state with 3 whole-suite runs and 17 discovery calls and wrote 6 phantom shim modules
+/// for task-id imports. Assembled by CODE at dispatch from sources that already exist: the
+/// gate's own spec parsers (package/entry, boot argv, endpoints, documented keys), the live
+/// tree's real exports (`extract_signatures`, names only), and the ledger's read-before-act
+/// block. The template's oracle clauses survive as a short suffix; its CLI/JSON-store paragraph
+/// renders only when the spec advertises no endpoints (a served app is not a JSON-store CLI).
+fn render_sink_description(
+    spec: &str,
+    lang: TargetLang,
+    root: &Path,
+    all_files: &[String],
+    ledger_block: &str,
+) -> String {
+    let mut s = String::from(
+        "INTEGRATE AND VERIFY the whole program end-to-end, working from the MEASURED state \
+         below. This task was assembled from the run's own artefacts — the module list, test \
+         outcomes, boot command and endpoints are facts, not suggestions; do not spend calls \
+         re-deriving them.\n\n",
+    );
+    let pkg = spec_python_entry(spec);
+    let entries: Vec<&String> = all_files
+        .iter()
+        .filter(|f| f.ends_with("__main__.py"))
+        .collect();
+    if pkg.is_some() || !entries.is_empty() {
+        s.push_str(&format!(
+            "PACKAGE{}; entry files: {}.\n",
+            pkg.as_deref()
+                .map(|p| format!(" `{p}`"))
+                .unwrap_or_default(),
+            if entries.is_empty() {
+                "per the spec's advertised entry".to_string()
+            } else {
+                entries
+                    .iter()
+                    .map(|e| e.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            }
+        ));
+    }
+    let sig_lang = match lang {
+        TargetLang::Python => goose_swarm::SigLang::Python,
+        TargetLang::Rust => goose_swarm::SigLang::Rust,
+        TargetLang::Go => goose_swarm::SigLang::Go,
+        TargetLang::TypeScript => goose_swarm::SigLang::TypeScript,
+        TargetLang::Other => goose_swarm::SigLang::Other,
+    };
+    let mut modules = String::new();
+    for f in all_files {
+        let base = std::path::Path::new(f)
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("");
+        if !lang.is_source_file(f) || lang.is_test_file(base) || f.ends_with("__init__.py") {
+            continue;
+        }
+        let Ok(src) = std::fs::read_to_string(root.join(f)) else {
+            continue;
+        };
+        let sigs = goose_swarm::extract_signatures(&src, sig_lang);
+        let mut names: Vec<&str> = sigs
+            .lines()
+            .filter_map(|l| {
+                let t = l.trim();
+                t.strip_prefix("def ")
+                    .or_else(|| t.strip_prefix("class "))
+                    .or_else(|| t.strip_prefix("pub fn "))
+                    .or_else(|| t.strip_prefix("fn "))
+                    .and_then(|r| r.split(['(', ':', '<', ' ']).next())
+                    .filter(|n| !n.is_empty() && !n.starts_with('_'))
+            })
+            .collect();
+        names.dedup();
+        if names.is_empty() {
+            continue;
+        }
+        let elided = if names.len() > 8 { ", …" } else { "" };
+        names.truncate(8);
+        modules.push_str(&format!("  - {f}: {}{elided}\n", names.join(", ")));
+    }
+    if !modules.is_empty() {
+        s.push_str(
+            "MODULES on disk and their exports (import from these EXACT paths; a task-id import \
+             like `app.approval_workflow` names a TASK, not a module — fix the import to the real \
+             module below or delete the file that carries it, do NOT write re-export shims):\n",
+        );
+        s.push_str(&truncate_block_at_line(&modules, 2_000));
+    }
+    if let Some(line) = pkg.as_deref().and_then(|p| spec_boot_line(spec, p)) {
+        s.push_str(&format!(
+            "BOOT exactly as the spec advertises: `{line}` (fill each placeholder with your own \
+             value; invoke python as python3).\n"
+        ));
+    }
+    let gets = spec_get_endpoints(spec);
+    let posts = spec_post_endpoints(spec);
+    if !gets.is_empty() || !posts.is_empty() {
+        s.push_str("ADVERTISED ENDPOINTS — the gate probes exactly these, nothing else:\n");
+        for (method, paths) in [("GET", &gets), ("POST", &posts)] {
+            for p in paths {
+                let keys = spec_documented_keys(spec, p);
+                s.push_str(&format!(
+                    "  - {method} {p}{}\n",
+                    if keys.is_empty() {
+                        String::new()
+                    } else {
+                        format!(" → documented keys {{{}}}", keys.join(","))
+                    }
+                ));
+            }
+        }
+    }
+    s.push('\n');
+    s.push_str(ledger_block);
+    s.push('\n');
+    // The template's oracle clauses, condensed — the checks stay, the re-derivation orders go.
+    s.push_str(
+        "For EACH advertised command/endpoint do a GOLDEN-VALUE CHECK: feed a concrete input the \
+         spec gives or implies and confirm the ACTUAL output equals the SPECIFIC value the spec \
+         implies (never just exit 0, and never an expected value you invented). Then PROBE \
+         ROBUSTNESS once per command with a plausibly-BAD input: it must produce a clean \
+         `error: <message>` and a nonzero exit, never an uncaught traceback — fix any traceback \
+         at the ROOT CAUSE with a SPECIFIC try/except, never a bare `except:`. RUNNING A SERVER: \
+         pick ONE port, reuse it for every check, and KILL the server when the check is done \
+         (background it, keep the PID, kill the PID); a port already in use is your OWN previous \
+         instance still holding it — kill that process, do not move to a new port.\n",
+    );
+    if gets.is_empty() && posts.is_empty() {
+        s.push_str(
+            "If the program READS a PERSISTED file or database, also probe a MALFORMED/corrupt \
+             version of that file AND a MISSING one: corrupt must give a clean error, missing must \
+             start empty cleanly — never an uncaught parse traceback. Guard the shared LOAD path, \
+             not only the command arguments. A green test suite does NOT prove the BUILT/advertised \
+             entry works.\n",
+        );
+    }
+    if boundary_probe_enabled() {
+        s.push_str(
+            "SILENT-ACCEPT CHECK: an out-of-domain input the spec defines no result for must NOT \
+             print empty output and exit 0 — that is a bug like a crash; it must either produce \
+             the spec's defined result or fail with a clean nonzero `error: <message>`. Fence this \
+             to the spec's UNDEFINED domain only.\n",
+        );
+    }
+    s
+}
+
+/// The II-3 arming decision, pure enough to test without a dispatcher: Some(semantic
+/// description) only when the ledger actually holds facts. An empty or unreadable ledger —
+/// a fresh run's first minutes, a degraded tree — returns None and the caller dispatches the
+/// existing template BYTE-IDENTICAL: the never-gates rule as the type signature.
+fn sink_semantic_description(
+    root: &Path,
+    task_id: &str,
+    deps: &[String],
+    all_files: &[String],
+    spec: &str,
+    lang: TargetLang,
+    collect_only: Option<&str>,
+) -> Option<String> {
+    let block = render_ledger_block(root, task_id, deps, all_files, 7_000, collect_only);
+    if block.is_empty() {
+        return None;
+    }
+    Some(render_sink_description(spec, lang, root, all_files, &block))
 }
 
 /// F790-3: the operator questions waiting in `<root>/.swarm/questions/*.txt` that have no
@@ -34506,6 +34786,28 @@ impl GooseAgentDispatcher {
                 }
             }
         }
+        // §II.2 MESSAGE FORMATION for the SINK (II-3). Computed HERE — after the owned-file
+        // fence has restored the tree, before any prompt block renders — so the exports and
+        // stats describe the tree the sink will actually verify. Armed only when the ledger
+        // holds facts: sink_semantic_description returns None on an empty/unreadable ledger and
+        // everything below is then byte-identical, template included. The collect-only probe is
+        // the one §II.2 dispatch-time subprocess (spawn-bounded instrument, flagged in the
+        // design; its absence is never evidence).
+        let sink_brief: Option<String> = if req.task_id == "integrate-verify" && !req.speculative {
+            let collect_only = collect_only_import_health(&root).await;
+            let spec = self.spec_frozen.lock().unwrap().clone();
+            sink_semantic_description(
+                &root,
+                &req.task_id,
+                &req.neighborhood,
+                &req.all_files,
+                &spec,
+                lang,
+                collect_only.as_deref(),
+            )
+        } else {
+            None
+        };
         let context_block = if req.context_slice.is_empty() {
             String::new()
         } else {
@@ -35168,7 +35470,15 @@ impl GooseAgentDispatcher {
         // (is_test_author is resolved ABOVE layout_block — see the hoist next to kind_prompt_on)
         // The reading rule, per kind. A test-author MUST open the file it is writing; telling it not
         // to is the contradiction that produced SyntaxErrors in shipped test files.
-        let reading_rules = if kind_prompt_on && is_test_author {
+        let reading_rules = if sink_brief.is_some() {
+            // II-3: with the semantic brief armed, "read AT MOST the ONE file you will edit" is
+            // wrong-job text for the sink — its facts are already in the task. The table replaces
+            // the read storm the old rule tried (and failed) to prevent.
+            "- THE TEST TABLE and MEASURED STATE in your task ARE the tree's state — trust them \
+             over re-deriving. Do not re-run the whole suite or re-read the project to 'understand \
+             it first': the modules, exports, endpoints and defects are already listed. Read a \
+             specific file only when a listed defect points into it.\n"
+        } else if kind_prompt_on && is_test_author {
             "- DON'T OVER-READ the project, but DO read what you are testing: the SOURCE module under \
              test (to get its real signatures) and YOUR OWN test file after you write it. Do not read \
              the rest of the suite or re-read the whole project.\n"
@@ -35256,7 +35566,9 @@ impl GooseAgentDispatcher {
                 } else {
                     "generic"
                 },
-                "reading_rules": if kind_prompt_on && is_test_author {
+                "reading_rules": if sink_brief.is_some() {
+                    "sink-semantic"
+                } else if kind_prompt_on && is_test_author {
                     "test-author"
                 } else if kind_prompt_on && read_only_shard {
                     "read-only-shard"
@@ -35265,7 +35577,9 @@ impl GooseAgentDispatcher {
                 } else {
                     "off-generic"
                 },
-                "stopping_rules": if kind_prompt_on && is_test_author {
+                "stopping_rules": if sink_brief.is_some() {
+                    "sink-semantic"
+                } else if kind_prompt_on && is_test_author {
                     "test-author"
                 } else if kind_prompt_on && read_only_shard {
                     "read-only-shard"
@@ -35313,7 +35627,14 @@ impl GooseAgentDispatcher {
         } else {
             ""
         };
-        let stopping_rules = if kind_prompt_on && is_test_author {
+        let stopping_rules = if sink_brief.is_some() {
+            // II-3: "STOP WHEN GREEN" tells the one verifier to chase a pass; its job is
+            // run-and-report — a failing check reported faithfully IS the job done.
+            "- RUN AND REPORT. Your job ends when every advertised command/endpoint has been run \
+             and its REAL output reported, pass or fail. There is no green to chase: fix what you \
+             can at the root cause, and report verbatim what you could not — a faithfully reported \
+             failure is a finished job; a manufactured pass is not.\n"
+        } else if kind_prompt_on && is_test_author {
             "- STOP WHEN YOUR TESTS RUN. Your job is a test file that IMPORTS and EXERCISES the real \
              module. Run it once to prove it collects and executes — a test file with a SyntaxError or \
              a bad import is worse than none. Then finish; do not chase coverage.\n"
@@ -35560,12 +35881,25 @@ impl GooseAgentDispatcher {
         // kill an honest 885s task. A stall surfaces as transient below → the scheduler re-routes it.
         // If the idle-model judge killed a prior attempt, lead with its corrective hint so this
         // re-dispatch heeds it (e.g. "you were over-reading/looping — WRITE now").
+        // II-3: for the sink with facts on ledger, the semantic brief IS the task — spliced at
+        // this seam (ahead of everything the worker reads as its task) so the model cannot reach
+        // the instructions without the measured facts having been in context. The injection is
+        // the mechanism; nothing refuses. `ledger_delivered` proves delivery from run.jsonl the
+        // way pitfalls_delivered does — the on-disk ledger only shows delivery was POSSIBLE.
+        let effective_description: &str = sink_brief.as_deref().unwrap_or(&req.description);
+        if let Some(b) = &sink_brief {
+            self.events.write_value(serde_json::json!({
+                "event": "ledger_delivered",
+                "task_id": req.task_id,
+                "chars": b.chars().count(),
+                "desc_sha": content_hash(b.as_bytes()).chars().take(8).collect::<String>(),
+            }));
+        }
         let worker_user_text = match &req.prior_hint {
             Some(h) => format!(
-                "SUPERVISOR NOTE — your previous attempt was stopped: {h}\n\nNow complete the task:\n{}",
-                req.description
+                "SUPERVISOR NOTE — your previous attempt was stopped: {h}\n\nNow complete the task:\n{effective_description}",
             ),
-            None => req.description.clone(),
+            None => effective_description.to_string(),
         };
         // ACT-NOW NUDGE — the LAST thing the worker reads, when it owns files and has written none.
         //
