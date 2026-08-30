@@ -87,6 +87,11 @@ it on mechanism. Mihai 14:35: "isn't build supposed to fan out?"
 
 ## Live queue (small items, fold into the next matching brief)
 
+- engine ask_max_q field + golden.generated.json entry removal (dead since cfcd32908) + the
+  integrate plan-time brief header cosmetic ("INTEGRATE AND VERIFY" ancestry wording) — surgeon #9.
+- useSwarmRun hasActivity filter ignores fullTranscript-only digests (latent lane-hiding) — panel #5.
+- r6 launch checklist: verify the research chip/lanes live over CDP on the first fan; verify the
+  integrate-verify DISPATCH-time description is the measured-tree one, not the plan-time placeholder.
 - judge_look carries no node/model attribution — 43 looks in r5 unattributable; add the serving
   node to the event (swarm-surgeon, next batch).
 
@@ -115,6 +120,16 @@ and lever_check.py consume it; the ask event's twin field was confirmed dead 0/0
    — add one fixture each.
 
 ## Grading log (newest first — one line per delegation; move closed items to the per-agent notes)
+- 2026-08-30 panel-surgeon #4 (r6 event coverage, a7c473a76/8475b196b/f983ec159): CLEAN PASS —
+  read every emit site before writing a case (caught the real field shapes incl. lane_panicked's
+  honestly-empty model), derived the Research chip from measured events after PROVING no phase
+  event exists (phase_banner is stderr-only), found and fixed the key whitelist that would have
+  filtered the fan off the board entirely (PLANNING_FAN_PREFIXES — the silent lane-hiding class),
+  and retired the lever by the file's own precedent. Five unbriefed observations — DISPOSED:
+  engine-side ask_max_q field removal + brief-header cosmetic -> surgeon #9 queue; hasActivity
+  filter missing fullTranscript (latent lane-hiding) -> surgeon/panel small queue; research-lanes
+  grouping under the chip -> panel #5 nice-to-have; r6 first-fan live CDP check -> the r6 launch
+  checklist. No charter gap.
 - 2026-08-30 swarm-surgeon #7 (10-item hardening batch, f2d75bebc..760fd8b32): CLEAN PASS — nine
   commits each gated before the next; the panic-cascade fix went STRUCTURAL (Vec<Result> join +
   DeviceReturn Drop guard + poison-recovery, all 5 fanout callers folded, the cascade pinned by
