@@ -26,6 +26,7 @@ import {
   type LiveChannel,
   type SwarmCall,
   type InflightCall,
+  type FormingCall,
   type CallMeaning,
   type ActivityItem,
   type PlanTask,
@@ -607,6 +608,7 @@ const LaneRow: React.FC<{
                     className="bg-background-primary border border-border-primary px-2 py-1"
                     style={{ borderRadius: CHIP_RADIUS }}
                   >
+                    <FormingRows forming={lane.forming} />
                     <InflightRows running={running} />
                     {calls.map((c, i) => (
                       // Developer mode opens every call's output; otherwise only the first failure.
@@ -1534,6 +1536,63 @@ const InflightRow: React.FC<{ call: InflightCall; now: number }> = ({ call, now 
   );
 };
 
+/** II-11b: a tool call the stream has NAMED whose argument body is still buffering server-side.
+ *  LM Studio ships ALL arguments in one terminal delta after minutes of silence (measured 161-172s
+ *  on big writes), so this row is open-frame keyed ONLY — a name, a spinner and a clock; there is
+ *  no byte progress to show and none is pretended. It precedes the RUNNING state (request not yet
+ *  complete) and the engine removes the sidecar the moment the call completes. */
+const FormingRow: React.FC<{ call: FormingCall; now: number }> = ({ call, now }) => {
+  const tool = call.name.replace(/^developer__/, '').toLowerCase();
+  const verb = INFLIGHT_VERB[tool] ?? call.name;
+  const color = SWARM_STATUS.running;
+  const s = Math.max(0, Math.round((now - call.since_ms) / 1000));
+  const clock = s < 60 ? `${s}s` : `${Math.floor(s / 60)}m ${String(s % 60).padStart(2, '0')}s`;
+  return (
+    <div
+      className="py-0.5 border-b border-border-primary last:border-0"
+      data-testid="forming-row"
+      data-call-id={call.id}
+    >
+      <div className="w-full flex items-start gap-2 text-left">
+        <span className="mt-0.5">
+          <CallTypeIcon icon="tool" color={color} />
+        </span>
+        <span className="flex-1 min-w-0">
+          <span className="flex items-center gap-1.5 flex-wrap">
+            <span className="text-xs font-medium text-text-primary">{verb}</span>
+            <span
+              className="shrink-0 inline-flex items-center gap-1 font-mono text-[9px] uppercase tracking-wide px-1 py-px text-white"
+              style={{ background: color, borderRadius: CHIP_RADIUS }}
+            >
+              <Loader2 size={9} className="animate-spin" />
+              forming…
+            </span>
+            <span className="font-mono text-[10px] tabular-nums" style={{ color }}>
+              {clock}
+            </span>
+          </span>
+          <span className="block font-mono text-[11px] text-text-secondary break-words">
+            the model is still generating this call's arguments
+          </span>
+        </span>
+      </div>
+    </div>
+  );
+};
+
+/** Forming rows sit ABOVE the running rows: a call is named before its request is complete. */
+const FormingRows: React.FC<{ forming?: FormingCall[] }> = ({ forming }) => {
+  const now = useSecondTick((forming?.length ?? 0) > 0);
+  if (!forming || forming.length === 0) return null;
+  return (
+    <>
+      {forming.map((c) => (
+        <FormingRow key={c.id} call={c} now={now} />
+      ))}
+    </>
+  );
+};
+
 /** The running rows, ABOVE the completed ones wherever a call list is drawn. */
 const InflightRows: React.FC<{ running: InflightCall[] }> = ({ running }) => {
   const now = useSecondTick(running.length > 0);
@@ -1679,21 +1738,23 @@ export const SaidSection: React.FC<{ said: SaidState; narration: string; process
 const WorkPane: React.FC<{
   calls: SwarmCall[];
   running: InflightCall[];
+  forming?: FormingCall[];
   toolCalls?: number;
   narration: string;
   said: SaidState;
   processing: boolean;
-}> = ({ calls, running, toolCalls, narration, said, processing }) => {
+}> = ({ calls, running, forming, toolCalls, narration, said, processing }) => {
   const meta = callRowMeta(calls, toolCalls);
   const attention = firstCallNeedingAttention(calls);
   const hasSaid = narration.length > 0 || said.superseded.length > 0 || said.live.attempt != null;
   return (
     <FollowScroll
-      dep={`${running.length}:${calls.length}:${narration.length}:${said.superseded.length}`}
+      dep={`${forming?.length ?? 0}:${running.length}:${calls.length}:${narration.length}:${said.superseded.length}`}
       className="px-3 py-2"
     >
-      {calls.length > 0 || running.length > 0 ? (
+      {calls.length > 0 || running.length > 0 || (forming?.length ?? 0) > 0 ? (
         <div>
+          <FormingRows forming={forming} />
           <InflightRows running={running} />
           {calls.map((c, i) => (
             <CallRow
@@ -1882,6 +1943,7 @@ const NodeInspector: React.FC<{
             <WorkPane
               calls={calls}
               running={running}
+              forming={lane?.forming}
               toolCalls={lane?.toolCalls}
               narration={narration}
               said={said}
@@ -3185,6 +3247,7 @@ const BoardTaskRow: React.FC<{
                 {running.length > 0 ? ` · ${running.length} running` : ''}
               </div>
               <div className="bg-background-primary border border-border-primary px-2 py-1" style={{ borderRadius: CHIP_RADIUS }}>
+                <FormingRows forming={lane?.forming} />
                 <InflightRows running={running} />
                 {calls.map((cl, i) => (
                   <CallRow key={i} call={cl} defaultOpen={dev || i === firstBadCall} />

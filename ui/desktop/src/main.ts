@@ -3317,7 +3317,9 @@ ipcMain.handle('read-swarm-run', async (event, workingDir: string) => {
     let freshest = mtime;
     await Promise.all(
       actEntries
-        .filter((f) => f.endsWith('.json'))
+        // `<key>.forming.json` is NOT a digest — it is the II-11b open-frame sidecar joined onto its
+        // digest below; parsed on its own it becomes a phantom `<key>.forming` lane.
+        .filter((f) => f.endsWith('.json') && !f.endsWith('.forming.json'))
         .map(async (f) => {
           try {
             const p = path.join(activityDir, f);
@@ -3326,6 +3328,23 @@ ipcMain.handle('read-swarm-run', async (event, workingDir: string) => {
             const c = await fs.readFile(p, 'utf8');
             const key = f.replace(/\.json$/, '');
             const parsed = JSON.parse(c);
+            // THE FORMING SIDECAR (II-11b): `<key>.forming.json` holds {forming:[{id,name,since_ms}]}
+            // while the provider stream has named a tool call whose argument body is still buffering
+            // server-side (LM Studio ships ALL args in one terminal delta after minutes of silence —
+            // measured, 3/3 runs). The engine removes the file the moment the call completes or the
+            // scope exits, so ABSENT means nothing is forming. A torn read (the writer rewrites it at
+            // decode time) parses as garbage for one 500ms poll and self-heals on the next — treated
+            // as absent rather than surfaced, which is the honest reading of a file mid-rewrite.
+            try {
+              const fPath = p.replace(/\.json$/, '.forming.json');
+              const fc = await fs.readFile(fPath, 'utf8');
+              const fj = JSON.parse(fc) as { forming?: unknown[] };
+              if (Array.isArray(fj.forming) && fj.forming.length > 0) {
+                (parsed as Record<string, unknown>).forming = fj.forming;
+              }
+            } catch {
+              // absent or mid-rewrite — nothing is forming on this lane
+            }
             // THE UNCLIPPED NARRATION, from the append-only transcript beside the digest.
             //
             // `full_reasoning` inside the digest is a 24,000-char TAIL clip — the digest is rewritten

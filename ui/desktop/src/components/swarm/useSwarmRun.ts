@@ -395,6 +395,9 @@ export interface TurnLane {
   saidAt?: string | null;
   saidKind?: SaidKind;
   superseded?: SupersededSaid[];
+  /** Forming tool calls (II-11b) — see Digest.forming. Never carried from prev: an absent sidecar
+   *  MEANS nothing is forming now, and a carried row would outlive its own call. */
+  forming?: FormingCall[];
   seq: number;
 }
 
@@ -2163,7 +2166,19 @@ type Digest = {
   /** What a previous attempt (or a previous call reusing this lane key) left behind — folded in by the
    *  new attempt's seed instead of being silently erased. Oldest first. */
   superseded?: SupersededSaid[];
+  /** II-11b: tool calls the provider stream has NAMED whose argument bodies are still buffering
+   *  server-side — attached by main.ts from `<key>.forming.json` (absent = nothing forming; the
+   *  engine removes the file on completion or scope exit). Open-frame keyed ONLY: LM Studio ships
+   *  the whole argument body in one terminal delta, so there is no byte progress to show. */
+  forming?: FormingCall[];
 };
+
+/** One forming tool call: named by the stream, arguments not yet arrived. */
+export interface FormingCall {
+  id: string;
+  name: string;
+  since_ms: number;
+}
 
 export type SaidKind = 'said' | 'error';
 
@@ -2337,6 +2352,7 @@ export function digestStreamFields(
   | 'saidAt'
   | 'saidKind'
   | 'superseded'
+  | 'forming'
 > {
   // ATTEMPT-KEYED CARRY (the measured 24m30s failure). A carried `lastText` belongs to the attempt
   // that produced it; when the digest names a NEWER attempt, that carry is a dead attempt's text —
@@ -2371,6 +2387,8 @@ export function digestStreamFields(
     saidAt: d?.said_at ?? prev?.saidAt,
     saidKind: d?.said_kind ?? prev?.saidKind,
     superseded: d?.superseded ?? prev?.superseded,
+    // Deliberately NO prev carry: the sidecar's absence is the engine saying nothing is forming.
+    forming: d?.forming,
   };
 }
 
