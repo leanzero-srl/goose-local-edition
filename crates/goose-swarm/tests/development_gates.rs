@@ -165,9 +165,14 @@ fn the_banned_integrate_template_only_shrinks() {
 /// (the second and last root-relative calls-read, 0dc8c297f's RESIDUAL, now routes through the
 /// one mirror predicate); and `multifile_stub_note` to commands/swarm/briefs.rs with its test,
 /// paying for its `repairing` disarm (a repair shard's live files must never be stub-written).
+/// Tightened to 44,920: the contextual pitfall cluster (DOMAIN_PITFALLS, PITFALL_TRIGGERS,
+/// relevant_pitfalls, pitfall_items, two tests) moved to commands/swarm/pitfalls.rs (-345, +2
+/// wiring), paying for the two r5-measured lessons taught general there — the
+/// referenced-but-never-defined identifier that severs a browser boot function, and the handler
+/// whose response omits its route's documented fields.
 #[test]
 fn swarm_rs_line_count_only_decreases() {
-    const SWARM_RS_LINE_BASELINE: usize = 45_265;
+    const SWARM_RS_LINE_BASELINE: usize = 44_920;
     let text = read("crates/goose-cli/src/commands/swarm.rs");
     let n = text.lines().count();
     assert!(
