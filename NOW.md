@@ -53,7 +53,26 @@ implied, the summary was wrong and the sources win.
 
 ---
 
-## THE CURRENT THREAD (2026-08-30 13:30)
+## THE CURRENT THREAD (2026-08-30 21:10)
+
+**r5 IS IN REPAIR — the first-ever full run of it.** INTEGRATE completed done/attempt-1 at 92.9m; the
+sink root-caused its own gate failure (validate_tokens fatal on an existing-but-empty tokens file) and
+a real KeyError:'day' in upsert_payment, then verified ~45 golden checks + 9 pytest green. REPAIR round
+0: the render gate CAUGHT viz.js live (`ReferenceError: onBrushChangeTracked`, console_errors=4 — the
+R5-ASSESSMENT boot-killer) but parked it as known_bugs (finding names no file); 6 of 8 findings
+misrouted to app/__main__.py (the template "POST {path}'s response" fuses a possessive apostrophe into
+the endpoint literal; clean() only trims ends; grep misses; entry-file fallback). Two fix shards live:
+sync.py (mihai — found the REAL F1 mechanism: dict(err.headers) is original-case, `.get(lowercase)`
+misses X-Collection-Generation, 304 never matches, full refetch) and __main__.py (gabee —
+reproduce-first, booting its own instance; it structurally cannot land the 6 handler findings:
+shard owns one file, promote-only-owned-files). Degradation lens: both lanes CLEAN, disciplined words.
+THREE r6 fixes from this: (1) endpoint_literal_of cut-at-first-disallowed-char + attribution.rs
+extraction (surgeon in flight); (2) probe consoleErrors.sources + engine " (in `file`)" suffix
+(bench-scorer in flight); (3) QUEUED behind the surgeon: repair-shard durable transcripts die with the
+shadow — mirror the four appends (log/think.log/marker/calls.jsonl) through fix_shard_mirror_dir like
+the digest; rescue_shadow_transcripts.sh is copying r5's out live.
+
+## THE PRIOR THREAD (2026-08-30 13:30)
 
 **I am the boss of the research-fan implementation; Mihai nudges with vision** (his words 13:28: "be
 the boss of this implementation with me nudging you along"). Method = his TRUE doctrine: microscopic
