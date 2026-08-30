@@ -97,6 +97,8 @@ covers them for free. Surgeon #10 the moment #9 lands; panel grouping rides pane
   block to the replan context too.
 - r7: early-skeleton needs a real pre-completed seam in Scheduler::run first (scheduler-surgeon);
   the CLI half follows. Four blockers documented in surgeon #9's handoff.
+- panel smalls: judge-lane SAID chips say 'attempt N' where looks are meant; fan lane groups sort
+  alphabetically (q10 before q2) — next panel batch.
 - cleanup queue: still-keyless supervision calls (scheduler-side judge(), propose_split,
   answer_user_question, verify_finding, pillars, reflect_on_success) — need their OWN key class
   (judge-<task> would double-write against the omni lane); surgeon #11 batch.

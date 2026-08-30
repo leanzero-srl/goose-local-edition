@@ -10,7 +10,8 @@ Mihai's longest-running complaint. Every recurrence has had a mechanism; none wa
 ## THERE ARE FIVE LANE-BUILDING PATHS, and the one that wins is the BUILD worker lane
 
 The digest→lane join was copy-pasted into five places and diverged twice. It now lives in ONE function,
-`digestStreamFields()`, with all 17 fields. **Never hand-copy a digest field onto a lane.** A path that
+`digestStreamFields()` (24 fields as of 13c2b8b81 — the count grows with the digest; the LAW is
+that every field goes through this one join, whatever the count). **Never hand-copy a digest field onto a lane.** A path that
 spreads this cannot be half-wired; a path that does its own join will be, and the failure is invisible
 because the other four paths look fine.
 
