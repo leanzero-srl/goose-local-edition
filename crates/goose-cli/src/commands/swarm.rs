@@ -7527,6 +7527,84 @@ mod tests {
         );
     }
 
+    /// N-7: the judge's delivery view is a measurement, and each of its four parts must actually
+    /// reach the prompt text. The r2 shape is pinned end to end: an owned file with a syntax error
+    /// shows the census line AND the py_compile fact; an owned path with nothing on disk SAYS so;
+    /// and a same-named file written where nobody owns one is called out as a WRONG-PATH fact —
+    /// the camera-system defect the r2 judge okayed because it read only reasoning.
+    #[test]
+    fn judge_delivery_block_carries_census_parse_state_and_wrong_path() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join("app")).unwrap();
+        std::fs::write(dir.path().join("app/store.py"), "def broken(:\n    pass\n").unwrap();
+        let owned = vec!["app/store.py".to_string(), "app/api.py".to_string()];
+        let defects = verify_owned_files(dir.path(), &owned);
+        let block = judge_delivery_block(dir.path(), &owned, &defects, &[]);
+        assert!(
+            block.contains("app/store.py — EXISTS,"),
+            "census names what is on disk: {block}"
+        );
+        assert!(
+            block.contains("app/api.py — DOES NOT EXIST"),
+            "a task with nothing on disk says so: {block}"
+        );
+        assert!(
+            block.contains("app/store.py DOES NOT PARSE"),
+            "the py_compile fact reaches the judge's user text: {block}"
+        );
+        assert!(
+            block.contains("What `app/store.py` holds right now"),
+            "a budgeted content excerpt is included: {block}"
+        );
+
+        // The r2 camera-system shape: the owned path is missing while a file with the SAME NAME
+        // appeared at the tree root during this attempt's window.
+        let owned = vec!["web/viz_camera.js".to_string()];
+        let block = judge_delivery_block(
+            dir.path(),
+            &owned,
+            &[
+                "web/viz_camera.js does not exist — this task owns it and nothing has written it"
+                    .to_string(),
+            ],
+            &["viz_camera.js".to_string()],
+        );
+        assert!(
+            block.contains("NO PLANNED TASK OWNS") && block.contains("viz_camera.js"),
+            "the window's unowned writes are in the prompt: {block}"
+        );
+        assert!(
+            block.contains("WRONG PATH") && block.contains("move it to `web/viz_camera.js`"),
+            "a basename match is stated as a misplaced deliverable with the exact owned path: {block}"
+        );
+
+        // A task owning nothing gets no block at all — planning lanes are covered by the
+        // structured-reply block, and an empty census would misread them as undelivered builds.
+        assert_eq!(judge_delivery_block(dir.path(), &[], &[], &[]), "");
+    }
+
+    /// N-7: the excerpt honours its budget and says when it cut — a file larger than the per-file
+    /// cap must arrive marked as an excerpt, never looking complete (the same honesty rule the
+    /// scheduler judge's 1800-char cut learned the hard way).
+    #[test]
+    fn judge_delivery_excerpt_is_budgeted_and_admits_the_cut() {
+        let dir = tempfile::tempdir().unwrap();
+        let big = format!("SEED = 1\n{}", "x = 2\n".repeat(2_000));
+        std::fs::write(dir.path().join("big.py"), &big).unwrap();
+        let owned = vec!["big.py".to_string()];
+        let block = judge_delivery_block(dir.path(), &owned, &[], &[]);
+        assert!(
+            block.contains("… (cut — an excerpt"),
+            "a cut excerpt admits it: {block}"
+        );
+        let excerpt = block.split("holds right now").nth(1).unwrap();
+        assert!(
+            excerpt.chars().count() < 2_000,
+            "the excerpt respects the per-file budget, got {} chars",
+            excerpt.chars().count()
+        );
+    }
+
     #[test]
     fn clip_tail_keeps_the_informative_end() {
         assert_eq!(clip_tail("short output", 400), "short output");
@@ -16966,82 +17044,48 @@ impl GooseAgentDispatcher {
                 } else {
                     verify_owned_files(&self.working_dir, &owned)
                 };
-                let owned_block = {
-                    if owned.is_empty() {
-                        String::new()
-                    } else {
-                        let listed: Vec<String> = owned
-                            .iter()
-                            .map(|f| {
-                                let path = self.working_dir.join(f);
-                                let state = match std::fs::metadata(&path) {
-                                    Ok(m) if m.len() > 0 => format!("EXISTS, {} bytes", m.len()),
-                                    Ok(_) => "EXISTS BUT EMPTY".to_string(),
-                                    Err(_) => "DOES NOT EXIST".to_string(),
-                                };
-                                format!("  {f} — {state}")
-                            })
+                // N-7: the ledger's fs facts at LOOK time — the same snapshot/delta rule as the
+                // attempt-end fs_delta (II-1, `fs_delta_between`), filtered against EVERY task's
+                // manifest so a sibling lane's legitimate write is never flagged at this one. Cost:
+                // one tree walk per look, on no node at all.
+                let unowned_writes: Vec<String> = fs_before
+                    .as_ref()
+                    .filter(|_| !owned.is_empty())
+                    .map(|before| {
+                        let all_owned: Vec<String> = self
+                            .owned_files_by_task
+                            .lock()
+                            .unwrap()
+                            .values()
+                            .flatten()
+                            .cloned()
                             .collect();
-                        // AND WHAT IS ACTUALLY IN THEM. The user's first ask was that the judge read the
-                        // FILES, and it still only ever read a reasoning tail: existence and a byte count
-                        // say nothing about whether the file parses or is a wall of `pass` stubs.
-                        // `verify_owned_files` answers both DETERMINISTICALLY — py_compile and
-                        // `skeleton_only`, on no node at all — and its findings were computed only at task
-                        // completion, which is an hour too late to steer anything.
-                        //
-                        // Scoped to THIS task's owned paths, so the cost is a stat plus one py_compile per
-                        // owned file (typically one to three) at judge cadence. `verify_tree_imports`
-                        // deliberately NOT run here: it walks the whole tree, and a cross-task import gap
-                        // is not this call's to fix.
-                        let defect_block = if owned_defects.is_empty() {
-                            String::new()
-                        } else {
-                            format!(
-                                "\n\nDETERMINISTIC CHECKS OF WHAT IT HAS WRITTEN SO FAR — these are \
-                                 FACTS, not opinions, read off the files a moment ago:\n{}\n\
-                                 If one of these is still true when the call ends, the task has not \
-                                 delivered. Put the FIRST of them into NEXT, naming the exact path.",
-                                owned_defects
-                                    .iter()
-                                    .map(|d| format!("  {d}"))
-                                    .collect::<Vec<_>>()
-                                    .join("\n")
-                            )
-                        };
-                        // A BOUNDED HEAD OF THE FIRST OWNED FILE, so "it wrote something" can be told
-                        // from "it wrote the right thing". Bounded and placed LAST on purpose: this
-                        // prompt's verdict quality rests on the reasoning tail and the recurrence
-                        // evidence, and file bytes must never crowd those out of a 27B's window.
-                        const OWNED_HEAD_BYTES: usize = 1_200;
-                        let head_block = owned
-                            .iter()
-                            .find_map(|f| {
-                                let body = std::fs::read_to_string(self.working_dir.join(f)).ok()?;
-                                if body.trim().is_empty() {
-                                    return None;
-                                }
-                                let head: String =
-                                    body.chars().take(OWNED_HEAD_BYTES).collect();
-                                let cut = if body.len() > head.len() { "\n…" } else { "" };
-                                Some(format!(
-                                    "\n\nThe first {} characters of `{f}` as it stands right now:\n{head}{cut}",
-                                    head.chars().count()
-                                ))
+                        let delta = fs_delta_between(
+                            before,
+                            &snapshot_tree_files(&work_dir),
+                            Some(&all_owned),
+                        );
+                        delta["outside_manifest"]
+                            .as_array()
+                            .map(|a| {
+                                a.iter()
+                                    .filter_map(|v| v.as_str().map(String::from))
+                                    .take(12)
+                                    .collect()
                             })
-                            .unwrap_or_default();
-                        format!(
-                            "\n\nTHIS TASK OWNS THESE FILES, and nothing else in the build will write \
-                             them:\n{}\n\
-                             ITS DELIVERABLE IS THE FILE, NOT THE REASONING. Characters of thinking are \
-                             not progress here; bytes on disk are. If it owns a file that does not exist \
-                             yet and it has taken no action, it is composing the file in its head and \
-                             waiting for it to be perfect — the single most expensive failure this run \
-                             can have. Tell it to write a first minimal version of that exact path NOW \
-                             and extend it afterwards.{defect_block}{head_block}",
-                            listed.join("\n")
-                        )
-                    }
-                };
+                            .unwrap_or_default()
+                    })
+                    .unwrap_or_default();
+                // The user's first ask was that the judge read the FILES. The whole delivery view —
+                // census, parse facts, shape excerpts, the window's unowned writes — is one pure
+                // function so it is testable without a stream; see `judge_delivery_block` for the
+                // WHY of each part and the r2 camera-system evidence.
+                let owned_block = judge_delivery_block(
+                    &self.working_dir,
+                    &owned,
+                    &owned_defects,
+                    &unowned_writes,
+                );
                 // THE SAME BLINDNESS, FOR A CALL WHOSE DELIVERABLE IS A STRUCTURED REPLY RATHER THAN A
                 // FILE. `owned_block` above covers build tasks; a planning lane owns nothing, so it stays
                 // empty and the judge again reads "enormous reasoning, no actions" as thinking hard.
@@ -23580,6 +23624,163 @@ fn owned_files_from_run_log(working_dir: &Path) -> Vec<String> {
 fn is_intentional_empty_marker(path: &str) -> bool {
     let base = path.rsplit('/').next().unwrap_or(path);
     base == "__init__.py" || base == "py.typed"
+}
+
+/// N-7: which signature extractor fits ONE file, by extension. `shape_excerpt` is called per owned
+/// file in the judge's delivery block, where no plan-level TargetLang is in scope; `Other` falls
+/// back to the raw body at the call site, so a wrong guess degrades to today's behaviour.
+fn sig_lang_for_path(path: &str) -> goose_swarm::SigLang {
+    match std::path::Path::new(path)
+        .extension()
+        .and_then(|e| e.to_str())
+    {
+        Some("py") => goose_swarm::SigLang::Python,
+        Some("rs") => goose_swarm::SigLang::Rust,
+        Some("go") => goose_swarm::SigLang::Go,
+        Some("ts" | "tsx" | "js" | "jsx" | "mjs") => goose_swarm::SigLang::TypeScript,
+        _ => goose_swarm::SigLang::Other,
+    }
+}
+
+/// N-7: WHAT WAS DELIVERED, as the omni judge's prompt sees it — extracted into one pure function so
+/// the block is testable without a stream. Four measurements, no verdict logic:
+///
+///   1. the census — every owned path's existence + byte count (a task with nothing on disk SAYS so);
+///   2. the parse facts — `verify_owned_files`' deterministic findings (py_compile, skeletons), passed
+///      in because the caller computes them once and uses them twice (prompt + defect steer);
+///   3. a BUDGETED shape excerpt of what the files actually hold — `shape_excerpt` (P1-6): signatures
+///      plus the key-literal/route/returned-dict lines, the densest per-char answer to "is this the
+///      right file", replacing the raw 1,200-char head of only the FIRST file;
+///   4. the window's unowned writes — paths that appeared/changed since this attempt started that NO
+///      planned task owns, from the same snapshot machinery as the attempt-end fs_delta (II-1).
+///
+/// 4 is the r2 camera-system evidence: the judge said "ok" while the deliverable sat at the tree root,
+/// because existence alone said only "missing" and nothing connected the missing owned path to the
+/// same-named file appearing where nobody owns one. A basename match between an unowned write and an
+/// owned path is called out as a WRONG-PATH fact the judge can put straight into NEXT.
+///
+/// Excerpts are bounded and placed LAST on purpose: this prompt's verdict quality rests on the
+/// reasoning tail and the recurrence evidence, and file bytes must never crowd those out of a 27B's
+/// window.
+fn judge_delivery_block(
+    working_dir: &Path,
+    owned: &[String],
+    defects: &[String],
+    unowned_writes: &[String],
+) -> String {
+    if owned.is_empty() {
+        return String::new();
+    }
+    let listed: Vec<String> = owned
+        .iter()
+        .map(|f| {
+            let state = match std::fs::metadata(working_dir.join(f)) {
+                Ok(m) if m.len() > 0 => format!("EXISTS, {} bytes", m.len()),
+                Ok(_) => "EXISTS BUT EMPTY".to_string(),
+                Err(_) => "DOES NOT EXIST".to_string(),
+            };
+            format!("  {f} — {state}")
+        })
+        .collect();
+    let defect_block = if defects.is_empty() {
+        String::new()
+    } else {
+        format!(
+            "\n\nDETERMINISTIC CHECKS OF WHAT IT HAS WRITTEN SO FAR — these are \
+             FACTS, not opinions, read off the files a moment ago:\n{}\n\
+             If one of these is still true when the call ends, the task has not \
+             delivered. Put the FIRST of them into NEXT, naming the exact path.",
+            defects
+                .iter()
+                .map(|d| format!("  {d}"))
+                .collect::<Vec<_>>()
+                .join("\n")
+        )
+    };
+    // The window's unowned writes. A stat of the tree, never a self-report — the window is shared
+    // with sibling calls, so plain listings carry that caveat; a basename match against an owned
+    // path is the one shape specific enough to state as this task's own misplaced deliverable.
+    let misplaced: Vec<String> = unowned_writes
+        .iter()
+        .filter_map(|p| {
+            let base = std::path::Path::new(p).file_name()?.to_str()?;
+            owned
+                .iter()
+                .find(|o| {
+                    *o != p
+                        && std::path::Path::new(o).file_name().and_then(|n| n.to_str())
+                            == Some(base)
+                })
+                .map(|o| {
+                    format!(
+                        "  `{p}` has the SAME NAME as owned `{o}` — the deliverable is at the \
+                         WRONG PATH. Put \"move it to `{o}`\" into NEXT."
+                    )
+                })
+        })
+        .collect();
+    let unowned_block = if unowned_writes.is_empty() {
+        String::new()
+    } else {
+        format!(
+            "\n\nFILES WRITTEN IN THIS CALL'S WINDOW THAT NO PLANNED TASK OWNS (a stat of the \
+             tree since this attempt started, not a self-report; sibling calls share the window, \
+             so attribute plain entries with care):\n{}{}",
+            unowned_writes
+                .iter()
+                .map(|p| format!("  {p}"))
+                .collect::<Vec<_>>()
+                .join("\n"),
+            if misplaced.is_empty() {
+                String::new()
+            } else {
+                format!("\n{}", misplaced.join("\n"))
+            }
+        )
+    };
+    const OWNED_EXCERPT_TOTAL: usize = 2_400;
+    const OWNED_EXCERPT_PER_FILE: usize = 1_200;
+    let mut excerpt_budget = OWNED_EXCERPT_TOTAL;
+    let mut excerpt_block = String::new();
+    for f in owned {
+        if excerpt_budget == 0 {
+            break;
+        }
+        let Ok(body) = std::fs::read_to_string(working_dir.join(f)) else {
+            continue;
+        };
+        if body.trim().is_empty() {
+            continue;
+        }
+        let shaped = shape_excerpt(&body, sig_lang_for_path(f));
+        let (source, kind): (&str, &str) = if shaped.trim().is_empty() {
+            (body.as_str(), "raw head")
+        } else {
+            (shaped.as_str(), "signatures + shape lines")
+        };
+        let cap = excerpt_budget.min(OWNED_EXCERPT_PER_FILE);
+        let head: String = source.chars().take(cap).collect();
+        let cut = if head.chars().count() < source.chars().count() {
+            "\n  … (cut — an excerpt, not the whole file; never treat the cut as unfinished work)"
+        } else {
+            ""
+        };
+        excerpt_budget = excerpt_budget.saturating_sub(head.chars().count());
+        excerpt_block.push_str(&format!(
+            "\n\nWhat `{f}` holds right now ({kind}):\n{head}{cut}"
+        ));
+    }
+    format!(
+        "\n\nTHIS TASK OWNS THESE FILES, and nothing else in the build will write \
+         them:\n{}\n\
+         ITS DELIVERABLE IS THE FILE, NOT THE REASONING. Characters of thinking are \
+         not progress here; bytes on disk are. If it owns a file that does not exist \
+         yet and it has taken no action, it is composing the file in its head and \
+         waiting for it to be perfect — the single most expensive failure this run \
+         can have. Tell it to write a first minimal version of that exact path NOW \
+         and extend it afterwards.{defect_block}{unowned_block}{excerpt_block}",
+        listed.join("\n")
+    )
 }
 
 /// A DETERMINISTIC CHECK OF WHAT A TASK ACTUALLY DELIVERED.
