@@ -32,18 +32,31 @@ const NODE_CHOICES = [1, 2, 3] as const;
 type NodeChoice = (typeof NODE_CHOICES)[number];
 
 const MODEL_MIN_CHARS = 8;
-const MODEL_MAX_CHARS = 120;
 
-/** Why the Model field cannot be published as typed, or null when it can. The one rule the input's
- *  aria-invalid, its visible hint and the Publish button's tooltip all read from — the three used to
- *  each restate "8–120 characters" and the input carried aria-invalid with no message linked to it. */
-export function modelFieldProblem(model: string): string | null {
-  const n = model.trim().length;
-  if (n === 0) return 'Required — the exact model id your fleet ran.';
-  if (n < MODEL_MIN_CHARS) return `Too short — ${n} of at least ${MODEL_MIN_CHARS} characters.`;
-  if (n > MODEL_MAX_CHARS) return `Too long — ${n} of at most ${MODEL_MAX_CHARS} characters.`;
+/** Why this result's ENGINE-TRUTH model id cannot be published, or null when it can. The field is
+ *  read-only — a user-editable model id publishes a lie — so the only problem left is absence:
+ *  a result whose run never recorded pool_resolved (or recorded junk) refuses with the reason. */
+export function modelIdProblem(modelId: string | undefined): string | null {
+  const n = (modelId ?? '').trim().length;
+  if (n === 0) return 'This result carries no model id from the engine — run the benchmark again.';
+  if (n < MODEL_MIN_CHARS) return `The engine recorded a ${n}-character model id — too short to publish.`;
   return null;
 }
+
+/** Why the Title field blocks publishing, or null when it does not. The title is the USER'S name
+ *  for the run on the public board — never auto-generated. */
+export function titleProblem(title: string): string | null {
+  if (title.trim().length === 0) return 'Title is required — name this run; it is the public title on the board.';
+  return null;
+}
+
+/** What the Publish button is in: the state machine ask 4 demands — a request in flight, the
+ *  server's acceptance (with what went live), or the server's OWN error words. */
+type PublishState =
+  | { kind: 'idle' }
+  | { kind: 'publishing' }
+  | { kind: 'accepted'; title: string; score: number; url: string | null }
+  | { kind: 'error'; message: string };
 
 /** The stored result row — the v1 chart fields plus the v2 publisher inputs main.ts persists. */
 interface MineRow extends BenchmarkRow {
@@ -329,12 +342,10 @@ export default function BenchmarkView() {
   const [running, setRunning] = useState(false);
   const [cancelling, setCancelling] = useState(false);
   const [confirmCancel, setConfirmCancel] = useState(false);
-  const [publishing, setPublishing] = useState(false);
+  const [pub, setPub] = useState<PublishState>({ kind: 'idle' });
   const [status, setStatus] = useState<string | null>(null);
   const [mine, setMine] = useState<MineRow | null>(null);
-  const [handle, setHandle] = useState<string | null>(null);
   const [title, setTitle] = useState('');
-  const [model, setModel] = useState('');
   const [shots, setShots] = useState<BenchShot[]>([]);
   const [activeWorkdir, setActiveWorkdir] = useState<string | null>(null);
   const [runStartedAt, setRunStartedAt] = useState<number | null>(null);
@@ -363,7 +374,6 @@ export default function BenchmarkView() {
       const result = await window.electron.benchmarkRead?.();
       if (result) {
         setMine(result as MineRow);
-        setModel((result as MineRow).modelId ?? '');
         void loadShots((result as MineRow).workdir);
       }
     } catch {
@@ -373,10 +383,6 @@ export default function BenchmarkView() {
 
   useEffect(() => {
     void loadExisting();
-    void window.electron.benchmarkIdentity?.().then(
-      (id) => setHandle(id?.handle ?? null),
-      () => setHandle(null)
-    );
     // Re-attach to a run started before this mount — a run takes hours and must survive navigation.
     void window.electron.benchmarkStatus?.().then((s) => {
       if (s?.running && s.workdir) {
@@ -428,8 +434,6 @@ export default function BenchmarkView() {
         setStatus('Run cancelled.');
       } else if (p?.row) {
         setMine(p.row);
-        // A fresh run's engine truth replaces any stale edit — the prefill is the honest default.
-        setModel(p.row.modelId ?? '');
         setStatus('Run complete.');
         void loadShots(p.row.workdir);
       } else if (p?.error) {
@@ -501,7 +505,6 @@ export default function BenchmarkView() {
       const result = await window.electron.benchmarkRun?.(nodes, tier, sampling);
       if (result) {
         setMine(result as MineRow);
-        setModel((result as MineRow).modelId ?? '');
         setStatus('Run complete.');
         void loadShots((result as MineRow).workdir);
       }
@@ -534,34 +537,48 @@ export default function BenchmarkView() {
 
   const publish = useCallback(async () => {
     if (!mine) return;
-    setPublishing(true);
-    setStatus('Publishing to leanzero.net…');
+    const chosen = title.trim();
+    if (!chosen) return;
+    setPub({ kind: 'publishing' });
     try {
-      const res = await window.electron.benchmarkPublish?.({
-        title: title.trim() || undefined,
-        model: model.trim(),
-      });
-      setStatus(
-        res?.ok
-          ? 'Published for review. It appears once a human approves it.'
-          : `Publish failed: ${res?.error ?? 'unknown error'}`
-      );
+      const res = await window.electron.benchmarkPublish?.({ title: chosen });
+      if (res?.ok) {
+        setPub({
+          kind: 'accepted',
+          title: chosen,
+          score: mine.score,
+          url: typeof res.url === 'string' ? res.url : null,
+        });
+      } else {
+        // The server's OWN words (its 4xx body travels through main.ts verbatim) — never a
+        // generic message; "unknown" appears only when the handler itself returned nothing.
+        setPub({ kind: 'error', message: res?.error ?? 'the publish handler returned no response' });
+      }
     } catch (err) {
-      setStatus(`Publish failed: ${err instanceof Error ? err.message : String(err)}`);
-    } finally {
-      setPublishing(false);
+      setPub({ kind: 'error', message: err instanceof Error ? err.message : String(err) });
     }
-  }, [mine, title, model]);
+  }, [mine, title]);
 
+  const publishing = pub.kind === 'publishing';
   const publishable = mine != null && mine.runMeta != null;
-  const modelProblem = modelFieldProblem(model);
-  const modelValid = modelProblem === null;
+  const modelProblem = modelIdProblem(mine?.modelId);
+  const publishTitleProblem = titleProblem(title);
   const mineFinished = fmtWhen(mine?.runMeta?.finishedAt);
   const uid = useId();
   const lockedId = `${uid}-locked`;
   const modelId = `${uid}-model`;
   const modelHintId = `${uid}-model-hint`;
   const titleId = `${uid}-title`;
+  const titleHintId = `${uid}-title-hint`;
+  const publishWhy = !publishable
+    ? 'Run the benchmark (v2) first'
+    : running
+      ? 'Publishing waits for the run in progress to finish'
+      : modelProblem
+        ? modelProblem
+        : publishTitleProblem
+          ? publishTitleProblem
+          : null;
   const lockedWhy = 'Locked while a run is live — the tier and node count are fixed at launch';
 
   return (
@@ -579,16 +596,6 @@ export default function BenchmarkView() {
                 what it produces — not by asking a model what it thinks.
               </p>
             </div>
-            {handle && (
-              <span
-                className="ml-auto flex items-center gap-1.5 rounded px-2.5 py-1 text-xs font-bold text-white"
-                style={{ backgroundColor: 'var(--color-node-4)' }}
-                title="Your public pseudonym on leanzero.net — stable for this install"
-              >
-                <BadgeCheck className="h-3.5 w-3.5" />
-                publishing as {handle}
-              </span>
-            )}
           </header>
 
           {/* Run settings — the sampling knobs the next run will use, editable until launch; while
@@ -837,9 +844,8 @@ export default function BenchmarkView() {
               </h2>
               <p className="mt-1 max-w-[70ch] text-sm text-text-secondary">
                 Posts your score, the full check-by-check breakdown and the before/after
-                screenshots as{' '}
-                <span className="font-bold text-text-primary">{handle ?? 'your handle'}</span>.
-                The result appears on the leanzero.net board immediately.
+                screenshots under the title you choose. The result appears on the leanzero.net
+                board immediately.
               </p>
               <div className="mt-3 flex flex-col gap-3">
                 <div className="max-w-[560px]">
@@ -847,21 +853,23 @@ export default function BenchmarkView() {
                     htmlFor={modelId}
                     className="mb-1 block text-xs font-bold uppercase tracking-wider text-text-secondary"
                   >
-                    Model <span style={{ color: '#e5484d' }}>*</span>
+                    Model{' '}
+                    <span className="font-medium normal-case tracking-normal">
+                      (from the run — not editable)
+                    </span>
                   </label>
+                  {/* READ-ONLY, not disabled: readOnly keeps the field labeled, focusable and
+                      selectable-for-copy; disabled would kill all three. The model id is engine
+                      truth (pool_resolved) — an editable field here publishes a lie. */}
                   <Input
                     id={modelId}
-                    value={model}
-                    onChange={(e) => setModel(e.target.value.slice(0, MODEL_MAX_CHARS))}
-                    maxLength={MODEL_MAX_CHARS}
-                    placeholder="The exact model your fleet ran — e.g. qwen3.6-27b-…-mtp"
-                    disabled={publishing}
-                    title={publishing ? 'Locked while publishing' : undefined}
-                    aria-invalid={!modelValid}
+                    value={mine.modelId ?? ''}
+                    readOnly
+                    className="cursor-default bg-background-secondary"
                     aria-describedby={modelHintId}
                   />
                   <p id={modelHintId} className="mt-1 text-[11px] text-text-secondary">
-                    Prefilled from the run's own pool — edit it if that is not the exact model.
+                    Engine truth from this run's pool — publishing sends exactly this.
                     {modelProblem && (
                       <span className="ml-1 font-bold" style={{ color: '#e5484d' }}>
                         {modelProblem}
@@ -875,8 +883,7 @@ export default function BenchmarkView() {
                       htmlFor={titleId}
                       className="mb-1 block text-xs font-bold uppercase tracking-wider text-text-secondary"
                     >
-                      Title{' '}
-                      <span className="font-medium normal-case tracking-normal">(optional)</span>
+                      Title <span style={{ color: '#e5484d' }}>*</span>
                     </label>
                     <Input
                       id={titleId}
@@ -886,20 +893,26 @@ export default function BenchmarkView() {
                       placeholder="e.g. My M4 fleet first run"
                       disabled={publishing}
                       title={publishing ? 'Locked while publishing' : undefined}
+                      aria-invalid={publishTitleProblem != null}
+                      aria-describedby={titleHintId}
                     />
+                    <p id={titleHintId} className="mt-1 text-[11px] text-text-secondary">
+                      Your name for this run — the public title on the board.
+                      {publishTitleProblem && (
+                        <span className="ml-1 font-bold" style={{ color: '#e5484d' }}>
+                          {publishTitleProblem}
+                        </span>
+                      )}
+                    </p>
                   </div>
                   <button
                     type="button"
                     onClick={publish}
-                    disabled={!publishable || running || publishing || !modelValid}
+                    disabled={publishWhy != null || publishing}
                     title={
-                      !publishable
-                        ? 'Run the benchmark (v2) first'
-                        : running
-                          ? 'Publishing waits for the run in progress to finish'
-                          : modelProblem
-                            ? `Model: ${modelProblem}`
-                            : 'Publish this result to leanzero.net'
+                      publishing
+                        ? 'Publishing — waiting for leanzero.net'
+                        : (publishWhy ?? 'Publish this result to leanzero.net')
                     }
                     className="flex items-center gap-2 rounded bg-[var(--color-block-teal)] px-4 py-2 text-sm font-semibold text-white disabled:opacity-40"
                   >
@@ -908,7 +921,7 @@ export default function BenchmarkView() {
                     ) : (
                       <Upload className="h-4 w-4" />
                     )}
-                    Publish
+                    {publishing ? 'Publishing…' : 'Publish'}
                   </button>
                 </div>
               </div>
@@ -917,6 +930,31 @@ export default function BenchmarkView() {
                   This result predates the v2 publisher — run the benchmark again to publish.
                 </p>
               )}
+              {/* The publish outcome — a solid saturated state block, never a gray status line.
+                  aria-live so the change is announced; the error carries the SERVER'S words. */}
+              <div aria-live="polite" role="status">
+                {pub.kind === 'accepted' && (
+                  <div
+                    className="mt-3 flex items-start gap-2 rounded px-4 py-3 text-sm font-semibold text-white"
+                    style={{ backgroundColor: PHASE_DONE }}
+                  >
+                    <BadgeCheck className="mt-0.5 h-4 w-4 shrink-0" />
+                    <span>
+                      Live on leanzero.net — &ldquo;{pub.title}&rdquo; ·{' '}
+                      {(pub.score * 100).toFixed(1)}%{pub.url ? ` · leanzero.net${pub.url}` : ''}
+                    </span>
+                  </div>
+                )}
+                {pub.kind === 'error' && (
+                  <div
+                    className="mt-3 flex items-start gap-2 rounded px-4 py-3 text-sm font-semibold text-white"
+                    style={{ backgroundColor: '#e5484d' }}
+                  >
+                    <XCircle className="mt-0.5 h-4 w-4 shrink-0" />
+                    <span>Publish failed: {pub.message}</span>
+                  </div>
+                )}
+              </div>
             </section>
           )}
 

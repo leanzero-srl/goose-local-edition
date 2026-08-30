@@ -162,19 +162,17 @@ type ElectronAPI = {
     /** The newest harness output line, for the same re-attach. */
     lastLine?: string | null;
   }>;
-  /** Poster identity (~/.config/goose/benchmark/identity.json), created on first use. */
-  benchmarkIdentity: () => Promise<{ installId: string; handle: string }>;
   /** The publish-picked screenshots (before/after) from a run's bench-shots dir, base64 PNGs. */
   benchmarkShots: (
     workdir?: string
   ) => Promise<Array<{ name: string; caption: string; b64: string }>>;
   /** Build + POST the v2 payload from the stored result. Must go through main: the renderer CSP
-   *  blocks external hosts. `model` is required (8..120 chars) — engine-truth prefilled, user
-   *  editable. Returns the server's own message on 422. */
+   *  blocks external hosts. `title` is REQUIRED (the user's name for the run); the model id is
+   *  engine truth read from the stored result — the renderer cannot send one. Returns the
+   *  server's own message on 4xx and the live card's url on success. */
   benchmarkPublish: (args?: {
     title?: string;
-    model?: string;
-  }) => Promise<{ ok: boolean; error?: string; status?: number }>;
+  }) => Promise<{ ok: boolean; error?: string; status?: number | string; url?: string }>;
   readSwarmRun: (workingDir: string) => Promise<{
     runId: string;
     /** Where the run actually lives — differs from workingDir when the engine redirected the build. */
@@ -386,10 +384,8 @@ const electronAPI: ElectronAPI = {
     ipcRenderer.invoke('benchmark-run', nodes, tier, sampling),
   benchmarkCancel: () => ipcRenderer.invoke('benchmark-cancel'),
   benchmarkStatus: () => ipcRenderer.invoke('benchmark-status'),
-  benchmarkIdentity: () => ipcRenderer.invoke('benchmark-identity'),
   benchmarkShots: (workdir?: string) => ipcRenderer.invoke('benchmark-shots', workdir),
-  benchmarkPublish: (args?: { title?: string; model?: string }) =>
-    ipcRenderer.invoke('benchmark-publish', args),
+  benchmarkPublish: (args?: { title?: string }) => ipcRenderer.invoke('benchmark-publish', args),
   fleetStatus: () => ipcRenderer.invoke('fleet-status'),
   writeFile: (filePath: string, content: string) =>
     ipcRenderer.invoke('write-file', filePath, content),
