@@ -415,3 +415,10 @@ research_request_block's armed-no-claimed-sections arm wording.
   live before/after probes verbatim with a no-write 503-sentinel test design. The route was the last
   seven-letter holdout — every other layer already spoke eleven. Pattern for the roster: refusal-
   proven tests (run them against the defect first) is worth adopting in surgeon charters.
+- 2026-08-31 00:50 swarm-surgeon (priorities, c47674fd4): CLEAN+. The exact non-hardcoded shape Mihai
+  ordered: 17 provenance sources authored at the push sites, severity a pure function of source
+  (untagged = loud "unsourced", last), MILD-only ordering (texts byte-identical, parallel arrays),
+  passed-partition membership untouched with the pinned test proving it, and an EMPIRICAL replay
+  (swarm repair on the r2 archive returned max_severity critical, zero orphans). swarm.rs 44,511 →
+  43,982. Queued smalls from its observations: stale known_active_bugs after a late green round;
+  PYTHONDONTWRITEBYTECODE missing in handle_repair (r2's archive already carries a __pycache__).
