@@ -33156,10 +33156,23 @@ impl GooseAgentDispatcher {
                 collect_only.as_deref(),
             );
             if brief.ledger_empty {
+                // NEAR-UNREACHABLE BY CONSTRUCTION, kept deliberately: the gate-round-0 write
+                // just above guarantees a ledger row exists before the brief is built, so this
+                // fires only when that write itself FAILED (write_ledger_mini returning None on
+                // a degraded tree) — which is exactly when the operator needs to hear it.
                 self.events.write_value(serde_json::json!({
                     "event": "ledger_empty_at_sink",
                     "task_id": req.task_id,
                     "spec_surface_empty": brief.spec_surface_empty,
+                }));
+            }
+            // The surface absence must not ride only on the near-unreachable event above: a
+            // spec advertising nothing is a measured fact of its own, whatever the ledger
+            // holds, and the brief already states it in prose — this is its event.
+            if brief.spec_surface_empty {
+                self.events.write_value(serde_json::json!({
+                    "event": "spec_surface_empty_at_sink",
+                    "task_id": req.task_id,
                 }));
             }
             Some(brief.description)
