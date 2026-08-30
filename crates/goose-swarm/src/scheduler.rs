@@ -3878,7 +3878,19 @@ impl Scheduler {
                         let outcome = judge.judge(req).await;
                         let intervened = {
                             let mut s = st.lock().await;
-                            let r = s.apply_judge_outcome(&tid, attempt, outcome, &cfg);
+                            // A-2: a failed LOOK applies nothing — no verdict row, no fingerprint,
+                            // no intervention. The pick already stamped `last_judged`, so a judge
+                            // model that stays dead re-fires at cooldown cadence, never a hot loop.
+                            let r = match outcome {
+                                Ok(o) => s.apply_judge_outcome(&tid, attempt, o, &cfg),
+                                Err(error) => {
+                                    s.sink.emit(&SwarmEvent::JudgeLookFailed {
+                                        task_id: tid.clone(),
+                                        error,
+                                    });
+                                    false
+                                }
+                            };
                             s.judge_running = false;
                             r
                         };
@@ -3980,12 +3992,23 @@ impl Scheduler {
                         // Emit so idle-node utilization is OBSERVABLE in the jsonl (it was previously invisible
                         // — a pre-review only left a file when it found ISSUES, so "ran + OK" looked like "never
                         // ran"). One quick sync emit under the lock, same as the judge's verdict emit.
-                        st.lock().await.sink.emit(&SwarmEvent::PreReview {
-                            task_id: tid,
-                            device: dev,
-                            had_findings: out.had_findings,
-                            secs: started.elapsed().as_secs_f64(),
-                        });
+                        // A-2: a review that never read the code records a FAILURE, not a clear —
+                        // r2's tail reviews logged provider errors as clean no-finding rows.
+                        let ev = match out {
+                            Ok(out) => SwarmEvent::PreReview {
+                                task_id: tid,
+                                device: dev,
+                                had_findings: out.had_findings,
+                                secs: started.elapsed().as_secs_f64(),
+                            },
+                            Err(error) => SwarmEvent::PreReviewFailed {
+                                task_id: tid,
+                                device: dev,
+                                error,
+                                secs: started.elapsed().as_secs_f64(),
+                            },
+                        };
+                        st.lock().await.sink.emit(&ev);
                     });
                 }
             }

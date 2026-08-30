@@ -7496,6 +7496,37 @@ mod tests {
         assert!(marker.ends_with(" =====\n"));
     }
 
+    /// A-2: the agent loop returns provider failures as Ok TEXT (its error closers), and every
+    /// lenient supervision parser will read that text as a substantive reply. This is the one
+    /// classification gate: the exact reply shape r2's judge received for 30 minutes must classify
+    /// as a failed call, and a real verdict line must pass through untouched.
+    #[test]
+    fn supervision_reply_rejects_provider_error_text_and_passes_verdicts() {
+        let r2_shape = "Ran into this error: Request failed with status 400 Bad Request: \
+             Invalid model identifier 'qwen3-omni-30b'.\n\nPlease retry if you think this is a \
+             transient or recoverable error.";
+        let err = supervision_reply(r2_shape).expect_err("a provider error is never a reply");
+        assert!(
+            err.contains("Invalid model identifier"),
+            "the failed event carries the error body: {err}"
+        );
+        // parse_judge_reply on the same text is exactly the r2 laundering — pinned here so the
+        // guard's necessity stays measured: lenient parsing DOES mint a Drifting verdict from it.
+        assert_eq!(
+            parse_judge_reply(r2_shape).verdict,
+            Verdict::Drifting,
+            "the parser still launders error text, so the gate must run BEFORE it"
+        );
+        assert_eq!(
+            supervision_reply("LOOPING|HIGH|the schema is written|write app/main.py"),
+            Ok("LOOPING|HIGH|the schema is written|write app/main.py"),
+        );
+        assert_eq!(
+            supervision_reply("OK|HIGH|wrote store.py"),
+            Ok("OK|HIGH|wrote store.py")
+        );
+    }
+
     #[test]
     fn clip_tail_keeps_the_informative_end() {
         assert_eq!(clip_tail("short output", 400), "short output");
@@ -14258,6 +14289,21 @@ fn said_kind_of(last_text: &str) -> &'static str {
     }
 }
 
+/// A-2: a supervision call's reply, with the transport-failure disguise removed. The agent loop
+/// surfaces a provider failure as its own error-closer TEXT (agent.rs:2678 "Ran into this error:
+/// {provider_err}…"), so `run_agent` returns `Ok` and the caller reads an HTTP 400 body as a model
+/// reply. Every judge/review parser is deliberately LENIENT, which is exactly what makes it launder
+/// that text: r2's parse read gabee's 400 "Invalid model identifier" as substantive-and-not-OK and
+/// emitted 28 `drifting` verdicts whose hint WAS the error body, from 22:02:35Z until the run ended.
+/// `Err` here is the whole error text (tail-clipped), for the caller's failed event.
+fn supervision_reply(text: &str) -> Result<&str, String> {
+    if said_kind_of(text) == "error" {
+        Err(clip_tail(text, 400))
+    } else {
+        Ok(text)
+    }
+}
+
 /// Provenance of the SAID text: WHICH attempt produced `last_text`, WHEN it was dispatched and when
 /// the answer channel last advanced, and what any PRIOR attempt on this lane key left behind.
 /// Instrumentation only — nothing engine-side reads these fields back (the judge's digest reader is
@@ -17228,6 +17274,19 @@ impl GooseAgentDispatcher {
                         }
                     }
                 };
+                // A-2: the agent loop surfaces a provider failure as its own error-closer TEXT
+                // (agent.rs:2678), so a dead judge model arrives here as Ok. r2 measured the cost of
+                // parsing that text: 28 of 61 verdicts were `drifting` conf 0.5 with gabee's 400
+                // "Invalid model identifier" as the hint — a transport fault steering model work.
+                // Reclassified BEFORE the Ok arm so it takes the failed-look path below instead.
+                let probe = probe.and_then(|o| {
+                    if said_kind_of(&o.text) == "error" {
+                        Err(anyhow!("judge provider error: {}", clip_tail(&o.text, 400)))
+                    } else {
+                        Ok(o)
+                    }
+                });
+                let probe_err = probe.as_ref().err().map(|e| clip_tail(&e.to_string(), 400));
                 if let Ok(o) = probe {
                     // CORROBORATION, not a single verdict. MEASURED across four fires — 1,200 / 1,201 /
                     // 3,759 / 4,003 reasoning chars — the judge returns LOOPING on its FIRST look almost
@@ -17851,6 +17910,10 @@ impl GooseAgentDispatcher {
                         "event": "judge_look_failed",
                         "task_id": activity_key,
                         "look": omni_looks,
+                        // A-2: the actual failure, so a dead judge model is diagnosable from the
+                        // log — r2's gabee 400s were only recoverable from the verdict hints they
+                        // had been laundered into.
+                        "error": probe_err,
                         "detail": "the judge model call failed; repeat evidence cleared so the trigger \
                                    does not re-fire on every stream event",
                     }));
@@ -25308,6 +25371,14 @@ where
     let (patch, findings) = match review(user_prompt.to_string(), plan_json.clone()).await {
         Ok(v) => v,
         Err(e) => {
+            // A-2: proceeding on the plan as-is is right (one round, no retry ladder), but the
+            // failure lands in the run log — stderr-only meant a run whose single REVIEW round
+            // died in transport was indistinguishable from one that reviewed and found nothing.
+            sink.write_value(serde_json::json!({
+                "event": "review_failed",
+                "round": 1,
+                "error": e.to_string().chars().take(400).collect::<String>(),
+            }));
             eprintln!("  · review did not return ({e}); proceeding on the plan as-is");
             return plan_json;
         }
@@ -26638,7 +26709,7 @@ mod judge_tree_block_tests {
 
 #[async_trait]
 impl Judge for GooseAgentDispatcher {
-    async fn judge(&self, req: JudgeRequest) -> JudgeOutcome {
+    async fn judge(&self, req: JudgeRequest) -> Result<JudgeOutcome, String> {
         // M3: split-enable is OFF in the default; GOOSE_SWARM_SPLIT=1 turns task-splitting on at runtime
         // so it can be proven live (M4) without a recompile, mirroring the judge/pre-review env gates.
         let cfg = JudgeConfig {
@@ -26785,7 +26856,7 @@ impl Judge for GooseAgentDispatcher {
         }));
         // Phase 1: cheap, unambiguous signals (won't-compile, no-output-while-old) act without a model.
         if let Some(out) = deterministic_verdict(&input, &cfg) {
-            return out;
+            return Ok(out);
         }
         // No idle device was free for the model review (fleet saturated — weight-1 with every node busy).
         // The cheap deterministic checks above already ran without a model; skip the LLM review rather than
@@ -26804,7 +26875,7 @@ impl Judge for GooseAgentDispatcher {
             // semantic review is not being declined — it is UNREACHABLE. High utilisation and semantic
             // judging are in direct tension, and nothing in the log said so.
             me_events_skip(&self.events, &req.task_id, "no_idle_device");
-            return JudgeOutcome::ok();
+            return Ok(JudgeOutcome::ok());
         }
         // M3 (gated by split_enabled): a too-big PRODUCING task — ask this idle node to PARTITION its files
         // into independent children instead of letting it crawl. The scheduler RE-VALIDATES the partition
@@ -26812,7 +26883,7 @@ impl Judge for GooseAgentDispatcher {
         // normal semantic review and the worker keeps running.
         if is_split_candidate(&input, &cfg) {
             if let Some(children) = self.propose_split(&req).await {
-                return JudgeOutcome::split(children);
+                return Ok(JudgeOutcome::split(children));
             }
         }
         // Phase 2: SEMANTIC review on the idle node. Reached only after the deterministic checks pass —
@@ -26841,7 +26912,7 @@ impl Judge for GooseAgentDispatcher {
         // reasoning while writing nothing and calling nothing is exactly what a supervisor is for.
         if input.file_contents.is_empty() && acts < 4 && thinking == 0 {
             me_events_skip(&self.events, &req.task_id, "nothing_produced_yet");
-            return JudgeOutcome::ok(); // genuinely nothing produced yet
+            return Ok(JudgeOutcome::ok()); // genuinely nothing produced yet
         }
         let files_block = if input.file_contents.is_empty() {
             "(no file written yet)".to_string()
@@ -27025,7 +27096,7 @@ impl Judge for GooseAgentDispatcher {
         if let Ok(seen) = self.judge_seen.lock() {
             if seen.get(&seen_key) == Some(&review_fp) {
                 me_events_skip(&self.events, &req.task_id, "unchanged_since_last_review");
-                return JudgeOutcome::ok();
+                return Ok(JudgeOutcome::ok());
             }
         }
         match self
@@ -27049,8 +27120,13 @@ impl Judge for GooseAgentDispatcher {
                     "filler": true,
                 }));
                 me_events_skip(&self.events, &req.task_id, "judge_turn_budget_exhausted");
-                JudgeOutcome::ok()
+                Ok(JudgeOutcome::ok())
             }
+            // A-2: the agent loop hands a provider failure back as TEXT, so this arm — not the Err
+            // arm below — is where r2's dead judge model arrived. It is a failed LOOK: no verdict,
+            // no fingerprint (this state was never judged, same rule as the filler above), no
+            // semantic_reviews row claiming a review happened.
+            Ok(o) if said_kind_of(&o.text) == "error" => Err(clip_tail(&o.text, 400)),
             Ok(o) => {
                 if let Ok(mut seen) = self.judge_seen.lock() {
                     seen.insert(seen_key, review_fp);
@@ -27081,9 +27157,12 @@ impl Judge for GooseAgentDispatcher {
                     "elapsed_secs": req.elapsed_secs,
                     "reply": o.text.replace('\n', " ").chars().take(400).collect::<String>(),
                 }));
-                parse_judge_reply(&o.text)
+                Ok(parse_judge_reply(&o.text))
             }
-            _ => JudgeOutcome::ok(),
+            // A-2: a transport Err from the judge's own call is a failed look, never a clean OK —
+            // the old `_ => JudgeOutcome::ok()` wrote `judge_verdict ok / confidence 1.0` rows for
+            // looks that never happened, indistinguishable from a real pass.
+            Err(e) => Err(clip_tail(&e.to_string(), 400)),
         }
     }
 }
@@ -27148,11 +27227,11 @@ impl PreReviewer for GooseAgentDispatcher {
             .remove(&q_path.to_string_lossy().to_string());
     }
 
-    async fn pre_review(&self, req: PreReviewRequest) -> PreReviewOutput {
-        let none = PreReviewOutput {
+    async fn pre_review(&self, req: PreReviewRequest) -> Result<PreReviewOutput, String> {
+        let none = Ok(PreReviewOutput {
             had_findings: false,
             summary: String::new(),
-        };
+        });
         let cwd = std::env::current_dir().unwrap_or_else(|_| self.working_dir.clone());
         let mut files_block = String::new();
         for f in &req.owned_files {
@@ -27266,12 +27345,15 @@ impl PreReviewer for GooseAgentDispatcher {
             desc = req.description,
             files = files_block,
         );
+        // A-2: a transport failure — the Err, or the agent loop's error-closer TEXT — is a review
+        // that never read the code. The old `.ok()…unwrap_or_default()` parsed it as `("OK", "")`,
+        // i.e. a clean clear, which is how r2 logged provider errors as no-finding reviews.
         let text = self
             .run_agent(&req.reviewer_model_id, system, user, None, 2, &[], None)
             .await
-            .ok()
-            .map(|o| o.text)
-            .unwrap_or_default();
+            .map_err(|e| clip_tail(&e.to_string(), 400))?
+            .text;
+        supervision_reply(&text)?;
         let (status, findings) = text.trim().split_once('|').unwrap_or(("OK", ""));
         let findings = findings.trim();
         let had_findings = status.to_uppercase().contains("ISSUE") && !findings.is_empty();
@@ -27301,10 +27383,10 @@ impl PreReviewer for GooseAgentDispatcher {
                     .to_string(),
             );
         }
-        PreReviewOutput {
+        Ok(PreReviewOutput {
             had_findings,
             summary: findings.chars().take(200).collect(),
-        }
+        })
     }
 
     async fn idle_dimension_review(&self, model_id: &str, goal: &str, dim_index: usize) {
@@ -27322,9 +27404,23 @@ impl PreReviewer for GooseAgentDispatcher {
             return;
         }
         let started = std::time::Instant::now();
-        let found = self
+        let found = match self
             .review_dimension(model_id, dim.id, dim.brief, goal, &files)
-            .await;
+            .await
+        {
+            Ok(f) => f,
+            Err(error) => {
+                // A-2: the review call died in transport. Named as a FAILURE — the old path fell
+                // through to `had_findings: false`, a claim about the code nobody made.
+                self.events.write_value(serde_json::json!({
+                    "event": "tail_review_failed",
+                    "dimension": dim.id,
+                    "secs": started.elapsed().as_secs(),
+                    "error": error,
+                }));
+                return;
+            }
+        };
         // ROUTE IT TO THE ONE CONSUMER THAT EXISTS. This reviewer is default-ON and saturates every
         // free node each scheduler tick — measured as the single largest class of model-seconds in a
         // run — and it pushed its findings into a Mutex with exactly two drains: one that logs the
@@ -34088,7 +34184,7 @@ impl TaskDispatcher for GooseAgentDispatcher {
         dim_brief: &str,
         goal: &str,
         files: &[String],
-    ) -> Option<String> {
+    ) -> Result<Option<String>, String> {
         // Mirrors pre_review's read-only shape: read the produced files as text, hand them to ONE model with
         // NO tools (&[] extensions => it physically cannot write), get back one advisory line. Because it is
         // read-only, N of these run concurrently over the same tree with no shadow + no write-race.
@@ -34104,7 +34200,7 @@ impl TaskDispatcher for GooseAgentDispatcher {
             }
         }
         if files_block.is_empty() {
-            return None; // nothing on disk to review
+            return Ok(None); // nothing on disk to review
         }
         let pillars_block = if goals_enabled() {
             self.pillars
@@ -34141,24 +34237,30 @@ impl TaskDispatcher for GooseAgentDispatcher {
         // No ceiling (II-7): the 240s idle-fill cut and the 900s planner budget it borrowed are
         // both gone — cost is not a reason to cut a model mid-thought; the fix for "dispatched
         // too eagerly" is to dispatch it less eagerly.
+        //
+        // A-2: a transport Err, or the agent loop's error-closer text, is a review that never read
+        // the code — it propagates as Err so the caller logs `tail_review_failed`, never the clean
+        // `had_findings: false` row r2 wrote for gabee's 400s.
         let text = self
             .run_agent(model_id, system, user, None, 2, &[], None)
             .await
-            .ok()
-            .map(|o| o.text)
-            .unwrap_or_default();
+            .map_err(|e| clip_tail(&e.to_string(), 400))?
+            .text;
+        supervision_reply(&text)?;
         // A weak reviewer that burns its 2 turns returns the agent-loop max-turns filler — never a real
         // finding of this dimension (the `|` parse already routes it to OK, but be explicit + robust).
         if is_agent_loop_filler(&text) {
-            return None;
+            return Ok(None);
         }
         let (status, findings) = text.trim().split_once('|').unwrap_or(("OK", ""));
         let findings = findings.trim();
-        if status.to_uppercase().contains("ISSUE") && !findings.is_empty() {
-            Some(format!("[{dim_id}] {findings}"))
-        } else {
-            None
-        }
+        Ok(
+            if status.to_uppercase().contains("ISSUE") && !findings.is_empty() {
+                Some(format!("[{dim_id}] {findings}"))
+            } else {
+                None
+            },
+        )
     }
 
     async fn verify_finding(
@@ -34219,12 +34321,30 @@ impl TaskDispatcher for GooseAgentDispatcher {
         let user = format!(
             "GOAL: {goal}\n\nFINDING TO VERIFY: {finding}\n\nFiles produced:\n{files_block}\nYour one-line verdict:"
         );
-        let text = self
+        // A-2: dropping the finding on a transport failure stays — fail-closed is this verifier's
+        // documented design (an unverified finding must never drive a fix) — but the drop is NAMED,
+        // because a refutation and a dead judge model are different facts and the log showed one.
+        let text = match self
             .run_agent(model_id, system, user, None, 2, &[], None)
             .await
-            .ok()
-            .map(|o| o.text)
-            .unwrap_or_default();
+            .map_err(|e| clip_tail(&e.to_string(), 400))
+            .and_then(|o| {
+                if said_kind_of(&o.text) == "error" {
+                    Err(clip_tail(&o.text, 400))
+                } else {
+                    Ok(o.text)
+                }
+            }) {
+            Ok(t) => t,
+            Err(error) => {
+                self.events.write_value(serde_json::json!({
+                    "event": "finding_verify_failed",
+                    "finding": finding.chars().take(200).collect::<String>(),
+                    "error": error,
+                }));
+                return false;
+            }
+        };
         let (verdict, confidence) = text.trim().split_once('|').unwrap_or(("REFUTE", "LOW"));
         verdict.to_uppercase().contains("CONFIRM") && confidence.to_uppercase().contains("HIGH")
     }

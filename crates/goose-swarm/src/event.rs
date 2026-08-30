@@ -122,6 +122,16 @@ pub enum SwarmEvent {
         /// judge on exactly that reasoning, when a deterministic 420 s branch had emitted it).
         deterministic: bool,
     },
+    /// A-2: the judge's LOOK failed in transport — its own model call died (provider error, dead node,
+    /// invalid model id) — so there is NOTHING to apply and nothing was learned about the worker. The
+    /// same name the in-call omni judge already uses for the same state, so one grep finds both. This
+    /// exists because the infallible path laundered the failure: r2 emitted 28 `drifting` verdicts
+    /// whose hint was gabee's 400 body, and the run's final read was a transport error dressed as a
+    /// diagnosis.
+    JudgeLookFailed {
+        task_id: String,
+        error: String,
+    },
     /// An idle node ran a correctness PRE-REVIEW of a completed task on a spare device (concurrently with
     /// the judge). Makes idle-node utilization observable in the jsonl; `had_findings` = a defect was found
     /// (persisted to `.swarm/prereview/<task>.json` for integrate-verify).
@@ -134,6 +144,14 @@ pub enum SwarmEvent {
         /// fired only on completion with no start and no duration — so the one idle-node mechanism
         /// that can block a real dispatch for a quarter of an hour was the one nobody could measure.
         /// Its slot-time had to be ESTIMATED from same-device inter-arrival gaps, which is a guess.
+        secs: f64,
+    },
+    /// A-2: the pre-review call itself failed in transport. Distinct from `PreReview` with no findings,
+    /// which is a REVIEW that read the code and cleared it — r2 logged provider errors as exactly that.
+    PreReviewFailed {
+        task_id: String,
+        device: String,
+        error: String,
         secs: f64,
     },
     /// A device was ADMITTED to a run already in progress — a fleet node that came back after the

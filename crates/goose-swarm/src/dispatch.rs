@@ -165,7 +165,8 @@ pub trait TaskDispatcher: Send + Sync {
     /// READ-ONLY correctness review of the produced `files` along ONE dimension, on a spare fleet model.
     /// The model is given the files as text with NO tools (it physically cannot write), so N of these run
     /// concurrently over one tree with no write-race. Returns advisory findings text, or None when clean /
-    /// nothing to review. Default None so the mock and the fanout-OFF path are unchanged.
+    /// nothing to review. `Err(error)` = the review call itself failed in transport (A-2): the caller logs
+    /// a failure, never a clean no-finding review. Default Ok(None) so mocks are unchanged.
     async fn review_dimension(
         &self,
         _model_id: &str,
@@ -173,8 +174,8 @@ pub trait TaskDispatcher: Send + Sync {
         _dim_brief: &str,
         _goal: &str,
         _files: &[String],
-    ) -> Option<String> {
-        None
+    ) -> Result<Option<String>, String> {
+        Ok(None)
     }
 
     /// ADVERSARIAL VERIFY (the three-vote core): hand ONE review finding to a skeptic model — a DIFFERENT

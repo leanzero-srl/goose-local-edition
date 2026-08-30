@@ -422,9 +422,16 @@ pub struct JudgeRequest {
 /// Inspects one in-flight worker and returns a verdict. Implemented in goose-cli by gathering evidence
 /// (see [`JudgeInput`] / [`deterministic_verdict`]) and running an LLM on the idle device for semantic
 /// review. The model-agnostic scheduler only calls this and acts on the [`JudgeOutcome`].
+///
+/// `Err(error)` means the LOOK ITSELF FAILED — the judge's own model call died in transport (provider
+/// error, dead node, invalid model). The scheduler emits `judge_look_failed` and applies NOTHING: no
+/// verdict event, no fingerprint, no intervention. The infallible signature was how r2's judge died in
+/// all but name — from 22:02:35Z every look returned gabee's 400 "Invalid model identifier" as TEXT,
+/// and the parse laundered it into 28 `drifting` verdicts whose hint was the error body. An error the
+/// judge's transport produced is a fact about the FLEET, never a diagnosis of the worker.
 #[async_trait]
 pub trait Judge: Send + Sync {
-    async fn judge(&self, req: JudgeRequest) -> JudgeOutcome;
+    async fn judge(&self, req: JudgeRequest) -> Result<JudgeOutcome, String>;
 }
 
 /// What the scheduler hands an idle-node PRE-REVIEWER (M5): a COMPLETED task to correctness-check while a
@@ -451,7 +458,10 @@ pub struct PreReviewOutput {
 /// the REAL feature — and records findings for integrate-verify. Opt-in like the judge (off by default).
 #[async_trait]
 pub trait PreReviewer: Send + Sync {
-    async fn pre_review(&self, req: PreReviewRequest) -> PreReviewOutput;
+    /// `Err(error)` = the review call itself failed in transport. Same rule as [`Judge::judge`]: the
+    /// scheduler emits `pre_review_failed` and records NO review — r2's tail reviews logged provider
+    /// errors as clean `had_findings: false` rows, which is a claim about the code nobody made.
+    async fn pre_review(&self, req: PreReviewRequest) -> Result<PreReviewOutput, String>;
 
     /// SINK IDLE-FILL (GOOSE_SWARM_SINK_REVIEW): while the integrate-verify SINK runs SOLO and pre-review is
     /// exhausted, an otherwise-idle node runs a READ-ONLY whole-tree correctness review along ONE dimension
