@@ -25304,6 +25304,25 @@ fn splice_briefs(
                 t["description"] = serde_json::Value::from(plan_sink_description(spec, lang));
             }
         }
+        // THE APPEND MUST SURVIVE THE REPAIR IT PRECEDES. This hardcoded `"files": []`, and
+        // `repair_owning_nothing` (rule (a), run on this very plan by `finalize_plan_before_dag`)
+        // removes any non-sink task owning nothing — so the task appended to save an unclaimed
+        // slice was deleted a phase later, every time, and the researched brief was thrown away
+        // anyway. The appended task owns what its slice's OWNER declared (`SliceBrief.files`),
+        // minus any path an existing task already claims — first claimant wins, the same rule
+        // `repair_shared_files` applies. A brief whose declared files are all claimed, or that
+        // declared none, still appends with [] and still meets the owns-nothing repair: nothing
+        // was left to own, and the repair's action line states the removal.
+        let mut claimed_paths: std::collections::HashSet<String> = tasks
+            .iter()
+            .flat_map(|t| {
+                t.get("files")
+                    .and_then(|f| f.as_array())
+                    .into_iter()
+                    .flatten()
+            })
+            .filter_map(|f| f.as_str().map(String::from))
+            .collect();
         for b in briefs {
             if claimed.contains(&b.id) {
                 continue;
@@ -25311,11 +25330,18 @@ fn splice_briefs(
             if b.id == goose_swarm::SINK_ID {
                 continue;
             }
+            let files: Vec<String> = b
+                .files
+                .iter()
+                .filter(|p| !claimed_paths.contains(p.as_str()))
+                .cloned()
+                .collect();
+            claimed_paths.extend(files.iter().cloned());
             tasks.push(serde_json::json!({
                 "id": b.id,
                 "slice": b.id,
                 "difficulty": "easy",
-                "files": [],
+                "files": files,
                 "depends_on": [],
                 "description": b.brief,
             }));
@@ -45033,6 +45059,66 @@ mod audit_regressions {
         assert!(
             d["tasks_owning_nothing"].as_array().unwrap().is_empty(),
             "the whole point: the fallback plan is no longer a plan of tasks that own nothing"
+        );
+    }
+
+    /// The unclaimed-brief append hardcoded `"files": []`, so `repair_owning_nothing` — which runs
+    /// on this very plan in `finalize_plan_before_dag` — removed exactly the task the append existed
+    /// to save: paid-for planning thrown away, silently, every time an unclaimed brief appended.
+    /// The appended task now owns its slice's own declarations minus what an existing task already
+    /// claims (first claimant wins, `repair_shared_files`' rule); a declaration-free brief still
+    /// appends honestly empty and the repair removes it with an action line saying so.
+    #[test]
+    fn an_unclaimed_brief_appends_owning_its_unclaimed_declarations_and_survives_the_repair() {
+        let mut plan = serde_json::json!({"subtasks": [
+            {"id": "web", "files": ["web/app.js"], "depends_on": [], "description": "old"},
+            {"id": "integrate-verify", "files": [], "depends_on": ["web"], "description": ""},
+        ]});
+        let spec = "Build a store. Run it as `python3 -m app serve`.";
+        splice_briefs(
+            &mut plan,
+            &[
+                brief("web", &["web/app.js"]),
+                brief("xsvc", &["app/x/impl.py", "web/app.js"]),
+                brief("ghost", &[]),
+            ],
+            TargetLang::Python,
+            spec,
+        );
+        let files = |plan: &serde_json::Value, id: &str| -> Option<Vec<String>> {
+            plan["subtasks"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|t| t["id"] == id)
+                .map(|t| {
+                    t["files"]
+                        .as_array()
+                        .unwrap()
+                        .iter()
+                        .map(|f| f.as_str().unwrap().to_string())
+                        .collect()
+                })
+        };
+        assert_eq!(
+            files(&plan, "xsvc").unwrap(),
+            vec!["app/x/impl.py".to_string()],
+            "the append owns the slice's declarations minus paths an existing task already claims"
+        );
+        assert_eq!(files(&plan, "ghost").unwrap(), Vec::<String>::new());
+        let r = repair_plan_flags(&mut plan, spec);
+        assert!(
+            files(&plan, "xsvc").is_some(),
+            "a file-owning append survives the owns-nothing repair"
+        );
+        assert!(
+            files(&plan, "ghost").is_none(),
+            "a declaration-free append is honestly removed by rule (a)"
+        );
+        assert!(
+            r.actions.iter().any(|a| a.contains("removed `ghost`")),
+            "{:?}",
+            r.actions
         );
     }
 
