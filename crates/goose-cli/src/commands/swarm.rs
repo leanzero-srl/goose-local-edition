@@ -32,8 +32,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use super::swarm_engine::{
-    all_resident_unservable_per_engine, default_engine, drop_unservable_devices_per_engine,
-    require_servable, served_by_engine, EngineKind, Engines,
+    all_resident_unservable_per_engine, default_engine, device_engine_kind,
+    drop_unservable_devices_per_engine, engines_for_run, merge_sidecar_devices, require_servable,
+    served_by_engine, EngineKind, Engines, LmsProcess,
 };
 mod judge_context;
 use judge_context::{is_intentional_empty_marker, judge_delivery_block, verify_owned_files};
@@ -2839,59 +2840,8 @@ pub(super) fn all_resident_unservable(
     }
 }
 
-// ---------------------------------------------------------------------------------------------
-// Fleet import — parse `lms ps` and add every loaded model (one per machine, or several) to the pool
-// ---------------------------------------------------------------------------------------------
-
-#[derive(Clone, Debug, PartialEq)]
-pub struct LmsProcess {
-    pub(super) identifier: String,
-    pub(super) status: String,
-    pub(super) device: Option<String>,
-    /// LM Studio's PARALLEL column — how many requests this model instance serves at once. The swarm
-    /// uses it as the device weight so dispatch concurrency tracks the user's LM Studio concurrency.
-    pub(super) parallel: Option<u32>,
-}
-
-/// Parse `lms ps` output (a plain whitespace-aligned table). Splits data rows on runs of >=2 spaces
-/// (so "29.53 GB" stays one field) and reads DEVICE by its header column index. Errs if no header.
-pub(super) fn parse_lms_ps(raw: &str) -> Result<Vec<LmsProcess>> {
-    let ansi = regex::Regex::new(r"\x1b\[[0-9;]*m").unwrap();
-    let gap = regex::Regex::new(r"\s{2,}").unwrap();
-    let clean = ansi.replace_all(raw, "");
-    let lines: Vec<&str> = clean.lines().collect();
-    let header = lines
-        .iter()
-        .position(|l| l.contains("IDENTIFIER") && l.contains("DEVICE"))
-        .ok_or_else(|| anyhow!("lms ps: header (IDENTIFIER/DEVICE) not found"))?;
-    let cols: Vec<&str> = lines[header].split_whitespace().collect();
-    let device_idx = cols.iter().position(|c| *c == "DEVICE").unwrap_or(6);
-    let status_idx = cols.iter().position(|c| *c == "STATUS").unwrap_or(2);
-    let parallel_idx = cols.iter().position(|c| *c == "PARALLEL");
-    let mut out = Vec::new();
-    for line in &lines[header + 1..] {
-        if line.trim().is_empty() {
-            continue;
-        }
-        let f: Vec<String> = gap
-            .split(line.trim())
-            .map(|s| s.trim().to_string())
-            .filter(|s| !s.is_empty())
-            .collect();
-        if f.is_empty() {
-            continue;
-        }
-        out.push(LmsProcess {
-            identifier: f[0].clone(),
-            status: f.get(status_idx).cloned().unwrap_or_default(),
-            device: f.get(device_idx).cloned().filter(|s| !s.is_empty()),
-            parallel: parallel_idx
-                .and_then(|i| f.get(i))
-                .and_then(|s| s.parse::<u32>().ok()),
-        });
-    }
-    Ok(out)
-}
+// Fleet import — add every loaded model to the pool. The `lms ps` parser and the LmsProcess row
+// type live in swarm_engine.rs with the probes that produce them.
 
 fn short_model(identifier: &str) -> String {
     identifier
@@ -4026,6 +3976,7 @@ mod tests {
         forming_preview, forming_tmp, FORMING_PREVIEW_MAX, FORMING_TAIL_KEEP,
     };
     use super::*;
+    use crate::commands::swarm_engine::parse_lms_ps;
 
     /// A-1's amendment (c) fixture: a shell child that daemonizes to PPID 1 — `sh -c '( sleep & )'`
     /// spawned as its OWN group leader, exactly what the shell tool now produces. The direct sh
@@ -13901,18 +13852,21 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
                 status: "IDLE".into(),
                 device: Some("Mac.lan".into()),
                 parallel: None,
+                loaded_context_length: None,
             },
             LmsProcess {
                 identifier: "dup-model".into(),
                 status: "IDLE".into(),
                 device: Some("Mac.lan".into()),
                 parallel: None,
+                loaded_context_length: None,
             },
             LmsProcess {
                 identifier: "dup-model".into(),
                 status: "IDLE".into(),
                 device: Some("Local".into()),
                 parallel: None,
+                loaded_context_length: None,
             },
         ];
         let s = import_processes(&mut cfg, &procs, 1, true);
@@ -15246,8 +15200,11 @@ pub struct GooseAgentDispatcher {
     /// Whether the swarm may `lms load` a model (gates the transient re-warm on dispatch errors).
     allow_model_load: bool,
     /// The engine registry the re-warm and the live-fleet residency probe go through (LM Studio
-    /// plus registered sidecars; only LM Studio today).
+    /// plus registered sidecars).
     engines: Arc<Engines>,
+    /// model_id → engine KIND for pool devices on a registered non-default engine; see the
+    /// DispatcherRecipe field of the same name.
+    engine_models: std::collections::HashMap<String, EngineKind>,
     /// Imposed sampling parameters applied to every model call (steadies weak local models).
     sampling: SamplingParams,
     /// APP PILLARS (GOOSE_SWARM_GOALS): a small set of distilled, app-level acceptance criteria (the
@@ -15387,19 +15344,31 @@ impl GooseAgentDispatcher {
         std::mem::take(&mut *self.sink_review_findings.lock().unwrap())
     }
 
-    /// Provider NAME serving this model id ("lmstudio" unless the pool declared it cloud).
+    /// Provider NAME serving this model id ("lmstudio" unless the pool declared it cloud or put
+    /// it on another registered local engine, e.g. "omlx" for an mlx-sidecar device).
     fn provider_name(&self, model_id: &str) -> &str {
-        self.cloud_models
+        if let Some(p) = self.cloud_models.get(model_id) {
+            return p;
+        }
+        self.engine_models
             .get(model_id)
-            .map(String::as_str)
+            .and_then(|k| self.engines.provider_name_for_kind(*k))
             .unwrap_or("lmstudio")
     }
 
-    /// Provider INSTANCE for this model id: the shared lmstudio provider for local models, a
-    /// lazily-created cached one per cloud provider name otherwise.
+    /// Provider INSTANCE for this model id: the shared lmstudio provider for default-engine local
+    /// models, a lazily-created cached one per provider name otherwise (cloud names and the
+    /// engine-kind names share the same cache — both pass through cloud_registry_name, which is
+    /// identity for "omlx").
     async fn provider_for(&self, model_id: &str) -> Result<Arc<dyn Provider>> {
-        let Some(pname) = self.cloud_models.get(model_id) else {
-            return Ok(self.provider.clone());
+        let engine_pname = self
+            .engine_models
+            .get(model_id)
+            .and_then(|k| self.engines.provider_name_for_kind(*k));
+        let pname: &str = match (self.cloud_models.get(model_id), engine_pname) {
+            (Some(p), _) => p,
+            (None, Some(p)) => p,
+            (None, None) => return Ok(self.provider.clone()),
         };
         let registry = cloud_registry_name(pname);
         let mut cache = self.cloud_providers.lock().await;
@@ -15409,7 +15378,7 @@ impl GooseAgentDispatcher {
         let p = goose::providers::create(registry, vec![])
             .await
             .map_err(|e| {
-                anyhow!("creating the '{registry}' provider for cloud node model '{model_id}': {e}")
+                anyhow!("creating the '{registry}' provider for node model '{model_id}': {e}")
             })?;
         cache.insert(registry.to_string(), p.clone());
         Ok(p)
@@ -15429,6 +15398,7 @@ impl GooseAgentDispatcher {
         stream_decode_retry: bool,
         repeat_break: bool,
         engines: Arc<Engines>,
+        engine_models: std::collections::HashMap<String, EngineKind>,
     ) -> Result<Self> {
         let provider = goose::providers::create("lmstudio", vec![]).await?;
         let session_root = std::env::temp_dir().join("goose-swarm-sessions");
@@ -15451,6 +15421,7 @@ impl GooseAgentDispatcher {
             planner_model,
             allow_model_load,
             engines,
+            engine_models,
             sampling,
             pillars: std::sync::OnceLock::new(),
             sink_tree_files: std::sync::OnceLock::new(),
@@ -22937,13 +22908,20 @@ async fn smoke_rust(root: &Path) -> SmokeResult {
 /// trustworthy of the two inputs.
 fn live_fleet_slots(devices: &[DeviceCfg], engines: &Engines) -> Vec<String> {
     let snapshot = fleet_slot_models(devices);
-    // DeviceCfg carries no engine tag (a goose-swarm type), so residency here is the LM Studio
-    // probe with the cloud skip below — per-engine liveness for sidecar devices is step C.
+    // DeviceCfg carries no engine tag (a goose-swarm type), so residency is the UNION of what
+    // each registered engine reports: the LM Studio probe (primary, its failure still falls back
+    // to the snapshot) plus the sidecar's live catalog — `lms ps` cannot see a rapid-mlx server,
+    // and without the union a healthy sidecar node would be filtered out of every fan.
     let Ok(procs) = engines.lmstudio().resident_processes() else {
         return snapshot;
     };
-    let resident: std::collections::HashSet<String> =
+    let mut resident: std::collections::HashSet<String> =
         procs.iter().map(|p| p.identifier.clone()).collect();
+    if let Some(sidecar) = engines.for_kind(EngineKind::MlxSidecar) {
+        if let Ok(p) = sidecar.resident_processes() {
+            resident.extend(p.into_iter().map(|p| p.identifier));
+        }
+    }
     if resident.is_empty() {
         return snapshot;
     }
@@ -31192,9 +31170,13 @@ struct DispatcherRecipe {
     sampling: SamplingParams,
     stream_decode_retry: bool,
     repeat_break: bool,
-    /// The engine registry (LM Studio + registered sidecars; only LM Studio today) — carried like
-    /// every other constructor arg so a fix-round dispatcher rebuild shares the same registry.
+    /// The engine registry (LM Studio + registered sidecars) — carried like every other
+    /// constructor arg so a fix-round dispatcher rebuild shares the same registry.
     engines: Arc<Engines>,
+    /// model_id → engine KIND for pool devices on a REGISTERED non-default engine (mlx-sidecar).
+    /// provider_name/provider_for consult it after cloud_models, and the transient re-warm routes
+    /// ensure_loaded through it. Empty on an all-LM-Studio pool — every path byte-identical.
+    engine_models: std::collections::HashMap<String, EngineKind>,
 }
 
 async fn build_swarm_dispatcher(
@@ -31215,6 +31197,7 @@ async fn build_swarm_dispatcher(
             r.stream_decode_retry,
             r.repeat_break,
             r.engines,
+            r.engine_models,
         )
         .await?,
     ))
@@ -35252,9 +35235,17 @@ impl GooseAgentDispatcher {
                         && !self.cloud_models.contains_key(&req.model_id)
                         && (s.contains("Model is unloaded") || s.contains("connection"))
                     {
-                        // Local non-cloud models are LM Studio's today; a per-device engine route
-                        // needs the device (not just model_id) here — step C.
-                        self.engines.lmstudio().ensure_loaded(&req.model_id, 1);
+                        // Route the re-warm through the model's OWN engine — `lms load` on an
+                        // mlx-sidecar model would warm the wrong runtime. Absent from
+                        // engine_models = the default LM Studio engine, definitionally.
+                        let kind = self
+                            .engine_models
+                            .get(&req.model_id)
+                            .copied()
+                            .unwrap_or(EngineKind::LmStudio);
+                        if let Some(engine) = self.engines.for_kind(kind) {
+                            engine.ensure_loaded(&req.model_id, 1);
+                        }
                     }
                     Err(DispatchError::Transient(s))
                 } else {
@@ -36583,14 +36574,15 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
     // on PATH — e.g. a Finder-launched desktop app) targets the CONFIGURED endpoint, not just the default.
     std::env::set_var("LMSTUDIO_HOST", &cfg.endpoint);
     suppress_inherited_hints();
-    // The engine registry: LM Studio globally (fronting the whole LM Link pool) plus zero-or-more
-    // sidecar engines — none registered today. Threaded through the run pipeline (servable probes,
-    // pre-warm, dispatcher re-warm) exactly where the single step-A engine object was.
-    let engines = Arc::new(Engines::new());
+    // The engine registry: LM Studio globally, plus the MLX sidecar iff config + pool demand it
+    // (see engines_for_run — an untagged pool is byte-identical). Threaded through the run
+    // pipeline (servable probes, pre-warm, re-warm/provider seam) as the one engine seam.
+    let engines = Arc::new(engines_for_run(&cfg.devices));
     // Auto-use what's loaded: the worker pool is derived from the models RESIDENT on the fleet
     // (`lms ps`), so the swarm runs on what's actually loaded — never spinning up the (possibly
     // stale) configured models over them. The configured pool is only a fallback for an empty fleet.
-    let (fleet_pool, fleet_planner) = reconcile_pool_with_fleet(&cfg, &engines);
+    let (mut fleet_pool, fleet_planner) = reconcile_pool_with_fleet(&cfg, &engines);
+    merge_sidecar_devices(&mut fleet_pool, &cfg.devices);
     // A model can be RESIDENT (`lms ps`) and yet UNSERVABLE (`/v1/models`), and the pool above is built from
     // the resident list. Intersect them before anything is dispatched — PER ENGINE: each device is judged
     // only against its own engine's catalog, so a dead sidecar can never condemn LM Studio devices or vice
@@ -37225,6 +37217,14 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
         stream_decode_retry: stream_decode_retry_enabled(cfg.stream_decode_retry),
         repeat_break: repeat_break_enabled(cfg.repeat_break),
         engines: engines.clone(),
+        engine_models: enabled
+            .iter()
+            .filter(|d| {
+                let kind = device_engine_kind(d);
+                kind != EngineKind::LmStudio && engines.for_kind(kind).is_some()
+            })
+            .map(|d| (d.model_id.clone(), device_engine_kind(d)))
+            .collect(),
     };
     let dispatcher = build_swarm_dispatcher(dispatcher_recipe.clone(), sink.clone()).await?;
 
