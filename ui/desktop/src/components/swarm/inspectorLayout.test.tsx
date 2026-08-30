@@ -53,6 +53,15 @@ describe('node inspector layout', () => {
     expect(SRC).not.toContain('Nothing emitted yet — reasoning, but no tool call and no text.');
   });
 
+  // Half the fix was the grid; the other half is the pane itself. With nothing to show, the Work pane
+  // still rendered STACKED under Thinking in the single column — a dead box captioned "Still thinking"
+  // spending the reasoning's vertical estate. It now renders only when it has work, when the full
+  // durable log is open (showingFullWork), or when a durable `<task>.log` has bytes to offer
+  // (workShowAll — the durable channel outranks the live tail, which can legitimately squeeze empty).
+  it('does not render the empty Work pane at all when there is no work to show', () => {
+    expect(SRC).toContain('{(hasWork || showingFullWork || workShowAll) && (');
+  });
+
   it('the supervisor badge no longer claims the lane is frozen', () => {
     expect(SRC).toContain("{'being reviewed'}");
     expect(SRC).not.toMatch(/buffers the worker's stream instead of processing it, so the counters below are genuinely\s*\n\s*\* *frozen/);

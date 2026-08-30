@@ -185,10 +185,17 @@ describe('the WORK pane while a call forms', () => {
     expect(dialog.querySelector('[data-testid="forming-preview"]')).toBeNull();
   });
 
-  it('no sidecar, no forming row — the placeholder states the thinking-only truth', async () => {
+  it('no sidecar, no forming row — and no Work pane at all: output earns its column', async () => {
     mockRun(digest(undefined));
     const { dialog } = await openInspector();
     expect(dialog.querySelector('[data-testid="forming-row"]')).toBeNull();
-    expect(dialog.textContent).toContain('Still thinking');
+    // The empty pane used to render stacked with the "Still thinking" placeholder. It renders
+    // NOTHING now — the Thinking pane gets the whole modal until the first call/narration byte.
+    expect(dialog.textContent).not.toContain('Still thinking');
+    const paneTitles = Array.from(
+      dialog.querySelectorAll('span.font-mono.uppercase')
+    ).map((el) => el.textContent);
+    expect(paneTitles).toContain('Thinking');
+    expect(paneTitles).not.toContain('Work');
   });
 });
