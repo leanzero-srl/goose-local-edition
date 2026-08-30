@@ -78,11 +78,24 @@ and lever_check.py consume it; the ask event's twin field was confirmed dead 0/0
    (:15650/:17648/:18782) -> one shared const.
 3. forming_write_failed lost on dispatch abort (event written only after the scoped future
    completes) — decide: acceptable-on-a-dying-call (document) or move the emission into the guard.
+4b. fanout_over_fleet drops a panicked lane handle silently (if let Ok(r) = h.await) — a research
+   or review lane that panics VANISHES with no row and no event (gate-1 class, surgeon #6's find,
+   shared with the review fan): emit a loud per-lane event (lane_panicked{key}) and fold an
+   unanswered/failed row instead of nothing.
 4. Forming test coverage: the open-frame and late-opening ArgsDelta arms are traversed by zero
    tests (dead under LM Studio's measured shapes but live for id+name+args-in-one-delta providers)
    — add one fixture each.
 
 ## Grading log (newest first — one line per delegation; move closed items to the per-agent notes)
+- 2026-08-30 swarm-surgeon #6 (research fan v2, 81cd50d38): PROVISIONAL CLEAN, delivery pending
+  the prover pass (the checking law) — all 8 amendments accounted for with anchors; hit the
+  fallback ratchet with 2 new unwrap_or_defaults and removed them STRUCTURALLY rather than
+  bumping the baseline (the gate refusing exactly as designed); honest trace YES at r5's real
+  slices_opened (25 questions over 3 one-per-host lanes vs the unamended 6 stacked lanes pasting
+  54k each); quarantine scope stated honestly (tool-menu, not sandbox). Five unbriefed
+  observations incl. fanout_over_fleet silently dropping a panicked lane handle (gate-1 class,
+  shared with the review fan) — QUEUED for surgeon #7. Handed back the orchestrator items
+  (tick rows, phase map, NOW risk) — all done same turn.
 - 2026-08-30 bench-scorer #1 (unflatter asked_when_unsure, 2cf79d6d9 + loop-state e557940):
   CLEAN PASS — chose the primary by MEASURING the three candidates on r5 (open.json rolls,
   calls.jsonl truncates at 200, open.log carries the array whole), verified 0.6-vs-1.0 through
