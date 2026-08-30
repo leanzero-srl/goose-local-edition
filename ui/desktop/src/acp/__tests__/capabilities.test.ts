@@ -1,6 +1,6 @@
 import type { InitializeResponse } from '@agentclientprotocol/sdk';
 import { describe, expect, it } from 'vitest';
-import { hasLocalInferenceCapability } from '../capabilities';
+import { hasGooseCapability, hasLocalInferenceCapability } from '../capabilities';
 
 function initializeResponseWithMeta(meta?: unknown): Pick<InitializeResponse, 'agentCapabilities'> {
   return {
@@ -32,5 +32,13 @@ describe('ACP capabilities', () => {
   it('ignores malformed Goose metadata', () => {
     expect(hasLocalInferenceCapability(initializeResponseWithMeta({ goose: true }))).toBe(false);
     expect(hasLocalInferenceCapability(initializeResponseWithMeta({ goose: null }))).toBe(false);
+  });
+
+  it('detects the MLX engine capability from Goose metadata', () => {
+    expect(
+      hasGooseCapability(initializeResponseWithMeta({ goose: { mlxEngine: {} } }), 'mlxEngine')
+    ).toBe(true);
+    expect(hasGooseCapability(initializeResponseWithMeta({ goose: {} }), 'mlxEngine')).toBe(false);
+    expect(hasGooseCapability(initializeResponseWithMeta(), 'mlxEngine')).toBe(false);
   });
 });
