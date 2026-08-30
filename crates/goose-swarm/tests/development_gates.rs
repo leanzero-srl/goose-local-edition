@@ -222,3 +222,47 @@ fn campaign_skill_still_forbids_headless_launches() {
          benchmark run (open -n with CDP, then bench_dispatch). Restore the procedure."
     );
 }
+
+/// GATE 6 — THE ONE-DOOR GATE (Mihai 2026-08-30, minutes after the r4 kill: "add it to our gates
+/// to avoid in the future - make it a practice"). r4's replanner spliced five tasks into the live
+/// DAG past every plan repair; one re-created the module/package shadow the repair had just fixed,
+/// and the pinned sink shipped owning README.md. Every DAG entry walks through the same repairs:
+/// the scheduler's splice site must sanitize through `repair_replan_specs` before `splice_specs`,
+/// the sink-file strip must stay in the plan-repair chain, and both agentic docs must carry the
+/// gate so a compaction cannot lose it.
+#[test]
+fn every_dag_entry_walks_through_the_same_repairs() {
+    let sched = read("crates/goose-swarm/src/scheduler.rs");
+    // The invariant is POSITIONAL in the run loop: between receiving the replanner's answer and
+    // handing anything to `splice_specs`, the batch passes the repair. A `find()` on the whole
+    // file would be satisfied by the fn DEFINITION (which precedes everything) — the same weak
+    // pattern this morning's skill-gate controls caught — so the assertion reads only the window
+    // between the two anchors.
+    let answer_at = sched
+        .find(".replan(ctx).await")
+        .expect("the replanner call site exists");
+    let splice_at = sched[answer_at..]
+        .find(".splice_specs(")
+        .map(|i| answer_at + i)
+        .expect("the replan splice site exists after the replanner call");
+    assert!(
+        sched[answer_at..splice_at].contains("repair_replan_specs("),
+        "repair_replan_specs must stand between the replanner's answer and splice_specs — \
+         a batch that reaches the DAG unrepaired is the r4 shadow-reintroduction class"
+    );
+    let engine = read("crates/goose-cli/src/commands/swarm.rs");
+    assert!(
+        engine.contains("repair_sink_files(plan, &mut actions);"),
+        "repair_sink_files left the plan-repair chain — the join owning a file is the \
+         cascaded-Failed, app-never-binds-a-port class (r4 shipped it owning README.md)"
+    );
+    for (doc, needle) in [
+        ("AGENTS.md", "ONE-DOOR GATE"),
+        (".claude/rules/development-gates.md", "THE ONE-DOOR GATE"),
+    ] {
+        assert!(
+            read(doc).contains(needle),
+            "{doc} lost the ONE-DOOR gate — the practice Mihai ordered kept"
+        );
+    }
+}

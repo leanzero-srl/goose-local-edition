@@ -212,6 +212,20 @@ that can bound a model call is rejected on sight. WHY: the 600s read cut was man
 (r2 drop 1), and the 420s stopwatch was the real harm behind r8's measurement. HOW IT REFUSES: the
 NO CAPS invariant above, and the structure itself — there is no knob left to set.
 
+**6. THE ONE-DOOR GATE — every task enters the DAG through the same repairs, and the join owns
+nothing STRUCTURALLY.** r4 (2026-08-30) was killed at BUILD+7m: the dynamic replanner spliced five
+tasks straight into the live DAG past `finalize_plan_before_dag` — one re-created the exact
+module/package import shadow (`app/notifierd.py` vs the skeleton's `app/notifierd/`) the plan repair
+had fixed four minutes earlier, with a 500-char brief; and the pinned sink shipped owning `README.md`
+(the cascaded-Failed, app-never-binds-a-port class). A repair that guards only ONE door holds until
+the first other door opens. HOW IT REFUSES: `repair_replan_specs` (scheduler.rs) applies the same
+ownership rules to every replan batch BEFORE `splice_specs` and its actions ride the `Replanned`
+event; `repair_sink_files` strips the join's files to a real owner; the replanner is summoned only
+once something has COMPLETED (its own value theory is "harden the completed work"); and
+`development_gates.rs` refuses a splice site that reaches the DAG around the repair. Mihai,
+2026-08-30: "note this down in our agentic mechanism, or even better add it to our gates - make it a
+practice."
+
 ## Never
 
 - Never: Recreate `ui/desktop/src/api` or add `@hey-api/openapi-ts` to `ui/desktop`
