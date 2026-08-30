@@ -33673,36 +33673,17 @@ impl GooseAgentDispatcher {
                 let skeleton_first = std::env::var("GOOSE_SWARM_SKELETON_FIRST")
                     .map(|v| matches!(v.to_lowercase().as_str(), "1" | "on" | "true" | "yes"))
                     .unwrap_or(true);
-                let is_entry_file = |f: &str| {
-                    f.ends_with("cli.py")
-                        || f.ends_with("__main__.py")
-                        || f.ends_with("main.rs")
-                        || f.ends_with("index.ts")
-                        || f.ends_with("cli.ts")
-                        || f.ends_with("main.go")
-                };
-                let skeleton_note = if skeleton_first
-                    && req.owned_files.iter().any(|f| is_entry_file(f))
-                {
-                    format!(
-                            "\nSKELETON-FIRST (OVERRIDES the 'write the whole file in ONE write' rule below, \
-                             for your ENTRY/wiring file ONLY): your entry file wires many commands, so do NOT \
-                             plan the entire file then dump it in one write — that front-loads thinking, burns \
-                             turns, and hides a bad import until the very end. Instead: (1) your FIRST `write` \
-                             emits the COMPILING SKELETON — every import plus every command/subcommand the spec \
-                             advertises REGISTERED, each with a placeholder body (`pass` / `todo!()` / \
-                             `throw new Error('todo')`); (2) run `{check}` ONCE and confirm it imports and \
-                             lists EVERY command; (3) THEN fill each handler body with a focused `edit`. You \
-                             MUST finish with EVERY body fully implemented — a skeleton with placeholder bodies \
-                             left in is NOT done and will fail verification. Write any NON-entry owned file \
-                             complete in one write as usual.",
-                            check = lang.entry_run_example()
-                        )
-                } else {
-                    String::new()
-                };
+                // The note itself lives in briefs.rs, DISARMED for a repairing shard beside its
+                // sibling stub note — r5's complete-fix::app/__main__.py received the skeleton
+                // order at both dispatches, directly beside the repair body's read-first rule.
+                let skeleton_note = briefs::skeleton_first_note(
+                    &req.owned_files,
+                    skeleton_first,
+                    repairing,
+                    lang.entry_run_example(),
+                );
                 let cli_note = cli_contract_note(
-                    req.owned_files.iter().any(|f| is_entry_file(f)),
+                    req.owned_files.iter().any(|f| briefs::is_entry_file(f)),
                     cli_contract_enabled(),
                 );
                 let multifile_note =
