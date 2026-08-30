@@ -182,55 +182,33 @@ deleting a layer to gating it; measure the fleet against ONE local node of the s
 
 ## WHAT WE ARE DOING RIGHT NOW
 
-**One sentence: r2 is running under the vigil (both tick halves every 10 min, kill checkpoints armed);
-`DESIGN-STABILITY-FIRST.md` (BP-1, the next evolution under STABILITY > SPEED > QUALITY) is WRITTEN and
-REVIEWED. Step 1 (PLAN-REPAIR) LANDED `ee0cbfe73` — `repair_plan_flags` + `finalize_plan_before_dag`, 8 tests
-on the real r0/r1 plans, a non-sink owns-nothing task is REFUSED at the plan boundary; step 14's fixtures
-for `plan_repaired` are IN (tick.py, snapshot_run.py, the panel). Ships in the r3 binary.
-The DELETIONS (REVIEW, CONTRACTS, judge, TEST/RATE) wait on Mihai's read — they are his call.**
+**One sentence: the r4 build campaign is in its final stretch — the campaign-wide adversarial review
+(24 agents, 4 lenses) is DONE: 18 findings confirmed, 2 refuted, ZERO landed commits reverted; the
+instrument half is closed and the engine half is queued in the GEN purge agent's chain; when that chain
+lands its gates run, we sweep dead code (G-1), rebuild, install, and launch r4 from the Benchmark view.**
 
-**Design §8 arm-S trap — RESOLVED 21:35:** benchmark runs never read config.yaml's `devices:`; the pool
-comes from `lms ps` capped by `GOOSE_SWARM_MAX_NODES` keeping the fastest by `speed_weights`
-(swarm.rs:35016). Arm S = Benchmark view with nodes=1 → workhorse. No config edit, no fleet change.
+**The review's verdict, in one line each (2026-08-30 ~08:15):**
+- CLOSED (instruments/docs/UI, commits 70d648d/e884ab0/f62e6c59c/ece2be374 + loop-state): the
+  RUN-LEDGER blocker (whole-row replace destroyed r0's score line — snapshot now MERGES rows,
+  history restored, r2's seed 5cd47b42e2a7c3e0 pinned + trace backfilled into the archived tree);
+  tick.py reads the six invisible events (vendor_probe, pre_review_failed, retry_reused_avoided_device,
+  replanned, known_bugs + absences) and labels gate-replay debris "not run state"; a live UNREAD-EVENTS
+  residue line means no future event can land invisible; plan_repaired got its panel fixture test.
+- IN THE GEN CHAIN (engine, swarm.rs + scheduler.rs): plan-side banned template (still reaches
+  REVIEW+judge via integrate_verify_spec_inner), GEN-5 brief floor (doc claimed it existed; landed
+  21ec27f82), ledger roll-up rows_dropped, Replanned three-arm reason, spec_surface_empty_at_sink
+  (landed 2cdc49c41), plan_repaired dag_fallback tag, SHRANK×A-3 fingerprint-SET terminator,
+  unwrap_or_default ratchet sweep, replay content-compare writes.
+- REFUTED (verified in code myself): the mid-edit E0063; the scheduler.rs 420s min-age — it is judge
+  SUMMONS CADENCE (pre-II-7, and the verdict it gated was deleted), not a bound on model work.
 
-Between runs, in this order: review the design under fresh eyes → implement what lands before r3 (batch by
-file, isolation-tested) → the queued engine item below → rebuild → install → r3. The "all vs single"
-control (the same engine on ONE local node, same seed and scorer) is part of that plan.
+**Then, in order:** GEN chain gates green → G-1 engine dead-code sweep (agenda item D; the clippy
+never-used cluster + orphans of the deletions) → wipe target (NEVER while cargo runs) → `just make-ui` →
+ditto to /Applications → launch from the Benchmark view (`bench_dispatch.mjs 9897 sb-7 3`) → N-4 live
+checks on the first tick → score hermetically (`score_run.sh`) vs cloud 0.2006 and r0's 0.0568 → arm S.
 
-The desktop streaming thread that used to live here (S1 incremental reads, S2 freshest line, S3 log
-folding) SHIPPED and was verified live on 2026-08-29; its fixes are in the table below.
-
-## r2 IS LIVE — launched 2026-08-29 20:42:59 from the Benchmark view, engine `a80c1fa98`
-
-**Different from r1:** REVIEW is ONE round with SYNTHESIS's measured flags injected as MUST-FIX
-(`5173eab67`); the judge-probe branch flushes both durable transcripts (`c3b211582`); the desktop's live
-line follows the channel that advanced last and the second-lane rows open the inspector (`2dd046553`,
-`3ecdbed9d`). Everything r1 carried (process-group kill, phantom-free gate, first-source attribution,
-contract block, REPAIR under benchmark) is in.
-
-**Claims r2 settles, in order:** (1) ✅ SETTLED 22:08 — REVIEW ran ONE round, 7 min, 9 new → 10 touches, patch replace 4 / remove 6, sharing 0 / owning-nothing 0, then CONTRACTS. (Was:) REVIEW ends after ONE round with a patch that fixes the measured flags
-— `review_findings round:1` then `plan_loaded`, no round 2; (2) ✅ BUILD REACHED 22:14 (CONTRACTS 6 min, plan_loaded=1, plan_patched=1), ✅ BUILD DONE 10/10, 0 failures, INTEGRATE started 23:22 (BUILD 68 min, ~37 of them the sink waiting on replanner test tasks) — and the run COMPLETES:
-`complete_result` → `run_finished` → heartbeat `EXITED:`, orphans 0; (3) REPAIR round 0 runs
-(`fix_criticals yes`, `complete_fix_dispatched` with `app/sync.py` and `app/ledgerd.py` shards) and
-round 1 answers no; (4) the score: does `sync_completeness` close and `GET /` serve? (5) the durable
-logs keep pace with the digests under judge looks (`tick_ui` "EXCEEDS the durable log" must stay quiet).
-
-**r2's OWN fixture seed is `5cd47b42e2a7c3e0`** (header of `runs/build/trace-swarm-3node-r0.jsonl`, mtime
-21:10 — the harness overwrote r0's trace because the run dir name is reused; r0 was `687ff58bfa6b707d`).
-**THE ASSESSMENT IS PRE-ARMED:** when `run_finished` lands — (1) `score_run.sh "<run dir>"`; (2) launch the
-workflow at `scratchpad/r2-assessment-workflow.js` (Workflow scriptPath, args {runDir, verdictJson,
-wallMinutes}) — five lenses → the r3 BUILD QUEUE with build/refuse verdicts (the deletions decided there,
-full autonomy) → two refuters; (3) refusals into REFUSED.md; (4) execute the queue batch-by-file with
-adversarial review per change; (5) rebuild, install, launch r3, run NOW.md's live checks first tick.
-
-Score r2 with ONE command once `run_finished` lands: `~/goose-builds/loop-state/score_run.sh "<run dir>"` —
-it refuses while the run is live or a server leaks a port, waits for run_build.py, stops only the vendor,
-clones the tree, scores under the playwright node at 8850 with the run's OWN seed (`5cd47b42e2a7c3e0`, from
-the ledger row) and prints the cloud comparison. The ledger row carries `fixture_seed` so the next overwrite
-cannot lose it.
-
-**Kill checkpoints armed:** a second REVIEW round; a plan re-emission; a clock stop; WEDGED (heartbeat
-fresh, no event ≥10m, fleet idle, 0% CPU); a leaked server count > 0.
+**Standing numbers:** r0 hermetic 0.0568; r2 hermetic 0.0396 (killed run — floor, not a design
+measurement); cloud single-agent 0.2006. The desktop app is ~52 commits behind HEAD until the rebuild.
 
 ## FIXED TODAY (2026-08-29) — all in the r2 binary `a80c1fa98`
 
