@@ -2484,6 +2484,13 @@ interface ActiveBenchRun {
   startedAt: string;
   cancelled: boolean;
   sampling: RunSampling;
+  /** The scorer reached its verdict line (rep0). MAIN owns this fact: it was renderer component
+   *  state set by a log-line regex, so a window recreated mid-run re-initialized it false and the
+   *  pipeline strip regressed 'done' back to a spinning 'score' — an active-work claim for finished
+   *  work — with no line left to re-derive it from. */
+  scored: boolean;
+  /** The newest harness output line, restored to a re-attaching view alongside `scored`. */
+  lastLine: string | null;
 }
 let activeBenchRun: ActiveBenchRun | null = null;
 
@@ -2722,8 +2729,8 @@ ipcMain.handle('benchmark-identity', async () => ensureBenchIdentity());
 // must not become invisible because the page unmounted.
 ipcMain.handle('benchmark-status', async () => {
   if (!activeBenchRun) return { running: false };
-  const { workdir, nodes, startedAt, sampling } = activeBenchRun;
-  return { running: true, workdir, nodes, startedAt, sampling };
+  const { workdir, nodes, startedAt, sampling, scored, lastLine } = activeBenchRun;
+  return { running: true, workdir, nodes, startedAt, sampling, scored, lastLine };
 });
 
 ipcMain.handle('benchmark-shots', async (_event, workdir?: string) => {
@@ -2740,7 +2747,7 @@ ipcMain.handle('benchmark-shots', async (_event, workdir?: string) => {
   return pickBenchShots(dir);
 });
 
-ipcMain.handle('benchmark-run', async (event, nodes: number, tier?: string, sampling?: RunSampling) => {
+ipcMain.handle('benchmark-run', async (_event, nodes: number, tier?: string, sampling?: RunSampling) => {
   if (activeBenchRun) {
     throw new Error('a benchmark run is already in progress');
   }
@@ -2770,12 +2777,17 @@ ipcMain.handle('benchmark-run', async (event, nodes: number, tier?: string, samp
   // is always the truthful failure signal.
   await fs.rm(workdir, { recursive: true, force: true });
   const startedAt = new Date().toISOString();
-  const sender = event.sender;
   const sendSafe = (channel: string, payload: unknown) => {
+    // BROADCAST, never the sender captured at run time. A benchmark run outlives windows: after a
+    // mid-run window recreation the closed-over sender.isDestroyed() was true forever, so every
+    // benchmark-log and the terminal benchmark-finished were silently dropped — a status-restored
+    // strip with no live line, and a finished run the view learned about only via the 1s poll.
     try {
-      if (!sender.isDestroyed()) sender.send(channel, payload);
+      for (const w of BrowserWindow.getAllWindows()) {
+        if (!w.isDestroyed()) w.webContents.send(channel, payload);
+      }
     } catch {
-      /* window gone — the run continues headless */
+      /* no window at all — the run continues headless */
     }
   };
 
@@ -2870,10 +2882,27 @@ ipcMain.handle('benchmark-run', async (event, nodes: number, tier?: string, samp
         },
       }
     );
-    activeBenchRun = { child, workdir, nodes, startedAt, cancelled: false, sampling: runSampling };
+    activeBenchRun = {
+      child,
+      workdir,
+      nodes,
+      startedAt,
+      cancelled: false,
+      sampling: runSampling,
+      scored: false,
+      lastLine: null,
+    };
     // Two-phase: hand the renderer the workdir IMMEDIATELY so it can point the live swarm panel
-    // at the run, then resolve with the scored row on completion as before.
-    sendSafe('benchmark-started', { workdir, nodes, startedAt, sampling: runSampling });
+    // at the run, then resolve with the scored row on completion as before. scored/lastLine ride
+    // along so a view (re)mounting off either payload restores the same facts the status poll serves.
+    sendSafe('benchmark-started', {
+      workdir,
+      nodes,
+      startedAt,
+      sampling: runSampling,
+      scored: false,
+      lastLine: null,
+    });
 
     let tail = '';
     const buffers: Record<string, string> = { stdout: '', stderr: '' };
@@ -2883,7 +2912,15 @@ ipcMain.handle('benchmark-run', async (event, nodes: number, tier?: string, samp
       const lines = buffers[stream].split('\n');
       buffers[stream] = lines.pop() ?? '';
       for (const line of lines) {
-        if (line.trim().length > 0) sendSafe('benchmark-log', { line, stream });
+        if (line.trim().length === 0) continue;
+        // MAIN owns the scored fact (finding 17): the rep0 verdict line is matched here, once, and
+        // shipped on every payload — the renderer no longer pattern-matches scorer stdout, so a
+        // recreated window restores 'done' from status instead of regressing to a spinning 'score'.
+        if (activeBenchRun) {
+          activeBenchRun.lastLine = line;
+          if (!activeBenchRun.scored && /rep0 \(/.test(line)) activeBenchRun.scored = true;
+        }
+        sendSafe('benchmark-log', { line, stream, scored: activeBenchRun?.scored === true });
       }
     };
     child.stdout?.on('data', onData('stdout'));
