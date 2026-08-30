@@ -362,3 +362,9 @@ research_request_block's armed-no-claimed-sections arm wording.
   F4-literal single-point-of-rescue. Pattern holds (4/4): self-traces honest in verdict, incomplete in
   at least one detail. Residuals deliberately NOT implemented — r6's task_owns events are the
   measurement that decides which of them is real.
+- 2026-08-30 23:20 swarm-surgeon (redispatch reader + verbatim literal, 0dc8c297f): CLEAN+. Fix 1's
+  premises verified in the live tree (16 mirrored rows, all attempt:0) before coding; fix 2 shipped as
+  an honest NO-net with a per-finding winner table proving zero r5 change; took the mid-flight
+  addendum (stale promote comment) without scope creep; minted briefs.rs for the softened multi-file
+  note instead of growing swarm.rs. Named the same-class sibling (build_task_ledger_row) instead of
+  silently skipping it — that sibling is now dispatched per drill-deeper. Charter gap: none.
