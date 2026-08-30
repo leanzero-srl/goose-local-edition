@@ -175,9 +175,14 @@ fn the_banned_integrate_template_only_shrinks() {
 /// the note's `repairing` disarm — the skeleton write-first order reached an entry-file repair
 /// shard at both of its dispatches in the motivating run, beside the repair body's read-first
 /// rule.
+/// Tightened to 44,518: the fleet-ordering cluster (`configured_speed_weight`,
+/// `fleet_slot_models`, `live_fleet_slots`, `one_lane_per_host`, `order_fleet_by_speed` and
+/// their 8 tests) moved verbatim to commands/swarm/fleet_order.rs (-383), ahead of the r5
+/// repair-node-selection fix that resolves speed weights per device instead of matching the
+/// substring map against slot model ids.
 #[test]
 fn swarm_rs_line_count_only_decreases() {
-    const SWARM_RS_LINE_BASELINE: usize = 44_901;
+    const SWARM_RS_LINE_BASELINE: usize = 44_518;
     let text = read("crates/goose-cli/src/commands/swarm.rs");
     let n = text.lines().count();
     assert!(
