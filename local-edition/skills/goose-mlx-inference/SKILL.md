@@ -12,6 +12,9 @@ workload: the SWARM (N concurrent long-context tool-calling agents). Plan of rec
 `~/.claude/plans/i-want-you-to-enumerated-hejlsberg.md`. Campaign state: `local-edition/mlx/NOW.md`.
 
 ## Hard rules (Mihai's, verbatim intent)
+- **Git identity on this repo is ALWAYS leanzero: `leanzero.srl <office@leanzero.net>`** (repo-local
+  `git config`; set on 2026-08-30, matches CogniRunner/axpo/mcp-* repos). Never the aerlingus or
+  personal identities.
 - LM Studio / LM Link / `lms` surfaces are NEVER removed or reconfigured. The engine is additive.
 - Tests use **qwen3.5-9b 4-bit only, freshly downloaded through our own path**. The fleet's 27B is
   off-limits for mounting.
