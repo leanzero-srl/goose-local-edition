@@ -60,6 +60,9 @@ like any finding. The doctrine: fallbacks only on many-happy-path arms; reachabi
 as-configured; no hard coding. First run: 2026-08-30 over the day's five landed changes.
 
 ## Surgeon #7 queue (dispatch when swarm.rs frees after #6 — the research fan)
+(works-prover, next fan): is plan_loaded.plan_confidence_breakdown dead post-P1-5? conf_trail.py
+and lever_check.py consume it; the ask event's twin field was confirmed dead 0/0.
+
 
 1. ASK-TRUTH honest fix (works-prover confirmed): open_decisions_total/not_asked computed from a
    breakdown the sole call site passes as None (swarm.rs:27124-27132 vs :36704-36710) — pass the
@@ -77,6 +80,16 @@ as-configured; no hard coding. First run: 2026-08-30 over the day's five landed 
    — add one fixture each.
 
 ## Grading log (newest first — one line per delegation; move closed items to the per-agent notes)
+- 2026-08-30 bench-scorer #1 (unflatter asked_when_unsure, 2cf79d6d9 + loop-state e557940):
+  CLEAN PASS — chose the primary by MEASURING the three candidates on r5 (open.json rolls,
+  calls.jsonl truncates at 200, open.log carries the array whole), verified 0.6-vs-1.0 through
+  the new code on the real run, replayed the archived bed before/after per charter, and made ONE
+  judged deviation ARGUED correctly (archived non-zero totals stay measurable — a dead call site
+  can only emit 0, so non-zero is evidence; zero licenses nothing) — flagged in code, commit,
+  and test rather than smuggled. Closed a note-and-ignore trap it found (dead open_decisions
+  variable now surfaced). QUEUED: its finding that plan_loaded.plan_confidence_breakdown may
+  also be dead post-rewire (conf_trail.py:35, lever_check.py:93,105 read it) — works-prover
+  material for the next fan. No charter gap.
 - 2026-08-30 panel-surgeon #3 (forming UI + follow-ups, 66a302bfb/871dc729e): CLEAN PASS — the
   join needed NO code change and the surgeon said so instead of touching it (the whole-object
   pass-through IS the law working); forming outranks both channels in laneLiveLine with the rank
