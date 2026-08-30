@@ -1151,7 +1151,7 @@ impl State {
             .sum()
     }
 
-    /// Any enabled supervision device with a free slot? The A3 last-slot yield protects BUILD
+    /// Any enabled supervision device with a free slot? The A-3 ready-work yield protects BUILD
     /// slots; when the free device is a supervision one the yield must not veto the pick (the
     /// preference in least_loaded_free_device guarantees that device is the one claimed).
     fn has_free_supervision_device(&self) -> bool {
@@ -1162,7 +1162,7 @@ impl State {
 
     /// Free BUILD worker slots across enabled devices (how much parallel build work could start
     /// right now). Supervision devices are excluded: they can never take build work, and counting
-    /// them would (a) open the replan gate (>=2) on a 1-node run and (b) defeat the A3 last-slot
+    /// them would (a) open the replan gate (>=2) on a 1-node run and (b) defeat the A-3 ready-work
     /// yield — both node-count semantics, both build-only by contract.
     fn idle_capacity(&self) -> u32 {
         self.devices
@@ -1334,28 +1334,27 @@ impl State {
             .copied()
             .filter(|&i| n.avoid_device.as_deref() != Some(self.devices[i].cfg.id.as_str()))
             .collect();
-        // If avoiding the failed device leaves nothing, WAIT for a different slot instead of
-        // rebinding — as long as the fleet has any other build device at all. The fallback used
-        // to hand the retry straight back to the device that just killed it, because the kill
-        // frees exactly that slot while the rest of the fleet is mid-generation. MEASURED (r8):
-        // web-viz stalled at 420s of zero token activity on the slowest node FOUR times, every
-        // retry re-landing on it — the same starvation each attempt, and the caller already
-        // re-queues a None cleanly (`leftover` -> Ready), so waiting is deadlock-free: another
-        // node's completion re-opens dispatch. A single-build-device fleet keeps the fallback.
-        let pool = if allowed.is_empty() {
-            let another_build_device_exists = n.avoid_device.is_some()
-                && self.devices.iter().any(|d| {
-                    d.cfg.enabled
-                        && !d.cfg.supervision
-                        && n.avoid_device.as_deref() != Some(d.cfg.id.as_str())
-                });
-            if another_build_device_exists {
-                return None;
-            }
-            free
-        } else {
-            allowed
-        };
+        // Avoidance is a PREFERENCE, never a wait (A-3, r3): when the just-failed device is the
+        // ONLY free one, REUSE it — `do_claim` emits `retry_reused_avoided_device` so the reuse is
+        // visible in the jsonl. With any other device free, `allowed` keeps the retry off the
+        // failure device exactly as before.
+        //
+        // HISTORY — this supersedes a wait-for-a-different-slot branch, and the r8 measurement that
+        // justified it is amended, not deleted. MEASURED (r8): "web-viz stalled at 420s of zero
+        // token activity on the slowest node FOUR times, every retry re-landing on it — the same
+        // starvation each attempt" — so the branch parked the retry (`leftover` -> Ready) until a
+        // DIFFERENT node freed. What made re-landing fatal in r8 was not the device: it was the
+        // 420s-x-attempt no-output stopwatch re-killing the same slow-but-working call every
+        // attempt. II-7 (7803faffd) deleted that stopwatch and the 600s provider read cut, so no
+        // surviving time wall can re-kill a reused slot (pinned by
+        // `no_time_wall_survives_on_the_reuse_path` in scheduler_mock.rs).
+        // COUNTER-MEASURED (r2): the wait itself starved the sink's body-drop retry for 11 minutes
+        // (21:26:35Z -> 21:37:37Z, ZERO events between) — `avoid_device` excluded the just-freed
+        // workhorse while idle-fill claims held every other slot, so "wait for a different slot"
+        // was a wait on nothing. With P1-7's SHRANK rule content retries recur more, so every such
+        // retry could re-starve the same way. r8's harm died with its stopwatch; r2's harm lives in
+        // the wait — the wait goes.
+        let pool = if allowed.is_empty() { free } else { allowed };
         // Spread work across the fleet: the LEAST-LOADED device wins, so idle nodes get work before
         // any node doubles up; ties break toward the planner's preferred model, then by index for
         // determinism. (Honoring preferred_model first would pile every same-model task on one device
@@ -1532,6 +1531,15 @@ impl State {
                 _ => "easy".to_string(),
             },
         });
+        // A-3: the retry landed back on the device it was avoiding — pick_device only allows that
+        // when it is the sole free one, and the reuse must be readable in the jsonl rather than
+        // inferred from device equality across attempts.
+        if self.dag.tasks[&tid].avoid_device.as_deref() == Some(device_id.as_str()) {
+            self.sink.emit(&SwarmEvent::RetryReusedAvoidedDevice {
+                task_id: tid.to_string(),
+                device: device_id.clone(),
+            });
+        }
         let owned_files = files.clone();
         let mut all_files: Vec<String> = self
             .dag
@@ -3895,10 +3903,8 @@ impl Scheduler {
                 if qa_enabled() && pr.has_pending_question() {
                     let pick = {
                         let mut s = state.lock().await;
-                        if !s.ready.is_empty()
-                            && s.idle_capacity() <= 1
-                            && !s.has_free_supervision_device()
-                        {
+                        // A-3 (r3) ready-work yield — see the pre-review block below.
+                        if !s.ready.is_empty() && !s.has_free_supervision_device() {
                             None
                         } else {
                             s.pick_qa()
@@ -3933,14 +3939,19 @@ impl Scheduler {
                     // — fire a pre-review iff a device is genuinely free. (The old `idle_jobs >= idle_capacity`
                     // double-counted once claiming was added, blocking the concurrent pre-review.)
                     //
-                    // A3: AND never the LAST free slot while ready work is waiting on capacity.
+                    // A-3 (r3) ready-work yield: NO idle-fill claim while ANY real task waits.
                     // pick_assignments ran first this pass, so a non-empty ready set here means tasks
-                    // exist that could not be placed — a review claiming the final slot would make the
-                    // fleet supervise instead of build at exactly the moment building is possible. With
-                    // 2+ slots free (or nothing waiting) the review proceeds as before.
+                    // exist that could not be placed. The old rule only reserved the LAST free slot
+                    // (`idle_capacity() <= 1`), and r2 measured why that is not enough: idle-fill
+                    // claims taken while ready work waited held nodes through the sink's body-drop
+                    // retry — 11 minutes (21:26:35Z -> 21:37:37Z) with zero events, one pre_review
+                    // call alone holding a node for 7,535s. An idle job is postponable by
+                    // construction; a real task's dispatch never is — so real work outranks every
+                    // idle-fill claim, not just the final slot. A free supervision device escapes
+                    // the yield: `least_loaded_free_device` claims supervision-first, so that claim
+                    // never competes with build dispatch.
                     if !s.has_free_supervision_device()
-                        && (s.idle_capacity() == 0
-                            || (!s.ready.is_empty() && s.idle_capacity() <= 1))
+                        && (s.idle_capacity() == 0 || !s.ready.is_empty())
                     {
                         None
                     } else {
@@ -3989,13 +4000,10 @@ impl Scheduler {
                 loop {
                     let pick = {
                         let mut s = state.lock().await;
-                        // A3: same last-slot yield as pre-review — inert during a normal sink window
-                        // (ready is empty by construction) but load-bearing if a replan injects work
-                        // mid-sink.
-                        if !s.ready.is_empty()
-                            && s.idle_capacity() <= 1
-                            && !s.has_free_supervision_device()
-                        {
+                        // A-3 (r3): same ready-work yield as pre-review — inert during a normal
+                        // sink window (ready is empty by construction) but load-bearing if a
+                        // replan injects work mid-sink.
+                        if !s.ready.is_empty() && !s.has_free_supervision_device() {
                             None
                         } else {
                             s.pick_sink_review()
@@ -4027,12 +4035,9 @@ impl Scheduler {
                 loop {
                     let pick = {
                         let mut s = state.lock().await;
-                        // A3 last-slot yield: never take the final free slot while dispatchable work
-                        // waits (inert on a real tail where `ready` is empty by construction).
-                        if !s.ready.is_empty()
-                            && s.idle_capacity() <= 1
-                            && !s.has_free_supervision_device()
-                        {
+                        // A-3 (r3) ready-work yield: never claim any free slot while dispatchable
+                        // work waits (inert on a real tail where `ready` is empty by construction).
+                        if !s.ready.is_empty() && !s.has_free_supervision_device() {
                             None
                         } else {
                             s.pick_tail_review()
@@ -4057,15 +4062,14 @@ impl Scheduler {
             }
             // S7 TESTGEN (GOOSE_SWARM_TESTGEN): when a node is STILL idle after pre-review and
             // sink-review got first refusal, spend it generating contract-derived tests — the one
-            // idle job with ZERO merge surface (new files, pytest-collected). Same last-slot yield
+            // idle job with ZERO merge surface (new files, pytest-collected). Same ready-work yield
             // as its siblings; the IdleSlotGuard releases the claim. Default OFF -> pick_testgen
             // returns None and this block is byte-identical to absent.
             if let Some(pr) = self.pre_reviewer.as_ref().filter(|_| !paused) {
                 let pick = {
                     let mut s = state.lock().await;
                     if !s.has_free_supervision_device()
-                        && (s.idle_capacity() == 0
-                            || (!s.ready.is_empty() && s.idle_capacity() <= 1))
+                        && (s.idle_capacity() == 0 || !s.ready.is_empty())
                     {
                         None
                     } else {
