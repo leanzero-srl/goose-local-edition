@@ -1321,12 +1321,27 @@ static CONFIG_PARSE_ERROR: std::sync::OnceLock<String> = std::sync::OnceLock::ne
 
 fn load_config() -> SwarmConfig {
     let cfg = Config::global();
+    merge_config_over_defaults(cfg.get(SWARM_CONFIG_KEY, false).ok(), || {
+        cfg.get_param::<SwarmConfig>(SWARM_CONFIG_KEY)
+            .unwrap_or_default()
+    })
+}
+
+/// The pure half of `load_config`, split out so the merge composition is PINNED by a test
+/// (`an_omitted_key_keeps_the_baked_golden_through_the_real_merge`): repeat_break/omni_judge
+/// stay armed for a yaml that lacks those keys ONLY because the operator's raw block is merged
+/// OVER `serde_json::to_value(SwarmConfig::default())` here. A de-merge refactor — reading the
+/// typed block directly, or basing the merge on serde's type defaults — silently reverts the
+/// entire baked golden formula (every Some(...) default) the moment a swarm block exists, which
+/// is always; the test fails it loudly instead.
+fn merge_config_over_defaults(
+    raw: Option<serde_json::Value>,
+    typed_fallback: impl Fn() -> SwarmConfig,
+) -> SwarmConfig {
     let Ok(mut base) = serde_json::to_value(SwarmConfig::default()) else {
-        return cfg
-            .get_param::<SwarmConfig>(SWARM_CONFIG_KEY)
-            .unwrap_or_default();
+        return typed_fallback();
     };
-    if let Ok(raw) = cfg.get(SWARM_CONFIG_KEY, false) {
+    if let Some(raw) = raw {
         merge_json(&mut base, raw);
     }
     serde_json::from_value(base).unwrap_or_else(|e| {
@@ -1334,8 +1349,7 @@ fn load_config() -> SwarmConfig {
             "swarm config block failed to deserialize ({e}) — the run is on DEFAULTS, not the \
              operator's config"
         ));
-        cfg.get_param::<SwarmConfig>(SWARM_CONFIG_KEY)
-            .unwrap_or_default()
+        typed_fallback()
     })
 }
 
@@ -11855,6 +11869,37 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
     /// omni abort arrives as a plain Transient with no intervention credit, so it consumed one of the task's
     /// three attempts. On a verify:: task that is pure loss — the progress-watchdog salvage path requires
     /// non-empty owned_files, so it cannot rescue one either.
+    /// THE MERGE PIN (refactor hazard, works-prover). repeat_break/omni_judge stay armed for a
+    /// yaml that lacks those keys ONLY because load_config merges the operator's raw block OVER
+    /// SwarmConfig::default() — serde's type default for both is None, which every resolver
+    /// reads as off. This traverses the REAL path (merge_config_over_defaults is load_config's
+    /// body minus the global-config read), so a future de-merge refactor fails here loudly
+    /// instead of silently disarming the golden formula on every configured machine.
+    #[test]
+    fn an_omitted_key_keeps_the_baked_golden_through_the_real_merge() {
+        let never = || panic!("a parseable block must never fall back to the typed read");
+        // An empty swarm block — the minimal configured machine.
+        let merged = merge_config_over_defaults(Some(serde_json::json!({})), never);
+        assert_eq!(merged.repeat_break, Some(true), "golden survives {{}}");
+        assert_eq!(merged.omni_judge, Some(true), "golden survives {{}}");
+        // A minimal operator yaml: one real key set, everything omitted stays golden.
+        let merged = merge_config_over_defaults(
+            Some(serde_json::json!({"planner_model": "operator-model"})),
+            never,
+        );
+        assert_eq!(merged.planner_model, "operator-model");
+        assert_eq!(merged.repeat_break, Some(true));
+        assert_eq!(merged.omni_judge, Some(true));
+        // merge_json's null rule: an explicit null leaves the baked default, never disarms it.
+        let merged =
+            merge_config_over_defaults(Some(serde_json::json!({"repeat_break": null})), never);
+        assert_eq!(merged.repeat_break, Some(true));
+        // No block at all (a fresh machine) is the struct default outright.
+        let merged = merge_config_over_defaults(None, never);
+        assert_eq!(merged.repeat_break, Some(true));
+        assert_eq!(merged.omni_judge, Some(true));
+    }
+
     #[test]
     fn omni_judge_is_on_by_default_and_env_still_wins() {
         assert_eq!(SwarmConfig::default().omni_judge, Some(true));
