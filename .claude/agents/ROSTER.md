@@ -382,3 +382,12 @@ research_request_block's armed-no-claimed-sections arm wording.
   the motivating run — skeleton_note's missing repairing disarm, delivered twice to the 0-edit shard.
   5/5 pattern: every self-trace honest in verdict, incomplete in at least one detail. The independent
   read remains the cheapest defect-finder we have.
+- 2026-08-31 00:35 swarm-surgeon (pitfall lessons + skeleton disarm, a3ffe49d1 + c3c5ec42d): CLEAN+.
+  Lessons are pure class-knowledge (zero r5 names — "measured:" clauses describe the shape, not the
+  instance) and the trigger craft is the standout: "render"/".js"/"api" REJECTED with measured
+  collision reasons, prospective YES proven on r5's real task texts (viz-field at "webgl",
+  ledgerd/integrate/fix-shard at "endpoint"). Took the mid-flight skeleton addendum as a clean second
+  commit gated on the shared repairing predicate; checked cli_contract_note and correctly left it
+  armed. Mechanism verification: the finder-tracer's walk stands as the independent read; I verified
+  the implementation hunks directly. swarm.rs 45,265→44,901 across the pair. Trap recorded: the
+  DOMAIN_PITFALLS trailing-backslash fusion (tripwired by pitfall_items_match_triggers). Charter gap: none.
