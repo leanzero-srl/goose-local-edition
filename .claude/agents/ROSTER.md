@@ -92,6 +92,13 @@ testgen/review side calls run keyless today (no digest/think.log/forming — inv
 r5 stall ran behind one). Give every supervision model call an activity key (e.g. judge-<task>-lookN,
 replan-rN, testgen-<task>), labeled + grouped as supervision in the panel; the forming hoist then
 covers them for free. Surgeon #10 the moment #9 lands; panel grouping rides panel #5.
+- surgeon #10 addendum: the mid-run replanner/judge read opts.prompt (user answers, NOT
+  research-settled conventions) — a replan can re-open a settled convention; deliver the settled
+  block to the replan context too.
+- r7: early-skeleton needs a real pre-completed seam in Scheduler::run first (scheduler-surgeon);
+  the CLI half follows. Four blockers documented in surgeon #9's handoff.
+- cleanup queue: partition_delegated_decisions + delegated_decisions_ok lever appear live-dead;
+  research_request_block's armed-no-claimed-sections arm points lanes at a request they don't have.
 - (refute-first) the transport inactivity cut: II-7 deleted the provider read window entirely, so
   a connected-but-silent stream hangs forever (A2; the fan multiplies exposure). The candidate: a
   read timeout that RESETS on every received chunk — bounds dead transport only, never model work
