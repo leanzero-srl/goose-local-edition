@@ -132,9 +132,12 @@ fn the_banned_integrate_template_only_shrinks() {
 /// Tightened to 46,540: the dead plan_confidence_breakdown cluster deleted (WIDTH batch, small 2).
 /// Tightened to 46,406: the research terminal-row cluster moved to commands/swarm/research.rs
 /// (-164), paying for the truthful look-1 steer wording (+~30) in the same commit.
+/// Tightened to 46,348: the forming-sidecar cluster moved to commands/swarm/supervision.rs
+/// (-224), paying for the r6 supervision-lane wiring (keyed judge/replan/review calls, the
+/// digest supervision stamp, the judge-lane event fields) in the same commit.
 #[test]
 fn swarm_rs_line_count_only_decreases() {
-    const SWARM_RS_LINE_BASELINE: usize = 46_406;
+    const SWARM_RS_LINE_BASELINE: usize = 46_348;
     let text = read("crates/goose-cli/src/commands/swarm.rs");
     let n = text.lines().count();
     assert!(
