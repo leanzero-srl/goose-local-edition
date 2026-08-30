@@ -182,28 +182,38 @@ deleting a layer to gating it; measure the fleet against ONE local node of the s
 
 ## WHAT WE ARE DOING RIGHT NOW
 
-**One sentence: r4 launched 09:12, was KILLED at BUILD+7m by its own vigil, and the kill became
-GATE 6; the app is rebuilding with the fixes and relaunches from the Benchmark view next.**
+**One sentence: r4b was killed on the WORDS (GATE 7), the three words-derived judge/reviewer fixes
+are committed and rebuilding, Mihai is refreshing the fleet (new models + LMS restart), and the next
+launch waits on HIS go — ask, do not launch.**
 
-**The r4 kill, in one paragraph (archive
-`swarm-3node-r4-KILLED-replan-r0-spliced-5-tasks-past-repair-shadow-reintroduced-sink-owned-README-build-7m`,
-row in RUN-LEDGER):** the planning chain worked exactly as designed — OPEN-1 read a 10k orientation
-instead of the 53k spec, ASK's 3 open decisions folded into every brief at the 5s benchmark timeout
-(BY DESIGN post-P1-5; the proxy is deleted), REVIEW held ONE round (new=1), a patch not a
-re-emission, skeleton prepended, plan repaired 9→8. Then the DYNAMIC REPLANNER — summoned at
-BUILD+4m with ZERO completions — spliced 5 tasks past every repair (`splice_specs` checks
-ids/deps/cycles, not ownership): `notifierd-service` re-created the module/package shadow the
-repair had fixed 4 minutes earlier, thin_brief fired on its 500-char description (GEN-5 measured
-live), and the pinned sink shipped owning `README.md` (the join-owns-files kill checkpoint, the
-cascaded-Failed class). Also real: the repair's drop-then-remove of the shadowed service task is
-what deleted notifierd's brief and invited the re-add.
+**r4b (archive `swarm-3node-r4b-KILLED-reviewer-verbatim-cycle-24m-judge-read-shapes-not-words...`):**
+the gate-6 build's plan chain was clean and REVIEW looped: the camera-orbit reviewer walked its
+seven-question checklist once, found its two findings, then cycled the identical ten-item
+"This is good… now let me check if there are any other issues" list verbatim for 24 minutes,
+final_output never called. The judge said DRIFTING once (the correct direction, drift-HELD), then OK
+five times at 78% measured duplication — the prompt HAD the rate, the earlier span and the tail, but
+never said to COMPARE them, and its "a list-shaped deliverable measures high and is working
+perfectly" line handed the checklist-loop its alibi.
 
-**GATE 6 — ONE DOOR (57ff5265b), Mihai's order minutes after the kill:** every DAG entry walks the
-same repairs (`repair_replan_specs` pre-splice, actions on the `Replanned` event), the join owns
-nothing STRUCTURALLY (`repair_sink_files`), shadowed modules are REWRITTEN into their packages
-(`<pkg>/impl.py`) never dropped, the replanner waits for a first completion, and the refusing test
-reads the WINDOW between the replanner's answer and the splice. Gates green: goose-cli 643,
-goose-swarm 153, workspace clippy -D clean.
+**GATE 7 — READ THE WORDS (c1bceaf2c):** Mihai, after catching shape-first analysis twice in ten
+minutes: "read the WORDS not the fucking shape… to come up with ACTUAL improvements." Operator: every
+loop/efficacy claim starts with `tail -c 4000` of think.log AND .log, QUOTED. Engine: a detector may
+summon; only a reader judges. In AGENTS.md + development-gates.md §7 + the campaign skill + a
+refusing test + memory `read-the-words-not-the-shape`.
+
+**The three words-derived fixes (committed, in the current rebuild):** (1) the reviewer's EXIT RAMP —
+seven questions are the whole checklist, one pass then the tool; (2) the judge's earlier-span block
+now ends with the COMPARE instruction + the r4b receipt, and the list alibi is closed ("the same ten
+items twice is a loop wearing a list's shape"); (3) a DRIFTING verdict on a stream the meter reads as
+recurring delivers WITHOUT a second look (measurement corroborates, like tool-repeats).
+
+**Also this hour:** UI truth pair fixed (clarify card reads low_confidence_ask_timeout 86e16e867;
+sampling card's stale "0.2 (pinned)" gone c195a6eed); the 4-lens frontend realtime/event review
+workflow is running; THOROUGH CLEAN reclaimed 13G (goose-builds 18G→5.2G, binaries out, every
+transcript kept).
+
+**LAUNCH GATE: Mihai is refreshing the fleet. When the build verifies, TELL HIM READY and WAIT for
+his word. Check `lms ps` shows the NEW models loaded before dispatch; never reconfigure the fleet.**
 
 **Then, in order:** GEN chain gates green → G-1 engine dead-code sweep (agenda item D; the clippy
 never-used cluster + orphans of the deletions) → wipe target (NEVER while cargo runs) → `just make-ui` →
