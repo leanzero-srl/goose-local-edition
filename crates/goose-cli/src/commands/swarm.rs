@@ -37198,6 +37198,15 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
     // and drift scans) all land on the build dir rather than the user's home.
     let spawn_dir = std::env::current_dir()?;
     let working_dir = resolve_app_root(spawn_dir.clone(), &run_id)?;
+    // The clarify handshake files are per-RUN state the ask path only deletes when IT asks. A run
+    // that never asks leaves the previous run's questions on disk, and the panel (which reads the
+    // file to build its prompt card) showed run 1's ask as run 2's "Waiting for you" for that whole
+    // run — the frontend now also age-gates on mtime, but the honest state is no stale file at all.
+    // Removing a file that is not there is a no-op, not an error.
+    for stale in ["clarify-questions.json", "clarify-answers.json"] {
+        let _ = std::fs::remove_file(working_dir.join(".swarm").join(stale));
+        let _ = std::fs::remove_file(spawn_dir.join(".swarm").join(stale));
+    }
     // Tell the desktop WHICH run is current, and where it lives. The panel used to guess by picking the
     // newest run-*.jsonl under the session's working dir, which has no notion of "current": it re-rendered a
     // FINISHED run from hours earlier the instant a new turn started (observed: a 4h-old stopped run shown
