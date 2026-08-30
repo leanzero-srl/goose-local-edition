@@ -210,6 +210,15 @@ pub struct JudgeInput {
     /// Which attempt of this task is running (0 = first). DATA for the events and the re-dispatch
     /// record; no deadline scales with it any more.
     pub attempt: u32,
+    /// GEN-4 (fallback rule): whether this dispatch's prompt actually carried the PROJECT FILE
+    /// LAYOUT block (it is gated on the plan manifest being non-empty). The deterministic hint
+    /// used to assert "you already have … the file layout" unconditionally; a claim about
+    /// context the worker was never given sends it hunting for something that does not exist.
+    pub file_layout_delivered: bool,
+    /// GEN-4: whether the dependency-API block carried REAL dependency source. False when the
+    /// NONE-ON-DISK redirect fired (a first-wave worker whose siblings have written nothing
+    /// yet) — then the hint must state that measured absence, never claim the APIs exist.
+    pub dep_apis_delivered: bool,
 }
 
 /// One child subtask proposed when the judge SPLITS a too-big task. It owns a DISJOINT SUBSET of the
@@ -488,6 +497,36 @@ pub trait PreReviewer: Send + Sync {
     async fn answer_user_question(&self, _model_id: &str, _goal: &str, _run_state: &str) {}
 }
 
+/// GEN-4 (fallback rule): the "you already have …" clause of the over-read/spiral hints, built
+/// from what the dispatch DELIVERED instead of asserted wholesale. The old constant claimed
+/// "the spec, the file layout, and the injected dependency APIs" on every such verdict — but a
+/// first-wave worker's dependency block is the NONE-ON-DISK redirect, and telling it that it
+/// already has APIs it was never given is a claim about missing input. Assert only the
+/// delivered facts; state the measured absence for the rest — never a quiet default.
+fn already_have_clause(input: &JudgeInput) -> String {
+    let mut have = vec!["the spec"];
+    if input.file_layout_delivered {
+        have.push("the file layout");
+    }
+    if input.dep_apis_delivered {
+        have.push("the injected dependency APIs");
+    }
+    let listed = match have.as_slice() {
+        [a] => (*a).to_string(),
+        [a, b] => format!("{a} and {b}"),
+        [a, b, c] => format!("{a}, {b}, and {c}"),
+        _ => unreachable!("at most three delivered-context facts"),
+    };
+    if input.dep_apis_delivered {
+        format!("you already have {listed}")
+    } else {
+        format!(
+            "you already have {listed}; no dependency source is on disk yet, so build against \
+             the agreed layout instead of hunting for APIs that do not exist"
+        )
+    }
+}
+
 /// A verdict derivable from cheap, unambiguous signals alone — no model required. The scheduler trusts
 /// this even without (or before) the LLM judge: code that won't compile and a worker that has read a
 /// lot while writing nothing are not judgment calls.
@@ -535,12 +574,13 @@ pub fn deterministic_verdict(input: &JudgeInput, cfg: &JudgeConfig) -> Option<Ju
         return Some(JudgeOutcome {
             verdict: Verdict::OverReading,
             confidence: 0.9,
-            hint: "You have taken many actions but written no file yet — you are exploring/re-reading \
-                   instead of producing. STOP investigating: you already have the spec, the file layout, \
-                   and the injected dependency APIs. WRITE your owned file(s) NOW — the SIMPLEST version \
-                   that satisfies the spec first (a small working file), then refine. A minimal working \
-                   file beats endless exploration."
-                .to_string(),
+            hint: format!(
+                "You have taken many actions but written no file yet — you are exploring/re-reading \
+                 instead of producing. STOP investigating: {}. WRITE your owned file(s) NOW — the \
+                 SIMPLEST version that satisfies the spec first (a small working file), then refine. \
+                 A minimal working file beats endless exploration.",
+                already_have_clause(input)
+            ),
             established: String::new(),
             next_action: String::new(),
             proposed_split: None,
@@ -563,12 +603,14 @@ pub fn deterministic_verdict(input: &JudgeInput, cfg: &JudgeConfig) -> Option<Ju
         return Some(JudgeOutcome {
             verdict: Verdict::OverReading,
             confidence: 0.9,
-            hint: "You have written NOTHING and taken no action — you are stuck deliberating (a long \
-                   reasoning spiral). You already have the spec, the file layout, and the injected dependency \
-                   APIs; there is nothing left to work out. STOP thinking and WRITE your owned file(s) NOW: \
-                   the SIMPLEST version that satisfies the spec FIRST (a small working file), then refine it. \
-                   A minimal working file beats a plan you never wrote down."
-                .to_string(),
+            hint: format!(
+                "You have written NOTHING and taken no action — you are stuck deliberating (a long \
+                 reasoning spiral). STOP thinking: {}, and there is nothing left to work out. WRITE \
+                 your owned file(s) NOW: the SIMPLEST version that satisfies the spec FIRST (a small \
+                 working file), then refine it. A minimal working file beats a plan you never wrote \
+                 down.",
+                already_have_clause(input)
+            ),
             established: String::new(),
             next_action: String::new(),
             proposed_split: None,
@@ -724,6 +766,10 @@ mod tests {
             prev_observed_secs: None,
             split_count: 0,
             attempt: 0,
+            // The common case: a real dispatch delivered both blocks, so the hint text is the
+            // full three-fact clause the older tests were written against.
+            file_layout_delivered: true,
+            dep_apis_delivered: true,
         }
     }
 
@@ -797,6 +843,45 @@ mod tests {
         let out = deterministic_verdict(&i, &cfg).expect("thrashing is caught");
         assert_eq!(out.verdict, Verdict::OverReading);
         assert!(out.hint.contains("taken many actions"), "{}", out.hint);
+    }
+
+    /// GEN-4 (fallback rule): the hint asserts only what the dispatch DELIVERED. With both
+    /// context blocks delivered the clause is the familiar three-fact one; when the
+    /// NONE-ON-DISK redirect fired (dep_apis_delivered = false) the clause must not claim the
+    /// APIs exist — it states the measured absence instead, and still redirects to writing.
+    #[test]
+    fn the_hint_asserts_only_what_the_dispatch_delivered() {
+        let cfg = JudgeConfig::default();
+        let mut full = mk_no_write(1, 300, 16);
+        full.prev_tool_calls = Some(3);
+        full.prev_observed_secs = Some(240);
+        let out = deterministic_verdict(&full, &cfg).expect("thrashing is caught");
+        assert!(
+            out.hint
+                .contains("the spec, the file layout, and the injected dependency APIs"),
+            "a fully-delivered dispatch keeps the full claim: {}",
+            out.hint
+        );
+        let mut first_wave = mk_no_write(1, 300, 16);
+        first_wave.prev_tool_calls = Some(3);
+        first_wave.prev_observed_secs = Some(240);
+        first_wave.dep_apis_delivered = false;
+        let out = deterministic_verdict(&first_wave, &cfg).expect("thrashing is caught");
+        assert!(
+            !out.hint.contains("injected dependency APIs"),
+            "the hint must not claim APIs the NONE-ON-DISK redirect never delivered: {}",
+            out.hint
+        );
+        assert!(
+            out.hint.contains("no dependency source is on disk yet"),
+            "the absence is stated as a fact, not papered over: {}",
+            out.hint
+        );
+        assert!(
+            out.hint.contains("the spec and the file layout"),
+            "what WAS delivered is still asserted: {}",
+            out.hint
+        );
     }
 
     /// F884: the VERBATIM file the run-10 accept called "the deliverable is complete" — the
@@ -1099,6 +1184,10 @@ mod provenance_tests {
             prev_observed_secs: None,
             split_count: 0,
             attempt: 0,
+            // GEN-4's tripwire moment: these mean "the dispatch delivered both context blocks",
+            // which is what a normal mid-run dispatch looks like.
+            file_layout_delivered: true,
+            dep_apis_delivered: true,
         };
         let cfg = JudgeConfig::default();
         let out =

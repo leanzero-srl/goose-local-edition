@@ -15760,6 +15760,12 @@ pub struct GooseAgentDispatcher {
     /// on-disk bytes drifted from its owner's snapshot is restored (owner wins) and flagged. Empty unless the
     /// flag is on -> no snapshot taken, no restore, byte-identical.
     owner_snapshots: Mutex<HashMap<String, (String, Vec<u8>)>>,
+    /// GEN-4 (fallback rule): per-task record of what the LAST dispatch's prompt actually
+    /// delivered — (file_layout_delivered, dep_apis_delivered) — written at prompt build, read
+    /// by the judge so its deterministic hint asserts only facts. `dep_apis` false means the
+    /// NONE-ON-DISK redirect fired: the worker has NO dependency source, and telling it "you
+    /// already have the injected dependency APIs" would send it hunting for missing context.
+    prompt_delivered: Mutex<HashMap<String, (bool, bool)>>,
     /// `worker_thinking_chars` as of the LAST judge observation of each task, so the judge can see a
     /// DELTA rather than a level. F143: `test-meridian` was killed for "stuck re-reading" while its
     /// tool_calls sat at 3 and its reasoning climbed 5,818 -> 8,784 — a single snapshot cannot tell a
@@ -15890,6 +15896,7 @@ impl GooseAgentDispatcher {
             prereview_dim: std::sync::atomic::AtomicUsize::new(0),
             spec_frozen: Mutex::new(String::new()),
             owner_snapshots: Mutex::new(HashMap::new()),
+            prompt_delivered: Mutex::new(HashMap::new()),
             judge_prev_thinking: Mutex::new(HashMap::new()),
             judge_prev_calls: Mutex::new(HashMap::new()),
             stream_decode_retry,
@@ -27165,6 +27172,13 @@ impl Judge for GooseAgentDispatcher {
             }
             was
         };
+        let delivered = self
+            .prompt_delivered
+            .lock()
+            .unwrap()
+            .get(&req.task_id)
+            .copied()
+            .unwrap_or((false, false));
         let input = JudgeInput {
             task_id: req.task_id.clone(),
             description: req.description.clone(),
@@ -27191,6 +27205,11 @@ impl Judge for GooseAgentDispatcher {
             // split carries split_count >= 1 and is never re-split).
             split_count: req.split_count,
             attempt: req.attempt,
+            // GEN-4: what this task's dispatch prompt actually delivered, recorded at prompt
+            // build. A look with no record (defensive only — dispatch precedes every look)
+            // claims nothing it cannot prove.
+            file_layout_delivered: delivered.0,
+            dep_apis_delivered: delivered.1,
         };
         // WHAT THE JUDGE ACTUALLY SAW, as a deterministic engine event.
         //
@@ -27228,6 +27247,27 @@ impl Judge for GooseAgentDispatcher {
         }));
         // Phase 1: cheap, unambiguous signals (won't-compile, no-output-while-old) act without a model.
         if let Some(out) = deterministic_verdict(&input, &cfg) {
+            // GEN-4 receipt (fallback rule): when a deterministic over-read hint had to drop a
+            // context claim because the dispatch never delivered it, that absence is a named
+            // event — a hint that quietly asserts less is otherwise indistinguishable from the
+            // full one in the log.
+            if out.deterministic
+                && matches!(out.verdict, goose_swarm::judge::Verdict::OverReading)
+                && !(input.file_layout_delivered && input.dep_apis_delivered)
+            {
+                let mut missing: Vec<&str> = Vec::new();
+                if !input.file_layout_delivered {
+                    missing.push("file_layout");
+                }
+                if !input.dep_apis_delivered {
+                    missing.push("dep_apis");
+                }
+                self.events.write_value(serde_json::json!({
+                    "event": "judge_hint_context_absent",
+                    "task_id": req.task_id,
+                    "missing": missing,
+                }));
+            }
             return Ok(out);
         }
         // No idle device was free for the model review (fleet saturated — weight-1 with every node busy).
@@ -33098,6 +33138,9 @@ impl GooseAgentDispatcher {
         // Same shape as `is_fix_round` further down (which this file has already been bitten by
         // twice: one defect, two sites, only one fixed).
         let repairing = req.task_id.starts_with("fix::") || req.task_id.starts_with("complete-fix");
+        // GEN-4: whether the dependency-API section below carries REAL source, recorded so the
+        // judge's deterministic hint can assert only what this prompt actually delivered.
+        let mut dep_apis_delivered = false;
         let layout_block = if req.all_files.is_empty() {
             String::new()
         } else {
@@ -33561,6 +33604,7 @@ impl GooseAgentDispatcher {
                  (`grep -n`/`sed -n`) before writing calls against it.\n\n"
                     .to_string()
             } else {
+                dep_apis_delivered = true;
                 dep_block
             };
             format!(
@@ -33569,6 +33613,12 @@ impl GooseAgentDispatcher {
                  location or write a second copy at the project root:\n{manifest}\n{owned_part}{existing_block}{dep_block}"
             )
         };
+        // GEN-4 record for the judge: the layout block is gated on the manifest, so its
+        // delivery IS that gate's outcome; dep_apis is the flag set above.
+        self.prompt_delivered.lock().unwrap().insert(
+            req.task_id.clone(),
+            (!req.all_files.is_empty(), dep_apis_delivered),
+        );
         // The FROZEN MODULE INTERFACES block is DELETED with CONTRACTS (P1-4): a stub is a
         // signature, not a behaviour, and r2 measured the bundle NARROWING the build (meridian/
         // viz/static silently dropped from the contract; the worker built exactly what was
