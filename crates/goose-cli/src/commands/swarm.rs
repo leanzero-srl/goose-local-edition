@@ -5412,11 +5412,13 @@ mod tests {
 
     /// II-11c: the sidecar write is tmp+rename (main.ts's poll must never see a torn file — a
     /// torn read there is a one-poll row disappearance), and the drop guard clears BOTH the
-    /// file and any stranded tmp.
+    /// file and any stranded tmp — and a fix shard's real-tree MIRROR with them: a stale
+    /// mirrored forming.json would read as a live amber row in the panel join forever.
     #[test]
     fn forming_write_is_atomic_and_the_guard_clears_both_files() {
         let dir = tempfile::tempdir().expect("tempdir");
         let path = dir.path().join("open.forming.json");
+        let mirror = dir.path().join("mirrored.forming.json");
         write_forming_atomic(&path, "{\"forming\":[]}").expect("atomic write");
         assert!(path.is_file());
         assert!(
@@ -5424,12 +5426,15 @@ mod tests {
             "the rename consumed the tmp — never left behind"
         );
         std::fs::write(forming_tmp(&path), "torn").expect("strand a tmp");
+        write_forming_atomic(&mirror, "{\"forming\":[]}").expect("mirror write");
         drop(FormingGuard {
             path: path.clone(),
+            mirror: Some(mirror.clone()),
             report: None,
         });
         assert!(!path.exists(), "guard removed the sidecar");
         assert!(!forming_tmp(&path).exists(), "guard removed the tmp too");
+        assert!(!mirror.exists(), "guard removed the real-tree mirror too");
     }
 
     /// HANDOFF-1: the handoff instruction is ONE constant riding the ONE shared rules join —
@@ -15137,6 +15142,10 @@ struct FormingReport {
 
 struct FormingGuard {
     path: PathBuf,
+    /// A fix shard's real-tree mirror (see `fix_shard_mirror_dir`). Cleared with the primary:
+    /// a stale mirrored forming.json in the REAL tree would read as a live amber row in the
+    /// panel join forever — worse than the shadow copy, which dies with the wave.
+    mirror: Option<PathBuf>,
     report: Option<FormingReport>,
 }
 
@@ -15144,6 +15153,10 @@ impl Drop for FormingGuard {
     fn drop(&mut self) {
         let _ = std::fs::remove_file(&self.path);
         let _ = std::fs::remove_file(forming_tmp(&self.path));
+        if let Some(m) = &self.mirror {
+            let _ = std::fs::remove_file(m);
+            let _ = std::fs::remove_file(forming_tmp(m));
+        }
         if let Some(FormingReport {
             events,
             key,
@@ -16899,6 +16912,24 @@ impl GooseAgentDispatcher {
         .await
     }
 
+    /// The real tree's activity dir, when `key` is a repair shard running in a speculative shadow —
+    /// the ONE rule behind both mirrors (digest and forming sidecar), shared so they cannot drift:
+    /// surgeon #5 found the forming sidecar landing only in the shadow precisely because the rule
+    /// lived at the digest site alone. Only repair-shard ids mirror (unique per round+file); a
+    /// speculative TWIN shares its task id with the primary and two writers would fight over one
+    /// file. None for every normal call (work_dir IS the real tree).
+    fn fix_shard_mirror_dir(&self, key: &str, work_dir: &Path) -> Option<PathBuf> {
+        if !key.starts_with("complete-fix") {
+            return None;
+        }
+        let dir = self.working_dir.join(".swarm").join("activity");
+        if dir == work_dir.join(".swarm").join("activity") {
+            return None; // not a shadow — the primary write already lands here
+        }
+        std::fs::create_dir_all(&dir).ok()?;
+        Some(dir)
+    }
+
     /// Like `run_agent` but the agent's file/shell tools are rooted at `work_dir` (the session working_dir).
     /// For a SPECULATIVE twin this is an isolated shadow copy, so the twin never writes the real tree; for
     /// every normal call `work_dir == self.working_dir`, so behavior is unchanged.
@@ -16955,9 +16986,17 @@ impl GooseAgentDispatcher {
         let dir = work_dir.join(".swarm").join("activity");
         let _ = std::fs::create_dir_all(&dir);
         let forming_path = dir.join(format!("{}.forming.json", activity_digest_key(key)));
+        // A fix shard's forming sidecar mirrors into the real tree exactly like its digest does
+        // (`fix_shard_mirror_dir` is the shared rule): the desktop's poll joins forming onto the
+        // digest by activity key IN THE REAL TREE, so a sidecar left in the shadow is invisible —
+        // the digest mirror showed the lane while its forming rows silently never arrived.
+        let forming_mirror = self
+            .fix_shard_mirror_dir(key, &work_dir)
+            .map(|d| d.join(format!("{}.forming.json", activity_digest_key(key))));
         let sidecar = std::sync::Arc::new(std::sync::Mutex::new(FormingSidecar::default()));
         let observer: goose_provider_types::formats::openai::ToolFormingObserver = {
             let path = forming_path.clone();
+            let mirror = forming_mirror.clone();
             let sidecar = sidecar.clone();
             std::sync::Arc::new(move |ev| {
                 use goose_provider_types::formats::openai::ToolFormingEvent;
@@ -16989,12 +17028,25 @@ impl GooseAgentDispatcher {
                     return;
                 }
                 let result = match render_forming_file(&g.live) {
-                    Some(body) => write_forming_atomic(&path, &body),
-                    None => match std::fs::remove_file(&path) {
-                        // Already absent IS the rendered state (nothing forming), not a failure.
-                        Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(e),
-                        _ => Ok(()),
-                    },
+                    Some(body) => {
+                        // Mirror best-effort, like the digest mirror: a failed mirror write only
+                        // costs the desktop a forming row; the primary result below stays the one
+                        // that drives write_error and the loud forming_write_failed report.
+                        if let Some(m) = &mirror {
+                            let _ = write_forming_atomic(m, &body);
+                        }
+                        write_forming_atomic(&path, &body)
+                    }
+                    None => {
+                        if let Some(m) = &mirror {
+                            let _ = std::fs::remove_file(m);
+                        }
+                        match std::fs::remove_file(&path) {
+                            // Already absent IS the rendered state (nothing forming), not a failure.
+                            Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(e),
+                            _ => Ok(()),
+                        }
+                    }
                 };
                 match result {
                     Ok(()) => {
@@ -17012,6 +17064,7 @@ impl GooseAgentDispatcher {
         };
         let _guard = FormingGuard {
             path: forming_path.clone(),
+            mirror: forming_mirror,
             report: Some(FormingReport {
                 events: self.events.clone(),
                 key: key.to_string(),
@@ -17292,21 +17345,14 @@ impl GooseAgentDispatcher {
         // desktop never reads and that is deleted when the wave ends — which is why two fix
         // workers showed "generating…" with nothing behind them for ten minutes (operator
         // report; the shadow-locality was the second half of that defect, found by adversarial
-        // review of the first fix). Only repair-shard ids are mirrored: they are unique per
-        // round+file, whereas a speculative TWIN shares its task id with the primary and two
-        // writers would fight over one file — the case the comment above protects. (P1-9: the
-        // twin race and the scheduled fix:: tasks are deleted; the shard fan is the one repair
-        // path this mirror serves.)
-        let activity_mirror = activity_key
-            .filter(|k| k.starts_with("complete-fix"))
-            .and_then(|k| {
-                let dir = self.working_dir.join(".swarm").join("activity");
-                if dir == work_dir.join(".swarm").join("activity") {
-                    return None; // not a shadow — the primary write already lands here
-                }
-                std::fs::create_dir_all(&dir).ok()?;
-                Some(dir.join(format!("{}.json", activity_digest_key(k))))
-            });
+        // review of the first fix). `fix_shard_mirror_dir` is the shared rule — repair-shard ids
+        // only, and the forming sidecar mirrors through the same rule, so the two cannot drift
+        // apart again. (P1-9: the twin race and the scheduled fix:: tasks are deleted; the shard
+        // fan is the one repair path this mirror serves.)
+        let activity_mirror = activity_key.and_then(|k| {
+            self.fix_shard_mirror_dir(k, &work_dir)
+                .map(|d| d.join(format!("{}.json", activity_digest_key(k))))
+        });
         // SAID provenance, born at dispatch and carried through every digest write of this call.
         let mut said = SaidProvenance::at_dispatch(attempt);
         // Watermark for `said_at`: how many text chunks the last digest write had seen.
