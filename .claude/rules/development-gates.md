@@ -245,6 +245,42 @@ Refusing enforcement: `development_gates.rs` pins this section and the AGENTS.md
 campaign/knob-turning skills carry the trace template; in review, a fix-commit without a trace block
 is returned on sight — the same standing as a new seconds-literal under gate 5.
 
+## HOW GATES 7 AND 8 ACTUALLY DECIDE — the reader is the gate, the test is only a tripwire
+
+**SCOPE (Mihai, same conversation): gates 7 and 8 are about HOW CLAUDE OPERATES ON GOOSE — the
+development and analysis practice — not about the benchmark and not about what the engine does.
+They bind every diagnosis, every fix, every review Claude performs in this repo, whether the
+subject is engine code, UI, instruments, or docs. Engine behaviors that came out of applying them
+(the judge's compare instruction, the reviewer's exit ramp) are ordinary work items, not the gate.**
+
+Mihai, 2026-08-30, on the first enforcement I wrote: *"the gates you install... I assume they're not
+pure deterministic garbage right? They're asking the AI agent to also assess. The real intent of the
+gates are to have the AI think extra hard... and then sift through all of that at microscopic level
+instead of not reading the actual information and just looking at shapes... you're once again
+massaging it into your own stupidity. Rethink please that gate."*
+
+He was right about the massage: gate 7 says "shapes never decide" and its first enforcement was a
+`contains()` — a shape check. Corrected architecture, binding for gates 7 and 8 and every gate that
+judges QUALITY of thought rather than presence of a string:
+
+1. **The deterministic layer is a TRIPWIRE, never the gate.** `development_gates.rs`'s doc-presence
+   asserts exist so a compaction cannot silently delete the practice. Passing them proves NOTHING
+   about compliance. A tripwire may summon; it may never decide — the same law the engine's own
+   supervision lives by (a detector summons the judge; only a reader judges).
+2. **The gate is an AI assessment with an inspectable artifact.** At the gated moment the operator
+   produces the artifact: gate 7 — the quoted spans and what the model is actually doing and why,
+   quotes BEFORE any statistic, the improvement derived from the quotes; gate 8 — the motivating
+   run's values walked branch-by-branch through the new code to a verdict. No artifact, no claim.
+3. **The yay/nay comes from an INDEPENDENT READER of the primary material.** For anything that gates
+   a kill, ships as a fix, or overturns a measurement: a separate agent is fed the RAW inputs (the
+   think.log, the run.jsonl, the code at HEAD) — never the operator's summary — and concurs or
+   refutes. The r4b tracer workflow (one adversarial tracer per fix, reconstructing the meter's
+   state per look from the archived data) is the reference form. A fix whose independent trace says
+   NO ships only as a labeled net; a kill whose independent read refutes the quoted loop was wrong.
+4. **Microscopic means the primary source.** The reader reads the words/values themselves — never a
+   ratio about them, never the summary of the person being checked. An assessment that cites only
+   aggregates fails the gate by construction.
+
 ## What each gate cost — the rebukes, verbatim
 
 His words (each ≤80 chars), the rule they produced, and the gate that now refuses it:
@@ -266,6 +302,7 @@ His words (each ≤80 chars), the rule they produced, and the gate that now refu
 | "add it to our gates to avoid in the future - make it a practice" | one door into the DAG; the join owns nothing structurally | 6 ONE-DOOR |
 | "read the WORDS not the fucking shape... stop wasting my money" | words first, quoted; shapes corroborate only | 7 READ-WORDS |
 | "run the changes mentally... be more exact. This is why I pay a fortune" | every fix-commit carries its would-it-have-fired trace | 8 TRACE |
+| "not pure deterministic garbage right?... Rethink please that gate" | tests are tripwires; an independent AI reading the primary data decides | 7+8 |
 | "so let's gates that stop this madness from ever unfolding" | this file and its refusing tests | all |
 
 The refusing tests live in `crates/goose-swarm/tests/development_gates.rs`. A doc regression (this file

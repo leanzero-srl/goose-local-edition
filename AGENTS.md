@@ -226,8 +226,8 @@ once something has COMPLETED (its own value theory is "harden the completed work
 2026-08-30: "note this down in our agentic mechanism, or even better add it to our gates - make it a
 practice."
 
-**7. THE READ-THE-WORDS GATE — no loop, quality or efficacy judgment from shapes alone; the WORDS
-decide.** Mihai, 2026-08-30, after catching it twice in ten minutes: *"I have asked for 9 weeks for
+**7. THE READ-THE-WORDS GATE (an OPERATING gate: how Claude works on goose, not what goose does) —
+no loop, quality or efficacy judgment from shapes alone; the WORDS decide.** Mihai, 2026-08-30, after catching it twice in ten minutes: *"I have asked for 9 weeks for
 you to read the WORDS not the fucking shape... You need to read the WORDS on both what it forms and
 what it thinks to come up with ACTUAL improvements."* The r4-relaunch loop was diagnosable in one
 `tail -c 4000` — a verbatim ten-item checklist cycling "This is good… now let me check if there are
@@ -240,7 +240,8 @@ entry claiming a loop without QUOTING the looping words is invalid on sight; eng
 is handed verbatim spans (current tail + a span from a prior look), never only counters, so it can
 SEE "same text as last look"; `development_gates.rs` asserts both docs and the skill carry this.
 
-**8. THE TRACE GATE — an engine change ships WITH its trace, or ships labeled a net.** Mihai,
+**8. THE TRACE GATE (an OPERATING gate, like 7) — a change to goose ships WITH its trace, or ships
+labeled a net.** Mihai,
 2026-08-30: *"do you have a gate installed when making these engine changes to run the changes
 mentally and see if they would make a difference?... Have you considered actually reading the code
 and not just skimming it?... install gates around this to be more specific at all times, to be more
