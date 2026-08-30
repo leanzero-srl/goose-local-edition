@@ -29,16 +29,21 @@ export interface PhaseLaneGroup {
 
 /**
  * The fleet fan that belongs to a planning phase, so its lanes render UNDER that phase's checklist rather than
- * in a trailing group that says nothing about when they ran. RESEARCH here is v1's slice fan (archived runs
- * only — v2's research-* lanes ride the planning-calls group via PLANNING_FAN_AFTER in pipeline order);
+ * in a trailing group that says nothing about when they ran. RESEARCH owns TWO fans across engine versions:
+ * v2's research-* question lanes (the live engine — their own fold group since panel #5) and v1's slice fan
+ * (archived runs only); a run produces one or the other, never both, so the live group wins when it exists.
  * CONTRACTS is the contract-* fan — which had no home in the zone at all and surfaced only as three busy
  * nodes parked under a ribbon lit on Build. This mapping is how an ARCHIVED run's fans keep their home.
  */
 export function planningLanesFor(
   key: PhaseKey,
-  lanes: { sliceLanes: TurnLane[]; contractLanes: TurnLane[] }
+  lanes: { sliceLanes: TurnLane[]; contractLanes: TurnLane[]; researchLanes: TurnLane[] }
 ): PhaseLaneGroup | null {
-  if (key === 'research') return { label: 'Slice specs', lanes: lanes.sliceLanes };
+  if (key === 'research') {
+    return lanes.researchLanes.length > 0
+      ? { label: 'Research answers', lanes: lanes.researchLanes }
+      : { label: 'Slice specs', lanes: lanes.sliceLanes };
+  }
   if (key === 'contracts') return { label: 'Contract stubs', lanes: lanes.contractLanes };
   return null;
 }

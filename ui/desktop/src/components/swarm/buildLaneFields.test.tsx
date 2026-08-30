@@ -70,6 +70,9 @@ const DIGEST = {
       args_preview: '"content": "def apply(payment):\\n    ledger.append(payment)',
     },
   ],
+  // r6: the engine's shared digest builders stamp this on supervision lanes (judge-<task>, replan-rN,
+  // prereview-<task>, tail-review-<dim>); absent — never false — on worker lanes and pre-r6 logs.
+  supervision: true,
 };
 
 // Written out by hand, deliberately. Deriving this from the join the paths share would make the test
@@ -125,6 +128,7 @@ const EXPECTED: Record<string, unknown> = {
       args_preview: '"content": "def apply(payment):\\n    ledger.append(payment)',
     },
   ],
+  supervision: true,
 };
 
 const digestFieldsOf = (lane: TurnLane | undefined): Record<string, unknown> => {
@@ -144,6 +148,7 @@ const ACTIVITY: Record<string, unknown> = {
   'contract-ledger': DIGEST,
   'detail-ledger': DIGEST,
   'slice-ledger': DIGEST,
+  'research-ledger-q1': DIGEST,
   synthesis: DIGEST,
 };
 
@@ -176,6 +181,7 @@ const LANE_GROUPS: Record<string, string> = {
   contractLanes: 'contract-ledger',
   detailLanes: 'detail-ledger',
   sliceLanes: 'slice-ledger',
+  researchLanes: 'research-ledger-q1',
   planningLanes: 'synthesis',
 };
 

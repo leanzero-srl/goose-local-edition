@@ -1,6 +1,11 @@
 import { fireEvent, render, renderHook, waitFor, screen } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { SwarmRunPanel } from './SwarmRunPanel';
+import {
+  REASONING_CLIP_NOTE,
+  SwarmRunPanel,
+  narrativeClipNote,
+  taskGenClipNote,
+} from './SwarmRunPanel';
 import { useSwarmRun } from './useSwarmRun';
 import { IntlTestWrapper } from '../../i18n/test-utils';
 
@@ -136,5 +141,60 @@ describe('the node inspector admits when a pane is only a tail', () => {
 
     const dialog = await screen.findByRole('dialog');
     expect(dialog.textContent).not.toContain('tail of');
+  });
+
+  /**
+   * ITEM 2's residue (agenda item V): an ARCHIVED digest whose durable logs are gone still carries
+   * `full_reasoning` — the engine's 24,000-char TAIL CLIP — and every surface that falls back to it
+   * used to present the clip as the whole record. The fallback stays (archived-run compat); the
+   * honest caption is what closes the item.
+   */
+  describe('the full_reasoning fallback is captioned as the 24k clip it is', () => {
+    it('predicates: the note fires only when the durable log the chain prefers is absent', () => {
+      expect(narrativeClipNote({ fullReasoning: 'the 24k clip' })).toBe(REASONING_CLIP_NOTE);
+      expect(
+        narrativeClipNote({ fullReasoning: 'the 24k clip', fullTranscript: 'durable answer log' })
+      ).toBeNull();
+      expect(narrativeClipNote({})).toBeNull();
+      expect(taskGenClipNote({ full_reasoning: 'the 24k clip' })).toBe(REASONING_CLIP_NOTE);
+      expect(
+        taskGenClipNote({ full_reasoning: 'the 24k clip', full_thinking: 'durable think.log' })
+      ).toBeNull();
+      expect(taskGenClipNote({})).toBeNull();
+    });
+
+    it('the inspector THINKING caption says so when its body fell back to the clip', async () => {
+      (electron().readSwarmRun as ReturnType<typeof vi.fn>).mockImplementation(async () => ({
+        runId: 'swarm-archived-clip',
+        dir: '/tmp/build',
+        events: EVENTS,
+        activity: {
+          'ledgerd-core': {
+            model: 'mihai-qwen3.6-27b',
+            full_reasoning: 'the last 24k characters of a much longer narration',
+            tool_calls: 3,
+          },
+        },
+        activityMtimes: { 'ledgerd-core': Date.now() },
+        clarify: null,
+        mtime: Date.now(),
+        heartbeat: Date.now(),
+        heartbeatExited: false,
+        pauseRequested: false,
+      }));
+
+      const { result } = renderHook(() => useSwarmRun('/tmp/build'));
+      await waitFor(() => expect(result.current.present).toBe(true));
+      render(
+        <IntlTestWrapper>
+          <SwarmRunPanel workingDir="/tmp/build" run={result.current} />
+        </IntlTestWrapper>
+      );
+
+      const cell = await screen.findByTestId('fleet-node');
+      fireEvent.click(cell.querySelector('[role="button"]') ?? cell);
+      const dialog = await screen.findByRole('dialog');
+      expect(dialog.textContent).toContain(REASONING_CLIP_NOTE);
+    });
   });
 });

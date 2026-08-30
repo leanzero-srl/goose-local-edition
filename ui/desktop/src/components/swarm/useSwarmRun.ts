@@ -402,6 +402,15 @@ export interface TurnLane {
    *  truth on the carry, deliberately NOT a digestStreamFields key — no digest carries it — so the
    *  visible-reasoning restart and the reset thinking_chars counter have an on-screen cause. */
   restreams?: number;
+  /** r6 supervision lanes (judge-<task> / replan-rN / prereview-<task> / tail-review-<dim>): the
+   *  ENGINE stamps `"supervision": true` into these digests (absent — never false — on worker lanes
+   *  and on every pre-r6 log), and it rides the one join like every other digest field. The panel's
+   *  supervision accent reads THIS, never the key shape alone. */
+  supervision?: boolean;
+  /** A digest-only laneless call whose record never stamped `phase:'done'` and whose file went quiet
+   *  past the open-call window — the LIVENESS fact that ends its 'running' claim (panel #2's find:
+   *  demoted, it used to vanish entirely). Derived, never a digest field: no digest says this. */
+  interrupted?: boolean;
   seq: number;
 }
 
@@ -663,6 +672,9 @@ export interface SwarmRunState {
   /** RESEARCH per-slice lanes (slice-<id>) — one per node, each owner writing its module's spec. Without
    *  these the RESEARCH phase renders empty lanes while the whole fleet is generating. */
   sliceLanes: TurnLane[];
+  /** The v2 RESEARCH fan (research-<slice>-q<n>): the opener's own questions, one read-only call each
+   *  across the fleet — grouped under the Research phase chip, not the trailing planning-calls list. */
+  researchLanes: TurnLane[];
   /** The single-node planning calls that own no slice: open / open-resplit / synthesis / review /
    *  proxy-answer / rate. Each writes its own digest, so the node running one reads WORKING, not idle. */
   planningLanes: TurnLane[];
@@ -798,6 +810,7 @@ const EMPTY: SwarmRunState = {
   contractLanes: [],
   detailLanes: [],
   sliceLanes: [],
+  researchLanes: [],
   planningLanes: [],
   fixLanes: [],
   pool: [],
@@ -2549,6 +2562,10 @@ type Digest = {
   /** What a previous attempt (or a previous call reusing this lane key) left behind — folded in by the
    *  new attempt's seed instead of being silently erased. Oldest first. */
   superseded?: SupersededSaid[];
+  /** Stamped `true` by BOTH shared digest builders on r6 supervision lanes (supervision.rs's one
+   *  derivation) — ABSENT, never false, on worker lanes and on all pre-r6 archived logs, so every
+   *  read is optional-tolerant by construction. */
+  supervision?: boolean;
   /** II-11b/c: tool calls the provider stream has NAMED whose argument bodies are still streaming —
    *  attached by main.ts from `<key>.forming.json` (absent = nothing forming; the engine removes the
    *  file on completion and at scope exit, and sweeps leftovers at run start). Since II-11c
@@ -2745,6 +2762,7 @@ export function digestStreamFields(
   | 'saidKind'
   | 'superseded'
   | 'forming'
+  | 'supervision'
 > {
   // ATTEMPT-KEYED CARRY (the measured 24m30s failure). A carried `lastText` belongs to the attempt
   // that produced it; when the digest names a NEWER attempt, that carry is a dead attempt's text —
@@ -2781,6 +2799,7 @@ export function digestStreamFields(
     superseded: d?.superseded ?? prev?.superseded,
     // Deliberately NO prev carry: the sidecar's absence is the engine saying nothing is forming.
     forming: d?.forming,
+    supervision: d?.supervision ?? prev?.supervision,
   };
 }
 
@@ -2793,6 +2812,9 @@ export interface FoldedRun {
   contractLanes: TurnLane[];
   detailLanes: TurnLane[];
   sliceLanes: TurnLane[];
+  /** The v2 research fan (`research-<slice>-q<n>`) — its own group so the lanes render under the
+   *  Research phase chip rather than in the trailing planning-calls list. */
+  researchLanes: TurnLane[];
   planningLanes: TurnLane[];
   fixLanes: TurnLane[];
 }
@@ -3056,6 +3078,17 @@ function finishFold(c: FoldCarry, activity: Record<string, unknown>, scope = '')
   // the app — the reasoning that was invisible before. NOT build tasks, so they're excluded from `totals`.
   // Running until the plan is chosen (plan_loaded / first dispatch), then done (kept, collapsed, for review).
   const planned = c.planned;
+  // THE ONE KEEP/HIDE RULE for lanes built from a digest alone (planLanes had its own near-copy that
+  // had already dropped the tool-calls clause — one rule, one place). Keep a lane the moment it's
+  // dispatched: prompt-PROCESSING (phase set, no tokens yet), text on ANY channel — the durable
+  // `<task>.log` included: a fullTranscript-only digest (answer channel written straight to the log,
+  // every rolling field still empty) was invisible to the old text-only checks, a latent lane-hider —
+  // reasoning-channel thinking, or tool calls made before any narration.
+  const hasActivity = (l: TurnLane) =>
+    (l.fullReasoning || l.reasoning || l.lastText || l.fullTranscript || '').trim().length > 0 ||
+    (l.calls?.length ?? 0) > 0 ||
+    (l.thinkingChars ?? 0) > 0 ||
+    l.phase === 'processing';
   const planLanes: TurnLane[] = Object.keys(activity)
     .filter((k) => /^plandraft-\d+$/.test(k))
     .sort()
@@ -3073,16 +3106,10 @@ function finishFold(c: FoldCarry, activity: Record<string, unknown>, scope = '')
         seq: i,
       };
     })
-    // Keep a lane the moment it's dispatched: prompt-PROCESSING (phase set, no tokens yet), text, OR
-    // reasoning-channel thinking. These coder models draft in the <think> channel (reasoning/last_text empty
-    // while thinking_chars climbs), and prompt-processing precedes the first token — the old text-only filter
-    // dropped both, so the Fleet strip read "idle" while the node was busy.
-    .filter(
-      (l) =>
-        (l.fullReasoning || l.reasoning || l.lastText || '').trim().length > 0 ||
-        (l.thinkingChars ?? 0) > 0 ||
-        l.phase === 'processing'
-    );
+    // These coder models draft in the <think> channel (reasoning/last_text empty while thinking_chars
+    // climbs), and prompt-processing precedes the first token — the old text-only filter dropped both,
+    // so the Fleet strip read "idle" while the node was busy. The rule itself lives in hasActivity.
+    .filter(hasActivity);
 
   // RESEARCH (scout-<lens>) and CONTRACTS (contract-<id>) now write per-node digests too, so those phases are no
   // longer a black box. Surface them as lanes, mirroring planLanes — but KEEP a lane that has TOOL CALLS even
@@ -3105,11 +3132,6 @@ function finishFold(c: FoldCarry, activity: Record<string, unknown>, scope = '')
       seq: i,
     };
   };
-  const hasActivity = (l: TurnLane) =>
-    (l.fullReasoning || l.reasoning || l.lastText || '').trim().length > 0 ||
-    (l.calls?.length ?? 0) > 0 ||
-    (l.thinkingChars ?? 0) > 0 ||
-    l.phase === 'processing';
   const scoutLanes: TurnLane[] = Object.keys(activity)
     .filter((k) => /^scout-/.test(k))
     .sort()
@@ -3138,6 +3160,16 @@ function finishFold(c: FoldCarry, activity: Record<string, unknown>, scope = '')
     .map((k, i) => laneFromDigest(k, `Slice · ${k.replace(/^slice-/, '')}`, researchOver, i))
     .filter(hasActivity);
 
+  // THE RESEARCH FAN (v2: `research-<slice>-q<n>`, the opener's own questions answered read-only across
+  // the fleet). These used to ride planningLanes via the fan-after table, which parked them in the
+  // trailing "Planning calls" group — a list that says nothing about WHEN they ran. As their own group
+  // they render under the Research phase chip (planningLanesFor), the home the v1 slice fan already has.
+  const researchLanes: TurnLane[] = Object.keys(activity)
+    .filter((k) => /^research-/.test(k))
+    .sort()
+    .map((k, i) => laneFromDigest(k, digestLabel(k), researchOver, i))
+    .filter(hasActivity);
+
   // The single-node planning calls. Each is over the moment its own digest stamps phase='done', so a node
   // that finished synthesising stops reading as working without waiting for the next phase to open.
   // PIPELINE ORDER, with each fan slotted beside the phase it belongs to. Sorting these alphabetically
@@ -3164,6 +3196,7 @@ function finishFold(c: FoldCarry, activity: Record<string, unknown>, scope = '')
     contractLanes,
     detailLanes,
     sliceLanes,
+    researchLanes,
     planningLanes,
     fixLanes,
   };
@@ -3463,12 +3496,11 @@ export const PLANNING_DIGEST_KEYS = [
 const PLANNING_FAN_PREFIXES = ['open-coverage-', 'review-', 'research-'] as const;
 
 /** Which fixed key each fan follows, so the lanes render in the order the phases actually run.
- *  The research fan (v2, `research-<slice>-q<n>`) runs between ASK and SYNTHESIS, so it slots after
- *  proxy-answer — whose own digest no longer exists (the proxy call is deleted), which is fine: the
- *  loop pushes a fan's lanes whether or not its anchor key wrote a digest. */
+ *  The research fan (v2, `research-<slice>-q<n>`) is deliberately NOT here any more: it has its own
+ *  fold group (`researchLanes`) and renders under the Research phase chip via planningLanesFor —
+ *  riding this table put it in the trailing planning-calls group instead. */
 const PLANNING_FAN_AFTER: Record<string, string | undefined> = {
   'open-resplit': 'open-coverage-',
-  'proxy-answer': 'research-',
   review: 'review-',
 };
 
@@ -3479,8 +3511,48 @@ export function isPlanningDigestKey(key: string): boolean {
   );
 }
 
+export type SupervisionLaneKind = 'judge' | 'replan' | 'prereview' | 'tailreview';
+
+/**
+ * Which r6 supervision class a lane KEY belongs to — null for every worker/planner lane. Mirrors the
+ * engine's one derivation (`supervision_lane_kind`, commands/swarm/supervision.rs) EXACTLY, including
+ * the digit-exact replan shape: `replan-r2` is the replanner's round 2, while `replan-extra` and
+ * `replan-r2b` are MODEL-chosen worker task ids and stay worker lanes (the engine pins this by test).
+ * Used for LABELS; the visual supervision accent reads the digest's own `supervision: true` stamp.
+ */
+export function supervisionLaneKind(key: string): SupervisionLaneKind | null {
+  if (key.startsWith('judge-')) return 'judge';
+  if (/^replan-r\d+$/.test(key)) return 'replan';
+  if (key.startsWith('prereview-')) return 'prereview';
+  if (key.startsWith('tail-review-')) return 'tailreview';
+  return null;
+}
+
+/**
+ * The honest caption for the judge's ROLLING lane: `judge-<task>` is ONE lane per supervised task,
+ * never one per look — each look reseeds the digest (its `attempt` is the look number, 1-BASED,
+ * unlike worker lanes' 0-based scheduler attempts) and folds the prior look's answer into
+ * `superseded` (kept ≤4). Without this line the lane reads like one long call. Null on non-judge
+ * lanes and on any digest that carries no attempt (optional-tolerant: pre-r6 logs have neither the
+ * key class nor the field).
+ */
+export function supervisionRollingCaption(
+  lane: Pick<TurnLane, 'taskId' | 'attempt' | 'superseded' | 'supervision'>
+): string | null {
+  if (!lane.supervision || supervisionLaneKind(lane.taskId) !== 'judge') return null;
+  if (typeof lane.attempt !== 'number') return null;
+  return `look ${lane.attempt}${(lane.superseded?.length ?? 0) > 0 ? ' · earlier looks folded' : ''}`;
+}
+
 /** Human label for a digest key that has no lane of its own ('verify::api' -> 'Verifying api'). */
 function digestLabel(key: string): string {
+  // r6 supervision lanes, labels derived from the key CLASS — this derivation (not a hardcoded
+  // guess) is what lets a replan lane say Replanning instead of the retired "review/test-gen" text.
+  const supervisionKind = supervisionLaneKind(key);
+  if (supervisionKind === 'judge') return `Supervising · ${key.slice('judge-'.length)}`;
+  if (supervisionKind === 'replan') return `Replanning · round ${key.slice('replan-r'.length)}`;
+  if (supervisionKind === 'prereview') return `Pre-review · ${key.slice('prereview-'.length)}`;
+  if (supervisionKind === 'tailreview') return `Tail review · ${key.slice('tail-review-'.length)}`;
   if (key.startsWith('verify-e2e::')) return 'End-to-end verify';
   if (key.startsWith('verify::')) return `Verifying ${key.slice('verify::'.length)}`;
   if (key.startsWith('complete-fix::')) return 'Repairing verify findings';
@@ -3620,15 +3692,18 @@ export function deriveFleet(args: {
     }
   }
   // A lane the LIFECYCLE closed (task_completed / fix completed) is over even if its digest predates
-  // the phase stamp — engine truth beats file freshness.
-  const closed = new Set(
+  // the phase stamp — engine truth beats file freshness. And a key ALREADY on screen through a
+  // laneSource (primary or also-row) must not mint a second row from its own digest.
+  const represented = new Set(
     args.laneSources.filter((l) => l.status !== 'running').map((l) => l.taskId)
   );
+  for (const l of workingByDevice.values()) represented.add(l.taskId);
+  for (const list of alsoRunningByDevice.values()) for (const l of list) represented.add(l.taskId);
   for (const [key, raw] of Object.entries(args.digests)) {
-    if (closed.has(key)) continue;
+    if (represented.has(key)) continue;
     const d = raw as (Digest & { model?: string }) | undefined;
     const device = shortNode(str(d?.model));
-    if (!device || workingByDevice.has(device) || !devices.includes(device)) continue;
+    if (!device || !devices.includes(device)) continue;
     const open = d?.phase !== 'done';
     // The digest's OWN open-call record (a provisional `ok: null` tail entry the engine appends while a
     // tool call is in flight) beats the short mtime window: one long shell call streams no tokens, so the
@@ -3639,7 +3714,7 @@ export function deriveFleet(args: {
     const age = args.now - (args.digestMtimes[key] ?? 0);
     const fresh = age < DIGEST_FRESH_MS || (callOpen && age < DIGEST_OPEN_CALL_FRESH_MS);
     if (!open || !fresh) continue;
-    workingByDevice.set(device, {
+    const laneRow: TurnLane = {
       taskId: key,
       description: digestLabel(key),
       device,
@@ -3647,15 +3722,34 @@ export function deriveFleet(args: {
       status: 'running',
       ...digestStreamFields(args.scope ? `${args.scope}::${key}` : key, d),
       seq: 0,
-    });
+    };
+    const primary = workingByDevice.get(device);
+    if (!primary) {
+      workingByDevice.set(device, laneRow);
+    } else {
+      // A node running a WORKER lane plus a laneless call — an r6 supervision lane (judge-<task>,
+      // replan-rN) riding beside the build task is the common shape. The old `has(device)` guard
+      // simply DROPPED the second call; the also-row machinery exists for exactly this.
+      const also = alsoRunningByDevice.get(device) ?? [];
+      if (!also.some((x) => x.taskId === key)) {
+        also.push(laneRow);
+        alsoRunningByDevice.set(device, also);
+      }
+    }
+    represented.add(key);
   }
   // SUPERVISION: an open judge span is real work on SOME node, but judge_observed never names it (the
   // engine picks an idle device; only the closing verdict carries judge_node). LM Studio's own busy
   // signal is the join: a node it reports generating, with no lane and no digest, is running exactly
   // this class of call — attach the span there so the busy state always has a visible explanation.
-  const liveSpans = (args.supervision ?? []).filter(
-    (s) => s.sinceMs == null || args.now - s.sinceMs < JUDGE_SPAN_MAX_MS
-  );
+  const liveSpans = (args.supervision ?? [])
+    .filter((s) => s.sinceMs == null || args.now - s.sinceMs < JUDGE_SPAN_MAX_MS)
+    // The r6 engine mints a REAL lane for the judge generation (`judge-<task>`, with a digest that
+    // names the node that is actually running it), so where that digest exists the span would be a
+    // second, GUESSED representation of the same work — attached to whichever busy node came first,
+    // which is the misattribution class. The span survives only for streams with no such digest
+    // (pre-r6 archives, and the verdict-judge calls the engine has not keyed).
+    .filter((s) => args.digests[`judge-${s.taskId}`] == null);
   const freeBusy = (args.busyNodes ?? []).filter(
     (n) => devices.includes(n) && !workingByDevice.has(n)
   );
@@ -3700,8 +3794,12 @@ export interface NodeHistoryEntry {
  *   - every laneSource whose lifecycle closed (done/error) — event-stream truth about how it ended;
  *   - every digest key no laneSource claims, once its own record stamps `phase: 'done'` (verify::*
  *     and the other laneless calls never get an event-stream lane at all).
- * A digest-only key that never reached 'done' is NOT listed: with no closing event and no stamp there
- * is no fact that the call ended, and a history row must not invent one.
+ * A digest-only key that never reached 'done' IS listed once its file goes quiet past the open-call
+ * window — as INTERRUPTED, never as finished. The staleness is a LIVENESS fact that the call is over
+ * (the engine rewrites a streaming digest ~2.5x/s), and before this row existed the demoted call
+ * simply VANISHED: live it was a fleet row, stale it was nothing, and nobody could learn it had died
+ * (panel #2's find). A digest with no mtime at all still gates nothing — an unknown age cannot
+ * corroborate an interruption, the same non-rule digestsFromThisRun keeps.
  *
  * Entries are per LANE KEY, never per call: REVIEW reuses one key across rounds, so an entry's durable
  * byte sizes are everything that key wrote this run — the row's caption must count calls, not claim a
@@ -3711,6 +3809,9 @@ export function deriveNodeHistory(args: {
   laneSources: TurnLane[];
   digests: Record<string, unknown>;
   digestMtimes: Record<string, number>;
+  /** The clock the interrupted-row liveness test reads — the same `now` deriveFleet gets, so the two
+   *  derivations agree about which side of the freshness window a digest is on. */
+  now: number;
   scope?: string;
 }): Map<string, NodeHistoryEntry[]> {
   const byDevice = new Map<string, NodeHistoryEntry[]>();
@@ -3727,7 +3828,20 @@ export function deriveNodeHistory(args: {
   for (const [key, raw] of Object.entries(args.digests)) {
     if (claimed.has(key)) continue;
     const d = raw as (Digest & { model?: string }) | undefined;
-    if (d?.phase !== 'done') continue;
+    const done = d?.phase === 'done';
+    let interrupted = false;
+    if (!done) {
+      // No completion stamp. Fresh (by the same windows deriveFleet applies) means LIVE — the fleet
+      // strip is showing it; stale means the call DIED mid-flight and this row is its only record.
+      const mtime = args.digestMtimes[key];
+      if (typeof mtime !== 'number') continue;
+      const lastCall = d?.calls?.length ? d.calls[d.calls.length - 1] : undefined;
+      const callOpen = lastCall != null && (lastCall.ok === null || lastCall.ok === undefined);
+      const age = args.now - mtime;
+      const fresh = age < DIGEST_FRESH_MS || (callOpen && age < DIGEST_OPEN_CALL_FRESH_MS);
+      if (fresh) continue;
+      interrupted = true;
+    }
     const device = shortNode(str(d?.model));
     if (!device) continue;
     add(device, {
@@ -3736,7 +3850,8 @@ export function deriveNodeHistory(args: {
         description: digestLabel(key),
         device,
         model: d?.model,
-        status: 'done',
+        status: done ? 'done' : 'error',
+        interrupted: interrupted || undefined,
         ...digestStreamFields(args.scope ? `${args.scope}::${key}` : key, d),
         seq: 0,
       },
@@ -4800,6 +4915,7 @@ export function useSwarmRun(workingDir: string | undefined, pollMs = 500): Swarm
           contractLanes,
           detailLanes,
           sliceLanes,
+          researchLanes,
           planningLanes,
           fixLanes,
         } = foldEventsIncremental(
@@ -4840,6 +4956,7 @@ export function useSwarmRun(workingDir: string | undefined, pollMs = 500): Swarm
           contractLanes,
           detailLanes,
           sliceLanes,
+          researchLanes,
           planningLanes,
           fixLanes,
           pool: resolvePool(data.events),

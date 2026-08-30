@@ -6,6 +6,8 @@ import {
   foldRunPhase,
   resetFoldCache,
 } from './useSwarmRun';
+import { planningLanesFor } from './phaseList';
+import type { TurnLane } from './useSwarmRun';
 
 /**
  * RESEARCH FAN v2 — the live engine's research: the opener's OWN questions, one read-only structured
@@ -124,7 +126,9 @@ describe('phase visibility — derived from the fan events, since no phase event
 describe('the research lanes reach the planning board through the digest poll', () => {
   beforeEach(() => resetFoldCache());
 
-  it('a research-<slice>-q<n> digest becomes a labeled planning lane', () => {
+  // Panel #5: research-* lanes are their OWN fold group (researchLanes) so they render under the
+  // Research phase chip via planningLanesFor, no longer inside the trailing planning-calls list.
+  it('a research-<slice>-q<n> digest becomes a labeled lane in the researchLanes group', () => {
     const folded = foldEvents(
       [START] as never,
       {
@@ -136,11 +140,13 @@ describe('the research lanes reach the planning board through the digest poll', 
       } as never,
       'research-lane-test'
     );
-    const lane = folded.planningLanes.find((l) => l.taskId === 'research-store-layer-q2');
-    expect(lane, 'the research lane must reach planningLanes').toBeTruthy();
+    const lane = folded.researchLanes.find((l) => l.taskId === 'research-store-layer-q2');
+    expect(lane, 'the research lane must reach researchLanes').toBeTruthy();
     // Identity before the ' · ' cut (laneSiblingTitle), caption after — the synthesis-label idiom.
     expect(lane?.description).toBe('Research store-layer q2 · one opener question, answered read-only');
     expect(lane?.status).toBe('running');
+    // And it left the planning-calls group — one home, not two.
+    expect(folded.planningLanes.some((l) => l.taskId === 'research-store-layer-q2')).toBe(false);
   });
 
   it('the lane closes when its own digest stamps done', () => {
@@ -156,7 +162,27 @@ describe('the research lanes reach the planning board through the digest poll', 
       } as never,
       'research-lane-done-test'
     );
-    expect(folded.planningLanes.find((l) => l.taskId === 'research-boot-q0')?.status).toBe('done');
+    expect(folded.researchLanes.find((l) => l.taskId === 'research-boot-q0')?.status).toBe('done');
+  });
+
+  // The grouping half: under the Research phase chip, the live engine's question lanes win; an
+  // archived v1 run (slice fan, no research-* keys) keeps its Slice specs group. One home per run.
+  it('planningLanesFor puts the research fan under the Research chip, v1 slices as the fallback', () => {
+    const laneOf = (taskId: string): TurnLane => ({ taskId, device: 'mihai', status: 'done', seq: 0 });
+    const v2 = planningLanesFor('research', {
+      sliceLanes: [],
+      contractLanes: [],
+      researchLanes: [laneOf('research-boot-q0')],
+    });
+    expect(v2?.label).toBe('Research answers');
+    expect(v2?.lanes.map((l) => l.taskId)).toEqual(['research-boot-q0']);
+    const v1 = planningLanesFor('research', {
+      sliceLanes: [laneOf('slice-boot')],
+      contractLanes: [],
+      researchLanes: [],
+    });
+    expect(v1?.label).toBe('Slice specs');
+    expect(v1?.lanes.map((l) => l.taskId)).toEqual(['slice-boot']);
   });
 });
 
