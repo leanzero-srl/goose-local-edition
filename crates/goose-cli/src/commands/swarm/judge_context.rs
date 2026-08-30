@@ -10,6 +10,12 @@ use std::path::Path;
 
 use super::shape_excerpt;
 
+/// Declared here rather than in swarm.rs: `verify_owned_files` below is its only consumer, and
+/// the split law prices every wiring line in the root. `#[path]` resolves beside this file, so
+/// web_refs.rs stays a flat commands/swarm/ sibling like the rest.
+#[path = "web_refs.rs"]
+mod web_refs;
+
 /// An empty `__init__.py` or `py.typed` is a CORRECT, INTENTIONAL file, not a missing deliverable.
 ///
 /// ONE rule in ONE place, because it was five hand-written copies and the fifth had already diverged.
@@ -262,6 +268,14 @@ pub(super) fn verify_owned_files(working_dir: &Path, owned: &[String]) -> Vec<St
                     continue;
                 }
             }
+        }
+        // A browser JS file that references an identifier defined nowhere in reach dies at boot
+        // with a ReferenceError that `node --check` structurally cannot see — r5 shipped exactly
+        // that (viz.js defined onBrushChange, registered onBrushChangeTracked) behind a green
+        // syntax check and `delivery_defects: []`, and four of five graded mechanisms were dead
+        // on arrival. The scan is MILD and false-positive-averse by construction; see web_refs.rs.
+        if rel.ends_with(".js") || rel.ends_with(".mjs") {
+            out.extend(web_refs::browser_js_undefined_refs(working_dir, rel));
         }
         // An HTML file that points at a file nobody wrote renders blank, and nothing else notices until
         // someone opens it — which historically has been nobody until the score comes back.
