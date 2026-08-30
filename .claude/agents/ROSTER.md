@@ -315,3 +315,9 @@ research_request_block's armed-no-claimed-sections arm wording.
 - 2026-08-30 gate-8 tracers (workflow, pre-roster): traces validated their own replay against
   logged values to 4 decimals — that discipline is now IN fix-tracer's charter ("a replay that
   matches logs to 3+ decimals is a measurement; one you cannot validate is an estimate").
+- 2026-08-30 21:05 bench-scorer (probe sources[]): CLEAN+. Corrected the ORCHESTRATOR's brief — I named
+  ui/desktop/src/swarm-bench (the gitignored forge mirror) as the file; the tracked source is
+  evals/swarm-bench/bench. Agent committed the source, synced the mirror byte-identically, proved the
+  shipped code via the file's own --selfcheck battery plus a mutated negative control when a bare
+  import proved impossible (main() at module top). Charter gap: none — the hermetic law held. Lesson
+  is MINE: verify tracked-vs-mirror before naming a path in a brief (git ls-files the path first).
