@@ -53,6 +53,8 @@ mod imports;
 use imports::{attribute_import_gap, tree_import_gaps, verify_tree_imports};
 mod transcripts;
 use transcripts::{append_attempt_marker, append_reasoning_transcript, append_thinking_transcript};
+mod desk;
+use desk::{spawn_shadow_desk, RecurrenceMeter, RECURRENCE_MIN_SPAN};
 
 const FINAL_OUTPUT_TOOL: &str = "recipe__final_output";
 /// The one engine terminator's own words — the `judge_out_of_moves` ending's Err message, which
@@ -3579,152 +3581,10 @@ fn restream_seed(
 // budget the call can exceed — nothing happens when it is crossed except that someone READS the call.
 const OMNI_JUDGE_GROWTH_CHARS: usize = 4_000;
 
-/// #F924 — a loop detector whose REACH is the whole call instead of its last 2,400 characters.
-///
-/// Every loop check the engine had read `last_thinking`, which the stream loop truncates to a
-/// 2,400-char rolling tail. A repetition whose PERIOD exceeds that window was therefore invisible
-/// to the omni-judge, to `tails_recur` and to the digest — structurally, not by tuning. MEASURED
-/// live on the sb-7 qwen3.8 r2 straggler (`detail-api-server-api`): 8,205 contiguous characters
-/// captured from the running call carried 47.7% duplicated 48-char shingles and 17 of its 59
-/// sentences were verbatim repeats ("For the buckets endpoint, I'm iterating through all
-/// payments…" twice), yet the judge's 2,000-char window scored 0.00 and its corroboration streak
-/// never once reached 2 across 191,000 characters and two hours. Healthy `detail` calls max out
-/// at 1,384 chars over 58 archived samples, so this one ran at 138x the worst healthy case with
-/// nothing able to see it.
-///
-/// Keeps FINGERPRINTS, never the text: a bounded deque of 48-char shingle hashes plus their
-/// counts, so the rate is available at any instant and a long call costs a few MB. Also keeps one
-/// far-back TEXT snapshot, so the judge can be shown "then" beside "now" rather than being asked
-/// to infer recurrence from a single window it cannot see past.
-struct RecurrenceMeter {
-    counts: std::collections::HashMap<u64, u32>,
-    order: std::collections::VecDeque<u64>,
-    carry: String,
-    recent: String,
-    mid: Option<String>,
-    older: Option<String>,
-    since_rotate: usize,
-}
-
-/// Shingle reach. 65,536 shingles ~= 65k characters of memory at ~3 MB per live call — 16x the
-/// longest repetition period measured (~4,000 chars), and 27x the window that was blind to it.
-const RECURRENCE_REACH: usize = 65_536;
-/// Below this much observed reasoning the rate is noise: a call restating a structured prompt to
-/// itself shares shingles with itself early on. 8,000 is the span the r2 pathology was measured
-/// over, so the threshold below is calibrated on a directly comparable number.
-const RECURRENCE_MIN_SPAN: usize = 8_000;
-/// Duplicated-over-distinct shingle ratio that SUMMONS THE JUDGE. Never kills on its own — under
-/// UNCAPPED the judge decides, and this only makes sure it is looking and knows what was measured.
-/// The r2 pathology read 0.4766; a healthy advancing call reads ~0.00-0.05.
-const RECURRENCE_TRIGGER: f32 = 0.25;
-
-impl RecurrenceMeter {
-    const WIN: usize = 48;
-
-    fn new() -> Self {
-        Self {
-            counts: std::collections::HashMap::new(),
-            order: std::collections::VecDeque::new(),
-            carry: String::new(),
-            recent: String::new(),
-            mid: None,
-            older: None,
-            since_rotate: 0,
-        }
-    }
-
-    fn reset(&mut self) {
-        *self = Self::new();
-    }
-
-    fn push(&mut self, chunk: &str) {
-        if chunk.is_empty() {
-            return;
-        }
-        self.note_text(chunk);
-        self.carry.push_str(chunk);
-        let chars: Vec<char> = self.carry.chars().collect();
-        if chars.len() < Self::WIN {
-            return;
-        }
-        use std::hash::{Hash, Hasher};
-        let mut i = 0;
-        while i + Self::WIN <= chars.len() {
-            let mut h = std::collections::hash_map::DefaultHasher::new();
-            chars[i..i + Self::WIN]
-                .iter()
-                .collect::<String>()
-                .hash(&mut h);
-            self.push_hash(h.finish());
-            i += 1;
-        }
-        self.carry = chars[chars.len() - (Self::WIN - 1)..].iter().collect();
-    }
-
-    fn push_hash(&mut self, h: u64) {
-        *self.counts.entry(h).or_insert(0) += 1;
-        self.order.push_back(h);
-        if self.order.len() > RECURRENCE_REACH {
-            if let Some(old) = self.order.pop_front() {
-                if let Some(c) = self.counts.get_mut(&old) {
-                    *c -= 1;
-                    if *c == 0 {
-                        self.counts.remove(&old);
-                    }
-                }
-            }
-        }
-    }
-
-    /// Rolls a 1,200-char text snapshot so `earlier()` hands the judge reasoning from 20k-40k
-    /// characters ago — far outside the tail window, which is the whole point.
-    fn note_text(&mut self, chunk: &str) {
-        self.recent.push_str(chunk);
-        if self.recent.chars().count() > 1_600 {
-            self.recent = tail_chars(&self.recent, 1_200);
-        }
-        self.since_rotate += chunk.chars().count();
-        if self.since_rotate >= 10_000 {
-            self.older = self.mid.take();
-            self.mid = Some(self.recent.clone());
-            self.since_rotate = 0;
-        }
-    }
-
-    fn span(&self) -> usize {
-        self.order.len()
-    }
-
-    /// Duplicated shingles over DISTINCT shingles — the same formula the live capture was scored
-    /// with, so 0.4766 in the ledger and 0.4766 here mean the identical thing.
-    fn rate(&self) -> f32 {
-        let distinct = self.counts.len();
-        if distinct == 0 {
-            return 0.0;
-        }
-        (self.order.len().saturating_sub(distinct)) as f32 / distinct as f32
-    }
-
-    fn recurring(&self) -> bool {
-        self.span() >= RECURRENCE_MIN_SPAN && self.rate() >= RECURRENCE_TRIGGER
-    }
-
-    /// The judge's out-of-tail span. TRACED on r4b (gate 8): right after a rotation `mid` is the
-    /// chars just behind the live tail — showing it as "tens of thousands of characters ago"
-    /// overlapped the tail by ~1,000 of its 1,200 chars and made the COMPARE instruction judge two
-    /// near-identical windows BY CONSTRUCTION on any healthy call. `mid` is exposed only once the
-    /// stream has moved >=8,000 chars past it; `older` (a full rotation further back) is always
-    /// safe. Rotation is 10,000 so a 2-4k char/min stream gets its first honest span at ~minute
-    /// 4-5 instead of ~7.
-    fn earlier(&self) -> Option<&str> {
-        let far = self.older.as_deref();
-        if self.since_rotate >= 8_000 {
-            far.or(self.mid.as_deref())
-        } else {
-            far
-        }
-    }
-}
+// #F924's RecurrenceMeter (and its REACH/MIN_SPAN/TRIGGER thresholds) moved to
+// commands/swarm/desk.rs under the incremental-split law: the shadow judge desk REPLAYS the
+// meter from the durable transcripts, and live meter and replay being ONE type is what makes
+// the r7 fidelity comparison meaningful. The worker loop reaches it via `use desk::...` above.
 
 /// The tail's 48-char shingle set (16-char stride), for RECURRENCE comparison across judge looks.
 /// An exact tail hash cannot see the most classic loop: a repeating sentence SHIFTS through the
@@ -17410,6 +17270,10 @@ impl GooseAgentDispatcher {
                      Deep, slow, or repetitive-LOOKING reasoning that is ADVANCING is OK. LOOPING means it is \
                      revisiting the same analysis without adding evidence, resolving a decision, or taking the \
                      next concrete step.\n\
+                     Say LOOPING only when ESTABLISHED quotes the claim this call has now made TWICE — \
+                     the sentence from the earlier span and its recurrence in the recent tail. No quote, \
+                     no LOOPING: a stream producing NEW content is OK or DRIFTING, whatever its pace. \
+                     (Your own law applied to you: a reader quotes what it acted on.)\n\
                      Reply on ONE line, exactly:\n\
                      VERDICT|CONFIDENCE|ESTABLISHED|NEXT\n\
                      VERDICT      OK | DRIFTING | LOOPING | RESTART\n\
@@ -17426,8 +17290,16 @@ impl GooseAgentDispatcher {
                      camera, picking\"), and wrote nothing at all. So if it owns a file, name the file \
                      and ask for a FIRST MINIMAL VERSION it can extend — the stub, the imports, one \
                      function. If its deliverable is a structured reply, tell it to emit what it has \
-                     NOW and refine after. A thing that exists can be improved; a thing being perfected \
+                     NOW and refine after. And to a call with ZERO actions so far, phrase NEXT as a \
+                     command about its NEXT MESSAGE — \"your next message must be a single tool call: \
+                     <the one write or emit>\" — never as an imperative about the artefact. MEASURED: \
+                     \"call the output tool NOW: emit the slice table\" bought 19,000 more characters \
+                     of reasoning and zero calls; \"your next message must be a tool call\" was quoted \
+                     back by the lane and obeyed. A thing that exists can be improved; a thing being perfected \
                      in silence cannot.\n\
+                     This governs your VERDICT too: a call that owns files, has taken ZERO actions, and \
+                     whose reasoning is already writing complete file bodies is DRIFTING — working on \
+                     the wrong thing (perfection in silence) — however good the draft reads.\n\
                      A DIRECTION THAT RESTATES THE BRIEF IS NOT A DIRECTION. If the most concrete thing \
                      you can name is the job the call was already given, you have nothing to add and the \
                      verdict is OK — say so and let it work. MEASURED twice on one run: the direction \
@@ -17482,8 +17354,9 @@ impl GooseAgentDispatcher {
                     ));
                 }
                 if nudges_used > 0 {
-                    let moved = if tool_calls_at_last_nudge.is_some_and(|n| call_records.len() > n)
-                    {
+                    let acted_since =
+                        tool_calls_at_last_nudge.is_some_and(|n| call_records.len() > n);
+                    let moved = if acted_since {
                         format!(
                             "taken {} action(s)",
                             call_records.len()
@@ -17504,6 +17377,21 @@ impl GooseAgentDispatcher {
                          and make NEXT a MEASUREMENT that would prove you wrong — a command whose output \
                          separates your old theory from the new one."
                     ));
+                    // VERDICT CONTINUITY ON AN IGNORED STEER (r5, reader 5). Only a second DRIFTING
+                    // re-arms delivery; skeleton's 11:05 steer went unescalated for 42 minutes/63k
+                    // chars because looks 4-8 oscillated looping/drifting — while open's look 12
+                    // stayed DRIFTING and earned the restream that produced its deliverable 23
+                    // minutes later. Same failure, opposite words, opposite machinery. Delivered
+                    // only on the measured zero-action case, so an obeyed steer never sees it.
+                    if !acted_since {
+                        sys.push_str(
+                            "\nAnd your VERDICT must carry this case: your direction was delivered \
+                             and the call has taken NO action since — that is the ignored-steer \
+                             case, and it is DRIFTING again, never LOOPING, however repetitive the \
+                             reasoning reads. A steered call that is still only reasoning has not \
+                             changed failure modes.",
+                        );
+                    }
                 }
                 // #F924: the judge used to get one 2,000-char window and nothing else, which is why a
                 // ~4,000-char-period loop read as OK on every look. It now also gets the deterministic
@@ -37853,6 +37741,14 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             stopping,
         }
     });
+
+    // SHADOW JUDGE DESK (r6 qualifying measurement; DESIGN-JUDGE-DESK.md). A reader of the
+    // durable lane files that records what an out-of-phase judge WOULD have done — desk_*
+    // events only, no model calls, no worker-visible effect. Same guard pattern as the
+    // heartbeat above: aborted on every run_swarm exit path by Drop.
+    let _desk = log_path
+        .as_ref()
+        .map(|p| spawn_shadow_desk(working_dir.clone(), p.clone(), sink.clone()));
 
     // Progress goes to stderr so stdout carries only the report (clean in --output-format json).
     eprintln!(
