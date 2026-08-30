@@ -4333,6 +4333,61 @@ mod tests {
         assert_eq!(lines[1]["attempt"], 1);
     }
 
+    /// II-8, the r2 ledger-core-tests shape (synthetic — r2 ran on a pre-II-1 binary, so no
+    /// archived capture exists): attempt 0 ran the suite, hit an ImportError, and wrote NOTHING.
+    /// The re-dispatch block must say all three — above all that nothing is on disk, because the
+    /// generic transient hint told r2's attempt 1 the opposite and it started blind, twice.
+    #[test]
+    fn the_previous_attempt_block_carries_attempt_zeros_facts_not_guesses() {
+        let rows = [
+            serde_json::json!({"ts":"2026-08-29T20:00:01Z","attempt":0,"name":"shell",
+                "summary":"python3 -m pytest tests/ -v 2>&1 | tail -30","ok":true,
+                "result_tail":"=== 32 failed, 46 passed in 41.07s ===",
+                "pytest":{"failed":32,"passed":46,"errors":0,"collect_error":false,"failures":[]}}),
+            serde_json::json!({"ts":"2026-08-29T20:04:11Z","attempt":0,"name":"shell",
+                "summary":"python3 -m pytest --collect-only -q","ok":false,
+                "result_tail":"ImportError: cannot import name 'Ledger' from 'app.ledger_core'"}),
+            serde_json::json!({"kind":"attempt_end","ts":"2026-08-29T20:12:00Z","attempt":0,
+                "elapsed_secs":720,
+                "fs_delta":{"appeared":[],"changed":[],"outside_manifest":[]}}),
+        ];
+        let text: String = rows.iter().map(|r| format!("{r}\n")).collect();
+
+        let block = render_previous_attempt_block(&text, 1).expect("attempt 0 left rows");
+        assert!(
+            block.contains("NOTHING"),
+            "an attempt that wrote no files must be SAID to have written none — the generic \
+             hint's 'still on disk' was the r2 lie: {block}"
+        );
+        assert!(
+            block.contains("32 failed, 46 passed"),
+            "the last pytest result is the fact the retry needs first: {block}"
+        );
+        assert!(
+            block.contains("test ×1") && block.contains("import ×1"),
+            "attempt 0's real call classes: {block}"
+        );
+        assert!(
+            block.contains("ImportError") && block.contains("--collect-only"),
+            "the last failing command and its error travel verbatim: {block}"
+        );
+
+        // Attempt 0 itself has no predecessor: nothing to render, prompt unchanged.
+        assert!(render_previous_attempt_block(&text, 0).is_none());
+        // An empty capture renders nothing rather than an empty scaffold.
+        assert!(render_previous_attempt_block("", 1).is_none());
+
+        // And when the attempt DID write, the files are named instead.
+        let wrote = serde_json::json!({"kind":"attempt_end","ts":"2026-08-29T20:12:00Z",
+            "attempt":0,
+            "fs_delta":{"appeared":["tests/test_ledger_core.py"],"changed":["app/ledger_core.py"],
+                        "outside_manifest":[]}});
+        let block = render_previous_attempt_block(&format!("{wrote}\n"), 1).unwrap();
+        assert!(block.contains("tests/test_ledger_core.py"), "{block}");
+        assert!(block.contains("app/ledger_core.py"), "{block}");
+        assert!(!block.contains("NOTHING"), "{block}");
+    }
+
     /// II-1 fs_delta: writes are attributed by the attempt's WINDOW, and out-of-manifest paths
     /// are named — the stat that catches what a self-report denies (r2's testgen root files).
     #[test]
@@ -14938,6 +14993,133 @@ fn append_calls_jsonl(
         }
     }
     *already = call_records.len();
+}
+
+/// II-8: the "previous attempt" block a re-dispatch carries, rendered from the II-1 pre-reset
+/// capture (`<task>.calls.jsonl` per-call rows + `attempt_end` fs_delta snapshots).
+///
+/// On r2, attempt 1 started blind TWICE after a transient drop: the sole cross-attempt channel
+/// was the generic `transient_retry_hint`, whose "any file you had written is still on disk" was
+/// UNTRUE for ledger-core-tests — attempt 0 wrote NOTHING (tests/test_ledger_core.py's mtime is
+/// attempt 1's), and the retry burned its opening turns re-deriving 12 minutes of dead work. The
+/// capture holds the facts, so the hint now states them instead of guessing: what the attempt
+/// actually wrote (including "nothing" — the case the generic text lied about), what it ran by
+/// class, its last pytest result, and its last failing command.
+///
+/// Pure over the capture text so the r2 shape renders in a unit test without a dispatcher.
+/// `None` when no row belongs to an earlier attempt — then there is nothing true to say, and the
+/// caller keeps the prompt exactly as it was. Data only: nothing here gates, retries or bounds.
+fn render_previous_attempt_block(calls_jsonl: &str, current_attempt: u32) -> Option<String> {
+    let mut wrote: std::collections::BTreeSet<String> = Default::default();
+    let mut classes: std::collections::BTreeMap<&'static str, (u64, Option<bool>)> =
+        Default::default();
+    let mut last_pytest: Option<(String, String)> = None;
+    let mut last_error: Option<(String, String)> = None;
+    let mut prior_attempt: u32 = 0;
+    let mut saw_prior_rows = false;
+    for line in calls_jsonl.lines() {
+        let Ok(v) = serde_json::from_str::<serde_json::Value>(line) else {
+            continue;
+        };
+        let att = v.get("attempt").and_then(|a| a.as_u64()).unwrap_or(0) as u32;
+        if att >= current_attempt {
+            continue;
+        }
+        saw_prior_rows = true;
+        prior_attempt = prior_attempt.max(att);
+        if v.get("kind").and_then(|k| k.as_str()) == Some("attempt_end") {
+            if let Some(d) = v.get("fs_delta") {
+                for key in ["appeared", "changed"] {
+                    for p in d.get(key).and_then(|x| x.as_array()).unwrap_or(&Vec::new()) {
+                        if let Some(s) = p.as_str() {
+                            wrote.insert(s.to_string());
+                        }
+                    }
+                }
+            }
+            continue;
+        }
+        if v.get("name").and_then(|n| n.as_str()) != Some("shell") {
+            continue;
+        }
+        let cmd = v.get("summary").and_then(|s| s.as_str()).unwrap_or("");
+        let ok = v.get("ok").and_then(|o| o.as_bool());
+        let entry = classes.entry(classify_command(cmd)).or_insert((0, None));
+        entry.0 += 1;
+        entry.1 = ok;
+        if let Some(py) = v.get("pytest") {
+            let n = |k: &str| py.get(k).and_then(|x| x.as_u64()).unwrap_or(0);
+            let summary = if py
+                .get("collect_error")
+                .and_then(|c| c.as_bool())
+                .unwrap_or(false)
+            {
+                "COLLECTION ERROR — the suite never ran".to_string()
+            } else {
+                format!(
+                    "{} failed, {} passed{}",
+                    n("failed"),
+                    n("passed"),
+                    if n("errors") > 0 {
+                        format!(", {} errors", n("errors"))
+                    } else {
+                        String::new()
+                    }
+                )
+            };
+            last_pytest = Some((cmd.to_string(), summary));
+        }
+        if ok == Some(false) {
+            let tail = v.get("result_tail").and_then(|r| r.as_str()).unwrap_or("");
+            last_error = Some((cmd.to_string(), tail_chars(tail, 300)));
+        }
+    }
+    if !saw_prior_rows {
+        return None;
+    }
+    let wrote_line = if wrote.is_empty() {
+        // The line that corrects the generic hint's lie: an attempt that wrote nothing must be
+        // SAID to have written nothing, or the retry reads files into existence.
+        "NOTHING — it wrote or changed no files, so do NOT assume any of its work is on disk"
+            .to_string()
+    } else {
+        wrote.iter().cloned().collect::<Vec<_>>().join(", ")
+    };
+    let ran_line = if classes.is_empty() {
+        "no shell commands".to_string()
+    } else {
+        classes
+            .iter()
+            .map(|(class, (count, ok))| {
+                format!(
+                    "{class} ×{count} (last: {})",
+                    match ok {
+                        Some(true) => "ok",
+                        Some(false) => "FAILED",
+                        None => "unknown",
+                    }
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+    let mut block = format!(
+        "WHAT YOUR PREVIOUS ATTEMPT (attempt {prior_attempt}) ACTUALLY DID — read from its \
+         recorded calls, facts not guesses:\n\
+         - files it wrote or changed: {wrote_line}\n\
+         - commands it ran: {ran_line}"
+    );
+    if let Some((cmd, summary)) = last_pytest {
+        block.push_str(&format!("\n- last pytest result: `{cmd}` → {summary}"));
+    }
+    if let Some((cmd, tail)) = last_error {
+        block.push_str(&format!("\n- last failing command: `{cmd}` → {tail}"));
+    }
+    block.push_str(
+        "\nKEEP what is already correct, fix what failed, and do not re-derive work this record \
+         shows was done.",
+    );
+    Some(block)
 }
 
 /// II-1 fs_delta, half 1: a cheap (path → mtime secs, size) map of the tree, taken at attempt
@@ -34263,11 +34445,34 @@ impl GooseAgentDispatcher {
                 "desc_sha": content_hash(b.as_bytes()).chars().take(8).collect::<String>(),
             }));
         }
-        let worker_user_text = match &req.prior_hint {
-            Some(h) => format!(
+        // II-8: a re-dispatch must not start blind. The generic transient hint GUESSES ("any file
+        // you had written is still on disk") and on r2 that guess was false — ledger-core-tests'
+        // attempt 0 wrote nothing, and attempt 1 opened on a lie, twice. The II-1 capture survives
+        // the digest reseed precisely so this prompt can carry the facts instead: rendered from
+        // `<task>.calls.jsonl`, absent (None) when no earlier attempt left rows. Read from `root`,
+        // the same tree the capture writer used, so a speculative twin reads its own shadow.
+        let prev_attempt_block = if req.attempt > 0 {
+            std::fs::read_to_string(
+                root.join(".swarm")
+                    .join("activity")
+                    .join(format!("{}.calls.jsonl", activity_digest_key(&req.task_id))),
+            )
+            .ok()
+            .and_then(|text| render_previous_attempt_block(&text, req.attempt))
+        } else {
+            None
+        };
+        let worker_user_text = match (&req.prior_hint, &prev_attempt_block) {
+            (Some(h), Some(b)) => format!(
+                "SUPERVISOR NOTE — your previous attempt was stopped: {h}\n\n{b}\n\nNow complete the task:\n{effective_description}",
+            ),
+            (Some(h), None) => format!(
                 "SUPERVISOR NOTE — your previous attempt was stopped: {h}\n\nNow complete the task:\n{effective_description}",
             ),
-            None => effective_description.to_string(),
+            (None, Some(b)) => {
+                format!("{b}\n\nNow complete the task:\n{effective_description}")
+            }
+            (None, None) => effective_description.to_string(),
         };
         // ACT-NOW NUDGE — the LAST thing the worker reads, when it owns files and has written none.
         //
