@@ -55,7 +55,10 @@ mod pytest_tail;
 use pytest_tail::parse_pytest_summary;
 mod spec_sets;
 mod transcripts;
-use transcripts::{append_attempt_marker, append_reasoning_transcript, append_thinking_transcript};
+use transcripts::{
+    append_attempt_marker, append_calls_jsonl, append_calls_row, append_reasoning_transcript,
+    append_thinking_transcript,
+};
 mod desk;
 use desk::{spawn_shadow_desk, RecurrenceMeter, RECURRENCE_MIN_SPAN};
 mod attribution;
@@ -4239,50 +4242,6 @@ mod tests {
         let mut reaper = ShellGroupReaper::armed("swarm-own-group-guard-test".to_string());
         assert!(reaper.reap_now().is_empty());
         assert!(process_groups::group_alive(own), "we must still be alive");
-    }
-
-    /// II-1's isolation fixture: attempt 0's captured calls SURVIVE the digest reseed that a
-    /// re-dispatch performs (the seed erased r2's ledger-core-tests attempt 0), and the watermark
-    /// never duplicates a row across the multiple write sites.
-    #[test]
-    fn calls_jsonl_survives_the_redispatch_seed_and_never_duplicates() {
-        let dir = tempfile::tempdir().unwrap();
-        let p = dir.path().join("ledger-core-tests.json");
-        let mut records: Vec<(String, String, Option<bool>, String)> = vec![(
-            "shell".into(),
-            "python3 -m pytest".into(),
-            Some(true),
-            "=== 7 failed, 19 passed in 0.29s ===".into(),
-        )];
-        let mut at = 0usize;
-        append_calls_jsonl(&p, 0, &records, &mut at);
-        // The same records again (a second digest flush) must append nothing.
-        append_calls_jsonl(&p, 0, &records, &mut at);
-        // The RE-DISPATCH: the seed overwrites the digest file itself — the erase II-1 outlives.
-        let said = SaidProvenance::at_dispatch(1);
-        std::fs::write(&p, seed_worker_digest("m", &said, None).to_string()).unwrap();
-        records.push((
-            "write".into(),
-            "write app/x.py".into(),
-            Some(true),
-            "ok".into(),
-        ));
-        let mut at1 = 1usize; // fresh attempt's watermark starts past nothing of its own
-        append_calls_jsonl(&p, 1, &records, &mut at1);
-        let lines: Vec<serde_json::Value> =
-            std::fs::read_to_string(p.with_extension("calls.jsonl"))
-                .unwrap()
-                .lines()
-                .map(|l| serde_json::from_str(l).unwrap())
-                .collect();
-        assert_eq!(
-            lines.len(),
-            2,
-            "attempt 0's row survived, attempt 1 appended"
-        );
-        assert_eq!(lines[0]["attempt"], 0);
-        assert_eq!(lines[0]["pytest"]["failed"], 7);
-        assert_eq!(lines[1]["attempt"], 1);
     }
 
     /// II-8, the r2 ledger-core-tests shape (synthetic — r2 ran on a pre-II-1 binary, so no
@@ -14576,51 +14535,6 @@ fn seed_worker_digest(
     d
 }
 
-/// II-1: append the NEW completed call records to the append-only `<task>.calls.jsonl`.
-///
-/// The digest is REWRITTEN in place and RESEEDED at every re-dispatch — that seed is what erased
-/// ledger-core-tests' 12-minute attempt 0 and the sink's 46-call attempt 0 on r2. This sibling is
-/// append-only across attempts (the `.log`/`.think.log` rule applied to calls), so an attempt's
-/// work survives its own death. `already` is the caller's watermark into `call_records`; rows are
-/// never rewritten and never duplicated. Best-effort like the transcripts: a failed write must
-/// never disturb a run.
-fn append_calls_jsonl(
-    activity_path: &Path,
-    attempt: u32,
-    call_records: &[(String, String, Option<bool>, String)],
-    already: &mut usize,
-) {
-    if call_records.len() <= *already {
-        return;
-    }
-    let path = activity_path.with_extension("calls.jsonl");
-    let Ok(mut f) = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&path)
-    else {
-        return;
-    };
-    let ts = chrono::Utc::now().to_rfc3339();
-    for (name, summary, ok, result) in &call_records[*already..] {
-        let mut row = serde_json::json!({
-            "ts": ts,
-            "attempt": attempt,
-            "name": name,
-            "summary": summary,
-            "ok": ok,
-            "result_tail": tail_chars(result, 2000),
-        });
-        if let Some(py) = parse_pytest_summary(result) {
-            row["pytest"] = serde_json::to_value(py).unwrap_or(serde_json::Value::Null);
-        }
-        if f.write_all(format!("{row}\n").as_bytes()).is_err() {
-            return;
-        }
-    }
-    *already = call_records.len();
-}
-
 /// II-8: the "previous attempt" block a re-dispatch carries, rendered from the II-1 pre-reset
 /// capture (`<task>.calls.jsonl` per-call rows + `attempt_end` fs_delta snapshots).
 ///
@@ -16414,7 +16328,15 @@ impl GooseAgentDispatcher {
             );
             // One boundary line per attempt in each append-only transcript, so a reader (human or the
             // panel's splitter) can tell where the previous attempt's text ends and this one's begins.
-            append_attempt_marker(p, said.attempt, &said.dispatched_at);
+            // The mirror gets the same boundary: a fix shard's durable transcripts land in the real
+            // tree too (the shadow is deleted when the wave ends — r5 kept only the digests), and
+            // the panel's attempt splitter reads the real tree's copy.
+            append_attempt_marker(
+                p,
+                activity_mirror.as_deref(),
+                said.attempt,
+                &said.dispatched_at,
+            );
             if let Some(m) = &activity_mirror {
                 let _ = std::fs::copy(p, m);
             }
@@ -17564,30 +17486,29 @@ impl GooseAgentDispatcher {
                                             if let Some(m) = &activity_mirror {
                                                 let _ = std::fs::write(m, d.to_string());
                                             }
-                                            let (at, werr) = append_reasoning_transcript(
+                                            let mirror = activity_mirror.as_deref();
+                                            let (at, mut werrs) = append_reasoning_transcript(
                                                 p,
+                                                mirror,
                                                 &texts,
                                                 transcript_at,
                                             );
                                             transcript_at = at;
-                                            if let Some(e) = werr {
-                                                self.note_transcript_write_failure(p, "log", &e);
-                                            }
-                                            if let Some(e) =
-                                                append_thinking_transcript(p, &mut think_unflushed)
-                                            {
-                                                self.note_transcript_write_failure(
-                                                    p,
-                                                    "think.log",
-                                                    &e,
-                                                );
-                                            }
-                                            append_calls_jsonl(
+                                            werrs.extend(append_thinking_transcript(
                                                 p,
+                                                mirror,
+                                                &mut think_unflushed,
+                                            ));
+                                            werrs.extend(append_calls_jsonl(
+                                                p,
+                                                mirror,
                                                 said.attempt,
                                                 &call_records,
                                                 &mut calls_jsonl_at,
-                                            );
+                                            ));
+                                            for (kind, e) in werrs {
+                                                self.note_transcript_write_failure(p, kind, &e);
+                                            }
                                             last_digest_at = Some(tokio::time::Instant::now());
                                             flush_digest_now = false;
                                         }
@@ -18406,15 +18327,21 @@ impl GooseAgentDispatcher {
                     if let Some(m) = &activity_mirror {
                         let _ = std::fs::write(m, digest.to_string());
                     }
-                    let (at, werr) = append_reasoning_transcript(p, &texts, transcript_at);
+                    let mirror = activity_mirror.as_deref();
+                    let (at, mut werrs) =
+                        append_reasoning_transcript(p, mirror, &texts, transcript_at);
                     transcript_at = at;
-                    if let Some(e) = werr {
-                        self.note_transcript_write_failure(p, "log", &e);
+                    werrs.extend(append_thinking_transcript(p, mirror, &mut think_unflushed));
+                    werrs.extend(append_calls_jsonl(
+                        p,
+                        mirror,
+                        said.attempt,
+                        &call_records,
+                        &mut calls_jsonl_at,
+                    ));
+                    for (kind, e) in werrs {
+                        self.note_transcript_write_failure(p, kind, &e);
                     }
-                    if let Some(e) = append_thinking_transcript(p, &mut think_unflushed) {
-                        self.note_transcript_write_failure(p, "think.log", &e);
-                    }
-                    append_calls_jsonl(p, said.attempt, &call_records, &mut calls_jsonl_at);
                     last_digest_at = Some(tokio::time::Instant::now());
                     flush_digest_now = false;
                 }
@@ -18453,18 +18380,20 @@ impl GooseAgentDispatcher {
                 obj.insert("phase".to_string(), serde_json::Value::from("done"));
             }
             let _ = std::fs::write(p, digest.to_string());
-            let (_, werr) = append_reasoning_transcript(p, &texts, transcript_at);
-            if let Some(e) = werr {
-                self.note_transcript_write_failure(p, "log", &e);
-            }
-            if let Some(e) = append_thinking_transcript(p, &mut think_unflushed) {
-                self.note_transcript_write_failure(p, "think.log", &e);
-            }
+            let mirror = activity_mirror.as_deref();
+            let (_, mut werrs) = append_reasoning_transcript(p, mirror, &texts, transcript_at);
+            werrs.extend(append_thinking_transcript(p, mirror, &mut think_unflushed));
             // The stragglers (pending drained above with unknown ok), then the per-attempt snapshot
             // row: the terminal digest (minus `calls`, already captured row by row) plus the
             // fs_delta for this attempt's window — written BEFORE any re-dispatch can reseed the
             // digest, which is the erase that cost r2 its two biggest attempts' evidence.
-            append_calls_jsonl(p, said.attempt, &call_records, &mut calls_jsonl_at);
+            werrs.extend(append_calls_jsonl(
+                p,
+                mirror,
+                said.attempt,
+                &call_records,
+                &mut calls_jsonl_at,
+            ));
             let mut snapshot = digest.clone();
             if let Some(obj) = snapshot.as_object_mut() {
                 obj.remove("calls");
@@ -18484,12 +18413,9 @@ impl GooseAgentDispatcher {
                 "fs_delta": fs_delta,
                 "digest": snapshot,
             });
-            if let Ok(mut f) = std::fs::OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open(p.with_extension("calls.jsonl"))
-            {
-                let _ = f.write_all(format!("{end_row}\n").as_bytes());
+            werrs.extend(append_calls_row(p, mirror, &end_row.to_string()));
+            for (kind, e) in werrs {
+                self.note_transcript_write_failure(p, kind, &e);
             }
             // The mirrored copy MUST receive this terminal phase="done" too, or the panel would hold
             // a mirrored fix node at "working" forever — the shadow (and its digest) is deleted the
