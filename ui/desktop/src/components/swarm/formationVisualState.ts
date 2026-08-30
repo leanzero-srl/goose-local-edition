@@ -185,7 +185,21 @@ export function formationPhaseState(
   steps: ReadonlyArray<{ key: RunPhase }> = FORMATION_PHASES
 ): FormationPhaseState {
   const active = formationPhaseIndex(phase, steps);
-  if (active < 0) return 'upcoming';
+  if (active < 0) {
+    // NO ACTIVE STEP — before the first phase event, or a caller with no live phase. History must
+    // stay lit off the evidence map: nulling the phase used to return 'upcoming' for EVERYTHING,
+    // so pausing a mid-build run erased every completed checkmark ("nothing has run yet" on a run
+    // that ran four phases). Steps below the FURTHEST observed one render off evidence exactly as
+    // they do behind an active step; the furthest observed step itself asserts neither work nor
+    // completion — evidence is set on phase ENTRY, and a run interrupted mid-Build has build:true
+    // with the build half-done, so a green check there would be unearned.
+    let furthest = -1;
+    steps.forEach((step, i) => {
+      if (evidence?.[step.key] === true) furthest = i;
+    });
+    if (index < furthest) return evidence?.[steps[index].key] === true ? 'complete' : 'skipped';
+    return 'upcoming';
+  }
   if (index < active) {
     return evidence && evidence[steps[index].key] !== true ? 'skipped' : 'complete';
   }

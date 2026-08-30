@@ -4508,13 +4508,15 @@ export const SwarmRunPanel: React.FC<{
         </span>
       </div>
       {/* Row 2 of the band: the run's ROUTE and its real fleet in one formation — which engine phase is
-          live, and which nodes are working under it. The active step is the engine's own phase key; a held
-          run has none, and the ribbon lights nothing rather than asserting work that is not happening. */}
+          live, and which nodes are working under it. The active step is the engine's own phase key; a
+          held run keeps its position but the chip renders held (grey outline, no fill) — asserting no
+          work WITHOUT erasing the completed phases behind it. */}
       {(run.inProgress || ended) && (
         <FormationRibbon
           phase={run.runPhase}
           nodes={formationNodes}
           evidence={run.runPhasesObserved}
+          held={run.held}
           activeColor={activePhaseColor}
           metrics={
             run.inProgress && !stale && !ended && !clarifyPending ? (

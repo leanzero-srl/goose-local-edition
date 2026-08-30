@@ -48,6 +48,28 @@ describe('FormationRibbon', () => {
     expect(screen.getByText('2 nodes')).toBeInTheDocument();
   });
 
+  // FINDING 16 of the frontend truth review: pressing Pause used to null the phase, which returned
+  // every chip to 'upcoming' — the ribbon un-completed a run four phases in until Resume. Held now
+  // keeps the position and drops only the work claim: grey outline, no fill, ' — held'.
+  it('held keeps completed history lit and renders the active chip as held, not working', () => {
+    render(
+      <FormationRibbon
+        phase="build"
+        held
+        evidence={{ open: true, ask: true, synthesize: true, review: true, build: true }}
+        nodes={[{ device: 'gabee-qwen', working: false }]}
+      />
+    );
+    const phases = screen.getByRole('list', { name: 'Run phases' });
+    expect(within(phases).getByText('Synthesize').closest('li')).toHaveAttribute(
+      'data-state',
+      'complete'
+    );
+    const buildChip = within(phases).getByText('Build — held').closest('li');
+    expect(buildChip).toHaveAttribute('data-state', 'active');
+    expect(buildChip).toHaveAttribute('data-held', 'true');
+  });
+
   // An ARCHIVED run proves it ran the retired stages, so it keeps their chips in engine order —
   // old run.jsonl files still carry the research/contracts phase events and must render as history.
   it('keeps Research and Contracts for a run whose evidence proves it ran them', () => {
