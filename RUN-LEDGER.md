@@ -177,3 +177,37 @@ DAG is actually parallel). reasoning_chars against answer_chars is the waste.
 - **tree_defects**: 0
 - **repair**: delivery_defect_steer=0 brief_defects=0 testgen=0 fix_target_selected=0 complete_verify=0 complete_result=0
 
+## swarm-3node-r0
+
+- **phases**: open
+- **started**: 08:38:47
+- **tasks**: 0
+- **files_planned**: 0
+- **collisions**: none
+- **sink_owns**: NO SINK
+- **chain**: 0
+- **startable**: 0
+- **brief_median**: 0
+- **reasoning_chars**: 122
+- **answer_chars**: 1422
+- **code_files**: 0
+- **code_bytes**: 0
+- **elapsed_min**: 45
+- **phase_split**: open 45m
+- **before_build_min**: 0 (internal diagnosis only — never a cross-run number)
+- **vs_target**: ONLY THE SCORE COMPARES. Target 20.06% (qwen3.8-27b, one cloud agent, same model). Wall clock is NOT comparable — that run is on far faster hardware, so minutes measure the machine. Bytes are NOT a verdict — more code is not better code, and it had no planning phases to spend budget on. Cross-hardware-honest work numbers for THIS run: 0B delivered, 122 chars reasoned, 0 tasks completed, 0 retried.
+- **python_parses**: 0 ok / 0 SYNTAX ERROR / 0 empty
+- **web_files**: NONE — 0.56 of the scoring weight is unreachable without a served page
+- **tasks_done**: 0/? completed, 0 dispatched, 0 retried
+- **arm**: F (fleet of 3)
+- **fixture_seed**: ddcbba021ea1eba1
+- **plan_patched**: 0
+- **plan_loaded**: 0
+- **review_rounds**: none
+- **judge_looks**: 12
+- **judge_nudges**: 2
+- **judge_ended**: 0
+- **drift_held**: 1
+- **tree_defects**: 0
+- **repair**: delivery_defect_steer=0 brief_defects=0 testgen=0 fix_target_selected=0 complete_verify=0 complete_result=0
+
