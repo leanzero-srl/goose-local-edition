@@ -51,6 +51,14 @@ boundary), run one gate-auditor pass over the whole roster.
 | cloud-campaign runner | the cloud-sb7 admission machinery | when that campaign resumes |
 
 ## Grading log (newest first — one line per delegation; move closed items to the per-agent notes)
+- 2026-08-30 swarm-surgeon #3 (splice_briefs unclaimed-brief files, 7b5171998): CLEAN PASS —
+  ordering proof given unprompted (splice runs before review/finalize, so the repair chain sees the
+  appended files and repair_shared_files backstops residual overlap), read-whole list includes the
+  fallback-path twin's doc comment, honest NO trace (structural net — every prior unclaimed append
+  died at owns-nothing), both test halves pinned (declared-files survive; declaration-free ghost
+  still removed). Two unbriefed observations reported-not-fixed per charter: RUN-LEDGER churn
+  (known, auto-snapshot) and a stale splice_briefs comment narrating the deleted orphan-research
+  block. SCHEDULED: fold the comment fix into the next swarm-surgeon brief. No charter gap.
 - 2026-08-30 words-reader #1 (r5 opener, live): CLEAN PASS — contract followed exactly (quotes with
   offsets, shapes after words, improvements derived from quotes, falsifier named); refuted the
   orchestrator's implied stall and found two prompt defects + a missing bound instead. No charter
