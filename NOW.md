@@ -61,7 +61,7 @@ built from the run's real artefacts (worked example from r2); don't-repeat as IN
 with per-mechanism replacements (the 600 s read cut and the 420 s stopwatch both provably decided model
 work WRONG in r2 → progress/lms-ps replacements); SAID provenance chips; the forming line (LM Studio arg
 streaming MEASURED LIVE 2026-08-30 12:46: 28,157 bytes/8s reached the engine during a frozen-channel
-structured-output emission — arg deltas DO stream; row 11 unblocked, cheap tap = byte counter); Claude Code patterns mirrored with doc cites.
+structured-output emission — arg deltas DO stream; row 11 unblocked; Mihai 13:05 asked for CONTENT ('show us exactly what is getting formed') -> full args-preview capture designed via workflow, refuted SOUND_WITH_AMENDMENTS, in build); Claude Code patterns mirrored with doc cites.
 II.7 = a 15-row ordered r3 list in TWO TRACKS: desktop row 10 (SAID) may start now; row 11 (forming) after
 its LM Studio measurement; ALL engine rows only after run_finished + the r2 score, re-verdicted per row.
 Nine refuter amendments applied (min_age_secs was itself a wall clock; the K-counter needed the lms-ps
