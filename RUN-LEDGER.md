@@ -188,14 +188,14 @@ DAG is actually parallel). reasoning_chars against answer_chars is the waste.
 - **chain**: 5
 - **startable**: 1
 - **brief_median**: 6054
-- **reasoning_chars**: 1467211
-- **answer_chars**: 101649
+- **reasoning_chars**: 1342001
+- **answer_chars**: 97434
 - **code_files**: 28
 - **code_bytes**: 260399
-- **elapsed_min**: 622
-- **phase_split**: open 68m · ask 0m · synthesis 16m · review 52m · build 325m · integrate 92m · repair 1m · fix 65m
+- **elapsed_min**: 631
+- **phase_split**: open 68m · ask 0m · synthesis 16m · review 52m · build 325m · integrate 92m · repair 1m · fix 74m
 - **before_build_min**: 137 (internal diagnosis only — never a cross-run number)
-- **vs_target**: ONLY THE SCORE COMPARES. Target 20.06% (qwen3.8-27b, one cloud agent, same model). Wall clock is NOT comparable — that run is on far faster hardware, so minutes measure the machine. Bytes are NOT a verdict — more code is not better code, and it had no planning phases to spend budget on. Cross-hardware-honest work numbers for THIS run: 260,399B delivered, 1,467,211 chars reasoned, 11 tasks completed, 0 retried.
+- **vs_target**: ONLY THE SCORE COMPARES. Target 20.06% (qwen3.8-27b, one cloud agent, same model). Wall clock is NOT comparable — that run is on far faster hardware, so minutes measure the machine. Bytes are NOT a verdict — more code is not better code, and it had no planning phases to spend budget on. Cross-hardware-honest work numbers for THIS run: 260,399B delivered, 1,342,001 chars reasoned, 11 tasks completed, 0 retried.
 - **python_parses**: 20 ok / 0 SYNTAX ERROR / 0 empty
 - **web_files**: app.js, brush.js, index.html, styles.css, viz.js
 - **tasks_done**: 11/9 completed, 11 dispatched, 0 retried
@@ -210,8 +210,8 @@ DAG is actually parallel). reasoning_chars against answer_chars is the waste.
 - **judge_ended**: 0
 - **drift_held**: 9
 - **tree_defects**: 0
-- **repair**: delivery_defect_steer=11 brief_defects=0 testgen=0 fix_target_selected=1 complete_verify=1 complete_result=0
-- **ledger**: 14 task ledger(s) in .swarm/ledger/, ledger.json roll-up present, written=14 delivered=1
+- **repair**: delivery_defect_steer=11 brief_defects=0 testgen=0 fix_target_selected=1 complete_verify=2 complete_result=0
+- **ledger**: 16 task ledger(s) in .swarm/ledger/, ledger.json roll-up present, written=16 delivered=1
 
 ## fakerun
 
