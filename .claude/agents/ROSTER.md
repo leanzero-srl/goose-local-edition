@@ -115,6 +115,15 @@ sort q10 before q2; partition_delegated_decisions + delegated_decisions_ok appea
 research_request_block's armed-no-claimed-sections arm wording.
 
 ## Grading log (newest first — one line per delegation; move closed items to the per-agent notes)
+- 2026-08-30 swarm-surgeon (cluster A, 6abd934c3..8a68a9c59): CLEAN PASS — six items with honest
+  per-item traces including two labeled NETs (item 4's look-1 case was already covered and it said
+  so; judge amendment (d)); the web_refs scan proven EMPIRICALLY against the real r5 viz.js (one
+  true finding, zero false positives on 89KB); the collision handled with a hygiene commit that
+  made HEAD buildable and banked both agents' extractions explicitly; item 2 landed with ZERO
+  swarm.rs lines via #[path] module hookup. Ratchet 45,772. Post-interleave HEAD verified by
+  orchestrator: gates 8/8, log coherent. DISPOSED: steer_superseding key mismatch (narrow) +
+  GL-semantics checks -> smalls queue; cross_task rendering -> panel queue; spec_set_exceeded
+  tick row -> done by orchestrator next edit.
 - 2026-08-30 swarm-surgeon (shadow desk, 4218ddaea + loop-state f1517e7): CLEAN PASS — honest
   three-part trace (YES on the growth crossing, 7 min ahead of the in-loop steer; NO on recurrence
   with the reason stated — the deterministic layer cannot see semantic loops; NO on silence,
