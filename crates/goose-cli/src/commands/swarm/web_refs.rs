@@ -586,7 +586,7 @@ fn sibling_declared(working_dir: &Path, rel: &str) -> HashSet<String> {
                     if q != '"' && q != '\'' {
                         return None;
                     }
-                    s[1..].split(q).next().map(String::from)
+                    s.split(q).nth(1).map(String::from)
                 })
                 .filter(|s| s.ends_with(".js") && !s.starts_with("http"))
                 .collect();
