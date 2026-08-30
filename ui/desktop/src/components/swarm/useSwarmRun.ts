@@ -1686,13 +1686,17 @@ export function buildActivity(events: Array<Record<string, unknown>>): {
         const chars = num(e['abandoned_thinking_chars']);
         const calls = num(e['abandoned_tool_calls']);
         const estChars = num(e['established_chars']);
+        // What actually crossed the cut (engine 63ebe140b): the restream seed carries the tail of the
+        // abandoned thinking, not only the ESTABLISHED lines — without this number the entry claims
+        // everything un-established was lost, which r5 measured as false (971 tail chars carried).
+        const carriedTail = num(e['carried_tail_chars']);
         verbose({
           kind: 'judge-act',
           tone: 'warn',
           text: `Judge wiped and re-streamed ${str(e['task_id']) || 'a call'} — its live reasoning starts over`,
           sub: [
             str(e['reason']),
-            `${chars == null ? '?' : chars.toLocaleString()} reasoning chars and ${calls == null ? '?' : calls} tool call${calls === 1 ? '' : 's'} abandoned · ${estChars == null ? '?' : estChars.toLocaleString()} chars of established context carried`,
+            `${chars == null ? '?' : chars.toLocaleString()} reasoning chars and ${calls == null ? '?' : calls} tool call${calls === 1 ? '' : 's'} abandoned · carried across the cut: ${estChars == null ? '?' : estChars.toLocaleString()} established chars${carriedTail == null ? '' : ` + ${carriedTail.toLocaleString()} chars of the formed tail`}`,
           ]
             .filter(Boolean)
             .join('\n'),
@@ -3528,6 +3532,80 @@ export function deriveFleet(args: {
     });
   }
   return { devices, workingByDevice, alsoRunningByDevice, unattributed };
+}
+
+/** One entry of a node's cumulative call history: the lane (joined through digestStreamFields, never
+ *  hand-copied) plus when its digest last wrote — which, for a finished lane, is when it ended. */
+export interface NodeHistoryEntry {
+  lane: TurnLane;
+  lastWriteMs: number | null;
+}
+
+/**
+ * EVERY FINISHED CALL A NODE RAN THIS RUN — the inspector's cumulative log, and the durable answer to
+ * "as soon as a phase ends the whole thing clears and that's it".
+ *
+ * The durable channel already holds everything: the activity digests and the `<task>.log` /
+ * `<task>.think.log` beside them PERSIST after a lane finishes, and digestsFromThisRun has already
+ * gated the set to this run. The UI used to throw its handle away the moment a lane left `running`
+ * (deriveFleet is deliberately about NOW), so the r5 opener's complete 128,270-byte think.log sat on
+ * disk while the inspector could only show the live synthesis lane.
+ *
+ * Two sources, deduped by lane key:
+ *   - every laneSource whose lifecycle closed (done/error) — event-stream truth about how it ended;
+ *   - every digest key no laneSource claims, once its own record stamps `phase: 'done'` (verify::*
+ *     and the other laneless calls never get an event-stream lane at all).
+ * A digest-only key that never reached 'done' is NOT listed: with no closing event and no stamp there
+ * is no fact that the call ended, and a history row must not invent one.
+ *
+ * Entries are per LANE KEY, never per call: REVIEW reuses one key across rounds, so an entry's durable
+ * byte sizes are everything that key wrote this run — the row's caption must count calls, not claim a
+ * round.
+ */
+export function deriveNodeHistory(args: {
+  laneSources: TurnLane[];
+  digests: Record<string, unknown>;
+  digestMtimes: Record<string, number>;
+  scope?: string;
+}): Map<string, NodeHistoryEntry[]> {
+  const byDevice = new Map<string, NodeHistoryEntry[]>();
+  const add = (device: string, entry: NodeHistoryEntry) => {
+    const list = byDevice.get(device) ?? [];
+    list.push(entry);
+    byDevice.set(device, list);
+  };
+  const claimed = new Set(args.laneSources.map((l) => l.taskId));
+  for (const l of args.laneSources) {
+    if (l.status === 'running') continue;
+    add(l.device, { lane: l, lastWriteMs: args.digestMtimes[l.taskId] ?? null });
+  }
+  for (const [key, raw] of Object.entries(args.digests)) {
+    if (claimed.has(key)) continue;
+    const d = raw as (Digest & { model?: string }) | undefined;
+    if (d?.phase !== 'done') continue;
+    const device = shortNode(str(d?.model));
+    if (!device) continue;
+    add(device, {
+      lane: {
+        taskId: key,
+        description: digestLabel(key),
+        device,
+        model: d?.model,
+        status: 'done',
+        ...digestStreamFields(args.scope ? `${args.scope}::${key}` : key, d),
+        seq: 0,
+      },
+      lastWriteMs: args.digestMtimes[key] ?? null,
+    });
+  }
+  for (const list of byDevice.values()) {
+    list.sort(
+      (a, b) =>
+        (a.lastWriteMs ?? Number.MAX_SAFE_INTEGER) - (b.lastWriteMs ?? Number.MAX_SAFE_INTEGER) ||
+        a.lane.seq - b.lane.seq
+    );
+  }
+  return byDevice;
 }
 
 // Derive the per-phase TODO from the engine's deterministic event stream. Every checkbox is flipped by a

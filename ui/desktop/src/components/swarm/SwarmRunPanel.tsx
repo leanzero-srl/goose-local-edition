@@ -10,6 +10,7 @@ import {
 import {
   useSwarmRun,
   deriveFleet,
+  deriveNodeHistory,
   deriveTaskBoard,
   runAppName,
   classifyCall,
@@ -38,6 +39,7 @@ import {
   type BoardRow,
   type TaskBoard,
   type SupervisionSpan,
+  type NodeHistoryEntry,
   type SwarmRunState,
   type ClarifyProxy,
   type RunOverview as RunOverviewData,
@@ -1494,8 +1496,10 @@ const InspectorPane: React.FC<{
   count: string;
   empty: string;
   isEmpty: boolean;
+  /** A header control (the live pane's "show all N KB" / "live tail" toggle) — beside the count. */
+  action?: React.ReactNode;
   children: React.ReactNode;
-}> = ({ title, count, empty, isEmpty, children }) => (
+}> = ({ title, count, empty, isEmpty, action, children }) => (
   <div
     className="flex flex-col min-h-0 flex-1 border border-border-primary overflow-hidden"
     style={{ borderRadius: CHIP_RADIUS }}
@@ -1504,7 +1508,10 @@ const InspectorPane: React.FC<{
       <span className="font-mono uppercase tracking-[0.18em] text-[10px] font-bold text-text-primary">
         {title}
       </span>
-      <span className="text-[10px] tabular-nums text-text-secondary">{count}</span>
+      <span className="flex items-center gap-2">
+        {action ?? null}
+        <span className="text-[10px] tabular-nums text-text-secondary">{count}</span>
+      </span>
     </div>
     <div className="min-h-0 flex-1 overflow-hidden">
       {isEmpty ? <div className="px-3 py-2 text-xs text-text-secondary">{empty}</div> : children}
@@ -1819,6 +1826,192 @@ const WorkPane: React.FC<{
   );
 };
 
+/** The small solid header-control button both inspector panes and history rows share. */
+const PaneActionButton: React.FC<{
+  label: string;
+  onClick: () => void;
+  children: React.ReactNode;
+}> = ({ label, onClick, children }) => (
+  <button
+    onClick={(e) => {
+      e.stopPropagation();
+      onClick();
+    }}
+    aria-label={label}
+    className="px-2 py-0.5 text-[10px] font-mono uppercase tracking-wider font-bold text-white"
+    style={{ borderRadius: CHIP_RADIUS, background: BLUE }}
+  >
+    {children}
+  </button>
+);
+
+/**
+ * One channel of an expanded history entry: the WHOLE durable file, loaded on expand.
+ *
+ * The caption is the workCaption law applied to a full read: "all N bytes" states that the body is the
+ * entire durable log (blank-run collapses admitted by squeezeNote), where every live surface can only
+ * ever say "last N of M". A null log renders the NAMED absence — a missing file and a failed read are
+ * different facts and say different things.
+ */
+const HistoryChannelPane: React.FC<{
+  title: string;
+  log: { text: string; bytes: number } | null;
+  failed: boolean;
+  empty: string;
+}> = ({ title, log, failed, empty }) => {
+  const squeezed = useMemo(() => squeezeBlankRuns(log?.text ?? ''), [log]);
+  return (
+    <InspectorPane
+      title={title}
+      count={log ? `all ${log.bytes.toLocaleString()} bytes${squeezeNote(log.text, squeezed)}` : ''}
+      empty={
+        failed
+          ? 'Reading the durable log FAILED — not the same as it not existing. Retry by collapsing and expanding this entry.'
+          : empty
+      }
+      isEmpty={!log || squeezed.length === 0}
+    >
+      <NodeExpandBox text={squeezed} fill />
+    </InspectorPane>
+  );
+};
+
+/**
+ * ONE FINISHED CALL, FOLDED TO A LINE — Mihai's "when it finishes a phase it folds it into a line
+ * visually and then moves on, and this way we can have a proper log all in a place".
+ *
+ * The folded line's sizes are the DURABLE byte sizes (`thinkingBytes` / `transcriptBytes`, the true
+ * file sizes main.ts stats beside every digest) — never `thinkingChars`, which is a per-stream counter
+ * that RESETS on a restream: the r5 opener measured 38,780 stream chars against 128,270 durable bytes,
+ * and captioning the counter as the size claims two-thirds of the record does not exist.
+ *
+ * Expanding reads the WHOLE durable pair over `read-swarm-activity-log` — the on-demand IPC, never the
+ * poll — and RELEASES it on collapse. That is the whole memory strategy: a durable log is hundreds of
+ * KB and a run has dozens of lanes, so holding every expanded transcript would pin megabytes in
+ * renderer state for no benefit, while a re-expand is one IPC read of a local file the OS page cache
+ * already holds. No LRU — the cache an LRU would manage already exists in the filesystem.
+ */
+const NodeHistoryRow: React.FC<{ entry: NodeHistoryEntry; runDir: string }> = ({
+  entry,
+  runDir,
+}) => {
+  const [open, setOpen] = useState(false);
+  const [logs, setLogs] = useState<{
+    think: { text: string; bytes: number } | null;
+    said: { text: string; bytes: number } | null;
+  } | null>(null);
+  const [failed, setFailed] = useState(false);
+  const lane = entry.lane;
+  const title = cleanTaskTitle(lane.description ?? lane.taskId, lane.taskId);
+  // Per LANE KEY, not per round: REVIEW reuses one key every round, so the durable files span every
+  // call the key ever ran and the line must say so instead of claiming to be one call.
+  const priorCalls = lane.superseded?.length ?? 0;
+  const durationLabel = (() => {
+    if (typeof lane.elapsedMs === 'number') return fmtDuration(lane.elapsedMs / 60000);
+    const started = lane.dispatchedAt ? Date.parse(lane.dispatchedAt) : NaN;
+    if (!Number.isNaN(started) && entry.lastWriteMs != null && entry.lastWriteMs > started) {
+      // dispatchedAt is stamped per ATTEMPT, so on a reused lane this spans only the last call.
+      return `${fmtDuration((entry.lastWriteMs - started) / 60000)}${priorCalls > 0 ? ' (last call)' : ''}`;
+    }
+    return null;
+  })();
+  const sizes: string[] = [];
+  if (typeof lane.thinkingBytes === 'number')
+    sizes.push(`thought ${lane.thinkingBytes.toLocaleString()} B`);
+  if (typeof lane.transcriptBytes === 'number')
+    sizes.push(`said ${lane.transcriptBytes.toLocaleString()} B`);
+  const toggle = () => {
+    if (open) {
+      setOpen(false);
+      setLogs(null);
+      setFailed(false);
+      return;
+    }
+    setOpen(true);
+    setFailed(false);
+    void Promise.all([
+      window.electron.readSwarmActivityLog(runDir, lane.taskId, 'thinking'),
+      window.electron.readSwarmActivityLog(runDir, lane.taskId, 'transcript'),
+    ])
+      .then(([think, said]) => setLogs({ think, said }))
+      .catch(() => {
+        setFailed(true);
+        setLogs({ think: null, said: null });
+      });
+  };
+  return (
+    <div
+      className="border border-border-primary"
+      style={{ borderRadius: CHIP_RADIUS }}
+      data-testid="node-history-entry"
+      data-task={lane.taskId}
+    >
+      <div
+        role="button"
+        tabIndex={0}
+        aria-expanded={open}
+        aria-label={`${open ? 'Collapse' : 'Expand'} the full durable log of ${title}`}
+        data-testid="node-history-row"
+        className="flex items-center gap-2 px-2 py-1.5 text-xs cursor-pointer"
+        onClick={toggle}
+        onKeyDown={(e: React.KeyboardEvent) => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            toggle();
+          }
+        }}
+      >
+        <span
+          className="px-1.5 py-0.5 text-[9px] font-mono uppercase tracking-wider font-bold text-white shrink-0"
+          style={{
+            borderRadius: CHIP_RADIUS,
+            background: lane.status === 'error' ? CALL_ERR : CALL_OK,
+          }}
+        >
+          {lane.status === 'error' ? 'failed' : 'finished'}
+        </span>
+        <span className="min-w-0 flex-1 truncate text-text-primary">{title}</span>
+        {priorCalls > 0 ? (
+          <span className="shrink-0 text-[10px] text-text-secondary">
+            {priorCalls + 1} calls on this lane
+          </span>
+        ) : null}
+        {durationLabel ? (
+          <span className="shrink-0 text-[10px] tabular-nums text-text-secondary">{durationLabel}</span>
+        ) : null}
+        <span className="shrink-0 text-[10px] tabular-nums font-mono text-text-secondary">
+          {sizes.length > 0 ? sizes.join(' · ') : 'no durable log'}
+        </span>
+        {open ? (
+          <ChevronDown size={12} className="shrink-0 text-text-secondary" />
+        ) : (
+          <ChevronRight size={12} className="shrink-0 text-text-secondary" />
+        )}
+      </div>
+      {open ? (
+        logs == null ? (
+          <div className="px-3 py-2 text-xs text-text-secondary">Reading the durable logs…</div>
+        ) : (
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-2 p-2" style={{ height: 340 }}>
+            <HistoryChannelPane
+              title="Thinking"
+              log={logs.think}
+              failed={failed}
+              empty="No .think.log on disk — this call never wrote the reasoning channel."
+            />
+            <HistoryChannelPane
+              title="Said"
+              log={logs.said}
+              failed={failed}
+              empty="No .log on disk — this call never wrote the answer channel."
+            />
+          </div>
+        )
+      ) : null}
+    </div>
+  );
+};
+
 const NodeInspector: React.FC<{
   device: string;
   letter: string;
@@ -1826,8 +2019,12 @@ const NodeInspector: React.FC<{
   ink: string;
   lane?: TurnLane;
   nodeState?: string;
+  /** Every FINISHED call this node ran this run (deriveNodeHistory) — the cumulative folded log. */
+  history: NodeHistoryEntry[];
+  /** The RESOLVED run dir (readSwarmRun's `dir`) — where the on-demand full-log reads aim. */
+  runDir: string;
   onClose: () => void;
-}> = ({ device, letter, hue, ink, lane, nodeState, onClose }) => {
+}> = ({ device, letter, hue, ink, lane, nodeState, history, runDir, onClose }) => {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') onClose();
@@ -1835,6 +2032,16 @@ const NodeInspector: React.FC<{
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [onClose]);
+
+  // THE LIVE PANE'S "SHOW ALL" SNAPSHOT — the whole durable think.log, read once on click over the
+  // on-demand IPC. The poll keeps handing this modal a bounded tail (main.ts reads the last 400k
+  // bytes; the repeat scan takes the last 24k chars), so the BEGINNING of a long call was
+  // unreachable from here — the r5 opener's 128,270-byte log started partway through forever.
+  // `taskId` rides in the snapshot so a different lane opened in the same modal can never inherit it.
+  const [fullThink, setFullThink] = useState<{ taskId: string; text: string; bytes: number } | null>(
+    null
+  );
+  const [fullThinkFailed, setFullThinkFailed] = useState(false);
 
   // PREFER THE DURABLE THINKING LOG. `fullReasoning` is built from the ANSWER channel and the digest's
   // thinking is a 2,400-char rolling window, so without this the pane clears and refills as the model
@@ -1865,6 +2072,32 @@ const NodeInspector: React.FC<{
     [lane?.taskId, thinkSource.length]
   );
   const thinkText = squeezeBlankRuns(rawThink);
+  const showingFullThink = fullThink != null && fullThink.taskId === lane?.taskId;
+  const fullThinkSqueezed = useMemo(
+    () => (fullThink ? squeezeBlankRuns(fullThink.text) : ''),
+    [fullThink]
+  );
+  // The control renders only when there IS more than the body shows: a durable log main.ts clipped,
+  // or one longer than the 24k repeat-scan bound. A "show all" over a body already showing all of it
+  // would claim hidden text that does not exist.
+  const thinkShowAll =
+    !!lane &&
+    typeof lane.thinkingBytes === 'number' &&
+    lane.thinkingBytes > 0 &&
+    (isClippedTail(lane.fullThinking, lane.thinkingBytes) ||
+      thinkSource.length > REPEAT_SCAN_CHARS);
+  const loadFullThink = () => {
+    if (!lane) return;
+    const taskId = lane.taskId;
+    setFullThinkFailed(false);
+    void window.electron
+      .readSwarmActivityLog(runDir, taskId, 'thinking')
+      .then((log) => {
+        if (log) setFullThink({ taskId, ...log });
+        else setFullThinkFailed(true);
+      })
+      .catch(() => setFullThinkFailed(true));
+  };
   const { completed: calls, running, tallies } = workRows(lane?.calls, lane?.inflight);
   const rawNarration = inspectorOutputText(lane ?? {});
   const narration = squeezeBlankRuns(rawNarration);
@@ -1878,6 +2111,9 @@ const NodeInspector: React.FC<{
   // and the old `outText` grid predicate would collapse the column and take all 60 calls with it.
   const hasWork =
     calls.length > 0 || running.length > 0 || narration.length > 0 || said.superseded.length > 0;
+  // The lane on top is live estate; a finished lane opened FROM history renders up there through the
+  // exact live-pane machinery, so its own folded line would be a duplicate row below itself.
+  const shownHistory = history.filter((h) => h.lane.taskId !== lane?.taskId);
 
   return createPortal(
     <>
@@ -1927,6 +2163,21 @@ const NodeInspector: React.FC<{
               {'being reviewed'}
             </span>
           )}
+          {/* THE LANE'S OWN END, event-driven: task_completed/failed or the digest's phase stamp.
+              Since the modal no longer clears when a phase ends, a reader mid-scroll needs the fact
+              that the call under them ENDED stated, not implied by counters going still. */}
+          {lane && lane.status !== 'running' && (
+            <span
+              data-testid="inspector-lane-ended"
+              className="px-2 py-0.5 text-[10px] font-mono uppercase tracking-wider font-bold text-white"
+              style={{
+                borderRadius: CHIP_RADIUS,
+                background: lane.status === 'done' ? CALL_OK : CALL_ERR,
+              }}
+            >
+              {lane.status === 'done' ? 'finished' : 'failed'}
+            </span>
+          )}
           {lane?.description && (
             <span className="text-xs text-text-secondary truncate">{lane.description}</span>
           )}
@@ -1945,6 +2196,8 @@ const NodeInspector: React.FC<{
             the reasoning it WAS producing was squeezed into the other half. Mihai, having opened it to
             watch a node work: "what is generating cause I can't see shit in it". Output earns its column
             when it has something in it. */}
+        {/* An idle node with only history skips the live grid — the history IS the content then. */}
+        {lane || shownHistory.length === 0 ? (
         <div
           className={`flex-1 min-h-0 grid gap-3 p-3 ${
             hasWork ? 'grid-cols-1 lg:grid-cols-2' : 'grid-cols-1'
@@ -1960,16 +2213,39 @@ const NodeInspector: React.FC<{
             // `thinkingChars` IS NOT THE DENOMINATOR. It is the engine's per-stream counter and resets on
             // a re-stream, so it says nothing about the size of `<task>.think.log`; the only number that
             // does is `thinkingBytes`, which main.ts has attached to every digest and nothing has read.
-            count={`${thinkingCaption(
-              thinkText,
-              lane?.fullThinking,
-              lane?.thinkingBytes,
-              lane?.thinkingChars
-            )}${squeezeNote(rawThink, thinkText)}`}
+            count={
+              showingFullThink
+                ? `all ${fullThink.bytes.toLocaleString()} bytes${squeezeNote(fullThink.text, fullThinkSqueezed)}`
+                : `${thinkingCaption(
+                    thinkText,
+                    lane?.fullThinking,
+                    lane?.thinkingBytes,
+                    lane?.thinkingChars
+                  )}${squeezeNote(rawThink, thinkText)}`
+            }
+            action={
+              showingFullThink ? (
+                <PaneActionButton
+                  label="Back to the live tail of the reasoning channel"
+                  onClick={() => setFullThink(null)}
+                >
+                  live tail
+                </PaneActionButton>
+              ) : thinkShowAll ? (
+                <PaneActionButton
+                  label={`Show the whole ${(lane?.thinkingBytes ?? 0).toLocaleString()}-byte reasoning log`}
+                  onClick={loadFullThink}
+                >
+                  {fullThinkFailed
+                    ? 'read failed — retry'
+                    : `show all ${Math.max(1, Math.round((lane?.thinkingBytes ?? 0) / 1024)).toLocaleString()} KB`}
+                </PaneActionButton>
+              ) : null
+            }
             empty="Nothing on the reasoning channel yet — the node has been dispatched but has not produced a token."
-            isEmpty={!thinkText}
+            isEmpty={showingFullThink ? !fullThinkSqueezed : !thinkText}
           >
-            <NodeExpandBox text={thinkText} fill />
+            <NodeExpandBox text={showingFullThink ? fullThinkSqueezed : thinkText} fill />
           </InspectorPane>
           <InspectorPane
             title="Work"
@@ -1999,6 +2275,34 @@ const NodeInspector: React.FC<{
             />
           </InspectorPane>
         </div>
+        ) : null}
+
+        {/* THE CUMULATIVE LOG — every finished call this node ran this run, folded to a line each.
+            This section is why NOTHING CLEARS ON PHASE END any more: a lane that finishes drops out
+            of the live maps above but lands here, discovered from the digests and durable logs that
+            persist on disk, and expands back into its whole transcript on demand. */}
+        {shownHistory.length > 0 ? (
+          <div
+            data-testid="node-history"
+            className={`border-t border-border-primary flex flex-col min-h-0 ${
+              lane ? 'shrink-0 max-h-[45%]' : 'flex-1'
+            }`}
+          >
+            <div className="flex items-center justify-between px-4 py-2 shrink-0">
+              <span className="font-mono uppercase tracking-[0.18em] text-[10px] font-bold text-text-primary">
+                {lane ? 'Earlier calls on this node' : 'Calls this node ran'}
+              </span>
+              <span className="text-[10px] tabular-nums text-text-secondary">
+                {shownHistory.length} finished
+              </span>
+            </div>
+            <div className="min-h-0 flex-1 overflow-y-auto px-4 pb-3 space-y-1">
+              {shownHistory.map((h) => (
+                <NodeHistoryRow key={h.lane.taskId} entry={h} runDir={runDir} />
+              ))}
+            </div>
+          </div>
+        ) : null}
       </div>
     </>,
     document.body
@@ -2018,6 +2322,10 @@ const FleetStrip: React.FC<{
   nodeStatus: Record<string, string>;
   /** Open supervision spans deriveFleet could not pin to a busy node — still shown, never dropped. */
   unattributed: SupervisionSpan[];
+  /** node -> every finished call it ran this run (deriveNodeHistory) — the inspector's cumulative log. */
+  historyByDevice: Map<string, NodeHistoryEntry[]>;
+  /** The RESOLVED run dir, for the inspector's on-demand full-log reads. */
+  runDir: string;
 }> = ({
   deviceOrder,
   runningByDevice,
@@ -2026,6 +2334,8 @@ const FleetStrip: React.FC<{
   dev,
   nodeStatus,
   unattributed,
+  historyByDevice,
+  runDir,
 }) => {
   // The full stream opens in a MODAL. Inline it was clipped by whatever height the row happened to have,
   // which made the panel least readable exactly when a node was busiest.
@@ -2053,7 +2363,10 @@ const FleetStrip: React.FC<{
           (lane?.phase === 'processing' ? 'processing the prompt…' : '') ||
           (lane?.status === 'running' ? 'generating…' : '');
         const fullGen = fleetExpandText(lane);
-        const canExpand = !!lane && fullGen.length > 0;
+        // A node with FINISHED calls is expandable even between tasks: the inspector is the cumulative
+        // log now, so "idle — no task" no longer means "nothing to open".
+        const nodeHistory = historyByDevice.get(device) ?? [];
+        const canExpand = (!!lane && fullGen.length > 0) || nodeHistory.length > 0;
         return (
           // THE INSTRUMENT'S ANCHOR. The per-tick frontend check reads the RENDERED lane text and the
           // RENDERED clickability off these attributes; without them it fell back to re-deriving both
@@ -2075,14 +2388,20 @@ const FleetStrip: React.FC<{
               style={{ cursor: canExpand ? 'pointer' : 'default' }}
               role={canExpand ? 'button' : undefined}
               tabIndex={canExpand ? 0 : undefined}
-              aria-label={canExpand ? `Open the full stream from ${shortName(device)}` : undefined}
-              onClick={canExpand && lane ? () => setInspect({ device, taskId: lane.taskId }) : undefined}
+              aria-label={
+                canExpand
+                  ? lane
+                    ? `Open the full stream from ${shortName(device)}`
+                    : `Open the calls ${shortName(device)} ran this run`
+                  : undefined
+              }
+              onClick={canExpand ? () => setInspect({ device, taskId: lane?.taskId ?? '' }) : undefined}
               onKeyDown={
-                canExpand && lane
+                canExpand
                   ? (e: React.KeyboardEvent) => {
                       if (e.key === 'Enter' || e.key === ' ') {
                         e.preventDefault();
-                        setInspect({ device, taskId: lane.taskId });
+                        setInspect({ device, taskId: lane?.taskId ?? '' });
                       }
                     }
                   : undefined
@@ -2323,10 +2642,17 @@ const FleetStrip: React.FC<{
         ? (() => {
             const i = Math.max(deviceOrder.indexOf(inspect.device), 0);
             const primary = runningByDevice.get(inspect.device);
+            const deviceHistory = historyByDevice.get(inspect.device) ?? [];
+            // NOTHING CLEARS ON PHASE END. A lane that finishes while this modal is open leaves the
+            // running maps, but its digest and durable logs persist — resolve it from history so the
+            // reader keeps the call they were reading (now labeled finished) instead of the modal
+            // silently jumping to whatever the node picked up next.
             const lane =
               [primary, ...(alsoRunningByDevice.get(inspect.device) ?? [])].find(
                 (l) => l?.taskId === inspect.taskId
-              ) ?? primary;
+              ) ??
+              deviceHistory.find((h) => h.lane.taskId === inspect.taskId)?.lane ??
+              primary;
             return (
               <NodeInspector
                 device={inspect.device}
@@ -2335,6 +2661,8 @@ const FleetStrip: React.FC<{
                 ink={FORMATION_INK[i % FORMATION_INK.length]}
                 lane={lane}
                 nodeState={nodeStatus[shortName(inspect.device)]}
+                history={deviceHistory}
+                runDir={runDir}
                 onClose={() => setInspect(null)}
               />
             );
@@ -4438,21 +4766,22 @@ export const SwarmRunPanel: React.FC<{
   // renders — idle ones as an explicit idle row, never absence — and ⬢A/hue is fixed for the whole run.
   // ALL lane kinds count toward WORKING in every mode (scouts/contracts/detailers/repair twins included):
   // the mode toggle controls display density below, not whether a busy node reads busy.
+  const laneSources = [
+    ...run.lanes,
+    ...run.planLanes,
+    ...run.scoutLanes,
+    ...run.contractLanes,
+    ...run.detailLanes,
+    // The rewritten pipeline's own lanes: the slice fan (one node per slice, RESEARCH) and the
+    // single-node planning calls (open / synthesis / review / proxy-answer / rate). Without them the
+    // Fleet zone reads "idle — no task" for the entire planning half of the run.
+    ...run.sliceLanes,
+    ...run.planningLanes,
+    ...run.fixLanes,
+  ];
   const fleet = deriveFleet({
     pool: run.pool,
-    laneSources: [
-      ...run.lanes,
-      ...run.planLanes,
-      ...run.scoutLanes,
-      ...run.contractLanes,
-      ...run.detailLanes,
-      // The rewritten pipeline's own lanes: the slice fan (one node per slice, RESEARCH) and the
-      // single-node planning calls (open / synthesis / review / proxy-answer / rate). Without them the
-      // Fleet zone reads "idle — no task" for the entire planning half of the run.
-      ...run.sliceLanes,
-      ...run.planningLanes,
-      ...run.fixLanes,
-    ],
+    laneSources,
     digests: run.activityDigests,
     digestMtimes: run.activityMtimes,
     now: Date.now(),
@@ -4466,6 +4795,15 @@ export const SwarmRunPanel: React.FC<{
     // whole fleet is idle (busyNodes [] alone cannot tell "all idle" from "lms unreachable").
     reportedNodes: Object.keys(nodeStatus),
     // Channel-memory scope for the laneless digest rows — same discriminant as the hook's fold scope.
+    scope: workingDir,
+  });
+  // The cumulative per-node call history — the same laneSources and gated digests deriveFleet reads,
+  // kept beside it rather than inside it so the NOW derivation and the LOG derivation stay separately
+  // testable. Everything here persists on disk after a lane finishes; only the UI ever forgot it.
+  const nodeHistory = deriveNodeHistory({
+    laneSources,
+    digests: run.activityDigests,
+    digestMtimes: run.activityMtimes,
     scope: workingDir,
   });
   const deviceOrder: string[] = fleet.devices;
@@ -4846,6 +5184,8 @@ export const SwarmRunPanel: React.FC<{
             live={run.inProgress && !stale && !ended}
             nodeStatus={nodeStatus}
             unattributed={fleet.unattributed}
+            historyByDevice={nodeHistory}
+            runDir={runDir ?? ''}
           />
         </div>
       ) : null}

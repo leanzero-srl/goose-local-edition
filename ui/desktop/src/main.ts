@@ -3719,6 +3719,46 @@ ipcMain.handle('read-file', async (_event, filePath) => {
  * The filename IS the ordering — read_user_notes sorts on it, so epoch-ms gives chronology for free, and
  * a unique name per note means two notes can never clobber each other.
  */
+/**
+ * THE ON-DEMAND WHOLE-FILE READ of a lane's durable log — the user-action complement to the poll.
+ *
+ * The poll's read in `read-swarm-run` is deliberately a bounded TAIL (400k thinking / 200k transcript):
+ * it runs over every lane twice a second, so an unbounded read there would grow without limit. But the
+ * durable `<task>.log` / `<task>.think.log` are append-only and COMPLETE — the r5 opener's think.log
+ * held 128,270 bytes while the poll ever handed the renderer its tail — so when a user expands a
+ * history entry or asks the live pane for everything, the whole file is read HERE, once, on that click.
+ *
+ * `runDir` is the RESOLVED run directory the renderer got back from read-swarm-run (`dir`), so the
+ * benchmark redirect is already applied. `null` means the file is not on disk (a pre-transcript engine,
+ * or a call that never produced that channel) — the renderer states that absence; it never substitutes.
+ */
+ipcMain.handle(
+  'read-swarm-activity-log',
+  async (_event, runDir: string, taskKey: string, channel: 'thinking' | 'transcript') => {
+    if (!runDir || typeof runDir !== 'string' || !taskKey || typeof taskKey !== 'string') return null;
+    const ext = channel === 'thinking' ? '.think.log' : '.log';
+    const actDir = path.resolve(path.join(expandTilde(runDir), '.swarm', 'activity'));
+    // The engine flattens path separators out of the digest FILENAME (activity_digest_key: `~`->`~t`,
+    // `/`->`~s`, `\`->`~b`) and the durable logs sit beside the digest under the SAME flattened name.
+    // The renderer holds the decoded task id, so encode it back; the raw key is the legacy fallback
+    // (old runs whose keys decode differently under the trailing-alternate rules).
+    const flat = taskKey.replace(/[~/\\]/g, (m) => (m === '~' ? '~t' : m === '/' ? '~s' : '~b'));
+    for (const name of [...new Set([flat, taskKey])]) {
+      const candidate = path.resolve(actDir, `${name}${ext}`);
+      // Containment, not trust: the key crosses the IPC boundary and lands in a path.
+      if (!candidate.startsWith(actDir + path.sep)) continue;
+      try {
+        const st = await fs.stat(candidate);
+        const text = await fs.readFile(candidate, 'utf8');
+        return { text, bytes: st.size };
+      } catch {
+        /* not under this name — try the fallback spelling */
+      }
+    }
+    return null;
+  }
+);
+
 ipcMain.handle('swarm-add-note', async (_event, workingDir: string, text: string) => {
   try {
     const t = String(text || '').trim();
