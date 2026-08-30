@@ -94,7 +94,8 @@ patch collision; opens the fan near plan_loaded instead of +75m). (2) Delete the
 breakdown_json + the plan_loaded splice, strip PlanConf to final_conf, cfg(test) sub-signal
 machinery goes, comments corrected to the design truth. (3) ask_max_q field + golden entry
 removal. (4) Integrate brief-header cosmetic. (5) hasActivity fullTranscript gap if surgeon
-judges it engine-side, else panel #5.
+judges it engine-side, else panel #5. (6) look-1 delivery-defect steer mislabels expected
+emptiness as DEFECT — rephrase the all-files-absent-at-first-look case honestly.
 - engine ask_max_q field + golden.generated.json entry removal (dead since cfcd32908) + the
   integrate plan-time brief header cosmetic ("INTEGRATE AND VERIFY" ancestry wording) — surgeon #9.
 - useSwarmRun hasActivity filter ignores fullTranscript-only digests (latent lane-hiding) — panel #5.
