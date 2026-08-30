@@ -130,9 +130,8 @@ DAG is actually parallel). reasoning_chars against answer_chars is the waste.
 - **web_files**: app.js, index.html, styles.css, test_camera.js, viz.js, viz_camera.js
 - **tasks_done**: 12/11 completed, 15 dispatched, 2 retried
 - **arm**: F (fleet of 3)
-- **fixture_seed**: unknown (no trace file)
+- **fixture_seed**: 5cd47b42e2a7c3e0
 - **plan_patched**: 1
-- **plan_repaired**: none
 - **plan_loaded**: 1
 - **review_rounds**: r1:new=9
 - **judge_looks**: 110
@@ -141,3 +140,5 @@ DAG is actually parallel). reasoning_chars against answer_chars is the waste.
 - **drift_held**: 14
 - **tree_defects**: 0
 - **repair**: delivery_defect_steer=3 brief_defects=2 testgen=3 fix_target_selected=0 complete_verify=0 complete_result=0
+- **seed_provenance**: backfilled 2026-08-30 from trace-swarm-3node-r0.jsonl header (trace.jsonl now pinned in the archived tree); the row briefly read "unknown (no trace file)" after a whole-row re-snapshot
+
