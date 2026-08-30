@@ -422,3 +422,8 @@ research_request_block's armed-no-claimed-sections arm wording.
   (swarm repair on the r2 archive returned max_severity critical, zero orphans). swarm.rs 44,511 →
   43,982. Queued smalls from its observations: stale known_active_bugs after a late green round;
   PYTHONDONTWRITEBYTECODE missing in handle_repair (r2's archive already carries a __pycache__).
+- 2026-08-31 00:45 fix-tracer (priorities trace): EXEMPLARY. Deterministic replay to the note-text
+  byte level; diffed the partition needles one by one; found the unnamed behavioral widening
+  (ownership pairings now claim in severity order); downgraded the headline to PARTIAL per the
+  gate's own template while crediting the body's honesty. The severest->fastest pairing is a
+  scheduling probability, not a structural gate — recorded for r6 reading.
