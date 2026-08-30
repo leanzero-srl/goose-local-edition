@@ -1,5 +1,6 @@
 pub mod edit;
 pub mod image;
+pub mod process_groups;
 pub mod shell;
 pub mod tree;
 
@@ -197,7 +198,12 @@ impl McpClientTrait for DeveloperClient {
         let working_dir = ctx.working_dir.as_deref();
         match name {
             "shell" => match Self::parse_args::<ShellParams>(arguments) {
-                Ok(params) => Ok(self.shell_tool.shell_with_cwd(params, working_dir).await),
+                // The session id rides along so an own-group spawn is registered under the session
+                // that made it — the attempt-scoped reap (see process_groups) keys on it.
+                Ok(params) => Ok(self
+                    .shell_tool
+                    .shell_in_session(params, working_dir, Some(&ctx.session_id))
+                    .await),
                 Err(error) => Ok(ShellTool::error_result(&format!("Error: {error}"), None)),
             },
             "write" => match Self::parse_args::<FileWriteParams>(arguments) {

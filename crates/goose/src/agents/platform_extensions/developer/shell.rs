@@ -355,6 +355,18 @@ impl ShellTool {
         params: ShellParams,
         working_dir: Option<&std::path::Path>,
     ) -> CallToolResult {
+        self.shell_in_session(params, working_dir, None).await
+    }
+
+    /// `session_id` attributes any own-process-group spawn (see `process_groups`) to the session
+    /// that made it, so a per-attempt reaper can sweep exactly its own leftovers. `None` spawns
+    /// unattributed: still own-group when enabled, but only a whole-registry sweep would find it.
+    pub async fn shell_in_session(
+        &self,
+        params: ShellParams,
+        working_dir: Option<&std::path::Path>,
+        session_id: Option<&str>,
+    ) -> CallToolResult {
         if params.command.trim().is_empty() {
             return Self::error_result("Command cannot be empty.", None);
         }
@@ -371,6 +383,7 @@ impl ShellTool {
             params.timeout_secs,
             working_dir,
             login_path_ref,
+            session_id,
         )
         .await
         {
@@ -516,6 +529,7 @@ async fn run_command(
     timeout_secs: Option<u64>,
     working_dir: Option<&std::path::Path>,
     login_path: Option<&str>,
+    session_id: Option<&str>,
 ) -> Result<ExecutionOutput, String> {
     let timeout_secs = Some(resolve_shell_timeout(timeout_secs));
 
@@ -525,9 +539,33 @@ async fn run_command(
     command.stderr(Stdio::piped());
     command.stdin(Stdio::null());
 
+    // Own process group per spawn when the host process opted in (the swarm engine does): a
+    // backgrounded grandchild then daemonizes INTO THIS GROUP instead of the engine's, so it stays
+    // reapable per attempt and a sweep of it can never signal the engine. r2 died to the inverse:
+    // an app server leaked into the engine's group, and the operator's killpg took both.
+    #[cfg(unix)]
+    let own_group = super::process_groups::enabled();
+    #[cfg(unix)]
+    if own_group {
+        command.process_group(0);
+    }
+
     let mut child = command
         .spawn()
         .map_err(|error| format!("Failed to spawn shell command: {}", error))?;
+
+    #[cfg(unix)]
+    let spawned_pgid = if own_group {
+        let pgid = child.id().map(|p| p as i32);
+        if let (Some(pgid), Some(sid)) = (pgid, session_id) {
+            super::process_groups::register(sid, pgid);
+        }
+        pgid
+    } else {
+        None
+    };
+    #[cfg(not(unix))]
+    let _ = session_id;
 
     let child_stdout = child
         .stdout
@@ -593,6 +631,13 @@ async fn run_command(
     let mut lines = Vec::new();
     while let Some(item) = rx.recv().await {
         lines.push(item);
+    }
+
+    // A group with no survivors leaves the registry now; one whose daemonized grandchildren live
+    // on STAYS registered — that entry is the leak-in-waiting the attempt-end reap exists to kill.
+    #[cfg(unix)]
+    if let Some(pgid) = spawned_pgid {
+        super::process_groups::prune_finished(pgid);
     }
 
     Ok(ExecutionOutput {
@@ -840,6 +885,37 @@ mod tests {
 
         assert_eq!(result.is_error, Some(false));
         assert!(extract_text(&result).contains("hello"));
+    }
+
+    /// End-to-end wiring of the own-group policy through the REAL shell path: an enabled spawn
+    /// whose backgrounded child outlives the command must leave a registered, session-keyed group
+    /// that a reap can kill — the r2 leak (app servers daemonized into the engine's group off the
+    /// task_retry path) caught at its spawn site.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn shell_own_group_registers_and_reaps_a_backgrounded_survivor() {
+        use super::super::process_groups;
+        process_groups::enable();
+        let tool = ShellTool::new_for_test().unwrap();
+        let result = tool
+            .shell_in_session(
+                ShellParams {
+                    command: "( sleep 300 & ); echo spawned".to_string(),
+                    timeout_secs: None,
+                },
+                None,
+                Some("shell-own-group-test-session"),
+            )
+            .await;
+        assert!(extract_text(&result).contains("spawned"));
+        let killed = process_groups::reap_session("shell-own-group-test-session");
+        assert_eq!(killed.len(), 1, "the surviving group must be registered");
+        let pgid = killed[0];
+        let gone = (0..100).any(|_| {
+            std::thread::sleep(std::time::Duration::from_millis(20));
+            !process_groups::group_alive(pgid)
+        });
+        assert!(gone, "the reap must kill the backgrounded survivor");
     }
 
     #[cfg(not(windows))]

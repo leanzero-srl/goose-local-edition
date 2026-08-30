@@ -239,6 +239,9 @@ keyring = { workspace = true, features = ["apple-native"], optional = true }
 keyring = { workspace = true, features = ["sync-secret-service"], optional = true }
 libc = { version = "0.2.182", default-features = false, features = ["std"] }
 
+[target."cfg(unix)".dependencies]
+libc = { version = "0.2.182", default-features = false, features = ["std"] }
+
 [dev-dependencies]
 serial_test = { workspace = true }
 mockall = { version = "0.14", default-features = false }
