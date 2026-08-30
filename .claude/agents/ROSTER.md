@@ -92,6 +92,8 @@ testgen/review side calls run keyless today (no digest/think.log/forming — inv
 r5 stall ran behind one). Give every supervision model call an activity key (e.g. judge-<task>-lookN,
 replan-rN, testgen-<task>), labeled + grouped as supervision in the panel; the forming hoist then
 covers them for free. Surgeon #10 the moment #9 lands; panel grouping rides panel #5.
+- replanned.reason emitted empty on r5's live splice (12:36:09) — the rationale should ride the
+  event; next swarm-surgeon batch.
 - verify_tree_imports false positive: 'app.httpapi — no task owns' while app/httpapi.py IS owned
   (module-path -> file-path resolution miss) — next swarm-surgeon batch.
 SURGEON #9 (dispatch when #8 lands — swarm.rs): (0) DECISIONS-INTO-FAN, refuter-amended:
