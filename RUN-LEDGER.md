@@ -188,15 +188,15 @@ DAG is actually parallel). reasoning_chars against answer_chars is the waste.
 - **chain**: 5
 - **startable**: 1
 - **brief_median**: 6054
-- **reasoning_chars**: 1169645
-- **answer_chars**: 75260
-- **code_files**: 24
-- **code_bytes**: 203675
-- **elapsed_min**: 429
-- **phase_split**: open 68m · ask 0m · synthesis 16m · review 52m · build 291m
+- **reasoning_chars**: 1179048
+- **answer_chars**: 77281
+- **code_files**: 27
+- **code_bytes**: 221790
+- **elapsed_min**: 442
+- **phase_split**: open 68m · ask 0m · synthesis 16m · review 52m · build 304m
 - **before_build_min**: 137 (internal diagnosis only — never a cross-run number)
-- **vs_target**: ONLY THE SCORE COMPARES. Target 20.06% (qwen3.8-27b, one cloud agent, same model). Wall clock is NOT comparable — that run is on far faster hardware, so minutes measure the machine. Bytes are NOT a verdict — more code is not better code, and it had no planning phases to spend budget on. Cross-hardware-honest work numbers for THIS run: 203,675B delivered, 1,169,645 chars reasoned, 8 tasks completed, 0 retried.
-- **python_parses**: 18 ok / 0 SYNTAX ERROR / 0 empty
+- **vs_target**: ONLY THE SCORE COMPARES. Target 20.06% (qwen3.8-27b, one cloud agent, same model). Wall clock is NOT comparable — that run is on far faster hardware, so minutes measure the machine. Bytes are NOT a verdict — more code is not better code, and it had no planning phases to spend budget on. Cross-hardware-honest work numbers for THIS run: 221,790B delivered, 1,179,048 chars reasoned, 8 tasks completed, 0 retried.
+- **python_parses**: 19 ok / 1 SYNTAX ERROR / 0 empty
 - **web_files**: brush.js, index.html, styles.css, viz.js
 - **tasks_done**: 8/9 completed, 10 dispatched, 0 retried
 - **arm**: F (fleet of 3)
@@ -205,8 +205,8 @@ DAG is actually parallel). reasoning_chars against answer_chars is the waste.
 - **plan_repaired**: 3 actions, owning-nothing 0->0, unassigned endpoints 0->0
 - **plan_loaded**: 1
 - **review_rounds**: r1:new=3
-- **judge_looks**: 91
-- **judge_nudges**: 4
+- **judge_looks**: 94
+- **judge_nudges**: 5
 - **judge_ended**: 0
 - **drift_held**: 8
 - **tree_defects**: 0
