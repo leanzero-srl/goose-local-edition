@@ -58,6 +58,8 @@ mod transcripts;
 use transcripts::{append_attempt_marker, append_reasoning_transcript, append_thinking_transcript};
 mod desk;
 use desk::{spawn_shadow_desk, RecurrenceMeter, RECURRENCE_MIN_SPAN};
+mod attribution;
+use attribution::{attribute_gate_finding, console_error_source};
 
 const FINAL_OUTPUT_TOOL: &str = "recipe__final_output";
 /// The one engine terminator's own words — the `judge_out_of_moves` ending's Err message, which
@@ -13420,149 +13422,6 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
         assert!(digest_failed_calls_block(&None).is_none());
     }
 
-    /// P1-3: the endpoint literal a gate finding names, straight from the gate's own emitter
-    /// shapes. A bare `/` is None on purpose — grepping a tree for "/" hits every file, and the
-    /// entry-file fallback answers that case honestly.
-    #[test]
-    fn the_endpoint_literal_comes_from_the_verb_or_backticks_never_bare_slash() {
-        assert_eq!(
-            endpoint_literal_of(
-                "GET /api/payments returned 404 — the spec advertises this endpoint but the app does not implement it"
-            )
-            .as_deref(),
-            Some("/api/payments")
-        );
-        assert_eq!(
-            endpoint_literal_of("POST /api/sync did not complete twice").as_deref(),
-            Some("/api/sync")
-        );
-        assert_eq!(
-            endpoint_literal_of("the advertised `/api/health` endpoint answers 500").as_deref(),
-            Some("/api/health")
-        );
-        assert_eq!(endpoint_literal_of("GET / returned 404"), None);
-        assert_eq!(endpoint_literal_of("no route named anywhere"), None);
-    }
-
-    /// P1-3: attribution by EVIDENCE. (1) the file whose source carries the endpoint literal;
-    /// (2) else the service's entry file, preferring the package the finding names; (3) else
-    /// None — the caller ships it as a known bug.
-    #[test]
-    fn an_unassigned_finding_attributes_by_grep_then_entry_file_then_known_bug() {
-        let all = vec![
-            "vendorsync/web/index.html".to_string(),
-            "vendorsync/api.py".to_string(),
-            "vendorsync/__main__.py".to_string(),
-        ];
-        let read = |f: &str| -> Option<String> {
-            match f {
-                "vendorsync/api.py" => Some(
-                    "if path == \"/api/payments\": ...\nif path == \"/api/payments\": ...".into(),
-                ),
-                "vendorsync/web/index.html" => Some("fetch(\"/api/payments?limit=100\")".into()),
-                _ => Some(String::new()),
-            }
-        };
-        // Most occurrences of the literal wins (the server names its route more than the page
-        // that calls it); ties go to all_files order.
-        assert_eq!(
-            attribute_gate_finding("GET /api/payments returned 404", &all, &read).as_deref(),
-            Some("vendorsync/api.py")
-        );
-        // No literal -> the entry file, and the package the finding names picks between entries.
-        assert_eq!(
-            attribute_gate_finding(
-                "spec-contract: `python3 -m vendorsync` never bound port 8850 within 4s",
-                &all,
-                &read
-            )
-            .as_deref(),
-            Some("vendorsync/__main__.py")
-        );
-        // Nothing greps, no entry file in the plan -> None: a known bug, not a residue task.
-        let no_entry = vec!["a.py".to_string()];
-        assert_eq!(
-            attribute_gate_finding("something nobody can place", &no_entry, &|_| None),
-            None
-        );
-        // And the shared seam merges an attributed finding into its file's existing group.
-        let findings = vec![
-            "vendorsync/api.py:12: wrong key".to_string(),
-            "GET /api/payments returned 404".to_string(),
-            "cosmic ray".to_string(),
-        ];
-        let (groups, known) = attribute_findings(&findings, &all, &read);
-        assert_eq!(groups.len(), 1);
-        assert_eq!(groups[0].file, "vendorsync/api.py");
-        assert_eq!(
-            groups[0].findings.len(),
-            2,
-            "the 404 joined its file's shard"
-        );
-        assert_eq!(known, ["cosmic ray"]);
-    }
-
-    /// P1-3 fixture: r0's real finding shapes against the ARCHIVED r0 tree, read-only. The tree
-    /// (evals/swarm-bench/runs/build/swarm-3node-r0 — the vendorsync app) is machine-local and
-    /// gitignored, so the test SKIPS loudly when it is absent rather than asserting on nothing.
-    #[test]
-    fn r0s_real_findings_attribute_against_the_archived_tree_read_only() {
-        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../evals/swarm-bench/runs/build/swarm-3node-r0");
-        if !root.join("vendorsync/api.py").exists() {
-            eprintln!(
-                "SKIP: archived r0 tree not on this machine ({})",
-                root.display()
-            );
-            return;
-        }
-        let all = vec![
-            "vendorsync/web/index.html".to_string(),
-            "vendorsync/api.py".to_string(),
-            "vendorsync/store.py".to_string(),
-            "vendorsync/meridian.py".to_string(),
-            "vendorsync/__main__.py".to_string(),
-        ];
-        let before: Vec<(String, std::time::SystemTime)> = all
-            .iter()
-            .filter_map(|f| {
-                std::fs::metadata(root.join(f))
-                    .and_then(|m| m.modified())
-                    .ok()
-                    .map(|t| (f.clone(), t))
-            })
-            .collect();
-        let read = |f: &str| std::fs::read_to_string(root.join(f)).ok();
-        // The gate's own emitter shape for an unimplemented advertised endpoint: the literal
-        // lives in api.py (the route dispatcher), so the finding shards there.
-        assert_eq!(
-            attribute_gate_finding(
-                "GET /api/payments returned 404 — the spec advertises this endpoint but the app does not implement it",
-                &all,
-                &read
-            )
-            .as_deref(),
-            Some("vendorsync/api.py")
-        );
-        // The boot-shaped finding names the package, not a path: the entry file owns it.
-        assert_eq!(
-            attribute_gate_finding(
-                "spec-contract: `python3 -m vendorsync` never bound port 8081 within 4s — the advertised entrypoint did not start a server",
-                &all,
-                &read
-            )
-            .as_deref(),
-            Some("vendorsync/__main__.py")
-        );
-        // READ-ONLY: attribution must not touch the archive.
-        for (f, t0) in before {
-            let t1 = std::fs::metadata(root.join(&f))
-                .and_then(|m| m.modified())
-                .unwrap();
-            assert_eq!(t0, t1, "attribution modified the archived tree: {f}");
-        }
-    }
-
     /// F881 REGRESSION (run 8, score 0.601): the repair round RACED whole-tree twins even though its
     /// first finding literally begins with a path. 0 of 3 twins promoted, as 0 of 9 had before it.
     /// These are the THREE finding strings run 8's own `complete_verify` emitted, and the file list
@@ -22868,6 +22727,16 @@ async fn run_spec_contract(root: &Path, spec: &str, lang: TargetLang) -> SpecCon
                                 .unwrap_or(0);
                             render_gate_status =
                                 format!("ran (rows={rows}, console_errors={console})");
+                            // r5 F8: the probe's `/consoleErrors/sources/0` (parallel to
+                            // `texts`) names the erroring file, so both console findings carry
+                            // the attribution-list suffix ` (in `{src}`)` as their FINAL
+                            // characters — the exact trailing shape `extract_file_from_finding`
+                            // parses — instead of parking as known_bugs while contract nits get
+                            // fix shards. Absent key = old probe: text unchanged.
+                            let src_suffix = match console_error_source(&v) {
+                                Some(src) => format!(" (in `{src}`)"),
+                                None => String::new(),
+                            };
                             if rows == 0 {
                                 let first_err = v
                                     .pointer("/consoleErrors/texts/0")
@@ -22879,7 +22748,7 @@ async fn run_spec_contract(root: &Path, spec: &str, lang: TargetLang) -> SpecCon
                                      console error: {first_err}. Open web/index.html end to end: \
                                      the page must fetch the documented endpoints and render the \
                                      rows, and every fetch failure must surface a visible state, \
-                                     not a blank page."
+                                     not a blank page.{src_suffix}"
                                 ));
                             } else if console > 0 {
                                 let first_err = v
@@ -22889,7 +22758,7 @@ async fn run_spec_contract(root: &Path, spec: &str, lang: TargetLang) -> SpecCon
                                 findings.push(format!(
                                     "the page renders but the browser console carries {console} \
                                      error(s) in normal use (first: {first_err}) — fix the JS \
-                                     errors; users hit them as broken interactions."
+                                     errors; users hit them as broken interactions.{src_suffix}"
                                 ));
                             } else {
                                 verified += 1;
@@ -31554,118 +31423,6 @@ fn group_findings_by_file(
         })
         .collect();
     (groups, unassigned)
-}
-
-/// P1-3, half one: the ENDPOINT LITERAL a gate finding names, if any. The deterministic gate's
-/// own emitters write `GET <path> returned <code>` / `POST <path> …`, so the token after an HTTP
-/// verb is the highest-confidence literal; a backticked `/…` token is the fallback for prose
-/// findings. A bare `/` is deliberately None — grepping a tree for "/" matches every file, which
-/// is attribution-shaped noise, and the entry-file fallback answers that case honestly instead.
-fn endpoint_literal_of(finding: &str) -> Option<String> {
-    let clean = |t: &str| {
-        t.trim_matches(|c: char| !(c.is_ascii_alphanumeric() || "/_-.".contains(c)))
-            .to_string()
-    };
-    let mut toks = finding.split_whitespace().peekable();
-    while let Some(t) = toks.next() {
-        let verb = t.trim_matches(|c: char| !c.is_ascii_alphabetic());
-        if matches!(verb, "GET" | "POST" | "PUT" | "DELETE" | "PATCH") {
-            if let Some(path) = toks.peek() {
-                let p = clean(path);
-                if p.starts_with('/') && p.len() > 1 {
-                    return Some(p);
-                }
-            }
-        }
-    }
-    finding
-        .split('`')
-        .skip(1)
-        .step_by(2)
-        .map(clean)
-        .find(|t| t.starts_with('/') && t.len() > 1)
-}
-
-/// P1-3, half two: attribute one UNASSIGNED gate finding to a file by EVIDENCE, never to a
-/// whole-tree residue worker. (1) grep the tree for the endpoint literal the finding names —
-/// the file that mentions `/api/payments` is the file that serves it or was supposed to; the
-/// file with the most occurrences wins, ties to `all_files` order. (2) Else the service's ENTRY
-/// file (`…/__main__.py`, preferring one whose package the finding names): an endpoint nothing
-/// implements is a defect of the file that binds the port. (3) Else None — the caller ships the
-/// finding as a KNOWN BUG event. WHY: r0's residue worker owned all eight files and took 115 of
-/// a 138-minute wave (83%) while the four file-attributed shards finished in 24 minutes, all
-/// promoted; r2's sink burned ~130 min on the same whole-tree shape. `read_source` is injected
-/// so the fixture drives this against an archived tree READ-ONLY.
-fn attribute_gate_finding(
-    finding: &str,
-    all_files: &[String],
-    read_source: &dyn Fn(&str) -> Option<String>,
-) -> Option<String> {
-    let literal = endpoint_literal_of(finding);
-    if let Some(lit) = &literal {
-        // A DECLARED route outranks a CALL to it: `"/api/payments":` in the dispatcher is the
-        // literal as a complete token, `"/api/payments?limit=100"` in the page is the literal
-        // mid-URL. Boundary hits (next char ends the path) are counted first; raw substring
-        // counts only break a no-boundary tie. Most hits wins; ties go to all_files order.
-        let boundary_hits = |src: &str| {
-            src.match_indices(lit.as_str())
-                .filter(|(i, _)| {
-                    src.get(i + lit.len()..)
-                        .and_then(|rest| rest.chars().next())
-                        .map(|c| !(c.is_ascii_alphanumeric() || "/_-.?=&%".contains(c)))
-                        .unwrap_or(true)
-                })
-                .count()
-        };
-        let mut best: Option<(usize, usize, usize)> = None; // (boundary, raw, index)
-        for (i, f) in all_files.iter().enumerate() {
-            let Some(src) = read_source(f) else { continue };
-            let raw = src.matches(lit.as_str()).count();
-            if raw == 0 {
-                continue;
-            }
-            let b = boundary_hits(&src);
-            if best.map(|(bb, br, _)| (b, raw) > (bb, br)).unwrap_or(true) {
-                best = Some((b, raw, i));
-            }
-        }
-        if let Some((_, _, i)) = best {
-            return Some(all_files[i].clone());
-        }
-    }
-    // The entry-file fallback answers ENDPOINT- and BOOT-shaped findings only: an advertised
-    // route nothing on disk mentions, or the gate's own boot-probe strings. Arbitrary prose must
-    // NOT land on the entry file — that would re-create the residue worker one file at a time.
-    let boot_shaped = {
-        let l = finding.to_lowercase();
-        [
-            "python -m",
-            "python3 -m",
-            "never bound",
-            "does not start",
-            "did not start",
-            "entry",
-        ]
-        .iter()
-        .any(|m| l.contains(m))
-    };
-    if literal.is_none() && !boot_shaped {
-        return None;
-    }
-    let entries: Vec<&String> = all_files
-        .iter()
-        .filter(|f| *f == "__main__.py" || f.ends_with("/__main__.py"))
-        .collect();
-    entries
-        .iter()
-        .find(|f| {
-            f.rsplit('/')
-                .nth(1)
-                .map(|pkg| !pkg.is_empty() && finding.contains(pkg))
-                .unwrap_or(false)
-        })
-        .or_else(|| entries.first())
-        .map(|f| (*f).clone())
 }
 
 /// P1-3, the seam every repair path shares: `group_findings_by_file`, then evidence-based
