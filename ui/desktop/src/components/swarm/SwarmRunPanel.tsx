@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useId } from 'react';
+import React, { useState, useEffect, useMemo, useRef, useId } from 'react';
 import { createPortal } from 'react-dom';
 import {
   Check, X, Loader2, CircleSlash, ChevronRight, ChevronDown, Wrench,
@@ -327,6 +327,14 @@ const ReasoningBlock: React.FC<{
   const words = text.split(/\s+/).filter(Boolean).length;
   const big = text.length > 1200;
   const bodyRef = useRef<HTMLDivElement | null>(null);
+  // FINDING 19: collapseRepeats' block scan is O(lines × totalChars) — measured 354ms per call at the
+  // 400KB think.log tail cap (822ms at 630KB, 7ms at 40KB), at up to 2Hz on the renderer main thread.
+  // Two of this block's feeders (laneNarrative → fullTranscript) are unbounded, so the scan runs over
+  // the newest REPEAT_SCAN_CHARS only. Memoized on the LENGTH, deliberately: both channels are
+  // append-only, so an unchanged length means unchanged text, while the 500ms poll re-materializes a
+  // fresh string identity every tick and keying on the string would defeat the memo.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const collapsed = useMemo(() => collapseRepeats(tailOf(text, REPEAT_SCAN_CHARS)), [text.length]);
   useEffect(() => {
     if (!live) return;
     const el = bodyRef.current;
@@ -353,7 +361,7 @@ const ReasoningBlock: React.FC<{
         {/* Prose gets the markdown path; a STRUCTURED payload gets a code path. The plan skeleton used to
             arrive here as raw JSON and markdown both reflowed it into an unreadable wall AND corrupted it —
             `__init__.py` reads as bold syntax, so the file list rendered as **init**.py. */}
-        <StructuredContent content={collapseRepeats(text)} />
+        <StructuredContent content={collapsed} />
       </div>
       {big && (
         <button
@@ -389,6 +397,12 @@ const LaneRow: React.FC<{
   const iconColor = interrupted ? CALL_PENDING : STATUS_COLOR[lane.status];
 
   const { completed: calls, running } = workRows(lane.calls, lane.inflight);
+  // FINDING 23: `calls` is the engine's SLIDING last-60 window, so past 60 resolved calls every new
+  // call re-aims each array index at a DIFFERENT call — an index key reassigns row identity under the
+  // cursor (an expanded output silently becomes a neighbour's; a context menu targets the wrong
+  // path). callRowMeta keys by the absolute ordinal, which survives the slide because tool_calls and
+  // the window advance in the same digest write — exactly as WorkPane already does.
+  const callMeta = callRowMeta(calls, lane.toolCalls);
   // THE DURABLE TRANSCRIPT FIRST — see `laneNarrative`, which is the one copy of this chain. It was
   // written out here and again on the board row, and the board's copy had already lost its `lastText`
   // fallback, which is how a rule with N copies reads on the day someone edits N-1 of them.
@@ -612,7 +626,12 @@ const LaneRow: React.FC<{
                     <InflightRows running={running} />
                     {calls.map((c, i) => (
                       // Developer mode opens every call's output; otherwise only the first failure.
-                      <CallRow key={i} call={c} defaultOpen={dev || i === firstFailIdx} />
+                      <CallRow
+                        key={callMeta[i].key}
+                        ordinal={callMeta[i].ordinal}
+                        call={c}
+                        defaultOpen={dev || i === firstFailIdx}
+                      />
                     ))}
                   </div>
                 </div>
@@ -1218,6 +1237,14 @@ export function inspectorThinkingText(lane: StreamLane): string {
  */
 export const INLINE_TAIL_CHARS = 2400;
 
+/**
+ * The block-repeat scan's input bound (finding 19). collapseRepeats re-joins the whole prefix per
+ * candidate block size — O(lines × totalChars) — and the unclipped feeders hand it up to 400KB at
+ * poll cadence. 24,000 matches the digest clip's own budget (taskGenReasoning already caps there);
+ * the durable logs on disk stay complete.
+ */
+export const REPEAT_SCAN_CHARS = 24_000;
+
 /** The preview cards show a lot more than a strip cell, but still not a whole log — this is the same
  *  volume the old 24,000-char `full_reasoning` clip put on screen, now taken from the durable log. */
 export const CARD_TAIL_CHARS = 24_000;
@@ -1815,7 +1842,16 @@ const NodeInspector: React.FC<{
   // The window is only a FALLBACK, for a lane whose durable log has not appeared yet.
   // BLANK RUNS ARE AN ARTIFACT OF STREAM CHUNKING, on both channels — see squeezeBlankRuns. The measured
   // lane was 123 blank lines out of 143, rendered verbatim by whitespace-pre-wrap.
-  const rawThink = collapseRepeats(inspectorThinkingText(lane ?? {}));
+  // FINDING 19: bounded + memoized like ReasoningBlock — this feeder is the 400KB think.log tail, the
+  // exact input measured at 354ms per scan. Length is identity on an append-only channel; the lane key
+  // rides the deps so another lane's equal length can never serve a stale collapse.
+  const thinkSource = inspectorThinkingText(lane ?? {});
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const rawThink = useMemo(
+    () => collapseRepeats(tailOf(thinkSource, REPEAT_SCAN_CHARS)),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [lane?.taskId, thinkSource.length]
+  );
   const thinkText = squeezeBlankRuns(rawThink);
   const { completed: calls, running, tallies } = workRows(lane?.calls, lane?.inflight);
   const rawNarration = inspectorOutputText(lane ?? {});
@@ -3039,6 +3075,9 @@ const BoardTaskRow: React.FC<{
   const idx = row.device ? deviceIndex(row.device, deviceOrder) : -1;
   const lane = row.lane;
   const { completed: calls, running } = workRows(lane?.calls, lane?.inflight);
+  // FINDING 23, same slide as the lane card: index keys over the engine's sliding last-60 window
+  // reassign row identity on every digest write past 60 calls — key by the absolute ordinal.
+  const callMeta = callRowMeta(calls, lane?.toolCalls);
   const reasoning = lane ? laneNarrative(lane) : '';
   const failLike = row.state === 'failed' || row.state === 'judge_failed' || interrupted;
   const laneError = failLike && lane?.error ? lane.error.trim() : '';
@@ -3124,6 +3163,22 @@ const BoardTaskRow: React.FC<{
           <Tip label={`The judge intervened: ${judgeFlag}${row.judge?.hint ? ` — ${row.judge.hint.slice(0, 140)}` : ''}`}>
             <span className="flex items-center gap-0.5 shrink-0" style={{ color: AMBER }}>
               <Gavel className="h-3 w-3" /> {judgeFlag}
+            </span>
+          </Tip>
+        ) : null}
+        {typeof lane?.restreams === 'number' && lane.restreams > 0 ? (
+          // FINDING 8: the judge wiped and re-streamed this call — its live reasoning and thinking
+          // counter restart from nothing, which read as a glitch with no cause on screen. The durable
+          // .think.log keeps every wiped chunk; this chip is the on-screen cause.
+          <Tip
+            label={`The judge wiped and re-streamed this call ${lane.restreams} time${lane.restreams === 1 ? '' : 's'} — the live reasoning and its counter restart; the durable thinking log keeps everything.`}
+          >
+            <span
+              className="text-[10px] font-bold px-1.5 py-0.5 text-white shrink-0"
+              style={{ backgroundColor: SWARM_STATUS.stopped, borderRadius: 3 }}
+              data-testid="lane-restreamed"
+            >
+              re-streamed ×{lane.restreams}
             </span>
           </Tip>
         ) : null}
@@ -3250,7 +3305,12 @@ const BoardTaskRow: React.FC<{
                 <FormingRows forming={lane?.forming} />
                 <InflightRows running={running} />
                 {calls.map((cl, i) => (
-                  <CallRow key={i} call={cl} defaultOpen={dev || i === firstBadCall} />
+                  <CallRow
+                    key={callMeta[i].key}
+                    ordinal={callMeta[i].ordinal}
+                    call={cl}
+                    defaultOpen={dev || i === firstBadCall}
+                  />
                 ))}
               </div>
             </div>
@@ -3501,7 +3561,11 @@ const ClarifyPrompt: React.FC<{
   /** The engine's confidence floor — this prompt only exists BECAUSE the plan scored under it, so the
    *  breakdown must name the real bar rather than judge the number against an invented band. */
   askFloor?: number | null;
-}> = ({ clarify, plan, proxy, askFloor = null }) => {
+  /** Engine liveness at render time. The prompt is normally unmounted when stale (PlanningZone shows
+   *  the interrupted notice), but liveness can flip between typing and sending — the send path must
+   *  never claim goose is building off a write that succeeded into a dead run's directory. */
+  stale?: boolean;
+}> = ({ clarify, plan, proxy, askFloor = null, stale = false }) => {
   const [answers, setAnswers] = useState<string[]>(() => clarify.questions.map(() => ''));
   const [guidance, setGuidance] = useState('');
   const [showPlan, setShowPlan] = useState(true);
@@ -3524,13 +3588,27 @@ const ClarifyPrompt: React.FC<{
   };
 
   if (sent) {
-    return (
+    // FINDING 12: the old banner said 'Sent — goose is building with your answers.' off nothing but a
+    // successful FILE WRITE — the filesystem being fine says nothing about the engine, and a user
+    // answered a SIGKILLed run into a green "building" claim. The write is the only fact this
+    // component holds, so that is what it states; engine pickup shows up as the pending flag flipping
+    // on the next poll (which unmounts this prompt) and the run moving in the feed.
+    return stale ? (
+      <div
+        className="flex items-center gap-2 px-3 py-2 text-xs text-white"
+        style={{ backgroundColor: SWARM_STATUS.solidStopped }}
+      >
+        <AlertTriangle className="h-4 w-4 shrink-0" />
+        Answers written — but the engine is not running, so they will not be read until the run is
+        relaunched.
+      </div>
+    ) : (
       <div
         className="flex items-center gap-2 px-3 py-2 text-xs text-white"
         style={{ backgroundColor: STATUS_COLOR.done }}
       >
         <Check className="h-4 w-4 shrink-0" />
-        Sent — goose is building with your answers.
+        Answers written — waiting for goose to pick them up.
       </div>
     );
   }
@@ -3753,8 +3831,11 @@ const PlanningZone: React.FC<{
   // `clarify.pending` is a FILE test (questions exist, answers file absent) — on the proxyless
   // engine a timed-out ask never writes answers, so the file test says "pending" forever while
   // the run builds. The event stream is the truth: once the window expired (or an answer landed),
-  // the prompt is history, not a request.
-  const clarifyPending = !!clarify?.pending && !proxy.timedOut;
+  // the prompt is history, not a request. And a DEAD engine (finding 12) makes the request itself a
+  // lie — nothing is blocked on the answers — so staleness demotes the prompt to the interrupted
+  // notice below rather than mounting an interactive form over a corpse.
+  const clarifyPending = !!clarify?.pending && !proxy.timedOut && !stale;
+  const clarifyInterrupted = !!clarify?.pending && !proxy.timedOut && stale;
   // A phase's own fan (the slice fan under RESEARCH, the contract fan under CONTRACTS) renders under that
   // phase, so the lanes say WHEN they ran; a phase with lanes but no checklist row yet still shows.
   const fanOf = (key: PhaseTodo['key']): PhaseLaneGroup | null => {
@@ -3799,10 +3880,17 @@ const PlanningZone: React.FC<{
     </div>
   );
   const hasBody =
-    clarifyPending || !!conf || !!proxy.timedOut || shownPhases.length > 0 || laneGroups.length > 0;
+    clarifyPending ||
+    clarifyInterrupted ||
+    !!conf ||
+    !!proxy.timedOut ||
+    shownPhases.length > 0 ||
+    laneGroups.length > 0;
   if (!hasBody && planConfidence == null) return null;
   // Historical once build starts: collapse by default, keep the one-line summary in the header.
-  const open = clarifyPending ? true : (openOverride ?? !buildStarted);
+  // An INTERRUPTED ask defaults open (still collapsible, unlike a live ask): the notice explaining
+  // that nothing is waiting on the answers is the whole point of the state.
+  const open = clarifyPending ? true : (openOverride ?? (!buildStarted || clarifyInterrupted));
   const climb = trail.length >= 2 ? trail[trail.length - 1] - trail[0] : 0;
   const explain = buildStarted
     ? 'how the plan was agreed before building'
@@ -3842,9 +3930,27 @@ const PlanningZone: React.FC<{
       />
       {open ? (
         clarifyPending && clarify ? (
-          <ClarifyPrompt clarify={clarify} plan={plan} proxy={proxy} askFloor={askFloor} />
+          <ClarifyPrompt clarify={clarify} plan={plan} proxy={proxy} askFloor={askFloor} stale={stale} />
         ) : (
           <div className="pb-1">
+            {/* The ask the engine died holding (finding 12): the questions are real, the request is
+                not — nothing is blocked on the answers any more. Said plainly instead of mounting the
+                interactive form. */}
+            {clarifyInterrupted ? (
+              <div className="px-3 pt-2">
+                <div
+                  className="flex items-start gap-2 px-2 py-2 text-xs text-white"
+                  data-testid="clarify-interrupted"
+                  style={{ backgroundColor: SWARM_STATUS.solidStopped, borderRadius: CHIP_RADIUS }}
+                >
+                  <AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-px" />
+                  <span>
+                    The run stopped while asking — the engine is not running, so nothing is waiting on
+                    these answers. Relaunch the run from its directory to be asked again.
+                  </span>
+                </div>
+              </div>
+            ) : null}
             {/* The questions were settled without you. This is the durable record of that — the prompt
                 itself unmounts the moment the answers file lands. */}
             {proxy.timedOut ? (
@@ -3943,6 +4049,60 @@ const KnownActiveBugs: React.FC<{ bugs: string[] }> = ({ bugs }) => {
               <span className="min-w-0 break-words">
                 <InlineMarkdown content={bug} />
               </span>
+            </li>
+          ))}
+        </ol>
+      ) : null}
+    </div>
+  );
+};
+
+// Mid-run Q&A (finding 10): a question dropped into .swarm/questions/ is answered by the engine into
+// a hidden .swarm/answers/ dotfile — the swarm_answer event is the only surface a panel reader ever
+// sees, and until this card existed the app dropped it.
+const SwarmQA: React.FC<{ qa: SwarmRunState['qa'] }> = ({ qa }) => {
+  const [open, setOpen] = useState(true);
+  if (qa.length === 0) return null;
+  return (
+    <div className="border-t border-border-primary" data-testid="swarm-qa">
+      <ZoneHeader
+        hue={SWARM_STATUS.action}
+        label="Questions answered"
+        explain="questions dropped to the running swarm, and its answers"
+        collapsed={!open}
+        onToggle={() => setOpen((o) => !o)}
+        right={
+          <span
+            className="text-xs px-2 py-0.5 text-white font-semibold tabular-nums"
+            style={{ backgroundColor: SWARM_STATUS.action, borderRadius: CHIP_RADIUS }}
+          >
+            {qa.length}
+          </span>
+        }
+      />
+      {open ? (
+        <ol className="px-3 pb-3 space-y-2">
+          {qa.map((item, i) => (
+            <li key={`${item.questionFile}-${i}`} className="text-xs" style={{ color: GEN_TEXT }}>
+              <div className="flex items-start gap-2 font-semibold">
+                <MessageCircleQuestion
+                  className="h-3.5 w-3.5 shrink-0 mt-0.5"
+                  style={{ color: SWARM_STATUS.action }}
+                  aria-hidden
+                />
+                <span className="min-w-0 break-words">{item.question}</span>
+              </div>
+              <div className="mt-1 ml-5 flex items-start gap-2">
+                <Bot className="h-3.5 w-3.5 shrink-0 mt-0.5 text-text-secondary" aria-hidden />
+                <span className="min-w-0 break-words whitespace-pre-wrap">
+                  <InlineMarkdown content={item.answer} />
+                  {item.model ? (
+                    <span className="ml-1 font-mono text-[10px] text-text-secondary">
+                      — {item.model}
+                    </span>
+                  ) : null}
+                </span>
+              </div>
             </li>
           ))}
         </ol>
@@ -4117,7 +4277,10 @@ const TerminalBanner: React.FC<{
       </div>
       {outcome === 'stopped' ? (
         <div className="px-3 py-1.5 text-[11px] text-text-secondary bg-background-secondary">
-          It ended without a completion signal — stopped or crashed mid-build. What finished is shown below.
+          {/* Absorbs the liveness banner's exited explanation — outcome 'stopped' keys on the same
+              EXITED heartbeat stamp, so both surfaces speaking would say one fact twice. */}
+          The engine exited without a completion signal — it stopped writing its heartbeat and stamped
+          an exit mid-build. What finished is shown below.
         </div>
       ) : null}
       {summary && summary.perDevice.length > 0 ? (
@@ -4322,9 +4485,7 @@ export const SwarmRunPanel: React.FC<{
   const stale = isEngineSilent(run, now);
   const { running, done, failed, tasks } = run.totals;
 
-  // A run is OVER when the engine said so. Nothing else — no timer, no quiet window — may end it.
   const clarifyPending = !!run.clarify?.pending && !run.proxy.timedOut;
-  const ended = run.finished;
   // The APP-LEVEL oracle: the engine's own end-to-end verify (complete_result -> phaseTodo v-e2e = 'done').
   // A green verify means the deliverable WORKS — so the run is 'done' and the overview shows — EVEN IF an
   // individual build task failed (e.g. the integrate-verify sink stalled but the orchestrator's verify still
@@ -4333,13 +4494,23 @@ export const SwarmRunPanel: React.FC<{
   const appVerified =
     (run.phaseTodo.find((p) => p.key === 'integrate')?.items ?? []).find((i) => i.id === 'v-e2e')
       ?.state === 'done';
-  const outcome: 'done' | 'failed' | 'stopped' | null = !ended
-    ? null
-    : run.finished
-      ? appVerified || (run.summary?.failed ?? failed) === 0
-        ? 'done'
-        : 'failed'
-      : 'stopped';
+  // A run is OVER when the engine said so, and the engine says so TWO ways: run_finished, or the
+  // heartbeat's `EXITED:` stamp (Drop ran — nothing more will ever be written). The old derivation
+  // defined ended = run.finished and then asked `ended && !run.finished` for 'stopped', which is
+  // contradictory — the 'Run stopped' terminal banner was dead code, and a killed run sat on the amber
+  // warning with 'N interrupted' forever, the exact limbo the banner was built to end. 'stopped' keys
+  // ONLY on the exit stamp, never on 'silent': a frozen heartbeat can be a hard-killed engine the
+  // operator resumes, and no clock may end a run. (Benign one-poll race: the EXITED stamp can be read
+  // one poll before the run_finished line, flipping a momentary 'stopped' to 'done' on the next fold —
+  // accepted, not a flicker bug.)
+  const outcome: 'done' | 'failed' | 'stopped' | null = run.finished
+    ? appVerified || (run.summary?.failed ?? failed) === 0
+      ? 'done'
+      : 'failed'
+    : liveness.state === 'exited'
+      ? 'stopped'
+      : null;
+  const ended = outcome != null;
   const durationMin =
     run.summary?.totalMin != null
       ? run.summary.totalMin
@@ -4403,9 +4574,28 @@ export const SwarmRunPanel: React.FC<{
           >
             <span className="text-xs font-semibold truncate text-text-primary">{appName}</span>
           </Tip>
-          {clarifyPending ? (
+          {run.meta?.resumed ? (
+            // FINDING 7: a resumed run skips planning and re-runs finished tasks — without this badge
+            // that read as a broken run doing duplicate work. Solid chip, engine-truth (run_resumed).
+            <Tip
+              label={`Resumed — reused the previous plan (${run.meta.resumed.tasks} task${run.meta.resumed.tasks === 1 ? '' : 's'}); planning skipped; ${run.meta.resumed.previouslyCompleted} finished task${run.meta.resumed.previouslyCompleted === 1 ? '' : 's'} re-run.`}
+            >
+              <span
+                className="text-[10px] px-1.5 py-0.5 flex items-center gap-1 shrink-0 text-white font-medium"
+                style={{ backgroundColor: SWARM_STATUS.action, borderRadius: CHIP_RADIUS }}
+                data-testid="run-resumed-chip"
+              >
+                <RotateCcw size={10} /> Resumed
+              </span>
+            </Tip>
+          ) : null}
+          {clarifyPending && !stale ? (
             // Paused waiting on the human — NOT active work, so no spinner and a distinct amber "paused" chip
             // (the old code showed a spinning "Planning" here, implying it was still churning).
+            // Gated on !stale (finding 12): a SIGKILLed engine mid-ask left this chip claiming "the
+            // build is paused, waiting for your answers" directly above the no-heartbeat banner —
+            // nothing was waiting, and nothing would ever read the answers. When the engine is dead
+            // the liveness banner is the honest surface, not an invitation to answer.
             <Tip label="The build is paused, waiting for your answers in the prompt below.">
               <span
                 className="text-[10px] px-1.5 py-0.5 flex items-center gap-1 shrink-0 text-white font-medium"
@@ -4420,12 +4610,20 @@ export const SwarmRunPanel: React.FC<{
             // watched this badge read a spinning "Building" through a 20-minute hold and reasonably concluded
             // the run had hung. The phase label is suppressed too — "which task is next" is not the question
             // someone asks when nothing is moving.
-            <Tip label="Held at a task boundary. In-flight work finished and nothing was lost — press ▶ to resume.">
+            // When STALE (finding 14), 'press ▶ to resume' is a promise nothing can keep: resume only
+            // removes a sentinel no process is watching. Say the engine died while held instead.
+            <Tip
+              label={
+                stale
+                  ? 'The engine died while held — resuming requires relaunching the run from its directory.'
+                  : 'Held at a task boundary. In-flight work finished and nothing was lost — press ▶ to resume.'
+              }
+            >
               <span
                 className="text-[10px] px-1.5 py-0.5 flex items-center gap-1 shrink-0 text-white font-medium"
-                style={{ backgroundColor: AMBER, borderRadius: CHIP_RADIUS }}
+                style={{ backgroundColor: stale ? SWARM_STATUS.solidStopped : AMBER, borderRadius: CHIP_RADIUS }}
               >
-                <Pause size={10} /> Paused
+                <Pause size={10} /> {stale ? 'Paused — engine gone' : 'Paused'}
               </span>
             </Tip>
           ) : run.inProgress && !stale && !ended && run.phase ? (
@@ -4485,8 +4683,14 @@ export const SwarmRunPanel: React.FC<{
                 !run.pauseRequested
                   ? 'Hold at the next task boundary — in-flight work finishes, nothing is lost'
                   : run.held
-                    ? 'Resume the build (re-runs nothing)'
-                    : 'Pausing — finishing the current task, then holding. Click to resume.'
+                    ? stale
+                      ? 'The engine died while held — this only clears the pause sentinel; resuming requires relaunching the run.'
+                      : 'Resume the build (re-runs nothing)'
+                    : stale
+                      ? liveness.state === 'exited'
+                        ? 'The engine exited — the pause request was written but nothing is reading it.'
+                        : 'Engine not responding — most likely hard-killed; the pause sentinel is written but nothing is reading it.'
+                      : 'Pausing — finishing the current task, then holding. Click to resume.'
               }
             >
               {!run.pauseRequested ? (
@@ -4496,6 +4700,14 @@ export const SwarmRunPanel: React.FC<{
               ) : run.held ? (
                 <>
                   <Play size={11} /> Resume
+                </>
+              ) : stale ? (
+                // FINDING 14: an animate-spin 'Pausing…' asserts live progress. On a dead engine the
+                // request stands but nothing is finishing anything — a static icon and a title that
+                // says which death this is (the button itself stays: the sentinel toggle is still
+                // meaningful for a later relaunch).
+                <>
+                  <Pause size={11} /> Pause requested
                 </>
               ) : (
                 <>
@@ -4572,6 +4784,9 @@ export const SwarmRunPanel: React.FC<{
       {/* The imperfections a green run shipped with. Mounted whenever the engine has rated defects — during
           the repair phase as well as at the end, because that is when they are actionable. */}
       <KnownActiveBugs bugs={run.knownActiveBugs} />
+
+      {/* Mid-run questions the swarm answered (finding 10) — otherwise the answers live only in dotfiles. */}
+      <SwarmQA qa={run.qa} />
 
       {/* ── PLANNING zone — the confidence story + planning checklist + candidate drafts, and the clarify
           prompt when goose is asking. Collapses to its one-line summary once building starts. */}
