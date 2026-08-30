@@ -64,6 +64,10 @@ mod desk;
 use desk::{spawn_shadow_desk, RecurrenceMeter, RECURRENCE_MIN_SPAN};
 mod attribution;
 use attribution::{attribute_findings, console_error_source, resolve_shard_ownership};
+mod findings;
+use findings::{
+    dedupe_findings_exact, engine_critical, FileGroup, FindingProvenance, FindingSource,
+};
 mod pitfalls;
 use pitfalls::{relevant_pitfalls, DOMAIN_PITFALLS};
 mod fleet_order;
@@ -1970,8 +1974,9 @@ async fn handle_gate(tree: PathBuf, spec: Option<PathBuf>) -> Result<()> {
 
 /// `goose swarm repair <tree>`: the tail's wave PLANNING, offline, no model. Everything the live
 /// tail decides deterministically before a shard is dispatched happens here against an archived
-/// tree — gate, engine_critical partition, P1-3 attribution — so "which shards would the wave
-/// fan, and what ships as a known bug" is provable in minutes. The dispatch itself (a model
+/// tree — gate, engine_critical partition, P1-3 attribution, the severity ordering (findings.rs)
+/// — so "which shards would the wave fan, in what order, and what ships as a known bug" is
+/// provable in minutes. The dispatch itself (a model
 /// filling the shard) is exactly the part this command does not do.
 async fn handle_repair(tree: PathBuf, spec: Option<PathBuf>) -> Result<()> {
     if !tree.is_dir() {
@@ -1992,9 +1997,16 @@ async fn handle_repair(tree: PathBuf, spec: Option<PathBuf>) -> Result<()> {
     let tree_read = tree.clone();
     // The runner-up map is dispatch-side ownership only (resolve_shard_ownership); the replay
     // reports grouping, which is unchanged by it.
-    let (groups, known_bugs, _) = attribute_findings(&r.findings, &existing, &move |rel: &str| {
-        std::fs::read_to_string(tree_read.join(rel)).ok()
-    });
+    let (mut groups, known_bugs, _) =
+        attribute_findings(&r.findings, &existing, &move |rel: &str| {
+            std::fs::read_to_string(tree_read.join(rel)).ok()
+        });
+    // The live wave's order, reproduced offline: severest file-group first, each group's own
+    // findings most-severe-first (provenance-derived, findings.rs).
+    for g in &mut groups {
+        r.provenance.sort_findings(&mut g.findings);
+    }
+    r.provenance.sort_groups(&mut groups);
     println!(
         "{}",
         serde_json::json!({
@@ -2005,6 +2017,8 @@ async fn handle_repair(tree: PathBuf, spec: Option<PathBuf>) -> Result<()> {
             "shards": groups.iter().map(|g| serde_json::json!({
                 "file": g.file,
                 "findings": g.findings.len(),
+                // First finding after the sort = the group's max severity.
+                "max_severity": g.findings.first().map(|f| r.provenance.severity_label(f)),
             })).collect::<Vec<_>>(),
             "known_bugs": known_bugs,
             "inconclusive": r.inconclusive.len(),
@@ -2018,7 +2032,15 @@ async fn handle_repair(tree: PathBuf, spec: Option<PathBuf>) -> Result<()> {
         known_bugs.len()
     );
     for g in &groups {
-        eprintln!("  · shard `{}` <- {} finding(s)", g.file, g.findings.len());
+        eprintln!(
+            "  · shard `{}` <- {} finding(s), max {}",
+            g.file,
+            g.findings.len(),
+            g.findings
+                .first()
+                .map(|f| r.provenance.severity_label(f))
+                .unwrap_or("unsourced")
+        );
     }
     Ok(())
 }
@@ -9361,57 +9383,6 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
     }
 
     #[test]
-    /// The finding COUNT gates green, fires the stall exit, AND is the baseline shard_beats_baseline
-    /// compares against — so one duplicate is charged three times, making the app harder to call green
-    /// and the shard easier to promote in the same round.
-    ///
-    /// MEASURED: two testers reported "Empty limit parameter silently falls back to default" and both
-    /// survived, because TEST prefixes every defect with `[{angle}] ` and the merge was a `contains`.
-    fn the_same_defect_from_two_testers_counts_once() {
-        let engine = "vendorsync/api.py:17 references DOM id `prev-btn`".to_string();
-        let a = "[bad-input] Empty limit parameter silently falls back to default".to_string();
-        let b =
-            "[primary-journey] Empty limit parameter silently falls back to default".to_string();
-        let model: std::collections::HashSet<String> = [a.clone(), b.clone()].into_iter().collect();
-
-        let out = dedupe_findings_exact(&[a.clone(), engine.clone(), b.clone()], &model);
-        assert_eq!(
-            out.len(),
-            2,
-            "the angle prefix must not make one defect two: {out:?}"
-        );
-        assert!(out.contains(&engine), "an unrelated finding must survive");
-
-        // AN ENGINE FINDING IS ALWAYS THE SURVIVOR, in either arrival order — engine_fatal forces its
-        // wording CRITICAL and keeping a tester's paraphrase would silently un-force it.
-        let measured = "the served page renders NO data rows".to_string();
-        let paraphrase = "[primary-journey] the served page renders NO data rows".to_string();
-        let only_model: std::collections::HashSet<String> =
-            [paraphrase.clone()].into_iter().collect();
-        for pair in [
-            vec![paraphrase.clone(), measured.clone()],
-            vec![measured.clone(), paraphrase.clone()],
-        ] {
-            let out = dedupe_findings_exact(&pair, &only_model);
-            assert_eq!(
-                out,
-                vec![measured.clone()],
-                "the engine string must survive"
-            );
-        }
-
-        // Two DIFFERENT defects that share a file must both stand — a false merge hides a real defect,
-        // which is worse than the duplicate this removes.
-        let x = "[bad-input] `--db` pointing at a directory crashes".to_string();
-        let y = "[bad-input] `--db` pointing at a non-SQLite file crashes".to_string();
-        assert_eq!(dedupe_findings_exact(&[x, y], &model).len(), 2);
-
-        // Nothing to fold leaves the list byte-identical.
-        let solo = vec!["only one".to_string()];
-        assert_eq!(dedupe_findings_exact(&solo, &model), solo);
-    }
-
-    #[test]
     /// No prompt text may carry a run of spaces from a flattened source literal.
     ///
     /// A multi-line Rust string with no `\` continuation keeps the SOURCE INDENTATION in the value, and
@@ -12986,121 +12957,6 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
     }
 
     #[test]
-    fn extract_file_prefers_source_over_test_and_none_when_absent() {
-        let f = "tests/test_cli.py:9: in test_add\n from spendlog.cli import main\n\
-                 spendlog/cli.py:3: in <module>\n    import missing\nE   ModuleNotFoundError"
-            .to_string();
-        assert_eq!(
-            extract_file_from_finding(&f, &[]).as_deref(),
-            Some("spendlog/cli.py"),
-            "a non-test source frame is the fix target"
-        );
-        assert_eq!(
-            extract_file_from_finding("no python3 -m app entry point found", &[]),
-            None
-        );
-        // `File "path", line N` shape (pytest full traceback / rust).
-        assert_eq!(
-            extract_file_from_finding("File \"app/core.py\", line 7, in run", &[]).as_deref(),
-            Some("app/core.py")
-        );
-    }
-
-    /// r0 (2026-08-29) TEST defect D5, verbatim: the tester's FILES line, re-emitted by
-    /// `parse_observed_defects` as the trailing "(in ...)" list, names the SERVER first and the page
-    /// second — the fix lives in ledgerd.py, which must serve the page. Last-wins sharded it to
-    /// web/index.html; so would first-wins over the whole sentence, because the prose mentions the
-    /// page ("despite `web/index.html` existing") before the list. The attribution list outranks
-    /// the prose, and within it — and within any authored sentence — the first source path wins.
-    #[test]
-    fn an_authored_finding_shards_to_the_first_file_in_its_attribution_list() {
-        let files: Vec<String> = [
-            "app/__init__.py",
-            "app/ledgerd.py",
-            "app/notifierd.py",
-            "web/index.html",
-            "web/app.js",
-            "tests/test_api.py",
-        ]
-        .iter()
-        .map(|s| s.to_string())
-        .collect();
-        let d5 = "[primary-journey] Frontend not served at all. `GET /` returns `{\"error\": \"Not \
-                  found\"}` instead of the HTML console page. The app cannot be used as a payments \
-                  console because there's no UI being served, despite `web/index.html` existing. \
-                  Command: `curl -s http://127.0.0.1:18400/` (in `app/ledgerd.py`, `web/index.html`)";
-        assert_eq!(
-            extract_file_from_finding(d5, &files).as_deref(),
-            Some("app/ledgerd.py"),
-            "D5's fix lives in the server that must serve the page"
-        );
-        // The same shape with the attribution suffix spelled literally (the TEST fan that used
-        // to author it is deleted; authored findings still arrive in this shape).
-        assert_eq!(
-            extract_file_from_finding(
-                "Frontend not served at all, despite `web/index.html` existing (in `app/ledgerd.py`, `web/index.html`)",
-                &files
-            )
-            .as_deref(),
-            Some("app/ledgerd.py")
-        );
-        // A test file first in the list never outranks the source that follows it.
-        assert_eq!(
-            extract_file_from_finding(
-                "/api/health 500s on an empty db (in `tests/test_api.py`, `app/ledgerd.py`)",
-                &files
-            )
-            .as_deref(),
-            Some("app/ledgerd.py")
-        );
-        // Without a list, an authored sentence is still subject-first.
-        assert_eq!(
-            extract_file_from_finding(
-                "`app/ledgerd.py` returns the wrong shape; `app/notifierd.py` is correct",
-                &files
-            )
-            .as_deref(),
-            Some("app/ledgerd.py")
-        );
-        // THE DATA/DOC RULE STANDS: a source path anywhere beats a config file named first.
-        assert_eq!(
-            extract_file_from_finding(
-                "see `config.yaml`: `app/ledgerd.py` mis-parses the flag",
-                &files
-            )
-            .as_deref(),
-            Some("app/ledgerd.py")
-        );
-    }
-
-    /// A traceback orders its frames the OTHER way: the failing frame is LAST, and the first is
-    /// routinely the test or CPython itself. First-wins there would send the shard to the caller,
-    /// or to the stdlib — so frames keep last-wins while authored paths take first-wins.
-    #[test]
-    fn a_traceback_still_shards_to_its_last_owned_frame() {
-        let files: Vec<String> = ["app/api.py", "app/store.py", "tests/test_api.py"]
-            .iter()
-            .map(|s| s.to_string())
-            .collect();
-        let tb = "`pytest -q` failed:\n \
-                  File \"/opt/homebrew/Cellar/python@3.14/lib/python3.14/threading.py\", line 1024, in run\n \
-                  File \"/Users/x/runs/unit/app/api.py\", line 40, in list_payments\n \
-                  File \"/Users/x/runs/unit/app/store.py\", line 88, in query";
-        assert_eq!(
-            extract_file_from_finding(tb, &files).as_deref(),
-            Some("app/store.py"),
-            "the failing frame is the last one"
-        );
-        let short = "tests/test_api.py:9: in test_list\n    api.list_payments()\n\
-                     app/api.py:40: in list_payments\n    store.query()\n\
-                     app/store.py:88: in query\nE   sqlite3.OperationalError";
-        assert_eq!(
-            extract_file_from_finding(short, &files).as_deref(),
-            Some("app/store.py")
-        );
-    }
-
-    #[test]
     fn subsplit_takes_two_to_four_identifiers_or_nothing() {
         use goose_swarm::extract_subsplit;
         let spec = "Build the client.\nSUBSPLIT: fetch_page, parse_rows, total_count";
@@ -13202,55 +13058,6 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
         assert!(digest_failed_calls_block(&None).is_none());
     }
 
-    /// F881 REGRESSION (run 8, score 0.601): the repair round RACED whole-tree twins even though its
-    /// first finding literally begins with a path. 0 of 3 twins promoted, as 0 of 9 had before it.
-    /// These are the THREE finding strings run 8's own `complete_verify` emitted, and the file list
-    /// its DAG owned. If attribution returns no group, the round can only race — so this test pins
-    /// the routing INPUT, not the routing rule (which `prefer_shard_over_race` already pins).
-    #[test]
-    fn run8_findings_attribute_to_files_so_the_round_shards() {
-        let files: Vec<String> = [
-            "README.md",
-            "test_api.py",
-            "test_main.py",
-            "test_meridian.py",
-            "test_store.py",
-            "test_web.py",
-            "vendorsync/__init__.py",
-            "vendorsync/__main__.py",
-            "vendorsync/api.py",
-            "vendorsync/meridian.py",
-            "vendorsync/store.py",
-            "vendorsync/web/app.js",
-            "vendorsync/web/index.html",
-            "vendorsync/web/styles.css",
-        ]
-        .iter()
-        .map(|s| s.to_string())
-        .collect();
-        let findings = vec![
-            "vendorsync/web/app.js:132 references DOM id `sync-error` which NO html file in the app \
-             defines — getElementById returns null there and the page throws at runtime (the \
-             rendered-nothing class). Either add the id to the HTML or fix the reference to an id \
-             that exists.".to_string(),
-            "POST /api/sync is not CHEAP on a repeat run — the second sync re-fetched 247 row(s) it \
-             already had. FIX: make the client send If-None-Match per page.".to_string(),
-            "the page renders but the browser console carries 2 error(s) in normal use (first: \
-             Failed to load resource: net::ERR_EMPTY_RESPONSE) — fix the JS errors; users hit them \
-             as broken interactions.".to_string(),
-        ];
-        let (groups, unassigned) = group_findings_by_file(&findings, &files);
-        eprintln!("GROUPS={} UNASSIGNED={}", groups.len(), unassigned.len());
-        for g in &groups {
-            eprintln!("  group {} <- {} finding(s)", g.file, g.findings.len());
-        }
-        let attributed: usize = groups.iter().map(|g| g.findings.len()).sum();
-        assert!(
-            attributed > 0 && !groups.is_empty(),
-            "run 8's findings must attribute to per-file shards — the fan is the only wave now"
-        );
-    }
-
     /// F881 (run 8, 0.601): the vendor client stored ONE collection-wide ETag and looped on 304
     /// forever after a cursor restart. The author must receive the conditional-request fact, and it
     /// must not spray onto tasks that have nothing to do with paged fetching.
@@ -13299,56 +13106,6 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
         // Still answering once populated -> no wedge, whatever else the body may be missing.
         assert!(!wedged_after_populating(200, 200));
         assert!(!wedged_after_populating(200, 500));
-    }
-
-    /// F882 REGRESSION (run 9, round 0): TWO findings, both describing file-anchored work, BOTH
-    /// attributed to nothing — so the round raced whole-tree twins (lifetime 0 of 12 promoted)
-    /// instead of sharding. These are the REAL shapes from that round: (1) a `pytest -q` failure
-    /// whose only file mentions are node-id summary lines with a status word in front; (2) the
-    /// gate's own NotCheap finding, which described the client fix in full and named no file —
-    /// now required to carry the client path the spec's module table derives.
-    #[test]
-    fn run9_round0_findings_attribute_and_shard() {
-        let files: Vec<String> = [
-            "vendorsync/api.py",
-            "vendorsync/meridian.py",
-            "vendorsync/store.py",
-            "tests/test_api.py",
-            "tests/test_meridian.py",
-        ]
-        .iter()
-        .map(|s| s.to_string())
-        .collect();
-        let pytest_finding =
-            "`pytest -q` failed — the generated tests exercise runtime paths that \
-             `--help`/`--collect-only` never invoke:\n\
-             ERROR tests/test_api.py::TestPayments::test_payments_item_keys - AttributeError\n\
-             ERROR tests/test_api.py::TestSummarySync::test_summary_empty_db - AttributeError\n\
-             19 failed, 33 passed, 16 warnings, 15 errors in 22.59s"
-                .to_string();
-        let notcheap_finding = "POST /api/sync is not CHEAP on a repeat run — the second sync \
-             re-fetched 247 row(s) it already had. Key each page's ETag by the exact request that \
-             produced it. The vendor client lives in `vendorsync/meridian.py` — fix it there."
-            .to_string();
-        assert_eq!(
-            extract_file_from_finding(&pytest_finding, &files).as_deref(),
-            Some("tests/test_api.py"),
-            "a pytest -q node-id summary must resolve to its file"
-        );
-        assert_eq!(
-            extract_file_from_finding(&notcheap_finding, &files).as_deref(),
-            Some("vendorsync/meridian.py"),
-            "a client-behaviour finding must resolve to the client file it now names"
-        );
-        let (groups, unassigned) =
-            group_findings_by_file(&[pytest_finding, notcheap_finding], &files);
-        assert_eq!(groups.len(), 2, "two files, two shards");
-        assert!(unassigned.is_empty());
-        let attributed: usize = groups.iter().map(|g| g.findings.len()).sum();
-        assert_eq!(
-            attributed, 2,
-            "run 9's round attributes both findings to shards"
-        );
     }
 
     /// F885 (run 10, round 0, watched live): the app.js shard's worker added every missing DOM
@@ -13405,113 +13162,6 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
             vec!["created", "failed"]
         );
         assert!(spec_documented_keys(spec, "/api/webhooks/meridian").is_empty());
-    }
-
-    #[test]
-    fn group_findings_by_file_partitions_dedups_and_serializes() {
-        let findings = vec![
-            "tests/test_a.py:5: in test_x\n assert foo() == 1\nE   AssertionError".to_string(),
-            "spendlog/cli.py:12: in cmd_add\n raise ValueError\nE   ValueError: boom".to_string(),
-            "spendlog/cli.py:40: in cmd_budget\n x\nE   KeyError".to_string(), // SAME file
-            "spendlog/cli.py:12: in cmd_add\n raise ValueError\nE   ValueError: boom".to_string(), // dup
-            "no python3 -m spendlog entry point found".to_string(), // unassigned
-        ];
-        let (groups, unassigned) = group_findings_by_file(&findings, &[]);
-        let cli = groups
-            .iter()
-            .find(|g| g.file == "spendlog/cli.py")
-            .expect("cli.py group");
-        // The two DISTINCT cli.py findings collapse into ONE group (same-file serialize); the dup is dropped.
-        assert_eq!(cli.findings.len(), 2);
-        assert!(groups.iter().any(|g| g.file == "tests/test_a.py"));
-        assert_eq!(unassigned.len(), 1); // the file-less finding
-                                         // Partition invariant: every group names a distinct file.
-        let files: std::collections::HashSet<_> = groups.iter().map(|g| &g.file).collect();
-        assert_eq!(files.len(), groups.len());
-    }
-
-    /// THE FAN'S PRECONDITION. `complete_parallel` groups findings by file and fans one shard per
-    /// group; anything with no file falls to the single serial fix worker that owns 22-44% of the
-    /// run. MEASURED by porting this extractor and running it on the finding strings three real runs
-    /// actually produced: FIVE of six shapes returned None, including the only two that appeared in
-    /// every run. The fan was well built and had almost nothing to fan — the same shape as the
-    /// judge-side splitter that never fires and the e2e fan that did not partition.
-    #[test]
-    fn every_real_finding_shape_resolves_to_a_file_group() {
-        let files = vec![
-            "vendorsync/api.py".to_string(),
-            "vendorsync/store.py".to_string(),
-            "vendorsync/meridian.py".to_string(),
-            "tests/test_meridian.py".to_string(),
-        ];
-        let cases: [(&str, &str); 5] = [
-            // AST review — names a MODULE, never a path. Present in 3 of 3 runs.
-            ("function 'log_message' in module 'vendorsync.api' is a STUB/UNIMPLEMENTED — implement it",
-             "vendorsync/api.py"),
-            // cross-module drift — names two modules; the READER is the one to fix.
-            ("module 'vendorsync.api' reads field 'total' that 'vendorsync.store' does not define",
-             "vendorsync/api.py"),
-            // engine-authored, path in backticks mid-sentence.
-            ("planned deliverable `vendorsync/store.py` is MISSING or EMPTY — create it",
-             "vendorsync/store.py"),
-            ("planned task `test-meridian` FAILED, but its deliverable `tests/test_meridian.py` IS \
-              written. Its attempts were exhausted because the checks it runs DO NOT PASS.",
-             "tests/test_meridian.py"),
-            // the pytest traceback the extractor was originally written for must still work.
-            ("`pytest -q` failed:\ntests/test_meridian.py:89: in test_x\nE   AssertionError",
-             "tests/test_meridian.py"),
-        ];
-        for (finding, want) in cases {
-            assert_eq!(
-                extract_file_from_finding(finding, &files).as_deref(),
-                Some(want),
-                "finding did not resolve to its file: {finding:?}"
-            );
-        }
-        // A finding that genuinely names no file must STILL be unassigned — the serial path is the
-        // correct home for it, and inventing a file would aim a fix shard at nothing.
-        assert_eq!(
-            extract_file_from_finding(
-                "GET /api/health returned 404 — the app does not implement it",
-                &files
-            ),
-            None
-        );
-
-        // THE REAL PYTEST TRACEBACK, in the shape of the first finding this engine ever emitted. Its
-        // FIRST frame is CPython's own threading.py and the app frame is ABSOLUTE. Neither may
-        // escape: a stdlib path sends a fix shard to repair CPython, and an absolute path keys the
-        // file-group differently from the rest of the engine and breaks the shadow tree's
-        // promote-by-relative-path. Latent until F41 made the fan fire.
-        let tb = "`pytest -q` failed:\n File \"/opt/homebrew/Cellar/python@3.14/lib/python3.14/threading.py\", line 1024, in run\n File \"/Users/x/runs/unit/vendorsync/meridian.py\", line 40, in serve";
-        assert_eq!(
-            extract_file_from_finding(tb, &files).as_deref(),
-            Some("vendorsync/meridian.py"),
-            "a traceback must resolve to the OWNED, repo-relative file — never the stdlib, never absolute"
-        );
-
-        // Naming only files this run does not own resolves to NOTHING; the serial fix path handles
-        // it. Inventing an owner is worse than admitting there is none.
-        let foreign =
-            "File \"/opt/homebrew/Cellar/python@3.14/lib/python3.14/socket.py\", line 9, in x";
-        assert_eq!(extract_file_from_finding(foreign, &files), None);
-    }
-
-    #[test]
-    fn normalize_rel_path_collapses_spellings_to_one_group() {
-        assert_eq!(normalize_rel_path("./pkg/x.py"), "pkg/x.py");
-        assert_eq!(normalize_rel_path("pkg//x.py"), "pkg/x.py");
-        assert_eq!(normalize_rel_path("pkg\\x.py"), "pkg/x.py");
-        assert_eq!(normalize_rel_path("pkg/x.py"), "pkg/x.py");
-        // Two DISTINCT findings that name the same file with different spellings must resolve to ONE
-        // file-group — otherwise two shards would promote to the same real dst (a torn write).
-        let findings = vec![
-            "./pkg/cli.py:1: in a\nE   Err".to_string(),
-            "pkg//cli.py:2: in b\nE   Err".to_string(),
-        ];
-        let (groups, _) = group_findings_by_file(&findings, &[]);
-        assert_eq!(groups.len(), 1, "both spellings collapse to one group");
-        assert_eq!(groups[0].file, "pkg/cli.py");
     }
 
     #[test]
@@ -19890,6 +19540,10 @@ struct SpecContractResult {
     /// entire fleet run's browser-truth blindness could not be attributed between "probe env
     /// missing" and "gate ran quietly". One string per verify: armed+result, or why not.
     render_gate: String,
+    /// WHO authored each finding (provenance → severity, findings.rs): populated at the push
+    /// site that writes each finding, so the caller can order the wave and label events
+    /// without ever matching finding text.
+    provenance: FindingProvenance,
 }
 
 /// FUNCTIONAL FLOOR probe: boot the spec's advertised entry and report whether it BINDS.
@@ -21323,6 +20977,10 @@ async fn probe_advertised_get(
 
 async fn run_spec_contract(root: &Path, spec: &str, lang: TargetLang) -> SpecContractResult {
     let mut findings = Vec::new();
+    // PROVENANCE: every finding pushed below goes through `prov.push` naming the check (or the
+    // authoring branch) that measured it — severity then derives from that source, never from
+    // the text (findings.rs). Ordering only; nothing here gates.
+    let mut prov = FindingProvenance::default();
     let mut inconclusive = Vec::new();
     // #120/#119: affirmative-pass count (advertised GETs that returned a genuine 2xx). Stays 0 at every early
     // return (they checked nothing / are inconclusive); incremented per 2xx in the curl loop below.
@@ -21349,6 +21007,7 @@ async fn run_spec_contract(root: &Path, spec: &str, lang: TargetLang) -> SpecCon
             verified,
             probed_post: 0,
             render_gate: "not-reached (gate exits before the entry spawn)".to_string(),
+            provenance: prov,
         };
     }
     let Some(pkg) = spec_python_entry(spec) else {
@@ -21358,6 +21017,7 @@ async fn run_spec_contract(root: &Path, spec: &str, lang: TargetLang) -> SpecCon
             verified,
             probed_post: 0,
             render_gate: "not-reached (gate exits before the entry spawn)".to_string(),
+            provenance: prov,
         };
     };
     let gets = spec_get_endpoints(spec);
@@ -21368,6 +21028,7 @@ async fn run_spec_contract(root: &Path, spec: &str, lang: TargetLang) -> SpecCon
             verified,
             probed_post: 0,
             render_gate: "not-reached (gate exits before the entry spawn)".to_string(),
+            provenance: prov,
         };
     }
     // PREFER THE INVOCATION THE SPEC ADVERTISES, on a port WE choose.
@@ -21440,6 +21101,7 @@ async fn run_spec_contract(root: &Path, spec: &str, lang: TargetLang) -> SpecCon
             verified,
             probed_post: 0,
             render_gate: "not-reached (gate exits before the entry spawn)".to_string(),
+            provenance: prov,
         };
     };
     let pgid = child.id().map(|p| p as i32);
@@ -21482,6 +21144,7 @@ async fn run_spec_contract(root: &Path, spec: &str, lang: TargetLang) -> SpecCon
             verified,
             probed_post: 0,
             render_gate: "not-reached (gate exits before the entry spawn)".to_string(),
+            provenance: prov,
         };
     }
     if !up {
@@ -21510,7 +21173,7 @@ async fn run_spec_contract(root: &Path, spec: &str, lang: TargetLang) -> SpecCon
                 "spec-contract: `python3 -m {pkg}` never bound port {port} within 4s — the advertised entrypoint did not start a server (the port was inferred from the spec, so this may be a bad guess rather than an app defect)"
             ));
         } else {
-            findings.push(format!(
+            prov.push(&mut findings, FindingSource::BootProbe, format!(
                 "the app never bound port {port} when started EXACTLY as its spec documents \
                  (`python3 -m {pkg} {}`), so it does not run at all. Check that the entrypoint BLOCKS \
                  while serving — a server started on a daemon thread dies the moment main() returns. \
@@ -21524,6 +21187,7 @@ async fn run_spec_contract(root: &Path, spec: &str, lang: TargetLang) -> SpecCon
             verified,
             probed_post: 0,
             render_gate: "not-reached (gate exits before the entry spawn)".to_string(),
+            provenance: prov,
         };
     }
     // FIRST PASS: the app as freshly started — EMPTY. Records which finding KINDS each path already
@@ -21547,7 +21211,7 @@ async fn run_spec_contract(root: &Path, spec: &str, lang: TargetLang) -> SpecCon
                 let seen = empty_pass.entry(path.clone()).or_default();
                 for (token, text) in found {
                     seen.insert(token);
-                    findings.push(text);
+                    prov.push(&mut findings, FindingSource::EndpointContractProbe, text);
                 }
             }
         }
@@ -21610,7 +21274,10 @@ async fn run_spec_contract(root: &Path, spec: &str, lang: TargetLang) -> SpecCon
                                         // vendor that reports N is the accumulation/counting bug
                                         // this exists for. A larger count is never a finding.
                                         if got < *vendor_n && (got == 0 || got * 2 <= *vendor_n) {
-                                            findings.push(format!(
+                                            prov.push(
+                                                &mut findings,
+                                                FindingSource::ClientApiPaging,
+                                                format!(
                                                 "{module}.{class}.{name}() returns {got} while the \
                                                  vendor's own collection holds {vendor_n} — the \
                                                  client's PUBLIC API is broken for a direct caller \
@@ -21618,7 +21285,8 @@ async fn run_spec_contract(root: &Path, spec: &str, lang: TargetLang) -> SpecCon
                                                  It must page to the end and return/count \
                                                  EVERYTHING (accumulate across pages; do not \
                                                  return or count only the first page)."
-                                            ));
+                                            ),
+                                            );
                                         }
                                     }
                                 }
@@ -21746,22 +21414,30 @@ async fn run_spec_contract(root: &Path, spec: &str, lang: TargetLang) -> SpecCon
                          conditional request answers 'this exact request is unchanged'; retrying it \
                          unchanged loops without end."
                     };
-                    findings.push(format!(
+                    prov.push(
+                        &mut findings,
+                        FindingSource::EndpointDeadProbe,
+                        format!(
                         "POST {path} NEVER RETURNS — still running after {POST_PROBE_SECS}s, and \
                          still running after a further {HANG_CONFIRM_SECS}s, which is past the far \
                          end of this spec's own performance budget. A hang is worse than an error: \
                          the endpoint answers nothing, and on a single-threaded server every later \
                          request queues behind it, so the whole app goes dark. {shape}{client_loc}"
-                    ));
+                    ),
+                    );
                 } else if c_code >= 500 {
                     // A confirm that ERRORS is not "merely slow" — it reproduces the failure the
                     // short samples could not see finish. Filing it as not-proven-broken would tell
                     // the fix loop, in writing, to ignore a POST that reproducibly 5xxes.
-                    findings.push(format!(
+                    prov.push(
+                        &mut findings,
+                        FindingSource::EndpointContractProbe,
+                        format!(
                         "POST {path} returned {c_code} — the spec advertises this endpoint and it \
                          errors (server 5xx, confirmed on a {HANG_CONFIRM_SECS}s call). Nothing \
                          downstream of it can work; fix this before any idempotency concern."
-                    ));
+                    ),
+                    );
                 } else {
                     if (200..300).contains(&c_code) {
                         // The sync DID complete — the app is populated, so the pass-2 read probes
@@ -21781,16 +21457,20 @@ async fn run_spec_contract(root: &Path, spec: &str, lang: TargetLang) -> SpecCon
                 // of a handler that never reaches its return statement.
                 continue;
             } else if a_code >= 500 {
-                findings.push(format!(
-                    "POST {path} returned {a_code} — the spec advertises this endpoint and it \
+                prov.push(
+                    &mut findings,
+                    FindingSource::EndpointContractProbe,
+                    format!(
+                        "POST {path} returned {a_code} — the spec advertises this endpoint and it \
                      errors (server 5xx). Nothing downstream of it can work; fix this before any \
                      idempotency concern."
-                ));
+                    ),
+                );
                 continue;
             }
             match repeated_post_verdict(a_body, b_body) {
                 RepeatedPost::Idempotent => verified += 1,
-                RepeatedPost::Duplicates(why) => findings.push(format!(
+                RepeatedPost::Duplicates(why) => prov.push(&mut findings, FindingSource::EndpointContractProbe, format!(
                     "POST {path} is NOT idempotent — {why}. The spec requires that the tool be run \
                      repeatedly against the same database and that a second run not duplicate \
                      rows. Upsert on the payment's own id rather than inserting.{client_loc}"
@@ -21801,7 +21481,7 @@ async fn run_spec_contract(root: &Path, spec: &str, lang: TargetLang) -> SpecCon
                 // by exactly ONE PAGE. They store a single ETag and replay it on the NEXT request,
                 // where it can never match because it is the previous page's tag. Advice that says
                 // "store the ETag" describes what they already do.
-                RepeatedPost::NotCheap(why) => findings.push(format!(
+                RepeatedPost::NotCheap(why) => prov.push(&mut findings, FindingSource::EndpointContractProbe, format!(
                     "POST {path} is not CHEAP on a repeat run — {why}. Rows are correct, so this is \
                      not a duplication bug: the app re-downloads the whole collection every sync, \
                      which the spec calls out as the top cause of quota exhaustion. Key each page's \
@@ -21817,7 +21497,7 @@ async fn run_spec_contract(root: &Path, spec: &str, lang: TargetLang) -> SpecCon
                 // consecutive 3-node builds shipped sync_completeness 0/247 through this exact
                 // arm while their gates went green (F823).
                 RepeatedPost::Vacuous(why) => match &vendor_total {
-                    Some((n, _)) if *n > 0 => findings.push(format!(
+                    Some((n, _)) if *n > 0 => prov.push(&mut findings, FindingSource::SyncAcquisition, format!(
                         "POST {path} acquired NOTHING while the vendor itself reports {n} \
                          item(s) ({why}). The collection was not acquired. The measured cause \
                          family is a feature interaction in the client's pagination or \
@@ -21844,14 +21524,14 @@ async fn run_spec_contract(root: &Path, spec: &str, lang: TargetLang) -> SpecCon
                 RepeatedPost::Unreadable => {
                     let documented = spec_documented_keys(spec, path.as_str());
                     if documented.is_empty() {
-                        findings.push(format!(
+                        prov.push(&mut findings, FindingSource::EndpointContractProbe, format!(
                             "POST {path}'s response could not be read as JSON on either probe — \
                              the spec documents a JSON response for every endpoint, so return the \
                              documented body; without it this endpoint's behaviour cannot be \
                              verified by anyone, including this gate."
                         ));
                     } else {
-                        findings.push(format!(
+                        prov.push(&mut findings, FindingSource::EndpointContractProbe, format!(
                             "POST {path}'s response does not carry the documented field(s) {} — \
                              the spec's endpoint table names them for exactly this endpoint. \
                              Return them from this handler; without them the endpoint's contract \
@@ -21897,13 +21577,17 @@ async fn run_spec_contract(root: &Path, spec: &str, lang: TargetLang) -> SpecCon
                         .max()
                         == Some(0);
                     if reads_zero {
-                        findings.push(format!(
+                        prov.push(
+                            &mut findings,
+                            FindingSource::SyncAcquisition,
+                            format!(
                             "POST {path}'s own response reports acquiring {acquired} row(s), but \
                              GET {gpath}'s documented `total` still reads 0 — the fetched data is \
                              not reaching the store the GET reads. Persist through the SAME store \
                              instance the API serves from; check the response key spelling and \
                              that the writer and reader share one database path/connection."
-                        ));
+                        ),
+                        );
                     }
                 }
             }
@@ -21950,6 +21634,7 @@ async fn run_spec_contract(root: &Path, spec: &str, lang: TargetLang) -> SpecCon
                 }
             }
         }
+        prov.tag(FindingSource::EndpointContractProbe, &fresh);
         findings.extend(fresh);
         if !dark.is_empty() {
             let all_dark = dark.len() == gets.len();
@@ -21962,13 +21647,13 @@ async fn run_spec_contract(root: &Path, spec: &str, lang: TargetLang) -> SpecCon
                 // EVERY advertised read going dark at once is one story about the server, not N
                 // stories about N endpoints. Reported as one finding so the fix round sees one
                 // defect instead of a cascade of that defect's symptoms.
-                findings.push(format!(
+                prov.push(&mut findings, FindingSource::EndpointDeadProbe, format!(
                     "EVERY advertised read ({}) answered while the app was EMPTY and then returned NOTHING AT ALL once it held rows — one sync in between, same process. The whole server is stuck or dead, not one endpoint: on a single-threaded server an unhandled exception or a loop that never terminates inside the sync leaves every later request queued behind it forever. Find the loop or the exception in the SYNC path first; the read endpoints themselves are almost certainly fine. Reproduce with a sync FIRST, then any GET.",
                     dark.join(", ")
                 ));
             } else {
                 for path in &dark {
-                    findings.push(format!(
+                    prov.push(&mut findings, FindingSource::EndpointDeadProbe, format!(
                         "GET {path} answered while the app was EMPTY and returns NOTHING AT ALL once it holds rows — same process, same endpoint, one sync in between, and its sibling endpoints still answer. That pair rules out both a slow endpoint and a dead server, and points at the code path that reads STORED rows: an unhandled exception there kills the connection (a browser shows ERR_EMPTY_RESPONSE). Check that every field the response builder reads is one the query actually SELECTs. Reproduce with a sync FIRST, then GET {path} — an empty app hides this entirely."
                     ));
                 }
@@ -22015,8 +21700,11 @@ async fn run_spec_contract(root: &Path, spec: &str, lang: TargetLang) -> SpecCon
                     if app_total_rows == Some(0) {
                         if let Some((vendor_n, _)) = &vendor_total {
                             if *vendor_n > 0 {
-                                findings.push(format!(
-                                    "the advertised sync answered 2xx but the app's OWN list \
+                                prov.push(
+                                    &mut findings,
+                                    FindingSource::SyncAcquisition,
+                                    format!(
+                                        "the advertised sync answered 2xx but the app's OWN list \
                                      holds ZERO rows while the vendor's collection holds \
                                      {vendor_n} — the sync did not acquire the data. If the \
                                      sync runs in a background thread, that thread is dying \
@@ -22025,14 +21713,19 @@ async fn run_spec_contract(root: &Path, spec: &str, lang: TargetLang) -> SpecCon
                                      like 'sync_started' must still be followed by rows \
                                      actually landing. Verify by POSTing the sync and then \
                                      counting the app's own list."
-                                ));
+                                    ),
+                                );
                             }
                         }
                     }
                     if let Some(fs) = v.get("findings").and_then(|x| x.as_array()) {
                         for f in fs {
                             if let Some(t) = f.as_str() {
-                                findings.push(t.to_string());
+                                prov.push(
+                                    &mut findings,
+                                    FindingSource::AggregateTruth,
+                                    t.to_string(),
+                                );
                             }
                         }
                         if fs.is_empty() && app_total_rows != Some(0) {
@@ -22125,7 +21818,10 @@ async fn run_spec_contract(root: &Path, spec: &str, lang: TargetLang) -> SpecCon
                              field or a data/items/rows array) — row acquisition unmeasured"
                                 .to_string(),
                         ),
-                        Some(0) => findings.push(format!(
+                        Some(0) => prov.push(
+                            &mut findings,
+                            FindingSource::SyncAcquisition,
+                            format!(
                             "sync_rows: the vendor's own collection holds {vendor_rows} row(s), \
                              the advertised sync (`POST {sync_path}`) answered {sync_code}, and \
                              the app's OWN reads still report ZERO rows — the sync is not \
@@ -22135,7 +21831,8 @@ async fn run_spec_contract(root: &Path, spec: &str, lang: TargetLang) -> SpecCon
                              page with the vendor's REAL key names (`data`, not a guess), and \
                              must store its own failure instead of swallowing it. Verify by \
                              POSTing the sync and then counting the app's own list."
-                        )),
+                        ),
+                        ),
                         Some(_) => {
                             // AFFIRMATIVE: the sync acquired rows — countable evidence, so it
                             // strengthens `verified` like any other satisfied check.
@@ -22218,14 +21915,18 @@ async fn run_spec_contract(root: &Path, spec: &str, lang: TargetLang) -> SpecCon
                                             .unwrap_or("no console error captured")
                                     ),
                                 };
-                                findings.push(format!(
-                                    "the served page renders NO data rows in a real browser — \
+                                prov.push(
+                                    &mut findings,
+                                    FindingSource::RenderGateRows,
+                                    format!(
+                                        "the served page renders NO data rows in a real browser — \
                                      the API works but the frontend shows a user nothing. \
                                      {exemplar}. Open web/index.html end to end: \
                                      the page must fetch the documented endpoints and render the \
                                      rows, and every fetch failure must surface a visible state, \
                                      not a blank page.{src_suffix}"
-                                ));
+                                    ),
+                                );
                             } else if console > 0 {
                                 let exemplar = match attributable {
                                     Some((i, text, _)) if i != 0 => {
@@ -22238,11 +21939,15 @@ async fn run_spec_contract(root: &Path, spec: &str, lang: TargetLang) -> SpecCon
                                             .unwrap_or("")
                                     ),
                                 };
-                                findings.push(format!(
+                                prov.push(
+                                    &mut findings,
+                                    FindingSource::RenderGateConsole,
+                                    format!(
                                     "the page renders but the browser console carries {console} \
                                      error(s) in normal use ({exemplar}) — fix the JS \
                                      errors; users hit them as broken interactions.{src_suffix}"
-                                ));
+                                ),
+                                );
                             } else {
                                 verified += 1;
                             }
@@ -22297,7 +22002,9 @@ async fn run_spec_contract(root: &Path, spec: &str, lang: TargetLang) -> SpecCon
                                                 != Some(false);
                                             let after = num("rowCountAfter").unwrap_or(-1);
                                             if !found {
-                                                findings.push(
+                                                prov.push(
+                                                    &mut findings,
+                                                    FindingSource::RenderGateRows,
                                                     "the page has no working SYNC control — the probe \
                                                      could not find a control to start a sync, so a \
                                                      user has no way to load data at all. The page \
@@ -22305,7 +22012,9 @@ async fn run_spec_contract(root: &Path, spec: &str, lang: TargetLang) -> SpecCon
                                                         .to_string(),
                                                 );
                                             } else if completed && after == 0 {
-                                                findings.push(
+                                                prov.push(
+                                                    &mut findings,
+                                                    FindingSource::RenderGateRows,
                                                     "after a SUCCESSFUL sync the page still renders \
                                                      ZERO rows — the backend acquired the data (the \
                                                      API returns it) but the frontend never displays \
@@ -22334,25 +22043,29 @@ async fn run_spec_contract(root: &Path, spec: &str, lang: TargetLang) -> SpecCon
                                 ),
                             }
                             if default_serif && zero_bg {
-                                findings.push(if no_sheet {
-                                    "the served page renders with browser-DEFAULT styling — no \
+                                prov.push(
+                                    &mut findings,
+                                    FindingSource::RenderGateStyling,
+                                    if no_sheet {
+                                        "the served page renders with browser-DEFAULT styling — no \
                                      stylesheet reached the browser (no <link rel=\"stylesheet\">, \
                                      no <style> block), the body renders in the default serif \
                                      font and zero elements carry a styled background. A user \
                                      sees bare unstyled HTML. Link a real stylesheet from \
                                      index.html, make the server serve it, and verify the \
                                      styling visibly applies."
-                                        .to_string()
-                                } else {
-                                    "a stylesheet is linked but NO css takes effect in a real \
+                                            .to_string()
+                                    } else {
+                                        "a stylesheet is linked but NO css takes effect in a real \
                                      browser (body renders in the default serif font and zero \
                                      elements carry a styled background) — the link href 404s, \
                                      the server does not actually serve the css path, or the \
                                      rules match nothing on the page. Fetch the css URL the html \
                                      links, make it return the real stylesheet, and verify the \
                                      styling visibly applies."
-                                        .to_string()
-                                });
+                                            .to_string()
+                                    },
+                                );
                             }
                         }
                         Err(_) => {
@@ -22422,7 +22135,7 @@ async fn run_spec_contract(root: &Path, spec: &str, lang: TargetLang) -> SpecCon
                         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
                     }
                     if !up2 {
-                        findings.push(format!(
+                        prov.push(&mut findings, FindingSource::RestartDurability, format!(
                             "the app does NOT come back when restarted against its own database — \
                              the same documented invocation that just ran was killed and respawned \
                              on the same --db file and never bound port {port} again. Schema init \
@@ -22450,7 +22163,7 @@ async fn run_spec_contract(root: &Path, spec: &str, lang: TargetLang) -> SpecCon
                                     let after = v.get("total_rows").and_then(|x| x.as_i64());
                                     let before = app_total_rows.unwrap_or(0);
                                     match after {
-                                        Some(a) if a < before => findings.push(format!(
+                                        Some(a) if a < before => prov.push(&mut findings, FindingSource::RestartDurability, format!(
                                             "DATA LOSS across restart: the app held {before} rows, \
                                              was killed and restarted on the SAME database, and now \
                                              serves only {a} — rows must survive a process restart; \
@@ -22516,13 +22229,17 @@ async fn run_spec_contract(root: &Path, spec: &str, lang: TargetLang) -> SpecCon
             }
             match boot_invocation(root, &other, &oargv, &oports, &inv_scratch).await {
                 None => verified += 1,
-                Some(tail) => findings.push(format!(
+                Some(tail) => prov.push(
+                    &mut findings,
+                    FindingSource::BootProbe,
+                    format!(
                     "the spec ALSO advertises `python3 -m {other} {}` and that invocation NEVER \
                      BINDS. Every documented boot form must work — a package entry needs its own \
                      __main__.py, and the entry must BLOCK while serving. Output tail: {}",
                     oargv.join(" "),
                     elide_middle(&tail, 150, 500)
-                )),
+                ),
+                ),
             }
         }
     }
@@ -22532,6 +22249,7 @@ async fn run_spec_contract(root: &Path, spec: &str, lang: TargetLang) -> SpecCon
         verified,
         probed_post: post_probed,
         render_gate: render_gate_status,
+        provenance: prov,
     }
 }
 
@@ -30379,312 +30097,6 @@ impl TargetLang {
     }
 }
 
-/// GOOSE_SWARM_COMPLETE_PARALLEL: a group of verify findings that all name the SAME file, so exactly one
-/// fix agent ever writes that file (same-file failures serialize by construction).
-struct FileGroup {
-    file: String,
-    findings: Vec<String>,
-}
-
-/// Pull the fix-target source file out of a deterministic pytest/tooling finding. Findings are built from
-/// `tail_lines` of real pytest/`-m` output (not model text), so the `path.py:N: in ...` and
-/// `File "path.py", line N` shapes are stable. Prefers a NON-test source frame (the thing to fix); falls
-/// back to the last file seen. Returns None when the finding names no code file (e.g. a missing entry point).
-/// Normalize a finding-extracted file path so different spellings of the SAME file (`./x`, `x`, `a//b`,
-/// backslashes) collapse to ONE canonical relative string. LOAD-BEARING for GOOSE_SWARM_COMPLETE_PARALLEL:
-/// two spellings must NOT become two file-groups -> two shards -> two promotes to the same real dst -> a
-/// torn write. Pure + unit-tested.
-fn normalize_rel_path(p: &str) -> String {
-    p.replace('\\', "/")
-        .split('/')
-        .filter(|seg| !seg.is_empty() && *seg != ".")
-        .collect::<Vec<_>>()
-        .join("/")
-}
-
-fn extract_file_from_finding(finding: &str, all_files: &[String]) -> Option<String> {
-    // F862 forensics: .js/.html/.css were missing, so every FRONTEND finding (render-no-rows,
-    // DOM TypeError) fell out of per-file fix scoping and collapsed into the unscoped join.
-    // The same hole F862 found for .js/.html/.css was still open for Go, Java, Kotlin, Swift, Ruby,
-    // C/C++ and .tsx — see FINDING_PATH_EXTS, which this now shares with `paths_in`.
-    let is_code = |p: &str| {
-        !p.is_empty() && !p.contains(' ') && FINDING_PATH_EXTS.iter().any(|e| p.ends_with(e))
-    };
-    let mut last: Option<String> = None;
-    // TWO SOURCE SLOTS, BECAUSE THE TWO FINDING SHAPES ORDER THEIR PATHS OPPOSITELY. A traceback
-    // lists the failing frame LAST and routinely opens on a stdlib frame, so among frames the last
-    // wins. An authored finding is written subject-FIRST — r0's TEST defect D5, "Frontend not served
-    // ... (in `app/ledgerd.py`, `web/index.html`)", names the server that must serve the page and
-    // then the page — so among named paths the first wins. One slot with last-wins sharded D5 to
-    // web/index.html, a file that was never wrong, which is the defect the module branch below had
-    // already fixed for its own shape ("FIRST match wins").
-    let mut frame_src: Option<String> = None;
-    let mut named_src: Option<String> = None;
-    let mut take = |p: &str, named: bool| {
-        // Normalize so two spellings of one file become ONE group (partition invariant).
-        let norm = normalize_rel_path(p);
-        // A DATA OR DOC FILE NEVER OUTRANKS SOURCE. The shared list admits .json/.yaml/.md so a defect
-        // that lives in one is readable at all; without this the LAST path won, and "`app/main.go`
-        // mis-parses the flag, see `config.yaml`" aimed its fix shard at the config file.
-        let code = FINDING_SOURCE_EXTS.iter().any(|e| norm.ends_with(e));
-        if code || last.is_none() {
-            last = Some(norm.clone());
-        }
-        if code && !p.contains("test") && !p.contains("conftest") {
-            if named {
-                named_src.get_or_insert(norm);
-            } else {
-                frame_src = Some(norm);
-            }
-        }
-    };
-    // THE ATTRIBUTION LIST OUTRANKS THE PROSE. `parse_observed_defects` re-emits the tester's FILES
-    // line as a trailing "(in `a`, `b`)" — the author's own answer to "which file", subject-first.
-    // Paths in the sentence before it are context: D5 says "despite `web/index.html` existing"
-    // three clauses before its list names `app/ledgerd.py` first, so first-wins over the whole
-    // sentence would still have aimed the shard at the page instead of the server.
-    if let Some((_, list)) = finding
-        .trim_end()
-        .strip_suffix(')')
-        .and_then(|f| f.rsplit_once(" (in `"))
-    {
-        for chunk in format!("`{list}").split('`').skip(1).step_by(2) {
-            let c = chunk.trim();
-            if is_code(c) {
-                take(c, true);
-            }
-        }
-    }
-    for raw in finding.lines() {
-        let line = raw.trim();
-        let cand: Option<&str> = if let Some((_, rest)) = line.split_once("File \"") {
-            rest.split('"').next()
-        } else {
-            line.split(':').next().map(|t| t.trim())
-        };
-        if let Some(p) = cand.map(|p| p.trim()) {
-            if is_code(p) {
-                take(p, false);
-            }
-        }
-        // A PATH IN BACKTICKS, anywhere in the sentence. The line-leading forms above only match a
-        // pytest traceback, which is the shape this was written for and the only one it ever saw.
-        // Engine-authored findings put the path mid-sentence in backticks —
-        // "planned deliverable `vendorsync/store.py` is MISSING", "its deliverable
-        // `tests/test_meridian.py` IS written" — and every one of them fell through to `unassigned`.
-        for chunk in line.split('`').skip(1).step_by(2) {
-            let c = chunk.trim();
-            if is_code(c) {
-                take(c, true);
-            }
-        }
-        // A PYTEST NODE ID, anywhere in the line. `pytest -q` names the failing file ONLY as
-        // `FAILED tests/test_api.py::TestX::test_y - msg` / `ERROR tests/test_api.py::test_z` —
-        // a status word first, then the path fused to the test path with `::`. The line-leading
-        // split above sees "ERROR tests/test_api.py" (embedded space) and rejects it. MEASURED
-        // (run 9, round 0): a finding carrying FIFTEEN such lines attributed to NOTHING, so the
-        // round raced whole-tree twins — the 0-for-12 path — instead of handing tests/test_api.py
-        // to a focused fixer.
-        for tok in line.split_whitespace() {
-            if let Some((head, _)) = tok.split_once("::") {
-                let h = head.trim();
-                if is_code(h) {
-                    take(h, true);
-                }
-            }
-        }
-    }
-    // RESOLVE AGAINST THE FILES THIS RUN OWNS. A pytest traceback names ABSOLUTE paths, and the first
-    // frame is routinely CPython's own stdlib —
-    // `/opt/homebrew/.../python3.14/threading.py` appeared as the first `File "..."` line in the very
-    // first real finding this engine emitted. Unfiltered, that becomes a FileGroup, and
-    // `complete_parallel` dispatches a fix shard that owns it: an agent sent to repair CPython, or to
-    // write an absolute path into a shadow tree that promotes by relative path.
-    //
-    // Latent until now because the fan never fired — five of six finding shapes resolved to nothing
-    // (F41). Fixing the extractor made this reachable, which is the whole reason "treat 'I fixed
-    // that' as a hypothesis" is a rule.
-    //
-    // With an EMPTY file list there is nothing to resolve against, so the old behaviour stands — that
-    // is the unit-test path; every real call site passes the run's planned files.
-    if let Some(f) = named_src.clone().or(frame_src).or(last) {
-        if all_files.is_empty() {
-            return Some(f);
-        }
-        // Exact, then longest-suffix: a traceback's absolute path ends with the repo-relative one.
-        if all_files.iter().any(|a| normalize_rel_path(a) == f) {
-            return Some(f);
-        }
-        if let Some(owned) = all_files
-            .iter()
-            .map(|a| normalize_rel_path(a))
-            .filter(|a| f.ends_with(&format!("/{a}")) || f.ends_with(a.as_str()))
-            .max_by_key(|a| a.len())
-        {
-            return Some(owned);
-        }
-        // Named a real file, but not one this run owns (stdlib, site-packages, a sibling checkout).
-        // Fall through to the module resolver rather than aiming a fix shard outside the app.
-    }
-    // A DOTTED MODULE resolved against the files this run actually planned. The AST review names a
-    // module, never a path — "function 'log_message' in module 'vendorsync.api' is a STUB" — and it
-    // produced a finding in 3 of 3 measured runs, as did cross-module drift, which names two. Both
-    // went to the serial path, so the fan they should have driven had almost nothing to fan.
-    //
-    // Resolved against `all_files` rather than by string-munging, so a module can only ever map to a
-    // file this run really owns — an invented path would send a fix shard at nothing.
-    let words: Vec<&str> = finding
-        .split(|c: char| !(c.is_alphanumeric() || c == '.' || c == '_'))
-        .filter(|w| w.contains('.') && !w.is_empty())
-        .collect();
-    // FIRST match wins. These findings are written subject-first — "function X in module `A` is a
-    // STUB", "module `A` reads a field `B` does not define" — so the first module named is the one to
-    // repair. Taking the last aimed the drift fix at the module that was CORRECT.
-    for w in words {
-        let as_path = w.replace('.', "/");
-        for f in all_files {
-            let norm = normalize_rel_path(f);
-            let stem = norm
-                .strip_suffix(".py")
-                .or_else(|| norm.strip_suffix(".rs"))
-                .or_else(|| norm.strip_suffix(".ts"))
-                .unwrap_or(&norm);
-            if stem == as_path {
-                return Some(norm);
-            }
-        }
-    }
-    None
-}
-
-/// Dedup + group findings by the file they name so each file becomes ONE fix agent (writes partitioned,
-/// same-file findings serialized). Returns (groups in first-seen order, unassigned findings that name no
-/// file) — the unassigned bucket gets a single serial fallback fix so a file-less finding is not dropped.
-/// The one string that decides whether two findings are the SAME defect.
-///
-/// The angle prefix is stripped — `[bad-input] X` and `[primary-journey] X` are one defect, not two —
-/// then every non-alphanumeric run collapses to one space and the body lowercases. Deliberately a
-/// WHOLE-BODY fingerprint: matching on a first line would fold two different pytest findings that
-/// happen to share a banner, and a FALSE MERGE hides a real defect, which is the one outcome worse than
-/// the duplicate this exists to remove.
-fn finding_fingerprint(f: &str) -> String {
-    let body = match f.strip_prefix('[') {
-        Some(rest) => match rest.split_once("] ") {
-            Some((_, tail)) => tail,
-            None => f,
-        },
-        None => f,
-    };
-    body.chars()
-        .map(|c| {
-            if c.is_alphanumeric() {
-                c.to_ascii_lowercase()
-            } else {
-                ' '
-            }
-        })
-        .collect::<String>()
-        .split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ")
-}
-
-/// Fold findings with equal fingerprints, keeping ONE.
-///
-/// The finding COUNT is the ruler for three decisions at once: it gates green, it fires the stall exit,
-/// and it is the baseline `shard_beats_baseline` compares a shadow against. One duplicate is charged
-/// three times — and in the SAME round it makes the app harder to call green and the shard easier to
-/// promote.
-///
-/// MEASURED (round 0 of a live run): "Empty limit parameter silently falls back to default" was reported
-/// by two testers and BOTH survived, because TEST prefixes every defect with `[{angle}] ` and the merge
-/// is a `contains` — an exact compare on strings made distinct one line earlier.
-///
-/// It only ever REMOVES, never rewrites, so every survivor is the exact string the fix fan already knows
-/// how to attribute. An ENGINE finding (absent from `model_observed`) always displaces a model-observed
-/// twin whichever order they arrived in, because `engine_fatal` forces the engine's own wording CRITICAL
-/// and keeping a tester's paraphrase would silently un-force it.
-/// The gate's own criticals (P1-9, replacing the deleted RATE call): a finding is CRITICAL when
-/// the ENGINE'S OWN WORDING says the app does not run, build or answer — strings written by
-/// run_smoke_gate, run_spec_contract and the deliverable stat, never by a model. Everything else
-/// ships as a known active bug (still repaired by the wave, never hidden). Pure, and pinned by a
-/// truth table over the REAL finding strings the gate emits, so a reworded probe message that
-/// silently demotes a dead app to "minor" fails a test instead of a run.
-fn engine_critical(f: &str) -> bool {
-    let l = f.to_lowercase();
-    l.contains("does not start")
-        || l.contains("never bound")
-        || l.contains("does not run at all")
-        || l.contains("did not build")
-        || l.contains("exited non-zero")
-        || l.contains("no such command")
-        || l.contains("runtime crash")
-        || l.contains("missing deliverable")
-        || l.contains("is missing or empty")
-        || l.contains("never returns")
-        || l.contains("nothing at all once it")
-}
-
-fn dedupe_findings_exact(
-    findings: &[String],
-    model_observed: &std::collections::HashSet<String>,
-) -> Vec<String> {
-    let mut keep: Vec<String> = Vec::new();
-    let mut at: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
-    for f in findings {
-        let fp = finding_fingerprint(f);
-        if fp.is_empty() {
-            keep.push(f.clone());
-            continue;
-        }
-        match at.get(&fp) {
-            None => {
-                at.insert(fp, keep.len());
-                keep.push(f.clone());
-            }
-            Some(&i) => {
-                if model_observed.contains(&keep[i]) && !model_observed.contains(f) {
-                    keep[i] = f.clone();
-                }
-            }
-        }
-    }
-    keep
-}
-
-fn group_findings_by_file(
-    findings: &[String],
-    all_files: &[String],
-) -> (Vec<FileGroup>, Vec<String>) {
-    let mut order: Vec<String> = Vec::new();
-    let mut by_file: std::collections::HashMap<String, Vec<String>> =
-        std::collections::HashMap::new();
-    let mut unassigned: Vec<String> = Vec::new();
-    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
-    for f in findings {
-        if !seen.insert(f.clone()) {
-            continue;
-        }
-        match extract_file_from_finding(f, all_files) {
-            Some(file) => {
-                if !by_file.contains_key(&file) {
-                    order.push(file.clone());
-                }
-                by_file.entry(file).or_default().push(f.clone());
-            }
-            None => unassigned.push(f.clone()),
-        }
-    }
-    let groups = order
-        .into_iter()
-        .map(|file| {
-            let findings = by_file.remove(&file).unwrap_or_default();
-            FileGroup { file, findings }
-        })
-        .collect();
-    (groups, unassigned)
-}
-
 /// F781/#16 (GOOSE_SWARM_FIX_SCHED, design commit 4): a fix ROUND as a DAG. One `fix::r{N}::{file}`
 /// root per file group from the normalized disjoint partition (each task owns exactly one file, so
 /// N run concurrently with no race; roots are born Ready via from_specs). P1-3: the
@@ -37967,6 +37379,8 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
         let mut final_passed = false;
         // Minors that did not block green — reported, never hidden.
         let mut known_active_bugs: Vec<String> = Vec::new();
+        // Parallel severity labels (provenance-derived) for the same list, in the same order.
+        let mut known_active_bugs_severities: Vec<String> = Vec::new();
         // Whether the smoke oracle actually RAN (vs skipped for an unprofiled language / missing toolchain
         // / empty tree). A skip ships byte-identically to today (final_passed stays true) but is reported
         // honestly as UNVERIFIED rather than GREEN, so a non-Python tree we can't check isn't a false green.
@@ -38173,6 +37587,12 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
         let mut round: u32 = 0;
         loop {
             let mut verdict = run_smoke_gate(&cwd, complete_lang).await;
+            // PROVENANCE (findings.rs): each check's findings are tagged with the check that
+            // authored them, at the extend site — severity derives from that source, orders the
+            // wave and the reporting, and never gates (green stays the engine_critical
+            // partition below, membership unchanged).
+            let mut prov = FindingProvenance::default();
+            prov.tag(FindingSource::SmokeGate, &verdict.findings);
             // A failed task blocks green ONLY when the smoke gate is BLIND (it did not run — an unprofiled
             // language, a missing toolchain, an empty tree). When the gate RAN (go build+test, pytest, cargo)
             // it is the authority: a task that failed DURING the build but whose deliverable the fix loop has
@@ -38181,6 +37601,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             // so the loop churned 3 rounds and ended UNVERIFIED on a repairable app. A genuinely broken app is
             // still caught — by the gate's own build/test findings, re-run every round below.
             if !verdict.ran {
+                prov.tag(FindingSource::FailedTask, &failed_task_findings);
                 verdict
                     .findings
                     .extend(failed_task_findings.iter().cloned());
@@ -38197,6 +37618,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                     "detail": "planned source deliverables missing/empty on disk this round — blocking green + driving the fix loop",
                 }));
             }
+            prov.tag(FindingSource::MissingDeliverable, &missing_now);
             verdict.findings.extend(missing_now);
             // Same reasoning as the failed tasks: the smoke gate is blind to this (the module IMPORTS fine;
             // the AttributeError only happens at request time), so without this the loop breaks green at
@@ -38211,6 +37633,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             } else {
                 DriftResult::default()
             };
+            prov.tag(FindingSource::CrossModuleDrift, &drift_now.findings);
             verdict.findings.extend(drift_now.findings.iter().cloned());
             // NO-TIMEOUT SCAN. Rides the same scope and the same fix loop as the drift check, because it
             // is the same KIND of defect: invisible to the smoke gate (the module imports fine and the
@@ -38276,6 +37699,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                     },
                 }));
             }
+            prov.tag(FindingSource::HttpTimeoutScan, &no_timeout.findings);
             verdict.findings.extend(no_timeout.findings.iter().cloned());
             // DOM-ID CONTRACT (F864): app.js referencing an id no HTML defines is the
             // rendered-nothing class (guaranteed null at runtime), invisible to every other
@@ -38294,6 +37718,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                     },
                 }));
             }
+            prov.tag(FindingSource::DomIdScan, &dom.findings);
             verdict.findings.extend(dom.findings.iter().cloned());
             // CSS-CLASS COHERENCE (F871): a stylesheet whose class vocabulary the markup never
             // uses ships an unstyled page while every gate stays green (the probe sees "a
@@ -38313,6 +37738,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                     },
                 }));
             }
+            prov.tag(FindingSource::CssCoherenceScan, &css.findings);
             verdict.findings.extend(css.findings.iter().cloned());
             // SPEC-CONTRACT (#120, gated OFF): the smoke gate is blind to a spec-advertised endpoint that 500s
             // or is never implemented (405) — it only ran --help + import. Run the advertised entry + curl the
@@ -38389,6 +37815,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                     // is silence, whatever else is or is not recorded alongside it.
                     "detail": spec_contract_detail(sc_verified, sc_found),
                 }));
+                prov.absorb(sc.provenance);
                 verdict.findings.extend(sc.findings);
                 verdict.inconclusive.extend(sc.inconclusive);
             }
@@ -38437,6 +37864,11 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                     );
                 }
             }
+            // SEVERITY ORDERS THE ROUND (provenance-derived, findings.rs): most-severe-
+            // first, stable within a tier so detector order still decides ties. This order is
+            // what the wave fans, what finding_texts reports, and what the shard briefs number.
+            // Reorders only — every string stays byte-identical for its existing readers.
+            prov.sort_findings(&mut verdict.findings);
             sink.write_value(serde_json::json!({
                 "event": "complete_verify",
                 "round": round,
@@ -38455,6 +37887,15 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                     // was recorded as a list of collected tests ending in `================`, the error
                     // banner starting one character past the old 400-char head cut.
                     .map(|f| elide_middle(f, 150, 650))
+                    .collect::<Vec<_>>(),
+                // PARALLEL to finding_texts (same order, same take): the provenance-derived
+                // severity and the authoring check per finding. finding_texts itself stays
+                // byte-per-finding identical for its existing readers (tick.py, panel, bench).
+                "finding_severities": verdict.findings.iter().take(12)
+                    .map(|f| prov.severity_label(f))
+                    .collect::<Vec<_>>(),
+                "finding_sources": verdict.findings.iter().take(12)
+                    .map(|f| prov.source_label(f))
                     .collect::<Vec<_>>(),
                 // WHY the run abstained, which is what decides `verified` — and until now it existed
                 // only in stderr. `verified` is false in 25/25 archived runs, and telling "pytest
@@ -38568,14 +38009,15 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                 .cloned()
                 .collect();
             if !verdict.findings.is_empty() {
-                // CRITICAL FIRST — by REORDER, never by exclusion: the wave fans in finding
-                // order, so a cosmetic defect must not own the first shard the fleet picks up
-                // while a dead app waits behind it. Stable within each group, so detector order
-                // still decides ties.
-                let mut ordered = criticals.clone();
-                ordered.extend(minors.iter().cloned());
-                verdict.findings = ordered;
+                // The severity sort above already fanned the severest first (a dead app never
+                // waits behind a cosmetic defect: every engine_critical author ranks CRITICAL
+                // by source). Here the partition only decides GREEN and what ships as known
+                // bugs — membership unchanged, and the minors keep their severity order.
                 known_active_bugs = minors.clone();
+                known_active_bugs_severities = minors
+                    .iter()
+                    .map(|m| prov.severity_label(m).to_string())
+                    .collect();
                 if criticals.is_empty() {
                     eprintln!(
                         "  {} every critical defect is closed — {} known active bug(s) remain",
@@ -38682,10 +38124,18 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                 // runs BEFORE the wave, so a finding the gate could not name a file for rides its
                 // real file's shard instead of waiting for a whole-tree residue worker.
                 let fan_read_cwd = cwd.clone();
-                let (groups, unassigned, runner_ups) =
+                let (mut groups, unassigned, runner_ups) =
                     attribute_findings(&verdict.findings, &smoke_all_files, &move |rel: &str| {
                         std::fs::read_to_string(fan_read_cwd.join(rel)).ok()
                     });
+                // THE WAVE ORDERS BY SEVERITY (provenance-derived): fanout_over_fleet hands
+                // devices to the FIRST items, so when file-groups exceed free nodes the
+                // severest file must head the list — max severity, then finding count, stable.
+                // Each group's own findings take the same order for the shard's numbered brief.
+                for g in &mut groups {
+                    prov.sort_findings(&mut g.findings);
+                }
+                prov.sort_groups(&mut groups);
                 eprintln!(
                     "complete: fix round {round} — {} file-group(s) fanned across {} model(s), {} known bug(s)",
                     groups.len(),
@@ -38700,6 +38150,11 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                         "event": "known_bugs",
                         "round": round,
                         "count": unassigned.len(),
+                        // Parallel to `findings` (same order): the provenance-derived severity
+                        // per known bug, so the severest unattributed defect reads first.
+                        "severities": unassigned.iter()
+                            .map(|f| prov.severity_label(f))
+                            .collect::<Vec<_>>(),
                         "findings": unassigned,
                     }));
                 }
@@ -38710,8 +38165,18 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                     // order, so the partition the promotes copy stays disjoint by construction.
                     let owned_by_shard =
                         resolve_shard_ownership(&groups, &smoke_all_files, &runner_ups);
-                    let groups: Vec<(FileGroup, Vec<String>)> =
-                        groups.into_iter().zip(owned_by_shard).collect();
+                    // The shard's fix-first instruction, precomputed because the fan closure
+                    // cannot borrow `prov`: THIS group's real severities, authoring checks and
+                    // positions, most-severe-first (specificity: this run's facts, no filler).
+                    let order_notes: Vec<String> = groups
+                        .iter()
+                        .map(|g| prov.fix_order_note(&g.findings))
+                        .collect();
+                    let groups: Vec<((FileGroup, Vec<String>), String)> = groups
+                        .into_iter()
+                        .zip(owned_by_shard)
+                        .zip(order_notes)
+                        .collect();
                     let me = smoke_fix_dispatcher.clone();
                     let all_files = smoke_all_files.clone();
                     let fan_cwd = cwd.clone();
@@ -38729,7 +38194,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                         sink.as_ref(),
                         fleet_slots.clone(),
                         groups,
-                        move |(g, shard_owned), model| {
+                        move |((g, shard_owned), order_note), model| {
                             let me = me.clone();
                             let all_files = all_files.clone();
                             let fan_cwd = fan_cwd.clone();
@@ -38747,16 +38212,19 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                                     "task_id": task_id, "baseline_findings": baseline,
                                 }));
                                 let started = std::time::Instant::now();
-                                let shard_desc = smoke_fix_description(
-                                    &g.findings,
-                                    complete_lang,
-                                    &fan_prompt,
-                                    &render_repair_history(
-                                        read_ledger_rollup(&fan_cwd).as_ref(),
-                                        &shard_owned,
+                                let shard_desc = format!(
+                                    "{order_note}{}",
+                                    smoke_fix_description(
                                         &g.findings,
-                                        round as usize,
-                                    ),
+                                        complete_lang,
+                                        &fan_prompt,
+                                        &render_repair_history(
+                                            read_ledger_rollup(&fan_cwd).as_ref(),
+                                            &shard_owned,
+                                            &g.findings,
+                                            round as usize,
+                                        ),
+                                    )
                                 );
                                 let req = DispatchRequest {
                                     task_id: task_id.clone(),
@@ -39102,6 +38570,9 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             },
             "shipped": shipped_desc,
             "known_active_bugs": known_active_bugs,
+            // Parallel to known_active_bugs (same most-severe-first order): the severity the
+            // authoring check derives for each shipped bug.
+            "known_active_bugs_severities": known_active_bugs_severities,
         }));
         // ── LEARN & REFLECT (GOOSE_SWARM_PERSONA, default OFF) ────────────────────────────────────────
         // The run just PROVED the app builds and its checks pass. That proof is a deterministic engine

@@ -184,9 +184,16 @@ fn the_banned_integrate_template_only_shrinks() {
 /// fleet_order.rs beside the new weight resolution (`config_speed_weights`,
 /// `publish_fleet_speed_weights`, `rank_fix_target`), paying for the publish call, the
 /// pool_resolved weight echo and the weight-primary re-rank wiring (-7 net).
+/// Tightened to 43,982: the finding cluster (`FileGroup`, `normalize_rel_path`,
+/// `extract_file_from_finding`, `finding_fingerprint`, `dedupe_findings_exact`,
+/// `engine_critical`, `group_findings_by_file` and their 9 tests, -677) moved verbatim to
+/// commands/swarm/findings.rs, paying for REPAIR priorities in the same commit: provenance
+/// tags at every authoring push site, the severity sort, the wave's severest-first group
+/// order, the shard fix-first note and the severity arrays on complete_verify / known_bugs /
+/// complete_result.
 #[test]
 fn swarm_rs_line_count_only_decreases() {
-    const SWARM_RS_LINE_BASELINE: usize = 44_511;
+    const SWARM_RS_LINE_BASELINE: usize = 43_982;
     let text = read("crates/goose-cli/src/commands/swarm.rs");
     let n = text.lines().count();
     assert!(
