@@ -29,6 +29,13 @@ redirects is the MILD tool for unpredictability: cut its cost, do not replace it
 carries a **MILD:** clause saying what this changes; where the clause and the original text disagree, the
 clause wins.
 
+**THE FALLBACK RULE (Mihai, 2026-08-30 07:30, binding):** a missing input never substitutes plausible
+content silently. Either build from facts that exist (computed unconditionally, armed on the right
+predicate), or degrade honestly and LOUDLY — a named event, the measured absence in the text, the tick
+printing it. `unwrap_or_default`, `Err(_) => empty`, `.ok()`-and-continue are suspects everywhere: an
+empty that MEANS empty is fine; an empty that means "the read failed" is hidden evidence. A killed
+fallback stays dead without the owner's explicit word.
+
 ## 1. The priority order and what it means operationally
 
 Mihai's order is **STABILITY > SPEED > QUALITY, lexicographic**: *"The prime reason the swarm would get
