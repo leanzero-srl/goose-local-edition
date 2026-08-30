@@ -15,6 +15,15 @@ import { readTail, readEvents, resetSwarmReadCache } from './swarmIncrementalRea
  *
  * This is the harness the campaign skill prescribes: prove a fix in seconds against ~30 stored runs
  * rather than discovering it three hours into a live one.
+ *
+ * HERMETIC AGAINST A LIVE RUN (measured flake, r5): the archive dir is also where the CURRENT
+ * benchmark run writes, so a picked source file can GROW between two reads of it. Two rules make the
+ * test deterministic anyway:
+ *   1. every source file is read into memory ONCE, and both the replayed copy and the expected value
+ *      derive from that one snapshot — nothing ever re-stats or re-reads the live file;
+ *   2. pickRun orders candidates by heartbeat mtime, STALEST FIRST. The live run is the one whose
+ *      heartbeat is being rewritten right now, so it sorts last without any wall-clock threshold —
+ *      a dead run's heartbeat froze at its last beat and stays frozen.
  */
 const ARCHIVE = path.join(
   os.homedir(),
@@ -28,25 +37,31 @@ const ARCHIVE = path.join(
  */
 async function pickRun(): Promise<string | null> {
   const dirs = await fsp.readdir(ARCHIVE).catch(() => [] as string[]);
+  const candidates: Array<{ dir: string; beat: number }> = [];
   for (const d of dirs) {
     const p = path.join(ARCHIVE, d);
     const hasLog = await fsp.stat(path.join(p, 'run.jsonl')).then(() => true, () => false);
     if (!hasLog) continue;
     const logs = (await fsp.readdir(path.join(p, '.swarm', 'activity')).catch(() => [] as string[]))
       .filter((f) => f.endsWith('.log'));
-    if (logs.length > 0) return p;
+    if (logs.length === 0) continue;
+    const beat = await fsp
+      .stat(path.join(p, 'heartbeat'))
+      .then((st) => st.mtimeMs)
+      .catch(() => 0);
+    candidates.push({ dir: p, beat });
   }
-  return null;
+  candidates.sort((a, b) => a.beat - b.beat);
+  return candidates[0]?.dir ?? null;
 }
 
-/** Append `src` into `dest` in `steps` growing chunks, polling `read` after every one. */
+/** Append the snapshot into `dest` in `steps` growing chunks, polling `read` after every one. */
 async function growAndPoll(
-  src: string,
+  bytes: Buffer,
   dest: string,
   steps: number,
   poll: (p: string) => Promise<unknown>
 ): Promise<void> {
-  const bytes = await fsp.readFile(src);
   await fsp.writeFile(dest, '');
   const step = Math.max(1, Math.ceil(bytes.length / steps));
   for (let off = 0; off < bytes.length; off += step) {
@@ -70,11 +85,17 @@ describe('replay against a real archived run', () => {
 
   it('readEvents over a real run.jsonl, grown in 25 appends, equals a full parse', async () => {
     if (!run) return; // no archive on this machine — the synthetic suite still covers the logic
-    const src = path.join(run, 'run.jsonl');
+    // ONE snapshot, cut at the last newline: the reader holds a non-terminated final line back in
+    // `rest` (it may still be mid-append), so a snapshot caught mid-line must not count that line
+    // on the expectation side either. On a dead run the file ends in '\n' and the cut is a no-op.
+    const raw = await fsp.readFile(path.join(run, 'run.jsonl'));
+    const nl = raw.lastIndexOf(0x0a);
+    const bytes = raw.subarray(0, nl + 1);
     const dest = path.join(tmp, 'run.jsonl');
-    await growAndPoll(src, dest, 25, (p) => readEvents(p));
+    await growAndPoll(bytes, dest, 25, (p) => readEvents(p));
 
-    const whole = (await fsp.readFile(src, 'utf8'))
+    const whole = bytes
+      .toString('utf8')
       .split('\n')
       .filter((l) => l.trim())
       .map((l) => {
@@ -102,20 +123,17 @@ describe('replay against a real archived run', () => {
 
     for (const f of files) {
       resetSwarmReadCache();
-      const src = path.join(actDir, f);
+      // The snapshot is the whole truth for this file: size and expected tail both come from it, so
+      // a source growing under a live run cannot fail the copy it was snapshotted into.
+      const bytes = await fsp.readFile(path.join(actDir, f));
       const dest = path.join(tmp, f);
       const MAX = 4096; // small on purpose, so the tail bound is genuinely exercised
-      await growAndPoll(src, dest, 15, (p) => readTail(p, MAX));
+      await growAndPoll(bytes, dest, 15, (p) => readTail(p, MAX));
 
-      const st = await fsp.stat(src);
-      const fh = await fsp.open(src, 'r');
-      const buf = Buffer.alloc(Math.min(st.size, MAX));
-      await fh.read(buf, 0, buf.length, Math.max(0, st.size - MAX));
-      await fh.close();
-
+      const expected = bytes.subarray(Math.max(0, bytes.length - MAX));
       const got = await readTail(dest, MAX);
-      expect(got!.size, `${f} size`).toBe(st.size);
-      expect(got!.text, `${f} tail`).toBe(buf.toString('utf8'));
+      expect(got!.size, `${f} size`).toBe(bytes.length);
+      expect(got!.text, `${f} tail`).toBe(expected.toString('utf8'));
     }
   });
 });
