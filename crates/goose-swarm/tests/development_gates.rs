@@ -145,9 +145,13 @@ fn the_banned_integrate_template_only_shrinks() {
 /// commands/swarm/transcripts.rs (-66, paying for the steer ISO stamps + measured closing), and
 /// #F924's RecurrenceMeter cluster moved to commands/swarm/desk.rs (-133 net, paying for the
 /// shadow judge desk's mod/use + spawn wiring); a +29 judge-prompt batch rode the same window.
+/// Tightened to 45,772: the pytest-tail cluster moved to commands/swarm/pytest_tail.rs (-153
+/// with its r2-shapes test), paying for the r5-assessment cluster-A wiring (delivery-defect
+/// routing with `cross_task`, the spec_set_exceeded sidecar/roll-up/event) across its two
+/// commits; web_refs.rs landed entirely module-side (0 root lines).
 #[test]
 fn swarm_rs_line_count_only_decreases() {
-    const SWARM_RS_LINE_BASELINE: usize = 45_820;
+    const SWARM_RS_LINE_BASELINE: usize = 45_772;
     let text = read("crates/goose-cli/src/commands/swarm.rs");
     let n = text.lines().count();
     assert!(

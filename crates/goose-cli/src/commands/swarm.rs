@@ -53,6 +53,7 @@ mod imports;
 use imports::{attribute_import_gap_with_owner, tree_import_gaps, verify_tree_imports};
 mod pytest_tail;
 use pytest_tail::parse_pytest_summary;
+mod spec_sets;
 mod transcripts;
 use transcripts::{append_attempt_marker, append_reasoning_transcript, append_thinking_transcript};
 mod desk;
@@ -15796,6 +15797,10 @@ pub struct GooseAgentDispatcher {
     /// already trying; sending it ONCE is new information. Nothing here can end a task, burn an attempt
     /// or bound anything — a defect that is never fixed simply stops being mentioned.
     defects_told: Mutex<HashMap<String, std::collections::HashSet<String>>>,
+    /// r5 item 3: the `spec_set_exceeded` states already emitted, keyed by the fact's own JSON —
+    /// the event fires once per distinct {area, frozen, extra} rather than on every completion
+    /// while the extra file sits there (the defects_told rule applied to a run-level fact).
+    spec_set_reported: Mutex<std::collections::HashSet<String>>,
     /// #136: gate for the repeated-identical-tool-call breaker. Resolved once at construction (default OFF).
     repeat_break: bool,
     /// The run's event stream. The dispatcher is the ONLY place that knows what a worker prompt actually
@@ -15896,6 +15901,7 @@ impl GooseAgentDispatcher {
             owned_files_by_task: Mutex::new(HashMap::new()),
             dispatched_tasks: Mutex::new(std::collections::HashSet::new()),
             defects_told: Mutex::new(HashMap::new()),
+            spec_set_reported: Mutex::new(std::collections::HashSet::new()),
             repeat_break,
         })
     }
@@ -33243,6 +33249,13 @@ fn rebuild_ledger_rollup(root: &Path) -> Option<serde_json::Value> {
     if !research.is_empty() {
         rollup["research"] = serde_json::Value::from(research);
     }
+    // SPEC-ENUMERATED FILE SETS (r5 item 3): the excess is re-derived from the tree NOW, the
+    // same rule as open_defects, so a removed/merged extra vanishes. Absent when clean (and
+    // when the run froze no enumeration — the sidecar simply does not exist).
+    let spec_set_exceeded = spec_sets::exceeded_facts(root);
+    if !spec_set_exceeded.is_empty() {
+        rollup["spec_set_exceeded"] = serde_json::Value::from(spec_set_exceeded);
+    }
     let out_path = root.join(".swarm").join("ledger.json");
     let bytes = serde_json::to_string_pretty(&rollup).ok()?;
     // Finding 9: identical roll-up bytes keep the archived file's mtime (see write_ledger_mini).
@@ -33361,6 +33374,35 @@ fn render_ledger_block(
             .push_str("OPEN DEFECTS (re-stat'd at the last ledger write; a fixed one vanishes):\n");
         for d in &open_defects {
             never.push_str(&format!("  - {d}\n"));
+        }
+    }
+    // r5 item 3: a measured fact, deliberately NOT under "OPEN DEFECTS" — an extra file may be a
+    // documented plan decision (r5's brush.js was), so the line hands the excess to the reader
+    // with the doc as the decider, never as an instruction to delete.
+    if let Some(exceeded) = rollup.get("spec_set_exceeded").and_then(|d| d.as_array()) {
+        for f in exceeded {
+            let listify = |key: &str| -> String {
+                match f.get(key).and_then(|v| v.as_array()) {
+                    Some(a) => a
+                        .iter()
+                        .filter_map(|x| x.as_str())
+                        .collect::<Vec<_>>()
+                        .join(", "),
+                    // Empty means empty: exceeded_facts builds every fact with these arrays; the
+                    // one arm without them (the unparseable-sidecar fact) carries its own `error`
+                    // field, so nothing-to-list here IS the truth, not a swallowed failure.
+                    None => String::new(),
+                }
+            };
+            never.push_str(&format!(
+                "SPEC-ENUMERATED FILE SET EXCEEDED — the spec freezes {}/ to [{}]; the tree also \
+                 holds: [{}]. An extra file may be a documented decision: verify it is named in \
+                 the delivered docs and stays inside any budget the spec counts over the frozen \
+                 set; never delete on this line alone.\n",
+                f.get("area").and_then(|a| a.as_str()).unwrap_or("?"),
+                listify("frozen"),
+                listify("extra"),
+            ));
         }
     }
     if let Some(gates) = rollup.get("gate").and_then(|g| g.as_array()) {
@@ -34019,6 +34061,27 @@ impl GooseAgentDispatcher {
         root: &Path,
         salvaged: bool,
     ) {
+        // SPEC-ENUMERATED FILE SETS (r5 item 3): measured on the same free pass — a completion is
+        // when the tree changed — and BEFORE the owned-files early return so the sink's ownerless
+        // completion still measures the final tree. Run-scoped (no task blamed): the r5 extra,
+        // brush.js, was another lane's documented decision. Once per distinct state; a fact for
+        // REPAIR/the sink via the roll-up's `spec_set_exceeded`, never a refusal.
+        for fact in spec_sets::exceeded_facts(root) {
+            if self
+                .spec_set_reported
+                .lock()
+                .unwrap()
+                .insert(fact.to_string())
+            {
+                let mut ev = serde_json::json!({ "event": "spec_set_exceeded" });
+                for k in ["area", "frozen", "extra", "error"] {
+                    if let Some(v) = fact.get(k) {
+                        ev[k] = v.clone();
+                    }
+                }
+                self.events.write_value(ev);
+            }
+        }
         if owned_files.is_empty() {
             return;
         }
@@ -37853,6 +37916,11 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
     // actually needed to answer — research output routinely contains "either is defensible", which is one of
     // the markers verbatim. Captured after the turn-context strip so it is the spec and nothing else.
     *dispatcher.spec_frozen.lock().unwrap() = opts.prompt.clone();
+    // SPEC-ENUMERATED FILE SETS (r5 item 3): derived from the SAME frozen copy — model prose must
+    // not be able to freeze an enumeration — and persisted once so the roll-up's rebuilds (tree
+    // in hand, spec not) can re-measure the excess on every write. See spec_sets.rs for the r5
+    // receipt (brush.js, the unfrozen fifth web file, outside the 150 KB counted budget).
+    spec_sets::persist(&dispatcher.working_dir, &opts.prompt);
 
     // Parallel research-planning: scope independent research questions, run them across the fleet,
     // feed the findings into the planner. Best-effort — never blocks the run.
