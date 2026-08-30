@@ -37,6 +37,10 @@ pub struct EngineSettings {
     pub repetition_penalty: Option<f64>,
     pub presence_penalty: Option<f64>,
     pub frequency_penalty: Option<f64>,
+    /// Swarm-facing model id advertised by the server (`--served-model-name`). The fleet's
+    /// node-identity convention lives in this name (`workhorse-…`); when unset the HF
+    /// directory id is served as-is.
+    pub served_model_name: Option<String>,
     pub spawn_command: Vec<String>,
 }
 
@@ -54,6 +58,7 @@ impl Default for EngineSettings {
             repetition_penalty: None,
             presence_penalty: None,
             frequency_penalty: None,
+            served_model_name: None,
             spawn_command: ENGINE_LAUNCHER.iter().map(|s| s.to_string()).collect(),
         }
     }
@@ -83,7 +88,10 @@ pub fn build_serve_command(settings: &EngineSettings, model_id: &str) -> Vec<Str
         "--port".to_string(),
         settings.port.to_string(),
         "--served-model-name".to_string(),
-        model_id.to_string(),
+        settings
+            .served_model_name
+            .clone()
+            .unwrap_or_else(|| model_id.to_string()),
         "--enable-prefix-cache".to_string(),
         "--max-concurrent-requests".to_string(),
         "8".to_string(),
@@ -405,6 +413,23 @@ mod tests {
     use super::*;
 
     #[test]
+    fn serve_command_uses_served_model_name_alias_when_set() {
+        let settings = EngineSettings {
+            served_model_name: Some("workhorse-qwen3.5-9b-4bit-mlx".to_string()),
+            ..Default::default()
+        };
+        let argv = build_serve_command(&settings, "mlx-community/Qwen3.5-9B-MLX-4bit");
+        let pos = argv
+            .iter()
+            .position(|a| a == "--served-model-name")
+            .unwrap();
+        assert_eq!(argv[pos + 1], "workhorse-qwen3.5-9b-4bit-mlx");
+        assert!(argv
+            .iter()
+            .any(|a| a.ends_with("mlx-community/Qwen3.5-9B-MLX-4bit")));
+    }
+
+    #[test]
     fn serve_command_golden_with_all_sampling_flags() {
         let settings = EngineSettings {
             model_id: Some("mlx-community/Qwen3.5-9B-MLX-4bit".to_string()),
@@ -418,6 +443,7 @@ mod tests {
             repetition_penalty: Some(1.1),
             presence_penalty: Some(0.5),
             frequency_penalty: Some(0.25),
+            served_model_name: None,
             spawn_command: ENGINE_LAUNCHER.iter().map(|s| s.to_string()).collect(),
         };
         let argv = build_serve_command(&settings, "mlx-community/Qwen3.5-9B-MLX-4bit");

@@ -2262,6 +2262,10 @@ pub struct MlxEngineSettingsDto {
     pub presence_penalty: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub frequency_penalty: Option<f64>,
+    /// Swarm-facing model id advertised by the engine (`--served-model-name`); the HF
+    /// directory id is served when unset.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub served_model_name: Option<String>,
     pub spawn_command: Vec<String>,
 }
 

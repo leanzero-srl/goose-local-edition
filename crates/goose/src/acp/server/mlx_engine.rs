@@ -50,6 +50,7 @@ fn settings_to_dto(settings: EngineSettings) -> MlxEngineSettingsDto {
         repetition_penalty: settings.repetition_penalty,
         presence_penalty: settings.presence_penalty,
         frequency_penalty: settings.frequency_penalty,
+        served_model_name: settings.served_model_name,
         spawn_command: settings.spawn_command,
     }
 }
@@ -67,6 +68,7 @@ fn settings_from_dto(dto: MlxEngineSettingsDto) -> EngineSettings {
         repetition_penalty: dto.repetition_penalty,
         presence_penalty: dto.presence_penalty,
         frequency_penalty: dto.frequency_penalty,
+        served_model_name: dto.served_model_name,
         spawn_command: dto.spawn_command,
     }
 }
