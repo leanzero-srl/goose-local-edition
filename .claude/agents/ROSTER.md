@@ -335,3 +335,10 @@ research_request_block's armed-no-claimed-sections arm wording.
   winning a shard, a gate-7 misquote (1 vs 4 errors), and the five-of-six-findings-still-can't-promote
   residual. This is why the self-trace never suffices. Charter gap: none. Brief leak: none — it was
   handed the claim and the primary anchors only.
+- 2026-08-30 22:00 swarm-surgeon (transcript mirror, fce592811): CLEAN+. Mirror-aware wrappers in
+  transcripts.rs with single-consumption state contracts (buffer clears iff primary succeeded, watermark
+  advances once), swarm.rs 45,529→45,455, five loud kinds through note_transcript_write_failure, 4 new
+  tests incl. state-consumption and unwritable-mirror shapes. The unwrap_or_default ratchet CAUGHT its
+  first test helper and it correctly chose a commented unwrap — absent must panic, not impersonate
+  empty. Unbriefed find: primary .calls.jsonl still best-effort-silent (GEN-6a class) — folded into the
+  next surgeon brief same-turn per implement-don't-backlog. Charter gap: none.
