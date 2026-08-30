@@ -32,7 +32,8 @@ impl Edition {
 }
 
 /// Provider-name fragments that are inherently local — their presence derives Local Edition.
-const LOCAL_PROVIDER_FRAGMENTS: &[&str] = &["lmstudio", "ollama", "swarm", "llama", "localai"];
+const LOCAL_PROVIDER_FRAGMENTS: &[&str] =
+    &["lmstudio", "ollama", "swarm", "llama", "localai", "mlx"];
 
 /// Interpret an environment-variable string as a boolean flag. Absent -> None; a falsey token
 /// (empty / `0` / `false` / `no` / `off`) -> Some(false); anything else -> Some(true).
@@ -145,6 +146,8 @@ mod tests {
             "swarm",
             "my-llama-host",
             "localai",
+            "omlx",
+            "mlx-sidecar",
         ] {
             assert_eq!(
                 resolve_edition_from(false, None, None, Some(p)),
