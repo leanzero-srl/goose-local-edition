@@ -33,7 +33,7 @@ function KnobField({
   value: number | undefined;
   hue: string;
   readOnly: boolean;
-  /** What an UNSET knob means here (default "model default" — the benchmark pins temp at 0.2). */
+  /** What an UNSET knob means here (default "model default"; no knob is pinned anywhere any more). */
   placeholder?: string;
   onCommit: (v: number | undefined) => void;
 }) {

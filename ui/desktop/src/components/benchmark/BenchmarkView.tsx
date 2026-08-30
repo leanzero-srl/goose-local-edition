@@ -586,15 +586,16 @@ export default function BenchmarkView() {
           </header>
 
           {/* Run settings — the sampling knobs the next run will use, editable until launch; while
-              a run is live they freeze on the values that run launched with. Unset temperature
-              keeps the benchmark's shipped 0.2 pin (regime comparability); the other knobs unset
-              fall through to config/model defaults. */}
+              a run is live they freeze on the values that run launched with. EVERY unset knob —
+              temperature included — falls through to the config/model default: the 0.2 benchmark
+              pin was deleted in main.ts ("NO HARDCODED TEMPERATURE" — it overrode the per-model
+              value Mihai sets in LM Studio), and a card still saying "0.2 (pinned)" claimed a pin
+              the run no longer sends (caught live on r4-relaunch, 2026-08-30). */}
           <SamplingKnobs
             className="mt-6"
             value={launchedSampling ?? sampling}
             onChange={setSampling}
             active={running}
-            placeholders={{ temperature: '0.2 (pinned)' }}
             onSaveDefaults={() => saveDefaults(sampling)}
           />
 
