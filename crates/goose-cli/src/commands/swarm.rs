@@ -17817,7 +17817,12 @@ impl GooseAgentDispatcher {
                         if h.is_empty() {
                             None
                         } else {
-                            Some(h.chars().take(400).collect::<String>())
+                            // This head becomes `direction` — the "Do this next:" line the WORKER
+                            // MODEL reads in a steer note or a re-stream seed. A mid-sentence cut
+                            // in model-read text is the r5 truncation tax (four re-litigations of
+                            // one cut sentence), so it ends at a sentence like the orientation
+                            // index does. The `judge_look` event carries the FULL next_action.
+                            Some(head_to_sentence_end(h, 400))
                         }
                     };
                     self.events.write_value(serde_json::json!({
@@ -24969,16 +24974,18 @@ fn slice_index(briefs: &[SliceBrief], existing: &[String], spec: &str) -> String
         .iter()
         .map(|b| {
             let signatures = extract_interface_lines(&b.brief);
-            let head: String = b
-                .brief
-                .lines()
-                .filter(|l| !l.trim().is_empty())
-                .take(3)
-                .collect::<Vec<_>>()
-                .join(" ")
-                .chars()
-                .take(400)
-                .collect();
+            // The summary line SYNTHESIS reads. A hard 400-char cut ends mid-sentence — the r5
+            // truncation tax measured on the orientation index (one cut sentence, four opener
+            // re-litigations) — so it extends to the sentence end like every model-read head.
+            let head = head_to_sentence_end(
+                &b.brief
+                    .lines()
+                    .filter(|l| !l.trim().is_empty())
+                    .take(3)
+                    .collect::<Vec<_>>()
+                    .join(" "),
+                400,
+            );
             // THE FILES THE OWNER DECLARED — the objective's backticked ownership declarations,
             // extracted by `files_from_objective`. The synthesis prompt says "files: the exact paths
             // that task will create, inferred from its slice's objective", and this index is the only
@@ -26782,7 +26789,10 @@ fn spec_orientation(sections: &[SpecSection]) -> String {
     s
 }
 
-/// An index entry never ends mid-sentence. The excerpt used to cut back to the last full LINE
+/// A model-read head cut never ends mid-sentence — shared by the orientation index, the
+/// slice-index summary, the judge's steer direction and the ledger row's final_text (the
+/// head-cuts whose consumer is a prompt; cuts that feed only an event or a log line stay
+/// hard cuts). The excerpt used to cut back to the last full LINE
 /// inside the first 400 chars, and markdown wraps sentences across lines — measured on r5's
 /// live opener (open.think.log ~4404): section 7's entry ended at "`web/index.html` (structure
 /// only)," — the one sentence naming the four deliverable files, cut after the first — and the
@@ -32827,18 +32837,22 @@ fn build_task_ledger_row(
             )
         })
         .collect();
-    let final_text: String = std::fs::read_to_string(&activity)
-        .ok()
-        .and_then(|c| serde_json::from_str::<serde_json::Value>(&c).ok())
-        .and_then(|d| {
-            d.get("last_text")
-                .and_then(|t| t.as_str())
-                .map(String::from)
-        })
-        .unwrap_or_default()
-        .chars()
-        .take(400)
-        .collect();
+    // This head reaches a model: the ledger block's "WHAT EACH LANE SAID IT DELIVERED" renders
+    // `tail_chars(final_text, 200)` into dependents' prompts, so what matters is that the STRING
+    // ENDS at a sentence — a hard 400-char cut hands the tail a mid-sentence ending, the r5
+    // truncation tax (one cut sentence, four opener re-litigations).
+    let final_text: String = head_to_sentence_end(
+        &std::fs::read_to_string(&activity)
+            .ok()
+            .and_then(|c| serde_json::from_str::<serde_json::Value>(&c).ok())
+            .and_then(|d| {
+                d.get("last_text")
+                    .and_then(|t| t.as_str())
+                    .map(String::from)
+            })
+            .unwrap_or_default(),
+        400,
+    );
     let owned: Vec<serde_json::Value> = owned_files
         .iter()
         .map(|f| {
