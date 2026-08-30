@@ -4708,6 +4708,265 @@ mod tests {
         assert_eq!(strip(&first), strip(&second), "second pass is a no-op");
     }
 
+    /// II-2b fixture: a tree + ledger cut from the r2 archive's real shapes — the lanes, the
+    /// commands, the pytest tails, the root testgen files with task-id imports — built through
+    /// the REAL writers so the render test also covers the write path end to end.
+    fn r2_cut_ledger_fixture() -> tempfile::TempDir {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        std::fs::create_dir_all(root.join(".swarm/activity")).unwrap();
+        std::fs::create_dir_all(root.join("app")).unwrap();
+        std::fs::create_dir_all(root.join("tests")).unwrap();
+        for f in [
+            "app/__init__.py",
+            "app/drafts.py",
+            "app/api.py",
+            "tests/test_ledger_core.py",
+            "tests/test_ledger_concurrency.py",
+            "tests/test_vendor_sync_edge.py",
+            "tests/test_sync_resilience.py",
+        ] {
+            std::fs::write(root.join(f), "x = 1\n").unwrap();
+        }
+        // r2's testgen class: a root test file importing a TASK ID as a module.
+        std::fs::write(
+            root.join("test_interfaces.py"),
+            "from app.approval_workflow import approve\n",
+        )
+        .unwrap();
+        let write_calls = |task: &str, rows: &[serde_json::Value]| {
+            std::fs::write(
+                root.join(".swarm/activity")
+                    .join(format!("{}.calls.jsonl", activity_digest_key(task))),
+                rows.iter().map(|c| format!("{c}\n")).collect::<String>(),
+            )
+            .unwrap();
+        };
+        // Real r2 rows (ledger-core-tests digest, verbatim commands and summary tails).
+        write_calls(
+            "ledger-core-tests",
+            &[
+                serde_json::json!({"ts":"2026-08-29T19:40:01Z","attempt":0,"name":"shell",
+                    "summary":"python3 -m pytest tests/test_ledger_core.py tests/test_ledger_concurrency.py -v 2>&1 | tail -5",
+                    "ok":true,"result_tail":"7 failed, 19 passed, 13 warnings in 0.29s",
+                    "pytest":{"failed":7,"passed":19,"errors":0,"raw":"7 failed, 19 passed"}}),
+                serde_json::json!({"ts":"2026-08-29T19:41:02Z","attempt":0,"name":"shell",
+                    "summary":"python3 -m pytest tests/test_ledger_concurrency.py::TestStress::test_high_volume_concurrent_writes -v",
+                    "ok":true,"result_tail":"1 failed, 9 warnings in 0.07s",
+                    "pytest":{"failed":1,"passed":0,"errors":0,"raw":"1 failed"}}),
+                serde_json::json!({"kind":"attempt_end","ts":"2026-08-29T19:42:00Z","attempt":0,
+                    "fs_delta":{"appeared":[],"changed":["tests/test_ledger_core.py"],
+                                "outside_manifest":[]}}),
+            ],
+        );
+        write_calls(
+            "vendor-sync-edge-tests",
+            &[
+                serde_json::json!({"ts":"2026-08-29T19:45:01Z","attempt":0,"name":"shell",
+                "summary":"python3 -m pytest tests/test_vendor_sync_edge.py tests/test_sync_resilience.py -v",
+                "ok":true,"result_tail":"17 passed in 1.07s",
+                "pytest":{"failed":0,"passed":17,"errors":0,"raw":"17 passed"}}),
+            ],
+        );
+        write_calls(
+            "integrate-verify",
+            &[
+                serde_json::json!({"ts":"2026-08-29T20:10:01Z","attempt":0,"name":"shell",
+                    "summary":"python3 -m pytest tests/ -v 2>&1 | tail -30","ok":true,
+                    "result_tail":"43 passed in 1.40s",
+                    "pytest":{"failed":0,"passed":43,"errors":0,"raw":"43 passed"}}),
+                serde_json::json!({"ts":"2026-08-29T20:11:02Z","attempt":0,"name":"shell",
+                    "summary":"python3 -m app --help 2>&1","ok":true,
+                    "result_tail":"usage: app [-h] --db-dir DB_DIR [--ledger-port LEDGER_PORT]"}),
+                serde_json::json!({"kind":"attempt_end","ts":"2026-08-29T20:12:00Z","attempt":0,
+                    "fs_delta":{"appeared":["test_interfaces.py","test_app_contracts.py"],
+                                "changed":[],
+                                "outside_manifest":["test_interfaces.py","test_app_contracts.py"]}}),
+            ],
+        );
+        std::fs::write(
+            root.join(".swarm/activity")
+                .join(format!("{}.json", activity_digest_key("integrate-verify"))),
+            serde_json::json!({"last_text":"I see the issue. The `LedgerHandler` expects `db` to be a `sqlite3.Connection`"}).to_string(),
+        )
+        .unwrap();
+        std::fs::write(
+            root.join(".swarm/activity")
+                .join(format!("{}.json", activity_digest_key("vendor-sync-edge-tests"))),
+            serde_json::json!({"last_text":"resilience: repeated connection errors (give up after 3), partial page then success"}).to_string(),
+        )
+        .unwrap();
+        write_task_ledger(
+            dir.path(),
+            "ledger-core-tests",
+            "done",
+            false,
+            &[
+                "tests/test_ledger_core.py".to_string(),
+                "tests/test_ledger_concurrency.py".to_string(),
+            ],
+            0,
+        )
+        .unwrap();
+        write_task_ledger(
+            dir.path(),
+            "vendor-sync-edge-tests",
+            "done",
+            false,
+            &[
+                "tests/test_vendor_sync_edge.py".to_string(),
+                "tests/test_sync_resilience.py".to_string(),
+            ],
+            0,
+        )
+        .unwrap();
+        write_task_ledger(dir.path(), "integrate-verify", "done", false, &[], 0).unwrap();
+        write_gate_ledger(
+            dir.path(),
+            0,
+            "smoke",
+            &["GET /api/stream returned 404 (advertised SSE endpoint)".to_string()],
+            &["POST /api/sync not probed".to_string()],
+            serde_json::json!(false),
+        )
+        .unwrap();
+        write_repair_ledger(
+            dir.path(),
+            RepairLedgerRow {
+                round: 0,
+                shard: "fix::r0::app/stream.py",
+                owned_files: &["app/stream.py".to_string()],
+                description: &smoke_fix_description(
+                    &["GET /api/stream returned 404 (advertised SSE endpoint)".to_string()],
+                    TargetLang::Python,
+                    "",
+                ),
+                output: "FINDING 1: NOT FIXED — registered the route on the wrong handler class",
+                promoted: false,
+                baseline: 1,
+                agent_ok: true,
+            },
+        )
+        .unwrap();
+        dir
+    }
+
+    /// II-2b: the read-before-act block renders the facts the r2 sink re-derived by hand — the
+    /// test table with each lane's last outcome, the don't-repeat run counts, the out-of-plan
+    /// testgen files with their unowned imports, and the repair verdict nothing used to read.
+    #[test]
+    fn render_ledger_block_carries_the_facts_the_r2_sink_rederived() {
+        let dir = r2_cut_ledger_fixture();
+        let block = render_ledger_block(
+            dir.path(),
+            "integrate-verify",
+            &["ledger-core-tests".to_string()],
+            &[],
+            7_000,
+            Some("ImportError: cannot import name 'approve' from 'app.approval_workflow'"),
+        );
+        assert!(
+            block.chars().count() <= 7_000,
+            "budget held: {}",
+            block.len()
+        );
+        assert!(
+            block.contains("tests/test_ledger_core.py + tests/test_ledger_concurrency.py")
+                && block.contains("7 failed, 19 passed"),
+            "test table names the lane's files and last outcome:\n{block}"
+        );
+        assert!(
+            block.contains("pytest already ran 4 time(s) across 3 lane(s)"),
+            "the §II.3 don't-repeat fact counts every lane's runs:\n{block}"
+        );
+        assert!(
+            block.contains("Last full run: 43 passed"),
+            "the whole-suite outcome is separated from targeted re-runs:\n{block}"
+        );
+        assert!(
+            block.contains("test_interfaces.py (written during `integrate-verify`)"),
+            "the out-of-plan testgen file is attributed:\n{block}"
+        );
+        assert!(
+            block.contains("imports `app.approval_workflow`"),
+            "the unowned task-id import is an open defect:\n{block}"
+        );
+        assert!(
+            block.contains("FINDING 1 NOT FIXED")
+                && block.contains("registered the route on the wrong handler class"),
+            "the repair verdict nothing used to parse is now read back:\n{block}"
+        );
+        assert!(
+            block.contains("`pytest --collect-only` has ALREADY been run"),
+            "the engine-run collect-only arrives as input:\n{block}"
+        );
+        // Deps-first ordering: the named dependency's row renders before the stranger lane's.
+        let dep = block.find("ledger-core-tests").unwrap();
+        let stranger = block.find("vendor-sync-edge-tests").unwrap();
+        assert!(dep < stranger, "dependency rows render first");
+    }
+
+    /// II-2b: an absent or unreadable ledger renders EMPTY — the dispatch proceeds
+    /// byte-identical, which is the never-gates rule in executable form.
+    #[test]
+    fn render_ledger_block_is_empty_without_a_ledger() {
+        let dir = tempfile::tempdir().unwrap();
+        assert_eq!(
+            render_ledger_block(dir.path(), "t", &[], &[], 7_000, None),
+            ""
+        );
+        std::fs::create_dir_all(dir.path().join(".swarm")).unwrap();
+        std::fs::write(dir.path().join(".swarm/ledger.json"), "not json{{{").unwrap();
+        assert_eq!(
+            render_ledger_block(dir.path(), "t", &[], &[], 7_000, None),
+            ""
+        );
+    }
+
+    /// II-2b: over budget, the droppables go first (ok-only command classes, then lane
+    /// self-reports) and NEVER a defect, a gate finding, or a NOT FIXED verdict; the last
+    /// resort is a line-boundary cut that says it cut (F196 — a block stopping mid-line reads
+    /// as a complete fact that is wrong).
+    #[test]
+    fn render_ledger_block_drop_order_never_drops_a_defect() {
+        let dir = r2_cut_ledger_fixture();
+        let full = render_ledger_block(dir.path(), "integrate-verify", &[], &[], 7_000, None);
+        assert!(
+            full.contains("ran clean"),
+            "under budget the ok classes render"
+        );
+        assert!(
+            full.contains("said:"),
+            "under budget the self-reports render"
+        );
+        let squeezed = render_ledger_block(
+            dir.path(),
+            "integrate-verify",
+            &[],
+            &[],
+            full.chars().count() - 1,
+            None,
+        );
+        assert!(
+            !squeezed.contains("ran clean"),
+            "ok-only classes drop first"
+        );
+        assert!(
+            squeezed.contains("NOT FIXED") && squeezed.contains("GET /api/stream returned 404"),
+            "defects and verdicts survive the squeeze:\n{squeezed}"
+        );
+        let tiny = render_ledger_block(dir.path(), "integrate-verify", &[], &[], 700, None);
+        assert!(tiny.chars().count() <= 700);
+        assert!(
+            tiny.contains("LEDGER TRUNCATED"),
+            "a cut block says it was cut:\n{tiny}"
+        );
+        assert!(
+            !tiny.trim_end().ends_with(','),
+            "the cut lands on a line boundary"
+        );
+    }
+
     #[test]
     fn answers_win_floor_keeps_answered_plan_only_when_gated_and_non_structural() {
         use PostAnswerAction::*;
@@ -33150,6 +33409,8 @@ fn build_task_ledger_row(
         std::collections::BTreeMap::new();
     let mut attempts_seen: u32 = attempt;
     let mut last_full_suite: Option<serde_json::Value> = None;
+    let mut last_pytest: Option<serde_json::Value> = None;
+    let mut last_pytest_filewide: Option<serde_json::Value> = None;
     let mut fs_appeared: std::collections::BTreeSet<String> = Default::default();
     let mut fs_changed: std::collections::BTreeSet<String> = Default::default();
     let mut fs_outside: std::collections::BTreeSet<String> = Default::default();
@@ -33201,6 +33462,12 @@ fn build_task_ledger_row(
                 );
             }
             if let Some(py) = py {
+                last_pytest = Some(serde_json::json!({ "cmd": cmd, "summary": py }));
+                // A `::node` re-run answers one test; the lane's file-wide outcome is what the
+                // test table reports, or a targeted 1-failed would shadow a 7-failed suite state.
+                if !cmd.contains("::") {
+                    last_pytest_filewide = Some(serde_json::json!({ "cmd": cmd, "summary": py }));
+                }
                 if pytest_runs_whole_suite(cmd) {
                     last_full_suite = Some(serde_json::json!({
                         "cmd": cmd,
@@ -33256,6 +33523,8 @@ fn build_task_ledger_row(
         "delivery_defects": verify_owned_files(root, owned_files),
         "commands": commands,
         "last_full_suite": last_full_suite,
+        "last_pytest": last_pytest,
+        "last_pytest_filewide": last_pytest_filewide,
         "final_text": final_text,
         "fs_delta": {
             "appeared": fs_appeared,
@@ -33444,10 +33713,337 @@ fn rebuild_ledger_rollup(root: &Path) -> Option<serde_json::Value> {
 
 /// The roll-up as the renderers consume it. None (ledger absent/unreadable) must render as an
 /// EMPTY block downstream — the dispatch then proceeds byte-identical, never blocked.
-#[allow(dead_code)] // consumed by render_ledger_block (II-2b, next commit); tested already
 fn read_ledger_rollup(root: &Path) -> Option<serde_json::Value> {
     serde_json::from_str(&std::fs::read_to_string(root.join(".swarm").join("ledger.json")).ok()?)
         .ok()
+}
+
+/// F196-style truncation for the ledger block: cut on a LINE boundary and say so. A block cut
+/// mid-line reads as a complete fact that is wrong; the never-drop content is rendered at the
+/// top precisely so a tail cut can only eat the droppable end.
+#[allow(dead_code)] // wired at the dispatch seam in II-3 (next commit); fixture-tested now
+fn truncate_block_at_line(s: &str, budget: usize) -> String {
+    if s.chars().count() <= budget {
+        return s.to_string();
+    }
+    let head: String = s.chars().take(budget.saturating_sub(60)).collect();
+    let whole = head.rsplit_once('\n').map(|(h, _)| h).unwrap_or(&head);
+    format!("{whole}\n… LEDGER TRUNCATED — the full state is in .swarm/ledger.json.\n")
+}
+
+/// §II.2 MESSAGE FORMATION — the read-before-act block, one renderer for every consumer (the
+/// sink, the repair shards, a BUILD worker's don't-repeat facts). Pure over `.swarm/ledger.json`
+/// plus an optional engine-run collect-only tail the CALLER produced (keeping the render itself
+/// free of subprocesses). Absent/unreadable/empty ledger renders "" and the dispatch proceeds
+/// byte-identical — the injection IS the whole mechanism, nothing is ever blocked on it.
+///
+/// Content order is the drop order in reverse: open defects, gate findings and NOT FIXED
+/// verdicts first (never dropped), then the test table and the §II.3 don't-repeat facts, then
+/// per-class failure tails, and only then the droppables — ok-only command classes and each
+/// lane's final_text, removed in that order when over budget, with a line-boundary truncation
+/// as the last resort. No time value orders or gates anything here.
+#[allow(dead_code)] // wired at the dispatch seam in II-3 (next commit); fixture-tested now
+fn render_ledger_block(
+    root: &Path,
+    task_id: &str,
+    deps: &[String],
+    all_files: &[String],
+    budget: usize,
+    collect_only: Option<&str>,
+) -> String {
+    let Some(rollup) = read_ledger_rollup(root) else {
+        return String::new();
+    };
+    let empty_map = serde_json::Map::new();
+    let tasks = rollup
+        .get("tasks")
+        .and_then(|t| t.as_object())
+        .unwrap_or(&empty_map);
+    if tasks.is_empty()
+        && rollup
+            .get("gate")
+            .and_then(|g| g.as_array())
+            .is_none_or(|v| v.is_empty())
+        && rollup
+            .pointer("/repair/rounds")
+            .and_then(|r| r.as_array())
+            .is_none_or(|v| v.is_empty())
+    {
+        return String::new();
+    }
+    // Dependencies' rows carry the facts THIS task builds on — they render before strangers'.
+    let ordered_tasks: Vec<(&String, &serde_json::Value)> = {
+        let mut v: Vec<_> = tasks.iter().collect();
+        v.sort_by_key(|(id, _)| (!deps.contains(*id), (*id).clone()));
+        v
+    };
+
+    let mut never = String::new();
+    never.push_str(
+        "MEASURED STATE OF THIS TREE — read before acting. Every line is a stat, a command \
+         record, or a gate probe from this run's own ledger; trust it over re-deriving.\n",
+    );
+    let open_defects: Vec<&str> = rollup
+        .get("open_defects")
+        .and_then(|d| d.as_array())
+        .map(|a| a.iter().filter_map(|x| x.as_str()).collect())
+        .unwrap_or_default();
+    if !open_defects.is_empty() {
+        never
+            .push_str("OPEN DEFECTS (re-stat'd at the last ledger write; a fixed one vanishes):\n");
+        for d in &open_defects {
+            never.push_str(&format!("  - {d}\n"));
+        }
+    }
+    if let Some(gates) = rollup.get("gate").and_then(|g| g.as_array()) {
+        if let Some(g) = gates.last() {
+            let findings: Vec<&str> = g
+                .get("findings")
+                .and_then(|f| f.as_array())
+                .map(|a| a.iter().filter_map(|x| x.as_str()).collect())
+                .unwrap_or_default();
+            if !findings.is_empty() {
+                never.push_str(&format!(
+                    "GATE (round {}) found, against the RUNNING app:\n",
+                    g.get("round").and_then(|r| r.as_u64()).unwrap_or(0)
+                ));
+                for f in &findings {
+                    never.push_str(&format!("  - {f}\n"));
+                }
+            }
+        }
+    }
+    if let Some(rounds) = rollup.pointer("/repair/rounds").and_then(|r| r.as_array()) {
+        let mut lines = String::new();
+        for r in rounds {
+            let round = r.get("round").and_then(|x| x.as_u64()).unwrap_or(0);
+            let shard = r.get("shard").and_then(|s| s.as_str()).unwrap_or("?");
+            for v in r
+                .get("verdicts")
+                .and_then(|v| v.as_array())
+                .unwrap_or(&Vec::new())
+            {
+                let verdict = v.get("verdict").and_then(|s| s.as_str()).unwrap_or("");
+                // FIXED and NOT REAL are history; NOT FIXED is a live instruction — an
+                // approach that already failed, which the next attempt must not repeat.
+                if verdict != "NOT FIXED" {
+                    continue;
+                }
+                lines.push_str(&format!(
+                    "  - round {round}, {shard}: FINDING {} NOT FIXED — {}{}\n",
+                    v.get("n").and_then(|n| n.as_u64()).unwrap_or(0),
+                    v.get("detail").and_then(|d| d.as_str()).unwrap_or(""),
+                    v.get("finding")
+                        .and_then(|f| f.as_str())
+                        .map(|f| format!(" (finding: {f})"))
+                        .unwrap_or_default(),
+                ));
+            }
+        }
+        if !lines.is_empty() {
+            never.push_str(
+                "ALREADY TRIED AND NOT FIXED (do not retry the same approach — try a different one):\n",
+            );
+            never.push_str(&lines);
+        }
+    }
+    let mut outside: std::collections::BTreeSet<String> = Default::default();
+    for (id, t) in &ordered_tasks {
+        for p in t
+            .pointer("/fs_delta/outside_manifest")
+            .and_then(|x| x.as_array())
+            .unwrap_or(&Vec::new())
+        {
+            if let Some(s) = p.as_str() {
+                outside.insert(format!("{s} (written during `{id}`)"));
+            }
+        }
+    }
+    if !outside.is_empty() {
+        never.push_str("FILES OUTSIDE THE PLAN — they exist on disk but NO task owns them:\n");
+        for o in &outside {
+            never.push_str(&format!("  - {o}\n"));
+        }
+    }
+
+    let mut mid = String::new();
+    {
+        // The test table: every test file the ledger knows, its owning lane, how often that
+        // lane ran pytest, and the lane's last recorded outcome — the state the r2 sink paid
+        // 3 whole-suite re-runs to learn.
+        let mut table = String::new();
+        for (id, t) in &ordered_tasks {
+            let owned: Vec<&str> = t
+                .get("owned_files")
+                .and_then(|o| o.as_array())
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|f| f.get("path").and_then(|p| p.as_str()))
+                        .collect()
+                })
+                .unwrap_or_default();
+            let test_files: Vec<&str> = owned
+                .iter()
+                .copied()
+                .filter(|f| {
+                    let base = f.rsplit('/').next().unwrap_or(f);
+                    base.starts_with("test_") || base.ends_with("_test.py")
+                })
+                .collect();
+            if test_files.is_empty() {
+                continue;
+            }
+            let runs = t
+                .pointer("/commands/test/count")
+                .and_then(|c| c.as_u64())
+                .unwrap_or(0);
+            let outcome = t
+                .pointer("/last_pytest_filewide/summary/raw")
+                .and_then(|r| r.as_str())
+                .or_else(|| {
+                    t.pointer("/last_pytest/summary/raw")
+                        .and_then(|r| r.as_str())
+                })
+                .map(|r| format!("last: {r}"))
+                .unwrap_or_else(|| "never run by its lane".to_string());
+            table.push_str(&format!(
+                "  - {} — lane `{id}`: pytest ran {runs}x, {outcome}\n",
+                test_files.join(" + "),
+            ));
+        }
+        if !table.is_empty() {
+            mid.push_str("TEST TABLE — this IS the suite's state:\n");
+            mid.push_str(&table);
+        }
+        if let Some(c) = collect_only {
+            mid.push_str(&format!(
+                "  `pytest --collect-only` has ALREADY been run; it FAILS at import:\n    {}\n",
+                c.trim().replace('\n', "\n    ")
+            ));
+        }
+        // §II.3 — the don't-repeat facts as INPUT, never a block: no tool is blocked, no retry
+        // refused; the model is handed the table instead of paying ~79 s a turn to re-derive it.
+        let total_runs: u64 = tasks
+            .values()
+            .filter_map(|t| t.pointer("/commands/test/count").and_then(|c| c.as_u64()))
+            .sum();
+        let lanes = tasks
+            .values()
+            .filter(|t| {
+                t.pointer("/commands/test/count")
+                    .and_then(|c| c.as_u64())
+                    .unwrap_or(0)
+                    > 0
+            })
+            .count();
+        if total_runs > 0 {
+            let last = rollup
+                .pointer("/last_full_suite/summary/raw")
+                .and_then(|r| r.as_str())
+                .map(|r| format!(" Last full run: {r} — the failing names are in the table above."))
+                .unwrap_or_default();
+            mid.push_str(&format!(
+                "DO NOT RE-DERIVE: pytest already ran {total_runs} time(s) across {lanes} lane(s) \
+                 before this dispatch.{last} Do not re-run the whole suite to learn its state; run \
+                 a single test only after an edit that targets its failure.\n"
+            ));
+        }
+        // The last failure per command class, dependencies first — the error text the next
+        // action should start from instead of reproducing it.
+        let mut fails = String::new();
+        for (id, t) in &ordered_tasks {
+            for (class, c) in t
+                .get("commands")
+                .and_then(|c| c.as_object())
+                .unwrap_or(&serde_json::Map::new())
+            {
+                let tail = c
+                    .get("last_failure_tail")
+                    .and_then(|x| x.as_str())
+                    .unwrap_or("");
+                if !tail.is_empty() {
+                    fails.push_str(&format!("  - `{id}` {class}: {tail}\n"));
+                }
+            }
+        }
+        if !fails.is_empty() {
+            mid.push_str("LAST FAILURE per lane and command class (start from this error text):\n");
+            mid.push_str(&fails);
+        }
+    }
+
+    // Droppables, least-durable last per the §II.2 drop order (judge_established would sit
+    // first here once captured; today the ledger holds none). Dropped whole on overflow —
+    // never a defect, a gate finding, or a NOT FIXED verdict.
+    let ok_classes = {
+        let mut s = String::new();
+        for (id, t) in &ordered_tasks {
+            let classes: Vec<String> = t
+                .get("commands")
+                .and_then(|c| c.as_object())
+                .unwrap_or(&serde_json::Map::new())
+                .iter()
+                .filter(|(_, c)| {
+                    c.get("last_failure_tail")
+                        .and_then(|x| x.as_str())
+                        .unwrap_or("")
+                        .is_empty()
+                })
+                .map(|(class, c)| {
+                    format!(
+                        "{class} {}x",
+                        c.get("count").and_then(|x| x.as_u64()).unwrap_or(0)
+                    )
+                })
+                .collect();
+            if !classes.is_empty() {
+                s.push_str(&format!("  - `{id}` ran clean: {}\n", classes.join(", ")));
+            }
+        }
+        if s.is_empty() {
+            s
+        } else {
+            format!("COMMANDS THAT RAN CLEAN (no need to repeat them):\n{s}")
+        }
+    };
+    let final_texts = {
+        let mut s = String::new();
+        for (id, t) in &ordered_tasks {
+            if *id == task_id {
+                continue;
+            }
+            let text = t
+                .get("final_text")
+                .and_then(|x| x.as_str())
+                .unwrap_or("")
+                .trim();
+            if !text.is_empty() {
+                s.push_str(&format!("  - `{id}` said: {}\n", tail_chars(text, 200)));
+            }
+        }
+        if s.is_empty() {
+            s
+        } else {
+            format!("WHAT EACH LANE SAID IT DELIVERED (self-reports — rank below the stats above):\n{s}")
+        }
+    };
+
+    let _ = all_files; // manifest facts arrive via fs_delta's outside_manifest, computed at write
+    let full = format!("{never}{mid}{ok_classes}{final_texts}");
+    if full.chars().count() <= budget {
+        return full;
+    }
+    // §II.2 drop order: (judge_established — none captured yet), then ok-only command
+    // classes, then final_text; a defect, gate finding or NOT FIXED verdict is never dropped.
+    let without_ok = format!("{never}{mid}{final_texts}");
+    if without_ok.chars().count() <= budget {
+        return without_ok;
+    }
+    let bare = format!("{never}{mid}");
+    if bare.chars().count() <= budget {
+        return bare;
+    }
+    truncate_block_at_line(&bare, budget)
 }
 
 /// F790-3: the operator questions waiting in `<root>/.swarm/questions/*.txt` that have no
