@@ -125,7 +125,9 @@ broken live HERE, and the rules files carry the detail for whoever does hit them
 
 1. **NO CAPS.** No wall clock, turn ceiling, retry count or volume limit may bound model work — local
    models are slow and that is expected. Terminators must be progress-based or live in the transport.
-   `effective_idle_budget()` returns uncapped for any input and is tested to.
+   Since II-7 (e1e32cdda) the guard is STRUCTURAL: `run_agent`/`run_agent_in` carry no time parameter
+   at all, so re-arming a cap means re-adding a parameter through every signature — never flipping a
+   number. (`effective_idle_budget()` and its test are deleted; do not reintroduce either.)
 2. **`"integrate-verify"` is an exact-equality string test in five live places**, and the join must own
    NO files — `scheduler.rs:2603` relaxes a dependent through an upstream failure only if it owns
    nothing, so a file-owning join is cascaded-Failed and the app never binds a port. Since `ee0cbfe73`
