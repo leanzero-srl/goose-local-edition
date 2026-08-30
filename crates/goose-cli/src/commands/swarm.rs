@@ -5144,6 +5144,55 @@ mod tests {
         );
     }
 
+    /// II-11b (engine half): the forming fold keeps the honest "name + since" shape and nothing
+    /// else — Complete removes its row, and an empty map means the file is REMOVED, never
+    /// written empty (an empty forming file would read as a live amber row in the panel join).
+    #[test]
+    fn a_forming_open_frame_renders_and_its_completion_clears() {
+        use goose_provider_types::formats::openai::ToolFormingEvent;
+        let mut live = std::collections::BTreeMap::new();
+        fold_forming_event(
+            &mut live,
+            ToolFormingEvent::Forming {
+                id: "call_1".into(),
+                name: "write_file".into(),
+                since: std::time::Instant::now(),
+            },
+        );
+        fold_forming_event(
+            &mut live,
+            ToolFormingEvent::Forming {
+                id: "call_2".into(),
+                name: "shell".into(),
+                since: std::time::Instant::now(),
+            },
+        );
+        let body = render_forming_file(&live).expect("two forming rows render");
+        assert!(body.contains("write_file") && body.contains("shell") && body.contains("since_ms"));
+        assert!(
+            !body.contains("progress"),
+            "no fake byte progress — LM Studio buffers the whole argument body (measured II-11)"
+        );
+        fold_forming_event(
+            &mut live,
+            ToolFormingEvent::Complete {
+                id: "call_1".into(),
+            },
+        );
+        let body = render_forming_file(&live).unwrap();
+        assert!(!body.contains("write_file") && body.contains("shell"));
+        fold_forming_event(
+            &mut live,
+            ToolFormingEvent::Complete {
+                id: "call_2".into(),
+            },
+        );
+        assert!(
+            render_forming_file(&live).is_none(),
+            "empty means REMOVE the file, never write it empty"
+        );
+    }
+
     /// HANDOFF-1: the handoff instruction is ONE constant riding the ONE shared rules join —
     /// appended inside each kind's branch it would drift into N disagreeing copies (the defect
     /// class this repo keeps refinding). Grep-style, like the frozen-interfaces gate.
@@ -14564,6 +14613,53 @@ fn append_reasoning_transcript(
         Err(e) => Some(e.to_string()),
     };
     (texts.len(), err)
+}
+
+/// II-11b (engine half): fold one provider open-frame event into the live forming map. LM
+/// Studio buffers a tool call's ENTIRE argument body server-side (measured: 161-172s of stream
+/// silence after the open frame, then one terminal delta), so the only honest live signal is
+/// "tool NAME is forming since T" — never byte progress, which would sit at 0 and jump to 100.
+/// Pure over the map so the fold is unit-testable without a stream.
+fn fold_forming_event(
+    live: &mut std::collections::BTreeMap<String, serde_json::Value>,
+    ev: goose_provider_types::formats::openai::ToolFormingEvent,
+) {
+    use goose_provider_types::formats::openai::ToolFormingEvent;
+    match ev {
+        ToolFormingEvent::Forming { id, name, .. } => {
+            // The observer runs synchronously at decode time, so now() IS the open-frame wall
+            // time (the seam's contract); elapsed renders downstream from since_ms.
+            live.insert(
+                id.clone(),
+                serde_json::json!({
+                    "id": id,
+                    "name": name,
+                    "since_ms": std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map(|d| d.as_millis() as u64)
+                        .unwrap_or(0),
+                }),
+            );
+        }
+        ToolFormingEvent::Complete { id } => {
+            live.remove(&id);
+        }
+    }
+}
+
+/// The `<key>.forming.json` body, or None when nothing is forming (the file is then removed).
+/// Sits BESIDE the digest (`<key>.json`) on purpose — the digest is rewritten on a hot 400ms
+/// coalesce by a different code path, and the panel/tick JOIN the two by activity key: the
+/// digest's inflight rows plus this file's rows render as the amber "forming…" state (the UI
+/// half of II-11b reads exactly this shape).
+fn render_forming_file(
+    live: &std::collections::BTreeMap<String, serde_json::Value>,
+) -> Option<String> {
+    if live.is_empty() {
+        return None;
+    }
+    let rows: Vec<&serde_json::Value> = live.values().collect();
+    Some(serde_json::json!({ "forming": rows }).to_string())
 }
 
 /// A tool request whose result has not landed yet, keyed in the worker loop's `pending` map by the
@@ -34975,74 +35071,106 @@ impl GooseAgentDispatcher {
             "lever_on": force_write_tool(),
             "owns_files": req.owned_files.len(),
         }));
-        let outcome = self
-            .run_agent_in(
-                root.clone(),
-                &req.model_id,
-                system_prompt,
-                worker_user_text,
-                None,
-                max_turns,
-                &self.worker_extensions,
-                Some(&req.task_id),
-                // The scheduler's attempt counter, stamped into the digest as SAID provenance so the
-                // panel can say WHOSE text it is showing (attempt 0's error vs attempt 1's answer).
-                req.attempt,
-                // PRE-CLOSE THE THINKING BLOCK for a worker whose job is to WRITE A FILE.
+        // II-11b (engine half): the provider decoder publishes tool-call OPEN FRAMES through
+        // the TOOL_FORMING_OBSERVER task-local (openai.rs seam, 282305c34). The observer keeps
+        // `<key>.forming.json` beside the digest; scope-exit below is the clearing point of
+        // record, because Complete is NOT guaranteed — an errored, aborted or stall-killed
+        // stream never sends it. Cheap by contract: a map fold and one small file write per
+        // open frame/terminal delta, never per chunk.
+        let forming_path = root.join(".swarm").join("activity").join(format!(
+            "{}.forming.json",
+            activity_digest_key(&req.task_id)
+        ));
+        let observer: goose_provider_types::formats::openai::ToolFormingObserver = {
+            let path = forming_path.clone();
+            let live = std::sync::Mutex::new(
+                std::collections::BTreeMap::<String, serde_json::Value>::new(),
+            );
+            std::sync::Arc::new(move |ev| {
+                let mut g = live.lock().unwrap();
+                fold_forming_event(&mut g, ev);
+                match render_forming_file(&g) {
+                    Some(body) => {
+                        let _ = std::fs::write(&path, body);
+                    }
+                    None => {
+                        let _ = std::fs::remove_file(&path);
+                    }
+                }
+            })
+        };
+        let worker_call = self.run_agent_in(
+            root.clone(),
+            &req.model_id,
+            system_prompt,
+            worker_user_text,
+            None,
+            max_turns,
+            &self.worker_extensions,
+            Some(&req.task_id),
+            // The scheduler's attempt counter, stamped into the digest as SAID provenance so the
+            // panel can say WHOSE text it is showing (attempt 0's error vs attempt 1's answer).
+            req.attempt,
+            // PRE-CLOSE THE THINKING BLOCK for a worker whose job is to WRITE A FILE.
+            //
+            // The template's generation prompt ends with a literal open `<think>\n`, so generation
+            // begins inside an unclosed thinking block and the only exit is to write to `</think>`.
+            // MEASURED on a 22,187-char worker prompt: 47.3 s and 974 characters of prose with NO
+            // tool call by default, versus 3.1 s with the tool call as the FIRST token when the
+            // block is pre-closed. Test-authors are 93% of all failures and are observed at
+            // `tool_calls == 0` at every kill.
+            //
+            // Scoped to test-authors on purpose. A planner or scout SHOULD deliberate; this
+            // suppresses deliberation only where the deliverable is a file the worker is failing to
+            // start. OFF by default so the change is byte-identical until the lever is set.
+            if think_off_test_authors() && is_test_author {
+                Some("<think>\n\n</think>\n\n")
+            } else if force_write_armed && req.attempt > 0 {
+                // WRITE-FIRST ON THE RETRY, because tool_choice is INERT on this stack.
                 //
-                // The template's generation prompt ends with a literal open `<think>\n`, so generation
-                // begins inside an unclosed thinking block and the only exit is to write to `</think>`.
-                // MEASURED on a 22,187-char worker prompt: 47.3 s and 974 characters of prose with NO
-                // tool call by default, versus 3.1 s with the tool call as the FIRST token when the
-                // block is pre-closed. Test-authors are 93% of all failures and are observed at
-                // `tool_calls == 0` at every kill.
+                // MEASURED against the live server (qwen3.8 on LM Studio, temperature 0):
+                // `tool_choice:"required"` — the strongest form the endpoint accepts, and what
+                // this engine sends — returns HTTP 200 with ZERO tool calls, twice. The named
+                // form ({"type":"function",...}) is rejected outright with HTTP 400. So the
+                // force-write lever CANNOT compel this model to act; a worker that narrates
+                // instead of writing will narrate again on every retry.
                 //
-                // Scoped to test-authors on purpose. A planner or scout SHOULD deliberate; this
-                // suppresses deliberation only where the deliverable is a file the worker is failing to
-                // start. OFF by default so the change is byte-identical until the lever is set.
-                if think_off_test_authors() && is_test_author {
-                    Some("<think>\n\n</think>\n\n")
-                } else if force_write_armed && req.attempt > 0 {
-                    // WRITE-FIRST ON THE RETRY, because tool_choice is INERT on this stack.
-                    //
-                    // MEASURED against the live server (qwen3.8 on LM Studio, temperature 0):
-                    // `tool_choice:"required"` — the strongest form the endpoint accepts, and what
-                    // this engine sends — returns HTTP 200 with ZERO tool calls, twice. The named
-                    // form ({"type":"function",...}) is rejected outright with HTTP 400. So the
-                    // force-write lever CANNOT compel this model to act; a worker that narrates
-                    // instead of writing will narrate again on every retry.
-                    //
-                    // The prefill IS honored (it is template text, not a server feature): closing
-                    // the thinking block before generation starts turns a 47s/974-char no-tool-call
-                    // turn into a tool call as the FIRST token. Applied ONLY from the second attempt
-                    // of a task whose owned files are still missing — the first attempt keeps the
-                    // deep deliberation that is this model's strength, and only a demonstrated
-                    // narrate-without-acting failure buys the constraint.
-                    Some("<think>\n\n</think>\n\n")
-                } else {
-                    None
-                },
-                // FORCE THE WRITE TOOL WHILE THE DELIVERABLE IS STILL MISSING.
-                //
-                // Only when this worker OWNS files and NONE of them exists on disk yet. That is exactly
-                // the state the engine re-dispatches with "You finished WITHOUT writing your owned
-                // file(s)", and it is a fact about the filesystem, not a guess about the model. The
-                // format layer drops the constraint the moment the conversation carries a tool call, so
-                // a worker is never trapped in a forced-call loop and the rest of its session is
-                // unchanged. A worker that owns nothing (the sink, a read-only verify shard) is never
-                // forced — its job may legitimately end in prose.
-                force_write_armed.then_some("write"),
-                None,
-                // K5: exactly one owned file -> core repairs a write/edit call whose `path` the
-                // weak model omitted, instead of the tool erroring and burning a turn.
-                (req.owned_files.len() == 1).then(|| req.owned_files[0].clone()),
-                false,
-                // A WORKER PASSES NO `response`, so `wants_structured_reply` is false and the terminator
-                // is unreachable here whatever this says. False states the intent rather than relying on
-                // that: the scheduler owns a worker's fate, through retry and salvage, not this helper.
-                false,
-            )
+                // The prefill IS honored (it is template text, not a server feature): closing
+                // the thinking block before generation starts turns a 47s/974-char no-tool-call
+                // turn into a tool call as the FIRST token. Applied ONLY from the second attempt
+                // of a task whose owned files are still missing — the first attempt keeps the
+                // deep deliberation that is this model's strength, and only a demonstrated
+                // narrate-without-acting failure buys the constraint.
+                Some("<think>\n\n</think>\n\n")
+            } else {
+                None
+            },
+            // FORCE THE WRITE TOOL WHILE THE DELIVERABLE IS STILL MISSING.
+            //
+            // Only when this worker OWNS files and NONE of them exists on disk yet. That is exactly
+            // the state the engine re-dispatches with "You finished WITHOUT writing your owned
+            // file(s)", and it is a fact about the filesystem, not a guess about the model. The
+            // format layer drops the constraint the moment the conversation carries a tool call, so
+            // a worker is never trapped in a forced-call loop and the rest of its session is
+            // unchanged. A worker that owns nothing (the sink, a read-only verify shard) is never
+            // forced — its job may legitimately end in prose.
+            force_write_armed.then_some("write"),
+            None,
+            // K5: exactly one owned file -> core repairs a write/edit call whose `path` the
+            // weak model omitted, instead of the tool erroring and burning a turn.
+            (req.owned_files.len() == 1).then(|| req.owned_files[0].clone()),
+            false,
+            // A WORKER PASSES NO `response`, so `wants_structured_reply` is false and the terminator
+            // is unreachable here whatever this says. False states the intent rather than relying on
+            // that: the scheduler owns a worker's fate, through retry and salvage, not this helper.
+            false,
+        );
+        let outcome = goose_provider_types::formats::openai::TOOL_FORMING_OBSERVER
+            .scope(observer, worker_call)
             .await;
+        // Scope-exit clearing (the seam's mandatory rule): whatever the stream did — finished,
+        // erred, was cut mid-call — nothing is forming once the call has returned.
+        let _ = std::fs::remove_file(&forming_path);
         let secs = started.elapsed().as_secs_f64();
         // A SINK THAT WAS CUT OFF DID NOT VERIFY ANYTHING — SAY SO, LOUDLY.
         //
