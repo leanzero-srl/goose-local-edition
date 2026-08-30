@@ -53,11 +53,12 @@ mod imports;
 use imports::{attribute_import_gap_with_owner, tree_import_gaps, verify_tree_imports};
 mod pytest_tail;
 use pytest_tail::parse_pytest_summary;
+mod briefs;
 mod spec_sets;
 mod transcripts;
 use transcripts::{
     append_attempt_marker, append_calls_jsonl, append_calls_row, append_reasoning_transcript,
-    append_thinking_transcript,
+    append_thinking_transcript, read_calls_capture,
 };
 mod desk;
 use desk::{spawn_shadow_desk, RecurrenceMeter, RECURRENCE_MIN_SPAN};
@@ -31420,7 +31421,6 @@ async fn build_swarm_dispatcher(
     ))
 }
 
-#[allow(dead_code)]
 /// F883/E5: the files a per-file fix shard OWNS. A pytest failure attributes to its TEST file —
 /// the only path a `-q` summary names — but the defect is as often in the module under test,
 /// which a shard owning only the test cannot land: its worker either fixes the module in a
@@ -34182,19 +34182,11 @@ impl GooseAgentDispatcher {
                     .map(|f| format!("  {cwd}/{f}"))
                     .collect::<Vec<_>>()
                     .join("\n");
-                // Multi-file tasks fail by writing the first owned file, forgetting the rest, then
-                // claiming done — the completion guard retries but the worker repeats it. Call it out.
-                let multi_note = if req.owned_files.len() > 1 {
-                    format!(
-                        "\nYOU OWN {n} FILES — you MUST write EVERY one. The classic multi-file failure is \
-                         writing the first and forgetting the rest, then claiming done: this task is NOT \
-                         complete until ALL {n} paths above exist and are non-empty. Write them one after \
-                         another and verify each is on disk before you finish.",
-                        n = req.owned_files.len()
-                    )
-                } else {
-                    String::new()
-                };
+                // Multi-file tasks fail by writing the first owned file, forgetting the rest,
+                // then claiming done — call it out; softened for a REPAIR shard whose owned
+                // files all exist (its job is a targeted edit, and "MUST write EVERY one"
+                // pushed rewrites of two live files whose defect lives in one).
+                let multi_note = briefs::multi_file_note(&req.owned_files, repairing, &root);
                 // GOOSE_SWARM_SKELETON_FIRST (direction A — atomic writes): a multi-command ENTRY/wiring file
                 // makes the worker front-load ~5k tokens planning the whole file then dump it in one write,
                 // which trips the deterministic over_read kill (gated on !any_owned_written) and surfaces a
@@ -35109,15 +35101,17 @@ impl GooseAgentDispatcher {
         // you had written is still on disk") and on r2 that guess was false — ledger-core-tests'
         // attempt 0 wrote nothing, and attempt 1 opened on a lie, twice. The II-1 capture survives
         // the digest reseed precisely so this prompt can carry the facts instead: rendered from
-        // `<task>.calls.jsonl`, absent (None) when no earlier attempt left rows. Read from `root`,
-        // the same tree the capture writer used, so a speculative twin reads its own shadow.
+        // `<task>.calls.jsonl`, absent (None) when no earlier attempt left rows. Read from `root`
+        // first (a speculative twin reads its own shadow), then a FIX SHARD's real-tree mirror:
+        // a re-dispatched shard's shadow is a FRESH `copy_tree_excluding` that skips `.swarm`, so
+        // its root file is empty while the mirrored rows survive (`read_calls_capture`).
         let prev_attempt_block = if req.attempt > 0 {
-            std::fs::read_to_string(
-                root.join(".swarm")
-                    .join("activity")
-                    .join(format!("{}.calls.jsonl", activity_digest_key(&req.task_id))),
+            let name = format!("{}.calls.jsonl", activity_digest_key(&req.task_id));
+            read_calls_capture(
+                &root.join(".swarm").join("activity").join(&name),
+                self.fix_shard_mirror_dir(&req.task_id, &root)
+                    .map(|d| d.join(&name)),
             )
-            .ok()
             .and_then(|text| render_previous_attempt_block(&text, req.attempt))
         } else {
             None
@@ -39660,9 +39654,10 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                                     prior_hint: None,
                                     subsplit: Vec::new(),
                                     // Shadow-isolate: this shard runs rooted at its OWN cp -r shadow tree, so N
-                                    // concurrent fix agents can never write the real tree at once. On success
-                                    // ONLY this shard's owned file is promoted back — and the file-groups are a
-                                    // NORMALIZED disjoint partition, so no two promotes touch the same real dst.
+                                    // concurrent fix agents can never write the real tree at once. On success the
+                                    // promote copies back `owned_files` (winner + any pairing/runner-up since
+                                    // 6585f0845); disjointness comes from `resolve_shard_ownership`'s sequential
+                                    // claim pass above, not from the file-groups themselves.
                                     speculative: true,
                                     // A FIX worker must honour the user's choices too — a fix that re-introduces
                                     // `Decimal` after the user chose integer cents is still wrong.
