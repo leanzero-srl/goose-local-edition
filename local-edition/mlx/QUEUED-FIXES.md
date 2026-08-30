@@ -6,8 +6,10 @@ SCHEDULED requires a named condition, not a vague "later".
 
 | # | Item | Verdict | Condition / where |
 |---|---|---|---|
-| 1 | Rapid-MLX presence_penalty pass-through to SamplingParams (upstream issue #355) | SCHEDULED | Only if Rapid-MLX wins the bake-off → first fork patch, verified by repetitive-prompt A/B |
-| 2 | Hybrid prefix-cache tool-calling re-verification on CURRENT engine versions (omlx #825 / mlx-lm #980 class) | IMPLEMENT | Bake-off dimension D4 — in the bench harness, not a separate task |
-| 3 | Engine `/admin/status` endpoint (residency, context length, size) for swarm parity | SCHEDULED | After bake-off verdict → fork patch on the winner |
-| 4 | Load-with-TTL on the winner (oMLX has natively; Rapid-MLX needs it) | SCHEDULED | After bake-off verdict, only if Rapid-MLX wins |
-| 5 | Serving from an arbitrary `models_dir` (incl. `publisher/model` two-level layout) | IMPLEMENT | Verified per engine during bake-off setup; fork patch if either can't |
+| 1 | Rapid-MLX presence_penalty pass-through to SamplingParams (upstream issue #355) | DROP (2026-08-30) | Already shipped upstream — 0.13.1 has `--default-presence-penalty`/`--default-frequency-penalty`; per-request bite still gets the A/B check in the UI phase |
+| 2 | Hybrid prefix-cache tool-calling re-verification on CURRENT engine versions (omlx #825 / mlx-lm #980 class) | IMPLEMENTED (2026-08-30) | Bench `prefix_probe`; rapid-mlx 0.13.1: no footgun (hit fidelity 1.0, hit TTFT 0.63s vs cold 0.85s) |
+| 3 | Engine `/admin/status` endpoint (residency, context length, size) for swarm parity | SCHEDULED | After bake-off verdict → fork patch on the winner. Note: rapid-mlx `/v1/models` already returns context_window, parsers, hybrid flags — the gap may be residency-state only |
+| 4 | Load-with-TTL on the winner | DROP as fork patch (2026-08-30) | Both have it natively: oMLX per-model TTL; rapid-mlx `--resident-model-idle-ttl` |
+| 5 | Serving from an arbitrary `models_dir` (incl. `publisher/model` two-level layout) | IMPLEMENTED for rapid-mlx (2026-08-30) | Served `~/.goose/models/...` local path directly; oMLX `--model-dir` verified next |
+
+Ratio so far: 3 implemented/resolved : 2 dropped-with-reason : 1 scheduled-with-condition (#3).
