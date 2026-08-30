@@ -355,3 +355,10 @@ research_request_block's armed-no-claimed-sections arm wording.
   designed. Also closed a latent concurrent-claim race (two .js groups, one .html) by resolving
   ownership sequentially before the fan, and refuted my brief's round-1 premise honestly (httpapi.py
   is F3's own group; runner-up claim correctly refused until F3 lands). Charter gap: none.
+- 2026-08-30 23:00 fix-tracer (independent trace of 6585f0845): CLEAN+. Mechanical old-vs-new replay
+  validated against the run's dispatch events; checked the tree-state question the surgeon skipped
+  (best-tree vs live — sync.py's docstring hit moved lines but the profile held); downgraded fix 1's
+  YES to PARTIAL with the honest firing condition; found the omitted runner_ups[sync]=httpapi and the
+  F4-literal single-point-of-rescue. Pattern holds (4/4): self-traces honest in verdict, incomplete in
+  at least one detail. Residuals deliberately NOT implemented — r6's task_owns events are the
+  measurement that decides which of them is real.
