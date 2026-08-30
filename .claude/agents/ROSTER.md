@@ -100,6 +100,17 @@ and lever_check.py consume it; the ask event's twin field was confirmed dead 0/0
    — add one fixture each.
 
 ## Grading log (newest first — one line per delegation; move closed items to the per-agent notes)
+- 2026-08-30 swarm-surgeon #7 (10-item hardening batch, f2d75bebc..760fd8b32): CLEAN PASS — nine
+  commits each gated before the next; the panic-cascade fix went STRUCTURAL (Vec<Result> join +
+  DeviceReturn Drop guard + poison-recovery, all 5 fanout callers folded, the cascade pinned by
+  an executing test) and shipped as an honestly-labeled NET; the ask truncation was KILLED not
+  parameterized (dead lever doc'd for the desktop round-trip); the needle test builds its Err
+  from the shared const (the pin, not a copy); item-7 decision argued (emission rides the guard
+  that already owns every-exit-path). Traces: 1 NO/net, 2 YES at r5's real values, rest labeled
+  nets. Five unbriefed observations — DISPOSED: score_process r5 commentary -> bench-scorer next
+  pass; inert ask_max_q desktop lever -> panel #4 queue; discarded smoke-fix dispatcher error +
+  odd sink_max_turns opener -> fallback-hunter/works-prover next fan. RESEARCH FAN NOW DELIVERED
+  (both APPEARS properties closed). No charter gap.
 - 2026-08-30 swarm-surgeon #6 (research fan v2, 81cd50d38): PROVISIONAL CLEAN, delivery pending
   the prover pass (the checking law) — all 8 amendments accounted for with anchors; hit the
   fallback ratchet with 2 new unwrap_or_defaults and removed them STRUCTURALLY rather than
