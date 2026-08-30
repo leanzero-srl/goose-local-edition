@@ -971,10 +971,14 @@ struct State {
     /// full task restart (measured 4-25 min) and converges on nothing the deterministic
     /// backstops would not handle better.
     kill_tree_hash: HashMap<TaskId, u64>,
-    /// Owned-file fingerprint as of this task's previous REAL failure (not a judge restart, not a
-    /// transport drop). A failure that leaves the tree exactly as the last one did is a failure that
-    /// retrying will reproduce, and that is what ends the retries — rather than a count of three.
-    retry_tree_hash: HashMap<TaskId, u64>,
+    /// Owned-file fingerprints of EVERY previous REAL failure of this task (not a judge restart,
+    /// not a transport drop). A failure that leaves the tree exactly as ANY earlier failure did is
+    /// a failure retrying will reproduce, and that is what ends the retries — rather than a count.
+    /// A SET, not the last value (finding 7): A-3's avoid_device alternates devices, and two
+    /// per-device-deterministic outputs A/B/A/B each differ from the IMMEDIATELY previous one, so
+    /// a last-value compare never fired and the ping-pong retried forever with zero progress.
+    /// Membership in the whole history is still purely progress-based — no count, no clock.
+    retry_tree_hash: HashMap<TaskId, std::collections::HashSet<u64>>,
     /// `owned_files_findings` count as of this task's previous CONTENT failure — the other half of
     /// the retry terminator (the SHRANK rule, §9 row 7). Written ONLY on content failures, so a
     /// transport drop or judge kill between attempts can neither add a comparison nor reset the
@@ -1827,8 +1831,9 @@ impl State {
                         real_failures >= 2
                     } else {
                         let fp = owned_files_fingerprint(&files);
-                        let unchanged = self.retry_tree_hash.get(tid) == Some(&fp);
-                        self.retry_tree_hash.insert(tid.to_string(), fp);
+                        let seen = self.retry_tree_hash.entry(tid.to_string()).or_default();
+                        let unchanged = seen.contains(&fp);
+                        seen.insert(fp);
                         if is_content {
                             let curr = owned_files_findings(&files).len();
                             let prev = self.retry_finding_counts.insert(tid.to_string(), curr);
