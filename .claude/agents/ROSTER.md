@@ -342,3 +342,9 @@ research_request_block's armed-no-claimed-sections arm wording.
   first test helper and it correctly chose a commented unwrap — absent must panic, not impersonate
   empty. Unbriefed find: primary .calls.jsonl still best-effort-silent (GEN-6a class) — folded into the
   next surgeon brief same-turn per implement-don't-backlog. Charter gap: none.
+- 2026-08-30 22:15 fix-tracer (independent trace of fce592811): CLEAN+. Byte-exact replay of the
+  attempt marker against the rescued log, adversarial sweep classifying all ten fs-write sites,
+  non-fix-lane arming checked, and the redispatch-starts-blind residual — the read half of the
+  mirror the write-half fix could not see. Two factual slips in the surgeon's self-trace caught
+  (tool-row count, omitted drifting verdict). The pattern holds: every self-trace so far has been
+  honest in verdict and wrong in at least one detail — the independent read is earning its cost.
