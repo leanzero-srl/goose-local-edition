@@ -34,6 +34,30 @@ The trained urges the gates refuse — silent fallbacks, generic task text, head
 killpg reaps, seconds-caps — RETURN after a compaction. AGENTS.md `## GATES` is the short form;
 `cargo test -p goose-swarm --test development_gates` is what refuses. Do not relitigate a gate.
 
+## The agent roster — divide the work, brief minimally, synthesize carefully
+
+`.claude/agents/` holds eight focused agents. Each body carries the distilled authoritative rules
+for its surface INLINE — the detail path-scoped rules cannot deliver to a grep+sed workflow — so a
+delegated task arrives sharp instead of inheriting a monolith. The orchestrator (you, the main
+session) decomposes, hands each agent ONLY the context its brief needs (exact anchors, the specific
+claim, the one run dir), and synthesizes the returns with care; workers never receive your whole
+thread.
+
+| agent | use for |
+|---|---|
+| `swarm-surgeon` | any edit in `swarm.rs` (six invariants + gates + surgical discipline inline) |
+| `scheduler-surgeon` | edits in `crates/goose-swarm/` (one-door splice, sink, retry rules) |
+| `panel-surgeon` | desktop swarm UI (the one digest join, truth-layer rules, design bans) |
+| `bench-scorer` | scoring + harness/instrument edits (hermetic law, five wrong-number mechanisms) |
+| `words-reader` | gate 7's independent reader: quotes and diagnoses model output from primary logs |
+| `fix-tracer` | gate 8's independent tracer: walks a run's real values through a change |
+| `fallback-hunter` | finds silent substitutions, designs the loud alternative per the fallback gate |
+| `gate-auditor` | audits deterministic checks for theater: keep the refusers, kill the superficial |
+
+The last five are read-only by charter — they report, the orchestrator decides. A kill or a shipped
+fix needs the matching reader's independent verdict (gates 7/8); a third-party finding needs the
+refuter pattern before implementation.
+
 ## Working in this repo without drowning in it
 
 The files here are large enough that naive reading is the main cause of lost work. Measured:
