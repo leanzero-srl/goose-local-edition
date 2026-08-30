@@ -28,11 +28,13 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::process::Command as ProcCommand;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
-use super::swarm_engine::{default_engine, probe_lms_http, resolve_lms, SwarmEngine};
+use super::swarm_engine::{
+    all_resident_unservable_per_engine, default_engine, drop_unservable_devices_per_engine,
+    require_servable, served_by_engine, EngineKind, Engines,
+};
 mod judge_context;
 use judge_context::{is_intentional_empty_marker, judge_delivery_block, verify_owned_files};
 mod decisions;
@@ -208,6 +210,11 @@ pub struct SwarmDevice {
     /// can never empty the build fleet.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub supervision: Option<bool>,
+    /// Which LOCAL engine hosts this device's model. None = LM Studio (the default — every
+    /// existing config deserializes and re-serializes byte-identical). "mlx-sidecar" = a step-C
+    /// MLX sidecar engine. Cloud devices (provider set) never consult this.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub engine: Option<EngineKind>,
 }
 
 impl SwarmDevice {
@@ -1165,6 +1172,7 @@ impl Default for SwarmConfig {
                     provider: None,
                     speed_weight: None,
                     supervision: None,
+                    engine: None,
                 },
                 SwarmDevice {
                     id: "macbook".to_string(),
@@ -1176,6 +1184,7 @@ impl Default for SwarmConfig {
                     provider: None,
                     speed_weight: None,
                     supervision: None,
+                    engine: None,
                 },
             ],
             worker_max_turns: default_worker_max_turns(),
@@ -2177,6 +2186,7 @@ async fn handle_cloud(def: &'static CloudDef, cmd: Option<CloudCommand>) -> Resu
                 provider: Some(name.to_string()),
                 speed_weight: None,
                 supervision: None,
+                engine: None,
             });
             save_config(&cfg)?;
             println!(
@@ -2529,6 +2539,7 @@ fn pool_menu() -> Result<()> {
                     provider: None,
                     speed_weight: None,
                     supervision: None,
+                    engine: None,
                 });
             }
             "weight" => {
@@ -2684,7 +2695,7 @@ fn pool_menu() -> Result<()> {
                 }
             }
             "probe" => default_engine().probe_report(),
-            "import" => match probe_lms_processes() {
+            "import" => match default_engine().resident_processes() {
                 Ok(procs) if !procs.is_empty() => {
                     let summary = import_processes(&mut cfg, &procs, 1, true);
                     print_import_summary(&summary);
@@ -2731,7 +2742,7 @@ fn pool_op(pc: PoolCommand) -> Result<()> {
             return Ok(());
         }
         PoolCommand::Import { weight, disabled } => {
-            let procs = probe_lms_processes()?;
+            let procs = default_engine().resident_processes()?;
             let summary = import_processes(&mut cfg, &procs, weight, !disabled);
             print_import_summary(&summary);
         }
@@ -2752,6 +2763,7 @@ fn pool_op(pc: PoolCommand) -> Result<()> {
                 provider: None,
                 speed_weight: None,
                 supervision: None,
+                engine: None,
             });
         }
         PoolCommand::Rm { id } => cfg.devices.retain(|d| d.id != id),
@@ -2776,21 +2788,6 @@ fn pool_op(pc: PoolCommand) -> Result<()> {
     Ok(())
 }
 
-/// Node/device name from an LM Link model id: the prefix before the first '-' (mihai-, workhorse-, gabee-).
-pub(super) fn device_from_lms_id(id: &str) -> Option<String> {
-    // NODE-FIRST: the fleet's per-host aliases put the node at the START of the id, and since the
-    // qwen3.8 roll-over they carry the publisher inside them (`mihai-qwen/qwen3.8-27b`) — stripping
-    // the namespace first collapsed all three nodes to "qwen3.8". Only when the first segment has
-    // no dash at all (`qwen/qwen3.8-27b`, a shared alias) fall back to the post-slash segment.
-    let first = id.split('/').next().unwrap_or(id);
-    let seg = if first.contains('-') {
-        first
-    } else {
-        id.rsplit('/').next().unwrap_or(id)
-    };
-    seg.split_once('-').map(|(prefix, _)| prefix.to_string())
-}
-
 /// Drop devices the endpoint will not serve, so a dead node cannot silently eat a third of the run.
 ///
 /// THE FAILURE THIS PREVENTS, measured end-to-end on a 71-minute run that produced nothing:
@@ -2806,7 +2803,7 @@ pub(super) fn device_from_lms_id(id: &str) -> Option<String> {
 /// NEVER EMPTIES THE POOL. If every device would be dropped, the probe disagrees with `lms ps` about
 /// literally everything, and the likeliest explanation is a broken probe — not a fleet that is 100% dead.
 /// Keep the pool, report nothing dropped, and let the run proceed as it did before this function existed.
-fn drop_unservable_devices(
+pub(super) fn drop_unservable_devices(
     devices: Vec<SwarmDevice>,
     served: Option<&std::collections::HashSet<String>>,
 ) -> (Vec<SwarmDevice>, Vec<(String, String)>) {
@@ -2823,17 +2820,6 @@ fn drop_unservable_devices(
     (keep, dropped)
 }
 
-/// The no-start guard (#128) is ON unless explicitly killed. It only ever ADDS a refusal on a PROVEN negative,
-/// so the safe direction is on; the kill-switch exists so a misfiring probe can be worked around without a
-/// rebuild. Env only (not a persisted config field) on purpose: a safety guard should not be silently disabled
-/// by a stale serialized config, and a bare-bool `#[serde(default)]` would deserialize to false = off.
-fn require_servable() -> bool {
-    match std::env::var("GOOSE_SWARM_REQUIRE_SERVABLE") {
-        Ok(v) => !matches!(v.trim(), "0" | "false" | "off" | "no"),
-        Err(_) => true,
-    }
-}
-
 /// PROVEN-zero-servable: refuse ONLY when the `/v1/models` catalog demonstrably WORKS (it returned a non-empty
 /// list — a positive control on the SAME endpoint) yet lists NONE of the resident pool's models. That is a
 /// negative PROVEN on the same object, not an observed-empty: `endpoint_model_ids` collapses an empty/unreachable
@@ -2841,7 +2827,7 @@ fn require_servable() -> bool {
 /// withdrawn (the LM Link node dropped off the LAN) — the exact case where proceeding dispatches a third (or all)
 /// of the run into instant 400s and a dead run. It can NEVER authorize a bad dispatch — only stop one — so it is
 /// structurally incapable of the false-"there are models" mistake.
-fn all_resident_unservable(
+pub(super) fn all_resident_unservable(
     pool: &[SwarmDevice],
     served: Option<&std::collections::HashSet<String>>,
 ) -> bool {
@@ -2869,7 +2855,7 @@ pub struct LmsProcess {
 
 /// Parse `lms ps` output (a plain whitespace-aligned table). Splits data rows on runs of >=2 spaces
 /// (so "29.53 GB" stays one field) and reads DEVICE by its header column index. Errs if no header.
-fn parse_lms_ps(raw: &str) -> Result<Vec<LmsProcess>> {
+pub(super) fn parse_lms_ps(raw: &str) -> Result<Vec<LmsProcess>> {
     let ansi = regex::Regex::new(r"\x1b\[[0-9;]*m").unwrap();
     let gap = regex::Regex::new(r"\s{2,}").unwrap();
     let clean = ansi.replace_all(raw, "");
@@ -2907,22 +2893,6 @@ fn parse_lms_ps(raw: &str) -> Result<Vec<LmsProcess>> {
     Ok(out)
 }
 
-fn probe_lms_processes() -> Result<Vec<LmsProcess>> {
-    // Primary: the `lms` CLI (richest — carries DEVICE + PARALLEL). Resolve its real path since a
-    // Finder-launched app has no lms on PATH.
-    if let Ok(out) = ProcCommand::new(resolve_lms()).arg("ps").output() {
-        if out.status.success() {
-            if let Ok(procs) = parse_lms_ps(&String::from_utf8_lossy(&out.stdout)) {
-                if !procs.is_empty() {
-                    return Ok(procs);
-                }
-            }
-        }
-    }
-    // Fallback: the LM Studio HTTP server (no lms CLI needed). Empty if the server is unreachable too.
-    Ok(probe_lms_http())
-}
-
 fn short_model(identifier: &str) -> String {
     identifier
         .rsplit('/')
@@ -2938,8 +2908,13 @@ fn short_model(identifier: &str) -> String {
 /// (`lms ps`) so the swarm runs on what's actually loaded, not (possibly stale) configured model_ids.
 /// Returns (pool, planner_model). An empty pool means the fleet has nothing loaded (caller bootstraps
 /// or bails). Weights: explicit device override, else speed_weight, else LM Studio PARALLEL, else 1.
-fn reconcile_pool_with_fleet(cfg: &SwarmConfig) -> (Vec<SwarmDevice>, Option<String>) {
-    let procs = match probe_lms_processes() {
+fn reconcile_pool_with_fleet(
+    cfg: &SwarmConfig,
+    engines: &Engines,
+) -> (Vec<SwarmDevice>, Option<String>) {
+    // LM-Studio-only by construction: the pool is discovered FROM the LM Studio fleet. How
+    // sidecar devices join the reconciled pool is step C.
+    let procs = match engines.lmstudio().resident_processes() {
         Ok(p) => p,
         Err(_) => return (Vec::new(), None),
     };
@@ -3006,6 +2981,8 @@ fn reconcile_pool_with_fleet(cfg: &SwarmConfig) -> (Vec<SwarmDevice>, Option<Str
                 .iter()
                 .find(|d| d.model_id == p.identifier)
                 .and_then(|d| d.supervision),
+            // Discovered from the LM Studio fleet, so LM Studio by definition (None = LmStudio).
+            engine: None,
         })
         .collect();
     // Planner: keep the configured planner if it is resident; else pick the best resident model for the
@@ -3107,6 +3084,7 @@ fn import_processes(
             provider: None,
             speed_weight: None,
             supervision: None,
+            engine: None,
         };
         cfg.devices.push(dev.clone());
         summary.added.push(dev);
@@ -9585,6 +9563,7 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
             provider: None,
             speed_weight: None,
             supervision: None,
+            engine: None,
         }
     }
 
@@ -13887,30 +13866,6 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
     }
 
     #[test]
-    fn device_from_lms_id_takes_node_prefix() {
-        assert_eq!(
-            device_from_lms_id("mihai-qwopus3.6-27b-coder-mlx").as_deref(),
-            Some("mihai")
-        );
-        assert_eq!(
-            device_from_lms_id("workhorse-qwopus3.6-27b-coder-mlx").as_deref(),
-            Some("workhorse")
-        );
-        // NODE-FIRST rule: a per-host alias keeps its node even with a publisher inside
-        assert_eq!(
-            device_from_lms_id("mihai-qwen/qwen3.8-27b").as_deref(),
-            Some("mihai")
-        );
-        // a shared publisher alias falls back to the post-slash segment's prefix
-        assert_eq!(
-            device_from_lms_id("qwen/qwen3.8-27b").as_deref(),
-            Some("qwen3.8")
-        );
-        // no dash -> no derivable device
-        assert_eq!(device_from_lms_id("solomodel").as_deref(), None);
-    }
-
-    #[test]
     fn import_adds_all_distinct_models() {
         let mut cfg = empty_cfg();
         let procs = parse_lms_ps(FIXTURE).unwrap();
@@ -13938,6 +13893,7 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
             provider: None,
             speed_weight: None,
             supervision: None,
+            engine: None,
         });
         let procs = vec![
             LmsProcess {
@@ -15289,8 +15245,9 @@ pub struct GooseAgentDispatcher {
     planner_model: String,
     /// Whether the swarm may `lms load` a model (gates the transient re-warm on dispatch errors).
     allow_model_load: bool,
-    /// The engine boundary the re-warm goes through (always LmStudioEngine today).
-    engine: Arc<dyn SwarmEngine>,
+    /// The engine registry the re-warm and the live-fleet residency probe go through (LM Studio
+    /// plus registered sidecars; only LM Studio today).
+    engines: Arc<Engines>,
     /// Imposed sampling parameters applied to every model call (steadies weak local models).
     sampling: SamplingParams,
     /// APP PILLARS (GOOSE_SWARM_GOALS): a small set of distilled, app-level acceptance criteria (the
@@ -15471,7 +15428,7 @@ impl GooseAgentDispatcher {
         sampling: SamplingParams,
         stream_decode_retry: bool,
         repeat_break: bool,
-        engine: Arc<dyn SwarmEngine>,
+        engines: Arc<Engines>,
     ) -> Result<Self> {
         let provider = goose::providers::create("lmstudio", vec![]).await?;
         let session_root = std::env::temp_dir().join("goose-swarm-sessions");
@@ -15493,7 +15450,7 @@ impl GooseAgentDispatcher {
             worker_extensions,
             planner_model,
             allow_model_load,
-            engine,
+            engines,
             sampling,
             pillars: std::sync::OnceLock::new(),
             sink_tree_files: std::sync::OnceLock::new(),
@@ -22978,9 +22935,11 @@ async fn smoke_rust(root: &Path) -> SmokeResult {
 /// that would leave the fan with no slots at all. A fan running on a stale-but-working list is a small
 /// inefficiency; a fan running on an empty one is a dead phase, and the probe is the newer and less
 /// trustworthy of the two inputs.
-fn live_fleet_slots(devices: &[DeviceCfg]) -> Vec<String> {
+fn live_fleet_slots(devices: &[DeviceCfg], engines: &Engines) -> Vec<String> {
     let snapshot = fleet_slot_models(devices);
-    let Ok(procs) = probe_lms_processes() else {
+    // DeviceCfg carries no engine tag (a goose-swarm type), so residency here is the LM Studio
+    // probe with the cloud skip below — per-engine liveness for sidecar devices is step C.
+    let Ok(procs) = engines.lmstudio().resident_processes() else {
         return snapshot;
     };
     let resident: std::collections::HashSet<String> =
@@ -25747,7 +25706,7 @@ async fn run_linear_plan(
     cwd_for_ask: &std::path::Path,
     ask_wait_secs: u64,
 ) -> Result<(String, Dag, PlanConf)> {
-    let worker_models: Vec<String> = live_fleet_slots(devices);
+    let worker_models: Vec<String> = live_fleet_slots(devices, &dispatcher.engines);
 
     // ---- OPEN -------------------------------------------------------------------------------
     phase_banner(
@@ -31233,9 +31192,9 @@ struct DispatcherRecipe {
     sampling: SamplingParams,
     stream_decode_retry: bool,
     repeat_break: bool,
-    /// The engine boundary (always LmStudioEngine today) — carried by value like every other
-    /// constructor arg so a fix-round dispatcher rebuild shares the exact same engine object.
-    engine: Arc<dyn SwarmEngine>,
+    /// The engine registry (LM Studio + registered sidecars; only LM Studio today) — carried like
+    /// every other constructor arg so a fix-round dispatcher rebuild shares the same registry.
+    engines: Arc<Engines>,
 }
 
 async fn build_swarm_dispatcher(
@@ -31255,7 +31214,7 @@ async fn build_swarm_dispatcher(
             r.sampling,
             r.stream_decode_retry,
             r.repeat_break,
-            r.engine,
+            r.engines,
         )
         .await?,
     ))
@@ -35293,7 +35252,9 @@ impl GooseAgentDispatcher {
                         && !self.cloud_models.contains_key(&req.model_id)
                         && (s.contains("Model is unloaded") || s.contains("connection"))
                     {
-                        self.engine.ensure_loaded(&req.model_id, 1);
+                        // Local non-cloud models are LM Studio's today; a per-device engine route
+                        // needs the device (not just model_id) here — step C.
+                        self.engines.lmstudio().ensure_loaded(&req.model_id, 1);
                     }
                     Err(DispatchError::Transient(s))
                 } else {
@@ -36622,22 +36583,26 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
     // on PATH — e.g. a Finder-launched desktop app) targets the CONFIGURED endpoint, not just the default.
     std::env::set_var("LMSTUDIO_HOST", &cfg.endpoint);
     suppress_inherited_hints();
-    // The one engine boundary: constructed unconditionally as LmStudioEngine today, threaded through
-    // the run pipeline (servable probe, pre-warm, dispatcher re-warm) so a second engine has a seam.
-    let engine = default_engine();
+    // The engine registry: LM Studio globally (fronting the whole LM Link pool) plus zero-or-more
+    // sidecar engines — none registered today. Threaded through the run pipeline (servable probes,
+    // pre-warm, dispatcher re-warm) exactly where the single step-A engine object was.
+    let engines = Arc::new(Engines::new());
     // Auto-use what's loaded: the worker pool is derived from the models RESIDENT on the fleet
     // (`lms ps`), so the swarm runs on what's actually loaded — never spinning up the (possibly
     // stale) configured models over them. The configured pool is only a fallback for an empty fleet.
-    let (fleet_pool, fleet_planner) = reconcile_pool_with_fleet(&cfg);
+    let (fleet_pool, fleet_planner) = reconcile_pool_with_fleet(&cfg, &engines);
     // A model can be RESIDENT (`lms ps`) and yet UNSERVABLE (`/v1/models`), and the pool above is built from
-    // the resident list. Intersect them before anything is dispatched — see drop_unservable_devices.
-    let served = engine.servable_model_ids();
+    // the resident list. Intersect them before anything is dispatched — PER ENGINE: each device is judged
+    // only against its own engine's catalog, so a dead sidecar can never condemn LM Studio devices or vice
+    // versa. See drop_unservable_devices (the unchanged kernel) and its per-engine wrapper.
+    let served = served_by_engine(&engines, &fleet_pool);
     // #128 no-start guard: if the endpoint proves it can serve models (non-empty /v1/models) but NONE of them
     // are our resident pool's — every alias withdrawn — refuse now instead of dispatching the whole run into
     // ~2s-per-attempt 400s and a dead run. `drop_unservable_devices` never empties the pool (it assumes a broken
     // probe over a 100%-dead fleet), so in the all-unservable case `fleet_pool` still carries every resident and
-    // this check sees them. served==None (probe empty/unreachable) never trips this — see all_resident_unservable.
-    if require_servable() && all_resident_unservable(&fleet_pool, served.as_ref()) {
+    // this check sees them. A probe that cannot answer (None) never trips this — see all_resident_unservable —
+    // and the refusal now requires EVERY engine's partition proven, so one live engine keeps the run alive.
+    if require_servable() && all_resident_unservable_per_engine(&fleet_pool, &served) {
         let ids: Vec<&str> = fleet_pool.iter().map(|d| d.model_id.as_str()).collect();
         return Err(anyhow!(
             "The fleet at {} lists models but NONE of the loaded pool [{}] is servable — every LM Link alias \
@@ -36648,7 +36613,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             ids.join(", ")
         ));
     }
-    let (fleet_pool, unservable) = drop_unservable_devices(fleet_pool, served.as_ref());
+    let (fleet_pool, unservable) = drop_unservable_devices_per_engine(fleet_pool, &served);
     // F779 i3: filled inside the MAX_NODES cap arm when the lever is on; consumed after
     // Scheduler::new via with_supervision_devices (invisible to worker_count and every fleet_*
     // capture — those are BUILD-device counts by contract).
@@ -36660,7 +36625,9 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
         // The PLANNER is pinned separately, and a withdrawn planner model kills the run before a single task
         // is dispatched — every draft returns a 400 as *text*, so the planner "answers" with an error and the
         // engine plans from nothing. If the configured planner is not servable, fall back to a device that is.
-        if let Some(served) = served.as_ref() {
+        // The planner runs on the LM Studio engine today, so consult ITS servable set (absent
+        // entirely when the pool carried no LM Studio device — then nothing is proven, no fallback).
+        if let Some(served) = served.get(&EngineKind::LmStudio).and_then(|o| o.as_ref()) {
             if !served.contains(&cfg.planner_model) {
                 if let Some(alt) = fleet_pool.first() {
                     eprintln!(
@@ -37126,10 +37093,13 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             .iter()
             .any(|d| d.is_cloud() && d.model_id == cfg.planner_model)
         {
-            engine.ensure_loaded(&cfg.planner_model, 1);
+            // The planner is an LM Studio model today (a sidecar planner is step C).
+            engines.lmstudio().ensure_loaded(&cfg.planner_model, 1);
         }
         for d in enabled.iter().filter(|d| !d.is_cloud()) {
-            engine.ensure_loaded(&d.model_id, d.instances);
+            engines
+                .engine_for_device(d)
+                .ensure_loaded(&d.model_id, d.instances);
         }
     } else {
         eprintln!(
@@ -37254,7 +37224,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
         },
         stream_decode_retry: stream_decode_retry_enabled(cfg.stream_decode_retry),
         repeat_break: repeat_break_enabled(cfg.repeat_break),
-        engine: engine.clone(),
+        engines: engines.clone(),
     };
     let dispatcher = build_swarm_dispatcher(dispatcher_recipe.clone(), sink.clone()).await?;
 
@@ -38316,7 +38286,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
     //
     // `fleet_slots` is what the fan-outs get, because their permit count IS the list length.
     let fleet_models: Vec<String> = devices.iter().map(|d| d.model_id.clone()).collect();
-    let fleet_slots: Vec<String> = live_fleet_slots(&devices);
+    let fleet_slots: Vec<String> = live_fleet_slots(&devices, &engines);
     // Fleet size for the honest dispatch-occupancy metric (§1-#10): captured before the scheduler consumes
     // `devices`. Used only inside the GOOSE_SWARM_OCCUPANCY-gated block at run_finished.
     let fleet_size = devices.len();

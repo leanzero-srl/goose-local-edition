@@ -28,6 +28,12 @@ fn run_path_files() -> Vec<(String, String)> {
         "crates/goose-cli/src/commands/swarm.rs".to_string(),
         read("crates/goose-cli/src/commands/swarm.rs"),
     )];
+    // The engine boundary (SwarmEngine/Engines) lives beside swarm.rs, not under commands/swarm/,
+    // and is the same run path — scanned explicitly so the split cannot move code out of the set.
+    files.push((
+        "crates/goose-cli/src/commands/swarm_engine.rs".to_string(),
+        read("crates/goose-cli/src/commands/swarm_engine.rs"),
+    ));
     // The incremental-split law moves engine code into commands/swarm/<area>.rs siblings; those
     // modules are the SAME run path and must not leave the scanned set by moving.
     let split = root.join("crates/goose-cli/src/commands/swarm");
@@ -170,9 +176,13 @@ fn the_banned_integrate_template_only_shrinks() {
 /// `ensure_loaded`) moved verbatim to commands/swarm_engine.rs behind the `SwarmEngine` trait
 /// (-165), paying for the `Arc<dyn SwarmEngine>` threading through run_swarm, the
 /// DispatcherRecipe and GooseAgentDispatcher (+26) — the mechanical seam for a second engine.
+/// Tightened to 45,096: step B (multi-engine generalization) — `probe_lms_processes`,
+/// `require_servable` and `device_from_lms_id` (with its test) moved verbatim to
+/// commands/swarm_engine.rs, paying for `SwarmDevice.engine`, the `Engines` registry threading
+/// and the per-engine servable partition wiring in the same commit.
 #[test]
 fn swarm_rs_line_count_only_decreases() {
-    const SWARM_RS_LINE_BASELINE: usize = 45_126;
+    const SWARM_RS_LINE_BASELINE: usize = 45_096;
     let text = read("crates/goose-cli/src/commands/swarm.rs");
     let n = text.lines().count();
     assert!(
