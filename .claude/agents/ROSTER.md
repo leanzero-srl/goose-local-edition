@@ -87,7 +87,18 @@ it on mechanism. Mihai 14:35: "isn't build supposed to fan out?"
 
 ## Live queue (small items, fold into the next matching brief)
 
-SURGEON #9 (dispatch when #8 lands — swarm.rs): (1) HEADLINE, refuter-corrected: early skeleton
+SURGEON #9 (dispatch when #8 lands — swarm.rs): (0) DECISIONS-INTO-FAN, refuter-amended:
+timed-out/unanswered open decisions ride the fan (one structured call each, "answer strictly from
+the spec; where silent name the conventional choice and say so"); REWRITE the :27561 quarantine pin
+with the r5 receipt in the same commit; decisions get their OWN settled/still-open partition
+folded into EVERY brief incl. the decisions task's (which must QUOTE the settled choices verbatim);
+a NEW provenance header ("settled at plan time by research; the user did not answer; conventions,
+binding for consistency") — never USER_DECISIONS_HEADER; splice lands after fan.await before
+plan_slices_to_dag; append to DispatchRequest.user_decisions under the new header; repair backstop
+strips implementation→docs-only-task deps ONLY when every decision folded settled (loud
+plan_repaired action, gate-6 class); trigger on qa-absence per decision only (no benchmark-mode
+second door); fix the stale :27107 "harness answers instantly AS the human" comment; gate-8 trace
+on r5's real 5-decisions/2-guessed values, wall figures labeled estimates. (1) HEADLINE, refuter-corrected: early skeleton
 dispatch concurrent with REVIEW (G-3's pre-vetted revive form — skeleton files derive from
 spec_python_invocations, stable across review patches; the one-door repair arbitrates the rare
 patch collision; opens the fan near plan_loaded instead of +75m). (2) Delete the dead breakdown:
@@ -129,6 +140,14 @@ and lever_check.py consume it; the ask event's twin field was confirmed dead 0/0
    — add one fixture each.
 
 ## Grading log (newest first — one line per delegation; move closed items to the per-agent notes)
+- 2026-08-30 refuter #2 (decisions-into-fan): EXEMPLARY — dug the actual deletion reason out of
+  commit 0409beef5 (redundancy+race, not answer quality), found the in-code quarantine pin the
+  proposal would have silently breached (:27561 "open_decisions never enter the fan" — must be
+  rewritten with the r5 receipt in the same commit), corrected the fold mechanism (per-slice row
+  keying means decisions need their OWN partition + provenance header + a splice point that does
+  not exist), scoped the repair backstop to settled-only, corrected the numbers (5 decisions;
+  width 4 not 5-6; wall labeled estimate), and undersold-strengthened the case (D-questions are
+  convention-by-design). ADOPTED with all amendments into surgeon #9.
 - 2026-08-30 bench-scorer #2 (stale-narration sweep, 4645ff056 + loop-state 6decf25): CLEAN PASS —
   era-split every stale comment instead of deleting history (pre-cfcd32908 runs keep scoring
   truthfully, post-fix 1.0 documented as expected-not-flattery), REPLAY-verified mechanism_screen
