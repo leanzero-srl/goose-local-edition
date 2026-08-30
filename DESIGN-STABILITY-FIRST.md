@@ -465,6 +465,13 @@ provenance only — never an input to rendering or order.
 
 ## II.5 Desktop: the forming line and the SAID pane
 
+**MEASURED 2026-08-30 07:45 (3 runs, raw SSE, mihai node):** LM Studio BUFFERS tool arguments — the whole
+argument body arrives in ONE terminal delta after 161–172 s of stream silence; the OPEN FRAME (tool name,
+empty args) arrives at ~5.5 s; reasoning streams normally (p50 66 ms). Verdict: byte-progress forming is
+IMPOSSIBLE on this stack and will not be faked; the buildable, honest form is open-frame keyed —
+"<tool> — forming… (Ns elapsed)" — which alone names r2's 40-min blind spot. II-11b implements exactly
+that and nothing more. Full numbers: scratchpad/ii11-lmstudio-arg-streaming.md.
+
 FORMING LINE (owner ask #1). Cheapest real signal: the OpenAI-compatible decoder buffers tool-call args in a local String
 and yields nothing until finish_reason (openai.rs:1121-1200, accumulation :1169) — a 12,930-char write was invisible 312 s
 while the judge burned three looks on "unchanged". Seam: a `tokio::task_local!` observer in goose-provider-types (report at
