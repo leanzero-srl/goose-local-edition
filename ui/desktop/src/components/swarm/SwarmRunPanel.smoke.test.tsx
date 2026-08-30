@@ -149,9 +149,11 @@ describe('SwarmRunPanel — the named-zone view actually renders', () => {
   it('renders the rewritten pipeline: the ribbon phase, the slice fan, the proxy answer, and the known bugs', async () => {
     const { findByText, findByTestId, container } = render(<SwarmRunPanel workingDir="/tmp/build" />);
 
-    // The RIBBON draws every phase the engine announces, in engine order, and lights the one it is actually
-    // in — read from the events, never from a label. The newest lifecycle event here is defects_rated, so
-    // it is Repair.
+    // The RIBBON draws every phase the run gives evidence of, in engine order, and lights the one it is
+    // actually in — read from the events, never from a label. The newest lifecycle event here is
+    // defects_rated, so it is Repair. This fixture EMITTED a research phase (an archived shape), so
+    // Research renders as history; it never emitted contracts, and the retired stage must not be
+    // offered — the engine can no longer reach it (P1-4).
     const ribbon = await findByTestId('formation-ribbon');
     expect(ribbon).toHaveAttribute('data-active-phase', 'repair');
     const steps = [
@@ -160,7 +162,6 @@ describe('SwarmRunPanel — the named-zone view actually renders', () => {
       'Research',
       'Synthesize',
       'Review',
-      'Contracts',
       'Build',
       'Integrate',
       'Repair',
@@ -170,8 +171,9 @@ describe('SwarmRunPanel — the named-zone view actually renders', () => {
     const positions = steps.map((step) => text.indexOf(step));
     expect(positions.every((at) => at >= 0)).toBe(true);
     expect([...positions].sort((a, b) => a - b)).toEqual(positions);
-    // The deleted Plan stage must not reappear as a ribbon step.
+    // The deleted Plan stage must not reappear as a ribbon step, and neither may the retired Contracts.
     expect(text).not.toContain('Plan ');
+    expect(text).not.toContain('Contracts');
 
     // KNOWN ACTIVE BUGS: green does not mean flawless, and the imperfections have their own surface.
     await findByText('Known active bugs');

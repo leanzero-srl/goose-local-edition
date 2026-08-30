@@ -5,13 +5,13 @@ import {
   CHIP_RADIUS,
   EYEBROW_CLASS,
   FORMATION_INK,
-  FORMATION_PHASES,
   FORMATION_RAMP,
   SWARM_STATUS,
   type FormationEvidence,
   type RunPhase,
   formationPhaseIndex,
   formationPhaseState,
+  formationPhasesFor,
 } from './formationVisualState';
 
 export type FormationRibbonNode = {
@@ -19,9 +19,6 @@ export type FormationRibbonNode = {
   working: boolean;
 };
 
-/** One column per engine phase. Tailwind's `grid-cols-N` is a static class, so it silently stayed at eight
- *  when the ribbon's phase list grew; deriving the template from the list is what keeps them equal. */
-const PHASE_COLUMNS = `repeat(${FORMATION_PHASES.length}, minmax(0, 1fr))`;
 
 function shortDeviceName(device: string): string {
   return device.match(/^([^-]+)/)?.[1] ?? device;
@@ -45,7 +42,13 @@ export function FormationRibbon({
   metrics?: React.ReactNode;
   evidence?: FormationEvidence;
 }) {
-  const activeIndex = formationPhaseIndex(phase);
+  // The steps are THIS run's: the live pipeline plus any retired phase (research/contracts — deleted
+  // from the engine) that the run's own events prove it ran. An archived run keeps its historical
+  // chips; a new run is never offered a stage the engine cannot reach. One column per step —
+  // Tailwind's `grid-cols-N` is a static class, so the template is derived from the list.
+  const steps = formationPhasesFor(evidence);
+  const phaseColumns = `repeat(${steps.length}, minmax(0, 1fr))`;
+  const activeIndex = formationPhaseIndex(phase, steps);
 
   return (
     <div
@@ -60,11 +63,11 @@ export function FormationRibbon({
         </div>
         <ol
           className="grid gap-1"
-          style={{ gridTemplateColumns: PHASE_COLUMNS }}
+          style={{ gridTemplateColumns: phaseColumns }}
           aria-label="Run phases"
         >
-          {FORMATION_PHASES.map((step, index) => {
-            const state = formationPhaseState(phase, index, evidence);
+          {steps.map((step, index) => {
+            const state = formationPhaseState(phase, index, evidence, steps);
             const color =
               state === 'active'
                 ? activeColor
@@ -103,10 +106,10 @@ export function FormationRibbon({
 
         <div
           className="mt-1 grid min-h-8 gap-1"
-          style={{ gridTemplateColumns: PHASE_COLUMNS }}
+          style={{ gridTemplateColumns: phaseColumns }}
           aria-label="Fleet formation"
         >
-          {FORMATION_PHASES.map((step, index) => (
+          {steps.map((step, index) => (
             <div
               key={step.key}
               className="flex min-w-0 items-center justify-center gap-1"

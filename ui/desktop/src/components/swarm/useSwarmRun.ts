@@ -429,12 +429,12 @@ export interface SwarmRunTotals {
 // a built task is 'unverified' (the worker's loop returned + passed a syntax gate; the app was NOT run), and
 // only Verify's complete_result.passed&&verified earns a green 'done'. Advisory items (LLM reviewers) are
 // info, never checks. See the phase-todo design workflow (2026-07-15).
-// The engine's pipeline, one key per phase it actually runs: OPEN (balanced semantic slices) -> ASK (the
-// opener's open decisions, answered by you or by goose) -> RESEARCH (one slice per node, each owner writes
-// that module's spec) -> SYNTHESIS (wire the slices into a task DAG) -> REVIEW (one round of structural
-// patches) -> CONTRACTS (signature-only module interfaces frozen across the fleet) -> BUILD -> INTEGRATE ->
-// REPAIR. Every phase the engine emits a `phase` event for is a key here. ASK used to be a row inside Open
-// and CONTRACTS a row inside Synthesize, so the checklist could never show either as the thing happening NOW.
+// The engine's pipeline, one key per phase it actually runs: OPEN (balanced semantic slices) -> ASK (only
+// when the opener names open decisions) -> SYNTHESIS (wire the slices into a task DAG) -> REVIEW (one round
+// of structural patches) -> BUILD -> INTEGRATE -> REPAIR. `research` and `contracts` are RETIRED keys:
+// P1-5 deleted the RESEARCH fan and P1-4 deleted CONTRACTS from the engine, but archived run.jsonl files
+// still carry their phase events, so the keys stay for the historical rows those runs render — a NEW run
+// must never be offered either as a pending stage (see RETIRED_PHASES in formationVisualState).
 export type PhaseKey =
   | 'open'
   | 'ask'
@@ -3456,7 +3456,7 @@ export function buildPhaseTodo(
   else if (openRan && (phasesSeen.has('research') || planned))
     ask.push(it('a-none', 'No open decisions — nothing to ask', 'skipped'));
 
-  // ---- RESEARCH ---- (one slice per node: answer its questions, then write that module's full spec)
+  // ---- RESEARCH ---- (RETIRED: deleted from the engine by P1-5 — historical rows for archived runs only)
   const legacyResearch = scoutsN != null || researchQ != null || researchDone != null;
   const research: PhaseTodoItem[] = [];
   if (briefChars.length > 0) {
@@ -3498,9 +3498,10 @@ export function buildPhaseTodo(
     if (researchDone != null)
       research.push(it('r-done', `Research finished — ${researchDone} findings returned`, 'done'));
     else research.push(it('r-legacy-run', 'Researching…', 'running'));
-  } else if (planned) {
-    research.push(it('r-skip', 'No research this run', 'skipped'));
   }
+  // No `planned -> skipped` placeholder any more: RESEARCH is deleted from the engine (P1-5), so a new
+  // run gets NO research row at all — an empty items list drops the chip. The branches above stay so an
+  // ARCHIVED run that ran research still renders its history.
 
   // ---- SYNTHESIS ---- (one node wires the researched slices into a task DAG; the specs splice in verbatim)
   const synthesis: PhaseTodoItem[] = [];
@@ -3579,16 +3580,17 @@ export function buildPhaseTodo(
   if (reviewRounds.length === 0 && phasesSeen.has('review') && !planLoaded)
     review.push(it('rv-run', 'Reading the request against the plan…', 'running'));
 
-  // ---- CONTRACTS ---- (every node freezes one module's signature-only interface before anything is built;
-  // the pillars distillation runs in the same pre-EXECUTE gap and has no phase event of its own)
+  // ---- CONTRACTS ---- (RETIRED: deleted from the engine by P1-4 — historical rows for archived runs only;
+  // the pillars distillation rode the same pre-EXECUTE gap and its row stays for the same reason)
   const contracts: PhaseTodoItem[] = [];
   if (contractsModules != null)
     contracts.push(it('c-frozen', `Frozen interfaces — ${contractsModules} modules`, 'done'));
   else if (phasesSeen.has('contracts'))
     contracts.push(it('c-run', 'Every node freezing one module’s interface…', 'running'));
-  // The engine emits no contracts phase when the plan owns no source files — the step was skipped, and
-  // the checklist says so instead of leaving the ribbon's "skipped" chip unexplained.
-  else if (planned) contracts.push(it('c-skip', 'No source modules to freeze', 'skipped'));
+  // No `planned -> skipped` placeholder any more: CONTRACTS is deleted from the engine (P1-4 — the
+  // 2,527-char contract that silently dropped meridian/viz/static was the causal origin of r2's
+  // GET / -> 404), so a new run gets NO contracts row — an empty items list drops the chip. The
+  // branches above stay so an ARCHIVED run that froze interfaces still renders its history.
   if (pillarsN != null)
     contracts.push(
       it(
@@ -3832,6 +3834,9 @@ export function buildPhaseTodo(
     },
   });
   // ENGINE ORDER — the list is read as a sequence, and it must carry every phase the engine announces.
+  // `research` and `contracts` stay in the sequence at their historical position: their items are empty
+  // unless the (archived) run actually emitted their events, and the PlanningZone drops empty phases, so
+  // a new run never shows either chip while an old run.jsonl renders exactly what it ran.
   const phases: PhaseTodo[] = [
     mk('open', 'Open', open),
     mk('ask', 'Ask', ask),

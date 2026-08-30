@@ -73,6 +73,24 @@ export const FORMATION_PHASES: ReadonlyArray<{ key: RunPhase; label: string; tip
 
 export type FormationPhaseState = 'complete' | 'active' | 'upcoming' | 'skipped';
 
+/** Phases DELETED from the engine (P1-5 removed the RESEARCH fan, P1-4 removed CONTRACTS). They are
+ *  retired, not erased: archived run.jsonl files still carry their `phase` events, so a run with
+ *  EVIDENCE of one renders it as a historical step — but a new run must not be offered a chip for a
+ *  stage the engine can no longer reach (it would sit permanently "skipped", claiming a route that
+ *  does not exist). */
+export const RETIRED_PHASES: ReadonlyArray<RunPhase> = ['research', 'contracts'];
+
+/** The steps the ribbon actually draws for THIS run: the live pipeline, plus any retired phase the
+ *  run's own events prove it ran. Evidence is set the moment a phase event is seen (foldRunPhase), so
+ *  an archived run mid-research still carries its step. */
+export function formationPhasesFor(
+  evidence?: FormationEvidence
+): ReadonlyArray<{ key: RunPhase; label: string; tip: string }> {
+  return FORMATION_PHASES.filter(
+    (step) => !RETIRED_PHASES.includes(step.key) || evidence?.[step.key] === true
+  );
+}
+
 /** Which phases the engine actually EMITTED. A phase behind the active one that was never observed reads
  *  'skipped' — the ribbon never back-fills a stage the run did not run (Integrate and Repair are both
  *  conditional, and a resumed run can start past Open). */
@@ -130,10 +148,15 @@ export const EYEBROW_CLASS = 'font-mono text-[10px] font-bold uppercase tracking
 export const CHIP_RADIUS = 6;
 export const PANEL_RADIUS = 8;
 
-/** Position of a phase in the pipeline, or -1 for "no phase" (before the first phase event, or held). */
-export function formationPhaseIndex(phase: RunPhase | null): number {
+/** Position of a phase in the pipeline, or -1 for "no phase" (before the first phase event, or held).
+ *  `steps` is the run's own list (formationPhasesFor) — indices are only meaningful against the list
+ *  being rendered, which no longer always equals FORMATION_PHASES. */
+export function formationPhaseIndex(
+  phase: RunPhase | null,
+  steps: ReadonlyArray<{ key: RunPhase }> = FORMATION_PHASES
+): number {
   if (!phase) return -1;
-  return FORMATION_PHASES.findIndex((step) => step.key === phase);
+  return steps.findIndex((step) => step.key === phase);
 }
 
 export function contrastRatio(foreground: string, background: string): number {
@@ -158,12 +181,13 @@ export function contrastRatio(foreground: string, background: string): number {
 export function formationPhaseState(
   phase: RunPhase | null,
   index: number,
-  evidence?: FormationEvidence
+  evidence?: FormationEvidence,
+  steps: ReadonlyArray<{ key: RunPhase }> = FORMATION_PHASES
 ): FormationPhaseState {
-  const active = formationPhaseIndex(phase);
+  const active = formationPhaseIndex(phase, steps);
   if (active < 0) return 'upcoming';
   if (index < active) {
-    return evidence && evidence[FORMATION_PHASES[index].key] !== true ? 'skipped' : 'complete';
+    return evidence && evidence[steps[index].key] !== true ? 'skipped' : 'complete';
   }
   if (index === active) return 'active';
   return 'upcoming';

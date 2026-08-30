@@ -6,12 +6,13 @@ import {
   contrastRatio,
   formationPhaseIndex,
   formationPhaseState,
+  formationPhasesFor,
   nextRevealedText,
   reducedMotionPreference,
 } from './formationVisualState';
 
 describe('formation phase truth', () => {
-  it('draws the pipeline the rewritten engine actually runs', () => {
+  it('carries every phase any run ever emitted — the SUPERSET the per-run filter draws from', () => {
     expect(FORMATION_PHASES.map((phase) => phase.label)).toEqual([
       'Open',
       'Ask',
@@ -48,6 +49,24 @@ describe('formation phase truth', () => {
     expect(formationPhaseIndex('integrate')).toBe(7);
     expect(formationPhaseIndex('repair')).toBe(8);
     expect(formationPhaseIndex('done')).toBe(9);
+  });
+
+  // RESEARCH and CONTRACTS are deleted from the engine (P1-5/P1-4). A new run must not be offered
+  // either as a stage — it would sit forever "skipped", claiming a route that no longer exists — but
+  // an ARCHIVED run whose events prove it ran them keeps its historical chips.
+  it('offers no retired phase without evidence, and keeps it for an archived run that ran it', () => {
+    const live = ['open', 'ask', 'synthesize', 'review', 'build', 'integrate', 'repair', 'done'];
+    expect(formationPhasesFor(undefined).map((s) => s.key)).toEqual(live);
+    expect(formationPhasesFor({ open: true, build: true }).map((s) => s.key)).toEqual(live);
+    expect(
+      formationPhasesFor({ open: true, research: true, contracts: true }).map((s) => s.key)
+    ).toEqual(['open', 'ask', 'research', 'synthesize', 'review', 'contracts', 'build', 'integrate', 'repair', 'done']);
+    // Index and state hold against the run's OWN list, where 'build' is no longer at 6.
+    const steps = formationPhasesFor(undefined);
+    expect(formationPhaseIndex('build', steps)).toBe(4);
+    expect(formationPhaseState('build', 3, undefined, steps)).toBe('complete');
+    expect(formationPhaseState('build', 4, undefined, steps)).toBe('active');
+    expect(formationPhaseState('build', 5, undefined, steps)).toBe('upcoming');
   });
 
   it('marks only earlier phases complete and the engine phase active', () => {
