@@ -59,6 +59,8 @@ const DIGEST = {
       model: 'mihai-qwen',
     },
   ],
+  // II-11b: a named call whose argument body is still buffering (from `<key>.forming.json`).
+  forming: [{ id: 'call_11', name: 'developer__write_file', since_ms: 1756500000000 }],
 };
 
 // Written out by hand, deliberately. Deriving this from the join the paths share would make the test
@@ -105,6 +107,7 @@ const EXPECTED: Record<string, unknown> = {
       model: 'mihai-qwen',
     },
   ],
+  forming: [{ id: 'call_11', name: 'developer__write_file', since_ms: 1756500000000 }],
 };
 
 const digestFieldsOf = (lane: TurnLane | undefined): Record<string, unknown> => {
