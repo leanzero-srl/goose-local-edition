@@ -375,3 +375,11 @@ research_request_block's armed-no-claimed-sections arm wording.
   {boot:2, import:1, other:7}), took the mid-flight stub-note addendum with tests. Measured README
   greps 0 TODAY because the __main__ shard rewrote it at 19:56 — checked the live state rather than
   assuming the morning's. Charter gap: none.
+- 2026-08-31 00:20 swarm-surgeon (SwarmEngine boundary step A, 9812ac069): CLEAN+. Seven functions
+  moved verbatim with a disposition table; Option/None probe-failed semantics carried byte-identical;
+  tests unmodified 404/0 + gates 8/0 + workspace clippy clean; ratchet tightened in the same commit;
+  refused to force probe_lms_processes (left for step B, said so) and surfaced two unbriefed finds:
+  loaded_context_length doesn't exist in the prober (brief overstated it — orchestrator error, not
+  charter gap) and swarm_engine.rs escapes run_path_files (dispatched as step-B item 6). Brief leak:
+  stale line anchors from a pre-pull exploration — the surgeon re-located by surface strings as its
+  charter directs; keep giving surfaces, drop the numbers. Charter gap: none.
