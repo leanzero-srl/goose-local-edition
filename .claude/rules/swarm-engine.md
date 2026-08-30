@@ -62,10 +62,19 @@ old shape — `tokio::process::Command` with piped stdio, `kill()`, then await t
 parked `run_swarm` forever when the wrapper's `Popen` grandchildren kept the write-ends (r0, 20 min at 0%
 CPU after its verdict; 41 leaked `ledgerd`/`notifierd` found). The drain now releases on GROUP liveness,
 not EOF; that bound is on a process we already killed, never on a model. Applied at `boot_invocation`,
-`run_spec_contract` and its kill sites, the restart reboot, `run_repro_once`, `land_generated_tests`.
+`run_spec_contract` and its kill sites, the restart reboot, `run_repro_once` (`land_generated_tests` died with the contract-derived testgen path, P1-4).
 Isolation proof: `./target/release/goose swarm gate <archived tree> --spec evals/swarm-bench/spec-build-sb7.md`
 returns in seconds and `tick.py` prints `orphans: 0`. **`swarm verify` does NOT boot the app** — it only
 checks imports/owned files — so it can prove neither a hang nor a phantom endpoint.
+
+## The planner is a straight line (P1-4/P1-5, r3)
+
+CONTRACTS is deleted (the 2,527-char contract NARROWED r2's build — meridian/viz/static silently dropped),
+and so are RESEARCH, coverage, the resplit and the ASK proxy. `plan_slices_to_dag` is the injectable seam;
+its test pins the sequence open → synthesis → review(1) → plan_repaired. `dep_signatures` ships OFF; the ON
+form is `shape_excerpt` (signatures + key-literal/route/return-dict lines). Unassigned gate findings
+attribute by endpoint-literal grep, else the entry file, else the `known_bugs` event — the `fix::rN::#join`
+residue task and the cross-file join twin are gone.
 
 ## REVIEW is one round (`5173eab67`)
 

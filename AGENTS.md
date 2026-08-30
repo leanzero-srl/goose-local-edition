@@ -112,7 +112,7 @@ remaining space for dynamic text.
 The swarm builds software by fanning work across 3 local LM Studio nodes. It is the subject of most work
 in this repo and it has a specific set of invariants that produce no compiler error when broken.
 
-**Phases:** `OPEN → ASK → RESEARCH → SYNTHESIS → REVIEW → CONTRACTS → BUILD → INTEGRATE → REPAIR`.
+**Phases (r3, P1-4/P1-5):** `OPEN → [ASK handshake, only when the opener leaves open decisions] → SYNTHESIS → REVIEW (one round) → BUILD → INTEGRATE → REPAIR`. RESEARCH, coverage, the resplit, the ASK proxy and CONTRACTS are DELETED — workers read real dependency sources (dep_block) and the ledger block instead of briefs and frozen stubs.
 
 **These six are repeated here ON PURPOSE.** The detail lives in `.claude/rules/swarm-engine.md`, but
 path-scoped rules arm only on the **Read** tool — `cat`, `sed`, `grep`, Grep and Glob do NOT trigger
