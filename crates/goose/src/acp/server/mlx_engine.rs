@@ -81,6 +81,7 @@ fn status_to_dto(status: goose_sidecar::engine::EngineStatus) -> MlxEngineStatus
         tool_call_parser: status.tool_call_parser,
         probe_error: status.probe_error,
         gate_message: status.gate_message,
+        gate_verdict: status.gate_verdict,
         available_memory_gb: status.available_memory_gb,
         total_memory_gb: status.total_memory_gb,
         restart_required: status.restart_required,

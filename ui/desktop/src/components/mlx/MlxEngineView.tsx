@@ -486,8 +486,11 @@ function EngineSection(props: EngineSectionProps) {
       {statusError && (
         <SolidBanner color={RED} label="Engine unreachable" text={statusError} />
       )}
-      {status?.gateMessage && (
+      {status?.gateMessage && status.gateVerdict === 'block' && (
         <SolidBanner color={RED} label="Mount blocked" text={status.gateMessage} />
+      )}
+      {status?.gateMessage && status.gateVerdict === 'warn' && (
+        <SolidBanner color={AMBER} label="Memory pressure" text={status.gateMessage} />
       )}
       {mountError && <SolidBanner color={RED} label="Mount failed" text={mountError} />}
       {status?.state === 'failed' && status.lastError && status.lastError !== mountError && (

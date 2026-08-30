@@ -135,16 +135,28 @@ pub struct EngineStatus {
     pub tool_call_parser: Option<String>,
     pub probe_error: Option<String>,
     pub gate_message: Option<String>,
+    pub gate_verdict: Option<String>,
     pub available_memory_gb: f64,
     pub total_memory_gb: f64,
     pub restart_required: bool,
     pub last_error: Option<String>,
 }
 
+/// The inherited PATH minus any goosed-injected `mcp-hermit` shim components (see the mount
+/// spawn comment for the incident this prevents).
+fn path_without_mcp_hermit() -> String {
+    std::env::var("PATH")
+        .unwrap_or_default()
+        .split(':')
+        .filter(|component| !component.contains("/mcp-hermit/"))
+        .collect::<Vec<_>>()
+        .join(":")
+}
+
 pub struct MlxEngineManager {
     state: Arc<Mutex<ManagerState>>,
     settings: StdMutex<EngineSettings>,
-    last_gate_message: StdMutex<Option<String>>,
+    last_gate: StdMutex<Option<crate::GateResult>>,
     gate: MemoryGate,
     probe_client: reqwest::Client,
 }
@@ -158,7 +170,7 @@ impl MlxEngineManager {
         Self {
             state: Arc::new(Mutex::new(ManagerState::Stopped)),
             settings: StdMutex::new(EngineSettings::default()),
-            last_gate_message: StdMutex::new(None),
+            last_gate: StdMutex::new(None),
             gate,
             probe_client: reqwest::Client::builder()
                 .timeout(Duration::from_secs(5))
@@ -196,11 +208,12 @@ impl MlxEngineManager {
 
         let (available, total) = measure();
         let gate = self.gate.evaluate(model.size_bytes, available, total);
-        if gate.verdict == Verdict::Block {
-            *self.last_gate_message.lock().unwrap() = Some(gate.message.clone());
-            bail!("memory gate BLOCK for '{model_id}': {}", gate.message);
+        let blocked = gate.verdict == Verdict::Block;
+        let block_message = gate.message.clone();
+        *self.last_gate.lock().unwrap() = Some(gate);
+        if blocked {
+            bail!("memory gate BLOCK for '{model_id}': {block_message}");
         }
-        *self.last_gate_message.lock().unwrap() = Some(gate.message);
 
         let mut state = self.state.lock().await;
         if let ManagerState::Mounting { model_id: current } = &*state {
@@ -222,7 +235,13 @@ impl MlxEngineManager {
         let state_arc = Arc::clone(&self.state);
         let model_id = model_id.to_string();
         tokio::spawn(async move {
-            let config = SidecarConfig::new("mlx-engine", argv.clone(), base_url);
+            let mut config = SidecarConfig::new("mlx-engine", argv.clone(), base_url);
+            // A cold uv resolve of the pinned fork legitimately takes minutes on first mount.
+            config.startup_timeout = Duration::from_secs(600);
+            // goosed prepends its MCP-hermit shim to PATH; inheriting it makes `uvx` resolve to
+            // a cold hermit bootstrap instead of the user's uv (observed 2026-08-31: a mount
+            // spent its whole readiness budget installing python 3.10 inside mcp-hermit).
+            config.env = vec![("PATH".to_string(), path_without_mcp_hermit())];
             match Sidecar::start(config).await {
                 Ok(sidecar) => {
                     let mut state = state_arc.lock().await;
@@ -273,7 +292,20 @@ impl MlxEngineManager {
     pub async fn status(&self) -> EngineStatus {
         let settings = self.settings();
         let (available, total) = measure();
-        let gate_message = self.last_gate_message.lock().unwrap().clone();
+        let (gate_message, gate_verdict) = match self.last_gate.lock().unwrap().clone() {
+            Some(g) => (
+                Some(g.message),
+                Some(
+                    match g.verdict {
+                        Verdict::Allow => "allow",
+                        Verdict::Warn => "warn",
+                        Verdict::Block => "block",
+                    }
+                    .to_string(),
+                ),
+            ),
+            None => (None, None),
+        };
         let mut status = EngineStatus {
             state: "stopped".to_string(),
             model_id: None,
@@ -283,6 +315,7 @@ impl MlxEngineManager {
             tool_call_parser: None,
             probe_error: None,
             gate_message,
+            gate_verdict,
             available_memory_gb: available as f64 / GIB as f64,
             total_memory_gb: total as f64 / GIB as f64,
             restart_required: false,
