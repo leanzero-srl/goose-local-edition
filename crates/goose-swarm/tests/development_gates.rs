@@ -141,9 +141,13 @@ fn the_banned_integrate_template_only_shrinks() {
 /// commands/swarm/imports.rs (-454) and the dead run_agent_timed delegate deleted, paying for
 /// the pre-build smalls batch (plan-wide ownership publication, replan orientation + rationale,
 /// six supervision-call keys) across its four commits.
+/// Tightened to 45,820: two moves banked together — the transcript writers moved to
+/// commands/swarm/transcripts.rs (-66, paying for the steer ISO stamps + measured closing), and
+/// #F924's RecurrenceMeter cluster moved to commands/swarm/desk.rs (-133 net, paying for the
+/// shadow judge desk's mod/use + spawn wiring); a +29 judge-prompt batch rode the same window.
 #[test]
 fn swarm_rs_line_count_only_decreases() {
-    const SWARM_RS_LINE_BASELINE: usize = 45_990;
+    const SWARM_RS_LINE_BASELINE: usize = 45_820;
     let text = read("crates/goose-cli/src/commands/swarm.rs");
     let n = text.lines().count();
     assert!(
