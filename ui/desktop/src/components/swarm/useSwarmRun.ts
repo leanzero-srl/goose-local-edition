@@ -601,14 +601,12 @@ export interface SliceFan {
   researchSecs: number | null;
 }
 
-/** The clarify PROXY: a question is always answered, by the user or — after a wait, or instantly on an
- *  unattended run — by goose itself from the spec. Both halves are surfaced so a run that answered its own
- *  questions never looks like a run the user steered. */
+/** What resolved the ask WITHOUT the user. The old proxy (armed/answered/failed) was DELETED with the
+ *  engine's proxy call: clarify_proxy_armed / _answered / _failed have no emitter left (a swarm.rs test
+ *  asserts the deleted planner step is never re-emitted), so those fields could never be non-null and
+ *  the cards they fed were unreachable. Only the timeout survives — it is fed by the live
+ *  low_confidence_ask_timeout. Archived runs' proxy history still renders via buildPhaseTodo's ask rows. */
 export interface ClarifyProxy {
-  armed: { mode: 'immediate' | 'after_wait'; waitSecs: number; questions: number } | null;
-  answered: { questions: string[]; answers: string[] } | null;
-  /** The proxy call itself failed; the engine unblocked the run with a conventional default. */
-  failed: string | null;
   /** P1-5's proxyless engine: the ask window expired unanswered (`low_confidence_ask_timeout`),
    *  the decisions were folded into every brief as "choose the most conventional option", and the
    *  build CONTINUED. Without this the card said "paused, waiting for you" for the rest of the
@@ -808,7 +806,7 @@ const EMPTY: SwarmRunState = {
   runPhase: null,
   runPhasesObserved: {},
   slices: null,
-  proxy: { armed: null, answered: null, failed: null, timedOut: null },
+  proxy: { timedOut: null },
   reviewRounds: [],
   qa: [],
   sinkRenamedFrom: null,
@@ -1165,11 +1163,13 @@ export function foldRunPhase(events: Array<Record<string, unknown>>): {
         // The verify itself is integration work; only findings turn the run into a repair.
         enter((num(e['findings']) ?? 0) > 0 ? 'repair' : 'integrate');
         break;
+      // defects_rated is LEGACY-LOG (no emitter remains) — kept so an archived run's ribbon still
+      // enters Repair on it. spec_repair_wave is deleted outright: its complete_fix_* siblings always
+      // ride beside it in the archives that carry it.
       case 'defects_rated':
       case 'complete_fix_dispatched':
       case 'complete_fix_completed':
       case 'complete_fix_wave':
-      case 'spec_repair_wave':
         enter('repair');
         break;
       case 'run_finished':
@@ -1219,7 +1219,7 @@ export function buildActivity(events: Array<Record<string, unknown>>): {
   let sliceOpenSecs: number | null = null;
   let sliceBriefChars: number[] = [];
   let sliceResearchSecs: number | null = null;
-  const proxy: ClarifyProxy = { armed: null, answered: null, failed: null, timedOut: null };
+  const proxy: ClarifyProxy = { timedOut: null };
   const reviewRounds: ReviewRound[] = [];
   const qa: SwarmAnswer[] = [];
   // Set by pillars_write_failed so the positive 'pillars' line can carry its honest caveat: the engine
@@ -1339,40 +1339,13 @@ export function buildActivity(events: Array<Record<string, unknown>>): {
         });
         break;
       }
-      case 'clarify_proxy_armed': {
-        const mode = str(e['mode']) === 'immediate' ? 'immediate' : 'after_wait';
-        const waitSecs = num(e['wait_secs']) ?? 0;
-        const questions = num(e['questions']) ?? 0;
-        proxy.armed = { mode, waitSecs, questions };
-        // A QUESTION IS ALWAYS ANSWERED. Say WHO will answer it before the answer exists, so an unattended
-        // run never looks like a run someone steered.
-        const text =
-          mode === 'immediate'
-            ? `Unattended run — goose is answering ${questions} open decision${questions === 1 ? '' : 's'} itself`
-            : `Asking you ${questions} open decision${questions === 1 ? '' : 's'} — goose answers in ${Math.round(waitSecs / 60)} min if you don't`;
-        compact({ kind: 'plan', text, tone: 'warn' });
-        verbose({ kind: 'plan', text, tone: 'warn' });
-        break;
-      }
-      case 'clarify_proxy_answered': {
-        const questions = arr(e['questions']).map(String);
-        const answers = arr(e['answers']).map(String);
-        proxy.answered = { questions, answers };
-        const sub =
-          questions.map((q, i) => `${i + 1}. ${q}\n   → ${answers[i] ?? ''}`).join('\n') ||
-          undefined;
-        compact({ kind: 'plan', text: 'Answered by goose — you did not reply', tone: 'warn', sub });
-        verbose({ kind: 'plan', text: 'Answered by goose — you did not reply', tone: 'warn', sub });
-        break;
-      }
-      case 'clarify_proxy_failed': {
-        proxy.failed = str(e['error']);
-        const text =
-          'The proxy answer failed — goose took the most conventional option and carried on';
-        compact({ kind: 'plan', text, tone: 'warn' });
-        verbose({ kind: 'plan', text, tone: 'warn', sub: proxy.failed || undefined });
-        break;
-      }
+      // clarify_proxy_armed / _answered / _failed were DELETED with the engine's proxy call (no emitter
+      // remains; a swarm.rs test asserts the deleted step is never re-emitted). Their feed lines and the
+      // ClarifyProxy state they fed are gone with them; archived runs' proxy history still renders via
+      // buildPhaseTodo's LEGACY-LOG ask rows.
+      // LEGACY-LOG: research_completed has no emitter left (P1-5 deleted the RESEARCH fan). The case
+      // stays because read-swarm-run renders whatever run-*.jsonl exists in the opened workdir, and
+      // pre-P1-5 archives carry it — both the slices+spec-sizes shape and the older findings-count one.
       case 'research_completed': {
         const n = num(e['slices']);
         const chars = arr(e['brief_chars']).map((c) => num(c) ?? 0);
@@ -1537,6 +1510,9 @@ export function buildActivity(events: Array<Record<string, unknown>>): {
         });
         break;
       }
+      // LEGACY-LOG: defects_rated has no emitter left. Kept because archived runs carry it and it is
+      // the only source of their repair headline and minors list; on live runs known_bugs (above) and
+      // complete_result own knownActiveBugs.
       case 'defects_rated': {
         const critical = num(e['critical']) ?? 0;
         const minor = num(e['minor']) ?? 0;
@@ -1739,47 +1715,9 @@ export function buildActivity(events: Array<Record<string, unknown>>): {
         });
         break;
       }
-      // HOW THE SLICE LIST GROWS. An operator watching a run saw 11 slices at OPEN and 21 at BUILD with
-      // nothing in between explaining it -- the coverage loop's whole job is invisible. These four make it
-      // legible: what was added, what was kept as coverage rather than work, and when the loop closed.
-      //
-      // Placed after a case that ends in `break`, never between a bare `case X:` and the one below it --
-      // a case inserted into a fall-through pair silently steals every event of the first kind.
-      case 'coverage_gap': {
-        const added = arr(e['titles']).map(String).filter(Boolean);
-        if (!added.length) break;
-        verbose({
-          kind: 'plan',
-          tone: 'warn',
-          text: `Coverage found ${added.length} unowned thing${added.length === 1 ? '' : 's'} — adding slices`,
-          sub: added.join(', '),
-        });
-        break;
-      }
-      // Rows the enumerator declined to turn into work. Shown because the engine used to FABRICATE a slice
-      // here from the component's name, which is how a hex colour became a build task.
-      case 'coverage_rows_not_work': {
-        const names = arr(e['names']).map(String).filter(Boolean);
-        if (!names.length) break;
-        verbose({
-          kind: 'plan',
-          tone: 'info',
-          text: `Kept ${names.length} row${names.length === 1 ? '' : 's'} as coverage, not work`,
-          sub: names.join(', '),
-        });
-        break;
-      }
-      case 'coverage_complete': {
-        verbose({
-          kind: 'plan',
-          tone: 'good',
-          text: `Coverage settled — every named component has an owner`,
-          sub: `${num(e['slices']) ?? '?'} slices`,
-        });
-        break;
-      }
-      // The review proposed the same patch and validation refused it the same way twice. Worth surfacing
-      // loudly: it means the plan is going to BUILD with the defect the reviewer just described.
+      // coverage_gap / coverage_rows_not_work / coverage_complete were DELETED with the coverage loop
+      // (no emitter remains anywhere in crates/). Their cases are gone rather than kept as legacy: the
+      // loop they narrated never shipped a run whose archive Mihai still opens.
       // THE VERIFIER'S FINDINGS. These are FACTS about files on disk -- a missing file, an empty file, a
       // syntax error, an import nobody wrote -- not the judge's opinion about a reasoning tail. They are
       // the highest-signal thing on the board and must never be buried.
@@ -1794,26 +1732,8 @@ export function buildActivity(events: Array<Record<string, unknown>>): {
         });
         break;
       }
-      // Two slices claiming one path, seen at the END of RESEARCH instead of after REVIEW has spent rounds
-      // unpicking it.
-      case 'brief_defects': {
-        const cols = arr(e['collisions']);
-        const nofiles = arr(e['slices_declaring_no_files']).map(String);
-        const bits: string[] = [];
-        for (const c of cols) {
-          const o = c as Record<string, unknown>;
-          bits.push(`${String(o['file'])} claimed by ${arr(o['slices']).map(String).join(', ')}`);
-        }
-        if (nofiles.length) bits.push(`declaring no files: ${nofiles.join(', ')}`);
-        if (!bits.length) break;
-        verbose({
-          kind: 'plan',
-          tone: 'warn',
-          text: `Briefs collide before synthesis even runs`,
-          sub: bits.join('\n'),
-        });
-        break;
-      }
+      // brief_defects was DELETED with the RESEARCH fan (no emitter remains) — plan_repaired's measured
+      // before/after now carries the collision story on live runs.
       // A nudge the judge WANTED to send and did not, because the call was producing. Shown so the saving
       // is visible rather than assumed -- 33 of 34 such nudges changed nothing and cost 66 minutes.
       case 'judge_drift_held': {
@@ -1825,17 +1745,9 @@ export function buildActivity(events: Array<Record<string, unknown>>): {
         });
         break;
       }
-      case 'scouts_planned': {
-        const lenses = arr(e['lenses']).map(String).join(', ');
-        compact({ kind: 'phase', text: 'Planning research', sub: lenses || undefined });
-        verbose({ kind: 'phase', text: 'Planning research', sub: lenses || undefined });
-        phase = 'Planning research';
-        break;
-      }
-      case 'research_planned':
-        verbose({ kind: 'phase', text: 'Researching the problem' });
-        phase = 'Researching';
-        break;
+      // scouts_planned / research_planned were DELETED with the scout fan (no emitter remains). The
+      // archived-run research story renders via the LEGACY-LOG research_completed case and
+      // buildPhaseTodo's retired-phase rows, which is where their history actually shows.
       case 'pillars': {
         // NOT gated on a prior pillars_write_failed: injection into the workers genuinely still happens
         // after a failed write (set_pillars runs regardless), so the line stays true — with the failed
@@ -1964,11 +1876,11 @@ export function buildActivity(events: Array<Record<string, unknown>>): {
         break;
       }
       case 'confidence_rescored': {
-        // The user answered the open decisions; the engine re-scored spec-clarity and the plan confidence
-        // climbed (e.g. 30 → 68). WITHOUT this case the rescore was DROPPED and the pill froze at the
-        // pre-answer value — which read on screen as "building at 30" when the run was in fact still PLANNING
-        // and the real confidence had already risen. Only spec-clarity moves on a rescore (the drafts are
-        // unchanged, so agreement is held); final = min(agreement, spec-clarity) = conf_after.
+        // LEGACY-LOG: no emitter remains — the rescore step was deleted with the redraft ladder, so this
+        // case cannot fix anything on a live run (its old comment claimed it un-froze the live pill; it
+        // did not, because the event never fires). Kept so an ARCHIVED run's pill still climbs through
+        // its recorded rescores. Only spec-clarity moves on a rescore (the drafts are unchanged, so
+        // agreement is held); final = min(agreement, spec-clarity) = conf_after.
         const after = num(e['conf_after']);
         const clarityAfter = num(e['spec_clarity_after']);
         const clarityBefore = num(e['spec_clarity_before']);
@@ -1993,9 +1905,9 @@ export function buildActivity(events: Array<Record<string, unknown>>): {
         break;
       }
       case 'confidence_retarget': {
-        // The swarm is dynamically raising the meter (re-drafting to a consensus / researching the open
-        // decisions). conf_after may be null (the new value lands on the next plan step) — either way we log
-        // the action; the header pill climbs via setConf on this or the subsequent plan event.
+        // LEGACY-LOG: no emitter remains — the retarget ladder was deleted with the multi-draft vote.
+        // Kept so an archived run's climb trail (conf_before → conf_after per round) still renders;
+        // conf_after may be null in those logs (the new value landed on the next plan step).
         const before = num(e['conf_before']);
         const after = num(e['conf_after']);
         const signal = str(e['binding_signal']);
@@ -2312,8 +2224,9 @@ export function buildActivity(events: Array<Record<string, unknown>>): {
       }
       case 'complete_fix_dispatched':
       case 'complete_fix_completed':
-      case 'complete_fix_wave':
-      case 'spec_repair_wave': {
+      case 'complete_fix_wave': {
+        // spec_repair_wave is gone from this group: no emitter remains, and an archive that carries it
+        // still enters Repairing via the complete_fix_* siblings that always ride beside it.
         phase = 'Repairing';
         break;
       }
@@ -3607,7 +3520,11 @@ export function buildPhaseTodo(
       sliceIds = arr(e['slices']).map(String);
       sliceWeights = arr(e['weights']).map((w) => num(w) ?? 1);
       openSecs = num(e['secs']);
-    } else if (t === 'clarify_proxy_armed')
+    }
+    // LEGACY-LOG: the three clarify_proxy_* events have no emitter left (the proxy call was deleted).
+    // These branches stay because archived runs carry them and the ask rows below are the only place
+    // their who-answered history still renders — the live ClarifyProxy state and its cards are gone.
+    else if (t === 'clarify_proxy_armed')
       proxyArmed = {
         mode: str(e['mode']),
         waitSecs: num(e['wait_secs']) ?? 0,
