@@ -306,11 +306,6 @@ pub struct JudgeConfig {
     /// file — writes within a handful of actions; this catches the "many actions, zero output" worker
     /// from its own behaviour, which is the only evidence that survives a slow model.
     pub over_read_tool_calls: u32,
-    /// RETIRED (r3 II-7): read by nothing — `is_split_candidate` now keys on production across looks,
-    /// never on elapsed seconds. The field survives only because goose-cli's dispatcher still fills it
-    /// from GOOSE_SWARM_SPLIT_SECS/config and that file belongs to another r3 lane; delete both
-    /// together when that lane is free. A value here decides nothing.
-    pub split_threshold_secs: u64,
     /// Master gate for task-splitting (M3): when false, `is_split_candidate` never fires and the judge
     /// never proposes a Verdict::Split, regardless of the threshold. Default false until proven live.
     pub split_enabled: bool,
@@ -333,7 +328,6 @@ impl Default for JudgeConfig {
             max_interventions_per_task: 2,
             rejudge_cooldown_secs: 60,
             over_read_tool_calls: 16,
-            split_threshold_secs: 900,
             // Off by default: task-splitting (M3) stays dark until a live run proves the DAG mutation +
             // LLM partition safe end-to-end (M4). The scheduler logic + detection are in place and tested;
             // this is the single master switch that lets a real run produce a Verdict::Split.
