@@ -53,7 +53,22 @@ implied, the summary was wrong and the sources win.
 
 ---
 
-## THE CURRENT THREAD (2026-08-30 23:35)
+## THE CURRENT THREAD (2026-08-31 00:35)
+
+**r6 IS LIVE** — launched 21:33Z from the Benchmark view of the freshly built+installed app (bundle
+binary sha edef1242 == target/release at c47674fd4; launch verified: run_build --sb7, vendor 200,
+fresh swarm-3node-r0). The full r6 stack is aboard: attribution trio + runner-up ownership +
+verbatim <id> literals + comment-strip + source-ext winner guard, transcript mirror + redispatch
+reader + ledger-row mirror, node weights (wave [workhorse,mihai,gabee], fix target by weight),
+PRIORITIES (17 sources -> 4 severities, severest-first waves, fix-first briefs), pitfall lessons
+19+20, skeleton/stub disarms for repair, probe sources[], verdict panel + wrap-up banner, publish
+flow (tested live end to end — in-app post accepted, row verified, test dup deleted). Closure
+controller being authored/attached (bench-scorer) so r6 publishes to the flagship natively.
+Vigil checklist for early phases: research chip/lanes on first fan; supervision lanes render;
+PURPOSE line per fix shard at REPAIR; degradation lens on fix edits. 0.3609 (r5 hermetic) is LIVE
+on the board as brun-fleet-qwen38-brainwaves-sb70-r5.
+
+## THE PRIOR THREAD (2026-08-30 23:35)
 
 **r5 FINISHED — PASSED/verified at 20:30:52Z, 7 known active bugs, 10/10 tasks done.** The repair
 farce is PROVEN from the calls file: attempt-1 EDITED the right handler files (httpapi.py +
