@@ -62,6 +62,19 @@ counts as done; big deliveries (the research fan) get their own prover pass agai
 amendments. "This is not work to be done superficially." The doctrine: fallbacks only on many-happy-path arms; reachability proven
 as-configured; no hard coding. First run: 2026-08-30 over the day's five landed changes.
 
+## Surgeon #8 candidate (refute first, then brief): code-written skeleton — the fan opens at minute zero
+
+r5 measured: planning 137m before BUILD, then the whole DAG serialized behind the skeleton ROOT
+(8 dependents) while a heavy-reasoner authored a full routes table for what was designed as a
+stub-write. REFUSED.md:56-57's revive condition ("OPEN+SYNTHESIS dominate >25% of wall") is MET
+by r5's own numbers. The sharper form than the refused early-dispatch: the repair already NAMES
+the skeleton files — code writes the package layout (empty __init__.py, minimal delegating
+__main__ shells) deterministically at finalize; the skeleton task stops being the root; three
+tasks start in parallel immediately. MUST SETTLE via refuter: the current skeleton brief asks for
+a real HTTP entry shell — split "layout by code" from "entry content owned by boot-contract";
+scaffolding is not the dead contract-stub form (interface stubs replacing real sources) — argue
+it on mechanism. Mihai 14:35: "isn't build supposed to fan out?"
+
 ## Surgeon #7 queue (dispatch when swarm.rs frees after #6 — the research fan)
 (works-prover, next fan): is plan_loaded.plan_confidence_breakdown dead post-P1-5? conf_trail.py
 and lever_check.py consume it; the ask event's twin field was confirmed dead 0/0.
