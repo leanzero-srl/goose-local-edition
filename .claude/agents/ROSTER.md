@@ -93,6 +93,15 @@ R6 LAUNCH CHECKLIST (at launch, not before): research chip/lanes live over CDP o
 the integrate-verify DISPATCH description is measured-tree, not the placeholder; supervision lanes
 render against a real r6 log.
 
+NEXT ENGINE BATCH — EARLY-SKELETON SHAPE C (refuter-designed, precedent-anchored; swarm.rs half
+waits for #12, scheduler half dispatchable): side lane in a SHADOW WORKSPACE (speculative-twin
+idiom, dispatch.rs), promote-on-match at plan load; engine-side completion at the promote seam
+(match + verify_owned_files clean + no skeleton_only file -> Done via the normal seam +
+relax_dependents, own loud event + completion flavor per the salvaged lesson); stuck-bail sibling
+guard (!skeleton_lane_in_flight, notify on termination); the lane's device booked in the device
+table at the planning->build handoff. Match compares FILE SETS only. Full anchors in refuter #4's
+handoff + the grading entry.
+
 R7 / GATED (deliberately parked, each with its qualifying condition):
 - the judge desk (DESIGN-JUDGE-DESK.md) — r6 measures whether the steer→restream ladder still fails;
 - early-skeleton dispatch — needs the scheduler pre-completed seam first (4 blockers in #9's handoff);
@@ -106,6 +115,17 @@ sort q10 before q2; partition_delegated_decisions + delegated_decisions_ok appea
 research_request_block's armed-no-claimed-sections arm wording.
 
 ## Grading log (newest first — one line per delegation; move closed items to the per-agent notes)
+- 2026-08-30 refuter #4 (early-skeleton Shape B): EXEMPLARY KILL-AND-REBUILD — proved the ACCEPT
+  lever dead code at HEAD three ways (no deterministic producer since the F165-era tail deletion;
+  parse_judge_reply has no ACCEPT keyword and hardcodes deterministic:false; revival collides with
+  a pinned gate-5 test), proved the hold as specified bails the run at BUILD+0 (all four stuck
+  predicates true), landed the one-door attack (pre-load tree writes = a plan-vs-disk shadow
+  channel no repair compares), measured r5's zero file-set drift — then DESIGNED Shape C with
+  every mechanism on a named in-tree precedent (speculative-twin shadow workspace + promote-on-
+  match; engine-side completion at the promote seam per the watchdog-salvage precedent; the
+  *_in_flight stuck-guard idiom; device booking). Also caught the orchestrator's misrouted desk
+  addendum. Shape C QUEUED as the next engine batch (swarm.rs half after #12; scheduler half
+  parallel) — lands in r6 if it beats r5's end, else first r6.5 item.
 - 2026-08-30 refuter #3 (transport cut): EXEMPLARY KILL — proved the candidate byte-for-byte the
   II-7-deleted mechanism (reqwest read_timeout IS chunk-resetting; the frame "my shape differs"
   was false), falsified the premise BOTH directions from the repo's own measurements (581s
