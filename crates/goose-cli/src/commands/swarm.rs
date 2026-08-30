@@ -5144,6 +5144,26 @@ mod tests {
         );
     }
 
+    /// HANDOFF-1: the handoff instruction is ONE constant riding the ONE shared rules join —
+    /// appended inside each kind's branch it would drift into N disagreeing copies (the defect
+    /// class this repo keeps refinding). Grep-style, like the frozen-interfaces gate.
+    #[test]
+    fn every_worker_kind_carries_the_handoff_rule() {
+        let src = include_str!("swarm.rs");
+        // Built by concat so this test's own source cannot satisfy the search.
+        let needle = ["{stopping_rules}", "{HANDOFF_RULE}"].concat();
+        assert!(
+            src.contains(&needle),
+            "HANDOFF_RULE must ride the shared reading/stopping rules join, not per-kind copies"
+        );
+        assert!(
+            HANDOFF_RULE.contains("exact")
+                && HANDOFF_RULE.contains("next step")
+                && HANDOFF_RULE.contains("Do NOT restate the spec"),
+            "the constant carries the three load-bearing clauses"
+        );
+    }
+
     /// GEN-5: the brief guard is a MEASURING instrument for the "no one-line spec" checkpoint.
     /// It classifies; it may never stop, downgrade or re-route (the dispatcher only ever emits
     /// a `thin_brief` warning event from its result). Pinned here: a substantive brief clears
@@ -33406,6 +33426,19 @@ fn sink_semantic_description(
     }
 }
 
+/// HANDOFF-1 (Mihai 08-30 07:30: "overthinking is the model COPING with vagueness … the models
+/// themselves must be instructed to hand SPECIFIC next steps to the next model so it doesn't
+/// need to overthink" — the II-11 probe reasoned 11+ minutes on a trivial-but-vague task).
+/// ONE constant, injected at the single shared rules join, so the instruction cannot drift
+/// per-kind — N copies of one rule disagreeing is the defect class this repo keeps refinding.
+const HANDOFF_RULE: &str =
+    "- YOUR OUTPUT IS THE NEXT MODEL'S INPUT. End your final message with a HANDOFF: the exact \
+     files you touched (paths), the exact symbols you added or changed (names), and — only if \
+     anything genuinely remains — the SINGLE most concrete next step (a file, a command, a \
+     function; never 'continue' or 'proceed'). Do NOT restate the spec and do NOT summarise \
+     what was already known: a vague handoff forces the next model to re-derive your work and \
+     overthink.\n";
+
 /// GEN-5: the dispatch-time brief guard's char floor — a MEASURING instrument for the
 /// "no one-line spec" checkpoint, which until now had no instrument at all. 240 is the
 /// codebase's existing "substantive detail" bar (thin_integrate_verify_spec is >240 chars and
@@ -34797,7 +34830,7 @@ impl GooseAgentDispatcher {
              folder. They are run logs / the plan / the task prompt — NOT project files; cat-ing them tells \
              you nothing and wastes turns (workers have looped 10+ times on `plan.json`). Ignore them \
              completely and also do NOT create a `plan.json`.\n\
-             {reading_rules}{stopping_rules}{supervisor_rules}\
+             {reading_rules}{stopping_rules}{HANDOFF_RULE}{supervisor_rules}\
              \n{write_first_block}{decisions_block}{doc_facts_block}{pitfalls_block}{notes_block}{pillars_block}{layout_block}{context_block}"
         );
         // Live concurrency view: each task prints when it STARTS and FINISHES. Because dispatches
