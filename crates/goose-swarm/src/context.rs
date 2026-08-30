@@ -35,6 +35,13 @@ impl SharedContext {
         let mut total = 0usize;
         for d in deps {
             if let Some(s) = self.summaries.get(d) {
+                // GEN-3: an honestly-empty completion renders NOTHING for its dependency — a
+                // "### Output of dependency" heading over an empty body is the same contentless
+                // stub the "(task X completed)" line was, just one level up. The dispatcher
+                // already emitted dependency_context_empty for it; here it simply does not exist.
+                if s.trim().is_empty() {
+                    continue;
+                }
                 let body: String = s.chars().take(PER_DEP).collect();
                 let body = if s.chars().count() > PER_DEP {
                     format!("{body}… [truncated — read the file on disk]")
@@ -65,5 +72,27 @@ impl SharedContext {
             "completed_order": self.order,
             "summaries": self.summaries,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// GEN-3 (fallback rule): a dependency that completed with an honestly-empty output must
+    /// not render a heading over nothing — that would recreate the "(task X completed)" stub
+    /// one level up. The emptiness is about CONTEXT only: the task still counts as completed.
+    #[test]
+    fn an_empty_completion_renders_no_dependency_stub() {
+        let mut ctx = SharedContext::new();
+        ctx.merge("api", "wrote: app/api.py".to_string());
+        ctx.merge("ghost", String::new());
+        let slice = ctx.slice_for(&["api".to_string(), "ghost".to_string()]);
+        assert!(slice.contains("### Output of dependency `api`"));
+        assert!(
+            !slice.contains("ghost"),
+            "an empty summary emits nothing at all:\n{slice}"
+        );
+        assert_eq!(ctx.completed().len(), 2);
     }
 }
