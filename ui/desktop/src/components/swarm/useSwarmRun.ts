@@ -395,7 +395,7 @@ export interface TurnLane {
   saidAt?: string | null;
   saidKind?: SaidKind;
   superseded?: SupersededSaid[];
-  /** Forming tool calls (II-11b) — see Digest.forming. Never carried from prev: an absent sidecar
+  /** Forming tool calls (II-11b/c) — see Digest.forming. Never carried from prev: an absent sidecar
    *  MEANS nothing is forming now, and a carried row would outlive its own call. */
   forming?: FormingCall[];
   /** How many times the judge WIPED AND RE-STREAMED this task's conversation (judge_restream). Event
@@ -2425,18 +2425,27 @@ type Digest = {
   /** What a previous attempt (or a previous call reusing this lane key) left behind — folded in by the
    *  new attempt's seed instead of being silently erased. Oldest first. */
   superseded?: SupersededSaid[];
-  /** II-11b: tool calls the provider stream has NAMED whose argument bodies are still buffering
-   *  server-side — attached by main.ts from `<key>.forming.json` (absent = nothing forming; the
-   *  engine removes the file on completion or scope exit). Open-frame keyed ONLY: LM Studio ships
-   *  the whole argument body in one terminal delta, so there is no byte progress to show. */
+  /** II-11b/c: tool calls the provider stream has NAMED whose argument bodies are still streaming —
+   *  attached by main.ts from `<key>.forming.json` (absent = nothing forming; the engine removes the
+   *  file on completion and at scope exit, and sweeps leftovers at run start). Since II-11c
+   *  (0fd574002) the sidecar is written for EVERY keyed call — the planner's OPEN/SYNTHESIS lanes
+   *  included — via tmp+rename, and ArgsDelta rides through the forming seam, so a call carries live
+   *  byte progress while its JSON forms. This is the surface that ends "visually frozen while it
+   *  writes": r5's OPEN sat looking dead for 5 minutes while 28 KB of arguments streamed. */
   forming?: FormingCall[];
 };
 
-/** One forming tool call: named by the stream, arguments not yet arrived. */
+/** One forming tool call: named by the stream, its argument body still streaming. `args_bytes` /
+ *  `args_preview` appear once argument bytes exist (preview ≤240 chars, front-trimmed to a
+ *  line/sentence boundary; present only when args_bytes > 0). A provider that ships the whole body
+ *  in one terminal delta still yields a zero-byte row — a name and a clock, which is exactly what
+ *  its stream has produced. */
 export interface FormingCall {
   id: string;
   name: string;
   since_ms: number;
+  args_bytes?: number;
+  args_preview?: string;
 }
 
 export type SaidKind = 'said' | 'error';

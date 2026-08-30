@@ -421,6 +421,7 @@ const LaneRow: React.FC<{
   const hasBody =
     reasoning.length > 0 ||
     calls.length > 0 ||
+    (lane.forming?.length ?? 0) > 0 ||
     (lane.recent?.length ?? 0) > 0 ||
     laneError.length > 0 ||
     saidChips;
@@ -429,7 +430,10 @@ const LaneRow: React.FC<{
   // board row two thousand lines down used the classifier. Two rules for one question is how they drift.
   const firstFailIdx = firstCallNeedingAttention(calls);
   // Compact mode's single high-level line: the freshest activity, else the last line of reasoning.
+  // A call FORMING leads: its argument bytes are being emitted right now (II-11c), newer than any
+  // finished activity or thought — the same rank laneLiveLine gives it.
   const compactLine =
+    formingLiveLine(lane.forming) ||
     (lane.recent && lane.recent.length ? lane.recent[lane.recent.length - 1] : '') ||
     (reasoning ? reasoning.split('\n').map((l) => l.trim()).filter(Boolean).slice(-1)[0] ?? '' : '') ||
     lane.lastText?.trim() ||
@@ -615,11 +619,12 @@ const LaneRow: React.FC<{
                   label={dev ? `${live ? 'Generating' : 'Reasoning'} · ${lane.model ?? lane.device}` : undefined}
                 />
               )}
-              {calls.length > 0 || running.length > 0 ? (
+              {calls.length > 0 || running.length > 0 || (lane.forming?.length ?? 0) > 0 ? (
                 <div>
                   <div className="text-[10px] font-bold uppercase tracking-[0.12em] text-text-secondary mb-1.5">
                     Tool calls · {lane.toolCalls ?? calls.length}
                     {running.length > 0 ? ` · ${running.length} running` : ''}
+                    {formingNote(lane.forming)}
                   </div>
                   <div
                     className="bg-background-primary border border-border-primary px-2 py-1"
@@ -958,11 +963,16 @@ const NodeLiveText: React.FC<{ text: string; lines: number }> = ({ text, lines }
  * BOTH feature guards are load-bearing — jsdom has neither `IntersectionObserver` nor `scrollIntoView`, and
  * the panel's smoke tests render this tree.
  */
-const FollowScroll: React.FC<{ dep: unknown; className?: string; children: React.ReactNode }> = ({
-  dep,
-  className,
-  children,
-}) => {
+const FollowScroll: React.FC<{
+  dep: unknown;
+  className?: string;
+  /** Full-log views only: they land scrolled to the END (the follow idiom), and Mihai's original
+   *  complaint about them was "it cuts the BEGINNING" — so a durable whole-file body offers a named
+   *  jump to its start, with the existing follow button as the way back to the end. Live tails keep
+   *  the plain follow behavior: their beginning is not on screen to jump to. */
+  jumpToStart?: boolean;
+  children: React.ReactNode;
+}> = ({ dep, className, jumpToStart, children }) => {
   const boxRef = useRef<HTMLDivElement>(null);
   const sentinelRef = useRef<HTMLDivElement>(null);
   const [follow, setFollow] = useState(true);
@@ -991,16 +1001,30 @@ const FollowScroll: React.FC<{ dep: unknown; className?: string; children: React
         {children}
         <div ref={sentinelRef} aria-hidden style={{ height: 1 }} />
       </div>
+      {jumpToStart ? (
+        <button
+          onClick={() => {
+            setFollow(false);
+            if (boxRef.current) boxRef.current.scrollTop = 0;
+          }}
+          aria-label="Jump to the start of this log"
+          className="absolute top-2 right-3 px-2 py-1 text-[10px] font-mono uppercase tracking-wider font-bold text-white shadow-lg"
+          style={{ borderRadius: CHIP_RADIUS, background: BLUE }}
+        >
+          ↑ start
+        </button>
+      ) : null}
       {!follow ? (
         <button
           onClick={() => {
             setFollow(true);
             sentinelRef.current?.scrollIntoView?.({ block: 'end' });
           }}
+          aria-label={jumpToStart ? 'Back to the end of this log' : 'Follow the newest text'}
           className="absolute bottom-2 right-3 px-2 py-1 text-[10px] font-mono uppercase tracking-wider font-bold text-white shadow-lg"
           style={{ borderRadius: CHIP_RADIUS, background: SWARM_STATUS.running }}
         >
-          ↓ follow
+          {jumpToStart ? '↓ end' : '↓ follow'}
         </button>
       ) : null}
     </div>
@@ -1022,11 +1046,16 @@ const FollowScroll: React.FC<{ dep: unknown; className?: string; children: React
  * a stream that is appending constantly you are ALWAYS at the bottom, so it yanks forever and reading is
  * impossible. Following is now explicit and stops the moment you scroll away — scroll back down to resume.
  */
-const NodeExpandBox: React.FC<{ text: string; fill?: boolean }> = ({ text, fill }) => {
+const NodeExpandBox: React.FC<{ text: string; fill?: boolean; jumpToStart?: boolean }> = ({
+  text,
+  fill,
+  jumpToStart,
+}) => {
   if (fill) {
     return (
       <FollowScroll
         dep={text}
+        jumpToStart={jumpToStart}
         className="px-3 py-2 font-mono text-[11px] leading-relaxed text-text-secondary whitespace-pre-wrap break-words"
       >
         {text}
@@ -1093,6 +1122,7 @@ export type StreamLane = {
   recent?: string[];
   liveChannel?: LiveChannel;
   inflight?: InflightCall[];
+  forming?: FormingCall[];
 };
 
 /** The fleet cell's line for a node waiting on a tool: what it is running, not what it last thought. */
@@ -1100,6 +1130,20 @@ export function inflightLiveLine(running: InflightCall[] | undefined): string {
   if (!running || running.length === 0) return '';
   const newest = running[running.length - 1];
   return `running: ${newest.args}${running.length > 1 ? ` +${running.length - 1}` : ''}`;
+}
+
+/** The live line for a call still FORMING (II-11c): the named call, the honest byte count, and the
+ *  freshest LINE of the argument bytes streamed so far — the generation transforming into the tool
+ *  call, on the one line a cell has. A zero-byte forming call (name announced, no argument bytes
+ *  yet) returns nothing and the caller falls through: with no bytes there is no line to hand a row,
+ *  and its FormingRow already shows the name, the spinner and the clock. */
+export function formingLiveLine(forming: FormingCall[] | undefined): string {
+  if (!forming || forming.length === 0) return '';
+  const newest = forming[forming.length - 1];
+  if (!newest.args_bytes || !newest.args_preview) return '';
+  const tool = newest.name.replace(/^developer__/, '');
+  const tail = lastSubstantiveLine(newest.args_preview);
+  return `forming ${tool} · ${newest.args_bytes.toLocaleString()} bytes${tail ? ` · ${tail}` : ''}`;
 }
 
 /**
@@ -1312,6 +1356,11 @@ export function lastSubstantiveLine(text: string): string {
 }
 
 export function laneLiveLine(lane: StreamLane): string {
+  // A CALL STILL FORMING OUTRANKS EVERYTHING: its argument bytes are what the model is emitting at
+  // this instant — both channels are frozen while a tool call's JSON forms (r5's OPEN read as dead
+  // for 5 minutes while 28 KB of arguments streamed), so any other source is older by construction.
+  const forming = formingLiveLine(lane.forming);
+  if (forming) return forming;
   // A TOOL CALL IN FLIGHT OUTRANKS BOTH CHANNELS. While the node waits on a tool neither channel moves,
   // so the freshest thought is what it thought BEFORE it acted; the request is newer by construction and
   // it is the one thing the node is doing. The channel rule below still decides between the two streams
@@ -1582,17 +1631,21 @@ const InflightRow: React.FC<{ call: InflightCall; now: number }> = ({ call, now 
   );
 };
 
-/** II-11b: a tool call the stream has NAMED whose argument body is still buffering server-side.
- *  LM Studio ships ALL arguments in one terminal delta after minutes of silence (measured 161-172s
- *  on big writes), so this row is open-frame keyed ONLY — a name, a spinner and a clock; there is
- *  no byte progress to show and none is pretended. It precedes the RUNNING state (request not yet
- *  complete) and the engine removes the sidecar the moment the call completes. */
+/** II-11b/c: a tool call the stream has NAMED whose argument body is still streaming. It precedes
+ *  the RUNNING state (request not yet complete) and the engine removes the sidecar the moment the
+ *  call completes. Since II-11c the sidecar carries `args_bytes`/`args_preview`, so the row shows
+ *  the generation transforming into the call: the honest byte count and the tail of the arguments
+ *  streamed so far, captioned as exactly that. A zero-byte row (a provider that ships the whole
+ *  body in one terminal delta, or a call named a moment ago) stays a name, a spinner and a clock —
+ *  no progress is pretended. */
 const FormingRow: React.FC<{ call: FormingCall; now: number }> = ({ call, now }) => {
   const tool = call.name.replace(/^developer__/, '').toLowerCase();
   const verb = INFLIGHT_VERB[tool] ?? call.name;
   const color = SWARM_STATUS.running;
   const s = Math.max(0, Math.round((now - call.since_ms) / 1000));
   const clock = s < 60 ? `${s}s` : `${Math.floor(s / 60)}m ${String(s % 60).padStart(2, '0')}s`;
+  const bytes = call.args_bytes ?? 0;
+  const preview = bytes > 0 ? call.args_preview : undefined;
   return (
     <div
       className="py-0.5 border-b border-border-primary last:border-0"
@@ -1616,15 +1669,38 @@ const FormingRow: React.FC<{ call: FormingCall; now: number }> = ({ call, now })
             <span className="font-mono text-[10px] tabular-nums" style={{ color }}>
               {clock}
             </span>
+            {bytes > 0 ? (
+              <span className="font-mono text-[10px] tabular-nums font-bold" style={{ color }}>
+                {bytes.toLocaleString()} bytes of arguments
+              </span>
+            ) : null}
           </span>
-          <span className="block font-mono text-[11px] text-text-secondary break-words">
-            the model is still generating this call's arguments
-          </span>
+          {preview ? (
+            <span className="block" data-testid="forming-preview">
+              <span className="block text-[9px] uppercase tracking-wide" style={{ color }}>
+                forming — last {preview.length} chars of the arguments so far
+              </span>
+              <span className="block font-mono text-[11px] text-text-secondary whitespace-pre-wrap break-words">
+                {preview}
+              </span>
+            </span>
+          ) : (
+            <span className="block font-mono text-[11px] text-text-secondary break-words">
+              the model is still generating this call's arguments
+            </span>
+          )}
         </span>
       </div>
     </div>
   );
 };
+
+/** The header suffix admitting the forming rows the body shows — a forming call is neither a
+ *  resolved record nor a running request, so `workCaption`'s buckets cannot carry it. */
+export function formingNote(forming: FormingCall[] | undefined): string {
+  const n = forming?.length ?? 0;
+  return n > 0 ? ` · ${n} forming` : '';
+}
 
 /** Forming rows sit ABOVE the running rows: a call is named before its request is complete. */
 const FormingRows: React.FC<{ forming?: FormingCall[] }> = ({ forming }) => {
@@ -1871,7 +1947,7 @@ const HistoryChannelPane: React.FC<{
       }
       isEmpty={!log || squeezed.length === 0}
     >
-      <NodeExpandBox text={squeezed} fill />
+      <NodeExpandBox text={squeezed} fill jumpToStart />
     </InspectorPane>
   );
 };
@@ -2098,6 +2174,37 @@ const NodeInspector: React.FC<{
       })
       .catch(() => setFullThinkFailed(true));
   };
+  // THE WORK PANE'S SYMMETRIC "SHOW ALL" — the same on-demand IPC, aimed at `<task>.log`. The poll
+  // hands this pane a 200k-byte TAIL (main.ts MAX), so a long call's answer channel had the same
+  // unreachable beginning the thinking pane was fixed for, with no way to ask for the rest.
+  const [fullWork, setFullWork] = useState<{ taskId: string; text: string; bytes: number } | null>(
+    null
+  );
+  const [fullWorkFailed, setFullWorkFailed] = useState(false);
+  const showingFullWork = fullWork != null && fullWork.taskId === lane?.taskId;
+  const fullWorkSqueezed = useMemo(
+    () => (fullWork ? squeezeBlankRuns(fullWork.text) : ''),
+    [fullWork]
+  );
+  // Same honesty rule as thinkShowAll: offer "show all" only when main.ts says the tail IS a tail —
+  // `transcriptClipped` is its explicit answer, `isClippedTail` the byte comparison for older payloads.
+  const workShowAll =
+    !!lane &&
+    typeof lane.transcriptBytes === 'number' &&
+    lane.transcriptBytes > 0 &&
+    isClippedTail(lane.fullTranscript, lane.transcriptBytes, lane.transcriptClipped);
+  const loadFullWork = () => {
+    if (!lane) return;
+    const taskId = lane.taskId;
+    setFullWorkFailed(false);
+    void window.electron
+      .readSwarmActivityLog(runDir, taskId, 'transcript')
+      .then((log) => {
+        if (log) setFullWork({ taskId, ...log });
+        else setFullWorkFailed(true);
+      })
+      .catch(() => setFullWorkFailed(true));
+  };
   const { completed: calls, running, tallies } = workRows(lane?.calls, lane?.inflight);
   const rawNarration = inspectorOutputText(lane ?? {});
   const narration = squeezeBlankRuns(rawNarration);
@@ -2109,8 +2216,15 @@ const NodeInspector: React.FC<{
   // THE PREDICATE HAD TO MOVE IN THE SAME COMMIT AS THE `recent` REMOVAL. With `recent` gone from
   // `inspectorOutputText`, the measured lane (60 calls, last_text one character) yields narration === '',
   // and the old `outText` grid predicate would collapse the column and take all 60 calls with it.
+  // A FORMING call is work: without it the pane says "Still thinking" over the exact moment the model
+  // is generating a tool call — r5's OPEN, visually frozen for 5 minutes while 28 KB of arguments
+  // streamed.
   const hasWork =
-    calls.length > 0 || running.length > 0 || narration.length > 0 || said.superseded.length > 0;
+    calls.length > 0 ||
+    running.length > 0 ||
+    (lane?.forming?.length ?? 0) > 0 ||
+    narration.length > 0 ||
+    said.superseded.length > 0;
   // The lane on top is live estate; a finished lane opened FROM history renders up there through the
   // exact live-pane machinery, so its own folded line would be a duplicate row below itself.
   const shownHistory = history.filter((h) => h.lane.taskId !== lane?.taskId);
@@ -2245,7 +2359,11 @@ const NodeInspector: React.FC<{
             empty="Nothing on the reasoning channel yet — the node has been dispatched but has not produced a token."
             isEmpty={showingFullThink ? !fullThinkSqueezed : !thinkText}
           >
-            <NodeExpandBox text={showingFullThink ? fullThinkSqueezed : thinkText} fill />
+            <NodeExpandBox
+              text={showingFullThink ? fullThinkSqueezed : thinkText}
+              fill
+              jumpToStart={showingFullThink}
+            />
           </InspectorPane>
           <InspectorPane
             title="Work"
@@ -2256,23 +2374,52 @@ const NodeInspector: React.FC<{
             //
             // SAY WHEN THE TRANSCRIPT IS A TAIL — main.ts already computed the answer, in the one place
             // that knows both the file size and the budget it read with. See streamTailNote.
-            count={`${workCaption(calls.length + running.length, lane?.toolCalls, tallies)}${streamTailNote(lane?.fullTranscript, lane?.transcriptBytes, lane?.transcriptClipped)}${squeezeNote(rawNarration, narration)}`}
+            count={
+              showingFullWork
+                ? `all ${fullWork.bytes.toLocaleString()} bytes${squeezeNote(fullWork.text, fullWorkSqueezed)}`
+                : `${workCaption(calls.length + running.length, lane?.toolCalls, tallies)}${formingNote(lane?.forming)}${streamTailNote(lane?.fullTranscript, lane?.transcriptBytes, lane?.transcriptClipped)}${squeezeNote(rawNarration, narration)}`
+            }
+            action={
+              showingFullWork ? (
+                <PaneActionButton
+                  label="Back to the live view of the answer channel"
+                  onClick={() => setFullWork(null)}
+                >
+                  live view
+                </PaneActionButton>
+              ) : workShowAll ? (
+                <PaneActionButton
+                  label={`Show the whole ${(lane?.transcriptBytes ?? 0).toLocaleString()}-byte answer log`}
+                  onClick={loadFullWork}
+                >
+                  {fullWorkFailed
+                    ? 'read failed — retry'
+                    : `show all ${Math.max(1, Math.round((lane?.transcriptBytes ?? 0) / 1024)).toLocaleString()} KB`}
+                </PaneActionButton>
+              ) : null
+            }
             empty={
               thinkText
                 ? 'Still thinking — this fills with tool calls and written text once it starts acting.'
                 : 'Nothing yet on either channel.'
             }
-            isEmpty={!hasWork}
+            isEmpty={showingFullWork ? !fullWorkSqueezed : !hasWork}
           >
-            <WorkPane
-              calls={calls}
-              running={running}
-              forming={lane?.forming}
-              toolCalls={lane?.toolCalls}
-              narration={narration}
-              said={said}
-              processing={saidProcessing}
-            />
+            {showingFullWork ? (
+              // The raw durable `<task>.log`, whole — attempt markers and all. The structured call/said
+              // view has no full-file mode; this is the honest one: the bytes on disk, captioned as such.
+              <NodeExpandBox text={fullWorkSqueezed} fill jumpToStart />
+            ) : (
+              <WorkPane
+                calls={calls}
+                running={running}
+                forming={lane?.forming}
+                toolCalls={lane?.toolCalls}
+                narration={narration}
+                said={said}
+                processing={saidProcessing}
+              />
+            )}
           </InspectorPane>
         </div>
         ) : null}
@@ -3546,7 +3693,15 @@ const BoardTaskRow: React.FC<{
       </div>
       {row.state === 'running' && !interrupted && !expanded ? (
         <div className="flex items-center gap-1.5 pl-5 pb-0.5 text-[10px] min-w-0">
-          {running.length > 0 ? (
+          {/* A call FORMING leads even over a running one: its bytes are this instant's generation. */}
+          {formingLiveLine(lane?.forming) ? (
+            <>
+              <Loader2 size={10} className="animate-spin shrink-0" style={{ color: SWARM_STATUS.running }} />
+              <span className="truncate font-mono" style={{ color: SWARM_STATUS.running }}>
+                {formingLiveLine(lane?.forming)}
+              </span>
+            </>
+          ) : running.length > 0 ? (
             <>
               <Loader2 size={10} className="animate-spin shrink-0" style={{ color: SWARM_STATUS.running }} />
               <span className="truncate font-mono" style={{ color: SWARM_STATUS.running }}>
@@ -3635,11 +3790,12 @@ const BoardTaskRow: React.FC<{
               label={row.state === 'running' ? 'Generating' : 'Reasoning'}
             />
           ) : null}
-          {calls.length > 0 || running.length > 0 ? (
+          {calls.length > 0 || running.length > 0 || (lane?.forming?.length ?? 0) > 0 ? (
             <div>
               <div className="text-[10px] font-bold uppercase tracking-[0.12em] text-text-secondary mb-1.5">
                 Tool calls · {lane?.toolCalls ?? calls.length}
                 {running.length > 0 ? ` · ${running.length} running` : ''}
+                {formingNote(lane?.forming)}
               </div>
               <div className="bg-background-primary border border-border-primary px-2 py-1" style={{ borderRadius: CHIP_RADIUS }}>
                 <FormingRows forming={lane?.forming} />
