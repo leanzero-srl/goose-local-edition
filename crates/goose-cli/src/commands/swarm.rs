@@ -12359,7 +12359,7 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
             total.clone(),
             max_total.clone(),
         );
-        let results = fanout_over_fleet(slots, items, move |i, dev| {
+        let results = fanout_over_fleet("test-slots", &NullSink, slots, items, move |i, dev| {
             let (mpd, inf, tot, mtot) = (mpd.clone(), inf.clone(), tot.clone(), mtot.clone());
             async move {
                 let cur = {
@@ -12424,31 +12424,32 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
             total.clone(),
             max_total.clone(),
         );
-        let results = fanout_over_fleet(devices, items, move |i, dev| {
-            let (mpd, inf, tot, mtot) = (mpd.clone(), inf.clone(), tot.clone(), mtot.clone());
-            async move {
-                let cur = {
-                    let mut g = inf.lock().unwrap();
-                    let e = g.entry(dev.clone()).or_insert(0);
-                    *e += 1;
-                    *e
-                };
-                {
-                    let mut m = mpd.lock().unwrap();
-                    let e = m.entry(dev.clone()).or_insert(0);
-                    if cur > *e {
-                        *e = cur;
+        let results =
+            fanout_over_fleet("test-devices", &NullSink, devices, items, move |i, dev| {
+                let (mpd, inf, tot, mtot) = (mpd.clone(), inf.clone(), tot.clone(), mtot.clone());
+                async move {
+                    let cur = {
+                        let mut g = inf.lock().unwrap();
+                        let e = g.entry(dev.clone()).or_insert(0);
+                        *e += 1;
+                        *e
+                    };
+                    {
+                        let mut m = mpd.lock().unwrap();
+                        let e = m.entry(dev.clone()).or_insert(0);
+                        if cur > *e {
+                            *e = cur;
+                        }
                     }
+                    let t = tot.fetch_add(1, Ordering::SeqCst) + 1;
+                    mtot.fetch_max(t, Ordering::SeqCst);
+                    tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+                    tot.fetch_sub(1, Ordering::SeqCst);
+                    *inf.lock().unwrap().get_mut(&dev).unwrap() -= 1;
+                    i * 2
                 }
-                let t = tot.fetch_add(1, Ordering::SeqCst) + 1;
-                mtot.fetch_max(t, Ordering::SeqCst);
-                tokio::time::sleep(std::time::Duration::from_millis(5)).await;
-                tot.fetch_sub(1, Ordering::SeqCst);
-                *inf.lock().unwrap().get_mut(&dev).unwrap() -= 1;
-                i * 2
-            }
-        })
-        .await;
+            })
+            .await;
         assert_eq!(results.len(), 9, "every item returns a result");
         for (dev, &m) in max_per_device.lock().unwrap().iter() {
             assert!(
@@ -12465,6 +12466,67 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
             3,
             "work-stealing should use every device"
         );
+    }
+
+    /// THE PANIC CASCADE, pinned. Before the DeviceReturn guard, a panicking lane on a
+    /// single-device pool stranded its device: the next lane's "a device is free whenever a
+    /// permit is held" expect fired inside the MutexGuard temporary, poisoned the pool, every
+    /// later `lock().unwrap()` panicked in turn, and the `if let Ok(r)` join swallowed the lot —
+    /// one panic consumed the whole fan and this test would have hung or returned 0 results.
+    /// Now: the device rides Drop back to the pool, the surviving lanes run to completion, the
+    /// panicked lane's slot arrives as Err, and the join names it with a lane_panicked event.
+    #[tokio::test]
+    async fn a_panicked_lane_returns_its_device_and_the_rest_of_the_fan_survives() {
+        #[derive(Default)]
+        struct ValueSink(Mutex<Vec<serde_json::Value>>);
+        impl EventSink for ValueSink {
+            fn emit(&self, _event: &SwarmEvent) {}
+            fn write_value(&self, value: serde_json::Value) {
+                self.0.lock().unwrap().push(value);
+            }
+        }
+        let sink = ValueSink::default();
+        let items: Vec<usize> = vec![0, 1, 2];
+        let results = fanout_over_fleet(
+            "panic-test",
+            &sink,
+            vec!["only-device".to_string()],
+            items,
+            move |i, dev| async move {
+                assert_eq!(dev, "only-device");
+                if i == 0 {
+                    panic!("lane 0 exploded on purpose");
+                }
+                i * 10
+            },
+        )
+        .await;
+        assert_eq!(
+            results.len(),
+            3,
+            "one slot per item, panicked lane included"
+        );
+        assert!(
+            results[0].as_ref().is_err_and(|e| e.contains("exploded")),
+            "the panicked lane's slot carries its panic message, got {:?}",
+            results[0]
+        );
+        assert_eq!(results[1], Ok(10), "the device came back for lane 1");
+        assert_eq!(results[2], Ok(20), "and again for lane 2");
+        let events = sink.0.lock().unwrap();
+        assert_eq!(events.len(), 1, "exactly the one lost lane is named");
+        assert_eq!(
+            events[0].get("event").and_then(|v| v.as_str()),
+            Some("lane_panicked")
+        );
+        assert_eq!(
+            events[0].get("context").and_then(|v| v.as_str()),
+            Some("panic-test")
+        );
+        assert!(events[0]
+            .get("error")
+            .and_then(|v| v.as_str())
+            .is_some_and(|e| e.contains("exploded")));
     }
 
     #[test]
@@ -23954,7 +24016,26 @@ mod fan_order_tests {
     }
 }
 
-async fn fanout_over_fleet<T, R, F, Fut>(devices: Vec<String>, items: Vec<T>, f: F) -> Vec<R>
+/// Returns ONE element per item, in item order — `Ok(R)` from the lane's closure, or `Err(panic
+/// message)` for a lane that panicked. The per-item slot is load-bearing twice over: the
+/// sink-review consumer zips results against its input list (a silently dropped lane would shift
+/// every later pairing), and the research consumer folds an `Err` into a terminal unanswered row.
+///
+/// A PANICKED LANE USED TO CONSUME THE WHOLE FAN, silently. The chain: the panic skipped the
+/// device push_back, breaking the permits==pool invariant; a later lane's "a device is free
+/// whenever a permit is held" expect then fired INSIDE the MutexGuard temporary, poisoning the
+/// pool; every remaining lane's `lock().unwrap()` panicked in turn; and the join's
+/// `if let Ok(r)` swallowed all of it. Three repairs, each necessary: the device rides a Drop
+/// guard back to the pool (unwind runs Drop), both lock sites recover a poisoned mutex instead
+/// of cascading (the queue holds Strings — no invariant can be torn mid-push), and the join
+/// names every lost lane with a `lane_panicked` event instead of silence.
+async fn fanout_over_fleet<T, R, F, Fut>(
+    context: &str,
+    events: &dyn EventSink,
+    devices: Vec<String>,
+    items: Vec<T>,
+    f: F,
+) -> Vec<Result<R, String>>
 where
     T: Send + 'static,
     R: Send + 'static,
@@ -23962,12 +24043,29 @@ where
     Fut: std::future::Future<Output = R> + Send + 'static,
 {
     use std::collections::VecDeque;
+    struct DeviceReturn {
+        pool: Arc<Mutex<VecDeque<String>>>,
+        dev: Option<String>,
+    }
+    impl Drop for DeviceReturn {
+        fn drop(&mut self) {
+            if let Some(dev) = self.dev.take() {
+                // Never a second panic inside Drop (that aborts the process): recover a
+                // poisoned lock and return the device anyway.
+                match self.pool.lock() {
+                    Ok(mut g) => g.push_back(dev),
+                    Err(poisoned) => poisoned.into_inner().push_back(dev),
+                }
+            }
+        }
+    }
     let devices = if devices.is_empty() {
         vec![String::new()]
     } else {
         order_fleet_by_speed(devices, &load_config().speed_weights)
     };
-    // permits == pool size, so a permit holder is always guaranteed a free device to pop.
+    // permits == pool size, so a permit holder is always guaranteed a free device to pop —
+    // an invariant the DeviceReturn guard keeps true through panicking lanes.
     let permits = Arc::new(tokio::sync::Semaphore::new(devices.len()));
     let pool = Arc::new(Mutex::new(
         devices.into_iter().collect::<VecDeque<String>>(),
@@ -23982,21 +24080,45 @@ where
                 .acquire_owned()
                 .await
                 .expect("fleet semaphore never closed");
-            let dev = {
-                pool.lock()
-                    .unwrap()
-                    .pop_front()
-                    .expect("a device is free whenever a permit is held")
+            let popped = match pool.lock() {
+                Ok(mut g) => g.pop_front(),
+                Err(poisoned) => poisoned.into_inner().pop_front(),
             };
-            let out = f(item, dev.clone()).await;
-            pool.lock().unwrap().push_back(dev);
-            out
+            // The expect fires OUTSIDE the lock: even a broken invariant costs one lane a
+            // panic (named at the join) without poisoning the pool for the rest.
+            let dev = popped.expect("a device is free whenever a permit is held");
+            let _return_guard = DeviceReturn {
+                pool,
+                dev: Some(dev.clone()),
+            };
+            f(item, dev).await
         }));
     }
     let mut results = Vec::with_capacity(handles.len());
     for h in handles {
-        if let Ok(r) = h.await {
-            results.push(r);
+        match h.await {
+            Ok(r) => results.push(Ok(r)),
+            Err(e) => {
+                let error = match e.try_into_panic() {
+                    Ok(payload) => payload
+                        .downcast_ref::<&str>()
+                        .map(|s| (*s).to_string())
+                        .or_else(|| payload.downcast_ref::<String>().cloned())
+                        .unwrap_or_else(|| "panicked with a non-string payload".to_string()),
+                    Err(join_err) => join_err.to_string(),
+                };
+                events.write_value(serde_json::json!({
+                    "event": "lane_panicked",
+                    "context": context,
+                    "error": error,
+                }));
+                eprintln!(
+                    "  {} {context} lane panicked ({error}) — its slot is folded as a failure; \
+                     the other lanes' results stand",
+                    style("!").red().bold()
+                );
+                results.push(Err(error));
+            }
         }
     }
     results
@@ -25880,6 +26002,8 @@ impl GooseAgentDispatcher {
         let me = self.clone();
         let plan = plan_json.to_string();
         let out = fanout_over_fleet(
+            "review",
+            self.events.as_ref(),
             lanes,
             parts.into_iter().enumerate().collect::<Vec<_>>(),
             move |(i, (title, part)): (usize, (String, String)), model: String| {
@@ -25913,7 +26037,9 @@ impl GooseAgentDispatcher {
         let mut seen_replace = std::collections::HashSet::new();
         let mut seen_add = std::collections::HashSet::new();
         let mut seen_remove = std::collections::HashSet::new();
-        for (p, f) in out.into_iter().flatten() {
+        // Double flatten: a panicked lane (outer Err — already named by lane_panicked) and an
+        // errored lane (inner None) both contribute nothing, and the round proceeds on the rest.
+        for (p, f) in out.into_iter().flatten().flatten() {
             for e in p.replace {
                 if seen_replace.insert(e.id.to_lowercase()) {
                     patch.replace.push(e);
@@ -27897,7 +28023,13 @@ impl GooseAgentDispatcher {
         );
         let lanes = research_fan_lanes(worker_models);
         let me = self.clone();
+        // (slice, q_index, question) per dispatched item, in dispatch order, so a panicked
+        // lane's Err — which arrives positionally — can be folded into a terminal row below.
+        let dispatched: Vec<ResearchQuestion> =
+            to_dispatch.iter().map(|(q, _)| q.clone()).collect();
         let fan_rows = fanout_over_fleet(
+            "research",
+            self.events.as_ref(),
             lanes,
             to_dispatch,
             move |(q, prefix): (ResearchQuestion, String), model: String| {
@@ -27973,7 +28105,42 @@ impl GooseAgentDispatcher {
             },
         )
         .await;
-        rows.extend(fan_rows);
+        for (i, folded) in fan_rows.into_iter().enumerate() {
+            match folded {
+                Ok(row) => rows.push(row),
+                Err(error) => {
+                    // A panicked lane is a TERMINAL unanswered outcome like any other miss:
+                    // the mini is written (the absence is a fact the ledger holds, and on
+                    // resume it stays settled like every unanswered row), the event is the
+                    // loud channel tick.py counts, and the brief keeps the raw question.
+                    // `model` is honestly empty — the lane died before any call attribution.
+                    let q = &dispatched[i];
+                    let row = ResearchRow {
+                        slice: q.slice.clone(),
+                        q_index: q.q_index,
+                        question: q.question.clone(),
+                        status: RESEARCH_UNANSWERED.to_string(),
+                        answer: String::new(),
+                        reason: Some("lane_panicked".to_string()),
+                        detail: Some(error.chars().take(300).collect()),
+                        raised: Vec::new(),
+                        model: String::new(),
+                        secs: 0,
+                    };
+                    write_research_ledger(&self.working_dir, &row);
+                    self.events.write_value(serde_json::json!({
+                        "event": "research_unanswered",
+                        "slice": row.slice,
+                        "q_index": row.q_index,
+                        "reason": row.reason,
+                        "detail": row.detail,
+                        "secs": row.secs,
+                        "model": row.model,
+                    }));
+                    rows.push(row);
+                }
+            }
+        }
         rows
     }
 }
@@ -40707,8 +40874,12 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                     let decisions = user_decisions.clone();
                     let facts = doc_facts.clone();
                     let sink_r = sink.clone();
-                    let summaries =
-                        fanout_over_fleet(fleet_slots.clone(), groups, move |g, model| {
+                    let summaries = fanout_over_fleet(
+                        "complete-fix",
+                        sink.as_ref(),
+                        fleet_slots.clone(),
+                        groups,
+                        move |g, model| {
                             let me = me.clone();
                             let all_files = all_files.clone();
                             let fan_cwd = fan_cwd.clone();
@@ -40855,9 +41026,12 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                                 }));
                                 promoted
                             }
-                        })
-                        .await;
-                    let promoted_now = summaries.iter().filter(|p| **p).count();
+                        },
+                    )
+                    .await;
+                    // A panicked shard lane (Err — named by lane_panicked) promoted nothing;
+                    // its shard's findings stay open and the loop head re-gates next round.
+                    let promoted_now = summaries.iter().filter(|p| matches!(p, Ok(true))).count();
                     wave_promoted = promoted_now > 0;
                     sink.write_value(serde_json::json!({
                         "event": "complete_fix_wave",
@@ -41286,6 +41460,8 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             let goal = opts.prompt.clone();
             let files = smoke_all_files.clone();
             let verdicts = fanout_over_fleet(
+                "sink-review",
+                sink.as_ref(),
                 fleet_slots.clone(),
                 prewarmed.clone(),
                 move |finding, model| {
@@ -41296,10 +41472,19 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                 },
             )
             .await;
+            // The zip is alignment-safe because the fan returns one slot per item even for a
+            // panicked lane (Err — fail-closed here: an unverified finding is dropped, which
+            // is this consumer's existing rule for anything the re-gate could not confirm).
             let survivors: Vec<String> = prewarmed
                 .iter()
                 .zip(verdicts.iter())
-                .filter_map(|(f, &ok)| if ok { Some(f.clone()) } else { None })
+                .filter_map(|(f, v)| {
+                    if matches!(v, Ok(true)) {
+                        Some(f.clone())
+                    } else {
+                        None
+                    }
+                })
                 .collect();
             sink.write_value(serde_json::json!({
                 "event": "sink_review",
