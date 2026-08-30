@@ -96,7 +96,9 @@ render against a real r6 log.
 R7 / GATED (deliberately parked, each with its qualifying condition):
 - the judge desk (DESIGN-JUDGE-DESK.md) — r6 measures whether the steer→restream ladder still fails;
 - early-skeleton dispatch — needs the scheduler pre-completed seam first (4 blockers in #9's handoff);
-- (refute-first) the transport inactivity cut — must survive a gate-5 refutation;
+- ~~transport inactivity cut~~ REFUTED BROKEN (refuter #3): the II-7-deleted mechanism itself;
+  false positives measured both directions. The honest shape (lms-ps ground-truth silent-stream
+  detection) rides the shadow desk as desk_silent_stream_suspected;
 - apply_split break-test coverage — before any split latch flips.
 
 NEXT-BATCH COSMETICS: judge-lane SAID chips say 'attempt' where looks are meant; fan lane groups
@@ -104,6 +106,14 @@ sort q10 before q2; partition_delegated_decisions + delegated_decisions_ok appea
 research_request_block's armed-no-claimed-sections arm wording.
 
 ## Grading log (newest first — one line per delegation; move closed items to the per-agent notes)
+- 2026-08-30 refuter #3 (transport cut): EXEMPLARY KILL — proved the candidate byte-for-byte the
+  II-7-deleted mechanism (reqwest read_timeout IS chunk-resetting; the frame "my shape differs"
+  was false), falsified the premise BOTH directions from the repo's own measurements (581s
+  byte-silent LIVE call at PARALLEL:2 — any threshold cuts queued work; SSE keep-alives reset
+  forever — the real hang never gets cut), invoked gate 1's killed-stays-dead correctly, and
+  surfaced II-7's own named alternative (lms-ps ground truth, K zero-production looks) which is
+  now folded into the shadow desk as a detector. Candidate DEAD; the queue entry closes as
+  refuted-with-receipts.
 - 2026-08-30 swarm-surgeon #8 (judge context + attribution + mirror, d93d7ca77..e6c620749):
   CLEAN PASS, with the day's best honesty move — found ITEM 1 ALREADY CLOSED by ef23d728e and
   said so instead of re-implementing or claiming it; honored the brief's module direction
