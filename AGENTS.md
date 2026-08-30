@@ -234,11 +234,11 @@ what it thinks to come up with ACTUAL improvements."* The r4-relaunch loop was d
 any other issues" with the exit (`final_output`) never taken — and the improvement list (an exit
 ramp in the reviewer prompt; hand the judge the words across looks, not a ratio about them) falls
 straight out of READING it. The shingle ratio only corroborates; it names no fix. HOW IT REFUSES:
-operator side — every loop/efficacy diagnosis starts with the tail WORDS of `<task>.think.log` AND
-`<task>.log` (the skill's checkpoint procedure carries the exact commands), and an OBSERVATIONS/note
-entry claiming a loop without QUOTING the looping words is invalid on sight; engine side — the judge
-is handed verbatim spans (current tail + a span from a prior look), never only counters, so it can
-SEE "same text as last look"; `development_gates.rs` asserts both docs and the skill carry this.
+every loop/efficacy diagnosis starts with the tail WORDS of `<task>.think.log` AND `<task>.log`,
+QUOTED — a claim without the quotes is invalid on sight; for a kill or a shipped fix, an INDEPENDENT
+reader of the PRIMARY material (the raw logs, the archived events, the code — never the claimant's
+summary) concurs or the claim falls. The deterministic doc-tests are amnesia TRIPWIRES: they may
+summon, they never decide — see "HOW GATES 7 AND 8 ACTUALLY DECIDE" in development-gates.md.
 
 **8. THE TRACE GATE (an OPERATING gate, like 7) — a change to goose ships WITH its trace, or ships
 labeled a net.** Mihai,
