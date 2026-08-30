@@ -212,8 +212,12 @@ sampling card's stale "0.2 (pinned)" gone c195a6eed); the 4-lens frontend realti
 workflow is running; THOROUGH CLEAN reclaimed 13G (goose-builds 18G→5.2G, binaries out, every
 transcript kept).
 
-**LAUNCH GATE: Mihai is refreshing the fleet. When the build verifies, TELL HIM READY and WAIT for
-his word. Check `lms ps` shows the NEW models loaded before dispatch; never reconfigure the fleet.**
+**LAUNCH GATE LIFTED (Mihai, ~13:10): "no more need to wait for my permission — as soon as the
+fixes land and you've done all you had to do, you can start the run." The new fleet is loaded and
+verified engine-compatible (gabee-/mihai-/workhorse-qwen3.8-27b, host prefixes intact, PARALLEL 2,
+gabee 180k ctx / others 262k). Sequence: UI batch lands -> full gates -> make-ui -> bundle verify ->
+launch from the Benchmark view -> first-tick checks (gate-6 watch list + exit-ramp obedience + the
+judge's compare behavior + the UI truth fixes live).**
 
 **Then, in order:** GEN chain gates green → G-1 engine dead-code sweep (agenda item D; the clippy
 never-used cluster + orphans of the deletions) → wipe target (NEVER while cargo runs) → `just make-ui` →
