@@ -278,6 +278,9 @@ fn the_read_the_words_gate_is_carried() {
             ".claude/rules/development-gates.md",
             "THE READ-THE-WORDS GATE",
         ),
+        ("AGENTS.md", "THE TRACE GATE"),
+        (".claude/rules/development-gates.md", "THE TRACE GATE"),
+        (".claude/rules/development-gates.md", "TRACE VERDICT"),
     ] {
         assert!(
             read(doc).contains(needle),

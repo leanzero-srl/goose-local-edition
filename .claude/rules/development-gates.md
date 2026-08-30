@@ -214,6 +214,37 @@ The rule, both sides:
 Refusing test: `development_gates.rs` asserts both agentic docs and the campaign skill carry the
 read-the-words step.
 
+## 8. THE TRACE GATE — run the change mentally against the measured case, and write the trace down
+
+Ordered by Mihai 2026-08-30: *"do you have a gate installed when making these engine changes to run
+the changes mentally and see if they would make a difference or possibly? Have you considered
+actually reading the code and not just skimming it?... install please gates around this to be more
+specific at all times, to be more exact. This is why I pay a fortune for you."*
+
+The receipt, same hour: three judge/reviewer fixes shipped for the r4b loop. Fix 3 — "a DRIFTING
+verdict on a recurring stream delivers without a second look" — could not have fired ANYWHERE in
+r4b's actual sequence: the one DRIFTING came at look 1 (07:15:12) when the meter held ~4.5k chars,
+under its 8,000-char span floor, so `recurring()` was false; looks 2-6 said OK, so the drift gate
+never ran again. The commit called it one of "the three fixes" with no such admission. It is a NET
+for a sequence r4b never produced — legitimate to ship, dishonest to ship UNLABELED.
+
+The rule, two halves:
+
+- **THE TRACE.** Every engine change that claims to fix a measured behavior carries its trace in the
+  commit message: walk the MOTIVATING RUN's real events and values through the NEW code path —
+  which branch fires at which event, with the actual numbers (spans, verdicts, timestamps) — and end
+  with one line: `TRACE VERDICT: would have changed the outcome — YES at <event/value>` or
+  `NO, because <reason>; ships as a NET for <the sequence it does cover>`. A change with a NO trace
+  may ship as a net; it may never be presented as the fix.
+- **THE READING.** Before the edit: read the surrounding functions WHOLE, and follow the changed
+  value to every consumer (grep, then read each hit — the drill-deeper rule, made refusing for
+  engine work). The commit names what was read. Skimming five lines around the edit is how a comment
+  three lines down contradicts the change.
+
+Refusing enforcement: `development_gates.rs` pins this section and the AGENTS.md short form; the
+campaign/knob-turning skills carry the trace template; in review, a fix-commit without a trace block
+is returned on sight — the same standing as a new seconds-literal under gate 5.
+
 ## What each gate cost — the rebukes, verbatim
 
 His words (each ≤80 chars), the rule they produced, and the gate that now refuses it:
@@ -234,6 +265,7 @@ His words (each ≤80 chars), the rule they produced, and the gate that now refu
 | "don't let them rot in a fucking backlog" | implement-don't-backlog (memory, prime) | working style |
 | "add it to our gates to avoid in the future - make it a practice" | one door into the DAG; the join owns nothing structurally | 6 ONE-DOOR |
 | "read the WORDS not the fucking shape... stop wasting my money" | words first, quoted; shapes corroborate only | 7 READ-WORDS |
+| "run the changes mentally... be more exact. This is why I pay a fortune" | every fix-commit carries its would-it-have-fired trace | 8 TRACE |
 | "so let's gates that stop this madness from ever unfolding" | this file and its refusing tests | all |
 
 The refusing tests live in `crates/goose-swarm/tests/development_gates.rs`. A doc regression (this file
