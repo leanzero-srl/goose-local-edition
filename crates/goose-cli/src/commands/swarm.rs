@@ -35,6 +35,12 @@ mod judge_context;
 use judge_context::{is_intentional_empty_marker, judge_delivery_block, verify_owned_files};
 mod decisions;
 use decisions::PlanDecision;
+mod supervision;
+use supervision::{
+    fold_forming_event, judge_lane_key, prereview_lane_key, render_forming_file, replan_lane_key,
+    supervision_lane_kind, tail_review_lane_key, write_forming_atomic, FormingGuard, FormingReport,
+    FormingSidecar,
+};
 mod research;
 use research::{
     budget_research_answer, fold_research_outcome, load_research_mini, research_fan_lanes,
@@ -4313,6 +4319,9 @@ fn repeated_post_verdict(first: &str, second: &str) -> RepeatedPost {
 
 #[cfg(test)]
 mod tests {
+    use super::supervision::{
+        forming_preview, forming_tmp, FORMING_PREVIEW_MAX, FORMING_TAIL_KEEP,
+    };
     use super::*;
 
     /// A-1's amendment (c) fixture: a shell child that daemonizes to PPID 1 — `sh -c '( sleep & )'`
@@ -4450,7 +4459,7 @@ mod tests {
         append_calls_jsonl(&p, 0, &records, &mut at);
         // The RE-DISPATCH: the seed overwrites the digest file itself — the erase II-1 outlives.
         let said = SaidProvenance::at_dispatch(1);
-        std::fs::write(&p, seed_worker_digest("m", &said).to_string()).unwrap();
+        std::fs::write(&p, seed_worker_digest("m", &said, None).to_string()).unwrap();
         records.push((
             "write".into(),
             "write app/x.py".into(),
@@ -7897,6 +7906,7 @@ mod tests {
                 "",
                 "m",
                 &SaidProvenance::at_dispatch(0),
+                None,
             )
         };
         let d = build(&pending);
@@ -7963,6 +7973,7 @@ mod tests {
             "",
             "workhorse-qwen",
             &said0,
+            None,
         );
         assert_eq!(d0["attempt"], 0);
         assert_eq!(
@@ -7980,7 +7991,7 @@ mod tests {
         // instead of silently erasing it.
         let mut said1 = SaidProvenance::at_dispatch(1);
         said1.superseded = superseded_from_prior(Some(d0.clone()));
-        let seed = seed_worker_digest("workhorse-qwen", &said1);
+        let seed = seed_worker_digest("workhorse-qwen", &said1, None);
         assert_eq!(seed["attempt"], 1);
         assert_eq!(
             seed["last_text"], "",
@@ -8006,6 +8017,7 @@ mod tests {
             "",
             "workhorse-qwen",
             &said1,
+            None,
         );
         assert_eq!(d1["attempt"], 1);
         assert_eq!(d1["superseded"], seed["superseded"]);
@@ -8043,7 +8055,8 @@ mod tests {
         assert_eq!(
             superseded_from_prior(Some(seed_worker_digest(
                 "m",
-                &SaidProvenance::at_dispatch(0)
+                &SaidProvenance::at_dispatch(0),
+                None
             ))),
             Vec::<serde_json::Value>::new()
         );
@@ -8052,6 +8065,52 @@ mod tests {
         let marker = attempt_marker_line(1, &said1.dispatched_at);
         assert!(marker.starts_with("\n===== swarm attempt 1 · dispatched "));
         assert!(marker.ends_with(" =====\n"));
+    }
+
+    /// r6 supervision lanes: BOTH shared digest builders stamp `"supervision": true` from the one
+    /// key-class derivation — and a worker lane's digest stays byte-identical (field absent, not
+    /// false), so nothing that reads today's digests can be disturbed by the new lanes.
+    #[test]
+    fn supervision_lanes_are_stamped_by_both_digest_builders_and_worker_lanes_are_not() {
+        let said = SaidProvenance::at_dispatch(3);
+        let d = build_worker_digest(
+            &[],
+            &[],
+            &HashMap::new(),
+            &[],
+            0,
+            0,
+            "",
+            "m",
+            &said,
+            Some("judge-open-1"),
+        );
+        assert_eq!(d["supervision"], serde_json::json!(true));
+        assert_eq!(
+            d["attempt"], 3,
+            "the judge lane's attempt field carries the look number"
+        );
+        let seed = seed_worker_digest("m", &said, Some("replan-r0"));
+        assert_eq!(seed["supervision"], serde_json::json!(true));
+        let w = build_worker_digest(
+            &[],
+            &[],
+            &HashMap::new(),
+            &[],
+            0,
+            0,
+            "",
+            "m",
+            &said,
+            Some("test-store-core"),
+        );
+        assert!(
+            w.get("supervision").is_none(),
+            "a worker lane digest is byte-identical to before"
+        );
+        assert!(seed_worker_digest("m", &said, None)
+            .get("supervision")
+            .is_none());
     }
 
     /// A-2: the agent loop returns provider failures as Ok TEXT (its error closers), and every
@@ -14731,230 +14790,6 @@ fn append_reasoning_transcript(
     (texts.len(), err)
 }
 
-/// II-11c: how many trailing chars of a forming call's arguments the sidecar retains, and how
-/// many of those the rendered preview may carry (mirrors INFLIGHT_PREVIEW_MAX). These bound a
-/// DISPLAY tail and an IO payload, never model work — the full argument body still flows to the
-/// decoder untouched, so gate 5 is not in play.
-const FORMING_TAIL_KEEP: usize = 480;
-const FORMING_PREVIEW_MAX: usize = 240;
-
-/// One live forming tool call: named by the stream's open frame, its argument bytes counted and
-/// tailed as their fragments arrive (r5 measured 28,157 B/8s of live fragments during OPEN).
-struct FormingRow {
-    name: String,
-    since_ms: u64,
-    args_bytes: u64,
-    args_tail: String,
-}
-
-/// The wrapper-owned state behind the forming observer: the live map plus the write-coalesce
-/// bookkeeping. `write_error` is recorded ONCE and surfaces from `FormingGuard::drop` as a named
-/// `forming_write_failed` event on every exit path, aborts included (gate 1: a failed write is
-/// loud, never a silent `.ok()`).
-#[derive(Default)]
-struct FormingSidecar {
-    live: std::collections::BTreeMap<String, FormingRow>,
-    last_write: Option<std::time::Instant>,
-    dirty: bool,
-    write_error: Option<String>,
-}
-
-/// Trim `s` in place to its last `keep` CHARS (never bytes — a delta may split multi-byte
-/// UTF-8 anywhere, and the tail must stay boundary-safe).
-fn keep_tail_chars(s: &mut String, keep: usize) {
-    let n = s.chars().count();
-    if n > keep {
-        if let Some((cut, _)) = s.char_indices().nth(n - keep) {
-            s.drain(..cut);
-        }
-    }
-}
-
-/// II-11c (engine half): fold one provider forming event into the live map. Two measured server
-/// shapes both land here honestly: the buffering shape (open frame, 161-172s of silence, one
-/// terminal ArgsDelta lump) reads as a named row whose bytes jump once; the streaming shape
-/// (r5's OPEN: live `function.arguments` fragments) reads as a row whose byte count and tail
-/// advance as the JSON forms. Pure over the map so the fold is unit-testable without a stream.
-fn fold_forming_event(
-    live: &mut std::collections::BTreeMap<String, FormingRow>,
-    ev: goose_provider_types::formats::openai::ToolFormingEvent,
-) {
-    use goose_provider_types::formats::openai::ToolFormingEvent;
-    // The observer runs synchronously at decode time, so now() IS the frame's wall time (the
-    // seam's contract); elapsed renders downstream from since_ms.
-    let now_ms = || {
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_millis() as u64)
-            .unwrap_or(0)
-    };
-    match ev {
-        ToolFormingEvent::Forming { id, name, .. } => {
-            live.insert(
-                id,
-                FormingRow {
-                    name,
-                    since_ms: now_ms(),
-                    args_bytes: 0,
-                    args_tail: String::new(),
-                },
-            );
-        }
-        ToolFormingEvent::ArgsDelta { id, delta } => {
-            // Decode order makes a delta without its open frame impossible today; if a decoder
-            // change ever breaks that, the row is named by the id — bytes counted, nothing
-            // fabricated (gate 1: no invented tool name).
-            let row = live.entry(id.clone()).or_insert_with(|| FormingRow {
-                name: id,
-                since_ms: now_ms(),
-                args_bytes: 0,
-                args_tail: String::new(),
-            });
-            row.args_bytes += delta.len() as u64;
-            row.args_tail.push_str(&delta);
-            keep_tail_chars(&mut row.args_tail, FORMING_TAIL_KEEP);
-        }
-        ToolFormingEvent::Complete { id } => {
-            live.remove(&id);
-        }
-    }
-}
-
-/// The bounded, readable window of a forming call's argument tail: the last FORMING_PREVIEW_MAX
-/// chars, front-trimmed to just after the first newline (else the first sentence break) so the
-/// window does not open mid-token. If trimming would empty it, the raw window stands — a short
-/// tail IS the content.
-fn forming_preview(tail: &str) -> String {
-    let n = tail.chars().count();
-    let window: &str = if n > FORMING_PREVIEW_MAX {
-        // The cut comes from char_indices, so get() cannot miss; the unreachable arm keeps the
-        // full tail (still bounded by FORMING_TAIL_KEEP), never fabricates.
-        tail.char_indices()
-            .nth(n - FORMING_PREVIEW_MAX)
-            .and_then(|(cut, _)| tail.get(cut..))
-            .unwrap_or(tail)
-    } else {
-        tail
-    };
-    let trimmed = match window.split_once('\n') {
-        Some((_, rest)) => rest,
-        None => match window.split_once(". ") {
-            Some((_, rest)) => rest,
-            None => window,
-        },
-    };
-    if trimmed.trim().is_empty() {
-        window.to_string()
-    } else {
-        trimmed.to_string()
-    }
-}
-
-/// The `<key>.forming.json` body, or None when nothing is forming (the file is then removed —
-/// never written empty; an empty forming file would read as a live amber row in the panel join).
-/// Sits BESIDE the digest (`<key>.json`) on purpose — the digest is rewritten on a hot 400ms
-/// coalesce by a different code path, and the panel/tick JOIN the two by activity key.
-/// `args_preview` is omitted while args_bytes==0 (nothing has formed; an empty preview would
-/// impersonate content).
-fn render_forming_file(live: &std::collections::BTreeMap<String, FormingRow>) -> Option<String> {
-    if live.is_empty() {
-        return None;
-    }
-    let rows: Vec<serde_json::Value> = live
-        .iter()
-        .map(|(id, row)| {
-            let mut v = serde_json::json!({
-                "id": id,
-                "name": row.name,
-                "since_ms": row.since_ms,
-                "args_bytes": row.args_bytes,
-            });
-            if row.args_bytes > 0 {
-                v["args_preview"] = serde_json::Value::from(forming_preview(&row.args_tail));
-            }
-            v
-        })
-        .collect();
-    Some(serde_json::json!({ "forming": rows }).to_string())
-}
-
-/// `<path>.tmp` for the atomic write below — same directory, so the rename is atomic in-dir.
-fn forming_tmp(path: &Path) -> PathBuf {
-    let mut os = path.as_os_str().to_os_string();
-    os.push(".tmp");
-    PathBuf::from(os)
-}
-
-/// tmp+rename write for the forming sidecar. main.ts reads this file on its poll and joins it
-/// onto the digest; a torn read there turns into a one-poll row disappearance (forming is never
-/// carried from prev), so a partially-written file must be impossible, not merely unlikely.
-fn write_forming_atomic(path: &Path, body: &str) -> std::io::Result<()> {
-    let tmp = forming_tmp(path);
-    std::fs::write(&tmp, body)?;
-    std::fs::rename(&tmp, path)
-}
-
-/// Removes the forming sidecar (and any half-written tmp) on EVERY exit path of the wrapped
-/// provider call — the ShellGroupReaper pattern: return, `?`, judge termination and cancellation
-/// of the whole dispatch future all unwind through this Drop. Complete is NOT guaranteed (an
-/// errored, aborted or stall-killed stream never sends it), so scope exit is the clearing point
-/// of record.
-///
-/// `report` (Some only in the live wrapper) makes the `forming_write_failed` diagnostic ride the
-/// SAME every-exit-path guarantee: the emission used to sit after the scoped `.await`, so a
-/// scheduler abort that cancelled the dispatch future cleaned the files (this Drop) but dropped
-/// the one named record that writes had been failing — the diagnostic died with the future.
-/// Cleanup-only users (the guard-clears test) pass None.
-struct FormingReport {
-    events: Arc<dyn EventSink>,
-    key: String,
-    sidecar: Arc<Mutex<FormingSidecar>>,
-}
-
-struct FormingGuard {
-    path: PathBuf,
-    /// A fix shard's real-tree mirror (see `fix_shard_mirror_dir`). Cleared with the primary:
-    /// a stale mirrored forming.json in the REAL tree would read as a live amber row in the
-    /// panel join forever — worse than the shadow copy, which dies with the wave.
-    mirror: Option<PathBuf>,
-    report: Option<FormingReport>,
-}
-
-impl Drop for FormingGuard {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_file(&self.path);
-        let _ = std::fs::remove_file(forming_tmp(&self.path));
-        if let Some(m) = &self.mirror {
-            let _ = std::fs::remove_file(m);
-            let _ = std::fs::remove_file(forming_tmp(m));
-        }
-        if let Some(FormingReport {
-            events,
-            key,
-            sidecar,
-        }) = self.report.take()
-        {
-            let (write_error, held_unflushed) = {
-                // Poison-recovered so a panicking observer cannot also silence the report;
-                // the sidecar holds plain data, nothing can be torn mid-update.
-                let mut g = match sidecar.lock() {
-                    Ok(g) => g,
-                    Err(poisoned) => poisoned.into_inner(),
-                };
-                (g.write_error.take(), g.dirty)
-            };
-            if let Some(error) = write_error {
-                events.write_value(serde_json::json!({
-                    "event": "forming_write_failed",
-                    "key": key,
-                    "error": error,
-                    "held_unflushed": held_unflushed,
-                }));
-            }
-        }
-    }
-}
-
 /// A tool request whose result has not landed yet, keyed in the worker loop's `pending` map by the
 /// request id the stream will answer with.
 #[derive(Clone, Debug)]
@@ -15165,8 +15000,12 @@ fn superseded_from_prior(prior: Option<serde_json::Value>) -> Vec<serde_json::Va
 /// prompt…" state. Carries the SAID provenance from birth: the attempt number, when it was
 /// dispatched, and the prior attempt's superseded text, so there is never a digest on disk that
 /// cannot say whose text it holds.
-fn seed_worker_digest(model_id: &str, said: &SaidProvenance) -> serde_json::Value {
-    serde_json::json!({
+fn seed_worker_digest(
+    model_id: &str,
+    said: &SaidProvenance,
+    activity_key: Option<&str>,
+) -> serde_json::Value {
+    let mut d = serde_json::json!({
         "tool_calls": 0,
         "errors": 0,
         "recent": [],
@@ -15179,7 +15018,13 @@ fn seed_worker_digest(model_id: &str, said: &SaidProvenance) -> serde_json::Valu
         "said_at": null,
         "said_kind": "said",
         "superseded": said.superseded,
-    })
+    });
+    // Same one-place supervision stamp as build_worker_digest, so a supervision lane is
+    // distinguishable from its FIRST digest (the panel groups on the seed too).
+    if activity_key.and_then(supervision_lane_kind).is_some() {
+        d["supervision"] = serde_json::Value::Bool(true);
+    }
+    d
 }
 
 /// ONE attempt-marker line, appended to `<task>.log` and `<task>.think.log` when a call is seeded.
@@ -15557,6 +15402,7 @@ fn build_worker_digest(
     last_thinking: &str,
     model_id: &str,
     said: &SaidProvenance,
+    activity_key: Option<&str>,
 ) -> serde_json::Value {
     let errors = tool_calls.iter().filter(|t| t.ok == Some(false)).count();
     let recent: Vec<String> = tool_calls
@@ -15602,7 +15448,7 @@ fn build_worker_digest(
             "name": c.name, "summary": c.summary, "ok": serde_json::Value::Null, "result": "", "is_mcp": c.is_mcp
         }));
     }
-    serde_json::json!({
+    let mut d = serde_json::json!({
         "tool_calls": tool_calls.len(),
         "errors": errors,
         "malformed": malformed,
@@ -15627,7 +15473,16 @@ fn build_worker_digest(
         "said_at": said.said_at,
         "said_kind": said_kind_of(&last_text),
         "superseded": said.superseded,
-    })
+    });
+    // Supervision lanes (judge looks, replan rounds, pre/tail reviews) are DISTINGUISHABLE in the
+    // digest itself — the panel's grouping reads this field, not the key string. ONE shared
+    // derivation from the lane key's class (supervision_lane_kind), stamped only in the shared
+    // builders so no write site can hand-set or drop it; absent (not false) on every
+    // worker/planner lane, so existing digests stay byte-identical.
+    if activity_key.and_then(supervision_lane_kind).is_some() {
+        d["supervision"] = serde_json::Value::Bool(true);
+    }
+    d
 }
 
 /// Per-run JSONL event sink. All writes go through one locked, line-flushed writer; a monotonic
@@ -17111,7 +16966,10 @@ impl GooseAgentDispatcher {
                     .ok()
                     .and_then(|s| serde_json::from_str(&s).ok()),
             );
-            let _ = std::fs::write(p, seed_worker_digest(model_id, &said).to_string());
+            let _ = std::fs::write(
+                p,
+                seed_worker_digest(model_id, &said, activity_key).to_string(),
+            );
             // One boundary line per attempt in each append-only transcript, so a reader (human or the
             // panel's splitter) can tell where the previous attempt's text ends and this one's begins.
             append_attempt_marker(p, said.attempt, &said.dispatched_at);
@@ -17215,7 +17073,13 @@ impl GooseAgentDispatcher {
         // the NEXT dispatch, so the running call never heard it.
         //
         // Planner-side calls are armed too, for the same reason: being summoned is not being cut.
-        let repeat_break_on = self.repeat_break && activity_key.is_some();
+        // A SUPERVISION LANE IS CAPTURED, NEVER SUPERVISED. Keying the judge/replan/review calls
+        // (r6 blocker) arms the digest/transcript/forming capture they were flying blind without —
+        // but the two watchers below must stay off for them: a judge look on a judge lane would
+        // mint `judge-judge-…` lanes without bound, and every one of these calls ran unwatched
+        // (keyless) before keying, so this is behavior parity, not a new exemption.
+        let supervision_lane = activity_key.and_then(supervision_lane_kind).is_some();
+        let repeat_break_on = self.repeat_break && activity_key.is_some() && !supervision_lane;
         // REMOVED: the global spiral break, and with it spiral_budget_for's per-kind multipliers.
         //
         // It was a CHAR COUNT deciding whether a call was stuck, and its own tuning table is the argument
@@ -17227,7 +17091,9 @@ impl GooseAgentDispatcher {
         // by its own wall-clock cap". That cap is gone, so the exemption would leave the longest call in
         // the run as the only unsupervised one. Unlike a char count the judge READS the reasoning, which
         // is the only thing that can tell a deep call from a stuck one.
-        let omni_judge_on = omni_judge_enabled(load_config().omni_judge) && activity_key.is_some();
+        let omni_judge_on = omni_judge_enabled(load_config().omni_judge)
+            && activity_key.is_some()
+            && !supervision_lane;
         let mut omni_next_look = tokio::time::Instant::now()
             + std::time::Duration::from_secs(OMNI_JUDGE_FIRST_LOOK_SECS);
         let mut omni_looks: u32 = 0;
@@ -18004,7 +17870,14 @@ impl GooseAgentDispatcher {
                     }
                 );
                 let pm = self.planner_model.clone();
-                // Box::pin: this is `run_agent` calling `run_agent`, i.e. async recursion (E0733).
+                // THE JUDGE'S OWN GENERATION GETS A LANE (r6 blocker; Mihai's third ask). One
+                // ROLLING lane per supervised task — `judge-<task_id>` — never per look: each look
+                // reseeds the digest (attempt = look number, prior look folded into `superseded`)
+                // and APPENDS to the durable `<lane>.log`/`.think.log`, the cumulative story.
+                // `activity_key` is structurally Some here (omni_judge_on requires it); "call"
+                // matches the unwrap at the steer site below, never a content substitute.
+                let judge_lane = judge_lane_key(activity_key.unwrap_or("call"));
+                // Box::pin: this is `run_agent_in` calling itself, i.e. async recursion (E0733).
                 // The judge's own call carries no deadline either. It is a model call like any other,
                 // and reqwest's inactivity timeout is what ends a dead one. A 45s ceiling here cut a
                 // supervisor that was merely slow on a loaded fleet — and an unsupervised worker is
@@ -18012,6 +17885,9 @@ impl GooseAgentDispatcher {
                 self.events.write_value(serde_json::json!({
                     "event": "judge_look_dispatched",
                     "task_id": activity_key,
+                    // The lane this look STREAMS ON, so events join lanes (the task_id above is
+                    // the lane it looks AT).
+                    "activity_key": judge_lane,
                     "look": omni_looks,
                     "thinking_chars": thinking_chars,
                     // WHO SERVED THE LOOK. r5 wrote 43 judge_look events no reader could attribute
@@ -18124,8 +18000,35 @@ impl GooseAgentDispatcher {
                 // hostage to an opinion about it. That alone would have let round 3 finish and the run
                 // continue.
                 let probe = {
-                    let mut probe_fut =
-                        Box::pin(self.run_agent(&pm, sys, user, None, 1, &[], None));
+                    // Keyed through `run_agent_in`, not `run_agent`, for two things `run_agent`
+                    // cannot pass: the lane key (digest + durable transcripts + forming sidecar,
+                    // all free once keyed) and attempt = the look number, so the lane's digest
+                    // says WHICH look is streaming. Keying also gives this probe its OWN forming
+                    // observer scope: the keyless probe was awaited inside the worker's
+                    // TOOL_FORMING_OBSERVER scope, so its forming fragments folded into the
+                    // WORKER's sidecar (the task-local nesting leak surgeon #5 noted) — the
+                    // nested scope shadows the worker's for exactly the probe future's polls.
+                    // Everything else is byte-parity with the old `run_agent` route: attempt was
+                    // 0, prefill/force-tool/temp/owned-file None, read_only false,
+                    // may_terminate false (a judge Err propagates to the failed-look arm below —
+                    // terminating it would kill the look, not a lane).
+                    let mut probe_fut = Box::pin(self.run_agent_in(
+                        self.working_dir.clone(),
+                        &pm,
+                        sys,
+                        user,
+                        None,
+                        1,
+                        &[],
+                        Some(judge_lane.as_str()),
+                        omni_looks,
+                        None,
+                        None,
+                        None,
+                        None,
+                        false,
+                        false,
+                    ));
                     loop {
                         tokio::select! {
                             biased;
@@ -18166,6 +18069,7 @@ impl GooseAgentDispatcher {
                                                 &last_thinking,
                                                 model_id,
                                                 &said,
+                                                activity_key,
                                             );
                                             d["judging"] = serde_json::Value::Bool(true);
                                             let _ = std::fs::write(p, d.to_string());
@@ -18215,6 +18119,7 @@ impl GooseAgentDispatcher {
                                     self.events.write_value(serde_json::json!({
                                         "event": "judge_look_abandoned",
                                         "task_id": activity_key,
+                                        "activity_key": judge_lane,
                                         "look": omni_looks,
                                         "model": pm.as_str(),
                                         "provider": self.provider_name(&pm),
@@ -18286,6 +18191,8 @@ impl GooseAgentDispatcher {
                         // WHO SERVED THE LOOK — same attribution as judge_look_dispatched.
                         "model": pm.as_str(),
                         "provider": self.provider_name(&pm),
+                        // The judge's own lane (it looks AT task_id, streams ON this).
+                        "activity_key": judge_lane,
                         // POST-RE-STREAM SILENCE, named so it is greppable. True when the call has
                         // reasoned a great deal in total but the CURRENT stream has produced nothing —
                         // which is exactly the state a re-stream leaves behind when its replacement
@@ -18872,6 +18779,7 @@ impl GooseAgentDispatcher {
                     self.events.write_value(serde_json::json!({
                         "event": "judge_look_failed",
                         "task_id": activity_key,
+                        "activity_key": judge_lane,
                         "look": omni_looks,
                         "model": pm.as_str(),
                         "provider": self.provider_name(&pm),
@@ -18999,6 +18907,7 @@ impl GooseAgentDispatcher {
                         &last_thinking,
                         model_id,
                         &said,
+                        activity_key,
                     );
                     let _ = std::fs::write(p, digest.to_string());
                     if let Some(m) = &activity_mirror {
@@ -19042,6 +18951,7 @@ impl GooseAgentDispatcher {
                 &last_thinking,
                 model_id,
                 &said,
+                activity_key,
             );
             // Mark the terminal digest phase="done" so the panel drops this node out of "working" the instant
             // ITS call ends — not when the whole phase ends. Without it a finished/capped scout kept reading as
@@ -29327,8 +29237,19 @@ impl PreReviewer for GooseAgentDispatcher {
         // A-2: a transport failure — the Err, or the agent loop's error-closer TEXT — is a review
         // that never read the code. The old `.ok()…unwrap_or_default()` parsed it as `("OK", "")`,
         // i.e. a clean clear, which is how r2 logged provider errors as no-finding reviews.
+        // Keyed `prereview-<task>` (r6 supervision lanes): the digest/transcripts capture what the
+        // reviewer generates, and the shared builders stamp it `"supervision": true`.
+        let lane = prereview_lane_key(&req.task_id);
         let text = self
-            .run_agent(&req.reviewer_model_id, system, user, None, 2, &[], None)
+            .run_agent(
+                &req.reviewer_model_id,
+                system,
+                user,
+                None,
+                2,
+                &[],
+                Some(&lane),
+            )
             .await
             .map_err(|e| clip_tail(&e.to_string(), 400))?
             .text;
@@ -36659,8 +36580,12 @@ impl TaskDispatcher for GooseAgentDispatcher {
         // A-2: a transport Err, or the agent loop's error-closer text, is a review that never read
         // the code — it propagates as Err so the caller logs `tail_review_failed`, never the clean
         // `had_findings: false` row r2 wrote for gabee's 400s.
+        // Keyed `tail-review-<dim>` (r6 supervision lanes) — the same name as its `tail_review`
+        // events and its `.swarm/prereview/tail-review-<dim>` findings file; it reviews the whole
+        // tree along one dimension, so the dimension IS the lane identity.
+        let lane = tail_review_lane_key(dim_id);
         let text = self
-            .run_agent(model_id, system, user, None, 2, &[], None)
+            .run_agent(model_id, system, user, None, 2, &[], Some(&lane))
             .await
             .map_err(|e| clip_tail(&e.to_string(), 400))?
             .text;
@@ -36810,8 +36735,25 @@ impl Replanner for GooseAgentDispatcher {
         // unparseable answer became a decision and armed the declined-state suppression. A
         // failure is an Err now; the scheduler's failed arm names it in the Replanned event.
         // Only a missing final_output stays a decline: the model genuinely produced no plan.
+        //
+        // Keyed `replan-r<round>` (r6 supervision lanes): r5's replan round generated for 43m52s
+        // with no lane, no digest and no think.log — the desktop could only say "supervising".
+        // One lane per round; everything else is parity with the old `run_agent_timed` route
+        // (temp None, read_only false, may_terminate false, attempt 0).
+        let lane = replan_lane_key(ctx.round);
         let out = self
-            .run_agent_timed(&self.planner_model, system, user, response, 10, &[])
+            .run_agent_timed_at(
+                &self.planner_model,
+                system,
+                user,
+                response,
+                10,
+                &[],
+                None,
+                Some(&lane),
+                false,
+                false,
+            )
             .await?;
         let Some(fo) = out.final_output else {
             return Ok(Vec::new());
