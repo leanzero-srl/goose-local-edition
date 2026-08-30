@@ -759,7 +759,14 @@ export interface SwarmRunState {
     planConfidence?: number;
     confidence?: ConfidenceBreakdown | null;
     answerPath: string;
+    /** mtime (ms) of clarify-questions.json, shipped by main so the hook can run-gate the file —
+     *  see clarifyFromThisRun. null/absent = unknown (older main), which gates nothing. */
+    mtime?: number | null;
   } | null;
+  /** True when a run WAS on screen and main's poll started answering null (the run log/breadcrumb no
+   *  longer resolves — archived or deleted). The hook holds the last state instead of flashing the
+   *  empty placeholder; presence-based only, never a timer (see swarmRunLiveness). */
+  sourceMissing: boolean;
   mtime: number | null;
   /** Epoch ms of the stamp INSIDE .swarm/heartbeat (rewritten every ~5s while running), or null for a run
    *  with no heartbeat file. Lets the panel detect a killed engine in seconds without false "stopped" during
@@ -821,6 +828,7 @@ const EMPTY: SwarmRunState = {
   summary: null,
   startedAt: null,
   clarify: null,
+  sourceMissing: false,
   mtime: null,
   heartbeat: null,
   heartbeatExited: false,
@@ -2847,8 +2855,15 @@ function absorbEvent(c: FoldCarry, e: Record<string, unknown>): void {
  * carry is never mutated by this join. That is the whole reason a stale digest can never be served: only
  * the event-derived half is cached, and this half is rebuilt each tick.
  */
-function finishFold(c: FoldCarry, activity: Record<string, unknown>): FoldedRun {
+function finishFold(c: FoldCarry, activity: Record<string, unknown>, scope = ''): FoldedRun {
   const canonDevice = nodeCanonLabeler(c.canon);
+  // THE ONE SHARED JOIN, scoped per run directory. digestStreamFields' `key` is what the channel
+  // memory is kept by, and every run uses constant lane keys ('open', 'synthesis', 'review-*'), so
+  // two concurrently-mounted hooks on DIFFERENT dirs alternated sizes under one key and flapped
+  // `liveChannel` between thinking/transcript on both panels. The scope rides the key HERE — one
+  // wrapper for all five lane-building paths — never hand-prefixed per path.
+  const join = (k: string, d: Digest | undefined, prev?: Partial<TurnLane>) =>
+    digestStreamFields(scope ? `${scope}::${k}` : k, d, prev);
 
   const lanes = [...c.tasks.values()].map((t) => {
     const act = activity[t.taskId] as Digest | undefined;
@@ -2871,7 +2886,7 @@ function finishFold(c: FoldCarry, activity: Record<string, unknown>): FoldedRun 
       //   - the "supervisor reading" badge and the char count were dead
       //   - LaneRow and BoardTaskRow fell back to the 24k full_reasoning CLIP, which is exactly the
       //     truncation I had already declared fixed twice
-      ...digestStreamFields(t.taskId, act, t),
+      ...join(t.taskId, act, t),
     };
   });
 
@@ -2882,7 +2897,7 @@ function finishFold(c: FoldCarry, activity: Record<string, unknown>): FoldedRun 
     return {
       ...t,
       device: canonDevice(t.device),
-      ...digestStreamFields(t.taskId, act, t),
+      ...join(t.taskId, act, t),
     };
   });
 
@@ -2916,7 +2931,7 @@ function finishFold(c: FoldCarry, activity: Record<string, unknown>): FoldedRun 
         // A per-call phase="done" (written when THIS draft's call ends) marks the lane done immediately, so the
         // node stops showing as working the instant its call finishes — not when the whole phase ends.
         status: (d.phase === 'done' || planned ? 'done' : 'running') as TurnStatus,
-        ...digestStreamFields(k, d),
+        ...join(k, d),
         seq: i,
       };
     })
@@ -2948,7 +2963,7 @@ function finishFold(c: FoldCarry, activity: Record<string, unknown>): FoldedRun 
       // Per-call phase="done" (written when THIS call ends) drops the node out of "working" immediately, so a
       // finished/capped scout stops reading as "Scouting" while the node is actually idle.
       status: (d.phase === 'done' || over ? 'done' : 'running') as TurnStatus,
-      ...digestStreamFields(k, d),
+      ...join(k, d),
       seq: i,
     };
   };
@@ -3018,11 +3033,12 @@ function finishFold(c: FoldCarry, activity: Record<string, unknown>): FoldedRun 
 
 export function foldEvents(
   events: Array<Record<string, unknown>>,
-  activity: Record<string, unknown>
+  activity: Record<string, unknown>,
+  scope = ''
 ): FoldedRun {
   const carry = newFoldCarry();
   for (const e of events) absorbEvent(carry, e);
-  return finishFold(carry, activity);
+  return finishFold(carry, activity, scope);
 }
 
 /**
@@ -3050,15 +3066,33 @@ interface FoldCacheEntry {
   carry: FoldCarry;
 }
 
-let foldCache: FoldCacheEntry | null = null;
+/**
+ * ONE CACHE ENTRY PER RUN DIRECTORY, never one module slot. Up to three useSwarmRun hooks are live at
+ * once (BaseChat, NavigationPanel's streaming rows, BenchmarkView), and with a single slot two hooks
+ * on DIFFERENT dirs alternated the key every tick, so the reuse check never matched and BOTH hooks
+ * re-folded their whole event log twice a second — the exact cost the (runId, generation) contract
+ * exists to remove. Keyed by the run DIRECTORY (the hook's workingDir), not runId: runId is 'bench'
+ * for any unpinned benchmark-layout dir, so it can collide across dirs. Scope '' is the legacy
+ * shared slot for callers that pass none. Bounded LRU, evicted on hook unmount (evictRunScope).
+ */
+const foldCaches = new Map<string, FoldCacheEntry>();
+const MAX_FOLD_SCOPES = 4;
 let foldCounters = { fullFolds: 0, incrementalFolds: 0, eventsFolded: 0 };
 
-/** Test seam: the fold's cache and the per-lane channel memory are module state, so a test that cares
+/** Test seam: the fold's caches and the per-lane channel memory are module state, so a test that cares
  *  about either must be able to clear both. */
 export function resetFoldCache(): void {
-  foldCache = null;
+  foldCaches.clear();
   foldCounters = { fullFolds: 0, incrementalFolds: 0, eventsFolded: 0 };
   resetLiveChannelMemory();
+}
+
+/** Drop one run directory's fold carry and channel memory — the hook calls this on unmount so a
+ *  desktop session that visits many runs does not accumulate their carries forever. */
+export function evictRunScope(scope: string): void {
+  foldCaches.delete(scope);
+  const prefix = `${scope}::`;
+  for (const k of [...channelMemory.keys()]) if (k.startsWith(prefix)) channelMemory.delete(k);
 }
 
 /** How much work the fold has actually done — `eventsFolded` is the number a full re-fold per tick inflates. */
@@ -3075,32 +3109,44 @@ export function foldStats(): { fullFolds: number; incrementalFolds: number; even
 export function foldEventsIncremental(
   events: Array<Record<string, unknown>>,
   activity: Record<string, unknown>,
-  source: FoldSource | null | undefined
+  source: FoldSource | null | undefined,
+  scope = ''
 ): FoldedRun {
   const key = source && Number.isFinite(source.generation) ? source : null;
+  const cached = foldCaches.get(scope) ?? null;
   const reuse =
     key !== null &&
-    foldCache !== null &&
-    foldCache.runId === key.runId &&
-    foldCache.generation === key.generation &&
-    events.length >= foldCache.length
-      ? foldCache
+    cached !== null &&
+    cached.runId === key.runId &&
+    cached.generation === key.generation &&
+    events.length >= cached.length
+      ? cached
       : null;
   const carry = reuse ? reuse.carry : newFoldCarry();
   const from = reuse ? reuse.length : 0;
   // DROP THE CACHE BEFORE TOUCHING THE CARRY. An event that throws half way through leaves a carry that
   // holds part of a tick — a task dispatched but not completed, a seq that skipped. Serving that on the
   // next call would render a run that never happened, and it would look plausible. With the slot already
-  // null, nothing can reach the damaged carry: the next call starts from scratch.
-  foldCache = null;
+  // deleted, nothing can reach the damaged carry: the next call starts from scratch.
+  foldCaches.delete(scope);
   for (let i = from; i < events.length; i++) absorbEvent(carry, events[i]);
   foldCounters.eventsFolded += events.length - from;
   if (reuse) foldCounters.incrementalFolds++;
   else foldCounters.fullFolds++;
   if (key) {
-    foldCache = { runId: key.runId, generation: key.generation, length: events.length, carry };
+    foldCaches.set(scope, {
+      runId: key.runId,
+      generation: key.generation,
+      length: events.length,
+      carry,
+    });
+    while (foldCaches.size > MAX_FOLD_SCOPES) {
+      const oldest = foldCaches.keys().next().value as string | undefined;
+      if (oldest === undefined) break;
+      foldCaches.delete(oldest);
+    }
   }
-  return finishFold(carry, activity);
+  return finishFold(carry, activity, scope);
 }
 
 // How long a digest may go unwritten and still count as a live open call. A streaming worker rewrites
@@ -3144,6 +3190,27 @@ export function digestsFromThisRun<T>(
     kept[key] = value;
   }
   return kept;
+}
+
+/**
+ * THE CLARIFY FILE THIS RUN ACTUALLY WROTE — the same gate digestsFromThisRun applies to digests,
+ * for the same reason: the engine never deletes clarify-questions.json (it clears only the stale
+ * ANSWERS file at ask time), so a previous run's unanswered ask survives into the NEXT run in the
+ * same directory. Ungated, that leftover held an amber 'Waiting for you' over an entire building
+ * run — forced-open prompt, idle formation, hidden metrics — and even rendered beside the green
+ * terminal banner when run 2 finished.
+ *
+ * Same two non-rules as the digest gate: an UNKNOWN mtime is kept (an older main ships none, and
+ * dropping a live ask beats nothing only when the gate is certain), and an unknown startedAtMs
+ * gates nothing (a stream with no parseable timestamp cannot say when the run began).
+ */
+export function clarifyFromThisRun<T extends { mtime?: number | null }>(
+  clarify: T | null,
+  startedAtMs: number | null
+): T | null {
+  if (clarify == null || startedAtMs == null) return clarify;
+  if (typeof clarify.mtime === 'number' && clarify.mtime < startedAtMs) return null;
+  return clarify;
 }
 
 /** An OPEN supervision generation — engine work that creates no task lane. */
@@ -3316,6 +3383,14 @@ export function deriveFleet(args: {
   /** Nodes LM Studio itself reports generating/prompt-processing — the join that attributes a
    *  supervision span to the node actually running it (the events never name it at start). */
   busyNodes?: string[];
+  /** EVERY node lms ps reported this poll, idle ones included (the nodeStatus keys). Presence is
+   *  what separates "fleet reachable, node idle" from "no fleet evidence at all" — busyNodes empty
+   *  cannot tell those apart, and the dead-lane demotion below needs the distinction. Keys are
+   *  deviceFromModelId short names, exactly what the fleet cells read. */
+  reportedNodes?: string[];
+  /** The run directory, for channel-memory scoping of the laneless digest rows — the fifth
+   *  lane-building path, joined here outside the fold. Same contract as finishFold's scope. */
+  scope?: string;
 }): {
   devices: string[];
   workingByDevice: Map<string, TurnLane>;
@@ -3341,13 +3416,31 @@ export function deriveFleet(args: {
   //
   // So the claim must be CORROBORATED, and only by evidence we already collect -- no timer is added
   // here, because a clock is what we deleted everywhere else. Demote only when BOTH independent
-  // signals disagree with the claim: LM Studio is reporting fleet state at all AND does not list this
-  // node as busy, AND the lane's own digest is stale past the open-call window. Either signal alone
-  // has demoted a genuinely working node before: mtime did it mid-shell-call, and busyNodes is empty
-  // for a cloud device, which never appears in `lms ps`.
-  const reportingBusy = args.busyNodes != null && args.busyNodes.length > 0;
+  // signals disagree with the claim: LM Studio REPLIED at all AND does not list this node as busy,
+  // AND the lane's own digest is stale past the open-call window. Either signal alone has demoted a
+  // genuinely working node before: mtime did it mid-shell-call, and a cloud device never appears in
+  // `lms ps`.
+  //
+  // "Replied at all" is `reportedNodes` (every nodeStatus entry, idle ones included), NOT
+  // busyNodes.length > 0: a REACHABLE fleet that is entirely idle reports idle entries, and the old
+  // busy-only guard switched the demotion off in exactly the case that most needs it — a
+  // claimed-working lane on a fleet lms swears is idle (the 2026-08-28 lie). An empty report
+  // (unreachable, or `lms ps --json` returning [] — measured, it can while reachable) still fails
+  // SAFE: no evidence, no demotion. A device lms never reports is a cloud node and is never demoted.
+  // Membership uses the same shortName normalization the fleet cells apply to nodeStatus keys —
+  // deriveFleet's devices are canonical node names, nodeStatus keys are deviceFromModelId short
+  // names, and a raw compare misclassifies exactly where they differ.
+  const lmsName = (device: string): string => device.match(/^([^-]+)/)?.[1] ?? device;
+  const reported = args.reportedNodes != null ? new Set(args.reportedNodes.map(lmsName)) : null;
+  const busy = new Set((args.busyNodes ?? []).map(lmsName));
+  const fleetReporting = reported != null ? reported.size > 0 : busy.size > 0;
   const laneLooksDead = (l: TurnLane): boolean => {
-    if (!reportingBusy || (args.busyNodes ?? []).includes(l.device)) return false;
+    if (!fleetReporting) return false;
+    const dev = lmsName(l.device);
+    if (busy.has(dev)) return false;
+    // With a full report, a device lms does not list is cloud — its idleness can never be
+    // corroborated. A caller shipping no reportedNodes (legacy) keeps the old busy-only rule.
+    if (reported != null && !reported.has(dev)) return false;
     const d = args.digests[l.taskId] as Digest | undefined;
     const lastCall = d?.calls?.length ? d.calls[d.calls.length - 1] : undefined;
     const callOpen = lastCall != null && (lastCall.ok === null || lastCall.ok === undefined);
@@ -3402,7 +3495,7 @@ export function deriveFleet(args: {
       device,
       model: d?.model,
       status: 'running',
-      ...digestStreamFields(key, d),
+      ...digestStreamFields(args.scope ? `${args.scope}::${key}` : key, d),
       seq: 0,
     });
   }
@@ -4368,14 +4461,24 @@ export function useSwarmRun(workingDir: string | undefined, pollMs = 500): Swarm
       return;
     }
     let alive = true;
+    // A NEW target directory starts with no run to hold: without this reset, a null read on the new
+    // dir would "keep visible" the PREVIOUS dir's run under the wrong workingDir.
+    lastRunId.current = null;
 
     const read = async () => {
       try {
         const data = await window.electron.readSwarmRun(workingDir);
         if (!alive) return;
         if (!data) {
-          setState({ ...EMPTY, loading: false });
-          lastRunId.current = null;
+          // null is main's MEASURED no-run answer (a failed read throws instead, and the catch below
+          // keeps the last state). When a run WAS on screen, honor the lastRunId comment: hold it
+          // with sourceMissing rather than flashing the empty placeholder — presence-based only,
+          // never a timer (the no-timer-hides-a-run rule in swarmRunLiveness).
+          if (lastRunId.current != null) {
+            setState((s) => ({ ...s, sourceMissing: true, loading: false }));
+          } else {
+            setState({ ...EMPTY, loading: false });
+          }
           return;
         }
         const {
@@ -4423,10 +4526,17 @@ export function useSwarmRun(workingDir: string | undefined, pollMs = 500): Swarm
           // same generation the array IS the previous one extended, so only the appended events are folded.
           typeof data.generation === 'number'
             ? { runId: data.runId, generation: data.generation }
-            : null
+            : null,
+          // The cache and channel-memory scope. workingDir, not runId: runId is 'bench' for any
+          // unpinned benchmark-layout dir, so it can collide across dirs.
+          workingDir
         );
+        // Run-gated like the digests, and BEFORE every consumer: a previous run's leftover
+        // clarify-questions.json held 'Waiting for you' over an entire building run (see
+        // clarifyFromThisRun for the gate and its two non-rules).
+        const clarify = clarifyFromThisRun(data.clarify, startedAt);
         const phaseTodo = buildPhaseTodo(data.events, digests, {
-          clarifyPending: !!data.clarify?.pending,
+          clarifyPending: !!clarify?.pending,
         });
         const { phase: runPhase, observed: runPhasesObserved } = foldRunPhase(data.events);
         lastRunId.current = data.runId;
@@ -4486,7 +4596,8 @@ export function useSwarmRun(workingDir: string | undefined, pollMs = 500): Swarm
           finished,
           summary,
           startedAt,
-          clarify: data.clarify,
+          clarify,
+          sourceMissing: false,
           runDir: data.dir ?? null,
           mtime: data.mtime,
           heartbeat: data.heartbeat,
@@ -4541,6 +4652,9 @@ export function useSwarmRun(workingDir: string | undefined, pollMs = 500): Swarm
       alive = false;
       clearInterval(iv);
       offDelta();
+      // This dir's fold carry and channel memory die with the mount. Another hook still watching the
+      // same dir just re-folds once and re-caches — correctness never depended on the cache.
+      evictRunScope(workingDir);
     };
   }, [workingDir, pollMs]);
 

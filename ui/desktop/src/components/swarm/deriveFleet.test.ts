@@ -96,6 +96,44 @@ describe('deriveFleet — every pool node renders; idle is a state, never absenc
       expect(deadLane({ busyNodes: undefined }).workingByDevice.has('gabee')).toBe(true);
     });
 
+    // FINDING 13 of the frontend truth review: `busyNodes.length > 0` was the reporting test, so a
+    // REACHABLE fleet truthfully reporting every node idle (busyNodes []) switched the demotion off
+    // in exactly the case it exists for — a claimed-working lane on a fleet lms swears is idle, the
+    // 2026-08-28 lie. `reportedNodes` (every nodeStatus key, idle entries included) carries the
+    // reachability fact separately from the busy fact.
+    it('drops the claim when lms REPLIED all-idle: reportedNodes present, busyNodes empty', () => {
+      expect(
+        deadLane({ busyNodes: [], reportedNodes: ['gabee', 'mihai'] }).workingByDevice.has('gabee')
+      ).toBe(false);
+    });
+
+    it('fails SAFE on an empty reply — lms ps --json can return [] while reachable (measured)', () => {
+      expect(deadLane({ busyNodes: [], reportedNodes: [] }).workingByDevice.has('gabee')).toBe(
+        true
+      );
+    });
+
+    it('never demotes a device lms does not report — cloud nodes cannot be corroborated idle', () => {
+      expect(
+        deadLane({ busyNodes: [], reportedNodes: ['mihai'] }).workingByDevice.has('gabee')
+      ).toBe(true);
+    });
+
+    it('matches nodeStatus short names to lane devices through the same shortName rule the cells use', () => {
+      // A lane device carrying a model-id suffix must still be recognized as the busy short-named
+      // node — a raw compare would demote a genuinely working node here.
+      const fleet = deriveFleet({
+        pool: ['gabee-qwen3.6-27b'],
+        laneSources: [lane('gabee-qwen3.6-27b', 'running', 't-gabee')],
+        digests: { 't-gabee': { calls: [{ ok: true }] } },
+        digestMtimes: { 't-gabee': 0 },
+        now: 10 * 60_000,
+        busyNodes: ['gabee'],
+        reportedNodes: ['gabee', 'mihai'],
+      });
+      expect(fleet.workingByDevice.has('gabee-qwen3.6-27b')).toBe(true);
+    });
+
     it('keeps it while a tool call is open, which legitimately streams nothing for minutes', () => {
       expect(
         deadLane({

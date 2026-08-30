@@ -2,7 +2,13 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import fsp from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { foldEvents, foldEventsIncremental, foldStats, resetFoldCache } from './useSwarmRun';
+import {
+  evictRunScope,
+  foldEvents,
+  foldEventsIncremental,
+  foldStats,
+  resetFoldCache,
+} from './useSwarmRun';
 import {
   eventsGeneration,
   readEvents,
@@ -581,5 +587,64 @@ describe('main issues the key, the renderer folds on it', () => {
     const again = await tick(p, 'run-a');
     expect(foldStats().eventsFolded).toBe(folded);
     expect(again).toStrictEqual(foldEvents(EVENTS, ACTIVITY));
+  });
+});
+
+/**
+ * FINDINGS 21/24 of the frontend truth review: the fold cache was ONE module slot and the channel
+ * memory was keyed by lane key alone, while up to three useSwarmRun hooks are mounted concurrently
+ * (BaseChat, NavigationPanel streaming rows, BenchmarkView). Two hooks on DIFFERENT dirs alternated
+ * the cache key every tick — both full-refolded twice a second — and flapped each other's liveChannel
+ * under the constant planning keys. Scoped by the run DIRECTORY, deliberately not runId: runId is
+ * 'bench' for every unpinned benchmark-layout dir, so it collides across dirs.
+ */
+describe('the fold caches are RUN-SCOPED — concurrent hooks on different dirs stop thrashing each other', () => {
+  it('two dirs alternating polls BOTH stay incremental (one shared slot forced full refolds)', () => {
+    foldEventsIncremental(reparse(EVENTS.slice(0, 10)), ACTIVITY, src('bench', 1), '/dirA');
+    foldEventsIncremental(reparse(EVENTS.slice(0, 12)), ACTIVITY, src('bench', 2), '/dirB');
+    const base = foldStats().fullFolds;
+    foldEventsIncremental(reparse(EVENTS.slice(0, 11)), ACTIVITY, src('bench', 1), '/dirA');
+    foldEventsIncremental(reparse(EVENTS.slice(0, 13)), ACTIVITY, src('bench', 2), '/dirB');
+    expect(foldStats().fullFolds).toBe(base);
+    expect(foldStats().incrementalFolds).toBe(2);
+  });
+
+  it("never shares a carry across dirs on the SAME (runId, generation) — the 'bench' collision", () => {
+    foldEventsIncremental(reparse(EVENTS.slice(0, 12)), ACTIVITY, src('bench', 3), '/dirA');
+    const other = reparse(EVENTS.slice(0, 14));
+    const folded = foldEventsIncremental(other, ACTIVITY, src('bench', 3), '/dirB');
+    expect(folded).toStrictEqual(foldEvents(other, ACTIVITY, '/dirB'));
+    expect(foldStats().incrementalFolds).toBe(0);
+  });
+
+  it('evictRunScope drops one dir and leaves the other cached', () => {
+    foldEventsIncremental(reparse(EVENTS.slice(0, 10)), ACTIVITY, src('bench', 4), '/dirA');
+    foldEventsIncremental(reparse(EVENTS.slice(0, 10)), ACTIVITY, src('bench', 5), '/dirB');
+    evictRunScope('/dirA');
+    foldEventsIncremental(reparse(EVENTS), ACTIVITY, src('bench', 4), '/dirA');
+    foldEventsIncremental(reparse(EVENTS), ACTIVITY, src('bench', 5), '/dirB');
+    expect(foldStats().fullFolds).toBe(3);
+    expect(foldStats().incrementalFolds).toBe(1);
+  });
+
+  it('channel memory is scoped: interleaved polls of another dir cannot drag a lane back to a stale channel', () => {
+    const synth = (t: number, th: number) => ({
+      synthesis: {
+        model: 'mihai-qwen',
+        last_text: 'x',
+        transcript_bytes: t,
+        thinking_bytes: th,
+        thinking_chars: th,
+      },
+    });
+    const ch = (scope: string, t: number, th: number) =>
+      foldEvents([], synth(t, th), scope).planningLanes.find((l) => l.taskId === 'synthesis')
+        ?.liveChannel;
+    ch('/dirA', 100, 0);
+    ch('/dirB', 500, 100);
+    ch('/dirA', 150, 0);
+    // dirB's transcript is static while its thinking grows — its live line must follow thinking.
+    // Unscoped, dirA's interleaved sizes made B's poll read as a tie and keep 'transcript'.
+    expect(ch('/dirB', 500, 200)).toBe('thinking');
   });
 });

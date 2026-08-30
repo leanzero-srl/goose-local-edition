@@ -4287,6 +4287,11 @@ export const SwarmRunPanel: React.FC<{
     busyNodes: Object.entries(nodeStatus)
       .filter(([, st]) => st === 'generating' || st === 'processingPrompt')
       .map(([n]) => n),
+    // EVERY node lms replied about, idle ones included — what arms the dead-lane demotion when the
+    // whole fleet is idle (busyNodes [] alone cannot tell "all idle" from "lms unreachable").
+    reportedNodes: Object.keys(nodeStatus),
+    // Channel-memory scope for the laneless digest rows — same discriminant as the hook's fold scope.
+    scope: workingDir,
   });
   const deviceOrder: string[] = fleet.devices;
   // The WORK board — the single source of truth for plan / ongoing / done (see deriveTaskBoard).
