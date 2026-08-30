@@ -43,6 +43,51 @@ metrics are voided in-ledger, never edited.
 
 **Next:** fork raullenchai/Rapid-MLX under leanzero; oMLX card filled in TRUMP-CARDS.md.
 
+## 2026-08-31 — Fork live, pinned launch proven, goose↔engine E2E proven with zero code changes
+
+**Fork:** github.com/leanzero-srl/Rapid-MLX created via API (keychain token auths as leanzero-srl),
+cloned to ~/Projects/Rapid-MLX with `upstream` → raullenchai/Rapid-MLX (tags fetched; v0.13.1
+present = the brew version we benched). Update runbook: `git fetch upstream && git merge
+upstream/main && git tag leanzero-vX.Y.Z && git push origin main --tags`, then bump the pin in
+goose. **Pinned launch proven:** `uvx --from git+https://github.com/leanzero-srl/Rapid-MLX@v0.13.1
+rapid-mlx --version` → 0.13.1 (resolves, builds, cached).
+
+**E2E:** release goose (Aug 25 build), `--provider omlx --model qwen3.5-9b-4bit`,
+OMLX_HOST→127.0.0.1:8090 (rapid-mlx): agent called `write` (hello.py verified on disk) then
+`shell` (python3 import+run), reported exact output "Hello, goose". The in-tree omlx declarative
+provider IS wire-compatible with rapid-mlx — provider layer needs zero new code for basic agent use.
+
+**Correction to the 2026-08-30 research-verdict entry:** upstream Rapid-MLX issue/PR numbers run
+past #2770, so the research doc's "#2330/#2360" citations were plausible after all — my "garbled
+citations" judgment was itself too broad. The failure-mode CONTENT still tested false on current
+versions (no cache-degradation on rapid in 3 runs; the decay showed on omlx instead).
+
+**Sidecar crate:** crates/goose-sidecar green — 4 real-child lifecycle tests + 6 memory-gate tests,
+clippy clean. GGUF-vs-MLX finding: goose-local-inference's download machinery is single-file
+GGUF-shaped; MLX needs repo-snapshot downloads → built fresh in goose-sidecar::hf (in flight).
+
+## 2026-08-31 — Backend + boundary landed by two agents; penalties proven to bite
+
+**ACP backend (c7be09fd0):** goose-sidecar grew hf.rs (MLX HF search — measured `filter=mlx` is the
+working filter, `library=mlx` returns unfiltered transformers repos — repo-tree pagination, snapshot
+downloads with .part/rename/resume/cancel and exact byte accounting proven by a LIVE 21 MB download
+test) and engine.rs (MlxEngineManager state machine: stopped/mounting/running/failed, gate-Block
+refuses before any load, restart_required = persisted-vs-mounted argv diff). 11 ACP methods under
+_goose/unstable/mlxEngine/* registered + capability advertised; settings persist under config key
+`mlx_engine`; all clippy-clean. Not yet exercised: a full real mount through the ACP handlers —
+that is the running-desktop-app verification, still owed.
+
+**SwarmEngine boundary step A (9812ac069, swarm-surgeon):** trait + LmStudioEngine, seven functions
+verbatim, 404 swarm tests + 8 development gates + workspace clippy green, size ratchet tightened.
+Surgeon's finds: the /api/v0/models prober never returned loaded_context_length (plan overstated
+the parity gap), and swarm_engine.rs sat outside the development-gates file glob → step B item.
+
+**Sampling penalties (live A/B on rapid-mlx 0.13.1, temp 0):** frequency_penalty=2.0 collapses a
+repeat-blue probe from 30 repetitions to 4 with early stop — the per-request OpenAI-params →
+sampler path IS plumbed. presence_penalty=1.9 did not flip the greedy argmax on the same probe
+(flat penalty < the dominant token's logit margin — expected math, same plumbing). UI ships both
+knobs; the settings path additionally uses the server-side --default-* flags at mount.
+
 ## 2026-08-30 — Campaign opened; finalists chosen from verified research; hybrid footgun inherited
 
 **Did:** Verified Mihai's engine research against the live web (all three engines real; citations
