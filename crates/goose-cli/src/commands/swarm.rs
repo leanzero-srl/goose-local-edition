@@ -21,8 +21,8 @@ use goose::session::SessionManager;
 use goose_swarm::{
     deterministic_verdict, is_split_candidate, ChildSpec, Dag, DeviceCfg, DispatchError,
     DispatchRequest, EventSink, Judge, JudgeConfig, JudgeInput, JudgeOutcome, JudgeRequest,
-    NullSink, PreReviewOutput, PreReviewRequest, PreReviewer, ReplanContext, Replanner, Scheduler,
-    SwarmEvent, TaskDispatcher, TaskRunOutput, TaskSpec, ToolCallRecord, Verdict,
+    NullSink, PreReviewOutput, PreReviewRequest, PreReviewer, ReplanAnswer, ReplanContext,
+    Replanner, Scheduler, SwarmEvent, TaskDispatcher, TaskRunOutput, ToolCallRecord, Verdict,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -36428,7 +36428,7 @@ impl TaskDispatcher for GooseAgentDispatcher {
 
 #[async_trait]
 impl Replanner for GooseAgentDispatcher {
-    async fn replan(&self, ctx: ReplanContext) -> Result<Vec<TaskSpec>> {
+    async fn replan(&self, ctx: ReplanContext) -> Result<ReplanAnswer> {
         let done = ctx
             .completed
             .iter()
@@ -36450,6 +36450,8 @@ impl Replanner for GooseAgentDispatcher {
              is a HANDOFF the worker builds from alone: name the exact file(s) it writes, the exact \
              symbols/endpoints it implements, and the one concrete check that proves it works — a \
              one-line description is a defect. Give id/description/difficulty/model/depends_on/files, \
+             and in `rationale` state in one or two sentences WHY this batch adds value NOW, grounded \
+             in the specific completed/failed work you read below (or why nothing useful remains), \
              then call the final_output tool."
         );
         // The research-settled conventions ride beside the goal (surgeon #9's find): ctx.goal is
@@ -36494,7 +36496,7 @@ impl Replanner for GooseAgentDispatcher {
             ctx.incomplete.join(", "),
         );
         let response = Some(Response {
-            json_schema: Some(plan_schema()),
+            json_schema: Some(replan_schema()),
         });
         // GEN-6a #9 (fallback rule): these arms used to launder every failure into Ok(vec![]),
         // which the scheduler reads as "the planner DECLINED" — a transport fault or an
@@ -36522,14 +36524,30 @@ impl Replanner for GooseAgentDispatcher {
             )
             .await?;
         let Some(fo) = out.final_output else {
-            return Ok(Vec::new());
+            // The model genuinely produced no plan — there is no answer text to read a
+            // rationale from, so None (the scheduler names the absence; nothing is invented).
+            return Ok(ReplanAnswer {
+                specs: Vec::new(),
+                rationale: None,
+            });
         };
         let mut specs = goose_swarm::specs_from_plan_json(&fo)
             .map_err(|e| anyhow!("replan output unparseable: {e}"))?;
         let existing: std::collections::HashSet<&str> =
             ctx.existing_ids.iter().map(|s| s.as_str()).collect();
         specs.retain(|s| !existing.contains(s.id.as_str()));
-        Ok(specs)
+        // The rationale is the answer's OWN text, verbatim — r5's live splice emitted
+        // `replanned.reason: ''` because it was never requested. Whitespace-only counts as
+        // not given; the scheduler turns None into the named absence, never ''.
+        let rationale = serde_json::from_str::<serde_json::Value>(&fo)
+            .ok()
+            .and_then(|v| {
+                v.get("rationale")
+                    .and_then(|r| r.as_str())
+                    .map(|r| r.trim().to_string())
+            })
+            .filter(|r| !r.is_empty());
+        Ok(ReplanAnswer { specs, rationale })
     }
 }
 
@@ -36603,11 +36621,17 @@ struct ClarifyQuestion {
     resolves: String,
 }
 
-fn plan_schema() -> serde_json::Value {
+/// The replanner's forced answer shape (its only caller — synthesis has its own path). Was
+/// `plan_schema` with a required `integration` string nothing ever parsed; the replanner never
+/// plans integration (the sink is pinned), so that slot is gone and `rationale` is REQUIRED in
+/// its place — r5's live splice emitted `replanned.reason: ''` because the model's why was never
+/// requested, and a rationale the schema demands cannot be silently omitted (an empty string
+/// still parses to a named absence, never '').
+fn replan_schema() -> serde_json::Value {
     serde_json::json!({
         "type": "object",
         "additionalProperties": false,
-        "required": ["subtasks", "integration"],
+        "required": ["subtasks", "rationale"],
         "properties": {
             "subtasks": {
                 "type": "array",
@@ -36625,7 +36649,7 @@ fn plan_schema() -> serde_json::Value {
                     }
                 }
             },
-            "integration": {"type": "string"}
+            "rationale": {"type": "string"}
         }
     })
 }

@@ -25,9 +25,21 @@ pub struct ReplanContext {
     pub round: u32,
 }
 
+/// What the replanner answered: the specs, plus its own stated WHY. r5's live splice (12:36:09,
+/// added frozen-rules-tests + viz-math-oracle) emitted `Replanned { reason: "" }` because the
+/// trait could only carry specs — the model's rationale was never requested, so the event's
+/// reason field held the hygiene actions alone, which that round had none of. `rationale` is the
+/// model's own text, verbatim; `None` when it genuinely gave none (the scheduler then names the
+/// absence — never fabricates and never ships '').
+pub struct ReplanAnswer {
+    pub specs: Vec<TaskSpec>,
+    pub rationale: Option<String>,
+}
+
 #[async_trait]
 pub trait Replanner: Send + Sync {
-    /// Return ADDITIONAL independent [`TaskSpec`]s to fill idle workers, or an empty vec to stop.
-    /// Errors are treated as empty — a replanner failure never aborts the run.
-    async fn replan(&self, ctx: ReplanContext) -> anyhow::Result<Vec<TaskSpec>>;
+    /// Return ADDITIONAL independent [`TaskSpec`]s to fill idle workers (empty to stop), with the
+    /// replanner's own rationale for the batch. An Err is a planner-call FAILURE, distinguished
+    /// from a decline by the scheduler's arms — it never aborts the run.
+    async fn replan(&self, ctx: ReplanContext) -> anyhow::Result<ReplanAnswer>;
 }

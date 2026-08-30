@@ -74,8 +74,10 @@ pub enum SwarmEvent {
     /// that used to collapse into one shape — the planner DECLINED (an empty plan is a
     /// decision), the planner CALL FAILED (a transport/model fault is not a decision), and the
     /// SPLICE was rejected (a planner answer the DAG could not take). A network fault reading
-    /// as "planner declined" is exactly the evidence-hiding this field removes. Empty on the
-    /// success arm.
+    /// as "planner declined" is exactly the evidence-hiding this field removes. On the success
+    /// arm `reason` opens with the replanner's OWN rationale (verbatim from its answer, or the
+    /// named absence "replanner gave no rationale" — r5's live splice shipped '' here), with any
+    /// splice-repair actions appended.
     Replanned {
         round: u32,
         added: Vec<String>,
