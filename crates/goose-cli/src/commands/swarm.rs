@@ -24394,7 +24394,40 @@ fn extract_first_json_object(s: &str) -> Option<String> {
 /// compacted at 53,902 structured bytes and the run produced six whole plans without ever reaching
 /// build. Here the planner sees a few lines per slice, emits a few hundred tokens of skeleton, and the
 /// ENGINE splices the owners' briefs in verbatim afterwards.
-fn slice_index(briefs: &[SliceBrief]) -> String {
+fn slice_index(briefs: &[SliceBrief], existing: &[String], spec: &str) -> String {
+    // GEN-2 (fallback rule): a slice whose owner named no files used to be captioned
+    // "(the owner named none — infer them from the interface)" — an invitation to INVENT, and
+    // an invented path becomes ENFORCED ownership the moment synthesis emits it (measured:
+    // `cli-interface` was assigned `wordfreq/cli.py` its own brief never named). The caption now
+    // hands synthesis the path facts that actually exist — the run-start manifest and the spec's
+    // advertised entry package — and when both are empty it states that measured absence instead.
+    // The caller emits `slice_files_unnamed` per such slice, so the gap is an event, not a guess.
+    let unnamed_caption = {
+        let mut facts = Vec::new();
+        if let Some(p) = spec_python_entry(spec) {
+            facts.push(format!("the spec's advertised entry package is `{p}`"));
+        }
+        if !existing.is_empty() {
+            let shown: Vec<&str> = existing.iter().map(|s| s.as_str()).take(12).collect();
+            facts.push(format!(
+                "files already on disk: {}{}",
+                shown.join(", "),
+                if existing.len() > 12 { ", …" } else { "" }
+            ));
+        }
+        if facts.is_empty() {
+            "(the owner named none, no file exists on disk yet, and the spec advertises no \
+             entry package — name this slice's paths from its objective and interface above; \
+             there is no real layout to copy yet)"
+                .to_string()
+        } else {
+            format!(
+                "(the owner named none — {}; place this slice's files against those REAL paths, \
+                 never a parallel invented layout)",
+                facts.join("; ")
+            )
+        }
+    };
     briefs
         .iter()
         .map(|b| {
@@ -24413,7 +24446,7 @@ fn slice_index(briefs: &[SliceBrief]) -> String {
             // taken from its slice's FILES section" and this index is the only thing it ever sees, so
             // until now that instruction pointed at nothing and the model made the paths up.
             let files = if b.files.is_empty() {
-                "(the owner named none — infer them from the interface)".to_string()
+                unnamed_caption.clone()
             } else {
                 b.files.join(", ")
             };
@@ -24477,7 +24510,16 @@ impl GooseAgentDispatcher {
         // a brand-new build reading as an amendment over somebody else's half-written frontend.
         existing: &[String],
     ) -> Result<String> {
-        let index = slice_index(briefs);
+        // GEN-2: an owner that named no files is a measured absence, not a licence for the
+        // planner to invent paths — the index caption carries the real-path facts, and this
+        // event is the absence tick.py can print.
+        for b in briefs.iter().filter(|b| b.files.is_empty()) {
+            self.events.write_value(serde_json::json!({
+                "event": "slice_files_unnamed",
+                "slice": b.id,
+            }));
+        }
+        let index = slice_index(briefs, existing, user_prompt);
         let lang = detect_language(user_prompt, existing);
         let test_cmd = lang.test_cmd();
         let system = format!(
@@ -43434,6 +43476,39 @@ mod audit_regressions {
         assert!(
             d["tasks_owning_nothing"].as_array().unwrap().is_empty(),
             "the whole point: the fallback plan is no longer a plan of tasks that own nothing"
+        );
+    }
+
+    /// GEN-2 (fallback rule): a slice with no owner-named files must be captioned with the REAL
+    /// path facts (run-start manifest + the spec's entry package), never the old "infer them
+    /// from the interface" invitation that produced invented — then enforced — ownership. When
+    /// no fact exists either, the caption states that measured absence.
+    #[test]
+    fn an_unnamed_slice_is_fed_real_paths_never_an_invitation_to_invent() {
+        let named = brief("store", &["app/store.py"]);
+        let unnamed = brief("cli", &[]);
+        let existing = vec!["app/store.py".to_string(), "web/index.html".to_string()];
+        let spec = "Run it as `python3 -m app serve`.";
+        let index = slice_index(&[named.clone(), unnamed.clone()], &existing, spec);
+        assert!(
+            !index.contains("infer them from the interface"),
+            "the invitation to invent is gone:\n{index}"
+        );
+        assert!(
+            index.contains("entry package is `app`") && index.contains("web/index.html"),
+            "the unnamed slice is pointed at the spec entry and the on-disk manifest:\n{index}"
+        );
+        assert!(
+            index.contains("files it will create: app/store.py"),
+            "a slice that named its files renders them unchanged:\n{index}"
+        );
+        // No manifest, no advertised entry: the caption states the absence — never a template,
+        // never a quiet default.
+        let bare = slice_index(&[unnamed], &[], "make a thing");
+        assert!(
+            bare.contains("no file exists on disk yet")
+                && bare.contains("the spec advertises no entry package"),
+            "both absences are stated as measured facts:\n{bare}"
         );
     }
 
