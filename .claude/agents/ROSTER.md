@@ -348,3 +348,10 @@ research_request_block's armed-no-claimed-sections arm wording.
   mirror the write-half fix could not see. Two factual slips in the surgeon's self-trace caught
   (tool-row count, omitted drifting verdict). The pattern holds: every self-trace so far has been
   honest in verdict and wrong in at least one detail — the independent read is earning its cost.
+- 2026-08-30 22:40 swarm-surgeon (attribution residuals + calls loudness, 6585f0845): CLEAN+. All four
+  landed, swarm.rs 45,455→45,453, and THE TRACE GATE WORKED IN CONSTRUCTION: walking r5's values caught
+  that a pure comment-strip would flip F1 off app/sync.py (its hits are a comment + docstring) and
+  regress the run's ONE real promotion — the shipped 4-tuple ordering key is trace-bought, not
+  designed. Also closed a latent concurrent-claim race (two .js groups, one .html) by resolving
+  ownership sequentially before the fan, and refuted my brief's round-1 premise honestly (httpapi.py
+  is F3's own group; runner-up claim correctly refused until F3 lands). Charter gap: none.
