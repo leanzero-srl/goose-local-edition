@@ -21,10 +21,18 @@ These you should open yourself:
 - **`RUN-LEDGER.md`** — one row per run, in comparable numbers, so runs are judged by measurement rather
   than recollection.
 - **`TICK-NOTES.md`** — every finding, newest last.
+- **`.claude/rules/development-gates.md`** — the five refusing gates in full detail (fallbacks,
+  generic text, benchmark launch, reaping, time inputs) with the rebukes that paid for each.
 - **`REFUSED.md`** — items culled by review, kept for revival. **Check before proposing something new.**
 - **`DESIGN-STABILITY-FIRST.md`** — the next evolution (BP-1, STABILITY > SPEED > QUALITY): what is
   deleted, what is kept, the 14 ranked steps and the all-vs-single control. **Read before implementing
   anything in the planner or REPAIR tail**; it supersedes the plan-mode file for those areas.
+
+## STANDING GATES (post-compaction: re-read AGENTS.md GATES before any engine/harness edit)
+
+The trained urges the gates refuse — silent fallbacks, generic task text, headless benchmark runs,
+killpg reaps, seconds-caps — RETURN after a compaction. AGENTS.md `## GATES` is the short form;
+`cargo test -p goose-swarm --test development_gates` is what refuses. Do not relitigate a gate.
 
 ## Working in this repo without drowning in it
 
