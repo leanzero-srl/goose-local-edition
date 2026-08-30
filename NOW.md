@@ -182,25 +182,28 @@ deleting a layer to gating it; measure the fleet against ONE local node of the s
 
 ## WHAT WE ARE DOING RIGHT NOW
 
-**One sentence: the r4 build campaign is in its final stretch — the campaign-wide adversarial review
-(24 agents, 4 lenses) is DONE: 18 findings confirmed, 2 refuted, ZERO landed commits reverted; the
-instrument half is closed and the engine half is queued in the GEN purge agent's chain; when that chain
-lands its gates run, we sweep dead code (G-1), rebuild, install, and launch r4 from the Benchmark view.**
+**One sentence: r4 launched 09:12, was KILLED at BUILD+7m by its own vigil, and the kill became
+GATE 6; the app is rebuilding with the fixes and relaunches from the Benchmark view next.**
 
-**The review's verdict, in one line each (2026-08-30 ~08:15):**
-- CLOSED (instruments/docs/UI, commits 70d648d/e884ab0/f62e6c59c/ece2be374 + loop-state): the
-  RUN-LEDGER blocker (whole-row replace destroyed r0's score line — snapshot now MERGES rows,
-  history restored, r2's seed 5cd47b42e2a7c3e0 pinned + trace backfilled into the archived tree);
-  tick.py reads the six invisible events (vendor_probe, pre_review_failed, retry_reused_avoided_device,
-  replanned, known_bugs + absences) and labels gate-replay debris "not run state"; a live UNREAD-EVENTS
-  residue line means no future event can land invisible; plan_repaired got its panel fixture test.
-- IN THE GEN CHAIN (engine, swarm.rs + scheduler.rs): plan-side banned template (still reaches
-  REVIEW+judge via integrate_verify_spec_inner), GEN-5 brief floor (doc claimed it existed; landed
-  21ec27f82), ledger roll-up rows_dropped, Replanned three-arm reason, spec_surface_empty_at_sink
-  (landed 2cdc49c41), plan_repaired dag_fallback tag, SHRANK×A-3 fingerprint-SET terminator,
-  unwrap_or_default ratchet sweep, replay content-compare writes.
-- REFUTED (verified in code myself): the mid-edit E0063; the scheduler.rs 420s min-age — it is judge
-  SUMMONS CADENCE (pre-II-7, and the verdict it gated was deleted), not a bound on model work.
+**The r4 kill, in one paragraph (archive
+`swarm-3node-r4-KILLED-replan-r0-spliced-5-tasks-past-repair-shadow-reintroduced-sink-owned-README-build-7m`,
+row in RUN-LEDGER):** the planning chain worked exactly as designed — OPEN-1 read a 10k orientation
+instead of the 53k spec, ASK's 3 open decisions folded into every brief at the 5s benchmark timeout
+(BY DESIGN post-P1-5; the proxy is deleted), REVIEW held ONE round (new=1), a patch not a
+re-emission, skeleton prepended, plan repaired 9→8. Then the DYNAMIC REPLANNER — summoned at
+BUILD+4m with ZERO completions — spliced 5 tasks past every repair (`splice_specs` checks
+ids/deps/cycles, not ownership): `notifierd-service` re-created the module/package shadow the
+repair had fixed 4 minutes earlier, thin_brief fired on its 500-char description (GEN-5 measured
+live), and the pinned sink shipped owning `README.md` (the join-owns-files kill checkpoint, the
+cascaded-Failed class). Also real: the repair's drop-then-remove of the shadowed service task is
+what deleted notifierd's brief and invited the re-add.
+
+**GATE 6 — ONE DOOR (57ff5265b), Mihai's order minutes after the kill:** every DAG entry walks the
+same repairs (`repair_replan_specs` pre-splice, actions on the `Replanned` event), the join owns
+nothing STRUCTURALLY (`repair_sink_files`), shadowed modules are REWRITTEN into their packages
+(`<pkg>/impl.py`) never dropped, the replanner waits for a first completion, and the refusing test
+reads the WINDOW between the replanner's answer and the splice. Gates green: goose-cli 643,
+goose-swarm 153, workspace clippy -D clean.
 
 **Then, in order:** GEN chain gates green → G-1 engine dead-code sweep (agenda item D; the clippy
 never-used cluster + orphans of the deletions) → wipe target (NEVER while cargo runs) → `just make-ui` →
