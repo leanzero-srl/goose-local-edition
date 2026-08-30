@@ -962,12 +962,6 @@ export default function SwarmSettingsSection() {
               <PresetBar active={activePreset} onApply={applyPreset} />
 
               <Group title="Advanced — timeouts &amp; budgets" cost="Per-hardware tuning. The defaults are the golden formula; change these only for an unusually fast or slow fleet.">
-                <Row
-                  label="Uncapped run (no time or volume limits)"
-                  hint="Removes EVERY limit below and the run's own deadline — the build finishes when it finishes, even if that takes many hours. goose stops a call only when its judge reads the model's reasoning and sees a real loop, when the same tool call repeats without progress, or when a model stops responding entirely. The right mode for slow local models, where a fixed limit kills healthy deep work mid-thought. When on, the timeout and budget knobs below are ignored."
-                >
-                  <SwarmSwitch checked={!!cfg.uncapped} onChange={(v) => set({ uncapped: v })} />
-                </Row>
                 <Row label="Worker max turns" hint="cap per worker before it must finish">
                   <NumberField value={cfg.worker_max_turns} onCommit={(v) => set({ worker_max_turns: v ?? 40 })} />
                 </Row>
