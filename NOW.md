@@ -61,7 +61,7 @@ ledgerd/__init__.py x3) in its shadow and promote-only-owned-files DELETED the f
 fixed the bugs, the engine discarded the work. Endgame in flight: hermetic score (bench-scorer),
 verdict-visibility panel fix (panel-surgeon), node-weights fix (surgeon — weights primary, median
 demoted to tiebreak; wave pool was ordering gabee-first via a model-id/device-id key mismatch).
-QUEUED next surgeon (swarm.rs, after node-weights): PRIORITIES — findings gain provenance+severity
+LANDED c47674fd4: PRIORITIES — findings gain provenance+severity
 (the engine_critical partition mis-tiered the dead 3D scene as MINOR), waves ordered by severity,
 briefs say fix-first, panel ranks. Then: r6 build (source bin/activate-hermit; fmt/build --release;
 just make-ui; verify bundled sha) -> pkill Goose -> Benchmark view launch -> bench_dispatch.mjs
