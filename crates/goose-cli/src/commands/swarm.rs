@@ -1410,6 +1410,22 @@ pub enum SwarmCommand {
         #[arg(long)]
         spec: Option<PathBuf>,
     },
+    /// Replay the repair tail's WAVE PLANNING against a built tree, with NO model dispatched:
+    /// gate the tree, partition the findings by the engine's own criticality wording, attribute
+    /// each finding to its file shard (P1-3's evidence rules), and print exactly what a live
+    /// tail's first wave would fan — shard set, known bugs, criticals vs minors. The planning is
+    /// the deterministic half of the tail; this proves it offline, the way `gate` proves the
+    /// contract, so a repair change is testable in minutes instead of a run.
+    #[command(
+        about = "Replay the repair wave's planning (gate + attribute + shard set) against a built tree — no model runs"
+    )]
+    Repair {
+        /// The build tree to plan repair for (contains app/, tests/, …).
+        tree: PathBuf,
+        /// Spec file. Default: the prompt recorded in the tree's own run log.
+        #[arg(long)]
+        spec: Option<PathBuf>,
+    },
     /// Serve the swarm as an MCP extension over stdio, so an interactive `goose session` can offload work
     /// to the local worker fleet. Scaffold: a read-only `swarm_status` tool (async dispatch/collect later).
     #[command(
@@ -1886,6 +1902,59 @@ async fn handle_gate(tree: PathBuf, spec: Option<PathBuf>) -> Result<()> {
     Ok(())
 }
 
+/// `goose swarm repair <tree>`: the tail's wave PLANNING, offline, no model. Everything the live
+/// tail decides deterministically before a shard is dispatched happens here against an archived
+/// tree — gate, engine_critical partition, P1-3 attribution — so "which shards would the wave
+/// fan, and what ships as a known bug" is provable in minutes. The dispatch itself (a model
+/// filling the shard) is exactly the part this command does not do.
+async fn handle_repair(tree: PathBuf, spec: Option<PathBuf>) -> Result<()> {
+    if !tree.is_dir() {
+        anyhow::bail!("{} is not a directory", tree.display());
+    }
+    let spec_text = spec_for_tree(&tree, spec)?;
+    let existing = existing_files_manifest(&tree);
+    let lang = detect_language(&spec_text, &existing);
+    eprintln!(
+        "repair replay: {} | spec {} chars | lang {:?} | {} existing file(s)",
+        tree.display(),
+        spec_text.len(),
+        lang,
+        existing.len()
+    );
+    let r = run_spec_contract(&tree, &spec_text, lang).await;
+    let criticals: Vec<&String> = r.findings.iter().filter(|f| engine_critical(f)).collect();
+    let tree_read = tree.clone();
+    let (groups, known_bugs) = attribute_findings(&r.findings, &existing, &move |rel: &str| {
+        std::fs::read_to_string(tree_read.join(rel)).ok()
+    });
+    println!(
+        "{}",
+        serde_json::json!({
+            "tree": tree.display().to_string(),
+            "findings": r.findings.len(),
+            "criticals": criticals.len(),
+            "minors": r.findings.len() - criticals.len(),
+            "shards": groups.iter().map(|g| serde_json::json!({
+                "file": g.file,
+                "findings": g.findings.len(),
+            })).collect::<Vec<_>>(),
+            "known_bugs": known_bugs,
+            "inconclusive": r.inconclusive.len(),
+        })
+    );
+    eprintln!(
+        "repair replay: wave 0 would fan {} shard(s) over {} finding(s) ({} critical, {} known bug(s) unattributed); no model was dispatched",
+        groups.len(),
+        r.findings.len(),
+        criticals.len(),
+        known_bugs.len()
+    );
+    for g in &groups {
+        eprintln!("  · shard `{}` <- {} finding(s)", g.file, g.findings.len());
+    }
+    Ok(())
+}
+
 async fn handle_cloud(def: &'static CloudDef, cmd: Option<CloudCommand>) -> Result<()> {
     let label = def.label;
     let name = def.name;
@@ -2138,6 +2207,7 @@ pub async fn handle_swarm(cmd: SwarmCommand) -> Result<()> {
             .await
         }
         SwarmCommand::Gate { tree, spec } => handle_gate(tree, spec).await,
+        SwarmCommand::Repair { tree, spec } => handle_repair(tree, spec).await,
         SwarmCommand::Cloud { provider, command } => match cloud_def(&provider) {
             Some(def) => handle_cloud(def, command).await,
             None => Err(anyhow!(
@@ -3653,21 +3723,6 @@ fn research_secret(name: &str) -> Option<String> {
         .filter(|v| !v.is_empty())
 }
 
-/// How long a question waits for the HUMAN before a node answers it.
-///
-/// This is NOT one of the caps §8 removed, and the distinction is the whole point: every one of those
-/// bounded how long a MODEL may work. This bounds how long the run waits on a PERSON, and it never
-/// discards anything — the question still gets a real answer, just from a node instead of you. It
-/// replaces `ask_wait_secs: 1800`, whose expiry left the question UNANSWERED and let the run proceed on
-/// a guess while three nodes sat idle for half an hour.
-fn proxy_answer_after_secs() -> u64 {
-    if benchmark() {
-        0
-    } else {
-        300
-    }
-}
-
 // II-7: UNCAPPED_SECS / effective_idle_budget deleted. The week-long stand-in existed for
 // deadline arithmetic that is itself deleted; the no-cap rule is now enforced by ABSENCE — no
 // run_agent path takes a time parameter at all, so there is nothing to guard with a sentinel.
@@ -4950,21 +5005,6 @@ mod tests {
         assert_eq!(
             smoke_fix_description(&findings, TargetLang::Python, "", ""),
             smoke_fix_description(&findings, TargetLang::Python, "", " \n "),
-        );
-        // And the fix_round_specs path threads it into a shard's description on its own.
-        let (specs, _known) = fix_round_specs(
-            &["pytest failure in `app/stream.py`: SSE handler wrong".to_string()],
-            &["app/stream.py".to_string()],
-            1,
-            TargetLang::Python,
-            "",
-            rollup.as_ref(),
-            &|_| None,
-        );
-        assert!(
-            specs[0].description.contains("FINDING 1 NOT FIXED"),
-            "the sched-path shard carries the verdict too:\n{}",
-            specs[0].description
         );
     }
 
@@ -9103,139 +9143,6 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
     }
 
     #[test]
-    /// The TEST fan's whole output goes through this. A strict parser would turn a node that found
-    /// three real bugs into a node that found none, so it is deliberately lenient — and lenient parsers
-    /// are exactly the ones that need tests, because their failures are silent.
-    ///
-    /// Every input below is the shape a 27B actually produces: numbered, bolded, bulleted, prose in
-    /// front, or the FILES line simply forgotten.
-    fn observed_defects_survive_the_shapes_a_weak_model_actually_emits() {
-        // The shape we asked for.
-        let clean = parse_observed_defects(
-            "DEFECT: `GET /api/payments` returns 500 when the db is empty\n\
-             FILES: `vendorsync/api.py`, `vendorsync/store.py`\n\
-             DEFECT: the sync button does nothing\n\
-             FILES: `vendorsync/web/app.js`",
-        );
-        assert_eq!(clean.len(), 2);
-        assert!(clean[0].contains("`vendorsync/api.py`"), "{:?}", clean[0]);
-        assert!(clean[0].contains("`vendorsync/store.py`"));
-        assert!(clean[1].contains("`vendorsync/web/app.js`"));
-
-        // Numbered, bolded, bulleted, with prose in front — all one model, one reply.
-        let messy = parse_observed_defects(
-            "I exercised the primary journey and found two problems.\n\n\
-             1. **DEFECT:** `python -m vendorsync` exits 1 with a traceback\n\
-             **FILES:** `vendorsync/__main__.py`\n\
-             - DEFECT : the --port flag is ignored\n\
-               FILES : `vendorsync/__main__.py`\n\n\
-             That is everything I could reproduce.",
-        );
-        assert_eq!(messy.len(), 2, "{messy:?}");
-        assert!(messy.iter().all(|d| d.contains("`vendorsync/__main__.py`")));
-
-        // A defect with no FILES line is KEPT — it falls to the unattributed residue worker, which is
-        // where an unattributable defect belongs. Dropping it would lose a real bug.
-        let orphan = parse_observed_defects("DEFECT: the app never binds a port");
-        assert_eq!(orphan.len(), 1);
-        assert!(!orphan[0].contains('`'));
-
-        // "unknown" and "-" are the model declining to attribute, not a path.
-        let declined = parse_observed_defects("DEFECT: something is slow\nFILES: unknown");
-        assert_eq!(declined.len(), 1);
-        assert!(!declined[0].contains("unknown"), "{:?}", declined[0]);
-
-        // A clean run must produce ZERO findings, however it phrases it — a false defect sends the fix
-        // loop at working code.
-        for clean_reply in [
-            "NO DEFECTS",
-            "no defects",
-            "  NO DEFECTS  ",
-            "I ran every advertised command and they all worked.\nNO DEFECTS",
-        ] {
-            assert!(
-                parse_observed_defects(clean_reply).is_empty(),
-                "{clean_reply:?} must yield no findings"
-            );
-        }
-
-        // A call that died returns nothing, and silence is not a defect.
-        assert!(parse_observed_defects("").is_empty());
-    }
-
-    #[test]
-    /// A preamble line used to shift every severity and every FILES list by one, because the parser
-    /// pushed one verdict per matching LINE and the caller zipped by position. A CRITICAL inheriting the
-    /// previous line's MINOR lands in `minors`, `criticals` empties, and the round prints GREEN.
-    fn a_preamble_line_cannot_shift_every_severity() {
-        // Exercises parse_rating_reply ITSELF. The previous version of this test held its own copy of
-        // the parsing logic, the fix landed in the copy, the test went green, and PRODUCTION KEPT THE
-        // BUG — caught only by grepping the shipped binary. That is why the parser is now a free
-        // function: a test that mirrors the code it tests passes for the wrong reason.
-        let reply = "Here is the triage; I marked anything that stops the app CRITICAL.\n\
-                     1. MINOR — cosmetic wording — FILES: `a.py`\n\
-                     2. CRITICAL — the app will not start — FILES: `b.py`\n\
-                     3. MINOR — an edge case — FILES: `c.py`";
-        let v = parse_rating_reply(reply, 3);
-        assert!(!v[0].critical, "defect 1 is MINOR");
-        assert!(
-            v[1].critical,
-            "defect 2 is the CRITICAL one and must not have shifted"
-        );
-        assert!(!v[2].critical, "defect 3 is MINOR");
-        assert_eq!(v[1].files, vec!["b.py"], "its files must travel with it");
-
-        // A reply that numbers NOTHING still parses positionally — the fallback must survive.
-        let unnumbered = "MINOR — cosmetic\nCRITICAL — will not start\nMINOR — edge case";
-        let u = parse_rating_reply(unnumbered, 3);
-        assert_eq!(
-            (u[0].critical, u[1].critical, u[2].critical),
-            (false, true, false),
-            "an unnumbered reply must still map in order"
-        );
-
-        // A defect nobody rated stays CRITICAL — never more permissive than the old all-or-nothing.
-        let short = parse_rating_reply("1. MINOR — only the first", 3);
-        assert!(!short[0].critical);
-        assert!(
-            short[1].critical && short[2].critical,
-            "unrated defects stay critical"
-        );
-    }
-
-    /// THREE TESTERS, ONE BROKEN THING. The TEST fan runs three angles over the same app, so one defect
-    /// is routinely reported three ways. `dedupe_findings_exact` only catches IDENTICAL text, so the
-    /// near-misses each became their own shard repairing the same cause, and every later round
-    /// re-reported all of them. The rater is the only party that reads every defect together.
-    #[test]
-    fn a_duplicate_is_recorded_as_one_not_rated_twice() {
-        let out = "1. CRITICAL — payments table renders nothing — FILES: `web/app.js`\n\
-                   2. DUPLICATE 1 — same empty table, different angle — FILES: `web/app.js`\n\
-                   3. MINOR — header wording is off — FILES: `web/index.html`";
-        let v = parse_rating_reply(out, 3);
-        assert_eq!(v[0].duplicate_of, None);
-        assert_eq!(v[1].duplicate_of, Some(0), "defect 2 restates defect 1");
-        assert_eq!(v[2].duplicate_of, None);
-        // A duplicate line names a severity in its own words; reading THAT as the verdict would rate the
-        // restatement instead of recording it.
-        assert!(!v[1].critical, "a duplicate is not separately critical");
-        assert!(v[0].critical);
-    }
-
-    /// A defect may not defer to itself or to a LATER one — two lines each pointing at the other would
-    /// erase a real defect between them.
-    #[test]
-    fn a_duplicate_may_only_point_backwards() {
-        let v = parse_rating_reply(
-            "1. DUPLICATE 2 — points forward — FILES: `a.py`\n2. CRITICAL — the real one — FILES: `a.py`",
-            2,
-        );
-        assert_eq!(v[0].duplicate_of, None, "forward reference must be ignored");
-        let self_ref = parse_rating_reply("1. DUPLICATE 1 — points at itself — FILES: `a.py`", 1);
-        assert_eq!(self_ref[0].duplicate_of, None);
-    }
-
-    #[test]
     /// The coverage pass de-duped its additions against the EXISTING slices and not against itself, so
     /// two additions sharing an id both survived. A slice id becomes a brief id verbatim and a brief id
     /// becomes a TASK id verbatim, so the DAG bails "duplicate task id" — and the flat fallback is built
@@ -9309,53 +9216,6 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
         // Nothing to fold leaves the list byte-identical.
         let solo = vec!["only one".to_string()];
         assert_eq!(dedupe_findings_exact(&solo, &model), solo);
-    }
-
-    #[test]
-    /// A MARKDOWN HEADING IS NOT A DEFECT. `strip` matches "DEFECT" as a prefix, so `**Defect found:**`
-    /// yields "found:**". MEASURED live: that fragment was reported as a defect, rated CRITICAL beside
-    /// eight real ones, and handed to the fix fan as work.
-    fn a_heading_is_not_a_defect() {
-        for heading in [
-            "**Defect found:**",
-            "## Defects found:",
-            "DEFECTS:",
-            "**DEFECT REPORT**",
-        ] {
-            assert!(
-                parse_observed_defects(heading).is_empty(),
-                "{heading:?} was read as a defect"
-            );
-        }
-        // ...and the real thing still parses, including a short-but-real one.
-        let real = parse_observed_defects(
-            "DEFECT: negative offset is not rejected, GET /api/payments?offset=-3 returns 200\n\
-             FILES: `vendorsync/api.py`",
-        );
-        assert_eq!(real.len(), 1, "{real:?}");
-        assert!(real[0].contains("negative offset"));
-    }
-
-    #[test]
-    /// The parser re-emits paths in BACKTICKS because that is the ONLY thing that makes the repair fan
-    /// able to shard a model-observed defect: `extract_file_from_finding` reads a backticked path from
-    /// mid-sentence. If this contract breaks, every TEST-fan defect silently falls to the single
-    /// unattributed worker and the fan has nothing to fan.
-    fn observed_defects_are_attributable_by_the_repair_fan() {
-        let all = vec![
-            "vendorsync/api.py".to_string(),
-            "vendorsync/web/app.js".to_string(),
-        ];
-        let d = parse_observed_defects(
-            "DEFECT: /api/payments 500s on an empty db\nFILES: `vendorsync/api.py`",
-        );
-        assert_eq!(d.len(), 1);
-        assert_eq!(
-            extract_file_from_finding(&d[0], &all).as_deref(),
-            Some("vendorsync/api.py"),
-            "the repair fan could not attribute {:?}",
-            d[0]
-        );
     }
 
     #[test]
@@ -12622,87 +12482,6 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
         }
     }
 
-    #[test]
-    fn a_raced_twin_lands_only_when_it_strictly_beats_the_baseline() {
-        let t = |s: &str, v: Option<usize>| (s.to_string(), v);
-
-        // The win: one twin cleared the findings, the others did not. Lowest count takes the tree.
-        assert_eq!(
-            pick_repair_winner(&[t("a", Some(2)), t("b", Some(0)), t("c", Some(1))], 2),
-            Some((0, "b".to_string()))
-        );
-
-        // THE REGRESSION THIS EXISTS TO MAKE UNREACHABLE. Every twin came back WORSE than the round's
-        // baseline. The engine's current behaviour promotes on the agent returning Ok and would land one
-        // of these on the real app; here nothing is promoted and the tree survives the round unchanged.
-        assert_eq!(
-            pick_repair_winner(&[t("a", Some(3)), t("b", Some(4))], 2),
-            None
-        );
-
-        // A TIE IS NOT AN IMPROVEMENT. Equal counts can mean the fix traded one finding for another, and
-        // overwriting the tree on that is a coin flip dressed as progress.
-        assert_eq!(
-            pick_repair_winner(&[t("a", Some(2)), t("b", Some(2))], 2),
-            None
-        );
-
-        // UNKNOWN IS NEVER A WINNER. `None` is a twin that errored, timed out, or whose gate could not run.
-        // Scoring an unchecked tree as clean would promote it OVER a checked one — the vacuous-pass trap in
-        // its most damaging form, because the destination is the real app.
-        assert_eq!(pick_repair_winner(&[t("a", None), t("b", None)], 5), None);
-        assert_eq!(
-            pick_repair_winner(&[t("a", None), t("b", Some(1))], 5),
-            Some((1, "b".to_string()))
-        );
-
-        // DETERMINISM: equal winning counts resolve to the earliest twin, so two replicates of one run
-        // cannot diverge on which fix landed.
-        assert_eq!(
-            pick_repair_winner(&[t("a", Some(1)), t("b", Some(1))], 3),
-            Some((1, "a".to_string()))
-        );
-
-        // Vacuous truth: no twins at all must promote nothing, not succeed by default.
-        assert_eq!(pick_repair_winner(&[], 4), None);
-
-        // A baseline of zero cannot be beaten — the round should never have opened, and nothing may land.
-        assert_eq!(pick_repair_winner(&[t("a", Some(0))], 0), None);
-    }
-
-    #[test]
-    /// REWRITTEN with its subject. REPAIR had a round ceiling — default 2, clamped to [1,6] — and the
-    /// loop broke on `round >= rounds`, so the phase stopped on a counter no amount of progress could
-    /// pass. Section 8 names it. What ends REPAIR now is section 6's own list: a round that changes
-    /// nothing on the real tree, a finding count that refuses to fall, or the ask answered no.
-    fn the_repair_phase_has_no_round_ceiling() {
-        for raw in [
-            None,
-            Some("4".to_string()),
-            Some("0".to_string()),
-            Some("nope".to_string()),
-        ] {
-            assert_eq!(
-                complete_rounds_from(raw.clone()),
-                u32::MAX,
-                "a round ceiling came back for {raw:?}"
-            );
-        }
-    }
-
-    #[test]
-    fn complete_stall_rounds_defaults_off_and_clamps() {
-        // F859: the value is a boolean in effect — >=1 arms the one-flat-round stop, 0 opts out.
-        // The default 2 therefore ARMS it (it used to be arithmetically unfireable; see the fn
-        // doc for the history). These asserts pin the parse/clamp behavior only.
-        assert_eq!(complete_stall_rounds_from(None), 2);
-        assert_eq!(complete_stall_rounds_from(Some("2".to_string())), 2);
-        assert_eq!(complete_stall_rounds_from(Some("99".to_string())), 6); // clamped high
-        assert_eq!(complete_stall_rounds_from(Some("0".to_string())), 0); // explicit OFF
-        assert_eq!(complete_stall_rounds_from(Some(" 3 ".to_string())), 3); // trimmed
-        assert_eq!(complete_stall_rounds_from(Some("nope".to_string())), 2); // unparseable -> default 2
-    }
-
     /// The shadow counterfactual must be the SAME question the lever acts on.
     ///
     /// `plan_convergence.would_skip_ladder` exists so an ordinary run — lever OFF — answers "would
@@ -13068,22 +12847,23 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
             Some("app/ledgerd.py"),
             "D5's fix lives in the server that must serve the page"
         );
-        // The same list through parse_observed_defects, which is where the suffix comes from.
-        let d = parse_observed_defects(
-            "DEFECT: Frontend not served at all, despite `web/index.html` existing\n\
-             FILES: `app/ledgerd.py`, `web/index.html`",
-        );
-        assert_eq!(d.len(), 1);
+        // The same shape with the attribution suffix spelled literally (the TEST fan that used
+        // to author it is deleted; authored findings still arrive in this shape).
         assert_eq!(
-            extract_file_from_finding(&d[0], &files).as_deref(),
+            extract_file_from_finding(
+                "Frontend not served at all, despite `web/index.html` existing (in `app/ledgerd.py`, `web/index.html`)",
+                &files
+            )
+            .as_deref(),
             Some("app/ledgerd.py")
         );
         // A test file first in the list never outranks the source that follows it.
-        let d = parse_observed_defects(
-            "DEFECT: /api/health 500s on an empty db\nFILES: `tests/test_api.py`, `app/ledgerd.py`",
-        );
         assert_eq!(
-            extract_file_from_finding(&d[0], &files).as_deref(),
+            extract_file_from_finding(
+                "/api/health 500s on an empty db (in `tests/test_api.py`, `app/ledgerd.py`)",
+                &files
+            )
+            .as_deref(),
             Some("app/ledgerd.py")
         );
         // Without a list, an authored sentence is still subject-first.
@@ -13134,31 +12914,6 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
     }
 
     #[test]
-    fn a_multi_file_round_shards_instead_of_racing_when_the_lever_is_on() {
-        // S1 both directions: the preference needs the lever AND real per-file work.
-        assert!(prefer_shard_over_race(true, 2, 2));
-        assert!(prefer_shard_over_race(true, 5, 9));
-        assert!(
-            prefer_shard_over_race(true, 1, 1),
-            "one finding that NAMES A FILE goes to a focused fixer — racing whole-tree twins \
-             promoted 0 of 9 across three measured waves"
-        );
-        assert!(!prefer_shard_over_race(true, 0, 0));
-        assert!(
-            !prefer_shard_over_race(false, 4, 8),
-            "lever off: byte-identical race"
-        );
-        // THE MEASURED CASE: seven findings in ONE file (every DOM id app.js referenced and no
-        // html defined). Group count says 1, but that file is exactly what a focused fixer
-        // should be handed — racing it re-verified at baseline three times and promoted
-        // nothing, twice in one run.
-        assert!(
-            prefer_shard_over_race(true, 1, 7),
-            "a cluster in one file is the BEST case for a per-file fixer, not a reason to race"
-        );
-    }
-
-    #[test]
     fn subsplit_takes_two_to_four_identifiers_or_nothing() {
         use goose_swarm::extract_subsplit;
         let spec = "Build the client.\nSUBSPLIT: fetch_page, parse_rows, total_count";
@@ -13188,39 +12943,6 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
     }
 
     #[test]
-    fn a_fix_shard_promotes_only_a_verified_strictly_better_tree() {
-        // S1 increment 2: the per-shard promote rule is pick_repair_winner's, per shard.
-        assert!(shard_beats_baseline(Some(3), 5));
-        assert!(
-            !shard_beats_baseline(Some(5), 5),
-            "equal is not an improvement — a traded finding must not overwrite the tree"
-        );
-        assert!(
-            !shard_beats_baseline(Some(7), 5),
-            "a regression never lands"
-        );
-        assert!(
-            !shard_beats_baseline(None, 5),
-            "an unverifiable shadow is UNKNOWN, never clean — the vacuous-pass trap"
-        );
-        assert!(!shard_beats_baseline(Some(0), 0));
-    }
-
-    #[test]
-    fn fix_sched_lever_defaults_off_env_wins() {
-        std::env::remove_var("GOOSE_SWARM_FIX_SCHED");
-        assert!(
-            !fix_sched(),
-            "default OFF — arms attribute it before any flip"
-        );
-        std::env::set_var("GOOSE_SWARM_FIX_SCHED", "1");
-        assert!(fix_sched());
-        std::env::set_var("GOOSE_SWARM_FIX_SCHED", "off");
-        assert!(!fix_sched());
-        std::env::remove_var("GOOSE_SWARM_FIX_SCHED");
-    }
-
-    #[test]
     fn fix_attempt_progress_fold_tracks_first_change_and_longest_still() {
         // F781/#15: 5 samples — still, change, still, still, change. First change at 120s;
         // longest still window = 2 consecutive still samples after a change = 120s.
@@ -13243,25 +12965,6 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
         }
         assert_eq!(idle.first_change_secs, None);
         assert_eq!(idle.longest_still_secs, 3 * FIX_PROGRESS_SAMPLE_SECS);
-    }
-
-    #[test]
-    fn judge_probes_the_shadow_only_in_an_active_fix_round() {
-        let cwd = PathBuf::from("/real");
-        let shadow = PathBuf::from("/shadow");
-        // No round: always the real tree, even when a shadow exists (speculation twins keep
-        // today's judge semantics byte-identical).
-        assert_eq!(
-            judge_probe_root_for(false, Some(shadow.clone()), cwd.clone()),
-            cwd
-        );
-        // Active round + shadow: probe what the fix agent actually edits.
-        assert_eq!(
-            judge_probe_root_for(true, Some(shadow.clone()), cwd.clone()),
-            shadow
-        );
-        // Active round, no shadow (yet): the real tree, never a panic.
-        assert_eq!(judge_probe_root_for(true, None, cwd.clone()), cwd);
     }
 
     #[test]
@@ -13310,61 +13013,6 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
         }));
         assert!(digest_failed_calls_block(&pending).is_none());
         assert!(digest_failed_calls_block(&None).is_none());
-    }
-
-    #[test]
-    fn fix_mode_only_arms_with_an_active_round() {
-        // c3: a fix::-named plan task with NO active round passes through as an ordinary task —
-        // the fill_fan gate's rule, applied to fix mode.
-        assert!(!fix_mode_applies("fix::r0::app/api.py", false));
-        assert!(fix_mode_applies("fix::r0::app/api.py", true));
-        assert!(!fix_mode_applies("build-api", true), "prefix required");
-        assert!(
-            !fix_mode_applies("prefix::fix::x", true),
-            "prefix, not substring"
-        );
-    }
-
-    #[test]
-    fn fix_shadow_guard_discards_only_while_armed() {
-        // c3: judge kills run ONLY Drop. Armed drop removes the entry (TempDir cleanup);
-        // a disarmed guard leaves the epilogue's decision alone.
-        let shadows: Mutex<HashMap<String, (tempfile::TempDir, Vec<String>)>> =
-            Mutex::new(HashMap::new());
-        let dir = tempfile::TempDir::new().unwrap();
-        let path = dir.path().to_path_buf();
-        shadows
-            .lock()
-            .unwrap()
-            .insert("fix::r0::a.py".into(), (dir, vec!["a.py".into()]));
-        {
-            let _g = FixShadowGuard {
-                shadows: &shadows,
-                task_id: "fix::r0::a.py".into(),
-                armed: true,
-            };
-        }
-        assert!(
-            !shadows.lock().unwrap().contains_key("fix::r0::a.py"),
-            "armed drop discards the shadow"
-        );
-        assert!(!path.exists(), "the TempDir is gone with the entry");
-
-        let dir2 = tempfile::TempDir::new().unwrap();
-        shadows
-            .lock()
-            .unwrap()
-            .insert("fix::r0::b.py".into(), (dir2, vec!["b.py".into()]));
-        let g2 = FixShadowGuard {
-            shadows: &shadows,
-            task_id: "fix::r0::b.py".into(),
-            armed: true,
-        };
-        g2.disarm();
-        assert!(
-            shadows.lock().unwrap().contains_key("fix::r0::b.py"),
-            "a disarmed guard leaves the shadow to the epilogue"
-        );
     }
 
     /// P1-3: the endpoint literal a gate finding names, straight from the gate's own emitter
@@ -13510,60 +13158,6 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
         }
     }
 
-    #[test]
-    fn fix_round_specs_disjoint_roots_and_known_bugs_instead_of_a_residue_join() {
-        // P1-3: two file groups + one file-less finding -> two Ready roots owning one file each,
-        // and the file-less finding comes back as a KNOWN BUG — the #join residue task that owned
-        // every smoke file is gone (r0: it took 115 of a 138-minute wave; the four file shards
-        // finished in 24 minutes, all promoted).
-        let findings = vec![
-            "app/api.py:12: TypeError in handler".to_string(),
-            "app/api.py:40: missing timeout".to_string(),
-            "app/store.py:5: bad upsert".to_string(),
-            "the second sync re-fetched 247 rows".to_string(),
-        ];
-        let all = vec!["app/api.py".to_string(), "app/store.py".to_string()];
-        let (specs, known) =
-            fix_round_specs(&findings, &all, 2, TargetLang::Python, "", None, &|_| None);
-        let ids: Vec<&str> = specs.iter().map(|t| t.id.as_str()).collect();
-        assert_eq!(ids, ["fix::r2::app/api.py", "fix::r2::app/store.py"]);
-        assert_eq!(specs[0].owned_files, ["app/api.py"]);
-        assert!(specs[0].deps.is_empty(), "fix tasks are roots — born Ready");
-        assert_eq!(
-            known,
-            ["the second sync re-fetched 247 rows"],
-            "the unattributable finding ships as a known bug, never a whole-tree task"
-        );
-        // The DAG accepts the specs; every root is Ready.
-        let dag = goose_swarm::Dag::from_specs(specs).unwrap();
-        assert_eq!(
-            dag.tasks["fix::r2::app/api.py"].state,
-            goose_swarm::TaskState::Ready
-        );
-        // An attributable "file-less" finding lands in its file's shard via the tree grep: the
-        // endpoint literal names exactly one source file.
-        let tricky = vec![
-            "join.py:1: broken".to_string(),
-            "GET /api/rows returned 404 — the spec advertises this endpoint".to_string(),
-        ];
-        let all2 = vec!["join.py".to_string()];
-        let (specs2, known2) =
-            fix_round_specs(&tricky, &all2, 0, TargetLang::Python, "", None, &|f| {
-                (f == "join.py").then(|| "if path == \"/api/rows\": ...".to_string())
-            });
-        let ids2: Vec<&str> = specs2.iter().map(|t| t.id.as_str()).collect();
-        assert_eq!(ids2, ["fix::r0::join.py"]);
-        assert!(known2.is_empty());
-        assert!(
-            specs2[0].description.matches("FINDING").count() >= 1,
-            "both findings ride the one shard"
-        );
-        // No findings -> no tasks, no known bugs.
-        let (none, none_known) =
-            fix_round_specs(&[], &all, 0, TargetLang::Python, "", None, &|_| None);
-        assert!(none.is_empty() && none_known.is_empty());
-    }
-
     /// F881 REGRESSION (run 8, score 0.601): the repair round RACED whole-tree twins even though its
     /// first finding literally begins with a path. 0 of 3 twins promoted, as 0 of 9 had before it.
     /// These are the THREE finding strings run 8's own `complete_verify` emitted, and the file list
@@ -13608,8 +13202,8 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
         }
         let attributed: usize = groups.iter().map(|g| g.findings.len()).sum();
         assert!(
-            prefer_shard_over_race(true, groups.len(), attributed),
-            "run 8's findings must route to per-file sharding, not a whole-tree race"
+            attributed > 0 && !groups.is_empty(),
+            "run 8's findings must attribute to per-file shards — the fan is the only wave now"
         );
     }
 
@@ -13707,9 +13301,9 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
         assert_eq!(groups.len(), 2, "two files, two shards");
         assert!(unassigned.is_empty());
         let attributed: usize = groups.iter().map(|g| g.findings.len()).sum();
-        assert!(
-            prefer_shard_over_race(true, groups.len(), attributed),
-            "run 9's round must shard, not race"
+        assert_eq!(
+            attributed, 2,
+            "run 9's round attributes both findings to shards"
         );
     }
 
@@ -15881,12 +15475,6 @@ pub struct GooseAgentDispatcher {
     /// task_id. A twin's agent is rooted here (NOT the real tree); on a twin win the scheduler calls
     /// `promote_speculative` which copies only these owned files back. Empty unless the flag is on.
     spec_shadows: Mutex<HashMap<String, (tempfile::TempDir, Vec<String>)>>,
-    /// F781/#16 c3: Some(_) while a fix round runs — arms the `fix::` dispatch path.
-    fix_round: Mutex<Option<FixRound>>,
-    /// Promotions landed in the CURRENT fix round (reset by begin_fix_round). The join skip reads
-    /// it: residuals are deferred to the next round's race only when THIS round made progress —
-    /// a flat round would hit the one-flat-round stall exit before the promised race ever runs.
-    fix_promotions: std::sync::atomic::AtomicUsize,
     /// F790-3: questions currently being answered, so two ticks never answer the same one.
     qa_inflight: Mutex<std::collections::HashSet<String>>,
     /// Per-task fingerprint of what the SEMANTIC REVIEW last saw. The judge re-ran a full 27B
@@ -16043,8 +15631,6 @@ impl GooseAgentDispatcher {
             pillars: std::sync::OnceLock::new(),
             sink_tree_files: std::sync::OnceLock::new(),
             spec_shadows: Mutex::new(HashMap::new()),
-            fix_round: Mutex::new(None),
-            fix_promotions: std::sync::atomic::AtomicUsize::new(0),
             qa_inflight: Mutex::new(std::collections::HashSet::new()),
             judge_seen: Mutex::new(std::collections::HashMap::new()),
             sink_review_findings: Mutex::new(Vec::new()),
@@ -16507,19 +16093,18 @@ impl GooseAgentDispatcher {
             let _ = std::fs::create_dir_all(&dir);
             dir.join(format!("{}.json", activity_digest_key(k)))
         });
-        // MIRROR A FIX TASK'S HEARTBEAT INTO THE REAL TREE. A `fix::` task always runs speculative,
-        // so the line above puts its digest inside a system-temp shadow that the desktop never reads
-        // and that is deleted when the round ends — which is why two fix workers showed "generating…"
-        // with nothing behind them for ten minutes (operator report; the shadow-locality was the
-        // second half of that defect, found by adversarial review of the first fix). Only fix ids are
-        // mirrored: they are unique per round+file, whereas a speculative TWIN shares its task id with
-        // the primary and two writers would fight over one file — the case the comment above protects.
+        // MIRROR A FIX SHARD'S HEARTBEAT INTO THE REAL TREE. The wave's per-file shards run
+        // speculative, so the line above puts their digest inside a system-temp shadow that the
+        // desktop never reads and that is deleted when the wave ends — which is why two fix
+        // workers showed "generating…" with nothing behind them for ten minutes (operator
+        // report; the shadow-locality was the second half of that defect, found by adversarial
+        // review of the first fix). Only repair-shard ids are mirrored: they are unique per
+        // round+file, whereas a speculative TWIN shares its task id with the primary and two
+        // writers would fight over one file — the case the comment above protects. (P1-9: the
+        // twin race and the scheduled fix:: tasks are deleted; the shard fan is the one repair
+        // path this mirror serves.)
         let activity_mirror = activity_key
-            // BOTH repair paths. The scheduled per-file tasks are `fix::rN::<file>`; the wave path
-            // races `complete-fix::twinN`, and those are speculative too, so leaving them out put
-            // the panel right back where it started — three nodes grinding repair twins with
-            // nothing behind them. Caught live watching this very run, one prefix short.
-            .filter(|k| k.starts_with("fix::") || k.starts_with("complete-fix"))
+            .filter(|k| k.starts_with("complete-fix"))
             .and_then(|k| {
                 let dir = self.working_dir.join(".swarm").join("activity");
                 if dir == work_dir.join(".swarm").join("activity") {
@@ -19755,69 +19340,6 @@ fn existing_files_manifest(root: &Path) -> Vec<String> {
         .collect()
 }
 
-/// Output schema for the end-of-run OVERVIEW summary agent. NOTE it has NO verification field — the agent is
-/// structurally incapable of authoring a "works/tested/verified" claim; that section is engine-sourced.
-fn run_overview_schema() -> serde_json::Value {
-    serde_json::json!({
-        "type": "object",
-        "additionalProperties": false,
-        "required": ["features", "engage", "next"],
-        "properties": {
-            "features": {"type": "array", "items": {"type": "string"}},
-            "engage": {"type": "string"},
-            "next": {"type": "array", "items": {"type": "string"}}
-        }
-    })
-}
-
-#[derive(serde::Deserialize, Default)]
-struct Overview {
-    #[serde(default)]
-    features: Vec<String>,
-    #[serde(default)]
-    engage: String,
-    #[serde(default)]
-    next: Vec<String>,
-}
-
-/// Deterministic backstop for the summary agent: a value/next line that asserts the program WORKS / is tested
-/// / verified is an over-claim (verification is the engine's separate, honest job) — drop it. Word-level match
-/// so "network" never trips "work". This is defense-in-depth on top of the prompt + the hedged UI.
-fn is_overclaim(line: &str) -> bool {
-    const BAD: &[&str] = &[
-        "works",
-        "working",
-        "worked",
-        "verified",
-        "verify",
-        "tested",
-        "testing",
-        "passes",
-        "passing",
-        "confirmed",
-        "proven",
-        "correct",
-        "correctly",
-        "reliable",
-        "robust",
-        "flawless",
-        "guaranteed",
-        "bugfree",
-        "validated",
-        "production",
-        "seamless",
-        "seamlessly",
-    ];
-    let low = line.to_lowercase();
-    low.split(|c: char| !c.is_alphanumeric())
-        .any(|w| BAD.contains(&w))
-}
-fn scrub_overclaim(lines: &mut Vec<String>) {
-    lines.retain(|l| !is_overclaim(l));
-}
-
-/// The EXACT command a user runs the built app with — stamped in Rust from the on-disk entry (never authored
-/// by the summary model, so it can't drift into an invented entry point). The `--help` form is what the verify
 /// oracle actually exercises. None for languages/layouts with no clean standalone entry.
 fn overview_run_command(lang: TargetLang, root: &Path, rel: &[String]) -> Option<String> {
     match lang {
@@ -19853,35 +19375,6 @@ fn overview_run_command(lang: TargetLang, root: &Path, rel: &[String]) -> Option
         // of silently inheriting this one.
         TargetLang::Other => None,
     }
-}
-
-/// Read excerpts of the produced SOURCE files (not tests) so the summary agent describes only code that
-/// actually exists — grounding it in Rust rather than trusting it to read the tree.
-fn overview_source_excerpts(root: &Path, rel: &[String]) -> String {
-    let mut out = String::new();
-    let mut budget = 12000usize;
-    for f in rel.iter() {
-        if budget < 500 {
-            break;
-        }
-        let src = f.ends_with(".py")
-            || f.ends_with(".ts")
-            || f.ends_with(".js")
-            || f.ends_with(".rs")
-            || f.ends_with(".go");
-        if !src || f.contains("test") {
-            continue;
-        }
-        if let Ok(c) = std::fs::read_to_string(root.join(f)) {
-            let ex: String = review_file_excerpt(&c)
-                .chars()
-                .take(budget.min(2500))
-                .collect();
-            budget = budget.saturating_sub(ex.len());
-            out.push_str(&format!("\n### {f}\n{ex}\n"));
-        }
-    }
-    out
 }
 
 /// Shorten a long string by keeping its HEAD and its TAIL and eliding the middle. Char-based, so it
@@ -23478,20 +22971,6 @@ const FINDING_SOURCE_EXTS: &[&str] = &[
     ".sql",
 ];
 
-/// Every source-looking path in one line — backticked, bulleted, or bare.
-fn paths_in(line: &str) -> Vec<String> {
-    line.split(|c: char| c.is_whitespace() || matches!(c, '`' | ',' | '|' | '(' | ')' | '"' | '\''))
-        .map(|t| t.trim_matches(|c: char| matches!(c, '.' | ':' | ';')))
-        .filter(|t| {
-            t.contains('.')
-                && !t.contains(' ')
-                && t.len() > 3
-                && FINDING_PATH_EXTS.iter().any(|e| t.ends_with(e))
-        })
-        .map(|t| t.to_string())
-        .collect()
-}
-
 /// The opener's contract, deliberately small: no files, no deps, no task ids, no requirement map.
 fn open_schema() -> serde_json::Value {
     serde_json::json!({
@@ -24345,475 +23824,11 @@ impl GooseAgentDispatcher {
         }
         Ok(parsed)
     }
-
-    /// TEST — three nodes exercise the built app from three DIFFERENT angles, in parallel.
-    ///
-    /// Until now the only thing that ever tried the app was the engine's own smoke gate: pytest plus
-    /// `--help`. That gate is deterministic and it is why it decides green, but it can only find what it
-    /// was written to look for, and it has never once opened a page. Two of three sb-6 runs shipped an
-    /// app that never bound a port and the gate did not say so.
-    ///
-    /// Three angles, and they are NAMED IN THE PROMPT rather than being a const lens table, because a
-    /// fixed table is what made research breadth a property of the array's length instead of the request
-    /// (see `SCOUT_LENSES`, deleted). Each returns defects with the files they touch, in backticks, so
-    /// `extract_file_from_finding` attributes them and the existing per-file fix fan shards them with no
-    /// new plumbing.
-    pub(crate) async fn test_app(
-        self: &Arc<Self>,
-        worker_models: Vec<String>,
-        user_prompt: &str,
-        files: &[String],
-    ) -> Vec<(String, String)> {
-        const ANGLES: [(&str, &str); 3] = [
-            (
-                "primary-journey",
-                "THE PRIMARY JOURNEY. Do the thing this app exists to do, end to end, the way its user \
-                 would. Not a unit test — the real path, start to finish, with realistic input. If it is \
-                 a web app, start it and request its pages. If it is a CLI, run the actual workflow.",
-            ),
-            (
-                "advertised-surface",
-                "THE ADVERTISED SURFACE. Take every command, endpoint, flag and option the request or \
-                 the app's own help text CLAIMS to have, and try each one. Something that is advertised \
-                 and missing, or advertised and broken, is a defect even if nothing else touches it.",
-            ),
-            (
-                "bad-input",
-                "BAD INPUT AND BROKEN STATE. Missing file, empty input, wrong type, absent directory, \
-                 a second run over the first run's data. It does not have to succeed — it has to fail \
-                 CLEANLY: a readable message and a non-zero exit, never a traceback or a silent zero.",
-            ),
-        ];
-        let lanes = one_lane_per_host(worker_models);
-        if lanes.is_empty() {
-            return Vec::new();
-        }
-        // A PORT EACH, and a clash is never a defect.
-        //
-        // All three angles are told to run the app, and they run AT THE SAME TIME on three machines
-        // against one working tree. Two of them binding the app's default port means two of them see
-        // "address already in use" and report that the app does not start — and `engine_fatal` below
-        // matches exactly that phrasing and force-promotes it to CRITICAL whatever the rater says. A
-        // working app would be held red by its own test fan, and the repair loop would then be sent to
-        // fix code that was never broken. That is the pillar-check failure this codebase already paid
-        // for once (swarm.rs: a distilled check false-failed a correct app and the fix loop broke two
-        // passing tests trying to satisfy it).
-        let port_note = |i: usize| {
-            format!(
-                "\n\nIf you need to bind a port, use {}. Two other testers are exercising this SAME tree \
-                 on other machines right now. If a port is already taken, that is one of THEM, not a bug \
-                 in the app — pick another port and carry on. Never report a port conflict, an \
-                 'address already in use', or a database lock as a defect.",
-                18400 + i
-            )
-        };
-        let me = self.clone();
-        let prompt = user_prompt.to_string();
-        let file_list = files
-            .iter()
-            .map(|f| format!("- `{f}`"))
-            .collect::<Vec<_>>()
-            .join("\n");
-        let out = fanout_over_fleet(
-            lanes,
-            ANGLES.iter().copied().enumerate().collect::<Vec<_>>(),
-            move |(i, (key, angle)): (usize, (&'static str, &'static str)), model: String| {
-                let prompt = prompt.clone();
-                let file_list = file_list.clone();
-                let me = me.clone();
-                async move {
-                    let system = format!(
-                        "The program in your working directory has just been built. You are testing it. \
-                         You are NOT fixing it — do not edit a single file.\n\n\
-                         YOUR ANGLE:\n{angle}\n\n\
-                         RUN IT. Use your shell. Read the code only to find out how to invoke it.\n\n\
-                         Report what you OBSERVED, never what you suspect. A defect you did not \
-                         reproduce is not a defect. Then report, in this exact shape and nothing else:\n\n\
-                         DEFECT: <what is wrong, and the exact command or URL that shows it>\n\
-                         FILES: `path/to/one.py`, `path/to/two.js`\n\n\
-                         Repeat that pair for each defect. Put every path in BACKTICKS — the repair fan \
-                         routes each defect to whoever owns the file, and an unattributed defect goes to \
-                         a worker that has to search the whole tree for it.\n\
-                         If you found nothing wrong from your angle, reply with exactly: NO DEFECTS{}",
-                        port_note(i)
-                    );
-                    // THE ADVERTISED SURFACE, AS A LIST, TO THE ANGLE THAT NEEDS IT.
-                    //
-                    // The advertised-surface angle is told "take every command, endpoint, flag and option
-                    // the request CLAIMS to have, and try each one" — and is then handed the whole 53,000
-                    // character request and left to find them. The engine already extracts that table
-                    // (`spec_advertised_surface`, used verbatim by the end-to-end shards) and simply did
-                    // not give it to the tester whose entire job is checking it.
-                    //
-                    // An angle asked to be exhaustive with no enumeration in front of it has no way to
-                    // know when it has finished, which is the same defect the fix worker had: a task with
-                    // no completion condition. Numbering the surface makes "I tried all of them" a
-                    // statement the model can actually make and a reader can check.
-                    let surface = spec_advertised_surface(&prompt);
-                    let surface_block = if surface.is_empty() || key != "advertised-surface" {
-                        String::new()
-                    } else {
-                        format!(
-                            "\n\n## The advertised surface — THIS numbered table is the list to work through\n{}\n\
-                             Try each one. Say which you tried and what happened; an item you never reached \
-                             is not an item that passed.",
-                            surface
-                                .iter()
-                                .enumerate()
-                                .map(|(i, a)| format!("  {}. {a}", i + 1))
-                                .collect::<Vec<_>>()
-                                .join("\n")
-                        )
-                    };
-                    let user = format!(
-                        "## What this app was asked to be\n{prompt}\n\n## Files it was built from\n{file_list}{surface_block}"
-                    );
-                    let text = match me
-                        .run_agent_timed_at(
-                            &model,
-                            system,
-                            user,
-                            None,
-                            planner_side_turns(),
-                            &[],
-                            None,
-                            Some(&format!("apptest-{key}")),
-                true,
-                false,
-            )
-                        .await
-                    {
-                        Ok(o) => o.text,
-                        // A node that could not test is silence, never a defect. Inventing a finding
-                        // from a failed call would send the fix fan at a file nobody observed breaking.
-                        Err(_) => String::new(),
-                    };
-                    (key, parse_observed_defects(&text))
-                }
-            },
-        )
-        .await;
-        out.into_iter()
-            .flat_map(|(key, defects)| defects.into_iter().map(move |d| (key.to_string(), d)))
-            .collect()
-    }
-
-    /// RATE each defect against what the app IS FOR: does it stop the app doing its job, or is it an
-    /// imperfection in an app that works?
-    ///
-    /// This is what replaces all-or-nothing. Measured on the first end-to-end run of this engine: the app
-    /// satisfied every requirement in its spec — correct output, correct --top, `error: no such file` with
-    /// exit 1, `no words found` on empty — and the run reported passed:false because ONE of the model's own
-    /// generated tests asserted a word appears in a top-FIVE listing when it ranks sixth. A run that calls
-    /// that red is not being rigorous, it is being useless: it hides the difference between "the app does
-    /// not work" and "one of its tests is wrong".
-    ///
-    /// Returns one CRITICAL/MINOR verdict per finding, in order.
-    pub(crate) async fn rate_findings(
-        &self,
-        planner_model: &str,
-        user_prompt: &str,
-        findings: &[String],
-        // FILES TOO, NOT JUST SEVERITY — section 6 [R-M3], never implemented until now.
-        //
-        // The residue worker `#join` owns `smoke_all_files` — the ENTIRE tree — on the stated grounds
-        // that "which file a cross-file fix needs is exactly what is unknown". MEASURED: that worker took
-        // 115 minutes of a 138-minute fix wave, 83% of it, while the four FILE-ATTRIBUTED shards beside
-        // it ran in parallel and finished in 24 minutes wall-clock, all four promoted.
-        //
-        // The scope is not unknown. RATE has already read every defect and the request; it simply was
-        // never asked. A model that can tell a CRITICAL from a MINOR can tell you that "--db pointing at
-        // a directory crashes" lives in __main__.py and store.py — the TEST fan's own defects name their
-        // files correctly and this is the same judgement on the findings that do not.
-    ) -> Vec<RatedFinding> {
-        if findings.is_empty() {
-            return Vec::new();
-        }
-        let listing = findings
-            .iter()
-            .enumerate()
-            .map(|(i, f)| format!("{}. {}", i + 1, f.chars().take(600).collect::<String>()))
-            .collect::<Vec<_>>()
-            .join("\n");
-        let system = "You are triaging defects in a program that was just built, against the request it \
-             was built from.\n\n\
-             For each numbered defect, decide ONE word:\n\
-             CRITICAL — the app does not do what it exists to do. It will not start, its main command \
-             errors or produces wrong output, data is lost, the page does not load, the advertised \
-             interface is missing.\n\
-             MINOR — the app DOES its job; this is an imperfection. A wrong assertion in a generated test, \
-             a cosmetic message, an unhandled edge case the request never named, a style complaint.\n\n\
-             DUPLICATE <n> — this is the SAME DEFECT as defect <n> above, described differently. Two \
-             testers looking from different angles report one broken thing twice; that is expected, and \
-             saying so is worth more than rating it again. Only when it is genuinely the same defect — \
-             two different symptoms of one cause are still two defects.\n\n\
-             Answer one line per defect, in order, exactly:\n\
-             `<number>. CRITICAL|MINOR|DUPLICATE <n> — <six words why> — FILES: <paths>`\n\
-             FILES is where the defect LIVES — the files that must change to fix it. Name them even when \
-             the defect text does not: you have read the request and you know what the program is made \
-             of. This decides whether one worker repairs three files or reads the whole tree looking for \
-             them, so a guess you are reasonably confident of beats leaving it blank. If a defect \
-             genuinely spans the whole program, say `FILES: -` and mean it.\n\
-             Judge against the REQUEST, not against your taste. A test that is itself wrong about the \
-             app's specified behaviour is MINOR: the test is the defect, not the app."
-            .to_string();
-        let out = match self
-            .run_agent_timed_at(
-                planner_model,
-                system,
-                format!("## The request\n{user_prompt}\n\n## The defects\n{listing}"),
-                None,
-                planner_side_turns(),
-                &[],
-                None,
-                Some("rate"),
-                true,
-                false,
-            )
-            .await
-        {
-            Ok(o) => o.text,
-            // A rating we could not get is not licence to ship: unrated defects are CRITICAL, which is
-            // exactly the old all-or-nothing behaviour and therefore never worse than before.
-            Err(_) => {
-                return findings
-                    .iter()
-                    .map(|_| RatedFinding {
-                        critical: true,
-                        files: Vec::new(),
-                        duplicate_of: None,
-                    })
-                    .collect()
-            }
-        };
-        parse_rating_reply(&out, findings.len())
-    }
 }
 
 /// A tolerant JSON object parse: takes the first balanced `{...}` in the reply and deserialises it.
 /// The fleet wraps structured output in prose and fences often enough that a strict parse is a coin
 /// flip, and losing a whole phase to a stray "Sure — here you go:" is not a trade worth making.
-/// Parse a TEST node's report into findings.
-///
-/// Deliberately lenient. The shape asked for is `DEFECT:` / `FILES:` pairs, but a 27B wraps it in prose,
-/// numbers it, bolds it, or drops the FILES line entirely — and a strict parser would turn a node that
-/// found three real bugs into a node that found none. A defect with no files is kept and simply falls to
-/// the unattributed residue worker, which is exactly where it belongs.
-///
-/// Paths are re-emitted in BACKTICKS because `extract_file_from_finding` reads them from there; that is
-/// the whole integration with the existing per-file fix fan.
-/// Parse a RATE reply into one (critical, files) per finding, BY THE MODEL'S OWN NUMBERING.
-///
-/// Free and pure so the test exercises THE SHIPPED CODE. It was inline in `rate_findings` with the test
-/// holding its own copy of the same logic — and the two drifted within minutes: the fix for the
-/// preamble shift landed in the copy, the test went green, and production kept the bug. A test that
-/// mirrors the code it is testing passes for the wrong reason, which is worse than having none.
-/// One defect's triage: how bad, where it lives, and whether it is the same thing as an earlier one.
-#[derive(Clone, Debug, PartialEq)]
-pub(crate) struct RatedFinding {
-    critical: bool,
-    files: Vec<String>,
-    /// Zero-based index of the defect this one merely restates, when the rater says so.
-    ///
-    /// Three testers exercise the app from three angles and one broken thing gets reported three times.
-    /// `dedupe_findings_exact` only catches IDENTICAL text, so the near-misses all survived into the fix
-    /// wave — each one becoming its own shard, each shard repairing the same cause, and every later round
-    /// re-reporting all three. The rater is already reading every defect together and is the only party
-    /// that can tell "the page renders no rows" and "the payments table is empty" are one bug.
-    ///
-    /// The model decides. There is no similarity score and no threshold here — that would be exactly the
-    /// deterministic machinery this engine exists without.
-    duplicate_of: Option<usize>,
-}
-
-fn parse_rating_reply(out: &str, count: usize) -> Vec<RatedFinding> {
-    // INDEXED BY THE MODEL'S OWN NUMBER, not by the order lines happen to arrive.
-    //
-    // This pushed one verdict per line containing CRITICAL or MINOR anywhere and the caller zipped
-    // by position — so a single preamble line ("Here is the triage; I marked anything that stops the
-    // app CRITICAL.") shifted every severity AND every FILES list by one. A CRITICAL inheriting the
-    // previous line's MINOR lands in `minors`, `criticals` empties, and the round prints GREEN.
-    // The prompt asks for `<number>. ...`, so honour the number when it is there.
-    let mut verdicts: Vec<RatedFinding> = vec![
-        RatedFinding {
-            critical: true,
-            files: Vec::new(),
-            duplicate_of: None
-        };
-        count
-    ];
-    let mut seen: Vec<bool> = vec![false; count];
-    let mut appended = 0usize;
-    // IF THE REPLY IS NUMBERED AT ALL, UNNUMBERED LINES ARE PROSE.
-    //
-    // A positional fallback per line is not enough: the preamble a 27B actually writes — "Here is
-    // the triage; I marked anything that stops the app CRITICAL." — contains the word CRITICAL and
-    // no number, so it claims slot 0 and shifts every real verdict down by one anyway. The fallback
-    // exists for a reply that numbers NOTHING; it must not rescue a stray sentence in a reply that
-    // numbers everything.
-    let numbered = out.lines().any(|l| {
-        let u = l.to_uppercase();
-        (u.contains("CRITICAL") || u.contains("MINOR"))
-            && l.trim()
-                .split(|c: char| !c.is_ascii_digit())
-                .find(|t| !t.is_empty())
-                .and_then(|t| t.parse::<usize>().ok())
-                .is_some_and(|v| v >= 1 && v <= count)
-    });
-    for line in out.lines() {
-        let l = line.trim();
-        let u = l.to_uppercase();
-        // DUPLICATE is checked FIRST: a duplicate line still names a severity in its six words
-        // ("DUPLICATE 2 — same critical render failure"), and reading that as the verdict would rate
-        // the restatement instead of recording it.
-        // AN OFFSET FOUND IN AN UPPERCASED COPY MAY NOT BE USED TO SLICE THE ORIGINAL.
-        //
-        // `to_uppercase()` CHANGES BYTE LENGTH (ß -> SS, ﬁ -> FI, ı -> I), so `u.find(..)` returns a
-        // byte offset into a DIFFERENT string. Slicing `l` with it is wrong at best and lands mid-UTF-8
-        // at worst — a live panic ("byte index N is not a char boundary") on the REVIEW findings-rating
-        // path. `.min(l.len())` bounds the length and says nothing about boundaries. Two sibling parsers
-        // in this file were already fixed for exactly this (`parse_judge_reply`'s `cut_eta`, and the
-        // verdict scan above it); this one was missed. Same shape as those: an ASCII byte scan over the
-        // ORIGINAL with `eq_ignore_ascii_case`.
-        let find_ascii = |hay: &str, needle: &str| -> Option<usize> {
-            let b = hay.as_bytes();
-            let n = needle.as_bytes();
-            if n.is_empty() || b.len() < n.len() {
-                return None;
-            }
-            (0..=b.len() - n.len()).find(|&i| b[i..i + n.len()].eq_ignore_ascii_case(n))
-        };
-        let dup_of = find_ascii(l, "DUPLICATE").and_then(|i| {
-            l.get(i + "DUPLICATE".len()..)
-                .unwrap_or("")
-                .split(|c: char| !c.is_ascii_digit())
-                .find(|t| !t.is_empty())
-                .and_then(|t| t.parse::<usize>().ok())
-                .filter(|n| *n >= 1 && *n <= count)
-                .map(|n| n - 1)
-        });
-        let crit = if dup_of.is_some() {
-            false
-        } else if u.contains("CRITICAL") {
-            true
-        } else if u.contains("MINOR") {
-            false
-        } else {
-            continue;
-        };
-        // Same lenient shape as the defect parser, and for the same reason: a 27B writes FILES:,
-        // **FILES**:, `files:` or drops the label entirely, and a strict parse would return nothing
-        // at all — which is the state this change exists to leave behind.
-        let files = match find_ascii(l, "FILES") {
-            Some(i) => paths_in(l.get(i..).unwrap_or(l)),
-            None => paths_in(l),
-        };
-        let idx = l
-            .split(|c: char| !c.is_ascii_digit())
-            .find(|t| !t.is_empty())
-            .and_then(|t| t.parse::<usize>().ok())
-            .filter(|n| *n >= 1 && *n <= count)
-            .map(|n| n - 1);
-        match idx {
-            Some(i) if !seen[i] => {
-                // A defect cannot be a duplicate of ITSELF, and pointing forward would let two lines
-                // each defer to the other and erase a real defect between them.
-                let duplicate_of = dup_of.filter(|d| *d < i);
-                verdicts[i] = RatedFinding {
-                    critical: crit,
-                    files,
-                    duplicate_of,
-                };
-                seen[i] = true;
-            }
-            // No number, or one already used: fall back to arrival order over the slots still
-            // unclaimed, which is the old behaviour for a reply that gives no numbering at all.
-            Some(_) => {}
-            None if numbered => {}
-            None => {
-                while appended < count && seen[appended] {
-                    appended += 1;
-                }
-                if appended < count {
-                    verdicts[appended] = RatedFinding {
-                        critical: crit,
-                        files,
-                        duplicate_of: dup_of.filter(|d| *d < appended),
-                    };
-                    seen[appended] = true;
-                }
-            }
-        }
-    }
-    // A defect nobody rated stays CRITICAL — the pre-filled default, and the old all-or-nothing
-    // behaviour, so this is never more permissive than before.
-    verdicts
-}
-
-fn parse_observed_defects(reply: &str) -> Vec<String> {
-    let mut out: Vec<String> = Vec::new();
-    let mut current: Option<String> = None;
-    let strip = |l: &str, tag: &str| -> Option<String> {
-        let t = l.trim_start_matches(['-', '*', '#', ' ', '\t']);
-        let t = t.trim_start_matches(|c: char| c.is_ascii_digit() || c == '.' || c == ')');
-        let t = t.trim().trim_start_matches("**").trim_start();
-        // Case-insensitive on the ORIGINAL bytes: `to_uppercase()` can change a string's byte length
-        // (ß -> SS), so a starts_with on an uppercased copy is not a licence to index the original.
-        let rest = t.get(tag.len()..).filter(|_| {
-            t.get(..tag.len())
-                .is_some_and(|h| h.eq_ignore_ascii_case(tag))
-        })?;
-        Some(rest.trim_start_matches([':', '*', ' ']).trim().to_string())
-    };
-    let flush = |cur: &mut Option<String>, files: &str, out: &mut Vec<String>| {
-        if let Some(text) = cur.take() {
-            if text.is_empty() {
-                return;
-            }
-            let paths: Vec<String> = files
-                .split(',')
-                .map(|p| p.trim().trim_matches('`').trim().to_string())
-                .filter(|p| !p.is_empty() && p != "-" && !p.eq_ignore_ascii_case("unknown"))
-                .map(|p| format!("`{p}`"))
-                .collect();
-            out.push(if paths.is_empty() {
-                text
-            } else {
-                format!("{text} (in {})", paths.join(", "))
-            });
-        }
-    };
-    for raw in reply.lines() {
-        if let Some(d) = strip(raw, "DEFECT") {
-            flush(&mut current, "", &mut out);
-            current = Some(d);
-        } else if let Some(f) = strip(raw, "FILES") {
-            flush(&mut current, &f, &mut out);
-        }
-    }
-    flush(&mut current, "", &mut out);
-    out.retain(|d| {
-        let u = d.to_uppercase();
-        if u.starts_with("NO DEFECTS") || u.starts_with("NONE") {
-            return false;
-        }
-        // A HEADING IS NOT A DEFECT. `strip` matches "DEFECT" as a prefix, so a model writing the
-        // markdown heading `**Defect found:**` yields the text "found:**" — which MEASURED live became a
-        // reported defect, was rated CRITICAL alongside eight real ones, and went to the fix fan as work.
-        // A real defect names something; a heading is a fragment that trails off into punctuation.
-        // A heading ANNOUNCES a list: it trails off into punctuation and names nothing. A defect, even a
-        // vague one ("something is slow"), is a sentence. Length alone is the wrong test — it threw away
-        // real short findings — so this reads the shape instead.
-        let raw = d.trim();
-        let body = raw.trim_end_matches(['*', ':', '#', ' ']);
-        !raw.ends_with(':')
-            && !raw.ends_with("**")
-            && body.chars().count() >= 12
-            && body.contains(' ')
-    });
-    out
-}
-
 fn parse_json_lenient<T: serde::de::DeserializeOwned>(raw: &str) -> Option<T> {
     if let Ok(v) = serde_json::from_str::<T>(raw) {
         return Some(v);
@@ -27478,13 +26493,10 @@ impl Judge for GooseAgentDispatcher {
             spiral_thinking_chars: 0,
             ..JudgeConfig::default()
         };
-        // c5: the owned-file loop AND the activity-digest read below both derive from this one
-        // binding — a fix-mode task is probed at its SHADOW, everything else at the real tree.
-        let cwd = judge_probe_root_for(
-            self.fix_round.lock().unwrap().is_some(),
-            self.speculative_root(&req.task_id),
-            std::env::current_dir().unwrap_or_else(|_| self.working_dir.clone()),
-        );
+        // P1-9: the judge probes the REAL tree, always. The shadow-probe selection existed for
+        // fix:: tasks under the fresh-scheduler fix round, which is deleted; the tail's shard fan
+        // dispatches directly (no scheduler, no judge look), so no live caller probes a shadow.
+        let cwd = std::env::current_dir().unwrap_or_else(|_| self.working_dir.clone());
         let mut file_contents: Vec<(String, String)> = Vec::new();
         let mut compile_errors: Vec<(String, String)> = Vec::new();
         let mut any_owned_written = false;
@@ -30874,6 +29886,27 @@ fn finding_fingerprint(f: &str) -> String {
 /// how to attribute. An ENGINE finding (absent from `model_observed`) always displaces a model-observed
 /// twin whichever order they arrived in, because `engine_fatal` forces the engine's own wording CRITICAL
 /// and keeping a tester's paraphrase would silently un-force it.
+/// The gate's own criticals (P1-9, replacing the deleted RATE call): a finding is CRITICAL when
+/// the ENGINE'S OWN WORDING says the app does not run, build or answer — strings written by
+/// run_smoke_gate, run_spec_contract and the deliverable stat, never by a model. Everything else
+/// ships as a known active bug (still repaired by the wave, never hidden). Pure, and pinned by a
+/// truth table over the REAL finding strings the gate emits, so a reworded probe message that
+/// silently demotes a dead app to "minor" fails a test instead of a run.
+fn engine_critical(f: &str) -> bool {
+    let l = f.to_lowercase();
+    l.contains("does not start")
+        || l.contains("never bound")
+        || l.contains("does not run at all")
+        || l.contains("did not build")
+        || l.contains("exited non-zero")
+        || l.contains("no such command")
+        || l.contains("runtime crash")
+        || l.contains("missing deliverable")
+        || l.contains("is missing or empty")
+        || l.contains("never returns")
+        || l.contains("nothing at all once it")
+}
+
 fn dedupe_findings_exact(
     findings: &[String],
     model_observed: &std::collections::HashSet<String>,
@@ -31313,49 +30346,6 @@ fn render_repair_history(
         return verdicts_block;
     }
     truncate_block_at_line(&verdicts_block, BUDGET)
-}
-
-fn fix_round_specs(
-    findings: &[String],
-    all_files: &[String],
-    round: usize,
-    lang: TargetLang,
-    spec: &str,
-    rollup: Option<&serde_json::Value>,
-    read_source: &dyn Fn(&str) -> Option<String>,
-) -> (Vec<goose_swarm::TaskSpec>, Vec<String>) {
-    // P1-3: evidence-based attribution replaces the `fix::r{N}::#join` residue task that owned
-    // EVERY file. A finding the attribution cannot place is returned as a KNOWN BUG for the
-    // caller to emit — never a whole-tree worker (r0: the residue worker took 115 of a
-    // 138-minute wave while four file shards finished in 24 minutes, all promoted).
-    let (groups, known_bugs) = attribute_findings(findings, all_files, read_source);
-    let fix_ids: Vec<String> = groups
-        .iter()
-        .map(|g| format!("fix::r{round}::{}", g.file))
-        .collect();
-    let taken: std::collections::HashSet<String> = groups.iter().map(|g| g.file.clone()).collect();
-    let specs: Vec<goose_swarm::TaskSpec> = groups
-        .into_iter()
-        .zip(fix_ids.iter())
-        .map(|(g, id)| {
-            let owned = shard_owned_files(&g.file, all_files, &taken);
-            goose_swarm::TaskSpec {
-                id: id.clone(),
-                description: smoke_fix_description(
-                    &g.findings,
-                    lang,
-                    spec,
-                    &render_repair_history(rollup, &owned, &g.findings, round),
-                ),
-                difficulty: goose_swarm::Difficulty::Hard,
-                preferred_model: None,
-                owned_files: owned,
-                deps: Vec::new(),
-                subsplit: Vec::new(),
-            }
-        })
-        .collect();
-    (specs, known_bugs)
 }
 
 /// Build the worker instruction for the GOOSE_SWARM_SMOKE corrective re-dispatch from the smoke findings.
@@ -31981,55 +30971,6 @@ fn web_vocab_note(owned_files: &[String], enabled: bool) -> String {
      ships unstyled and FAILS verification). State containers must be hidden by default and \
      toggled by the js — never all visible at once."
         .to_string()
-}
-
-/// F781/#16 c3: the active fix round's shared context — the round-opening baseline every
-/// per-file fix is graded against, the language for the shadow gate, and the real file list a
-/// fix req is normalized to.
-#[derive(Clone)]
-struct FixRound {
-    baseline: usize,
-    lang: TargetLang,
-    all_files: Vec<String>,
-    round: usize,
-    /// The run's user prompt — the composite shadow grade (smoke + spec_contract, the F848 ruler)
-    /// needs it; a smoke-only grade certified "0 findings" twice while the gate read 2.
-    prompt: String,
-    /// Whether a multi-model race path exists to cover residual findings next round (fleet > 1
-    /// AND spec_repair armed — review: fleet width alone lied under a flipped lever). Decides the
-    /// join skip: a serial #join at <=1 finding measured 981s on one node, promoted nothing, while
-    /// two nodes idled — the next round's race re-covers the same finding on every node.
-    race_next: bool,
-    /// Whether the round's verify ruler includes spec_contract (delivery_on || spec_contract gate).
-    /// The shadow grade must use the SAME ruler — review: an unconditional spec_contract term
-    /// graded shadows at >=k against a baseline that excluded those k findings when the gate was
-    /// off, discarding genuine fixes.
-    composite: bool,
-    /// Whether the round counts missing deliverables (delivery_on || failed_tasks_block_green) —
-    /// one more ruler category the F862 one-ruler grade must mirror exactly.
-    missing_gate: bool,
-}
-
-/// Pure trigger for fix mode: an ACTIVE round and the fix:: prefix, both. With no active round a
-/// fix::-named plan task passes through as an ordinary task (tested).
-fn fix_mode_applies(task_id: &str, round_active: bool) -> bool {
-    round_active && task_id.starts_with("fix::")
-}
-
-/// F781/#16 c5 (the graft the adversarial verify demanded): pick the tree the judge PROBES. A
-/// fix-mode task writes ONLY its shadow — heartbeats included — so probing the real tree would
-/// deterministically BrokenCode-kill every syntax-error fix at first inspection (the syntax error
-/// is in the real tree BY DEFINITION; that is why the fix task exists) and deterministic-Accept
-/// compiling-tree fixes at ~420s (stale real-tree mtime + no digest = "not producing"). Pure so
-/// the selection is testable without a dispatcher; gated on an ACTIVE round, so run-1 judge
-/// behavior (fill:: tasks, speculation twins) is byte-identical.
-fn judge_probe_root_for(round_active: bool, shadow: Option<PathBuf>, cwd: PathBuf) -> PathBuf {
-    if round_active {
-        if let Some(root) = shadow {
-            return root;
-        }
-    }
-    cwd
 }
 
 /// F790-2: the worker's FAILED tool calls, from the activity digest's `calls` records — the
@@ -33135,311 +32076,7 @@ fn pending_questions(root: &std::path::Path) -> Vec<std::path::PathBuf> {
     out.into_iter().map(|(_, p)| p).collect()
 }
 
-/// Judge kills are JoinHandle aborts: cancellation lands at an await point and runs NO epilogue
-/// code — only Drop runs. Armed, this discards the task's shadow (HashMap::remove drops the
-/// TempDir); the grade epilogue disarms it once promote/discard has decided. A kill therefore
-/// forfeits that attempt's salvage (discard, never promote) — the verified design's stated trade,
-/// measured before any default-ON decision.
-struct FixShadowGuard<'a> {
-    shadows: &'a Mutex<HashMap<String, (tempfile::TempDir, Vec<String>)>>,
-    task_id: String,
-    armed: bool,
-}
-
-impl FixShadowGuard<'_> {
-    fn disarm(mut self) {
-        self.armed = false;
-    }
-}
-
-impl Drop for FixShadowGuard<'_> {
-    fn drop(&mut self) {
-        if self.armed {
-            if let Ok(mut g) = self.shadows.lock() {
-                g.remove(&self.task_id);
-            }
-        }
-    }
-}
-
 impl GooseAgentDispatcher {
-    /// F781/#16 c3: open a fix round — every `fix::` task dispatched while this is set runs the
-    /// fix path (forced speculative, capped, graded, promote-iff-strictly-better).
-    #[allow(dead_code)]
-    fn begin_fix_round(&self, fr: FixRound) {
-        self.fix_promotions
-            .store(0, std::sync::atomic::Ordering::Relaxed);
-        *self.fix_round.lock().unwrap() = Some(fr);
-    }
-
-    /// Close the round and drain every leftover shadow. A judge-aborted fix's Drop guard already
-    /// removed its entry; the drain bounds the TempDir leak for any abort that lands outside the
-    /// guard's lifetime. Safe on the fix run's FRESH dispatcher — run 1's shadows live on run 1's
-    /// dispatcher and are untouched.
-    #[allow(dead_code)]
-    fn end_fix_round(&self) {
-        *self.fix_round.lock().unwrap() = None;
-        self.spec_shadows.lock().unwrap().clear();
-    }
-
-    /// One fix task under GOOSE_SWARM_FIX_SCHED. The whole point in four rules, each measured on
-    /// the hand-rolled fan this replaces: (1) the agent works a SHADOW (forced speculative), the
-    /// real tree is untouchable; (2) GRADE THE TREE, NOT THE AGENT'S EXIT — a timed-out or errored
-    /// agent's partial shadow still competes (three historical rounds went red-to-green AT the
-    /// cap); (3) promote ONLY strictly-better than the round baseline (shard_beats_baseline — the
-    /// vacuous-pass trap is `None` and never promotes); (4) never a scheduler retry — an Err would
-    /// re-shadow from a CURRENT tree against a STALE baseline, so the graded verdict returns Ok
-    /// and the next round's gate regenerates fix tasks for still-red files.
-    async fn run_fix_task(
-        &self,
-        req: DispatchRequest,
-        fr: FixRound,
-    ) -> Result<TaskRunOutput, DispatchError> {
-        let is_join = req.task_id.ends_with("::#join");
-        let baseline = if is_join {
-            // The join owns the whole tree, so its baseline is the REAL tree as the root fixes
-            // left it — re-gated NOW, after their promotions. If the gate cannot run there is no
-            // baseline to beat and the agent is not spent (the wave's own skip rule).
-            let real_root = std::env::current_dir().unwrap_or_else(|_| self.working_dir.clone());
-            // F862 ONE RULER: the join's baseline and every shadow grade below now measure the
-            // round's full category set — smoke-only (then smoke+sc) baselines biased every
-            // strictly-better comparison by the categories they omitted.
-            let (graded, _) = one_ruler_grade(
-                &real_root,
-                &fr.prompt,
-                fr.lang,
-                &fr.all_files,
-                fr.composite,
-                fr.missing_gate,
-            )
-            .await;
-            let Some(base) = graded else {
-                self.events.write_value(serde_json::json!({
-                    "event": "complete_fix_completed", "path": "sched",
-                    "round": fr.round, "task_id": req.task_id,
-                    "skipped": "real-tree gate cannot run — no baseline to beat, agent not spent",
-                }));
-                return Ok("fix join skipped: the real-tree gate cannot run"
-                    .to_string()
-                    .into());
-            };
-            // F799 polish: a CLEAN post-wave tree means nothing can promote (strictly-better
-            // than 0 is impossible) — observed live on the first proof run, where the join
-            // spent a full agent generation on work that was discarded by construction.
-            if base == 0 {
-                self.events.write_value(serde_json::json!({
-                    "event": "complete_fix_completed", "path": "sched",
-                    "round": fr.round, "task_id": req.task_id,
-                    "skipped": "the real tree is already clean after the wave — nothing can beat 0",
-                }));
-                return Ok("fix join skipped: the post-wave tree is clean"
-                    .to_string()
-                    .into());
-            }
-            // SPEED (measured): the serial #join ran 981s on ONE node at baseline 1 and promoted
-            // nothing — 61% of the round's wall while two nodes idled. At <=1 residual finding on
-            // a multi-model fleet, the NEXT round's race re-attempts the same finding on every
-            // node under early-close; the serial tail buys nothing the race does not. On a
-            // 1-model fleet the join stays — it is the only fixer for cross-file findings there.
-            // AND only when this round PROMOTED something (review): a flat round hits the
-            // one-flat-round stall exit before the promised race ever dispatches, so skipping
-            // the join there would orphan the residual — no progress means the join keeps its
-            // honest (historically futile) attempt.
-            let promoted_this_round = self
-                .fix_promotions
-                .load(std::sync::atomic::Ordering::Relaxed)
-                > 0;
-            if fr.race_next && base <= 1 && promoted_this_round {
-                self.events.write_value(serde_json::json!({
-                    "event": "complete_fix_completed", "path": "sched",
-                    "round": fr.round, "task_id": req.task_id,
-                    "skipped": format!(
-                        "join skipped at {base} residual finding(s) — the next round's race \
-                         covers residuals on every node; the serial join measured 981s/1 node/\
-                         promoted nothing"),
-                }));
-                return Ok("fix join skipped: residuals go to the next round's race"
-                    .to_string()
-                    .into());
-            }
-            base
-        } else {
-            fr.baseline
-        };
-        let mut req = req;
-        req.speculative = true;
-        req.all_files = fr.all_files.clone();
-        let root = std::env::current_dir().unwrap_or_else(|_| self.working_dir.clone());
-        // "model" like every wave-path emitter — the desktop's fleet strip keys the lane's
-        // device off it, and the model-less sched event minted a phantom "?" fleet row that
-        // then persisted as a 4th idle node for the rest of the run (holistic review).
-        self.events.write_value(serde_json::json!({
-            "event": "complete_fix_dispatched", "path": "sched",
-            "round": fr.round, "task_id": req.task_id, "baseline_findings": baseline,
-            "model": req.model_id,
-        }));
-        let started = std::time::Instant::now();
-        let guard = FixShadowGuard {
-            shadows: &self.spec_shadows,
-            task_id: req.task_id.clone(),
-            armed: true,
-        };
-        // II-7: the deadline arm and the stillborn floor are gone — both were a clock deciding
-        // model work, and F889's five-minute floor could not tell "narrating instead of acting"
-        // from "queued behind a sibling on a busy node" (the r2 slot-starvation blind spot). The
-        // poll survives as a LOOK cadence only: each tick MEASURES — the digest's tool_calls and
-        // the node's own lms-ps state — and emits `fix_zero_production_look` as data. NO verdict,
-        // NO break: K (how many zero-production looks mean anything) is underived until r2's
-        // healthy inter-delta gap distribution is measured, and the unchanged shadow already
-        // refuses a stillborn fix at grade time, so nothing is lost by not aborting.
-        let ran = {
-            let digest_path = root
-                .join(".swarm/activity")
-                .join(format!("{}.json", activity_digest_key(&req.task_id)));
-            let fut = self.run_task_inner(req.clone());
-            tokio::pin!(fut);
-            let mut poll = tokio::time::interval(std::time::Duration::from_secs(FIX_LOOK_SECS));
-            poll.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-            let mut zero_production_looks: u64 = 0;
-            loop {
-                tokio::select! {
-                    r = &mut fut => break r,
-                    _ = poll.tick() => {
-                        let tool_calls = std::fs::read_to_string(&digest_path)
-                            .ok()
-                            .and_then(|c| serde_json::from_str::<serde_json::Value>(&c).ok())
-                            .and_then(|v| v.get("tool_calls").and_then(|t| t.as_u64()));
-                        if tool_calls != Some(0) {
-                            continue;
-                        }
-                        // Zero tool calls so far: is the node even generating for us? lms ps is
-                        // the per-node truth (the parser the pool import already trusts); probed
-                        // only on the zero-calls path so healthy lanes cost nothing.
-                        let model_id = req.model_id.clone();
-                        let node_state = tokio::task::spawn_blocking(move || {
-                            probe_lms_processes()
-                                .ok()
-                                .and_then(|procs| {
-                                    procs
-                                        .into_iter()
-                                        .find(|p| p.identifier == model_id)
-                                        .map(|p| p.status)
-                                })
-                                .unwrap_or_else(|| "absent".to_string())
-                        })
-                        .await
-                        .unwrap_or_else(|_| "absent".to_string());
-                        let held = matches!(node_state.as_str(), "GENERATING" | "PROCESSINGPROMPT");
-                        if !held {
-                            zero_production_looks += 1;
-                        }
-                        self.events.write_value(serde_json::json!({
-                            "event": "fix_zero_production_look", "path": "sched",
-                            "round": fr.round, "task_id": req.task_id,
-                            "looks": zero_production_looks,
-                            "node_state": node_state,
-                            "detail": if held {
-                                "queued behind a sibling — the node is working, just not for this call"
-                            } else {
-                                "node idle and zero tool calls — a zero-production look (summons data; no verdict)"
-                            },
-                        }));
-                    }
-                }
-            }
-        };
-
-        // A shadow that was never built grades nothing: keep the Transient bail (re-shadow is
-        // safe — make_shadow's insert overwrites) instead of minting a vacuous verdict.
-        if self.speculative_root(&req.task_id).is_none() {
-            if let Err(DispatchError::Transient(e)) = &ran {
-                let e = e.clone();
-                guard.disarm();
-                return Err(DispatchError::Transient(e));
-            }
-        }
-        // F862 ONE RULER + F883 GRADE-WHAT-LANDS: the composed preview answers the round's
-        // exact question about the tree a promote would actually produce.
-        let (verified, shadow_changed, _est) = self
-            .grade_promotion_preview(
-                &req.task_id,
-                &root,
-                &fr.prompt,
-                fr.lang,
-                &fr.all_files,
-                fr.composite,
-                fr.missing_gate,
-            )
-            .await;
-        let promoted = shadow_changed && shard_beats_baseline(verified, baseline);
-        if promoted {
-            self.fix_promotions
-                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-            self.promote_speculative(&req.task_id).await;
-        } else {
-            self.discard_speculative(&req.task_id).await;
-        }
-        guard.disarm();
-        let agent_ok = ran.is_ok();
-        self.events.write_value(serde_json::json!({
-            "event": "complete_fix_completed", "path": "sched",
-            "round": fr.round, "task_id": req.task_id,
-            "secs": started.elapsed().as_secs(),
-            "agent_ok": agent_ok,
-            "verified_findings": verified,
-            "baseline_findings": baseline,
-            "promoted": promoted,
-            "shadow_changed": shadow_changed,
-        }));
-        // §II.2 WRITERS, repair leg. The shard prompt has demanded per-finding verdict lines
-        // since the numbered protocol shipped, and NOTHING parsed them — so a round N+1 shard
-        // re-tried what round N had already reported (the fresh per-round Scheduler discards its
-        // SharedContext; only what is on disk survives it). Written to the REAL tree whatever
-        // the shadow's fate: "tried and NOT FIXED" is precisely the fact a discarded attempt
-        // leaves behind.
-        {
-            let agent_text = if let Ok(o) = &ran {
-                o.output.clone()
-            } else {
-                String::new()
-            };
-            if let Some(path) = write_repair_ledger(
-                &root,
-                RepairLedgerRow {
-                    round: fr.round,
-                    shard: &req.task_id,
-                    owned_files: &req.owned_files,
-                    description: &req.description,
-                    output: &agent_text,
-                    promoted,
-                    baseline,
-                    agent_ok,
-                },
-            ) {
-                self.events.write_value(serde_json::json!({
-                    "event": "ledger_written",
-                    "kind": "repair",
-                    "round": fr.round,
-                    "task_id": req.task_id,
-                    "path": path.display().to_string(),
-                }));
-            }
-        }
-        match ran {
-            Ok(mut out) => {
-                out.output = format!(
-                    "{}\n[fix graded: verified={verified:?} baseline={baseline} promoted={promoted}]",
-                    out.output
-                );
-                Ok(out)
-            }
-            _ => Ok(format!(
-                "fix attempt graded without agent completion: verified={verified:?} baseline={baseline} promoted={promoted}"
-            )
-            .into()),
-        }
-    }
-
     /// The ordinary task body — everything run() did after kind-normalization, extracted verbatim
     /// (F781/#16 c3) so the fix path can wrap it in a grade epilogue.
     /// VERIFY WHAT A TASK ACTUALLY DELIVERED, THE MOMENT IT SAYS IT IS DONE, on EVERY path that says so.
@@ -35244,20 +33881,9 @@ impl TaskDispatcher for GooseAgentDispatcher {
         // The S3 fill fan (skeleton::/join::/fill:: dispatch kinds) died with CONTRACTS (P1-4):
         // its skeleton/join steps could only run over a frozen stub bundle, and no expansion
         // manufactures those task ids any more.
-        // F781/#16 c3 (GOOSE_SWARM_FIX_SCHED): FIX MODE. Gated on an ACTIVE round, never on the
-        // prefix alone — a coincidentally-named plan task can never trip it (the fill_fan gate's
-        // rule). The fix path wraps the ordinary task body in the fix cap, then ALWAYS grades the
-        // shadow and promotes only strictly-better (the fan's measured salvage rule) — see
-        // run_fix_task.
-        if fix_mode_applies(&req.task_id, self.fix_round.lock().unwrap().is_some()) {
-            let fr = self
-                .fix_round
-                .lock()
-                .unwrap()
-                .clone()
-                .expect("checked is_some under the same lock pattern");
-            return self.run_fix_task(req, fr).await;
-        }
+        // The fresh-scheduler FIX MODE (fix:: tasks under GOOSE_SWARM_FIX_SCHED) died with the
+        // tail straight-line (P1-9): the per-file shard fan is the one wave mechanism, and it
+        // dispatches speculative complete-fix:: tasks through the ordinary body below.
         self.run_task_inner(req).await
     }
 
@@ -35634,65 +34260,6 @@ fn phase_banner(label: &str, why: &str) {
 /// harness or an eval) -> write the questions to `.swarm/clarify-questions.json`, emit a `low_confidence_ask`
 /// event, and BLOCK-poll for `.swarm/clarify-answers.json` (the harness answers AS the human) up to
 /// `wait_secs`, then proceed. Returns a Q&A block to fold into the planner findings, or "" if unanswered.
-/// THE REPAIR ASK — "shall I spend another round on this?", routed by §5's one rule.
-///
-/// `benchmark` ON -> answered INSTANTLY by the proxy, no wait. OFF -> the human gets exactly
-/// `proxy_answer_after_secs()`, then the proxy answers. Identical routing to the clarify ask, from the
-/// same expression, because two ask sites with two timings is how one of them silently becomes a cap.
-///
-/// The proxy's answer is `proxy_yes`, and the caller derives it from ONE thing: did the last round change
-/// the real tree. Yes while it is still changing, no the moment it stops. That is deliberately not a model
-/// call — under `benchmark` a model asked "want another round?" answers yes forever, and the only exit
-/// from that is Ctrl-C. It is the same progress terminator the rest of the phase uses, applied to the
-/// question of whether another round is worth buying.
-async fn ask_repair_round(
-    dir: &Path,
-    key: &str,
-    question: &str,
-    detail: &[String],
-    proxy_yes: bool,
-) -> (bool, &'static str) {
-    let qpath = dir.join(format!("{key}-question.json"));
-    let apath = dir.join(format!("{key}-answer.json"));
-    let _ = std::fs::remove_file(&apath);
-    let _ = std::fs::create_dir_all(dir);
-    let _ = std::fs::write(
-        &qpath,
-        serde_json::to_string_pretty(&serde_json::json!({
-            "question": question,
-            "detail": detail,
-            "answer_file": format!(".swarm/{key}-answer.json"),
-            "answer_format": {"answer": "yes|no"},
-        }))
-        .unwrap_or_default(),
-    );
-    let wait = proxy_answer_after_secs();
-    let read_answer = |path: &Path| -> Option<bool> {
-        let s = std::fs::read_to_string(path).ok()?;
-        let v = serde_json::from_str::<serde_json::Value>(&s).ok()?;
-        let a = v
-            .get("answer")
-            .and_then(|a| a.as_str())
-            .map(|a| a.trim().to_lowercase())?;
-        match a.as_str() {
-            "yes" | "y" | "true" | "1" => Some(true),
-            "no" | "n" | "false" | "0" => Some(false),
-            _ => None,
-        }
-    };
-    let mut waited = 0u64;
-    loop {
-        if let Some(a) = read_answer(&apath) {
-            return (a, "human");
-        }
-        if waited >= wait {
-            return (proxy_yes, "proxy");
-        }
-        tokio::time::sleep(std::time::Duration::from_secs(5)).await;
-        waited += 5;
-    }
-}
-
 async fn ask_clarifying_questions(
     questions: &[ClarifyQuestion],
     cwd: &Path,
@@ -35950,110 +34517,6 @@ async fn ask_clarifying_questions(
     }
 }
 
-/// GOOSE_SWARM_COMPLETE_ROUNDS: the fix-round budget for the push-to-completion loop. Default 2; clamped
-/// to [1,6] so a misconfigured value can never spin the fleet forever. Pure split-out for unit testing.
-fn complete_rounds_from(_raw: Option<String>) -> u32 {
-    // NO ROUND CEILING. This defaulted to 2, clamped to [1,6], and the loop broke on `round >= rounds`
-    // — so REPAIR stopped on a counter that no amount of progress could pass, which is the shape section 8
-    // exists to remove. What ends REPAIR now is what section 6 says ends it: a round that changes nothing
-    // on the real tree (fix_converged), the count refusing to fall, or the ask being answered no.
-    u32::MAX
-}
-
-fn complete_rounds() -> u32 {
-    complete_rounds_from(std::env::var("GOOSE_SWARM_COMPLETE_ROUNDS").ok())
-}
-
-/// GOOSE_SWARM_COMPLETE_STALL_ROUNDS — since the F859 rewrite this is a BOOLEAN in effect:
-/// any value >= 1 arms the ONE-FLAT-ROUND stop (a fix round whose verify did not REDUCE the
-/// finding COUNT ends the loop before the next wave is bought), 0 opts out. The numeric value no
-/// longer counts rounds; 1..6 are indistinguishable and only kept parseable so existing configs
-/// don't error. History, kept because it is the reason for the shape: the previous semantics ("N
-/// consecutive IDENTICAL rounds") was doubly dead — the round arithmetic made N=2 unreachable
-/// (a PROVEN zero across 54 logs) and the equality compared finding STRINGS, which mutate every
-/// round (the pytest finding embeds the failure list), so even a truly flat app compared unequal.
-/// The count-based one-round rule is grounded in the same observation as ever: every fix that
-/// ever landed dropped findings on its FIRST round; flat-then-drop has never been observed.
-/// Stated trade: an equal-count round with DIFFERENT findings (fixed A, surfaced B) now stops
-/// where the old comparison would have continued.
-fn complete_stall_rounds_from(v: Option<String>) -> u32 {
-    v.and_then(|s| s.trim().parse::<u32>().ok())
-        .unwrap_or(2)
-        .min(6)
-}
-
-fn complete_stall_rounds() -> u32 {
-    complete_stall_rounds_from(std::env::var("GOOSE_SWARM_COMPLETE_STALL_ROUNDS").ok())
-}
-
-/// GOOSE_SWARM_COMPLETE_PARALLEL (default OFF): fan the push-to-completion FIX step across the fleet's
-/// models — one fix agent per failing FILE, each writing only its own file (shadow isolation), instead of
-/// one serial fix on a single node. Off => the serial v1 fix path runs verbatim.
-fn complete_parallel() -> bool {
-    std::env::var("GOOSE_SWARM_COMPLETE_PARALLEL")
-        .map(|v| matches!(v.to_lowercase().as_str(), "1" | "on" | "true" | "yes"))
-        .unwrap_or(false)
-}
-
-/// GOOSE_SWARM_SPEC_REPAIR (default OFF): race the SAME finding set across every fleet model at once —
-/// one independent attempt per node, each in its own shadow tree — then re-verify every shadow with the
-/// deterministic smoke gate and promote the BEST one, but only if it beats the pre-fix baseline.
-///
-/// This is the one use of three nodes on a one-finding round that this bench has found. `complete_parallel`
-/// fans by failing FILE and is therefore bounded by how many files the findings name: MEASURED across 31
-/// repair rounds, findings per round is min 0 / median 1 / max 2, so NO round has ever had work for a third
-/// node and 24 of 31 had work for one. The axis that does decompose is the ATTEMPT, not the finding.
-///
-/// The selection rule is what makes racing safe rather than merely triple the cost. Three published results
-/// point the same way and this bench's own corpus agrees with all three:
-///   - repeated independent sampling raises coverage, and a same-model repeat on an IDENTICAL task is not
-///     redundant because per-trial variance is large (SWE-bench Pro, Qwen3.6-27B: pass@1 50.7 -> pass@8 70.7)
-///   - a noisy verify-repair loop can repair a CORRECT program into an incorrect one, so the attempt count
-///     is only safe when a verifier — not a model — picks the winner
-///   - writes must stay single-threaded; extra agents contribute intelligence, not actions. Exactly one
-///     shadow is ever promoted, so the real tree still has one writer.
-///
-/// MONOTONIC BY CONSTRUCTION: a twin is promoted only when its re-verified finding count is STRICTLY below
-/// the count that opened the round. Ties and regressions promote NOTHING. The current engine promotes on the
-/// agent returning Ok — it never checks the fix at all — and the corpus shows the cost: findings ROSE in 3
-/// of 13 rounds. Requiring strict improvement makes that outcome unreachable rather than unlikely.
-/// ⚠️ BAKED ON (2026-08-08). It was written, documented, measured across 31 repair rounds — and never
-/// once switched on: `spec_repair_wave` appears in ZERO of the 13 archived cells in this bench's corpus.
-///
-/// The evidence that flipped it is the campaign's own. Decomposing seven cells built from an IDENTICAL
-/// binary showed the EXECUTE window is nearly constant (43.0-58.9 min) while the wall ranges 68.5-108.3,
-/// so almost none of the variance lives in the DAG. It lives in the post-execute repair phase: the two
-/// cells that scored 0.3587 and 0.4624 are EXACTLY the two whose `complete_result.passed` was false,
-/// each after a SERIAL fix worker burned 23.4 and 20.0 minutes. This file already recorded the same
-/// observation independently — "a serial complete-fix burned ~35min on one node while two idled".
-///
-/// And repair cannot be parallelised by splitting findings: measured, findings-per-round is min 0 /
-/// median 1 / max 2, so no round has ever had work for a third node. The axis that decomposes is the
-/// ATTEMPT. On three nodes the serial path leaves TWO IDLE for twenty minutes at the exact moment both
-/// pillars are decided, which is the clearest use for extra nodes this campaign has found.
-///
-/// Safe to default ON because promotion is MONOTONIC BY CONSTRUCTION: a twin lands only when its
-/// re-verified finding count is STRICTLY below the count that opened the round (`pick_repair_winner`),
-/// so ties and regressions promote nothing and a raced round can never leave the tree worse than it
-/// found it. Set GOOSE_SWARM_SPEC_REPAIR=0 to restore the serial path.
-/// S1 increment 1 (GOOSE_SWARM_SINK_SHARD, default OFF — armed in the sweep): when a repair
-/// round's findings partition into 2+ distinct file groups, prefer the PER-FILE fan over the
-/// monolithic race. MEASURED basis: two full race waves (3+3 twins) died at the per-fix cap with
-/// the findings unchanged — each twin re-derives whole-app context to fix everything at once,
-/// while the fan hands each shard ONE file's findings under the same shadow discipline. The race
-/// stays for single-group rounds, where a partition cannot help and racing is the designed win.
-fn sink_shard() -> bool {
-    // DEFAULT ON (Mihai, 2026-08-12: "the tail could easily produce tasks ... so the final tail
-    // isn't done by one node alone"). This is that mechanism, already built and gated: a round
-    // whose findings span >=2 files fans one specific fix task per file across the fleet instead
-    // of one node taking the whole set. Quality-safe by construction — each shard promotes only
-    // if its re-verified shadow strictly beats the round baseline (shard_beats_baseline), so the
-    // worst case is "nothing promoted, tree unchanged". Single-file rounds still race twins.
-    std::env::var("GOOSE_SWARM_SINK_SHARD")
-        .map(|v| matches!(v.to_lowercase().as_str(), "1" | "on" | "true" | "yes"))
-        .unwrap_or(true)
-}
-
 /// F781/#15 (the judge's eye for the repair phase — OBSERVER first, kill rule later): a fix
 /// attempt carries no bound at all now (II-7), so a stalled 27B twin burns wall time invisibly.
 /// Before any early-kill can be trusted (a false kill deletes a healthy twin — the measured
@@ -36130,13 +34593,6 @@ fn tree_fingerprint(root: &std::path::Path) -> (usize, u64) {
     (count, newest)
 }
 
-/// II-7: the cadence of the fix attempt's LOOK loop — how often the attempt is MEASURED (digest
-/// tool_calls + lms-ps node state), never how long it may run. The five-minute stillborn floor
-/// and the fix-cap deadline this file used to carry are deleted: both were clocks deciding model
-/// work, and the floor could not tell narrate-don't-act from queued-behind-a-sibling. A cadence
-/// is §II.4 MAY-STAY — it delays only a look, and no count of looks carries a verdict.
-const FIX_LOOK_SECS: u64 = 30;
-
 /// F781/#15: ONE sampler for both repair fans (race twins AND file shards) — same signal, same
 /// cadence, one implementation, so the two paths can never drift apart the way the two fix caps
 /// once did. Abort the returned handle when the attempt ends, then read `progress`.
@@ -36161,36 +34617,6 @@ fn spawn_fix_progress_sampler(
     })
 }
 
-/// Pure: does this round shard instead of race? (Pinned by test — the decision, not the env.)
-fn prefer_shard_over_race(
-    shard_on: bool,
-    distinct_file_groups: usize,
-    attributed_findings: usize,
-) -> bool {
-    // "Two files or race" was the wrong axis, and two runs measured it. Run A's findings spanned
-    // TWO files, sharded into focused per-file fixers, and promoted 2 of 3. Run B had SEVEN
-    // findings in ONE file (every one a DOM id `app.js` referenced and no html defined) plus a
-    // few unattributable ones — one group, so it raced: three twins each had to repair the whole
-    // tree, each re-verified at EXACTLY the baseline, nothing promoted, twice, ~63 node-minutes
-    // per wave. The budget those waves burned is what later denied the run its final round.
-    //
-    // What actually decides it is whether the per-file partition covers real work. One file
-    // holding a cluster of findings is the BEST case for a focused fixer, not a reason to fall
-    // back to whole-tree racing; a single lone finding is still worth racing, since sharding it
-    // occupies one node and leaves the rest idle for a problem that may need a second opinion.
-    //
-    // MEASURED AGAIN, and the threshold moved twice for the same reason. Across three waves in
-    // two runs the whole-tree race promoted 0 of 9 twins — every one re-verifying at EXACTLY the
-    // baseline — while the per-file path promoted 2 of 3 in the run that used it. The last wave
-    // is the clearest: three findings, one of them a single DOM id the html simply had to
-    // declare, and the twins spent 23 / 19 / 6 tool calls on filter handlers and reading without
-    // one of them making that one-line edit. A generalist told to fix everything fixes the
-    // interesting thing; a fixer handed ONE FILE fixes that file. So the rule is now simply
-    // whether the finding names a file at all: if anything is attributable, shard it; race only
-    // when nothing is, which is the case sharding genuinely cannot serve.
-    shard_on && distinct_file_groups >= 1 && attributed_findings >= 1
-}
-
 /// Pure: may this fix shard's shadow promote its owned file to the real tree? Same rule as
 /// `pick_repair_winner`, per shard: `None` (no shadow, or the gate could not run there) is
 /// UNKNOWN and never promotes — scoring it as clean would land an unchecked tree on the real
@@ -36202,8 +34628,6 @@ fn shard_beats_baseline(verified: Option<usize>, baseline: usize) -> bool {
     verified.is_some_and(|v| v < baseline)
 }
 
-/// F781/#16: the fix-round-as-scheduler-run lever. Env wins, config falls back, default OFF —
-/// the campaign attributes it per arm before any default flip.
 /// F779 i3: the supervision-pool lever. Env wins, config falls back, default OFF.
 fn supervision_pool_on() -> bool {
     swarm_gate_cfg(
@@ -36226,49 +34650,6 @@ fn supervision_pool_on() -> bool {
 // REMOVED: JUDGE_NUDGE_MAX (was 2, "before the abort backstop"). Redirects are unbounded now and there
 // is no abort backstop: the judge escalates on EVIDENCE — it is shown its own prior direction and whether
 // the call acted on it — rather than on a counter. See the nudge block in run_agent_in.
-
-fn fix_sched() -> bool {
-    swarm_gate_cfg("GOOSE_SWARM_FIX_SCHED", load_config().fix_sched)
-}
-
-fn spec_repair() -> bool {
-    std::env::var("GOOSE_SWARM_SPEC_REPAIR")
-        .map(|v| matches!(v.to_lowercase().as_str(), "1" | "on" | "true" | "yes"))
-        .unwrap_or(true)
-}
-
-/// Which raced twin (if any) is allowed to touch the real tree. PURE, because this one rule is the whole
-/// safety argument for racing N writers, and it must be testable without a fleet.
-///
-/// `outcomes` is (task_id, re-verified finding count) — `None` means the twin errored, timed out, or its
-/// gate could not run, all of which are UNKNOWN and never winners. A twin lands only when its count is
-/// STRICTLY below `baseline`; equal is not an improvement, and promoting on equal would let a fix that
-/// merely traded one finding for another overwrite the tree on a coin flip. Lowest count wins, ties resolve
-/// to the earliest twin so replicates of the same run make the same choice.
-fn pick_repair_winner(
-    outcomes: &[(String, Option<usize>)],
-    baseline: usize,
-) -> Option<(usize, String)> {
-    outcomes
-        .iter()
-        .enumerate()
-        .filter_map(|(i, (t, v))| v.map(|n| (n, i, t.clone())))
-        .filter(|(n, _, _)| *n < baseline)
-        .min_by_key(|(n, i, _)| (*n, *i))
-        .map(|(n, _, t)| (n, t))
-}
-
-// S7's GOOSE_SWARM_TESTGEN gate lives in goose_swarm::testgen_enabled — ONE resolution shared
-// by the scheduler's picker and this crate's dispatcher, the sink_review_enabled lesson.
-
-// Contract-derived TESTGEN's extract/land helpers and the S3 fill-fan splice machinery
-// (SpliceRefusal, py_module_spans, module_stub, anchor_subsplit, skeleton_from_stub,
-// splice_functions) died with CONTRACTS (P1-4): every one of them consumed the frozen stub
-// bundle, and with no bundle none could ever fire again.
-
-// II-7: fix_cap_secs / GOOSE_SWARM_FIX_CAP_SECS deleted — the serial-fix wall clock and its
-// inert UNCAPPED stand-in. A fix ends when the model finishes, when the judge redirects it, or
-// when the transport's connect path fails; never on a clock.
 
 /// GOOSE_SWARM_TEMP > config > model default (Mihai 2026-08-16: "reduce the temperature to avoid
 /// such disparity"). ONE resolution used by the dispatcher's sampling, the levers_resolved echo
@@ -37260,9 +35641,6 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
         repeat_break: repeat_break_enabled(cfg.repeat_break),
     };
     let dispatcher = build_swarm_dispatcher(dispatcher_recipe.clone(), sink.clone()).await?;
-    // F781/#16 c6: the fix-round dispatcher is seeded with the SAME pillars the run-1 dispatcher
-    // got — captured at the set site below. (The frozen-contracts half died with CONTRACTS, P1-4.)
-    let mut fix_pillars_block = String::new();
 
     // #136 — FREEZE THE OPERATOR'S SPEC, right here, before a single model call can touch it. Research
     // findings are appended to opts.prompt at :19660 and clarify Q&A at :19799, and a retarget round then
@@ -37632,11 +36010,9 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             "benchmark": benchmark(),
             "ask_floor": ask_floor,
             "ask_max_q": ask_max_q,
-            // Prompt-only levers emit nothing of their own, which is why two earlier ones were screened
-            // "unobservable" — on + precondition met, and no way to tell whether anything happened. The
-            // variant here is a PURE function of this gate, so the gate's value plus a low_confidence_ask
-            // in the same log is a complete mechanism proof.
-            "fix_sched": fix_sched(),
+            // P1-9: `fix_sched` and `spec_repair` rows are GONE, with their mechanisms — the
+            // fresh-scheduler fix DAG and the twin race were deleted; a lever line for a deleted
+            // mechanism reads exactly like a live lever resolved to its default.
             "qa": goose_swarm::qa_enabled(),
             "supervision_pool": supervision_pool_on(),
             "clarify_spec_bound": swarm_gate_cfg_bundle(
@@ -37692,12 +36068,6 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             "kind_prompt": swarm_gate_cfg("GOOSE_SWARM_KIND_PROMPT", load_config().kind_prompt),
             // AND A THIRD, ADDED THE SAME MORNING IT WAS BAKED, BECAUSE I MADE THIS EXACT MISTAKE AGAIN.
             //
-            // `spec_repair` was flipped default-ON hours ago and shipped WITHOUT a line here. The first
-            // cell on the new binary then reported `spec_repair: ABSENT` from its own levers event —
-            // which, per the comment below, reads exactly like "resolved to null". Had no
-            // `spec_repair_wave` fired, I could not have told a dead lever from a cell that simply never
-            // entered repair, and the whole point of baking it was to find out which.
-            "spec_repair": spec_repair(),
             // TWO LEVERS SHIPPED WITHOUT A LINE HERE, AND THE LOG COULD NOT SAY WHETHER EITHER WAS ON.
             //
             // `levers_resolved` is a hand-maintained list, so a new gate is invisible until someone adds
@@ -38100,8 +36470,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                 "  pillars: {} distilled and injected into every worker",
                 pillars.pillars.len()
             );
-            fix_pillars_block = render_pillars_block(&pillars);
-            dispatcher.set_pillars(fix_pillars_block.clone());
+            dispatcher.set_pillars(render_pillars_block(&pillars));
         }
     }
 
@@ -38380,9 +36749,6 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
     // Planning ends here (skeleton draft + verbalized confidence + any ASK/re-plan + detailing are all
     // behind us); the scheduler.run below IS the execute phase (workers + judge + integrate-verify).
     let t_plan = std::time::Instant::now();
-    // Kept for the repair phase's criticality rating, which runs long after the scheduler consumed the
-    // dispatcher as a trait object.
-    let rater = dispatcher.clone();
     let report = scheduler
         .run_with_decisions(
             dag,
@@ -38421,11 +36787,11 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
     // just that workers reported "done"). Only this licenses the overview's confident (non-hedged) layout.
     let mut ov_verified = false;
     if complete_on {
-        let rounds = complete_rounds();
         // II-7: the repair phase carries NO wall — the requested/effective cap arithmetic, the
         // GOOSE_SWARM_RUN_DEADLINE_UNIX_MS harness clamp and the cap_deadline they produced are
-        // deleted, not parked: the env read re-armed a real wall through the back door. The phase
-        // ends when a round changes nothing on the tree.
+        // deleted, not parked: the env read re-armed a real wall through the back door. P1-9
+        // finished the job: the round FLOOR/CEILING and the stall counter went the same way —
+        // the phase ends when a wave changes nothing on the tree, and only then.
         // Detect from the PRODUCED file manifest, not just the spec: a language-unspecified spec whose
         // plan built a non-Python tree (e.g. a Rust CLI) would otherwise default to Python, run pytest on
         // a tree with no .py, skip (ran=false), and ship trivially green. The manifest's extensions route
@@ -38500,34 +36866,18 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
         let mut last_verify_ran;
         let mut last_verify_count;
         let mut last_verify_established;
-        // Stall early-exit budget (GOOSE_SWARM_COMPLETE_STALL_ROUNDS; 0 = opt out of the
-        // one-flat-round stop).
-        let stall_cap = complete_stall_rounds();
-        // F907: which mechanism the previous fix round used and whether it PROMOTED — a
-        // promoted round whose finding count held flat is new information for the OTHER
-        // mechanism, and the stall exit used to fire before that arm ever saw the improved
-        // tree (r10 and r11 both promoted a verified fix, then stall-exited at a flat count).
-        let mut last_round_promoted = false;
-        // What the repair ASK quotes back. An ETA has to come from what actually happened in THIS
-        // run — rounds that ran, the wall-clock they took, and how many criticals they closed — or it
-        // is a number invented to make a question look answerable.
         sink.write_value(serde_json::json!({"event": "phase", "phase": "repair"}));
-        let mut round_walls: Vec<u64> = Vec::new();
-        let mut first_criticals: Option<usize> = None;
-        // WHICH defects, not HOW MANY. Progress here is a set difference and the count hides it
-        // completely: MEASURED round 0 -> round 1, criticals 8 -> 8 and findings 11 -> 11, while NINE
-        // findings were actually closed (the page rendering no rows, app.js referencing DOM ids no html
-        // defines, an empty pytest suite, negative offset unrejected) and TEN new ones were found by the
-        // TEST fan going deeper on its second pass. The ask reported "closed NO critical yet" to the
-        // human, which was the exact opposite of the truth, and the ETA it derived was worthless.
-        // When the previous round actually began, so its duration can be closed out AFTER its fix wave
-        // rather than at its RATE call.
-        let mut prev_round_started: Option<std::time::Instant> = None;
-        let mut prev_findings: std::collections::HashSet<String> = std::collections::HashSet::new();
-        let mut closed_total: usize = 0;
-        let mut last_round_was_shard = false;
-        // `rounds` fix attempts, each preceded by a verify, PLUS a final verify after the last fix so the
-        // last fix is actually checked (0..=rounds => rounds+1 verifies, rounds fixes).
+        // P1-9 (STRAIGHT-LINE THE TAIL): the round loop's steering — the TEST fan, RATE, the
+        // repair ASK + proxy, the twin race, the fresh-scheduler fix DAG, the serial fallback,
+        // the stall counter and the strategy switch — is DELETED, on r0's own measurements: the
+        // TEST fan spent 29.1 min observing 12 defects none of which were acted on while the
+        // deterministic gate had already found 37 including GET / 404; RATE spent 7.6 min and
+        // its output reached no consumer (complete_fix_dispatched: 0); the twin race's
+        // whole-tree join took 115 of a 138-minute wave while four file shards beside it took
+        // 24; and the proxy expression made REPAIR unreachable under benchmark at all. What
+        // remains is the only measured shape with a promotion: GATE → attribute → ONE shard
+        // wave per round → re-gate, waves continuing WHILE the tree improves and stopping the
+        // round a wave changes nothing — a tree-based terminator, never a count, never a wall.
         // FAILED PLANNED TASKS (GOOSE_SWARM_FAILED_TASKS_BLOCK_GREEN, default OFF).
         //
         // The complete loop's ONLY input is the smoke gate — it never looks at whether the build's own tasks
@@ -38684,28 +37034,14 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                 );
             }
         }
-        // PROGRESS-BASED ROUNDS (speed hunt, 2026-08-16). The static `for round in 0..=rounds` had
-        // two dead ends: a FLAT round could not stop early (the stall-exit was arithmetically
-        // unreachable at the defaults AND compared finding STRINGS, which mutate every round — the
-        // pytest finding embeds the failure list, so '7 failed' vs '19 failed, 45 passed' reads as
-        // change on an app that stayed red), and a CONVERTING run was cut at the count while budget
-        // remained. The round COUNT of gate findings is the ruler that decides green, so it decides
-        // continuation too: strictly decreasing + budget headroom => keep going (hard ceiling 6, the
-        // config clamp); not decreasing => one flat round is proof enough, stop before buying the
-        // next wave. MEASURED stakes: a flat wave costs 1,599-2,400s; a cut converting run costs the
-        // rounds it was denied.
+        // WAVES WHILE THE TREE IMPROVES (P1-9). A shard lands only when its graded promotion
+        // preview strictly beats the round's baseline, so "a wave promoted something" IS "the
+        // tree improved" — measured on the tree, never inferred from a count (the count is flat
+        // across a round that closes nine findings and surfaces ten). A wave that promotes
+        // nothing leaves the tree byte-identical to what this round's opening gate measured, so
+        // re-gating it would buy a guaranteed repeat: the phase ends there instead.
         let mut round: u32 = 0;
-        // ONE STRATEGY SWITCH (r5 postmortem): the detectors now produce precise, actionable
-        // findings, and the loss moved to FIX CONVERSION — r5's single sched round promoted
-        // nothing against 7 named findings and converged at 0.017. A zero-promotion round may
-        // switch strategy EXACTLY ONCE (shards -> race, or race -> shards): a different
-        // mechanism is new information, a repeat is not. The pending switch bypasses the
-        // stall exit for its one round; a second zero-promotion round converges for good.
-        let mut force_race_next = false;
-        let mut force_shard_next = false;
-        let mut strategy_switched = false;
         loop {
-            let round_started = std::time::Instant::now();
             let mut verdict = run_smoke_gate(&cwd, complete_lang).await;
             // A failed task blocks green ONLY when the smoke gate is BLIND (it did not run — an unprofiled
             // language, a missing toolchain, an empty tree). When the gate RAN (go build+test, pytest, cargo)
@@ -38945,61 +37281,18 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                     }));
                 }
             }
-            // WHICH FINDINGS A MODEL MERELY OBSERVED. `engine_fatal` below force-promotes a finding to
-            // CRITICAL on its wording alone, and it exists for exactly one reason: an opinion may not
-            // overrule a MEASUREMENT. The strings it matches are written by run_smoke_gate and the
-            // command probes — engine facts. Feeding the TEST fan's output into the same list inverts
-            // that: a model that says "the app does not start" because a sibling tester already held the
-            // port would be force-promoted past the rater, and the fix loop would be sent at working
-            // code. Model-observed defects are rated like anything else; only measurements are forced.
-            let mut model_observed: std::collections::HashSet<String> =
-                std::collections::HashSet::new();
-            sink.write_value(
-                serde_json::json!({"event": "phase", "phase": "test", "round": round}),
-            );
-            // TEST — the three-node fan, before the round's verdict is written so its defects are
-            // rated and fixed by exactly the same machinery as the engine's own.
-            //
-            // The engine gate above is deterministic and it is why it decides green; what it CANNOT do is
-            // notice something it was never written to look for. Two of three sb-6 runs shipped an app
-            // that never bound a port and pytest was perfectly happy. These three angles run the app the
-            // way a person would, and their defects join `verdict.findings` as ordinary strings with the
-            // paths in backticks — so `extract_file_from_finding` shards them across the fix fan with no
-            // new plumbing, and RATE below triages them against intent like everything else.
-            //
-            // A model observation never overrules a measurement: `engine_fatal` still forces the engine's
-            // own strings CRITICAL whatever the rater says.
-            if !fleet_models.is_empty() {
-                let observed = smoke_fix_dispatcher
-                    .test_app(fleet_models.clone(), &opts.prompt, &smoke_all_files)
-                    .await;
-                let mut by_angle: std::collections::BTreeMap<String, usize> =
-                    std::collections::BTreeMap::new();
-                for (angle, _) in &observed {
-                    *by_angle.entry(angle.clone()).or_default() += 1;
-                }
-                sink.write_value(serde_json::json!({
-                    "event": "defects_observed",
-                    "round": round,
-                    "total": observed.len(),
-                    "by_angle": by_angle,
-                    "defects": observed.iter()
-                        .map(|(a, d)| format!("[{a}] {}", elide_middle(d, 150, 650)))
-                        .collect::<Vec<_>>(),
-                }));
-                for (angle, d) in observed {
-                    let text = format!("[{angle}] {d}");
-                    model_observed.insert(text.clone());
-                    if !verdict.findings.contains(&text) {
-                        verdict.findings.push(text);
-                    }
-                }
-            }
-            // DE-DUPLICATE BEFORE ANYTHING COUNTS — the count is the ruler for green, for the stall
-            // exit, and for shard_beats_baseline's baseline, so a duplicate is charged three times.
+            // P1-9: the TEST fan and RATE are DELETED. r0 measured the fan at 29.1 minutes for 12
+            // model-observed defects, none of which were acted on, while the deterministic gate
+            // above had already found 37 — including the scored GET / 404 — and RATE's 7.6-minute
+            // triage reached no consumer at all. Every finding in `verdict` is now an engine
+            // measurement; criticality is the engine's own wording (`engine_critical`), not a
+            // model's opinion of it.
+            // DE-DUPLICATE BEFORE ANYTHING COUNTS — the count is the ruler for green and for
+            // shard_beats_baseline's baseline, so a duplicate is charged twice.
             {
                 let before = verdict.findings.len();
-                verdict.findings = dedupe_findings_exact(&verdict.findings, &model_observed);
+                verdict.findings =
+                    dedupe_findings_exact(&verdict.findings, &std::collections::HashSet::new());
                 if verdict.findings.len() < before {
                     sink.write_value(serde_json::json!({
                         "event": "defects_deduped",
@@ -39043,12 +37336,13 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                     .collect::<Vec<_>>(),
             }));
             // §II.2 WRITERS, gate leg — here and not earlier because THIS is where
-            // verdict.findings is final (post model-observed merge, post dedupe). What it writes
-            // is exactly what the round decided on; a later dispatch reading the ledger sees the
-            // round's real ruler, never a pre-dedupe draft.
+            // verdict.findings is final (post dedupe). What it writes is exactly what the round
+            // decided on. Round 0 belongs to the COMPLETION gate at the sink's dispatch (III-1's
+            // hook), so the tail's rounds start at 1 — the ledger reads as one history:
+            // gate-r0 = the tree the sink received, gate-rN = the tree after wave N-1.
             if let Some(path) = write_gate_ledger(
                 &cwd,
-                round as u64,
+                round as u64 + 1,
                 "smoke",
                 &verdict.findings,
                 &verdict.inconclusive,
@@ -39057,7 +37351,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                 sink.write_value(serde_json::json!({
                     "event": "ledger_written",
                     "kind": "gate",
-                    "round": round,
+                    "round": round + 1,
                     "path": path.display().to_string(),
                 }));
             }
@@ -39124,159 +37418,37 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                     "ok": ok,
                 }));
             }
-            // CRITICALITY DECIDES GREEN, not completeness.
-            //
-            // An empty findings set is green as before. But a NON-empty one is now triaged: if nothing
-            // that remains stops the app doing what it exists to do, the run is green and the rest are
-            // reported as KNOWN ACTIVE BUGS rather than hidden or treated as failure. Measured on this
-            // engine's first end-to-end run: the app met every requirement in its spec and the run said
-            // passed:false because one of the model's OWN generated tests asserted a word appears in a
-            // top-five listing when it ranked sixth.
-            //
-            // Engine-observed "the app does not run" findings are forced CRITICAL regardless of the
-            // rating. Those strings are written by run_smoke_gate and the command probes — they are
-            // engine facts, and a model opinion may not overrule a measurement.
-            let mut minors: Vec<String> = Vec::new();
+            // CRITICALITY DECIDES GREEN, not completeness — and it is the ENGINE'S OWN WORDING
+            // that decides criticality now (P1-9: RATE is deleted; its measured 7.6 minutes of
+            // triage reached no consumer). An empty findings set is green as before. A non-empty
+            // one is partitioned by `engine_critical`: a finding whose text says the app does not
+            // run/build/answer is a measurement and blocks the green claim; everything else ships
+            // as a KNOWN ACTIVE BUG — reported, never hidden, and still fed to the repair wave
+            // below, because a fixable bug should not wait on a verdict about whether it may be.
+            let criticals: Vec<String> = verdict
+                .findings
+                .iter()
+                .filter(|f| engine_critical(f))
+                .cloned()
+                .collect();
+            let minors: Vec<String> = verdict
+                .findings
+                .iter()
+                .filter(|f| !engine_critical(f))
+                .cloned()
+                .collect();
             if !verdict.findings.is_empty() {
-                sink.write_value(
-                    serde_json::json!({"event": "phase", "phase": "rate", "round": round}),
-                );
-                let rated = rater
-                    .rate_findings(&cfg.planner_model, &opts.prompt, &verdict.findings)
-                    .await;
-                let engine_fatal = |f: &str| {
-                    let l = f.to_lowercase();
-                    l.contains("does not start")
-                        || l.contains("never bound its port")
-                        || l.contains("did not build")
-                        || l.contains("exited non-zero")
-                        || l.contains("no such command")
-                        || l.contains("runtime crash")
-                        || l.contains("missing deliverable")
-                };
-                // Computed here, before the event that reports it. Progress is a SET difference: the
-                // count is flat across a round that closed nine and found ten.
-                let now_findings: std::collections::HashSet<String> =
-                    verdict.findings.iter().cloned().collect();
-                let closed_this_round = prev_findings.difference(&now_findings).count();
-                let found_this_round = if prev_findings.is_empty() {
-                    0
-                } else {
-                    now_findings.difference(&prev_findings).count()
-                };
-                closed_total += closed_this_round;
-                prev_findings = now_findings;
-                let mut criticals: Vec<String> = Vec::new();
-                let forced = |f: &String| engine_fatal(f) && !model_observed.contains(f);
-                // WHERE THE UNATTRIBUTABLE DEFECTS LIVE, as the rater sees it. `extract_file_from_finding`
-                // can only read a path the finding TEXT happens to contain; the rater has read the defect
-                // AND the request and can say where it lives when the text does not. That answer is what
-                // stops the residue worker owning the whole tree.
-                let mut rated_files: std::collections::HashSet<String> =
-                    std::collections::HashSet::new();
-                // A DUPLICATE IS NOT A SEPARATE DEFECT. The rater has said this line restates an
-                // earlier one; counting it again would give the same cause two shards in the wave, two
-                // entries in the criticals list, and a re-report every round. `forced` still wins — an
-                // engine product check is a measurement, and a model may not rate a measurement away.
-                let mut deduped = 0usize;
-                for (f, r) in verdict.findings.iter().zip(rated.iter()) {
-                    let (is_crit, files) = (&r.critical, &r.files);
-                    if r.duplicate_of.is_some() && !forced(f) {
-                        deduped += 1;
-                        continue;
-                    }
-                    if *is_crit || forced(f) {
-                        criticals.push(f.clone());
-                    } else {
-                        minors.push(f.clone());
-                    }
-                    // ONLY the findings the join will actually receive.
-                    //
-                    // This collected the rater's files across ALL findings, while the residue worker is
-                    // handed only the UNASSIGNED ones — those whose text names no path. So the join was
-                    // fenced to files belonging to OTHER defects, and `read_on_fix` then tells it in the
-                    // system prompt that it may edit any file the fix requires. It does; and
-                    // grade_promotion_preview computes `changed` over `owned` only and copy_owned_files
-                    // copies `owned` only, so the edit is graded as ABSENT and the whole residue fix is
-                    // discarded with the shadow — which also leaves last_round_promoted false, the input
-                    // to proxy_yes and therefore to the premature-stop blocker.
-                    //
-                    // `extract_file_from_finding` is the same predicate group_findings_by_file uses to
-                    // decide `unassigned`, so this scope is exactly the join's own caseload.
-                    if extract_file_from_finding(f, &smoke_all_files).is_none() {
-                        for p in files {
-                            rated_files.insert(normalize_rel_path(p));
-                        }
-                    }
-                }
-                // CRITICAL FIRST — by REORDER, never by exclusion.
-                //
-                // `verdict.findings` reaches every fix path WHOLE (race, fix_sched DAG, shard fan,
-                // residue/join, serial) in DETECTOR-APPEND order, so the css probe's findings sit ahead
-                // of the model fan's and a cosmetic defect can own the first shard the fleet picks up
-                // while a critical waits behind it. RATE has just worked out which is which and then
-                // dropped the answer on the floor: `criticals` is declared inside this block and the fix
-                // wave is outside it, so the split was not merely unused — it was out of scope.
-                //
-                // Order is the only severity signal the wave can carry without changing any of the five
-                // dispatch paths. Nothing is dropped: a minor still gets fixed, just after the thing that
-                // stops the app working. Stable within each group, so detector order still decides ties.
-                {
-                    let crit: std::collections::HashSet<&String> = criticals.iter().collect();
-                    let (mut first, rest): (Vec<String>, Vec<String>) = verdict
-                        .findings
-                        .iter()
-                        .cloned()
-                        .partition(|f| crit.contains(f));
-                    first.extend(rest);
-                    verdict.findings = first;
-                }
-                // Only a scope that is genuinely NARROWER than the tree was worth having; its one
-                // consumer (the cross-file join twin) died with P1-3, so the scope survives ONLY
-                // as the event field below — a measurement, no longer a dispatch input.
-                let mut join_scope: Vec<String> = rated_files
-                    .iter()
-                    .filter(|f| smoke_all_files.contains(f))
-                    .cloned()
-                    .collect();
-                join_scope.sort();
-                if join_scope.len() >= smoke_all_files.len() {
-                    join_scope.clear();
-                }
-                sink.write_value(serde_json::json!({
-                    "event": "defects_rated",
-                    "round": round,
-                    "join_scope": join_scope,
-                    // The two numbers that show progress a count cannot. MEASURED: 11 -> 11 findings
-                    // across a round that closed 9 and found 10.
-                    "closed_this_round": closed_this_round,
-                    "found_this_round": found_this_round,
-                    "closed_total": closed_total,
-                    "critical": criticals.len(),
-                    "minor": minors.len(),
-                    "engine_forced": verdict.findings.iter().filter(|f| forced(f)).count(),
-                    "model_observed": model_observed.len(),
-                    "minors": minors,
-                    "deduped": deduped,
-                }));
-                if deduped > 0 {
-                    let keep: Vec<String> = verdict
-                        .findings
-                        .iter()
-                        .zip(rated.iter())
-                        .filter(|(f, r)| r.duplicate_of.is_none() || forced(f))
-                        .map(|(f, _)| f.clone())
-                        .collect();
-                    eprintln!(
-                        "  · {} defect(s) were the same thing said twice — one fix, not {}",
-                        deduped,
-                        deduped + 1
-                    );
-                    verdict.findings = keep;
-                }
+                // CRITICAL FIRST — by REORDER, never by exclusion: the wave fans in finding
+                // order, so a cosmetic defect must not own the first shard the fleet picks up
+                // while a dead app waits behind it. Stable within each group, so detector order
+                // still decides ties.
+                let mut ordered = criticals.clone();
+                ordered.extend(minors.iter().cloned());
+                verdict.findings = ordered;
+                known_active_bugs = minors.clone();
                 if criticals.is_empty() {
                     eprintln!(
-                        "  {} every critical defect is closed — shipping GREEN with {} known active bug(s)",
+                        "  {} every critical defect is closed — {} known active bug(s) remain",
                         style("✓").green(),
                         minors.len()
                     );
@@ -39294,172 +37466,10 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                         minors.len()
                     );
                 }
-                known_active_bugs = minors.clone();
-                // The PREVIOUS round's full duration, recorded here because this point is after that
-                // round's fix wave and before this one's.
-                //
-                // It used to push `round_started.elapsed()` — the time from the round's start to RATE,
-                // which excludes the fix wave entirely. The fix wave is the expensive part: MEASURED,
-                // 115 minutes of a 138-minute wave in ONE worker. So every ETA the operator was shown
-                // understated a round by most of it, and the sentence it appears in is the one a human
-                // reads before deciding whether to spend another hour.
-                if let Some(prev) = prev_round_started.replace(round_started) {
-                    round_walls.push(prev.elapsed().as_secs());
-                }
-                if first_criticals.is_none() {
-                    first_criticals = Some(criticals.len());
-                }
-
-                // THE ASK. Whether to buy another round is the user's call, not the engine's — and it is
-                // asked either way, because "criticals remain" and "only minors remain" are different
-                // questions with the same answer shape. Routing is §5's rule verbatim, from the same
-                // expression: instant under `benchmark`, five minutes with the human otherwise.
-                //
-                // The proxy answers from PROGRESS. `last_round_promoted` is the only honest input: a fix
-                // landed on the real tree, or it did not. Asking a model would answer yes forever under
-                // benchmark and leave Ctrl-C as the only exit.
-                let rounds_run = round_walls.len();
-                let avg_round = if rounds_run > 0 {
-                    round_walls.iter().sum::<u64>() / rounds_run as u64
-                } else {
-                    0
-                };
-                let closed = closed_total;
-                // An ETA nobody can stand behind is worse than none. If no critical has ever closed, say
-                // exactly that instead of extrapolating from a rate of zero.
-                let eta = if rounds_run == 0 || avg_round == 0 {
-                    "no round has finished yet, so there is nothing to estimate from".to_string()
-                } else if criticals.is_empty() {
-                    format!(
-                        "another round looks like roughly {}m, from the {rounds_run} that have run",
-                        avg_round / 60
-                    )
-                } else if closed == 0 && rounds_run > 1 {
-                    format!(
-                        "{rounds_run} round(s) have run at about {}m each and have closed NO critical yet, \
-                         so I cannot honestly estimate how long the rest would take",
-                        avg_round / 60
-                    )
-                } else {
-                    let per = avg_round as f64 * criticals.len() as f64 / closed.max(1) as f64;
-                    format!(
-                        "{rounds_run} round(s) at about {}m each have CLOSED {closed} defect(s); this \
-                         round closed {closed_this_round} and found {found_this_round} new ones, so {} \
-                         remain ({} critical). At that rate the rest look like roughly {}m — though a \
-                         round that keeps finding new defects is making progress even when the count \
-                         holds flat.",
-                        avg_round / 60,
-                        verdict.findings.len(),
-                        criticals.len(),
-                        (per / 60.0).round() as u64
-                    )
-                };
-                let (question, detail, key) = if criticals.is_empty() {
-                    (
-                        format!("The app works. {} minor issue(s) remain. {eta}. Spend another round on them?", minors.len()),
-                        minors.clone(),
-                        "fix_minors",
-                    )
-                } else {
-                    (
-                        format!(
-                            "{} critical problem(s) remain. {eta}. Continue?",
-                            criticals.len()
-                        ),
-                        criticals.clone(),
-                        "fix_criticals",
-                    )
-                };
-                // Round 0 has bought nothing yet, so it is never the moment to ask whether to buy more.
-                //
-                // UNDER BENCHMARK THE ANSWER IS NO, ALWAYS. There is no human on the other end and
-                // nothing downstream that pays for grinding: the run is measured on the TREE, by a scorer
-                // that never reads the round count. Granting rounds while anything at all changed is how
-                // a repair phase reached eight hours and 115 minutes in a single worker, and no run has
-                // ever emitted complete_result — the loop outlived every one of them.
-                //
-                // So a benchmark round gets its ONE fix wave and then the phase ends and the tree gets
-                // scored. That is not a cap on the models: nothing is cut mid-call, the wave runs to
-                // completion, and the verdict reports honestly whether criticals remain. It is the answer
-                // to a question, and the answer for an unattended run is end.
-                // AND IT GAVE ZERO. `!benchmark() && (...)` is false for EVERY round under
-                // GOOSE_SWARM_BENCHMARK=1, so the repair-continue ask could only ever be answered no and
-                // REPAIR has never run in a benchmark. Measured on r0: 29 criticals, 2 minors,
-                // `complete_fix_dispatched: 0`, "STOPPING at round 0 with 29 critical(s) open — proxy said
-                // no". Every local benchmark number this project has published is therefore a PRE-REPAIR
-                // score — the app as TEST first found it, with no fix wave, no re-test and no verdict loop.
-                //
-                // The comment above states the intent and the code contradicts it, which is why it
-                // survived: "a benchmark round gets its ONE fix wave and then the phase ends". So say
-                // exactly that. Benchmark grants round 0 and nothing after it — one wave, no loop, and the
-                // infinite-yes the guard existed to prevent is prevented by the round check itself rather
-                // than by disabling the phase. Attended runs keep the progress rule: another round while
-                // the last one changed the tree, and no round once it stopped.
-                let proxy_yes = if benchmark() {
-                    round == 0
-                } else {
-                    round == 0 || last_round_promoted
-                };
-                sink.write_value(serde_json::json!({
-                    "event": "clarify_proxy_armed",
-                    "ask": key,
-                    "round": round,
-                    "mode": if benchmark() { "immediate" } else { "after_wait" },
-                    "wait_secs": proxy_answer_after_secs(),
-                    "questions": 1,
-                }));
-                if !benchmark() {
-                    eprintln!(
-                        "  {} {question}\n answer in .swarm/{key}-answer.json ({{\"answer\":\"yes\"}}) within {}s, or goose decides",
-                        style("?").cyan().bold(),
-                        proxy_answer_after_secs()
-                    );
-                }
-                let (go_on, source) =
-                    ask_repair_round(&cwd.join(".swarm"), key, &question, &detail, proxy_yes).await;
-                sink.write_value(serde_json::json!({
-                    "event": key,
-                    "round": round,
-                    "question": question,
-                    "eta": eta,
-                    "answer": if go_on { "yes" } else { "no" },
-                    "source": source,
-                    "criticals": criticals.len(),
-                    "minors": minors.len(),
-                    "tree_changed_last_round": last_round_promoted,
-                }));
-                // AN ASSIGNMENT, NOT A LATCH. This was `= true` and never assigned false anywhere in the
-                // round loop, so once any round rated everything MINOR the run reported passed:true for
-                // good — including through the "STOPPING with N critical(s) open" exit added in the same
-                // change. Ordinary trigger: round 0 all-minor sets it; round 0 buys round 1 because
-                // proxy_yes is true at round 0; round 1's TEST fan surfaces a CRITICAL and the wave
-                // promotes nothing, so the proxy answers no and the loop breaks — green, exit 0, with an
-                // open critical. The ship-best rescue is not a backstop: it is gated on !final_passed.
+                // `passed` means THE GATE'S CRITICALS ARE CLOSED — assigned every round, never
+                // latched, so a late-surfacing critical flips it back honestly.
                 final_passed = criticals.is_empty();
-                if criticals.is_empty() {
-                    if !go_on {
-                        eprintln!(
-                            "{}",
-                            style(format!(
-                                "complete: GREEN at round {round} — shipping with {} known active bug(s)",
-                                minors.len()
-                            ))
-                            .green()
-                        );
-                        break;
-                    }
-                } else if !go_on {
-                    final_passed = false;
-                    eprintln!(
-                        "{}",
-                        style(format!(
-                            "complete: STOPPING at round {round} with {} critical(s) open — {source} said no",
-                            criticals.len()
-                        ))
-                        .yellow()
-                    );
-                    break;
-                }
+                final_verified = verdict.established();
             }
             if verdict.findings.is_empty() {
                 final_passed = true;
@@ -39513,88 +37523,6 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                 }
                 break;
             }
-            // THE FIX WAVE IS A PHASE AND HAD NO PHASE EVENT.
-            //
-            // Every other phase says its own name; this one never did, so the most expensive thing in
-            // the run was invisible and got folded into whichever label came before it. MEASURED on an
-            // 8h20m run: "rate" appeared to consume 4h23m, 52.7% of the whole thing — while the rate
-            // lane showed `tools 0` and RATE is a single triage call. The receipts say what actually
-            // happened: fix_criticals at 22:18, then complete_fix_completed at 22:22, 22:29, 22:31,
-            // 22:42 and 00:38. Two hours twenty of fix wave inside a two hour twenty-one "rate"
-            // segment.
-            //
-            // A phase you cannot measure is a phase you cannot make faster, and this is the one to make
-            // faster: planning plus BUILD together were 62 minutes of that run and repair was seven
-            // hours.
-            sink.write_value(serde_json::json!({"event": "phase", "phase": "fix", "round": round}));
-            // STALL EXIT, count-based (speed hunt 2026-08-16). The old predicate compared finding
-            // STRINGS (never equal in practice — the pytest finding's embedded failure list mutates
-            // while the app stays red) and needed `stall_cap=2` consecutive hits that the round
-            // arithmetic made unreachable: a PROVEN zero across 54 logs. The count is the ruler
-            // that gates green, so it judges progress: a round that did not REDUCE the count made
-            // no progress, and one such round is proof — the next wave would re-attempt the same
-            // findings from the same tree at 1,599-2,400s a draw. `stall_cap=0` keeps the opt-out.
-            // PROMOTED-BUT-FLAT SWITCH (F907): a verified fix landed last round yet the count
-            // held — before the stall exit ends the phase, the OTHER mechanism gets its one
-            // round on the improved tree. Same one-shot bound as the zero-promotion switch.
-            if stall_cap > 0
-                && round > 0
-                && verdict.findings.len() >= last_findings.len()
-                && !force_race_next
-                && !force_shard_next
-                && last_round_promoted
-                && !strategy_switched
-            {
-                let to_race = last_round_was_shard && spec_repair() && fleet_models.len() > 1;
-                let to_shard = !last_round_was_shard && fix_sched();
-                if to_race || to_shard {
-                    strategy_switched = true;
-                    if to_race {
-                        force_race_next = true;
-                    } else {
-                        force_shard_next = true;
-                    }
-                    sink.write_value(serde_json::json!({
-                        "event": "fix_strategy_switch",
-                        "round": round,
-                        "from": if to_race { "shards" } else { "race" },
-                        "to": if to_race { "race" } else { "shards" },
-                        "detail": "the round PROMOTED a verified fix but the finding count held flat — the other mechanism gets one round on the improved tree before the stall exit ends the phase",
-                    }));
-                }
-            }
-            if stall_cap > 0
-                && round > 0
-                && verdict.findings.len() >= last_findings.len()
-                && !force_race_next
-                && !force_shard_next
-            {
-                sink.write_value(serde_json::json!({
-                    "event": "complete_stall_exit",
-                    "round": round,
-                    "findings": verdict.findings.len(),
-                    "previous": last_findings.len(),
-                }));
-                eprintln!(
-                    "{}",
-                    style(format!(
-                        "complete: fix round made no progress ({} -> {} finding(s)) — stopping \
-                         instead of buying another wave",
-                        last_findings.len(),
-                        verdict.findings.len()
-                    ))
-                    .yellow()
-                );
-                // Refresh before breaking so complete_result reports THIS round's count, not the
-                // previous round's (review: findings rising 3->5 reported remaining 3).
-                last_findings = verdict.findings.clone();
-                break;
-            }
-            let prev_count = if round > 0 {
-                Some(last_findings.len())
-            } else {
-                None
-            };
             last_findings = verdict.findings.clone();
             eprintln!(
                 "{} round {round}: {} finding(s)",
@@ -39604,462 +37532,22 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             for f in &verdict.findings {
                 eprintln!("  - {}", f.lines().next().unwrap_or(""));
             }
-            // Round budget: the static count is a FLOOR, not a wall. A run that just STRICTLY
-            // reduced its findings and still holds a full fix-cap of wall budget has earned the
-            // next round (extension requires BOTH; ceiling 6 = the config clamp). A run at the
-            // count without that proof stops exactly as before. A pending strategy switch
-            // bypasses this cap the same way it bypasses the stall exit (adversarial review:
-            // the zero-promotion round is USUALLY the last budgeted one, so gating the switch
-            // on the cap emitted fix_strategy_switch, burned the one-shot flag, and never ran
-            // the switched round). The switch is already bounded by strategy_switched, and the
-            // wall/headroom checks below still apply to it.
-            if round >= rounds && !force_race_next && !force_shard_next {
-                // Extension requires ESTABLISHED progress — a blind verify's lower count is
-                // not evidence that another round is earning its wall time (rank-1 chain fix).
-                let decreasing =
-                    prev_count.is_some_and(|p| verdict.findings.len() < p) && verdict.established();
-                if !(decreasing && round < 6) {
-                    break;
-                }
-                eprintln!(
-                    "complete: findings still falling ({} -> {}) with budget in hand — extending \
-                     past the {rounds}-round floor",
-                    prev_count.unwrap_or(0),
-                    verdict.findings.len()
-                );
-            }
-            // ZERO-PROMOTION CONVERGENCE (wall-time hunt, verified): set by the graded round
-            // paths when nothing promoted — the real tree is then byte-identical to the tree
-            // this round's opening verify measured, so the next round-head gate would re-measure
-            // the same state at 2-6 minutes for a guaranteed stall exit. Break instead; the
-            // round-opening verdict stays the accurate final word on this tree.
-            let mut fix_converged = false;
-            // FIX. Default: ONE serial fix on a single node (v1). GOOSE_SWARM_COMPLETE_PARALLEL: fan one fix
-            // per failing FILE across the fleet's models — each agent writes only its own file (shadow
-            // isolation), so two agents can never touch the same file; same-file findings collapse into one
-            // group and serialize. Re-verify happens at the loop head next round.
-            let Some((dev_id, model_id)) = smoke_fix_target.clone() else {
+            // With no fix target or no fleet, nothing can dispatch a repair — ship what the gate
+            // measured (the restore + boot floor below still run).
+            let Some((dev_id, _)) = smoke_fix_target.clone() else {
                 break;
             };
-            // `len() > 1`, not `!is_empty()`. Racing ONE model is the serial path plus shadow-tree
-            // machinery: same single attempt, same single verify, extra copying. The entire argument for
-            // racing is that the OTHER nodes are idle during a median-one-finding repair round, so with
-            // one model there is nothing to recover and the overhead is pure cost. This matters now that
-            // the lever is default-ON — a 1-node fleet must keep running exactly what it ran before.
-            let shard_this_round = if force_race_next {
-                force_race_next = false;
-                false
-            } else if force_shard_next {
-                force_shard_next = false;
-                true
-            } else {
-                let (groups, _) = group_findings_by_file(&verdict.findings, &smoke_all_files);
-                let attributed: usize = groups.iter().map(|g| g.findings.len()).sum();
-                prefer_shard_over_race(sink_shard(), groups.len(), attributed)
-            };
-            if spec_repair() && fleet_models.len() > 1 && !shard_this_round {
-                // RACE. One independent attempt per fleet model at the SAME findings, each rooted in its
-                // own shadow, then a deterministic re-verify of every shadow decides which (if any) lands.
-                let baseline = verdict.findings.len();
-                let attempts: Vec<(usize, String)> =
-                    fleet_models.iter().cloned().enumerate().collect();
-                eprintln!(
-                    "complete: fix round {round} — racing {} independent attempt(s) at {baseline} finding(s); \
-                     a twin lands only if its re-verify beats {baseline}",
-                    attempts.len()
-                );
-                let me = smoke_fix_dispatcher.clone();
-                let all_files = smoke_all_files.clone();
-                let dev = dev_id.clone();
-                let decisions = user_decisions.clone();
-                let facts = doc_facts.clone();
-                let desc = smoke_fix_description(
-                    &verdict.findings,
-                    complete_lang,
-                    &opts.prompt,
-                    &render_repair_history(
-                        read_ledger_rollup(&cwd).as_ref(),
-                        &smoke_all_files,
-                        &verdict.findings,
-                        round as usize,
-                    ),
-                );
-                let wave_prompt = opts.prompt.clone();
-                let wave_cwd = cwd.clone();
-                // F862: the ruler flags the round graded with — the twins grade with the same.
-                let wave_composite = delivery_on || spec_contract_enabled();
-                let wave_missing_gate = missing_deliverable_gate;
-                let sink_r = sink.clone();
-                // F846 EARLY-CLOSE (NEXT-BIG rank 2). MEASURED on the first green product-regime
-                // run: both waves' winners re-verified 5-7.5 minutes before the wave closed, while
-                // capped losers burned 2,400 twin-seconds converting nothing. FIRST-PAST-THE-POST:
-                // a twin whose shadow re-verifies STRICTLY better than baseline claims the round
-                // and notifies the rest, which cancel their own runs and clean up after themselves
-                // (their sampler, their event, their shadow discard below). The trade is explicit
-                // and intended: the FIRST better twin wins, not the BEST of all — wall-time is the
-                // axis this wave exists to buy. With no claimant, pick_repair_winner decides
-                // exactly as before.
-                // REVIEWED (adversarial, 2026-08-16) and reworked on its findings: the claim's
-                // ONLY job is to fire the cancellation — winner selection stays the proven
-                // minimum-pick over ALL graded shadows (cancelled ones included), so a dead
-                // claimant can never discard the round and a slower-but-greener sibling still
-                // wins. The token is level-triggered (a twin not yet parked in its select still
-                // sees the cancellation), and a claim requires an ESTABLISHED gate — a re-verify
-                // blinded by an inconclusive leg (port collision) cannot kill its siblings.
-                let win_claim: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
-                let wave_cancel = tokio_util::sync::CancellationToken::new();
-                let win_claim_outer = win_claim.clone();
-                let outcomes =
-                    fanout_over_fleet(fleet_models.clone(), attempts, move |(i, _), model| {
-                        let me = me.clone();
-                        let all_files = all_files.clone();
-                        let dev = dev.clone();
-                        let decisions = decisions.clone();
-                        let facts = facts.clone();
-                        let desc = desc.clone();
-                        let sink_r = sink_r.clone();
-                        let win_claim = win_claim.clone();
-                        let wave_cancel = wave_cancel.clone();
-                        let wave_prompt = wave_prompt.clone();
-                        let wave_cwd = wave_cwd.clone();
-                        async move {
-                            let task_id = format!("complete-fix::twin{i}");
-                            // THE TAIL'S FIRST DISPATCH EVENT. The repair tail emitted no task_dispatched at
-                            // all, so 13-26% of every run had no occupancy number and no change to it could be
-                            // judged. These two events are what make this mechanism measurable.
-                            sink_r.write_value(serde_json::json!({
-                                "event": "complete_fix_dispatched",
-                                "round": round, "twin": i, "model": model, "task_id": task_id,
-                                "baseline_findings": baseline,
-                            }));
-                            let started = std::time::Instant::now();
-                            let req = DispatchRequest {
-                                task_id: task_id.clone(),
-                                description: desc,
-                                device_id: dev,
-                                model_id: model.clone(),
-                                context_slice: String::new(),
-                                attempt: round,
-                                // The twin owns EVERY app file: which file the fix needs is exactly what is
-                                // unknown, and a promote copies only owned files. Its shadow is a cp -r of the
-                                // real tree, so the files it does not touch promote back byte-identical.
-                                owned_files: all_files.clone(),
-                                all_files: all_files.clone(),
-                                prior_hint: None,
-                                subsplit: Vec::new(),
-                                speculative: true,
-                                user_decisions: decisions,
-                                doc_facts: facts,
-                                neighborhood: Vec::new(),
-                            };
-                            // F781/#15: the repair-phase observer. Samples the twin's shadow
-                            // fingerprint once a minute while the attempt runs and reports the
-                            // progress shape when it ends — the data the future early-cut rule
-                            // derives its threshold from. Observer only: it never kills.
-                            let progress =
-                                Arc::new(std::sync::Mutex::new(FixAttemptProgress::default()));
-                            let sampler = spawn_fix_progress_sampler(
-                                me.clone(),
-                                task_id.clone(),
-                                progress.clone(),
-                            );
-                            let ran = tokio::select! {
-                                r = me.run(req) => Some(r),
-                                // A sibling twin already landed a strictly-better tree; stop
-                                // generating. The shadow still gets GRADED below — a cancelled
-                                // twin's partial tree has historically gone red-to-green and the
-                                // minimum-pick must be able to see it.
-                                _ = wave_cancel.cancelled() => None,
-                            };
-                            sampler.abort();
-                            {
-                                let st = progress.lock().unwrap().clone();
-                                sink_r.write_value(serde_json::json!({
-                                    "event": "fix_attempt_progress",
-                                    "round": round, "twin": i,
-                                    "samples": st.samples,
-                                    "changed_samples": st.changed,
-                                    "first_change_secs": st.first_change_secs,
-                                    "longest_still_secs": st.longest_still_secs,
-                                }));
-                            }
-                            let cancelled = ran.is_none();
-                            // RE-VERIFY THE SHADOW, not the real tree. `run_smoke_gate` already takes its root
-                            // as a parameter, so the twin is graded by the same deterministic gate that opened
-                            // the round — no model gets a vote on which fix is better.
-                            //
-                            // GRADE THE TREE, NOT THE AGENT'S EXIT. This deliberately does NOT require the
-                            // agent to have finished, and that distinction is load-bearing. The serial path
-                            // this replaces wraps the fix in `let _ = timeout(...)`, so when an agent is
-                            // killed at the cap its partial writes are already on the real tree and simply
-                            // stay — and a corpus sweep of 90 run logs found THREE historical rounds that
-                            // went from red to green exactly that way, on a round that hit the 1200s cap.
-                            // Discarding a timed-out twin would delete that outcome and make this change a
-                            // regression dressed as a safety improvement. A shadow holds whatever its agent
-                            // wrote before it was stopped, so the honest question is whether the TREE is
-                            // better, never whether the agent got to say so.
-                            // F862 ONE RULER: the F848 smoke+spec_contract grade was still a
-                            // SUBSET of the round's — the r1 forensics caught a zero-edit twin
-                            // grading baseline-3 on the invisible timeout findings, claiming the
-                            // round, cancelling the twins that were editing, and promoting twelve
-                            // byte-identical files. The shadow now answers the round's exact
-                            // question, every category included.
-                            // F883: composed preview, not the raw shadow — a twin owns every
-                            // PLANNED file, but an edit to an unplanned pre-existing file still
-                            // does not land (promote copies owned + creations only), so the raw
-                            // shadow can grade a tree the real one never becomes.
-                            let (verified, twin_changed, twin_est) = me
-                                .grade_promotion_preview(
-                                    &task_id,
-                                    &wave_cwd,
-                                    &wave_prompt,
-                                    complete_lang,
-                                    &all_files,
-                                    wave_composite,
-                                    wave_missing_gate,
-                                )
-                                .await;
-                            let gate_established = twin_est;
-                            let verified = if twin_changed { verified } else { None };
-                            sink_r.write_value(serde_json::json!({
-                                "event": "complete_fix_completed",
-                                // task_id: the desktop's fleet panel closes the twin's lane on THIS
-                                // event keyed by task_id — without it, a finished node showed
-                                // "Repairing…" until the wave's own end event, 10+ minutes of
-                                // phantom work on an idle node (Mihai caught it on screen).
-                                "round": round, "twin": i, "model": model, "task_id": task_id,
-                                "secs": started.elapsed().as_secs(),
-                                // Recorded, but NOT what decides the twin: a timed-out or
-                                // early-close-cancelled agent whose partial writes verify better
-                                // still wins — the tree is graded, never the agent's exit.
-                                "agent_ok": matches!(ran, Some(Ok(_))),
-                                "cancelled_by_early_close": cancelled,
-                                "verified_findings": verified,
-                                "baseline_findings": baseline,
-                            }));
-                            // A claim KILLS siblings, so it demands the strictest evidence: a
-                            // fully-established gate (ran, zero inconclusive legs) strictly under
-                            // baseline. A blinded gate (port collision voiding the pytest leg)
-                            // can still WIN via the minimum-pick, but it cannot cancel anyone.
-                            if !cancelled && gate_established {
-                                if let Some(v) = verified.filter(|v| *v < baseline) {
-                                    let mut claim = win_claim.lock().unwrap();
-                                    if claim.is_none() {
-                                        *claim = Some(task_id.clone());
-                                        wave_cancel.cancel();
-                                        eprintln!(
-                                            "complete: EARLY-CLOSE — twin {i} re-verified {v} < {baseline} \
-                                             (established); cancelling the remaining attempt(s)"
-                                        );
-                                    }
-                                }
-                            }
-                            (task_id, verified)
-                        }
-                    })
-                    .await;
-                // The claim only CANCELLED; the winner is the original minimum-findings pick
-                // over every graded shadow — cancelled twins included, so the documented
-                // red-to-green class (a stopped agent's partial tree verifying best) survives,
-                // and a claimant that died after claiming can never discard the round.
-                let claimed = win_claim_outer.lock().unwrap().clone();
-                let winner = pick_repair_winner(&outcomes, baseline);
-                for (task_id, _) in &outcomes {
-                    if winner.as_ref().is_some_and(|(_, w)| w == task_id) {
-                        smoke_fix_dispatcher.promote_speculative(task_id).await;
-                    } else {
-                        smoke_fix_dispatcher.discard_speculative(task_id).await;
-                    }
-                }
-                sink.write_value(serde_json::json!({
-                    "event": "spec_repair_wave",
-                    "round": round,
-                    "early_close": claimed.is_some(),
-                    "twins": outcomes.len(),
-                    "verified": outcomes.iter().filter(|(_, v)| v.is_some()).count(),
-                    "baseline_findings": baseline,
-                    "winner_findings": winner.as_ref().map(|(n, _)| *n),
-                    "promoted": winner.is_some(),
-                    "detail": if winner.is_some() {
-                        "a twin re-verified strictly better than the round's baseline and was promoted"
-                    } else {
-                        "NO twin beat the baseline — nothing was promoted, so the tree is unchanged \
-                         rather than damaged by an unverified edit"
-                    },
-                }));
-                last_round_was_shard = false;
-                last_round_promoted = winner.is_some();
-                if winner.is_none() {
-                    if !strategy_switched && fix_sched() {
-                        strategy_switched = true;
-                        force_shard_next = true;
-                        sink.write_value(serde_json::json!({
-                            "event": "fix_strategy_switch",
-                            "round": round,
-                            "from": "race", "to": "shards",
-                            "detail": "the race promoted nothing — one round of per-file shards \
-                                       before convergence; a different mechanism is new \
-                                       information, a repeat is not",
-                        }));
-                    } else {
-                        fix_converged = true;
-                    }
-                }
-            } else if fix_sched() && shard_this_round && !fleet_models.is_empty() {
-                // F781/#16 c6 (GOOSE_SWARM_FIX_SCHED, default OFF): THE FIX ROUND AS A REAL
-                // SCHEDULER RUN. The gate's findings become fix::r{N}::{file} DAG tasks a FRESH
-                // Scheduler dispatches over the same fleet — so a fix round gets claims, capacity
-                // discipline, judge supervision (probing SHADOWS, c5) and tail-review for free,
-                // instead of the hand-rolled fan below. The FRESH dispatcher is load-bearing:
-                // reusing run 1's would re-arm its OnceLock silent no-op, stale owner_snapshots
-                // restore, and sink_review_findings carryover. max_attempts=1 is one-shot parity
-                // with the fan — a retry would re-shadow from a CURRENT tree against a STALE
-                // baseline. The round loop's next real-tree gate stays the sole authority on
-                // green; this path never touches green_blocking.
-                let baseline = verdict.findings.len();
-                let fix_cwd = cwd.clone();
-                let (specs, known_bugs) = fix_round_specs(
-                    &verdict.findings,
-                    &smoke_all_files,
-                    round as usize,
-                    complete_lang,
-                    &opts.prompt,
-                    read_ledger_rollup(&cwd).as_ref(),
-                    &move |rel: &str| std::fs::read_to_string(fix_cwd.join(rel)).ok(),
-                );
-                if !known_bugs.is_empty() {
-                    // P1-3: the still-unattributed findings SHIP as known bugs — an event, never
-                    // the all-files residue task the fix DAG used to grow.
-                    sink.write_value(serde_json::json!({
-                        "event": "known_bugs",
-                        "round": round,
-                        "count": known_bugs.len(),
-                        "findings": known_bugs,
-                    }));
-                }
-                match goose_swarm::Dag::from_specs(specs) {
-                    Err(e) => {
-                        // NEVER `?` out of run_swarm from the advisory fix path — an unbuildable
-                        // fix DAG skips the round exactly like the stuck-bail Err.
-                        sink.write_value(serde_json::json!({
-                            "event": "complete_fix_sched_result", "round": round,
-                            "error": format!("fix DAG build failed: {e}"),
-                        }));
-                    }
-                    Ok(fix_dag) => {
-                        match build_swarm_dispatcher(dispatcher_recipe.clone(), sink.clone()).await
-                        {
-                            Err(e) => {
-                                sink.write_value(serde_json::json!({
-                                    "event": "complete_fix_sched_result", "round": round,
-                                    "error": format!("fresh dispatcher build failed: {e}"),
-                                }));
-                            }
-                            Ok(fresh) => {
-                                *fresh.spec_frozen.lock().unwrap() = opts.prompt.clone();
-                                if !fix_pillars_block.is_empty() {
-                                    fresh.set_pillars(fix_pillars_block.clone());
-                                }
-                                fresh.begin_fix_round(FixRound {
-                                    baseline,
-                                    lang: complete_lang,
-                                    all_files: smoke_all_files.clone(),
-                                    round: round as usize,
-                                    prompt: opts.prompt.clone(),
-                                    race_next: fleet_models.len() > 1 && spec_repair(),
-                                    composite: delivery_on || spec_contract_enabled(),
-                                    missing_gate: missing_deliverable_gate,
-                                });
-                                let mut fix_run = Scheduler::new(fix_devices.clone(), 1)
-                                    .for_fix_round()
-                                    .with_sink(sink.clone())
-                                    .with_doc_facts(doc_facts.clone())
-                                    .with_pause_file(working_dir.join(".swarm").join("pause"));
-                                // The judge/pre-review mirror run 1's env resolution — an
-                                // env-disabled judge must NOT reappear for fix rounds. No
-                                // replanner, no speculation: a fix round neither replans nor
-                                // races twins of its own tasks.
-                                if judge_on {
-                                    fix_run = fix_run.with_judge(
-                                        fresh.clone() as Arc<dyn Judge>,
-                                        JudgeConfig::default(),
-                                    );
-                                }
-                                if prereview_on {
-                                    fix_run = fix_run
-                                        .with_pre_reviewer(fresh.clone() as Arc<dyn PreReviewer>);
-                                }
-                                // F890 (run 11, measured live: the fix loop ran 117 minutes
-                                // against an 80-minute cap and was still spawning children when
-                                // the operator asked why the run was three hours in). The
-                                // completion cap is enforced ONLY at round heads, and a fix-round
-                                // DAG has no wall bound of its own — the judge's splits keep
-                                // adding tasks INSIDE the round, so the round head that would
-                                // enforce the cap never arrives. The scheduler run now lives
-                                // inside the cap's remaining window: on expiry the run future is
-                                // dropped (kill_on_drop reaps the workers), promoted shards are
-                                // already landed, unpromoted shadows are discarded, and the loop
-                                // proceeds to the honest re-verify exactly as a cap at the round
-                                // head would have.
-                                let fix_sched_run = fix_run.run_with_decisions(
-                                    fix_dag,
-                                    fresh.clone() as Arc<dyn TaskDispatcher>,
-                                    opts.prompt.clone(),
-                                    user_decisions.clone(),
-                                );
-                                let report = fix_sched_run.await;
-                                fresh.end_fix_round();
-                                // The fix run's review findings have no consumer yet — drained to
-                                // an informational event so they are visible, never green-blocking.
-                                let dropped = fresh.drain_sink_review();
-                                match report {
-                                    Ok(r) => {
-                                        sink.write_value(serde_json::json!({
-                                            "event": "complete_fix_sched_result", "round": round,
-                                            "done": r.done.len(), "failed": r.failed.len(),
-                                            "review_findings_dropped": dropped.len(),
-                                        }));
-                                    }
-                                    Err(e) => {
-                                        sink.write_value(serde_json::json!({
-                                            "event": "complete_fix_sched_result", "round": round,
-                                            "error": e.to_string(),
-                                            "review_findings_dropped": dropped.len(),
-                                        }));
-                                    }
-                                }
-                                last_round_was_shard = true;
-                                last_round_promoted = fresh
-                                    .fix_promotions
-                                    .load(std::sync::atomic::Ordering::Relaxed)
-                                    > 0;
-                                if fresh
-                                    .fix_promotions
-                                    .load(std::sync::atomic::Ordering::Relaxed)
-                                    == 0
-                                {
-                                    if !strategy_switched && spec_repair() && fleet_models.len() > 1
-                                    {
-                                        strategy_switched = true;
-                                        force_race_next = true;
-                                        sink.write_value(serde_json::json!({
-                                            "event": "fix_strategy_switch",
-                                            "round": round,
-                                            "from": "shards", "to": "race",
-                                            "detail": "the shard round promoted nothing — one \
-                                                       race of independent whole-fix attempts \
-                                                       before convergence; a different mechanism \
-                                                       is new information, a repeat is not",
-                                        }));
-                                    } else {
-                                        fix_converged = true;
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            } else if (complete_parallel() || shard_this_round) && !fleet_models.is_empty() {
+            if fleet_models.is_empty() {
+                break;
+            }
+            // THE WAVE — one per-file shard fan, unconditional (P1-9). The race, the
+            // fresh-scheduler fix DAG and the serial fallback are deleted: the per-file fan is
+            // the only mechanism a measured run ever promoted through (r0: four file shards in
+            // 24 minutes beside a 115-minute whole-tree join), and one mechanism means the
+            // wave's outcome is attributable to it.
+            sink.write_value(serde_json::json!({"event": "phase", "phase": "fix", "round": round}));
+            let mut wave_promoted = false;
+            {
                 // P1-3: evidence-based attribution (endpoint-literal grep, else the entry file)
                 // runs BEFORE the wave, so a finding the gate could not name a file for rides its
                 // real file's shard instead of waiting for a whole-tree residue worker.
@@ -40122,24 +37610,25 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                                 }));
                                 let started = std::time::Instant::now();
                                 let shard_owned = shard_owned_files(&g.file, &all_files, &taken);
+                                let shard_desc = smoke_fix_description(
+                                    &g.findings,
+                                    complete_lang,
+                                    &fan_prompt,
+                                    &render_repair_history(
+                                        read_ledger_rollup(&fan_cwd).as_ref(),
+                                        &shard_owned,
+                                        &g.findings,
+                                        round as usize,
+                                    ),
+                                );
                                 let req = DispatchRequest {
                                     task_id: task_id.clone(),
-                                    description: smoke_fix_description(
-                                        &g.findings,
-                                        complete_lang,
-                                        &fan_prompt,
-                                        &render_repair_history(
-                                            read_ledger_rollup(&fan_cwd).as_ref(),
-                                            &shard_owned,
-                                            &g.findings,
-                                            round as usize,
-                                        ),
-                                    ),
+                                    description: shard_desc.clone(),
                                     device_id: dev,
                                     model_id: model.clone(),
                                     context_slice: String::new(),
                                     attempt: round,
-                                    owned_files: shard_owned,
+                                    owned_files: shard_owned.clone(),
                                     all_files,
                                     prior_hint: None,
                                     subsplit: Vec::new(),
@@ -40206,6 +37695,36 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                                 } else {
                                     me.discard_speculative(&task_id).await;
                                 }
+                                // §II.2 WRITERS, repair leg (II-4): the shard's FINDING n
+                                // FIXED/NOT FIXED lines land in the on-disk repair ledger the
+                                // NEXT wave's shard reads (render_repair_history) — the wave's
+                                // in-memory state dies with it; the file is what survives. This
+                                // write moved here from the deleted fix_sched path so the one
+                                // kept mechanism keeps the one history writer.
+                                if let Some(path) = write_repair_ledger(
+                                    &fan_cwd,
+                                    RepairLedgerRow {
+                                        round: round as usize,
+                                        shard: &g.file,
+                                        owned_files: &shard_owned,
+                                        description: &shard_desc,
+                                        output: ran
+                                            .as_ref()
+                                            .map(|o| o.output.as_str())
+                                            .unwrap_or(""),
+                                        promoted,
+                                        baseline,
+                                        agent_ok: ran.is_ok(),
+                                    },
+                                ) {
+                                    sink_r.write_value(serde_json::json!({
+                                        "event": "ledger_written",
+                                        "kind": "repair",
+                                        "round": round,
+                                        "shard": g.file,
+                                        "path": path.display().to_string(),
+                                    }));
+                                }
                                 sink_r.write_value(serde_json::json!({
                                     "event": "complete_fix_completed",
                                     "round": round, "shard": g.file, "model": model,
@@ -40220,21 +37739,8 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                             }
                         })
                         .await;
-                    // THE TREE CHANGED, AND THE REST OF THE PHASE HAS TO KNOW.
-                    //
-                    // `last_round_promoted` was written in exactly two branches — the race and the
-                    // fix_sched DAG — and neither is the one that normally runs. `prefer_shard_over_race`
-                    // returns true as soon as one finding names a file, and the TEST fan's FILES: contract
-                    // makes that the normal case, so THIS per-file fan is the live path. It computed
-                    // `promoted`, published it in the event, and threw it away.
-                    //
-                    // The consequence: at round 1 the repair ask computes `proxy_yes = round == 0 ||
-                    // last_round_promoted` -> false -> answered no -> break, with criticals still open,
-                    // however much that wave actually landed. The event even reported
-                    // `tree_changed_last_round: false` beside a `complete_fix_wave` that promoted. Both
-                    // exits from REPAIR were dead on the path that actually executes.
                     let promoted_now = summaries.iter().filter(|p| **p).count();
-                    last_round_promoted = promoted_now > 0;
+                    wave_promoted = promoted_now > 0;
                     sink.write_value(serde_json::json!({
                         "event": "complete_fix_wave",
                         "round": round,
@@ -40244,91 +37750,32 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                     }));
                 }
                 // P1-3: the cross-file JOIN TWIN is gone. It was the whole-tree residue worker
-                // by another name — owning everything whenever the rater named nothing, measured
+                // by another name — owning everything whenever nothing named a file, measured
                 // at 115 of a 138-minute wave (83%) against 24 minutes for the four file shards
-                // beside it. Unattributed findings now ship as the known_bugs event above, and
-                // the loop head re-gates next round.
-            } else {
-                eprintln!("complete: fix round {round} against the distilled failure ...");
-                let fix_model_id = model_id.clone();
-                let fix_req = DispatchRequest {
-                    task_id: "complete-fix".to_string(),
-                    description: smoke_fix_description(
-                        &verdict.findings,
-                        complete_lang,
-                        &opts.prompt,
-                        &render_repair_history(
-                            read_ledger_rollup(&cwd).as_ref(),
-                            &smoke_all_files,
-                            &verdict.findings,
-                            round as usize,
-                        ),
-                    ),
-                    device_id: dev_id,
-                    model_id,
-                    context_slice: String::new(),
-                    attempt: round,
-                    owned_files: vec![],
-                    all_files: smoke_all_files.clone(),
-                    prior_hint: None,
-                    subsplit: Vec::new(),
-                    speculative: false,
-                    // A FIX worker must honour the user's choices too — a fix that re-introduces
-                    // `Decimal` after the user chose integer cents is still wrong.
-                    user_decisions: user_decisions.clone(),
-                    doc_facts: doc_facts.clone(),
-                    // Fix/sink dispatch: no DAG neighborhood → the contract bundle stays unscoped (full).
-                    neighborhood: Vec::new(),
-                };
-                // THE TAIL'S DISPATCH EVENTS BELONG ON *THIS* PATH, the default one.
-                //
-                // F76/F77 added complete_fix_dispatched/complete_fix_completed so the repair tail
-                // would stop being a measurement black hole (F74: 13-26% of every run with no
-                // occupancy number, because the tail emits no task_dispatched). But they were placed
-                // inside the `spec_repair()` branch — a lever that is DEFAULT-OFF — so on an ordinary
-                // run the tail still emitted nothing and the black hole was exactly as dark as
-                // before. MEASURED: complete_fix_dispatched = 0 on the first full run after shipping
-                // it (F105).
-                //
-                // That is a mechanism whose precondition never holds, inside the fix for mechanisms
-                // whose preconditions never hold. The events now ride the SERIAL path, which is the
-                // one that actually runs.
-                sink.write_value(serde_json::json!({
-                    "event": "complete_fix_dispatched",
-                    "round": round,
-                    "twin": 0,
-                    "model": fix_model_id,
-                    "task_id": "complete-fix",
-                    "baseline_findings": verdict.findings.len(),
-                    "path": "serial",
-                }));
-                let fix_started = std::time::Instant::now();
-                let fix_out = smoke_fix_dispatcher.run(fix_req).await;
-                sink.write_value(serde_json::json!({
-                    "event": "complete_fix_completed",
-                    "round": round,
-                    "twin": 0,
-                    "secs": fix_started.elapsed().as_secs(),
-                    // The serial path writes straight into the real tree and nothing re-verifies the
-                    // edit before it lands (F75: `passed` false in 13 of 13 archived rounds, findings
-                    // ROSE in 3). So there is no verified_findings to report here — the next round's
-                    // complete_verify is the only check, and saying `null` states that plainly rather
-                    // than implying a grade that was never computed.
-                    "verified_findings": serde_json::Value::Null,
-                    "agent_ok": fix_out.is_ok(),
-                    "baseline_findings": verdict.findings.len(),
-                    "path": "serial",
-                }));
+                // beside it. Unattributed findings ship as the known_bugs event above, and the
+                // loop head re-gates next round.
             }
-            if fix_converged {
+            // THE TERMINATOR IS THE TREE (fix_converged-class, MILD): a shard lands only when
+            // its graded preview strictly beats this round's baseline, so zero promotions means
+            // the real tree is byte-identical to what this round's opening gate measured —
+            // re-gating it would buy a guaranteed repeat. Never a round count, never a wall.
+            if !wave_promoted {
                 sink.write_value(serde_json::json!({
                     "event": "complete_fix_converged",
                     "round": round,
                     "findings": verdict.findings.len(),
-                    "detail": "a graded fix round promoted nothing — the tree is unchanged since \
-                               its opening verify, so the phase ends here instead of re-measuring \
-                               an identical tree into a stall exit",
+                    "detail": "the wave changed nothing on the tree (no shard graded strictly \
+                               better than baseline, or nothing attributed to a file) — the phase \
+                               ends here instead of re-measuring an identical tree",
                 }));
+                eprintln!(
+                    "{}",
+                    style(format!(
+                        "complete: wave {round} changed nothing — stopping with {} finding(s) open",
+                        verdict.findings.len()
+                    ))
+                    .yellow()
+                );
                 break;
             }
             round += 1;
@@ -40500,7 +37947,11 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
         ov_verified = final_verified;
         sink.write_value(serde_json::json!({
             "event": "complete_result",
+            // P1-9: `passed` means THE GATE'S CRITICALS CLOSED — the deterministic
+            // engine_critical partition over the final verify, not a model's triage and not
+            // findings==0. Non-critical findings ship as known_active_bugs, honestly listed.
             "passed": final_passed,
+            "passed_means": "the gate's criticals closed (engine_critical partition; minors ship as known_active_bugs)",
             "verified": final_verified,
             "remaining_findings": if shipped_desc == "final tree" {
                 last_findings.len()
@@ -40607,7 +38058,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             eprintln!(
                 "{}",
                 style(format!(
-                    "complete: STILL RED after {rounds} fix round(s) — the run will NOT report success ({} finding(s) remain)",
+                    "complete: STILL RED after {round} wave(s) — the run will NOT report success ({} finding(s) remain)",
                     last_findings.len()
                 ))
                 .red()
@@ -40977,17 +38428,14 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
         }
     };
 
-    // ── END-OF-RUN OVERVIEW ──────────────────────────────────────────────────────────────────────────────
-    // A human-readable close-out (Mihai: other tools give "no overview"). Sections: WHAT WAS BUILT (a GROUNDED
-    // summary agent — reads real code excerpts, FORBIDDEN from any works/tested/verified claim + scrubbed),
-    // HOW TO RUN IT (the entry stamped in RUST, never the model), WHAT'S NEXT. VERIFICATION is engine-only
-    // (the desktop re-derives it from phaseTodo). MUST run BEFORE `run_finished` + the final stdout report:
-    // the desktop provider kill_on_drop-kills the CLI the instant it reads the final stdout output, which
-    // would kill this ~30-120s summary call mid-flight (the bug that shipped in v1.41.37 — it never emitted).
-    // Skipped (generated:false) on a RED build so a confident summary never over-sells a broken app; a
-    // STOPPED run dies mid-build and never reaches here, so the UI still never shows a triumphant overview.
-    // Gate = DEFAULT ON, env can force off. (NOT swarm_gate(..,true) — that only activates under the assured
-    // profile, which the desktop provider doesn't set, so the overview silently never ran there.)
+    // ── END-OF-RUN OVERVIEW (P1-9: the summary AGENT is deleted — a model call nothing
+    // scores, spending 30-120s of the planner node at the exact moment the run is done. What
+    // REMAINS is everything deterministic the desktop actually reads: the engine-stamped run
+    // command, its language, and whether the oracle verified it. `generated: false` is the
+    // shape the UI already renders for a RED build, so every consumer keeps working; the
+    // model-written features/next lines are gone with their call.)
+    // MUST run BEFORE `run_finished` + the final stdout report: the desktop provider
+    // kill_on_drop-kills the CLI the instant it reads the final stdout output.
     if swarm_gate_cfg("GOOSE_SWARM_OVERVIEW", true) {
         let ov_root = std::env::current_dir().unwrap_or_default();
         let rel_files = existing_files_manifest(&ov_root);
@@ -41000,78 +38448,12 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
         };
         let run_cmd = overview_run_command(ov_lang, &ov_root, &rel_files);
         let run_cmd_verified = ov_verified && run_cmd.is_some();
-        let emit_bare = |sink: &dyn EventSink| {
-            sink.write_value(serde_json::json!({
-                "event": "run_overview", "generated": false,
-                "run_command": run_cmd, "run_command_lang": lang_tag,
-                "run_command_verified": run_cmd_verified,
-                "features": [], "engage": serde_json::Value::Null, "next": [],
-            }));
-        };
-        if complete_failed || rel_files.is_empty() {
-            emit_bare(sink.as_ref());
-        } else {
-            eprintln!("  generating build summary …");
-            let spec_excerpt: String = opts.prompt.chars().take(1800).collect();
-            let excerpts = overview_source_excerpts(&ov_root, &rel_files);
-            let verify_line = if ov_verified {
-                "the app was RUN end-to-end and verified"
-            } else {
-                "the app was shipped but NOT run or verified (no test oracle ran)"
-            };
-            let system = "You write the END-OF-BUILD overview a non-technical user reads after a local AI swarm finished BUILDING a program. \
-                You are given the SPEC, the files produced, and EXCERPTS of the ACTUAL code. Describe ONLY what you can see in the code excerpts — \
-                never a feature not present. Produce THREE things, then call the final_output tool: (1) features: 3-6 short lines, each a VALUE the \
-                user gets (e.g. 'Splits a bill and rounds each share to the cent'), for a human — not a file list, not jargon; one capability per line, \
-                <=12 words. (2) engage: ONE sentence on how to have goose run it for them. (3) next: 2-3 concrete, buildable follow-ups — capabilities \
-                NOT present yet. HARD RULE: you are FORBIDDEN from any claim about whether the program works, is tested, verified, correct, complete, \
-                reliable, or bug-free — a SEPARATE section reports verification from the engine's own checks; that is NOT your job. Never write \
-                works/working/tested/verified/passes/correct/reliable/production-ready or any synonym in ANY field. Do NOT restate the run command.".to_string();
-            let user = format!(
-                "SPEC:\n{spec_excerpt}\n\nFILES PRODUCED ({}):\n{}\n\nCODE EXCERPTS:\n{}\n\nVERIFICATION (already reported separately — do NOT restate or contradict; here ONLY so your 'next' fits reality): {verify_line}\n\nCall final_output with features/engage/next.",
-                rel_files.len(),
-                rel_files.join("\n"),
-                excerpts
-            );
-            let resp = Some(Response {
-                json_schema: Some(run_overview_schema()),
-            });
-            // No ceiling on the overview call either — it is a model call like every other one.
-            let res = smoke_fix_dispatcher
-                .run_agent_timed(
-                    &smoke_fix_dispatcher.planner_model,
-                    system,
-                    user,
-                    resp,
-                    4,
-                    &[],
-                )
-                .await;
-            let parsed = res
-                .ok()
-                .and_then(|o| o.final_output)
-                .and_then(|fo| serde_json::from_str::<Overview>(&fo).ok());
-            match parsed {
-                Some(mut ov) => {
-                    scrub_overclaim(&mut ov.features);
-                    scrub_overclaim(&mut ov.next);
-                    if is_overclaim(&ov.engage) {
-                        ov.engage =
-                            "You can ask goose in chat to run this program for you.".to_string();
-                    }
-                    if ov.features.is_empty() {
-                        ov.features = vec![format!("Produced {} source file(s)", rel_files.len())];
-                    }
-                    sink.write_value(serde_json::json!({
-                        "event": "run_overview", "generated": true,
-                        "run_command": run_cmd, "run_command_lang": lang_tag,
-                        "run_command_verified": run_cmd_verified,
-                        "features": ov.features, "engage": ov.engage, "next": ov.next,
-                    }));
-                }
-                None => emit_bare(sink.as_ref()),
-            }
-        }
+        sink.write_value(serde_json::json!({
+            "event": "run_overview", "generated": false,
+            "run_command": run_cmd, "run_command_lang": lang_tag,
+            "run_command_verified": run_cmd_verified,
+            "features": [], "engage": serde_json::Value::Null, "next": [],
+        }));
     }
 
     let mut phases_value = serde_json::json!({
@@ -44545,6 +41927,98 @@ struct ResearchFinding {
 mod audit_regressions {
     use super::*;
 
+    /// P1-9: criticality is the ENGINE'S OWN WORDING, pinned against the REAL strings the gate
+    /// emits — a reworded probe message that silently demoted a dead app to "minor" would pass
+    /// a build and fail here. Minors are the classes that ship as known active bugs (still
+    /// repaired by the wave, never blocking the green claim).
+    #[test]
+    fn engine_criticality_is_pinned_to_the_gates_own_strings() {
+        for critical in [
+            // run_spec_contract's advertised-boot finding, verbatim shape
+            "the app never bound port 8123 when started EXACTLY as its spec documents \
+             (`python3 -m app --db-dir X`), so it does not run at all.",
+            "POST /api/sync NEVER RETURNS — still running after 20s, and still running after a \
+             further 200s",
+            "planned deliverable `app/api.py` is MISSING or EMPTY — a task was marked done \
+             without writing it.",
+            "EVERY advertised read (GET /api/health) answered while the app was EMPTY and then \
+             returned NOTHING AT ALL once it held rows",
+            "pkg did not build: SyntaxError",
+            "the entry exited non-zero",
+        ] {
+            assert!(engine_critical(critical), "must be critical: {critical}");
+        }
+        for minor in [
+            "GET /api/health returned 404 — the spec advertises this endpoint but the app does \
+             not implement it",
+            "css classes and markup disagree — the page renders unstyled",
+            "js references a DOM id no html defines",
+            "the advertised sync answered 2xx but the app's OWN list holds ZERO rows while the \
+             vendor's collection holds 12288 — the sync did not acquire the data.",
+            "an outbound HTTP call has no timeout",
+        ] {
+            assert!(!engine_critical(minor), "must ship as a known bug: {minor}");
+        }
+    }
+
+    /// P1-9: a NON-IMPROVING shard is never promoted — `None` (no shadow / gate could not run)
+    /// is UNKNOWN and promotes nothing; equal-to-baseline promotes nothing; only strictly
+    /// better lands. This composition is the whole tree-based terminator: zero promotions
+    /// means the tree is byte-identical to what the round's opening gate measured.
+    #[test]
+    fn a_non_improving_shard_is_not_promoted() {
+        assert!(shard_beats_baseline(Some(2), 3));
+        assert!(
+            !shard_beats_baseline(Some(3), 3),
+            "equal is not improvement"
+        );
+        assert!(!shard_beats_baseline(Some(4), 3));
+        assert!(!shard_beats_baseline(None, 3), "unknown never promotes");
+        assert!(!shard_beats_baseline(Some(0), 0));
+    }
+
+    /// P1-9: the tail is a straight line and its terminator is the TREE. The deleted steering —
+    /// TEST fan, RATE, the repair ask/proxy, the twin race, the fresh-scheduler fix DAG, the
+    /// serial fallback, the stall counter, the round ceiling — must stay deleted (four planner
+    /// "deletions" once came back as `#[cfg(test)]` moves; this greps the live tree, not a
+    /// diff), and the one wave loop must end on `wave_promoted`, never on a count.
+    #[test]
+    fn the_tail_is_a_straight_line_with_a_tree_terminator() {
+        const SRC: &str = include_str!("swarm.rs");
+        // Needles are ASSEMBLED so this test's own source can never match them.
+        for dead in [
+            format!("fn {}", "rate_findings"),
+            format!("fn {}", "test_app"),
+            format!("fn {}", "ask_repair_round"),
+            format!("fn {}", "complete_rounds"),
+            format!("fn {}", "complete_stall_rounds"),
+            format!("fn {}", "prefer_shard_over_race"),
+            format!("fn {}", "pick_repair_winner"),
+            format!("fn {}", "fix_round_specs"),
+            format!("fn {}", "run_fix_task"),
+            format!("fn {}", "begin_fix_round"),
+            format!("complete-fix::{}", "twin"),
+            format!("\"{}{}\"", "defects_", "observed"),
+            format!("\"{}{}\"", "defects_", "rated"),
+            format!("\"{}{}\"", "fix_", "criticals"),
+            format!("\"{}{}\"", "complete_", "stall_exit"),
+            format!("\"{}{}\"", "fix_", "strategy_switch"),
+        ] {
+            assert!(
+                !SRC.contains(&dead),
+                "deleted tail mechanism is back: {dead}"
+            );
+        }
+        assert!(
+            SRC.contains("if !wave_promoted {"),
+            "the tree-based terminator must be the wave's only stop"
+        );
+        assert!(
+            SRC.contains("\"event\": \"complete_fix_converged\""),
+            "convergence must still be stated as an event"
+        );
+    }
+
     fn tmp(tag: &str) -> PathBuf {
         let d = std::env::temp_dir().join(format!(
             "goose-audit-{tag}-{}-{:?}",
@@ -45279,27 +42753,6 @@ mod audit_regressions {
         assert!(
             d["tasks_owning_nothing"].as_array().unwrap().is_empty(),
             "integrate-verify owns nothing BY DESIGN and must stay exempt"
-        );
-    }
-
-    /// A LIVE PANIC: two lookups took a byte offset from an UPPERCASED copy and sliced the ORIGINAL.
-    /// `to_uppercase()` changes byte length (ß -> SS), so the offset can land mid-UTF-8. Two sibling
-    /// parsers in this file were already fixed for exactly this; this one was missed.
-    #[test]
-    fn rating_a_reply_containing_non_ascii_does_not_panic_or_misparse() {
-        let reply = "1. Straße — CRITICAL FILES: app/store.py\n\
-                     2. ﬁle handling — MINOR FILES: app/api.py\n\
-                     3. DUPLICATE 1 — ıdentical render failure\n";
-        let out = parse_rating_reply(reply, 3);
-        assert_eq!(out.len(), 3);
-        assert!(out[0].critical);
-        assert_eq!(out[0].files, vec!["app/store.py".to_string()]);
-        assert!(!out[1].critical);
-        assert_eq!(out[1].files, vec!["app/api.py".to_string()]);
-        assert_eq!(
-            out[2].duplicate_of,
-            Some(0),
-            "the duplicate still resolves after a ß, a ﬁ ligature and a dotless ı"
         );
     }
 
