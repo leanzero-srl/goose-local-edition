@@ -188,16 +188,16 @@ DAG is actually parallel). reasoning_chars against answer_chars is the waste.
 - **chain**: 5
 - **startable**: 1
 - **brief_median**: 6054
-- **reasoning_chars**: 606309
-- **answer_chars**: 59955
-- **code_files**: 10
-- **code_bytes**: 36583
-- **elapsed_min**: 254
-- **phase_split**: open 68m · ask 0m · synthesis 16m · review 52m · build 116m
+- **reasoning_chars**: 637404
+- **answer_chars**: 60239
+- **code_files**: 12
+- **code_bytes**: 48399
+- **elapsed_min**: 270
+- **phase_split**: open 68m · ask 0m · synthesis 16m · review 52m · build 133m
 - **before_build_min**: 137 (internal diagnosis only — never a cross-run number)
-- **vs_target**: ONLY THE SCORE COMPARES. Target 20.06% (qwen3.8-27b, one cloud agent, same model). Wall clock is NOT comparable — that run is on far faster hardware, so minutes measure the machine. Bytes are NOT a verdict — more code is not better code, and it had no planning phases to spend budget on. Cross-hardware-honest work numbers for THIS run: 36,583B delivered, 606,309 chars reasoned, 4 tasks completed, 0 retried.
-- **python_parses**: 8 ok / 0 SYNTAX ERROR / 0 empty
-- **web_files**: NONE — 0.56 of the scoring weight is unreachable without a served page
+- **vs_target**: ONLY THE SCORE COMPARES. Target 20.06% (qwen3.8-27b, one cloud agent, same model). Wall clock is NOT comparable — that run is on far faster hardware, so minutes measure the machine. Bytes are NOT a verdict — more code is not better code, and it had no planning phases to spend budget on. Cross-hardware-honest work numbers for THIS run: 48,399B delivered, 637,404 chars reasoned, 4 tasks completed, 0 retried.
+- **python_parses**: 9 ok / 0 SYNTAX ERROR / 0 empty
+- **web_files**: brush.js
 - **tasks_done**: 4/9 completed, 7 dispatched, 0 retried
 - **arm**: F (fleet of 3)
 - **fixture_seed**: ddcbba021ea1eba1
@@ -205,7 +205,7 @@ DAG is actually parallel). reasoning_chars against answer_chars is the waste.
 - **plan_repaired**: 3 actions, owning-nothing 0->0, unassigned endpoints 0->0
 - **plan_loaded**: 1
 - **review_rounds**: r1:new=3
-- **judge_looks**: 57
+- **judge_looks**: 58
 - **judge_nudges**: 3
 - **judge_ended**: 0
 - **drift_held**: 4
