@@ -368,3 +368,10 @@ research_request_block's armed-no-claimed-sections arm wording.
   addendum (stale promote comment) without scope creep; minted briefs.rs for the softened multi-file
   note instead of growing swarm.rs. Named the same-class sibling (build_task_ledger_row) instead of
   silently skipping it — that sibling is now dispatched per drill-deeper. Charter gap: none.
+- 2026-08-30 23:55 swarm-surgeon (reader-class closer + winner class-split + addendum, fc3e907a7):
+  CLEAN+. Complete reader census with per-reader disposition (converted / already-fixed / comment /
+  test-write / desk-correct), swarm.rs 45,448→45,265 via moving build_task_ledger_row beside its
+  reader, all three fixes labeled honest NETs with real-value walks (16 mirror rows classified
+  {boot:2, import:1, other:7}), took the mid-flight stub-note addendum with tests. Measured README
+  greps 0 TODAY because the __main__ shard rewrote it at 19:56 — checked the live state rather than
+  assuming the morning's. Charter gap: none.
