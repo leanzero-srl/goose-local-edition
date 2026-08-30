@@ -48,11 +48,15 @@ fn run_path_files() -> Vec<(String, String)> {
 /// template that still shipped on 2026-08-30 because its arming predicate was wrong (GEN-1: it fires
 /// on an empty ledger instead of an empty spec surface). Lines that REFUSE the phrase — `contains(`
 /// guards, `replacen` correctors, comments — are the gate working and are not counted; what is
-/// counted is lines that CARRY it as content. Baseline 2 = the one live emission GEN-1 removes
+/// counted is lines that CARRY it as content. Baseline 1 since finding 1 (2026-08-30): the
+/// template fns are `#[cfg(test)]`, their opener is assembled by concat so no live line carries
+/// the phrase, and both plan-side consumers build from the spec's fact parsers
+/// (plan_sink_description). The single surviving content line is the archived-r2 test fixture.
+/// Historical note — baseline 2 = the one live emission GEN-1 removes
 /// (integrate_verify_spec_inner) plus the r2-plan JSON fixture embedded in a test that documents the
 /// r2 shape. When GEN-1 lands the live site goes, the count drops to 1, and this baseline TIGHTENS in
 /// the same commit — it may only decrease, never grow.
-const INTEGRATE_TEMPLATE_BASELINE: usize = 2;
+const INTEGRATE_TEMPLATE_BASELINE: usize = 1;
 
 /// A corrector's needle operand can sit on the line AFTER `.replacen(` (rustfmt breaks the call),
 /// so the previous line vouches for it too.
