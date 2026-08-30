@@ -34034,16 +34034,47 @@ fn rebuild_ledger_rollup(root: &Path) -> Option<serde_json::Value> {
         .cloned();
     let mut open_defects: Vec<String> = verify_tree_imports(root);
     for t in tasks.values() {
-        let owned: Vec<String> = t
+        let entries: Vec<(String, u64)> = t
             .get("owned_files")
             .and_then(|o| o.as_array())
             .map(|a| {
                 a.iter()
-                    .filter_map(|f| f.get("path").and_then(|p| p.as_str()).map(String::from))
+                    .filter_map(|f| {
+                        Some((
+                            f.get("path").and_then(|p| p.as_str())?.to_string(),
+                            f.get("bytes").and_then(|b| b.as_u64()).unwrap_or(0),
+                        ))
+                    })
                     .collect()
             })
             .unwrap_or_default();
-        for d in verify_owned_files(root, &owned) {
+        // Re-verify a row's files ONLY when they changed since its write. verify_owned_files
+        // spawns py_compile per .py file; running the full detector set for every row on every
+        // rebuild would put a growing, blocking cost on every task completion. The row already
+        // stores each file's bytes-on-disk at write time, so an unchanged file keeps the row's
+        // stored verdict and a changed one (any fix changes size in practice; a same-size edit
+        // keeps a stale advisory line at worst) is re-measured — which is what makes a FIXED
+        // defect vanish from the roll-up.
+        let changed = entries.iter().any(|(p, b)| {
+            std::fs::metadata(root.join(p))
+                .map(|m| m.len())
+                .unwrap_or(0)
+                != *b
+        });
+        let defects: Vec<String> = if changed {
+            let paths: Vec<String> = entries.into_iter().map(|(p, _)| p).collect();
+            verify_owned_files(root, &paths)
+        } else {
+            t.get("delivery_defects")
+                .and_then(|d| d.as_array())
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|x| x.as_str().map(String::from))
+                        .collect()
+                })
+                .unwrap_or_default()
+        };
+        for d in defects {
             if !open_defects.contains(&d) {
                 open_defects.push(d);
             }
