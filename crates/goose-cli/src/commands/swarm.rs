@@ -18231,6 +18231,12 @@ impl GooseAgentDispatcher {
                     "task_id": activity_key,
                     "look": omni_looks,
                     "thinking_chars": thinking_chars,
+                    // WHO SERVED THE LOOK. r5 wrote 43 judge_look events no reader could attribute
+                    // to a node — every look runs on the planner identity, resolved once at pool
+                    // reconciliation, and for the local fleet the model id IS the node key (the
+                    // three distinct identifiers; telemetry joins on the same key).
+                    "model": pm.as_str(),
+                    "provider": self.provider_name(&pm),
                 }));
                 // A DEFECT IS A FACT, AND IT SHOULD NOT WAIT FOR AN OPINION.
                 //
@@ -18404,6 +18410,8 @@ impl GooseAgentDispatcher {
                                         "event": "judge_look_abandoned",
                                         "task_id": activity_key,
                                         "look": omni_looks,
+                                        "model": pm.as_str(),
+                                        "provider": self.provider_name(&pm),
                                         "reason": "the call finished while the judge was still reading it",
                                     }));
                                     break Err(anyhow!(
@@ -18469,6 +18477,9 @@ impl GooseAgentDispatcher {
                     };
                     self.events.write_value(serde_json::json!({
                         "event": "judge_look",
+                        // WHO SERVED THE LOOK — same attribution as judge_look_dispatched.
+                        "model": pm.as_str(),
+                        "provider": self.provider_name(&pm),
                         // POST-RE-STREAM SILENCE, named so it is greppable. True when the call has
                         // reasoned a great deal in total but the CURRENT stream has produced nothing —
                         // which is exactly the state a re-stream leaves behind when its replacement
@@ -19056,6 +19067,8 @@ impl GooseAgentDispatcher {
                         "event": "judge_look_failed",
                         "task_id": activity_key,
                         "look": omni_looks,
+                        "model": pm.as_str(),
+                        "provider": self.provider_name(&pm),
                         // A-2: the actual failure, so a dead judge model is diagnosable from the
                         // log — r2's gabee 400s were only recoverable from the verdict hints they
                         // had been laundered into.
