@@ -248,8 +248,13 @@ lane shows the SAID chips (attempt N · live / superseded / error→retried) and
 archived r0 run renders chipless, new runs' <task>.log files begin with an attempt-marker line; (3) on `#/benchmark` with
 the run live, Cmd+N / Cmd+W / Cmd+Q / Cmd+T / Cmd+, each show the warning toast and do nothing, mouse clicks on the
 same menu items still act; Cmd+R / Cmd+Shift+R / Cmd+Alt+I do nothing and the View menu shows no Reload items;
-without a run, Cmd+N opens a sibling window on the focused directory and Cmd+W / Cmd+Q behave as before. Token-level argument streaming
-is out of scope on this branch (no partial tool-call deltas in the provider layer).
+without a run, Cmd+N opens a sibling window on the focused directory and Cmd+W / Cmd+Q behave as before. (6) FORMING (II-11b, provider seam
+282305c34 + the digest half from the GEN chain): the WORK pane shows "<tool> — forming…" from the moment
+the stream's open frame names the tool (~5.5s in), through the long argument-buffering silence (measured
+161-172s on big write_file args), flipping to RUNNING when the request completes — keyed on the open frame
+ONLY, never byte progress (LM Studio buffers args; there are no mid-argument deltas to count). (7) the
+backend tick's UNREAD-EVENTS residue line (70d648d) stays EMPTY on the first live tick — any name it
+prints is an event born invisible, to be given a row before the run ends.
 Extended after r2 (the run exposed more): (2c) the SAID check must also pass on the SINK shape — r2's
 integrate-verify body drop (task_retry 21:26:35Z, re-dispatch 21:37:37Z) is the second real case beside
 ledger-core-tests (19:57:50Z → completed 20:22:20Z = the 24m30s the installed app showed the dead error as
