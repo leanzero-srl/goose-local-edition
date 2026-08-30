@@ -55,7 +55,15 @@ implied, the summary was wrong and the sources win.
 
 ## THE CURRENT THREAD (2026-08-31 00:35)
 
-**r6 IS LIVE** — launched 21:33Z from the Benchmark view of the freshly built+installed app (bundle
+**r6a KILLED at OPEN 49m; r6b relaunches once the ladder fix lands.** The kill (follow-the-test):
+five nudge->restream cycles, zero tool calls, runway shrinking per cycle because the steer-ignored
+state SURVIVES a restream — look 1 on each fresh attempt read the OLD nudge as ignored and wiped it
+(archive ...r6a-KILLED-open-ladder-5-restream-cycles...). Fix in flight (surgeon): restream resets
+the per-call ladder; ignored requires plateau/recurrence (producing calls route through the existing
+drift-hold); the genuinely-stuck r5 shape keeps coverage. Then: rebuild, reinstall, relaunch r6b.
+The 5-cycle record is the desk-qualifying measurement, N=5.
+
+**r6a WAS launched 21:33Z** — launched 21:33Z from the Benchmark view of the freshly built+installed app (bundle
 binary sha edef1242 == target/release at c47674fd4; launch verified: run_build --sb7, vendor 200,
 fresh swarm-3node-r0). The full r6 stack is aboard: attribution trio + runner-up ownership +
 verbatim <id> literals + comment-strip + source-ext winner guard, transcript mirror + redispatch
