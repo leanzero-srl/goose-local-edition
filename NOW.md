@@ -60,8 +60,11 @@ the boss of this implementation with me nudging you along"). Method = his TRUE d
 reading of actual information, never shapes — that is what makes it FAST. The architecture (his 13:15
 steer, memory `swarm-research-fan-vision`): OPEN's per-slice questions fan to idle nodes immediately,
 answers snowball into the ledger, synthesis plans over ANSWERED material; imperfections flow to
-REPAIR. Design fan in flight; implementation starts the moment swarm.rs frees. r5 completes untouched
-as the serial baseline.
+REPAIR. THE r6 ENGINE IS COMPLETE AND DELIVERED (research fan 81cd50d38 + hardening f2d75bebc..760fd8b32,
+delivery affirmed by the prover pass + fixes): the fan, forming capture end to end, folded
+inspector, restream tail carry, opener fixes, honest ask event (truncation killed), honest scorer.
+THE r6 BUILD WAITS ONLY FOR r5 TO FINISH — a release build starves the fleet (the measured clippy
+precedent) and install kills the run. r5 completes untouched as the serial baseline.
 
 **Named risk (A2, refuter-found, deliberately not fixed):** a connected-but-silent stream (0 chars
 ever) is non-terminal today — the judge look predicate needs ~2k thinking chars — and the research
