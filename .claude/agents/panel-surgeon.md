@@ -29,7 +29,7 @@ components before editing.
   dead-on-arrival UI twice.
 
 ## Gate before done: `cd ui/desktop && pnpm run typecheck && npx vitest run src` at ZERO failures
-(2 skipped realfs push tests are expected — this machine's FSEvents is degraded). Every new feed
+(realfs push tests skipped only under vitest.integration.config.ts — plain `pnpm test` may show 0 skipped, and that is not a miss are expected — this machine's FSEvents is degraded). Every new feed
 line/state gets a fixture test (askTimeout.test.tsx is the template). Report = handoff: shas,
 components touched, tests added, unbriefed observations reported not fixed.
 
