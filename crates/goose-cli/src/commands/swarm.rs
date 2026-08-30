@@ -15127,16 +15127,27 @@ fn write_forming_atomic(path: &Path, body: &str) -> std::io::Result<()> {
 /// scheduler abort that cancelled the dispatch future cleaned the files (this Drop) but dropped
 /// the one named record that writes had been failing — the diagnostic died with the future.
 /// Cleanup-only users (the guard-clears test) pass None.
+struct FormingReport {
+    events: Arc<dyn EventSink>,
+    key: String,
+    sidecar: Arc<Mutex<FormingSidecar>>,
+}
+
 struct FormingGuard {
     path: PathBuf,
-    report: Option<(Arc<dyn EventSink>, String, Arc<Mutex<FormingSidecar>>)>,
+    report: Option<FormingReport>,
 }
 
 impl Drop for FormingGuard {
     fn drop(&mut self) {
         let _ = std::fs::remove_file(&self.path);
         let _ = std::fs::remove_file(forming_tmp(&self.path));
-        if let Some((events, key, sidecar)) = self.report.take() {
+        if let Some(FormingReport {
+            events,
+            key,
+            sidecar,
+        }) = self.report.take()
+        {
             let (write_error, held_unflushed) = {
                 // Poison-recovered so a panicking observer cannot also silence the report;
                 // the sidecar holds plain data, nothing can be torn mid-update.
@@ -16999,7 +17010,11 @@ impl GooseAgentDispatcher {
         };
         let _guard = FormingGuard {
             path: forming_path.clone(),
-            report: Some((self.events.clone(), key.to_string(), sidecar.clone())),
+            report: Some(FormingReport {
+                events: self.events.clone(),
+                key: key.to_string(),
+                sidecar: sidecar.clone(),
+            }),
         };
         let out = goose_provider_types::formats::openai::TOOL_FORMING_OBSERVER
             .scope(
@@ -42175,34 +42190,36 @@ mod clarify_proxy_tests {
             ask_clarifying_questions(&questions, dir.path(), None, &decisions, 0, None, &sink)
                 .await;
         assert!(out.is_empty(), "nothing answered; got {out:?}");
-        let events = sink.0.lock().unwrap();
-        let ask = events
-            .iter()
-            .find(|e| e.get("event").and_then(|v| v.as_str()) == Some("low_confidence_ask"))
-            .expect("the ask event is written");
-        assert_eq!(
-            ask.get("open_decisions_total").and_then(|v| v.as_u64()),
-            Some(5),
-            "the real count, not the dead-arg 0"
-        );
-        assert_eq!(
-            ask.get("open_decisions_not_asked").and_then(|v| v.as_u64()),
-            Some(2)
-        );
-        let named: Vec<&str> = ask["open_decisions_not_asked_detail"]
-            .as_array()
-            .expect("the guessed decisions are named, never only counted")
-            .iter()
-            .filter_map(|v| v.as_str())
-            .collect();
-        assert_eq!(
-            named,
-            vec!["ids: uuid or sequential?", "timestamps: utc iso or epoch?"],
-            "verbatim, so no one has to diff by hand"
-        );
+        // Scoped so the guard provably drops before the next .await (await_holding_lock).
+        {
+            let events = sink.0.lock().unwrap();
+            let ask = events
+                .iter()
+                .find(|e| e.get("event").and_then(|v| v.as_str()) == Some("low_confidence_ask"))
+                .expect("the ask event is written");
+            assert_eq!(
+                ask.get("open_decisions_total").and_then(|v| v.as_u64()),
+                Some(5),
+                "the real count, not the dead-arg 0"
+            );
+            assert_eq!(
+                ask.get("open_decisions_not_asked").and_then(|v| v.as_u64()),
+                Some(2)
+            );
+            let named: Vec<&str> = ask["open_decisions_not_asked_detail"]
+                .as_array()
+                .expect("the guessed decisions are named, never only counted")
+                .iter()
+                .filter_map(|v| v.as_str())
+                .collect();
+            assert_eq!(
+                named,
+                vec!["ids: uuid or sequential?", "timestamps: utc iso or epoch?"],
+                "verbatim, so no one has to diff by hand"
+            );
+        }
         // And when every decision is asked — the live planner path since the truncation kill —
         // the event says 0 guessed and carries no detail key.
-        drop(events);
         let all_asked: Vec<ClarifyQuestion> = decisions.iter().map(|d| q(d)).collect();
         let sink2 = ValueSink::default();
         let _ = ask_clarifying_questions(&all_asked, dir.path(), None, &decisions, 0, None, &sink2)
