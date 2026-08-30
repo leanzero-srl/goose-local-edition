@@ -5214,9 +5214,11 @@ mod tests {
         );
     }
 
-    /// II-11b (engine half): the forming fold keeps the honest "name + since" shape and nothing
-    /// else — Complete removes its row, and an empty map means the file is REMOVED, never
-    /// written empty (an empty forming file would read as a live amber row in the panel join).
+    /// II-11c (engine half): the forming fold's full lifecycle — an open frame renders name +
+    /// since + args_bytes:0 with NO args_preview (an empty preview would impersonate content),
+    /// ArgsDelta fragments advance the byte count and surface a preview, Complete removes the
+    /// row, and an empty map means the file is REMOVED, never written empty (an empty forming
+    /// file would read as a live amber row in the panel join).
     #[test]
     fn a_forming_open_frame_renders_and_its_completion_clears() {
         use goose_provider_types::formats::openai::ToolFormingEvent;
@@ -5240,8 +5242,20 @@ mod tests {
         let body = render_forming_file(&live).expect("two forming rows render");
         assert!(body.contains("write_file") && body.contains("shell") && body.contains("since_ms"));
         assert!(
-            !body.contains("progress"),
-            "no fake byte progress — LM Studio buffers the whole argument body (measured II-11)"
+            body.contains("\"args_bytes\":0") && !body.contains("args_preview"),
+            "no fragments yet: bytes honestly 0, preview OMITTED, got {body}"
+        );
+        fold_forming_event(
+            &mut live,
+            ToolFormingEvent::ArgsDelta {
+                id: "call_1".into(),
+                delta: "{\"path\": \"a.py\", \"content\": \"x\"}".into(),
+            },
+        );
+        let body = render_forming_file(&live).unwrap();
+        assert!(
+            body.contains("\"args_bytes\":32") && body.contains("args_preview"),
+            "fragments arrived: bytes counted and a preview rendered, got {body}"
         );
         fold_forming_event(
             &mut live,
@@ -5261,6 +5275,114 @@ mod tests {
             render_forming_file(&live).is_none(),
             "empty means REMOVE the file, never write it empty"
         );
+    }
+
+    /// II-11c: the tail is trimmed on CHAR boundaries (a delta may split multi-byte UTF-8
+    /// anywhere), and the preview window is bounded and front-trimmed without ever splitting a
+    /// character.
+    #[test]
+    fn forming_tail_truncation_is_utf8_boundary_safe() {
+        use goose_provider_types::formats::openai::ToolFormingEvent;
+        let mut live = std::collections::BTreeMap::new();
+        fold_forming_event(
+            &mut live,
+            ToolFormingEvent::Forming {
+                id: "call_1".into(),
+                name: "write_file".into(),
+                since: std::time::Instant::now(),
+            },
+        );
+        // 300 four-byte chars in two fragments: 1200 bytes, 300 chars — over the 240-char
+        // preview window, under the 480-char tail, then a second wave pushes past 480 chars.
+        for _ in 0..2 {
+            fold_forming_event(
+                &mut live,
+                ToolFormingEvent::ArgsDelta {
+                    id: "call_1".into(),
+                    delta: "\u{1F600}".repeat(150),
+                },
+            );
+        }
+        fold_forming_event(
+            &mut live,
+            ToolFormingEvent::ArgsDelta {
+                id: "call_1".into(),
+                delta: "\u{1F600}".repeat(300),
+            },
+        );
+        let row = live.get("call_1").expect("row lives");
+        assert_eq!(
+            row.args_bytes,
+            600 * 4,
+            "every byte counted, none displayed"
+        );
+        assert_eq!(
+            row.args_tail.chars().count(),
+            FORMING_TAIL_KEEP,
+            "tail kept to the last {FORMING_TAIL_KEEP} CHARS on a boundary"
+        );
+        let preview = forming_preview(&row.args_tail);
+        assert_eq!(
+            preview.chars().count(),
+            FORMING_PREVIEW_MAX,
+            "no newline/sentence break in the window: the raw bounded window stands"
+        );
+    }
+
+    /// II-11c: the preview opens just after the first newline (else the first sentence break)
+    /// so the window does not start mid-token — unless that trim would empty it, in which case
+    /// the raw window IS the content.
+    #[test]
+    fn forming_preview_trims_to_a_readable_front() {
+        let with_newline = format!("{}\nsecond line tail", "x".repeat(300));
+        assert_eq!(forming_preview(&with_newline), "second line tail");
+        let with_sentence = "A first sentence. then the tail continues";
+        assert_eq!(forming_preview(with_sentence), "then the tail continues");
+        let trailing_newline = "all one line ending here\n";
+        assert_eq!(
+            forming_preview(trailing_newline),
+            trailing_newline,
+            "trimming to after the only newline would empty the preview: keep the raw window"
+        );
+        assert_eq!(forming_preview("short"), "short");
+    }
+
+    /// II-11c: an ArgsDelta whose open frame never arrived (impossible in today's decode order,
+    /// possible after a decoder change) still counts honestly — the row is NAMED BY THE ID,
+    /// never a fabricated tool name.
+    #[test]
+    fn an_orphan_args_delta_names_its_row_by_the_id() {
+        use goose_provider_types::formats::openai::ToolFormingEvent;
+        let mut live = std::collections::BTreeMap::new();
+        fold_forming_event(
+            &mut live,
+            ToolFormingEvent::ArgsDelta {
+                id: "call_orphan".into(),
+                delta: "{\"k\":1}".into(),
+            },
+        );
+        let row = live.get("call_orphan").expect("orphan delta still rows");
+        assert_eq!(row.name, "call_orphan");
+        assert_eq!(row.args_bytes, 7);
+    }
+
+    /// II-11c: the sidecar write is tmp+rename (main.ts's poll must never see a torn file — a
+    /// torn read there is a one-poll row disappearance), and the drop guard clears BOTH the
+    /// file and any stranded tmp.
+    #[test]
+    fn forming_write_is_atomic_and_the_guard_clears_both_files() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("open.forming.json");
+        write_forming_atomic(&path, "{\"forming\":[]}").expect("atomic write");
+        assert!(path.is_file());
+        assert!(
+            !forming_tmp(&path).exists(),
+            "the rename consumed the tmp — never left behind"
+        );
+        std::fs::write(forming_tmp(&path), "torn").expect("strand a tmp");
+        drop(FormingGuard { path: path.clone() });
+        assert!(!path.exists(), "guard removed the sidecar");
+        assert!(!forming_tmp(&path).exists(), "guard removed the tmp too");
     }
 
     /// HANDOFF-1: the handoff instruction is ONE constant riding the ONE shared rules join —
@@ -14685,31 +14807,87 @@ fn append_reasoning_transcript(
     (texts.len(), err)
 }
 
-/// II-11b (engine half): fold one provider open-frame event into the live forming map. LM
-/// Studio buffers a tool call's ENTIRE argument body server-side (measured: 161-172s of stream
-/// silence after the open frame, then one terminal delta), so the only honest live signal is
-/// "tool NAME is forming since T" — never byte progress, which would sit at 0 and jump to 100.
-/// Pure over the map so the fold is unit-testable without a stream.
+/// II-11c: how many trailing chars of a forming call's arguments the sidecar retains, and how
+/// many of those the rendered preview may carry (mirrors INFLIGHT_PREVIEW_MAX). These bound a
+/// DISPLAY tail and an IO payload, never model work — the full argument body still flows to the
+/// decoder untouched, so gate 5 is not in play.
+const FORMING_TAIL_KEEP: usize = 480;
+const FORMING_PREVIEW_MAX: usize = 240;
+
+/// One live forming tool call: named by the stream's open frame, its argument bytes counted and
+/// tailed as their fragments arrive (r5 measured 28,157 B/8s of live fragments during OPEN).
+struct FormingRow {
+    name: String,
+    since_ms: u64,
+    args_bytes: u64,
+    args_tail: String,
+}
+
+/// The wrapper-owned state behind the forming observer: the live map plus the write-coalesce
+/// bookkeeping. `write_error` is recorded ONCE and surfaces after the scope as a named
+/// `forming_write_failed` event (gate 1: a failed write is loud, never a silent `.ok()`).
+#[derive(Default)]
+struct FormingSidecar {
+    live: std::collections::BTreeMap<String, FormingRow>,
+    last_write: Option<std::time::Instant>,
+    dirty: bool,
+    write_error: Option<String>,
+}
+
+/// Trim `s` in place to its last `keep` CHARS (never bytes — a delta may split multi-byte
+/// UTF-8 anywhere, and the tail must stay boundary-safe).
+fn keep_tail_chars(s: &mut String, keep: usize) {
+    let n = s.chars().count();
+    if n > keep {
+        if let Some((cut, _)) = s.char_indices().nth(n - keep) {
+            s.drain(..cut);
+        }
+    }
+}
+
+/// II-11c (engine half): fold one provider forming event into the live map. Two measured server
+/// shapes both land here honestly: the buffering shape (open frame, 161-172s of silence, one
+/// terminal ArgsDelta lump) reads as a named row whose bytes jump once; the streaming shape
+/// (r5's OPEN: live `function.arguments` fragments) reads as a row whose byte count and tail
+/// advance as the JSON forms. Pure over the map so the fold is unit-testable without a stream.
 fn fold_forming_event(
-    live: &mut std::collections::BTreeMap<String, serde_json::Value>,
+    live: &mut std::collections::BTreeMap<String, FormingRow>,
     ev: goose_provider_types::formats::openai::ToolFormingEvent,
 ) {
     use goose_provider_types::formats::openai::ToolFormingEvent;
+    // The observer runs synchronously at decode time, so now() IS the frame's wall time (the
+    // seam's contract); elapsed renders downstream from since_ms.
+    let now_ms = || {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(0)
+    };
     match ev {
         ToolFormingEvent::Forming { id, name, .. } => {
-            // The observer runs synchronously at decode time, so now() IS the open-frame wall
-            // time (the seam's contract); elapsed renders downstream from since_ms.
             live.insert(
-                id.clone(),
-                serde_json::json!({
-                    "id": id,
-                    "name": name,
-                    "since_ms": std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .map(|d| d.as_millis() as u64)
-                        .unwrap_or(0),
-                }),
+                id,
+                FormingRow {
+                    name,
+                    since_ms: now_ms(),
+                    args_bytes: 0,
+                    args_tail: String::new(),
+                },
             );
+        }
+        ToolFormingEvent::ArgsDelta { id, delta } => {
+            // Decode order makes a delta without its open frame impossible today; if a decoder
+            // change ever breaks that, the row is named by the id — bytes counted, nothing
+            // fabricated (gate 1: no invented tool name).
+            let row = live.entry(id.clone()).or_insert_with(|| FormingRow {
+                name: id,
+                since_ms: now_ms(),
+                args_bytes: 0,
+                args_tail: String::new(),
+            });
+            row.args_bytes += delta.len() as u64;
+            row.args_tail.push_str(&delta);
+            keep_tail_chars(&mut row.args_tail, FORMING_TAIL_KEEP);
         }
         ToolFormingEvent::Complete { id } => {
             live.remove(&id);
@@ -14717,19 +14895,94 @@ fn fold_forming_event(
     }
 }
 
-/// The `<key>.forming.json` body, or None when nothing is forming (the file is then removed).
+/// The bounded, readable window of a forming call's argument tail: the last FORMING_PREVIEW_MAX
+/// chars, front-trimmed to just after the first newline (else the first sentence break) so the
+/// window does not open mid-token. If trimming would empty it, the raw window stands — a short
+/// tail IS the content.
+fn forming_preview(tail: &str) -> String {
+    let n = tail.chars().count();
+    let window: &str = if n > FORMING_PREVIEW_MAX {
+        // The cut comes from char_indices, so get() cannot miss; the unreachable arm keeps the
+        // full tail (still bounded by FORMING_TAIL_KEEP), never fabricates.
+        tail.char_indices()
+            .nth(n - FORMING_PREVIEW_MAX)
+            .and_then(|(cut, _)| tail.get(cut..))
+            .unwrap_or(tail)
+    } else {
+        tail
+    };
+    let trimmed = match window.split_once('\n') {
+        Some((_, rest)) => rest,
+        None => match window.split_once(". ") {
+            Some((_, rest)) => rest,
+            None => window,
+        },
+    };
+    if trimmed.trim().is_empty() {
+        window.to_string()
+    } else {
+        trimmed.to_string()
+    }
+}
+
+/// The `<key>.forming.json` body, or None when nothing is forming (the file is then removed —
+/// never written empty; an empty forming file would read as a live amber row in the panel join).
 /// Sits BESIDE the digest (`<key>.json`) on purpose — the digest is rewritten on a hot 400ms
-/// coalesce by a different code path, and the panel/tick JOIN the two by activity key: the
-/// digest's inflight rows plus this file's rows render as the amber "forming…" state (the UI
-/// half of II-11b reads exactly this shape).
-fn render_forming_file(
-    live: &std::collections::BTreeMap<String, serde_json::Value>,
-) -> Option<String> {
+/// coalesce by a different code path, and the panel/tick JOIN the two by activity key.
+/// `args_preview` is omitted while args_bytes==0 (nothing has formed; an empty preview would
+/// impersonate content).
+fn render_forming_file(live: &std::collections::BTreeMap<String, FormingRow>) -> Option<String> {
     if live.is_empty() {
         return None;
     }
-    let rows: Vec<&serde_json::Value> = live.values().collect();
+    let rows: Vec<serde_json::Value> = live
+        .iter()
+        .map(|(id, row)| {
+            let mut v = serde_json::json!({
+                "id": id,
+                "name": row.name,
+                "since_ms": row.since_ms,
+                "args_bytes": row.args_bytes,
+            });
+            if row.args_bytes > 0 {
+                v["args_preview"] = serde_json::Value::from(forming_preview(&row.args_tail));
+            }
+            v
+        })
+        .collect();
     Some(serde_json::json!({ "forming": rows }).to_string())
+}
+
+/// `<path>.tmp` for the atomic write below — same directory, so the rename is atomic in-dir.
+fn forming_tmp(path: &Path) -> PathBuf {
+    let mut os = path.as_os_str().to_os_string();
+    os.push(".tmp");
+    PathBuf::from(os)
+}
+
+/// tmp+rename write for the forming sidecar. main.ts reads this file on its poll and joins it
+/// onto the digest; a torn read there turns into a one-poll row disappearance (forming is never
+/// carried from prev), so a partially-written file must be impossible, not merely unlikely.
+fn write_forming_atomic(path: &Path, body: &str) -> std::io::Result<()> {
+    let tmp = forming_tmp(path);
+    std::fs::write(&tmp, body)?;
+    std::fs::rename(&tmp, path)
+}
+
+/// Removes the forming sidecar (and any half-written tmp) on EVERY exit path of the wrapped
+/// provider call — the ShellGroupReaper pattern: return, `?`, judge termination and cancellation
+/// of the whole dispatch future all unwind through this Drop. Complete is NOT guaranteed (an
+/// errored, aborted or stall-killed stream never sends it), so scope exit is the clearing point
+/// of record.
+struct FormingGuard {
+    path: PathBuf,
+}
+
+impl Drop for FormingGuard {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.path);
+        let _ = std::fs::remove_file(forming_tmp(&self.path));
+    }
 }
 
 /// A tool request whose result has not landed yet, keyed in the worker loop's `pending` map by the
@@ -16463,8 +16716,157 @@ impl GooseAgentDispatcher {
     /// Like `run_agent` but the agent's file/shell tools are rooted at `work_dir` (the session working_dir).
     /// For a SPECULATIVE twin this is an isolated shadow copy, so the twin never writes the real tree; for
     /// every normal call `work_dir == self.working_dir`, so behavior is unchanged.
+    ///
+    /// II-11c: this wrapper is the ONE place the TOOL_FORMING_OBSERVER is armed — every call with
+    /// an activity key gets `<key>.forming.json` beside its digest (r5's OPEN emission streamed
+    /// 28,157 B/8s of `function.arguments` fragments while forming stayed None, because only the
+    /// worker dispatch site used to arm the observer). No other scope may exist: nested scopes
+    /// silently shadow the task-local. Cost contract: a map fold per event, and never more than
+    /// one sidecar write per 400ms coalesce plus the open/terminal frames.
     #[allow(clippy::too_many_arguments)]
     async fn run_agent_in(
+        &self,
+        work_dir: PathBuf,
+        model_id: &str,
+        system_prompt: String,
+        user_text: String,
+        response: Option<Response>,
+        max_turns: u32,
+        extensions: &[ExtensionConfig],
+        activity_key: Option<&str>,
+        attempt: u32,
+        prefill_assistant: Option<&str>,
+        force_tool_until_act: Option<&str>,
+        temp_override: Option<f32>,
+        single_owned_file: Option<String>,
+        read_only: bool,
+        may_terminate: bool,
+    ) -> Result<RunAgentOut> {
+        let Some(key) = activity_key else {
+            // Judge/reviewer/probe calls carry no lane: no observer, no sidecar. (A probe that
+            // runs INSIDE a scoped call still publishes into its worker's observer — the
+            // pre-existing task-local nesting, unchanged by the hoist.)
+            return self
+                .run_agent_in_inner(
+                    work_dir,
+                    model_id,
+                    system_prompt,
+                    user_text,
+                    response,
+                    max_turns,
+                    extensions,
+                    activity_key,
+                    attempt,
+                    prefill_assistant,
+                    force_tool_until_act,
+                    temp_override,
+                    single_owned_file,
+                    read_only,
+                    may_terminate,
+                )
+                .await;
+        };
+        let dir = work_dir.join(".swarm").join("activity");
+        let _ = std::fs::create_dir_all(&dir);
+        let forming_path = dir.join(format!("{}.forming.json", activity_digest_key(key)));
+        let sidecar = std::sync::Arc::new(std::sync::Mutex::new(FormingSidecar::default()));
+        let observer: goose_provider_types::formats::openai::ToolFormingObserver = {
+            let path = forming_path.clone();
+            let sidecar = sidecar.clone();
+            std::sync::Arc::new(move |ev| {
+                use goose_provider_types::formats::openai::ToolFormingEvent;
+                let mut g = sidecar.lock().unwrap();
+                // Open/terminal frames always write (they must appear promptly, and during
+                // post-open silence this closure is the only writer that can fire). ArgsDelta
+                // coalesces on the digest's own 400ms cadence — an IO cadence, never a bound on
+                // model work — and a held-dirty fragment flushes with the next event that lands
+                // past the window. The one residual staleness: a mid-call fragment held during
+                // TOTAL stream silence stays off disk until the next frame; acceptable, because
+                // a silent stream is exactly the case where nothing new formed.
+                let frame_write = matches!(
+                    ev,
+                    ToolFormingEvent::Forming { .. } | ToolFormingEvent::Complete { .. }
+                );
+                fold_forming_event(&mut g.live, ev);
+                if g.write_error.is_some() {
+                    // First failure was recorded and will surface as forming_write_failed after
+                    // the scope; keep folding (cheap), stop writing (gate 1: loud once, then
+                    // honest silence — not a retry storm against a broken disk).
+                    return;
+                }
+                let due = frame_write
+                    || g.last_write
+                        .is_none_or(|t| t.elapsed() >= std::time::Duration::from_millis(400));
+                if !due {
+                    g.dirty = true;
+                    return;
+                }
+                let result = match render_forming_file(&g.live) {
+                    Some(body) => write_forming_atomic(&path, &body),
+                    None => match std::fs::remove_file(&path) {
+                        // Already absent IS the rendered state (nothing forming), not a failure.
+                        Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(e),
+                        _ => Ok(()),
+                    },
+                };
+                match result {
+                    Ok(()) => {
+                        g.last_write = Some(std::time::Instant::now());
+                        g.dirty = false;
+                    }
+                    Err(e) => {
+                        g.write_error = Some(e.to_string());
+                        // The state that failed to land stays marked unflushed, so the named
+                        // failure event below can say whether fragments were lost with it.
+                        g.dirty = true;
+                    }
+                }
+            })
+        };
+        let _guard = FormingGuard {
+            path: forming_path.clone(),
+        };
+        let out = goose_provider_types::formats::openai::TOOL_FORMING_OBSERVER
+            .scope(
+                observer,
+                self.run_agent_in_inner(
+                    work_dir,
+                    model_id,
+                    system_prompt,
+                    user_text,
+                    response,
+                    max_turns,
+                    extensions,
+                    activity_key,
+                    attempt,
+                    prefill_assistant,
+                    force_tool_until_act,
+                    temp_override,
+                    single_owned_file,
+                    read_only,
+                    may_terminate,
+                ),
+            )
+            .await;
+        let (write_error, held_unflushed) = {
+            let mut g = sidecar.lock().unwrap();
+            (g.write_error.take(), g.dirty)
+        };
+        if let Some(error) = write_error {
+            self.events.write_value(serde_json::json!({
+                "event": "forming_write_failed",
+                "key": key,
+                "error": error,
+                "held_unflushed": held_unflushed,
+            }));
+        }
+        out
+    }
+
+    /// The body of `run_agent_in`, unchanged by the II-11c hoist — call it ONLY through the
+    /// wrapper above, which owns the forming observer scope and its cleanup guard.
+    #[allow(clippy::too_many_arguments)]
+    async fn run_agent_in_inner(
         &self,
         work_dir: PathBuf,
         model_id: &str,
@@ -35386,34 +35788,9 @@ impl GooseAgentDispatcher {
             "lever_on": force_write_tool(),
             "owns_files": req.owned_files.len(),
         }));
-        // II-11b (engine half): the provider decoder publishes tool-call OPEN FRAMES through
-        // the TOOL_FORMING_OBSERVER task-local (openai.rs seam, 282305c34). The observer keeps
-        // `<key>.forming.json` beside the digest; scope-exit below is the clearing point of
-        // record, because Complete is NOT guaranteed — an errored, aborted or stall-killed
-        // stream never sends it. Cheap by contract: a map fold and one small file write per
-        // open frame/terminal delta, never per chunk.
-        let forming_path = root.join(".swarm").join("activity").join(format!(
-            "{}.forming.json",
-            activity_digest_key(&req.task_id)
-        ));
-        let observer: goose_provider_types::formats::openai::ToolFormingObserver = {
-            let path = forming_path.clone();
-            let live = std::sync::Mutex::new(
-                std::collections::BTreeMap::<String, serde_json::Value>::new(),
-            );
-            std::sync::Arc::new(move |ev| {
-                let mut g = live.lock().unwrap();
-                fold_forming_event(&mut g, ev);
-                match render_forming_file(&g) {
-                    Some(body) => {
-                        let _ = std::fs::write(&path, body);
-                    }
-                    None => {
-                        let _ = std::fs::remove_file(&path);
-                    }
-                }
-            })
-        };
+        // II-11c: the forming observer (`<key>.forming.json`) is armed INSIDE run_agent_in for
+        // every keyed call — this site passes Some(task_id) below and owns nothing else. The
+        // wiring used to live here, which is exactly why r5's OPEN call had no forming file.
         let worker_call = self.run_agent_in(
             root.clone(),
             &req.model_id,
@@ -35480,12 +35857,7 @@ impl GooseAgentDispatcher {
             // that: the scheduler owns a worker's fate, through retry and salvage, not this helper.
             false,
         );
-        let outcome = goose_provider_types::formats::openai::TOOL_FORMING_OBSERVER
-            .scope(observer, worker_call)
-            .await;
-        // Scope-exit clearing (the seam's mandatory rule): whatever the stream did — finished,
-        // erred, was cut mid-call — nothing is forming once the call has returned.
-        let _ = std::fs::remove_file(&forming_path);
+        let outcome = worker_call.await;
         let secs = started.elapsed().as_secs_f64();
         // A SINK THAT WAS CUT OFF DID NOT VERIFY ANYTHING — SAY SO, LOUDLY.
         //
@@ -37375,6 +37747,24 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
     for stale in ["clarify-questions.json", "clarify-answers.json"] {
         let _ = std::fs::remove_file(working_dir.join(".swarm").join(stale));
         let _ = std::fs::remove_file(spawn_dir.join(".swarm").join(stale));
+    }
+    // II-11c: forming sidecars are per-CALL state cleared by run_agent_in's drop guard — but a
+    // SIGKILL'd run drops no guards, and a stale `<key>.forming.json` would read as a
+    // forever-amber forming row on the next run's panel. Sweep both activity dirs at run start;
+    // a dir that does not exist yet has nothing to sweep.
+    for dir in [
+        working_dir.join(".swarm").join("activity"),
+        spawn_dir.join(".swarm").join("activity"),
+    ] {
+        if let Ok(entries) = std::fs::read_dir(&dir) {
+            for entry in entries.flatten() {
+                let name = entry.file_name();
+                let name = name.to_string_lossy();
+                if name.ends_with(".forming.json") || name.ends_with(".forming.json.tmp") {
+                    let _ = std::fs::remove_file(entry.path());
+                }
+            }
+        }
     }
     // Tell the desktop WHICH run is current, and where it lives. The panel used to guess by picking the
     // newest run-*.jsonl under the session's working dir, which has no notion of "current": it re-rendered a

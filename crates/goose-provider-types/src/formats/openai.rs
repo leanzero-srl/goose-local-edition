@@ -34,12 +34,16 @@ type ToolCallData = HashMap<
     ),
 >;
 
-/// II-11b provider seam. MEASURED (3 raw-SSE runs, scratchpad/ii11-lmstudio-arg-streaming.md):
-/// LM Studio sends a tool call's OPEN FRAME (id + function name, empty arguments) within seconds,
-/// then buffers the ENTIRE argument body server-side — 161–172 s of total stream silence — and
-/// delivers it in ONE terminal delta. Byte progress is therefore impossible; the only honest live
-/// signal is "this named tool call is forming since T". This observer surfaces exactly that,
-/// with no MessageContent change, no Provider-trait change, and no decoding change when unset.
+/// II-11b provider seam. MEASURED twice, with opposite shapes: the 3 raw-SSE runs of
+/// scratchpad/ii11-lmstudio-arg-streaming.md saw LM Studio send a tool call's OPEN FRAME
+/// (id + function name, empty arguments) within seconds, then buffer the ENTIRE argument body
+/// server-side — 161–172 s of total stream silence — and deliver it in ONE terminal delta.
+/// r5's OPEN emission (2026-08-30 12:42–12:47) saw the same server STREAM `function.arguments`
+/// as live SSE fragments — 28,157 B over 8 s — while every captured channel sat frozen. So the
+/// honest live signals are BOTH "this named tool call is forming since T" AND every argument
+/// fragment exactly as it arrives (which may be one terminal lump on a buffering server). This
+/// observer forwards exactly that, with no MessageContent change, no Provider-trait change, and
+/// no decoding change when unset.
 #[derive(Debug, Clone)]
 pub enum ToolFormingEvent {
     /// The first streamed delta for a tool call carried its function name (the open frame).
@@ -48,6 +52,10 @@ pub enum ToolFormingEvent {
         name: String,
         since: std::time::Instant,
     },
+    /// A streamed fragment of this call's `function.arguments`, forwarded verbatim as it
+    /// arrived. Empty fragments are never emitted; consumers coalesce — the decoder never
+    /// batches or delays. On a server that buffers the whole body this is one terminal lump.
+    ArgsDelta { id: String, delta: String },
     /// The call's terminal delta was decoded; the full ToolRequest is about to be yielded.
     /// A stream that dies mid-call never publishes this — consumers must ALSO clear forming
     /// state when the provider-call future completes.
@@ -1166,6 +1174,12 @@ where
                                 name: name.clone(),
                                 since: std::time::Instant::now(),
                             });
+                            if !tool_call.function.arguments.is_empty() {
+                                notify_tool_forming(ToolFormingEvent::ArgsDelta {
+                                    id: id.clone(),
+                                    delta: tool_call.function.arguments.clone(),
+                                });
+                            }
                         }
                     }
                 }
@@ -1205,7 +1219,13 @@ where
                                     if let Some(delta_tool_calls) = &tool_chunk.choices[0].delta.tool_calls {
                                         for delta_call in delta_tool_calls {
                                             if let Some(index) = delta_call.index {
-                                                if let Some((_, _, ref mut args, ref mut extra)) = tool_call_data.get_mut(&index) {
+                                                if let Some((ref id, _, ref mut args, ref mut extra)) = tool_call_data.get_mut(&index) {
+                                                    if !delta_call.function.arguments.is_empty() {
+                                                        notify_tool_forming(ToolFormingEvent::ArgsDelta {
+                                                            id: id.clone(),
+                                                            delta: delta_call.function.arguments.clone(),
+                                                        });
+                                                    }
                                                     args.push_str(&delta_call.function.arguments);
                                                     if extra.is_none() && delta_call.extra.is_some() {
                                                         *extra = delta_call.extra.clone();
@@ -1221,6 +1241,12 @@ where
                                                         name: name.clone(),
                                                         since: std::time::Instant::now(),
                                                     });
+                                                    if !delta_call.function.arguments.is_empty() {
+                                                        notify_tool_forming(ToolFormingEvent::ArgsDelta {
+                                                            id: id.clone(),
+                                                            delta: delta_call.function.arguments.clone(),
+                                                        });
+                                                    }
                                                 }
                                             }
                                         }
@@ -3143,8 +3169,23 @@ data: [DONE]
                 }
 
                 let seen = events.lock().unwrap();
-                assert_eq!(seen.len(), 2, "Forming then Complete, got {seen:?}");
+                assert_eq!(
+                    seen.len(),
+                    3,
+                    "Forming, then the buffered body as ONE ArgsDelta, then Complete, got {seen:?}"
+                );
                 match &seen[1] {
+                    ToolFormingEvent::ArgsDelta { id, delta } => {
+                        assert_eq!(id, "call_lms_1");
+                        assert_eq!(
+                            delta,
+                            "{\"path\": \"src/main.py\", \"content\": \"print('hello')\\nprint('world')\\n\"}",
+                            "a buffering server's terminal lump is forwarded verbatim"
+                        );
+                    }
+                    other => panic!("expected ArgsDelta at the terminal body, got {other:?}"),
+                }
+                match &seen[2] {
                     ToolFormingEvent::Complete { id } => assert_eq!(id, "call_lms_1"),
                     other => panic!("expected Complete at the terminal delta, got {other:?}"),
                 }
@@ -3186,8 +3227,8 @@ data: [DONE]
             .await?;
         assert_eq!(
             events.lock().unwrap().len(),
-            2,
-            "the scoped run must have published Forming + Complete"
+            3,
+            "the scoped run must have published Forming + ArgsDelta + Complete"
         );
 
         // `created` is a wall-clock stamp taken at yield time, not decoder output; zero it so
@@ -3242,6 +3283,7 @@ data: [DONE]
             .iter()
             .map(|e| match e {
                 ToolFormingEvent::Forming { id, name, .. } => format!("forming:{id}:{name}"),
+                ToolFormingEvent::ArgsDelta { id, delta } => format!("args:{id}:{}", delta.len()),
                 ToolFormingEvent::Complete { id } => format!("complete:{id}"),
             })
             .collect();
@@ -3249,13 +3291,78 @@ data: [DONE]
             shape,
             vec![
                 "forming:call_1:write_file",
+                "args:call_1:16",
                 "forming:call_2:run_tests",
+                "args:call_2:17",
                 "complete:call_1",
                 "complete:call_2",
             ],
-            "each name arrival publishes Forming; the terminal delta publishes Complete in index order"
+            "each name arrival publishes Forming, each argument fragment publishes ArgsDelta as it \
+             arrives; the terminal delta publishes Complete in index order"
         );
 
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_tool_forming_arg_fragments_arrive_verbatim_in_order() -> anyhow::Result<()> {
+        // r5's measured shape: the server STREAMS function.arguments as many small SSE
+        // fragments. Each must reach the observer exactly as it arrived, in order — the
+        // decoder never batches, delays, or emits an empty fragment.
+        let response_lines = r#"
+data: {"id":"chatcmpl-frag1","object":"chat.completion.chunk","created":1756500000,"model":"m","choices":[{"index":0,"delta":{"role":"assistant","tool_calls":[{"index":0,"id":"call_f1","type":"function","function":{"name":"write_file","arguments":""}}]},"finish_reason":null}]}
+data: {"id":"chatcmpl-frag1","object":"chat.completion.chunk","created":1756500001,"model":"m","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{\"pa"}}]},"finish_reason":null}]}
+data: {"id":"chatcmpl-frag1","object":"chat.completion.chunk","created":1756500001,"model":"m","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":""}}]},"finish_reason":null}]}
+data: {"id":"chatcmpl-frag1","object":"chat.completion.chunk","created":1756500002,"model":"m","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"th\": \"a"}}]},"finish_reason":null}]}
+data: {"id":"chatcmpl-frag1","object":"chat.completion.chunk","created":1756500003,"model":"m","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":".py\"}"}}]},"finish_reason":null}]}
+data: {"id":"chatcmpl-frag1","object":"chat.completion.chunk","created":1756500004,"model":"m","choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}],"usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}
+data: [DONE]
+"#
+        .lines()
+        .map(str::to_string)
+        .collect::<Vec<_>>();
+
+        let (events, observer) = recording_observer();
+        let yielded = TOOL_FORMING_OBSERVER
+            .scope(observer, decode_all(response_lines))
+            .await?;
+
+        let seen = events.lock().unwrap();
+        let fragments: Vec<&str> = seen
+            .iter()
+            .filter_map(|e| match e {
+                ToolFormingEvent::ArgsDelta { id, delta } => {
+                    assert_eq!(id, "call_f1");
+                    Some(delta.as_str())
+                }
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            fragments,
+            vec!["{\"pa", "th\": \"a", ".py\"}"],
+            "each non-empty fragment forwarded verbatim in arrival order; the empty one skipped"
+        );
+
+        // The decoded output still assembles the same call (the observer changed nothing).
+        let tool_requests: Vec<_> = yielded
+            .iter()
+            .filter_map(|(m, _)| m.as_ref())
+            .flat_map(|m| m.content.iter())
+            .filter_map(|c| match c {
+                MessageContent::ToolRequest(req) => req.tool_call.as_ref().ok(),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(tool_requests.len(), 1);
+        assert_eq!(
+            tool_requests[0]
+                .arguments
+                .as_ref()
+                .and_then(|a| a.get("path"))
+                .and_then(|v| v.as_str()),
+            Some("a.py")
+        );
         Ok(())
     }
 
