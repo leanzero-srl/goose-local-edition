@@ -87,6 +87,14 @@ it on mechanism. Mihai 14:35: "isn't build supposed to fan out?"
 
 ## Live queue (small items, fold into the next matching brief)
 
+SURGEON #9 (dispatch when #8 lands — swarm.rs): (1) HEADLINE, refuter-corrected: early skeleton
+dispatch concurrent with REVIEW (G-3's pre-vetted revive form — skeleton files derive from
+spec_python_invocations, stable across review patches; the one-door repair arbitrates the rare
+patch collision; opens the fan near plan_loaded instead of +75m). (2) Delete the dead breakdown:
+breakdown_json + the plan_loaded splice, strip PlanConf to final_conf, cfg(test) sub-signal
+machinery goes, comments corrected to the design truth. (3) ask_max_q field + golden entry
+removal. (4) Integrate brief-header cosmetic. (5) hasActivity fullTranscript gap if surgeon
+judges it engine-side, else panel #5.
 - engine ask_max_q field + golden.generated.json entry removal (dead since cfcd32908) + the
   integrate plan-time brief header cosmetic ("INTEGRATE AND VERIFY" ancestry wording) — surgeon #9.
 - useSwarmRun hasActivity filter ignores fullTranscript-only digests (latent lane-hiding) — panel #5.
@@ -120,6 +128,20 @@ and lever_check.py consume it; the ask event's twin field was confirmed dead 0/0
    — add one fixture each.
 
 ## Grading log (newest first — one line per delegation; move closed items to the per-agent notes)
+- 2026-08-30 refuter #1 (skeleton-by-code): EXEMPLARY — refuted the orchestrator's own candidate
+  in both arms on MECHANISM (dep_block hands the skeleton's real source as "build against THIS";
+  code shells = CONTRACTS' frozen-behaviour surface with less information; the demote arm trips
+  the judge's ACCEPT lever so the walking skeleton never gets written), corrected the inflated
+  75m attribution against already-landed fixes, caught the brief drifting harsher than its own
+  source note, and delivered a BETTER fix pre-licensed by REFUSED.md's own revive clause (early
+  skeleton dispatch concurrent with REVIEW). ADOPTED as surgeon #9's headline. This is why
+  refute-first exists.
+- 2026-08-30 fallback-hunter #1 (breakdown field): CLEAN PASS — proved the field structurally
+  unemittable (both producers PlanConf::default(); breakdown_json None-gates), classified every
+  consumer honestly (one GUILTY instrument printing FIRED-with-None — fixed same turn; one
+  self-flagged retirement candidate — tombstoned; UI null-tolerant but carrying archive-only
+  renderers), verified the killed literal-0 fallback stayed dead, and named the right fix
+  (delete + retire, never feed). Engine deletion + UI labeling queued.
 - 2026-08-30 panel-surgeon #4 (r6 event coverage, a7c473a76/8475b196b/f983ec159): CLEAN PASS —
   read every emit site before writing a case (caught the real field shapes incl. lane_panicked's
   honestly-empty model), derived the Research chip from measured events after PROVING no phase
