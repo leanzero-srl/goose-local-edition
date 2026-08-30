@@ -437,3 +437,9 @@ research_request_block's armed-no-claimed-sections arm wording.
   inline latch is untestable without an unordered extraction — said so instead of gold-plating).
   Left a fused doc-comment verbatim rather than editorialize — right call. Did not push (charter
   ambiguity?) — pushed by the orchestrator; consider adding push-after-commit to the charter.
+- 2026-08-31 02:00 swarm-surgeon (ladder reset + hold, 1fe842a8e): CLEAN+. Enumerated the seam state
+  reset-vs-kept with reasons (the tracer's verification target, by design), routed producing calls
+  through a HOLD that keeps their chars, made ignored structurally unreachable on a fresh attempt,
+  and kept r5's stuck-shape coverage. Side-find of the day: r6a's judge once emitted an
+  assistant-limit refusal as a DIRECTION — a new r7 detector class. swarm.rs 43,933→43,715.
+  Unbriefed gaps it named honestly: tick.py (fixed same-turn) + panel don't know judge_restream_held.
