@@ -142,15 +142,14 @@ pub struct EngineStatus {
     pub last_error: Option<String>,
 }
 
-/// The inherited PATH minus any goosed-injected `mcp-hermit` shim components (see the mount
-/// spawn comment for the incident this prevents).
-fn path_without_mcp_hermit() -> String {
-    std::env::var("PATH")
-        .unwrap_or_default()
-        .split(':')
-        .filter(|component| !component.contains("/mcp-hermit/"))
-        .collect::<Vec<_>>()
-        .join(":")
+/// A fixed, standard spawn PATH for the engine process. goosed's own PATH is a grab-bag of
+/// goose-internal tool shims — the MCP `mcp-hermit` bootstrap AND the desktop-bundled
+/// `ui/desktop/src/bin/uvx` wrapper — and inheriting it resolved `uvx` to those shims twice
+/// on 2026-08-31 (a cold hermit python install, then a nested bash chain that never served).
+/// A controlled environment makes resolution deterministic; if `uvx` is absent from these
+/// standard locations the spawn fails loudly with exactly that message.
+fn sidecar_spawn_path() -> String {
+    "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin".to_string()
 }
 
 pub struct MlxEngineManager {
@@ -238,10 +237,7 @@ impl MlxEngineManager {
             let mut config = SidecarConfig::new("mlx-engine", argv.clone(), base_url);
             // A cold uv resolve of the pinned fork legitimately takes minutes on first mount.
             config.startup_timeout = Duration::from_secs(600);
-            // goosed prepends its MCP-hermit shim to PATH; inheriting it makes `uvx` resolve to
-            // a cold hermit bootstrap instead of the user's uv (observed 2026-08-31: a mount
-            // spent its whole readiness budget installing python 3.10 inside mcp-hermit).
-            config.env = vec![("PATH".to_string(), path_without_mcp_hermit())];
+            config.env = vec![("PATH".to_string(), sidecar_spawn_path())];
             match Sidecar::start(config).await {
                 Ok(sidecar) => {
                     let mut state = state_arc.lock().await;
