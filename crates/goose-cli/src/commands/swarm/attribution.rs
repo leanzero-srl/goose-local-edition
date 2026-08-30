@@ -5,6 +5,8 @@
 //! `clean` (r5: `/api/drafts's` kept its apostrophe, the tree grep hit zero files, and 6 of 8
 //! round-0 findings misrouted to the entry file).
 
+use super::FileGroup;
+
 /// P1-3, half one: the ENDPOINT LITERAL a gate finding names, if any. The deterministic gate's
 /// own emitters write `GET <path> returned <code>` / `POST <path> …`, so the token after an HTTP
 /// verb is the highest-confidence literal; a backticked `/…` token is the fallback for prose
@@ -44,6 +46,57 @@ fn endpoint_literal_of(finding: &str) -> Option<String> {
         .find(|t| t.starts_with('/') && t.len() > 1)
 }
 
+/// Comment text never counts as attribution EVIDENCE (r5, run swarm-20260830-083847650, REPAIR
+/// round 0: web/app.js's only `/api/drafts` hits — 2 boundary, 3 raw — sat in its doc-comment
+/// endpoint inventory at lines 41-42 and came ONE RANK from winning F4's shard over the file
+/// that declares the route). `.py`: `#` to end-of-line; the js/ts family: `//` to EOL and
+/// `/* */` blocks. A cheap scanner, deliberately: a `#` or `//` inside a string literal
+/// (`"http://…"`) mildly over-strips the rest of that line, which is acceptable for EVIDENCE
+/// COUNTING — the cost is a slightly lower count inside a ranking, never a refusal and never a
+/// lost finding. Python docstrings survive (they are string literals — and r5's F1 fix, the one
+/// promotion of round 0, rode a docstring mention in app/sync.py). Block comments become one
+/// space so stripping can never JOIN two halves of a line into a match that was not there.
+/// Other extensions pass through unchanged.
+fn strip_comments_for_evidence(src: &str, file: &str) -> String {
+    if file.ends_with(".py") {
+        src.lines()
+            .map(|l| l.split('#').next().unwrap_or(""))
+            .collect::<Vec<_>>()
+            .join("\n")
+    } else if [".js", ".mjs", ".cjs", ".jsx", ".ts", ".tsx"]
+        .iter()
+        .any(|e| file.ends_with(e))
+    {
+        let mut out = String::with_capacity(src.len());
+        let mut it = src.chars().peekable();
+        while let Some(c) = it.next() {
+            if c == '/' && it.peek() == Some(&'/') {
+                for d in it.by_ref() {
+                    if d == '\n' {
+                        out.push('\n');
+                        break;
+                    }
+                }
+            } else if c == '/' && it.peek() == Some(&'*') {
+                it.next();
+                let mut prev = ' ';
+                for d in it.by_ref() {
+                    if prev == '*' && d == '/' {
+                        break;
+                    }
+                    prev = d;
+                }
+                out.push(' ');
+            } else {
+                out.push(c);
+            }
+        }
+        out
+    } else {
+        src.to_string()
+    }
+}
+
 /// P1-3, half two: attribute one UNASSIGNED gate finding to a file by EVIDENCE, never to a
 /// whole-tree residue worker. (1) grep the tree for the endpoint literal the finding names —
 /// the file that mentions `/api/payments` is the file that serves it or was supposed to; the
@@ -54,17 +107,30 @@ fn endpoint_literal_of(finding: &str) -> Option<String> {
 /// a 138-minute wave (83%) while the four file-attributed shards finished in 24 minutes, all
 /// promoted; r2's sink burned ~130 min on the same whole-tree shape. `read_source` is injected
 /// so the fixture drives this against an archived tree READ-ONLY.
-pub(super) fn attribute_gate_finding(
+///
+/// Returns `(winner, runner_up)`. The RUNNER-UP is the second-best candidate by the same
+/// ordering, surfaced only when it is a SOURCE file with at least one comment-stripped boundary
+/// hit — a finding whose evidence reconciles across two files (route table vs handler body) must
+/// let the shard own both, so whichever side the worker fixes can land (the js/css↔html
+/// reconciliation precedent at `shard_owned_files`). Grouping stays by winner; only ownership
+/// may widen, and only through the caller's `resolve_shard_ownership` claim pass.
+pub(super) fn attribute_gate_finding_ranked(
     finding: &str,
     all_files: &[String],
     read_source: &dyn Fn(&str) -> Option<String>,
-) -> Option<String> {
+) -> Option<(String, Option<String>)> {
     let literal = endpoint_literal_of(finding);
     if let Some(lit) = &literal {
         // A DECLARED route outranks a CALL to it: `"/api/payments":` in the dispatcher is the
         // literal as a complete token, `"/api/payments?limit=100"` in the page is the literal
         // mid-URL. Boundary hits (next char ends the path) are counted first; raw substring
         // counts only break a no-boundary tie. Most hits wins; ties go to all_files order.
+        // Counts are taken over COMMENT-STRIPPED source (a file whose only mentions are
+        // comments exits the candidate set entirely — r5's web/app.js); an exact stripped tie
+        // falls back to the UNSTRIPPED counts before file order, because r5's F1 proved a
+        // docstring/comment mention can still be the honest discriminator between files that
+        // each carry one code hit (app/sync.py, the round's one landed fix, ties app/httpapi.py
+        // and app/ledgerd/__init__.py at (1,1) stripped and wins only on the raw counts).
         let boundary_hits = |src: &str| {
             src.match_indices(lit.as_str())
                 .filter(|(i, _)| {
@@ -75,20 +141,35 @@ pub(super) fn attribute_gate_finding(
                 })
                 .count()
         };
-        let mut best: Option<(usize, usize, usize)> = None; // (boundary, raw, index)
+        type RankKey = (usize, usize, usize, usize); // (stripped b, stripped raw, raw b, raw raw)
+        let mut best: Option<(RankKey, usize)> = None;
+        let mut second: Option<(RankKey, usize)> = None;
         for (i, f) in all_files.iter().enumerate() {
-            let Some(src) = read_source(f) else { continue };
-            let raw = src.matches(lit.as_str()).count();
-            if raw == 0 {
+            let Some(full) = read_source(f) else { continue };
+            let src = strip_comments_for_evidence(&full, f);
+            let stripped_raw = src.matches(lit.as_str()).count();
+            if stripped_raw == 0 {
                 continue;
             }
-            let b = boundary_hits(&src);
-            if best.map(|(bb, br, _)| (b, raw) > (bb, br)).unwrap_or(true) {
-                best = Some((b, raw, i));
+            let key: RankKey = (
+                boundary_hits(&src),
+                stripped_raw,
+                boundary_hits(&full),
+                full.matches(lit.as_str()).count(),
+            );
+            if best.map(|(bk, _)| key > bk).unwrap_or(true) {
+                second = best;
+                best = Some((key, i));
+            } else if second.map(|(sk, _)| key > sk).unwrap_or(true) {
+                second = Some((key, i));
             }
         }
-        if let Some((_, _, i)) = best {
-            return Some(all_files[i].clone());
+        if let Some((_, i)) = best {
+            let runner_up = second
+                .filter(|((sb, _, _, _), _)| *sb >= 1)
+                .map(|(_, j)| all_files[j].clone())
+                .filter(|f| super::FINDING_SOURCE_EXTS.iter().any(|e| f.ends_with(e)));
+            return Some((all_files[i].clone(), runner_up));
         }
     }
     // The entry-file fallback answers ENDPOINT- and BOOT-shaped findings only: an advertised
@@ -123,24 +204,111 @@ pub(super) fn attribute_gate_finding(
                 .unwrap_or(false)
         })
         .or_else(|| entries.first())
-        .map(|f| (*f).clone())
+        .map(|f| ((*f).clone(), None))
 }
 
-/// The render probe's own attribution: `/consoleErrors/sources/0` — an array parallel to
+/// The winner alone, for tests that assert grouping without ownership.
+#[cfg(test)]
+fn attribute_gate_finding(
+    finding: &str,
+    all_files: &[String],
+    read_source: &dyn Fn(&str) -> Option<String>,
+) -> Option<String> {
+    attribute_gate_finding_ranked(finding, all_files, read_source).map(|(w, _)| w)
+}
+
+/// P1-3, the seam every repair path shares: `group_findings_by_file`, then evidence-based
+/// attribution for what it could not place. Attributed findings JOIN their file's shard (or open
+/// one); what remains is the KNOWN-BUGS list — the caller emits it as an event and dispatches
+/// no whole-tree residue worker for it. The third return is the winner→runner-up map (first
+/// attributed finding with a runner-up sets its group's entry): candidate co-ownership only —
+/// nothing is owned until `resolve_shard_ownership`'s claim pass, so grouping is unchanged.
+pub(super) fn attribute_findings(
+    findings: &[String],
+    all_files: &[String],
+    read_source: &dyn Fn(&str) -> Option<String>,
+) -> (
+    Vec<FileGroup>,
+    Vec<String>,
+    std::collections::HashMap<String, String>,
+) {
+    let (mut groups, unassigned) = super::group_findings_by_file(findings, all_files);
+    let mut known_bugs: Vec<String> = Vec::new();
+    let mut runner_ups: std::collections::HashMap<String, String> =
+        std::collections::HashMap::new();
+    for f in unassigned {
+        match attribute_gate_finding_ranked(&f, all_files, read_source) {
+            Some((file, ru)) => {
+                if let Some(ru) = ru {
+                    runner_ups.entry(file.clone()).or_insert(ru);
+                }
+                match groups.iter_mut().find(|g| g.file == file) {
+                    Some(g) => g.findings.push(f),
+                    None => groups.push(FileGroup {
+                        file,
+                        findings: vec![f],
+                    }),
+                }
+            }
+            None => known_bugs.push(f),
+        }
+    }
+    (groups, known_bugs, runner_ups)
+}
+
+/// Fix-1 seam, the CLAIM pass: each shard's owned files, resolved SEQUENTIALLY in group order
+/// BEFORE the concurrent fan. `shard_owned_files`' pairings (test↔module, js/css↔html) and the
+/// attribution runner-up claim into `taken` as they land, so the partition the promotes copy
+/// stays DISJOINT by construction — first shard claims, later shards stay narrower (two
+/// promotes must never touch one real dst). This also closes the latent pairing race: two .js
+/// groups in one directory could each pair the same .html when every closure consulted only the
+/// group-file set. MILD throughout — ownership only ever widens; nothing is refused.
+pub(super) fn resolve_shard_ownership(
+    groups: &[FileGroup],
+    all_files: &[String],
+    runner_ups: &std::collections::HashMap<String, String>,
+) -> Vec<Vec<String>> {
+    let mut taken: std::collections::HashSet<String> =
+        groups.iter().map(|g| g.file.clone()).collect();
+    groups
+        .iter()
+        .map(|g| {
+            let mut owned = super::shard_owned_files(&g.file, all_files, &taken);
+            if let Some(ru) = runner_ups.get(&g.file) {
+                if !taken.contains(ru) && !owned.contains(ru) {
+                    owned.push(ru.clone());
+                }
+            }
+            for f in owned.iter().skip(1) {
+                taken.insert(f.clone());
+            }
+            owned
+        })
+        .collect()
+}
+
+/// The render probe's own attribution: `/consoleErrors/sources` — an array parallel to
 /// `texts`, each a server-relative path like `web/viz.js`, `""` when the browser could not name
-/// a source. An ABSENT key is an old probe: None, finding text unchanged — degrade gracefully,
-/// never an error. r5 F8: the console finding named NO file, so the ONE product-killing bug
-/// (ReferenceError: onBrushChangeTracked is not defined, web/viz.js:1124) parked as known_bugs
-/// while six contract nits got fix shards.
-pub(super) fn console_error_source(v: &serde_json::Value) -> Option<&str> {
-    v.pointer("/consoleErrors/sources/0")
-        .and_then(|x| x.as_str())
-        .filter(|s| !s.is_empty())
+/// a source. Scans the first THREE pairs (the probe records at most three texts) and returns the
+/// first index whose text AND source are both non-empty, as `(i, text, source)` — the honest
+/// PAIR, so a caller can never attach error 2's file to error 1's text (a first error with `""`
+/// source must not suppress an attributable error 2 behind it). An ABSENT key is an old probe:
+/// None, finding text unchanged — degrade gracefully, never an error. r5 F8: the console finding
+/// named NO file, so the ONE product-killing bug (ReferenceError: onBrushChangeTracked is not
+/// defined, web/viz.js:1124) parked as known_bugs while six contract nits got fix shards.
+pub(super) fn console_error_source(v: &serde_json::Value) -> Option<(usize, &str, &str)> {
+    (0..3).find_map(|i| {
+        let text = v.pointer(&format!("/consoleErrors/texts/{i}"))?.as_str()?;
+        let src = v
+            .pointer(&format!("/consoleErrors/sources/{i}"))?
+            .as_str()?;
+        (!text.is_empty() && !src.is_empty()).then_some((i, text, src))
+    })
 }
 
 #[cfg(test)]
 mod tests {
-    use super::super::{attribute_findings, extract_file_from_finding};
+    use super::super::extract_file_from_finding;
     use super::*;
 
     /// P1-3: the endpoint literal a gate finding names, straight from the gate's own emitter
@@ -260,7 +428,7 @@ mod tests {
             "GET /api/payments returned 404".to_string(),
             "cosmic ray".to_string(),
         ];
-        let (groups, known) = attribute_findings(&findings, &all, &read);
+        let (groups, known, _) = attribute_findings(&findings, &all, &read);
         assert_eq!(groups.len(), 1);
         assert_eq!(groups[0].file, "vendorsync/api.py");
         assert_eq!(
@@ -269,6 +437,147 @@ mod tests {
             "the 404 joined its file's shard"
         );
         assert_eq!(known, ["cosmic ray"]);
+    }
+
+    /// Fix 2, the r5 receipt VERBATIM (run swarm-20260830-083847650, REPAIR round 0, F4):
+    /// web/app.js's only `/api/drafts` mentions are its doc-comment endpoint inventory (lines
+    /// 41-42) — 2 boundary + 3 raw, ONE RANK from beating app/httpapi.py's (2,2). Comment
+    /// stripping drops it to 0 and it exits the candidate set entirely; a tree holding ONLY the
+    /// comment-carrying file attributes nowhere (known bug), never to the comment.
+    #[test]
+    fn comment_hits_never_count_as_attribution_evidence() {
+        let f4 = "POST /api/drafts's response does not carry the documented field(s) \
+                  `amount_minor`, `currency`, `counterparty`, `name`, `country`, `note` — the \
+                  spec's endpoint table names them for exactly this endpoint.";
+        let app_js = "/* ============================================================================\n\
+                      \x20*   Drafts — every call carries Authorization: Bearer <#role-token>:\n\
+                      \x20*     POST /api/drafts {amount_minor, currency, counterparty:{name,country},\n\
+                      \x20*     note}; GET /api/drafts; POST /api/drafts/<id>/{submit,approve,reject}.\n\
+                      \x20* ============================================================================\n\
+                      \x20*/\n(function () {\n  \"use strict\";\n})();\n";
+        let only_comments = vec!["web/app.js".to_string()];
+        let read_js = |f: &str| (f == "web/app.js").then(|| app_js.to_string());
+        assert_eq!(
+            attribute_gate_finding(f4, &only_comments, &read_js),
+            None,
+            "a file whose only mentions are comments must exit the candidate set"
+        );
+        // And the r5 F1 shape proves the tiebreak half: after stripping, app/sync.py's `#`
+        // comment hit dies but its DOCSTRING hit survives, tying all three files at (1,1)
+        // stripped — the raw counts (sync 2-2 vs 1-1) must keep the winner at app/sync.py, the
+        // file round 0's one landed promotion actually fixed, instead of file order handing F1
+        // to app/httpapi.py.
+        let f1 = "POST /api/sync is not CHEAP on a repeat run — the second sync re-fetched \
+                  12290 row(s) it already had.";
+        let all = vec![
+            "app/httpapi.py".to_string(),
+            "app/ledgerd/__init__.py".to_string(),
+            "app/sync.py".to_string(),
+        ];
+        let read = |f: &str| -> Option<String> {
+            match f {
+                "app/sync.py" => Some(
+                    "_SYNC_LOCK = threading.Lock()   # one walk at a time (POST /api/sync + boot loop)\n\
+                     def start_boot_sync():\n\
+                     \x20   \"\"\"Kick the boot walk.\n\
+                     \x20   once it returns. Later syncs are on-demand (POST /api/sync).\"\"\"\n"
+                        .into(),
+                ),
+                "app/httpapi.py" => Some("            if path == \"/api/sync\":\n".into()),
+                "app/ledgerd/__init__.py" => Some("    (\"POST\", \"/api/sync\"),\n".into()),
+                _ => None,
+            }
+        };
+        assert_eq!(
+            attribute_gate_finding_ranked(f1, &all, &read),
+            Some((
+                "app/sync.py".to_string(),
+                Some("app/httpapi.py".to_string())
+            )),
+            "an exact stripped tie falls back to the unstripped counts before file order"
+        );
+    }
+
+    /// Fix 1, r5's F4 verbatim: the finding's evidence reconciles across the route table
+    /// (app/ledgerd/__init__.py, 5 raw — the winner and the group) and the handler file
+    /// (app/httpapi.py, the runner-up) where the response-field fix actually belongs. The shard
+    /// owns BOTH when the runner-up is unclaimed, so whichever side the worker fixes can land;
+    /// a runner-up already claimed (the r5 round-1 shape: httpapi.py is F3's own group) leaves
+    /// the shard single-file — the promoted partition stays disjoint.
+    #[test]
+    fn an_endpoint_shard_owns_winner_and_unclaimed_runner_up() {
+        let f4 = "POST /api/drafts's response does not carry the documented field(s) \
+                  `amount_minor`, `currency`, `counterparty`, `name`, `country`, `note` — the \
+                  spec's endpoint table names them for exactly this endpoint.";
+        let f3 = "POST /api/webhooks/meridian's response could not be read as JSON on either \
+                  probe — the spec documents a JSON response for every endpoint.";
+        let all = vec![
+            "app/httpapi.py".to_string(),
+            "app/ledgerd/__init__.py".to_string(),
+            "web/app.js".to_string(),
+        ];
+        let read = |f: &str| -> Option<String> {
+            match f {
+                "app/ledgerd/__init__.py" => Some(
+                    "    (\"POST\", \"/api/drafts\"),\n\
+                     \x20   (\"POST\", \"/api/drafts/<id>/submit\"),\n\
+                     \x20   (\"POST\", \"/api/drafts/<id>/approve\"),\n\
+                     \x20   (\"POST\", \"/api/drafts/<id>/reject\"),\n\
+                     \x20   (\"GET\", \"/api/drafts\"),\n\
+                     \x20   (\"POST\", \"/api/webhooks/meridian\"),\n"
+                        .into(),
+                ),
+                "app/httpapi.py" => Some(
+                    "            if path == \"/api/drafts\":\n\
+                     \x20           if path == \"/api/drafts\":\n\
+                     \x20           if path == \"/api/webhooks/meridian\":\n\
+                     \x20           if path == \"/api/webhooks/meridian\":\n"
+                        .into(),
+                ),
+                // The r5 doc comment: raw hits that must not resurrect app.js as a runner-up.
+                "web/app.js" => Some(
+                    "/*\n * POST /api/drafts {amount_minor,\n * note}; GET /api/drafts; POST /api/drafts/<id>/x.\n */\n"
+                        .into(),
+                ),
+                _ => None,
+            }
+        };
+        assert_eq!(
+            attribute_gate_finding_ranked(f4, &all, &read),
+            Some((
+                "app/ledgerd/__init__.py".to_string(),
+                Some("app/httpapi.py".to_string())
+            ))
+        );
+        // UNCLAIMED runner-up (F4 alone): the shard owns winner AND runner-up.
+        let (groups, known, runner_ups) = attribute_findings(&[f4.to_string()], &all, &read);
+        assert!(known.is_empty());
+        assert_eq!(groups.len(), 1);
+        assert_eq!(groups[0].file, "app/ledgerd/__init__.py");
+        assert_eq!(
+            runner_ups
+                .get("app/ledgerd/__init__.py")
+                .map(|s| s.as_str()),
+            Some("app/httpapi.py")
+        );
+        let owned = resolve_shard_ownership(&groups, &all, &runner_ups);
+        assert_eq!(
+            owned,
+            vec![vec![
+                "app/ledgerd/__init__.py".to_string(),
+                "app/httpapi.py".to_string()
+            ]],
+            "the shard owns both, so the handler-body fix can land"
+        );
+        // TAKEN runner-up (F4 + F3, the r5 round-1 shape): httpapi.py is F3's own group, so the
+        // ledgerd shard stays single-file — first shard claims, later shards don't.
+        let (groups2, _, runner_ups2) =
+            attribute_findings(&[f4.to_string(), f3.to_string()], &all, &read);
+        let files: Vec<&str> = groups2.iter().map(|g| g.file.as_str()).collect();
+        assert_eq!(files, ["app/ledgerd/__init__.py", "app/httpapi.py"]);
+        let owned2 = resolve_shard_ownership(&groups2, &all, &runner_ups2);
+        assert_eq!(owned2[0], vec!["app/ledgerd/__init__.py".to_string()]);
+        assert_eq!(owned2[1], vec!["app/httpapi.py".to_string()]);
     }
 
     /// P1-3 fixture: r0's real finding shapes against the ARCHIVED r0 tree, read-only. The tree
@@ -352,7 +661,14 @@ mod tests {
         let v = serde_json::json!({"consoleErrors": {"count": 1,
             "texts": ["ReferenceError: onBrushChangeTracked is not defined"],
             "sources": ["web/viz.js"]}});
-        assert_eq!(console_error_source(&v), Some("web/viz.js"));
+        assert_eq!(
+            console_error_source(&v),
+            Some((
+                0,
+                "ReferenceError: onBrushChangeTracked is not defined",
+                "web/viz.js"
+            ))
+        );
         let empty =
             serde_json::json!({"consoleErrors": {"count": 1, "texts": ["x"], "sources": [""]}});
         assert_eq!(console_error_source(&empty), None);
@@ -362,5 +678,26 @@ mod tests {
             None,
             "absent means old probe, never an error"
         );
+    }
+
+    /// The suffix scans all three PAIRS honestly: a first error the browser could not source
+    /// (`""`) must not suppress an attributable error behind it, and the pair returned is the
+    /// pair — error 2's file can never ride error 1's text. All-empty sources: None, so the
+    /// finding text stays exactly as before.
+    #[test]
+    fn the_console_suffix_scans_all_three_pairs_honestly() {
+        let v = serde_json::json!({"consoleErrors": {"count": 3,
+            "texts": ["Uncaught SyntaxError: unexpected token",
+                      "ReferenceError: drawBrush is not defined",
+                      "TypeError: x is undefined"],
+            "sources": ["", "web/viz.js", ""]}});
+        assert_eq!(
+            console_error_source(&v),
+            Some((1, "ReferenceError: drawBrush is not defined", "web/viz.js")),
+            "the exemplar must be texts/1 — the text web/viz.js actually produced"
+        );
+        let none = serde_json::json!({"consoleErrors": {"count": 2,
+            "texts": ["a", "b"], "sources": ["", ""]}});
+        assert_eq!(console_error_source(&none), None);
     }
 }

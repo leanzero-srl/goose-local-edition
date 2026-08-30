@@ -62,7 +62,7 @@ use transcripts::{
 mod desk;
 use desk::{spawn_shadow_desk, RecurrenceMeter, RECURRENCE_MIN_SPAN};
 mod attribution;
-use attribution::{attribute_gate_finding, console_error_source};
+use attribution::{attribute_findings, console_error_source, resolve_shard_ownership};
 
 const FINAL_OUTPUT_TOOL: &str = "recipe__final_output";
 /// The one engine terminator's own words — the `judge_out_of_moves` ending's Err message, which
@@ -1979,7 +1979,9 @@ async fn handle_repair(tree: PathBuf, spec: Option<PathBuf>) -> Result<()> {
     let r = run_spec_contract(&tree, &spec_text, lang).await;
     let criticals: Vec<&String> = r.findings.iter().filter(|f| engine_critical(f)).collect();
     let tree_read = tree.clone();
-    let (groups, known_bugs) = attribute_findings(&r.findings, &existing, &move |rel: &str| {
+    // The runner-up map is dispatch-side ownership only (resolve_shard_ownership); the replay
+    // reports grouping, which is unchanged by it.
+    let (groups, known_bugs, _) = attribute_findings(&r.findings, &existing, &move |rel: &str| {
         std::fs::read_to_string(tree_read.join(rel)).ok()
     });
     println!(
@@ -22653,37 +22655,55 @@ async fn run_spec_contract(root: &Path, spec: &str, lang: TargetLang) -> SpecCon
                                 .unwrap_or(0);
                             render_gate_status =
                                 format!("ran (rows={rows}, console_errors={console})");
-                            // r5 F8: the probe's `/consoleErrors/sources/0` (parallel to
-                            // `texts`) names the erroring file, so both console findings carry
-                            // the attribution-list suffix ` (in `{src}`)` as their FINAL
-                            // characters — the exact trailing shape `extract_file_from_finding`
-                            // parses — instead of parking as known_bugs while contract nits get
-                            // fix shards. Absent key = old probe: text unchanged.
-                            let src_suffix = match console_error_source(&v) {
-                                Some(src) => format!(" (in `{src}`)"),
+                            // r5 F8: the probe's `/consoleErrors/sources` (parallel to `texts`)
+                            // names the erroring file, so both console findings carry the
+                            // attribution-list suffix ` (in `{src}`)` as their FINAL characters
+                            // — the exact trailing shape `extract_file_from_finding` parses —
+                            // instead of parking as known_bugs while contract nits get fix
+                            // shards. All three pairs are scanned (a first error with "" source
+                            // must not suppress an attributable error 2), and the quoted
+                            // exemplar is the ATTRIBUTABLE pair's own text — never error 2's
+                            // file on error 1's words. Absent key = old probe: text unchanged.
+                            let attributable = console_error_source(&v);
+                            let src_suffix = match attributable {
+                                Some((_, _, src)) => format!(" (in `{src}`)"),
                                 None => String::new(),
                             };
                             if rows == 0 {
-                                let first_err = v
-                                    .pointer("/consoleErrors/texts/0")
-                                    .and_then(|x| x.as_str())
-                                    .unwrap_or("no console error captured");
+                                let exemplar = match attributable {
+                                    Some((i, text, _)) if i != 0 => {
+                                        format!("First attributable console error: {text}")
+                                    }
+                                    _ => format!(
+                                        "First console error: {}",
+                                        v.pointer("/consoleErrors/texts/0")
+                                            .and_then(|x| x.as_str())
+                                            .unwrap_or("no console error captured")
+                                    ),
+                                };
                                 findings.push(format!(
                                     "the served page renders NO data rows in a real browser — \
-                                     the API works but the frontend shows a user nothing. First \
-                                     console error: {first_err}. Open web/index.html end to end: \
+                                     the API works but the frontend shows a user nothing. \
+                                     {exemplar}. Open web/index.html end to end: \
                                      the page must fetch the documented endpoints and render the \
                                      rows, and every fetch failure must surface a visible state, \
                                      not a blank page.{src_suffix}"
                                 ));
                             } else if console > 0 {
-                                let first_err = v
-                                    .pointer("/consoleErrors/texts/0")
-                                    .and_then(|x| x.as_str())
-                                    .unwrap_or("");
+                                let exemplar = match attributable {
+                                    Some((i, text, _)) if i != 0 => {
+                                        format!("first attributable: {text}")
+                                    }
+                                    _ => format!(
+                                        "first: {}",
+                                        v.pointer("/consoleErrors/texts/0")
+                                            .and_then(|x| x.as_str())
+                                            .unwrap_or("")
+                                    ),
+                                };
                                 findings.push(format!(
                                     "the page renders but the browser console carries {console} \
-                                     error(s) in normal use (first: {first_err}) — fix the JS \
+                                     error(s) in normal use ({exemplar}) — fix the JS \
                                      errors; users hit them as broken interactions.{src_suffix}"
                                 ));
                             } else {
@@ -31351,32 +31371,6 @@ fn group_findings_by_file(
     (groups, unassigned)
 }
 
-/// P1-3, the seam every repair path shares: `group_findings_by_file`, then evidence-based
-/// attribution for what it could not place. Attributed findings JOIN their file's shard (or open
-/// one); what remains is the KNOWN-BUGS list — the caller emits it as an event and dispatches
-/// no whole-tree residue worker for it.
-fn attribute_findings(
-    findings: &[String],
-    all_files: &[String],
-    read_source: &dyn Fn(&str) -> Option<String>,
-) -> (Vec<FileGroup>, Vec<String>) {
-    let (mut groups, unassigned) = group_findings_by_file(findings, all_files);
-    let mut known_bugs: Vec<String> = Vec::new();
-    for f in unassigned {
-        match attribute_gate_finding(&f, all_files, read_source) {
-            Some(file) => match groups.iter_mut().find(|g| g.file == file) {
-                Some(g) => g.findings.push(f),
-                None => groups.push(FileGroup {
-                    file,
-                    findings: vec![f],
-                }),
-            },
-            None => known_bugs.push(f),
-        }
-    }
-    (groups, known_bugs)
-}
-
 /// F781/#16 (GOOSE_SWARM_FIX_SCHED, design commit 4): a fix ROUND as a DAG. One `fix::r{N}::{file}`
 /// root per file group from the normalized disjoint partition (each task owns exactly one file, so
 /// N run concurrently with no race; roots are born Ready via from_specs). P1-3: the
@@ -39578,7 +39572,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                 // runs BEFORE the wave, so a finding the gate could not name a file for rides its
                 // real file's shard instead of waiting for a whole-tree residue worker.
                 let fan_read_cwd = cwd.clone();
-                let (groups, unassigned) =
+                let (groups, unassigned, runner_ups) =
                     attribute_findings(&verdict.findings, &smoke_all_files, &move |rel: &str| {
                         std::fs::read_to_string(fan_read_cwd.join(rel)).ok()
                     });
@@ -39601,8 +39595,13 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                 }
                 if !groups.is_empty() {
                     let baseline = verdict.findings.len();
-                    let taken: std::collections::HashSet<String> =
-                        groups.iter().map(|g| g.file.clone()).collect();
+                    // Fix-1 seam (r5 F4): ownership resolves SEQUENTIALLY here, before the
+                    // concurrent fan — pairings and the attribution runner-up claim in group
+                    // order, so the partition the promotes copy stays disjoint by construction.
+                    let owned_by_shard =
+                        resolve_shard_ownership(&groups, &smoke_all_files, &runner_ups);
+                    let groups: Vec<(FileGroup, Vec<String>)> =
+                        groups.into_iter().zip(owned_by_shard).collect();
                     let me = smoke_fix_dispatcher.clone();
                     let all_files = smoke_all_files.clone();
                     let fan_cwd = cwd.clone();
@@ -39620,7 +39619,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                         sink.as_ref(),
                         fleet_slots.clone(),
                         groups,
-                        move |g, model| {
+                        move |(g, shard_owned), model| {
                             let me = me.clone();
                             let all_files = all_files.clone();
                             let fan_cwd = fan_cwd.clone();
@@ -39630,7 +39629,6 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                             let decisions = decisions.clone();
                             let facts = facts.clone();
                             let sink_r = sink_r.clone();
-                            let taken = taken.clone();
                             async move {
                                 let task_id = format!("complete-fix::{}", g.file);
                                 sink_r.write_value(serde_json::json!({
@@ -39639,7 +39637,6 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                                     "task_id": task_id, "baseline_findings": baseline,
                                 }));
                                 let started = std::time::Instant::now();
-                                let shard_owned = shard_owned_files(&g.file, &all_files, &taken);
                                 let shard_desc = smoke_fix_description(
                                     &g.findings,
                                     complete_lang,
@@ -39698,8 +39695,9 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                                 // same measured reasons: a shard killed at the cap may still hold the
                                 // fix in its shadow, and an agent's "done" may not survive the gate.
                                 // Promoting on `Ok(Ok(_))` alone (what this branch did before) lands
-                                // whatever the agent claims, unverified, on the real tree. The shard
-                                // owns ONE file and the worker is pinned to it (single_owned_file), so
+                                // whatever the agent claims, unverified, on the real tree. The shard's
+                                // owned files are its whole write surface (one file pins the worker via
+                                // single_owned_file; a pairing/runner-up widens it to both sides), so
                                 // the shadow's gate verdict is what a promote would produce for real.
                                 // F883 + F862: the shard's grade was run_smoke_gate — a SUBSET
                                 // of the ruler that produced `baseline` (the round's composite
