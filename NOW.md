@@ -67,7 +67,10 @@ THE r6 OPERATING CONTRACT (Mihai 15:05: "I do expect it to fail first 2-3 runs..
 stuff with stubs, with deterministic fallback garbage... drive it in a way that resolves the real
 issue, not just sweeps it under a rug"): failures are data; every one is root-caused from primary
 material to a NAMED mechanism, fixed where the mechanism lives, traced (gate 8), prover-checked.
-BANNED fix shapes: stubs, 0-happy-path fallbacks, refusing gates, instance patches. THE r6 BUILD WAITS ONLY FOR r5 TO FINISH — a release build starves the fleet (the measured clippy
+BANNED fix shapes: stubs, 0-happy-path fallbacks, refusing gates, instance patches. THE r6 ENGINE IS COMPLETE INCLUDING ALL THREE OF MIHAI'S SAME-DAY ORDERS (research fan +
+hardening; decisions-into-fan + width; supervision lanes — the judge's ~2h of invisible generation
+in r5 becomes watchable lanes). Remaining sequence: panel #5 (supervision grouping, in flight) →
+r5 finishes → score hermetically → build + install → smoke → launch r6. THE r6 BUILD WAITS ONLY FOR r5 TO FINISH — a release build starves the fleet (the measured clippy
 precedent) and install kills the run. r5 completes untouched as the serial baseline.
 
 **r7 CANDIDATE PARKED (DESIGN-JUDGE-DESK.md): the judge desk** — judgment moves to a standing

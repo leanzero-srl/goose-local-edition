@@ -97,6 +97,9 @@ covers them for free. Surgeon #10 the moment #9 lands; panel grouping rides pane
   block to the replan context too.
 - r7: early-skeleton needs a real pre-completed seam in Scheduler::run first (scheduler-surgeon);
   the CLI half follows. Four blockers documented in surgeon #9's handoff.
+- cleanup queue: still-keyless supervision calls (scheduler-side judge(), propose_split,
+  answer_user_question, verify_finding, pillars, reflect_on_success) — need their OWN key class
+  (judge-<task> would double-write against the omni lane); surgeon #11 batch.
 - cleanup queue: partition_delegated_decisions + delegated_decisions_ok lever appear live-dead;
   research_request_block's armed-no-claimed-sections arm points lanes at a request they don't have.
 - (refute-first) the transport inactivity cut: II-7 deleted the provider read window entirely, so
