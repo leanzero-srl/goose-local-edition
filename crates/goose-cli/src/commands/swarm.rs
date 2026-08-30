@@ -20356,6 +20356,52 @@ struct VendorProbeOutcome {
     fetched: usize,
     bytes: usize,
     error: String,
+    /// P1-12: the vendor's OWN row truth, read off page 1 of its advertised GETs — the `total`
+    /// field when the body documents one, and the first collection array's length. The GATE's
+    /// `sync_rows` row compares the app's own row count against these; they are persisted to
+    /// `.swarm/vendor-probe.json` because a number that lives only in an event cannot be read
+    /// by a later gate.
+    vendor_total: Option<i64>,
+    page1_rows: Option<i64>,
+}
+
+/// P1-12, pure: the two row-evidence numbers one JSON body can carry — (`total` field, first
+/// collection array's length over the names this bench family uses). Both None for a body that
+/// is not JSON or carries neither: the caller then abstains rather than inventing a zero.
+fn json_rows_and_total(body: &str) -> (Option<i64>, Option<i64>) {
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(body.trim()) else {
+        return (None, None);
+    };
+    let total = v.get("total").and_then(|t| t.as_i64());
+    let rows = [
+        "data",
+        "items",
+        "rows",
+        "events",
+        "processed",
+        "notifications",
+    ]
+    .iter()
+    .find_map(|k| v.get(*k).and_then(|a| a.as_array()).map(|a| a.len() as i64));
+    (total, rows)
+}
+
+/// P1-12, pure: one number for "how many rows does this body prove" — the documented `total`
+/// outranks a page length (a page is bounded by `limit`; the total is the collection).
+fn json_rows_evidence(body: &str) -> Option<i64> {
+    let (total, rows) = json_rows_and_total(body);
+    total.or(rows)
+}
+
+/// P1-12: the vendor row truth the RUN persisted at BUILD start (`.swarm/vendor-probe.json`,
+/// written beside the vendor_probe event). None when the file is absent or carries no number —
+/// an offline replay of an older tree, or a spec with no vendor.
+fn read_vendor_probe_rows(root: &Path) -> Option<i64> {
+    let text = std::fs::read_to_string(root.join(".swarm").join("vendor-probe.json")).ok()?;
+    let v: serde_json::Value = serde_json::from_str(&text).ok()?;
+    v.get("vendor_total")
+        .and_then(|t| t.as_i64())
+        .or_else(|| v.get("page1_rows").and_then(|t| t.as_i64()))
 }
 
 /// P1-8: fetch the vendor's docs page and ONE page of each GET it advertises, so every worker's
@@ -20409,6 +20455,8 @@ async fn probe_vendor(docs_url: &str, base_url: &str, api_key: Option<&str>) -> 
                 fetched: 0,
                 bytes: 0,
                 error: e,
+                vendor_total: None,
+                page1_rows: None,
             };
         }
     };
@@ -20416,9 +20464,15 @@ async fn probe_vendor(docs_url: &str, base_url: &str, api_key: Option<&str>) -> 
     let endpoints = vendor_docs_get_paths(&docs_text);
     let mut pages: Vec<String> = vec![format!("### GET {docs_url}\n{}", excerpt(&docs_text))];
     let mut fetched = 0usize;
+    let mut vendor_total: Option<i64> = None;
+    let mut page1_rows: Option<i64> = None;
     for path in &endpoints {
         let url = format!("{}{path}", base_url.trim_end_matches('/'));
         if let Ok(body) = fetch(url.clone()).await {
+            // P1-12: read the row truth off the FULL body before it is excerpted for the prompt.
+            let (t, r) = json_rows_and_total(&body);
+            vendor_total = vendor_total.max(t);
+            page1_rows = page1_rows.max(r);
             pages.push(format!("### GET {url}\n{}", excerpt(&body)));
             fetched += 1;
         }
@@ -20438,6 +20492,8 @@ async fn probe_vendor(docs_url: &str, base_url: &str, api_key: Option<&str>) -> 
         fetched,
         bytes,
         error: String::new(),
+        vendor_total,
+        page1_rows,
     }
 }
 
@@ -21969,6 +22025,111 @@ async fn run_spec_contract(root: &Path, spec: &str, lang: TargetLang) -> SpecCon
             },
             None => inconclusive
                 .push("aggregate-truth: probe did not complete — nothing proven".to_string()),
+        }
+    }
+    // GATE ROW `sync_rows` (P1-12 — MILD: a FINDING fed to repair, NEVER a block on shipping).
+    // The top critical of BOTH scored runs — r0 loaded 0 of 12,288 rows and r2 repeated it
+    // exactly (verdict.json sync_completeness 0/12288) — was invisible to this gate whenever the
+    // POST-probe lever was off: nothing issued the spec's own sync and counted the app's rows
+    // against the vendor's. This row does exactly that, unconditionally: vendor truth from the
+    // run's persisted probe (P1-8's .swarm/vendor-probe.json), else asked of the LIVE vendor
+    // now; the advertised sync POSTed once (hang-confirm budget, past the far end of the spec's
+    // own performance ladder, so a merely-slow sync is never blamed); the app's own row count
+    // read back from its advertised reads. Every wording here stays OUTSIDE the
+    // engine_critical needles on purpose — the app RUNS, it just holds nothing — so the row
+    // shards to repair and never blocks the green claim or the ship (pinned by test).
+    if up {
+        let vendor_rows = match read_vendor_probe_rows(root) {
+            Some(n) => Some(n),
+            None => vendor_truth_total(spec).await.map(|(n, _)| n),
+        };
+        let sync_path = spec_post_endpoints(spec)
+            .into_iter()
+            .find(|p| p.to_ascii_lowercase().contains("sync"));
+        match (vendor_rows, sync_path) {
+            (Some(vendor_rows), Some(sync_path)) if vendor_rows > 0 => {
+                let url = format!("http://127.0.0.1:{port}{sync_path}");
+                let mut sync_cmd = tokio::process::Command::new("curl");
+                sync_cmd.args([
+                    "-s",
+                    "-o",
+                    "/dev/null",
+                    "-w",
+                    "%{http_code}",
+                    "-X",
+                    "POST",
+                    "-m",
+                    &HANG_CONFIRM_SECS.to_string(),
+                    &url,
+                ]);
+                let sync_code = smoke_output(sync_cmd, HANG_CONFIRM_SECS + 10)
+                    .await
+                    .and_then(|o| {
+                        String::from_utf8_lossy(&o.stdout)
+                            .trim()
+                            .parse::<u16>()
+                            .ok()
+                    })
+                    .unwrap_or(0);
+                if sync_code == 0 {
+                    inconclusive.push(format!(
+                        "sync_rows: POST {sync_path} did not answer within {HANG_CONFIRM_SECS}s \
+                         — row acquisition unmeasured (a hang is the POST-probe row's finding, \
+                         not this one's)"
+                    ));
+                } else {
+                    let mut app_rows: Option<i64> = None;
+                    for path in &gets {
+                        let Some(p) = probeable_get_path(path) else {
+                            continue;
+                        };
+                        let mut c = tokio::process::Command::new("curl");
+                        c.args(["-s", "-m", "20", &format!("http://127.0.0.1:{port}{p}")]);
+                        if let Some(out) = smoke_output(c, 30).await {
+                            if let Some(n) =
+                                json_rows_evidence(&String::from_utf8_lossy(&out.stdout))
+                            {
+                                app_rows = Some(app_rows.map_or(n, |m: i64| m.max(n)));
+                            }
+                        }
+                    }
+                    match app_rows {
+                        None => inconclusive.push(
+                            "sync_rows: no advertised read returned a countable body (a `total` \
+                             field or a data/items/rows array) — row acquisition unmeasured"
+                                .to_string(),
+                        ),
+                        Some(0) => findings.push(format!(
+                            "sync_rows: the vendor's own collection holds {vendor_rows} row(s), \
+                             the advertised sync (`POST {sync_path}`) answered {sync_code}, and \
+                             the app's OWN reads still report ZERO rows — the sync is not \
+                             acquiring the data. If the sync answers before the work is done, \
+                             the background worker is dying silently: it must not share a \
+                             sqlite connection across threads, must page to the vendor's last \
+                             page with the vendor's REAL key names (`data`, not a guess), and \
+                             must store its own failure instead of swallowing it. Verify by \
+                             POSTing the sync and then counting the app's own list."
+                        )),
+                        Some(_) => {
+                            // AFFIRMATIVE: the sync acquired rows — countable evidence, so it
+                            // strengthens `verified` like any other satisfied check.
+                            verified += 1;
+                        }
+                    }
+                }
+            }
+            (Some(_), Some(_)) => inconclusive.push(
+                "sync_rows: the vendor's page 1 is EMPTY — a zero-row app is legitimate, \
+                 nothing to assert"
+                    .to_string(),
+            ),
+            (None, _) => inconclusive.push(
+                "sync_rows: vendor row truth unavailable (no .swarm/vendor-probe.json and the \
+                 vendor did not answer now) — row acquisition unmeasured"
+                    .to_string(),
+            ),
+            (_, None) => inconclusive
+                .push("sync_rows: the spec advertises no sync POST — nothing to drive".to_string()),
         }
     }
     let mut render_gate_status = if !up {
@@ -35814,7 +35975,31 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                 "fetched": probe.fetched,
                 "bytes": probe.bytes,
                 "error": probe.error,
+                "vendor_total": probe.vendor_total,
+                "page1_rows": probe.page1_rows,
             }));
+            // P1-12: persist the probe's row truth WHERE THE GATE CAN READ IT. The `sync_rows`
+            // gate row compares the app's own row count against what the vendor held, and a
+            // number that lives only in run.jsonl is invisible to run_spec_contract — the same
+            // event-then-thrown-away failure §II.2 catalogues. Best-effort: a write failure
+            // never disturbs the run.
+            {
+                let dir = std::env::current_dir().unwrap_or_default().join(".swarm");
+                let _ = std::fs::create_dir_all(&dir);
+                let _ = std::fs::write(
+                    dir.join("vendor-probe.json"),
+                    serde_json::json!({
+                        "ok": probe.ok,
+                        "docs_url": docs_url,
+                        "base_url": base_url,
+                        "endpoints": probe.endpoints,
+                        "fetched": probe.fetched,
+                        "vendor_total": probe.vendor_total,
+                        "page1_rows": probe.page1_rows,
+                    })
+                    .to_string(),
+                );
+            }
             if probe.ok && !probe.block.trim().is_empty() {
                 if doc_facts.trim().is_empty() {
                     doc_facts = probe.block;
@@ -41959,6 +42144,55 @@ mod audit_regressions {
         ] {
             assert!(!engine_critical(minor), "must ship as a known bug: {minor}");
         }
+    }
+
+    /// P1-12: the row-evidence readers are pinned — `total` outranks a page length (a page is
+    /// bounded by `limit`; the total is the collection), a collection array counts when no total
+    /// is documented, and a body that is not JSON or carries neither ABSTAINS (None), never
+    /// invents a zero — a zero here becomes a repair finding, so an invented one would send a
+    /// fixer at working code.
+    #[test]
+    fn row_evidence_reads_total_over_page_and_abstains_on_neither() {
+        assert_eq!(
+            json_rows_and_total(r#"{"data": [1, 2, 3], "total": 12288, "limit": 64}"#),
+            (Some(12288), Some(3))
+        );
+        assert_eq!(
+            json_rows_evidence(r#"{"data": [1, 2], "total": 12288}"#),
+            Some(12288)
+        );
+        assert_eq!(json_rows_evidence(r#"{"events": [1]}"#), Some(1));
+        assert_eq!(json_rows_evidence(r#"{"data": []}"#), Some(0));
+        assert_eq!(json_rows_evidence(r#"{"status": "ok"}"#), None);
+        assert_eq!(json_rows_evidence("<html>not json</html>"), None);
+        // the persisted probe file round-trips through the gate-side reader
+        let dir = tmp("vendor-probe");
+        assert_eq!(read_vendor_probe_rows(&dir), None, "absent file abstains");
+        std::fs::create_dir_all(dir.join(".swarm")).unwrap();
+        std::fs::write(
+            dir.join(".swarm/vendor-probe.json"),
+            r#"{"ok": true, "vendor_total": 12288, "page1_rows": 64}"#,
+        )
+        .unwrap();
+        assert_eq!(read_vendor_probe_rows(&dir), Some(12288));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// P1-12 (MILD): the sync_rows FINDING repairs and never blocks — its wording must stay
+    /// outside every engine_critical needle, because under P1-9 `passed` means the gate's
+    /// criticals closed and this row must never flip it.
+    #[test]
+    fn the_sync_rows_finding_is_repairable_never_blocking() {
+        let finding = "sync_rows: the vendor's own collection holds 12288 row(s), the advertised \
+                       sync (`POST /api/sync`) answered 200, and the app's OWN reads still report \
+                       ZERO rows — the sync is not acquiring the data.";
+        assert!(
+            !engine_critical(finding),
+            "sync_rows must ship as a known bug, not a critical"
+        );
+        // and it attributes: the endpoint literal is backticked, so the P1-3 evidence rules can
+        // grep the tree for the handler that owns it
+        assert!(finding.contains("`POST /api/sync`"));
     }
 
     /// P1-9: a NON-IMPROVING shard is never promoted — `None` (no shadow / gate could not run)
