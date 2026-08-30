@@ -92,6 +92,10 @@ testgen/review side calls run keyless today (no digest/think.log/forming — inv
 r5 stall ran behind one). Give every supervision model call an activity key (e.g. judge-<task>-lookN,
 replan-rN, testgen-<task>), labeled + grouped as supervision in the panel; the forming hoist then
 covers them for free. Surgeon #10 the moment #9 lands; panel grouping rides panel #5.
+- (refute-first) the transport inactivity cut: II-7 deleted the provider read window entirely, so
+  a connected-but-silent stream hangs forever (A2; the fan multiplies exposure). The candidate: a
+  read timeout that RESETS on every received chunk — bounds dead transport only, never model work
+  (the original §8 reasoning). Must survive a gate-5 refutation before any surgeon touches it.
 - apply_split's partition refusals: zero break-test coverage (feed foreign-file, overlapping,
   non-covering children; watch each refuse) — scheduler-surgeon, before any split latch flips.
 - ReplanContext.goal ships the whole 53.6k-char spec into the replan prompt (a large share of the
