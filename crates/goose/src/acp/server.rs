@@ -95,6 +95,7 @@ mod list_sessions;
 mod load_session;
 mod local_inference;
 mod manage_sessions;
+mod mlx_engine;
 mod new_session;
 mod onboarding;
 mod prompts;
@@ -263,6 +264,7 @@ fn agent_capabilities_meta() -> Option<Meta> {
     if cfg!(feature = "local-inference") {
         goose.insert("localInference".to_string(), serde_json::json!({}));
     }
+    goose.insert("mlxEngine".to_string(), serde_json::json!({}));
 
     if goose.is_empty() {
         return None;

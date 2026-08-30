@@ -7,6 +7,8 @@
 //! unrelated work before). Startup and restart failures carry the engine's stderr tail
 //! so a dead sidecar is a diagnosable event, not a silent absence.
 
+pub mod engine;
+pub mod hf;
 mod memory;
 mod subprocess;
 

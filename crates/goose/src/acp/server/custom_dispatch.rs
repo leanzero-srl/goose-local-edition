@@ -923,4 +923,92 @@ impl GooseAcpAgent {
         self.on_local_inference_builtin_chat_templates_list(req)
             .await
     }
+
+    #[custom_method(MlxEngineStatusRequest)]
+    async fn dispatch_mlx_engine_status(
+        &self,
+        req: MlxEngineStatusRequest,
+    ) -> Result<MlxEngineStatusResponse, agent_client_protocol::Error> {
+        self.on_mlx_engine_status(req).await
+    }
+
+    #[custom_method(MlxEngineMountRequest)]
+    async fn dispatch_mlx_engine_mount(
+        &self,
+        req: MlxEngineMountRequest,
+    ) -> Result<EmptyResponse, agent_client_protocol::Error> {
+        self.on_mlx_engine_mount(req).await
+    }
+
+    #[custom_method(MlxEngineUnmountRequest)]
+    async fn dispatch_mlx_engine_unmount(
+        &self,
+        req: MlxEngineUnmountRequest,
+    ) -> Result<EmptyResponse, agent_client_protocol::Error> {
+        self.on_mlx_engine_unmount(req).await
+    }
+
+    #[custom_method(MlxEngineSettingsReadRequest)]
+    async fn dispatch_mlx_engine_settings_read(
+        &self,
+        req: MlxEngineSettingsReadRequest,
+    ) -> Result<MlxEngineSettingsResponse, agent_client_protocol::Error> {
+        self.on_mlx_engine_settings_read(req).await
+    }
+
+    #[custom_method(MlxEngineSettingsUpdateRequest)]
+    async fn dispatch_mlx_engine_settings_update(
+        &self,
+        req: MlxEngineSettingsUpdateRequest,
+    ) -> Result<MlxEngineSettingsResponse, agent_client_protocol::Error> {
+        self.on_mlx_engine_settings_update(req).await
+    }
+
+    #[custom_method(MlxEngineModelsListRequest)]
+    async fn dispatch_mlx_engine_models_list(
+        &self,
+        req: MlxEngineModelsListRequest,
+    ) -> Result<MlxEngineModelsListResponse, agent_client_protocol::Error> {
+        self.on_mlx_engine_models_list(req).await
+    }
+
+    #[custom_method(MlxEngineModelDeleteRequest)]
+    async fn dispatch_mlx_engine_model_delete(
+        &self,
+        req: MlxEngineModelDeleteRequest,
+    ) -> Result<EmptyResponse, agent_client_protocol::Error> {
+        self.on_mlx_engine_model_delete(req).await
+    }
+
+    #[custom_method(MlxEngineHfSearchRequest)]
+    async fn dispatch_mlx_engine_hf_search(
+        &self,
+        req: MlxEngineHfSearchRequest,
+    ) -> Result<MlxEngineHfSearchResponse, agent_client_protocol::Error> {
+        self.on_mlx_engine_hf_search(req).await
+    }
+
+    #[custom_method(MlxEngineDownloadRequest)]
+    async fn dispatch_mlx_engine_download(
+        &self,
+        req: MlxEngineDownloadRequest,
+    ) -> Result<EmptyResponse, agent_client_protocol::Error> {
+        self.on_mlx_engine_download(req).await
+    }
+
+    #[custom_method(MlxEngineDownloadProgressRequest)]
+    async fn dispatch_mlx_engine_download_progress(
+        &self,
+        req: MlxEngineDownloadProgressRequest,
+    ) -> Result<MlxEngineDownloadProgressResponse, agent_client_protocol::Error> {
+        self.on_mlx_engine_download_progress(req).await
+    }
+
+    #[custom_method(MlxEngineDownloadCancelRequest)]
+    async fn dispatch_mlx_engine_download_cancel(
+        &self,
+        req: MlxEngineDownloadCancelRequest,
+    ) -> Result<EmptyResponse, agent_client_protocol::Error> {
+        self.on_mlx_engine_download_cancel(req).await
+    }
 }

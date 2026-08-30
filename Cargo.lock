@@ -4905,6 +4905,7 @@ dependencies = [
  "goose-mcp",
  "goose-providers",
  "goose-sdk-types",
+ "goose-sidecar",
  "goose-test-support",
  "http 1.4.2",
  "icu_calendar",
@@ -5276,11 +5277,13 @@ name = "goose-sidecar"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "dirs",
  "libc",
  "reqwest 0.13.4",
  "serde",
  "serde_json",
  "sysinfo 0.37.2",
+ "tempfile",
  "tokio",
  "tracing",
 ]
