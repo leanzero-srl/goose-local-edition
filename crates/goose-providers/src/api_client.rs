@@ -14,65 +14,18 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
-const DEFAULT_PROVIDER_TIMEOUT_SECS: u64 = 600;
-
-// reqwest's `.timeout()` is a TOTAL-request deadline — for a streamed completion it caps the ENTIRE stream,
-// so a healthy generation that keeps emitting tokens past the deadline is killed mid-stream (observed as
-// Stream-decode run-kills on long generations; upstream fixed the same class in 7e431ac6f).
-//
-// DEFAULT (7e431ac6f ADAPT): inactivity semantics — `.read_timeout(total)` resets on every received
-// chunk, plus a 30s connect deadline so a DEAD endpoint still fails fast. A slow-but-alive 900s local
-// generation survives; a genuinely silent stream is cut after `total` of no bytes; a down node is
-// caught at connect. `GOOSE_PROVIDER_READ_TIMEOUT_SECS=N` still overrides the inactivity window, and
-// `GOOSE_PROVIDER_TOTAL_TIMEOUT=1` restores the pre-adapt total-deadline behavior verbatim.
-fn read_timeout_override() -> Option<Duration> {
-    std::env::var("GOOSE_PROVIDER_READ_TIMEOUT_SECS")
-        .ok()
-        .and_then(|v| v.trim().parse::<u64>().ok())
-        .filter(|&n| n > 0)
-        .map(Duration::from_secs)
-}
-
-fn total_timeout_forced() -> bool {
-    std::env::var("GOOSE_PROVIDER_TOTAL_TIMEOUT")
-        .map(|v| {
-            matches!(
-                v.trim().to_lowercase().as_str(),
-                "1" | "on" | "true" | "yes"
-            )
-        })
-        .unwrap_or(false)
-}
-
+// TRANSPORT ONLY. A dead ENDPOINT is a transport fact, so the 30s connect deadline stays: a down node
+// fails fast instead of hanging a dispatch. A silent STREAM is NOT a dead model: r2 measured a live
+// PARALLEL:2 slot 581 seconds silent — queued behind its sibling's generation — 19 seconds short of the
+// 600s inactivity window that used to live here discarding real model work (TICK-NOTES 2026-08-29 21:23).
+// So there is no read window, no total deadline, and no env override to re-arm either: a parked override
+// is how caps have returned twice (r3 II-7 / the owner's rule — seconds may be recorded as data, never
+// be an input that cuts model work). Stream liveness belongs to the layers that can actually SEE
+// liveness: the operator tick's lms-ps/WEDGED reading and the judge's production-based looks.
 const CONNECT_TIMEOUT_SECS: u64 = 30;
 
-fn apply_request_timeout(
-    builder: reqwest::ClientBuilder,
-    total: Duration,
-) -> reqwest::ClientBuilder {
-    if total_timeout_forced() {
-        return builder.timeout(total);
-    }
-    let read = read_timeout_override().unwrap_or(total);
-    builder
-        .read_timeout(read)
-        .connect_timeout(Duration::from_secs(CONNECT_TIMEOUT_SECS))
-}
-
-#[cfg(test)]
-mod timeout_semantics_tests {
-    use super::*;
-
-    /// 7e431ac6f ADAPT, both directions — pinned at the DECISION level (reqwest's builder is
-    /// opaque, so the branch inputs are the testable surface).
-    #[test]
-    fn streaming_default_is_inactivity_not_total() {
-        // Default: no env forcing => the read path is taken with read == total.
-        assert!(!total_timeout_forced() || std::env::var("GOOSE_PROVIDER_TOTAL_TIMEOUT").is_ok());
-        // The override parses and filters exactly as before.
-        std::env::remove_var("GOOSE_PROVIDER_READ_TIMEOUT_SECS");
-        assert_eq!(read_timeout_override(), None);
-    }
+fn apply_transport_timeouts(builder: reqwest::ClientBuilder) -> reqwest::ClientBuilder {
+    builder.connect_timeout(Duration::from_secs(CONNECT_TIMEOUT_SECS))
 }
 
 pub type RequestBuilderDecorator =
@@ -84,7 +37,6 @@ pub struct ApiClient {
     auth: AuthMethod,
     default_headers: HeaderMap,
     default_query: Vec<(String, String)>,
-    timeout: Duration,
     tls_config: Option<TlsConfig>,
     request_builder: Option<RequestBuilderDecorator>,
 }
@@ -296,21 +248,7 @@ impl ApiClient {
         auth: AuthMethod,
         tls_config: Option<TlsConfig>,
     ) -> Result<Self> {
-        Self::with_timeout_and_tls(
-            host,
-            auth,
-            Duration::from_secs(DEFAULT_PROVIDER_TIMEOUT_SECS),
-            tls_config,
-        )
-    }
-
-    pub fn with_timeout_and_tls(
-        host: String,
-        auth: AuthMethod,
-        timeout: Duration,
-        tls_config: Option<TlsConfig>,
-    ) -> Result<Self> {
-        let mut client_builder = apply_request_timeout(Client::builder(), timeout);
+        let mut client_builder = apply_transport_timeouts(Client::builder());
 
         if let Some(ref config) = tls_config {
             client_builder = Self::configure_tls(client_builder, config)?;
@@ -324,10 +262,25 @@ impl ApiClient {
             auth,
             default_headers: HeaderMap::new(),
             default_query: Vec::new(),
-            timeout,
             tls_config,
             request_builder: None,
         })
+    }
+
+    /// COMPAT SHIM (r3 II-7). The read/total window this `timeout` used to feed is DELETED — a wall
+    /// clock may not cut model work, and the 600s default it carried was 19s from discarding a live
+    /// 581s-silent slot in r2 — so the value is ignored: only the connect deadline is applied. The
+    /// parameter survives solely because nine provider call sites (openai.rs, databricks.rs,
+    /// databricks_v2.rs, ollama.rs, litellm.rs, huggingface.rs, openai_def.rs, ollama_def.rs,
+    /// dictation/providers.rs) still pass one and those files belong to other r3 lanes; when those
+    /// lanes are free, fold the callers into `new_with_tls` and delete this fn.
+    pub fn with_timeout_and_tls(
+        host: String,
+        auth: AuthMethod,
+        _timeout: Duration,
+        tls_config: Option<TlsConfig>,
+    ) -> Result<Self> {
+        Self::new_with_tls(host, auth, tls_config)
     }
 
     pub fn host(&self) -> &str {
@@ -335,7 +288,7 @@ impl ApiClient {
     }
 
     fn rebuild_client(&mut self) -> Result<()> {
-        let mut client_builder = apply_request_timeout(Client::builder(), self.timeout)
+        let mut client_builder = apply_transport_timeouts(Client::builder())
             .default_headers(self.default_headers.clone());
 
         // Configure TLS if needed
@@ -525,7 +478,6 @@ impl fmt::Debug for ApiClient {
         f.debug_struct("ApiClient")
             .field("host", &self.host)
             .field("auth", &"[auth method]")
-            .field("timeout", &self.timeout)
             .field("default_headers", &self.default_headers)
             .finish_non_exhaustive()
     }

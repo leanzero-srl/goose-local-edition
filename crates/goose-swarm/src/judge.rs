@@ -155,19 +155,21 @@ pub struct JudgeInput {
     pub file_contents: Vec<(String, String)>,
     /// (path, error) for each owned file that exists but fails a syntax/compile check.
     pub compile_errors: Vec<(String, String)>,
-    /// Seconds since this attempt was dispatched.
+    /// Seconds since this attempt was dispatched. DATA ONLY (r3 II-7): recorded into the judge events
+    /// for the operator and the ledgers; read by no verdict branch — a wall clock may not decide
+    /// model work.
     pub elapsed_secs: u64,
     /// True once at least one owned file exists and is non-empty — the worker has produced something.
     pub any_owned_written: bool,
-    /// Seconds since the most-recently-modified owned file changed; `None` if nothing is written yet. A
-    /// large value (or `None`) on an old attempt means the worker is reading/looping, not producing —
-    /// over-reading and a think-loop both surface here as a lack of output.
+    /// Seconds since the most-recently-modified owned file changed; `None` if nothing is written yet.
+    /// DATA ONLY (r3 II-7): a fact about the FILE, recorded for the events; it says nothing about
+    /// whether the WORKER is producing (a reasoning model streams deliberation that touches no file)
+    /// and no verdict branch reads it.
     pub secs_since_last_write: Option<u64>,
     /// How many tool calls (actions) the live worker has taken so far this attempt, if known. A
     /// behavioral progress signal independent of wall-clock: a worker that has taken MANY actions while
-    /// writing NOTHING is thrashing (exploring/re-reading), and that is catchable far sooner than the
-    /// elapsed-time fallback. `None` when no activity heartbeat is available (then only time-based checks
-    /// apply).
+    /// writing NOTHING is thrashing (exploring/re-reading). `None` when no activity heartbeat is
+    /// available — and then no deterministic verdict can fire, because behaviour is the only evidence.
     pub worker_tool_calls: Option<u32>,
     /// How many characters of REASONING the live worker has streamed this attempt, if known.
     ///
@@ -188,24 +190,25 @@ pub struct JudgeInput {
     /// a worker mid-generation from a worker that has stopped.
     pub prev_thinking_chars: Option<u64>,
     /// `worker_tool_calls` AS OF THE PREVIOUS JUDGE OBSERVATION of this same attempt, if there was one.
-    /// `None` on the first look. This is the ACTION counterpart to `prev_thinking_chars` and the input
-    /// `is_still_producing` keys on: reasoning that grows proves only that the model is talking.
+    /// `None` on the first look. This is the ACTION counterpart to `prev_thinking_chars`, and the pair
+    /// (previous, current) is what `is_split_candidate` reads as "producing across looks": reasoning
+    /// that grows proves only that the model is talking.
     pub prev_tool_calls: Option<u32>,
-    /// `elapsed_secs` AS OF that previous observation, so the delta above can be read as a RATE rather
-    /// than as an unbounded "acted at some point since last time I looked".
+    /// `elapsed_secs` AS OF that previous observation. DATA ONLY (r3 II-7): its presence still marks
+    /// "there was a prior look" (see `had_prior_look`), but the seconds value itself is provenance for
+    /// the events — the staleness window that used to read it (`is_still_producing`) is deleted with
+    /// the deadline it served.
     ///
-    /// MEASURED on `swarm-3node-r0`: the gap between consecutive judge observations of the same attempt
-    /// has a median of 60s — but a p90 of 135s and a MAX of 1,267s, because the judge only runs when a
-    /// device is idle and the fleet suppressed 66 of 72 opportunities. 2 of the 21 `is_still_producing`
-    /// firings in that run spanned a gap LONGER than the 420s staleness threshold they were overriding,
-    /// and one of them was `test-meridian`, which had written its files 12 minutes earlier and still held
-    /// a slot at 27 minutes. An observation that old cannot certify that a worker is producing NOW.
+    /// MEASURED on `swarm-3node-r0`, kept as the WHY for never resurrecting a rate read: the gap
+    /// between consecutive judge observations of the same attempt had a median of 60s but a MAX of
+    /// 1,267s, because the judge only runs when a device is idle — an observation that old cannot
+    /// certify anything about NOW, which is one of the two reasons the wall-clock verdicts are gone.
     pub prev_observed_secs: Option<u64>,
     /// How many times THIS task has already been split. Splitting is capped (once) so a task can never be
     /// recursively shattered; a task that has already been split is never split again.
     pub split_count: u32,
-    /// Which attempt of this task is running (0 = first). The nothing-written deadline scales with it —
-    /// see `no_output_deadline_secs`.
+    /// Which attempt of this task is running (0 = first). DATA for the events and the re-dispatch
+    /// record; no deadline scales with it any more.
     pub attempt: u32,
 }
 
@@ -278,30 +281,35 @@ impl JudgeOutcome {
 }
 
 /// Tunables for when the judge runs and when its verdict is allowed to kill a worker.
+///
+/// TIME RULE (r3 II-7, the owner's rule): the seconds fields here are SUMMONS CADENCE — they decide
+/// when the judge LOOKS (scheduler.rs reads them to pick a candidate), which §II.4 permits. No verdict
+/// branch in this module reads seconds any more: every guard that used to be a wall clock is a count
+/// of looks or of actions. A clock may summon a look; it may never decide one.
 #[derive(Clone, Copy, Debug)]
 pub struct JudgeConfig {
-    /// Don't judge a worker until it has been running at least this long (let it get started).
+    /// SUMMONS CADENCE ONLY: scheduler.rs skips judging a worker younger than this (let it get
+    /// started before spending an idle node on it). Read by NO verdict branch — the first-look
+    /// misread this used to also guard inside `deterministic_verdict` is guarded by `had_prior_look`
+    /// (a look count) instead.
     pub min_age_secs: u64,
     /// Minimum confidence for an LLM verdict to trigger a kill + re-dispatch.
     pub intervene_confidence: f32,
     /// Cap on kill+re-dispatch interventions per task, so the judge can never loop a task forever.
     pub max_interventions_per_task: u32,
-    /// Minimum seconds between RE-judging the SAME in-flight task. The judge tick is ~15s; without this an
-    /// OK long worker would be re-judged every tick (wasted calls queued on a busy node while another
-    /// idled). 60s = at most ~1 re-judge/min/task, still catches a worker that goes bad (the idle-based
-    /// worker_timeout is the hard-stall backstop). The FIRST judge is gated only by `min_age_secs`.
+    /// SUMMONS CADENCE ONLY: minimum seconds between RE-judging the SAME in-flight task. The judge
+    /// tick is ~15s; without this an OK long worker would be re-judged every tick (wasted calls
+    /// queued on a busy node while another idled). Bounds when the judge looks, never what it decides.
     pub rejudge_cooldown_secs: u64,
     /// Behavioral over-read trip: this many tool calls (actions) with NO owned file written means the
     /// worker is thrashing, regardless of the clock. A healthy worker — even a slow one composing a big
     /// file — writes within a handful of actions; this catches the "many actions, zero output" worker
-    /// minutes before the elapsed-time fallback would.
+    /// from its own behaviour, which is the only evidence that survives a slow model.
     pub over_read_tool_calls: u32,
-    /// A task that has exhausted its re-dispatch cap AND is still flagged is terminal-failed (not left to
-    /// spin a node to worker_max_turns) — but only once its final attempt has run at least this long, so
-    /// a momentary flag on a just-started final attempt can't cut a task that might still be getting going.
-    pub terminal_min_secs: u64,
-    /// A PRODUCTIVE task (writing, not over-reading) that has run at least this long is a candidate to be
-    /// SPLIT into smaller file-partitioned subtasks instead of being left to crawl. 0 disables splitting.
+    /// RETIRED (r3 II-7): read by nothing — `is_split_candidate` now keys on production across looks,
+    /// never on elapsed seconds. The field survives only because goose-cli's dispatcher still fills it
+    /// from GOOSE_SWARM_SPLIT_SECS/config and that file belongs to another r3 lane; delete both
+    /// together when that lane is free. A value here decides nothing.
     pub split_threshold_secs: u64,
     /// Master gate for task-splitting (M3): when false, `is_split_candidate` never fires and the judge
     /// never proposes a Verdict::Split, regardless of the threshold. Default false until proven live.
@@ -321,11 +329,10 @@ impl Default for JudgeConfig {
             intervene_confidence: 0.8,
             // Allow the judge to help a struggling task more than once: a hard task often needs a
             // second round of "simplify your approach" guidance before it lands. Total work is still
-            // bounded by max_attempts; the 420s thresholds prevent rapid re-killing.
+            // bounded by max_attempts; the rejudge cooldown prevents rapid re-killing.
             max_interventions_per_task: 2,
             rejudge_cooldown_secs: 60,
             over_read_tool_calls: 16,
-            terminal_min_secs: 90,
             split_threshold_secs: 900,
             // Off by default: task-splitting (M3) stays dark until a live run proves the DAG mutation +
             // LLM partition safe end-to-end (M4). The scheduler logic + detection are in place and tested;
@@ -347,15 +354,31 @@ fn is_code_deliverable(path: &str) -> bool {
     CODE.iter().any(|e| p.ends_with(e))
 }
 
-/// Deterministic SPLIT detection: a task is a split candidate when it has been PRODUCING (an owned file is
-/// written and the worker is NOT over-reading) for at least `split_threshold_secs`, owns >= 2 files (so it
+/// LOOK-COUNT GUARD (r3 II-7). The verdict branches used to carry `elapsed_secs >= min_age_secs` — a
+/// wall clock deciding model work, and one of r2's two proven-wrong firings (three false
+/// `over_reading` verdicts on a slot-starved worker that was merely queued behind a sibling). What
+/// that guard actually protected against is a FIRST-look misread — a startup burst read as thrashing
+/// — and a count of looks states that directly: any `prev_*` field present means the judge has
+/// observed this attempt before, so this is at least the second look. Seconds stay in the record as
+/// data; they arm nothing.
+fn had_prior_look(input: &JudgeInput) -> bool {
+    input.prev_tool_calls.is_some()
+        || input.prev_thinking_chars.is_some()
+        || input.prev_observed_secs.is_some()
+}
+
+/// Deterministic SPLIT detection: a task is a split candidate when it is PRODUCING across looks (an
+/// owned file is written AND its action count grew between two judge looks — counts, never seconds;
+/// r3 II-7 removed the `split_threshold_secs` wall clock this used to key on), owns >= 2 files (so it
 /// can actually be partitioned), and has not been split before. This is deliberately distinct from the
-/// over-read/looping paths — a thrashing worker is re-dispatched, not split; splitting is for work that is
-/// genuinely TOO BIG for one worker, not misbehaving.
+/// over-read/looping paths — a thrashing worker is re-dispatched, not split; splitting is for work that
+/// is genuinely TOO BIG for one worker, not misbehaving.
 pub fn is_split_candidate(input: &JudgeInput, cfg: &JudgeConfig) -> bool {
     cfg.split_enabled
-        && cfg.split_threshold_secs > 0
-        && input.elapsed_secs >= cfg.split_threshold_secs
+        && matches!(
+            (input.prev_tool_calls, input.worker_tool_calls),
+            (Some(prev), Some(now)) if now > prev
+        )
         && input.any_owned_written
         && input.owned_files.len() >= 2
         && input.split_count == 0
@@ -389,8 +412,8 @@ pub struct JudgeRequest {
     /// once, so a child born from a split (split_count >= 1) is never split again — preventing runaway
     /// shattering. The scheduler tracks this and the goose-cli judge feeds it into `is_split_candidate`.
     pub split_count: u32,
-    /// Which attempt of this task is running (0 = first). The nothing-written deadline scales with it —
-    /// see `no_output_deadline_secs`.
+    /// Which attempt of this task is running (0 = first). DATA for the events and the re-dispatch
+    /// record; no deadline scales with it any more (r3 II-7).
     pub attempt: u32,
     /// EVERY planned deliverable in the run with what is on disk for it right now — `path
     /// [delivered]`, `[MISSING]`, `[stub]`, `[in progress]`, `[not written yet]` — not just this
@@ -483,19 +506,24 @@ pub fn deterministic_verdict(input: &JudgeInput, cfg: &JudgeConfig) -> Option<Ju
     }
     // Behavioral over-read: the worker has TAKEN many actions (tool calls) yet produced no owned file.
     // This is thrashing — exploring/listing/re-reading instead of writing — and it is visible from the
-    // worker's ACTIVITY long before the elapsed-time fallback below would trip. A healthy worker, even a
-    // slow one composing a large file, makes only a handful of tool calls before its file appears; a
-    // worker on its Nth action with nothing written is over-reading and should be redirected NOW, not in
-    // several more minutes. A small min-age guard keeps a fast startup burst from being misread.
+    // worker's ACTIVITY alone. A healthy worker, even a slow one composing a large file, makes only a
+    // handful of tool calls before its file appears; a worker on its Nth action with nothing written is
+    // over-reading and should be redirected NOW. `had_prior_look` (a look count, r3 II-7 — never a
+    // clock) keeps a fast startup burst on the judge's first look from being misread.
     // The over-read heuristic only makes sense for a worker that OWNS files it should be writing. A task
     // that owns NO files (the integrate-verify sink, a pure verifier) legitimately reads the whole program
     // and RUNS it without ever writing an owned file, so `!any_owned_written` is permanently true for it —
     // applying this gate GUARANTEES it is killed for over_reading once it makes a few tool calls (the
     // observed false-negative: integrate-verify judge_killed x3 -> run reported FAILED though the app works).
-    // No-owned tasks are bounded by the idle-based worker_timeout instead; exempt them here.
-    if !input.owned_files.is_empty()
+    // ARM ONLY ON A CODE DELIVERABLE, for the same measured reason the old deadline carried this
+    // predicate: in the 3 corpus runs where the planner gave the sink `README.md`, "owns a file it has
+    // not written" armed a trip against a verification task and killed the only sink failure in the
+    // corpus into existence. A doc or manifest is not the deliverable that makes "wrote nothing"
+    // diagnostic — without this term the same kill simply recurs through this branch now that the
+    // deadline is gone.
+    if input.owned_files.iter().any(|f| is_code_deliverable(f))
         && !input.any_owned_written
-        && input.elapsed_secs >= cfg.min_age_secs
+        && had_prior_look(input)
         && input
             .worker_tool_calls
             .is_some_and(|n| n >= cfg.over_read_tool_calls)
@@ -517,15 +545,16 @@ pub fn deterministic_verdict(input: &JudgeInput, cfg: &JudgeConfig) -> Option<Ju
     }
     // #134 REASONING-SPIRAL trip (OFF at default cfg.spiral_thinking_chars == 0 → byte-identical): a worker
     // that has emitted a LOT of thinking with ZERO tool calls and NO file is spiralling (cli-entry: 20 799
-    // thinking chars, stream then died mid-token, never wrote main.go). Catch it EARLY — at the char cap
-    // (~60-120s) — with the forceful "write the simplest version NOW" nudge, instead of burning the whole
-    // idle window. Deterministic: a char count creates the verdict, never a model opinion.
+    // thinking chars, stream then died mid-token, never wrote main.go). Catch it EARLY — at the char cap —
+    // with the forceful "write the simplest version NOW" nudge. Deterministic: a char count creates the
+    // verdict, never a model opinion, and `had_prior_look` (looks, not seconds — r3 II-7) is the
+    // first-look guard.
     if cfg.spiral_thinking_chars > 0
-        && !input.owned_files.is_empty()
+        && input.owned_files.iter().any(|f| is_code_deliverable(f))
         && !input.any_owned_written
         && input.worker_tool_calls == Some(0)
         && input.worker_thinking_chars.unwrap_or(0) >= cfg.spiral_thinking_chars
-        && input.elapsed_secs >= cfg.min_age_secs
+        && had_prior_look(input)
     {
         return Some(JudgeOutcome {
             verdict: Verdict::OverReading,
@@ -542,316 +571,46 @@ pub fn deterministic_verdict(input: &JudgeInput, cfg: &JudgeConfig) -> Option<Ju
             deterministic: true,
         });
     }
-    // Blind fallback: no file on disk and the clock ran out. Unlike the branch above this one has NO
-    // evidence term — it fires on a stopwatch alone, so it is the ONLY branch that can ever reach a worker
-    // whose tool_calls are 0. Two corrections to that bluntness, both inert at the default config:
-    //   * the hint no longer ASSERTS over-reading. A worker with 0 tool calls has read nothing, and
-    //     telling it to "stop exploring/re-reading" is a false diagnosis injected as a supervisor note.
-    // I ALSO TRIED widening this deadline per owned file and REMOVED it. The deadline is on
-    // TIME-TO-FIRST-BYTE, and how many files a task owes in total has nothing to do with when it writes
-    // its FIRST one — the scaling was incoherent on its own terms. MEASURED, the run that would have used
-    // it: a 4-file task wrote its first file at ~140s and was SPLIT, while the task that died at 457s had
-    // made ZERO tool calls. tool_calls is the discriminator, not file count. Widening the clock would only
-    // buy a spiralling worker more silence.
-    // ARM ONLY ON A CODE DELIVERABLE. "You have read a lot and written nothing" is a defect for a
-    // worker whose job is to produce source. It is the JOB DESCRIPTION of `integrate-verify`, which
-    // runs the assembled app, reads what it finds, and fixes failures.
+    // THE BLIND NO-OUTPUT DEADLINE IS DELETED, not retuned (r3 II-7, the owner's rule: nothing
+    // time-related may cut, restart, retire or verdict model work — local models are slow and that is
+    // expected). This was the 420s-x-attempt stopwatch: `no_output_deadline_secs(min_age_secs.max(420),
+    // attempt, is_still_producing(..))`, the ONE branch that fired on a clock with no evidence term.
+    // Twice measured wrong, from opposite directions:
+    //   * F201: time-to-first-owned-write is p90 475s for implementers, p90 831s (max 1099s) for
+    //     test-authors — the constant sat BELOW the p90 of BOTH populations it judged, and all 11
+    //     archived trips fired in 420-485s.
+    //   * r2: three false `over_reading` verdicts on a slot-starved worker producing zero bytes because
+    //     it was QUEUED BEHIND A SIBLING's generation (PARALLEL:2) — stillness that no clock can tell
+    //     from death, and each false verdict's text then threaded into the next dispatch as prior_hint.
+    // The deterministic no-first-write split routing (F857a) and the composed no-file hint died with the
+    // branch, because only this clock ever reached them.
     //
-    // MEASURED across 13 runs, perfect separation. The sink normally owns nothing and the gate stays
-    // disarmed — 7 runs, 1 attempt each, ZERO over-read kills. In 3 runs the planner happened to give
-    // it `README.md`, and in two of those the gate armed and killed it repeatedly with the canned
-    // hint "You have produced no file yet. STOP reading/deliberating ... WRITE your file(s) NOW" —
-    // 2 kills and 3 kills, attempts exhausted, and the 3-kill run is the ONLY sink failure in the
-    // corpus. A verification task was told to stop verifying and write a README.
+    // What owns the nothing-written case now — all evidence, none of it seconds:
+    //   * the behavioural over-read trip above (>= over_read_tool_calls actions, nothing written, look
+    //     >= 2): a worker that ACTS without producing is caught from its behaviour;
+    //   * the K zero-production-looks counter (r3 II-7): K consecutive judge looks with nothing produced,
+    //     each look counted ONLY while `lms ps` reads the worker's node IDLE/absent (GENERATING or
+    //     PROCESSINGPROMPT ⇒ hold — the r2 starved-sibling shape, never a verdict). That counter lives
+    //     with the dispatcher's look events and is SUMMONS-ONLY until K is derived from r2's healthy
+    //     inter-delta gap distribution: an unmeasured K may summon a semantic look, never verdict;
+    //   * the semantic judge on an idle node, the recurrence meter (content, not time), and the
+    //     operator tick's lms-ps/WEDGED reading for transport-level death.
     //
-    // A doc or manifest is not the deliverable that makes "wrote nothing" diagnostic, so it must not
-    // arm the trip. This is the same class as the worker prompt handing implementer rules to a
-    // test-author: a rule written for one kind of task applied to another.
-    let owns_code = input.owned_files.iter().any(|f| is_code_deliverable(f));
-    // EVIDENCE TERM ON THE DEADLINE. This branch used to be a pure stopwatch: it killed at 420s without
-    // ever asking whether the worker was progressing. MEASURED (F201), time-to-first-owned-write across
-    // the corpus is p90 475s for implementers and p90 831s (max 1099s) for test-authors — the constant
-    // sat BELOW the p90 of BOTH populations it judged, and all 11 trips fired in 420-485s. A worker that
-    // is still PRODUCING therefore gets double the budget, while one that has gone quiet dies on the
-    // original schedule. Combined with `is_still_producing` keying on ACTIONS rather than reasoning, a
-    // spiral (thinking climbs, tool calls flat) is NOT producing and still dies at 420s — which is the
-    // case this branch exists for.
-    let deadline = no_output_deadline_secs(
-        cfg.min_age_secs.max(420),
-        input.attempt,
-        is_still_producing(input, cfg),
-    );
-    if owns_code && !input.any_owned_written && input.elapsed_secs >= deadline {
-        let read_nothing = input.worker_tool_calls == Some(0);
-        // F857a (speed hunt 2026-08-16): a no-first-write kill on a MULTI-FILE task used to
-        // re-dispatch the same shape, and the retry re-earned split eligibility from zero —
-        // MEASURED: web-assets burned 454s proven-idle, then 583s more before the judge finally
-        // split it; the children then finished in 128-271s each. The attempt has proven the shape
-        // too big to start, the partition is deterministic (one child per owned code file, capped
-        // at 4 by chunking), and apply_split's validator makes a malformed partition a no-op — so
-        // route the verdict straight to the split instead of paying the same 454s again. Same-shape
-        // retry remains for single-file tasks and previously-split children.
-        // Partition ALL owned files, never only the code files (adversarial review: apply_split
-        // requires the children's union to equal the parent's files EXACTLY; a code-only partition
-        // of a task that also owns an .html/.json/.md is refused as a no-op every judge pass, and
-        // the refused verdict replaced the kill — a proven-idle worker with NO intervention, ever).
-        // The >=2 CODE files condition still gates the branch (a partition must have real work on
-        // both sides); the chunking then covers everything the parent owned.
-        let code_files = input
-            .owned_files
-            .iter()
-            .filter(|f| is_code_deliverable(f))
-            .count();
-        if code_files >= 2 && input.split_count == 0 && cfg.split_enabled {
-            let n_children = code_files.min(4);
-            let chunk = input.owned_files.len().div_ceil(n_children);
-            let children: Vec<ChildSpec> = input
-                .owned_files
-                .chunks(chunk)
-                .enumerate()
-                .map(|(i, fs)| ChildSpec {
-                    id: format!("{}-part{}", input.task_id, i + 1),
-                    files: fs.to_vec(),
-                    depends_on: Vec::new(),
-                })
-                .collect();
-            return Some(JudgeOutcome {
-                verdict: Verdict::Split,
-                confidence: 1.0,
-                hint: format!(
-                    "{} Splitting deterministically: {} owned files -> {} children, one worker \
-                     per part.",
-                    no_file_hint(input, read_nothing),
-                    input.owned_files.len(),
-                    n_children
-                ),
-                established: String::new(),
-                next_action: String::new(),
-                proposed_split: Some(children),
-                deterministic: true,
-            });
-        }
-        return Some(JudgeOutcome {
-            // HONEST LABEL. `read_nothing` is computed on the line above and the hint already branches on
-            // it, but the verdict was stamped `OverReading` either way — so the run log recorded
-            // "over_reading" about workers whose tool-call count was ZERO (9 of 11 measured). That label
-            // is the primary key of every downstream analysis and it produced three false causal chains
-            // in this campaign before anyone checked the counter beside it.
-            verdict: if read_nothing {
-                Verdict::NoFirstWrite
-            } else {
-                Verdict::OverReading
-            },
-            confidence: 0.9,
-            hint: no_file_hint(input, read_nothing),
-            established: String::new(),
-            next_action: String::new(),
-            proposed_split: None,
-            deterministic: true,
-        });
-    }
-    // Finalize-spin: the worker DID produce its owned file(s) but has not touched them in a long
-    // time while still running — it is stuck re-reading or re-verifying instead of reporting done.
-    // The over-read check above can't see this (a file exists), so catch it here. Excludes the
-    // integrate-verify sink, which legitimately edits OTHER modules' files for a long stretch and so
-    // can leave its own file untouched while still doing real work.
-    // ACCEPT before Looping. A worker that has stopped touching files is only "spinning" if the work is
-    // UNFINISHED; if every owned file exists and none fails its compile check, it is finished and the
-    // honest verdict is DONE. MEASURED (F165): test-meridian was killed three times and recorded a
-    // TERMINAL FAILURE while its file sat on disk with 8 passing test functions that the crunched app
-    // still runs. The kill path was the judge's only lever, so "looks complete" and "looks stuck" both
-    // resolved to kill. This branch is deliberately placed FIRST and gated on the same evidence the
-    // spin branch uses, so the only cases it takes are the ones that would otherwise burn an attempt.
-    // THE SINK HAD NO REACHABLE VERDICT AT ALL, AND THAT IS WHY A TIMER KILLED IT.
+    // THE FINALIZE-SPIN / ACCEPT / LOOPING TAIL IS GONE TOO, and the history matters enough to keep:
+    // three verdicts here once fired off `secs_since_last_write >= 420`, and the scheduler answered an
+    // Accept with `h.abort()` plus a DONE record — a wall clock truncating the longest call in the run
+    // and writing it into the log as finished. The predicate guarding them counted TOOL CALLS, so a
+    // worker sitting inside one long `pytest`, `cargo build` or `npm install` looked "still" while
+    // being extremely busy. F165 (test-meridian recorded a TERMINAL FAILURE with 8 passing test
+    // functions on disk) is why Accept exists as a VERDICT VARIANT at all — the judge model may still
+    // conclude it; no clock may.
     //
-    // Every gate above needs owned files — over-read, the spiral trip, finalize-spin and the Accept
-    // branch below all require a non-empty `owned_files`, and Accept and Looping exclude
-    // `integrate-verify` by name on top of that. `secs_since_last_write` is derived only from owned
-    // files, so it is None for the sink too. The scheduler's own comment records the consequence:
-    // "leave it to worker_timeout as the hard-stall backstop" — the judge's only lever on the join was
-    // a kill, and a kill re-dispatches it, which redoes the ENTIRE join from zero.
-    //
-    // `is_still_producing` is the one predicate that works here, because it reads TOOL CALLS from the
-    // activity digest rather than files on disk. So the join IS decidable: one that has taken real
-    // actions and then gone quiet has done work, and the honest verdict is Accept — keep what it
-    // established — not a kill that throws all of it away.
-    //
-    // Accept is excluded from the intervention path by `is_problem()`, so this branch can never fail
-    // or re-dispatch a task. The worst case is stopping a join that would have continued, and that is
-    // bounded on both sides: `green_blocking_failed` already excludes owns-nothing tasks from the
-    // green veto so an accepted join gates nothing, and the deterministic smoke gate remains the
-    // correctness backstop. Against the alternative — a kill that ALSO does not finish the job and
-    // additionally burns a full restart — accepting is strictly better.
-    // REMOVED THE 420-SECOND WALL. This branch fired on `elapsed_secs >= min_age_secs.max(420)` and
-    // returned Accept, which the scheduler answers with `h.abort()` and a DONE record — a stopwatch
-    // truncating the longest call in the run and writing it into the log as finished.
-    //
-    // With the sink cap and the idle watchdog gone this was the last wall-clock terminator on a model
-    // call, and it was the worst-shaped one: `is_still_producing` counts TOOL CALLS, so a sink sitting
-    // inside one long `pytest`, `cargo build` or `npm install` registers nothing new, goes false at
-    // 420s, and is cut in the middle of the command it was asked to run.
-    //
-    // Disabled by a condition that can never hold rather than deleted, because the surrounding
-    // reasoning about Accept (it gates nothing, the smoke gate backstops) is worth keeping next to the
-    // decision that retired it.
-    // THE THREE 420-SECOND STOPWATCH VERDICTS ARE GONE, not disarmed.
-    //
-    // Each returned Accept or Looping off `secs_since_last_write >= 420`, and the scheduler answered an
-    // Accept with `h.abort()` plus a DONE record — a wall clock truncating the longest call in the run and
-    // writing it into the log as finished. `is_still_producing` counts TOOL CALLS, so a worker sitting
-    // inside one long `pytest`, `cargo build` or `npm install` looked "still" while being extremely busy.
-    //
-    // They were parked behind `&& false` so the surrounding reasoning stayed next to the decision that
-    // retired them. That was a mistake of its own: clippy reads `if false && ..` as a logic bug, and the
-    // lint only surfaced once `cargo fmt` reflowed the constant to the front of the condition — so the
-    // parked code was one reformat away from breaking the build. Dead code does not get to keep living
-    // as a comment attached to an expression; the reasoning is preserved here, and git holds the rest.
-    //
-    // What still catches a genuinely stuck call: the recurrence meter (content, not time), the semantic
-    // judge on an idle node, and the transport's own inactivity read-timeout, which is where a dead
-    // socket belongs.
+    // They were first parked behind `&& false` so the reasoning stayed next to the decision. That was
+    // a mistake of its own: clippy reads `if false && ..` as a logic bug, and the lint only surfaced
+    // once `cargo fmt` reflowed the constant to the front of the condition — the parked code was one
+    // reformat away from breaking the build. Dead code does not get to keep living as a comment
+    // attached to an expression; the reasoning is preserved here, and git holds the rest.
     None
-}
-
-/// How long a worker that owns code may go without producing it, GIVEN which attempt this is.
-///
-/// It used to be flat: `min_age_secs.max(420)`, doubled while the worker is still producing. So every
-/// attempt got the same seven minutes, including the attempt dispatched *because* the previous one was
-/// killed at seven minutes for exactly this.
-///
-/// MEASURED on `baseline-n3-r0`, and it is the run's entire critical path. `test-api-error-handling`
-/// consumed 51.7 minutes of a 63.4-minute execute phase — 82% of it — on one node while the other two
-/// had nothing to do:
-///
-///   attempt 0  7.2 min  KILLED  "none of the files you own exists on disk yet, though you have run 2 command(s)"
-///   attempt 1  9.1 min  KILLED  the IDENTICAL diagnosis, after receiving attempt 0's hint
-///   attempt 2 35.4 min  COMPLETED
-///
-/// The obvious reading is that the worker needed a firmer hand, and the obvious fix is to kill it
-/// sooner on a retry. The digest says the opposite, and this is why the rule reads the way it does:
-/// ALL THREE ATTEMPTS RAN THE SAME THREE-STEP SHAPE — two shell commands, then `write`. Attempts 0 and
-/// 1 were killed *before reaching the write*. Attempt 2 was not observed until 16.8 minutes in, wrote
-/// its file, and finished. The only attempt that was left alone is the only attempt that worked.
-///
-/// So the kill was not correcting a pathology, it was restarting a process that had not finished its
-/// second step — and the corrective hint had already been delivered to attempt 1 (the scheduler
-/// threads `prior_hints` onto the re-dispatch) and changed nothing. Two identical kills producing two
-/// identical behaviours is evidence that the intervention does not work on this failure, and the
-/// engine's answer to "the intervention is not working" must not be a third, faster intervention.
-///
-/// Growing rather than shrinking also keeps the guard honest where it EARNS its keep: attempt 0 is
-/// unchanged at 420s, so a genuinely stuck first attempt is caught exactly as before. Only a task that
-/// has already paid for a kill buys more rope, and it is capped at 3x so a truly wedged worker is still
-/// bounded — `worker_timeout_secs` and the behavioural over-read gate remain in force throughout.
-fn no_output_deadline_secs(base: u64, attempt: u32, still_producing: bool) -> u64 {
-    let rope = 1 + attempt.min(2) as u64;
-    base.saturating_mul(rope)
-        .saturating_mul(if still_producing { 2 } else { 1 })
-}
-
-/// The nothing-written correction, COMPOSED — and in particular, it STATES what it observes instead
-/// of DIAGNOSING it.
-///
-/// The two canned variants it replaces fired 18 times between them, and the first one asserted
-/// *"you have taken no action at all — you are deliberating instead of building"*. The comment three
-/// branches above already warns about exactly this: *"the hint no longer ASSERTS over-reading … that
-/// is a false diagnosis injected as a supervisor note."* The same objection applies to asserting
-/// deliberation, and F131 measured the population it is aimed at: workers killed here carry a MEDIAN
-/// of 1,229 thinking chars (max 4,519). Some really have been reasoning hard; some produced almost
-/// nothing (one had 285 chars over 420 s). One sentence cannot be true of both, so it states the
-/// counts and lets the worker draw the conclusion.
-///
-/// It also names THE FILES THIS WORKER OWES. The canned versions said "your owned file(s)" to a
-/// worker whose entire problem is not having started — and the engine has the paths right there.
-///
-/// Context is kept deliberately SHORT: the observed counts, the owed paths, and one next action. A
-/// supervisory nudge that arrives as a wall of text is another way to bog a worker down.
-fn no_file_hint(input: &JudgeInput, read_nothing: bool) -> String {
-    let owed: Vec<String> = input
-        .owned_files
-        .iter()
-        .filter(|f| is_code_deliverable(f))
-        .map(|f| format!("`{f}`"))
-        .collect();
-    let first = owed.first().cloned().unwrap_or_else(|| "your file".into());
-    let mins = format!("{:.1}", input.elapsed_secs as f64 / 60.0);
-
-    // THE OBSERVATION — counts, not character judgements.
-    let mut h = format!("After {mins} minutes, none of the files you own exists on disk yet");
-    match (read_nothing, input.worker_thinking_chars) {
-        (true, Some(t)) if t > 0 => h.push_str(&format!(
-            ", and you have run no command — you have emitted {t} characters of reasoning instead"
-        )),
-        (true, _) => h.push_str(", and you have run no command at all"),
-        (false, _) => h.push_str(&format!(
-            ", though you have run {} command(s)",
-            input.worker_tool_calls.unwrap_or(0)
-        )),
-    }
-    h.push('.');
-
-    // THE OWED DELIVERABLE, by name.
-    if !owed.is_empty() {
-        h.push_str(&format!("\n\nYou owe: {}.", owed.join(", ")));
-    }
-
-    // ONE next action, concrete and small enough to be done immediately.
-    h.push_str(&format!(
-        "\n\nWrite {first} NOW, in one `write`, using the spec and the dependency APIs already in \
-         your prompt — there is nothing further to look up. If the task feels too large, write the \
-         SIMPLEST version that satisfies the spec and refine it after; a small working file beats a \
-         plan you never wrote down. Do not read anything before that first write."
-    ));
-    h
-}
-
-/// Is this worker STILL GENERATING, as opposed to stopped?
-///
-/// `secs_since_last_write` is a fact about the FILE. It says nothing about whether the WORKER is
-/// working, and on a reasoning model those two routinely disagree: the model streams deliberation
-/// that is neither a tool call nor a write, so a worker mid-generation looks identical to a dead one
-/// through every file-shaped lens.
-///
-/// MEASURED, and this is why the guard exists (F143). `test-meridian` was killed for "stuck
-/// re-reading or re-verifying" at a moment when its tool_calls had been **3, unchanged**, across
-/// three consecutive observations while its reasoning climbed **5,818 -> 8,784 characters**. It ran
-/// no commands; it could not have been re-reading. It was generating, and it was killed for it —
-/// three attempts, then a terminal failure.
-///
-/// The rule is the DELTA, never the level. A worker that has emitted a great deal of reasoning and
-/// then STOPPED is exactly the case the spin trip is for, and suppressing that kill would be wrong —
-/// so growth between two observations is required, and a flat count (or a first look, where there is
-/// no previous value) leaves the trip armed.
-///
-/// This does not remove a backstop. `worker_timeout_secs`, the progress watchdog and the #134 spiral
-/// trip all still bound a worker that generates forever; this only declines to call a producing
-/// worker "stuck".
-fn is_still_producing(input: &JudgeInput, cfg: &JudgeConfig) -> bool {
-    // ACTIONS, not reasoning. Keying this on thinking growth made it permanently true for a spiral, since
-    // a spiral's thinking climbs monotonically BY DEFINITION — MEASURED (F191): test-api wrote its file at
-    // 408s then ran 595s with ZERO tool calls while thinking went 2,897 -> 22,627, and every trip that
-    // could have caught it was blocked by this predicate. A tool call is the only signal that separates a
-    // worker doing work from one talking to itself.
-    //
-    // Verified not to re-introduce F163's false kill (F195): that case had flat thinking AND flat tool
-    // calls, and was protected by `any_owned_written == false` in all three flat observations, so this
-    // predicate never got a vote there. The change is a strict narrowing.
-    //
-    // AND THE INCREASE MUST BE RECENT. The pair says "acted since I last looked", which is only the same
-    // thing as "producing now" while the looks are close together. The judge runs only on an idle device,
-    // so under load the gap stretches — measured to 1,267s in one run — and a single tool call anywhere
-    // inside a 21-minute window then reads as active generation, blocking the Accept branch and DOUBLING
-    // the stall deadline for a worker that finished long ago. The window is `cfg.min_age_secs.max(420)`,
-    // the SAME constant the Accept branch and the deadline use, deliberately: a predicate must not be
-    // allowed to override a staleness threshold using evidence coarser than that threshold. No new
-    // literal, and the rule stays true if that constant is ever retuned.
-    match (input.prev_tool_calls, input.worker_tool_calls) {
-        (Some(prev), Some(now)) if now > prev => match input.prev_observed_secs {
-            Some(then) => input.elapsed_secs.saturating_sub(then) <= cfg.min_age_secs.max(420),
-            None => true,
-        },
-        _ => false,
-    }
 }
 
 #[cfg(test)]
@@ -864,8 +623,8 @@ mod tests {
     /// That is exactly what a spiral looks like — a spiral's reasoning grows monotonically BY
     /// DEFINITION. MEASURED (F191): `test-api` wrote its file at 408s then ran 595s with ZERO tool
     /// calls while thinking climbed 2,897 -> 22,627, and every trip that could have caught it was
-    /// suppressed by this rule. `is_still_producing` now keys on ACTIONS, so the case below must be
-    /// CAUGHT, not protected. Keeping the old assertion would have pinned the defect in place.
+    /// suppressed by that rule. Production predicates key on ACTIONS, so the case below must never
+    /// be PROTECTED by its reasoning volume. Keeping the old assertion would have pinned the defect.
     #[test]
     fn climbing_reasoning_alone_does_not_protect_a_worker() {
         let cfg = JudgeConfig::default();
@@ -909,15 +668,23 @@ mod tests {
             "a worker that merely went quiet must not be terminated by a clock"
         );
 
+        // REWRITTEN WITH ITS SUBJECT (r3 II-7). This block expected a stopped, nothing-written
+        // worker to be KILLED — by the 420s-x-attempt deadline, the last clock verdict, now deleted
+        // (r2 fired it falsely three times on a slot-starved worker queued behind a PARALLEL:2
+        // sibling). Three tool calls is below the behavioural over-read bar, so there is no
+        // evidence-based verdict either: the honest deterministic answer is silence, and the case
+        // belongs to the K zero-production-looks summons (lms-ps-gated, verdict-less until K is
+        // derived from r2) and the semantic judge.
         let mut stopped_unfinished = mk("test-meridian", false, None, 900);
         stopped_unfinished.worker_tool_calls = Some(3);
         stopped_unfinished.prev_tool_calls = Some(3);
         stopped_unfinished.prev_observed_secs = Some(840);
         stopped_unfinished.worker_thinking_chars = Some(8784);
         stopped_unfinished.prev_thinking_chars = Some(8784);
-        let killed = deterministic_verdict(&stopped_unfinished, &cfg)
-            .expect("a stopped worker with NOTHING written is still killed");
-        assert!(killed.verdict.is_problem(), "{:?}", killed.verdict);
+        assert!(
+            deterministic_verdict(&stopped_unfinished, &cfg).is_none(),
+            "below the behavioural bar there is no evidence, and a clock may not stand in for it"
+        );
 
         // A first look with no delta used to leave the stillness trip ARMED. That trip is disarmed, so
         // what must hold now is the opposite and stronger property: an absent observation cannot
@@ -929,45 +696,6 @@ mod tests {
                 .as_ref()
                 .is_none_or(|o| o.verdict != Verdict::Accept && o.verdict != Verdict::Looping),
             "absence of a prior observation must not terminate a call"
-        );
-    }
-
-    /// The two "produced no file yet" variants asserted a MOTIVE ("you are deliberating") that F131
-    /// measured to be true of only part of the population — median 1,229 thinking chars, but one
-    /// worker at 285 over 420s. A hint must STATE the counts and name the owed paths, and a heavy
-    /// thinker must not read the same as a worker that did nothing at all.
-    #[test]
-    fn a_no_file_hint_states_counts_and_names_the_owed_files() {
-        let mut heavy = mk_no_write(2, 900, 0);
-        heavy.worker_thinking_chars = Some(4519);
-        let hh = no_file_hint(&heavy, true);
-        assert!(
-            hh.contains("4519 characters of reasoning"),
-            "state the real volume: {hh}"
-        );
-        assert!(hh.contains("f0.py"), "name the owed file: {hh}");
-        assert!(
-            !hh.contains("deliberating instead of building"),
-            "do not assert a motive: {hh}"
-        );
-
-        let mut idle = mk_no_write(2, 900, 0);
-        idle.worker_thinking_chars = Some(0);
-        let hi = no_file_hint(&idle, true);
-        assert_ne!(
-            hh, hi,
-            "a heavy thinker and an idle worker must not get the same text"
-        );
-
-        let busy = mk_no_write(2, 900, 12);
-        let hb = no_file_hint(&busy, false);
-        assert!(
-            hb.contains("12 command(s)"),
-            "state the real command count: {hb}"
-        );
-        assert_ne!(
-            hb, hh,
-            "acted-but-wrote-nothing differs from thought-but-acted-nothing"
         );
     }
 
@@ -1005,16 +733,13 @@ mod tests {
         }
     }
 
-    /// REGRESSION — the measured kill. baseline3's `api-app` owned 4 files, had made 0 tool calls (a
-    /// reasoning model streams thinking, which the digest could not see), and was killed at 457s / 450s /
-    /// 430s across all three attempts. At the default config the flat 420s deadline still fires, exactly
-    /// as it did — this pins today's behaviour so the grace lever's effect is visible as a DIFF.
     /// THE SINK WAS KILLED FOR DOING ITS JOB. `integrate-verify` runs the assembled app and fixes
     /// failures; it writes no source. MEASURED across 13 runs: when it owned nothing the over-read
     /// gate stayed disarmed (7 runs, 1 attempt, zero kills), and in the 3 runs where the planner gave
     /// it `README.md` the gate armed — 2 and 3 kills, attempts exhausted, and the 3-kill run is the
     /// only sink failure in the corpus. A doc is not the deliverable that makes "wrote nothing"
-    /// diagnostic.
+    /// diagnostic. Since r3 II-7 this predicate guards the BEHAVIOURAL over-read trip (the deadline
+    /// it used to guard is deleted), so the same kill cannot recur through the surviving branch.
     #[test]
     fn over_read_does_not_arm_on_a_doc_only_task() {
         assert!(!is_code_deliverable("README.md"));
@@ -1023,32 +748,37 @@ mod tests {
         assert!(is_code_deliverable("vendorsync/meridian.py"));
         assert!(is_code_deliverable("cmd/app/main.go"));
         assert!(is_code_deliverable("src/lib.rs"));
+        // ...and the live branch respects it: a README-owning sink thrashing past the tool-call bar
+        // on its second look still gets NO verdict — verification reads a lot, and that is its job.
+        let cfg = JudgeConfig::default();
+        let mut sink = mk("integrate-verify", false, None, 900);
+        sink.owned_files = vec!["README.md".to_string()];
+        sink.worker_tool_calls = Some(40);
+        sink.prev_tool_calls = Some(10);
+        sink.prev_observed_secs = Some(840);
+        assert!(deterministic_verdict(&sink, &cfg).is_none());
     }
 
+    /// INVERTED WITH ITS SUBJECT (r3 II-7). The doc-only half of the old regression stays below;
+    /// the kill half pinned the flat 420s deadline killing `api-app`'s zero-tool-call reasoning
+    /// worker at 457s — the exact shape r2 then proved wrong three more times on a slot-starved
+    /// worker queued behind a PARALLEL:2 sibling. The deadline is deleted, so the property is now
+    /// the opposite and holds at every age and look: a worker that has DONE nothing carries no
+    /// evidence, and no seconds value may stand in for evidence. Its case belongs to the K
+    /// zero-production-looks summons (each look gated on `lms ps` IDLE/absent; verdict-less until K
+    /// is derived from r2's inter-delta gaps) and to the semantic judge.
     #[test]
-    fn blind_deadline_kills_a_zero_tool_call_worker_at_420s_by_default() {
+    fn no_clock_ever_kills_a_zero_tool_call_worker() {
         let cfg = JudgeConfig::default();
-        let out =
-            deterministic_verdict(&mk_no_write(4, 457, 0), &cfg).expect("killed, as measured");
-        // NoFirstWrite, not OverReading: a worker with ZERO tool calls did not over-read, it read
-        // NOTHING. Labelling it `over_reading` misdirects every later reader of the log, which is
-        // why the verdict was split in two. The remedies differ.
-        assert_eq!(out.verdict, Verdict::NoFirstWrite);
-        // ...and the hint must NOT accuse a worker that has read nothing of re-reading.
-        //
-        // This assertion used to pin the exact canned sentence ("taken no action at all"), which made
-        // it a test of the WORDING rather than of the rule. The wording is now composed per worker
-        // (F141/F142), so it asserts the INTENT the comment above always stated: state the zero-command
-        // fact, and never accuse this worker of exploring or re-reading — it has done neither.
-        let h = &out.hint;
-        assert!(
-            h.contains("no command"),
-            "a 0-tool-call worker must be told what it actually did (nothing): {h}"
-        );
-        for accusation in ["re-reading", "exploring", "stuck re-reading"] {
+        for elapsed in [457u64, 4_570, 45_700] {
+            let mut i = mk_no_write(4, elapsed, 0);
+            // Even well past the first look: a look count licenses READING evidence, not inventing it.
+            i.prev_tool_calls = Some(0);
+            i.prev_thinking_chars = Some(1_000);
+            i.prev_observed_secs = Some(elapsed.saturating_sub(60));
             assert!(
-                !h.contains(accusation),
-                "a 0-tool-call worker must not be accused of {accusation}: {h}"
+                deterministic_verdict(&i, &cfg).is_none(),
+                "a zero-action worker got a verdict at {elapsed}s with no evidence but the clock"
             );
         }
     }
@@ -1057,8 +787,10 @@ mod tests {
     #[test]
     fn behavioural_branch_still_owns_the_thrashing_worker() {
         let cfg = JudgeConfig::default();
-        let out =
-            deterministic_verdict(&mk_no_write(1, 300, 16), &cfg).expect("thrashing is caught");
+        let mut i = mk_no_write(1, 300, 16);
+        i.prev_tool_calls = Some(3);
+        i.prev_observed_secs = Some(240);
+        let out = deterministic_verdict(&i, &cfg).expect("thrashing is caught");
         assert_eq!(out.verdict, Verdict::OverReading);
         assert!(out.hint.contains("taken many actions"), "{}", out.hint);
     }
@@ -1130,19 +862,27 @@ mod tests {
         }
     }
 
-    /// ...but an UNFINISHED one still trips the finalize spin. Without this the test above would pass
-    /// for an Accept branch that had swallowed the spin trip entirely.
+    /// REWRITTEN WITH ITS SUBJECT (r3 II-7). This pinned the deadline branch catching an unwritten
+    /// task once the clock ran out. With every clock verdict deleted, an unwritten task whose
+    /// activity is UNKNOWN (`worker_tool_calls: None` — no heartbeat) yields silence at every age:
+    /// there is no evidence, and seconds may not stand in for evidence. The K zero-production-looks
+    /// summons and the semantic judge own this case.
     #[test]
-    fn finalize_spin_still_fires_when_nothing_is_written() {
-        let v = deterministic_verdict(
-            &mk("scan-module", false, None, 700),
-            &JudgeConfig::default(),
-        );
-        assert!(v.is_some_and(|o| o.verdict != Verdict::Accept));
+    fn nothing_written_with_unknown_activity_is_silence_at_any_age() {
+        for age in [500u64, 700, 7_000] {
+            assert!(
+                deterministic_verdict(
+                    &mk("scan-module", false, None, age),
+                    &JudgeConfig::default()
+                )
+                .is_none(),
+                "an unwritten task with no activity evidence was verdicted at {age}s"
+            );
+        }
     }
 
     #[test]
-    fn finalize_spin_excludes_integrate_verify() {
+    fn no_verdict_for_the_sink_that_wrote_and_went_quiet() {
         let v = deterministic_verdict(
             &mk("integrate-verify", true, Some(500), 700),
             &JudgeConfig::default(),
@@ -1154,7 +894,7 @@ mod tests {
     }
 
     #[test]
-    fn finalize_spin_quiet_when_recently_written() {
+    fn quiet_when_recently_written() {
         let v = deterministic_verdict(
             &mk("scan-module", true, Some(60), 700),
             &JudgeConfig::default(),
@@ -1163,15 +903,6 @@ mod tests {
             v.is_none(),
             "a worker that wrote recently is making progress"
         );
-    }
-
-    #[test]
-    fn over_read_fires_with_no_output_on_old_attempt() {
-        let v = deterministic_verdict(
-            &mk("scan-module", false, None, 500),
-            &JudgeConfig::default(),
-        );
-        assert_eq!(v.map(|o| o.verdict), Some(Verdict::OverReading));
     }
 
     #[test]
@@ -1185,11 +916,20 @@ mod tests {
 
     #[test]
     fn behavioral_over_read_fires_early_on_many_actions_no_output() {
-        // 0 writes + 16 tool calls past min-age → over-read caught at 150s, NOT the 420s fallback.
+        // 0 writes + 16 tool calls on the SECOND look → over-read caught from behaviour alone. The
+        // elapsed value is irrelevant now: the first-look guard is a look count (r3 II-7), never
+        // `elapsed_secs >= min_age_secs`.
         let mut i = mk("core-tree", false, None, 150);
         i.worker_tool_calls = Some(16);
+        i.prev_tool_calls = Some(4);
+        i.prev_observed_secs = Some(90);
         let v = deterministic_verdict(&i, &JudgeConfig::default());
         assert_eq!(v.map(|o| o.verdict), Some(Verdict::OverReading));
+        // The FIRST look, same shape: not yet — one look cannot tell a startup burst from thrashing,
+        // which is exactly what the seconds guard was protecting and what the look count now states.
+        let mut first = mk("core-tree", false, None, 150);
+        first.worker_tool_calls = Some(16);
+        assert!(deterministic_verdict(&first, &JudgeConfig::default()).is_none());
     }
 
     #[test]
@@ -1202,10 +942,8 @@ mod tests {
         i.owned_files = vec![];
         i.worker_tool_calls = Some(40);
         // THE GUARANTEE IS "NEVER KILLED", NOT "NEVER JUDGED", and this used to assert the proxy.
-        // It now reaches the owns-nothing Accept branch, which is a COMPLETION: `is_problem()` excludes
-        // it from the intervention path, so it can neither re-dispatch nor fail the task. Asserting the
-        // property directly keeps the original protection (integrate-verify judge_killed x3 -> run
-        // FAILED though the app worked) while allowing the salvage this sink previously could not reach.
+        // Asserting the property directly keeps the original protection (integrate-verify
+        // judge_killed x3 -> run FAILED though the app worked) whatever branches come and go.
         let v = deterministic_verdict(&i, &JudgeConfig::default());
         assert!(
             v.as_ref().is_none_or(|o| !o.verdict.is_problem()),
@@ -1219,8 +957,9 @@ mod tests {
         // that was actually protecting this task, and it still holds.
     }
 
-    /// A join that is STILL WORKING must be left alone — the Accept branch is for one that has gone
-    /// quiet, and cutting a productive sink short would be the same mistake in the other direction.
+    /// A join that is STILL WORKING must be left alone — and one that has gone quiet gets silence
+    /// too, not a clock verdict: cutting a productive sink short and "accepting" a busy one mid-
+    /// command were the same mistake from opposite directions, and both walls are deleted.
     #[test]
     fn a_still_producing_join_is_not_accepted_early() {
         let mut i = mk("integrate-verify", false, None, 500);
@@ -1232,7 +971,7 @@ mod tests {
             deterministic_verdict(&i, &JudgeConfig::default()).is_none(),
             "a join whose tool calls are still climbing must keep running"
         );
-        // Nor a young one, however quiet: the age floor is the same constant the other Accept uses.
+        // Nor a young one, however quiet.
         let mut young = mk("integrate-verify", false, None, 60);
         young.owned_files = vec![];
         young.worker_tool_calls = Some(3);
@@ -1246,10 +985,12 @@ mod tests {
 
     #[test]
     fn over_read_still_fires_for_a_task_that_owns_files() {
-        // The over-read gate itself is untouched: a task that DOES own files and has written nothing
-        // while burning tool calls is still redirected.
+        // The over-read gate keeps its teeth: a task that DOES own code and has written nothing while
+        // burning tool calls is still redirected — on evidence (actions + a second look), not a clock.
         let mut i = mk("core-tree", false, None, 500);
         i.worker_tool_calls = Some(40);
+        i.prev_tool_calls = Some(12);
+        i.prev_observed_secs = Some(440);
         assert_eq!(
             deterministic_verdict(&i, &JudgeConfig::default()).map(|o| o.verdict),
             Some(Verdict::OverReading)
@@ -1266,7 +1007,7 @@ mod tests {
 
     #[test]
     fn behavioral_over_read_quiet_for_slow_single_generation() {
-        // Slow but healthy: few tool calls (one long generation), no file yet, under the time fallback.
+        // Slow but healthy: few tool calls (one long generation), no file yet — below the action bar.
         let mut i = mk("core-tree", false, None, 200);
         i.worker_tool_calls = Some(4);
         assert!(deterministic_verdict(&i, &JudgeConfig::default()).is_none());
@@ -1274,20 +1015,26 @@ mod tests {
 
     #[test]
     fn split_candidate_only_for_big_productive_multifile_tasks() {
-        // split_threshold_secs = 900; enable the master gate so the detector can fire in this unit test.
+        // Enable the master gate so the detector can fire in this unit test. Since r3 II-7 the
+        // "too big" evidence is production ACROSS LOOKS (action count grew between two judge
+        // observations), never `elapsed_secs >= split_threshold_secs` — a wall clock is not evidence.
         let cfg = JudgeConfig {
             split_enabled: true,
             ..JudgeConfig::default()
         };
-        // Long, producing, owns 2 files, not over-reading, never split -> SPLIT candidate.
+        // Producing across looks, owns 2 files, not over-reading, never split -> SPLIT candidate.
         let mut big = mk("core", true, Some(10), 1000);
         big.owned_files = vec!["a.py".to_string(), "b.py".to_string()];
         big.worker_tool_calls = Some(5);
+        big.prev_tool_calls = Some(2);
+        big.prev_observed_secs = Some(900);
         assert!(is_split_candidate(&big, &cfg));
         // Same but only ONE owned file -> not splittable.
-        let one = mk("core", true, Some(10), 1000); // owned_files = ["m.py"]
+        let mut one = mk("core", true, Some(10), 1000); // owned_files = ["m.py"]
+        one.worker_tool_calls = Some(5);
+        one.prev_tool_calls = Some(2);
         assert!(!is_split_candidate(&one, &cfg));
-        // Long + multi-file but OVER-READING (thrashing) -> re-dispatch path, not split.
+        // Multi-file but OVER-READING (thrashing) -> re-dispatch path, not split.
         let mut thrash = big.clone();
         thrash.worker_tool_calls = Some(cfg.over_read_tool_calls + 1);
         assert!(!is_split_candidate(&thrash, &cfg));
@@ -1295,10 +1042,14 @@ mod tests {
         let mut again = big.clone();
         again.split_count = 1;
         assert!(!is_split_candidate(&again, &cfg));
-        // Not yet old enough -> not a candidate.
-        let mut young = big.clone();
-        young.elapsed_secs = 300;
-        assert!(!is_split_candidate(&young, &cfg));
+        // FIRST look -> not a candidate: one observation cannot show production across looks.
+        let mut first = big.clone();
+        first.prev_tool_calls = None;
+        assert!(!is_split_candidate(&first, &cfg));
+        // Flat across looks -> not a candidate: it may be sitting inside one long command.
+        let mut flat = big.clone();
+        flat.prev_tool_calls = Some(5);
+        assert!(!is_split_candidate(&flat, &cfg));
     }
 }
 
@@ -1353,33 +1104,5 @@ mod provenance_tests {
             out.deterministic,
             "a compile error is an ENGINE FACT — it must be marked deterministic or it can never fail a task"
         );
-    }
-
-    #[test]
-    fn a_retried_task_gets_more_rope_to_write_its_file_not_less() {
-        // baseline-n3-r0's critical path: two kills at 7.2 and 9.1 min for the IDENTICAL reason, then a
-        // third attempt that was left alone and finished. The first attempt is unchanged — a genuinely
-        // stuck opener is still caught at 420s — and only an attempt that has already paid for a kill
-        // buys more time.
-        assert_eq!(no_output_deadline_secs(420, 0, false), 420);
-        assert_eq!(no_output_deadline_secs(420, 1, false), 840);
-        assert_eq!(no_output_deadline_secs(420, 2, false), 1260);
-
-        // Capped at 3x: more rope is not unbounded rope. A wedged worker is still bounded here, and
-        // worker_timeout_secs and the behavioural over-read gate remain in force regardless.
-        assert_eq!(no_output_deadline_secs(420, 7, false), 1260);
-
-        // It must GROW, never shrink — the whole point is that killing sooner was the wrong direction.
-        for a in 0..5u32 {
-            assert!(
-                no_output_deadline_secs(420, a + 1, false)
-                    >= no_output_deadline_secs(420, a, false),
-                "attempt {a} got LESS rope than the attempt before it"
-            );
-        }
-
-        // The still-producing doubling composes with the attempt scaling rather than replacing it.
-        assert_eq!(no_output_deadline_secs(420, 0, true), 840);
-        assert_eq!(no_output_deadline_secs(420, 1, true), 1680);
     }
 }
