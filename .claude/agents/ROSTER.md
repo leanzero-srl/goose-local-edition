@@ -85,89 +85,25 @@ a real HTTP entry shell — split "layout by code" from "entry content owned by 
 scaffolding is not the dead contract-stub form (interface stubs replacing real sources) — argue
 it on mechanism. Mihai 14:35: "isn't build supposed to fan out?"
 
-## Live queue (small items, fold into the next matching brief)
+## Live queue (groomed 2026-08-30 17:55 — done items moved to the grading log)
 
-R6-BLOCKING (Mihai 15:45, third ask): SUPERVISION CALLS GET LANES — judge looks, the replanner,
-testgen/review side calls run keyless today (no digest/think.log/forming — invisible; the 24-min
-r5 stall ran behind one). Give every supervision model call an activity key (e.g. judge-<task>-lookN,
-replan-rN, testgen-<task>), labeled + grouped as supervision in the panel; the forming hoist then
-covers them for free. Surgeon #10 the moment #9 lands; panel grouping rides panel #5.
-- surgeon #10 addendum: the mid-run replanner/judge read opts.prompt (user answers, NOT
-  research-settled conventions) — a replan can re-open a settled convention; deliver the settled
-  block to the replan context too.
-- r7: early-skeleton needs a real pre-completed seam in Scheduler::run first (scheduler-surgeon);
-  the CLI half follows. Four blockers documented in surgeon #9's handoff.
-- panel smalls: judge-lane SAID chips say 'attempt N' where looks are meant; fan lane groups sort
-  alphabetically (q10 before q2) — next panel batch.
-- cleanup queue: still-keyless supervision calls (scheduler-side judge(), propose_split,
-  answer_user_question, verify_finding, pillars, reflect_on_success) — need their OWN key class
-  (judge-<task> would double-write against the omni lane); surgeon #11 batch.
-- cleanup queue: partition_delegated_decisions + delegated_decisions_ok lever appear live-dead;
-  research_request_block's armed-no-claimed-sections arm points lanes at a request they don't have.
-- (refute-first) the transport inactivity cut: II-7 deleted the provider read window entirely, so
-  a connected-but-silent stream hangs forever (A2; the fan multiplies exposure). The candidate: a
-  read timeout that RESETS on every received chunk — bounds dead transport only, never model work
-  (the original §8 reasoning). Must survive a gate-5 refutation before any surgeon touches it.
-- apply_split's partition refusals: zero break-test coverage (feed foreign-file, overlapping,
-  non-covering children; watch each refuse) — scheduler-surgeon, before any split latch flips.
-- ReplanContext.goal ships the whole 53.6k-char spec into the replan prompt (a large share of the
-  43m call) — orientation-index treatment, same as fan A5; next swarm-surgeon batch.
-- fleet panel labels a replan call "review/test-gen" (planner-identity misattribution) — panel #5.
-- replanned.reason emitted empty on r5's live splice (12:36:09) — the rationale should ride the
-  event; next swarm-surgeon batch.
-- verify_tree_imports false positive: 'app.httpapi — no task owns' while app/httpapi.py IS owned
-  (module-path -> file-path resolution miss) — next swarm-surgeon batch.
-SURGEON #9 (dispatch when #8 lands — swarm.rs): (0) DECISIONS-INTO-FAN, refuter-amended:
-timed-out/unanswered open decisions ride the fan (one structured call each, "answer strictly from
-the spec; where silent name the conventional choice and say so"); REWRITE the :27561 quarantine pin
-with the r5 receipt in the same commit; decisions get their OWN settled/still-open partition
-folded into EVERY brief incl. the decisions task's (which must QUOTE the settled choices verbatim);
-a NEW provenance header ("settled at plan time by research; the user did not answer; conventions,
-binding for consistency") — never USER_DECISIONS_HEADER; splice lands after fan.await before
-plan_slices_to_dag; append to DispatchRequest.user_decisions under the new header; repair backstop
-strips implementation→docs-only-task deps ONLY when every decision folded settled (loud
-plan_repaired action, gate-6 class); trigger on qa-absence per decision only (no benchmark-mode
-second door); fix the stale :27107 "harness answers instantly AS the human" comment; gate-8 trace
-on r5's real 5-decisions/2-guessed values, wall figures labeled estimates. (1) HEADLINE, refuter-corrected: early skeleton
-dispatch concurrent with REVIEW (G-3's pre-vetted revive form — skeleton files derive from
-spec_python_invocations, stable across review patches; the one-door repair arbitrates the rare
-patch collision; opens the fan near plan_loaded instead of +75m). (2) Delete the dead breakdown:
-breakdown_json + the plan_loaded splice, strip PlanConf to final_conf, cfg(test) sub-signal
-machinery goes, comments corrected to the design truth. (3) ask_max_q field + golden entry
-removal. (4) Integrate brief-header cosmetic. (5) hasActivity fullTranscript gap if surgeon
-judges it engine-side, else panel #5. (6) look-1 delivery-defect steer mislabels expected
-emptiness as DEFECT — rephrase the all-files-absent-at-first-look case honestly.
-- engine ask_max_q field + golden.generated.json entry removal (dead since cfcd32908) + the
-  integrate plan-time brief header cosmetic ("INTEGRATE AND VERIFY" ancestry wording) — surgeon #9.
-- useSwarmRun hasActivity filter ignores fullTranscript-only digests (latent lane-hiding) — panel #5.
-- r6 launch checklist: verify the research chip/lanes live over CDP on the first fan; verify the
-  integrate-verify DISPATCH-time description is the measured-tree one, not the plan-time placeholder.
-- judge_look carries no node/model attribution — 43 looks in r5 unattributable; add the serving
-  node to the event (swarm-surgeon, next batch).
+IN FLIGHT — surgeon #11 (the pre-build smalls batch): replan-prompt orientation treatment;
+replanned.reason; verify_tree_imports module->file false positive; still-keyless scheduler-side
+supervision calls (own key class — judge-<task> would double-write).
 
-## Surgeon #7 queue — ALL LANDED 2026-08-30 (f2d75bebc..760fd8b32); kept for the record
-(works-prover, next fan): is plan_loaded.plan_confidence_breakdown dead post-P1-5? conf_trail.py
-and lever_check.py consume it; the ask event's twin field was confirmed dead 0/0.
+R6 LAUNCH CHECKLIST (at launch, not before): research chip/lanes live over CDP on the first fan;
+the integrate-verify DISPATCH description is measured-tree, not the placeholder; supervision lanes
+render against a real r6 log.
 
+R7 / GATED (deliberately parked, each with its qualifying condition):
+- the judge desk (DESIGN-JUDGE-DESK.md) — r6 measures whether the steer→restream ladder still fails;
+- early-skeleton dispatch — needs the scheduler pre-completed seam first (4 blockers in #9's handoff);
+- (refute-first) the transport inactivity cut — must survive a gate-5 refutation;
+- apply_split break-test coverage — before any split latch flips.
 
-1. ASK-TRUTH honest fix (works-prover confirmed): open_decisions_total/not_asked computed from a
-   breakdown the sole call site passes as None (swarm.rs:27124-27132 vs :36704-36710) — pass the
-   real count (opened.open_decisions.len()), revive the "will be GUESSED" stderr warning, and
-   KILL the ask_max_q=3 truncation on this path (the guess-the-rest arm is a silent fallback on
-   a 0-happy-path overflow; asking 5 costs the same one prompt as asking 3). Tests must traverse
-   the primary arm (today all three pass breakdown=None — zero coverage of the computation).
-2. Drift-hazard consts (works-prover minors): the 400ms coalesce literal x3 (forming :16799,
-   digest sites :18160/:18988) -> one shared const; the 2,000-char look-tail literal x3
-   (:15650/:17648/:18782) -> one shared const.
-3. forming_write_failed lost on dispatch abort (event written only after the scoped future
-   completes) — decide: acceptable-on-a-dying-call (document) or move the emission into the guard.
-4b. fanout_over_fleet drops a panicked lane handle silently (if let Ok(r) = h.await) — a research
-   or review lane that panics VANISHES with no row and no event (gate-1 class, surgeon #6's find,
-   shared with the review fan): emit a loud per-lane event (lane_panicked{key}) and fold an
-   unanswered/failed row instead of nothing.
-4. Forming test coverage: the open-frame and late-opening ArgsDelta arms are traversed by zero
-   tests (dead under LM Studio's measured shapes but live for id+name+args-in-one-delta providers)
-   — add one fixture each.
+NEXT-BATCH COSMETICS: judge-lane SAID chips say 'attempt' where looks are meant; fan lane groups
+sort q10 before q2; partition_delegated_decisions + delegated_decisions_ok appear live-dead;
+research_request_block's armed-no-claimed-sections arm wording.
 
 ## Grading log (newest first — one line per delegation; move closed items to the per-agent notes)
 - 2026-08-30 swarm-surgeon #8 (judge context + attribution + mirror, d93d7ca77..e6c620749):
