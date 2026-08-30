@@ -42,6 +42,37 @@ pub(super) fn tail_review_lane_key(dim_id: &str) -> String {
     format!("tail-review-{dim_id}")
 }
 
+/// The SCHEDULER-side judge's semantic review (`Judge::judge`), one lane per reviewed task.
+/// DELIBERATELY not `judge-<task>` (surgeon #10's warning): the omni judge already owns that key
+/// for the same task, and two writers on one digest would interleave two different reviews into
+/// one rolling story. Distinct class, same task suffix, so the panel can still group both onto
+/// the task.
+pub(super) fn schedjudge_lane_key(task_id: &str) -> String {
+    format!("schedjudge-{task_id}")
+}
+
+/// One sink-review verification (`verify_finding`), keyed by the finding's index in its drained
+/// batch — the fan runs these CONCURRENTLY over the fleet, so a shared key would have parallel
+/// lanes fighting over one digest file. Digit-suffixed exactly (like `replan-r<n>`) so a
+/// model-chosen task id such as `verify-endpoints` stays a worker lane.
+pub(super) fn verify_lane_key(idx: usize) -> String {
+    format!("verify-{idx}")
+}
+
+/// The mid-run operator-question answerer's lane (`answer_user_question`). One lane for the run:
+/// questions are answered one at a time (the in-flight set serializes them) and each new answer
+/// folds the prior into `superseded`, which is the cumulative story the inspector renders.
+pub(super) const ASK_ANSWER_LANE: &str = "ask-answer";
+
+/// The pillars distillation's lane (`distill_pillars`) — one planner call per run, at plan time.
+pub(super) const PILLARS_LANE: &str = "pillars";
+
+/// The stack-skill reflection's lane (`reflect_on_success`) — one call per successful run, at
+/// the very end. Exact-match keys (`pillars`, `reflect`, `ask-answer`) carry the same accepted
+/// hazard as the prefix classes below: a model-chosen task id could collide; live plans name
+/// tasks after modules and none of these three is a module name any measured plan has produced.
+pub(super) const REFLECT_LANE: &str = "reflect";
+
 /// Which supervision class a lane key belongs to — None for every build/planner lane. This is the
 /// ONE derivation behind both consumers: the shared digest builders stamp `"supervision": true`
 /// from it (never hand-set per write site), and `run_agent_in_inner` disarms the omni judge and
@@ -69,6 +100,24 @@ pub(super) fn supervision_lane_kind(key: &str) -> Option<&'static str> {
     if key.starts_with("tail-review-") {
         return Some("tailreview");
     }
+    if key.starts_with("schedjudge-") {
+        return Some("schedjudge");
+    }
+    // Digit-exact like replan-r<n>: `verify-endpoints` is a name a plan could give a build task.
+    if let Some(rest) = key.strip_prefix("verify-") {
+        if !rest.is_empty() && rest.bytes().all(|b| b.is_ascii_digit()) {
+            return Some("verify");
+        }
+    }
+    if key == ASK_ANSWER_LANE {
+        return Some("ask");
+    }
+    if key == PILLARS_LANE {
+        return Some("pillars");
+    }
+    if key == REFLECT_LANE {
+        return Some("reflect");
+    }
     None
 }
 
@@ -94,6 +143,14 @@ mod tests {
             supervision_lane_kind(&tail_review_lane_key("wiring")),
             Some("tailreview")
         );
+        assert_eq!(
+            supervision_lane_kind(&schedjudge_lane_key("web-viz")),
+            Some("schedjudge")
+        );
+        assert_eq!(supervision_lane_kind(&verify_lane_key(3)), Some("verify"));
+        assert_eq!(supervision_lane_kind(ASK_ANSWER_LANE), Some("ask"));
+        assert_eq!(supervision_lane_kind(PILLARS_LANE), Some("pillars"));
+        assert_eq!(supervision_lane_kind(REFLECT_LANE), Some("reflect"));
         for worker in [
             "test-store-core",
             "review",
@@ -105,6 +162,10 @@ mod tests {
             "research-payments-q0",
             "apptest-primary-journey",
             "integrate-verify",
+            // The digit-exact rule keeps a model-chosen verify task a WORKER lane: a
+            // misclassification here would silently strip its omni-judge supervision.
+            "verify-endpoints",
+            "verify-2b",
         ] {
             assert_eq!(
                 supervision_lane_kind(worker),
