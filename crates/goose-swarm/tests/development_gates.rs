@@ -130,9 +130,11 @@ fn the_banned_integrate_template_only_shrinks() {
 /// mirror +46 rode the same payment).
 /// Tightened to 46,925: the dead ask_max_q lever deleted (WIDTH batch, small 3).
 /// Tightened to 46,540: the dead plan_confidence_breakdown cluster deleted (WIDTH batch, small 2).
+/// Tightened to 46,406: the research terminal-row cluster moved to commands/swarm/research.rs
+/// (-164), paying for the truthful look-1 steer wording (+~30) in the same commit.
 #[test]
 fn swarm_rs_line_count_only_decreases() {
-    const SWARM_RS_LINE_BASELINE: usize = 46_540;
+    const SWARM_RS_LINE_BASELINE: usize = 46_406;
     let text = read("crates/goose-cli/src/commands/swarm.rs");
     let n = text.lines().count();
     assert!(
