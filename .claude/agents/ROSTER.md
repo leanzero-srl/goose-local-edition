@@ -129,6 +129,13 @@ and lever_check.py consume it; the ask event's twin field was confirmed dead 0/0
    — add one fixture each.
 
 ## Grading log (newest first — one line per delegation; move closed items to the per-agent notes)
+- 2026-08-30 bench-scorer #2 (stale-narration sweep, 4645ff056 + loop-state 6decf25): CLEAN PASS —
+  era-split every stale comment instead of deleting history (pre-cfcd32908 runs keep scoring
+  truthfully, post-fix 1.0 documented as expected-not-flattery), REPLAY-verified mechanism_screen
+  old-vs-new on the archived bed (one intended diff line, verdicts byte-identical), proved the
+  arm_config set-equality with ast, and correctly REFUSED to touch the tombstoned legacy script
+  carrying another session's uncommitted work. Flagged six stale July escalation markers —
+  removed by orchestrator (dead campaign era). No charter gap.
 - 2026-08-30 refuter #1 (skeleton-by-code): EXEMPLARY — refuted the orchestrator's own candidate
   in both arms on MECHANISM (dep_block hands the skeleton's real source as "build against THIS";
   code shells = CONTRACTS' frozen-behaviour surface with less information; the demote arm trips
