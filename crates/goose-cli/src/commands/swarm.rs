@@ -27538,10 +27538,50 @@ fn files_from_objective(objective: &str) -> Vec<String> {
     out
 }
 
+/// The ONE find+splice loop for a slice's claimed sections. Both consumers — the brief a
+/// builder reads (`briefs_from_slices`) and the research prompt (`research_request_block`) —
+/// call THIS, so the heading-match rule cannot diverge between them (the digestStreamFields
+/// law: one shared join, never a hand-copied loop; the loop had already been duplicated
+/// verbatim at both sites).
+///
+/// A claimed heading that matches NO spec section is a MEASURED absence, never a silent drop:
+/// r5's boot slice claimed a typo'd heading and lost 3,501 chars from BOTH its research
+/// prompts and its brief, surfacing only through the generic `spec_sections_unclaimed` on the
+/// real heading. Each miss emits `slice_claimed_section_unmatched{slice, claimed}` — loud,
+/// MILD, never blocks; the matching sections still splice.
+fn splice_claimed_sections(
+    slice_id: &str,
+    claimed: &[String],
+    sections: &[SpecSection],
+    events: &dyn EventSink,
+) -> String {
+    let mut spliced = String::new();
+    for want in claimed {
+        let key = want.trim().to_lowercase();
+        match sections
+            .iter()
+            .find(|s| s.heading.trim().to_lowercase() == key)
+        {
+            Some(sec) => {
+                spliced.push_str(&format!("\n### {}\n{}", sec.heading, sec.body.trim()));
+            }
+            None => {
+                events.write_value(serde_json::json!({
+                    "event": "slice_claimed_section_unmatched",
+                    "slice": slice_id,
+                    "claimed": want,
+                }));
+            }
+        }
+    }
+    spliced
+}
+
 fn briefs_from_slices(
     opened: &OpenOutput,
     spec: &str,
     research: &[ResearchRow],
+    events: &dyn EventSink,
 ) -> Vec<SliceBrief> {
     let sections = spec_sections(spec);
     let armed = orientation_armed(spec, &sections);
@@ -27614,16 +27654,7 @@ fn briefs_from_slices(
             // gets the orientation plus a stated absence (the fallback rule): the map exists
             // even when the owner named no territory, and the caller emits the event.
             if armed {
-                let mut spliced = String::new();
-                for want in &sl.sections {
-                    let key = want.trim().to_lowercase();
-                    if let Some(sec) = sections
-                        .iter()
-                        .find(|s| s.heading.trim().to_lowercase() == key)
-                    {
-                        spliced.push_str(&format!("\n### {}\n{}", sec.heading, sec.body.trim()));
-                    }
-                }
+                let spliced = splice_claimed_sections(&sl.id, &sl.sections, &sections, events);
                 if spliced.is_empty() {
                     brief.push_str(&format!(
                         "\n\nSPEC SECTIONS: this slice claimed none — the orientation index of \
@@ -27685,6 +27716,9 @@ fn briefs_from_slices(
 // channels only: Q/A blocks in `briefs_from_slices`, the settled line in `slice_index`, a
 // droppable section in `render_ledger_block`. Research adds no tasks, writes no files, and never
 // dispatches a question a researcher RAISED (recorded on the row for the operator, nothing more).
+// "Writes no files" is a TOOL-MENU quarantine, not a sandbox: the lane gets no write/edit tool,
+// but shell redirection could still write — the prompt forbids it, and `tree_at_start` (captured
+// before any call) would surface anything a lane left behind.
 //
 // Why v1 stays dead (P1-5) and this is not its revival: v1 wrote prose BRIEFS that replaced the
 // dependency sources workers read — a planner's paraphrase is strictly worse than the real source,
@@ -27870,21 +27904,14 @@ fn research_request_block(
     spec: &str,
     sections: &[SpecSection],
     armed: bool,
+    slice_id: &str,
     claimed: &[String],
+    events: &dyn EventSink,
 ) -> String {
     if !armed {
         return format!("THE REQUEST:\n{spec}");
     }
-    let mut spliced = String::new();
-    for want in claimed {
-        let key = want.trim().to_lowercase();
-        if let Some(sec) = sections
-            .iter()
-            .find(|s| s.heading.trim().to_lowercase() == key)
-        {
-            spliced.push_str(&format!("\n### {}\n{}", sec.heading, sec.body.trim()));
-        }
-    }
+    let spliced = splice_claimed_sections(slice_id, claimed, sections, events);
     let orientation = spec_orientation(sections);
     if spliced.is_empty() {
         format!(
@@ -27985,7 +28012,14 @@ impl GooseAgentDispatcher {
                 continue;
             }
             let prefix = research_user_text(
-                &research_request_block(spec, &sections, armed, &sl.sections),
+                &research_request_block(
+                    spec,
+                    &sections,
+                    armed,
+                    &sl.id,
+                    &sl.sections,
+                    self.events.as_ref(),
+                ),
                 &sl.id,
                 &sl.title,
                 &sl.objective,
@@ -28173,7 +28207,7 @@ where
     R: FnMut(String, String) -> RFut,
     RFut: std::future::Future<Output = Result<(goose_swarm::PlanPatch, Vec<String>)>>,
 {
-    let briefs = briefs_from_slices(&opened, user_prompt, research);
+    let briefs = briefs_from_slices(&opened, user_prompt, research, sink.as_ref());
     // OPEN-1's absence events (the fallback rule): a slice that claimed no sections and a
     // section no slice claimed are both measured gaps, named where the tick can count them.
     {
@@ -45869,7 +45903,7 @@ mod audit_regressions {
             ],
             open_decisions: Vec::new(),
         };
-        let briefs = briefs_from_slices(&opened, spec, &[]);
+        let briefs = briefs_from_slices(&opened, spec, &[], &NullSink);
         assert!(
             briefs[0].brief.contains("THE SPEC'S OWN SECTIONS")
                 && briefs[0].brief.contains("/api/payments"),
@@ -45918,7 +45952,7 @@ mod audit_regressions {
             ],
             open_decisions: Vec::new(),
         };
-        let briefs = briefs_from_slices(&opened, "build the app", &[]);
+        let briefs = briefs_from_slices(&opened, "build the app", &[], &NullSink);
         assert_eq!(
             briefs[0].files,
             vec!["app/ledgerd/impl.py".to_string(), "web/app.js".to_string()],
@@ -46060,7 +46094,7 @@ mod audit_regressions {
                 secs: 3,
             },
         ];
-        let briefs = briefs_from_slices(&opened, "build the app", &rows);
+        let briefs = briefs_from_slices(&opened, "build the app", &rows, &NullSink);
         let b = &briefs[0].brief;
         assert!(b.contains("ANSWERS SETTLED AT PLAN TIME"));
         assert!(b.contains("Q: which port") && b.contains("A: Port 8850"));
@@ -46078,7 +46112,7 @@ mod audit_regressions {
             briefs[0].settled, "1/2 — Port 8850, from the spec's own boot table.",
             "the slice_index settled line carries answered/total and the first answer's head"
         );
-        let plain = briefs_from_slices(&opened, "build the app", &[]);
+        let plain = briefs_from_slices(&opened, "build the app", &[], &NullSink);
         assert!(
             !plain[0].brief.contains("ANSWERS SETTLED")
                 && plain[0].brief.contains("- which port")
@@ -46120,7 +46154,14 @@ mod audit_regressions {
             orientation_armed(&spec, &sections),
             "the fixture must cross the real arming floor"
         );
-        let block = research_request_block(&spec, &sections, true, &["Alpha".to_string()]);
+        let block = research_request_block(
+            &spec,
+            &sections,
+            true,
+            "s1",
+            &["Alpha".to_string()],
+            &NullSink,
+        );
         let text = research_user_text(
             &block,
             "payments",
@@ -46149,8 +46190,55 @@ mod audit_regressions {
         );
         // Below the floor: the spec as-is is the better input, exactly like OPEN's own message.
         let small = "build a tiny thing";
-        let small_block = research_request_block(small, &spec_sections(small), false, &[]);
+        let small_block =
+            research_request_block(small, &spec_sections(small), false, "s1", &[], &NullSink);
         assert_eq!(small_block, format!("THE REQUEST:\n{small}"));
+    }
+
+    /// r5's silent 3,501-char loss, pinned. The boot slice claimed a typo'd heading; the splice
+    /// loop found no match and dropped the claim from BOTH the research prompts and the brief
+    /// with no per-slice signal — only the generic spec_sections_unclaimed fired, on the REAL
+    /// heading. The shared splice now names each unmatched claim (loud, MILD, never blocks:
+    /// the matching sections still splice), from both consumers.
+    #[test]
+    fn a_typoed_claimed_heading_is_named_not_silently_dropped() {
+        #[derive(Default)]
+        struct ValueSink(Mutex<Vec<serde_json::Value>>);
+        impl EventSink for ValueSink {
+            fn emit(&self, _event: &SwarmEvent) {}
+            fn write_value(&self, value: serde_json::Value) {
+                self.0.lock().unwrap().push(value);
+            }
+        }
+        let spec = "# Alpha\nalpha body text\n\n# Beta\nbeta body text\n";
+        let sections = spec_sections(spec);
+        let sink = ValueSink::default();
+        let spliced = splice_claimed_sections(
+            "boot",
+            &["Alpha".to_string(), "Bta".to_string()],
+            &sections,
+            &sink,
+        );
+        assert!(
+            spliced.contains("alpha body text"),
+            "the matching claim still splices"
+        );
+        assert!(!spliced.contains("beta body text"), "no fuzzy substitution");
+        let events = sink.0.lock().unwrap();
+        assert_eq!(events.len(), 1, "exactly the one miss is named");
+        assert_eq!(
+            events[0].get("event").and_then(|v| v.as_str()),
+            Some("slice_claimed_section_unmatched")
+        );
+        assert_eq!(
+            events[0].get("slice").and_then(|v| v.as_str()),
+            Some("boot")
+        );
+        assert_eq!(
+            events[0].get("claimed").and_then(|v| v.as_str()),
+            Some("Bta"),
+            "the typo VERBATIM, so the operator can see what to fix"
+        );
     }
 
     /// A3: the fan's lane pool is ONE lane per host, never the raw slot-expanded pool (F623 —
