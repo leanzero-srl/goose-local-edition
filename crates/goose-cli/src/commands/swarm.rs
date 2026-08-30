@@ -36458,9 +36458,36 @@ impl Replanner for GooseAgentDispatcher {
         // settled convention. Empty when research settled nothing (or on a resume with no
         // planning round): the prompt is then byte-identical to before.
         let settled = self.settled_decisions.lock().unwrap().clone();
+        // THE GOAL BLOCK GETS THE SAME ORIENTATION TREATMENT AS OPEN AND THE RESEARCH FAN
+        // (OPEN-1/A5): on a spec with real document structure, the index — every heading with its
+        // measured size and opening sentences — replaces the whole document. MEASURED (r5, replan
+        // round 0, 12:36:09): ctx.goal carried the full 53,634-char spec, the call's prompt
+        // weighed 16,969 tokens and the round generated for 43m52s — and the replanner's own job
+        // is hardening COMPLETED work, which it reads from the Done list below, not from spec
+        // prose. There is no per-task section map at this seam (section text is spliced into each
+        // task's BRIEF at synthesis and not retained), so the index rides alone with that absence
+        // stated to the model rather than papered over. NOT a cap: message formation only, same
+        // arming floor as the opener; a small spec keeps the byte-identical whole-goal prompt.
+        let goal_sections = spec_sections(&ctx.goal);
+        let goal_block = if orientation_armed(&ctx.goal, &goal_sections) {
+            let orientation = spec_orientation(&goal_sections);
+            self.events.write_value(serde_json::json!({
+                "event": "replan_orientation",
+                "round": ctx.round,
+                "goal_chars": ctx.goal.chars().count(),
+                "orientation_chars": orientation.chars().count(),
+            }));
+            format!(
+                "(as its ORIENTATION INDEX — every spec section's heading, size and opening \
+                 sentences; the full section text is NOT in this prompt, it lives with each \
+                 existing task's brief. Ground new work in the Done outputs below and the index, \
+                 and name exact files/symbols from them.)\n\n{orientation}"
+            )
+        } else {
+            ctx.goal.clone()
+        };
         let user = format!(
-            "Goal: {}{settled}\n\nAlready created (do NOT reuse these ids): {}\n\nDone so far:\n{}\n\nFailed (do not depend on): {}\n\nStill running: {}",
-            ctx.goal,
+            "Goal: {goal_block}{settled}\n\nAlready created (do NOT reuse these ids): {}\n\nDone so far:\n{}\n\nFailed (do not depend on): {}\n\nStill running: {}",
             ctx.existing_ids.join(", "),
             done,
             ctx.failed.join(", "),
