@@ -51,6 +51,16 @@ boundary), run one gate-auditor pass over the whole roster.
 | cloud-campaign runner | the cloud-sb7 admission machinery | when that campaign resumes |
 
 ## Grading log (newest first — one line per delegation; move closed items to the per-agent notes)
+- 2026-08-30 swarm-surgeon #4 (restream seed carries formed tail, 63ebe140b): CLEAN PASS — made
+  the seed a PURE FUNCTION so a real test seam exists instead of theater; matched the file's
+  established tail idiom (2,000-char tail_chars, the judge's own look scale) rather than inventing
+  a truncation; proved the empty-tail case REACHABLE (pending-tool-request/RESTART restreams with
+  no thinking) so the honest-absence branch is earned, not decorative; followed the change to
+  every describer comment (the "does not go looking" narrative was now false and changed with the
+  code); honestly bounded trace (YES at 09:24:12, but only the last 2,000 chars — older rows still
+  lost, structural buffer bound stated). Three unbriefed observations: tick.py printer (fixed by
+  orchestrator same turn), panel not surfacing the field (folded into next panel brief), closing
+  line could be sharper (correctly left minimal). No charter gap.
 - 2026-08-30 panel-surgeon #1 (stale-cell render path): CLEAN PASS — refused the instrument's
   diagnosis and proved the chain link by link over live CDP (digest fresh, fiber memoizedProps
   fresh, DOM frozen), found the real mechanism (useSmoothText rAF fires 0x while the window is
