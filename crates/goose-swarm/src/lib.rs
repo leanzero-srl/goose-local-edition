@@ -16,7 +16,7 @@ pub mod patch;
 pub mod replan;
 pub mod scheduler;
 
-pub use coherence::{extract_signatures, scope_contract_bundle, SigLang};
+pub use coherence::{extract_signatures, SigLang};
 pub use context::SharedContext;
 pub use dag::{
     expand_subsplits, extract_subsplit, fill_fan_enabled, specs_from_plan_json, Dag, Difficulty,
