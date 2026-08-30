@@ -26,16 +26,15 @@ describe('FormationRibbon', () => {
       'data-state',
       'upcoming'
     );
-    // Every phase the engine announces is a step: CONTRACTS sits between Review and Build and is BEHIND
-    // Build here, never folded into it. The deleted Plan stage must not reappear.
+    // RETIRED phases are not offered without evidence: RESEARCH and CONTRACTS are deleted from the
+    // engine (P1-5/P1-4), so a run with no proof it ran them draws neither chip — Review sits
+    // immediately before Build. The deleted Plan stage must not reappear either.
     const labels = within(phases)
       .getAllByRole('listitem')
       .map((li) => li.textContent?.trim());
-    expect(labels.indexOf('Contracts')).toBe(labels.indexOf('Build') - 1);
-    expect(within(phases).getByText('Contracts').closest('li')).toHaveAttribute(
-      'data-state',
-      'complete'
-    );
+    expect(labels.indexOf('Review')).toBe(labels.indexOf('Build') - 1);
+    expect(within(phases).queryByText('Research')).not.toBeInTheDocument();
+    expect(within(phases).queryByText('Contracts')).not.toBeInTheDocument();
     expect(within(phases).getByText('Ask').closest('li')).toHaveAttribute('data-state', 'complete');
     expect(within(phases).queryByText('Plan')).not.toBeInTheDocument();
 
@@ -47,6 +46,39 @@ describe('FormationRibbon', () => {
     // The working/idle COUNT moved to the FLEET header, which is where the nodes are named. The ribbon
     // keeps the chips, which carry WHICH node is lit — the fact the count could not express.
     expect(screen.getByText('2 nodes')).toBeInTheDocument();
+  });
+
+  // An ARCHIVED run proves it ran the retired stages, so it keeps their chips in engine order —
+  // old run.jsonl files still carry the research/contracts phase events and must render as history.
+  it('keeps Research and Contracts for a run whose evidence proves it ran them', () => {
+    render(
+      <FormationRibbon
+        phase="build"
+        nodes={[{ device: 'gabee-qwen', working: true }]}
+        evidence={{
+          open: true,
+          ask: true,
+          research: true,
+          synthesize: true,
+          review: true,
+          contracts: true,
+        }}
+      />
+    );
+    const phases = screen.getByRole('list', { name: 'Run phases' });
+    const labels = within(phases)
+      .getAllByRole('listitem')
+      .map((li) => li.textContent?.trim());
+    expect(labels.indexOf('Research')).toBe(labels.indexOf('Synthesize') - 1);
+    expect(labels.indexOf('Contracts')).toBe(labels.indexOf('Build') - 1);
+    expect(within(phases).getByText('Contracts').closest('li')).toHaveAttribute(
+      'data-state',
+      'complete'
+    );
+    expect(within(phases).getByText('Research').closest('li')).toHaveAttribute(
+      'data-state',
+      'complete'
+    );
   });
 
   // A held run has no phase. The ribbon must show nothing active rather than the old regex fallback,
