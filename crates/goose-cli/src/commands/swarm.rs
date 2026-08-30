@@ -7634,10 +7634,12 @@ mod tests {
     }
 
     #[test]
-    fn build_full_reasoning_matches_full_walk_at_clip_boundary() {
-        // build_full_reasoning now walks from the back and stops once it has covered the 24000-char clip,
+    fn build_answer_window_matches_full_walk_at_window_boundary() {
+        // build_answer_window walks from the back and stops once it has covered ANSWER_WINDOW_CHARS,
         // instead of scanning the whole (growing) texts vec every write. Prove the output is byte-identical
-        // to the naive full walk it replaced, ACROSS the clip boundary where the early-stop actually kicks in.
+        // to the naive full walk it replaced, ACROSS the window boundary where the early-stop actually
+        // kicks in. (G-2: the fn was `build_full_reasoning` — same behaviour, honest name; the window is
+        // a digest I/O bound, and the complete record is the append-only `<task>.log`.)
         fn reference(texts: &[String]) -> String {
             let joined = texts
                 .iter()
@@ -7645,9 +7647,9 @@ mod tests {
                 .filter(|t| t.chars().count() >= 6 && t.contains(char::is_whitespace))
                 .collect::<Vec<_>>()
                 .join("\n\n");
-            clip_tail(&joined, 24000)
+            clip_tail(&joined, ANSWER_WINDOW_CHARS)
         }
-        // 400 chunks of ~120 chars each ≈ 48000 chars total — well past the 24000 clip, plus interleaved
+        // 400 chunks of ~120 chars each ≈ 48000 chars total — well past the window, plus interleaved
         // trivial fragments (dropped) and a couple of short no-whitespace tokens (also dropped).
         let mut texts: Vec<String> = Vec::new();
         for i in 0..400 {
@@ -7658,15 +7660,15 @@ mod tests {
             ));
             texts.push("`".into());
         }
-        assert_eq!(build_full_reasoning(&texts), reference(&texts));
-        // And the small case (under the clip) is identical too.
+        assert_eq!(build_answer_window(&texts), reference(&texts));
+        // And the small case (under the window) is identical too.
         let small = vec![
             "first substantive narration line".to_string(),
             ".".to_string(),
             "second substantive narration line".to_string(),
         ];
-        assert_eq!(build_full_reasoning(&small), reference(&small));
-        assert_eq!(build_full_reasoning(&[]), reference(&[]));
+        assert_eq!(build_answer_window(&small), reference(&small));
+        assert_eq!(build_answer_window(&[]), reference(&[]));
     }
 
     #[test]
@@ -14120,15 +14122,32 @@ fn tool_result_text<E>(result: &Result<rmcp::model::CallToolResult, E>) -> Strin
     clip_tail(&joined, 4000)
 }
 
-/// The worker's FULL narration — every substantive text chunk it produced, in order, joined. This is the
-/// "read the reasoning in plain" the run panel shows on expand (distinct from `build_reasoning`, which is
-/// the short last-few-chunks summary the judge reads). Tail-capped very generously.
-fn build_full_reasoning(texts: &[String]) -> String {
-    // Walk from the newest chunk backward, keeping only enough substantive tail to cover the 24000-char clip
-    // below, then stop. This is O(kept) instead of O(all-texts) — the digest is rebuilt on a hot timer while
-    // `texts` grows for the whole task. clip_tail still yields the EXACT same last 24000 chars: once the kept
-    // suffix is itself >= 24000 chars, clipping it equals clipping the full join (the char count here ignores
-    // the "\n\n" separators, which only makes the real suffix longer, so we never keep too little).
+/// G-2: how much of the ANSWER channel the digest's rolling window carries. A bound the digest
+/// genuinely needs — it is REWRITTEN on a ~400ms coalesce for the whole life of a task, so a truly
+/// full field would make every write O(everything said so far): quadratic I/O for a record the
+/// engine already keeps once, append-only and complete, in `<task>.log`. The window is a VIEW for
+/// readers with no durable log in hand (archived digests from old runs, a lane before its first
+/// transcript flush); every primary surface reads the durable log first (post-26612c1a3 the panel's
+/// taskGenReasoning/inspector/laneNarrative all rank `<task>.log`/`.think.log` above this field).
+const ANSWER_WINDOW_CHARS: usize = 24_000;
+
+/// The digest's rolling WINDOW over the worker's answer channel — the newest ~24k substantive chars,
+/// honestly a tail, never the whole narration (distinct from `build_reasoning`, the short
+/// last-few-chunks summary the judge reads; the COMPLETE record is the append-only `<task>.log`).
+///
+/// This was `build_full_reasoning`, and the name was the lie the agenda's item V is about: the field
+/// silently clipped at 24k while claiming "full", and UI surfaces built fallback chains on that
+/// claim. The honest fix is not to grow the field (see `ANSWER_WINDOW_CHARS` for why that is
+/// quadratic I/O) but to stop calling a window "full". The WIRE KEY stays `full_reasoning` for now:
+/// five UI lane paths join digest fields in ONE place (`digestStreamFields`), and renaming the key
+/// from the engine side alone would silently blank the UI's fallbacks — the desktop batch owns
+/// renaming its half and deleting the fallback reads, and the key follows in that change.
+fn build_answer_window(texts: &[String]) -> String {
+    // Walk from the newest chunk backward, keeping only enough substantive tail to cover the window,
+    // then stop. This is O(kept) instead of O(all-texts) — the digest is rebuilt on a hot timer while
+    // `texts` grows for the whole task. clip_tail still yields the EXACT same last window: once the kept
+    // suffix is itself >= the window, clipping it equals clipping the full join (the char count here
+    // ignores the "\n\n" separators, which only makes the real suffix longer, so we never keep too little).
     let mut kept: Vec<&str> = Vec::new();
     let mut chars = 0usize;
     for t in texts.iter().rev() {
@@ -14136,14 +14155,14 @@ fn build_full_reasoning(texts: &[String]) -> String {
         if t.chars().count() >= 6 && t.contains(char::is_whitespace) {
             chars += t.chars().count();
             kept.push(t);
-            if chars >= 24000 {
+            if chars >= ANSWER_WINDOW_CHARS {
                 break;
             }
         }
     }
     kept.reverse();
     let joined = kept.join("\n\n");
-    clip_tail(&joined, 24000)
+    clip_tail(&joined, ANSWER_WINDOW_CHARS)
 }
 
 /// The user's answers are BINDING, and the framing says so imperatively.
@@ -14917,7 +14936,9 @@ fn build_worker_digest(
         "last_text": last_text,
         "calls": calls,
         "reasoning": build_reasoning(texts),
-        "full_reasoning": build_full_reasoning(texts),
+        // G-2: a rolling ANSWER-channel window (see build_answer_window). The key's name predates
+        // the durable transcripts and stays until the UI's shared join renames its half.
+        "full_reasoning": build_answer_window(texts),
         "thinking_chars": thinking_chars,
         // Carry a generous tail of the live reasoning so the desktop's expandable per-node box shows a real
         // run of thinking, not a sliver. The compact line still clamps it; the expand shows the whole thing.
