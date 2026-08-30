@@ -1910,6 +1910,20 @@ async fn handle_gate(tree: PathBuf, spec: Option<PathBuf>) -> Result<()> {
             "inconclusive": r.inconclusive,
         })
     );
+    // §II.2 WRITERS, offline leg: persist this replay's verdict into the tree's own ledger, so a
+    // sink/shard prompt reproduces from an archived tree exactly as it would mid-run — the same
+    // renderer over the same file, no live run required. Same round-0 slot every replay:
+    // rewritten whole, so a second pass on an unchanged tree is a no-op.
+    if let Some(path) = write_gate_ledger(
+        &tree,
+        0,
+        "spec_contract_replay",
+        &r.findings,
+        &r.inconclusive,
+        serde_json::json!(r.verified),
+    ) {
+        eprintln!("gate replay: ledger written to {}", path.display());
+    }
     if r.findings.is_empty() && r.verified > 0 {
         eprintln!(
             "gate replay: PASS — {} advertised check(s) verified",
@@ -4478,6 +4492,220 @@ mod tests {
             delta["outside_manifest"],
             serde_json::json!(["test_interfaces.py"])
         );
+    }
+
+    /// II-2: the shard prompt's own demanded line format, parsed at last. `NOT FIXED`/`NOT REAL`
+    /// must win over the `FIXED` they contain, markdown litter must not hide a verdict, and a
+    /// line that is not a verdict must not become one.
+    #[test]
+    fn parse_finding_verdicts_reads_the_demanded_line_format() {
+        let out = "I repaired what I could.\n\
+                   FINDING 1: FIXED — ran `python3 -m pytest tests/test_ledger_core.py`, 26 passed\n\
+                   - **FINDING 2: NOT FIXED** — tried rewriting the UPDATE to use version guards; \
+                   test_concurrent_updates still fails with version 3 != 2\n\
+                   FINDING 3: NOT REAL — GET /api/health returned 200 with {\"status\":\"ok\"}\n\
+                   finding 4 was hard so I skipped it\n\
+                   Finding 5: FIXED — curl output attached";
+        let v = parse_finding_verdicts(out);
+        assert_eq!(
+            v.iter().map(|(n, s, _)| (*n, *s)).collect::<Vec<_>>(),
+            vec![
+                (1, "FIXED"),
+                (2, "NOT FIXED"),
+                (3, "NOT REAL"),
+                (5, "FIXED")
+            ],
+            "the prose line about finding 4 is not a verdict"
+        );
+        assert!(
+            v[1].2.contains("version guards"),
+            "detail survives: {:?}",
+            v[1].2
+        );
+        assert!(parse_finding_verdicts("all good, nothing to report").is_empty());
+    }
+
+    /// II-2: the repair ledger recovers the findings from the description it was built from —
+    /// a round trip through our own format, so numbered verdicts can be paired with their text.
+    #[test]
+    fn parse_numbered_findings_round_trips_smoke_fix_description() {
+        let findings = vec![
+            "pytest: 7 failed — tests/test_ledger_core.py concurrency guard".to_string(),
+            "GET /api/stream returned 404 (advertised SSE endpoint, in `app/stream.py`)"
+                .to_string(),
+        ];
+        let desc = smoke_fix_description(&findings, TargetLang::Python, "");
+        assert_eq!(parse_numbered_findings(&desc), findings);
+        assert!(parse_numbered_findings("no numbers here").is_empty());
+    }
+
+    /// II-2: command classes are the four questions a later dispatch asks. Import beats test for
+    /// collect-only (an import probe spelled with pytest); the boot class recognises the
+    /// spec-entry idiom, not a hardcoded package name.
+    #[test]
+    fn classify_command_answers_the_four_questions() {
+        assert_eq!(
+            classify_command("python3 -m pytest tests/ -v 2>&1 | tail -30"),
+            "test"
+        );
+        assert_eq!(
+            classify_command("python3 -m pytest --collect-only -q"),
+            "import"
+        );
+        assert_eq!(classify_command("python3 -c 'import app.api'"), "import");
+        assert_eq!(classify_command("python3 -m app --help 2>&1"), "boot");
+        assert_eq!(
+            classify_command("python3 -m app --db-dir /tmp/d --ledger-port 9907"),
+            "boot"
+        );
+        assert_eq!(classify_command("ls -la"), "other");
+        // Whole-suite detection: a named file or node id is a targeted re-run.
+        assert!(pytest_runs_whole_suite("python3 -m pytest -q"));
+        assert!(pytest_runs_whole_suite("python3 -m pytest tests/ -v"));
+        assert!(!pytest_runs_whole_suite(
+            "python3 -m pytest tests/test_ledger_core.py -v"
+        ));
+        assert!(!pytest_runs_whole_suite(
+            "python3 -m pytest tests/test_x.py::TestA::test_b"
+        ));
+    }
+
+    /// II-2 writers, end to end on a fixture tree cut from the r2 archive's shapes: a task row
+    /// carries the command table, pytest truth and fs_delta from `<key>.calls.jsonl`; the gate
+    /// and repair rows land beside it; the roll-up is rebuilt WHOLE and a second identical write
+    /// is a byte-level no-op (the `goose swarm gate` idempotence the row demands).
+    #[test]
+    fn ledger_writers_persist_and_rollup_rebuild_is_idempotent() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        std::fs::create_dir_all(root.join(".swarm/activity")).unwrap();
+        std::fs::create_dir_all(root.join("app")).unwrap();
+        std::fs::write(root.join("app/api.py"), "def health():\n    return 'ok'\n").unwrap();
+        // Calls cut from r2's integrate-verify digest shapes (real commands, real tails).
+        let key = activity_digest_key("api-endpoints");
+        let calls = [
+            serde_json::json!({"ts":"2026-08-29T20:00:01Z","attempt":0,"name":"shell",
+                "summary":"python3 -m pytest tests/ -v 2>&1 | tail -30","ok":true,
+                "result_tail":"14 failed, 64 passed in 12.41s",
+                "pytest":{"failed":14,"passed":64,"errors":0,"raw":"14 failed, 64 passed"}}),
+            serde_json::json!({"ts":"2026-08-29T20:00:02Z","attempt":0,"name":"shell",
+                "summary":"python3 -m app --help 2>&1","ok":true,
+                "result_tail":"usage: app [-h] --db-dir DB_DIR [--ledger-port LEDGER_PORT]"}),
+            serde_json::json!({"ts":"2026-08-29T20:00:03Z","attempt":1,"name":"shell",
+                "summary":"python3 -m pytest --collect-only -q","ok":false,
+                "result_tail":"ImportError: cannot import name 'parse_ledger_args' from 'app.cli'"}),
+            serde_json::json!({"kind":"attempt_end","ts":"2026-08-29T20:00:04Z","attempt":1,
+                "fs_delta":{"appeared":["test_interfaces.py"],"changed":["app/api.py"],
+                            "outside_manifest":["test_interfaces.py"]}}),
+        ];
+        std::fs::write(
+            root.join(".swarm/activity")
+                .join(format!("{key}.calls.jsonl")),
+            calls.iter().map(|c| format!("{c}\n")).collect::<String>(),
+        )
+        .unwrap();
+        std::fs::write(
+            root.join(".swarm/activity").join(format!("{key}.json")),
+            serde_json::json!({"last_text":"wired /api/health and /api/payments"}).to_string(),
+        )
+        .unwrap();
+
+        let owned = vec![
+            "app/api.py".to_string(),
+            "app/ledgerd/server.py".to_string(),
+        ];
+        write_task_ledger(root, "api-endpoints", "done", false, &owned, 1).unwrap();
+        write_gate_ledger(
+            root,
+            0,
+            "smoke",
+            &["GET /api/stream returned 404".to_string()],
+            &["POST /api/sync not probed".to_string()],
+            serde_json::json!(false),
+        )
+        .unwrap();
+        write_repair_ledger(
+            root,
+            RepairLedgerRow {
+                round: 0,
+                shard: "fix::r0::app/api.py",
+                owned_files: &owned[..1],
+                description: &smoke_fix_description(
+                    &["GET /api/stream returned 404".to_string()],
+                    TargetLang::Python,
+                    "",
+                ),
+                output: "FINDING 1: NOT FIXED — added route but SSE headers still wrong",
+                promoted: false,
+                baseline: 1,
+                agent_ok: true,
+            },
+        )
+        .unwrap();
+
+        let rollup = read_ledger_rollup(root).unwrap();
+        let task = &rollup["tasks"]["api-endpoints"];
+        assert_eq!(task["commands"]["test"]["count"], 1);
+        assert_eq!(task["commands"]["boot"]["count"], 1);
+        assert_eq!(task["commands"]["import"]["count"], 1);
+        assert!(
+            task["commands"]["import"]["last_failure_tail"]
+                .as_str()
+                .unwrap()
+                .contains("ImportError"),
+            "the last failure per class carries its tail"
+        );
+        assert_eq!(
+            task["attempts"], 2,
+            "both attempts counted from calls.jsonl"
+        );
+        assert_eq!(
+            task["fs_delta"]["outside_manifest"],
+            serde_json::json!(["test_interfaces.py"])
+        );
+        assert!(
+            task["delivery_defects"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|d| d.as_str().unwrap().contains("app/ledgerd/server.py")),
+            "the missing owned file is re-stat'd at write: {:?}",
+            task["delivery_defects"]
+        );
+        assert_eq!(rollup["tests_run_total"], 1);
+        assert_eq!(rollup["last_full_suite"]["summary"]["failed"], 14);
+        assert_eq!(
+            rollup["gate"][0]["findings"][0],
+            "GET /api/stream returned 404"
+        );
+        let rep = &rollup["repair"]["rounds"][0];
+        assert_eq!(rep["verdicts"][0]["verdict"], "NOT FIXED");
+        assert_eq!(
+            rep["verdicts"][0]["finding"],
+            "GET /api/stream returned 404"
+        );
+        assert_eq!(rep["promoted"], false);
+
+        // Idempotence: the same writes again produce the same roll-up bytes.
+        let first = std::fs::read_to_string(root.join(".swarm/ledger.json")).unwrap();
+        write_task_ledger(root, "api-endpoints", "done", false, &owned, 1).unwrap();
+        write_gate_ledger(
+            root,
+            0,
+            "smoke",
+            &["GET /api/stream returned 404".to_string()],
+            &["POST /api/sync not probed".to_string()],
+            serde_json::json!(false),
+        )
+        .unwrap();
+        let second = std::fs::read_to_string(root.join(".swarm/ledger.json")).unwrap();
+        // The task mini's ts is provenance and changes; everything the renderers read must not.
+        let strip = |s: &str| {
+            s.lines()
+                .filter(|l| !l.trim_start().starts_with("\"ts\""))
+                .collect::<String>()
+        };
+        assert_eq!(strip(&first), strip(&second), "second pass is a no-op");
     }
 
     #[test]
@@ -32761,6 +32989,467 @@ async fn collect_only_import_health(root: &std::path::Path) -> Option<String> {
     }
 }
 
+// ─────────────────────────────── THE PER-RUN LEDGER (§II.2) ───────────────────────────────
+//
+// capture → LEDGER → message. Models are stateless; the harness is the state. Everything a run
+// measures about a task — what it wrote, what it ran, what failed, what the gate found, what a
+// repair round already tried — is captured today (digests, `<task>.calls.jsonl`,
+// delivery_defects events, gate verdicts) and was thrown away before the next dispatch could
+// read it: on r2, `delivery_defects` named the sink's whole problem 0.24 ms before the sink was
+// dispatched without it, and the sink then re-derived everything with 3 whole-suite runs and 17
+// discovery calls. These writers persist those facts as `.swarm/ledger/<key>.json` minis plus a
+// `.swarm/ledger.json` roll-up rebuilt WHOLE from the minis on every write — the
+// `.swarm/prereview/` file mechanics, the injection channel this engine has measured to work.
+//
+// THE LEDGER INFORMS, NEVER GATES. Every write is best-effort (a failed write must never
+// disturb a run), nothing here stops, caps, retries or refuses model work, and no time value is
+// an input to what is written or how it renders — timestamps are provenance only.
+
+const LEDGER_DIR: &str = ".swarm/ledger";
+
+/// Class a shell command for the ledger's `commands` table. Four classes because they are the
+/// four questions a later dispatch actually asks: did the tests run (and how often), does the
+/// tree import, was the app booted, anything else. `import` is checked before `test` because a
+/// `pytest --collect-only` is an import probe that happens to be spelled with pytest.
+fn classify_command(cmd: &str) -> &'static str {
+    let c = cmd.trim();
+    if c.contains("--collect-only") || (c.contains(" -c ") && c.contains("import")) {
+        return "import";
+    }
+    if c.contains("pytest") || c.contains("cargo test") || c.contains("go test") {
+        return "test";
+    }
+    if c.contains("--help")
+        || c.contains("cargo run")
+        || c.contains("go run")
+        || spec_python_entry(c).is_some()
+    {
+        return "boot";
+    }
+    "other"
+}
+
+/// Does a pytest invocation run the WHOLE suite? A command that names an individual test file or
+/// a `::` node id is a targeted re-run; anything else (bare `pytest`, `pytest -q`, `pytest
+/// tests/`) exercises the suite. The roll-up's "last whole-suite outcome" — the one number the
+/// r2 sink paid 3 full re-runs to learn — keys off this.
+fn pytest_runs_whole_suite(cmd: &str) -> bool {
+    !cmd.contains("::")
+        && !cmd
+            .split_whitespace()
+            .any(|t| t.trim_matches('"').ends_with(".py"))
+}
+
+/// The numbered findings block out of a `smoke_fix_description` — the contiguous `1. …` `2. …`
+/// run the shard prompt itself demands verdict lines against. Recovered from the description
+/// because the dispatcher's epilogue (where the repair ledger is written) has the description in
+/// hand but not the findings vec it was built from; round-tripping our own format is exact.
+fn parse_numbered_findings(desc: &str) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for line in desc.lines() {
+        let t = line.trim();
+        let want = format!("{}. ", out.len() + 1);
+        if let Some(rest) = t.strip_prefix(&want) {
+            out.push(rest.to_string());
+        } else if !out.is_empty() && !t.is_empty() {
+            break;
+        }
+    }
+    out
+}
+
+/// The `FINDING n: FIXED / NOT FIXED / NOT REAL — detail` lines the shard prompt has demanded
+/// since the numbered-verdict protocol shipped — and which NOTHING parsed until now, so a round
+/// N+1 shard re-tried what round N had already reported. Order matters: `NOT FIXED` and `NOT
+/// REAL` are tested before `FIXED` because both contain it. Tolerant of markdown litter
+/// (leading `-`/`*`/`#`, `**bold**`) because the reporter is a weak model, not a serializer.
+fn parse_finding_verdicts(output: &str) -> Vec<(u32, &'static str, String)> {
+    let mut out = Vec::new();
+    for line in output.lines() {
+        let t = line
+            .trim()
+            .trim_start_matches(['-', '*', '#', '>', ' '])
+            .trim_start_matches("**");
+        let Some(rest) = t
+            .strip_prefix("FINDING ")
+            .or_else(|| t.strip_prefix("Finding "))
+        else {
+            continue;
+        };
+        let digits: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
+        let Ok(n) = digits.parse::<u32>() else {
+            continue;
+        };
+        let after = rest
+            .get(digits.len()..)
+            .unwrap_or("")
+            .trim_start_matches("**")
+            .trim_start_matches([':', ' '])
+            .trim_start_matches("**")
+            .trim();
+        let upper = after.to_uppercase();
+        let verdict = if upper.starts_with("NOT FIXED") {
+            "NOT FIXED"
+        } else if upper.starts_with("NOT REAL") {
+            "NOT REAL"
+        } else if upper.starts_with("FIXED") {
+            "FIXED"
+        } else {
+            continue;
+        };
+        let detail = after
+            .get(verdict.len()..)
+            .unwrap_or("")
+            .trim_start_matches(['*', ' ', '—', '-', ':'])
+            .trim();
+        out.push((n, verdict, tail_chars(detail, 300)));
+    }
+    out
+}
+
+/// Write one ledger mini and rebuild the roll-up from ALL minis. Every writer funnels through
+/// here so the roll-up can never drift from its parts. Returns the mini's path, None on any
+/// failure — the caller emits `ledger_written` only for a write that actually happened.
+fn write_ledger_mini(
+    root: &Path,
+    file_name: &str,
+    row: &serde_json::Value,
+) -> Option<std::path::PathBuf> {
+    let dir = root.join(LEDGER_DIR);
+    std::fs::create_dir_all(&dir).ok()?;
+    let path = dir.join(file_name);
+    std::fs::write(&path, serde_json::to_string_pretty(row).ok()?).ok()?;
+    rebuild_ledger_rollup(root);
+    Some(path)
+}
+
+/// The per-task ledger row, from what the run already captured: the append-only
+/// `<key>.calls.jsonl` (per-call rows + `attempt_end` snapshots with fs_delta), the live digest's
+/// `last_text`, and a fresh `verify_owned_files` stat — a re-run, not a copy, so a defect fixed
+/// since completion vanishes instead of being re-litigated.
+fn build_task_ledger_row(
+    root: &Path,
+    task_id: &str,
+    status: &str,
+    salvaged: bool,
+    owned_files: &[String],
+    attempt: u32,
+) -> serde_json::Value {
+    let key = activity_digest_key(task_id);
+    let activity = root
+        .join(".swarm")
+        .join("activity")
+        .join(format!("{key}.json"));
+    #[derive(Default)]
+    struct Class {
+        count: u64,
+        last_ok: Option<bool>,
+        last_failure_tail: String,
+    }
+    let mut classes: std::collections::BTreeMap<&'static str, Class> =
+        std::collections::BTreeMap::new();
+    let mut attempts_seen: u32 = attempt;
+    let mut last_full_suite: Option<serde_json::Value> = None;
+    let mut fs_appeared: std::collections::BTreeSet<String> = Default::default();
+    let mut fs_changed: std::collections::BTreeSet<String> = Default::default();
+    let mut fs_outside: std::collections::BTreeSet<String> = Default::default();
+    if let Ok(text) = std::fs::read_to_string(activity.with_extension("calls.jsonl")) {
+        for line in text.lines() {
+            let Ok(v) = serde_json::from_str::<serde_json::Value>(line) else {
+                continue;
+            };
+            if let Some(a) = v.get("attempt").and_then(|a| a.as_u64()) {
+                attempts_seen = attempts_seen.max(a as u32);
+            }
+            if v.get("kind").and_then(|k| k.as_str()) == Some("attempt_end") {
+                if let Some(d) = v.get("fs_delta") {
+                    let take = |key: &str, into: &mut std::collections::BTreeSet<String>| {
+                        for p in d.get(key).and_then(|x| x.as_array()).unwrap_or(&Vec::new()) {
+                            if let Some(s) = p.as_str() {
+                                into.insert(s.to_string());
+                            }
+                        }
+                    };
+                    take("appeared", &mut fs_appeared);
+                    take("changed", &mut fs_changed);
+                    take("outside_manifest", &mut fs_outside);
+                }
+                continue;
+            }
+            if v.get("name").and_then(|n| n.as_str()) != Some("shell") {
+                continue;
+            }
+            let cmd = v.get("summary").and_then(|s| s.as_str()).unwrap_or("");
+            let class = classify_command(cmd);
+            let ok = v.get("ok").and_then(|o| o.as_bool());
+            let entry = classes.entry(class).or_default();
+            entry.count += 1;
+            entry.last_ok = ok;
+            let py = v.get("pytest");
+            let failed_pytest = py
+                .and_then(|p| p.get("failed"))
+                .and_then(|f| f.as_u64())
+                .unwrap_or(0)
+                > 0;
+            if ok == Some(false) || failed_pytest {
+                entry.last_failure_tail = tail_chars(
+                    &format!(
+                        "{cmd}: {}",
+                        v.get("result_tail").and_then(|r| r.as_str()).unwrap_or("")
+                    ),
+                    300,
+                );
+            }
+            if let Some(py) = py {
+                if pytest_runs_whole_suite(cmd) {
+                    last_full_suite = Some(serde_json::json!({
+                        "cmd": cmd,
+                        "summary": py,
+                        "task_id": task_id,
+                        "ts": v.get("ts").cloned().unwrap_or(serde_json::Value::Null),
+                    }));
+                }
+            }
+        }
+    }
+    let commands: serde_json::Map<String, serde_json::Value> = classes
+        .into_iter()
+        .map(|(class, c)| {
+            (
+                class.to_string(),
+                serde_json::json!({
+                    "count": c.count,
+                    "ok": c.last_ok,
+                    "last_failure_tail": c.last_failure_tail,
+                }),
+            )
+        })
+        .collect();
+    let final_text: String = std::fs::read_to_string(&activity)
+        .ok()
+        .and_then(|c| serde_json::from_str::<serde_json::Value>(&c).ok())
+        .and_then(|d| {
+            d.get("last_text")
+                .and_then(|t| t.as_str())
+                .map(String::from)
+        })
+        .unwrap_or_default()
+        .chars()
+        .take(400)
+        .collect();
+    let owned: Vec<serde_json::Value> = owned_files
+        .iter()
+        .map(|f| {
+            serde_json::json!({
+                "path": f,
+                "bytes": std::fs::metadata(root.join(f)).map(|m| m.len()).unwrap_or(0),
+            })
+        })
+        .collect();
+    serde_json::json!({
+        "kind": "task",
+        "task_id": task_id,
+        "status": status,
+        "salvaged": salvaged,
+        "attempts": u64::from(attempts_seen) + 1,
+        "owned_files": owned,
+        "delivery_defects": verify_owned_files(root, owned_files),
+        "commands": commands,
+        "last_full_suite": last_full_suite,
+        "final_text": final_text,
+        "fs_delta": {
+            "appeared": fs_appeared,
+            "changed": fs_changed,
+            "outside_manifest": fs_outside,
+        },
+        "ts": chrono::Utc::now().to_rfc3339(),
+    })
+}
+
+fn write_task_ledger(
+    root: &Path,
+    task_id: &str,
+    status: &str,
+    salvaged: bool,
+    owned_files: &[String],
+    attempt: u32,
+) -> Option<std::path::PathBuf> {
+    let row = build_task_ledger_row(root, task_id, status, salvaged, owned_files, attempt);
+    write_ledger_mini(
+        root,
+        &format!("{}.json", activity_digest_key(task_id)),
+        &row,
+    )
+}
+
+/// One gate round's verdict, persisted where the NEXT dispatch can read it. `verified` is the
+/// source's own affirmation shape — `established` (bool) for the in-run smoke gate, the
+/// affirmative check count for a spec-contract replay — kept as-is rather than flattened,
+/// because collapsing them is how "inconclusive" and "verified" became the same value once
+/// before. Carries no timestamp: `goose swarm gate` on the same tree twice must be a no-op.
+fn write_gate_ledger(
+    root: &Path,
+    round: u64,
+    source: &str,
+    findings: &[String],
+    inconclusive: &[String],
+    verified: serde_json::Value,
+) -> Option<std::path::PathBuf> {
+    let row = serde_json::json!({
+        "kind": "gate",
+        "round": round,
+        "source": source,
+        "findings": findings,
+        "inconclusive": inconclusive,
+        "verified": verified,
+    });
+    write_ledger_mini(root, &format!("gate-r{round}.json"), &row)
+}
+
+/// What one repair shard reported, verdict lines parsed and PAIRED with the findings they judge
+/// — a bare "FINDING 2: NOT FIXED" is only actionable next round alongside what finding 2 was.
+struct RepairLedgerRow<'a> {
+    round: usize,
+    shard: &'a str,
+    owned_files: &'a [String],
+    description: &'a str,
+    output: &'a str,
+    promoted: bool,
+    baseline: usize,
+    agent_ok: bool,
+}
+
+fn write_repair_ledger(root: &Path, row: RepairLedgerRow<'_>) -> Option<std::path::PathBuf> {
+    let findings = parse_numbered_findings(row.description);
+    let verdicts: Vec<serde_json::Value> = parse_finding_verdicts(row.output)
+        .into_iter()
+        .map(|(n, verdict, detail)| {
+            serde_json::json!({
+                "n": n,
+                "finding": findings.get((n as usize).saturating_sub(1)),
+                "verdict": verdict,
+                "detail": detail,
+            })
+        })
+        .collect();
+    let mini = serde_json::json!({
+        "kind": "repair",
+        "round": row.round,
+        "shard": row.shard,
+        "owned_files": row.owned_files,
+        "findings_assigned": findings,
+        "verdicts": verdicts,
+        "promoted": row.promoted,
+        "baseline": row.baseline,
+        "agent_ok": row.agent_ok,
+    });
+    write_ledger_mini(
+        root,
+        &format!(
+            "repair-r{}-{}.json",
+            row.round,
+            activity_digest_key(row.shard)
+        ),
+        &mini,
+    )
+}
+
+/// Rebuild `.swarm/ledger.json` WHOLE from the minis. Rewriting the roll-up in full on every
+/// write is what makes the writers order-independent and idempotent — the prereview mechanics,
+/// not an append log that could double-count. `open_defects` is re-derived from the tree NOW
+/// (verify_tree_imports + each task's owned-file stat), so a defect fixed since its task
+/// completed vanishes instead of haunting every later prompt.
+fn rebuild_ledger_rollup(root: &Path) -> Option<serde_json::Value> {
+    let dir = root.join(LEDGER_DIR);
+    let mut tasks: std::collections::BTreeMap<String, serde_json::Value> = Default::default();
+    let mut gates: Vec<serde_json::Value> = Vec::new();
+    let mut repairs: Vec<serde_json::Value> = Vec::new();
+    for e in std::fs::read_dir(&dir).ok()?.flatten() {
+        if e.path().extension().and_then(|x| x.to_str()) != Some("json") {
+            continue;
+        }
+        let Some(v) = std::fs::read_to_string(e.path())
+            .ok()
+            .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok())
+        else {
+            continue;
+        };
+        match v.get("kind").and_then(|k| k.as_str()) {
+            Some("task") => {
+                if let Some(id) = v.get("task_id").and_then(|t| t.as_str()) {
+                    tasks.insert(id.to_string(), v);
+                }
+            }
+            Some("gate") => gates.push(v),
+            Some("repair") => repairs.push(v),
+            _ => {}
+        }
+    }
+    gates.sort_by_key(|g| g.get("round").and_then(|r| r.as_u64()).unwrap_or(0));
+    repairs.sort_by_key(|r| {
+        (
+            r.get("round").and_then(|x| x.as_u64()).unwrap_or(0),
+            r.get("shard")
+                .and_then(|s| s.as_str())
+                .unwrap_or("")
+                .to_string(),
+        )
+    });
+    let tests_run_total: u64 = tasks
+        .values()
+        .filter_map(|t| t.pointer("/commands/test/count").and_then(|c| c.as_u64()))
+        .sum();
+    let last_full_suite = tasks
+        .values()
+        .filter_map(|t| t.get("last_full_suite").filter(|v| !v.is_null()))
+        .max_by_key(|s| {
+            s.get("ts")
+                .and_then(|t| t.as_str())
+                .unwrap_or("")
+                .to_string()
+        })
+        .cloned();
+    let mut open_defects: Vec<String> = verify_tree_imports(root);
+    for t in tasks.values() {
+        let owned: Vec<String> = t
+            .get("owned_files")
+            .and_then(|o| o.as_array())
+            .map(|a| {
+                a.iter()
+                    .filter_map(|f| f.get("path").and_then(|p| p.as_str()).map(String::from))
+                    .collect()
+            })
+            .unwrap_or_default();
+        for d in verify_owned_files(root, &owned) {
+            if !open_defects.contains(&d) {
+                open_defects.push(d);
+            }
+        }
+    }
+    let rollup = serde_json::json!({
+        "tasks": tasks,
+        "gate": gates,
+        "repair": { "rounds": repairs },
+        "tests_run_total": tests_run_total,
+        "last_full_suite": last_full_suite,
+        "open_defects": open_defects,
+    });
+    std::fs::write(
+        root.join(".swarm").join("ledger.json"),
+        serde_json::to_string_pretty(&rollup).ok()?,
+    )
+    .ok()?;
+    Some(rollup)
+}
+
+/// The roll-up as the renderers consume it. None (ledger absent/unreadable) must render as an
+/// EMPTY block downstream — the dispatch then proceeds byte-identical, never blocked.
+#[allow(dead_code)] // consumed by render_ledger_block (II-2b, next commit); tested already
+fn read_ledger_rollup(root: &Path) -> Option<serde_json::Value> {
+    serde_json::from_str(&std::fs::read_to_string(root.join(".swarm").join("ledger.json")).ok()?)
+        .ok()
+}
+
 /// F790-3: the operator questions waiting in `<root>/.swarm/questions/*.txt` that have no
 /// answer in `<root>/.swarm/answers/<same-stem>.txt` yet, oldest first. Pure over the
 /// filesystem so the discovery rule is testable: the answer file's existence IS the
@@ -33026,6 +33715,40 @@ impl GooseAgentDispatcher {
             "promoted": promoted,
             "shadow_changed": shadow_changed,
         }));
+        // §II.2 WRITERS, repair leg. The shard prompt has demanded per-finding verdict lines
+        // since the numbered protocol shipped, and NOTHING parsed them — so a round N+1 shard
+        // re-tried what round N had already reported (the fresh per-round Scheduler discards its
+        // SharedContext; only what is on disk survives it). Written to the REAL tree whatever
+        // the shadow's fate: "tried and NOT FIXED" is precisely the fact a discarded attempt
+        // leaves behind.
+        {
+            let agent_text = if let Ok(Ok(o)) = &ran {
+                o.output.clone()
+            } else {
+                String::new()
+            };
+            if let Some(path) = write_repair_ledger(
+                &root,
+                RepairLedgerRow {
+                    round: fr.round,
+                    shard: &req.task_id,
+                    owned_files: &req.owned_files,
+                    description: &req.description,
+                    output: &agent_text,
+                    promoted,
+                    baseline,
+                    agent_ok,
+                },
+            ) {
+                self.events.write_value(serde_json::json!({
+                    "event": "ledger_written",
+                    "kind": "repair",
+                    "round": fr.round,
+                    "task_id": req.task_id,
+                    "path": path.display().to_string(),
+                }));
+            }
+        }
         match ran {
             Ok(Ok(mut out)) => {
                 out.output = format!(
@@ -33092,6 +33815,34 @@ impl GooseAgentDispatcher {
                 style("!").red().bold(),
                 style(task_id).bold()
             );
+        }
+    }
+
+    /// §II.2 WRITERS, task leg: persist what this attempt measurably did the moment it says it
+    /// is done (or fails) — the same free pass emit_delivery_defects rides. Speculative attempts
+    /// are skipped on purpose: a shadow's bytes may be discarded at grade time, and recording
+    /// them as tree state would put a lie in every later prompt; the repair leg
+    /// (write_repair_ledger) is the shadow world's recorder. Best-effort: a failed write emits
+    /// nothing and changes nothing.
+    fn record_task_ledger(&self, req: &DispatchRequest, root: &Path, status: &str, salvaged: bool) {
+        if req.speculative {
+            return;
+        }
+        if let Some(path) = write_task_ledger(
+            root,
+            &req.task_id,
+            status,
+            salvaged,
+            &req.owned_files,
+            req.attempt,
+        ) {
+            self.events.write_value(serde_json::json!({
+                "event": "ledger_written",
+                "kind": "task",
+                "task_id": req.task_id,
+                "status": status,
+                "path": path.display().to_string(),
+            }));
         }
     }
 
@@ -34599,6 +35350,7 @@ impl GooseAgentDispatcher {
                     }
                 }
                 self.emit_delivery_defects(&req.task_id, &req.owned_files, &root, false);
+                self.record_task_ledger(&req, &root, "done", false);
                 Ok(TaskRunOutput {
                     output,
                     session_id: Some(out.session_id),
@@ -34664,6 +35416,7 @@ impl GooseAgentDispatcher {
                         // non-empty except the intentional markers, not a skeleton. No py_compile parse
                         // check, no HTML asset check, and no cross-task import check at all.
                         self.emit_delivery_defects(&req.task_id, &req.owned_files, &root, true);
+                        self.record_task_ledger(&req, &root, "done", true);
                         return Ok(TaskRunOutput {
                             output: "(progress-watchdog: thinking-only spiral stopped; owned files already written)".to_string(),
                             session_id: None,
@@ -34672,6 +35425,16 @@ impl GooseAgentDispatcher {
                         });
                     }
                 }
+                // The Err arm writes a ledger row too: an attempt that failed still ran commands
+                // and wrote files, and "attempt 1 failed here" is exactly the fact attempt 2's
+                // don't-repeat block exists to carry. Recorded, never acted on — the scheduler
+                // alone decides retry/fail, and this write cannot influence it.
+                self.record_task_ledger(
+                    &req,
+                    &root,
+                    if transient { "retrying" } else { "failed" },
+                    false,
+                );
                 if transient {
                     // Best-effort re-warm before re-dispatch — only if model loading is allowed.
                     if self.allow_model_load
@@ -39233,6 +39996,25 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                     .map(|r| elide_middle(r, 150, 650))
                     .collect::<Vec<_>>(),
             }));
+            // §II.2 WRITERS, gate leg — here and not earlier because THIS is where
+            // verdict.findings is final (post model-observed merge, post dedupe). What it writes
+            // is exactly what the round decided on; a later dispatch reading the ledger sees the
+            // round's real ruler, never a pre-dedupe draft.
+            if let Some(path) = write_gate_ledger(
+                &cwd,
+                round as u64,
+                "smoke",
+                &verdict.findings,
+                &verdict.inconclusive,
+                serde_json::json!(verdict.established()),
+            ) {
+                sink.write_value(serde_json::json!({
+                    "event": "ledger_written",
+                    "kind": "gate",
+                    "round": round,
+                    "path": path.display().to_string(),
+                }));
+            }
             // F835: record what THIS verify measured, and snapshot the tree when a RAN verify
             // posts the fewest findings yet. A ran:false verify never snapshots — promoting an
             // UNCHECKED tree is the vacuous-pass trap the speculative-twin path already refuses.
