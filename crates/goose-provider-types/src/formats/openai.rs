@@ -3366,6 +3366,118 @@ data: [DONE]
         Ok(())
     }
 
+    #[tokio::test]
+    async fn test_tool_forming_open_frame_with_nonempty_arguments_publishes_both(
+    ) -> anyhow::Result<()> {
+        // Every other forming fixture opens with arguments:"" — leaving the open-frame ArgsDelta
+        // arm (Forming immediately followed by ArgsDelta from the SAME first delta) traversed by
+        // zero tests. Some providers ship id+name+the whole argument body in one delta; both the
+        // open frame and its argument bytes must reach the observer, and the call must still
+        // assemble.
+        let response_lines = r#"
+data: {"id":"chatcmpl-of1","object":"chat.completion.chunk","created":1756500000,"model":"m","choices":[{"index":0,"delta":{"role":"assistant","tool_calls":[{"index":0,"id":"call_o1","type":"function","function":{"name":"write_file","arguments":"{\"path\": \"a.py\"}"}}]},"finish_reason":null}]}
+data: {"id":"chatcmpl-of1","object":"chat.completion.chunk","created":1756500001,"model":"m","choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}],"usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}
+data: [DONE]
+"#
+        .lines()
+        .map(str::to_string)
+        .collect::<Vec<_>>();
+
+        let (events, observer) = recording_observer();
+        let yielded = TOOL_FORMING_OBSERVER
+            .scope(observer, decode_all(response_lines))
+            .await?;
+
+        let seen = events.lock().unwrap();
+        let shape: Vec<String> = seen
+            .iter()
+            .map(|e| match e {
+                ToolFormingEvent::Forming { id, name, .. } => format!("forming:{id}:{name}"),
+                ToolFormingEvent::ArgsDelta { id, delta } => format!("args:{id}:{delta}"),
+                ToolFormingEvent::Complete { id } => format!("complete:{id}"),
+            })
+            .collect();
+        assert_eq!(
+            shape,
+            vec![
+                "forming:call_o1:write_file",
+                "args:call_o1:{\"path\": \"a.py\"}",
+                "complete:call_o1",
+            ],
+            "an open frame carrying its whole argument body publishes Forming AND the body as an \
+             ArgsDelta, verbatim"
+        );
+
+        let tool_requests: Vec<_> = yielded
+            .iter()
+            .filter_map(|(m, _)| m.as_ref())
+            .flat_map(|m| m.content.iter())
+            .filter_map(|c| match c {
+                MessageContent::ToolRequest(req) => req.tool_call.as_ref().ok(),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(tool_requests.len(), 1);
+        assert_eq!(
+            tool_requests[0]
+                .arguments
+                .as_ref()
+                .and_then(|a| a.get("path"))
+                .and_then(|v| v.as_str()),
+            Some("a.py"),
+            "the one-delta call still assembles"
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_tool_forming_late_opening_call_with_nonempty_arguments_publishes_both(
+    ) -> anyhow::Result<()> {
+        // The inner accumulation loop's OTHER untested arm: a secondary call that opens
+        // mid-burst with id+name+non-empty arguments in ONE delta. Its Forming and its argument
+        // fragment must both arrive (the multi-tool fixture opens its second call with
+        // arguments:"", so this arm too had zero coverage).
+        let response_lines = r#"
+data: {"id":"chatcmpl-lo1","object":"chat.completion.chunk","created":1756500000,"model":"m","choices":[{"index":0,"delta":{"role":"assistant","tool_calls":[{"index":0,"id":"call_b1","type":"function","function":{"name":"write_file","arguments":""}}]},"finish_reason":null}]}
+data: {"id":"chatcmpl-lo1","object":"chat.completion.chunk","created":1756500000,"model":"m","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{\"path\": \"a.py\"}"}}]},"finish_reason":null}]}
+data: {"id":"chatcmpl-lo1","object":"chat.completion.chunk","created":1756500000,"model":"m","choices":[{"index":0,"delta":{"tool_calls":[{"index":1,"id":"call_b2","type":"function","function":{"name":"run_tests","arguments":"{\"suite\": \"unit\"}"}}]},"finish_reason":null}]}
+data: {"id":"chatcmpl-lo1","object":"chat.completion.chunk","created":1756500000,"model":"m","choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}],"usage":{"prompt_tokens":100,"completion_tokens":20,"total_tokens":120}}
+data: [DONE]
+"#
+        .lines()
+        .map(str::to_string)
+        .collect::<Vec<_>>();
+
+        let (events, observer) = recording_observer();
+        TOOL_FORMING_OBSERVER
+            .scope(observer, decode_all(response_lines))
+            .await?;
+
+        let seen = events.lock().unwrap();
+        let shape: Vec<String> = seen
+            .iter()
+            .map(|e| match e {
+                ToolFormingEvent::Forming { id, name, .. } => format!("forming:{id}:{name}"),
+                ToolFormingEvent::ArgsDelta { id, delta } => format!("args:{id}:{}", delta.len()),
+                ToolFormingEvent::Complete { id } => format!("complete:{id}"),
+            })
+            .collect();
+        assert_eq!(
+            shape,
+            vec![
+                "forming:call_b1:write_file",
+                "args:call_b1:16",
+                "forming:call_b2:run_tests",
+                "args:call_b2:17",
+                "complete:call_b1",
+                "complete:call_b2",
+            ],
+            "a late-opening call that arrives with its arguments publishes Forming then the \
+             fragment from the same delta"
+        );
+        Ok(())
+    }
+
     #[test]
     fn test_response_to_message_with_nested_extra_content() -> anyhow::Result<()> {
         let response = json!({
