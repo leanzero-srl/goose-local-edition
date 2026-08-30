@@ -601,6 +601,12 @@ export interface ClarifyProxy {
   answered: { questions: string[]; answers: string[] } | null;
   /** The proxy call itself failed; the engine unblocked the run with a conventional default. */
   failed: string | null;
+  /** P1-5's proxyless engine: the ask window expired unanswered (`low_confidence_ask_timeout`),
+   *  the decisions were folded into every brief as "choose the most conventional option", and the
+   *  build CONTINUED. Without this the card said "paused, waiting for you" for the rest of the
+   *  run — Mihai hit exactly that on r4-relaunch (2026-08-30): the run was mid-REVIEW while the
+   *  UI begged for answers no reader would ever collect. */
+  timedOut: { questions: number; waitedSecs: number } | null;
 }
 
 /** One REVIEW round: what it found, how much of that was a repeat, and what its patch actually touched.
@@ -777,7 +783,7 @@ const EMPTY: SwarmRunState = {
   runPhase: null,
   runPhasesObserved: {},
   slices: null,
-  proxy: { armed: null, answered: null, failed: null },
+  proxy: { armed: null, answered: null, failed: null, timedOut: null },
   reviewRounds: [],
   sinkRenamedFrom: null,
   synthesisFallback: null,
@@ -1186,7 +1192,7 @@ export function buildActivity(events: Array<Record<string, unknown>>): {
   let sliceOpenSecs: number | null = null;
   let sliceBriefChars: number[] = [];
   let sliceResearchSecs: number | null = null;
-  const proxy: ClarifyProxy = { armed: null, answered: null, failed: null };
+  const proxy: ClarifyProxy = { armed: null, answered: null, failed: null, timedOut: null };
   const reviewRounds: ReviewRound[] = [];
   let sinkRenamedFrom: string | null = null;
   let synthesisFallback: { error: string; tasks: number } | null = null;
@@ -1738,6 +1744,20 @@ export function buildActivity(events: Array<Record<string, unknown>>): {
           text: `Low confidence (${typeof pc === 'number' ? pc : '?'}/100) — asking the user ${nq} clarifying question${nq === 1 ? '' : 's'} before building`,
           tone: 'warn',
           sub: qsub,
+        });
+        break;
+      }
+      case 'low_confidence_ask_timeout': {
+        const nq = num(e['questions_unanswered']) ?? 0;
+        const waited = num(e['waited_secs']) ?? 0;
+        proxy.timedOut = { questions: nq, waitedSecs: waited };
+        const t = `Unanswered at the ${waited}s window — goose chose conventional options; the build continues`;
+        compact({ kind: 'plan', text: t, tone: 'info' });
+        verbose({
+          kind: 'plan',
+          text: t,
+          tone: 'info',
+          sub: 'Each open decision was folded into every worker brief as "choose the most conventional option and note the choice in a code comment".',
         });
         break;
       }
@@ -3194,6 +3214,7 @@ export function buildPhaseTodo(
   let pillarsN: number | null = null;
   const retargets: Array<{ round: number; action: string }> = [];
   let askedQ: number | null = null;
+  let askTimedOut = false;
   let planned = false;
   let planLoaded = false;
   let contractsModules: number | null = null;
@@ -3294,6 +3315,7 @@ export function buildPhaseTodo(
     else if (t === 'confidence_retarget')
       retargets.push({ round: num(e['round']) ?? 0, action: str(e['action']) });
     else if (t === 'low_confidence_ask') askedQ = arr(e['questions']).length;
+    else if (t === 'low_confidence_ask_timeout') askTimedOut = true;
     else if (t === 'contracts') contractsModules = num(e['modules']) ?? 0;
     else if (t === 'plan_loaded') {
       planLoaded = true;
@@ -3464,8 +3486,12 @@ export function buildPhaseTodo(
       it(
         'a-ask-legacy',
         `Asked you ${askedQ} question${askedQ === 1 ? '' : 's'}`,
-        opts.clarifyPending ? 'running' : 'done',
-        opts.clarifyPending ? 'waiting on your answer' : undefined
+        opts.clarifyPending && !askTimedOut ? 'running' : 'done',
+        askTimedOut
+          ? 'unanswered at the unattended window — conventional options chosen, folded into every brief'
+          : opts.clarifyPending
+            ? 'waiting on your answer'
+            : undefined
       )
     );
   else if (phasesSeen.has('ask')) ask.push(it('a-run', 'Naming the open decisions…', 'running'));
