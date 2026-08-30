@@ -25717,6 +25717,7 @@ fn repair_plan_flags(plan: &mut serde_json::Value, spec: &str) -> PlanRepairs {
     if plan.get("subtasks").and_then(|s| s.as_array()).is_some() {
         repair_shared_files(plan, &mut actions);
         repair_module_package_collisions(plan, &mut actions);
+        repair_sink_files(plan, &mut actions);
         repair_owning_nothing(plan, &mut actions);
         repair_unassigned_endpoints(plan, spec, &mut actions);
     }
@@ -25725,6 +25726,74 @@ fn repair_plan_flags(plan: &mut serde_json::Value, spec: &str) -> PlanRepairs {
         before,
         after,
         actions,
+    }
+}
+
+/// THE JOIN OWNS NOTHING — structurally, at repair time, whatever synthesis said. r4 (2026-08-30)
+/// shipped `integrate-verify` owning `README.md`: scheduler.rs relaxes a dependent through an
+/// upstream failure ONLY if it owns no files, so a file-owning join is cascaded-Failed by any
+/// build failure and the app never binds a port (the r0 class). The files move to the first
+/// file-owning non-sink task (the skeleton, when present) so a spec-mandated file keeps an owner.
+fn repair_sink_files(plan: &mut serde_json::Value, actions: &mut Vec<String>) {
+    let Some(subtasks) = plan.get_mut("subtasks").and_then(|s| s.as_array_mut()) else {
+        return;
+    };
+    let sink_idx = subtasks
+        .iter()
+        .position(|t| t.get("id").and_then(|i| i.as_str()) == Some(goose_swarm::SINK_ID));
+    let Some(sink_idx) = sink_idx else { return };
+    // An absent/non-array `files` field IS the desired state (the join owns nothing) — nothing to
+    // strip, so the early return is the honest reading, not a default standing in for one.
+    let Some(moved) = subtasks[sink_idx]
+        .get("files")
+        .and_then(|f| f.as_array())
+        .map(|a| {
+            a.iter()
+                .filter_map(|f| f.as_str().map(String::from))
+                .collect::<Vec<String>>()
+        })
+        .filter(|m| !m.is_empty())
+    else {
+        return;
+    };
+    if let Some(files) = subtasks[sink_idx]
+        .get_mut("files")
+        .and_then(|f| f.as_array_mut())
+    {
+        files.clear();
+    }
+    // The home must have a real id (it goes in the action sentence) — an id-less task cannot load
+    // as a DAG anyway, so requiring one here loses nothing.
+    let home = subtasks.iter().enumerate().find_map(|(i, t)| {
+        let id = t.get("id").and_then(|v| v.as_str())?;
+        if id != goose_swarm::SINK_ID
+            && t.get("files")
+                .and_then(|f| f.as_array())
+                .is_some_and(|a| !a.is_empty())
+        {
+            Some((i, id.to_string()))
+        } else {
+            None
+        }
+    });
+    match home {
+        Some((hi, home_id)) => {
+            if let Some(files) = subtasks[hi].get_mut("files").and_then(|f| f.as_array_mut()) {
+                for m in &moved {
+                    if !files.iter().any(|f| f.as_str() == Some(m.as_str())) {
+                        files.push(serde_json::Value::String(m.clone()));
+                    }
+                }
+            }
+            actions.push(format!(
+                "`{}` owned {moved:?}: the join owns nothing — moved to `{home_id}`",
+                goose_swarm::SINK_ID
+            ));
+        }
+        None => actions.push(format!(
+            "`{}` owned {moved:?}: the join owns nothing — dropped (no file-owning task to take them)",
+            goose_swarm::SINK_ID
+        )),
     }
 }
 
@@ -25803,11 +25872,43 @@ fn repair_module_package_collisions(plan: &mut serde_json::Value, actions: &mut 
         };
         let module_owner_id = id_at(subtasks, module_owner);
         let package_owner_id = id_at(subtasks, package_owner);
+        // REWRITE, don't drop (r4 kill, 2026-08-30): dropping the shadowed module file left the
+        // service task owning NOTHING, rule (c) removed it, its brief died with it, and the live
+        // replanner re-added the task four minutes into BUILD with the shadow back. The work the
+        // planner assigned survives at an unshadowed path inside the package; only a path some
+        // other task already claims falls back to the old drop.
+        let rewritten = format!("{prefix}impl.py");
+        let rewrite_free = !subtasks.iter().any(|st| owns(st, &rewritten));
         if let Some(files) = subtasks[module_owner]
             .get_mut("files")
             .and_then(|f| f.as_array_mut())
         {
-            files.retain(|f| f.as_str() != Some(module.as_str()));
+            if rewrite_free {
+                for f in files.iter_mut() {
+                    if f.as_str() == Some(module.as_str()) {
+                        *f = serde_json::Value::String(rewritten.clone());
+                    }
+                }
+            } else {
+                files.retain(|f| f.as_str() != Some(module.as_str()));
+            }
+        }
+        if rewrite_free {
+            // The package marker must still exist, and it belongs to the PACKAGE owner (the task
+            // holding most of the package's files) — the same home the drop-arm below gives it.
+            if !subtasks.iter().any(|st| owns(st, &init)) {
+                if let Some(files) = subtasks[package_owner]
+                    .get_mut("files")
+                    .and_then(|f| f.as_array_mut())
+                {
+                    files.push(serde_json::Value::String(init.clone()));
+                }
+            }
+            actions.push(format!(
+                "module `{module}` shadowed by package `{prefix}`: rewritten to `{rewritten}` \
+                 (kept by `{module_owner_id}` — the task keeps its work at an unshadowed path)"
+            ));
+            continue;
         }
         match subtasks.iter().position(|st| owns(st, &init)) {
             Some(init_owner) => actions.push(format!(
@@ -35794,8 +35895,12 @@ impl Replanner for GooseAgentDispatcher {
              project-scaffolding subtask — they waste the run's tail for zero functional value. If nothing useful \
              remains, return an EMPTY subtasks list (do NOT invent make-work). Rules: every id MUST be new (never \
              reuse an existing id); depends_on may reference DONE ids but NEVER a failed id; files must not overlap \
-             work still in progress. Give id/description/difficulty/model/depends_on/files, then call the \
-             final_output tool."
+             work still in progress; never a bare `X.py` beside an existing package dir `X/` (it \
+             shadows the package at import time — put the file INSIDE the package). Each description \
+             is a HANDOFF the worker builds from alone: name the exact file(s) it writes, the exact \
+             symbols/endpoints it implements, and the one concrete check that proves it works — a \
+             one-line description is a defect. Give id/description/difficulty/model/depends_on/files, \
+             then call the final_output tool."
         );
         let user = format!(
             "Goal: {}\n\nAlready created (do NOT reuse these ids): {}\n\nDone so far:\n{}\n\nFailed (do not depend on): {}\n\nStill running: {}",
@@ -40886,8 +40991,9 @@ mod live_fleet_tests {
         );
         assert_eq!(r.after["tasks"], 15);
         assert_eq!(
-            r.after["distinct_files"], 26,
-            "a merge renames, it never loses a file"
+            r.after["distinct_files"], 28,
+            "the two shadowed modules are REWRITTEN into their packages (impl.py each), \
+             so the plan gains two real paths and loses none"
         );
         assert!(strings(&r.after["tasks_owning_nothing"]).is_empty());
         assert!(strings(&r.after["module_package_collisions"]).is_empty());
@@ -40917,7 +41023,19 @@ mod live_fleet_tests {
         assert!(!sink_deps.contains(&"viz-engine".to_string()));
 
         let boot = strings(&task(&v, "service-boot")["files"]);
-        assert_eq!(boot, ["app/__init__.py", "app/__main__.py", "app/cli.py"]);
+        assert_eq!(
+            boot,
+            [
+                "app/__init__.py",
+                "app/__main__.py",
+                "app/cli.py",
+                "app/ledgerd/impl.py",
+                "app/notifierd/impl.py"
+            ],
+            "service-boot keeps the shadowed modules' work at unshadowed paths — the r4 lesson: \
+             a task emptied by a drop gets removed, its brief dies, and the replanner re-adds \
+             the shadow four minutes into BUILD"
+        );
         assert!(strings(&task(&v, "ledger-core")["files"])
             .contains(&"app/ledgerd/__init__.py".to_string()));
         assert!(strings(&task(&v, "notifier-service")["files"])
@@ -41175,8 +41293,46 @@ mod live_fleet_tests {
         goose_swarm::Dag::from_planner_json(&v.to_string()).expect("loads");
     }
 
-    /// (c) when the package already has an `__init__.py`: the shadowed module is dropped rather than
-    /// duplicated, and a module whose owner is also the package's owner is renamed in place.
+    /// THE JOIN OWNS NOTHING, structurally (r4 kill, 2026-08-30): synthesis gave
+    /// `integrate-verify` a README.md and nothing stripped it — scheduler relax works only for a
+    /// file-less join, so any build failure would have cascaded the sink to Failed and the app
+    /// would never bind a port (the r0 class). The file keeps an owner: the first file-owning
+    /// task in plan order (the skeleton, on a real run).
+    #[test]
+    fn plan_repair_strips_the_sinks_files_to_a_real_owner() {
+        let plan = r#"{"subtasks":[
+            {"id":"skeleton","files":["app/__main__.py"],"depends_on":[],"description":"wire"},
+            {"id":"svc","files":["app/svc.py"],"depends_on":["skeleton"],"description":"svc"},
+            {"id":"integrate-verify","files":["README.md"],"depends_on":["skeleton","svc"],"description":"v"}
+        ]}"#;
+        let mut v: serde_json::Value = serde_json::from_str(plan).unwrap();
+        let r = repair_plan_flags(&mut v, "");
+        assert!(
+            task(&v, "integrate-verify")["files"]
+                .as_array()
+                .unwrap()
+                .is_empty(),
+            "the join owns nothing after repair"
+        );
+        assert!(
+            strings(&task(&v, "skeleton")["files"]).contains(&"README.md".to_string()),
+            "the stripped file keeps a real owner"
+        );
+        assert!(
+            r.actions
+                .iter()
+                .any(|a| a.contains("the join owns nothing")),
+            "{:?}",
+            r.actions
+        );
+        goose_swarm::Dag::from_planner_json(&v.to_string()).expect("loads");
+    }
+
+    /// (b) REWRITES a shadowed module into its package instead of dropping it (r4 kill,
+    /// 2026-08-30: the drop gutted `notifierd-service` to owning nothing, rule (c) removed it,
+    /// and the live replanner re-added it mid-BUILD with the shadow back). The owner keeps its
+    /// work at `<pkg>/impl.py`; the package marker is guaranteed on whichever task ends up
+    /// needing to create it; nothing gains a second owner.
     #[test]
     fn plan_repair_module_merge_never_creates_a_second_owner() {
         let plan = r#"{"subtasks":[
@@ -41188,15 +41344,28 @@ mod live_fleet_tests {
         let r = repair_plan_flags(&mut v, "");
         assert_eq!(
             strings(&task(&v, "boot")["files"]),
-            ["app/notifierd/x.py", "app/notifierd/__init__.py"]
+            [
+                "app/ledgerd/impl.py",
+                "app/notifierd/impl.py",
+                "app/notifierd/x.py",
+                "app/notifierd/__init__.py"
+            ],
+            "both shadowed modules keep their work, rewritten into the packages; \
+             notifierd's marker lands on boot (nobody else owned it)"
         );
         assert_eq!(
             strings(&task(&v, "core")["files"]),
-            ["app/ledgerd/__init__.py", "app/ledgerd/core.py"]
+            ["app/ledgerd/__init__.py", "app/ledgerd/core.py"],
+            "core keeps the ledgerd marker it already owned — no second owner"
         );
-        assert_eq!(r.after["distinct_files"], 4);
+        assert_eq!(
+            r.after["distinct_files"], 6,
+            "a rewrite renames, it never loses work"
+        );
         assert!(r.after["shared_files"].as_array().unwrap().is_empty());
         assert!(strings(&r.after["module_package_collisions"]).is_empty());
+        assert!(strings(&r.after["tasks_owning_nothing"]).is_empty());
+        goose_swarm::Dag::from_planner_json(&v.to_string()).expect("loads");
     }
 
     #[test]

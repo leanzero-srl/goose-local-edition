@@ -138,6 +138,48 @@ budget, window, stopwatch, min-age on a verdict branch — is rejected on sight.
 progress-based (look-counts, action growth, byte production) or they live in the transport. There is no
 knob left to set, and no knob comes back.
 
+## 6. THE ONE-DOOR GATE — every task enters the DAG through the same repairs
+
+Ordered by Mihai 2026-08-30, minutes after the r4 kill: *"note this down in our agentic mechanism,
+or even better add it to our gates - make it a practice."*
+
+What happened (r4, killed at BUILD+7m, archive
+`swarm-3node-r4-KILLED-replan-r0-spliced-5-tasks-past-repair-shadow-reintroduced-sink-owned-README-build-7m`):
+
+- `finalize_plan_before_dag` did its job perfectly — pin → skeleton → repairs — and the loaded plan
+  was clean. Then the DYNAMIC REPLANNER, summoned at BUILD+4m with ZERO completed tasks, spliced five
+  new tasks straight into the live DAG through `splice_specs`, which validates ids/deps/cycles and
+  NOTHING about ownership. One of the five re-created the exact module/package import shadow
+  (`app/notifierd.py` beside the skeleton's `app/notifierd/`) the repair had fixed four minutes
+  earlier — with a 500-char brief (`thin_brief` fired; GEN-5 measured it live).
+- Separately, synthesis gave the pinned sink `README.md` and nothing stripped it: `scheduler.rs`
+  relaxes a dependent through an upstream failure ONLY when it owns no files, so a file-owning join
+  is cascaded-Failed by any build failure — the app-never-binds-a-port class.
+
+The rule: **a repair that guards one door is a guarantee that holds until the first other door
+opens.** Every path that ADDS tasks to the DAG — synthesis, the flat fallback, review patches, the
+skeleton prepend, the replanner splice, any future path — goes through the same ownership rules, and
+the join's file-lessness is enforced structurally (a repair rule), never assumed from the planner's
+good behavior.
+
+The mechanisms:
+- `repair_sink_files` (swarm.rs, in `repair_plan_flags`' chain): the pinned sink's files move to the
+  first file-owning task; test `plan_repair_strips_the_sinks_files_to_a_real_owner`.
+- `repair_module_package_collisions` REWRITES a shadowed module into its package (`<pkg>/impl.py`)
+  instead of dropping it — the drop gutted a service task to owning nothing, rule (c) removed it,
+  its brief died, and the replanner re-added the shadow; test
+  `plan_repair_module_merge_never_creates_a_second_owner`.
+- `repair_replan_specs` (scheduler.rs): the same rules against the LIVE dag's ownership, applied to
+  every replan batch before `splice_specs`; its actions ride the `Replanned` event (loud, MILD —
+  repaired, never refused silently); test `a_replan_batch_is_repaired_against_live_ownership` pins
+  the r4 shape verbatim.
+- The replanner is summoned only after at least one task has COMPLETED — its own prompt says the
+  value is "hardening on the COMPLETED work"; with nothing completed it invents tasks from the goal.
+  Progress-based: bounds when the ENGINE asks, never any model call.
+
+Refusing test: `development_gates.rs` asserts the scheduler's splice site reaches `splice_specs` only
+through `repair_replan_specs`, and that `repair_sink_files` stays in the repair chain.
+
 ## What each gate cost — the rebukes, verbatim
 
 His words (each ≤80 chars), the rule they produced, and the gate that now refuses it:
@@ -156,6 +198,7 @@ His words (each ≤80 chars), the rule they produced, and the gate that now refu
 | "WHY THE FUCK DO WE STILL HAVE CAPS... REMOVE THAT MISERABLE CAP" | caps deleted structurally (II-7) | 5 NO-TIME |
 | "FUCK YOU PLEASE DO ALL OF THESE IN PARALLEL … I HAVE TO CHASE FOR YOU" | batch independent calls; fan out (CLAUDE.md) | working style |
 | "don't let them rot in a fucking backlog" | implement-don't-backlog (memory, prime) | working style |
+| "add it to our gates to avoid in the future - make it a practice" | one door into the DAG; the join owns nothing structurally | 6 ONE-DOOR |
 | "so let's gates that stop this madness from ever unfolding" | this file and its refusing tests | all |
 
 The refusing tests live in `crates/goose-swarm/tests/development_gates.rs`. A doc regression (this file

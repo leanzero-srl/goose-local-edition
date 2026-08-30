@@ -575,6 +575,72 @@ fn replan_has_enough_dag_left(mandatory_incomplete: usize, mandatory_total: usiz
     mandatory_total == 0 || mandatory_incomplete * 4 >= mandatory_total
 }
 
+/// Ownership hygiene for a replan batch BEFORE it touches the DAG (r4 kill, 2026-08-30): the
+/// replanner proposed `app/notifierd.py` while the skeleton owned `app/notifierd/__init__.py` —
+/// re-creating, four minutes into BUILD, the exact module/package import shadow the plan repair
+/// had fixed pre-DAG. The same three rules the plan-side repair applies, against the LIVE dag's
+/// ownership: an exact path someone owns is dropped (first claimant wins), a module that shadows
+/// an existing package is rewritten to `<pkg>/impl.py` when that path is free (dropped when not),
+/// and a spec repaired down to zero files is not spliced at all. Every action is returned as a
+/// sentence and rides the Replanned event — repaired loudly, never refused silently (MILD).
+fn repair_replan_specs(
+    existing_files: &std::collections::HashSet<String>,
+    specs: Vec<crate::dag::TaskSpec>,
+) -> (Vec<crate::dag::TaskSpec>, Vec<String>) {
+    let mut repairs = Vec::new();
+    let existing_pkgs: std::collections::HashSet<String> = existing_files
+        .iter()
+        .filter_map(|f| f.rsplit_once('/').map(|(dir, _)| dir.to_string()))
+        .collect();
+    let mut batch_claimed: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut kept_specs = Vec::new();
+    for mut sp in specs {
+        let claimed_any = !sp.owned_files.is_empty();
+        let mut kept = Vec::new();
+        for f in std::mem::take(&mut sp.owned_files) {
+            if existing_files.contains(&f) || batch_claimed.contains(&f) {
+                repairs.push(format!(
+                    "replan `{}`: dropped `{f}` — already owned (first claimant keeps it)",
+                    sp.id
+                ));
+                continue;
+            }
+            let as_pkg = f.strip_suffix(".py").unwrap_or(&f);
+            if f.ends_with(".py") && existing_pkgs.contains(as_pkg) {
+                let rewritten = format!("{as_pkg}/impl.py");
+                if existing_files.contains(&rewritten) || batch_claimed.contains(&rewritten) {
+                    repairs.push(format!(
+                        "replan `{}`: dropped `{f}` — it shadows package `{as_pkg}/` and                          `{rewritten}` is taken",
+                        sp.id
+                    ));
+                } else {
+                    repairs.push(format!(
+                        "replan `{}`: `{f}` shadows package `{as_pkg}/` — rewritten to `{rewritten}`",
+                        sp.id
+                    ));
+                    batch_claimed.insert(rewritten.clone());
+                    kept.push(rewritten);
+                }
+                continue;
+            }
+            batch_claimed.insert(f.clone());
+            kept.push(f);
+        }
+        // Only a spec repaired DOWN to nothing is refused — one that never claimed files is a
+        // legitimate file-less bonus task (tests/validation) and splices as proposed.
+        if claimed_any && kept.is_empty() {
+            repairs.push(format!(
+                "replan `{}`: not spliced — every proposed file already has an owner",
+                sp.id
+            ));
+            continue;
+        }
+        sp.owned_files = kept;
+        kept_specs.push(sp);
+    }
+    (kept_specs, repairs)
+}
+
 /// A2: the ranking key for a HARD task's device choice — min() wins. IDLE beats busier (first
 /// element), weight decides among equally-loaded devices (second), a first-dispatch timing accident
 /// never outranks the operator's weights (speed is third, among equal weights only). The measured
@@ -3751,6 +3817,12 @@ impl Scheduler {
                         && s.total_in_flight() > 0
                         && s.ready.is_empty()
                         && s.idle_capacity() >= 2
+                        // r4 (2026-08-30): summoned at BUILD+4m with ZERO completions, the
+                        // replanner invented five tasks from the goal alone — one re-created the
+                        // module/package shadow the plan repair had just fixed. Its own prompt
+                        // says the value is "hardening on the COMPLETED work"; until something
+                        // has completed there is nothing to harden and the fan is still arriving.
+                        && s.dag.tasks.values().any(|n| n.state == TaskState::Done)
                         && s.replans_done < self.max_replans
                         && !s.sink_in_flight()
                         // Near the end, an injected task has nothing to overlap with and simply
@@ -3815,6 +3887,28 @@ impl Scheduler {
                     } else {
                         // Replanner-added tasks are OPPORTUNISTIC (idle-fill) — record them as bonus so a
                         // bonus failure cannot fail an otherwise-complete run (run success = core plan).
+                        let existing_files: std::collections::HashSet<String> = s
+                            .dag
+                            .tasks
+                            .values()
+                            .flat_map(|n| n.spec.owned_files.iter().cloned())
+                            .collect();
+                        let (specs, splice_repairs) = repair_replan_specs(&existing_files, specs);
+                        if specs.is_empty() {
+                            s.sink.emit(&SwarmEvent::Replanned {
+                                round,
+                                added: Vec::new(),
+                                stopped: true,
+                                reason: format!(
+                                    "every proposed task was repaired away: {}",
+                                    splice_repairs.join("; ")
+                                ),
+                            });
+                            s.replans_done = s.replans_done.saturating_sub(1);
+                            s.replan_declined_at_incomplete = Some(s.incomplete_count());
+                            drop(s);
+                            continue;
+                        }
                         let spliced_ids: Vec<TaskId> =
                             specs.iter().map(|sp| sp.id.clone()).collect();
                         match s.dag.splice_specs(specs) {
@@ -3841,7 +3935,9 @@ impl Scheduler {
                                     round,
                                     added,
                                     stopped: false,
-                                    reason: String::new(),
+                                    // The hygiene pass's actions ride the success event so a
+                                    // rewritten path is READ, never silent (fallback rule).
+                                    reason: splice_repairs.join("; "),
                                 });
                                 drop(s);
                                 continue;
@@ -4233,6 +4329,58 @@ mod salvage_tests {
     /// The split used to hand a child a ~40-char label as its ENTIRE task statement, discarding the
     /// implementation spec PLAN had just spent 40% of the run's wall-clock writing (loop-04: a 2038-char
     /// spec -> "(split of data-model-persistence) note-store", 43 chars). These pin both arms.
+    /// THE r4 SHAPE, verbatim (2026-08-30): the skeleton owns app/notifierd/__init__.py and
+    /// __main__.py; the replanner proposes notifierd-service owning app/notifierd.py (the module
+    /// that would shadow the package at import time) plus app/notifierd_main.py (free). The
+    /// hygiene pass rewrites the shadow into the package, keeps the free file, drops an exact
+    /// duplicate, and refuses to splice a spec repaired down to nothing — each with a sentence.
+    #[test]
+    fn a_replan_batch_is_repaired_against_live_ownership() {
+        let existing: std::collections::HashSet<String> = [
+            "app/__main__.py",
+            "app/notifierd/__init__.py",
+            "app/notifierd/__main__.py",
+        ]
+        .into_iter()
+        .map(String::from)
+        .collect();
+        let spec = |id: &str, files: &[&str]| crate::dag::TaskSpec {
+            id: id.to_string(),
+            description: format!("{id} desc"),
+            difficulty: crate::dag::Difficulty::Hard,
+            preferred_model: None,
+            owned_files: files.iter().map(|f| f.to_string()).collect(),
+            deps: Vec::new(),
+            subsplit: Vec::new(),
+        };
+        let (kept, repairs) = repair_replan_specs(
+            &existing,
+            vec![
+                spec(
+                    "notifierd-service",
+                    &["app/notifierd.py", "app/notifierd_main.py"],
+                ),
+                spec("dup-main", &["app/__main__.py"]),
+            ],
+        );
+        assert_eq!(kept.len(), 1, "{repairs:?}");
+        assert_eq!(kept[0].id, "notifierd-service");
+        assert_eq!(
+            kept[0].owned_files,
+            vec![
+                "app/notifierd/impl.py".to_string(),
+                "app/notifierd_main.py".to_string()
+            ],
+            "the shadow is rewritten INTO the package; the free file survives"
+        );
+        assert!(repairs
+            .iter()
+            .any(|r| r.contains("shadows package `app/notifierd/`")));
+        assert!(repairs
+            .iter()
+            .any(|r| r.contains("dup-main") && r.contains("not spliced")));
+    }
+
     #[test]
     fn tail_review_gate_defaults_on_and_respects_the_env() {
         // F779: read-only, IS the ratio lever -> default ON (unlike sink_review/testgen).
