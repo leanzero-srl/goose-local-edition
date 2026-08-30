@@ -2365,6 +2365,14 @@ const NodeInspector: React.FC<{
               jumpToStart={showingFullThink}
             />
           </InspectorPane>
+          {/* OUTPUT EARNS ITS COLUMN — and its pane. The grid already collapsed to one column when the
+              answer channel had nothing, but the empty Work pane still rendered STACKED under Thinking:
+              a dead box captioned "Still thinking" spending half the reasoning's vertical estate. With
+              nothing to show it renders nothing; the pane (and its show-all action) appears with the
+              first call/forming/narration byte. showingFullWork keeps it mounted while the full durable
+              log is open, and workShowAll keeps the door to a durable `<task>.log` that HAS bytes on
+              disk even when the live tail squeezed to nothing (the durable channel outranks the tail). */}
+          {(hasWork || showingFullWork || workShowAll) && (
           <InspectorPane
             title="Work"
             // THE HEADER STOPS CONFLATING TWO NUMBERS. `tool_calls` counts RESOLVED records; `calls` is the
@@ -2421,6 +2429,7 @@ const NodeInspector: React.FC<{
               />
             )}
           </InspectorPane>
+          )}
         </div>
         ) : null}
 
