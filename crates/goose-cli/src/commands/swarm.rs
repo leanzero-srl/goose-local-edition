@@ -26647,13 +26647,216 @@ where
     Ok((plan_json, dag))
 }
 
-/// The plan the DAG is built from, in the one order the three passes can run: the sink is pinned
-/// first so the repair's join exemption sees the engine's name; the measured flags are repaired
-/// second, BEFORE the entry injection, because rule (c) turns `app/ledgerd.py` into
-/// `app/ledgerd/__init__.py` and only an injection that runs afterwards can see that
-/// `python -m app.ledgerd` is now without its `__main__.py`; the injection runs last. Rule (d) picks
-/// the entry owner with the injection's own helper on the same plan, so the task told to serve an
-/// endpoint is the task that receives the entry file.
+/// PART III — THE WALKING SKELETON. The plan's first task, prepended by CODE after the review:
+/// entry point(s) + boot + config + route registration, with EVERY advertised route pre-registered
+/// serving a 501 stub and `GET /` serving the static shell, so the app BOOTS and answers its whole
+/// advertised surface BEFORE the parallel fan writes a single module.
+///
+/// WHY (r2, measured): wiring was nobody's job until the sink, INTEGRATE ran ~130 minutes, fixed one
+/// boot defect, never reached the wiring, and both scored criticals (`GET /` 404, dead sync) are
+/// exactly the classes a route-pre-registered skeleton kills at the source. The skeleton's content
+/// is assembled from DETERMINISTIC inputs only — the spec's own boot invocations, the spec's own
+/// endpoint tables, the plan's own module list — the same way the semantic sink description is:
+/// a model executes it, but no model decides what it says.
+const SKELETON_ID: &str = "skeleton";
+
+/// The wiring files the skeleton owns: for every advertised `python -m X`, the entry `X/__main__.py`
+/// that invocation boots through, plus `X/__init__.py` when no planned task puts any other file in
+/// the package (someone must create the package marker or the entry cannot import). This is
+/// `require_advertised_entry_files`' own mapping, computed for the skeleton instead of for a module
+/// task — after the skeleton exists, the injection finds every entry owned and no-ops.
+fn skeleton_invocation_files(
+    subtasks: &[serde_json::Value],
+    invocations: &[String],
+) -> Vec<String> {
+    let owned: Vec<String> = subtasks
+        .iter()
+        .filter_map(|s| s.get("files").and_then(|f| f.as_array()))
+        .flatten()
+        .filter_map(|f| f.as_str().map(str::to_string))
+        .collect();
+    let mut files = Vec::new();
+    for inv in invocations {
+        let dir = inv.replace('.', "/");
+        let entry = format!("{dir}/__main__.py");
+        if !files.contains(&entry) {
+            files.push(entry);
+        }
+        let prefix = format!("{dir}/");
+        let init = format!("{dir}/__init__.py");
+        let fresh_package = !owned.iter().any(|f| f.starts_with(&prefix));
+        if fresh_package && !files.contains(&init) {
+            files.push(init);
+        }
+    }
+    files
+}
+
+/// The skeleton's brief, assembled from the spec's tables and the plan — every clause traceable to a
+/// deterministic parser (`spec_python_invocations`, `spec_surface_rows`/`spec_get_endpoints`, the
+/// plan's own `files`). The advertised rows are quoted VERBATIM so `brief_mentions_path` — the same
+/// predicate rule (d) uses — finds every advertised path here and the endpoint-append targets this
+/// task (or, with nothing missing, no-ops: the skeleton IS rule (d)'s guarantee, delivered up front).
+fn skeleton_description(
+    subtasks: &[serde_json::Value],
+    spec: &str,
+    invocations: &[String],
+    owned: &[String],
+) -> String {
+    let mut s = String::from(
+        "WALKING SKELETON — assembled by the engine from the spec's own tables and the plan.\n\
+         Write the app's entry point(s), boot, config and route registration FIRST, so the app \
+         BOOTS and answers EVERY advertised route BEFORE any module is built. The tasks after \
+         you fill their modules in behind these routes; your job is the frame they land in.\n\n\
+         BOOT — the spec's own invocations; each must start, bind its documented port, and serve:\n",
+    );
+    for inv in invocations {
+        s.push_str(&format!(
+            "- `python3 -m {inv}` with exactly the flags the spec documents for it\n"
+        ));
+    }
+    s.push_str(
+        "\nYOU OWN EXACTLY THESE FILES — module tasks own everything else, never write theirs:\n",
+    );
+    for f in owned {
+        s.push_str(&format!("- `{f}`\n"));
+    }
+    s.push_str(
+        "\nPLANNED MODULES — they DO NOT EXIST YET. Import each one lazily or behind a guarded \
+         import so a missing module NEVER stops boot; register its routes now and keep them \
+         answering until the module lands:\n",
+    );
+    for t in subtasks {
+        let id = t.get("id").and_then(|i| i.as_str()).unwrap_or_default();
+        if id == goose_swarm::SINK_ID || id == SKELETON_ID {
+            continue;
+        }
+        let files: Vec<String> = t
+            .get("files")
+            .and_then(|f| f.as_array())
+            .map(|a| {
+                a.iter()
+                    .filter_map(|f| f.as_str().map(str::to_string))
+                    .collect()
+            })
+            .unwrap_or_default();
+        if files.is_empty() {
+            continue;
+        }
+        s.push_str(&format!("- {id}: {}\n", files.join(", ")));
+    }
+    // The endpoint tables, grouped by the service whose section carries each row — the same
+    // service→invocation rule the plan repair's rule (d) applies (last invocation segment names
+    // the service; an unmatched service falls to the first invocation).
+    let SpecSurface { rows, .. } = spec_surface_rows(spec);
+    let invocation_for = |service: Option<&str>| -> String {
+        service
+            .and_then(|name| {
+                invocations
+                    .iter()
+                    .find(|inv| inv.rsplit('.').next() == Some(name))
+            })
+            .or(invocations.first())
+            .cloned()
+            .unwrap_or_default()
+    };
+    s.push_str(
+        "\nADVERTISED ROUTES — pre-register EVERY row below NOW. Until its module fills it in, a \
+         route answers `501 Not Implemented` with a JSON error envelope — a 501 is a promise kept; \
+         a 404 is the run's oldest scored critical. `GET /` serves the static shell page (the \
+         frontend entry), never a 501.\n",
+    );
+    if rows.is_empty() {
+        for path in spec_get_endpoints(spec) {
+            s.push_str(&format!("- `GET {path}`\n"));
+        }
+    } else {
+        let mut last_service: Option<String> = None;
+        for (service, row) in rows {
+            let inv = invocation_for(service.as_deref());
+            let label = service.unwrap_or_else(|| inv.clone());
+            if last_service.as_deref() != Some(label.as_str()) {
+                s.push_str(&format!("[service `{label}` — `python3 -m {inv}`]\n"));
+                last_service = Some(label);
+            }
+            s.push_str(&format!("- `{row}`\n"));
+        }
+    }
+    s.push_str(
+        "\nDONE means: every boot command above starts and binds, every route above answers (a 501 \
+         counts, a 404 does not), and `GET /` returns the shell page. Prove it yourself before \
+         finishing: run each boot command, curl the routes, then KILL the server you started.\n",
+    );
+    s
+}
+
+/// Prepend the skeleton as the plan's first task and make every other task depend on it. Runs
+/// BEFORE the repair passes on purpose: rule (b)'s first-claimant then guarantees module tasks
+/// never own the skeleton's files (the skeleton is claimant #1 by position), and rule (d)'s
+/// `entry_owner_index` resolves every advertised invocation to the skeleton, so the
+/// endpoint-append targets the one task whose job is serving.
+///
+/// Returns the event to emit, or None when there is nothing to build from — no advertised
+/// `python -m` invocation (the same guard `require_advertised_entry_files` applies; a spec with no
+/// bootable entry has no boot for a skeleton to prove) — or when the plan already carries one
+/// (idempotent: the second pass is a no-op, like every other repair).
+fn prepend_skeleton_task(v: &mut serde_json::Value, spec: &str) -> Option<serde_json::Value> {
+    let invocations = spec_python_invocations(spec);
+    if invocations.is_empty() {
+        return None;
+    }
+    let subtasks = v.get_mut("subtasks").and_then(|s| s.as_array_mut())?;
+    if subtasks.is_empty()
+        || subtasks
+            .iter()
+            .any(|t| t.get("id").and_then(|i| i.as_str()) == Some(SKELETON_ID))
+    {
+        return None;
+    }
+    let files = skeleton_invocation_files(subtasks, &invocations);
+    if files.is_empty() {
+        return None;
+    }
+    let description = skeleton_description(subtasks, spec, &invocations, &files);
+    let module_count = subtasks.len();
+    for t in subtasks.iter_mut() {
+        let obj = t.as_object_mut()?;
+        let deps = obj
+            .entry("depends_on")
+            .or_insert_with(|| serde_json::json!([]));
+        if let Some(a) = deps.as_array_mut() {
+            if !a.iter().any(|d| d.as_str() == Some(SKELETON_ID)) {
+                a.push(serde_json::Value::String(SKELETON_ID.to_string()));
+            }
+        }
+    }
+    subtasks.insert(
+        0,
+        serde_json::json!({
+            "id": SKELETON_ID,
+            "difficulty": "hard",
+            "files": files,
+            "depends_on": [],
+            "description": description,
+        }),
+    );
+    Some(serde_json::json!({
+        "event": "skeleton_prepended",
+        "files": files,
+        "invocations": invocations,
+        "dependents": module_count,
+        "description_chars": description.chars().count(),
+    }))
+}
+
+/// The plan the DAG is built from, in the one order the passes can run: the sink is pinned first so
+/// the repair's join exemption sees the engine's name; the WALKING SKELETON is prepended second,
+/// BEFORE the repairs, so rule (b) fences its files against module claimants and rule (d) finds it
+/// as every invocation's entry owner; the measured flags are repaired third, BEFORE the entry
+/// injection, because rule (c) turns `app/ledgerd.py` into `app/ledgerd/__init__.py` and only an
+/// injection that runs afterwards can see that `python -m app.ledgerd` is now without its
+/// `__main__.py`; the injection runs last (a no-op whenever the skeleton exists, since the skeleton
+/// owns every advertised entry).
 ///
 /// `plan_repaired` is emitted every time, actions or none, so a checkpoint can read `after` on a clean
 /// plan instead of inferring cleanliness from silence.
@@ -26675,6 +26878,15 @@ fn finalize_plan_before_dag(plan_json: String, spec: &str, sink: &Arc<dyn EventS
             "where": "pre-dag",
         }));
     }
+    let skeleton = prepend_skeleton_task(&mut v, spec);
+    if let Some(ev) = &skeleton {
+        eprintln!(
+            "  {} walking skeleton prepended — the app boots and answers every advertised route \
+             BEFORE the fan",
+            style("·").cyan()
+        );
+        sink.write_value(ev.clone());
+    }
     let repairs = repair_plan_flags(&mut v, spec);
     if !repairs.is_noop() {
         eprintln!(
@@ -26695,7 +26907,7 @@ fn finalize_plan_before_dag(plan_json: String, spec: &str, sink: &Arc<dyn EventS
             "where": "pre-dag",
         }));
     }
-    if pinned.is_some() || !repairs.is_noop() || !added.is_empty() {
+    if pinned.is_some() || skeleton.is_some() || !repairs.is_noop() || !added.is_empty() {
         v.to_string()
     } else {
         plan_json
@@ -33394,8 +33606,34 @@ impl GooseAgentDispatcher {
         // the one §II.2 dispatch-time subprocess (spawn-bounded instrument, flagged in the
         // design; its absence is never evidence).
         let sink_brief: Option<String> = if req.task_id == "integrate-verify" && !req.speculative {
-            let collect_only = collect_only_import_health(&root).await;
             let spec = self.spec_frozen.lock().unwrap().clone();
+            // III-1 (P1-2's hook): the sink becoming dispatchable IS "the last producer completed" —
+            // the scheduler releases the join only when every dependency is terminal. Run the
+            // deterministic gate NOW and persist it as gate ROUND 0 (the first completion-gate row,
+            // §II.2), so the semantic description below reads LIVE boot/endpoint findings instead of
+            // only task self-reports. run_spec_contract owns its process group and fails open
+            // (non-Python / no advertised surface returns in microseconds), so this adds seconds,
+            // never a wall, and its absence from the ledger is a measured absence, not silence.
+            let gate0 = run_spec_contract(&root, &spec, lang).await;
+            let ledger_path = write_gate_ledger(
+                &root,
+                0,
+                "completion",
+                &gate0.findings,
+                &gate0.inconclusive,
+                serde_json::json!(gate0.verified),
+            );
+            self.events.write_value(serde_json::json!({
+                "event": "ledger_written",
+                "kind": "gate",
+                "round": 0,
+                "source": "completion",
+                "findings": gate0.findings.len(),
+                "inconclusive": gate0.inconclusive.len(),
+                "verified": gate0.verified,
+                "path": ledger_path.as_ref().map(|p| p.display().to_string()),
+            }));
+            let collect_only = collect_only_import_health(&root).await;
             sink_semantic_description(
                 &root,
                 &req.task_id,
@@ -41619,6 +41857,132 @@ mod live_fleet_tests {
         );
     }
 
+    /// III-1: the walking skeleton, assembled from r2's REAL plan and the REAL sb-7 spec. Every
+    /// clause of the description is checkable against a deterministic parser: the three advertised
+    /// boot invocations, the entry files the invocations boot through, every endpoint-table row
+    /// (ledgerd's AND notifierd's), and `GET /` as the static shell.
+    #[test]
+    fn the_skeleton_is_assembled_from_the_r2_plan_and_the_real_spec() {
+        let spec = include_str!("../../../../evals/swarm-bench/spec-build-sb7.md");
+        let mut v: serde_json::Value =
+            serde_json::from_str(include_str!("../../tests/fixtures/r2-plan.json")).unwrap();
+        let ev = prepend_skeleton_task(&mut v, spec).expect("the sb-7 spec advertises boots");
+        let skel = &v["subtasks"][0];
+        assert_eq!(skel["id"], "skeleton", "prepended FIRST, not appended");
+        let files = strings(&skel["files"]);
+        assert_eq!(
+            files,
+            vec![
+                "app/__main__.py",
+                "app/ledgerd/__main__.py",
+                "app/notifierd/__main__.py"
+            ],
+            "exactly the advertised entries; no __init__.py because every package has a planned owner"
+        );
+        let desc = skel["description"].as_str().unwrap();
+        for boot in [
+            "python3 -m app`",
+            "python3 -m app.ledgerd`",
+            "python3 -m app.notifierd`",
+        ] {
+            assert!(desc.contains(boot), "boot command missing: {boot}");
+        }
+        for route in [
+            "GET /api/health",
+            "/api/payments?limit=",
+            "POST /api/sync",
+            "GET /api/stream",
+            "POST /notify/events",
+            "GET /health",
+            "POST /api/drafts",
+            "`GET / ",
+            "501 Not Implemented",
+            "static shell",
+        ] {
+            assert!(desc.contains(route), "advertised surface missing: {route}");
+        }
+        // the planned module list rides along so the skeleton imports what will exist
+        assert!(desc.contains("vendor-sync: app/vendor_sync.py"));
+        // every other task now waits on the skeleton — the app boots before the fan
+        for t in v["subtasks"].as_array().unwrap().iter().skip(1) {
+            assert!(
+                strings(&t["depends_on"]).contains(&"skeleton".to_string()),
+                "{} does not depend on the skeleton",
+                t["id"]
+            );
+        }
+        assert_eq!(ev["event"], "skeleton_prepended");
+        // THE FENCE: after the repair passes, no module task owns a skeleton file — rule (b)'s
+        // first claimant is the skeleton by position, and the action rows say so.
+        let repairs = repair_plan_flags(&mut v, spec);
+        for f in &files {
+            let owners: Vec<String> = v["subtasks"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter(|t| strings(&t["files"]).contains(f))
+                .map(|t| t["id"].as_str().unwrap().to_string())
+                .collect();
+            assert_eq!(owners, vec!["skeleton"], "{f} must be skeleton-only");
+        }
+        assert!(
+            repairs
+                .actions
+                .iter()
+                .any(|a| a.contains("kept by `skeleton`")),
+            "the fence must be stated as a repair action: {:?}",
+            repairs.actions
+        );
+        // rule (d) has nothing left to append: the skeleton's verbatim rows mention every
+        // advertised path, so the plan ships with zero unassigned endpoints by construction.
+        assert!(
+            unassigned_endpoints(&v, spec).is_empty(),
+            "the skeleton IS rule (d)'s guarantee"
+        );
+    }
+
+    /// III-1: prepending is idempotent through the full finalize pass — a resumed or re-finalized
+    /// plan gets ONE skeleton, and the second pass is byte-identical.
+    #[test]
+    fn the_skeleton_is_prepended_exactly_once() {
+        let spec = include_str!("../../../../evals/swarm-bench/spec-build-sb7.md");
+        let sink: Arc<dyn EventSink> = Arc::new(NullSink);
+        let plan = include_str!("../../tests/fixtures/r2-plan.json").to_string();
+        let once = finalize_plan_before_dag(plan, spec, &sink);
+        let twice = finalize_plan_before_dag(once.clone(), spec, &sink);
+        assert_eq!(once, twice, "the second finalize must be a no-op");
+        let v: serde_json::Value = serde_json::from_str(&twice).unwrap();
+        let skeletons = v["subtasks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|t| t["id"] == "skeleton")
+            .count();
+        assert_eq!(skeletons, 1);
+        assert_eq!(v["subtasks"][0]["id"], "skeleton");
+        // and the finalized plan still loads as a DAG with the join intact
+        let dag = goose_swarm::Dag::from_planner_json(&twice).unwrap();
+        assert!(dag.tasks.contains_key("integrate-verify"));
+        assert!(dag.tasks.contains_key("skeleton"));
+    }
+
+    /// III-1: a spec with no advertised `python -m` boot builds NOTHING deterministic for a
+    /// skeleton to prove, so none is prepended and the plan is untouched — the same guard
+    /// `require_advertised_entry_files` applies.
+    #[test]
+    fn no_advertised_boot_means_no_skeleton() {
+        let mut v: serde_json::Value = serde_json::from_str(
+            r#"{"subtasks":[
+                {"id":"a","files":["app/a.py"],"depends_on":[],"description":"a"},
+                {"id":"integrate-verify","files":[],"depends_on":["a"],"description":"verify"}
+            ]}"#,
+        )
+        .unwrap();
+        let before = v.clone();
+        assert!(prepend_skeleton_task(&mut v, "build a CLI tool").is_none());
+        assert_eq!(v, before);
+    }
+
     /// (b) keeps a shared file with its FIRST claimant, and (a) re-points through a CHAIN of removed
     /// tasks — and through a cycle among them — so no dependency dangles.
     #[test]
@@ -44527,6 +44891,72 @@ mod audit_regressions {
                 .any(|e| e.get("event").and_then(|v| v.as_str()) == Some("plan_repaired")),
             "plan_repaired is emitted actions-or-none, fallback included"
         );
+    }
+
+    /// III-1: through the SAME fake-dispatcher seam, a spec that advertises a boot gets the walking
+    /// skeleton prepended after plan_repaired — FIRST in topological order (the only zero-dep task),
+    /// with every other task, join included, waiting on it. The phase line stays
+    /// open → synthesis → review(1) → plan_repaired, and the skeleton rides plan_repaired's pass.
+    #[tokio::test]
+    async fn the_walking_skeleton_leads_the_dag_from_the_fake_dispatcher_seam() {
+        let sink = Arc::new(RecordingSink::default());
+        let sink_dyn: Arc<dyn EventSink> = sink.clone();
+        let spec = "Build `app`. Runs as `python -m app --port N`.\n\n\
+                    | Method | Path | Response |\n|---|---|---|\n\
+                    | `GET` | `/api/health` | `{\"status\": \"ok\"}` |\n\
+                    | `GET` | `/` | the frontend |\n";
+        let (plan_json, dag) = plan_slices_to_dag(
+            two_slices(),
+            spec,
+            Vec::new(),
+            TargetLang::Python,
+            |_briefs: Vec<SliceBrief>, _tree: Vec<String>| async move {
+                Ok(serde_json::json!({"subtasks": [
+                    {"id": "api", "slice": "api", "files": ["app/api.py"], "depends_on": []},
+                    {"id": "web", "slice": "web", "files": ["web/app.js"], "depends_on": []},
+                    {"id": "integrate-verify", "files": [], "depends_on": ["api", "web"]},
+                ]})
+                .to_string())
+            },
+            |_prompt: String, _plan: String| async move {
+                Ok((goose_swarm::PlanPatch::default(), Vec::new()))
+            },
+            &sink_dyn,
+        )
+        .await
+        .unwrap();
+        let skel = &dag.tasks["skeleton"];
+        assert!(
+            skel.spec.deps.is_empty(),
+            "the skeleton is the unique root — first in every topological order"
+        );
+        for id in ["api", "web", "integrate-verify"] {
+            assert!(
+                dag.tasks[id].spec.deps.contains(&"skeleton".to_string()),
+                "{id} must wait on the skeleton"
+            );
+        }
+        assert!(
+            skel.spec
+                .owned_files
+                .contains(&"app/__main__.py".to_string()),
+            "the skeleton owns the advertised entry"
+        );
+        let v: serde_json::Value = serde_json::from_str(&plan_json).unwrap();
+        assert_eq!(v["subtasks"][0]["id"], "skeleton");
+        let events = sink.0.lock().unwrap().clone();
+        let names: Vec<&str> = events
+            .iter()
+            .filter_map(|e| e.get("event").and_then(|v| v.as_str()))
+            .collect();
+        let idx = |n: &str| {
+            names
+                .iter()
+                .position(|x| *x == n)
+                .unwrap_or_else(|| panic!("missing {n} in {names:?}"))
+        };
+        assert!(idx("plan_synthesized") < idx("skeleton_prepended"));
+        assert!(idx("skeleton_prepended") < idx("plan_repaired"));
     }
 
     /// A finding with no patch changes nothing, so the round asks ONCE for the patch it is owed. That
