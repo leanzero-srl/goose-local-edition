@@ -166,6 +166,52 @@ prefer the durable log, and the panel's live line follows whichever channel adva
 `EXPERIMENTS-LEDGER.md` records what was already tried and what it measured — **read it before proposing
 an engine change**, because several ideas here have been tried twice.
 
+## GATES — the rules that refuse (paid for, do not relitigate)
+
+Each of these was bought with a destroyed run or a nine-week defect. After a compaction the urge to
+break them returns; the gate is what refuses, not your memory. Full detail, the suspect catalogue and
+what each one cost: `.claude/rules/development-gates.md`. Enforced by
+`cargo test -p goose-swarm --test development_gates`.
+
+**1. THE FALLBACK GATE — a missing input never silently substitutes content.** Facts, or a loud NAMED
+absence-event (`ledger_empty_at_sink` class) that tick.py prints — never a template, never a quiet
+default. A fallback the owner ordered killed STAYS dead without his word; root-causing it does not
+revive it. Before writing any `unwrap_or_default()` / `Err(_) => empty` / `.ok()`-and-continue in the
+run path, prove the empty MEANS empty (honest-empty exemplar: `scheduler.rs:237` hashes `"ABSENT"`
+distinctly). WHY: the nine-week template lived inside an empty-ledger fallback, and the GEN-6 sweep
+found 10 of these hiding real failures — one turned a pillars serialize failure into a green gate.
+HOW IT REFUSES: `development_gates.rs` ratchets the run-path `unwrap_or_default()` count — it may only
+decrease.
+
+**2. THE SPECIFICITY GATE — no generic or template task text ever reaches a model.** "Integrate every
+module and VERIFY", "DO EVERYTHING" and their class are banned — the ban is nine weeks old and the
+phrase still shipped on 2026-08-30. Every dispatched description is assembled from THIS run's facts
+(spec surface, ledger, fs_delta), and every output is a HANDOFF: exact files, symbols, the concrete
+next step — vagueness is what a small model copes with by overthinking (measured: 11+ min of reasoning
+on a trivial-but-vague probe task). HOW IT REFUSES: the `swarm.rs:~4900` dispatch checkpoint plus the
+banned-phrase count-ratchet in `development_gates.rs`; GEN-5's brief floor emits a `plan_flag` WARNING.
+
+**3. THE BENCHMARK-LAUNCH GATE — a benchmark run starts ONLY from the app's Benchmark view.**
+`pkill` stray Goose apps, `open -n /Applications/Goose.app --args --remote-debugging-port=9897`, then
+`bench_dispatch.mjs` over CDP. NEVER headless, NEVER by typing the spec into a chat, NEVER a hand-rolled
+vendor/harness (run_build.py already serves the vendor, builds fixtures, substitutes placeholders and
+scores). WHY: every headless run of 2026-08-28 was void — twice, the second time via a self-written
+harness. HOW IT REFUSES: campaign skill §4a is the procedure and `development_gates.rs` asserts the
+skill still carries it; `first_tick_r1.sh` proves a run is real (run_build `--sb7`, vendor 200, orphans 0).
+
+**4. THE REAPING GATE — kill PIDs, never killpg.** r2 died at INTEGRATE minute 139 because a killpg
+aimed at two orphaned app servers took the engine with them — bare-spawn orphans share the engine's
+process group. Reap surgically per-pid; tree kills belong to `kill_app_tree` only. HOW IT REFUSES:
+tick.py and launch.sh reap per-pid by construction; any `killpg`/`kill -- -PGID` in an operator command
+is wrong on sight.
+
+**5. THE NO-TIME-INPUT GATE — no seconds value may decide model work.** II-7 made this structural:
+read windows, idle budgets and seconds-verdicts are DELETED, only connect timeouts (transport) remain,
+and terminators are look-counts and progress, not clocks. In review, any new literal-seconds constant
+that can bound a model call is rejected on sight. WHY: the 600s read cut was manufacturing retries
+(r2 drop 1), and the 420s stopwatch was the real harm behind r8's measurement. HOW IT REFUSES: the
+NO CAPS invariant above, and the structure itself — there is no knob left to set.
+
 ## Never
 
 - Never: Recreate `ui/desktop/src/api` or add `@hey-api/openapi-ts` to `ui/desktop`
