@@ -170,6 +170,14 @@ type Events = Record<string, unknown>[];
  */
 const inFlight = new Map<string, Promise<Events>>();
 
+let lastDeltaReadFailureLogMs = 0;
+function noteDeltaReadFailure(p: string, err: unknown): void {
+  const now = Date.now();
+  if (now - lastDeltaReadFailureLogMs < 30_000) return;
+  lastDeltaReadFailureLogMs = now;
+  console.error(`[swarm-read] delta read failed for ${p} (serving the accumulated prefix):`, err);
+}
+
 /**
  * Every event in an append-only JSONL log, parsing only the lines that are new.
  *
@@ -219,7 +227,23 @@ async function readOnce(p: string): Promise<Events> {
   entry.id = id;
   touch(logs, p, entry);
 
-  const delta = await readRange(p, entry.size, size - entry.size);
+  let delta: Buffer;
+  try {
+    delta = await readRange(p, entry.size, size - entry.size);
+  } catch (err) {
+    // ONE transient open/read failure (EMFILE under fd pressure, a permissions blip) must not void
+    // the whole poll WHEN A PREFIX EXISTS: the accumulated events are still a faithful read of the
+    // file, the offset has not advanced and the decoder/rest are untouched, so serving them and
+    // retrying the delta next poll is exact — never a substitution. A FRESH entry has no prefix, and
+    // a failure there must throw rather than impersonate an empty log (the caller's catch keeps its
+    // last state; an invented [] would blank it). Logged rate-limited so a read failing every poll
+    // is visible instead of reading as a quiet log.
+    if (entry.size > 0 || entry.events.length > 0) {
+      noteDeltaReadFailure(p, err);
+      return entry.events;
+    }
+    throw err;
+  }
   const chunk = entry.rest + entry.decoder.write(delta);
   const lines = chunk.split('\n');
   entry.rest = lines.pop() ?? '';

@@ -128,6 +128,20 @@ describe('readEvents', () => {
     expect(await readEvents(path.join(dir, 'gone.jsonl'))).toEqual([]);
   });
 
+  it('serves the accumulated prefix when the delta read fails, then recovers whole', async () => {
+    // The guard for one transient open/read failure (EMFILE-class): the poll must not be voided —
+    // the accumulated events are still a faithful prefix, the offset stays put, the next poll
+    // retries the delta and parses it once, whole.
+    const p = path.join(dir, 'guarded.jsonl');
+    await fsp.writeFile(p, '{"event":"a"}\n{"event":"b"}\n');
+    expect(await readEvents(p)).toHaveLength(2);
+    await fsp.appendFile(p, '{"event":"c"}\n');
+    await fsp.chmod(p, 0o000); // stat still succeeds; open('r') fails, like an fd-pressure blip
+    expect(await readEvents(p)).toEqual([{ event: 'a' }, { event: 'b' }]);
+    await fsp.chmod(p, 0o644);
+    expect(await readEvents(p)).toEqual([{ event: 'a' }, { event: 'b' }, { event: 'c' }]);
+  });
+
   it('reads no bytes when the file has not changed', async () => {
     const p = path.join(dir, 'stable.jsonl');
     await fsp.writeFile(p, '{"event":"a"}\n');

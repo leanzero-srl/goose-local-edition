@@ -199,6 +199,10 @@ type ElectronAPI = {
         openDecisions: string[];
       } | null;
       answerPath: string;
+      /** mtime (ms) of clarify-questions.json — the renderer gates it against the run's startedAt,
+       *  because the engine never deletes the file and a previous run's ask survives into the next
+       *  run in the same directory. null = unknown (kept, same non-rule as digestsFromThisRun). */
+      mtime: number | null;
     } | null;
     pauseRequested: boolean;
   } | null>;
