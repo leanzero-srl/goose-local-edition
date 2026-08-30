@@ -17,7 +17,7 @@ use std::sync::Arc;
 
 use console::style;
 
-use super::swarm::SwarmDevice;
+use super::swarm::{gen_entry_id, SwarmConfig, SwarmDevice};
 
 /// One resident/served model row as an engine's probe reports it — the exchange type every
 /// catalog probe returns and the pool builder consumes.
@@ -134,6 +134,16 @@ impl Engines {
 
     pub fn register_sidecar(&mut self, name: &str, engine: Arc<dyn SwarmEngine>) {
         self.sidecars.insert(name.to_string(), engine);
+    }
+
+    /// Test seam only: a registry whose LM Studio slot is a recording double, so the pre-warm
+    /// routing can be asserted without touching `lms` or the network.
+    #[cfg(test)]
+    pub(super) fn with_lmstudio_for_tests(lmstudio: Arc<dyn SwarmEngine>) -> Self {
+        Self {
+            lmstudio,
+            sidecars: BTreeMap::new(),
+        }
     }
 
     /// The registered engine for a KIND — `None` only for a sidecar kind nobody registered.
@@ -734,6 +744,150 @@ pub(super) fn engines_for_run(devices: &[SwarmDevice]) -> Engines {
     engines
 }
 
+/// JIT pre-warm for the resolved pool: each model warms through ITS OWN engine. The planner
+/// warms through the engine of the POOL DEVICE that carries it — the LM-pinned planner arm this
+/// replaces fired a doomed `lms load <sidecar-alias>` and could never mount the sidecar. A
+/// planner carried by no pool device keeps the historical LM Studio warm-up byte-identically
+/// (a sidecar planner outside the pool has no device to name its engine — left unresolved).
+pub(super) fn prewarm_pool(engines: &Engines, enabled: &[SwarmDevice], planner_model: &str) {
+    if !enabled
+        .iter()
+        .any(|d| d.is_cloud() && d.model_id == planner_model)
+    {
+        match enabled
+            .iter()
+            .find(|d| !d.is_cloud() && d.model_id == planner_model)
+        {
+            Some(d) => engines.engine_for_device(d).ensure_loaded(planner_model, 1),
+            None => engines.lmstudio().ensure_loaded(planner_model, 1),
+        }
+    }
+    for d in enabled.iter().filter(|d| !d.is_cloud()) {
+        engines
+            .engine_for_device(d)
+            .ensure_loaded(&d.model_id, d.instances);
+    }
+}
+
+/// "Auto-use what's loaded": build the worker pool from the models currently resident on the
+/// LM Studio fleet (`lms ps` through the engine's own probe chain) so the swarm runs on what's
+/// actually loaded, not (possibly stale) configured model_ids. LM-Studio-only BY CONSTRUCTION:
+/// sidecar devices are config-declared, not discovered — `merge_sidecar_devices` adds them.
+/// Returns (pool, planner_model). An empty pool means the fleet has nothing loaded (caller
+/// bootstraps or bails). Weights: explicit device override, else speed_weight, else LM Studio
+/// PARALLEL, else 1.
+pub(super) fn reconcile_pool_with_fleet(
+    cfg: &SwarmConfig,
+    engines: &Engines,
+) -> (Vec<SwarmDevice>, Option<String>) {
+    let procs = match engines.lmstudio().resident_processes() {
+        Ok(p) => p,
+        Err(_) => return (Vec::new(), None),
+    };
+    // One worker per DISTINCT loaded identifier (LM Link routes by identifier); first host wins.
+    let mut seen = std::collections::HashSet::new();
+    let mut resident: Vec<&LmsProcess> = Vec::new();
+    for p in &procs {
+        if !p.identifier.is_empty() && seen.insert(p.identifier.clone()) {
+            resident.push(p);
+        }
+    }
+    if resident.is_empty() {
+        return (Vec::new(), None);
+    }
+    let pool: Vec<SwarmDevice> = resident
+        .iter()
+        .map(|p| SwarmDevice {
+            id: gen_entry_id(cfg, p.device.as_deref(), &p.identifier),
+            model_id: p.identifier.clone(),
+            // Weight = an explicit configured override for this model_id (USER WINS — never clamped: a
+            // weight above the probed PARALLEL is a legit throughput tactic since agent tasks are bursty, so
+            // an extra slot overlaps the idle LM Studio window between an agent's LLM calls), else the
+            // configured speed_weight for this host/model (so "a slower machine does less work" actually
+            // shapes DISPATCH, not just planner pick — backlog #6), else LM Studio's PARALLEL for this
+            // instance, else 1. K6: if an override EXCEEDS the probed PARALLEL we WARN but keep the value.
+            weight: {
+                let user_w = cfg
+                    .devices
+                    .iter()
+                    .find(|d| d.model_id == p.identifier)
+                    .map(|d| d.weight);
+                if let (Some(w), Some(par)) = (user_w, p.parallel) {
+                    if w > par {
+                        eprintln!(
+                            "  {} pool weight {w} for {} exceeds LM Studio PARALLEL {par} — kept (oversubscribing can overlap the idle gaps between an agent's LLM calls; if requests just queue with no gain, lower it)",
+                            style("⚠").yellow(),
+                            p.identifier,
+                        );
+                    }
+                }
+                // Concurrency = the node's real capacity: an explicit device override, else LM Studio's
+                // PARALLEL, else 1. NOT the speed_weight — LM Studio serves one request per model at a time,
+                // so weight > PARALLEL just QUEUES requests on that node and STARVES an idle one (observed:
+                // workhorse w3 got 3 tasks, 2 queued, while gabee sat READY). "Faster host does MORE work" is
+                // handled separately by pick_device's speed_weight-weighted ROUTING (DeviceCfg.speed_weight),
+                // which spreads proportionally more tasks to the fast node OVER TIME via work-stealing (it
+                // finishes first and grabs the next ready task) — the correct lever, without oversubscribing.
+                user_w.or(p.parallel).unwrap_or(1).max(1)
+            },
+            enabled: true,
+            instances: 1,
+            host: p.device.clone(),
+            provider: None,
+            // Discovery rebuilds the local pool from `lms ps`, so anything the user set per node has to be
+            // carried across or it is silently lost every run. Matched on model_id, which is what LM Link
+            // actually routes by.
+            speed_weight: cfg
+                .devices
+                .iter()
+                .find(|d| d.model_id == p.identifier)
+                .and_then(|d| d.speed_weight),
+            supervision: cfg
+                .devices
+                .iter()
+                .find(|d| d.model_id == p.identifier)
+                .and_then(|d| d.supervision),
+            // Discovered from the LM Studio fleet, so LM Studio by definition (None = LmStudio).
+            engine: None,
+        })
+        .collect();
+    // Planner: keep the configured planner if it is resident; else pick the best resident model for the
+    // hardest job (the architect skeleton). QUALITY outranks speed here: a low-quant model (q5/q4/q3/q2)
+    // fails the structured skeleton, so prefer a NOT-low-quant model FIRST, then the fastest host
+    // (highest speed_weight). speed_weight keys match device+identifier (some identifiers omit the host).
+    let planner_rank = |p: &&LmsProcess| -> (u8, u32) {
+        let ident = p.identifier.to_lowercase();
+        let quant_ok = u8::from(
+            !(ident.contains("q2_")
+                || ident.contains("q3_")
+                || ident.contains("q4_")
+                || ident.contains("q5")),
+        );
+        let hay = format!("{} {}", p.device.as_deref().unwrap_or(""), ident);
+        let speed = cfg
+            .speed_weights
+            .iter()
+            .find(|(pat, _)| hay.contains(pat.as_str()))
+            .map(|(_, w)| *w)
+            .unwrap_or(1);
+        (quant_ok, speed)
+    };
+    let planner = if resident.iter().any(|p| p.identifier == cfg.planner_model) {
+        Some(cfg.planner_model.clone())
+    } else {
+        resident
+            .iter()
+            .filter(|p| {
+                let n = p.identifier.to_lowercase();
+                n.contains("27b") || n.contains("dense") || n.contains("coder")
+            })
+            .max_by_key(|p| planner_rank(p))
+            .or_else(|| resident.iter().max_by_key(|p| planner_rank(p)))
+            .map(|p| p.identifier.clone())
+    };
+    (pool, planner)
+}
+
 /// Config-declared sidecar devices join the pool ADDITIVELY: reconcile discovers only the LM
 /// Studio fleet (`lms ps` cannot see a rapid-mlx server), so a device tagged engine=mlx-sidecar
 /// is declared, not discovered. Merged BEFORE the per-engine servability partition, which judges
@@ -1061,6 +1215,101 @@ mod tests {
         assert_eq!(
             status.state, "stopped",
             "unset mlx_engine.model_id -> loud refusal, no mount"
+        );
+    }
+
+    /// A SwarmEngine double that records every ensure_loaded call and answers every probe with
+    /// honest emptiness — no lms, no network.
+    struct RecordingEngine {
+        name: &'static str,
+        calls: std::sync::Mutex<Vec<(String, u32)>>,
+    }
+    impl RecordingEngine {
+        fn new(name: &'static str) -> Arc<Self> {
+            Arc::new(Self {
+                name,
+                calls: std::sync::Mutex::new(Vec::new()),
+            })
+        }
+        fn calls(&self) -> Vec<(String, u32)> {
+            self.calls.lock().expect("calls lock").clone()
+        }
+    }
+    impl SwarmEngine for RecordingEngine {
+        fn provider_name(&self) -> &'static str {
+            self.name
+        }
+        fn http_host(&self) -> String {
+            String::new()
+        }
+        fn catalog_probe(&self) -> Vec<LmsProcess> {
+            Vec::new()
+        }
+        fn servable_model_ids(&self) -> Option<std::collections::HashSet<String>> {
+            None
+        }
+        fn loaded_instance_count(&self, _model_id: &str) -> usize {
+            0
+        }
+        fn ensure_loaded(&self, model_id: &str, instances: u32) {
+            self.calls
+                .lock()
+                .expect("calls lock")
+                .push((model_id.to_string(), instances));
+        }
+        fn resident_processes(&self) -> Result<Vec<LmsProcess>> {
+            Ok(Vec::new())
+        }
+        fn probe_report(&self) {}
+    }
+
+    /// The 2026-08-30 micro-run defect, pinned: a config-complete sidecar device (tagged, engine
+    /// registered) MUST be pre-warmed through ITS OWN engine — and a planner carried by that
+    /// device warms there too, never through a doomed `lms load` of the alias.
+    #[test]
+    fn prewarm_mounts_a_sidecar_device_through_its_own_engine() {
+        let lm = RecordingEngine::new("lmstudio");
+        let sc = RecordingEngine::new("omlx");
+        let mut engines = Engines::with_lmstudio_for_tests(lm.clone());
+        engines.register_sidecar("mlx-sidecar", sc.clone());
+        let pool = vec![
+            dev(
+                "workhorse-mlx",
+                "workhorse-alias-mlx",
+                Some(EngineKind::MlxSidecar),
+            ),
+            dev("mac-gabee", "gabee-qwen", None),
+        ];
+        prewarm_pool(&engines, &pool, "workhorse-alias-mlx");
+        assert_eq!(
+            sc.calls(),
+            vec![
+                ("workhorse-alias-mlx".to_string(), 1), // planner, via ITS device's engine
+                ("workhorse-alias-mlx".to_string(), 1), // the device loop (fast-path at runtime)
+            ],
+            "the sidecar engine receives both warms for its model"
+        );
+        assert_eq!(
+            lm.calls(),
+            vec![("gabee-qwen".to_string(), 1)],
+            "LM Studio warms only ITS device — no doomed lms load of the sidecar alias"
+        );
+    }
+
+    /// The historical shape stays byte-identical: a planner carried by NO pool device keeps the
+    /// LM Studio warm-up.
+    #[test]
+    fn prewarm_keeps_lmstudio_warmup_for_an_out_of_pool_planner() {
+        let lm = RecordingEngine::new("lmstudio");
+        let engines = Engines::with_lmstudio_for_tests(lm.clone());
+        let pool = vec![dev("mac-gabee", "gabee-qwen", None)];
+        prewarm_pool(&engines, &pool, "some-other-planner");
+        assert_eq!(
+            lm.calls(),
+            vec![
+                ("some-other-planner".to_string(), 1),
+                ("gabee-qwen".to_string(), 1),
+            ]
         );
     }
 

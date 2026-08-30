@@ -12,7 +12,7 @@ use goose::agents::{
     Agent, AgentConfig, AgentEvent, ExtensionConfig, GoosePlatform, SessionConfig,
 };
 use goose::config::permission::PermissionManager;
-use goose::config::{Config, GooseMode};
+use goose::config::{Config, ConfigError, GooseMode};
 use goose::conversation::message::{Message, MessageContent};
 use goose::providers::base::Provider;
 use goose::recipe::Response;
@@ -33,8 +33,8 @@ use std::sync::{Arc, Mutex};
 
 use super::swarm_engine::{
     all_resident_unservable_per_engine, default_engine, device_engine_kind,
-    drop_unservable_devices_per_engine, engines_for_run, merge_sidecar_devices, require_servable,
-    served_by_engine, EngineKind, Engines, LmsProcess,
+    drop_unservable_devices_per_engine, engines_for_run, merge_sidecar_devices, prewarm_pool,
+    reconcile_pool_with_fleet, require_servable, served_by_engine, EngineKind, Engines, LmsProcess,
 };
 mod judge_context;
 use judge_context::{is_intentional_empty_marker, judge_delivery_block, verify_owned_files};
@@ -222,7 +222,7 @@ impl SwarmDevice {
     fn provider_name(&self) -> &str {
         self.provider.as_deref().unwrap_or("lmstudio")
     }
-    fn is_cloud(&self) -> bool {
+    pub(super) fn is_cloud(&self) -> bool {
         self.provider_name() != "lmstudio"
     }
 }
@@ -1355,7 +1355,26 @@ static CONFIG_PARSE_ERROR: std::sync::OnceLock<String> = std::sync::OnceLock::ne
 
 fn load_config() -> SwarmConfig {
     let cfg = Config::global();
-    merge_config_over_defaults(cfg.get(SWARM_CONFIG_KEY, false).ok(), || {
+    let raw = match cfg.get(SWARM_CONFIG_KEY, false) {
+        Ok(v) => Some(v),
+        // A missing key is a fresh install — defaults are the honest answer, silently.
+        Err(ConfigError::NotFound(_)) => None,
+        Err(e) => {
+            // Any OTHER failure means the operator's config EXISTS but never reached the run.
+            // MEASURED 2026-08-30 (run swarm-20260830-222740116): a duplicate top-level
+            // `mlx_engine:` key failed the whole config-file parse, `.ok()` erased the evidence,
+            // and the run silently used defaults — allow_model_load fell to off, the configured
+            // sidecar device and planner vanished, and the red run was misdiagnosed as an engine
+            // defect. Same OnceLock as the block-level arm in merge_config_over_defaults, so the
+            // levers echo carries `config_parse_error` and the red banner names it.
+            let _ = CONFIG_PARSE_ERROR.set(format!(
+                "the goose config FILE failed to load ({e}) — the operator's swarm block never \
+                 reached the run"
+            ));
+            None
+        }
+    };
+    merge_config_over_defaults(raw, || {
         cfg.get_param::<SwarmConfig>(SWARM_CONFIG_KEY)
             .unwrap_or_default()
     })
@@ -2858,121 +2877,7 @@ fn short_model(identifier: &str) -> String {
 /// (`lms ps`) so the swarm runs on what's actually loaded, not (possibly stale) configured model_ids.
 /// Returns (pool, planner_model). An empty pool means the fleet has nothing loaded (caller bootstraps
 /// or bails). Weights: explicit device override, else speed_weight, else LM Studio PARALLEL, else 1.
-fn reconcile_pool_with_fleet(
-    cfg: &SwarmConfig,
-    engines: &Engines,
-) -> (Vec<SwarmDevice>, Option<String>) {
-    // LM-Studio-only by construction: the pool is discovered FROM the LM Studio fleet. How
-    // sidecar devices join the reconciled pool is step C.
-    let procs = match engines.lmstudio().resident_processes() {
-        Ok(p) => p,
-        Err(_) => return (Vec::new(), None),
-    };
-    // One worker per DISTINCT loaded identifier (LM Link routes by identifier); first host wins.
-    let mut seen = std::collections::HashSet::new();
-    let mut resident: Vec<&LmsProcess> = Vec::new();
-    for p in &procs {
-        if !p.identifier.is_empty() && seen.insert(p.identifier.clone()) {
-            resident.push(p);
-        }
-    }
-    if resident.is_empty() {
-        return (Vec::new(), None);
-    }
-    let pool: Vec<SwarmDevice> = resident
-        .iter()
-        .map(|p| SwarmDevice {
-            id: gen_entry_id(cfg, p.device.as_deref(), &p.identifier),
-            model_id: p.identifier.clone(),
-            // Weight = an explicit configured override for this model_id (USER WINS — never clamped: a
-            // weight above the probed PARALLEL is a legit throughput tactic since agent tasks are bursty, so
-            // an extra slot overlaps the idle LM Studio window between an agent's LLM calls), else the
-            // configured speed_weight for this host/model (so "a slower machine does less work" actually
-            // shapes DISPATCH, not just planner pick — backlog #6), else LM Studio's PARALLEL for this
-            // instance, else 1. K6: if an override EXCEEDS the probed PARALLEL we WARN but keep the value.
-            weight: {
-                let user_w = cfg
-                    .devices
-                    .iter()
-                    .find(|d| d.model_id == p.identifier)
-                    .map(|d| d.weight);
-                if let (Some(w), Some(par)) = (user_w, p.parallel) {
-                    if w > par {
-                        eprintln!(
-                            "  {} pool weight {w} for {} exceeds LM Studio PARALLEL {par} — kept (oversubscribing can overlap the idle gaps between an agent's LLM calls; if requests just queue with no gain, lower it)",
-                            style("⚠").yellow(),
-                            p.identifier,
-                        );
-                    }
-                }
-                // Concurrency = the node's real capacity: an explicit device override, else LM Studio's
-                // PARALLEL, else 1. NOT the speed_weight — LM Studio serves one request per model at a time,
-                // so weight > PARALLEL just QUEUES requests on that node and STARVES an idle one (observed:
-                // workhorse w3 got 3 tasks, 2 queued, while gabee sat READY). "Faster host does MORE work" is
-                // handled separately by pick_device's speed_weight-weighted ROUTING (DeviceCfg.speed_weight),
-                // which spreads proportionally more tasks to the fast node OVER TIME via work-stealing (it
-                // finishes first and grabs the next ready task) — the correct lever, without oversubscribing.
-                user_w.or(p.parallel).unwrap_or(1).max(1)
-            },
-            enabled: true,
-            instances: 1,
-            host: p.device.clone(),
-            provider: None,
-            // Discovery rebuilds the local pool from `lms ps`, so anything the user set per node has to be
-            // carried across or it is silently lost every run. Matched on model_id, which is what LM Link
-            // actually routes by.
-            speed_weight: cfg
-                .devices
-                .iter()
-                .find(|d| d.model_id == p.identifier)
-                .and_then(|d| d.speed_weight),
-            supervision: cfg
-                .devices
-                .iter()
-                .find(|d| d.model_id == p.identifier)
-                .and_then(|d| d.supervision),
-            // Discovered from the LM Studio fleet, so LM Studio by definition (None = LmStudio).
-            engine: None,
-        })
-        .collect();
-    // Planner: keep the configured planner if it is resident; else pick the best resident model for the
-    // hardest job (the architect skeleton). QUALITY outranks speed here: a low-quant model (q5/q4/q3/q2)
-    // fails the structured skeleton, so prefer a NOT-low-quant model FIRST, then the fastest host
-    // (highest speed_weight). speed_weight keys match device+identifier (some identifiers omit the host).
-    let planner_rank = |p: &&LmsProcess| -> (u8, u32) {
-        let ident = p.identifier.to_lowercase();
-        let quant_ok = u8::from(
-            !(ident.contains("q2_")
-                || ident.contains("q3_")
-                || ident.contains("q4_")
-                || ident.contains("q5")),
-        );
-        let hay = format!("{} {}", p.device.as_deref().unwrap_or(""), ident);
-        let speed = cfg
-            .speed_weights
-            .iter()
-            .find(|(pat, _)| hay.contains(pat.as_str()))
-            .map(|(_, w)| *w)
-            .unwrap_or(1);
-        (quant_ok, speed)
-    };
-    let planner = if resident.iter().any(|p| p.identifier == cfg.planner_model) {
-        Some(cfg.planner_model.clone())
-    } else {
-        resident
-            .iter()
-            .filter(|p| {
-                let n = p.identifier.to_lowercase();
-                n.contains("27b") || n.contains("dense") || n.contains("coder")
-            })
-            .max_by_key(|p| planner_rank(p))
-            .or_else(|| resident.iter().max_by_key(|p| planner_rank(p)))
-            .map(|p| p.identifier.clone())
-    };
-    (pool, planner)
-}
-
-fn gen_entry_id(cfg: &SwarmConfig, device: Option<&str>, identifier: &str) -> String {
+pub(super) fn gen_entry_id(cfg: &SwarmConfig, device: Option<&str>, identifier: &str) -> String {
     let dev = device
         .map(|d| d.split('.').next().unwrap_or(d).to_lowercase())
         .unwrap_or_default();
@@ -36612,7 +36517,16 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
     let mut supervision_pool_devices: Vec<DeviceCfg> = Vec::new();
     let enabled: Vec<SwarmDevice> = if !fleet_pool.is_empty() {
         if let Some(p) = fleet_planner {
-            cfg.planner_model = p;
+            // The CONFIGURED planner survives discovery when a pool device carries it. Reconcile's
+            // own keep-test sees only `lms ps` residents, so a merged sidecar planner (resident on
+            // ITS engine, invisible to lms) was overridden to a fleet model — measured on run
+            // swarm-20260830-222740116, where planner_model workhorse-qwen3.5-9b-4bit-mlx became
+            // workhorse-qwen3.8-27b and every planning call 401'd. Byte-identical otherwise: an
+            // lms-resident configured planner comes back unchanged as `p` (skip = same value), and
+            // a planner in no pool device takes the override exactly as before.
+            if !fleet_pool.iter().any(|d| d.model_id == cfg.planner_model) {
+                cfg.planner_model = p;
+            }
         }
         // The PLANNER is pinned separately, and a withdrawn planner model kills the run before a single task
         // is dispatched — every draft returns a 400 as *text*, so the planner "answers" with an error and the
@@ -37081,18 +36995,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
     // Gated by allow_model_load — OFF by default, so the swarm never spins up models on its own.
     if cfg.allow_model_load {
         eprintln!("pre-warming models (idempotent) ...");
-        if !enabled
-            .iter()
-            .any(|d| d.is_cloud() && d.model_id == cfg.planner_model)
-        {
-            // The planner is an LM Studio model today (a sidecar planner is step C).
-            engines.lmstudio().ensure_loaded(&cfg.planner_model, 1);
-        }
-        for d in enabled.iter().filter(|d| !d.is_cloud()) {
-            engines
-                .engine_for_device(d)
-                .ensure_loaded(&d.model_id, d.instances);
-        }
+        prewarm_pool(&engines, &enabled, &cfg.planner_model);
     } else {
         eprintln!(
             "{}",

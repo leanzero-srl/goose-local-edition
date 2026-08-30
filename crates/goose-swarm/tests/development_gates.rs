@@ -184,9 +184,13 @@ fn the_banned_integrate_template_only_shrinks() {
 /// to commands/swarm_engine.rs beside the probes that produce them, paying line-for-line for
 /// the sidecar wiring (engine_models provider seam, per-engine re-warm, sidecar pool merge,
 /// live-residency union).
+/// Tightened to 44,999: the micro-run repair (run swarm-20260830-222740116) — the pre-warm
+/// extracted to swarm_engine::prewarm_pool (per-device planner routing, pinned by recording-
+/// engine tests) and `reconcile_pool_with_fleet` moved beside `merge_sidecar_devices`, paying
+/// for the planner-keep guard and the loud file-level config-load failure in load_config.
 #[test]
 fn swarm_rs_line_count_only_decreases() {
-    const SWARM_RS_LINE_BASELINE: usize = 45_096;
+    const SWARM_RS_LINE_BASELINE: usize = 44_999;
     let text = read("crates/goose-cli/src/commands/swarm.rs");
     let n = text.lines().count();
     assert!(
