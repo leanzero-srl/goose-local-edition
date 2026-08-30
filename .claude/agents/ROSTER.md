@@ -51,6 +51,16 @@ boundary), run one gate-auditor pass over the whole roster.
 | cloud-campaign runner | the cloud-sb7 admission machinery | when that campaign resumes |
 
 ## Grading log (newest first — one line per delegation; move closed items to the per-agent notes)
+- 2026-08-30 panel-surgeon #2 (folded durable inspector, 030ea1cb9): CLEAN PASS — nothing clears
+  on phase end (history via deriveNodeHistory beside deriveFleet, ended chips, full-transcript
+  on-demand IPC with engine-codec key encoding + containment check), the honesty pins are TESTS
+  (38,780 stream chars vs 128,270 durable bytes pinned; finish-under-open-inspector persistence
+  pinned), memory strategy argued not defaulted (release-on-collapse over LRU: page cache already
+  holds the file), and the drift-guard fixture deliberately unextended with the reason stated.
+  Seven unbriefed observations. QUEUED for panel #3: jump-to-start affordance (Mihai's ask was
+  the cut BEGINNING), symmetric Work-pane show-all, replay-test live-run race fix, laneless-call
+  interrupted-state gap. tick_ui clickability rule revisit queued for next-build install. No
+  charter gap.
 - 2026-08-30 swarm-surgeon #4 (restream seed carries formed tail, 63ebe140b): CLEAN PASS — made
   the seed a PURE FUNCTION so a real test seam exists instead of theater; matched the file's
   established tail idiom (2,000-char tail_chars, the judge's own look scale) rather than inventing
