@@ -33,6 +33,12 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 const FINAL_OUTPUT_TOOL: &str = "recipe__final_output";
+/// The one engine terminator's own words — the `judge_out_of_moves` ending's Err message, which
+/// `fold_research_outcome` string-matches to classify a lane as `judge_ended` rather than
+/// laundering it into `provider_error`. ONE constant at the emit site, the matcher and the test,
+/// because the three used to be independent literals: a rewording at the emit site would have
+/// silently degraded every judge-ended lane to provider_error with green tests.
+const JUDGE_ENDED_NEEDLE: &str = "owed a structured reply and never made one";
 const SWARM_CONFIG_KEY: &str = "swarm";
 
 // ---------------------------------------------------------------------------------------------
@@ -18796,7 +18802,7 @@ impl GooseAgentDispatcher {
                                         activity_key.unwrap_or("call")
                                     );
                                     return Err(anyhow!(
-                                        "call owed a structured reply and never made one: {nudges_used} nudges, \
+                                        "call {JUDGE_ENDED_NEEDLE}: {nudges_used} nudges, \
                                          {thinking_chars} reasoning chars, {calls_since_last_nudge} tool calls \
                                          since the last nudge"
                                     ));
@@ -27885,7 +27891,7 @@ fn fold_research_outcome(
             // The one engine terminator's own words (emitted at exactly one site, the
             // judge_out_of_moves ending): a lane the ENGINE ended is named as such, not
             // laundered into a transport failure.
-            if e.contains("owed a structured reply and never made one") {
+            if e.contains(JUDGE_ENDED_NEEDLE) {
                 row.reason = Some("judge_ended".to_string());
             } else {
                 row.reason = Some("provider_error".to_string());
@@ -45999,11 +46005,14 @@ mod audit_regressions {
         );
         let prose = fold_research_outcome(&q, "m", 3, Ok("no json at all".into()));
         assert_eq!(prose.reason.as_deref(), Some("empty_answer"));
+        // Built FROM the shared needle, exactly as the emit site builds its Err — so this test
+        // pins emit-site==matcher. Its own copy of the words would stay green through a
+        // rewording that silently degraded every judge_ended lane to provider_error.
         let judge = fold_research_outcome(
             &q,
             "m",
             900,
-            Err("call owed a structured reply and never made one: 4 nudges".into()),
+            Err(format!("call {JUDGE_ENDED_NEEDLE}: 4 nudges")),
         );
         assert_eq!(
             (judge.status.as_str(), judge.reason.as_deref()),
