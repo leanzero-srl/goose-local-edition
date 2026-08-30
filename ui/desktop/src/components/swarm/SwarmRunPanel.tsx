@@ -3508,6 +3508,23 @@ const ProxyNotice: React.FC<{ proxy: ClarifyProxy }> = ({ proxy }) => {
       </div>
     );
   }
+  if (proxy.timedOut) {
+    const { questions, waitedSecs } = proxy.timedOut;
+    return (
+      <div
+        className="flex items-start gap-2 px-2 py-2 text-xs text-white"
+        style={{ backgroundColor: SWARM_STATUS.action, borderRadius: CHIP_RADIUS }}
+        data-testid="clarify-timed-out"
+      >
+        <Bot className="h-3.5 w-3.5 shrink-0 mt-px" />
+        <span>
+          {questions} open decision{questions === 1 ? '' : 's'} went unanswered at the {waitedSecs}s
+          unattended window — every worker was told to choose the most conventional option and note
+          the choice in a code comment. The build was never paused for it.
+        </span>
+      </div>
+    );
+  }
   if (!proxy.armed) return null;
   const { mode, waitSecs, questions } = proxy.armed;
   return (
@@ -3789,7 +3806,11 @@ const PlanningZone: React.FC<{
 }) => {
   const [openOverride, setOpenOverride] = useState<boolean | null>(null);
   const [laneOpen, setLaneOpen] = useState<Record<string, boolean>>({});
-  const clarifyPending = !!clarify?.pending;
+  // `clarify.pending` is a FILE test (questions exist, answers file absent) — on the proxyless
+  // engine a timed-out ask never writes answers, so the file test says "pending" forever while
+  // the run builds. The event stream is the truth: once the window expired (or an answer landed),
+  // the prompt is history, not a request.
+  const clarifyPending = !!clarify?.pending && !proxy.timedOut && !proxy.answered;
   // A phase's own fan (the slice fan under RESEARCH, the contract fan under CONTRACTS) renders under that
   // phase, so the lanes say WHEN they ran; a phase with lanes but no checklist row yet still shows.
   const fanOf = (key: PhaseTodo['key']): PhaseLaneGroup | null => {
@@ -3887,7 +3908,7 @@ const PlanningZone: React.FC<{
           <div className="pb-1">
             {/* The questions were settled without you. This is the durable record of that — the prompt
                 itself unmounts the moment the answers file lands. */}
-            {proxy.answered || proxy.failed ? (
+            {proxy.answered || proxy.failed || proxy.timedOut ? (
               <div className="px-3 pt-2">
                 <ProxyNotice proxy={proxy} />
               </div>
@@ -4358,7 +4379,7 @@ export const SwarmRunPanel: React.FC<{
   const { running, done, failed, tasks } = run.totals;
 
   // A run is OVER when the engine said so. Nothing else — no timer, no quiet window — may end it.
-  const clarifyPending = !!run.clarify?.pending;
+  const clarifyPending = !!run.clarify?.pending && !run.proxy.timedOut && !run.proxy.answered;
   const ended = run.finished;
   // The APP-LEVEL oracle: the engine's own end-to-end verify (complete_result -> phaseTodo v-e2e = 'done').
   // A green verify means the deliverable WORKS — so the run is 'done' and the overview shows — EVEN IF an
