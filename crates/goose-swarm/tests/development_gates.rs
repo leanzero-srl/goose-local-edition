@@ -196,9 +196,15 @@ fn the_banned_integrate_template_only_shrinks() {
 /// `inconclusive_reasons`, whose 400-char head-cut defect motivated it), paying for the
 /// green-round clear of known_active_bugs(+severities) and handle_repair's
 /// PYTHONDONTWRITEBYTECODE guard.
+/// Tightened to 43,715: the nudge-ladder cluster (`produced_since_look`, `nudge_arm`,
+/// `calls_since_nudge`, `nudge_delivery`, `restream_seed` and their 5 tests, -280) moved to
+/// commands/swarm/ladder.rs, paying for the r6a fix in the same commit: `nudge_delivery`'s
+/// advancing HOLD (a restream may only take a stream that has stopped) and the restream seam's
+/// ladder reset (a fresh attempt starts at nudge 0 — the ignored-steer memory no longer outlives
+/// the stream it measured).
 #[test]
 fn swarm_rs_line_count_only_decreases() {
-    const SWARM_RS_LINE_BASELINE: usize = 43_933;
+    const SWARM_RS_LINE_BASELINE: usize = 43_715;
     let text = read("crates/goose-cli/src/commands/swarm.rs");
     let n = text.lines().count();
     assert!(
