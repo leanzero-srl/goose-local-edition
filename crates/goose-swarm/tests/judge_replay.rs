@@ -168,7 +168,14 @@ fn a_worker_still_taking_actions_survives_the_first_write_deadline() {
          evidence term, not just a stopwatch",
         base.elapsed_secs
     );
-    // Same instant, but the counters are FLAT — nothing is happening. This one must still be caught.
+    // Same instant, but the counters are FLAT — nothing is happening. REWRITTEN WITH ITS SUBJECT
+    // (r3 II-7): this half expected the deadline to catch the stall, and the deadline is deleted —
+    // it was the last clock verdict, and r2 fired it falsely three times on a slot-starved worker
+    // whose zero bytes meant "queued behind a PARALLEL:2 sibling", not "dead". Nine tool calls is
+    // below the behavioural over-read bar, so the deterministic layer's honest answer is silence;
+    // the stall belongs to the K zero-production-looks summons (each look gated on `lms ps`
+    // IDLE/absent, verdict-less until K is derived from r2's inter-delta gaps) and to the semantic
+    // judge on an idle node.
     let stalled = to_input(
         &base,
         Some(9),
@@ -176,14 +183,20 @@ fn a_worker_still_taking_actions_survives_the_first_write_deadline() {
         Some(base.elapsed_secs - 60),
         false,
     );
-    let v = deterministic_verdict(&stalled, &cfg).expect("a stalled worker is still caught");
-    assert_eq!(v.verdict, Verdict::OverReading);
-    assert!(v.deterministic);
+    assert!(
+        deterministic_verdict(&stalled, &cfg).is_none(),
+        "below the action bar there is no evidence, and a clock may not stand in for it"
+    );
 }
 
 /// A ZERO-tool-call worker is stuck before its first byte — it did not "over-read", it read nothing.
+/// REWRITTEN WITH ITS SUBJECT (r3 II-7): the deadline that fired here is deleted (the last clock
+/// verdict; three false r2 firings on a slot-starved worker). What survives of the old assertion is
+/// its label-honesty half, now in the strongest form: a worker with tool_calls == 0 can never be
+/// labelled ANYTHING deterministically — zero actions is zero evidence, and elapsed seconds may not
+/// stand in for evidence. Its case belongs to the lms-ps-gated zero-production-looks summons.
 #[test]
-fn a_worker_that_ran_no_command_is_labelled_no_first_write() {
+fn a_worker_that_ran_no_command_gets_no_deterministic_verdict() {
     let cfg = JudgeConfig::default();
     let r = Row {
         task_id: "test-api".into(),
@@ -194,16 +207,13 @@ fn a_worker_that_ran_no_command_is_labelled_no_first_write() {
         secs_since_last_write: None,
         owns_files: true,
     };
-    let v = deterministic_verdict(
-        &to_input(&r, Some(0), Some(9_000), Some(r.elapsed_secs - 60), false),
-        &cfg,
-    )
-    .expect("the deadline still fires on a silent worker");
-    assert_eq!(
-        v.verdict,
-        Verdict::NoFirstWrite,
-        "a worker with tool_calls == 0 must not be recorded as `over_reading` — that label sent three \
-         separate analyses down a false causal chain"
+    assert!(
+        deterministic_verdict(
+            &to_input(&r, Some(0), Some(9_000), Some(r.elapsed_secs - 60), false),
+            &cfg,
+        )
+        .is_none(),
+        "a silent worker carries no evidence; in r2 that silence meant a starved slot, not a dead one"
     );
 }
 
@@ -341,19 +351,49 @@ fn quantify_the_change_against_the_recorded_verdicts() {
     }
     eprintln!(
         "PREDICTED EFFECT on {} archived observations:\n  \
-         deadline trips that NOW SURVIVE (worker was still acting): {}\n  \
-         deadline trips that STILL FIRE (worker genuinely stalled): {}\n  \
+         old 420s-deadline trips that NOW yield silence:            {}\n  \
+         old 420s-deadline trips that still fire (action evidence): {}\n  \
          observations that NOW yield Accept instead of a kill:      {}",
         rows.len(),
         trips_now_survive,
         trips_still_fire,
         accepts
     );
-    assert!(
-        trips_still_fire > 0,
-        "the deadline must still catch a genuinely stalled worker — a change that disarms it entirely \
-         would trade one failure mode for a worse one"
-    );
+    // REWRITTEN WITH ITS SUBJECT (r3 II-7). This asserted `trips_still_fire > 0` — that the deadline
+    // must keep catching a stalled worker — which pinned the stopwatch itself. The stopwatch is
+    // deleted (three false r2 firings on a slot-starved worker; F201's constant sat below the p90 of
+    // both populations it judged), so the invariant is now the owner's rule in replayable form:
+    // whatever fires against this corpus fires on EVIDENCE — a compile error or an action count over
+    // the behavioural bar — never on elapsed seconds. The stalled cases the old assert spoke for are
+    // owned by the lms-ps-gated zero-production-looks summons and the semantic judge, which no
+    // deterministic replay can exercise.
+    assert_eq!(accepts, 0, "no clock-shaped Accept may terminate a call");
+    let cfg2 = JudgeConfig::default();
+    let (mut pc, mut pt, mut pa) = (None, None, None);
+    let mut lt = String::new();
+    for r in &rows {
+        if r.task_id != lt {
+            pc = None;
+            pt = None;
+            pa = None;
+            lt = r.task_id.clone();
+        }
+        let input = to_input(r, pc, pt, pa, r.any_owned_written);
+        if let Some(o) = deterministic_verdict(&input, &cfg2) {
+            assert!(
+                !input.compile_errors.is_empty()
+                    || input
+                        .worker_tool_calls
+                        .is_some_and(|n| n >= cfg2.over_read_tool_calls),
+                "{}: verdict {:?} fired without action evidence — only a clock could have decided it",
+                r.task_id,
+                o.verdict
+            );
+        }
+        pc = r.tool_calls;
+        pt = r.thinking_chars;
+        pa = Some(r.elapsed_secs);
+    }
 }
 
 /// A tool-call increase seen across a 21-MINUTE gap is not evidence that the worker is producing NOW.
@@ -382,10 +422,11 @@ fn an_action_increase_across_a_stale_gap_does_not_count_as_producing() {
         owns_files: true,
     };
     // The real pair from the run: previous look at 360s with 0 calls, this look at 1627s with 8.
-    // REWRITTEN WITH ITS SUBJECT. The staleness rule this predicate guarded is disarmed (see the
-    // sibling test), so `is_still_producing` no longer decides anyone's fate and there is nothing left
-    // for a window comparison to veto. The measured incident stays recorded above because it is the
-    // clearest statement of why a coarse observation must never license a fine-grained decision.
+    // REWRITTEN WITH ITS SUBJECT — TWICE. First the staleness rule this predicate guarded was
+    // disarmed; then r3 II-7 deleted `is_still_producing` outright along with the deadline it fed,
+    // so no window comparison exists to veto anything. The measured incident stays recorded above
+    // because it is the clearest statement of why a coarse observation must never license a
+    // fine-grained decision — one of the two reasons the wall-clock verdicts are gone for good.
     //
     // What must hold now, in both directions: neither a 21-minute-old action count nor a fresh one can
     // produce a terminal verdict from elapsed time alone.
