@@ -115,6 +115,16 @@ sort q10 before q2; partition_delegated_decisions + delegated_decisions_ok appea
 research_request_block's armed-no-claimed-sections arm wording.
 
 ## Grading log (newest first — one line per delegation; move closed items to the per-agent notes)
+- 2026-08-30 swarm-surgeon (shadow desk, 4218ddaea + loop-state f1517e7): CLEAN PASS — honest
+  three-part trace (YES on the growth crossing, 7 min ahead of the in-loop steer; NO on recurrence
+  with the reason stated — the deterministic layer cannot see semantic loops; NO on silence,
+  marked not solved), the addendum resolved at the RIGHT layer (no per-poll subprocess in the
+  engine; desk_silent + tick's existing lms-ps record join), char-exact replay tests across split
+  UTF-8, zero judge_* event pollution. ORCHESTRATOR FAULT logged against MYSELF: I dispatched TWO
+  agents into swarm.rs simultaneously (desk wiring + cluster A) — the staleness guards absorbed
+  it, but the law is now absolute: ONE swarm.rs-touching agent at a time, even when briefs are
+  module-heavy; the wiring lines always meet in the root. Post-#12, verify HEAD once (git log +
+  full gates) given the interleaved commits.
 - 2026-08-30 refuter #4 (early-skeleton Shape B): EXEMPLARY KILL-AND-REBUILD — proved the ACCEPT
   lever dead code at HEAD three ways (no deterministic producer since the F165-era tail deletion;
   parse_judge_reply has no ACCEPT keyword and hardcodes deterministic:false; revival collides with
