@@ -278,9 +278,12 @@ ledger-core-tests (19:57:50Z → completed 20:22:20Z = the 24m30s the installed 
 the live answer); attempt 0's error renders as error→retried, attempt 1 as "processing the prompt…", never
 the old error as body. (4) the `plan_repaired` row (`6d009c901`/`972d81f53`) is SILENT until the engine
 emits the event — the r2 archive must render with no row and no console error, and the r1 archive (which
-had multi-round review) must render with the `review_patch_stuck` handler gone (`49beda438`). (5) prove
-`afa644ddd` from the live process, not the code: `ps eww <engine pid>` shows
-`GOOSE_PROVIDER_READ_TIMEOUT_SECS=1800` (same method that verified r1's env at 18:45 on 08-29). (6) caveat
+had multi-round review) must render with the `review_patch_stuck` handler gone (`49beda438`). (5) INVERTED for r3
+(the afa644ddd env line is DELETED — II-7 read-window-off): `ps eww <engine pid>` shows NO
+`GOOSE_PROVIDER_READ_TIMEOUT_SECS` at all, and DOES show the five supervision-off lines
+`GOOSE_SWARM_TAIL_REVIEW=0`, `GOOSE_SWARM_PREREVIEW=0`, `GOOSE_SWARM_PREREVIEW_DIMS=0`,
+`GOOSE_SWARM_JUDGE=0` (idle-model only — the omni judge stays ON), `GOOSE_SWARM_TESTGEN=0`
+(same `ps eww` method that verified r1's env at 18:45 on 08-29). (6) caveat
 armed for the tick itself: a frozen digest with NO inflight row while `lms ps` shows GENERATING is the
 FORMING class (r2: sink digest mtime 23:46:28 → body drop 00:26:35, ~40 min), not a dead lane and not an
 inflight-row defect — `inflight[]` is written at the REQUEST moment and row 11 (forming line) is unbuilt;
@@ -295,8 +298,9 @@ nothing was verified on the running r2 app.
 **NO THROWAWAY WORK (Mihai, 22:20: "if something gets deleted and redone what's the point of doing it to
 begin with?").** Nothing gets built for a layer the design deletes — no config fields, no gates, no
 levers rows for pre-review / tail idle-fill / idle-model judge / prereview dims. For r3 they are switched
-off by four `=0` lines in the Benchmark view's spawn env (main.ts `benchmark-run`, beside
-`GOOSE_SWARM_BENCHMARK`), which die with step 11; the tick proves the state by the absence of their events.
+off by five `=0` values in the Benchmark view's spawn env (main.ts `benchmark-run`, beside
+`GOOSE_SWARM_BENCHMARK`): four added lines plus the `GOOSE_SWARM_TESTGEN` flip `'1'`→`'0'` (Part II /
+II-5), all of which die with step 11; the tick proves the state by the absence of their events.
 The step-10 config-plumbing agent was STOPPED before it changed a line. Rule for every step from here:
 implement what the design KEEPS or ADDS; for what it DELETES, delete or leave — never plumb.
 
@@ -312,8 +316,12 @@ four supervision layers are ENV-ONLY and ON by default, so a packaged app cannot
 `GOOSE_SWARM_JUDGE` (:36712, the idle-model judge, not the omni), `GOOSE_SWARM_PREREVIEW_DIMS` (:27190).
 Each needs a `SwarmConfig` field + a `levers_resolved` row. The rest switch off in one command:
 `arm_config.py --set omni_judge=false dynamic_replan=false incremental_replan=false goals=false sink_review=false supervision_pool=false retarget=false benchmark=true`.
+`planner_model` needs NO flip in that command even though the configured name is non-resident — verified
+in the pool loader: a non-resident `planner_model` falls back to the best RESIDENT model (not-low-quant
+preferred, then fastest host — `planner_rank`, swarm.rs `reconcile_pool_with_fleet`), so the stale value cannot strand
+planning; the fallback pick surfaces in the run's own planner identity.
 
-**LANDED during r2, ships in r3 (`2b1e755ac`):** a nudge escalates to a seeded re-stream (conversation wiped in the same session, `judge_restream` event) when a prior steer produced no action or the judge says RESTART — `nudge_delivery()` is pure and tested. r2's opener needed 22 min and five ignored steers to finish; r1's review lane six. First `judge_restream` event in r3 is the live check. Also for r3: `afa644ddd` — the Benchmark view passes `GOOSE_PROVIDER_READ_TIMEOUT_SECS=1800` (a live PARALLEL:2 slot went 581 s silent on r2; the default 600 s would have cut it).
+**LANDED during r2, ships in r3 (`2b1e755ac`):** a nudge escalates to a seeded re-stream (conversation wiped in the same session, `judge_restream` event) when a prior steer produced no action or the judge says RESTART — `nudge_delivery()` is pure and tested. r2's opener needed 22 min and five ignored steers to finish; r1's review lane six. First `judge_restream` event in r3 is the live check. SUPERSEDED for r3: `afa644ddd`'s 1800 s line is deleted from main.ts — II-7 removed the provider read window entirely (connect timeout stays), so the 581 s-silent-slot evidence is answered by NO window rather than a wider one; live check (5) above is inverted to prove the var's ABSENCE.
 
 **Was queued (now done):** when the judge answers RESTART on a call with
 `actions_since_last_look == 0` and the previous steer changed nothing (thinking grew, no action), deliver the
