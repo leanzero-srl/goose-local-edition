@@ -61,7 +61,7 @@ export const FORMATION_PHASES: ReadonlyArray<{ key: RunPhase; label: string; tip
   {
     key: 'integrate',
     label: 'Integrate',
-    tip: 'The sink assembles the produced modules, runs the tests, and boots what the request advertises.',
+    tip: 'The file-less join boots the app and exercises every advertised route end-to-end — the wiring itself was the FIRST task (skeleton), so this verifies, it does not assemble.',
   },
   {
     key: 'repair',
