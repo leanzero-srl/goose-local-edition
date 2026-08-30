@@ -4886,7 +4886,7 @@ mod tests {
         .iter()
         .map(|s| s.to_string())
         .collect();
-        let desc = sink_semantic_description(
+        let brief = sink_semantic_description(
             root,
             "integrate-verify",
             &[],
@@ -4894,8 +4894,12 @@ mod tests {
             spec,
             TargetLang::Python,
             Some("ImportError: cannot import name 'approve' from 'app.approval_workflow'"),
-        )
-        .expect("a populated ledger arms the semantic description");
+        );
+        assert!(
+            !brief.ledger_empty && !brief.spec_surface_empty,
+            "a populated ledger and a real spec surface report no absences"
+        );
+        let desc = brief.description;
         assert!(
             !desc.contains("Integrate every module and VERIFY"),
             "the zero-fact template line must be gone"
@@ -4928,20 +4932,90 @@ mod tests {
             !desc.contains("READS a PERSISTED file"),
             "the CLI/JSON-store paragraph drops when the spec advertises endpoints"
         );
-        // The arming rule: no ledger, no replacement — the dispatch stays byte-identical.
+        // GEN-1 arming rule: an empty ledger no longer forfeits the semantic build — the spec
+        // facts still arm it, the ledger's absence is STATED, and the flag the caller turns
+        // into `ledger_empty_at_sink` is set. The template never comes back.
         let bare = tempfile::tempdir().unwrap();
+        let empty_ledger = sink_semantic_description(
+            bare.path(),
+            "integrate-verify",
+            &[],
+            &all_files,
+            spec,
+            TargetLang::Python,
+            None,
+        );
         assert!(
-            sink_semantic_description(
-                bare.path(),
-                "integrate-verify",
-                &[],
-                &all_files,
-                spec,
-                TargetLang::Python,
-                None,
-            )
-            .is_none(),
-            "an empty/unreadable ledger must leave the template dispatch untouched"
+            empty_ledger.ledger_empty && !empty_ledger.spec_surface_empty,
+            "the absence is a named flag, and a real spec keeps the surface non-empty"
+        );
+        assert!(
+            !empty_ledger
+                .description
+                .contains("Integrate every module and VERIFY"),
+            "an empty ledger must arm the spec-fact brief, never the banned template"
+        );
+        assert!(
+            empty_ledger.description.contains("LEDGER: EMPTY")
+                && empty_ledger.description.contains("BOOT exactly"),
+            "the brief states the ledger's absence while still carrying the spec's boot facts:\n{}",
+            empty_ledger.description
+        );
+    }
+
+    /// GEN-1's reachability gate, in the style of `no_prompt_reintroduces_the_frozen_interfaces_section`:
+    /// the banned "Integrate every module and VERIFY…" constant must be UNREACHABLE as a dispatched
+    /// description. Functional half: with NOTHING — no ledger, no spec, no tree — the sink brief is
+    /// still built and states its measured absences. Source half: the builder's signature must stay
+    /// non-Option, because `-> Option<String>` WAS the mechanism that re-dispatched the template on
+    /// every empty-ledger sink (the caller's `unwrap_or(&req.description)` is the only join).
+    #[test]
+    fn the_banned_integrate_template_cannot_reach_a_dispatch() {
+        let bare = tempfile::tempdir().unwrap();
+        let brief = sink_semantic_description(
+            bare.path(),
+            "integrate-verify",
+            &[],
+            &[],
+            "",
+            TargetLang::Python,
+            None,
+        );
+        assert!(
+            brief.ledger_empty && brief.spec_surface_empty,
+            "both absences are measured, not defaulted"
+        );
+        assert!(
+            !brief
+                .description
+                .contains("Integrate every module and VERIFY"),
+            "even a fully empty world must never re-arm the template"
+        );
+        assert!(
+            brief.description.contains("MEASURED ABSENCE")
+                && brief.description.contains("LEDGER: EMPTY"),
+            "the empty-world brief states both absences instead of substituting:\n{}",
+            brief.description
+        );
+        let src = include_str!("swarm.rs");
+        // Built by concat so this test's own source can never satisfy its own search.
+        let needle = ["fn sink_semantic_", "description("].concat();
+        let decl: String = src
+            .split(&needle)
+            .nth(1)
+            .expect("the sink brief builder exists")
+            .chars()
+            .take_while(|c| *c != '{')
+            .collect();
+        // Only the RETURN type — a parameter may legitimately be an Option (collect_only is).
+        let ret = decl
+            .rsplit("->")
+            .next()
+            .expect("the builder returns a value");
+        assert!(
+            !ret.contains("Option<"),
+            "the sink brief builder must return unconditionally — an Option here is the exact \
+             empty-input fallback that shipped the banned template (GEN-1)"
         );
     }
 
@@ -32365,13 +32439,19 @@ fn spec_boot_line(spec: &str, pkg: &str) -> Option<String> {
 /// tree's real exports (`extract_signatures`, names only), and the ledger's read-before-act
 /// block. The template's oracle clauses survive as a short suffix; its CLI/JSON-store paragraph
 /// renders only when the spec advertises no endpoints (a served app is not a JSON-store CLI).
+///
+/// GEN-1 (fallback rule): the spec parsers and the on-disk export scan run whether or not the
+/// ledger holds rows, so an empty ledger no longer forfeits the whole semantic build. A missing
+/// input becomes a STATED measured absence in the text, never a silent fallback to a template.
+/// Returns (description, spec_surface_empty) — the second half is true when the spec advertises
+/// nothing AND the tree shows no exports, so the caller can put that absence in an event.
 fn render_sink_description(
     spec: &str,
     lang: TargetLang,
     root: &Path,
     all_files: &[String],
     ledger_block: &str,
-) -> String {
+) -> (String, bool) {
     let mut s = String::from(
         "INTEGRATE AND VERIFY the whole program end-to-end, working from the MEASURED state \
          below. This task was assembled from the run's own artefacts — the module list, test \
@@ -32448,7 +32528,8 @@ fn render_sink_description(
         );
         s.push_str(&truncate_block_at_line(&modules, 2_000));
     }
-    if let Some(line) = pkg.as_deref().and_then(|p| spec_boot_line(spec, p)) {
+    let boot = pkg.as_deref().and_then(|p| spec_boot_line(spec, p));
+    if let Some(line) = &boot {
         s.push_str(&format!(
             "BOOT exactly as the spec advertises: `{line}` (fill each placeholder with your own \
              value; invoke python as python3).\n"
@@ -32472,8 +32553,33 @@ fn render_sink_description(
             }
         }
     }
+    // GEN-1: an absent input is a MEASURED FACT the sink can build on, so it is stated in the
+    // description — never papered over by re-dispatching the zero-fact template, which is what
+    // taught the r2 sink to re-derive the tree by hand and write phantom shims.
+    let spec_surface_empty = pkg.is_none()
+        && entries.is_empty()
+        && modules.is_empty()
+        && boot.is_none()
+        && gets.is_empty()
+        && posts.is_empty();
+    if spec_surface_empty {
+        s.push_str(
+            "MEASURED ABSENCE: the spec advertises no package, no boot invocation and no \
+             endpoints, and no module exports were found on disk. Discover the program's real \
+             entry from the tree itself, and treat anything the spec does not advertise as out \
+             of scope for golden checks — do not invent an advertised surface.\n",
+        );
+    }
     s.push('\n');
-    s.push_str(ledger_block);
+    if ledger_block.is_empty() {
+        s.push_str(
+            "LEDGER: EMPTY — this run's ledger holds no task rows, gate probes or repair \
+             verdicts yet, so nothing above comes from run history; the module and endpoint \
+             facts are the tree and spec as measured now.\n",
+        );
+    } else {
+        s.push_str(ledger_block);
+    }
     s.push('\n');
     // The template's oracle clauses, condensed — the checks stay, the re-derivation orders go.
     s.push_str(
@@ -32504,13 +32610,25 @@ fn render_sink_description(
              to the spec's UNDEFINED domain only.\n",
         );
     }
-    s
+    (s, spec_surface_empty)
 }
 
-/// The II-3 arming decision, pure enough to test without a dispatcher: Some(semantic
-/// description) only when the ledger actually holds facts. An empty or unreadable ledger —
-/// a fresh run's first minutes, a degraded tree — returns None and the caller dispatches the
-/// existing template BYTE-IDENTICAL: the never-gates rule as the type signature.
+/// The sink's dispatch-time brief and which of its inputs were measured absent. GEN-1: the
+/// description is UNCONDITIONAL — arming used to key on "ledger non-empty", so every
+/// empty-ledger dispatch (a fresh run's first minutes, a degraded tree) silently shipped the
+/// banned 3,668-char zero-fact template instead. The spec-surface facts are computed whether or
+/// not the ledger holds rows, so the brief is always built from whatever facts exist, and each
+/// absence is a named flag the caller MUST emit as an event (the fallback rule: no silent
+/// substitution, never a template, never a quiet default).
+struct SinkBrief {
+    description: String,
+    /// The run ledger contributed nothing — the caller emits `ledger_empty_at_sink`.
+    ledger_empty: bool,
+    /// The spec advertises nothing and the tree shows no exports either; the description
+    /// states that measured absence in prose and the event carries it.
+    spec_surface_empty: bool,
+}
+
 fn sink_semantic_description(
     root: &Path,
     task_id: &str,
@@ -32519,12 +32637,15 @@ fn sink_semantic_description(
     spec: &str,
     lang: TargetLang,
     collect_only: Option<&str>,
-) -> Option<String> {
+) -> SinkBrief {
     let block = render_ledger_block(root, task_id, deps, all_files, 7_000, collect_only);
-    if block.is_empty() {
-        return None;
+    let (description, spec_surface_empty) =
+        render_sink_description(spec, lang, root, all_files, &block);
+    SinkBrief {
+        description,
+        ledger_empty: block.is_empty(),
+        spec_surface_empty,
     }
-    Some(render_sink_description(spec, lang, root, all_files, &block))
 }
 
 /// F790-3: the operator questions waiting in `<root>/.swarm/questions/*.txt` that have no
@@ -32716,11 +32837,14 @@ impl GooseAgentDispatcher {
         }
         // §II.2 MESSAGE FORMATION for the SINK (II-3). Computed HERE — after the owned-file
         // fence has restored the tree, before any prompt block renders — so the exports and
-        // stats describe the tree the sink will actually verify. Armed only when the ledger
-        // holds facts: sink_semantic_description returns None on an empty/unreadable ledger and
-        // everything below is then byte-identical, template included. The collect-only probe is
-        // the one §II.2 dispatch-time subprocess (spawn-bounded instrument, flagged in the
-        // design; its absence is never evidence).
+        // stats describe the tree the sink will actually verify. GEN-1: armed UNCONDITIONALLY
+        // for the sink (the scheduler never speculates a task owning no files, so this arm
+        // covers every sink dispatch). It used to arm on "ledger non-empty", which shipped the
+        // banned zero-fact template on exactly the dispatches with the least context; now an
+        // empty ledger is a stated fact in the brief plus a `ledger_empty_at_sink` event — the
+        // fallback rule: build from the facts that exist and name the absence, never a quiet
+        // default. The collect-only probe is the one §II.2 dispatch-time subprocess
+        // (spawn-bounded instrument, flagged in the design; its absence is never evidence).
         let sink_brief: Option<String> = if req.task_id == "integrate-verify" && !req.speculative {
             let spec = self.spec_frozen.lock().unwrap().clone();
             // III-1 (P1-2's hook): the sink becoming dispatchable IS "the last producer completed" —
@@ -32750,7 +32874,7 @@ impl GooseAgentDispatcher {
                 "path": ledger_path.as_ref().map(|p| p.display().to_string()),
             }));
             let collect_only = collect_only_import_health(&root).await;
-            sink_semantic_description(
+            let brief = sink_semantic_description(
                 &root,
                 &req.task_id,
                 &req.neighborhood,
@@ -32758,7 +32882,15 @@ impl GooseAgentDispatcher {
                 &spec,
                 lang,
                 collect_only.as_deref(),
-            )
+            );
+            if brief.ledger_empty {
+                self.events.write_value(serde_json::json!({
+                    "event": "ledger_empty_at_sink",
+                    "task_id": req.task_id,
+                    "spec_surface_empty": brief.spec_surface_empty,
+                }));
+            }
+            Some(brief.description)
         } else {
             None
         };
