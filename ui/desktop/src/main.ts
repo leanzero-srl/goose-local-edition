@@ -3191,7 +3191,9 @@ ipcMain.handle(
             typeof c?.tier === 'string' &&
             typeof c?.score === 'number'
         )
-        .slice(0, 90)
+        // Mirrors the server's MAX_CHECKS (raised to 91 for sb-7's full check set in site
+        // commit 07cc27b); a lower client cap silently drops scorer evidence.
+        .slice(0, 91)
         .map((c) => ({
           check: (c.check as string).slice(0, 60),
           tier: c.tier as string,
