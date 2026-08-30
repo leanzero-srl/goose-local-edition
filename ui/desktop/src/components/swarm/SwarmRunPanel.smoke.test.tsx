@@ -195,9 +195,11 @@ describe('SwarmRunPanel — the named-zone view actually renders', () => {
     await findByText('Slice · store');
     await findByText('Slice · api');
 
-    // WHO answered — a run that answered its own questions must never read like a steered one. It lands
-    // in both the clarify surface and the event log, and both are the point.
-    expect(await findAllByText('Answered by goose — you did not reply')).not.toHaveLength(0);
+    // WHO answered — a run that answered its own questions must never read like a steered one. The
+    // proxy CARDS are gone with the engine's deleted proxy call (clarify_proxy_* has no emitter left;
+    // ClarifyProxy carries only timedOut now) — an ARCHIVED run like this fixture keeps its
+    // who-answered history via buildPhaseTodo's LEGACY-LOG ask row.
+    expect(await findAllByText(/answered by goose — you did not reply/)).not.toHaveLength(0);
     await findByText('Request cut into 2 slices');
   });
 });

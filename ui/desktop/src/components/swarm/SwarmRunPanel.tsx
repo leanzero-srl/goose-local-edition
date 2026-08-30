@@ -3463,80 +3463,25 @@ const NoteBox: React.FC<{ workingDir: string }> = ({ workingDir }) => {
 };
 
 /**
- * WHO ANSWERED — the fact the clarify surface exists to carry.
- *
- * A question is ALWAYS answered now: by you, or — instantly on an unattended run, otherwise after a wait —
- * by goose from the spec. Both halves are shown, because a run that answered its own questions must never
- * read like a run someone steered. `armed` says who WILL answer, before the answer exists; `answered` says
- * who DID.
+ * The ask that resolved WITHOUT the user. Only the timeout survives: the old proxy branches
+ * (armed / answered / failed) rendered state that only the engine's DELETED proxy call could set —
+ * clarify_proxy_* has no emitter left, so those cards were unreachable, and ClarifyProxy no longer
+ * carries their fields. Archived runs' proxy history renders via buildPhaseTodo's ask rows instead.
  */
 const ProxyNotice: React.FC<{ proxy: ClarifyProxy }> = ({ proxy }) => {
-  if (proxy.failed) {
-    return (
-      <div
-        className="flex items-start gap-2 px-2 py-2 text-xs text-white"
-        style={{ backgroundColor: SWARM_STATUS.solidRunning, borderRadius: CHIP_RADIUS }}
-      >
-        <AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-px" />
-        <span>
-          Goose&apos;s own answer failed, so it took the most conventional option and carried on. An
-          unanswered question that idles the whole fleet is worse than a conventional default.
-        </span>
-      </div>
-    );
-  }
-  if (proxy.answered) {
-    return (
-      <div
-        className="px-2 py-2 text-xs text-white"
-        style={{ backgroundColor: SWARM_STATUS.solidRunning, borderRadius: CHIP_RADIUS }}
-      >
-        <div className="flex items-center gap-2 font-semibold">
-          <Bot className="h-3.5 w-3.5 shrink-0" />
-          Answered by goose — you did not reply
-        </div>
-        <ol className="mt-1.5 space-y-1.5">
-          {proxy.answered.questions.map((q: string, i: number) => (
-            <li key={i}>
-              <div className="font-medium">
-                {i + 1}. {q}
-              </div>
-              <div>→ {proxy.answered?.answers[i] ?? ''}</div>
-            </li>
-          ))}
-        </ol>
-      </div>
-    );
-  }
-  if (proxy.timedOut) {
-    const { questions, waitedSecs } = proxy.timedOut;
-    return (
-      <div
-        className="flex items-start gap-2 px-2 py-2 text-xs text-white"
-        style={{ backgroundColor: SWARM_STATUS.action, borderRadius: CHIP_RADIUS }}
-        data-testid="clarify-timed-out"
-      >
-        <Bot className="h-3.5 w-3.5 shrink-0 mt-px" />
-        <span>
-          {questions} open decision{questions === 1 ? '' : 's'} went unanswered at the {waitedSecs}s
-          unattended window — every worker was told to choose the most conventional option and note
-          the choice in a code comment. The build was never paused for it.
-        </span>
-      </div>
-    );
-  }
-  if (!proxy.armed) return null;
-  const { mode, waitSecs, questions } = proxy.armed;
+  if (!proxy.timedOut) return null;
+  const { questions, waitedSecs } = proxy.timedOut;
   return (
     <div
       className="flex items-start gap-2 px-2 py-2 text-xs text-white"
       style={{ backgroundColor: SWARM_STATUS.action, borderRadius: CHIP_RADIUS }}
+      data-testid="clarify-timed-out"
     >
       <Bot className="h-3.5 w-3.5 shrink-0 mt-px" />
       <span>
-        {mode === 'immediate'
-          ? `Unattended run — goose is answering ${questions === 1 ? 'this' : 'these'} from the spec. Reply here and yours wins.`
-          : `No reply in ${Math.round(waitSecs / 60)} min and goose will answer ${questions === 1 ? 'this' : 'these'} from the spec itself.`}
+        {questions} open decision{questions === 1 ? '' : 's'} went unanswered at the {waitedSecs}s
+        unattended window — every worker was told to choose the most conventional option and note
+        the choice in a code comment. The build was never paused for it.
       </span>
     </div>
   );
@@ -3741,9 +3686,8 @@ const ClarifyPrompt: React.FC<{
           </button>
           <span id={`${uid}-send-why`} className="text-[11px] text-text-secondary">
             {canSend ? '' : `${sendWhy}. `}
-            {proxy.armed
-              ? 'Your answers guide every worker; the plan shape stays as drafted. Goose answers for you if you leave this.'
-              : 'The build is paused until you respond. Your answers guide every worker; the plan shape stays as drafted.'}
+            The build is paused until you respond. Your answers guide every worker; the plan shape
+            stays as drafted.
           </span>
         </div>
       </div>
@@ -3810,7 +3754,7 @@ const PlanningZone: React.FC<{
   // engine a timed-out ask never writes answers, so the file test says "pending" forever while
   // the run builds. The event stream is the truth: once the window expired (or an answer landed),
   // the prompt is history, not a request.
-  const clarifyPending = !!clarify?.pending && !proxy.timedOut && !proxy.answered;
+  const clarifyPending = !!clarify?.pending && !proxy.timedOut;
   // A phase's own fan (the slice fan under RESEARCH, the contract fan under CONTRACTS) renders under that
   // phase, so the lanes say WHEN they ran; a phase with lanes but no checklist row yet still shows.
   const fanOf = (key: PhaseTodo['key']): PhaseLaneGroup | null => {
@@ -3855,12 +3799,7 @@ const PlanningZone: React.FC<{
     </div>
   );
   const hasBody =
-    clarifyPending ||
-    !!conf ||
-    !!proxy.answered ||
-    !!proxy.failed ||
-    shownPhases.length > 0 ||
-    laneGroups.length > 0;
+    clarifyPending || !!conf || !!proxy.timedOut || shownPhases.length > 0 || laneGroups.length > 0;
   if (!hasBody && planConfidence == null) return null;
   // Historical once build starts: collapse by default, keep the one-line summary in the header.
   const open = clarifyPending ? true : (openOverride ?? !buildStarted);
@@ -3908,7 +3847,7 @@ const PlanningZone: React.FC<{
           <div className="pb-1">
             {/* The questions were settled without you. This is the durable record of that — the prompt
                 itself unmounts the moment the answers file lands. */}
-            {proxy.answered || proxy.failed || proxy.timedOut ? (
+            {proxy.timedOut ? (
               <div className="px-3 pt-2">
                 <ProxyNotice proxy={proxy} />
               </div>
@@ -4379,7 +4318,7 @@ export const SwarmRunPanel: React.FC<{
   const { running, done, failed, tasks } = run.totals;
 
   // A run is OVER when the engine said so. Nothing else — no timer, no quiet window — may end it.
-  const clarifyPending = !!run.clarify?.pending && !run.proxy.timedOut && !run.proxy.answered;
+  const clarifyPending = !!run.clarify?.pending && !run.proxy.timedOut;
   const ended = run.finished;
   // The APP-LEVEL oracle: the engine's own end-to-end verify (complete_result -> phaseTodo v-e2e = 'done').
   // A green verify means the deliverable WORKS — so the run is 'done' and the overview shows — EVEN IF an
