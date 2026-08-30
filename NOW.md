@@ -63,7 +63,11 @@ answers snowball into the ledger, synthesis plans over ANSWERED material; imperf
 REPAIR. THE r6 ENGINE IS COMPLETE AND DELIVERED (research fan 81cd50d38 + hardening f2d75bebc..760fd8b32,
 delivery affirmed by the prover pass + fixes): the fan, forming capture end to end, folded
 inspector, restream tail carry, opener fixes, honest ask event (truncation killed), honest scorer.
-THE r6 BUILD WAITS ONLY FOR r5 TO FINISH — a release build starves the fleet (the measured clippy
+THE r6 OPERATING CONTRACT (Mihai 15:05: "I do expect it to fail first 2-3 runs... unless you fix
+stuff with stubs, with deterministic fallback garbage... drive it in a way that resolves the real
+issue, not just sweeps it under a rug"): failures are data; every one is root-caused from primary
+material to a NAMED mechanism, fixed where the mechanism lives, traced (gate 8), prover-checked.
+BANNED fix shapes: stubs, 0-happy-path fallbacks, refusing gates, instance patches. THE r6 BUILD WAITS ONLY FOR r5 TO FINISH — a release build starves the fleet (the measured clippy
 precedent) and install kills the run. r5 completes untouched as the serial baseline.
 
 **Named risk (A2, refuter-found, deliberately not fixed):** a connected-but-silent stream (0 chars
