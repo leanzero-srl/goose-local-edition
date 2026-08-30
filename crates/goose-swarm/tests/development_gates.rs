@@ -149,9 +149,12 @@ fn the_banned_integrate_template_only_shrinks() {
 /// with its r2-shapes test), paying for the r5-assessment cluster-A wiring (delivery-defect
 /// routing with `cross_task`, the spec_set_exceeded sidecar/roll-up/event) across its two
 /// commits; web_refs.rs landed entirely module-side (0 root lines).
+/// Tightened to 45,529: the endpoint-attribution cluster moved to commands/swarm/attribution.rs
+/// (-255 with its three tests), paying for the r5 REPAIR-round-0 pair (the possessive-apostrophe
+/// cut in `clean`, the console-finding `sources/0` attribution suffix) in the same commit.
 #[test]
 fn swarm_rs_line_count_only_decreases() {
-    const SWARM_RS_LINE_BASELINE: usize = 45_772;
+    const SWARM_RS_LINE_BASELINE: usize = 45_529;
     let text = read("crates/goose-cli/src/commands/swarm.rs");
     let n = text.lines().count();
     assert!(
