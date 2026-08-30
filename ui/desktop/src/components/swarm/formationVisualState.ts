@@ -251,3 +251,33 @@ export function usePrefersReducedMotion(): boolean {
 
   return reduced;
 }
+
+/**
+ * IS THE PAGE VISIBLE AT ALL? A hidden/occluded window suspends requestAnimationFrame ENTIRELY
+ * (measured over CDP on the live r0 benchmark, 2026-08-30: `visibilityState === 'hidden'`, zero rAF
+ * callbacks in 1.5s, timers clamped to ~1s), so any content that advances only inside a rAF loop
+ * freezes at its last frame — mid-word — while React keeps committing fresh props behind it. Content
+ * must never depend on the animation loop; a consumer that types text on rAF snaps to the target
+ * whenever this is false, exactly as it does for reduced motion.
+ */
+export function pageVisibility(
+  doc: { visibilityState?: string } | undefined = typeof document === 'undefined'
+    ? undefined
+    : document
+): boolean {
+  return doc?.visibilityState !== 'hidden';
+}
+
+export function usePageVisible(): boolean {
+  const [visible, setVisible] = useState(pageVisibility);
+
+  useEffect(() => {
+    if (typeof document === 'undefined') return;
+    const update = () => setVisible(pageVisibility());
+    update();
+    document.addEventListener('visibilitychange', update);
+    return () => document.removeEventListener('visibilitychange', update);
+  }, []);
+
+  return visible;
+}
