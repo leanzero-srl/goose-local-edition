@@ -169,11 +169,11 @@ def judge_tool_call(row, expected_tool):
     return True, "ok"
 
 
-def agent_loop(base, model, loop_id, timeout, results, turns=TURNS):
+def agent_loop(base, model, loop_id, timeout, results, turns=TURNS, extra=None):
     messages = [{"role": "system", "content": SYSTEM}]
     for turn_no, (expected_tool, instruction) in enumerate(turns):
         messages.append({"role": "user", "content": instruction})
-        row = stream_chat(base, model, messages, timeout)
+        row = stream_chat(base, model, messages, timeout, extra)
         ok, why = judge_tool_call(row, expected_tool)
         row.update({"loop": loop_id, "turn": turn_no, "expected": expected_tool,
                     "tool_ok": ok, "tool_why": why})
@@ -193,9 +193,9 @@ def agent_loop(base, model, loop_id, timeout, results, turns=TURNS):
     return messages
 
 
-def run_concurrency(base, model, n, timeout):
+def run_concurrency(base, model, n, timeout, extra=None):
     results = []
-    threads = [threading.Thread(target=agent_loop, args=(base, model, i, timeout, results))
+    threads = [threading.Thread(target=agent_loop, args=(base, model, i, timeout, results, TURNS, extra))
                for i in range(n)]
     t0 = time.monotonic()
     for t in threads:
@@ -228,13 +228,13 @@ def summarize(results, wall):
     }
 
 
-def prefix_probe(base, model, timeout):
+def prefix_probe(base, model, timeout, extra=None):
     """Same 3-turn conversation twice; the second run should hit every cache. Fidelity on
     the SECOND run is the hybrid footgun detector."""
     turns = TURNS[:3]
     r1, r2 = [], []
-    agent_loop(base, model, 100, timeout, r1, turns)
-    agent_loop(base, model, 101, timeout, r2, turns)
+    agent_loop(base, model, 100, timeout, r1, turns, extra)
+    agent_loop(base, model, 101, timeout, r2, turns, extra)
     f1 = sum(1 for r in r1 if r.get("tool_ok")) / len(r1) if r1 else 0
     f2 = sum(1 for r in r2 if r.get("tool_ok")) / len(r2) if r2 else 0
     t1 = [r["ttft_s"] for r in r1 if not r["error"] and r["ttft_s"]]
@@ -258,7 +258,9 @@ def main():
     ap.add_argument("--concurrency", default="1,4,8")
     ap.add_argument("--ledger", help="experiments.jsonl to append the result row to")
     ap.add_argument("--commit", default="")
+    ap.add_argument("--extra-body", help="JSON merged into every request body (e.g. chat_template_kwargs)")
     args = ap.parse_args()
+    extra = json.loads(args.extra_body) if args.extra_body else None
 
     with urllib.request.urlopen(args.base + "/v1/models", timeout=20) as r:
         served = [m["id"] for m in json.load(r).get("data", [])]
@@ -273,7 +275,7 @@ def main():
     all_errors = 0
     for n in [int(x) for x in args.concurrency.split(",")]:
         print("== concurrency N=%d ==" % n)
-        results, wall = run_concurrency(args.base, args.model, n, args.timeout)
+        results, wall = run_concurrency(args.base, args.model, n, args.timeout, extra)
         s = summarize(results, wall)
         report["n%d" % n] = s
         all_rows += s["requests"]
@@ -281,7 +283,7 @@ def main():
         print(json.dumps(s, indent=2))
 
     print("== prefix/hybrid probe ==")
-    report["prefix_probe"] = prefix_probe(args.base, args.model, args.timeout)
+    report["prefix_probe"] = prefix_probe(args.base, args.model, args.timeout, extra)
     print(json.dumps(report["prefix_probe"], indent=2))
 
     if sampler:
@@ -299,7 +301,7 @@ def main():
         void_reason = "hybrid prefix-cache footgun: fidelity dropped on cache hit"
 
     row = {"ts": time.strftime("%Y-%m-%dT%H:%M:%S%z"), "experiment": "swarm-bench",
-           "engine": args.engine, "config": {"model": args.model, "base": args.base,
+           "engine": args.engine, "config": {"model": args.model, "base": args.base, "extra_body": extra,
                                              "concurrency": args.concurrency, "turns": len(TURNS)},
            "result": report, "verdict": verdict, "commit": args.commit}
     if void_reason:
