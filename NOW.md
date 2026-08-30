@@ -70,6 +70,11 @@ material to a NAMED mechanism, fixed where the mechanism lives, traced (gate 8),
 BANNED fix shapes: stubs, 0-happy-path fallbacks, refusing gates, instance patches. THE r6 BUILD WAITS ONLY FOR r5 TO FINISH — a release build starves the fleet (the measured clippy
 precedent) and install kills the run. r5 completes untouched as the serial baseline.
 
+**r7 CANDIDATE PARKED (DESIGN-JUDGE-DESK.md): the judge desk** — judgment moves to a standing
+out-of-phase reader of durable artifacts, delivery stays in-loop. Refuted SOUND_WITH_AMENDMENTS;
+**r6 is its qualifying measurement** (does the steer→restream-with-tail ladder still fail on
+reasoning calls?). Watch that question explicitly in every r6 escalation.
+
 **Named risk (A2, refuter-found, deliberately not fixed):** a connected-but-silent stream (0 chars
 ever) is non-terminal today — the judge look predicate needs ~2k thinking chars — and the research
 fan widens that exposure N-fold. Pre-existing transport class; the tick watches age-without-chars.

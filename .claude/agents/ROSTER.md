@@ -140,6 +140,13 @@ and lever_check.py consume it; the ask event's twin field was confirmed dead 0/0
    — add one fixture each.
 
 ## Grading log (newest first — one line per delegation; move closed items to the per-agent notes)
+- 2026-08-30 design fan #3 + refuter (judge desk): CLEAN — the fan produced the desk/receiver
+  split with real mechanism (replayed RecurrenceMeter proven chunk-boundary-independent; the
+  IdleSlotGuard ride; epoch-matched verdicts), and the refuter's 10 objections included one FATAL
+  (the silence hole — a bytes-appended desk cannot see the quiet-socket class) and the decisive
+  sequencing catch (G-4's revive-if is a measurement BEFORE revival — r6 qualifies it). PARKED as
+  DESIGN-JUDGE-DESK.md with all amendments mandatory-on-build. The refuter also caught the design
+  citing seconds constants as "progress thresholds" — gate-5 discipline holding under pressure.
 - 2026-08-30 refuter #2 (decisions-into-fan): EXEMPLARY — dug the actual deletion reason out of
   commit 0409beef5 (redundancy+race, not answer quality), found the in-code quarantine pin the
   proposal would have silently breached (:27561 "open_decisions never enter the fan" — must be
