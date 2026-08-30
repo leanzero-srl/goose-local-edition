@@ -188,14 +188,14 @@ DAG is actually parallel). reasoning_chars against answer_chars is the waste.
 - **chain**: 5
 - **startable**: 1
 - **brief_median**: 6054
-- **reasoning_chars**: 829485
+- **reasoning_chars**: 874240
 - **answer_chars**: 65656
 - **code_files**: 16
 - **code_bytes**: 88624
-- **elapsed_min**: 317
-- **phase_split**: open 68m · ask 0m · synthesis 16m · review 52m · build 179m
+- **elapsed_min**: 331
+- **phase_split**: open 68m · ask 0m · synthesis 16m · review 52m · build 193m
 - **before_build_min**: 137 (internal diagnosis only — never a cross-run number)
-- **vs_target**: ONLY THE SCORE COMPARES. Target 20.06% (qwen3.8-27b, one cloud agent, same model). Wall clock is NOT comparable — that run is on far faster hardware, so minutes measure the machine. Bytes are NOT a verdict — more code is not better code, and it had no planning phases to spend budget on. Cross-hardware-honest work numbers for THIS run: 88,624B delivered, 829,485 chars reasoned, 6 tasks completed, 0 retried.
+- **vs_target**: ONLY THE SCORE COMPARES. Target 20.06% (qwen3.8-27b, one cloud agent, same model). Wall clock is NOT comparable — that run is on far faster hardware, so minutes measure the machine. Bytes are NOT a verdict — more code is not better code, and it had no planning phases to spend budget on. Cross-hardware-honest work numbers for THIS run: 88,624B delivered, 874,240 chars reasoned, 6 tasks completed, 0 retried.
 - **python_parses**: 13 ok / 0 SYNTAX ERROR / 0 empty
 - **web_files**: brush.js
 - **tasks_done**: 6/9 completed, 9 dispatched, 0 retried
@@ -205,10 +205,10 @@ DAG is actually parallel). reasoning_chars against answer_chars is the waste.
 - **plan_repaired**: 3 actions, owning-nothing 0->0, unassigned endpoints 0->0
 - **plan_loaded**: 1
 - **review_rounds**: r1:new=3
-- **judge_looks**: 68
+- **judge_looks**: 71
 - **judge_nudges**: 4
 - **judge_ended**: 0
-- **drift_held**: 6
+- **drift_held**: 7
 - **tree_defects**: 0
 - **repair**: delivery_defect_steer=9 brief_defects=0 testgen=0 fix_target_selected=0 complete_verify=0 complete_result=0
 - **ledger**: 6 task ledger(s) in .swarm/ledger/, ledger.json roll-up present, written=6 delivered=0
