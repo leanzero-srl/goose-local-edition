@@ -21,6 +21,12 @@ type RunPayload = {
   events: Array<Record<string, unknown>>;
   activity: Record<string, unknown>;
   activityMtimes: Record<string, number>;
+  clarify?: {
+    pending: boolean;
+    questions: Array<{ question: string; options: string[] }>;
+    answerPath: string;
+    mtime: number | null;
+  } | null;
 };
 
 const electron = () => (window as unknown as { electron: Record<string, unknown> }).electron;
@@ -118,5 +124,105 @@ describe('useSwarmRun — reads are single-flight, so the panel never regresses'
     expect(result.current.sliceLanes.map((l) => l.taskId)).toStrictEqual(['slice-live']);
     expect(Object.keys(result.current.activityDigests)).toStrictEqual(['slice-live']);
     expect(Object.keys(result.current.activityMtimes)).toStrictEqual(['slice-live']);
+  });
+});
+
+/**
+ * FINDING 20 of the frontend truth review (renderer half): `lastRunId` was written and never read, so
+ * one null poll reset the whole live panel to the empty placeholder — a healthy run flashing away for
+ * at least 500ms, for good on a persistent failure. null is main's MEASURED no-run answer (failed
+ * reads throw now); when a run WAS on screen it is HELD with sourceMissing, presence-based only.
+ */
+describe('useSwarmRun — a run that stops resolving is held, never flashed away', () => {
+  beforeEach(() => resetFoldCache());
+  afterEach(() => {
+    delete electron().readSwarmRun;
+    electron().onSwarmDelta = vi.fn(() => () => {});
+  });
+
+  const withDelta = () => {
+    let pushDelta: ((d: Delta) => void) | undefined;
+    electron().onSwarmDelta = vi.fn((cb: (d: Delta) => void) => {
+      pushDelta = cb;
+      return () => {};
+    });
+    return () => pushDelta;
+  };
+
+  it('holds the last run with sourceMissing on a null poll, and recovers when the run resolves again', async () => {
+    let next: RunPayload | null = payload(2);
+    electron().readSwarmRun = vi.fn(async () => next);
+    const delta = withDelta();
+
+    const { result } = renderHook(() => useSwarmRun('/tmp/run', 10_000_000));
+    await waitFor(() => expect(result.current.present).toBe(true));
+    expect(result.current.totals.tasks).toBe(2);
+
+    next = null;
+    await act(async () => delta()?.({ workingDir: '/tmp/run' }));
+    await waitFor(() => expect(result.current.sourceMissing).toBe(true));
+    expect(result.current.present).toBe(true);
+    expect(result.current.totals.tasks).toBe(2);
+
+    next = payload(2);
+    await act(async () => delta()?.({ workingDir: '/tmp/run' }));
+    await waitFor(() => expect(result.current.sourceMissing).toBe(false));
+    expect(result.current.present).toBe(true);
+  });
+
+  it('a dir that never had a run still renders the empty state, not a held ghost', async () => {
+    electron().readSwarmRun = vi.fn(async () => null);
+    electron().onSwarmDelta = vi.fn(() => () => {});
+    const { result } = renderHook(() => useSwarmRun('/tmp/none', 10_000_000));
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    expect(result.current.present).toBe(false);
+    expect(result.current.sourceMissing).toBe(false);
+  });
+});
+
+/**
+ * FINDING 11 (renderer half): clarify-questions.json survives forever (the engine deletes only the
+ * stale ANSWERS file), so a previous run's unanswered ask read 'Waiting for you' over the whole of
+ * the NEXT run in the same directory. main ships the file's mtime; the hook gates it against the run
+ * stream's startedAt exactly as digestsFromThisRun gates digests.
+ */
+describe('useSwarmRun — the clarify file is run-gated by its mtime', () => {
+  beforeEach(() => resetFoldCache());
+  afterEach(() => {
+    delete electron().readSwarmRun;
+    electron().onSwarmDelta = vi.fn(() => () => {});
+  });
+
+  const clarifyPayload = (mtime: number | null) =>
+    payload(0, {
+      clarify: {
+        pending: true,
+        questions: [{ question: 'which port?', options: [] }],
+        answerPath: '/tmp/run/.swarm/clarify-answers.json',
+        mtime,
+      },
+    });
+
+  const mount = async (mtime: number | null) => {
+    electron().readSwarmRun = vi.fn(async () => clarifyPayload(mtime));
+    electron().onSwarmDelta = vi.fn(() => () => {});
+    const { result } = renderHook(() => useSwarmRun('/tmp/run', 10_000_000));
+    await waitFor(() => expect(result.current.present).toBe(true));
+    return result;
+  };
+
+  it("drops a questions file older than this run's first event — the previous run's leftover ask", async () => {
+    const result = await mount(started - 60_000);
+    expect(result.current.clarify).toBeNull();
+  });
+
+  it('keeps a questions file written BY this run', async () => {
+    const result = await mount(started + 60_000);
+    expect(result.current.clarify?.pending).toBe(true);
+  });
+
+  it('keeps an unknown-mtime clarify (older main ships none) — the gate only fires when certain', async () => {
+    const result = await mount(null);
+    expect(result.current.clarify?.pending).toBe(true);
   });
 });
