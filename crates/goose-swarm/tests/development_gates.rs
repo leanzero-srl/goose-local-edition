@@ -165,9 +165,14 @@ fn the_banned_integrate_template_only_shrinks() {
 /// (the second and last root-relative calls-read, 0dc8c297f's RESIDUAL, now routes through the
 /// one mirror predicate); and `multifile_stub_note` to commands/swarm/briefs.rs with its test,
 /// paying for its `repairing` disarm (a repair shard's live files must never be stub-written).
+/// Tightened to 45,126: the LM Studio engine surface (`resolve_lms`, `lms_http_host`,
+/// `probe_lms_http`, `endpoint_model_ids`, `probe_fleet`, `loaded_instance_count`,
+/// `ensure_loaded`) moved verbatim to commands/swarm_engine.rs behind the `SwarmEngine` trait
+/// (-165), paying for the `Arc<dyn SwarmEngine>` threading through run_swarm, the
+/// DispatcherRecipe and GooseAgentDispatcher (+26) — the mechanical seam for a second engine.
 #[test]
 fn swarm_rs_line_count_only_decreases() {
-    const SWARM_RS_LINE_BASELINE: usize = 45_265;
+    const SWARM_RS_LINE_BASELINE: usize = 45_126;
     let text = read("crates/goose-cli/src/commands/swarm.rs");
     let n = text.lines().count();
     assert!(
