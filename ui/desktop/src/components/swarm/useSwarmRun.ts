@@ -398,6 +398,10 @@ export interface TurnLane {
   /** Forming tool calls (II-11b) — see Digest.forming. Never carried from prev: an absent sidecar
    *  MEANS nothing is forming now, and a carried row would outlive its own call. */
   forming?: FormingCall[];
+  /** How many times the judge WIPED AND RE-STREAMED this task's conversation (judge_restream). Event
+   *  truth on the carry, deliberately NOT a digestStreamFields key — no digest carries it — so the
+   *  visible-reasoning restart and the reset thinking_chars counter have an on-screen cause. */
+  restreams?: number;
   seq: number;
 }
 
@@ -523,6 +527,10 @@ export interface RunMeta {
   endpoint: string;
   nodes: string[];
   gates: boolean;
+  /** Set when the engine emitted run_resumed: the previous plan was reused, planning was skipped, and
+   *  `previouslyCompleted` finished tasks are re-run. The header badge reads this — without it a resumed
+   *  run skips straight past planning with no explanation and re-runs look like duplicate work. */
+  resumed?: { tasks: number; previouslyCompleted: number };
 }
 export interface SmokeResult {
   ran: boolean;
@@ -609,6 +617,16 @@ export interface ClarifyProxy {
   timedOut: { questions: number; waitedSecs: number } | null;
 }
 
+/** A mid-run question ANSWERED by the swarm (swarm_answer): someone dropped a question into
+ *  .swarm/questions/ and the engine wrote the answer to .swarm/answers/<stem> — which is a hidden
+ *  dotfile nobody watching the panel would ever find. The event carries everything the panel needs. */
+export interface SwarmAnswer {
+  question: string;
+  answer: string;
+  model: string;
+  questionFile: string;
+}
+
 /** One REVIEW round: what it found, how much of that was a repeat, and what its patch actually touched.
  *  `patchTouches` is the honest measure — findings without a patch are commentary, and the engine settles
  *  the loop on exactly that distinction. */
@@ -620,6 +638,10 @@ export interface ReviewRound {
   patchTouches: number;
   patch: { replace: number; add: number; remove: number } | null;
   rejected: string | null;
+  /** The review CALL died in transport (review_failed) — a round whose model call failed is a different
+   *  thing from a round that read the code and found nothing, and r2 logged provider errors as exactly
+   *  the latter. Carries the error text; absent on rounds that actually ran. */
+  failed?: string;
 }
 
 export interface SwarmRunState {
@@ -691,6 +713,9 @@ export interface SwarmRunState {
   proxy: ClarifyProxy;
   /** The REVIEW rounds, with what each patch actually touched. */
   reviewRounds: ReviewRound[];
+  /** Mid-run questions the swarm answered (swarm_answer events) — the answers otherwise live only in
+   *  .swarm/answers/ dotfiles. Accumulated in event order by buildActivity. */
+  qa: SwarmAnswer[];
   /** The plan's join was renamed to the engine's canonical sink id — worth saying once, because every sink
    *  check downstream matches on that id. */
   sinkRenamedFrom: string | null;
@@ -785,6 +810,7 @@ const EMPTY: SwarmRunState = {
   slices: null,
   proxy: { armed: null, answered: null, failed: null, timedOut: null },
   reviewRounds: [],
+  qa: [],
   sinkRenamedFrom: null,
   synthesisFallback: null,
   knownActiveBugs: [],
@@ -1178,6 +1204,7 @@ export function buildActivity(events: Array<Record<string, unknown>>): {
   slices: SliceFan | null;
   proxy: ClarifyProxy;
   reviewRounds: ReviewRound[];
+  qa: SwarmAnswer[];
   sinkRenamedFrom: string | null;
   synthesisFallback: { error: string; tasks: number } | null;
   knownActiveBugs: string[];
@@ -1194,6 +1221,12 @@ export function buildActivity(events: Array<Record<string, unknown>>): {
   let sliceResearchSecs: number | null = null;
   const proxy: ClarifyProxy = { armed: null, answered: null, failed: null, timedOut: null };
   const reviewRounds: ReviewRound[] = [];
+  const qa: SwarmAnswer[] = [];
+  // Set by pillars_write_failed so the positive 'pillars' line can carry its honest caveat: the engine
+  // still injects pillars into workers after a failed write (set_pillars runs regardless), but the
+  // file-driven pillar CHECKS will not run.
+  let pillarsWriteFailed = false;
+  let resumed: RunMeta['resumed'];
   let sinkRenamedFrom: string | null = null;
   let synthesisFallback: { error: string; tasks: number } | null = null;
   let knownActiveBugs: string[] = [];
@@ -1261,6 +1294,18 @@ export function buildActivity(events: Array<Record<string, unknown>>): {
           tone: 'info',
         });
         phase = 'Starting';
+        break;
+      }
+      case 'run_resumed': {
+        // The resume feature exists because whole runs were lost twice in one day; the event is why a
+        // resumed run skips straight past planning. Without this line the skip read as a broken run and
+        // the re-run of finished tasks read as duplicate work.
+        const tasks = num(e['tasks']) ?? 0;
+        const prevDone = num(e['previously_completed']) ?? 0;
+        resumed = { tasks, previouslyCompleted: prevDone };
+        const t = `Resumed — reused the previous plan (${tasks} task${tasks === 1 ? '' : 's'}); planning skipped${prevDone > 0 ? `; ${prevDone} finished task${prevDone === 1 ? '' : 's'} re-run` : ''}`;
+        compact({ kind: 'phase', text: t, sub: str(e['detail']) || undefined });
+        verbose({ kind: 'phase', text: t, sub: str(e['detail']) || undefined });
         break;
       }
       case 'phase': {
@@ -1363,6 +1408,38 @@ export function buildActivity(events: Array<Record<string, unknown>>): {
         const t = `Synthesis didn't return — building one task per slice instead (${synthesisFallback.tasks})`;
         compact({ kind: 'plan', text: t, tone: 'warn' });
         verbose({ kind: 'plan', text: t, tone: 'warn', sub: synthesisFallback.error || undefined });
+        break;
+      }
+      case 'open_fallback': {
+        // The opener produced no parseable slices twice; the engine proceeds with the WHOLE request as
+        // one slice rather than ending the run. Degraded parallelism the user must see, not a failure.
+        const t = 'The opener failed twice — building from ONE slice (the whole request)';
+        const sub =
+          [str(e['first_error']), str(e['second_error'])].filter(Boolean).join('\n') || undefined;
+        compact({ kind: 'plan', text: t, tone: 'warn' });
+        verbose({ kind: 'plan', text: t, tone: 'warn', sub });
+        break;
+      }
+      case 'review_failed': {
+        // The review CALL died (transport/model fault). Without this a REVIEW round whose model call
+        // failed rendered exactly like a review that read the code and found nothing — the A-2
+        // laundering, undone on screen. The failed round joins reviewRounds so every consumer of the
+        // rounds sees a round that did NOT run.
+        const round = num(e['round']) ?? reviewRounds.length + 1;
+        const error = str(e['error']);
+        reviewRounds.push({
+          round,
+          fresh: 0,
+          repeated: 0,
+          findings: [],
+          patchTouches: 0,
+          patch: null,
+          rejected: null,
+          failed: error || 'review call failed',
+        });
+        const t = `Review round ${round} FAILED — the model call died; the plan proceeds unreviewed`;
+        compact({ kind: 'review', text: t, tone: 'warn' });
+        verbose({ kind: 'review', text: t, tone: 'warn', sub: error || undefined });
         break;
       }
       case 'review_findings': {
@@ -1617,6 +1694,51 @@ export function buildActivity(events: Array<Record<string, unknown>>): {
         });
         break;
       }
+      // The judge WIPED the conversation and re-streamed it. Without this line the lane's visible
+      // reasoning restarts mid-task with no cause on screen — it reads as a glitch or a hang (the
+      // durable .think.log survives the wipe; what resets is the live counters and the rolling window).
+      case 'judge_restream': {
+        const chars = num(e['abandoned_thinking_chars']);
+        const calls = num(e['abandoned_tool_calls']);
+        const estChars = num(e['established_chars']);
+        verbose({
+          kind: 'judge-act',
+          tone: 'warn',
+          text: `Judge wiped and re-streamed ${str(e['task_id']) || 'a call'} — its live reasoning starts over`,
+          sub: [
+            str(e['reason']),
+            `${chars == null ? '?' : chars.toLocaleString()} reasoning chars and ${calls == null ? '?' : calls} tool call${calls === 1 ? '' : 's'} abandoned · ${estChars == null ? '?' : estChars.toLocaleString()} chars of established context carried`,
+          ]
+            .filter(Boolean)
+            .join('\n'),
+        });
+        break;
+      }
+      // A DELIVERY DEFECT steer injected into a live worker — the verifier's facts about broken
+      // deliverables, delivered mid-call rather than at completion.
+      case 'delivery_defect_steer': {
+        const defects = arr(e['defects']).map(String);
+        verbose({
+          kind: 'judge-act',
+          tone: 'warn',
+          text: `Delivery-defect steer to ${str(e['task_id']) || 'a worker'}${num(e['look']) != null ? ` (look ${num(e['look'])})` : ''}`,
+          sub: defects.join('\n') || undefined,
+        });
+        break;
+      }
+      // The tree warden's cross-lane finding: a dependency that reported done left a stub or a missing
+      // file on disk. The task board carries the annotation (buildPhaseTodo); this is the feed record.
+      case 'tree_defect': {
+        const dep = str(e['dependency']) || 'a dependency';
+        const dependent = str(e['task_id']);
+        verbose({
+          kind: 'fail',
+          tone: 'warn',
+          text: `${dep} reported done but left a defect on disk${dependent ? ` — found while ${dependent} builds on it` : ''}`,
+          sub: str(e['detail']) || undefined,
+        });
+        break;
+      }
       // HOW THE SLICE LIST GROWS. An operator watching a run saw 11 slices at OPEN and 21 at BUILD with
       // nothing in between explaining it -- the coverage loop's whole job is invisible. These four make it
       // legible: what was added, what was kept as coverage rather than work, and when the loop closed.
@@ -1714,10 +1836,81 @@ export function buildActivity(events: Array<Record<string, unknown>>): {
         verbose({ kind: 'phase', text: 'Researching the problem' });
         phase = 'Researching';
         break;
-      case 'pillars':
-        verbose({ kind: 'phase', text: 'Defining quality pillars' });
+      case 'pillars': {
+        // NOT gated on a prior pillars_write_failed: injection into the workers genuinely still happens
+        // after a failed write (set_pillars runs regardless), so the line stays true — with the failed
+        // write carried as its honest caveat rather than the failure suppressing the fact.
+        verbose({
+          kind: 'phase',
+          text: 'Defining quality pillars',
+          sub: pillarsWriteFailed
+            ? 'pillars.json write failed — pillar checks will not run'
+            : undefined,
+        });
         phase = 'Planning';
         break;
+      }
+      // ── THE FALLBACK-GATE ABSENCE EVENTS (GEN-6/GEN-6a). Each one is the engine saying "an input was
+      // missing and nothing was substituted for it" — tick.py prints every one of these, and the app
+      // dropped them all, recreating the evidence-hiding that gate 1 exists to prevent at the UI layer.
+      // Every line is built from the event's own facts; the class has no template.
+      case 'pillars_write_failed': {
+        pillarsWriteFailed = true;
+        const t = 'pillars.json write failed — pillar checks will not run';
+        compact({ kind: 'fail', text: t, tone: 'warn', sub: str(e['error']) || undefined });
+        verbose({ kind: 'fail', text: t, tone: 'warn', sub: str(e['error']) || undefined });
+        break;
+      }
+      case 'pillars_distill_failed': {
+        const t = 'Pillar distillation failed — the run proceeds without distilled pillars';
+        const sub =
+          [str(e['reason']), str(e['raw_head'])].filter(Boolean).join('\n') || undefined;
+        compact({ kind: 'fail', text: t, tone: 'warn', sub: str(e['reason']) || undefined });
+        verbose({ kind: 'fail', text: t, tone: 'warn', sub });
+        break;
+      }
+      case 'ledger_empty_at_sink': {
+        const t = `No ledger rows at the sink — ${str(e['task_id']) || 'integrate-verify'} dispatched without build history`;
+        const sub =
+          e['spec_surface_empty'] === true ? 'the spec surface is empty too' : undefined;
+        compact({ kind: 'fail', text: t, tone: 'bad', sub });
+        verbose({ kind: 'fail', text: t, tone: 'bad', sub });
+        break;
+      }
+      case 'spec_surface_empty_at_sink': {
+        const t = `The spec advertises no surface — ${str(e['task_id']) || 'the sink'} verifies against an empty surface`;
+        compact({ kind: 'fail', text: t, tone: 'warn' });
+        verbose({ kind: 'fail', text: t, tone: 'warn' });
+        break;
+      }
+      case 'transcript_write_failed': {
+        const t = `Transcript stopped persisting for ${str(e['activity_key']) || 'a worker'}`;
+        compact({ kind: 'fail', text: t, tone: 'warn', sub: str(e['error']) || undefined });
+        verbose({ kind: 'fail', text: t, tone: 'warn', sub: str(e['error']) || undefined });
+        break;
+      }
+      case 'ledger_row_unreadable': {
+        const rows = arr(e['rows']).map(String);
+        const t = `${rows.length || 'Some'} ledger row${rows.length === 1 ? '' : 's'} unreadable — ${str(e['task_id']) || 'a task'} reads a truncated roll-up`;
+        compact({ kind: 'fail', text: t, tone: 'warn' });
+        verbose({ kind: 'fail', text: t, tone: 'warn', sub: rows.join('\n') || undefined });
+        break;
+      }
+      case 'dependency_context_empty': {
+        const t = `No dependency context for ${str(e['task_id']) || 'a task'} — it builds without its upstream sources`;
+        compact({ kind: 'fail', text: t, tone: 'warn' });
+        verbose({ kind: 'fail', text: t, tone: 'warn' });
+        break;
+      }
+      case 'thin_brief': {
+        const missing = arr(e['missing']).map(String);
+        const chars = num(e['chars']);
+        const t = `Thin brief for ${str(e['task_id']) || 'a task'}${chars != null ? ` (${chars} chars)` : ''} — vagueness is what a small model copes with by overthinking`;
+        const sub = missing.length ? `missing: ${missing.join(', ')}` : undefined;
+        compact({ kind: 'fail', text: t, tone: 'warn', sub });
+        verbose({ kind: 'fail', text: t, tone: 'warn', sub });
+        break;
+      }
       case 'low_confidence_ask': {
         // Surface the confidence AS SOON AS the swarm asks (before plan_loaded), so the badge is visible at
         // the exact moment it pauses for the user — not only after the re-plan.
@@ -1930,14 +2123,32 @@ export function buildActivity(events: Array<Record<string, unknown>>): {
         break;
       }
       case 'replanned': {
-        // A dynamic-replan round that actually spliced in new tasks — the swarm noticed missing work and grew
-        // the plan. The routine "checked, nothing to add" rounds (added empty) are noise and stay hidden.
+        // A dynamic-replan round. GEN-6a added `reason` precisely so a planner CALL FAILURE (a network
+        // fault) cannot render like the planner DECLINING (a decision) — only the exact declined
+        // constant is routine noise and stays hidden; every other empty-added arm is evidence and
+        // fails loud, unknown future arms included (the fallback gate's default).
         const added = arr(e['added']).map(String);
+        const reason = str(e['reason']);
         if (added.length > 0) {
           const t = `Re-planned — added ${added.length} task${added.length === 1 ? '' : 's'}`;
           compact({ kind: 'retry', text: t, tone: 'warn' });
-          verbose({ kind: 'retry', text: t, sub: added.join(', '), tone: 'warn' });
+          // A non-empty reason on the SUCCESS arm carries the splice-hygiene repairs — the engine
+          // promises the rewrite is READ, never silent, so it rides the verbose sub with the ids.
+          verbose({
+            kind: 'retry',
+            text: t,
+            sub: [added.join(', '), reason].filter(Boolean).join('\n'),
+            tone: 'warn',
+          });
+          break;
         }
+        if (reason === 'planner declined (empty plan)') break;
+        // A pre-GEN-6a log has no reason field at all; its empty rounds stay hidden as before —
+        // absence of the field is not evidence of a fault.
+        if (!reason && !('reason' in e)) break;
+        const t = `Re-plan round returned nothing — ${reason || 'no reason recorded'}`;
+        compact({ kind: 'retry', text: t, tone: 'warn' });
+        verbose({ kind: 'retry', text: t, tone: 'warn' });
         break;
       }
       case 'scheduler_stuck': {
@@ -1990,12 +2201,57 @@ export function buildActivity(events: Array<Record<string, unknown>>): {
         });
         break;
       }
+      // The delivered twin's negative: notes scoped out as STALE and never delivered. Same rule as the
+      // twin above — this is the user's own input, so it reaches BOTH feeds; the engine's `detail`
+      // carries the 1970-epoch-prefix explanation ("a note the user wrote and never saw delivered is
+      // worse than no channel at all").
+      case 'user_notes_skipped_stale': {
+        const files = arr(e['files']).map(String);
+        const n = files.length;
+        const t = `Your note${n === 1 ? '' : `s (${n})`} skipped as stale — never delivered`;
+        const sub = [files.join(', '), str(e['detail'])].filter(Boolean).join('\n') || undefined;
+        compact({ kind: 'note', text: t, tone: 'warn', sub });
+        verbose({ kind: 'note', text: t, tone: 'warn', sub });
+        break;
+      }
+      // A mid-run question dropped into .swarm/questions/, answered by the engine into a hidden
+      // dotfile — the event is the only surface a panel reader will ever see. Also accumulated into
+      // `qa` for the panel's Q&A card.
+      case 'swarm_answer': {
+        const question = str(e['question']);
+        const head = question.length > 80 ? question.slice(0, 77) + '…' : question;
+        qa.push({
+          question,
+          answer: str(e['answer']),
+          model: str(e['model']),
+          questionFile: str(e['question_file']),
+        });
+        compact({ kind: 'note', text: `Answered your question: ${head}`, tone: 'good' });
+        verbose({
+          kind: 'note',
+          text: `Answered your question: ${head}`,
+          tone: 'good',
+          sub: str(e['answer']) || undefined,
+        });
+        break;
+      }
       case 'pre_review': {
         const had = !!e['had_findings'];
         verbose({
           kind: 'prereview',
           text: `Pre-review ${str(e['task_id'])}: ${had ? 'findings raised' : 'clean'}`,
           tone: had ? 'warn' : 'good',
+        });
+        break;
+      }
+      // The A-2 laundering fix, kept honest on screen: a pre-review whose CALL died is neither 'clean'
+      // nor 'never ran' — r2 logged provider errors as reviews that cleared the code.
+      case 'pre_review_failed': {
+        verbose({
+          kind: 'prereview',
+          text: `Pre-review ${str(e['task_id'])} FAILED — the review call died, nothing was read`,
+          tone: 'bad',
+          sub: str(e['error']) || undefined,
         });
         break;
       }
@@ -2061,6 +2317,62 @@ export function buildActivity(events: Array<Record<string, unknown>>): {
         phase = 'Repairing';
         break;
       }
+      // ── THE REPAIR-TAIL DECISIONS. The long fix tail is where the run is most opaque, and these are
+      // the moments that decide what ships: findings that ship as bugs, a boot repair that gave up, a
+      // tree rolled back, the waves stopping. All were appended to the jsonl and never reached a screen.
+      case 'known_bugs': {
+        // Per-round unattributed findings that SHIP as bugs. UNION into knownActiveBugs — the later
+        // whole-list snapshots (complete_result, and defects_rated on legacy logs) still ASSIGN and
+        // supersede this accumulation, which is the honest precedence: a snapshot outranks a merge.
+        const findings = arr(e['findings']).map(String);
+        for (const f of findings) if (!knownActiveBugs.includes(f)) knownActiveBugs.push(f);
+        const round = num(e['round']);
+        verbose({
+          kind: 'review',
+          tone: 'warn',
+          text: `${findings.length} unattributed finding${findings.length === 1 ? '' : 's'} ship${findings.length === 1 ? 's' : ''} as known bug${findings.length === 1 ? '' : 's'}${round != null ? ` (round ${round})` : ''}`,
+          sub: findings.join('\n') || undefined,
+        });
+        break;
+      }
+      case 'boot_repair_exhausted': {
+        const attempts = num(e['attempts']);
+        const t = `Boot repair gave up after ${attempts ?? '?'} attempt${attempts === 1 ? '' : 's'} — the app does not start`;
+        const sub =
+          [str(e['detail']), str(e['boot_error'])].filter(Boolean).join('\n') || undefined;
+        compact({ kind: 'fail', text: t, tone: 'bad', sub: str(e['boot_error']) || undefined });
+        verbose({ kind: 'fail', text: t, tone: 'bad', sub });
+        break;
+      }
+      case 'boot_repaired': {
+        const attempts = num(e['attempts']);
+        verbose({
+          kind: 'done',
+          tone: 'good',
+          text: `Boot repaired after ${attempts ?? '?'} attempt${attempts === 1 ? '' : 's'} — the app binds and answers`,
+          sub: str(e['detail']) || undefined,
+        });
+        break;
+      }
+      case 'best_tree_restored': {
+        const from = num(e['from_round']);
+        const best = num(e['best_findings']);
+        const fin = num(e['final_findings']);
+        const restored = e['restored'] === true;
+        const t = restored
+          ? `Rolled back to the round-${from ?? '?'} tree — ${best ?? '?'} established finding${best === 1 ? '' : 's'} vs ${fin ?? '?'} in the final tree`
+          : `Tried to roll back to the round-${from ?? '?'} tree and the restore FAILED — the final tree ships`;
+        compact({ kind: 'review', text: t, tone: restored ? 'warn' : 'bad' });
+        verbose({ kind: 'review', text: t, tone: restored ? 'warn' : 'bad' });
+        break;
+      }
+      case 'complete_fix_converged': {
+        const findings = num(e['findings']);
+        const t = `Fix waves stopped — converged with ${findings ?? '?'} finding${findings === 1 ? '' : 's'} standing`;
+        compact({ kind: 'review', text: t, tone: 'warn', sub: str(e['detail']) || undefined });
+        verbose({ kind: 'review', text: t, tone: 'warn', sub: str(e['detail']) || undefined });
+        break;
+      }
       case 'run_finished': {
         const report = (e['report'] ?? {}) as Record<string, unknown>;
         const done = arr(report['done']).length;
@@ -2117,7 +2429,7 @@ export function buildActivity(events: Array<Record<string, unknown>>): {
   return {
     activity: feed.slice(-30),
     verbose: vfeed.slice(-200),
-    meta,
+    meta: meta && resumed ? { ...meta, resumed } : meta,
     plan,
     smoke,
     phase,
@@ -2141,6 +2453,7 @@ export function buildActivity(events: Array<Record<string, unknown>>): {
         : null,
     proxy,
     reviewRounds,
+    qa,
     sinkRenamedFrom,
     synthesisFallback,
     knownActiveBugs,
@@ -2558,6 +2871,7 @@ function absorbEvent(c: FoldCarry, e: Record<string, unknown>): void {
       // A re-dispatch after a retry keeps the retry's failure text: it is the WHY behind the
       // superseded chip ("retried: <reason>") until the task terminally completes.
       error: prev?.error,
+      restreams: prev?.restreams,
       seq: c.seq++,
     });
   } else if (type === 'task_retry') {
@@ -2571,6 +2885,7 @@ function absorbEvent(c: FoldCarry, e: Record<string, unknown>): void {
       error: e['error'] ? String(e['error']) : prev?.error,
       attempts: prev?.attempts,
       attempt: prev?.attempt,
+      restreams: prev?.restreams,
       seq: c.seq++,
     });
   } else if (type === 'task_completed') {
@@ -2591,8 +2906,20 @@ function absorbEvent(c: FoldCarry, e: Record<string, unknown>): void {
       attempts: typeof e['attempts'] === 'number' ? (e['attempts'] as number) : prev?.attempts,
       // A failed completion keeps the last retry's reason; a clean one clears it.
       error: status === 'error' ? prev?.error : undefined,
+      restreams: prev?.restreams,
       seq: c.seq++,
     });
+  } else if (type === 'judge_restream') {
+    // The judge wiped this task's conversation and re-streamed it. Counted on the EVENT-derived carry
+    // (not a digestStreamFields key — no digest carries it), so the visible-reasoning restart and the
+    // reset thinking_chars counter have an on-screen cause. Rides the ...t spread in finishFold.
+    const prevT = c.tasks.get(taskId);
+    if (prevT) {
+      c.tasks.set(taskId, { ...prevT, restreams: (prevT.restreams ?? 0) + 1 });
+    } else {
+      const prevF = c.fixTasks.get(taskId);
+      if (prevF) c.fixTasks.set(taskId, { ...prevF, restreams: (prevF.restreams ?? 0) + 1 });
+    }
   } else if (type === 'judge_verdict' && str(e['action']) === 'split') {
     // The judge decomposed this task into freshly-dispatched children. The parent gets no task_completed, so
     // its lane would spin forever. Drop it — the children have their own lanes and the split stays in the feed.
@@ -3259,6 +3586,12 @@ export function buildPhaseTodo(
   let synthesisFallback: number | null = null;
   const reviewRounds: Array<{ round: number; fresh: number; touches: number; rejected: boolean }> =
     [];
+  // review_failed rounds — a review whose CALL died must not render like one that found nothing.
+  const reviewFailedRounds: Array<{ round: number; error: string }> = [];
+  // Tree-warden findings (tree_defect): dependency -> its on-disk defect details, and the dependents
+  // that build on a flagged dependency. Annotations, never state changes — the engine keeps the dep Done.
+  const treeDefects = new Map<string, string[]>();
+  const buildsOnFlagged = new Map<string, Set<string>>();
   let defects: { critical: number; minor: number; forced: number } | null = null;
   let fixWaves = 0;
   // Canonical node names throughout — a raw pool id stored here reaches the node chip and mis-keys its
@@ -3291,6 +3624,25 @@ export function buildPhaseTodo(
         touches: num(e['patch_touches']) ?? 0,
         rejected: false,
       });
+    else if (t === 'review_failed')
+      reviewFailedRounds.push({
+        round: num(e['round']) ?? reviewFailedRounds.length + 1,
+        error: str(e['error']),
+      });
+    else if (t === 'tree_defect') {
+      const dep = str(e['dependency']);
+      const dependent = str(e['task_id']);
+      if (dep) {
+        const list = treeDefects.get(dep) ?? [];
+        list.push(str(e['detail']));
+        treeDefects.set(dep, list);
+        if (dependent) {
+          const set = buildsOnFlagged.get(dependent) ?? new Set<string>();
+          set.add(dep);
+          buildsOnFlagged.set(dependent, set);
+        }
+      }
+    }
     else if (t === 'plan_patch_rejected') {
       const target = reviewRounds.find((r) => r.round === (num(e['round']) ?? 0));
       if (target) target.rejected = true;
@@ -3621,7 +3973,18 @@ export function buildPhaseTodo(
       )
     );
   }
-  if (reviewRounds.length === 0 && phasesSeen.has('review') && !planLoaded)
+  // A review round whose CALL died is neither settled nor clean — the plan went to BUILD unreviewed.
+  reviewFailedRounds.forEach((rf, i) =>
+    review.push(
+      it(
+        `rv-failed-${rf.round}-${i}`,
+        `Round ${rf.round} — review call failed; the plan proceeds unreviewed`,
+        'unverified',
+        rf.error || undefined
+      )
+    )
+  );
+  if (reviewRounds.length === 0 && reviewFailedRounds.length === 0 && phasesSeen.has('review') && !planLoaded)
     review.push(it('rv-run', 'Reading the request against the plan…', 'running'));
 
   // ---- CONTRACTS ---- (RETIRED: deleted from the engine by P1-4 — historical rows for archived runs only;
@@ -3682,6 +4045,20 @@ export function buildPhaseTodo(
     } else {
       state = 'pending';
     }
+    // The tree warden flagged THIS task's on-disk output (a file never written, or only the engine's
+    // stub) while a dependent built on it. Annotation only: the row keeps its engine state — the
+    // engine keeps the dep Done, and the end-of-run e2e green may still promote it (the stub can have
+    // been repaired by then) — but the finding persists, because no later event ever supersedes it.
+    const warden = treeDefects.get(id);
+    if (warden)
+      detail = [detail, `tree warden: ${warden[warden.length - 1]}`].filter(Boolean).join(' · ');
+    // The other half of the same finding: the dependent was told (via its pending hint) that an
+    // upstream it builds on is defective — worth a note while its work is still ahead of it.
+    const flagged = buildsOnFlagged.get(id);
+    if (flagged && (state === 'running' || state === 'pending'))
+      detail = [detail, `building on flagged ${[...flagged].join(', ')}`]
+        .filter(Boolean)
+        .join(' · ');
     // TITLE = the stable, readable task id; SUMMARY = a short human line; the FULL description / files / judge
     // reasoning are carried for the expand. This is the redesign: clean row collapsed, everything else tucked.
     const item = it(`b-${id}`, humanizeTaskId(id), state, detail, s?.device);
@@ -4102,6 +4479,7 @@ export function useSwarmRun(workingDir: string | undefined, pollMs = 500): Swarm
           slices,
           proxy,
           reviewRounds,
+          qa,
           sinkRenamedFrom,
           synthesisFallback,
           knownActiveBugs,
@@ -4179,6 +4557,7 @@ export function useSwarmRun(workingDir: string | undefined, pollMs = 500): Swarm
           slices,
           proxy,
           reviewRounds,
+          qa,
           sinkRenamedFrom,
           synthesisFallback,
           knownActiveBugs,
