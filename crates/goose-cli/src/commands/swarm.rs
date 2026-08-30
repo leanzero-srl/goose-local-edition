@@ -70,7 +70,9 @@ mod fleet_order;
 #[cfg(test)]
 use fleet_order::fleet_slot_models;
 use fleet_order::{
-    configured_speed_weight, live_fleet_slots, one_lane_per_host, order_fleet_by_speed,
+    configured_speed_weight, live_fleet_slots, measured_rate_for, one_lane_per_host,
+    order_fleet_by_speed, publish_fleet_speed_weights, rank_fix_target,
+    resolved_fleet_speed_weights, unmatched_speed_weight_patterns,
 };
 
 const FINAL_OUTPUT_TOOL: &str = "recipe__final_output";
@@ -22683,7 +22685,10 @@ where
     let devices = if devices.is_empty() {
         vec![String::new()]
     } else {
-        order_fleet_by_speed(devices, &load_config().speed_weights)
+        // RESOLVED weights, never the raw substring map: the pool entries are MODEL ids and the
+        // map's keys are DEVICE-id fragments (r5: only "gabee" matched, the all-tie sort kept
+        // config order, and the weight-3 host idled through the round-0 fix wave).
+        order_fleet_by_speed(devices, &resolved_fleet_speed_weights(&load_config()))
     };
     // permits == pool size, so a permit holder is always guaranteed a free device to pop —
     // an invariant the DeviceReturn guard keeps true through panicking lanes.
@@ -35733,25 +35738,6 @@ fn telemetry_node_rates(path: &Path) -> std::collections::HashMap<String, f64> {
         .collect()
 }
 
-/// The measured rate for a device: the telemetry node key must equal the device/model id or be
-/// a '-'-bounded prefix of it (the fleet's node identity is the model-id prefix, "gabee-…").
-/// The boundary requirement is load-bearing: a bare starts_with would let a one-letter key
-/// claim every device. Pure/testable.
-fn measured_rate_for(
-    rates: &std::collections::HashMap<String, f64>,
-    dev_id: &str,
-    model_id: &str,
-) -> Option<f64> {
-    rates.iter().find_map(|(k, r)| {
-        let matches = |s: &str| {
-            s == k
-                || s.strip_prefix(k.as_str())
-                    .is_some_and(|rest| rest.starts_with('-'))
-        };
-        (matches(model_id) || matches(dev_id)).then_some(*r)
-    })
-}
-
 #[cfg(test)]
 mod telemetry_rank_tests {
     use super::*;
@@ -35787,23 +35773,6 @@ mod telemetry_rank_tests {
             "median, not mean: {rates:?}"
         );
         assert!(telemetry_node_rates(Path::new("/definitely/missing")).is_empty());
-    }
-
-    #[test]
-    fn rate_lookup_requires_a_dash_bounded_prefix() {
-        let rates: std::collections::HashMap<String, f64> =
-            [("gabee".to_string(), 13.2)].into_iter().collect();
-        assert_eq!(
-            measured_rate_for(&rates, "dev0", "gabee-qwen3.6-27b"),
-            Some(13.2)
-        );
-        assert_eq!(
-            measured_rate_for(&rates, "gabee", "other-model"),
-            Some(13.2)
-        );
-        // "gabee" is NOT a '-'-bounded prefix of "gabeexl-…" — a loose starts_with would lie here.
-        assert_eq!(measured_rate_for(&rates, "dev1", "gabeexl-qwen"), None);
-        assert_eq!(measured_rate_for(&rates, "dev2", "mihai-qwen"), None);
     }
 }
 
@@ -36548,7 +36517,10 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             "id": d.id, "model_id": d.model_id, "weight": d.weight, "instances": d.instances,
             // The RESOLVED speed weight — the placement tie-break rides on it, and until this
             // echo existed no run could prove what it resolved (key/id mismatches ran silent).
-            "speed_weight": configured_speed_weight(&cfg.speed_weights, &d.id),
+            // The node's own explicit setting wins, same as the DeviceCfg build below: this
+            // echo used to skip the override and report the substring match even where the
+            // routing honored the per-device value (echo-vs-gating drift, F837 class).
+            "speed_weight": d.speed_weight.unwrap_or_else(|| configured_speed_weight(&cfg.speed_weights, &d.id)),
         })).collect::<Vec<_>>(),
         // The RESOLVED gate set (assured bundle + explicit overrides applied) so a run's config is legible.
         "assured": assured_enabled(),
@@ -36646,13 +36618,26 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
     // that event changes meaning underneath it. `pool` stays what it always was; this is what the run
     // actually has.
     let startup_started = std::time::Instant::now();
+    // The fans order by the SAME resolution the scheduler routes by — published here because a
+    // reconciled pool ("auto-use what's loaded") exists in no config entry, so re-resolving from
+    // config at a fan would miss every model id (r5: all three configured devices were disabled
+    // qwopus3.6 entries while the run built on lms-ps-discovered qwen3.8).
+    publish_fleet_speed_weights(&devices);
     sink.write_value(serde_json::json!({
         "event": "pool_resolved",
         "devices": devices.iter().map(|d| serde_json::json!({
             "id": d.id,
             "model_id": d.model_id,
             "weight": d.weight,
+            // The resolved ROUTING weight (explicit override, else the speed_weights substring
+            // map vs the DEVICE id, else 1) — the once-per-run proof of what the fans and the
+            // fix-target pick will actually order by.
+            "speed_weight": d.speed_weight,
         })).collect::<Vec<_>>(),
+        // FALLBACK-GATE visibility: any speed_weights key that matched neither a device id nor
+        // a model id in this pool. r5's {local, worksmacstudio} resolved to 1 at the fan with
+        // nothing anywhere saying so; a mismatch is now a printed fact instead of a silent tie.
+        "speed_weight_unmatched_patterns": unmatched_speed_weight_patterns(&cfg.speed_weights, &devices),
         "worker_count": devices.len(),
         "planner_pushed": devices.iter().any(|d| d.id == "planner"),
         // F779 i3: NEVER folded into worker_count — the harness reads that as node-count ground
@@ -37674,23 +37659,25 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
     // was the one dispatch that ignored the setting entirely. `max_by_key` returns the LAST maximum, so
     // ties resolve to the later pool entry deterministically rather than by iteration accident.
     //
-    // MEASURED BEATS CONFIGURED — but the measurement happens LATER. speed_weight decides the
-    // initial target here; the candidate list is captured (devices moves into the scheduler
-    // below) so the COMPLETE phase can re-rank by the run's OWN telemetry once the build wave
-    // has produced per-node samples. The first version of this read telemetry HERE — at
-    // EXECUTE start, before a single worker call — so the measured branch could never engage
-    // (adversarial review). A live capture caught the config backwards (gabee 13.2 tok/s
-    // ranked below a 7.9 tok/s node), which is why the re-rank exists at all.
+    // THE OPERATOR'S WEIGHT IS PRIMARY — the measurement only breaks ties. speed_weight decides
+    // the target here; the candidate list is captured WITH each device's resolved weight
+    // (devices moves into the scheduler below) so the COMPLETE phase can consult the run's OWN
+    // telemetry once the build wave has produced per-node samples. The first version of the
+    // re-rank let the measured median OVERRIDE the weight outright, and r5
+    // (swarm-20260830-083847650) measured why that lies: workhorse's samples were the 93-minute
+    // sink call at huge context (decode collapses as KV grows) while gabee idled through BUILD
+    // and sampled light calls — the median ranked the WORKLOAD each node got, not the node, and
+    // sent every serialized repair dispatch to the weight-1 host. See rank_fix_target.
     let mut smoke_fix_target = devices
         .iter()
         .filter(|d| d.enabled)
         .max_by_key(|d| d.speed_weight)
         .or_else(|| devices.first())
         .map(|d| (d.id.clone(), d.model_id.clone()));
-    let fix_target_candidates: Vec<(String, String)> = devices
+    let fix_target_candidates: Vec<(String, String, u32)> = devices
         .iter()
         .filter(|d| d.enabled)
-        .map(|d| (d.id.clone(), d.model_id.clone()))
+        .map(|d| (d.id.clone(), d.model_id.clone(), d.speed_weight))
         .collect();
     // LEARN & REFLECT — the SNAPSHOT. Capture the structural facts NOW, while the plan is still in scope:
     // by the time the run knows it PASSED, plan_json has been moved into the plan_loaded event and `dag` has
@@ -37941,8 +37928,9 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             "verify the app by RUNNING it, fix-until-green (bounded), and refuse to ship a red app",
         );
         // FIX-TARGET RE-RANK, at the moment it matters: by now the build wave has pushed
-        // hundreds of per-call telemetry lines, so the run's OWN measured decode rates can
-        // outrank the static speed_weight for the serialized repair dispatches. Requires
+        // hundreds of per-call telemetry lines. The operator's resolved weight stays PRIMARY;
+        // the run's own median decode rate breaks ties only WITHIN equal weights (r5: the
+        // median measured each node's workload, not the node — see rank_fix_target). Requires
         // EVERY candidate measured (mixed measured-vs-unmeasured comparisons lie); anything
         // less keeps the speed_weight target chosen at EXECUTE start.
         {
@@ -37953,21 +37941,26 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             let all_measured = !fix_target_candidates.is_empty()
                 && fix_target_candidates
                     .iter()
-                    .all(|(id, model)| measured_rate_for(&telemetry_rates, id, model).is_some());
+                    .all(|(id, model, _)| measured_rate_for(&telemetry_rates, id, model).is_some());
+            let mut basis = "speed_weight";
             if all_measured {
-                smoke_fix_target = fix_target_candidates
-                    .iter()
-                    .max_by(|a, b| {
-                        let ra = measured_rate_for(&telemetry_rates, &a.0, &a.1).unwrap_or(0.0);
-                        let rb = measured_rate_for(&telemetry_rates, &b.0, &b.1).unwrap_or(0.0);
-                        ra.total_cmp(&rb)
-                    })
-                    .map(|(id, model)| (id.clone(), model.clone()));
+                if let Some((target, ranked_basis)) =
+                    rank_fix_target(&fix_target_candidates, &telemetry_rates)
+                {
+                    smoke_fix_target = Some(target);
+                    basis = ranked_basis;
+                }
             }
             sink.write_value(serde_json::json!({
                 "event": "fix_target_selected",
                 "device": smoke_fix_target.as_ref().map(|(d, _)| d.clone()),
-                "basis": if all_measured { "measured_decode_rate" } else { "speed_weight" },
+                "basis": basis,
+                "all_measured": all_measured,
+                // The resolved weights the choice ordered by, so the pick is auditable next to
+                // the rates it declined to be overridden by.
+                "weights": fix_target_candidates.iter()
+                    .map(|(id, _, w)| (id.clone(), *w))
+                    .collect::<std::collections::HashMap<_, _>>(),
                 "measured_rates": telemetry_rates,
             }));
         }
