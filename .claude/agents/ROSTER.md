@@ -61,6 +61,11 @@ boundary), run one gate-auditor pass over the whole roster.
   objectives whole), two unbriefed finds reported-not-fixed per charter (SliceBrief.files always
   empty + four sibling take(400) truncation sites). No charter gap; the
   report-don't-fix-unbriefed rule earned its keep on its first outing.
+- 2026-08-30 swarm-surgeon #2 (files-from-objectives + truncation siblings, 5316de72f/176c4513f):
+  CLEAN PASS — full reader list with per-reader verdicts, honest leave-alone reasons (events and
+  test strings excluded from sentence-ending), honest NO-trace on finding 2 (ships as a net), one
+  new unbriefed find (splice_briefs' hardcoded files:[] feeds the owns-nothing removal) reported
+  not fixed. No charter gap. Pattern holding: each surgeon pass mines the next brief.
 
 - 2026-08-30 ui-truth batch (general-purpose, pre-roster): two spec deviations argued correctly by
   the agent (F8 event-carry vs digest-join, F22 not-independently-shippable) → panel-surgeon's
