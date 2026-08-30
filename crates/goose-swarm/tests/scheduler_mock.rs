@@ -808,9 +808,9 @@ struct KillJudge {
 
 #[async_trait]
 impl Judge for KillJudge {
-    async fn judge(&self, req: JudgeRequest) -> JudgeOutcome {
+    async fn judge(&self, req: JudgeRequest) -> Result<JudgeOutcome, String> {
         if req.task_id == self.target {
-            JudgeOutcome {
+            Ok(JudgeOutcome {
                 verdict: Verdict::Restart,
                 confidence: 1.0,
                 hint: "STOP looping and WRITE the file now".to_string(),
@@ -821,9 +821,9 @@ impl Judge for KillJudge {
                 // 1.0. That flag used to be what let a verdict terminal-fail a task; nothing can do that
                 // from here any more. RESTART is the judge's only remaining action.
                 deterministic: false,
-            }
+            })
         } else {
-            JudgeOutcome::ok()
+            Ok(JudgeOutcome::ok())
         }
     }
 }
@@ -904,8 +904,8 @@ async fn a_barren_restart_is_withheld_and_never_fails_the_task() {
     struct AlwaysRestartJudge;
     #[async_trait]
     impl Judge for AlwaysRestartJudge {
-        async fn judge(&self, _req: JudgeRequest) -> JudgeOutcome {
-            JudgeOutcome {
+        async fn judge(&self, _req: JudgeRequest) -> Result<JudgeOutcome, String> {
+            Ok(JudgeOutcome {
                 verdict: Verdict::Restart,
                 confidence: 1.0,
                 hint: "start over".to_string(),
@@ -913,7 +913,7 @@ async fn a_barren_restart_is_withheld_and_never_fails_the_task() {
                 next_action: "start over".to_string(),
                 proposed_split: None,
                 deterministic: false,
-            }
+            })
         }
     }
 
@@ -1017,14 +1017,14 @@ struct CountJudge {
 
 #[async_trait]
 impl Judge for CountJudge {
-    async fn judge(&self, req: JudgeRequest) -> JudgeOutcome {
+    async fn judge(&self, req: JudgeRequest) -> Result<JudgeOutcome, String> {
         *self
             .counts
             .lock()
             .unwrap()
             .entry(req.task_id.clone())
             .or_default() += 1;
-        JudgeOutcome::ok()
+        Ok(JudgeOutcome::ok())
     }
 }
 
@@ -1117,10 +1117,10 @@ async fn a_judge_killed_attempt_reports_the_time_it_really_ran() {
     }
     #[async_trait]
     impl Judge for SlowKillJudge {
-        async fn judge(&self, req: JudgeRequest) -> JudgeOutcome {
+        async fn judge(&self, req: JudgeRequest) -> Result<JudgeOutcome, String> {
             tokio::time::sleep(Duration::from_millis(50)).await;
             if req.task_id == self.target {
-                JudgeOutcome {
+                Ok(JudgeOutcome {
                     verdict: Verdict::Restart,
                     confidence: 1.0,
                     hint: "STOP looping and WRITE the file now".to_string(),
@@ -1128,9 +1128,9 @@ async fn a_judge_killed_attempt_reports_the_time_it_really_ran() {
                     next_action: String::new(),
                     proposed_split: None,
                     deterministic: false,
-                }
+                })
             } else {
-                JudgeOutcome::ok()
+                Ok(JudgeOutcome::ok())
             }
         }
     }
@@ -1229,12 +1229,12 @@ struct RecordingPreReviewer {
 
 #[async_trait]
 impl PreReviewer for RecordingPreReviewer {
-    async fn pre_review(&self, req: PreReviewRequest) -> PreReviewOutput {
+    async fn pre_review(&self, req: PreReviewRequest) -> Result<PreReviewOutput, String> {
         self.reviewed.lock().unwrap().push(req.task_id.clone());
-        PreReviewOutput {
+        Ok(PreReviewOutput {
             had_findings: false,
             summary: String::new(),
-        }
+        })
     }
 }
 
@@ -1285,8 +1285,8 @@ struct ObservingJudge;
 
 #[async_trait]
 impl Judge for ObservingJudge {
-    async fn judge(&self, _req: JudgeRequest) -> JudgeOutcome {
-        JudgeOutcome::ok()
+    async fn judge(&self, _req: JudgeRequest) -> Result<JudgeOutcome, String> {
+        Ok(JudgeOutcome::ok())
     }
 }
 
@@ -1346,15 +1346,15 @@ struct PeakPreReviewer {
 
 #[async_trait]
 impl PreReviewer for PeakPreReviewer {
-    async fn pre_review(&self, _req: PreReviewRequest) -> PreReviewOutput {
+    async fn pre_review(&self, _req: PreReviewRequest) -> Result<PreReviewOutput, String> {
         let n = self.cur.fetch_add(1, Ordering::SeqCst) + 1;
         self.peak.fetch_max(n, Ordering::SeqCst);
         tokio::time::sleep(Duration::from_millis(40)).await;
         self.cur.fetch_sub(1, Ordering::SeqCst);
-        PreReviewOutput {
+        Ok(PreReviewOutput {
             had_findings: false,
             summary: String::new(),
-        }
+        })
     }
 }
 
@@ -1408,15 +1408,15 @@ struct LoggingPreReviewer {
 
 #[async_trait]
 impl PreReviewer for LoggingPreReviewer {
-    async fn pre_review(&self, req: PreReviewRequest) -> PreReviewOutput {
+    async fn pre_review(&self, req: PreReviewRequest) -> Result<PreReviewOutput, String> {
         self.log
             .lock()
             .unwrap()
             .push(format!("review_start:{}", req.task_id));
-        PreReviewOutput {
+        Ok(PreReviewOutput {
             had_findings: false,
             summary: String::new(),
-        }
+        })
     }
 }
 
@@ -2635,4 +2635,68 @@ async fn the_warden_is_silent_when_the_dependency_actually_delivered() {
         retry.hint
     );
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A-2: a judge look that FAILS IN TRANSPORT applies nothing — `judge_look_failed` with the error,
+/// no `judge_verdict` row of any kind, and the worker runs to its own end untouched. This is the
+/// trait-level pin for r2's laundering: from 22:02:35Z every look returned gabee's 400 "Invalid
+/// model identifier" as text and the run logged 28 `drifting` verdicts whose hint WAS the error
+/// body. An infallible judge signature is what made that reachable; the failed look must now be a
+/// different event, not a differently-worded verdict.
+#[tokio::test]
+async fn a_judge_transport_error_is_a_failed_look_never_a_verdict() {
+    struct DeadModelJudge;
+    #[async_trait]
+    impl Judge for DeadModelJudge {
+        async fn judge(&self, _req: JudgeRequest) -> Result<JudgeOutcome, String> {
+            Err("HTTP 400: Invalid model identifier 'qwen3-omni-30b'".to_string())
+        }
+    }
+
+    let runs = Arc::new(Mutex::new(HashMap::new()));
+    let disp = Arc::new(JudgeTestDispatcher {
+        runs: runs.clone(),
+        hints: Arc::new(Mutex::new(Vec::new())),
+        target: "slow".to_string(),
+        delay: Duration::from_millis(20),
+        slow_all: false,
+    });
+    let dag = Dag::from_specs(vec![spec("slow", &[], &["a.py"])]).unwrap();
+    let cfg = JudgeConfig {
+        min_age_secs: 0,
+        intervene_confidence: 0.5,
+        ..JudgeConfig::default()
+    };
+    let events = Arc::new(EventLog::default());
+    let report = Scheduler::new(vec![dev("a", "m-a", 1), dev("b", "m-b", 1)], 3)
+        .with_sink(events.clone())
+        .with_judge(Arc::new(DeadModelJudge), cfg)
+        .run(dag, disp, String::new())
+        .await
+        .unwrap();
+
+    assert!(
+        report.done.contains(&"slow".to_string()) && report.failed.is_empty(),
+        "the worker is untouched by its supervisor's dead model: done={:?} failed={:?}",
+        report.done,
+        report.failed
+    );
+    let failed = events.named("judge_look_failed");
+    assert!(
+        !failed.is_empty(),
+        "the failed look is a named engine fact, not silence"
+    );
+    assert!(
+        failed[0]["error"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("Invalid model identifier"),
+        "the event carries the transport error itself: {:?}",
+        failed[0]
+    );
+    assert!(
+        events.named("judge_verdict").is_empty(),
+        "no verdict row of any kind is minted from a transport error: {:?}",
+        events.named("judge_verdict")
+    );
 }
