@@ -4933,13 +4933,14 @@ mod tests {
             smoke_fix_description(&findings, TargetLang::Python, "", " \n "),
         );
         // And the fix_round_specs path threads it into a shard's description on its own.
-        let specs = fix_round_specs(
+        let (specs, _known) = fix_round_specs(
             &["pytest failure in `app/stream.py`: SSE handler wrong".to_string()],
             &["app/stream.py".to_string()],
             1,
             TargetLang::Python,
             "",
             rollup.as_ref(),
+            &|_| None,
         );
         assert!(
             specs[0].description.contains("FINDING 1 NOT FIXED"),
@@ -13380,10 +13381,155 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
         );
     }
 
+    /// P1-3: the endpoint literal a gate finding names, straight from the gate's own emitter
+    /// shapes. A bare `/` is None on purpose — grepping a tree for "/" hits every file, and the
+    /// entry-file fallback answers that case honestly.
     #[test]
-    fn fix_round_specs_disjoint_roots_and_collision_proof_join() {
-        // F781/#16 commit 4: two file groups + one file-less finding -> two Ready roots owning
-        // one file each, plus a #join owning everything and depending on both.
+    fn the_endpoint_literal_comes_from_the_verb_or_backticks_never_bare_slash() {
+        assert_eq!(
+            endpoint_literal_of(
+                "GET /api/payments returned 404 — the spec advertises this endpoint but the app does not implement it"
+            )
+            .as_deref(),
+            Some("/api/payments")
+        );
+        assert_eq!(
+            endpoint_literal_of("POST /api/sync did not complete twice").as_deref(),
+            Some("/api/sync")
+        );
+        assert_eq!(
+            endpoint_literal_of("the advertised `/api/health` endpoint answers 500").as_deref(),
+            Some("/api/health")
+        );
+        assert_eq!(endpoint_literal_of("GET / returned 404"), None);
+        assert_eq!(endpoint_literal_of("no route named anywhere"), None);
+    }
+
+    /// P1-3: attribution by EVIDENCE. (1) the file whose source carries the endpoint literal;
+    /// (2) else the service's entry file, preferring the package the finding names; (3) else
+    /// None — the caller ships it as a known bug.
+    #[test]
+    fn an_unassigned_finding_attributes_by_grep_then_entry_file_then_known_bug() {
+        let all = vec![
+            "vendorsync/web/index.html".to_string(),
+            "vendorsync/api.py".to_string(),
+            "vendorsync/__main__.py".to_string(),
+        ];
+        let read = |f: &str| -> Option<String> {
+            match f {
+                "vendorsync/api.py" => Some(
+                    "if path == \"/api/payments\": ...\nif path == \"/api/payments\": ...".into(),
+                ),
+                "vendorsync/web/index.html" => Some("fetch(\"/api/payments?limit=100\")".into()),
+                _ => Some(String::new()),
+            }
+        };
+        // Most occurrences of the literal wins (the server names its route more than the page
+        // that calls it); ties go to all_files order.
+        assert_eq!(
+            attribute_gate_finding("GET /api/payments returned 404", &all, &read).as_deref(),
+            Some("vendorsync/api.py")
+        );
+        // No literal -> the entry file, and the package the finding names picks between entries.
+        assert_eq!(
+            attribute_gate_finding(
+                "spec-contract: `python3 -m vendorsync` never bound port 8850 within 4s",
+                &all,
+                &read
+            )
+            .as_deref(),
+            Some("vendorsync/__main__.py")
+        );
+        // Nothing greps, no entry file in the plan -> None: a known bug, not a residue task.
+        let no_entry = vec!["a.py".to_string()];
+        assert_eq!(
+            attribute_gate_finding("something nobody can place", &no_entry, &|_| None),
+            None
+        );
+        // And the shared seam merges an attributed finding into its file's existing group.
+        let findings = vec![
+            "vendorsync/api.py:12: wrong key".to_string(),
+            "GET /api/payments returned 404".to_string(),
+            "cosmic ray".to_string(),
+        ];
+        let (groups, known) = attribute_findings(&findings, &all, &read);
+        assert_eq!(groups.len(), 1);
+        assert_eq!(groups[0].file, "vendorsync/api.py");
+        assert_eq!(
+            groups[0].findings.len(),
+            2,
+            "the 404 joined its file's shard"
+        );
+        assert_eq!(known, ["cosmic ray"]);
+    }
+
+    /// P1-3 fixture: r0's real finding shapes against the ARCHIVED r0 tree, read-only. The tree
+    /// (evals/swarm-bench/runs/build/swarm-3node-r0 — the vendorsync app) is machine-local and
+    /// gitignored, so the test SKIPS loudly when it is absent rather than asserting on nothing.
+    #[test]
+    fn r0s_real_findings_attribute_against_the_archived_tree_read_only() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../evals/swarm-bench/runs/build/swarm-3node-r0");
+        if !root.join("vendorsync/api.py").exists() {
+            eprintln!(
+                "SKIP: archived r0 tree not on this machine ({})",
+                root.display()
+            );
+            return;
+        }
+        let all = vec![
+            "vendorsync/web/index.html".to_string(),
+            "vendorsync/api.py".to_string(),
+            "vendorsync/store.py".to_string(),
+            "vendorsync/meridian.py".to_string(),
+            "vendorsync/__main__.py".to_string(),
+        ];
+        let before: Vec<(String, std::time::SystemTime)> = all
+            .iter()
+            .filter_map(|f| {
+                std::fs::metadata(root.join(f))
+                    .and_then(|m| m.modified())
+                    .ok()
+                    .map(|t| (f.clone(), t))
+            })
+            .collect();
+        let read = |f: &str| std::fs::read_to_string(root.join(f)).ok();
+        // The gate's own emitter shape for an unimplemented advertised endpoint: the literal
+        // lives in api.py (the route dispatcher), so the finding shards there.
+        assert_eq!(
+            attribute_gate_finding(
+                "GET /api/payments returned 404 — the spec advertises this endpoint but the app does not implement it",
+                &all,
+                &read
+            )
+            .as_deref(),
+            Some("vendorsync/api.py")
+        );
+        // The boot-shaped finding names the package, not a path: the entry file owns it.
+        assert_eq!(
+            attribute_gate_finding(
+                "spec-contract: `python3 -m vendorsync` never bound port 8081 within 4s — the advertised entrypoint did not start a server",
+                &all,
+                &read
+            )
+            .as_deref(),
+            Some("vendorsync/__main__.py")
+        );
+        // READ-ONLY: attribution must not touch the archive.
+        for (f, t0) in before {
+            let t1 = std::fs::metadata(root.join(&f))
+                .and_then(|m| m.modified())
+                .unwrap();
+            assert_eq!(t0, t1, "attribution modified the archived tree: {f}");
+        }
+    }
+
+    #[test]
+    fn fix_round_specs_disjoint_roots_and_known_bugs_instead_of_a_residue_join() {
+        // P1-3: two file groups + one file-less finding -> two Ready roots owning one file each,
+        // and the file-less finding comes back as a KNOWN BUG — the #join residue task that owned
+        // every smoke file is gone (r0: it took 115 of a 138-minute wave; the four file shards
+        // finished in 24 minutes, all promoted).
         let findings = vec![
             "app/api.py:12: TypeError in handler".to_string(),
             "app/api.py:40: missing timeout".to_string(),
@@ -13391,52 +13537,45 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
             "the second sync re-fetched 247 rows".to_string(),
         ];
         let all = vec!["app/api.py".to_string(), "app/store.py".to_string()];
-        let specs = fix_round_specs(&findings, &all, 2, TargetLang::Python, "", None);
+        let (specs, known) =
+            fix_round_specs(&findings, &all, 2, TargetLang::Python, "", None, &|_| None);
         let ids: Vec<&str> = specs.iter().map(|t| t.id.as_str()).collect();
-        assert_eq!(
-            ids,
-            [
-                "fix::r2::app/api.py",
-                "fix::r2::app/store.py",
-                "fix::r2::#join"
-            ]
-        );
+        assert_eq!(ids, ["fix::r2::app/api.py", "fix::r2::app/store.py"]);
         assert_eq!(specs[0].owned_files, ["app/api.py"]);
         assert!(specs[0].deps.is_empty(), "fix tasks are roots — born Ready");
-        assert_eq!(specs[2].owned_files, all, "the join owns every smoke file");
         assert_eq!(
-            specs[2].deps,
-            ["fix::r2::app/api.py", "fix::r2::app/store.py"],
-            "the join waits for every fix"
+            known,
+            ["the second sync re-fetched 247 rows"],
+            "the unattributable finding ships as a known bug, never a whole-tree task"
         );
-        // The DAG accepts the specs; roots are Ready, the join is Pending.
+        // The DAG accepts the specs; every root is Ready.
         let dag = goose_swarm::Dag::from_specs(specs).unwrap();
         assert_eq!(
             dag.tasks["fix::r2::app/api.py"].state,
             goose_swarm::TaskState::Ready
         );
-        assert_eq!(
-            dag.tasks["fix::r2::#join"].state,
-            goose_swarm::TaskState::Pending
-        );
-        // A source file whose name is exactly `join` (with any matchable extension) cannot
-        // collide with the join id — '#' never appears in a normalized file id.
-        let tricky = vec!["join.py:1: broken".to_string(), "no file here".to_string()];
+        // An attributable "file-less" finding lands in its file's shard via the tree grep: the
+        // endpoint literal names exactly one source file.
+        let tricky = vec![
+            "join.py:1: broken".to_string(),
+            "GET /api/rows returned 404 — the spec advertises this endpoint".to_string(),
+        ];
         let all2 = vec!["join.py".to_string()];
-        let specs2 = fix_round_specs(&tricky, &all2, 0, TargetLang::Python, "", None);
+        let (specs2, known2) =
+            fix_round_specs(&tricky, &all2, 0, TargetLang::Python, "", None, &|f| {
+                (f == "join.py").then(|| "if path == \"/api/rows\": ...".to_string())
+            });
         let ids2: Vec<&str> = specs2.iter().map(|t| t.id.as_str()).collect();
-        assert_eq!(ids2, ["fix::r0::join.py", "fix::r0::#join"]);
+        assert_eq!(ids2, ["fix::r0::join.py"]);
+        assert!(known2.is_empty());
         assert!(
-            goose_swarm::Dag::from_specs(specs2).is_ok(),
-            "no id collision"
+            specs2[0].description.matches("FINDING").count() >= 1,
+            "both findings ride the one shard"
         );
-        // No file-less findings -> no join at all.
-        let only_file = vec!["app/api.py:1: x".to_string()];
-        let specs3 = fix_round_specs(&only_file, &all, 1, TargetLang::Python, "", None);
-        assert_eq!(specs3.len(), 1);
-        assert!(!specs3.iter().any(|t| t.id.ends_with("#join")));
-        // No findings -> no tasks.
-        assert!(fix_round_specs(&[], &all, 0, TargetLang::Python, "", None).is_empty());
+        // No findings -> no tasks, no known bugs.
+        let (none, none_known) =
+            fix_round_specs(&[], &all, 0, TargetLang::Python, "", None, &|_| None);
+        assert!(none.is_empty() && none_known.is_empty());
     }
 
     /// F881 REGRESSION (run 8, score 0.601): the repair round RACED whole-tree twins even though its
@@ -30224,16 +30363,152 @@ fn group_findings_by_file(
     (groups, unassigned)
 }
 
-/// F781/#16 (deterministic core, not yet wired): turn the sink gate's findings into DISJOINT
+/// P1-3, half one: the ENDPOINT LITERAL a gate finding names, if any. The deterministic gate's
+/// own emitters write `GET <path> returned <code>` / `POST <path> …`, so the token after an HTTP
+/// verb is the highest-confidence literal; a backticked `/…` token is the fallback for prose
+/// findings. A bare `/` is deliberately None — grepping a tree for "/" matches every file, which
+/// is attribution-shaped noise, and the entry-file fallback answers that case honestly instead.
+fn endpoint_literal_of(finding: &str) -> Option<String> {
+    let clean = |t: &str| {
+        t.trim_matches(|c: char| !(c.is_ascii_alphanumeric() || "/_-.".contains(c)))
+            .to_string()
+    };
+    let mut toks = finding.split_whitespace().peekable();
+    while let Some(t) = toks.next() {
+        let verb = t.trim_matches(|c: char| !c.is_ascii_alphabetic());
+        if matches!(verb, "GET" | "POST" | "PUT" | "DELETE" | "PATCH") {
+            if let Some(path) = toks.peek() {
+                let p = clean(path);
+                if p.starts_with('/') && p.len() > 1 {
+                    return Some(p);
+                }
+            }
+        }
+    }
+    finding
+        .split('`')
+        .skip(1)
+        .step_by(2)
+        .map(clean)
+        .find(|t| t.starts_with('/') && t.len() > 1)
+}
+
+/// P1-3, half two: attribute one UNASSIGNED gate finding to a file by EVIDENCE, never to a
+/// whole-tree residue worker. (1) grep the tree for the endpoint literal the finding names —
+/// the file that mentions `/api/payments` is the file that serves it or was supposed to; the
+/// file with the most occurrences wins, ties to `all_files` order. (2) Else the service's ENTRY
+/// file (`…/__main__.py`, preferring one whose package the finding names): an endpoint nothing
+/// implements is a defect of the file that binds the port. (3) Else None — the caller ships the
+/// finding as a KNOWN BUG event. WHY: r0's residue worker owned all eight files and took 115 of
+/// a 138-minute wave (83%) while the four file-attributed shards finished in 24 minutes, all
+/// promoted; r2's sink burned ~130 min on the same whole-tree shape. `read_source` is injected
+/// so the fixture drives this against an archived tree READ-ONLY.
+fn attribute_gate_finding(
+    finding: &str,
+    all_files: &[String],
+    read_source: &dyn Fn(&str) -> Option<String>,
+) -> Option<String> {
+    let literal = endpoint_literal_of(finding);
+    if let Some(lit) = &literal {
+        // A DECLARED route outranks a CALL to it: `"/api/payments":` in the dispatcher is the
+        // literal as a complete token, `"/api/payments?limit=100"` in the page is the literal
+        // mid-URL. Boundary hits (next char ends the path) are counted first; raw substring
+        // counts only break a no-boundary tie. Most hits wins; ties go to all_files order.
+        let boundary_hits = |src: &str| {
+            src.match_indices(lit.as_str())
+                .filter(|(i, _)| {
+                    src.get(i + lit.len()..)
+                        .and_then(|rest| rest.chars().next())
+                        .map(|c| !(c.is_ascii_alphanumeric() || "/_-.?=&%".contains(c)))
+                        .unwrap_or(true)
+                })
+                .count()
+        };
+        let mut best: Option<(usize, usize, usize)> = None; // (boundary, raw, index)
+        for (i, f) in all_files.iter().enumerate() {
+            let Some(src) = read_source(f) else { continue };
+            let raw = src.matches(lit.as_str()).count();
+            if raw == 0 {
+                continue;
+            }
+            let b = boundary_hits(&src);
+            if best.map(|(bb, br, _)| (b, raw) > (bb, br)).unwrap_or(true) {
+                best = Some((b, raw, i));
+            }
+        }
+        if let Some((_, _, i)) = best {
+            return Some(all_files[i].clone());
+        }
+    }
+    // The entry-file fallback answers ENDPOINT- and BOOT-shaped findings only: an advertised
+    // route nothing on disk mentions, or the gate's own boot-probe strings. Arbitrary prose must
+    // NOT land on the entry file — that would re-create the residue worker one file at a time.
+    let boot_shaped = {
+        let l = finding.to_lowercase();
+        [
+            "python -m",
+            "python3 -m",
+            "never bound",
+            "does not start",
+            "did not start",
+            "entry",
+        ]
+        .iter()
+        .any(|m| l.contains(m))
+    };
+    if literal.is_none() && !boot_shaped {
+        return None;
+    }
+    let entries: Vec<&String> = all_files
+        .iter()
+        .filter(|f| *f == "__main__.py" || f.ends_with("/__main__.py"))
+        .collect();
+    entries
+        .iter()
+        .find(|f| {
+            f.rsplit('/')
+                .nth(1)
+                .map(|pkg| !pkg.is_empty() && finding.contains(pkg))
+                .unwrap_or(false)
+        })
+        .or_else(|| entries.first())
+        .map(|f| (*f).clone())
+}
+
+/// P1-3, the seam every repair path shares: `group_findings_by_file`, then evidence-based
+/// attribution for what it could not place. Attributed findings JOIN their file's shard (or open
+/// one); what remains is the KNOWN-BUGS list — the caller emits it as an event and dispatches
+/// no whole-tree residue worker for it.
+fn attribute_findings(
+    findings: &[String],
+    all_files: &[String],
+    read_source: &dyn Fn(&str) -> Option<String>,
+) -> (Vec<FileGroup>, Vec<String>) {
+    let (mut groups, unassigned) = group_findings_by_file(findings, all_files);
+    let mut known_bugs: Vec<String> = Vec::new();
+    for f in unassigned {
+        match attribute_gate_finding(&f, all_files, read_source) {
+            Some(file) => match groups.iter_mut().find(|g| g.file == file) {
+                Some(g) => g.findings.push(f),
+                None => groups.push(FileGroup {
+                    file,
+                    findings: vec![f],
+                }),
+            },
+            None => known_bugs.push(f),
+        }
+    }
+    (groups, known_bugs)
+}
+
 /// F781/#16 (GOOSE_SWARM_FIX_SCHED, design commit 4): a fix ROUND as a DAG. One `fix::r{N}::{file}`
-/// root per file group from group_findings_by_file's normalized disjoint partition (each task owns
-/// exactly one file, so N run concurrently with no race; roots are born Ready via from_specs), plus
-/// — only when file-less findings exist — a `fix::r{N}::#join` that owns every smoke file and
-/// depends on all the fixes. '#' cannot appear in a normalized file id, so a source file literally
-/// named `join` can never collide with the join task. `lang` is threaded (the earlier draft
-/// hardcoded Python — a non-Python run would have gotten Python fix instructions in every task).
-/// Pure — tested without a fleet. The consumer (a second scheduler run behind fix_sched()) is
-/// design commit 6.
+/// root per file group from the normalized disjoint partition (each task owns exactly one file, so
+/// N run concurrently with no race; roots are born Ready via from_specs). P1-3: the
+/// `fix::r{N}::#join` residue task that owned every smoke file is GONE — file-less findings are
+/// attributed by evidence (attribute_findings) and the remainder returns as KNOWN BUGS for the
+/// caller's event. `lang` is threaded (the earlier draft hardcoded Python — a non-Python run
+/// would have gotten Python fix instructions in every task). Deterministic given `read_source` —
+/// tested without a fleet against an archived tree, read-only.
 /// F781/#16 (design commit 2): everything needed to construct a GooseAgentDispatcher, BY VALUE,
 /// so a second dispatcher with identical semantics can be built later (the fix-round scheduler
 /// run builds a FRESH one — reusing run 1's would re-arm its OnceLock no-op, stale
@@ -30480,14 +30755,19 @@ fn fix_round_specs(
     lang: TargetLang,
     spec: &str,
     rollup: Option<&serde_json::Value>,
-) -> Vec<goose_swarm::TaskSpec> {
-    let (groups, unassigned) = group_findings_by_file(findings, all_files);
+    read_source: &dyn Fn(&str) -> Option<String>,
+) -> (Vec<goose_swarm::TaskSpec>, Vec<String>) {
+    // P1-3: evidence-based attribution replaces the `fix::r{N}::#join` residue task that owned
+    // EVERY file. A finding the attribution cannot place is returned as a KNOWN BUG for the
+    // caller to emit — never a whole-tree worker (r0: the residue worker took 115 of a
+    // 138-minute wave while four file shards finished in 24 minutes, all promoted).
+    let (groups, known_bugs) = attribute_findings(findings, all_files, read_source);
     let fix_ids: Vec<String> = groups
         .iter()
         .map(|g| format!("fix::r{round}::{}", g.file))
         .collect();
     let taken: std::collections::HashSet<String> = groups.iter().map(|g| g.file.clone()).collect();
-    let mut specs: Vec<goose_swarm::TaskSpec> = groups
+    let specs: Vec<goose_swarm::TaskSpec> = groups
         .into_iter()
         .zip(fix_ids.iter())
         .map(|(g, id)| {
@@ -30508,23 +30788,7 @@ fn fix_round_specs(
             }
         })
         .collect();
-    if !unassigned.is_empty() {
-        specs.push(goose_swarm::TaskSpec {
-            id: format!("fix::r{round}::#join"),
-            description: smoke_fix_description(
-                &unassigned,
-                lang,
-                spec,
-                &render_repair_history(rollup, &[], &unassigned, round),
-            ),
-            difficulty: goose_swarm::Difficulty::Hard,
-            preferred_model: None,
-            owned_files: all_files.to_vec(),
-            deps: fix_ids,
-            subsplit: Vec::new(),
-        });
-    }
-    specs
+    (specs, known_bugs)
 }
 
 /// Build the worker instruction for the GOOSE_SWARM_SMOKE corrective re-dispatch from the smoke findings.
@@ -38252,9 +38516,6 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             // rating. Those strings are written by run_smoke_gate and the command probes — they are
             // engine facts, and a model opinion may not overrule a measurement.
             let mut minors: Vec<String> = Vec::new();
-            // The files the RATER named across every defect this round. Empty until RATE has run, and
-            // empty is the honest signal to fall back to the whole tree.
-            let mut join_scope: Vec<String> = Vec::new();
             if !verdict.findings.is_empty() {
                 sink.write_value(
                     serde_json::json!({"event": "phase", "phase": "rate", "round": round}),
@@ -38349,10 +38610,10 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                     first.extend(rest);
                     verdict.findings = first;
                 }
-                // Only a scope that is genuinely NARROWER than the tree is worth having. A rater that
-                // names every file has told us nothing, and a rater that named nothing must not shrink
-                // the residue worker's reach to zero.
-                join_scope = rated_files
+                // Only a scope that is genuinely NARROWER than the tree was worth having; its one
+                // consumer (the cross-file join twin) died with P1-3, so the scope survives ONLY
+                // as the event field below — a measurement, no longer a dispatch input.
+                let mut join_scope: Vec<String> = rated_files
                     .iter()
                     .filter(|f| smoke_all_files.contains(f))
                     .cloned()
@@ -39063,14 +39324,26 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                 // baseline. The round loop's next real-tree gate stays the sole authority on
                 // green; this path never touches green_blocking.
                 let baseline = verdict.findings.len();
-                let specs = fix_round_specs(
+                let fix_cwd = cwd.clone();
+                let (specs, known_bugs) = fix_round_specs(
                     &verdict.findings,
                     &smoke_all_files,
                     round as usize,
                     complete_lang,
                     &opts.prompt,
                     read_ledger_rollup(&cwd).as_ref(),
+                    &move |rel: &str| std::fs::read_to_string(fix_cwd.join(rel)).ok(),
                 );
+                if !known_bugs.is_empty() {
+                    // P1-3: the still-unattributed findings SHIP as known bugs — an event, never
+                    // the all-files residue task the fix DAG used to grow.
+                    sink.write_value(serde_json::json!({
+                        "event": "known_bugs",
+                        "round": round,
+                        "count": known_bugs.len(),
+                        "findings": known_bugs,
+                    }));
+                }
                 match goose_swarm::Dag::from_specs(specs) {
                     Err(e) => {
                         // NEVER `?` out of run_swarm from the advisory fix path — an unbuildable
@@ -39227,14 +39500,31 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                     }
                 }
             } else if (complete_parallel() || shard_this_round) && !fleet_models.is_empty() {
+                // P1-3: evidence-based attribution (endpoint-literal grep, else the entry file)
+                // runs BEFORE the wave, so a finding the gate could not name a file for rides its
+                // real file's shard instead of waiting for a whole-tree residue worker.
+                let fan_read_cwd = cwd.clone();
                 let (groups, unassigned) =
-                    group_findings_by_file(&verdict.findings, &smoke_all_files);
+                    attribute_findings(&verdict.findings, &smoke_all_files, &move |rel: &str| {
+                        std::fs::read_to_string(fan_read_cwd.join(rel)).ok()
+                    });
                 eprintln!(
-                    "complete: fix round {round} — {} file-group(s) fanned across {} model(s), {} unassigned",
+                    "complete: fix round {round} — {} file-group(s) fanned across {} model(s), {} known bug(s)",
                     groups.len(),
                     fleet_models.len(),
                     unassigned.len()
                 );
+                if !unassigned.is_empty() {
+                    // Still-unattributed findings SHIP as known bugs — an event the score and the
+                    // operator can read, never a task owning every file (P1-3; r0's residue
+                    // worker took 115 of a 138-minute wave while four file shards took 24).
+                    sink.write_value(serde_json::json!({
+                        "event": "known_bugs",
+                        "round": round,
+                        "count": unassigned.len(),
+                        "findings": unassigned,
+                    }));
+                }
                 if !groups.is_empty() {
                     let baseline = verdict.findings.len();
                     let taken: std::collections::HashSet<String> =
@@ -39403,124 +39693,11 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                         "unassigned": unassigned.len(),
                     }));
                 }
-                // A finding that names no file still gets one shot after the partitioned wave —
-                // S1 increment 3: as a JOIN TWIN under the same shadow-and-gate discipline, not
-                // the `speculative: false` direct write this was. That flag made this the LAST
-                // dispatch in the whole repair tail whose agent touched the real tree ungraded.
-                // The gate must run on the REAL tree first: the round's opening count is stale
-                // the moment a shard promotes, so the join's honest baseline is the post-wave
-                // tree. If that gate cannot run, no promote decision can be honest — skip the
-                // join entirely; the loop head re-gates next round and the findings drive it
-                // there. (A sentinel baseline here would promote on UNKNOWN, the vacuous-pass
-                // trap with the sign flipped.)
-                // F862: the join twin's baseline and grade were BOTH run_smoke_gate — internally
-                // consistent, but a SUBSET of the ruler that opened the round, so a cross-file
-                // finding visible only to the composite categories could neither hold the twin
-                // accountable nor be repaired by it. One ruler here too.
-                let post_wave_gate = if unassigned.is_empty() {
-                    None
-                } else {
-                    Some(
-                        one_ruler_grade(
-                            &cwd,
-                            &opts.prompt,
-                            complete_lang,
-                            &smoke_all_files,
-                            delivery_on || spec_contract_enabled(),
-                            missing_deliverable_gate,
-                        )
-                        .await,
-                    )
-                };
-                if let Some(post_wave) = post_wave_gate.and_then(|(n, _)| n) {
-                    let task_id = "complete-fix::cross-file".to_string();
-                    sink.write_value(serde_json::json!({
-                        "event": "complete_fix_dispatched",
-                        "round": round, "shard": "(cross-file)", "model": model_id.as_str(),
-                        "task_id": task_id, "baseline_findings": post_wave,
-                    }));
-                    let started = std::time::Instant::now();
-                    let req = DispatchRequest {
-                        task_id: task_id.clone(),
-                        description: smoke_fix_description(
-                            &unassigned,
-                            complete_lang,
-                            &opts.prompt,
-                            &render_repair_history(
-                                read_ledger_rollup(&cwd).as_ref(),
-                                &smoke_all_files,
-                                &unassigned,
-                                round as usize,
-                            ),
-                        ),
-                        device_id: dev_id,
-                        model_id: model_id.clone(),
-                        context_slice: String::new(),
-                        attempt: round,
-                        // Whole-tree twin semantics: which file a cross-file fix needs is exactly
-                        // what is unknown, so it owns everything and its shadow (cp -r of the
-                        // POST-promote tree — this dispatch is after the wave's barrier) promotes
-                        // in full or not at all.
-                        // SCOPED BY THE RATER, when the rater could say. The comment above is from
-                        // before the TEST fan and RATE could answer this: the scope is no longer unknown.
-                        // MEASURED: this worker took 115 minutes of a 138-minute wave — 83% — owning all
-                        // eight files, while the four file-attributed shards beside it ran in parallel
-                        // and finished in 24 minutes wall-clock, all four promoted. Falls back to the
-                        // whole tree whenever the rater named nothing, or named everything.
-                        owned_files: if join_scope.is_empty() {
-                            smoke_all_files.clone()
-                        } else {
-                            join_scope.clone()
-                        },
-                        all_files: smoke_all_files.clone(),
-                        prior_hint: None,
-                        subsplit: Vec::new(),
-                        speculative: true,
-                        // A FIX worker must honour the user's choices too — a fix that re-introduces
-                        // `Decimal` after the user chose integer cents is still wrong.
-                        user_decisions: user_decisions.clone(),
-                        doc_facts: doc_facts.clone(),
-                        // Fix/sink dispatch: no DAG neighborhood → the contract bundle stays unscoped (full).
-                        neighborhood: Vec::new(),
-                    };
-                    let ran = tokio::time::timeout(
-                        std::time::Duration::from_secs(fix_cap_eff),
-                        smoke_fix_dispatcher.run(req),
-                    )
-                    .await;
-                    // GRADE THE TREE, NOT THE AGENT'S EXIT — third application of the one rule,
-                    // now on the composed preview with the round's full ruler (F883/F862).
-                    let (verified, join_changed, _est) = smoke_fix_dispatcher
-                        .grade_promotion_preview(
-                            &task_id,
-                            &cwd,
-                            &opts.prompt,
-                            complete_lang,
-                            &smoke_all_files,
-                            delivery_on || spec_contract_enabled(),
-                            missing_deliverable_gate,
-                        )
-                        .await;
-                    let promoted = join_changed && shard_beats_baseline(verified, post_wave);
-                    // Same omission as the fan above: the residue worker can be the only thing that
-                    // lands in a round, and if it does not say so the round reads as barren.
-                    last_round_promoted = last_round_promoted || promoted;
-                    if promoted {
-                        smoke_fix_dispatcher.promote_speculative(&task_id).await;
-                    } else {
-                        smoke_fix_dispatcher.discard_speculative(&task_id).await;
-                    }
-                    sink.write_value(serde_json::json!({
-                        "event": "complete_fix_completed",
-                        "round": round, "shard": "(cross-file)", "model": model_id.as_str(),
-                        "task_id": task_id,
-                        "secs": started.elapsed().as_secs(),
-                        "agent_ok": matches!(ran, Ok(Ok(_))),
-                        "verified_findings": verified,
-                        "baseline_findings": post_wave,
-                        "promoted": promoted,
-                    }));
-                }
+                // P1-3: the cross-file JOIN TWIN is gone. It was the whole-tree residue worker
+                // by another name — owning everything whenever the rater named nothing, measured
+                // at 115 of a 138-minute wave (83%) against 24 minutes for the four file shards
+                // beside it. Unattributed findings now ship as the known_bugs event above, and
+                // the loop head re-gates next round.
             } else {
                 eprintln!("complete: fix round {round} against the distilled failure ...");
                 let fix_model_id = model_id.clone();
