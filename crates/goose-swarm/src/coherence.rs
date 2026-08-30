@@ -1,16 +1,13 @@
 //! Swarm-coherence primitives (Phase 1, deterministic — no model in the path).
 //!
-//! Two pure helpers that make decomposed work fit together by construction, both fully deterministic
-//! so they are unit-testable here without a fleet:
+//! One pure helper that makes decomposed work fit together by construction, fully deterministic
+//! so it is unit-testable here without a fleet:
 //!
-//! 1. [`extract_signatures`] — TIER-A backward extraction. Given a built dependency's source, return
-//!    ONLY its declaration surface (function/method signatures with bodies removed; type/const/var
-//!    declarations kept verbatim). This replaces injecting a dependency's WHOLE body into a consumer's
-//!    prompt with the exact, smaller, body-noise-free signatures it actually needs to call.
-//!
-//! 2. [`scope_contract_bundle`] — DAG-scoped context. The frozen-contract bundle is one global string
-//!    holding EVERY module's stub (`### module: <id>` sections). Scope it to a worker's DAG neighborhood
-//!    (its deps ∪ its consumers ∪ itself) so per-worker context is O(degree), not O(total modules).
+//! [`extract_signatures`] — TIER-A backward extraction. Given a built dependency's source, return
+//! ONLY its declaration surface (function/method signatures with bodies removed; type/const/var
+//! declarations kept verbatim). This replaces injecting a dependency's WHOLE body into a consumer's
+//! prompt with the exact, smaller, body-noise-free signatures it actually needs to call.
+//! (`scope_contract_bundle`, the frozen-bundle scoper, died with the CONTRACTS phase — P1-4.)
 //!
 //! HEURISTIC, NOT A FULL AST (Phase 1, by design): the extractor is a brace/indentation-aware line
 //! scanner, not a language parser. It assumes the common K&R style (a block's opening `{` sits on the
@@ -296,30 +293,6 @@ fn ends_python_sig(line: &str) -> bool {
     code.trim_end().ends_with(':')
 }
 
-/// Scope a frozen-contract `bundle` to the modules in `neighborhood`. The bundle is a concatenation of
-/// `### module: <id>` sections (see `generate_contracts`); a section is kept iff its `<id>` is in the
-/// neighborhood. An empty neighborhood means "no scoping info" and returns the bundle unchanged, so
-/// callers with no DAG neighborhood (fix/sink/mock dispatches) fall back to the full bundle.
-pub fn scope_contract_bundle(bundle: &str, neighborhood: &[String]) -> String {
-    if neighborhood.is_empty() {
-        return bundle.to_string();
-    }
-    const HDR: &str = "### module: ";
-    let keep_set: std::collections::HashSet<&str> =
-        neighborhood.iter().map(|s| s.as_str()).collect();
-    let mut out = String::new();
-    let mut keep = false;
-    for line in bundle.split_inclusive('\n') {
-        if let Some(rest) = line.strip_prefix(HDR) {
-            keep = keep_set.contains(rest.trim());
-        }
-        if keep {
-            out.push_str(line);
-        }
-    }
-    out
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -473,40 +446,5 @@ pub const CLOSE: &str = \"}\";
     #[test]
     fn other_language_extracts_nothing() {
         assert_eq!(extract_signatures("puts 'hi'", SigLang::Other), "");
-    }
-
-    #[test]
-    fn scope_keeps_only_neighborhood_sections() {
-        let bundle = "\
-### module: a
-def a(): ...
-
-### module: b
-def b(): ...
-
-### module: c
-def c(): ...
-
-";
-        let scoped = scope_contract_bundle(bundle, &["a".to_string(), "c".to_string()]);
-        assert!(scoped.contains("### module: a"));
-        assert!(scoped.contains("def a(): ..."));
-        assert!(!scoped.contains("### module: b"));
-        assert!(!scoped.contains("def b(): ..."));
-        assert!(scoped.contains("### module: c"));
-        assert!(scoped.contains("def c(): ..."));
-    }
-
-    #[test]
-    fn scope_empty_neighborhood_is_passthrough() {
-        let bundle = "### module: a\ndef a(): ...\n\n";
-        assert_eq!(scope_contract_bundle(bundle, &[]), bundle);
-    }
-
-    #[test]
-    fn scope_full_neighborhood_is_identity() {
-        let bundle = "### module: a\ndef a(): ...\n\n### module: b\ndef b(): ...\n\n";
-        let all = vec!["a".to_string(), "b".to_string()];
-        assert_eq!(scope_contract_bundle(bundle, &all), bundle);
     }
 }

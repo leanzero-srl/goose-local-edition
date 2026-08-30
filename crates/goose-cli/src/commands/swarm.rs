@@ -212,10 +212,10 @@ pub struct SwarmConfig {
     /// is in. Clamped to [10, draft_timeout]. None => default 45. env GOOSE_SWARM_STRAGGLER_GRACE_SECS wins.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub straggler_grace_secs: Option<u64>,
-    /// #135 degrade-straggler-stop: extend straggler-stop to the CONTRACTS and DETAIL planning fanouts.
-    /// SEPARATE from `straggler_stop` because these CAN change a worker's build inputs — a stopped straggler
-    /// drops that module's frozen interface / detailed spec, degrading exactly like a timed-out contract/
-    /// detail (the module builds from its brief; integrate-verify reconciles). At most one module degrades.
+    /// #135 degrade-straggler-stop: extend straggler-stop to the DETAIL planning fanout. SEPARATE from
+    /// `straggler_stop` because it CAN change a worker's build inputs — a stopped straggler drops that
+    /// module's detailed spec, degrading exactly like a timed-out detail (the module builds from its
+    /// brief; integrate-verify reconciles). At most one module degrades.
     /// None => OFF. env GOOSE_SWARM_STRAGGLER_STOP_DEGRADE overrides. Reuses `straggler_grace_secs`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub straggler_stop_degrade: Option<bool>,
@@ -316,16 +316,6 @@ pub struct SwarmConfig {
     /// cannot ship a truncated deliverable. env overrides; 0 disables.
     #[serde(default = "default_progress_watchdog_secs")]
     pub progress_watchdog_secs: u64,
-    /// ⚠️ BAKED ON — the golden formula sets this in `Default for SwarmConfig`. Any
-    /// "off by default" wording below describes the PRE-BAKE world and is kept for its reasoning (F392).
-    /// #median-slash: drop the frozen contract bundle (all modules' signature stubs) from the integrate-verify
-    /// SINK's prompt. The sink RUNS the built app end-to-end via the developer extension (reads the real files);
-    /// it does NOT build against the stubs, so the O(N-modules) bundle is dead context that only slows its
-    /// prefill — and the sink is the slowest task (measured 1500s, ran to the cap). Shrinking its prefill speeds
-    /// it so it finishes before the cap. Only the sink is affected; the golden run/checks are untouched. None =>
-    /// OFF (byte-identical). env GOOSE_SWARM_SINK_LEAN_PREFILL overrides.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub sink_lean_prefill: Option<bool>,
     /// SINK IDLE-FILL (`GOOSE_SWARM_SINK_REVIEW`): while `integrate-verify` runs — a task that owns
     /// nothing, blocks nothing, and holds the fleet — give the FREE nodes read-only whole-tree review
     /// work, and hand its findings to the join.
@@ -710,9 +700,6 @@ pub struct SwarmConfig {
     pub smoke: bool,
     /// ⚠️ BAKED ON — the golden formula sets this in `Default for SwarmConfig` (F393).
     #[serde(default = "default_true")]
-    pub contracts: bool,
-    /// ⚠️ BAKED ON — the golden formula sets this in `Default for SwarmConfig` (F393).
-    #[serde(default = "default_true")]
     pub complete: bool,
     /// Seconds a task must run before the judge may SPLIT it. The provider forced 300 on every desktop run
     /// with a measured reason ("median 219s / p75 406s, so 900 split almost nothing while 300 splits the fat
@@ -850,14 +837,6 @@ pub struct SwarmConfig {
     /// GOOSE_SWARM_USER_NOTES env overrides.
     #[serde(default)]
     pub user_notes: bool,
-    /// ⚠️ BAKED ON — the golden formula sets this in `Default for SwarmConfig`. Any
-    /// "off by default" wording below describes the PRE-BAKE world and is kept for its reasoning (F392).
-    /// Parse the frozen contract stubs and record WHAT was frozen in the contracts event. Today the bundle is
-    /// accepted raw on a non-empty check and its text is never persisted, so the interface every worker is
-    /// told to honour cannot be audited afterwards. Observability only — it gates nothing. OFF by default.
-    /// GOOSE_SWARM_CONTRACT_VALIDATE env overrides.
-    #[serde(default = "default_true")]
-    pub contract_validate: bool,
 
     /// #130 backstop: flatten the architect's false-serialization dependency CHAINS into a FLAT FAN. CONTRACTS
     /// freezes a signature-only interface for EVERY module into every worker BEFORE it writes code, and no
@@ -887,16 +866,6 @@ pub struct SwarmConfig {
     /// burning the whole idle window. 0 = OFF (byte-identical). GOOSE_SWARM_SPIRAL_THINKING_CHARS overrides.
     #[serde(default)]
     pub spiral_thinking_chars: u64,
-    /// CONTRACT RETRY (#131 enabler): the CONTRACTS phase freezes a signature-only interface per module BEFORE
-    /// EXECUTE so workers agree on each other's API. It runs on a freshly-loaded 262k-ctx fleet where the FIRST
-    /// call is slow; measured on mustsolve-test1, all 3 stubs came back empty within the 75s budget and the
-    /// engine logged "no stubs produced — skipping injection", so the whole frozen-interface injection was
-    /// SILENTLY absent and workers diverged (Diff / DiffTemplates / Compute for one function). When ON, an
-    /// empty/timed-out stub is retried once with a longer budget. OFF by default = single attempt, byte-
-    /// identical. (The per-module empty-reason warning is always on — a silent "no stubs" must never recur.)
-    /// GOOSE_SWARM_CONTRACT_RETRY env overrides.
-    #[serde(default)]
-    pub contract_retry: bool,
     /// Suspend the implementer read-prohibitions during a FIX round. A fix worker owns no files and is
     /// repairing a defect the gates already reproduced by RUNNING the app; a cross-module signature
     /// mismatch is by definition not visible in the one file the implementer rules allow it to read.
@@ -1068,14 +1037,6 @@ pub struct SwarmConfig {
     /// written none. Default ON. GOOSE_SWARM_ACT_NOW overrides.
     #[serde(default)]
     pub act_now_nudge: Option<bool>,
-    /// SWARM-COHERENCE Phase-1 (DAG-scoped context, deterministic). The frozen-contract bundle is one global
-    /// string holding EVERY module's stub, injected identically into EVERY worker — O(total modules) per
-    /// worker, growing with every split. When ON, scope it to the worker's DAG neighborhood (its deps ∪ its
-    /// consumers ∪ itself) so per-worker context is O(degree). A worker with no neighborhood (fix/sink) keeps
-    /// the full bundle. `None`/OFF => the full unscoped bundle is injected exactly as before = byte-identical.
-    /// GOOSE_SWARM_SCOPED_CONTRACTS env overrides.
-    #[serde(default)]
-    pub scoped_contracts: Option<bool>,
     /// ⚠️ BAKED ON — the golden formula sets this in `Default for SwarmConfig`. Any
     /// "off by default" wording below describes the PRE-BAKE world and is kept for its reasoning (F392).
     /// SINK DECOMPOSITION (Phase-1). The planner emits ONE terminal `integrate-verify` sink that depends on
@@ -1222,7 +1183,6 @@ impl Default for SwarmConfig {
             max_tool_response_chars: None,
             scout_budget_secs: default_scout_budget_secs(),
             progress_watchdog_secs: 900,
-            sink_lean_prefill: Some(true),
             sink_review: None,
             backbone_skip_confident: Some(true),
             detail_memo: Some(true),
@@ -1261,7 +1221,6 @@ impl Default for SwarmConfig {
             ask_max_q: Some(3),
             split: Some(true),
             smoke: true,
-            contracts: true,
             complete: true,
             split_secs: 300,
             complete_cap_secs: default_complete_cap_secs(),
@@ -1280,11 +1239,9 @@ impl Default for SwarmConfig {
             sink_prebuild: true,
             persona: true,
             user_notes: true,
-            contract_validate: true,
             relax_contracted_deps: false,
             owned_file_fence: false,
             spiral_thinking_chars: 0,
-            contract_retry: false,
             // ON. A repair is not first authoring, and the sink is a repair.
             //
             // `is_fix_round` is TRUE for integrate-verify (it owns no files and is not a verify:: id), so
@@ -1327,7 +1284,6 @@ impl Default for SwarmConfig {
             think_off_test_authors: None,
             force_write_tool: None,
             act_now_nudge: Some(true),
-            scoped_contracts: None,
             fan_verify: true,
             require_tests: true,
             parallel_tests: Some(true),
@@ -3308,41 +3264,6 @@ fn straggler_stop_degrade_enabled(cfg: Option<bool>) -> bool {
     )
 }
 
-/// #median-slash sink-lean-prefill gate: env GOOSE_SWARM_SINK_LEAN_PREFILL wins, else config, else default OFF.
-///
-/// ⚠️ IT IS ALREADY ON. `Default for SwarmConfig` sets `sink_lean_prefill: Some(true)`, so the sink
-/// has been running WITHOUT the frozen contract bundle in every archived run. The field doc above
-/// still says "None => OFF (byte-identical)", which was true before the golden bake and has been
-/// false since — and it misled me for a full turn (F392). Read this resolver and the Default impl,
-/// never the field doc.
-///
-/// ⚠️ THIS LEVER IS TWO-SIDED — do not treat the field doc as the case for it; it records only the
-/// upside ("dead context that only slows its prefill").
-///
-/// PRO, and it targets a real failure: the sink is the slowest task and the one that runs to the cap.
-/// A capped sink is the single highest-leverage defect on the board — the arm's worst cell (0.4780)
-/// is the run whose integrate-verify was cut off at 1800.1s mid-repair, and removing that one cell
-/// from the arm moves the node-scaling design from 51 matched pairs to 11. Shrinking the slowest
-/// task's prefill is a direct attack on it.
-///
-/// CON, which the field doc does not state: this deletes the frozen-contract bundle from the ONE task
-/// whose job is reconciling cross-module interfaces. `frozen_interfaces_block` describes itself as the
-/// reference for "the #1 cause of passing-unit-tests but a broken end-to-end integration" — and a
-/// SHAPE check is exactly what the capped run lost (sync_shape 1.00 -> 0.00). Running the app finds
-/// that a mismatch EXISTS; the frozen bundle is what says which side is wrong. Without it the sink can
-/// still detect the break and then repair the wrong end of it, and "cut off mid-repair after 9 writes"
-/// is precisely the state the worst cell died in.
-///
-/// So the two sides pull on the SAME metric in opposite directions — and the ON side is what has
-/// been shipping. The archive is weak circumstantial support for the CON: with the bundle already
-/// absent from every sink, `sync_shape` fails in three of four 3-node cells. That is an association
-/// across five runs with nothing varied, not a finding. The arm to run is therefore
-/// `sink_lean_prefill=0` — turn it OFF and see whether restoring the contract to the one
-/// cross-module reconciler recovers the integration checks.
-fn sink_lean_prefill_enabled(cfg: Option<bool>) -> bool {
-    straggler_stop_resolved(std::env::var("GOOSE_SWARM_SINK_LEAN_PREFILL").ok(), cfg)
-}
-
 /// #136 repeat-breaker gate: env GOOSE_SWARM_REPEAT_BREAK wins, else config, else default OFF.
 fn repeat_break_enabled(cfg: Option<bool>) -> bool {
     straggler_stop_resolved(std::env::var("GOOSE_SWARM_REPEAT_BREAK").ok(), cfg)
@@ -3823,6 +3744,18 @@ fn planner_wall(_planner_timeout_secs: u64) -> u64 {
 // to be disarmed outright. A threshold that must be disarmed for the kind it matters most for is not
 // measuring the thing it claims to. Reading the reasoning is; that is the judge.
 
+/// #135 pure decision: given the number of drafts requested (`n`) and how many have so far returned a VALID
+/// skeleton (`valid`), should the grace timer for the lone straggler be armed now? True only when every draft
+/// but one is in (`valid >= n - 1`) AND we already hold at least 2 valid drafts (agreement needs a pair).
+/// This is deliberately conservative: it only ever races the SINGLE last-place draft, never sacrificing draft
+/// diversity while more than one draft is still outstanding. n < 3 can never arm (no lone straggler to stop).
+/// Its last live consumer (the CONTRACTS fan's straggler collector) died with P1-4; the retained
+/// `collect_drafts_with_straggler_stop` test model still exercises it, so it lives under cfg(test).
+#[cfg(test)]
+fn should_arm_straggler_grace(n: usize, valid: usize) -> bool {
+    n >= 3 && valid >= 2 && valid >= n - 1
+}
+
 /// #136: consecutive identical tool calls that trip the repeat breaker. MEASURED across 268 shell-bearing
 /// tasks in 44 real runs: the longest legitimate consecutive identical run was 4 (`swift build` re-runs); the
 /// one pathology hit 31. 6 leaves a 2-call margin above every observed legitimate run.
@@ -3881,78 +3814,6 @@ fn short_digest(s: &str) -> String {
 // 122-character brief scored 42.7% against 88.7% for the run where it got a 1,497-character spec
 // containing the vendor's /v1 prefix. "The engine was willing to spend 10-19 MINUTES re-drafting a plan
 // and 75 SECONDS writing the specs that plan depends on."
-
-/// #135: resolve the straggler grace window (seconds). An EXPLICIT env or config value wins and is
-/// used fixed, exactly as before; None means DERIVE it from the round's own timings at arming
-/// (G1 — a constant grace cannot fit a fleet whose calls span 30-900s: 45s was a fraction of one
-/// call and structurally degraded best-of-N to N-1). NOT clamped here — the caller clamps once
-/// draft_timeout is known.
-fn straggler_grace_resolved(env: Option<String>, cfg: Option<u64>) -> Option<u64> {
-    env.and_then(|s| s.trim().parse::<u64>().ok()).or(cfg)
-}
-
-fn straggler_grace_secs(cfg: Option<u64>) -> Option<u64> {
-    straggler_grace_resolved(std::env::var("GOOSE_SWARM_STRAGGLER_GRACE_SECS").ok(), cfg)
-}
-
-/// #135 pure decision: given the number of drafts requested (`n`) and how many have so far returned a VALID
-/// skeleton (`valid`), should the grace timer for the lone straggler be armed now? True only when every draft
-/// but one is in (`valid >= n - 1`) AND we already hold at least 2 valid drafts (agreement needs a pair).
-/// This is deliberately conservative: it only ever races the SINGLE last-place draft, never sacrificing draft
-/// diversity while more than one draft is still outstanding. n < 3 can never arm (no lone straggler to stop).
-fn should_arm_straggler_grace(n: usize, valid: usize) -> bool {
-    n >= 3 && valid >= 2 && valid >= n - 1
-}
-
-/// #135 generic straggler collector for a fleet fanout where EVERY completed task is a usable result and any
-/// completion counts toward the quorum (e.g. SCOUTS — advisory research with no parse/validity gate, so there
-/// is no "dead" concept). Drains `js`; once every task but one has completed (should_arm_straggler_grace on
-/// the completion count), the lone straggler gets `grace_secs` then is aborted. Returns (results in completion
-/// order, stopped count). `n` is the initial task count. Shares the verified grace/abort mechanics with the
-/// draft collector (same 1-day bounded inert timer, same biased/guarded select).
-async fn collect_fleet_with_straggler_stop<R>(
-    mut js: tokio::task::JoinSet<R>,
-    n: usize,
-    grace_secs: u64,
-) -> (Vec<R>, usize)
-where
-    R: Send + 'static,
-{
-    let mut results: Vec<R> = Vec::new();
-    let mut done = 0usize;
-    let mut stopped = 0usize;
-    let grace_timer = tokio::time::sleep(std::time::Duration::from_secs(86_400));
-    tokio::pin!(grace_timer);
-    let mut armed = false;
-    while !js.is_empty() {
-        tokio::select! {
-            biased;
-            joined = js.join_next() => {
-                match joined {
-                    Some(Ok(r)) => {
-                        results.push(r);
-                        done += 1;
-                    }
-                    // A panicked/aborted task still reduces the outstanding count (it will never deliver).
-                    Some(Err(_)) => done += 1,
-                    None => break,
-                }
-                if !armed && should_arm_straggler_grace(n, done) {
-                    grace_timer
-                        .as_mut()
-                        .reset(tokio::time::Instant::now() + std::time::Duration::from_secs(grace_secs));
-                    armed = true;
-                }
-            }
-            _ = &mut grace_timer, if armed => {
-                stopped = js.len();
-                js.abort_all();
-                while js.join_next().await.is_some() {}
-            }
-        }
-    }
-    (results, stopped)
-}
 
 /// The fenced example blocks of a fetched document, which is where the wire contract actually lives.
 ///
@@ -7926,6 +7787,31 @@ mod tests {
     }
 
     #[test]
+    fn straggler_grace_arms_only_for_the_lone_last_draft() {
+        // n < 3: no lone straggler concept — never arm (both drafts are needed for agreement).
+        assert!(!should_arm_straggler_grace(1, 1));
+        assert!(!should_arm_straggler_grace(2, 2));
+        // n == 3: Mihai's "2 of 3" — arm exactly when 2 valid are in and 1 is still out.
+        assert!(
+            !should_arm_straggler_grace(3, 1),
+            "one valid draft is not a quorum"
+        );
+        assert!(
+            should_arm_straggler_grace(3, 2),
+            "2 of 3 valid -> race the 3rd"
+        );
+        assert!(should_arm_straggler_grace(3, 3));
+        // n == 6: conservative — only ever race the single last draft (5 of 6), never sacrifice diversity
+        // while more than one draft is still outstanding.
+        assert!(!should_arm_straggler_grace(6, 2));
+        assert!(!should_arm_straggler_grace(6, 4));
+        assert!(
+            should_arm_straggler_grace(6, 5),
+            "5 of 6 valid -> race the 6th"
+        );
+    }
+
+    #[test]
     fn stream_decode_retry_defaults_on_and_opts_out() {
         // #121 ships ON: unset env+config resolves TRUE so the false-green fix reaches every user, including
         // desktop configs that omit the field.
@@ -7984,49 +7870,6 @@ mod tests {
             Some("nonsense".into()),
             Some(true)
         ));
-    }
-
-    #[test]
-    fn straggler_grace_resolves_env_then_config_then_derive() {
-        // G1: no explicit value means DERIVE per round (None), no baked constant — an explicit
-        // env or config value stays a fixed override exactly as before.
-        assert_eq!(straggler_grace_resolved(None, None), None);
-        assert_eq!(straggler_grace_resolved(None, Some(30)), Some(30));
-        assert_eq!(
-            straggler_grace_resolved(Some("90".into()), Some(30)),
-            Some(90)
-        );
-        // Unparseable env falls through to config, then to derive.
-        assert_eq!(
-            straggler_grace_resolved(Some("abc".into()), Some(30)),
-            Some(30)
-        );
-        assert_eq!(straggler_grace_resolved(Some("abc".into()), None), None);
-    }
-
-    #[test]
-    fn straggler_grace_arms_only_for_the_lone_last_draft() {
-        // n < 3: no lone straggler concept — never arm (both drafts are needed for agreement).
-        assert!(!should_arm_straggler_grace(1, 1));
-        assert!(!should_arm_straggler_grace(2, 2));
-        // n == 3: Mihai's "2 of 3" — arm exactly when 2 valid are in and 1 is still out.
-        assert!(
-            !should_arm_straggler_grace(3, 1),
-            "one valid draft is not a quorum"
-        );
-        assert!(
-            should_arm_straggler_grace(3, 2),
-            "2 of 3 valid -> race the 3rd"
-        );
-        assert!(should_arm_straggler_grace(3, 3));
-        // n == 6: conservative — only ever race the single last draft (5 of 6), never sacrifice diversity
-        // while more than one draft is still outstanding.
-        assert!(!should_arm_straggler_grace(6, 2));
-        assert!(!should_arm_straggler_grace(6, 4));
-        assert!(
-            should_arm_straggler_grace(6, 5),
-            "5 of 6 valid -> race the 6th"
-        );
     }
 
     // The async abort/grace path — the pure predicate test above did NOT exercise this, and that is exactly
@@ -8182,49 +8025,6 @@ mod tests {
         // …and near the hard backstop the grace can never outrun draft_timeout.
         assert_eq!(derived_straggler_grace(470, 480), 10);
         assert_eq!(derived_straggler_grace(400, 480), 80);
-    }
-
-    // Scout collector (generic, every completion counts — advisory phase, no validity gate).
-    #[tokio::test]
-    async fn fleet_straggler_stop_aborts_lone_lagging_scout() {
-        let mut js = tokio::task::JoinSet::new();
-        js.spawn(async { "libraries".to_string() });
-        js.spawn(async { "edge-cases".to_string() });
-        js.spawn(async {
-            tokio::time::sleep(std::time::Duration::from_secs(30)).await;
-            "architecture".to_string()
-        });
-        // Two scouts land instantly and arm a 1s grace; the 30s straggler is aborted ~1s later.
-        let (results, stopped) = collect_fleet_with_straggler_stop(js, 3, 1).await;
-        assert_eq!(stopped, 1, "the lone lagging scout is stopped");
-        assert_eq!(results.len(), 2, "proceed on the 2 that landed");
-        assert!(!results.contains(&"architecture".to_string()));
-    }
-
-    #[tokio::test]
-    async fn fleet_straggler_stop_keeps_all_when_none_lags() {
-        let mut js = tokio::task::JoinSet::new();
-        for k in ["a", "b", "c"] {
-            let s = k.to_string();
-            js.spawn(async move { s });
-        }
-        let (results, stopped) = collect_fleet_with_straggler_stop(js, 3, 1).await;
-        assert_eq!(stopped, 0);
-        assert_eq!(results.len(), 3);
-    }
-
-    #[tokio::test]
-    async fn fleet_straggler_stop_never_arms_below_three() {
-        // n < 3 can never arm — both tasks are awaited even if one is slower.
-        let mut js = tokio::task::JoinSet::new();
-        js.spawn(async { "a".to_string() });
-        js.spawn(async {
-            tokio::time::sleep(std::time::Duration::from_millis(60)).await;
-            "b".to_string()
-        });
-        let (results, stopped) = collect_fleet_with_straggler_stop(js, 2, 1).await;
-        assert_eq!(stopped, 0, "no lone straggler concept below 3");
-        assert_eq!(results.len(), 2);
     }
 
     #[test]
@@ -10267,56 +10067,6 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
         assert_eq!(parse_judge_reply("VERDICT|HIGH|").verdict, Verdict::Ok);
     }
 
-    /// GOOSE_SWARM_REQUIRE_TESTS. An EMPTY suite is not a PASSING suite.
-    ///
-    /// MEASURED on verify-6 (the only fan_verify run that reached run_finished): `verify::analytics-io`
-    /// reported "No tests/ directory exists yet — this is expected", the `tests` task reported "the failures
-    /// are expected", and the run still shipped complete_result{passed:true, verified:true}. The mechanism is
-    /// that only `Failures` ever pushed a finding, so NoTests was silently green.
-    /// An unparseable stub must LEAVE the frozen bundle, not merely be warned about.
-    /// `fanout_over_fleet` promises "Results come back in item order" and the straggler variant
-    /// bills itself as the same thing with a tail-stop — but its collector pushed in COMPLETION
-    /// order, which is race-determined across nodes. MEASURED: two runs of one config produced
-    /// [libraries, architecture] and [architecture, libraries], changing the research block handed
-    /// to the planner by ordering alone. This pins the promise for every caller: scouts, the frozen
-    /// contract bundle, and the detail fan.
-    #[test]
-    fn the_straggler_fanout_returns_results_in_item_order_not_completion_order() {
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        // Item 0 is deliberately the SLOWEST, so completion order is the exact reverse of item order.
-        let items = vec![(0usize, 90u64), (1, 60), (2, 30), (3, 1)];
-        let out = rt.block_on(fanout_over_fleet_straggler(
-            vec!["a".into(), "b".into(), "c".into(), "d".into()],
-            items,
-            0, // grace 0 => the await-all path, which already promised item order
-            "test",
-            None,
-            |(idx, delay): (usize, u64), _dev: String| async move {
-                tokio::time::sleep(std::time::Duration::from_millis(delay)).await;
-                idx
-            },
-        ));
-        assert_eq!(out, vec![0, 1, 2, 3], "await-all path must be item-ordered");
-
-        // And the STRAGGLER path, which is the one that was returning completion order.
-        let items = vec![(0usize, 90u64), (1, 60), (2, 30), (3, 1)];
-        let out = rt.block_on(fanout_over_fleet_straggler(
-            vec!["a".into(), "b".into(), "c".into(), "d".into()],
-            items,
-            30, // non-zero grace => the indexed collector path
-            "test",
-            None,
-            |(idx, delay): (usize, u64), _dev: String| async move {
-                tokio::time::sleep(std::time::Duration::from_millis(delay)).await;
-                idx
-            },
-        ));
-        assert!(
-            out.windows(2).all(|w| w[0] < w[1]),
-            "straggler path must be item-ordered, got {out:?}"
-        );
-    }
-
     /// The JOIN must never be handed the canonical spec AND a second copy of an engine-authored
     /// sweep. When fan_verify applies, the sink is excluded from the detail fan, so the description
     /// it carries is thin_integrate_verify_spec — which is >240 chars and used to pass the
@@ -10391,36 +10141,6 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
             "gate ON on the same spec must take the new branch — otherwise the gate does nothing \
              and the arm would measure a no-op"
         );
-    }
-
-    /// A STUB IS A SIGNATURE, NOT A BEHAVIOUR — the contract block must say so.
-    ///
-    /// r0's five worst defects were all this gap: `sync.py` read `body.get("items")` where the vendor
-    /// returns `"data"`, and parsed `amount` where it sends `amount_minor`. The worker had the
-    /// signature and never the data shape, and the real file was finished on disk when it ran —
-    /// `boot-wrapper` depends on two services and made ZERO tool calls.
-    #[test]
-    fn the_contract_block_licenses_a_targeted_read_of_the_real_file() {
-        let block = frozen_interfaces_block("### module: ledger\ndef load(path): ...\n");
-        assert!(
-            block.contains("A STUB IS A SIGNATURE, NOT A BEHAVIOUR"),
-            "the worker must be told the stub is not the whole truth"
-        );
-        assert!(
-            block.contains("ALREADY WRITTEN and on disk"),
-            "and that the file it needs exists — the DAG guarantees it"
-        );
-        // TARGETED, because the same prompt correctly warns that whole-file dumps degrade local models.
-        assert!(block.contains("grep") && block.contains("sed -n"));
-        assert!(
-            block.contains("never `cat` of a whole file"),
-            "permission to read is not permission to hoover up the tree"
-        );
-        // The original contract must survive intact — this ADDS, it does not replace.
-        assert!(block.contains("build against these EXACTLY"));
-        assert!(block.contains("### module: ledger"));
-        // And an empty bundle still yields nothing at all, so a run with no contracts is unchanged.
-        assert!(frozen_interfaces_block("").is_empty());
     }
 
     /// A BENCHMARK MUST GET ITS ONE FIX WAVE.
@@ -11327,55 +11047,6 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
         );
     }
 
-    #[test]
-    fn a_stub_that_does_not_parse_is_dropped_from_the_frozen_bundle() {
-        let bundle = "### module: store\nclass Store: ...\n\n### module: cli\ndef main() \u{2014}> None: ...\n\n"
-            .to_string();
-        let validation = serde_json::json!({"modules":[
-            {"module":"store","parsed":true},
-            {"module":"cli","parsed":false,"error":"invalid character '\u{2014}'"}
-        ]});
-        let out = drop_unparseable_stubs(bundle.clone(), &validation);
-        assert!(out.contains("### module: store"), "a good stub is kept");
-        // D1: the failed module's BODY must not be frozen as an interface — but the module may no
-        // longer vanish silently either. Its section becomes a MARKED absence that licenses one
-        // direct read (fired live: r2's `cli`, injected 3 of 4, with the banner still claiming the
-        // bundle was complete). Both properties pinned:
-        assert!(
-            !out.contains("def main()"),
-            "prose that does not parse must not be frozen as an interface"
-        );
-        assert!(
-            out.contains("### missing module: cli") && out.contains("CONTRACT UNAVAILABLE"),
-            "a failed stub must be a marked absence, never a silent hole: {out}"
-        );
-        // Validation absent (it did not run) => byte-identical, so the OFF path cannot change a run.
-        assert_eq!(
-            drop_unparseable_stubs(bundle.clone(), &serde_json::Value::Null),
-            bundle
-        );
-        // Nothing bad => byte-identical, so a healthy run is untouched.
-        let all_ok = serde_json::json!({"modules":[{"module":"store","parsed":true},{"module":"cli","parsed":true}]});
-        assert_eq!(drop_unparseable_stubs(bundle.clone(), &all_ok), bundle);
-
-        // EVERY stub bad => the bundle is EMPTIED, and the caller must not then claim it froze
-        // anything. The empty-bundle guard in run_swarm runs BEFORE this drop, so a bundle emptied
-        // HERE used to sail past it, print the success line and emit frozen: true with the pre-drop
-        // module count. MEASURED live: `store` failed `expected ':'` and the event still read
-        // modules: 4, frozen: true. The caller now counts the `### module: ` sections that survive,
-        // so this asserts the fact that count is derived from.
-        let all_bad = serde_json::json!({"modules":[
-            {"module":"store","parsed":false,"error":"expected ':'"},
-            {"module":"cli","parsed":false,"error":"invalid syntax"}
-        ]});
-        let emptied = drop_unparseable_stubs(bundle, &all_bad);
-        assert_eq!(
-            emptied.split("### module: ").skip(1).count(),
-            0,
-            "a bundle whose every stub failed must carry NO module sections — frozen must be false"
-        );
-    }
-
     /// A corrupt store must give a CLEAN error, never a traceback. The sink's spec already demanded this,
     /// which made it a model self-report; it is now deterministic.
     #[test]
@@ -11626,62 +11297,6 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
         assert!(thin.len() < full.len());
     }
 
-    /// A stub the model wrapped in a MARKDOWN FENCE is real code that merely does not parse.
-    ///
-    /// MEASURED h1-treat-4: 3 of 6 stubs failed `invalid syntax` at 147-3092 bytes with a bare
-    /// triple-backtick in their tails. The prompt explicitly says "no code fences" and the model's own
-    /// reasoning repeats the instruction back before fencing the block anyway — so this is fixed
-    /// deterministically, not by asking more firmly.
-    #[test]
-    fn a_fenced_stub_is_unwrapped_into_parseable_source() {
-        let fenced = "```python\nclass Store:\n def get(self, k: str) -> str: ...\n```";
-        let out = strip_code_fences(fenced);
-        assert!(!out.contains("```"));
-        assert!(out.contains("class Store:"));
-        // Unfenced source is returned byte-identical — this can only repair, never mangle.
-        let plain = "class Store:\n def get(self, k: str) -> str: ...\n";
-        assert_eq!(strip_code_fences(plain), plain);
-        // A stray UNPAIRED fence still yields usable source rather than nothing.
-        let stray = "```\nclass A: ...";
-        assert!(strip_code_fences(stray).contains("class A: ..."));
-        // Prose around a fenced block is dropped with the fence, which is the point.
-        let chatty =
-            "Here are the stubs:\n```python\ndef f(x: int) -> int: ...\n```\nHope that helps!";
-        let out2 = strip_code_fences(chatty);
-        assert!(out2.contains("def f(x: int) -> int: ..."));
-        assert!(!out2.contains("Hope that helps"));
-    }
-
-    /// A frozen contract stub that does not PARSE is not an interface — it is prose, and the worker that
-    /// receives it writes against nothing.
-    ///
-    /// MEASURED (h1-treat-2): 2 of 3 stubs failed to parse and `cli`'s error was literally
-    /// `invalid character '—'`. The cli worker then called `Store(args.store)`, passing argparse's str
-    /// where store.py annotates `store_path: Path`, and EVERY command of the shipped app died on `.mkdir`
-    /// and `/`. The run still reported passed+verified.
-    #[test]
-    fn smart_punctuation_that_breaks_generated_python_is_normalised() {
-        // The exact killer: an em-dash in code position.
-        let broken =
-            "def init(store_path: Path) -> None:  # create the dir — then the log\n    ...";
-        let fixed = sanitize_generated_source(broken);
-        assert!(!fixed.contains('\u{2014}'), "em-dash must be gone");
-        assert!(fixed.contains("# create the dir - then the log"));
-        // Curly quotes, non-breaking space and ellipsis are the same class of local-model artifact.
-        assert_eq!(
-            sanitize_generated_source("x = \u{2018}a\u{2019}"),
-            "x = 'a'"
-        );
-        assert_eq!(
-            sanitize_generated_source("s = \u{201c}hi\u{201d}"),
-            "s = \"hi\""
-        );
-        assert_eq!(sanitize_generated_source("a\u{00a0}= 1"), "a = 1");
-        // Ordinary ASCII source is returned byte-identical — this can only ever repair, never mangle.
-        let clean = "def f(p: Path) -> None:\n p.mkdir(parents=True)\n";
-        assert_eq!(sanitize_generated_source(clean), clean);
-    }
-
     /// THE FALSE GREEN THIS WHOLE CHECK EXISTS FOR (MEASURED, h1-treat-2).
     ///
     /// Every command of the produced app was broken, and the run still shipped passed+verified. Nothing
@@ -11918,6 +11533,29 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
         assert!(dribbled.recurring());
     }
 
+    /// P1-4: CONTRACTS is deleted, and no worker prompt may quietly reintroduce the frozen-stub
+    /// section. r2 measured the bundle NARROWING the build (meridian/viz/static silently dropped
+    /// from a 2,527-char contract; the worker built exactly its 9 contracted functions — the
+    /// causal origin of the GET / -> 404 critical). The prompt is assembled inline rather than by
+    /// a pure fn, so this is a source-level gate: if the emitted heading returns anywhere in this
+    /// file, the deletion has regressed and the gate goes red.
+    #[test]
+    fn no_prompt_reintroduces_the_frozen_interfaces_section() {
+        let src = include_str!("swarm.rs");
+        // Built by concat so this test's own source can never satisfy its own search.
+        let heading = ["## FROZEN", " MODULE INTERFACES"].concat();
+        assert!(
+            !src.contains(&heading),
+            "the FROZEN MODULE INTERFACES prompt section was deleted with CONTRACTS (P1-4) \
+             and must not come back"
+        );
+        let injector = ["frozen_interfaces", "_block("].concat();
+        assert!(
+            !src.contains(&injector),
+            "no caller of the deleted contracts-bundle injector may return"
+        );
+    }
+
     /// ELECTRON PARITY. The desktop provider used to force SMOKE/SPLIT/CONTRACTS/COMPLETE onto the spawned
     /// engine, so a UI build and a headless `goose swarm run` of the SAME spec ran different engines — the
     /// four were always on for one and always off for the other. The provider no longer sets them; these
@@ -11926,10 +11564,7 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
     fn desktop_and_headless_resolve_the_same_quality_gates() {
         let d = SwarmConfig::default();
         assert!(d.smoke, "smoke was force-set to 1 for every desktop run");
-        assert!(
-            d.contracts,
-            "contracts was force-set to 1 for every desktop run"
-        );
+        // (contracts left this list with the CONTRACTS deletion, P1-4.)
         assert!(
             d.complete,
             "complete was force-set to 1 for every desktop run"
@@ -11980,11 +11615,7 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
             cfg.sink_max_turns.unwrap() > 100_000,
             "section 8: no turn cap on the sink"
         );
-        assert!(
-            cfg.contract_validate,
-            "must default ON, not to bool's false"
-        );
-        assert!(cfg.verify_commands);
+        assert!(cfg.verify_commands, "must default ON, not to bool's false");
         assert!(cfg.fan_e2e);
         assert_eq!(cfg.progress_watchdog_secs, 900);
         // And a key that IS set is honoured.
@@ -12826,18 +12457,6 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
     }
 
     #[test]
-    fn frozen_interfaces_block_noop_when_empty() {
-        assert_eq!(frozen_interfaces_block(""), "");
-        assert_eq!(frozen_interfaces_block("   \n  "), "");
-        let block = frozen_interfaces_block("def add(a: int, b: int) -> int: ...");
-        assert!(block.contains("FROZEN MODULE INTERFACES"));
-        assert!(
-            block.contains("def add(a: int, b: int) -> int: ..."),
-            "the stub bundle must be embedded verbatim"
-        );
-    }
-
-    #[test]
     fn render_pillars_block_noop_when_empty_else_renders() {
         // Empty -> empty string, so the GOOSE_SWARM_GOALS injection is a true no-op (byte-identical off-path).
         assert_eq!(render_pillars_block(&Pillars::default()), "");
@@ -13605,39 +13224,6 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
     }
 
     #[test]
-    fn skeleton_comes_from_the_contract_and_fails_loudly_when_unfilled() {
-        let bundle = "### module: client\ndef fetch(url: str) -> dict: ...\n\n\nclass Pager:\n def next_page(self) -> list: ...\n\n### module: store\ndef save(row: dict) -> None: ...\n\n### missing module: broken\n# CONTRACT UNAVAILABLE\n";
-        // Section lookup: the right module, header stripped; a D1-dropped module yields None.
-        let stub = module_stub(bundle, "client").unwrap();
-        assert!(stub.contains("def fetch") && stub.contains("class Pager"));
-        assert!(!stub.contains("### module:") && !stub.contains("def save"));
-        assert_eq!(module_stub(bundle, "broken"), None);
-        assert_eq!(module_stub(bundle, "absent"), None);
-        // Anchoring: only contract-defined top-level names survive, and <2 collapses to none.
-        let names = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
-        assert_eq!(
-            anchor_subsplit(&stub, &names(&["fetch", "Pager", "invented"])),
-            ["fetch", "Pager"]
-        );
-        assert_eq!(
-            anchor_subsplit(&stub, &names(&["fetch", "invented"])),
-            Vec::<String>::new()
-        );
-        assert_eq!(
-            anchor_subsplit("not ( python", &names(&["a", "b"])),
-            Vec::<String>::new()
-        );
-        // Skeleton: every body raises — a silent `...` would let tests pass on an unfilled slot.
-        let skel = skeleton_from_stub(&stub).unwrap();
-        assert_eq!(skel.matches("raise NotImplementedError").count(), 2);
-        assert!(!skel.contains("..."));
-        let spans = py_module_spans(&skel).unwrap();
-        let got: Vec<&str> = spans.defs.iter().map(|d| d.name.as_str()).collect();
-        assert_eq!(got, ["fetch", "Pager"]);
-        assert_eq!(skeleton_from_stub("def broken(: ..."), None);
-    }
-
-    #[test]
     fn subsplit_takes_two_to_four_identifiers_or_nothing() {
         use goose_swarm::extract_subsplit;
         let spec = "Build the client.\nSUBSPLIT: fetch_page, parse_rows, total_count";
@@ -13664,88 +13250,6 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
             extract_subsplit("SUBSPLIT: 1st, second"),
             Vec::<String>::new()
         );
-    }
-
-    #[test]
-    fn splice_fills_owned_slots_and_refuses_every_foreign_touch() {
-        // S3's 5-way plan (S3-DESIGN.md), one composed skeleton, all directions.
-        let skeleton = "import json\n\n\ndef alpha():\n raise NotImplementedError\n\n\ndef beta():\n raise NotImplementedError\n\n\ndef gamma():\n return 3\n";
-        // (1) Two fillers, disjoint slots: each edited ONLY its own body.
-        let fill_a = "import json\n\n\ndef alpha():\n return {\"a\": 1}\n\n\ndef beta():\n raise NotImplementedError\n\n\ndef gamma():\n return 3\n";
-        let fill_b = "import json\n\n\ndef alpha():\n raise NotImplementedError\n\n\ndef beta():\n return json.dumps([2])\n\n\ndef gamma():\n return 3\n";
-        let (after_a, _) = splice_functions(skeleton, skeleton, fill_a, &["alpha".into()]).unwrap();
-        assert!(after_a.contains("return {\"a\": 1}"));
-        assert!(after_a.contains("def beta():\n raise NotImplementedError"));
-        let (done, _) = splice_functions(&after_a, skeleton, fill_b, &["beta".into()]).unwrap();
-        assert!(done.contains("return {\"a\": 1}") && done.contains("json.dumps([2])"));
-        assert!(done.contains("def gamma():\n return 3"));
-        // (2) POLICY CHANGE (F809, measured on the first live join — 2 of 5 fills were
-        // whole-file rewrites and the fatal fence landed NOTHING): a filler that also edited a
-        // sibling's body now contributes ITS OWN slot only — the sibling edit is IGNORED by
-        // construction (only owned spans are copied), and the fact is reported.
-        let overreach = "import json\n\n\ndef alpha():\n return {\"a\": 1}\n\n\ndef beta():\n return \"sneaky\"\n\n\ndef gamma():\n return 3\n";
-        let (soft, foreign) =
-            splice_functions(skeleton, skeleton, overreach, &["alpha".into()]).unwrap();
-        assert!(foreign, "the foreign edit is recorded");
-        assert!(soft.contains("return {\"a\": 1}"), "the owned slot lands");
-        assert!(
-            !soft.contains("sneaky"),
-            "the sibling edit NEVER reaches the file"
-        );
-        // (3) A filler that deleted its own slot.
-        let deleted = "import json\n\n\ndef beta():\n raise NotImplementedError\n\n\ndef gamma():\n return 3\n";
-        assert!(matches!(
-            splice_functions(skeleton, skeleton, deleted, &["alpha".into()]),
-            Err(SpliceRefusal::SlotMissingInShadow(_))
-        ));
-        assert!(matches!(
-            splice_functions(skeleton, skeleton, fill_a, &["delta".into()]),
-            Err(SpliceRefusal::SlotMissingInSkeleton(_))
-        ));
-        // (4) Import ADD merges once and lands above the defs; import CONFLICT refuses.
-        let with_import = "import json\nimport hashlib\n\n\ndef alpha():\n return hashlib.sha256(b\"x\").hexdigest()\n\n\ndef beta():\n raise NotImplementedError\n\n\ndef gamma():\n return 3\n";
-        let (merged, _) =
-            splice_functions(skeleton, skeleton, with_import, &["alpha".into()]).unwrap();
-        assert_eq!(merged.matches("import hashlib").count(), 1);
-        assert!(merged.find("import hashlib").unwrap() < merged.find("def alpha").unwrap());
-        let conflict = "import json as j\n\n\ndef alpha():\n return j.dumps(1)\n\n\ndef beta():\n raise NotImplementedError\n\n\ndef gamma():\n return 3\n";
-        assert!(matches!(
-            splice_functions(skeleton, skeleton, conflict, &["alpha".into()]),
-            Err(SpliceRefusal::ImportConflict(_))
-        ));
-        // (5) The composed module still parses (py_module_spans is the same validator the
-        // skeleton passed) and every skeleton def survives with its name.
-        let spans = py_module_spans(&done).unwrap();
-        let names: Vec<&str> = spans.defs.iter().map(|d| d.name.as_str()).collect();
-        assert_eq!(names, ["alpha", "beta", "gamma"]);
-    }
-
-    #[test]
-    fn generated_tests_come_from_the_largest_fence_and_must_contain_a_test() {
-        // The deliverable block wins over a small illustrative fence.
-        let reply = "Here is an example:\n```python\nx = 1\n```\nAnd the tests:\n```python\nimport pytest\n\ndef test_cursor_pagination():\n assert paginate([], None) == []\n\ndef test_total_is_documented():\n assert total({}) == 0\n```\nDone.";
-        let got = extract_generated_tests(reply).unwrap();
-        assert!(got.starts_with("import pytest"));
-        assert!(got.contains("def test_total_is_documented"));
-        // A big fence with NO test function is not a test file.
-        assert_eq!(
-            extract_generated_tests("```python\nprint('hello world, this is long')\n```"),
-            None
-        );
-        // POLICY CHANGE (F804-batch, measured 0/3 bare-reply landings): a bare reply carrying a
-        // test function now lands via the whole-reply fallback — the collect-only landing guard
-        // is the safety property, the fence was only ever a delimiter. Same for an unclosed
-        // fence: the fallback strips to the first import/def line.
-        assert_eq!(
-            extract_generated_tests("def test_x(): pass").as_deref(),
-            Some("def test_x(): pass")
-        );
-        assert_eq!(
-            extract_generated_tests("```python\ndef test_x(): pass").as_deref(),
-            Some("def test_x(): pass")
-        );
-        // Untagged fences count too — the 27B frequently omits the language tag.
-        assert!(extract_generated_tests("```\ndef test_y():\n assert True\n```").is_some());
     }
 
     #[test]
@@ -13871,23 +13375,6 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
         }));
         assert!(digest_failed_calls_block(&pending).is_none());
         assert!(digest_failed_calls_block(&None).is_none());
-    }
-
-    #[test]
-    fn generated_tests_extract_fenced_or_bare_but_never_garbage() {
-        // Fenced: unchanged behavior.
-        let fenced = "here you go\n```python\nimport pytest\n\ndef test_a():\n assert 1\n```";
-        assert!(extract_generated_tests(fenced)
-            .unwrap()
-            .starts_with("import pytest"));
-        // F804-batch: a BARE reply (the measured 0/3 class) lands via the fallback — reasoning
-        // preamble stripped to the first import/def line.
-        let bare = "I'll write the tests now. They cover the happy path.\n\nimport pytest\n\ndef test_b():\n assert 2";
-        let got = extract_generated_tests(bare).unwrap();
-        assert!(got.starts_with("import pytest") && got.contains("def test_b"));
-        // No test function anywhere: nothing to land.
-        assert!(extract_generated_tests("just prose, no code").is_none());
-        assert!(extract_generated_tests("def helper(): pass").is_none());
     }
 
     #[test]
@@ -16199,10 +15686,6 @@ pub struct GooseAgentDispatcher {
     allow_model_load: bool,
     /// Imposed sampling parameters applied to every model call (steadies weak local models).
     sampling: SamplingParams,
-    /// Frozen module-interface contracts (signature-only stubs) injected into EVERY worker prompt to kill
-    /// cross-module drift. Empty until the GOOSE_SWARM_CONTRACTS stub pass populates it (stage 2b); set
-    /// once before the EXECUTE phase, then read by every worker. Empty -> the injection is a no-op.
-    contracts: std::sync::OnceLock<String>,
     /// APP PILLARS (GOOSE_SWARM_GOALS): a small set of distilled, app-level acceptance criteria (the
     /// non-negotiable goals + interface/invariant shape) injected — as a pre-rendered block — into EVERY
     /// worker prompt so modules cohere to the same north star through context compaction. Distilled once
@@ -16277,14 +15760,6 @@ pub struct GooseAgentDispatcher {
     /// done — so the swallowed decode error can no longer produce a silent false-green. Resolved once at
     /// construction (env GOOSE_SWARM_STREAM_RETRY > config.stream_decode_retry > default ON).
     stream_decode_retry: bool,
-    /// #135: grace window (seconds, unclamped) for the last lagging draft; clamped to [10, draft_timeout] at
-    /// the drafting call site. Resolved once at construction (default 45).
-    /// G1: None = derive per round (drafts); Some = explicit env/config, fixed. Non-draft fans
-    /// (scouts, contracts/details straggler) keep the pre-G1 fixed default via unwrap_or(45).
-    straggler_grace_secs: Option<u64>,
-    /// #135 degrade: extend straggler-stop to the contracts + detail fanouts (which can change build inputs).
-    /// Resolved once at construction (default OFF).
-    straggler_stop_degrade: bool,
     /// task id -> the files that task OWNS. Published when a plan loads, read by the omni-judge loop,
     /// which is handed only an `activity_key` and otherwise cannot tell a build task from a planner call.
     ///
@@ -16363,8 +15838,6 @@ impl GooseAgentDispatcher {
         allow_model_load: bool,
         sampling: SamplingParams,
         stream_decode_retry: bool,
-        straggler_grace_secs: Option<u64>,
-        straggler_stop_degrade: bool,
         repeat_break: bool,
     ) -> Result<Self> {
         let provider = goose::providers::create("lmstudio", vec![]).await?;
@@ -16390,7 +15863,6 @@ impl GooseAgentDispatcher {
             planner_timeout_secs,
             allow_model_load,
             sampling,
-            contracts: std::sync::OnceLock::new(),
             pillars: std::sync::OnceLock::new(),
             sink_tree_files: std::sync::OnceLock::new(),
             spec_shadows: Mutex::new(HashMap::new()),
@@ -16405,8 +15877,6 @@ impl GooseAgentDispatcher {
             judge_prev_thinking: Mutex::new(HashMap::new()),
             judge_prev_calls: Mutex::new(HashMap::new()),
             stream_decode_retry,
-            straggler_grace_secs,
-            straggler_stop_degrade,
             owned_files_by_task: Mutex::new(HashMap::new()),
             defects_told: Mutex::new(HashMap::new()),
             repeat_break,
@@ -16417,141 +15887,6 @@ impl GooseAgentDispatcher {
     /// excluded) into a fresh TempDir, stored in `spec_shadows[task_id]` with the twin's owned files so a
     /// later `promote_speculative` can copy exactly those back. Returns the shadow path. On any IO error the
     /// caller MUST bail the twin (never fall back to the real tree — that would let two writers collide).
-    /// S3 fill fan, SKELETON step: write the module's contract skeleton to its real file —
-    /// deterministic, zero model calls. Failure is honest and Terminal: a missing or
-    /// unparseable stub cannot improve on retry, and the fills depending on this task then
-    /// never dispatch (their deps never satisfy), which is the correct dead-end — the
-    /// complete gate's findings drive repair of the missing module from there.
-    async fn run_skeleton_step(
-        &self,
-        module: String,
-        req: &DispatchRequest,
-    ) -> Result<TaskRunOutput, DispatchError> {
-        let file = req
-            .owned_files
-            .first()
-            .cloned()
-            .ok_or_else(|| DispatchError::Terminal("skeleton step owns no file".into()))?;
-        let bundle = self.contracts.get().cloned().unwrap_or_default();
-        let skel = module_stub(&bundle, &module)
-            .as_deref()
-            .and_then(skeleton_from_stub);
-        let Some(src) = skel else {
-            self.events.write_value(serde_json::json!({
-                "event": "skeleton_failed", "module": module,
-                "detail": "no parseable contract stub for this module — the fan should not have fired",
-            }));
-            return Err(DispatchError::Terminal(format!(
-                "no parseable contract stub for `{module}`"
-            )));
-        };
-        let cwd = std::env::current_dir().unwrap_or_else(|_| self.working_dir.clone());
-        let abs = cwd.join(&file);
-        if let Some(dir) = abs.parent() {
-            std::fs::create_dir_all(dir).map_err(|e| DispatchError::Transient(e.to_string()))?;
-        }
-        std::fs::write(&abs, &src).map_err(|e| DispatchError::Transient(e.to_string()))?;
-        let defs = py_module_spans(&src).map(|sp| sp.defs.len()).unwrap_or(0);
-        self.events.write_value(serde_json::json!({
-            "event": "skeleton_written", "module": module, "file": file, "defs": defs,
-        }));
-        Ok(TaskRunOutput::from(format!(
-            "skeleton written: {file} ({defs} top-level defs, all raising NotImplementedError)"
-        )))
-    }
-
-    /// S3 fill fan, JOIN step: splice each fill shadow's version of the module back into the
-    /// real file by its owned slot, refusing foreign touches (splice_functions' byte-fence
-    /// against the re-derived skeleton ROOT). Deterministic, zero model calls. Refusals are
-    /// recorded and the slot keeps its NotImplementedError body — the complete gate owns the
-    /// consequence; a join with zero fills or all refusals still returns Ok with honest
-    /// events, because the tree state (skeleton) is valid and the gate is the judge.
-    async fn run_join_step(
-        &self,
-        module: String,
-        req: &DispatchRequest,
-    ) -> Result<TaskRunOutput, DispatchError> {
-        let file = req
-            .owned_files
-            .first()
-            .cloned()
-            .ok_or_else(|| DispatchError::Terminal("join step owns no file".into()))?;
-        let cwd = std::env::current_dir().unwrap_or_else(|_| self.working_dir.clone());
-        let abs = cwd.join(&file);
-        let current0 = std::fs::read_to_string(&abs)
-            .map_err(|e| DispatchError::Transient(format!("join: real file unreadable: {e}")))?;
-        // The fence ROOT is the skeleton every fill was fanned from — re-derived, not stored:
-        // module_stub + skeleton_from_stub are deterministic, so this is byte-identical to
-        // what the skeleton step wrote, with no new dispatcher state to keep consistent.
-        let bundle = self.contracts.get().cloned().unwrap_or_default();
-        let root_src = module_stub(&bundle, &module)
-            .as_deref()
-            .and_then(skeleton_from_stub)
-            .unwrap_or_else(|| current0.clone());
-        let prefix = format!("fill::{module}::");
-        let mut fills: Vec<(String, String, PathBuf)> = {
-            let shadows = self.spec_shadows.lock().unwrap();
-            shadows
-                .keys()
-                .filter_map(|k| {
-                    k.strip_prefix(&prefix)
-                        .map(|slot| (k.clone(), slot.to_string(), shadows[k].0.path().join(&file)))
-                })
-                .collect()
-        };
-        fills.sort();
-        let mut current = current0;
-        let mut spliced = 0usize;
-        let mut refusals: Vec<String> = Vec::new();
-        // F809: slots salvaged from whole-file-rewriting shadows — recorded so the arm can
-        // measure how often the soft extraction (vs the old fatal fence) actually pays.
-        let mut foreign_touched_slots: Vec<String> = Vec::new();
-        for (_, slot, shadow_file) in &fills {
-            let Ok(shadow_src) = std::fs::read_to_string(shadow_file) else {
-                refusals.push(format!("{slot}: shadow file missing"));
-                continue;
-            };
-            match splice_functions(&current, &root_src, &shadow_src, std::slice::from_ref(slot))
-                .map(|(src, foreign)| {
-                    if foreign {
-                        foreign_touched_slots.push(slot.clone());
-                    }
-                    src
-                }) {
-                Ok(composed) => {
-                    current = composed;
-                    spliced += 1;
-                }
-                Err(e) => refusals.push(format!("{slot}: {e:?}")),
-            }
-        }
-        if spliced > 0 {
-            std::fs::write(&abs, &current)
-                .map_err(|e| DispatchError::Transient(format!("join: write failed: {e}")))?;
-        }
-        for (tid, _, _) in &fills {
-            self.discard_speculative(tid).await;
-        }
-        self.events.write_value(serde_json::json!({
-            "event": "join_spliced", "module": module, "file": file,
-            "foreign_touched": foreign_touched_slots,
-            "slots": fills.len(), "spliced": spliced,
-            "refused": refusals.len(), "refusals": refusals,
-        }));
-        Ok(TaskRunOutput::from(format!(
-            "join: {spliced}/{} fill(s) spliced into {file}{}",
-            fills.len(),
-            if refusals.is_empty() {
-                String::new()
-            } else {
-                format!(
-                    " ({} refused — slots keep their skeleton bodies)",
-                    refusals.len()
-                )
-            }
-        )))
-    }
-
     fn make_shadow(
         &self,
         task_id: &str,
@@ -19016,11 +18351,6 @@ impl GooseAgentDispatcher {
         })
     }
 
-    /// GOOSE_SWARM_CONTRACTS (2b): freeze the contract before EXECUTE. Set once; every worker reads it.
-    pub fn set_contracts(&self, bundle: String) {
-        let _ = self.contracts.set(bundle);
-    }
-
     /// GOOSE_SWARM_GOALS: freeze the rendered app-PILLARS block before EXECUTE. Set once; every worker reads it.
     pub fn set_pillars(&self, block: String) {
         let _ = self.pillars.set(block);
@@ -19085,124 +18415,6 @@ impl GooseAgentDispatcher {
         let mut p: Pillars = serde_json::from_str(&raw).unwrap_or_default();
         p.pillars.truncate(7);
         p
-    }
-
-    /// Generate signature-only interface stubs per module IN PARALLEL across the fleet and assemble them
-    /// into one frozen-contract bundle, so parallel workers build against the SAME interfaces (kills the
-    /// cross-module drift that passing isolation tests hide). One call per module, work-stolen over the
-    /// fleet; a slow/empty/failed stub just drops out of the bundle.
-    async fn generate_contracts(
-        self: &Arc<Self>,
-        modules: Vec<TaskSpec>,
-        worker_models: Vec<String>,
-        goal: &str,
-        lang: TargetLang,
-    ) -> String {
-        let goal = goal.to_string();
-        // #135 degrade-straggler-stop: once every contract but one is in, stop the lone lagging one (measured
-        // 7+ min on one node while two idled). Safe because a dropped contract == a timed-out/empty contract:
-        // the bundle-assembly loop already skips empty stubs, the module builds without a frozen self-
-        // interface, and integrate-verify reconciles. grace 0 => OFF => byte-identical await-all.
-        let contract_grace = if self.straggler_stop_degrade {
-            self.straggler_grace_secs
-                .unwrap_or(45)
-                .clamp(10, self.worker_timeout_secs.max(10))
-        } else {
-            0
-        };
-        let me = self.clone();
-        let stubs =
-            fanout_over_fleet_straggler(one_lane_per_host(worker_models), modules, contract_grace, "contract", Some(self.events.clone()), move |spec, model| {
-            let me = me.clone();
-            let goal = goal.clone();
-            async move {
-                let files = spec
-                    .owned_files
-                    .iter()
-                    .filter(|f| lang.is_source_file(f.as_str()))
-                    .cloned()
-                    .collect::<Vec<_>>()
-                    .join(", ");
-                eprintln!(
-                    "  {} contract {} → {}",
-                    style("▸").cyan().bold(),
-                    style(&spec.id).bold(),
-                    model
-                );
-                let (system_str, comment) = contract_stub_spec(lang);
-                let system = system_str.to_string();
-                let user = format!(
-                    "Overall program: {goal}\n\nModule subtask [{}]: {}\nFiles it owns: {files}\n\n\
-                     Emit signature-only stubs, each file preceded by a `{comment} <path>` header.",
-                    spec.id, spec.description
-                );
-                // The contract stub is a model call on the SAME fleet as workers, but the old 75/150s budget
-                // was ~5x below the worker budget — measured on mustsolve-test2 it TIMED OUT on all 3 modules
-                // on the 262k-ctx fleet, so every module lost its frozen interface and the granular modules
-                // cascade-FAILED into an unusable app. Give the stub the worker budget (the proven-adequate
-                // fleet timeout) so it actually completes; the gated retry is then a second full-budget attempt.
-                // The per-module empty-reason warning below is ALWAYS on so a silently-empty CONTRACTS phase —
-                // which strips every module's frozen interface — can never recur unseen.
-                let retry_on =
-                    swarm_gate_cfg("GOOSE_SWARM_CONTRACT_RETRY", load_config().contract_retry);
-                let attempts = if retry_on { 2 } else { 1 };
-                let stub_budget = UNCAPPED_SECS;
-                // Write a per-module contract digest so the CONTRACTS phase shows live per-node activity (dev
-                // verbosity) instead of a black box — the desktop reads .swarm/activity/contract-<id>.json.
-                let contract_key = format!("contract-{}", spec.id);
-                let mut stub = String::new();
-                let mut reason = "empty_text".to_string();
-                for _attempt in 0..attempts {
-                    let budget = std::time::Duration::from_secs(stub_budget);
-                    match tokio::time::timeout(
-                        budget,
-                        me.run_agent(
-                            &model,
-                            system.clone(),
-                            user.clone(),
-                            None,
-                            planner_side_turns(),
-                            &[],
-                            0,
-                            Some(contract_key.as_str()),
-                        ),
-                    )
-                    .await
-                    {
-                        Ok(Ok(o)) if !o.text.trim().is_empty() => {
-                            stub = o.text;
-                            break;
-                        }
-                        Ok(Ok(_)) => reason = "empty_text".to_string(),
-                        Ok(Err(e)) => {
-                            reason = format!("agent_error: {}", e.to_string().replace('\n', " "))
-                        }
-                        Err(_) => reason = "timeout".to_string(),
-                    }
-                }
-                if stub.trim().is_empty() {
-                    eprintln!(
-                        "  {} contract {} produced NO stub ({}) — this module has no frozen interface; siblings may diverge",
-                        style("⚠").yellow().bold(),
-                        style(&spec.id).bold(),
-                        reason,
-                    );
-                }
-                (spec.id, stub)
-            }
-        })
-        .await;
-        let mut bundle = String::new();
-        for (id, stub) in stubs {
-            // Sanitize BEFORE freezing: a stub whose only defect is an em-dash is a real interface that
-            // merely does not parse, and freezing it as-is hands the worker prose instead of a signature.
-            let stub = sanitize_generated_source(&strip_code_fences(&stub));
-            let stub = stub.trim();
-            if !stub.is_empty() {
-                bundle.push_str(&format!("### module: {id}\n{stub}\n\n"));
-            }
-        }
-        bundle
     }
 }
 
@@ -19832,93 +19044,6 @@ fn collect_lang_files(root: &Path, lang: TargetLang) -> Vec<PathBuf> {
     let mut out = Vec::new();
     walk(root, 3, lang, &mut out);
     out
-}
-
-/// Per-language interface-stub instructions for the CONTRACTS phase. Returns (system prompt, per-file header
-/// comment prefix). Python is the ORIGINAL prompt verbatim — byte-identical behavior on Python trees. TS/Rust/
-/// Go emit language-native public-interface stubs; the generic arm handles ANY other language so contracts are
-/// language-AGNOSTIC, not Python-only. All arms carry the same anti-drift SCHEMA rule that made contracts valuable.
-fn contract_stub_spec(lang: TargetLang) -> (&'static str, &'static str) {
-    match lang {
-        TargetLang::Python => (
-            "You are defining the PUBLIC INTERFACE of ONE module BEFORE it is \
-             implemented, so parallel workers agree on the contract. Output ONLY Python signature \
-             stubs for the listed files: every public function and class the module will expose, \
-             with EXACT names, full type-annotated signatures, and a ONE-LINE docstring each, with \
-             `...` as the body. ALSO — if this module owns a DATABASE SCHEMA (it creates tables, a \
-             SQLite/SQL schema, or defines the persisted record shape), append a `# SCHEMA` comment \
-             block listing each TABLE and its EXACT column names (and types), because every module \
-             that reads or writes those tables MUST use the SAME column names — a drift (one module \
-             using `league_id` while another uses `league`, or `home_team` vs `home`) is a top \
-             integration failure that passing isolation unit-tests hide. NO implementations, NO \
-             private helpers, NO prose, NO code fences. You have file/shell tools but MUST NOT use \
-             them: do NOT create, write, or edit ANY file — put the stubs in your reply TEXT only. \
-             Keep it tight.",
-            "#",
-        ),
-        TargetLang::TypeScript => (
-            "You are defining the PUBLIC INTERFACE of ONE module BEFORE it is implemented, so parallel \
-             workers agree on the contract. Output ONLY TypeScript DECLARATION stubs for the listed files: \
-             every EXPORTED function, class, interface, type, and const the module will expose, with EXACT \
-             names and full type signatures (parameter AND return types). Prefer `export interface`, \
-             `export type`, and `export declare function` / class signatures with NO bodies. ALSO — if this \
-             module owns a persisted data shape or DB schema, append a `// SCHEMA` comment block listing \
-             each record/table and its EXACT field/column names (and types), because every module that \
-             reads or writes it MUST use the SAME names — a drift (one module using `homeTeam` while \
-             another uses `home`) is a top integration failure that passing isolation unit-tests hide. NO \
-             implementations, NO private helpers, NO prose, NO code fences. You have file/shell tools but \
-             MUST NOT use them: do NOT create, write, or edit ANY file — put the stubs in your reply TEXT \
-             only. Keep it tight.",
-            "//",
-        ),
-        TargetLang::Rust => (
-            "You are defining the PUBLIC INTERFACE of ONE module BEFORE it is implemented, so parallel \
-             workers agree on the contract. Output ONLY Rust signature stubs for the listed files: every \
-             PUBLIC item the module will expose — `pub fn` (full typed signature, body `unimplemented!()`), \
-             `pub struct` / `pub enum` (with their public fields + types), `pub trait` (method signatures), \
-             and key `pub type` / `pub const`. Use EXACT names and full types. ALSO — if this module owns a \
-             persisted data shape, on-disk object format, or schema, append a `// SCHEMA` comment block \
-             listing each record and its EXACT field names (and types), because every module that reads or \
-             writes it MUST use the SAME names — a drift (one module using `parent_hash` while another uses \
-             `parent`) is a top integration failure that passing isolation unit-tests hide. NO function \
-             bodies beyond `unimplemented!()`, NO private items, NO prose, NO code fences. You have \
-             file/shell tools but MUST NOT use them: do NOT create, write, or edit ANY file — put the stubs \
-             in your reply TEXT only. Keep it tight.",
-            "//",
-        ),
-        TargetLang::Go => (
-            "You are defining the PUBLIC INTERFACE of ONE module BEFORE it is implemented, so parallel \
-             workers agree on the contract. Output ONLY Go signature stubs for the listed files: every \
-             EXPORTED (capitalized) identifier the module will expose — `func` signatures (body \
-             `panic(\"stub\")`), `type` structs (with their exported fields + types), and interfaces (method \
-             signatures). Include the `package` line. Use EXACT names and full types. ALSO — if this module \
-             owns a persisted data shape or schema, append a `// SCHEMA` comment block listing each record and \
-             its EXACT field names (and types), because every module that reads or writes it MUST use the SAME \
-             names — a drift (one module using `ParentHash` while another uses `Parent`) is a top integration \
-             failure that passing isolation unit-tests hide. NO unexported items, NO prose, NO code fences. You \
-             have file/shell tools but MUST NOT use them: do NOT create, write, or edit ANY file — put the \
-             stubs in your reply TEXT only. Keep it tight.",
-            "//",
-        ),
-        // Language-AGNOSTIC fallback — any language detect_language couldn't map to a specific arm. Instructs
-        // the model to emit the module's public interface IN ITS OWN LANGUAGE + syntax, so contracts are never
-        // Python-only. The header prefix "//" is the most common; the prompt tells the model to use the file's
-        // own comment style for the SCHEMA block.
-        TargetLang::Other => (
-            "You are defining the PUBLIC INTERFACE of ONE module BEFORE it is implemented, so parallel \
-             workers agree on the contract. Infer the module's programming language from the file extensions, \
-             then output ONLY signature-only stubs for that language: every PUBLIC / exported function, type, \
-             class, interface, and constant the module will expose, with EXACT names and full type signatures, \
-             and NO bodies (use the language's stub idiom — a declaration, an empty/abstract body, or a \
-             `TODO`). ALSO — if this module owns a persisted data shape or schema, append a SCHEMA comment (in \
-             the file's own comment syntax) listing each record/table and its EXACT field/column names (and \
-             types), because every module that reads or writes it MUST use the SAME names — a drift is a top \
-             integration failure that passing isolation unit-tests hide. NO implementations, NO private \
-             helpers, NO prose, NO code fences. You have file/shell tools but MUST NOT use them: do NOT create, \
-             write, or edit ANY file — put the stubs in your reply TEXT only. Keep it tight.",
-            "//",
-        ),
-    }
 }
 
 /// Outcome of the smoke gate, serialized into the run jsonl `smoke` event.
@@ -23618,9 +22743,9 @@ fn fleet_slot_models(devices: &[DeviceCfg]) -> Vec<String> {
 /// discovery order). Every fan pops devices from the FRONT of its queue, so front == the
 /// node that gets the first (and, when items < devices, the ONLY) work. MEASURED (r13,
 /// operator screenshot): pool order is discovery order — gabee, mihai, workhorse — so the
-/// weight-4 host was structurally LAST in line for every scout/contract/detail fan and sat
+/// weight-4 host was structurally LAST in line for every scout/detail fan and sat
 /// READY while the weight-1 host prefilled. One rule, one place: every fan site inherits it.
-/// One lane per HOST for the prologue fans (scout/contract/detail) — their own docstrings
+/// One lane per HOST for the prologue fans (scout/detail) — their own docstrings
 /// promise "one per device", but the pool arrives SLOT-expanded, so two calls stack on one
 /// host and degrade each other (F623: detail time is queue time, monotonic in concurrency).
 /// MEASURED, r16 vs r17: the same detail fan cleared 14/14 on 4 slots, then dropped three
@@ -23800,143 +22925,6 @@ where
     results
 }
 
-/// #135: like `fanout_over_fleet`, but stops the lone lagging task once the others are in. Used for the SCOUT
-/// phase (advisory) and, under the degrade gate, CONTRACTS/DETAIL (measured: 2 scouts done at ~85s, the 3rd
-/// ran to 199s → 111s of two nodes idle; a contract ran 7+ min while two nodes idled). Straggler-stop is sound
-/// ONLY when every item runs concurrently (items <= devices, so nothing is queued behind a busy device) and
-/// there is a lone last item to race (>=3 items); `grace_secs == 0` (feature off) or any other shape falls
-/// back to the byte-identical await-all fanout. `noun` labels the phase in the logs (scout/contract/detail).
-async fn fanout_over_fleet_straggler<T, R, F, Fut>(
-    devices: Vec<String>,
-    items: Vec<T>,
-    grace_secs: u64,
-    noun: &str,
-    events: Option<Arc<dyn EventSink>>,
-    f: F,
-) -> Vec<R>
-where
-    T: Send + 'static,
-    R: Send + 'static,
-    F: Fn(T, String) -> Fut + Clone + Send + 'static,
-    Fut: std::future::Future<Output = R> + Send + 'static,
-{
-    let n = items.len();
-    // #F924 INSTRUMENT — "the whole fleet is now waiting on one call".
-    //
-    // In sb-7 r2 the detail fan reached 26-of-27 done and then sat for two hours on the 27th while
-    // the other two nodes idled. NOTHING said so: the only trace was the absence of one
-    // `detail_completed`, which had to be reconstructed by hand from activity files. Mihai saw the
-    // idle fleet in LM Studio before any instrument did, and that is the wrong order.
-    //
-    // Deliberately NOT a kill. `straggler_stop_degrade` (default OFF) can already abort the lone
-    // lagger, and turning it on would be wrong here: detail calls on this fleet legitimately run
-    // 226-1,193s, so a fixed grace after the second-to-last finishes would kill genuinely slow
-    // work and hand that module a bare one-line brief — the measured detail_fallback class, which
-    // collapsed one module's tier to 14.3%. Under UNCAPPED a slow call is allowed to be slow. The
-    // job here is to make the wait VISIBLE; the loop itself is the judge's to end.
-    let f = {
-        let outstanding = Arc::new(std::sync::atomic::AtomicUsize::new(n));
-        let noun = noun.to_string();
-        let events = events.clone();
-        move |item, model| {
-            let outstanding = outstanding.clone();
-            let noun = noun.clone();
-            let events = events.clone();
-            let fut = f(item, model);
-            async move {
-                let r = fut.await;
-                let left = outstanding
-                    .fetch_sub(1, std::sync::atomic::Ordering::SeqCst)
-                    .saturating_sub(1);
-                if left == 1 && n > 2 {
-                    if let Some(ev) = events.as_ref() {
-                        ev.write_value(serde_json::json!({
-                            "event": "fan_last_outstanding",
-                            "fan": noun,
-                            "total": n,
-                        }));
-                    }
-                    eprintln!(
-                        "  {} {noun} fan: 1 of {n} still running — every other node is now idle behind it",
-                        style("⧗").yellow()
-                    );
-                }
-                r
-            }
-        }
-    };
-    // The `n > devices.len()` bail-out that used to be here made straggler-stop DEAD for the fans that need
-    // it most. MEASURED: detail fans are 4-11 items on a 3-device fleet, so 0 of 52 measured detail fans were
-    // EVER eligible; contracts bail out the moment modules > devices. The arming rule below is
-    // "every item but one has finished" — i.e. exactly ONE call outstanding and every other node idle — which
-    // is the true tail of a fan and is correct whether or not the items had to queue. With more items than
-    // devices the items simply queue through the semaphore first and the grace still arms at the real tail.
-    if grace_secs == 0 || n < 3 {
-        return fanout_over_fleet(devices, items, f).await;
-    }
-    // Observability (verify-instrument-reporting-zero): make the straggler PATH visible even on runs where it
-    // never has to abort, so a clean "no fire" is distinguishable from a silent fall-back to await-all.
-    eprintln!(
-        "  {} straggler-stop watching {n} {noun}(s) — the last lagger gets a {grace_secs}s grace, then stops",
-        style("↯").dim()
-    );
-    use std::collections::VecDeque;
-    let devices = order_fleet_by_speed(devices, &load_config().speed_weights);
-    let permits = Arc::new(tokio::sync::Semaphore::new(devices.len()));
-    let pool = Arc::new(Mutex::new(
-        devices.into_iter().collect::<VecDeque<String>>(),
-    ));
-    let mut js = tokio::task::JoinSet::new();
-    // Spawn INDEXED so the results can be restored to item order below. `fanout_over_fleet`
-    // documents "Results come back in item order" and this function bills itself as "like
-    // `fanout_over_fleet`, but stops the lone lagging task" — yet the collector pushes each result
-    // as it JOINS, i.e. in completion order, which is race-determined on a multi-node fleet.
-    //
-    // That silently made three callers nondeterministic. MEASURED across two runs of the same
-    // config: one completed libraries then architecture, the other architecture then libraries, so
-    // the research block handed to the planner differed by ordering alone. The same collector also
-    // feeds `generate_contracts`, which builds the FROZEN CONTRACT BUNDLE by iterating the returned
-    // Vec — so the "### module:" sections every worker is told to honour were emitted in race order
-    // too. And `detail_memo_key` hashes the findings string, so a reorder also misses the memo.
-    //
-    // In a campaign whose entire problem is a 46-point replicate spread, an engine lever that
-    // injects ordering nondeterminism into the planner's own prompt is a variance source worth
-    // removing outright. Sorting here fixes every caller at the seam that made the promise, rather
-    // than at one call site while the seam keeps lying to the others.
-    for (idx, item) in items.into_iter().enumerate() {
-        let permits = permits.clone();
-        let pool = pool.clone();
-        let f = f.clone();
-        js.spawn(async move {
-            let _permit = permits
-                .acquire_owned()
-                .await
-                .expect("fleet semaphore never closed");
-            let dev = {
-                pool.lock()
-                    .unwrap()
-                    .pop_front()
-                    .expect("a device is free whenever a permit is held")
-            };
-            let out = f(item, dev.clone()).await;
-            pool.lock().unwrap().push_back(dev);
-            (idx, out)
-        });
-    }
-    let (mut indexed, stopped) = collect_fleet_with_straggler_stop(js, n, grace_secs).await;
-    indexed.sort_by_key(|(i, _)| *i);
-    let results: Vec<R> = indexed.into_iter().map(|(_, r)| r).collect();
-    if stopped > 0 {
-        eprintln!(
-            "  {} straggler-stop: {stopped} lagging {noun}(s) aborted after {grace_secs}s grace — proceeding \
-             on {} of {n}",
-            style("↯").yellow(),
-            results.len()
-        );
-    }
-    results
-}
-
 /// #135 OMNI-JUDGE probe. Asks a model whether an IN-FLIGHT call is repeating itself, from the call's own
 /// recent reasoning plus the commands it has run. This is the piece a threshold cannot do: for a plan draft,
 /// healthy and pathological look IDENTICAL by volume (healthy reach 57k chars), so only reading the text
@@ -23945,8 +22933,8 @@ where
 /// Deliberately conservative — it returns true ONLY on an explicit LOOPING verdict. Anything ambiguous, any
 /// parse failure, any model error reads as "keep going", because a false abort costs a planner call that has
 /// NO retry path. It can never fail a task or a run: it aborts at most this one call, and every phase
-/// degrades gracefully (scout -> N of 3, draft -> best-of-N, detail -> skeleton brief, contract -> no frozen
-/// interface, worker -> the existing stall path).
+/// degrades gracefully (scout -> N of 3, draft -> best-of-N, detail -> skeleton brief, worker -> the
+/// existing stall path).
 /// Does this verdict mean the call needs REDIRECTING, as opposed to being left alone?
 ///
 /// RESTART belongs here and was missing. `parse_judge_reply` produces it, nothing in the planner-side
@@ -28643,62 +27631,6 @@ fn default_true() -> bool {
     true
 }
 
-/// Replace the SMART PUNCTUATION a local model sprinkles into generated code with its ASCII equivalent.
-///
-/// MEASURED (h1-treat-2): 2 of 3 frozen contract stubs did not parse, and `cli`'s failure was literally
-/// `invalid character '—'`. The worker that then wrote cli.py had NO usable interface for its sibling, so
-/// it called `Store(args.store)` — passing argparse's str where the module annotates `store_path: Path` —
-/// and every command of the shipped app died on `.mkdir` / `/`. The engine reported passed+verified.
-///
-/// This is a signature LOCAL-MODEL failure: em/en dashes and curly quotes are fine in prose and fatal in
-/// source. Pure, and it can only turn invalid Python into valid Python — never the reverse.
-/// Remove from a frozen contract bundle every module whose stub did NOT parse, per the validator's own
-/// per-module verdict. Returns the bundle unchanged when validation did not run (Null) or found nothing
-/// bad, so the OFF path and the healthy path are byte-identical. Pure — unit-tested without python3.
-fn drop_unparseable_stubs(bundle: String, validation: &serde_json::Value) -> String {
-    let Some(mods) = validation.get("modules").and_then(|m| m.as_array()) else {
-        return bundle;
-    };
-    let bad: std::collections::HashSet<&str> = mods
-        .iter()
-        .filter(|m| m.get("parsed") == Some(&serde_json::Value::Bool(false)))
-        .filter_map(|m| m.get("module").and_then(|x| x.as_str()))
-        .collect();
-    if bad.is_empty() {
-        return bundle;
-    }
-    let mut out = String::new();
-    for section in bundle.split("### module: ") {
-        if section.trim().is_empty() {
-            continue;
-        }
-        let id = section.lines().next().unwrap_or("").trim();
-        if bad.contains(id) {
-            // D1: MARKED absence, never a silent hole. The dropped section left a bundle whose
-            // banner still claimed "the stubs every sibling module WILL expose" while one module
-            // was simply missing — and the same prompt forbids reading dependency files, so the
-            // hole was unrecoverable by any permitted action (fired live: r2's `cli`, parsed:false,
-            // injected 3 of 4). A stub DERIVED from plan prose was considered and rejected: under
-            // a banner that says "build against these EXACTLY", a guessed signature is worse than
-            // an honest gap. The marker states the gap and licenses the one read that closes it.
-            // "missing module", NOT "module": the caller counts `### module: ` sections to decide
-            // `frozen` and the module count — a marker matching that heading would make an all-bad
-            // bundle read frozen:true, the exact lie the count exists to prevent (its test pins 0).
-            out.push_str("### missing module: ");
-            out.push_str(id);
-            out.push_str(
-                "\n# CONTRACT UNAVAILABLE — this module's frozen stub failed to parse and is NOT shown.\n\
-                 # Its real interface exists only in its source file. If you must call this module,\n\
-                 # read that ONE file directly before writing the call — do NOT guess names or signatures.\n\n",
-            );
-            continue;
-        }
-        out.push_str("### module: ");
-        out.push_str(section);
-    }
-    out
-}
-
 /// The path-like CLI option an app uses for its persisted store, read off its own `--help`.
 /// None when the app advertises no such option, in which case there is no store to corrupt.
 fn store_flag_in_help(help: &str) -> Option<&'static str> {
@@ -28724,51 +27656,6 @@ fn store_flag_in_help(help: &str) -> Option<&'static str> {
 /// the right thing, and the two apps independently graded 9/9 both do.
 fn corrupt_store_crash(out: &str, err: &str) -> bool {
     format!("{out}\n{err}").contains("Traceback (most recent call last)")
-}
-
-/// Unwrap a MARKDOWN CODE FENCE from generated "code" output.
-///
-/// MEASURED (h1-treat-4): 3 of 6 frozen contract stubs failed to parse with `invalid syntax` while being
-/// 147-3092 bytes long, and their captured tails were literally a bare triple-backtick. The stub-gen
-/// prompt says "no prose, no code fences" and the model's own reasoning repeats the instruction back —
-/// then it emits the block fenced anyway. That is a 27B instruction-following failure no prompt wording
-/// fixes, and it cost those modules their frozen interface.
-///
-/// Returns the concatenated contents of the fenced blocks when the text is fenced, else the text
-/// unchanged. A fence is never valid Python, so this can only ever repair.
-fn strip_code_fences(s: &str) -> String {
-    if !s.contains("```") {
-        return s.to_string();
-    }
-    let mut out = String::new();
-    let mut inside = false;
-    for line in s.lines() {
-        if line.trim_start().starts_with("```") {
-            inside = !inside;
-            continue;
-        }
-        if inside {
-            out.push_str(line);
-            out.push('\n');
-        }
-    }
-    // No fenced CONTENT (e.g. a stray unpaired fence) => keep the original minus the fence lines.
-    if out.trim().is_empty() {
-        return s
-            .lines()
-            .filter(|l| !l.trim_start().starts_with("```"))
-            .collect::<Vec<_>>()
-            .join("\n");
-    }
-    out
-}
-
-fn sanitize_generated_source(s: &str) -> String {
-    s.replace(['\u{2014}', '\u{2013}', '\u{2212}'], "-")
-        .replace(['\u{2018}', '\u{2019}'], "'")
-        .replace(['\u{201c}', '\u{201d}'], "\"")
-        .replace('\u{00a0}', " ")
-        .replace('\u{2026}', "...")
 }
 
 fn default_split_secs() -> u64 {
@@ -29685,53 +28572,18 @@ impl PreReviewer for GooseAgentDispatcher {
         }
     }
 
-    async fn generate_tests(&self, model_id: &str, goal: &str, seq: u32) {
-        // Contract-derived ONLY: the prompt sees the goal and the FROZEN interface bundle,
-        // never the produced code — a test written from the code can only cement the code's
-        // own bugs (AgentCoder's load-bearing choice, S7-DESIGN.md). No contracts yet means
-        // nothing worth testing against; the claim was still cheap (one scheduler tick).
-        let Some(bundle) = self.contracts.get().filter(|b| !b.trim().is_empty()) else {
-            self.events.write_value(serde_json::json!({
-                "event": "testgen",
-                "seq": seq, "model": model_id, "landed": Option::<String>::None,
-                "reason": "no frozen contracts on this run — generation skipped",
-            }));
-            return;
-        };
-        let cwd = std::env::current_dir().unwrap_or_else(|_| self.working_dir.clone());
-        let started = std::time::Instant::now();
-        let system = "You write ADDITIONAL pytest tests for a multi-module Python app, from its \
-                      interface contracts alone. You see the goal and the frozen module \
-                      signatures — NOT the implementation — so assert only what those two \
-                      guarantee: exact module/function/class names and signatures, documented \
-                      data shapes, values the goal itself states. Do NOT invent undocumented \
-                      values and do NOT assert internal implementation details. Reply with ONE \
-                      fenced python code block containing a complete pytest file: imports first, \
-                      then 3-5 focused test functions (def test_...). No prose outside the fence."
-            .to_string();
-        let user = format!(
-            "GOAL: {goal}\n{contracts}\nYour pytest file (one fenced block):",
-            contracts = frozen_interfaces_block(bundle)
-        );
-        let reply = tokio::time::timeout(
-            std::time::Duration::from_secs(planner_wall(self.planner_timeout_secs)),
-            self.run_agent(model_id, system, user, None, 2, &[], 0, None),
-        )
-        .await
-        .ok()
-        .and_then(|r| r.ok())
-        .map(|o| o.text)
-        .unwrap_or_default();
-        let landed = match extract_generated_tests(&reply) {
-            None => Err("no landable fenced test block in the reply".to_string()),
-            Some(body) => land_generated_tests(&cwd, &body, seq as usize).await,
-        };
+    async fn generate_tests(&self, model_id: &str, _goal: &str, seq: u32) {
+        // Testgen was contract-derived ONLY — the prompt saw the goal and the FROZEN interface
+        // bundle, never the produced code (a test written from the code can only cement the
+        // code's own bugs; AgentCoder's load-bearing choice, S7-DESIGN.md). CONTRACTS is deleted
+        // (P1-4), so there is nothing to derive from and generation always skips; the claim stays
+        // cheap (one scheduler tick) and the event stays honest. r2 measured the generation path
+        // 0/3 landed while its calls wrote poisoned root test files past the guard — the
+        // machinery itself is scheduled for deletion with the r4 supervision sweep (II-5).
         self.events.write_value(serde_json::json!({
             "event": "testgen",
-            "seq": seq, "model": model_id,
-            "secs": started.elapsed().as_secs(),
-            "landed": landed.as_ref().ok(),
-            "reason": landed.as_ref().err(),
+            "seq": seq, "model": model_id, "landed": Option::<String>::None,
+            "reason": "contract-derived only, and CONTRACTS is deleted — generation skipped",
         }));
     }
 }
@@ -30337,24 +29189,7 @@ struct PersonaSnapshot {
     judge_lessons: Vec<String>,
 }
 
-/// Validate the frozen contract bundle and turn it into an AUDITABLE ARTIFACT.
-///
-/// Today the bundle is the weakest evidence in the run, treated as the strongest: `generate_contracts` takes
-/// the model's reply RAW — the only check is that it is non-empty — concatenates it into a prompt blob, and
-/// emits `contracts{modules:N, frozen:true}` WITHOUT the stub text. So the interface every worker is told to
-/// honour is never parsed, never checked, and never written down. It dies with the process, and nothing can
-/// audit afterwards what was actually frozen.
-///
-/// That the model disobeys this exact prompt is not a hypothesis: the engine already ships cleanup for
-/// "stray stub file(s) the stub-gen wrote" because a weak model writes files despite being told "MUST NOT
-/// create, write, or edit ANY file". A prompt that says "NO prose, NO code fences" is exactly as unenforced.
-///
-/// This does NOT gate anything. A contract mismatch cannot say whether the module or the CONTRACT is wrong —
-/// and the contract is a pre-build guess from one 75s call to a weak model, while the module has survived
-/// real imports, its own tests and the sink. Reding a built artifact against a pre-build prediction is the
-/// pillar-check bug, whose own remedy is recorded in this file: "remove the guess, not mitigate it
-/// downstream". So: MEASURE first. Emit what was frozen and whether it even parses.
-/// CROSS-MODULE ATTRIBUTE DRIFT — the check that catches what CONTRACTS cannot.
+/// CROSS-MODULE ATTRIBUTE DRIFT — the check that catches what a signature stub never could.
 ///
 /// THE BUG, measured and shipped as verified:
 ///   models.py:31  class ExpenseCreate(BaseModel): payer/amount/description/split_among   <- no group_id
@@ -31282,70 +30117,6 @@ fn parse_cross_module_drift(stdout: &str) -> DriftResult {
         findings,
         partial: false,
     }
-}
-
-const CONTRACT_VALIDATE_SCRIPT: &str = r####"
-import ast, json, sys
-bundle = sys.stdin.read()
-out = []
-cur, buf = None, []
-def flush():
-    if cur is None:
-        return
-    text = chr(10).join(buf)
-    entry = {"module": cur, "bytes": len(text)}
-    try:
-        tree = ast.parse(text)
-        names = sorted({
-            n.name for n in tree.body
-            if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
-            and not n.name.startswith("_")
-        })
-        entry["parsed"] = True
-        entry["public"] = names
-    except SyntaxError as e:
-        # A stub that will not parse is not an interface — it is prose, a code fence, or an apology.
-        entry["parsed"] = False
-        entry["error"] = str(e).split("(")[0].strip()[:80]
-        entry["public"] = []
-    out.append(entry)
-for line in bundle.splitlines():
-    if line.startswith("### module: "):
-        flush()
-        cur, buf = line[len("### module: "):].strip(), []
-    elif cur is not None:
-        buf.append(line)
-flush()
-print(json.dumps({"modules": out}))
-"####;
-
-/// Run the validator over a frozen bundle. Fails OPEN: no python3, a crash, or unparseable output yields
-/// None and changes nothing — this is observability, and observability must never break a run.
-async fn validate_contract_bundle(bundle: &str) -> Option<serde_json::Value> {
-    use tokio::io::AsyncWriteExt;
-    let mut child = tokio::process::Command::new("python3")
-        .arg("-c")
-        .arg(CONTRACT_VALIDATE_SCRIPT)
-        .stdin(std::process::Stdio::piped())
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::null())
-        .kill_on_drop(true)
-        .spawn()
-        .ok()?;
-    child
-        .stdin
-        .take()?
-        .write_all(bundle.as_bytes())
-        .await
-        .ok()?;
-    let out = tokio::time::timeout(std::time::Duration::from_secs(20), child.wait_with_output())
-        .await
-        .ok()?
-        .ok()?;
-    if !out.status.success() {
-        return None;
-    }
-    serde_json::from_slice(&out.stdout).ok()
 }
 
 /// Ceiling on the user-notes block. It rides EVERY dispatch for the rest of the run, so an unbounded inbox
@@ -32568,8 +31339,6 @@ struct DispatcherRecipe {
     allow_model_load: bool,
     sampling: SamplingParams,
     stream_decode_retry: bool,
-    straggler_grace_secs: Option<u64>,
-    straggler_stop_degrade: bool,
     repeat_break: bool,
 }
 
@@ -32591,8 +31360,6 @@ async fn build_swarm_dispatcher(
             r.allow_model_load,
             r.sampling,
             r.stream_decode_retry,
-            r.straggler_grace_secs,
-            r.straggler_stop_degrade,
             r.repeat_break,
         )
         .await?,
@@ -32997,50 +31764,6 @@ fn fix_evidence_pointers(findings: &[String]) -> String {
     )
 }
 
-/// Format the frozen module-interface contracts bundle for injection into a worker prompt. An empty (or
-/// whitespace) bundle yields an empty string, so the GOOSE_SWARM_CONTRACTS injection is a true no-op
-/// until the stub pass populates it. Pure — unit-tested without a model.
-fn frozen_interfaces_block(bundle: &str) -> String {
-    if bundle.trim().is_empty() {
-        return String::new();
-    }
-    // A SIGNATURE IS NOT A BEHAVIOUR, and r0 paid for the difference.
-    //
-    // This block is the whole of what a worker knew about its dependencies, and the prompt around it
-    // says "REUSE the modules whose API is injected below" — presenting the stub as sufficient. It is
-    // not: a stub carries names and types, never the SHAPE OF THE DATA that actually flows. Measured
-    // on r0, five of twelve defects were exactly that gap — `sync.py` read `body.get("items")` where
-    // the vendor returns `"data"`, and parsed `amount` where it sends `amount_minor`; the health,
-    // summary and buckets endpoints all returned the wrong shape. No amount of deliberation fixes
-    // those: the model never had the information.
-    //
-    // And it was ON DISK. The DAG does not dispatch a dependent until its dependencies are Done, so
-    // every file a worker needs is finished and sitting three directories away. `boot-wrapper`
-    // depends on two services and made ZERO tool calls.
-    //
-    // So the block now says the stub is a signature and names the one read that closes the gap. It is
-    // deliberately bounded to `grep`/`sed -n` rather than `cat`: the same prompt warns that dumping
-    // whole files is slow on local models and degrades quality, and that warning is correct — the fix
-    // is a TARGETED read, not permission to hoover up the tree.
-    format!(
-        "\n## FROZEN MODULE INTERFACES — the agreed contract (build against these EXACTLY)\n\
-         These are the signature-only stubs every sibling module WILL expose. Import and call them with \
-         these EXACT names + signatures, and keep shared data shapes identical; do NOT invent a different \
-         signature or re-shape a shared value. A mismatch here is the #1 cause of passing-unit-tests but a \
-         broken end-to-end integration.\n\
-         \n\
-         A STUB IS A SIGNATURE, NOT A BEHAVIOUR. It cannot tell you the KEY NAMES in a dict a module \
-         returns, the units it uses, which error it raises, or what an upstream API actually sends. Those \
-         live only in the real source, and every module you depend on is ALREADY WRITTEN and on disk right \
-         now — nothing dispatched you until it finished. Before you write a call that consumes another \
-         module's data, or that parses a response, READ THE REAL FILE for the exact field names: \
-         `grep -n 'def <symbol>' <path>` then `sed -n '<start>,<end>p' <path>`, or `grep -n '\\[\"' <path>` \
-         to see the keys it reads and writes. Keep it TARGETED — `grep`/`sed -n`, never `cat` of a whole \
-         file. Guessing a field name is the single most expensive mistake available to you: it passes \
-         every unit test you write and breaks the program end to end.\n{bundle}\n"
-    )
-}
-
 /// APP PILLARS (GOOSE_SWARM_GOALS): a small set of distilled, app-level acceptance criteria injected into
 /// EVERY worker so the whole fleet builds toward the same north star even after context compaction.
 #[derive(serde::Serialize, serde::Deserialize, Clone)]
@@ -33273,26 +31996,6 @@ fn dep_signatures_on() -> bool {
     swarm_gate_cfg_bundle(
         "GOOSE_SWARM_DEP_SIGNATURES",
         load_config().dep_signatures,
-        false,
-    )
-}
-
-/// SWARM-COHERENCE Phase-1 (DAG-scoped context): scope the frozen-contract bundle to a worker's DAG
-/// neighborhood. Not in the assured bundle → default OFF (byte-identical).
-///
-/// ⚠ DO NOT TURN THIS ON without first changing the planner. MEASURED across three real plans
-/// (evals/swarm-bench/runs/*/run.jsonl, plan_loaded): **zero** inter-module dependency edges among
-/// code modules, in every one. That is not an accident — the architect prompt says "Default to a
-/// FLAT FAN: make every module a root with no deps" (swarm.rs:11493), and `relax_contracted_deps`
-/// exists to flatten any chain that survives it. So a worker's DAG neighborhood is just ITSELF, and
-/// scoping the bundle to it deletes every SIBLING interface while keeping only the module's own stub
-/// — the one interface it does not need, because it is the thing writing it. Under a flat fan the
-/// FULL bundle is the correct bundle, and this lever is inert at best and destructive at worst.
-/// It becomes meaningful only if the plan ever carries real inter-module edges.
-fn scoped_contracts_on() -> bool {
-    swarm_gate_cfg_bundle(
-        "GOOSE_SWARM_SCOPED_CONTRACTS",
-        load_config().scoped_contracts,
         false,
     )
 }
@@ -35600,15 +34303,17 @@ impl GooseAgentDispatcher {
                 }
             }
             // D3: the worker prompts point at "'API of …'" as the authoritative surface, and for a
-            // FIRST-WAVE task no dependency file exists on disk yet — dep_block is EMPTY, the
-            // heading is absent, and the worker is pointed at a section that is not there while the
-            // real interfaces sit under '## FROZEN MODULE INTERFACES'. Emitting the heading WITH a
-            // redirect makes every pointer true without touching the prompts that carry them.
+            // FIRST-WAVE task no dependency file exists on disk yet — dep_block is EMPTY and the
+            // heading is absent, so the worker is pointed at a section that is not there. Emitting
+            // the heading WITH a redirect makes every pointer true without touching the prompts
+            // that carry them. (The redirect used to point at the FROZEN MODULE INTERFACES bundle;
+            // that died with CONTRACTS, P1-4 — the plan manifest is now the naming authority.)
             let dep_block = if dep_block.is_empty() {
                 "## API of dependencies — NONE ON DISK YET\n\
                  No dependency source exists on disk yet (your siblings are still building). The \
-                 authoritative interfaces are under '## FROZEN MODULE INTERFACES' below — import and \
-                 call EXACTLY those names and signatures.\n\n"
+                 PROJECT FILE LAYOUT above is the naming authority: import your dependencies from \
+                 EXACTLY those paths, and once a dependency lands on disk read its real source \
+                 (`grep -n`/`sed -n`) before writing calls against it.\n\n"
                     .to_string()
             } else {
                 dep_block
@@ -35619,42 +34324,10 @@ impl GooseAgentDispatcher {
                  location or write a second copy at the project root:\n{manifest}\n{owned_part}{existing_block}{dep_block}"
             )
         };
-        let contracts_on = swarm_gate_cfg("GOOSE_SWARM_CONTRACTS", load_config().contracts);
-        // GOOSE_SWARM_CONTRACTS: inject the frozen sibling-module interfaces so every parallel worker
-        // builds against ONE agreed contract (kills cross-module drift). No-op until the stub pass (2b)
-        // populates the bundle, so this is safe to ship ahead of the generator.
-        // SWARM-COHERENCE Phase-1 (DAG-scoped context): scope the frozen bundle to this worker's DAG
-        // neighborhood (deps ∪ consumers ∪ self) so per-worker context is O(degree), not O(total modules).
-        // OFF (or an empty neighborhood, e.g. a fix/sink dispatch) => the full bundle path is byte-identical.
-        let scoped_contracts_on = scoped_contracts_on();
-        // #median-slash: the integrate-verify SINK RUNS the built app (reads the real files); it does not build
-        // against the frozen stubs, so the O(N-modules) contract bundle is dead context that only slows the
-        // slowest task's prefill. Drop it for the sink when enabled. Only the sink is affected; OFF => the full
-        // bundle path is byte-identical.
-        let sink_lean = req.task_id == "integrate-verify"
-            && matches!(
-                std::env::var("GOOSE_SWARM_SINK_LEAN_PREFILL")
-                    .ok()
-                    .as_deref(),
-                Some("1" | "on" | "true" | "yes")
-            );
-        let contracts_block = if contracts_on && !sink_lean {
-            match self.contracts.get() {
-                Some(b) => {
-                    if scoped_contracts_on && !req.neighborhood.is_empty() {
-                        frozen_interfaces_block(&goose_swarm::scope_contract_bundle(
-                            b,
-                            &req.neighborhood,
-                        ))
-                    } else {
-                        frozen_interfaces_block(b)
-                    }
-                }
-                None => String::new(),
-            }
-        } else {
-            String::new()
-        };
+        // The FROZEN MODULE INTERFACES block is DELETED with CONTRACTS (P1-4): a stub is a
+        // signature, not a behaviour, and r2 measured the bundle NARROWING the build (meridian/
+        // viz/static silently dropped from the contract; the worker built exactly what was
+        // contracted). The dep_block above hands workers the REAL dependency sources instead.
         // GOOSE_SWARM_GOALS: the app-level PILLARS block (pre-rendered), injected into EVERY worker so the
         // whole fleet holds the same acceptance criteria through compaction. Empty until distilled -> no-op.
         let pillars_block = if goals_enabled() {
@@ -35743,7 +34416,7 @@ impl GooseAgentDispatcher {
             "\nWRITE FIRST — before you read ANYTHING. Your VERY FIRST tool call MUST be a `write` that creates \
              one of your OWNED files as a working skeleton (its imports and the functions/classes the manifest \
              names, with minimal bodies), then fill it in. Do NOT `cat`/`ls`/`tree`/`find`/`grep`/'explore' \
-             before that first write: you ALREADY have the file manifest and your dependencies' contracts \
+             before that first write: you ALREADY have the file manifest and your dependencies' API excerpts \
              above, which is everything you need to start. Reading before writing is the #1 way a worker \
              stalls (some have burned 10+ reads and produced nothing). Skeleton first, then iterate.\n"
                 .to_string()
@@ -36088,7 +34761,7 @@ impl GooseAgentDispatcher {
              mentions. A signature mismatch lives in TWO files — the caller and the callee — and you \
              cannot fix it from one.\n\
              - Before editing, confirm the REAL signature/behaviour by reading the definition. Do NOT \
-             guess it and do NOT trust an injected contract over the actual source here.\n\
+             guess it and do NOT trust an injected excerpt over the actual source here.\n\
              - Fix the side that is WRONG relative to the project's own spec, not whichever is easier \
              to edit.\n\
              - You own no files by default: you may edit ANY file the fix requires.\n\
@@ -36133,8 +34806,8 @@ impl GooseAgentDispatcher {
              do NOT reflexively `cat` the whole file before every fix. Never speculate about \
              bytecode/.pyc/caching/compilation — the error text is reality.\n\
              - Create ONLY the files your task owns; never leave scratch, notes, or plan files behind.\n\
-             - Every dependency's API you may call is ALREADY injected above (under 'API of …' / the frozen \
-             interfaces). USE those exact names, signatures and constants — do NOT re-`cat` a dependency \
+             - Every dependency's API you may call is ALREADY injected above (under 'API of …'). \
+             USE those exact names, signatures and constants — do NOT re-`cat` a dependency \
              whose API is shown; independent guesses DIVERGE and the tests then disagree with the code. \
              Only `cat` a dependency's source when the injected API is MISSING the exact symbol/constant you \
              must call — and then read just that file, once.\n\
@@ -36147,7 +34820,7 @@ impl GooseAgentDispatcher {
              you nothing and wastes turns (workers have looped 10+ times on `plan.json`). Ignore them \
              completely and also do NOT create a `plan.json`.\n\
              {reading_rules}{stopping_rules}{supervisor_rules}\
-             \n{write_first_block}{decisions_block}{doc_facts_block}{pitfalls_block}{notes_block}{pillars_block}{layout_block}{contracts_block}{context_block}"
+             \n{write_first_block}{decisions_block}{doc_facts_block}{pitfalls_block}{notes_block}{pillars_block}{layout_block}{context_block}"
         );
         // Live concurrency view: each task prints when it STARTS and FINISHES. Because dispatches
         // run concurrently, you see several "▸ run" lines before their "✓" — that IS the parallelism.
@@ -36690,45 +35363,9 @@ impl TaskDispatcher for GooseAgentDispatcher {
                 "attempt": req.attempt,
             }));
         }
-        // S3 FILL FAN (GOOSE_SWARM_FILL_FAN): the two DETERMINISTIC task kinds and the fill
-        // normalization. Gate first so a coincidentally-named plan task can never trip these
-        // paths on an ordinary run — with the gate off this block is byte-identical to absent.
-        if goose_swarm::fill_fan_enabled() {
-            if let Some(module) = req.task_id.strip_prefix("skeleton::") {
-                return self.run_skeleton_step(module.to_string(), &req).await;
-            }
-            if let Some(module) = req.task_id.strip_prefix("join::") {
-                return self.run_join_step(module.to_string(), &req).await;
-            }
-        }
-        let req = if goose_swarm::fill_fan_enabled() && req.task_id.starts_with("fill::") {
-            // A fill's SCHEDULER identity is the virtual `<file>#<slot>` (held_files stays
-            // disjoint while N fillers target one real file); its AGENT identity must be the
-            // real file — the owned-file completion check and the K5 single-file pin both read
-            // owned_files, and a worker told to write `api.py#handle_get` writes garbage.
-            // Forced speculative: the fill works a shadow the JOIN reads later; nothing
-            // promotes it (promote/discard stay explicit, and the join discards).
-            let mut r = req;
-            r.owned_files = r
-                .owned_files
-                .iter()
-                .map(|f| f.split('#').next().unwrap_or(f).to_string())
-                .collect();
-            r.all_files = {
-                let mut a: Vec<String> = r
-                    .all_files
-                    .iter()
-                    .map(|f| f.split('#').next().unwrap_or(f).to_string())
-                    .collect();
-                a.sort();
-                a.dedup();
-                a
-            };
-            r.speculative = true;
-            r
-        } else {
-            req
-        };
+        // The S3 fill fan (skeleton::/join::/fill:: dispatch kinds) died with CONTRACTS (P1-4):
+        // its skeleton/join steps could only run over a frozen stub bundle, and no expansion
+        // manufactures those task ids any more.
         // F781/#16 c3 (GOOSE_SWARM_FIX_SCHED): FIX MODE. Gated on an ACTIVE round, never on the
         // prefix alone — a coincidentally-named plan task can never trip it (the fill_fan gate's
         // rule). The fix path wraps the ordinary task body in the fix cap, then ALWAYS grades the
@@ -37768,409 +36405,10 @@ fn pick_repair_winner(
 // S7's GOOSE_SWARM_TESTGEN gate lives in goose_swarm::testgen_enabled — ONE resolution shared
 // by the scheduler's picker and this crate's dispatcher, the sink_review_enabled lesson.
 
-/// Pure: the test body inside a model reply. Takes the LARGEST fenced code block (prose replies
-/// carry small illustrative fences; the deliverable is the big one) and requires a `def test_`
-/// inside it — a block without a single test function is not a test file, whatever the model
-/// says around it. None means the reply carried nothing landable, which the caller records
-/// rather than papering over. Split on the fence marker: parts at odd indices are fence bodies,
-/// and a body is CLOSED only when another part follows it — a trailing unterminated fence is
-/// dropped, never landed half-open.
-fn extract_generated_tests(reply: &str) -> Option<String> {
-    let parts: Vec<&str> = reply.split("```").collect();
-    let fenced = parts
-        .iter()
-        .enumerate()
-        .skip(1)
-        .step_by(2)
-        .filter(|(i, _)| *i < parts.len() - 1)
-        .map(|(_, fence)| fence.split_once('\n').map(|(_, body)| body).unwrap_or(""))
-        .filter(|b| b.contains("def test_"))
-        .max_by_key(|b| b.len())
-        .map(|b| b.trim().to_string());
-    // F804-batch: WHOLE-REPLY FALLBACK. Measured split — one run landed 3/3 fenced replies, the
-    // next 0/3 with "no landable fenced test block" three times: the model emitted the test file
-    // BARE. The fence was only ever a delimiter, not a safety property — the landing guard
-    // collect-onlys every candidate and removes what does not parse — so a bare reply that looks
-    // like a pytest file is landable on the same terms. Reasoning tails are stripped to the
-    // first import/def line.
-    fenced.or_else(|| {
-        if !reply.contains("def test_") {
-            return None;
-        }
-        let start = reply.lines().position(|l| {
-            let t = l.trim_start();
-            t.starts_with("import ") || t.starts_with("from ") || t.starts_with("def ")
-        })?;
-        let body: String = reply
-            .lines()
-            .skip(start)
-            .collect::<Vec<_>>()
-            .join("\n")
-            .trim()
-            .to_string();
-        if body.contains("def test_") {
-            Some(body)
-        } else {
-            None
-        }
-    })
-}
-
-/// Land a generated test body only if pytest can COLLECT it from the tree root — a SyntaxError
-/// or bad-import test file is worse than none (it breaks the whole suite the deterministic gate
-/// runs). On any failure the file is removed again and the reason returned, so the caller can
-/// emit an honest event instead of a landed-looking no-op.
-async fn land_generated_tests(
-    root: &std::path::Path,
-    body: &str,
-    seq: usize,
-) -> Result<String, String> {
-    let rel = format!("tests/generated/test_gen_{seq}.py");
-    let abs = root.join(&rel);
-    if let Some(dir) = abs.parent() {
-        std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
-    }
-    std::fs::write(&abs, body).map_err(|e| e.to_string())?;
-    // Collection IMPORTS the module. A generated test that starts the app at import time leaves a
-    // grandchild holding the inherited pipe, and a plain `output()` would then wait for an EOF that
-    // never comes; so the collector runs as a group and the tree is killed once pytest itself exits.
-    // No bound on pytest: it is waited for however long it takes.
-    let mut collect = tokio::process::Command::new("python3");
-    collect
-        .args(["-m", "pytest", "--collect-only", "-q", &rel])
-        .current_dir(root);
-    let collected = match spawn_grouped(&mut collect) {
-        Err(e) => Err(e.to_string()),
-        Ok(mut app) => {
-            let status = app.child.wait().await;
-            let out = app.kill_tree().await;
-            status
-                .map(|st| (st.success(), out))
-                .map_err(|e| e.to_string())
-        }
-    };
-    if matches!(collected, Ok((true, _))) {
-        Ok(rel)
-    } else {
-        let why = match &collected {
-            Ok((_, out)) => out
-                .lines()
-                .rfind(|l| !l.trim().is_empty())
-                .unwrap_or("collection failed")
-                .to_string(),
-            Err(e) => e.clone(),
-        };
-        let _ = std::fs::remove_file(&abs);
-        Err(why)
-    }
-}
-
-/// S3: why a splice was REFUSED. Refusal is a first-class outcome, never a panic — a refused
-/// splice falls back to the serial path with the tree untouched, which is always safe.
-#[derive(Debug, PartialEq)]
-#[allow(dead_code)] // S3 increment 1: the pure helper + tests; increments 2-3 wire the callers.
-enum SpliceRefusal {
-    SlotMissingInShadow(String),
-    SlotMissingInSkeleton(String),
-    /// The byte-fence: the shadow differs from the skeleton OUTSIDE its owned slots (imports
-    /// excepted — those merge under their own rules). CooperBench's overlapping-write failure
-    /// mode, refused mechanically instead of trusted away.
-    ShadowTouchedForeignSlot(String),
-    /// Same bound name imported differently on the two sides — or a skeleton import the shadow
-    /// dropped. Either way the composed module's names would not mean what the contract meant.
-    ImportConflict(String),
-    Unparseable(&'static str),
-}
-
-/// A slot's (start, end) line range in one source — 1-based inclusive.
-type SlotSpan = (usize, usize);
-
-/// One top-level span (1-based inclusive line range) in a Python module.
-#[derive(serde::Deserialize)]
-struct PySpan {
-    name: String,
-    start: usize,
-    end: usize,
-}
-
-#[derive(serde::Deserialize)]
-struct PySpans {
-    defs: Vec<PySpan>,
-    imports: Vec<PySpan>,
-}
-
-/// Top-level def/class + import spans via the interpreter's own ast (the drift checks' pattern:
-/// python3 is already a hard dependency of every Python-target run). Decorators are part of a
-/// def's span — a shadow that edits a sibling's decorator edited the sibling.
-#[allow(dead_code)] // S3 increment 1 (see SpliceRefusal).
-fn py_module_spans(src: &str) -> Option<PySpans> {
-    use std::io::Write;
-    let script = r#"
-import ast, json, sys
-src = sys.stdin.read()
-try:
-    tree = ast.parse(src)
-except SyntaxError:
-    print("PARSE_ERROR"); sys.exit(0)
-defs, imports = [], []
-for n in tree.body:
-    if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-        start = min([d.lineno for d in n.decorator_list] + [n.lineno])
-        defs.append({"name": n.name, "start": start, "end": n.end_lineno})
-    elif isinstance(n, (ast.Import, ast.ImportFrom)):
-        for a in n.names:
-            bound = a.asname or a.name.split(".")[0]
-            imports.append({"name": bound, "start": n.lineno, "end": n.end_lineno})
-print(json.dumps({"defs": defs, "imports": imports}))
-"#;
-    let mut child = std::process::Command::new("python3")
-        .args(["-c", script])
-        .stdin(std::process::Stdio::piped())
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::null())
-        .spawn()
-        .ok()?;
-    child.stdin.take()?.write_all(src.as_bytes()).ok()?;
-    let out = child.wait_with_output().ok()?;
-    let text = String::from_utf8_lossy(&out.stdout);
-    if !out.status.success() || text.trim() == "PARSE_ERROR" {
-        return None;
-    }
-    serde_json::from_str(text.trim()).ok()
-}
-
-/// S3 i3, anchor half: the module's stub text from the contracts bundle — the section
-/// scope_contract_bundle keeps for exactly this id, header line removed. None when no section
-/// survives for the module (D1 renames a dropped stub's heading to `### missing module:`,
-/// which scope_contract_bundle correctly does not match — an unparseable contract can never
-/// become a skeleton).
-#[allow(dead_code)] // S3 i3 lands in halves; the fan half (next commit) is the caller.
-fn module_stub(bundle: &str, module_id: &str) -> Option<String> {
-    let section = goose_swarm::scope_contract_bundle(bundle, &[module_id.to_string()]);
-    let body: String = section
-        .lines()
-        .filter(|l| !l.trim_start().starts_with("### module:"))
-        .collect::<Vec<_>>()
-        .join("\n");
-    let t = body.trim();
-    if t.is_empty() {
-        None
-    } else {
-        Some(t.to_string())
-    }
-}
-
-/// S3 i3: subsplit names the contract stub actually defines at top level. The prompt is a
-/// hope; the contract is the truth — and fewer than 2 survivors is no split at all.
-#[allow(dead_code)] // S3 i3 lands in halves (see module_stub).
-fn anchor_subsplit(stub: &str, names: &[String]) -> Vec<String> {
-    let Some(spans) = py_module_spans(stub) else {
-        return Vec::new();
-    };
-    let have: std::collections::HashSet<&str> =
-        spans.defs.iter().map(|d| d.name.as_str()).collect();
-    let kept: Vec<String> = names
-        .iter()
-        .filter(|n| have.contains(n.as_str()))
-        .cloned()
-        .collect();
-    if kept.len() >= 2 {
-        kept
-    } else {
-        Vec::new()
-    }
-}
-
-/// S3 i3, skeleton half: the stub with every function body replaced by
-/// `raise NotImplementedError`, via the interpreter's own ast — deterministic, zero model
-/// calls. The stub's own `...` bodies would return None SILENTLY, letting some tests pass on
-/// an unfilled slot and poisoning the fix loop's attribution; an unfilled slot must fail
-/// loudly the moment anything exercises it.
-#[allow(dead_code)] // S3 i3 lands in halves (see module_stub).
-fn skeleton_from_stub(stub: &str) -> Option<String> {
-    use std::io::Write;
-    let script = r#"
-import ast, sys
-src = sys.stdin.read()
-try:
-    tree = ast.parse(src)
-except SyntaxError:
-    print("PARSE_ERROR"); sys.exit(0)
-class T(ast.NodeTransformer):
-    def _fix(self, node):
-        node.body = [ast.Raise(exc=ast.Call(func=ast.Name(id="NotImplementedError", ctx=ast.Load()), args=[], keywords=[]), cause=None)]
-        return node
-    def visit_ClassDef(self, node):
-        self.generic_visit(node)
-        return node
-    def visit_FunctionDef(self, node):
-        return self._fix(node)
-    def visit_AsyncFunctionDef(self, node):
-        return self._fix(node)
-tree = T().visit(tree)
-ast.fix_missing_locations(tree)
-print(ast.unparse(tree))
-"#;
-    let mut child = std::process::Command::new("python3")
-        .args(["-c", script])
-        .stdin(std::process::Stdio::piped())
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::null())
-        .spawn()
-        .ok()?;
-    child.stdin.take()?.write_all(stub.as_bytes()).ok()?;
-    let out = child.wait_with_output().ok()?;
-    let text = String::from_utf8_lossy(&out.stdout);
-    if !out.status.success() || text.trim() == "PARSE_ERROR" || text.trim().is_empty() {
-        return None;
-    }
-    Some(text.trim_end().to_string() + "\n")
-}
-
-/// S3's merge: the CURRENT module with ONLY the named slots' bodies replaced from one filler's
-/// shadow. The byte-fence compares the shadow against the ROOT it was fanned from — not against
-/// `current`, which other fillers' landed slots have already advanced (the first live test of
-/// the 3-arg version refused exactly that false positive). Everything outside the owned slots
-/// must be byte-identical between root and shadow (imports excepted: the shadow may ADD
-/// imports, deduped against BOTH root and current; same-name-different-text refuses). Splices
-/// apply in DESCENDING order so earlier line ranges stay valid; the composed module must itself
-/// parse or the whole splice refuses. For a single filler, `current == root`.
-#[allow(dead_code)] // S3 increment 1 (see SpliceRefusal).
-fn splice_functions(
-    current_src: &str,
-    root_src: &str,
-    shadow_src: &str,
-    slots: &[String],
-) -> Result<(String, bool), SpliceRefusal> {
-    let cur = py_module_spans(current_src).ok_or(SpliceRefusal::Unparseable("current"))?;
-    let root = py_module_spans(root_src).ok_or(SpliceRefusal::Unparseable("root"))?;
-    let shad = py_module_spans(shadow_src).ok_or(SpliceRefusal::Unparseable("shadow"))?;
-    let find = |spans: &[PySpan], name: &str| -> Option<(usize, usize)> {
-        spans
-            .iter()
-            .find(|s| s.name == name)
-            .map(|s| (s.start, s.end))
-    };
-    // Per slot: its span in all three sources. Missing in current/root is the skeleton side.
-    let mut owned: Vec<(SlotSpan, SlotSpan, SlotSpan)> = Vec::new();
-    for slot in slots {
-        let in_cur = find(&cur.defs, slot)
-            .ok_or_else(|| SpliceRefusal::SlotMissingInSkeleton(slot.clone()))?;
-        let in_root = find(&root.defs, slot)
-            .ok_or_else(|| SpliceRefusal::SlotMissingInSkeleton(slot.clone()))?;
-        let in_shad = find(&shad.defs, slot)
-            .ok_or_else(|| SpliceRefusal::SlotMissingInShadow(slot.clone()))?;
-        owned.push((in_cur, in_root, in_shad));
-    }
-    let cur_lines: Vec<&str> = current_src.lines().collect();
-    let root_lines: Vec<&str> = root_src.lines().collect();
-    let shad_lines: Vec<&str> = shadow_src.lines().collect();
-    // The byte-fence: strip owned slots AND all import lines from root and shadow, then the
-    // remainders must match exactly. Content comparison, not offsets — replaced bodies shift
-    // every line number below them, which is why spans cannot be compared directly.
-    let strip = |lines: &[&str], cut: &[(usize, usize)]| -> String {
-        lines
-            .iter()
-            .enumerate()
-            .filter(|(i, _)| {
-                let ln = i + 1;
-                !cut.iter().any(|(s, e)| ln >= *s && ln <= *e)
-            })
-            .map(|(_, l)| *l)
-            .collect::<Vec<_>>()
-            .join("\n")
-    };
-    let root_cut: Vec<(usize, usize)> = owned
-        .iter()
-        .map(|(_, r, _)| *r)
-        .chain(root.imports.iter().map(|s| (s.start, s.end)))
-        .collect();
-    let shad_cut: Vec<(usize, usize)> = owned
-        .iter()
-        .map(|(_, _, h)| *h)
-        .chain(shad.imports.iter().map(|s| (s.start, s.end)))
-        .collect();
-    // F809 (measured on the first live exercise): the hard refusal here cost EVERY contribution
-    // from a whole-file-rewriting worker — the commonest weak-model behavior (2 of 5 fills died
-    // this way, and the other 3 died on slot names, so the first exercised join landed nothing).
-    // The fence's purpose — foreign edits must never reach the real file — is preserved by
-    // CONSTRUCTION below: only the owned slots' spans are copied out of the shadow, so a foreign
-    // rewrite is IGNORED rather than fatal. The residual risk (a slot body that depends on the
-    // shadow's foreign edits) is exactly what the join's post-splice verify exists to catch.
-    // The condition is kept only as a RECORDED fact for the join_spliced event.
-    let foreign_touched = strip(&root_lines, &root_cut) != strip(&shad_lines, &shad_cut);
-    // Import rules: every root import must survive in the shadow with identical text (a dropped
-    // or re-aimed import changes what foreign code MEANS); shadow-only imports merge into
-    // current unless current already carries the name (identical text -> dedupe, different ->
-    // conflict: two fillers wanting the same name to mean different things).
-    let import_text = |lines: &[&str], span: &PySpan| -> String {
-        lines[span.start - 1..span.end.min(lines.len())]
-            .join("\n")
-            .trim()
-            .to_string()
-    };
-    for ri in &root.imports {
-        match shad.imports.iter().find(|x| x.name == ri.name) {
-            None => {
-                return Err(SpliceRefusal::ImportConflict(format!(
-                    "the shadow dropped root import `{}`",
-                    ri.name
-                )))
-            }
-            Some(xi) => {
-                if import_text(&root_lines, ri) != import_text(&shad_lines, xi) {
-                    return Err(SpliceRefusal::ImportConflict(format!(
-                        "`{}` is imported differently in shadow and root",
-                        ri.name
-                    )));
-                }
-            }
-        }
-    }
-    let mut added: Vec<String> = Vec::new();
-    for xi in shad
-        .imports
-        .iter()
-        .filter(|x| !root.imports.iter().any(|r| r.name == x.name))
-    {
-        let text = import_text(&shad_lines, xi);
-        match cur.imports.iter().find(|c| c.name == xi.name) {
-            None => added.push(text),
-            Some(ci) => {
-                if import_text(&cur_lines, ci) != text {
-                    return Err(SpliceRefusal::ImportConflict(format!(
-                        "`{}` already means something else in the composed module",
-                        xi.name
-                    )));
-                }
-            }
-        }
-    }
-    // Compose: slot replacements in DESCENDING current order (indices above stay valid), then
-    // added imports after the last CURRENT import (import lines sit above every def and are
-    // untouched by the splices below them).
-    let mut out: Vec<String> = cur_lines.iter().map(|l| l.to_string()).collect();
-    let mut by_desc = owned.clone();
-    by_desc.sort_by_key(|((s, _), _, _)| std::cmp::Reverse(*s));
-    for ((cs, ce), _, (hs, he)) in &by_desc {
-        let body: Vec<String> = shad_lines[hs - 1..*he]
-            .iter()
-            .map(|l| l.to_string())
-            .collect();
-        out.splice(cs - 1..*ce, body);
-    }
-    if !added.is_empty() {
-        let at = cur.imports.iter().map(|s| s.end).max().unwrap_or(0);
-        for (k, line) in added.iter().enumerate() {
-            out.insert(at + k, line.clone());
-        }
-    }
-    let composed = out.join("\n") + "\n";
-    if py_module_spans(&composed).is_none() {
-        return Err(SpliceRefusal::Unparseable("composed"));
-    }
-    Ok((composed, foreign_touched))
-}
+// Contract-derived TESTGEN's extract/land helpers and the S3 fill-fan splice machinery
+// (SpliceRefusal, py_module_spans, module_stub, anchor_subsplit, skeleton_from_stub,
+// splice_functions) died with CONTRACTS (P1-4): every one of them consumed the frozen stub
+// bundle, and with no bundle none could ever fire again.
 
 /// Hard wall-clock cap (seconds) for a SERIAL push-to-completion / review fix agent. The dispatcher's own
 /// worker timeout is IDLE-based, so an agent that ACTIVELY over-generates (a reasoning model thinking for
@@ -38879,18 +37117,6 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             cfg.progress_watchdog_secs.to_string(),
         );
     }
-    // #median-slash: bridge the sink-lean-prefill tunable to the env the worker-prompt build reads (contracts
-    // block). Env wins; else the config value. Absent/false => the full contract bundle path is byte-identical.
-    if std::env::var("GOOSE_SWARM_SINK_LEAN_PREFILL").is_err() {
-        std::env::set_var(
-            "GOOSE_SWARM_SINK_LEAN_PREFILL",
-            if sink_lean_prefill_enabled(cfg.sink_lean_prefill) {
-                "1"
-            } else {
-                "0"
-            },
-        );
-    }
     // Upstream #10348 applies the default extension timeout (300s) as a HARD per-command kill to developer
     // `shell` calls that omit `timeout_secs`. Swarm WORKERS routinely run longer single commands (`cargo
     // build`, `npm install`, a big `pytest`/`cargo test`), and our own idle watchdog already bounds a HUNG
@@ -39061,7 +37287,6 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
         "gates": {
             "complete": swarm_gate_cfg("GOOSE_SWARM_COMPLETE", load_config().complete),
             "goals": goals_enabled(),
-            "contracts": swarm_gate_cfg("GOOSE_SWARM_CONTRACTS", load_config().contracts),
             "review": swarm_gate_cfg("GOOSE_SWARM_REVIEW", load_config().review),
             "sink_review": goose_swarm::sink_review_enabled(),
             "smoke": swarm_gate_cfg("GOOSE_SWARM_SMOKE", load_config().smoke),
@@ -39208,14 +37433,11 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             repeat_penalty: swarm_repeat_penalty_resolved(cfg.repeat_penalty),
         },
         stream_decode_retry: stream_decode_retry_enabled(cfg.stream_decode_retry),
-        straggler_grace_secs: straggler_grace_secs(cfg.straggler_grace_secs),
-        straggler_stop_degrade: straggler_stop_degrade_enabled(cfg.straggler_stop_degrade),
         repeat_break: repeat_break_enabled(cfg.repeat_break),
     };
     let dispatcher = build_swarm_dispatcher(dispatcher_recipe.clone(), sink.clone()).await?;
-    // F781/#16 c6: the fix-round dispatcher is seeded with the SAME frozen contracts + pillars the
-    // run-1 dispatcher got — captured at their set sites below (set_contracts takes ownership).
-    let mut fix_contracts_bundle = String::new();
+    // F781/#16 c6: the fix-round dispatcher is seeded with the SAME pillars the run-1 dispatcher
+    // got — captured at the set site below. (The frozen-contracts half died with CONTRACTS, P1-4.)
     let mut fix_pillars_block = String::new();
 
     // #136 — FREEZE THE OPERATOR'S SPEC, right here, before a single model call can touch it. Research
@@ -39594,9 +37816,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             "delivery": swarm_gate_cfg("GOOSE_SWARM_DELIVERY", load_config().delivery),
             "cross_module_check": swarm_gate_cfg("GOOSE_SWARM_CROSS_MODULE_CHECK", load_config().cross_module_check),
             "unwired_demotes_verified": swarm_gate_cfg("GOOSE_SWARM_UNWIRED_DEMOTES_VERIFIED", load_config().unwired_demotes_verified),
-            "contract_validate": swarm_gate_cfg("GOOSE_SWARM_CONTRACT_VALIDATE", load_config().contract_validate),
             "owned_file_fence": swarm_gate_cfg("GOOSE_SWARM_OWNED_FILE_FENCE", load_config().owned_file_fence),
-            "contract_retry": swarm_gate_cfg("GOOSE_SWARM_CONTRACT_RETRY", load_config().contract_retry),
             "read_on_fix": swarm_gate_cfg("GOOSE_SWARM_READ_ON_FIX", load_config().read_on_fix),
             "kind_prompt": swarm_gate_cfg("GOOSE_SWARM_KIND_PROMPT", load_config().kind_prompt),
             // AND A THIRD, ADDED THE SAME MORNING IT WAS BAKED, BECAUSE I MADE THIS EXACT MISTAKE AGAIN.
@@ -39640,7 +37860,6 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             ),
             "dep_signatures": dep_signatures_on(),
             "think_off_test_authors": think_off_test_authors(),
-            "scoped_contracts": scoped_contracts_on(),
             "persona": swarm_gate_cfg("GOOSE_SWARM_PERSONA", load_config().persona),
             // map — a lever missing from it reads as OFF even while it is demonstrably firing. MEASURED:
             // bedA's screen reported "(not on: 1)" for `review` on a run where review ran, found dead code,
@@ -39686,7 +37905,6 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                 .map(|v| matches!(v.trim().to_lowercase().as_str(), "1" | "on" | "true" | "yes"))
                 .unwrap_or(false),
             "complete": swarm_gate_cfg("GOOSE_SWARM_COMPLETE", load_config().complete),
-            "contracts": swarm_gate_cfg("GOOSE_SWARM_CONTRACTS", load_config().contracts),
             "smoke": swarm_gate_cfg("GOOSE_SWARM_SMOKE", load_config().smoke),
             // #129/#130 levers + ask_replan were firing but ABSENT from this map, so a campaign screen read
             // them as OFF while they demonstrably drove the run (measured: nf-hexohm-fixed shipped 82 via
@@ -39709,7 +37927,6 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                 "GOOSE_SWARM_CLARITY_FAIL_CLOSED",
                 load_config().clarity_fail_closed,
             ),
-            "sink_lean_prefill": sink_lean_prefill_enabled(load_config().sink_lean_prefill),
             // MEASURED 2026-07-20 (run allon-1): spec_contract was set in config.yaml, was honoured by the
             // engine (spec_contract_enabled() at 13237, used at 20563), and was MISSING from this event. The
             // levers event is the campaign's ONLY ground truth that an arm's lever actually landed, so a
@@ -39963,11 +38180,10 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
     };
 
     // PILLARS OFF THE CRITICAL PATH (speed hunt 2026-08-16). This was one serial planner call
-    // wedged BETWEEN two fan phases (contracts fan -> pillars -> dispatch) while every non-planner
-    // device idled — a pure pipeline bubble of ~1-3 min. Its inputs (prompt, research, adopted
-    // plan) are all available here, before CONTRACTS begins, and workers read pillars from a
-    // OnceLock exactly like contracts — the only true requirement is set_pillars before
-    // Scheduler::run, preserved by the await at the old call site below.
+    // wedged between fan phases while every non-planner device idled — a pure pipeline bubble of
+    // ~1-3 min. Its inputs (prompt, research, adopted plan) are all available here; the only true
+    // requirement is set_pillars before Scheduler::run, preserved by the await at the old call
+    // site below.
     let pillars_handle = if goals_enabled() {
         let d = dispatcher.clone();
         let pm = cfg.planner_model.clone();
@@ -39980,175 +38196,13 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
     } else {
         None
     };
-    // GOOSE_SWARM_CONTRACTS (2b): freeze signature-only module interfaces across the fleet before
-    // EXECUTE, so every parallel worker builds against ONE agreed contract (kills cross-module drift).
-    let contracts_on = swarm_gate_cfg("GOOSE_SWARM_CONTRACTS", load_config().contracts);
-    // The contract stubs are PYTHON signature stubs — gate the whole phase to a Python target so a
-    // non-Python (or mixed) tree never gets Python stubs injected into its worker prompts. The `.py`
-    // CONTRACTS is LANGUAGE-AGNOSTIC: it runs for ANY detected language (Python/TS/Rust/Go each get a native
-    // per-language stub prompt; anything else gets the generic arm of contract_stub_spec + a broad source-file
-    // matcher via is_source_file(Other)). The module filter empties on a tree with no code files, so a
-    // non-code plan simply skips. Python is byte-identical (same prompt, `.py` filter, collector). This kills
-    // cross-module interface drift on every tree, not just Python — the coherence gap Mihai flagged.
-    let contract_lang = detect_language(&opts.prompt, &[]);
-    if contracts_on {
-        let modules: Vec<TaskSpec> = dag
-            .tasks
-            .values()
-            .map(|n| n.spec.clone())
-            .filter(|s| {
-                // A TEST module has no interface a sibling needs — nobody imports `test_store` to call it —
-                // so freezing one buys nothing and costs a full worker-budget model call (up to
-                // worker_timeout_secs) on the same fleet the build is waiting for.
-                //
-                // MEASURED h1-treat-4: 3 of the 6 contract calls were for test modules (test-store,
-                // test-cli, test-main) — half the CONTRACTS phase spent on interfaces nobody consumes.
-                // They are also the most reliable source of unparseable stubs: test-store failed
-                // `invalid syntax` in BOTH h1-treat-4 and h1-treat-5, at 3092 and 2086 bytes, because a
-                // test file has no signature-only form to distil.
-                //
-                // is_test_file takes a BASE name, so pass the file name, not the full path.
-                let base_of = |f: &String| -> String {
-                    f.rsplit('/').next().unwrap_or(f.as_str()).to_string()
-                };
-                s.id != "integrate-verify"
-                    && s.owned_files
-                        .iter()
-                        .any(|f| contract_lang.is_source_file(f))
-                    && !s
-                        .owned_files
-                        .iter()
-                        .all(|f| contract_lang.is_test_file(&base_of(f)))
-            })
-            .collect();
-        if !modules.is_empty() {
-            sink.write_value(serde_json::json!({"event": "phase", "phase": "contracts"}));
-            phase_banner(
-                "CONTRACTS",
-                "freeze signature-only module interfaces across the fleet before EXECUTE",
-            );
-            let n_modules = modules.len();
-            let wm: Vec<String> = fleet_slot_models(&devices);
-            let cwd = std::env::current_dir().unwrap_or_default();
-            let before: std::collections::HashSet<PathBuf> =
-                collect_lang_files(&cwd, contract_lang)
-                    .into_iter()
-                    .collect();
-            let bundle = dispatcher
-                .generate_contracts(modules, wm, &opts.prompt, contract_lang)
-                .await;
-            // The stub-gen workers must emit TEXT, but a weak model sometimes writes a `...`-body stub
-            // file anyway. Remove any source file that appeared so EXECUTE starts from a clean tree — a
-            // leftover stub would otherwise risk a lazy worker shipping it as "done".
-            let stray: Vec<PathBuf> = collect_lang_files(&cwd, contract_lang)
-                .into_iter()
-                .filter(|p| !before.contains(p))
-                .collect();
-            for p in &stray {
-                let _ = std::fs::remove_file(p);
-            }
-            if !stray.is_empty() {
-                eprintln!(
-                    "  contracts: removed {} stray stub file(s) the stub-gen wrote (interfaces kept in-prompt)",
-                    stray.len()
-                );
-            }
-            if bundle.trim().is_empty() {
-                eprintln!("  contracts: no stubs produced — skipping injection");
-            } else {
-                // Validate BEFORE the move: set_contracts takes ownership of the bundle.
-                // Deterministic: ast.parse each stub. Fails OPEN — no python3 / a crash / bad output yields
-                // null and changes nothing. Gated because it costs one python3 call; observability only,
-                // it gates NOTHING (a mismatch cannot say whether the module or the CONTRACT is wrong, and
-                // reding a built artifact against a pre-build guess is the pillar-check bug).
-                let contract_validation = if swarm_gate_cfg(
-                    "GOOSE_SWARM_CONTRACT_VALIDATE",
-                    load_config().contract_validate,
-                ) {
-                    let v = validate_contract_bundle(&bundle).await;
-                    if let Some(val) = &v {
-                        let mods = val.get("modules").and_then(|m| m.as_array());
-                        let bad = mods
-                            .map(|a| {
-                                a.iter()
-                                    .filter(|m| {
-                                        m.get("parsed") == Some(&serde_json::Value::Bool(false))
-                                    })
-                                    .count()
-                            })
-                            .unwrap_or(0);
-                        if bad > 0 {
-                            eprintln!(
-                                "  {} {} of {} frozen contract stub(s) do NOT parse — those modules were handed prose, not an interface",
-                                style("contracts:").yellow().bold(),
-                                bad,
-                                mods.map(|a| a.len()).unwrap_or(0),
-                            );
-                        }
-                    }
-                    v.unwrap_or(serde_json::Value::Null)
-                } else {
-                    serde_json::Value::Null
-                };
-                // DROP the stubs that still do not parse. This block used to gate NOTHING — it printed the
-                // warning above and froze the poisoned bundle anyway. Its reasoning ("a mismatch cannot say
-                // whether the module or the CONTRACT is wrong") is right for a SEMANTIC mismatch and wrong
-                // here: Python that will not parse is not an interface at any reading, so there is nothing
-                // to adjudicate. MEASURED h1-treat-2 — `cli`'s stub failed on `invalid character '—'`, the
-                // cli worker got prose instead of a signature, passed a str where the sibling annotates
-                // Path, and every command of the shipped app crashed.
-                //
-                // A module with NO frozen self-interface is an ALREADY-HANDLED case (identical to a contract
-                // timeout): it builds without one and integrate-verify reconciles. A module handed garbage
-                // is not handled at all — it writes against nothing while believing it has a contract.
-                let bundle = drop_unparseable_stubs(bundle, &contract_validation);
-                // Count what SURVIVED the drop, before set_contracts takes ownership. The
-                // empty-bundle guard above runs BEFORE the drop, so a bundle emptied BY the drop
-                // still reached here, printed the success line and emitted frozen: true with the
-                // PRE-drop module count. MEASURED on a live 3-node run: `store`'s stub failed
-                // `expected ':'` and was dropped, and the event still said modules: 4, frozen: true.
-                // "N modules frozen" was the strongest-sounding claim in the phase and could be
-                // wrong by every module in it.
-                let injected: Vec<String> = bundle
-                    .split("### module: ")
-                    .skip(1)
-                    .filter_map(|sec| sec.lines().next())
-                    .map(|id| id.trim().to_string())
-                    .collect();
-                let frozen_n = injected.len();
-                fix_contracts_bundle = bundle.clone();
-                dispatcher.set_contracts(bundle);
-                if frozen_n == 0 {
-                    eprintln!(
-                        "  {} every stub failed validation and was dropped — NO frozen interface was injected; \
-                         workers build blind and integrate-verify reconciles",
-                        style("contracts:").yellow().bold(),
-                    );
-                } else {
-                    eprintln!(
-                        "  contracts: frozen interfaces injected into every worker ({frozen_n} of {n_modules} module(s))"
-                    );
-                }
-                // The one class-A CONTRACTS milestone for the phase TODO: interfaces were actually frozen
-                // across N modules (previously the phase emitted only a stderr banner — no stream evidence).
-                sink.write_value(serde_json::json!({
-                    "event": "contracts",
-                    // REQUESTED vs actually INJECTED. These differ whenever a stub fails to parse,
-                    // and only the second one is a fact about what workers received.
-                    "modules": n_modules,
-                    "frozen": frozen_n > 0,
-                    "injected": frozen_n,
-                    "injected_modules": injected,
-                    // WHAT was actually frozen, and whether it even parses. Until now this event said only
-                    // "N modules, frozen: true" — the stub TEXT was never written anywhere, so the interface
-                    // every worker is told to honour died with the process and could not be audited. It is
-                    // also the weakest evidence in the run (one 75s call to a weak model, accepted raw on a
-                    // non-empty check) being treated as the strongest. MEASURE it before anyone gates on it.
-                    "validated": contract_validation,
-                }));
-            }
-        }
-    }
+    // CONTRACTS is DELETED (P1-4, r3). The assessment proved the frozen bundle NARROWED the build:
+    // r2's REVIEW correctly folded sync/meridian/static into the api-endpoints brief, then the
+    // 2,527-char contract silently dropped meridian/viz/static and the worker built exactly its 9
+    // contracted functions — the causal origin of the j_workflow_journey critical (GET / -> 404).
+    // Earlier: 5 of 12 TEST defects were verbatim wrong-key against stubs, and 2/3 then 3/6 stubs
+    // did not parse. Workers now read the REAL dependency sources instead (dep_block excerpts +
+    // the ledger block) — a signature is not a behaviour, and the real file is already on disk.
 
     // GOOSE_SWARM_GOALS (part 1+3): distill the app's non-negotiable PILLARS from the spec + research + the
     // chosen plan and inject them into EVERY worker, so modules cohere to one north star through context
@@ -40361,29 +38415,10 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
     // SAME fleet — captured before Scheduler::new moves `devices`, like its three siblings above.
     let fix_devices: Vec<DeviceCfg> = devices.clone();
     let _ = &fix_devices;
-    // F804: SUBSPLIT EXPANSION, DEFERRED TO HERE — after the contracts freeze, where "does this
-    // module's stub parse" is finally answerable. Plan-time expansion manufactured skeleton::
-    // tasks that could only refuse at execution (measured 3-for-3 across two runs). Re-parsing
-    // from the same plan JSON loses nothing: detail specs are per-dispatch state and nothing
-    // mutates the dag between build and here. A module whose stub does not parse keeps its
-    // ordinary serial task; fill_fan_enabled still gates inside the expansion.
-    let dag = if goose_swarm::fill_fan_enabled() {
-        match goose_swarm::Dag::from_planner_json_with(&plan_json, &|m: &str| {
-            // F809: the slots ARE the stub's own definition names — the skeleton is generated
-            // from this same stub, so every slot exists in it by construction.
-            let skel = module_stub(&fix_contracts_bundle, m)
-                .as_deref()
-                .and_then(skeleton_from_stub)?;
-            let spans = py_module_spans(&skel)?;
-            let names: Vec<String> = spans.defs.iter().map(|d| d.name.clone()).collect();
-            (!names.is_empty()).then_some(names)
-        }) {
-            Ok(d) => d,
-            Err(_) => dag,
-        }
-    } else {
-        dag
-    };
+    // The F804 subsplit expansion (skeleton::/fill::/join:: from frozen-contract stubs) died with
+    // CONTRACTS (P1-4): the slots came from each module's stub, and with no bundle the closure could
+    // only ever return None — every module keeps its ordinary serial task, which is what runs did
+    // anyway (fills measured 3-for-3 SlotMissingInSkeleton across two runs).
     let mut scheduler = Scheduler::new(devices, cfg.max_attempts)
         // F779 i3: borrowed machines for read-only idle work — appended AFTER the fleet_* captures
         // above so nothing derived from `devices` (race width, fan permits, occupancy, planner
@@ -42143,9 +40178,6 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                             }
                             Ok(fresh) => {
                                 *fresh.spec_frozen.lock().unwrap() = opts.prompt.clone();
-                                if !fix_contracts_bundle.is_empty() {
-                                    fresh.set_contracts(fix_contracts_bundle.clone());
-                                }
                                 if !fix_pillars_block.is_empty() {
                                     fresh.set_pillars(fix_pillars_block.clone());
                                 }
