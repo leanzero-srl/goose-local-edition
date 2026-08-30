@@ -168,13 +168,43 @@ describe('MlxEngineView engine tab', () => {
     unmount();
   });
 
-  it('renders the gate message verbatim as a solid red banner', async () => {
+  it('renders a BLOCK gate message verbatim as a solid red banner', async () => {
     const gate =
       'BLOCK: model needs 24.0 GB but only 9.1 GB of unified memory is free — close something or pick a smaller quant';
-    mockStatus.mockResolvedValue(statusOf({ state: 'stopped', gateMessage: gate }));
+    mockStatus.mockResolvedValue(
+      statusOf({ state: 'stopped', gateMessage: gate, gateVerdict: 'block' })
+    );
     const { unmount } = render(<MlxEngineView />);
     await waitFor(() => {
       expect(screen.getByText(gate)).toBeInTheDocument();
+      expect(screen.getByText('Mount blocked')).toBeInTheDocument();
+    });
+    unmount();
+  });
+
+  it('an ALLOW gate verdict renders no red banner (live-caught defect: allow shown as blocked)', async () => {
+    const gate = 'model 5.6 GiB fits with 15.0 GiB above the 9.6 GiB floor';
+    mockStatus.mockResolvedValue(
+      statusOf({ state: 'stopped', gateMessage: gate, gateVerdict: 'allow' })
+    );
+    const { unmount } = render(<MlxEngineView />);
+    await waitFor(() => {
+      expect(screen.queryByText('Mount blocked')).not.toBeInTheDocument();
+      expect(screen.queryByText('Memory pressure')).not.toBeInTheDocument();
+    });
+    unmount();
+  });
+
+  it('a WARN gate verdict renders the amber pressure banner', async () => {
+    const gate = 'fits, but only 2.1 GiB above the floor — expect pressure under load';
+    mockStatus.mockResolvedValue(
+      statusOf({ state: 'stopped', gateMessage: gate, gateVerdict: 'warn' })
+    );
+    const { unmount } = render(<MlxEngineView />);
+    await waitFor(() => {
+      expect(screen.getByText(gate)).toBeInTheDocument();
+      expect(screen.getByText('Memory pressure')).toBeInTheDocument();
+      expect(screen.queryByText('Mount blocked')).not.toBeInTheDocument();
     });
     unmount();
   });

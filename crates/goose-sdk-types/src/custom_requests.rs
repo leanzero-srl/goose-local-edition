@@ -2286,6 +2286,9 @@ pub struct MlxEngineStatusDto {
     pub probe_error: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub gate_message: Option<String>,
+    /// The last memory-gate verdict for `gate_message`: "allow" | "warn" | "block".
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gate_verdict: Option<String>,
     pub available_memory_gb: f64,
     pub total_memory_gb: f64,
     /// True when the persisted settings would spawn the running engine differently

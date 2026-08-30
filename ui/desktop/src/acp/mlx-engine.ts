@@ -23,6 +23,7 @@ export interface MlxEngineStatus {
   probeError?: string;
   /** A mount gate refusal (e.g. not enough memory). Render VERBATIM, never paraphrased. */
   gateMessage?: string;
+  gateVerdict?: 'allow' | 'warn' | 'block';
   /** Persisted settings would spawn the running engine differently; remount to apply. */
   restartRequired: boolean;
   availableMemoryGb: number;
