@@ -3581,7 +3581,7 @@ impl RecurrenceMeter {
             self.recent = tail_chars(&self.recent, 1_200);
         }
         self.since_rotate += chunk.chars().count();
-        if self.since_rotate >= 20_000 {
+        if self.since_rotate >= 10_000 {
             self.older = self.mid.take();
             self.mid = Some(self.recent.clone());
             self.since_rotate = 0;
@@ -3606,8 +3606,20 @@ impl RecurrenceMeter {
         self.span() >= RECURRENCE_MIN_SPAN && self.rate() >= RECURRENCE_TRIGGER
     }
 
+    /// The judge's out-of-tail span. TRACED on r4b (gate 8): right after a rotation `mid` is the
+    /// chars just behind the live tail — showing it as "tens of thousands of characters ago"
+    /// overlapped the tail by ~1,000 of its 1,200 chars and made the COMPARE instruction judge two
+    /// near-identical windows BY CONSTRUCTION on any healthy call. `mid` is exposed only once the
+    /// stream has moved >=8,000 chars past it; `older` (a full rotation further back) is always
+    /// safe. Rotation is 10,000 so a 2-4k char/min stream gets its first honest span at ~minute
+    /// 4-5 instead of ~7.
     fn earlier(&self) -> Option<&str> {
-        self.older.as_deref().or(self.mid.as_deref())
+        let far = self.older.as_deref();
+        if self.since_rotate >= 8_000 {
+            far.or(self.mid.as_deref())
+        } else {
+            far
+        }
     }
 }
 
@@ -17350,6 +17362,10 @@ impl GooseAgentDispatcher {
                 // thing that actually distinguishes a loop from a table: whether the repeats ADVANCE.
                 // It already has the objective and the tail; it does not need a threshold.
                 let measured = if recur.span() >= RECURRENCE_MIN_SPAN {
+                    // rate() is duplicated-over-DISTINCT and exceeds 1.0 deep in a loop — printed
+                    // raw it claimed "240% of windows are repeats" at r4b's kill state, nonsense a
+                    // judge may discount. rate/(1+rate) is the bounded share of windows that are
+                    // repeats (r4b kill: 70.6%, matching the archive's measured duplication).
                     format!(
                         "\n\nA deterministic detector measured the last {} characters of this call: {:.0}% of \
                          its 48-character windows are exact repeats of earlier windows in this SAME call.\n\
@@ -17363,7 +17379,7 @@ impl GooseAgentDispatcher {
                          through NEW items; the same ten items with the same verdicts a second time is \
                          a loop wearing a list's shape.",
                         recur.span(),
-                        recur.rate() * 100.0
+                        (recur.rate() / (1.0 + recur.rate())) * 100.0
                     )
                 } else {
                     String::new()
@@ -17906,7 +17922,11 @@ impl GooseAgentDispatcher {
                                     .iter()
                                     .any(|prev| tails_recur(prev, &tail_set)))
                         {
-                            omni_looping_streak += 1;
+                            // TRACED on r4b (gate 8): a FIRST LOOPING with the meter already
+                            // recurring went 0 -> 1 and delivery (streak >= 2) waited a whole extra
+                            // look. The measurement IS the second witness — the same standing the
+                            // drift gate gives it — so a corroborated LOOPING delivers now.
+                            omni_looping_streak = (omni_looping_streak + 1).max(2);
                         } else {
                             // First LOOPING on this content — arm, but do not yet count toward the kill.
                             omni_looping_streak = 1;
@@ -25447,12 +25467,15 @@ impl GooseAgentDispatcher {
              NOT confirm the plan is sound, do NOT summarise it back. If the plan needs no change, return \
              empty lists for all four keys and say nothing else. Saying \"the plan is sound\" as a finding \
              is the same as saying nothing, and it costs the fleet's whole round to say it.\n\n\
-             THE EXIT RAMP — read this twice. The seven questions above are your WHOLE checklist. The \
-             moment you have walked them once, CALL THE final_output TOOL with what you have. Do not \
-             \"check if there are any other issues\": there is no eighth question, and walking the list \
-             again on a clean plan produces the identical answers — a reviewer was measured doing exactly \
-             that, verbatim, for 24 minutes, its review complete after the first pass and its exit never \
-             taken. One pass, then the tool."
+             THE EXIT RAMP — read this twice. The numbered questions above (1-7, 6b included) are your \
+             WHOLE checklist. The moment you have walked them once and resolved any MUST-FIX, CALL THE \
+             final_output TOOL with what you have. Do not \"check if there are any other issues\": there \
+             is no question you have not been given, and the plan's other fields — summary, difficulty, \
+             slice, model, description — are NOT checks either: no question asks about them, and a \
+             reviewer was measured sweeping exactly those five fields in a verbatim cycle for 24 minutes, \
+             its review complete after the first pass and its exit never taken. \"The only review the \
+             plan gets\" means the numbered questions answered well — a second walk catches nothing the \
+             first did not. One pass, then the tool."
             .to_string();
         // Question 7 asks whether the plan's paths match what is on disk. Handing over that list is what
         // makes it answerable. MEASURED 2026-08-28: without it the reviewer shelled out looking for the
