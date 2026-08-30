@@ -85,6 +85,11 @@ a real HTTP entry shell — split "layout by code" from "entry content owned by 
 scaffolding is not the dead contract-stub form (interface stubs replacing real sources) — argue
 it on mechanism. Mihai 14:35: "isn't build supposed to fan out?"
 
+## Live queue (small items, fold into the next matching brief)
+
+- judge_look carries no node/model attribution — 43 looks in r5 unattributable; add the serving
+  node to the event (swarm-surgeon, next batch).
+
 ## Surgeon #7 queue — ALL LANDED 2026-08-30 (f2d75bebc..760fd8b32); kept for the record
 (works-prover, next fan): is plan_loaded.plan_confidence_breakdown dead post-P1-5? conf_trail.py
 and lever_check.py consume it; the ask event's twin field was confirmed dead 0/0.
