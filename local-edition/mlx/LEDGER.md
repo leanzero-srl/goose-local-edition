@@ -1,5 +1,35 @@
 # MLX engine campaign — LEDGER
 
+## 2026-08-31 ~01:00 — LIVE DESKTOP VERIFICATION COMPLETE (the whole loop, in the running app)
+
+Driven over CDP (ENABLE_PLAYWRIGHT + playwright connect_over_cdp; screenshots in the session
+scratchpad). Verified END TO END in the RUNNING app, not by tests: nav shows MLX Engine
+(capability-gated) → view live (status card polls real ACP) → model picker lists the 9B from
+~/.goose/models → Mount → MOUNTING → **RUNNING** (solid green; hermes chip; context 262,144; pid;
+19.1 GB free bar) → presence penalty 1.2 → Save → exact "Restart required" banner → Remount →
+running again, banner gone, field persisted, **engine process cmdline carries
+--default-presence-penalty 1.2 (ps-proven)** → Models tab: models_dir row (~/.goose/models, Edit)
+→ HF search returns real MLX repos → Download (Irfanuruchi/SmolLM2-135M-Instruct-MLX-4bit) → live
+progress bar → DONE chip at 76 MB/76 MB, listed with size → Delete via custom dialog → gone from
+list AND disk → Unmount → STOPPED, 8090 freed, zero orphan processes → Settings: ZERO "Local
+Inference" occurrences (old window fully removed). Fleet gate ALLOW before/after everything.
+
+**Three defects the live run caught that no test had** (all fixed + pinned by new tests/commits):
+1. goosed's PATH grab-bag broke the spawn TWICE — first the mcp-hermit shim (cold python
+   bootstrap ate the 180s budget), then the desktop-bundled ui/desktop/src/bin/uvx wrapper
+   (nested bash chain, never served). Fix: the engine subprocess gets a FIXED standard PATH;
+   missing uvx fails loudly by name. (2a249bafc + follow-up)
+2. The gate's ALLOW message rendered under a red "Mount blocked" banner — status now carries
+   gate_verdict; block=red, warn=amber, allow=no banner; 3 UI tests pin it.
+3. First-run friction the tests can't see: onboarding guard (needs GOOSE_PROVIDER — set to omlx
+   with GOOSE_MODEL qwen3.5-9b-4bit in config.yaml, backed up first) and the telemetry consent
+   modal (declined). Both are one-time.
+
+Instrument note (honesty): my driver wrongly expected the progress row to vanish on completion —
+the UI keeps it with a DONE chip, which is better; driver assumption, not a defect.
+
+Residual polish item: deleting a model leaves an empty publisher dir shell in models_dir.
+
 Append-only, newest first, READ BACK at the start of every session. Every entry: what happened,
 what it changed, what it means next time. Machine twin: `experiments.jsonl` (one row per real
 experiment/event; a failed or inconclusive row carries a `void_reason` string, never a bare boolean).
