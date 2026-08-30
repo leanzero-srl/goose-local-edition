@@ -51,6 +51,14 @@ boundary), run one gate-auditor pass over the whole roster.
 | cloud-campaign runner | the cloud-sb7 admission machinery | when that campaign resumes |
 
 ## Grading log (newest first — one line per delegation; move closed items to the per-agent notes)
+- 2026-08-30 panel-surgeon #1 (stale-cell render path): CLEAN PASS — refused the instrument's
+  diagnosis and proved the chain link by link over live CDP (digest fresh, fiber memoizedProps
+  fresh, DOM frozen), found the real mechanism (useSmoothText rAF fires 0x while the window is
+  hidden), fixed BOTH sides with tests (goose 2696b926d, loop-state b27818f), closed it with a
+  natural experiment (window visible -> lane advanced), and correctly ruled the WASTE duplicates
+  by-design (two surfaces, two sources). Four unbriefed observations reported-not-fixed. CHARTER
+  STALENESS fixed this turn: the "2 skipped realfs push tests" expectation does not match plain
+  `pnpm test` (they live under the integration config) — charter line amended.
 - 2026-08-30 swarm-surgeon #3 (splice_briefs unclaimed-brief files, 7b5171998): CLEAN PASS —
   ordering proof given unprompted (splice runs before review/finalize, so the repair chain sees the
   appended files and repair_shared_files backstops residual overlap), read-whole list includes the
