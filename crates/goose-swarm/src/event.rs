@@ -69,12 +69,18 @@ pub enum SwarmEvent {
     RunPaused,
     /// The pause sentinel was cleared; the scheduler resumed claiming ready tasks (re-runs nothing).
     RunUnpaused,
-    /// A dynamic replan round: `added` are the spliced task ids; `stopped` means the replanner
-    /// declined (empty/invalid) and no further replans will run.
+    /// A dynamic replan round: `added` are the spliced task ids; `stopped` means no tasks were
+    /// spliced this round. GEN-6a #4/#9 (fallback rule): `reason` distinguishes the three arms
+    /// that used to collapse into one shape — the planner DECLINED (an empty plan is a
+    /// decision), the planner CALL FAILED (a transport/model fault is not a decision), and the
+    /// SPLICE was rejected (a planner answer the DAG could not take). A network fault reading
+    /// as "planner declined" is exactly the evidence-hiding this field removes. Empty on the
+    /// success arm.
     Replanned {
         round: u32,
         added: Vec<String>,
         stopped: bool,
+        reason: String,
     },
     /// A judge-side SPLIT was applied: one task became `children`. Emitted because it was previously
     /// invisible — `apply_split` mutated the DAG and said nothing, so "does the swarm decompose work

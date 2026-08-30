@@ -3767,22 +3767,39 @@ impl Scheduler {
                 };
                 if let Some(ctx) = ctx {
                     let round = ctx.round;
-                    let specs = self
-                        .replanner
-                        .as_ref()
-                        .unwrap()
-                        .replan(ctx)
-                        .await
-                        .unwrap_or_default();
+                    // GEN-6a #4 (fallback rule): the old `.unwrap_or_default()` here read a
+                    // planner-call FAILURE as a planner DECISION — a network fault became
+                    // "planner declined" and armed the declined-state suppression. The arms are
+                    // distinguished now; nothing is laundered into an empty plan.
+                    let replan_result = self.replanner.as_ref().unwrap().replan(ctx).await;
                     let mut s = state.lock().await;
                     if s.all_terminal() {
                         return Ok(s.build_report());
                     }
+                    let specs = match replan_result {
+                        Ok(specs) => specs,
+                        Err(e) => {
+                            s.sink.emit(&SwarmEvent::Replanned {
+                                round,
+                                added: Vec::new(),
+                                stopped: true,
+                                reason: format!("planner call failed: {e}"),
+                            });
+                            // Refund the round (a failed call says nothing about the DAG), but do
+                            // NOT record a declined-state marker: the planner never answered, so
+                            // suppressing future asks on its behalf would turn one transport
+                            // fault into a silently disabled replanner.
+                            s.replans_done = s.replans_done.saturating_sub(1);
+                            drop(s);
+                            continue;
+                        }
+                    };
                     if specs.is_empty() {
                         s.sink.emit(&SwarmEvent::Replanned {
                             round,
                             added: Vec::new(),
                             stopped: true,
+                            reason: "planner declined (empty plan)".to_string(),
                         });
                         // REFUND the round and remember the state instead of burning the budget. An
                         // empty answer costs one planner call and says nothing about a DAG that has
@@ -3819,15 +3836,19 @@ impl Scheduler {
                                     round,
                                     added,
                                     stopped: false,
+                                    reason: String::new(),
                                 });
                                 drop(s);
                                 continue;
                             }
-                            Err(_) => {
+                            Err(e) => {
                                 s.sink.emit(&SwarmEvent::Replanned {
                                     round,
                                     added: Vec::new(),
                                     stopped: true,
+                                    // GEN-6a #4: a rejected splice is the third distinct arm —
+                                    // the planner ANSWERED and the DAG refused the answer.
+                                    reason: format!("splice rejected: {e}"),
                                 });
                                 s.replans_done = self.max_replans;
                             }
