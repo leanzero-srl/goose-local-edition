@@ -1,5 +1,34 @@
 # MLX engine campaign — LEDGER
 
+## 2026-08-31 ~02:30 — First sidecar-only swarm micro-run DIVERGED; stopped, different fix dispatched
+
+Per follow-the-test-kill-on-divergence: the run was not retried. Observed (stdout + ground truth):
+the surgeon's viability trace rested on a premise I failed to flag — `lms ps` WORKS here (CLI IPC,
+tokenless), so fleet discovery imported the three 27B devices; every task went to them and 401'd
+instantly (0.0s "claimed done but never wrote"); the engine correctly finished STILL RED and
+refused success. The sidecar device: never pre-warmed (no mount, no listener on 8090), never
+dispatched. Poisoned metric spotted: instant-failing devices ranked "fastest" (15ms = the speed of
+a 401). Also suspicious: integrate-verify showed ✓ at 0.0s while carrying the auth error in its
+report body. All four findings handed to the swarm-surgeon with the run's event log for a
+diagnose-and-fix pass (pre-warm mount ordering is the step-C defect; speed-ranking and ✓-on-401
+are its call to fix-or-report under mild-not-deterministic).
+
+## 2026-08-31 ~02:00 — Swarm wiring complete (step C); micro-run's LM-planner leg blocked on fleet token
+
+Step C (a2aec6fd4, swarm-surgeon): SidecarEngine registered in the Engines registry behind the
+"mlx-sidecar" device tag; dispatcher routes sidecar models to the omlx provider (map the brief
+presumed, surgeon built minimally); sidecar devices merge additively from config (never discovered,
+never condemned by a not-yet-mounted engine's None probe); per-engine re-warm; OMLX_HOST exported
+at registry construction; TRACE VERDICT YES walked in both directions; 704 tests + 8 gates +
+workspace clippy green; ratchet held at 45,096. Planner remains lmstudio-pinned (pre-warm +
+servability) by explicit choice.
+
+**Blocker found for the full mixed-pool micro-run:** the fleet's LM Studio HTTP API (:1234) now
+requires Bearer auth; no token exists on this machine (`lms ps` works — CLI IPC — but the openai
+provider path 401s; the earlier probe that looked like a token was `logIncomingTokens: false`).
+The token lives with the MacBook setup. Morning item for Mihai: provide LM_API_TOKEN (or run the
+mixed micro-run from the MacBook). Sidecar-only run viability question put to the surgeon.
+
 ## 2026-08-31 ~01:00 — LIVE DESKTOP VERIFICATION COMPLETE (the whole loop, in the running app)
 
 Driven over CDP (ENABLE_PLAYWRIGHT + playwright connect_over_cdp; screenshots in the session
