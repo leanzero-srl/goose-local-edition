@@ -1008,6 +1008,13 @@ struct State {
     /// `user_decisions`. Empty when DOC_PREFETCH is off => the worker prompt is byte-identical.
     doc_facts: String,
     replans_done: u32,
+    /// A summoned replan whose planner call has not resolved yet. Single-flight guard for the
+    /// SPAWNED replan (r5, 2026-08-30): the call used to be awaited INLINE in the scheduler loop,
+    /// and a 27B planner grinding for 40+ minutes parked ALL dispatch — decisions completed at
+    /// 12:16:50 with two ready successors and two free devices, and nothing moved. While true, the
+    /// summon gate stays closed (replans_done alone cannot hold it: both decline arms refund the
+    /// round) and the stuck-bail is suppressed — the planner's answer may still add work.
+    replan_in_flight: bool,
     /// How many tasks were still incomplete the last time the replanner answered with NOTHING.
     ///
     /// An empty answer used to burn the entire budget (`replans_done = max_replans`), which turned
@@ -3655,6 +3662,7 @@ impl Scheduler {
             user_decisions,
             doc_facts: self.doc_facts.clone(),
             replans_done: 0,
+            replan_in_flight: false,
             replan_declined_at_incomplete: None,
             bonus_ids: HashSet::new(),
             device_speed: HashMap::new(),
@@ -3690,6 +3698,9 @@ impl Scheduler {
         let mut was_paused = false;
         // Claim count at the last demand signal — the rate limiter for the caller's fleet re-probe.
         let mut last_demand_claims: u64 = 0;
+        // The in-flight SPAWNED replan, aborted when the run ends (all_terminal) so a planner call
+        // whose answer has nowhere to land cannot outlive the run and emit into a closed sink.
+        let mut replan_abort: Option<tokio::task::AbortHandle> = None;
 
         loop {
             // MID-RUN DEVICE ADMISSION. Drained here, at the TOP of the pass, so an admitted device is
@@ -3766,14 +3777,23 @@ impl Scheduler {
             {
                 let s = state.lock().await;
                 if s.all_terminal() {
+                    // A replan still thinking has nothing left to splice into — its answer was
+                    // going to be discarded on all_terminal even when the call was inline.
+                    if let Some(h) = replan_abort.take() {
+                        h.abort();
+                    }
                     return Ok(s.build_report());
                 }
-                if !paused && !dispatched_now && s.build_in_flight() == 0 {
+                if !paused && !dispatched_now && s.build_in_flight() == 0 && !s.replan_in_flight {
                     // Nothing assignable and nothing running, but not all terminal: the remaining
                     // tasks are permanently blocked (deps failed, or a file deadlock).
                     // The `!paused` guard is LOAD-BEARING: while held we intentionally claim nothing and can
                     // drain to zero in-flight — without this guard that state trips the stuck-bail and turns
                     // Pause into an accidental terminate. Held + drained must idle until the sentinel clears.
+                    // `!replan_in_flight` likewise: the fleet can drain to zero while the planner is
+                    // still composing an answer that may add work; bailing there would turn a slow
+                    // planner into a terminated run. Its resolution notifies, so the bail is only
+                    // deferred, never lost.
                     let remaining = s
                         .dag
                         .tasks
@@ -3806,14 +3826,20 @@ impl Scheduler {
                 }
             }
             // Dynamic replan: workers idle while a task is still in flight (e.g. a slow tail) — ask the
-            // planner for more parallel work to fill them. Gated on in_flight > 0, so it is mutually
-            // exclusive with the stuck-bail above (which needs in_flight == 0). The state lock is
-            // released across the async planner call; completions fire meanwhile and splice_specs
-            // re-validates against the now-current DAG.
+            // planner for more parallel work to fill them. The call is SPAWNED, never awaited in the
+            // loop. r5 (2026-08-30) is the receipt for why: the old inline `.await` parked the entire
+            // scheduler loop on one 27B planner call from 11:52:17 onward — completions still landed
+            // (worker futures take the state lock directly) but no pass ran, so when `decisions`
+            // completed at 12:16:50 its two ready successors sat undispatched for 40+ minutes beside
+            // two free devices, and the completed skeleton was never pre-reviewed. Releasing the
+            // state lock across the call was never the point; the LOOP is the dispatch engine.
+            // Completions fire while the planner thinks and splice_specs re-validates against the
+            // now-current DAG when the answer lands; `replan_in_flight` keeps the summon single-shot.
             if !paused && self.replanner.is_some() {
                 let ctx = {
                     let mut s = state.lock().await;
                     if !dispatched_now
+                        && !s.replan_in_flight
                         && s.total_in_flight() > 0
                         && s.ready.is_empty()
                         && s.idle_capacity() >= 2
@@ -3837,6 +3863,7 @@ impl Scheduler {
                             .is_none_or(|prev| s.incomplete_count() < prev)
                     {
                         s.replans_done += 1;
+                        s.replan_in_flight = true;
                         Some(s.make_replan_context())
                     } else {
                         None
@@ -3844,117 +3871,136 @@ impl Scheduler {
                 };
                 if let Some(ctx) = ctx {
                     let round = ctx.round;
-                    // GEN-6a #4 (fallback rule): the old `.unwrap_or_default()` here read a
-                    // planner-call FAILURE as a planner DECISION — a network fault became
-                    // "planner declined" and armed the declined-state suppression. The arms are
-                    // distinguished now; nothing is laundered into an empty plan.
-                    let replan_result = self.replanner.as_ref().unwrap().replan(ctx).await;
-                    let mut s = state.lock().await;
-                    if s.all_terminal() {
-                        return Ok(s.build_report());
-                    }
-                    let specs = match replan_result {
-                        Ok(specs) => specs,
-                        Err(e) => {
-                            s.sink.emit(&SwarmEvent::Replanned {
-                                round,
-                                added: Vec::new(),
-                                stopped: true,
-                                reason: format!("planner call failed: {e}"),
-                            });
-                            // Refund the round (a failed call says nothing about the DAG), but do
-                            // NOT record a declined-state marker: the planner never answered, so
-                            // suppressing future asks on its behalf would turn one transport
-                            // fault into a silently disabled replanner.
-                            s.replans_done = s.replans_done.saturating_sub(1);
-                            drop(s);
-                            continue;
+                    let replanner = self.replanner.as_ref().unwrap().clone();
+                    let st = state.clone();
+                    let nt = notify.clone();
+                    let max_replans = self.max_replans;
+                    let jh = tokio::spawn(async move {
+                        // GEN-6a #4 (fallback rule): the old `.unwrap_or_default()` here read a
+                        // planner-call FAILURE as a planner DECISION — a network fault became
+                        // "planner declined" and armed the declined-state suppression. The arms are
+                        // distinguished now; nothing is laundered into an empty plan.
+                        let replan_result = replanner.replan(ctx).await;
+                        let mut s = st.lock().await;
+                        // Cleared FIRST, before any arm can panic: a wedged-true flag would suppress
+                        // the stuck-bail and disable the replanner for the rest of the run.
+                        s.replan_in_flight = false;
+                        if s.all_terminal() {
+                            // Same as the inline era: an answer arriving after the DAG finished is
+                            // discarded (the loop's own all_terminal pass ends the run).
+                            return;
                         }
-                    };
-                    if specs.is_empty() {
-                        s.sink.emit(&SwarmEvent::Replanned {
-                            round,
-                            added: Vec::new(),
-                            stopped: true,
-                            reason: "planner declined (empty plan)".to_string(),
-                        });
-                        // REFUND the round and remember the state instead of burning the budget. An
-                        // empty answer costs one planner call and says nothing about a DAG that has
-                        // since shrunk; consuming the whole budget for it is what left two nodes idle
-                        // through an 18-minute single-task tail with the replanner switched off.
-                        s.replans_done = s.replans_done.saturating_sub(1);
-                        s.replan_declined_at_incomplete = Some(s.incomplete_count());
-                    } else {
-                        // Replanner-added tasks are OPPORTUNISTIC (idle-fill) — record them as bonus so a
-                        // bonus failure cannot fail an otherwise-complete run (run success = core plan).
-                        let existing_files: std::collections::HashSet<String> = s
-                            .dag
-                            .tasks
-                            .values()
-                            .flat_map(|n| n.spec.owned_files.iter().cloned())
-                            .collect();
-                        let (specs, splice_repairs) = repair_replan_specs(&existing_files, specs);
-                        if specs.is_empty() {
-                            s.sink.emit(&SwarmEvent::Replanned {
-                                round,
-                                added: Vec::new(),
-                                stopped: true,
-                                reason: format!(
-                                    "every proposed task was repaired away: {}",
-                                    splice_repairs.join("; ")
-                                ),
-                            });
-                            s.replans_done = s.replans_done.saturating_sub(1);
-                            s.replan_declined_at_incomplete = Some(s.incomplete_count());
-                            drop(s);
-                            continue;
-                        }
-                        let spliced_ids: Vec<TaskId> =
-                            specs.iter().map(|sp| sp.id.clone()).collect();
-                        match s.dag.splice_specs(specs) {
-                            Ok(new_ready) => {
-                                // `added` must be what was ADDED, not what happened to become READY.
-                                // A spliced task whose deps are not yet satisfied is in the DAG and
-                                // will run, but it is not in `new_ready` — so reporting new_ready
-                                // under-counts, and can report ZERO for a successful replan.
-                                //
-                                // MEASURED: a live run emitted `Replanned { added: [], stopped: false }`
-                                // while `test-api-edge-cases` and `test-store-integrity` were both
-                                // spliced and later dispatched. `stopped: false` with an empty `added`
-                                // is a contradiction — the empty case takes the other branch — and it
-                                // made a plan-vs-execution review report two legitimately-added tasks
-                                // as UNPLANNED DRIFT. An event that cannot be reconciled with the
-                                // dispatch log turns a correct mechanism into a false alarm.
-                                let added = spliced_ids.clone();
-                                s.bonus_ids.extend(spliced_ids);
-                                for id in new_ready {
-                                    let fan_out = s.dag.tasks[&id].fan_out;
-                                    s.ready.push(Ranked { fan_out, id });
-                                }
-                                s.sink.emit(&SwarmEvent::Replanned {
-                                    round,
-                                    added,
-                                    stopped: false,
-                                    // The hygiene pass's actions ride the success event so a
-                                    // rewritten path is READ, never silent (fallback rule).
-                                    reason: splice_repairs.join("; "),
-                                });
-                                drop(s);
-                                continue;
-                            }
+                        let specs = match replan_result {
+                            Ok(specs) => specs,
                             Err(e) => {
                                 s.sink.emit(&SwarmEvent::Replanned {
                                     round,
                                     added: Vec::new(),
                                     stopped: true,
-                                    // GEN-6a #4: a rejected splice is the third distinct arm —
-                                    // the planner ANSWERED and the DAG refused the answer.
-                                    reason: format!("splice rejected: {e}"),
+                                    reason: format!("planner call failed: {e}"),
                                 });
-                                s.replans_done = self.max_replans;
+                                // Refund the round (a failed call says nothing about the DAG), but do
+                                // NOT record a declined-state marker: the planner never answered, so
+                                // suppressing future asks on its behalf would turn one transport
+                                // fault into a silently disabled replanner.
+                                s.replans_done = s.replans_done.saturating_sub(1);
+                                drop(s);
+                                nt.notify_one();
+                                return;
+                            }
+                        };
+                        if specs.is_empty() {
+                            s.sink.emit(&SwarmEvent::Replanned {
+                                round,
+                                added: Vec::new(),
+                                stopped: true,
+                                reason: "planner declined (empty plan)".to_string(),
+                            });
+                            // REFUND the round and remember the state instead of burning the budget. An
+                            // empty answer costs one planner call and says nothing about a DAG that has
+                            // since shrunk; consuming the whole budget for it is what left two nodes idle
+                            // through an 18-minute single-task tail with the replanner switched off.
+                            s.replans_done = s.replans_done.saturating_sub(1);
+                            s.replan_declined_at_incomplete = Some(s.incomplete_count());
+                        } else {
+                            // Replanner-added tasks are OPPORTUNISTIC (idle-fill) — record them as bonus so a
+                            // bonus failure cannot fail an otherwise-complete run (run success = core plan).
+                            let existing_files: std::collections::HashSet<String> = s
+                                .dag
+                                .tasks
+                                .values()
+                                .flat_map(|n| n.spec.owned_files.iter().cloned())
+                                .collect();
+                            let (specs, splice_repairs) =
+                                repair_replan_specs(&existing_files, specs);
+                            if specs.is_empty() {
+                                s.sink.emit(&SwarmEvent::Replanned {
+                                    round,
+                                    added: Vec::new(),
+                                    stopped: true,
+                                    reason: format!(
+                                        "every proposed task was repaired away: {}",
+                                        splice_repairs.join("; ")
+                                    ),
+                                });
+                                s.replans_done = s.replans_done.saturating_sub(1);
+                                s.replan_declined_at_incomplete = Some(s.incomplete_count());
+                                drop(s);
+                                nt.notify_one();
+                                return;
+                            }
+                            let spliced_ids: Vec<TaskId> =
+                                specs.iter().map(|sp| sp.id.clone()).collect();
+                            match s.dag.splice_specs(specs) {
+                                Ok(new_ready) => {
+                                    // `added` must be what was ADDED, not what happened to become READY.
+                                    // A spliced task whose deps are not yet satisfied is in the DAG and
+                                    // will run, but it is not in `new_ready` — so reporting new_ready
+                                    // under-counts, and can report ZERO for a successful replan.
+                                    //
+                                    // MEASURED: a live run emitted `Replanned { added: [], stopped: false }`
+                                    // while `test-api-edge-cases` and `test-store-integrity` were both
+                                    // spliced and later dispatched. `stopped: false` with an empty `added`
+                                    // is a contradiction — the empty case takes the other branch — and it
+                                    // made a plan-vs-execution review report two legitimately-added tasks
+                                    // as UNPLANNED DRIFT. An event that cannot be reconciled with the
+                                    // dispatch log turns a correct mechanism into a false alarm.
+                                    let added = spliced_ids.clone();
+                                    s.bonus_ids.extend(spliced_ids);
+                                    for id in new_ready {
+                                        let fan_out = s.dag.tasks[&id].fan_out;
+                                        s.ready.push(Ranked { fan_out, id });
+                                    }
+                                    s.sink.emit(&SwarmEvent::Replanned {
+                                        round,
+                                        added,
+                                        stopped: false,
+                                        // The hygiene pass's actions ride the success event so a
+                                        // rewritten path is READ, never silent (fallback rule).
+                                        reason: splice_repairs.join("; "),
+                                    });
+                                }
+                                Err(e) => {
+                                    s.sink.emit(&SwarmEvent::Replanned {
+                                        round,
+                                        added: Vec::new(),
+                                        stopped: true,
+                                        // GEN-6a #4: a rejected splice is the third distinct arm —
+                                        // the planner ANSWERED and the DAG refused the answer.
+                                        reason: format!("splice rejected: {e}"),
+                                    });
+                                    s.replans_done = max_replans;
+                                }
                             }
                         }
-                    }
+                        drop(s);
+                        // Wake the loop for the spliced work (or, on a decline, for the stuck-bail
+                        // this flag was deferring). One notify per RESOLVED planner call — it cannot
+                        // spin the way F893's per-release notify did, because re-arming it costs a
+                        // whole summon + model call, not a microsecond re-pick.
+                        nt.notify_one();
+                    });
+                    replan_abort = Some(jh.abort_handle());
                 }
             }
             // Idle-model judge: when a node would otherwise sit idle while tasks are still in flight,

@@ -756,6 +756,77 @@ async fn replan_respects_max_replans() {
     );
 }
 
+/// r5 (2026-08-30, run swarm-20260830-083847650): the replanner used to be awaited INLINE in the
+/// scheduler loop. Summoned at 11:52:17 (the first pass after `skeleton` completed), the 27B
+/// planner call ground for 40+ minutes — and when `decisions` completed at 12:16:50, its two ready
+/// successors (`ledgerd-service`, `brush-contract`) sat undispatched beside two free devices,
+/// because the one loop that runs `pick_assignments` was parked inside `.replan(ctx).await`.
+/// This pins the exact shape: a task completing WHILE a replan is still thinking must have its
+/// successors dispatched immediately. With the inline await this test hangs (the parked replanner
+/// never resolves), so the 60s harness timeout is what refuses the regression.
+#[tokio::test]
+async fn a_completion_during_an_in_flight_replan_still_dispatches_successors() {
+    struct ParkedReplanner {
+        calls: Arc<AtomicUsize>,
+        park: Arc<tokio::sync::Notify>,
+    }
+    #[async_trait]
+    impl Replanner for ParkedReplanner {
+        async fn replan(&self, _ctx: ReplanContext) -> anyhow::Result<Vec<TaskSpec>> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            self.park.notified().await; // never released: the planner "thinks" for the whole run
+            Ok(Vec::new())
+        }
+    }
+    let rec = Arc::new(Mutex::new(Recorder::default()));
+    // The r5 DAG shape: skeleton fans out; ledgerd-service/brush-contract wait on decisions.
+    // `quick` exists so a completion wakes the loop into the summon pass (ready empty, two tasks
+    // still in flight, something Done) without waiting out the 15s tick the live run used.
+    let dag = Dag::from_specs(vec![
+        spec("skeleton", &[], &[]),
+        spec("decisions", &["skeleton"], &[]),
+        spec("notifierd-service", &["skeleton"], &[]),
+        spec("quick", &["skeleton"], &[]),
+        spec("ledgerd-service", &["decisions", "skeleton"], &[]),
+        spec("brush-contract", &["decisions", "skeleton"], &[]),
+    ])
+    .unwrap();
+    let calls = Arc::new(AtomicUsize::new(0));
+    let replanner = Arc::new(ParkedReplanner {
+        calls: calls.clone(),
+        park: Arc::new(tokio::sync::Notify::new()),
+    });
+    let sched = Scheduler::new(
+        vec![dev("d0", "m0", 2), dev("d1", "m1", 2), dev("d2", "m2", 2)],
+        3,
+    )
+    .with_replanner(replanner, 1);
+    let report = tokio::time::timeout(
+        Duration::from_secs(60),
+        sched.run(
+            dag,
+            slow_dispatcher(&rec, 30, &["decisions", "notifierd-service"]),
+            "g".into(),
+        ),
+    )
+    .await
+    .expect("the run must finish while the replanner is still thinking — a hang here is the r5 parked-loop regression")
+    .unwrap();
+    assert_eq!(
+        calls.load(Ordering::SeqCst),
+        1,
+        "the replanner must have been summoned (otherwise this test never opened the r5 window)"
+    );
+    let done: HashSet<_> = report.done.iter().cloned().collect();
+    assert!(
+        ["ledgerd-service", "brush-contract"]
+            .iter()
+            .all(|t| done.contains(*t)),
+        "decisions' successors must dispatch during the in-flight replan: done={:?}",
+        report.done
+    );
+}
+
 #[tokio::test]
 async fn cycle_is_rejected_at_load() {
     let specs = vec![spec("a", &["b"], &[]), spec("b", &["a"], &[])];
