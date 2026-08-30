@@ -23608,6 +23608,12 @@ pub(crate) struct OpenSlice {
     /// up in parallel, so a slice twice the size of its siblings is a node idling while one grinds.
     #[serde(default)]
     weight: u32,
+    /// OPEN-1: the spec section HEADINGS this slice owns, claimed by the opener against the
+    /// orientation index. The engine splices each claimed section's full text into the slice's
+    /// brief verbatim. Empty on a small spec (orientation not armed) — everything then behaves
+    /// exactly as before this field existed.
+    #[serde(default)]
+    sections: Vec<String>,
 }
 
 #[derive(Clone, Debug, Default, serde::Deserialize)]
@@ -23684,7 +23690,8 @@ fn open_schema() -> serde_json::Value {
                         "title": {"type": "string"},
                         "objective": {"type": "string"},
                         "questions": {"type": "array", "items": {"type": "string"}},
-                        "weight": {"type": "integer"}
+                        "weight": {"type": "integer"},
+                        "sections": {"type": "array", "items": {"type": "string"}}
                     }
                 }
             },
@@ -24602,6 +24609,18 @@ impl GooseAgentDispatcher {
                 existing.join("\n")
             )
         };
+        let sections = spec_sections(user_prompt);
+        let armed = orientation_armed(user_prompt, &sections);
+        let sections_block = if armed {
+            "\n\nTHE REQUEST ARRIVES AS AN ORIENTATION INDEX — every section of the document \
+             with its heading, measured size and opening lines. You are ORIENTING and SLICING, \
+             not reading the whole document: the engine splices each section's FULL text into \
+             the owning slice's brief after you answer. For each slice, list in `sections` the \
+             EXACT headings (verbatim from the index) of every section that slice owns; every \
+             section must appear in at least one slice's `sections`."
+        } else {
+            ""
+        };
         let system = format!(
             "You are the OPENER. Read the request and split it into SEMANTIC SLICES — coherent areas of \
              work, divided by MEANING and by interface, never by document order or by equal-sized \
@@ -24650,13 +24669,34 @@ impl GooseAgentDispatcher {
              would need to choose (storage format, auth or none, which library). Only real ones — if the \
              request settles it, or convention obviously settles it, it is not an open decision.\n\n\
              Do NOT plan files, tasks or dependencies. Do NOT write code. Call the final_output tool once \
-             with the slices.{existing_block}"
+             with the slices.{sections_block}{existing_block}"
         );
+        // OPEN-1: above the arming floor the opener consumes the spec's OWN structure — an
+        // orientation index cut by CODE at the document's headings — never the whole 50k in one
+        // prompt (r2's opener window peaked at 20,814 prompt_tokens per call re-reading the
+        // full sb-7 spec). The detail is not lost: briefs_from_slices splices each claimed
+        // section's full text into the owning slice verbatim. Below the floor everything here
+        // is byte-identical.
+        let user_text = if armed {
+            let orientation = spec_orientation(&sections);
+            self.events.write_value(serde_json::json!({
+                "event": "open_orientation",
+                "sections": sections.len(),
+                "spec_chars": user_prompt.chars().count(),
+                "orientation_chars": orientation.chars().count(),
+            }));
+            format!(
+                "The request, as its ORIENTATION INDEX (the engine splices each section's full \
+                 text into the owning slice's brief after you answer):\n\n{orientation}"
+            )
+        } else {
+            format!("The request:\n\n{user_prompt}")
+        };
         let out = self
             .run_agent_timed_at(
                 planner_model,
                 system,
-                format!("The request:\n\n{user_prompt}"),
+                user_text,
                 Some(Response {
                     json_schema: Some(open_schema()),
                 }),
@@ -26260,6 +26300,7 @@ async fn run_linear_plan(
                             objective: opts.prompt.clone(),
                             questions: Vec::new(),
                             weight: 5,
+                            sections: Vec::new(),
                         }],
                         open_decisions: Vec::new(),
                     }
@@ -26390,7 +26431,102 @@ async fn run_linear_plan(
 /// 2 of 3 nodes idle, and its median-4,789-char paraphrases did not prevent the five wrong-key
 /// defects — the real dependency source, which every worker now reads (dep_block + ledger block),
 /// is the authority a paraphrase never was. Pure, so the straight line is testable without a model.
-fn briefs_from_slices(opened: &OpenOutput) -> Vec<SliceBrief> {
+/// OPEN-1: one heading-delimited section of the operator's spec, cut by the document's OWN
+/// structure (`#`..`######` headings; tables stay inside their section's body). The spec is
+/// split by CODE so the opener never has to swallow the whole document to orient itself —
+/// Mihai 08-30 07:30: "the benchmark prompt is ~50k tokens and the orientation is simple —
+/// SPLIT THAT FILE and detail what needs detailing; OPEN must not swallow 50k in one prompt."
+struct SpecSection {
+    heading: String,
+    body: String,
+}
+
+fn spec_sections(spec: &str) -> Vec<SpecSection> {
+    let mut out: Vec<SpecSection> = Vec::new();
+    let mut cur = SpecSection {
+        heading: String::new(),
+        body: String::new(),
+    };
+    for line in spec.lines() {
+        let t = line.trim_start();
+        let hashes = t.chars().take_while(|c| *c == '#').count();
+        let is_heading = (1..=6).contains(&hashes) && {
+            let (_, rest) = t.split_at(hashes);
+            rest.starts_with(' ') && !rest.trim().is_empty()
+        };
+        if is_heading {
+            if !cur.heading.is_empty() || !cur.body.trim().is_empty() {
+                out.push(cur);
+            }
+            let (_, rest) = t.split_at(hashes);
+            cur = SpecSection {
+                heading: rest.trim().to_string(),
+                body: String::new(),
+            };
+        } else {
+            cur.body.push_str(line);
+            cur.body.push('\n');
+        }
+    }
+    if !cur.heading.is_empty() || !cur.body.trim().is_empty() {
+        out.push(cur);
+    }
+    out
+}
+
+/// OPEN-1's arming floor. NOT a cap on model work (nothing is bounded or terminated by it) —
+/// it decides MESSAGE FORMATION only: below it, the whole spec is the better opener input and
+/// the prompt stays byte-identical; above it, with real document structure to lean on, the
+/// opener reads the orientation index and the engine splices each section's full text into the
+/// briefs afterwards. 12k chars is comfortably above any toy spec and ~4x below sb-7's 54k.
+const SPEC_ORIENTATION_MIN_CHARS: usize = 12_000;
+
+fn orientation_armed(spec: &str, sections: &[SpecSection]) -> bool {
+    sections.len() >= 3 && spec.chars().count() >= SPEC_ORIENTATION_MIN_CHARS
+}
+
+/// The compact index the opener consumes when `orientation_armed`: every section's heading with
+/// a measured size and a line-cut head excerpt. The detail is not lost — `briefs_from_slices`
+/// splices each claimed section's FULL text into the owning slice's brief, verbatim.
+fn spec_orientation(sections: &[SpecSection]) -> String {
+    let mut s = String::new();
+    for sec in sections {
+        let heading = if sec.heading.is_empty() {
+            "(preamble)"
+        } else {
+            &sec.heading
+        };
+        let head: String = sec.body.chars().take(400).collect();
+        let head = head.rsplit_once('\n').map(|(h, _)| h).unwrap_or(&head);
+        s.push_str(&format!(
+            "## {heading} [{} chars]\n{}\n\n",
+            sec.body.chars().count(),
+            head.trim_end()
+        ));
+    }
+    s
+}
+
+/// The section headings NO slice claimed — the coverage gap, measured deterministically so it
+/// can be an event instead of a hope that the opener's own read-back caught it.
+fn unclaimed_sections(opened: &OpenOutput, sections: &[SpecSection]) -> Vec<String> {
+    let claimed: std::collections::HashSet<String> = opened
+        .slices
+        .iter()
+        .flat_map(|sl| sl.sections.iter())
+        .map(|h| h.trim().to_lowercase())
+        .collect();
+    sections
+        .iter()
+        .filter(|s| !s.heading.is_empty())
+        .filter(|s| !claimed.contains(&s.heading.trim().to_lowercase()))
+        .map(|s| s.heading.clone())
+        .collect()
+}
+
+fn briefs_from_slices(opened: &OpenOutput, spec: &str) -> Vec<SliceBrief> {
+    let sections = spec_sections(spec);
+    let armed = orientation_armed(spec, &sections);
     let folded_decisions = if opened.open_decisions.is_empty() {
         String::new()
     } else {
@@ -26421,6 +26557,36 @@ fn briefs_from_slices(opened: &OpenOutput) -> Vec<SliceBrief> {
                         .collect::<Vec<_>>()
                         .join("\n")
                 ));
+            }
+            // OPEN-1, the detailing half: the opener saw an orientation index, so the FULL text
+            // of each section this slice claimed is spliced here by CODE — the builder reads
+            // the spec's own words, never a planner paraphrase. A slice that claimed nothing
+            // gets the orientation plus a stated absence (the fallback rule): the map exists
+            // even when the owner named no territory, and the caller emits the event.
+            if armed {
+                let mut spliced = String::new();
+                for want in &sl.sections {
+                    let key = want.trim().to_lowercase();
+                    if let Some(sec) = sections
+                        .iter()
+                        .find(|s| s.heading.trim().to_lowercase() == key)
+                    {
+                        spliced.push_str(&format!("\n### {}\n{}", sec.heading, sec.body.trim()));
+                    }
+                }
+                if spliced.is_empty() {
+                    brief.push_str(&format!(
+                        "\n\nSPEC SECTIONS: this slice claimed none — the orientation index of \
+                         the whole request follows; the sections' full text lives in the \
+                         request itself:\n{}",
+                        spec_orientation(&sections)
+                    ));
+                } else {
+                    brief.push_str(&format!(
+                        "\n\nTHE SPEC'S OWN SECTIONS FOR THIS SLICE — verbatim, and the \
+                         authority over any paraphrase above:{spliced}"
+                    ));
+                }
             }
             brief.push_str(&folded_decisions);
             SliceBrief {
@@ -26455,7 +26621,27 @@ where
     R: FnMut(String, String) -> RFut,
     RFut: std::future::Future<Output = Result<(goose_swarm::PlanPatch, Vec<String>)>>,
 {
-    let briefs = briefs_from_slices(&opened);
+    let briefs = briefs_from_slices(&opened, user_prompt);
+    // OPEN-1's absence events (the fallback rule): a slice that claimed no sections and a
+    // section no slice claimed are both measured gaps, named where the tick can count them.
+    {
+        let sections = spec_sections(user_prompt);
+        if orientation_armed(user_prompt, &sections) {
+            for sl in opened.slices.iter().filter(|sl| sl.sections.is_empty()) {
+                sink.write_value(serde_json::json!({
+                    "event": "slice_sections_unnamed",
+                    "slice": sl.id,
+                }));
+            }
+            let unclaimed = unclaimed_sections(&opened, &sections);
+            if !unclaimed.is_empty() {
+                sink.write_value(serde_json::json!({
+                    "event": "spec_sections_unclaimed",
+                    "headings": unclaimed,
+                }));
+            }
+        }
+    }
     phase_banner("SYNTHESIS", "one node wires the slices into a task DAG");
     sink.write_value(serde_json::json!({"event": "phase", "phase": "synthesis"}));
     let plan_json = match synthesize(briefs.clone(), tree_at_start.clone()).await {
@@ -43691,6 +43877,97 @@ mod audit_regressions {
             .is_empty());
     }
 
+    /// OPEN-1: on a real 54k-char spec the opener consumes an orientation index cut at the
+    /// document's own headings — never the whole document — while a small spec stays
+    /// byte-identical (not armed). The index carries every heading; tables stay in bodies.
+    #[test]
+    fn the_opener_orientation_replaces_the_whole_spec() {
+        let spec = include_str!("../../../../evals/swarm-bench/spec-build-sb7.md");
+        let sections = spec_sections(spec);
+        assert!(
+            orientation_armed(spec, &sections),
+            "sb-7 (54k chars, {} sections) arms the orientation",
+            sections.len()
+        );
+        let orientation = spec_orientation(&sections);
+        for sec in sections.iter().filter(|s| !s.heading.is_empty()) {
+            assert!(
+                orientation.contains(&sec.heading),
+                "every heading is in the index: {}",
+                sec.heading
+            );
+        }
+        assert!(
+            orientation.chars().count() * 3 < spec.chars().count(),
+            "the index is a fraction of the document: {} vs {}",
+            orientation.chars().count(),
+            spec.chars().count()
+        );
+        assert!(
+            sections.iter().any(|s| s.body.contains("/api/payments")),
+            "the endpoint table lives inside a section body, not lost at the cut"
+        );
+        let small = "# a\nbody\n# b\nbody\n# c\nbody\n";
+        assert!(
+            !orientation_armed(small, &spec_sections(small)),
+            "a small spec keeps the whole-text opener prompt byte-identical"
+        );
+    }
+
+    /// OPEN-1's detailing half: a slice's claimed sections arrive in its brief VERBATIM (the
+    /// builder reads the spec's own words, not a planner paraphrase); a slice that claimed none
+    /// gets the orientation map plus a stated absence (the fallback rule), and
+    /// unclaimed_sections measures the coverage gap deterministically.
+    #[test]
+    fn a_slice_gets_its_claimed_sections_verbatim_and_absence_is_stated() {
+        let spec = include_str!("../../../../evals/swarm-bench/spec-build-sb7.md");
+        let sections = spec_sections(spec);
+        let table_heading = sections
+            .iter()
+            .find(|s| s.body.contains("/api/payments"))
+            .expect("the endpoint table has a section")
+            .heading
+            .clone();
+        let opened = OpenOutput {
+            slices: vec![
+                OpenSlice {
+                    id: "ledger".into(),
+                    title: "ledger".into(),
+                    objective: "the ledger service".into(),
+                    questions: Vec::new(),
+                    weight: 3,
+                    sections: vec![table_heading.clone()],
+                },
+                OpenSlice {
+                    id: "web".into(),
+                    title: "web".into(),
+                    objective: "the dashboard".into(),
+                    questions: Vec::new(),
+                    weight: 2,
+                    sections: Vec::new(),
+                },
+            ],
+            open_decisions: Vec::new(),
+        };
+        let briefs = briefs_from_slices(&opened, spec);
+        assert!(
+            briefs[0].brief.contains("THE SPEC'S OWN SECTIONS")
+                && briefs[0].brief.contains("/api/payments"),
+            "the claimed section's full text rides in the brief"
+        );
+        assert!(
+            briefs[1].brief.contains("this slice claimed none")
+                && briefs[1].brief.contains(&table_heading),
+            "the unclaiming slice gets the stated absence plus the orientation map"
+        );
+        let un = unclaimed_sections(&opened, &sections);
+        assert!(
+            !un.is_empty() && !un.contains(&table_heading),
+            "the coverage gap is measured: {} unclaimed, claimed one absent",
+            un.len()
+        );
+    }
+
     fn two_slices() -> OpenOutput {
         OpenOutput {
             slices: vec![
@@ -43700,6 +43977,7 @@ mod audit_regressions {
                     objective: "serve GET /health".into(),
                     questions: vec!["which port".into()],
                     weight: 3,
+                    sections: Vec::new(),
                 },
                 OpenSlice {
                     id: "web".into(),
@@ -43707,6 +43985,7 @@ mod audit_regressions {
                     objective: "draw the dashboard".into(),
                     questions: Vec::new(),
                     weight: 2,
+                    sections: Vec::new(),
                 },
             ],
             open_decisions: vec!["which storage backend".into()],
