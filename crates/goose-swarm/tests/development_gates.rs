@@ -125,9 +125,12 @@ fn the_banned_integrate_template_only_shrinks() {
 /// edit that must add wiring lines here extracts at least as many in the same commit. Baseline
 /// 47,150 measured at the law's birth; it may only DECREASE. This is the refusing form — a charter
 /// alone is advice, and advice does not survive a compaction.
+/// Tightened to 46,936 at the law's first live test (d93d7ca77: the judge-context cluster moved
+/// to commands/swarm/judge_context.rs, -274; judge-look attribution +13 and the forming-sidecar
+/// mirror +46 rode the same payment).
 #[test]
 fn swarm_rs_line_count_only_decreases() {
-    const SWARM_RS_LINE_BASELINE: usize = 47_150;
+    const SWARM_RS_LINE_BASELINE: usize = 46_936;
     let text = read("crates/goose-cli/src/commands/swarm.rs");
     let n = text.lines().count();
     assert!(
