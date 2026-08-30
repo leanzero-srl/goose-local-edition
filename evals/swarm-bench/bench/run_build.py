@@ -94,12 +94,12 @@ def invoke(entrant: str, workdir: Path, port: int, env: Dict[str, str], timeout:
     tpath = (workdir / ".swarm" / "telemetry.jsonl").resolve()
     tpath.parent.mkdir(parents=True, exist_ok=True)
     tpath.write_text("")
-    # The engine's repair phase clamps its own deadline to this absolute wall (minus one
-    # fix-cap) so runs FINISH inside the harness timeout instead of being truncated
-    # mid-round — r9 and r11 were both guillotined by the timeout while mid-repair.
-    # --timeout 0 = UNCAPPED (Mihai 2026-08-21): no wall deadline, no subprocess kill, and the
-    # engine's GOOSE_SWARM_UNCAPPED switch removes every wall/volume cap — the run stops only
-    # when it finishes, when the judge/repeat-break sees a REAL loop, or when a stream goes dead.
+    # II-7 time purge: GOOSE_SWARM_RUN_DEADLINE_UNIX_MS and GOOSE_SWARM_UNCAPPED are read by
+    # NOTHING in crates/ any more (only history comments remain — the engine's deadline clamp
+    # and the uncapped switch were deleted with the cap arithmetic they served, because the env
+    # read re-armed a real wall through the back door), so the harness sets neither. --timeout
+    # now bounds ONLY the subprocess wait below (0 = no kill, run to finish); the engine stops
+    # on its own progress-based terminators (judge verdicts, repeat-break, dead stream).
     # NEVER let an unattended run block on a GUI dialog.
     #
     # MEASURED (swarm-3node-r0, 2026-08-27): the engine sat for 75m55s between pool_resolved and
@@ -114,10 +114,6 @@ def invoke(entrant: str, workdir: Path, port: int, env: Dict[str, str], timeout:
     # entrants talk to LM Studio, which needs no key. Secrets fall back to ~/.config/goose/secrets.yaml
     # (base.rs:99-101), which this path does not use either.
     env = {**env, "GOOSE_SWARM_TELEMETRY_FILE": str(tpath), "GOOSE_DISABLE_KEYRING": "1"}
-    if timeout and timeout > 0:
-        env["GOOSE_SWARM_RUN_DEADLINE_UNIX_MS"] = str(int((time.time() + timeout) * 1000))
-    else:
-        env["GOOSE_SWARM_UNCAPPED"] = "1"
     if entrant in MODELS:
         cmd = [str(GOOSE), "run", "--provider", "aws_bedrock", "--model", MODELS[entrant],
                "-t", prompt]
