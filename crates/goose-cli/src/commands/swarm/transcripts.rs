@@ -124,11 +124,11 @@ pub(super) fn append_reasoning_transcript(
 /// append-only across attempts (the `.log`/`.think.log` rule applied to calls), so an attempt's
 /// work survives its own death. `already` is the caller's watermark into `call_records`; rows are
 /// never rewritten and never duplicated. Best-effort like the transcripts: a failed write must
-/// never disturb a run. The PRIMARY write stays silent on failure (the pre-GEN-6a contract for
-/// this file, unchanged here); the mirror degrades loudly (`calls.jsonl.mirror`) because a silent
-/// mirror gap is exactly the r5 evidence loss this module exists to close. The watermark advances
-/// iff the primary accepted every row, and the mirror is fed only in that same call — no target
-/// can receive a row twice.
+/// never disturb a run. BOTH targets degrade loudly (GEN-6a class: `calls.jsonl` for the
+/// primary, `calls.jsonl.mirror` for the copy that survives the shadow) — a silent primary gap
+/// froze the only durable call record with no trace, the same evidence-hiding shape the mirror
+/// kind already closed. The watermark advances iff the primary accepted every row, and the
+/// mirror is fed only in that same call — no target can receive a row twice.
 pub(super) fn append_calls_jsonl(
     activity_path: &Path,
     mirror: Option<&Path>,
@@ -155,13 +155,11 @@ pub(super) fn append_calls_jsonl(
         }
         rows.push_str(&format!("{row}\n"));
     }
-    if append_bytes(
+    if let Some(e) = append_bytes(
         &activity_path.with_extension("calls.jsonl"),
         rows.as_bytes(),
-    )
-    .is_some()
-    {
-        return Vec::new();
+    ) {
+        return vec![("calls.jsonl", e)];
     }
     *already = call_records.len();
     let mut errs = Vec::new();
@@ -174,8 +172,8 @@ pub(super) fn append_calls_jsonl(
 }
 
 /// One pre-serialized row (the terminal flush's `attempt_end` snapshot) appended to
-/// `<task>.calls.jsonl` on both targets. Same contracts as `append_calls_jsonl`: silent primary
-/// (unchanged), loud mirror.
+/// `<task>.calls.jsonl` on both targets. Same contracts as `append_calls_jsonl`: loud on both
+/// targets, mirror fed only what the primary accepted.
 pub(super) fn append_calls_row(
     activity_path: &Path,
     mirror: Option<&Path>,
@@ -183,12 +181,11 @@ pub(super) fn append_calls_row(
 ) -> AppendErrs {
     let line = format!("{row}\n");
     let mut errs = Vec::new();
-    if append_bytes(
+    if let Some(e) = append_bytes(
         &activity_path.with_extension("calls.jsonl"),
         line.as_bytes(),
-    )
-    .is_some()
-    {
+    ) {
+        errs.push(("calls.jsonl", e));
         return errs;
     }
     if let Some(m) = mirror {
@@ -356,6 +353,40 @@ mod tests {
             !m.with_extension("think.log").exists(),
             "mirror gets only primary-accepted bytes, so the retry cannot duplicate"
         );
+    }
+
+    /// GEN-6a (fce592811 handoff): a failed PRIMARY calls.jsonl append is LOUD — it reports the
+    /// `calls.jsonl` kind the caller feeds to `note_transcript_write_failure` — and the
+    /// watermark stays put so the rows retry next flush instead of vanishing silently. The
+    /// mirror gets nothing this call (only primary-accepted bytes), so the retry cannot
+    /// double-append.
+    #[test]
+    fn a_failed_primary_calls_append_reports_and_keeps_the_watermark() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("complete-fix__w.json");
+        std::fs::create_dir_all(p.with_extension("calls.jsonl")).unwrap();
+        let m = dir.path().join("real").join("complete-fix__w.json");
+        std::fs::create_dir_all(m.parent().unwrap()).unwrap();
+
+        let records = vec![(
+            "shell".to_string(),
+            "ls".to_string(),
+            Some(true),
+            "ok".to_string(),
+        )];
+        let mut at = 0usize;
+        let errs = append_calls_jsonl(&p, Some(&m), 0, &records, &mut at);
+        assert_eq!(at, 0, "watermark must not advance past a failed primary");
+        assert_eq!(errs.len(), 1);
+        assert_eq!(errs[0].0, "calls.jsonl");
+        assert!(
+            !m.with_extension("calls.jsonl").exists(),
+            "mirror gets only primary-accepted rows"
+        );
+        let errs = append_calls_row(&p, Some(&m), "{\"kind\":\"attempt_end\"}");
+        assert_eq!(errs.len(), 1);
+        assert_eq!(errs[0].0, "calls.jsonl");
+        assert!(!m.with_extension("calls.jsonl").exists());
     }
 
     /// II-1's isolation fixture: attempt 0's captured calls SURVIVE the digest reseed that a

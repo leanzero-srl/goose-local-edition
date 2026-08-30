@@ -152,9 +152,12 @@ fn the_banned_integrate_template_only_shrinks() {
 /// Tightened to 45,529: the endpoint-attribution cluster moved to commands/swarm/attribution.rs
 /// (-255 with its three tests), paying for the r5 REPAIR-round-0 pair (the possessive-apostrophe
 /// cut in `clean`, the console-finding `sources/0` attribution suffix) in the same commit.
+/// Tightened to 45,453: `attribute_findings` moved to attribution.rs beside its cluster, paying
+/// for the fix-1 ownership seam (`resolve_shard_ownership` zip into the complete-fix fan) and
+/// the honest three-pair console exemplar in the same commit.
 #[test]
 fn swarm_rs_line_count_only_decreases() {
-    const SWARM_RS_LINE_BASELINE: usize = 45_455;
+    const SWARM_RS_LINE_BASELINE: usize = 45_453;
     let text = read("crates/goose-cli/src/commands/swarm.rs");
     let n = text.lines().count();
     assert!(
