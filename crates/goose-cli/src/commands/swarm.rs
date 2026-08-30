@@ -8947,52 +8947,6 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
     }
 
     #[test]
-    /// SYNTHESIS is told to take each task's files "from its slice's FILES section" — and the index it
-    /// is handed never carried them, so it invented ownership and the engine ENFORCED the invention.
-    /// Measured on smoke-linear-1: task `cli-interface` was given `wordfreq/cli.py` while its spliced
-    /// brief declares three other files and never mentions cli.py.
-    ///
-    /// The parser is lenient on purpose — the contract asks for "2. FILES — the exact paths you will
-    /// create" and a 27B numbers, bolds, bullets, backticks or tabulates them.
-    fn a_slice_owners_declared_files_reach_synthesis() {
-        let brief = "## 1. PURPOSE\nServe the payments API.\n\n                     ## 2. FILES\n- `vendorsync/api.py`\n- `vendorsync/routes.py`\n\n                     ## 3. INTERFACE\n```python\ndef serve(port: int) -> None: ...\n```\n                     It must not touch `vendorsync/store.py`.";
-        let f = files_from_brief(brief);
-        assert_eq!(
-            f,
-            vec!["vendorsync/api.py", "vendorsync/routes.py"],
-            "{f:?}"
-        );
-
-        // Inline on the heading, bolded, unbulleted — all the shapes seen in real briefs.
-        assert_eq!(
-            files_from_brief("**FILES:** `app/cli.py`, `app/__main__.py`"),
-            vec!["app/__main__.py", "app/cli.py"]
-        );
-        assert_eq!(
-            files_from_brief("2. FILES\n   web/index.html\n   web/app.js\n3. INTERFACE\n   x.py"),
-            vec!["web/app.js", "web/index.html"],
-            "a later contract heading must end the section"
-        );
-
-        // A brief with no FILES section yields nothing rather than guessing.
-        assert!(files_from_brief("PURPOSE: do the thing\nINTERFACE: def f(): ...").is_empty());
-
-        // And the index actually renders them, which is the whole point.
-        let b = SliceBrief {
-            id: "api".into(),
-            title: "the API".into(),
-            objective: "serve it".into(),
-            files: files_from_brief(brief),
-            brief: brief.to_string(),
-        };
-        let idx = slice_index(&[b]);
-        assert!(
-            idx.contains("vendorsync/api.py") && idx.contains("vendorsync/routes.py"),
-            "synthesis still cannot see the owner's files:\n{idx}"
-        );
-    }
-
-    #[test]
     /// ORDER IS THE WHOLE BUG. `pin_sink_id` was correct and ran on the wrong value at the wrong time —
     /// after the DAG the scheduler actually runs had already been built from the unpinned JSON. This
     /// pins the composition: pin THEN build, and the DAG carries the engine's sink id.
@@ -9414,12 +9368,6 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
                 "call_objective({k:?}) carries a run of spaces from a source literal: {o:?}"
             );
         }
-        assert!(
-            !BRIEF_CONTRACT
-                .lines()
-                .any(|l| l.trim_start().contains("  ")),
-            "BRIEF_CONTRACT carries a run of spaces from a source literal"
-        );
     }
 
     #[test]
@@ -15641,21 +15589,6 @@ fn build_worker_extension(name: &str) -> Option<ExtensionConfig> {
             None
         }
     }
-}
-
-/// GROUNDING (Phase 1, Move 1): the research MCP tools attached to the scouts. Each arm self-disables to a
-/// no-op when its env key is absent (`build_worker_extension` returns `None`), so the master `enabled` switch
-/// is the only thing that changes today's behaviour: OFF => empty list => `research_exts` empty => the run
-/// cannot look anything up, exactly as before this switch existed. ON => tools attach for whichever keys are
-/// present. Callable from both the initial-research and the retarget-research sites so the gate is identical.
-fn build_research_exts(enabled: bool) -> Vec<ExtensionConfig> {
-    if !enabled {
-        return Vec::new();
-    }
-    ["context7", "web-search"]
-        .into_iter()
-        .filter_map(build_worker_extension)
-        .collect()
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -23163,8 +23096,9 @@ pub(crate) struct OpenOutput {
     open_decisions: Vec<String>,
 }
 
-/// A slice after its owner has researched it. `brief` is the module specification, and it is spliced
-/// into the task description VERBATIM — it never passes through the synthesis model.
+/// A slice as SYNTHESIS consumes it (P1-5: built directly from the opener's slice by
+/// `briefs_from_slices` — the RESEARCH fan that used to write these is deleted). `brief` is
+/// spliced into the task description VERBATIM — it never passes through the synthesis model.
 #[derive(Clone, Debug)]
 pub(crate) struct SliceBrief {
     id: String,
@@ -23181,57 +23115,6 @@ pub(crate) struct SliceBrief {
     /// brief declares three other files and never mentions cli.py. A task's enforced ownership can
     /// contradict the only instruction it is given, and the two go to different phases.
     files: Vec<String>,
-}
-
-/// Pull the FILES section out of a slice owner's brief.
-///
-/// Deliberately lenient in the same way `parse_observed_defects` is: the contract asks for
-/// "2. FILES — the exact paths you will create", and a 27B numbers it, bolds it, bullets the paths,
-/// backticks them, or writes them as a table row. Anything that looks like a source path under a FILES
-/// heading counts, and an empty result simply leaves synthesis where it already was.
-fn files_from_brief(brief: &str) -> Vec<String> {
-    let mut out: Vec<String> = Vec::new();
-    let mut in_files = false;
-    for raw in brief.lines() {
-        let l = raw.trim();
-        let bare = l
-            .trim_start_matches(['#', '*', '-', ' ', '\t'])
-            .trim_start_matches(|c: char| c.is_ascii_digit() || c == '.' || c == ')')
-            .trim()
-            .trim_start_matches("**")
-            .trim();
-        let upper = bare.to_uppercase();
-        if upper.starts_with("FILES") {
-            in_files = true;
-            // "FILES: a.py, b.py" puts them on the heading line itself.
-            if let Some((_, rest)) = bare.split_once(':') {
-                out.extend(paths_in(rest));
-            }
-            continue;
-        }
-        // Any other numbered contract heading ends the section.
-        if in_files
-            && [
-                "PURPOSE",
-                "INTERFACE",
-                "CONSUMES",
-                "BEHAVIOUR",
-                "BEHAVIOR",
-                "HOW",
-                "EXCLUDES",
-            ]
-            .iter()
-            .any(|h| upper.starts_with(h))
-        {
-            in_files = false;
-        }
-        if in_files {
-            out.extend(paths_in(l));
-        }
-    }
-    out.sort();
-    out.dedup();
-    out
 }
 
 /// EVERY EXTENSION A DEFECT MAY NAME. One list, because there were two and they disagreed.
@@ -23657,115 +23540,6 @@ fn verify_owned_files(working_dir: &Path, owned: &[String]) -> Vec<String> {
     out
 }
 
-/// Split unowned coverage rows into the ones that PROPOSE WORK and the ones that are only coverage.
-///
-/// A row whose `slice` is absent is a fact about the request, not a thing anybody builds — the enumerator
-/// is told to leave the field empty for exactly that case. This used to be `unwrap_or_else`, which
-/// FABRICATED a slice from the component's name and so produced a build task precisely when the model had
-/// obeyed. Run 4 shipped `background-color-101828` ("Background color #101828") into a 21-slice plan that
-/// way, and ten of its twenty-six tasks ended up owning no files at all.
-///
-/// Returns (slices to add, names kept as coverage only).
-fn coverage_rows_to_slices(rows: Vec<CoverageComponent>) -> (Vec<OpenSlice>, Vec<String>) {
-    let (proposed, coverage_only): (Vec<_>, Vec<_>) =
-        rows.into_iter().partition(|c| c.slice.is_some());
-    (
-        proposed
-            .into_iter()
-            .filter_map(|c| c.slice)
-            .filter(|sl| !sl.id.trim().is_empty())
-            .collect(),
-        coverage_only.into_iter().map(|c| c.name).collect(),
-    )
-}
-
-/// OBEYING THE PROMPT MUST NOT DISCARD THE TABLE.
-///
-/// The enumerator is told TWICE to "LEAVE `slice` EMPTY" for a row that is a fact about the request
-/// rather than a thing somebody builds. Omitting the key works. The two obvious literal readings do not:
-/// `"slice": {}` fails with "missing field `id`" (OpenSlice.id has no serde default) and `"slice": ""`
-/// fails on type. `components` is ONE document, so a single obedient row used to fail the whole part's
-/// parse — `unwrap_or_default().components` yields ZERO rows, `coverage_enumerated` logs `components: 0`,
-/// the lane returns an empty Vec, and the section is then marked permanently SETTLED because "a section
-/// that found nothing missing is DONE". The model complied and the engine forgot the section.
-///
-/// An id-less object routes to None rather than to a blank-id slice, because a blank id cannot key a task
-/// (see `a_proposed_slice_with_a_blank_id_is_not_work`).
-fn deserialize_lenient_slice<'de, D>(d: D) -> Result<Option<OpenSlice>, D::Error>
-where
-    D: serde::Deserializer<'de>,
-{
-    let v = <Option<serde_json::Value> as serde::Deserialize>::deserialize(d)?;
-    Ok(match v {
-        None | Some(serde_json::Value::Null) => None,
-        Some(other) => serde_json::from_value::<OpenSlice>(other)
-            .ok()
-            .filter(|s| !s.id.trim().is_empty()),
-    })
-}
-
-/// One row of the coverage table, tolerant of a row that cannot be read at all.
-///
-/// Same amplifier as the field above, one level out: with a strict element type a single unreadable row
-/// costs the WHOLE part. Untagged with a `Value` fallback makes one bad row cost one row, and the raw
-/// value is reported rather than swallowed so "the model wrote something odd" never looks like "the model
-/// found nothing".
-#[derive(serde::Deserialize)]
-#[serde(untagged)]
-pub(crate) enum CoverageRow {
-    Read(Box<CoverageComponent>),
-    Unreadable(serde_json::Value),
-}
-
-#[derive(serde::Deserialize, Default)]
-pub(crate) struct CoverageComponent {
-    #[serde(default)]
-    name: String,
-    /// The words in the request this row was taken FROM. Reported in `coverage_enumerated` so a reader
-    /// can check the enumerator against the request rather than taking the row's name on trust.
-    #[serde(default)]
-    named_in_request: String,
-    #[serde(default)]
-    owner_slice_id: String,
-    #[serde(default)]
-    owner_evidence: String,
-    #[serde(default, deserialize_with = "deserialize_lenient_slice")]
-    slice: Option<OpenSlice>,
-}
-
-/// A coverage row counts as OWNED only when it names a slice that exists AND quotes that slice's own
-/// words. An unquoted claim is the generous match the table exists to catch: asked whether anything owns
-/// webhooks against a list containing `api-backend`, the honest-looking answer is yes.
-fn coverage_row_is_owned(
-    c: &CoverageComponent,
-    known_lowercase_ids: &std::collections::HashSet<String>,
-) -> bool {
-    !c.owner_slice_id.trim().is_empty()
-        && !c.owner_evidence.trim().is_empty()
-        && known_lowercase_ids.contains(&c.owner_slice_id.trim().to_lowercase())
-}
-
-#[derive(serde::Deserialize, Default)]
-pub(crate) struct CoverageOutput {
-    #[serde(default)]
-    components: Vec<CoverageRow>,
-}
-
-impl CoverageOutput {
-    /// (rows that were read, rows that were not).
-    fn rows(self) -> (Vec<CoverageComponent>, Vec<serde_json::Value>) {
-        let mut read = Vec::new();
-        let mut unreadable = Vec::new();
-        for r in self.components {
-            match r {
-                CoverageRow::Read(c) => read.push(*c),
-                CoverageRow::Unreadable(v) => unreadable.push(v),
-            }
-        }
-        (read, unreadable)
-    }
-}
-
 /// Cut a request into `n` portions of roughly equal CHARACTER COUNT, in order, never splitting a paragraph.
 ///
 /// NOTHING TO DO WITH ANY DEVICE WEIGHT. This function sees only the request text and a lane count; it
@@ -24000,39 +23774,6 @@ fn review_patch_schema() -> serde_json::Value {
     })
 }
 
-fn coverage_schema() -> serde_json::Value {
-    serde_json::json!({
-        "type": "object",
-        "required": ["components"],
-        "properties": {
-            "components": {
-                "type": "array",
-                "items": {
-                    "type": "object",
-                    "required": ["name", "named_in_request", "owner_slice_id", "owner_evidence"],
-                    "properties": {
-                        "name": {"type": "string"},
-                        "named_in_request": {"type": "string"},
-                        "owner_slice_id": {"type": "string"},
-                        "owner_evidence": {"type": "string"},
-                        "slice": {
-                            "type": "object",
-                            "required": ["id", "title", "objective", "questions", "weight"],
-                            "properties": {
-                                "id": {"type": "string"},
-                                "title": {"type": "string"},
-                                "objective": {"type": "string"},
-                                "questions": {"type": "array", "items": {"type": "string"}},
-                                "weight": {"type": "integer"}
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    })
-}
-
 /// SYNTHESIS emits only the skeleton — ids, files, deps. Hundreds of tokens, not tens of thousands.
 fn skeleton_schema() -> serde_json::Value {
     serde_json::json!({
@@ -24056,47 +23797,6 @@ fn skeleton_schema() -> serde_json::Value {
         }
     })
 }
-
-/// Is this slice set lopsided enough to be worth one more cut? HEAVIEST vs LIGHTEST, matching the
-/// pairwise rule the prompt states ("more than roughly twice the work of another"). A median test
-/// structurally cannot see "two big, one tiny", which is the shape that actually idles a node.
-fn lopsided_slice(slices: &[OpenSlice]) -> Option<String> {
-    if slices.len() < 2 {
-        return None;
-    }
-    let mut w: Vec<(u32, &str)> = slices
-        .iter()
-        .map(|s| (s.weight.max(1), s.id.as_str()))
-        .collect();
-    w.sort_unstable();
-    let (light, _) = w[0];
-    let (heavy, heavy_id) = *w.last().unwrap();
-    if heavy > light * 2 {
-        Some(heavy_id.to_string())
-    } else {
-        None
-    }
-}
-
-/// THE BRIEF CONTRACT — what a slice owner must produce. This is the worker's ENTIRE instruction, so
-/// it is the deliverable of the research phase, not a note about it.
-const BRIEF_CONTRACT: &str = "\
-Write the MODULE SPECIFICATION for your slice. Another engineer, on another machine, with no access \
-to you and no other context, must be able to build it from this alone. Include, in this order:\n\
-1. PURPOSE — what this module is for, in one sentence, in the app's own terms.\n\
-2. FILES — the exact paths you will create. Nothing outside them.\n\
-3. INTERFACE — every function, class or endpoint it exports, with REAL signatures: names, parameter \
-types, return types. Not \"a function to parse the CSV\" but `parse_ledger(path: Path) -> list[Row]`.\n\
-4. CONSUMES — what it needs from other modules, named by symbol and signature, so two people building \
-in parallel meet in the middle.\n\
-5. BEHAVIOUR AND EDGE CASES — the error cases it must handle and what it does in each: bad input, \
-missing file, empty data, a failing upstream call.\n\
-6. HOW YOU WOULD KNOW IT WORKS — the concrete check. A command to run, a call to make, an output to see.\n\
-7. EXCLUDES — what it must NOT do, so it does not wander into a neighbour's files.\n\n\
-WRITE IT TIGHT. This is a specification, not an essay: signatures, paths, error cases, the check. No \
-restating the request back, no rationale, no summary at the end. A specification LONGER THAN THE FILE \
-IT DESCRIBES will be contradicted by the code, and the whole point of it is that the code can be \
-trusted to follow it.";
 
 // MEASURED 2026-08-28, and this is why the concision clause above exists.
 //
@@ -24148,8 +23848,8 @@ impl GooseAgentDispatcher {
              A SLICE MUST OWN FILES NO OTHER SLICE OWNS. If two areas of work would live in the SAME \
              file, they are ONE slice — always. Two slices sharing a file cannot be built at the same \
              time no matter how many machines exist, because only one of them may hold that file; the \
-             second buys no parallelism at all and costs a whole research pass, a contract and a review \
-             pass to gain nothing. MEASURED: a request was split into 21 slices of which FIVE — picking, \
+             second buys no parallelism at all and costs a review pass to gain nothing. MEASURED: a \
+             request was split into 21 slices of which FIVE — picking, \
              labels, layout, rendering, streaming — all described ONE file, `viz.js`, and four more \
              described endpoints of ONE service. The product a single engineer built from the same \
              request was NINE files. Ask, for each slice: what files does this own, and does any other \
@@ -24451,524 +24151,6 @@ impl GooseAgentDispatcher {
             }
         };
         parse_rating_reply(&out, findings.len())
-    }
-
-    /// THE USER-PROXY ANSWER. A node answers the clarify questions when the human does not.
-    ///
-    /// A question is always answered: it is never dropped and it never stalls the run. Before this, the
-    /// ask blocked for 1800s and then PROCEEDED UNANSWERED — three nodes idle for half an hour and the
-    /// decisions silently made by whatever the planner happened to assume.
-    ///
-    /// It answers strictly from the spec, and where the spec is silent it picks the most conventional
-    /// option and SAYS SO, so a proxy answer is never mistaken for a researched one.
-    pub(crate) async fn proxy_answer(
-        &self,
-        planner_model: &str,
-        user_prompt: &str,
-        questions: &[String],
-    ) -> Result<Vec<String>> {
-        let qs = questions
-            .iter()
-            .enumerate()
-            .map(|(i, q)| format!("{}. {q}", i + 1))
-            .collect::<Vec<_>>()
-            .join("\n");
-        let system = "You are standing in for the person who commissioned this build, because they are \
-             not at the keyboard. Answer their questions from THE REQUEST ITSELF.\n\n\
-             For each question, in order, give ONE line: the decision, then why.\n\
-             - If the request settles it, say so and quote the part that does.\n\
-             - If the request does NOT settle it, choose the most CONVENTIONAL option a competent \
-               engineer would pick for this kind of program, and say explicitly that the request did not \
-               specify and this is a default.\n\n\
-             Never answer \"it depends\", never ask a question back, and never leave one blank. Decide."
-            .to_string();
-        let out = self
-            .run_agent_timed_at(
-                planner_model,
-                system,
-                format!("## The request\n{user_prompt}\n\n## Their questions\n{qs}"),
-                None,
-                planner_side_turns(),
-                &[],
-                None,
-                Some("proxy-answer"),
-                true,
-                false,
-            )
-            .await?;
-        // One answer per question, in order. A model that returns prose still yields usable lines, and a
-        // short answer set is padded rather than dropped — an unanswered question would re-block the run.
-        let lines: Vec<String> = out
-            .text
-            .lines()
-            .map(|l| {
-                l.trim()
-                    .trim_start_matches(|c: char| c.is_ascii_digit() || c == '.' || c == ')')
-                    .trim()
-            })
-            .filter(|l| l.len() > 3)
-            .map(|l| l.to_string())
-            .collect();
-        let mut answers: Vec<String> = lines.into_iter().take(questions.len()).collect();
-        while answers.len() < questions.len() {
-            answers.push(
-                "(the proxy did not answer this one; the most conventional choice applies)"
-                    .to_string(),
-            );
-        }
-        Ok(answers)
-    }
-
-    /// One targeted re-cut of a single lopsided slice. A PATCH, not a re-open: the opener is shown the
-    /// slice list it already produced and asked to replace exactly one entry, so the other slices — and
-    /// the reasoning that produced them — are never re-emitted. If it declines, or returns something
-    /// unusable, the run proceeds on the original split: an uneven slice costs queue time, and `weight`
-    /// was a model estimate rather than a measurement in the first place.
-    /// COVERAGE — the one question the opener never asks itself: what did I miss?
-    ///
-    /// Returns ONLY the slices that are missing. It is a PATCH, never a re-open: the slices that exist
-    /// are not re-described, not re-ordered and not re-weighted, so a coverage pass costs one call and
-    /// cannot damage a decomposition that was already good. Same principle as the REVIEW patch, applied
-    /// one phase earlier.
-    ///
-    /// It runs BEFORE research on purpose. A component discovered at REVIEW time can only be added as a
-    /// task carrying a one-line description invented by the reviewer; discovered here, it becomes a slice
-    /// with a real owner that writes it a 2,000-6,000 character brief like every other.
-    ///
-    /// MEASURED, the failure this exists for: an opener read a 54,146-character spec naming two services,
-    /// webhooks, an approval workflow, an idempotent consumer, an event ledger and a 3D field of 12,288
-    /// instances — and produced nine slices for a table with pagination. It ended its own reasoning
-    /// "This looks comprehensive." The scorer then reported most checks UNAVAILABLE rather than failed,
-    /// because the app had no such surface, and seven hours of repair could not reach it: repair fixes
-    /// what was built, never what was never planned.
-    /// COVERAGE, FANNED ACROSS THE FLEET — because one call cannot read 54,000 characters.
-    ///
-    /// MEASURED twice on the same spec. First an opener read all 54,146 characters, produced nine slices
-    /// for a table with pagination, and ended its own reasoning "This looks comprehensive." Then a
-    /// dedicated coverage call — one node, same 54,146 characters, asked only "what is missing?" — found
-    /// exactly ONE gap and declared complete, while webhooks, notifierd, the outbox, the event ledger,
-    /// the approval workflow, the 3D field and DECISIONS.md all still had no owner. Nine slices became
-    /// ten. Seven of nine components stayed unplanned.
-    ///
-    /// The instruction was not the problem; the volume is. So the DOCUMENT is divided, not the judgement:
-    /// each node reads a portion it can actually hold and answers about that portion only, and the gaps
-    /// are unioned. Same shape as RESEARCH fanning slices and TEST fanning angles — this fans reading.
-    ///
-    /// The split is at paragraph boundaries and knows nothing about the content: it does not look for
-    /// headings, requirements or keywords, and it makes no decision about what matters. Every judgement
-    /// about what is missing is still a model's, made against the slices it is shown.
-    /// `settled` carries the request-section indices that already returned ZERO unowned components, and
-    /// they are SKIPPED on later rounds.
-    ///
-    /// A section with nothing unowned cannot acquire something unowned: the slice list only ever GROWS
-    /// between rounds, so every component that had an owner still has one and no new component appears in
-    /// a section whose text did not change. Re-enumerating it is a full model call that is guaranteed to
-    /// find nothing.
-    ///
-    /// MEASURED 2026-08-29: round 1 returned part 2/3 with 31 components and 0 unowned; round 2 re-ran the
-    /// same section and returned 34 components and 0 unowned, ~20 minutes and a node for a result that
-    /// could not have differed. Part 3 did the same. The loop was already correct -- it ends the first
-    /// round that adds nothing -- it was simply paying full price for the proof.
-    pub(crate) async fn cover_slices_fanned(
-        self: &Arc<Self>,
-        worker_models: Vec<String>,
-        user_prompt: &str,
-        slices: &[OpenSlice],
-        settled: &mut std::collections::HashSet<usize>,
-    ) -> Vec<OpenSlice> {
-        let lanes = one_lane_per_host(worker_models);
-        if lanes.is_empty() {
-            return Vec::new();
-        }
-        // ONE NAMED SECTION-GROUP PER LANE, cut at the request's OWN headings so no component is severed
-        // and every lane can say what it owns. Never "part i of n" — see cut_request_into_sections.
-        let parts = cut_request_into_sections(user_prompt, lanes.len().max(1));
-        let listing = slices
-            .iter()
-            .map(|s| format!("- {} — {}: {}", s.id, s.title, s.objective))
-            .collect::<Vec<_>>()
-            .join("\n");
-        let known_ids: Vec<String> = slices.iter().map(|s| s.id.trim().to_lowercase()).collect();
-        let total = parts.len();
-        let me = self.clone();
-        // ONLY THE SECTIONS THAT CAN STILL FIND SOMETHING. A section that already enumerated with zero
-        // unowned components cannot acquire one: the slice list only GROWS between rounds, so everything
-        // that had an owner still has one and the section's own text never changed. Results come back in
-        // item order, so an EMPTY result marks that section settled for every later round.
-        let items: Vec<(usize, (String, String))> = parts
-            .into_iter()
-            .enumerate()
-            .filter(|(i, _)| !settled.contains(i))
-            .collect();
-        let order: Vec<usize> = items.iter().map(|(i, _)| *i).collect();
-        let out = fanout_over_fleet(
-            lanes,
-            items,
-            move |(i, (title, part)): (usize, (String, String)), model: String| {
-                let listing = listing.clone();
-                let known_ids = known_ids.clone();
-                let me = me.clone();
-                async move {
-                    let system = format!(
-                        "You are building a COVERAGE TABLE for THESE SECTIONS OF THE REQUEST: {}\n\
-                         (portion {} of {} — the request's own sections, not an arbitrary split). You are \
-                         not improving the breakdown, not re-balancing it, and not renaming anything.\n\n\
-                         DO IT IN THIS ORDER, and the table you return is the proof you did.\n\n\
-                         FIRST, before you look at the slice list at all, read YOUR PART and write down \
-                         every component it names. A component is a thing the request asks to EXIST: a \
-                         service, a daemon, a file, an endpoint, a workflow, a stored artefact, a screen, \
-                         a document it says you must write. Take them from the request's own words and \
-                         keep its own vocabulary — if it says `notifierd`, the component is `notifierd`, \
-                         not `the notification layer`. Quote the words that name it.\n\n\
-                         DO NOT CLASSIFY. If the request NAMES it, it goes in the table. Never spend a \
-                         line deciding whether something is \"really a component\" or \"just an \
-                         implementation detail\" — that question has no answer and it is not your job. \
-                         The two mistakes are not equal: an extra row costs one line that a reader \
-                         skips, and a missing row is a part of the program nobody ever builds and \
-                         nobody ever notices. So when you are unsure, INCLUDE IT. A table that lists \
-                         everything named is finished; a table that argues about categories is not.\n\n\
-                         THEN, and only then, go down your list and say which slice owns each one. For \
-                         every component you claim is owned you must QUOTE the words in that slice's \
-                         objective that prove it. If you cannot quote them, it is NOT owned — leave the \
-                         owner empty. `api-backend` does not own webhooks because webhooks arrive over \
-                         HTTP, and `store-layer` does not own an event ledger because a ledger is \
-                         stored. A slice named after a LAYER of a program owns a named component only \
-                         when its objective names that component. \"It would probably go there\" is the \
-                         exact mistake this table exists to catch: it is how a plan of nine tasks passed \
-                         review while missing webhooks, an approval workflow, an idempotent consumer, an \
-                         event ledger, a second service and a 3D field — six of the nine things its \
-                         request named.\n\n\
-                         For every component with no owner, write the slice that SHOULD own it, in the \
-                         slice shape, in the `slice` field.\n\
-                         BUT LEAVE `slice` EMPTY WHEN THE ROW IS A FACT ABOUT THE REQUEST RATHER THAN A \
-                         THING SOMEBODY BUILDS. The table wants every named thing, so keep enumerating \
-                         them — but a slice is WORK, and nobody can be assigned \"12,288 payments\" or \
-                         \"96 calendar days\". Those are a volume and a span: they are properties the \
-                         real components must satisfy, and they belong in those components' briefs, not \
-                         in a task of their own. MEASURED: five gap rows became five slices and two of \
-                         them were exactly those, pushing a 13-slice plan toward the 21 that collapsed \
-                         under its own decomposition. Propose a slice only for something that gets \
-                         CREATED — a file, a service, an endpoint, a workflow, a stored artefact, a \
-                         screen, a document. If you cannot name the file or process it would produce, \
-                         leave `slice` empty and let the row stand as coverage.\n\n\
-                         Return EVERY component you found, owned and unowned alike. The owned rows are \
-                         not wasted work — they are how anyone can check you actually enumerated rather \
-                         than skimmed. A part nobody was asked to build is simply absent from the \
-                         finished program, and no later phase can notice: the builders build the list, \
-                         the reviewer reviews the list, and the missing part is never mentioned again.\n\n\
-                         You are seeing one part of a longer request, so a slice may look unrelated to \
-                         your part and be perfectly good for another. Never remove or rename anything.",
-                        title,
-                        i + 1,
-                        total
-                    );
-                    let user = format!(
-                        "## THE SECTIONS YOU OWN: {title}\n{part}\n\n## The slices so far\n{listing}"
-                    );
-                    match me
-                        .run_agent_timed_at(
-                            &model,
-                            system,
-                            user,
-                            Some(Response {
-                                json_schema: Some(coverage_schema()),
-                            }),
-                            planner_side_turns(),
-                            &[],
-                            None,
-                            Some(&format!("open-coverage-{}", i + 1)),
-                            true,
-                            // A part nobody could read leaves the breakdown as it was for that part
-                            // (`Err(_) => Vec::new()` at the match below), so ending a wedged lane costs
-                            // completeness and never the phase. This is the ONE fanout the terminator's
-                            // safety argument was actually written about.
-                            true,
-                        )
-                        .await
-                    {
-                        Ok(o) => {
-                            let raw = o.final_output.clone().unwrap_or_else(|| o.text.clone());
-                            let (table, unreadable) = parse_json_lenient::<CoverageOutput>(&raw)
-                                .unwrap_or_default()
-                                .rows();
-                            // OWNERSHIP MUST BE PROVEN, not asserted. A row counts as owned only when it
-                            // names a slice that actually exists AND quotes that slice's own words. An
-                            // unquoted claim is the generous match this table was built to catch.
-                            let known: std::collections::HashSet<String> =
-                                known_ids.iter().cloned().collect();
-                            let owned = |c: &CoverageComponent| coverage_row_is_owned(c, &known);
-                            me.events.write_value(serde_json::json!({
-                                "event": "coverage_enumerated",
-                                "part": i + 1,
-                                "of": total,
-                                "components": table.len(),
-                                "unowned": table.iter().filter(|c| !owned(c)).count(),
-                                // A ROW THE PARSER COULD NOT READ IS NOT A ROW THAT WAS NOT WRITTEN.
-                                // Silence here is what let one bad row read as "this part found nothing",
-                                // which settles the section for the rest of the run.
-                                "unreadable_rows": unreadable.len(),
-                                "unreadable": unreadable,
-                                "table": table
-                                    .iter()
-                                    .map(|c| serde_json::json!({
-                                        "name": c.name,
-                                        "named_in_request": c.named_in_request,
-                                        "owner": if owned(c) { c.owner_slice_id.clone() } else { String::new() },
-                                    }))
-                                    .collect::<Vec<_>>(),
-                            }));
-                            // AN EMPTY `slice` MEANS "THIS IS COVERAGE, NOT WORK" -- AND THE ENGINE USED
-                            // TO OVERRULE IT.
-                            //
-                            // The prompt tells the enumerator to leave `slice` EMPTY when a row is a fact
-                            // about the request rather than a thing somebody builds. This code then called
-                            // `unwrap_or_else` and FABRICATED a slice from the component's name, so
-                            // obeying the instruction produced a slice anyway -- named after the fact.
-                            //
-                            // MEASURED, run 4 round 1: the gap added seven slices and five were properties
-                            // -- `12-288-payment-instances`, `berlin-day-positions`,
-                            // `currency-exponent-heights`, `flat-status-colors`, and
-                            // `background-color-101828` ("Background color #101828"). A HEX COLOUR became
-                            // a build task. Run 3 produced the same shape with "12,288 payments" and
-                            // "96 calendar days", and I answered it with a prompt clause that this
-                            // fallback was quietly cancelling.
-                            //
-                            // The fallback made sense when the prompt said "write the slice that SHOULD own
-                            // it" and an empty field meant the model had failed to comply. It gives "empty"
-                            // a meaning now, so the engine has to honour it.
-                            let (slices, coverage_only) = coverage_rows_to_slices(
-                                table.into_iter().filter(|c| !owned(c)).collect(),
-                            );
-                            if !coverage_only.is_empty() {
-                                me.events.write_value(serde_json::json!({
-                                    "event": "coverage_rows_not_work",
-                                    "part": i + 1,
-                                    "dropped": coverage_only.len(),
-                                    "names": coverage_only,
-                                }));
-                            }
-                            slices
-                        }
-                        // A part nobody could read leaves the breakdown as it was for that part.
-                        Err(_) => Vec::new(),
-                    }
-                }
-            },
-        )
-        .await;
-        // A section that found nothing missing is DONE, permanently. Recorded before the flatten, while
-        // the per-section shape is still intact.
-        for (j, res) in out.iter().enumerate() {
-            if res.is_empty() {
-                if let Some(idx) = order.get(j) {
-                    settled.insert(*idx);
-                }
-            }
-        }
-        // Union, de-duped against the existing slices AND against each other — two parts naming the
-        // same missing component is the expected case, not an error.
-        let mut have: std::collections::HashSet<String> =
-            slices.iter().map(|s| s.id.to_lowercase()).collect();
-        out.into_iter()
-            .flatten()
-            .filter(|s| {
-                let id = s.id.trim().to_lowercase();
-                !id.is_empty() && have.insert(id)
-            })
-            .collect()
-    }
-
-    pub(crate) async fn resplit_slice(
-        &self,
-        planner_model: &str,
-        user_prompt: &str,
-        slices: &[OpenSlice],
-        heavy_id: &str,
-    ) -> Result<Vec<OpenSlice>> {
-        let listing = slices
-            .iter()
-            .map(|s| format!("- {} (weight {}) — {}", s.id, s.weight.max(1), s.title))
-            .collect::<Vec<_>>()
-            .join("\n");
-        let heavy = slices
-            .iter()
-            .find(|s| s.id == heavy_id)
-            .ok_or_else(|| anyhow!("slice `{heavy_id}` vanished"))?;
-        let system = "You previously split a request into slices. One of them is much larger than its \
-             siblings, which means one machine will grind on it while the others idle.\n\n\
-             Split THAT SLICE ONLY into two or more comparable slices. Keep every other slice exactly as \
-             it is — do not restate them, do not renumber them, do not return them.\n\n\
-             Return only the replacements, in the same shape as before: id, title, objective, questions, \
-             weight. Call the final_output tool once."
-            .to_string();
-        let out = self
-            .run_agent_timed_at(
-                planner_model,
-                system,
-                format!(
-                    "## The request\n{user_prompt}\n\n## Your slices\n{listing}\n\n\
-                     ## The one to split: `{}`\n{}\n\nQuestions it carries:\n{}",
-                    heavy.id,
-                    heavy.objective,
-                    heavy.questions.join("\n")
-                ),
-                Some(Response {
-                    json_schema: Some(open_schema()),
-                }),
-                planner_side_turns(),
-                &[],
-                None,
-                Some("open-resplit"),
-                true,
-                false,
-            )
-            .await?;
-        let raw = out.final_output.clone().unwrap_or_else(|| out.text.clone());
-        let parsed: OpenOutput = parse_json_lenient(&raw)
-            .ok_or_else(|| anyhow!("re-split returned nothing parseable"))?;
-        Ok(parsed.slices)
-    }
-
-    /// RESEARCH — one slice per node, queued through the fleet. Each owner answers its own questions
-    /// and then writes the module specification for its area. Uncapped: this is where the specificity
-    /// of every downstream task is earned, and the phase it replaces died 25 times to a 75-second cap.
-    pub(crate) async fn research_slices(
-        self: &Arc<Self>,
-        worker_models: Vec<String>,
-        user_prompt: &str,
-        user_decisions: &str,
-        slices: Vec<OpenSlice>,
-        research_exts: Vec<ExtensionConfig>,
-    ) -> Vec<SliceBrief> {
-        let lanes = one_lane_per_host(worker_models);
-        let me = self.clone();
-        let prompt = user_prompt.to_string();
-        let decisions = user_decisions.to_string();
-        let exts = research_exts;
-        let out = fanout_over_fleet(lanes, slices.clone(), move |slice: OpenSlice, model: String| {
-            let prompt = prompt.clone();
-            let decisions = decisions.clone();
-            let exts = exts.clone();
-            let me = me.clone();
-            async move {
-                let qs = if slice.questions.is_empty() {
-                    "(none listed — work out what you need to know, then answer it)".to_string()
-                } else {
-                    slice
-                        .questions
-                        .iter()
-                        .map(|q| format!("- {q}"))
-                        .collect::<Vec<_>>()
-                        .join("\n")
-                };
-                let decisions_block = if decisions.trim().is_empty() {
-                    String::new()
-                } else {
-                    format!("\n\n## USER DECISIONS — BINDING, honour these EXACTLY\n{decisions}")
-                };
-                let system = format!(
-                    "You OWN one slice of this build, and nobody else will touch it. Two jobs, in order.\n\n\
-                     FIRST answer your slice's questions. Use your tools if you have them; where you \
-                     cannot look something up, say what you assumed and why, rather than inventing a \
-                     citation.\n\n\
-                     THEN write the module specification.\n\n{BRIEF_CONTRACT}\n\n\
-                     Write the specification itself, not a description of one. Do NOT write the \
-                     implementation — the engineer who builds this gets your specification as their \
-                     entire instruction, so be precise and be complete, and stop there."
-                );
-                let user = format!(
-                    "## The overall request\n{prompt}{decisions_block}\n\n\
-                     ## Your slice: {} — {}\n{}\n\n## Questions to answer first\n{qs}",
-                    slice.id, slice.title, slice.objective
-                );
-                let key = format!("slice-{}", slice.id);
-                let res = me
-                    .run_agent_timed_at(
-                        &model,
-                        system,
-                        user,
-                        None,
-                        planner_side_turns(),
-                        &exts,
-                        None,
-                        Some(&key),
-                true,
-                false,
-            )
-                    .await;
-                let brief = match res {
-                    Ok(o) if !o.text.trim().is_empty() => o.text,
-                    // AN OWNER THAT DIES SHIPS ITS OBJECTIVE, and the run continues. The slice still has
-                    // an owner and still becomes a task; it is simply less specified than its siblings.
-                    // Losing one brief must never cost the decomposition.
-                    _ => format!(
-                        "PURPOSE: {}\n(The owner of this slice did not return a specification; build it \
-                         from the objective and the overall request.)",
-                        slice.objective
-                    ),
-                };
-                SliceBrief {
-                    id: slice.id,
-                    title: slice.title,
-                    objective: slice.objective,
-                    files: files_from_brief(&brief),
-                    brief,
-                }
-            }
-        })
-        .await;
-        // (3) CHECK THE PLAN AS IT IS CREATED, NOT AN HOUR LATER.
-        //
-        // Every brief declares the files its slice will create. Two briefs naming the same path is a
-        // COLLISION, and it is knowable HERE -- the moment RESEARCH ends -- instead of at SYNTHESIS, and
-        // then only after REVIEW spends rounds repairing it.
-        //
-        // MEASURED, run 4: `web/viz.js` was claimed by SIX tasks. SYNTHESIS created that collision, REVIEW
-        // took two rounds and 74 minutes to unpick it, and the repair left 11 tasks owning nothing. The
-        // information needed to prevent all of it existed 74 minutes earlier, in these briefs.
-        let mut owners: std::collections::HashMap<String, Vec<String>> =
-            std::collections::HashMap::new();
-        for b in &out {
-            for f in &b.files {
-                owners.entry(f.clone()).or_default().push(b.id.clone());
-            }
-        }
-        let mut collisions: Vec<serde_json::Value> = owners
-            .iter()
-            .filter(|(_, ids)| ids.len() > 1)
-            .map(|(f, ids)| serde_json::json!({ "file": f, "slices": ids }))
-            .collect();
-        collisions.sort_by_key(|v| v["file"].as_str().unwrap_or("").to_string());
-        let no_files: Vec<&str> = out
-            .iter()
-            .filter(|b| b.files.is_empty())
-            .map(|b| b.id.as_str())
-            .collect();
-        if !collisions.is_empty() || !no_files.is_empty() {
-            self.events.write_value(serde_json::json!({
-                "event": "brief_defects",
-                "collisions": collisions,
-                "slices_declaring_no_files": no_files,
-                "briefs": out.len(),
-            }));
-            for c in &collisions {
-                eprintln!(
-                    "  {} `{}` is claimed by {} slices: {}",
-                    style("!").yellow().bold(),
-                    c["file"].as_str().unwrap_or("?"),
-                    c["slices"].as_array().map_or(0, |a| a.len()),
-                    c["slices"]
-                        .as_array()
-                        .map(|a| a
-                            .iter()
-                            .filter_map(|x| x.as_str())
-                            .collect::<Vec<_>>()
-                            .join(", "))
-                        .unwrap_or_default()
-                );
-            }
-        }
-        out
     }
 }
 
@@ -25328,14 +24510,14 @@ impl GooseAgentDispatcher {
         let lang = detect_language(user_prompt, existing);
         let test_cmd = lang.test_cmd();
         let system = format!(
-            "You are the SYNTHESIS step. Every slice below has already been researched and specified by \
-             its owner. You are WIRING THEM TOGETHER, not designing them — do not restate their \
-             specifications and do not write code.\n\n\
+            "You are the SYNTHESIS step. Every slice below is one balanced part of the request. You \
+             are WIRING THEM TOGETHER into a task DAG, not designing them — do not restate their \
+             objectives and do not write code.\n\n\
              Emit one task per slice, keyed to that slice's id, with:\n\
              - id: kebab-case task id\n\
              - slice: the slice id it implements (exactly as given)\n\
              - difficulty: \"easy\" or \"hard\"\n\
-             - files: the paths that task owns, taken from its slice's FILES section\n\
+             - files: the exact paths that task will create, inferred from its slice's objective\n\
              ONE FILE, ONE OWNER, WITH NO EXCEPTIONS. If two slices name the same path, decide HERE \
              which single task owns it and give the others `files: []` — do not hand the same path to \
              both and do not invent a second path to keep them apart. MEASURED: `web/viz.js` was handed \
@@ -25348,8 +24530,8 @@ impl GooseAgentDispatcher {
              - depends_on: task ids it needs\n\n\
              DEPENDENCIES ARE EXPENSIVE — every one of them idles a machine. Add one ONLY when a task \
              literally cannot compile or run without another's file already existing. Needing to know a \
-             signature is NOT a dependency: the interfaces are already frozen and shared. If you are not \
-             sure, leave it out.\n\n\
+             signature is NOT a dependency: a worker reads its dependencies' real source when it runs. \
+             If you are not sure, leave it out.\n\n\
              Then add ONE final task with id exactly `integrate-verify`, difficulty \"hard\", which \
              depends_on EVERY other task and OWNS NO FILES AT ALL (`files: []`). It wires the produced \
              modules together, runs `{test_cmd}`, boots the app, and exercises the commands the request \
@@ -25375,9 +24557,7 @@ impl GooseAgentDispatcher {
             .run_agent_timed_at(
                 planner_model,
                 system,
-                format!(
-                    "## The request\n{user_prompt}\n\n## The researched slices\n{index}{existing_block}"
-                ),
+                format!("## The request\n{user_prompt}\n\n## The slices\n{index}{existing_block}"),
                 Some(Response {
                     json_schema: Some(skeleton_schema()),
                 }),
@@ -26634,9 +25814,10 @@ where
     }
 }
 
-/// Drive OPEN -> ASK -> RESEARCH -> SYNTHESIS -> REVIEW and return what the rest of the run expects:
-/// the plan JSON, its DAG, a PlanConf, and whether the detail fan still needs to run (it does not —
-/// the slice owners already wrote every task's specification).
+/// Drive the STRAIGHT-LINE planner (P1-5): OPEN -> [ask handshake, only if the opener left open
+/// decisions] -> SYNTHESIS (the slices directly) -> REVIEW (one round) -> plan_repaired -> DAG,
+/// and return what the rest of the run expects. The coverage/RESEARCH fans, the resplit and the
+/// ASK proxy are deleted — r2 measured them costing the fleet more than they returned.
 #[allow(clippy::too_many_arguments)]
 async fn run_linear_plan(
     dispatcher: &Arc<GooseAgentDispatcher>,
@@ -26676,7 +25857,7 @@ async fn run_linear_plan(
     // single-slice fallback: the whole request as one slice. That always parses, always validates, and
     // costs parallelism rather than the run. RESEARCH then writes one large brief instead of nine, which
     // is a worse plan and still a plan.
-    let mut opened = match dispatcher
+    let opened = match dispatcher
         .open_slices(&cfg.planner_model, &opts.prompt)
         .await
     {
@@ -26718,106 +25899,17 @@ async fn run_linear_plan(
         }
     };
 
-    // ONE targeted re-cut if the opener's own weights are lopsided. Heaviest vs lightest, matching the
-    // pairwise rule the prompt states — a median test cannot see "two big, one tiny", which is exactly
-    // the shape that leaves a node idle. A patch, never a re-open: if it declines, we proceed, because
-    // an uneven slice costs queue time and `weight` is a model estimate, not truth.
-    if let Some(heavy) = lopsided_slice(&opened.slices) {
-        eprintln!(
-            "  · slice `{heavy}` is more than twice its lightest sibling — asking for one more cut"
-        );
-        if let Ok(re) = dispatcher
-            .resplit_slice(&cfg.planner_model, &opts.prompt, &opened.slices, &heavy)
-            .await
-        {
-            // NEVER SPLICE AN ID THAT ALREADY EXISTS. The coverage pass below filters its additions
-            // by id for exactly this reason; the re-split, which lands one phase earlier, never did.
-            //
-            // A replacement reusing a surviving sibling's id is FATAL, not cosmetic: SYNTHESIS is told
-            // to emit "one task per slice, keyed to that slice's id", and the synthesis fallback sets
-            // `"id": b.id` verbatim — so two slices called `store` become two tasks called `store` and
-            // Dag::from_specs bails "duplicate task id", ending a run that has already paid for the
-            // opener, the ask and the entire research phase.
-            //
-            // `heavy` is excluded from the collision set on purpose: it is being removed, so a child
-            // that keeps its parent's id is legitimate and common.
-            let mut seen: std::collections::HashSet<String> = opened
-                .slices
-                .iter()
-                .filter(|s| s.id != heavy)
-                .map(|s| s.id.to_lowercase())
-                .collect();
-            let fresh: Vec<OpenSlice> = re
-                .into_iter()
-                .filter(|s| seen.insert(s.id.to_lowercase()))
-                .collect();
-            // Below two this is no longer a split — proceed on the original rather than replace a heavy
-            // slice with one renamed copy of itself.
-            if fresh.len() >= 2 {
-                opened.slices.retain(|s| s.id != heavy);
-                opened.slices.extend(fresh);
-            } else {
-                sink.write_value(serde_json::json!({
-                    "event": "resplit_discarded",
-                    "slice": heavy,
-                    "detail": "the re-split's ids collided with surviving siblings; keeping the \
-                               original slice rather than risking a duplicate task id",
-                }));
-            }
-        }
-    }
-    // COVERAGE, OFF THE CRITICAL PATH — it runs CONCURRENTLY with ASK and RESEARCH instead of ahead of
-    // them, and its late-found slices are researched when they arrive.
-    //
-    // WHY IT EXISTS AT ALL, because the cost below is only justified by this: an opener read a
-    // 54,146-character spec naming two services, webhooks, an approval workflow, an idempotent consumer,
-    // an event ledger and a 3D field, and produced nine slices for a table with pagination and a filter.
-    // That run scored 0.0023, and SEVEN HOURS of repair could not reach it — repair fixes what was BUILT,
-    // never what was never PLANNED. Coverage took named components from 2-of-11 to 12-of-12.
-    //
-    // WHY IT MOVED. Mihai, 2026-08-28, on an OPEN that had run 50 minutes: *"how did we end up from my
-    // idea of opener with one model doing something to an opener that lasts over 40 min?"* Fair, and the
-    // honest answer was that each layer here answered a measured failure while nobody re-measured the
-    // phase budget. The value is real; being SERIAL was not load-bearing. Research of a slice depends
-    // only on that slice, so the slices the opener already found can be researched while coverage is
-    // still looking for the ones it missed.
-    //
-    // It is still a patch loop that ends the first time it adds nothing, with no round ceiling — a
-    // request naming twelve components should get twelve. Only its position changed.
-    let coverage_task = {
-        let d = Arc::clone(dispatcher);
-        let models = worker_models.clone();
-        let prompt = opts.prompt.clone();
-        let sk = Arc::clone(sink);
-        let mut known = opened.slices.clone();
-        tokio::spawn(async move {
-            let mut late: Vec<OpenSlice> = Vec::new();
-            // Request sections that have already come back with nothing unowned. Carried ACROSS rounds --
-            // that is the whole point; within a round it would be empty every time.
-            let mut settled: std::collections::HashSet<usize> = std::collections::HashSet::new();
-            loop {
-                let missing = d
-                    .cover_slices_fanned(models.clone(), &prompt, &known, &mut settled)
-                    .await;
-                if missing.is_empty() {
-                    sk.write_value(serde_json::json!({
-                        "event": "coverage_complete",
-                        "slices": known.len(),
-                    }));
-                    break;
-                }
-                sk.write_value(serde_json::json!({
-                    "event": "coverage_gap",
-                    "added": missing.iter().map(|s| s.id.clone()).collect::<Vec<_>>(),
-                    "titles": missing.iter().map(|s| s.title.clone()).collect::<Vec<_>>(),
-                    "slices_before": known.len(),
-                }));
-                known.extend(missing.clone());
-                late.extend(missing);
-            }
-            late
-        })
-    };
+    // The re-split of a lopsided slice is DELETED (P1-5): it fired on r1 and r2 with no measured
+    // effect on the plan, and on r2 it MANUFACTURED the webhook file collision that REVIEW then
+    // paid a round to remove. An uneven slice costs queue time; a duplicate-id plan costs the run.
+
+    // COVERAGE is DELETED (P1-5, full autonomy 2026-08-30). r2 measured both sides: +7 slices and
+    // unowned surfaces 10 -> 0 (incl. sse-endpoint) AGAINST the fleet idling 12+ minutes behind one
+    // coverage call, 2 of 3 nodes idle >=8 min twice, and slice-camera-system writing viz_camera.js
+    // at the TREE ROOT instead of briefing (TICK-NOTES 08-29 21:36/21:53). Its one measured positive
+    // — unowned advertised surfaces -> 0 — is delivered deterministically by repair rule (d)
+    // (require_advertised_entry_files mapping in finalize_plan_before_dag), so nothing coverage
+    // caught goes uncaught. Revival path lives in the r3 queue (II-13).
     eprintln!(
         "  {} slice(s) in {:.0}s: {}",
         opened.slices.len(),
@@ -26853,84 +25945,20 @@ async fn run_linear_plan(
                 resolves: String::new(),
             })
             .collect();
-        // A QUESTION IS ALWAYS ANSWERED. Arm the proxy BEFORE blocking, so the log states the routing
-        // before the answer exists: instantly under `benchmark`, otherwise after the human has had five
-        // minutes. The proxy writes the same `.swarm/clarify-answers.json` the desktop panel writes, so
-        // nothing downstream can tell the difference in shape — only the label says who answered.
-        let proxy_after = proxy_answer_after_secs();
-        sink.write_value(serde_json::json!({
-            "event": "clarify_proxy_armed",
-            "mode": if proxy_after == 0 { "immediate" } else { "after_wait" },
-            "wait_secs": proxy_after,
-            "questions": opened.open_decisions.len(),
-        }));
-        eprintln!(
-            "  · {} will answer these",
-            if proxy_after == 0 {
-                "unattended run — a node".to_string()
-            } else {
-                format!("you have {proxy_after}s, then a node")
-            }
-        );
-        let clarify_proxy = {
-            let me = dispatcher.clone();
-            let sink2 = sink.clone();
-            let prompt = opts.prompt.clone();
-            let planner = cfg.planner_model.clone();
-            let decisions = opened.open_decisions.clone();
-            let apath = cwd_for_ask.join(".swarm").join("clarify-answers.json");
-            tokio::spawn(async move {
-                if proxy_after > 0 {
-                    tokio::time::sleep(std::time::Duration::from_secs(proxy_after)).await;
-                }
-                // The human may have answered while we waited; theirs wins.
-                if apath.exists() {
-                    return;
-                }
-                match me.proxy_answer(&planner, &prompt, &decisions).await {
-                    Ok(answers) => {
-                        sink2.write_value(serde_json::json!({
-                            "event": "clarify_proxy_answered",
-                            "questions": decisions,
-                            "answers": answers,
-                            "source": "proxy",
-                        }));
-                        let body = serde_json::json!({
-                            "answers": answers,
-                            "source": "proxy",
-                        });
-                        let _ = std::fs::write(&apath, body.to_string());
-                        eprintln!(
-                            "  · a node answered the open decisions (labelled `proxy` in the log)"
-                        );
-                    }
-                    Err(e) => {
-                        // Even a failed proxy must unblock the run: an unanswered question that idles the
-                        // whole fleet is strictly worse than a conventional default, and the label says
-                        // which it was.
-                        sink2.write_value(serde_json::json!({
-                            "event": "clarify_proxy_failed",
-                            "error": e.to_string(),
-                        }));
-                        let body = serde_json::json!({
-                            "answers": decisions
-                                .iter()
-                                .map(|_| "(unanswered — take the most conventional option)".to_string())
-                                .collect::<Vec<_>>(),
-                            "source": "proxy_failed",
-                        });
-                        let _ = std::fs::write(&apath, body.to_string());
-                    }
-                }
-            })
-        };
+        // The ASK PROXY is DELETED (P1-5): a node answering the opener's own questions is a
+        // decision code can take by rule — SYNTHESIS folds unanswered open decisions as "choose the
+        // conventional option" (briefs_from_slices), which is what the proxy's fallback text said
+        // anyway. What stays is the clarify-answers.json HANDSHAKE: the questions are written to
+        // .swarm/clarify-questions.json and a human (or the benchmark harness, which answers
+        // instantly AS the human) answers in .swarm/clarify-answers.json within `ask_wait_secs`.
+        // If OPEN emits no open decisions, none of this fires.
         let qa = ask_clarifying_questions(
             &questions,
             cwd_for_ask,
             None,
             None,
             ask_wait_secs,
-            Some(clarify_proxy),
+            None,
             sink.as_ref(),
         )
         .await;
@@ -26944,166 +25972,152 @@ async fn run_linear_plan(
         }
     }
 
-    // ---- RESEARCH ---------------------------------------------------------------------------
-    phase_banner(
-        "RESEARCH",
-        "every node owns a slice: answer its questions, then write its module spec",
-    );
-    sink.write_value(serde_json::json!({"event": "phase", "phase": "research"}));
-    let t_research = std::time::Instant::now();
-    // What the tree looked like before anyone researched it. RESEARCH produces BRIEFS, not files, so
-    // every path that appears during it is by definition unplanned. The tool
-    // whitelist removes the obvious way to create one; this is how we find out whether that was enough,
-    // instead of discovering it a third time by reading a run tree by hand.
-    let tree_before_research: std::collections::HashSet<String> =
-        tree_at_start.iter().cloned().collect();
-    let research_exts = build_research_exts(swarm_gate_cfg(
-        "GOOSE_SWARM_RESEARCH_TOOLS",
-        cfg.research_tools,
-    ));
-    let mut briefs = dispatcher
-        .research_slices(
-            worker_models.clone(),
-            &opts.prompt,
-            user_decisions,
-            opened.slices.clone(),
-            research_exts.clone(),
-        )
-        .await;
-    // THE LATE SLICES. Coverage has been reading the request while the fleet researched what the opener
-    // already found; join it here, because SYNTHESIS cannot wire a slice that has no brief. Anything it
-    // discovered is researched now, at the same depth and with the same tools — a component found late is
-    // still a component the request named, and shipping it with a thin brief would give back exactly what
-    // coverage was built to win. Only the WAIT moved off the critical path, never the work.
-    match coverage_task.await {
-        Ok(late) if !late.is_empty() => {
-            eprintln!(
-                "  {} coverage added {} slice(s) while research ran: {}",
-                style("+").cyan().bold(),
-                late.len(),
-                late.iter()
-                    .map(|s| s.id.as_str())
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            );
-            sink.write_value(serde_json::json!({
-                "event": "coverage_late_slices",
-                "added": late.iter().map(|s| s.id.clone()).collect::<Vec<_>>(),
-                "researched_after_the_first_wave": true,
-            }));
-            opened.slices.extend(late.clone());
-            let late_briefs = dispatcher
-                .research_slices(
-                    worker_models.clone(),
-                    &opts.prompt,
-                    user_decisions,
-                    late,
-                    research_exts,
-                )
-                .await;
-            briefs.extend(late_briefs);
-        }
-        Ok(_) => {}
-        Err(e) => {
-            // A coverage pass that fails leaves the decomposition exactly as the opener wrote it, which
-            // is where it was before this existed. Never fatal.
-            sink.write_value(serde_json::json!({
-                "event": "coverage_skipped",
-                "error": e.to_string(),
-            }));
-        }
-    }
-    {
-        let created: Vec<String> = existing_files_manifest(&dispatcher.working_dir)
-            .into_iter()
-            .filter(|f| !tree_before_research.contains(f))
-            .collect();
-        if !created.is_empty() {
-            sink.write_value(serde_json::json!({
-                "event": "research_wrote_files",
-                "count": created.len(),
-                "files": created,
-            }));
-            eprintln!(
-                "  {} planning created {} file(s) no task owns yet: {}",
-                style("!").yellow().bold(),
-                created.len(),
-                created.join(", ")
-            );
-        }
-    }
-    for b in &briefs {
-        eprintln!("  · {} — {} chars of spec", b.id, b.brief.chars().count());
-    }
-    sink.write_value(serde_json::json!({
-        "event": "research_completed",
-        "slices": briefs.len(),
-        "brief_chars": briefs.iter().map(|b| b.brief.chars().count()).collect::<Vec<_>>(),
-        "secs": t_research.elapsed().as_secs(),
-    }));
-    // The briefs ARE the research findings for everything downstream that reads them.
-    for b in &briefs {
-        research_findings.push_str(&format!("\n## {} — {}\n{}\n", b.id, b.title, b.brief));
-    }
+    // RESEARCH is DELETED (P1-5, full autonomy 2026-08-30). r2: 48 minutes of RESEARCH with 2 of 3
+    // nodes idle >=8 min twice, and the briefs (median 4,789 chars) did not prevent the five
+    // wrong-key defects — a planner's paraphrase of a dependency is strictly worse than the
+    // dependency's real source, which every worker now receives (dep_block + the ledger block).
+    // SYNTHESIS takes the slices DIRECTLY: see briefs_from_slices.
 
-    // ---- SYNTHESIS --------------------------------------------------------------------------
-    phase_banner(
-        "SYNTHESIS",
-        "one node wires the researched slices into a task DAG",
-    );
+    // ---- SYNTHESIS + REVIEW, the straight line -----------------------------------------------
+    // Everything from the slices to a loadable DAG lives in `plan_slices_to_dag`, injected with the
+    // real model closures here and with fakes in its test — the fake-dispatcher seam that proves the
+    // sequence open -> synthesis -> review(1) -> plan_repaired with nothing between.
+    let lang = detect_language(&opts.prompt, &tree_at_start);
+    let (plan_json, dag) = plan_slices_to_dag(
+        opened,
+        &opts.prompt,
+        tree_at_start,
+        lang,
+        {
+            let dispatcher = dispatcher.clone();
+            let planner_model = cfg.planner_model.clone();
+            let prompt = opts.prompt.clone();
+            move |briefs: Vec<SliceBrief>, tree: Vec<String>| async move {
+                dispatcher
+                    .synthesize_plan(&planner_model, &prompt, &briefs, &tree)
+                    .await
+            }
+        },
+        |prompt: String, plan: String| {
+            let dispatcher = dispatcher.clone();
+            let worker_models = worker_models.clone();
+            async move {
+                dispatcher
+                    .review_plan_fanned(worker_models, &prompt, &plan)
+                    .await
+            }
+        },
+        sink,
+    )
+    .await?;
+    // plan_needs_detail = false: each task's description IS its slice (briefs_from_slices), and the
+    // detail fan that once expanded one-line briefs is long deleted.
+    Ok((plan_json, dag, PlanConf::default()))
+}
+
+/// SYNTHESIS TAKES THE SLICES DIRECTLY (P1-5): each slice's brief IS the slice — its objective
+/// plus its own questions, with the opener's global open decisions folded in as "choose the
+/// conventional option". RESEARCH used to write these briefs over 48 measured minutes (r2) with
+/// 2 of 3 nodes idle, and its median-4,789-char paraphrases did not prevent the five wrong-key
+/// defects — the real dependency source, which every worker now reads (dep_block + ledger block),
+/// is the authority a paraphrase never was. Pure, so the straight line is testable without a model.
+fn briefs_from_slices(opened: &OpenOutput) -> Vec<SliceBrief> {
+    let folded_decisions = if opened.open_decisions.is_empty() {
+        String::new()
+    } else {
+        format!(
+            "\n\nOPEN DECISIONS — unless a USER DECISIONS block in the request settles one of \
+             these, choose the most CONVENTIONAL option and note the choice in a code comment; \
+             never invent a novel one:\n{}",
+            opened
+                .open_decisions
+                .iter()
+                .map(|d| format!("- {d}"))
+                .collect::<Vec<_>>()
+                .join("\n")
+        )
+    };
+    opened
+        .slices
+        .iter()
+        .map(|sl| {
+            let mut brief = sl.objective.clone();
+            if !sl.questions.is_empty() {
+                brief.push_str(&format!(
+                    "\n\nQUESTIONS this slice must settle in its implementation (conventional \
+                     answers unless the request says otherwise):\n{}",
+                    sl.questions
+                        .iter()
+                        .map(|q| format!("- {q}"))
+                        .collect::<Vec<_>>()
+                        .join("\n")
+                ));
+            }
+            brief.push_str(&folded_decisions);
+            SliceBrief {
+                id: sl.id.clone(),
+                title: sl.title.clone(),
+                objective: sl.objective.clone(),
+                brief,
+                files: Vec::new(),
+            }
+        })
+        .collect()
+}
+
+/// The straight-line planner core, from OPEN's output to a loadable DAG:
+/// SYNTHESIS -> REVIEW (one round, `review_once`, MUST-FIX flags injected) -> `plan_repaired`
+/// (finalize_plan_before_dag) -> DAG, with the flat one-task-per-slice fallback at both failure
+/// points so a bad model reply costs parallelism, never the run. `synthesize` and `review_fan`
+/// are injected so the whole sequence runs in a test without a model — the fake-dispatcher seam
+/// that proves no coverage/research/resplit/proxy step remains between the phases (P1-5).
+async fn plan_slices_to_dag<S, SFut, R, RFut>(
+    opened: OpenOutput,
+    user_prompt: &str,
+    tree_at_start: Vec<String>,
+    lang: TargetLang,
+    synthesize: S,
+    review_fan: R,
+    sink: &Arc<dyn EventSink>,
+) -> Result<(String, Dag)>
+where
+    S: FnOnce(Vec<SliceBrief>, Vec<String>) -> SFut,
+    SFut: std::future::Future<Output = Result<String>>,
+    R: FnMut(String, String) -> RFut,
+    RFut: std::future::Future<Output = Result<(goose_swarm::PlanPatch, Vec<String>)>>,
+{
+    let briefs = briefs_from_slices(&opened);
+    phase_banner("SYNTHESIS", "one node wires the slices into a task DAG");
     sink.write_value(serde_json::json!({"event": "phase", "phase": "synthesis"}));
-    let plan_json = match dispatcher
-        .synthesize_plan(&cfg.planner_model, &opts.prompt, &briefs, &tree_at_start)
-        .await
-    {
+    let plan_json = match synthesize(briefs.clone(), tree_at_start.clone()).await {
         Ok(p) => p,
         Err(e) => {
-            // THE FALLBACK IS A VALID PLAN, not a dead run. One task per slice, no dependencies, each
-            // carrying its owner's verbatim brief and the sink behind them. Flatter and more serial
-            // than a good synthesis, but every module is specified and owned — a bad synthesis costs
-            // parallelism, never the work that was already paid for.
+            // THE FALLBACK IS A VALID PLAN, not a dead run. One task per slice, no dependencies,
+            // each carrying its slice verbatim and the sink behind them. Flatter and more serial
+            // than a good synthesis, but every module is specified and owned — a bad synthesis
+            // costs parallelism, never the work that was already paid for.
             eprintln!("  · synthesis did not return ({e}); falling back to one task per slice");
             sink.write_value(serde_json::json!({
                 "event": "synthesis_fallback",
                 "error": e.to_string(),
                 "tasks": briefs.len() + 1,
             }));
-            flat_plan_from_briefs(
-                &briefs,
-                detect_language(
-                    &opts.prompt,
-                    &existing_files_manifest(&dispatcher.working_dir),
-                ),
-            )
+            flat_plan_from_briefs(&briefs, lang)
         }
     };
 
-    // THE PLAN, THE MOMENT IT EXISTS — not after CONTRACTS, which is where `plan_loaded` lands.
-    //
-    // MEASURED 2026-08-28: asked what the plan looked like while REVIEW was running, the honest answer was
-    // "the engine has not said". `plan_loaded` is emitted well after `phase: contracts`, so for the whole
-    // of REVIEW the plan is invisible — and REVIEW is precisely the phase that patches it. Two runs were
-    // killed IN REVIEW today and both took their plan to the grave: the kill checkpoints that read
-    // `plan_loaded.tasks[]` (a one-line description, a misnamed or file-owning join) cannot be evaluated
-    // at the only time they would still be worth acting on.
-    //
-    // Additive and pre-review, so it says what SYNTHESIS produced before any patch touches it, and a
-    // later diff against `plan_loaded` shows exactly what REVIEW changed.
+    // THE PLAN, THE MOMENT IT EXISTS. Additive and pre-review, so it says what SYNTHESIS produced
+    // before any patch touches it, and a later diff against `plan_loaded` shows exactly what
+    // REVIEW changed. (Two runs were once killed IN REVIEW and took their plan to the grave.)
     {
         let tasks: Vec<serde_json::Value> = serde_json::from_str::<serde_json::Value>(&plan_json)
             .ok()
             .and_then(|v| v.get("subtasks").and_then(|t| t.as_array()).cloned())
             .unwrap_or_default();
-        // ONE RULE IN ONE PLACE, AS `decomposition_of`'s OWN DOC COMMENT ALREADY CLAIMED.
-        //
-        // These five numbers were recomputed inline here, verbatim, against the same
-        // `id != "integrate-verify"` filter — the second copy that comment says "would drift and the
-        // drift would be invisible, because each side would look internally consistent". It had already
-        // drifted: only the inline copy carried `module_package_collisions`, so the shadow detector was
-        // absent from the reading taken after every REVIEW patch.
-        //
-        // The event shape is unchanged: the keys come out of `decomposition_of` spelled exactly as they
-        // were, and the four arrays that belong only to this event are inserted alongside them.
+        // ONE RULE IN ONE PLACE: the five decomposition numbers come out of `decomposition_of`
+        // spelled exactly as they were (an inline copy drifted once — it alone carried
+        // `module_package_collisions`), and the four arrays that belong only to this event are
+        // inserted alongside them.
         let mut ev = decomposition_of(&plan_json);
         if let Some(o) = ev.as_object_mut() {
             o.insert(
@@ -27153,139 +26167,28 @@ async fn run_linear_plan(
         sink.write_value(ev);
     }
 
-    // ---- REVIEW -----------------------------------------------------------------------------
+    // ---- REVIEW (ONE round — kept, P1-5) ------------------------------------------------------
+    // r2 measured the one-round form EARNING its 7 minutes: 9 findings, 10 patch touches, and it
+    // cleared sharing/owning-nothing itself. The multi-round form is what burned r1 for 51 minutes;
+    // its deletion is REFUSED in REFUSED.md while this shape keeps proving out.
     phase_banner(
         "REVIEW",
         "an idle node reads the ORIGINAL request against the plan and patches what is missing",
     );
     sink.write_value(serde_json::json!({"event": "phase", "phase": "review"}));
-    let mut plan_json = review_once(
-        |prompt: String, plan: String| {
-            let dispatcher = dispatcher.clone();
-            let worker_models = worker_models.clone();
-            async move {
-                dispatcher
-                    .review_plan_fanned(worker_models, &prompt, &plan)
-                    .await
-            }
-        },
-        &opts.prompt,
-        plan_json,
-        sink,
-    )
-    .await;
+    let mut plan_json = review_once(review_fan, user_prompt, plan_json, sink).await;
+    // (REVIEW-added tasks are no longer sent back to a research fan — RESEARCH is deleted. An
+    // added task ships with the reviewer's own description; repair rule (d) below still guarantees
+    // every advertised surface an owner.)
 
-    // A TASK REVIEW ADDED HAS NO OWNER, SO NOBODY EVER RESEARCHED IT.
-    //
-    // MEASURED 2026-08-28, on the first run to reach BUILD: `frontend-notifications-feed` was dispatched
-    // with a **182-character** description against a 6,312-char median. REVIEW invented it in round 2
-    // because nothing owned the notifications feed — correct call — but an added task has no slice, so
-    // `splice_briefs` matches nothing and it ships with whatever sentence the reviewer typed. The entire
-    // case for deleting the DETAIL fan is "a worker's instruction IS its slice owner's brief"; a task
-    // with no owner silently falls outside that guarantee, and it is exactly the NEW work — the part
-    // nobody planned for — that most needs a real specification.
-    //
-    // So research them now, the same way coverage's late slices are researched, at the same depth and
-    // with the same tools. This runs only when REVIEW actually added something.
-    {
-        let have: std::collections::HashSet<String> = briefs.iter().map(|b| b.id.clone()).collect();
-        let orphans: Vec<OpenSlice> = serde_json::from_str::<serde_json::Value>(&plan_json)
-            .ok()
-            .and_then(|v| v.get("subtasks").and_then(|t| t.as_array()).cloned())
-            .unwrap_or_default()
-            .iter()
-            .filter_map(|t| {
-                let id = t.get("id").and_then(|v| v.as_str())?.to_string();
-                if id == goose_swarm::SINK_ID {
-                    return None;
-                }
-                let slice = t.get("slice").and_then(|v| v.as_str()).unwrap_or(&id);
-                if have.contains(slice) {
-                    return None;
-                }
-                Some(OpenSlice {
-                    id: slice.to_string(),
-                    title: id.replace('-', " "),
-                    objective: t
-                        .get("description")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or_default()
-                        .to_string(),
-                    questions: Vec::new(),
-                    weight: 3,
-                })
-            })
-            .collect();
-        if !orphans.is_empty() {
-            eprintln!(
-                "  {} {} task(s) REVIEW added have no brief — researching them before BUILD: {}",
-                style("+").cyan().bold(),
-                orphans.len(),
-                orphans
-                    .iter()
-                    .map(|o| o.id.as_str())
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            );
-            sink.write_value(serde_json::json!({
-                "event": "review_added_tasks_researched",
-                "ids": orphans.iter().map(|o| o.id.clone()).collect::<Vec<_>>(),
-                "objective_chars": orphans.iter().map(|o| o.objective.chars().count()).collect::<Vec<_>>(),
-            }));
-            let extra = dispatcher
-                .research_slices(
-                    worker_models.clone(),
-                    &opts.prompt,
-                    user_decisions,
-                    orphans,
-                    build_research_exts(swarm_gate_cfg(
-                        "GOOSE_SWARM_RESEARCH_TOOLS",
-                        cfg.research_tools,
-                    )),
-                )
-                .await;
-            if !extra.is_empty() {
-                let mut v: serde_json::Value =
-                    serde_json::from_str(&plan_json).unwrap_or(serde_json::Value::Null);
-                splice_briefs(
-                    &mut v,
-                    &extra,
-                    detect_language(
-                        &opts.prompt,
-                        &existing_files_manifest(&dispatcher.working_dir),
-                    ),
-                );
-                plan_json = v.to_string();
-                briefs.extend(extra);
-            }
-        }
-    }
+    // PIN THE SINK BEFORE THE DAG EXISTS. finalize_plan_before_dag pins the join's exact id (six
+    // exact-equality consumers read it), repairs the measured flags, injects advertised entry
+    // files, and emits `plan_repaired` every time — actions or none.
+    plan_json = finalize_plan_before_dag(plan_json, user_prompt, sink);
 
-    // PIN THE SINK BEFORE THE DAG EXISTS, NOT TEN THOUSAND LINES LATER.
-    //
-    // `pin_sink_id` also runs in run_swarm, on the plan_json this function RETURNS — and that was a dead
-    // write. The DAG the scheduler actually runs is the one built immediately below, from the PRE-pin
-    // JSON, and it is only rebuilt from the pinned plan under `fill_fan_enabled()`, which defaults false.
-    // So in the exact case the pin exists for — the model calls its join `wire-app` — the rename reached
-    // raw_plan_json and the sink_id_pinned event and NOTHING ELSE. Six exact-equality consumers kept the
-    // model's name and silently read false: the replan-suppression gate (scheduler.rs:906), the claim
-    // gate (:1110), the phase:integrate emit (:1158), plan_loaded.tasks[].id (built from dag.tasks), the
-    // desktop's only Verify row, and the bench sink detectors. plan_loaded then contradicted itself in a
-    // single event — tasks[].id said `wire-app` while raw_plan_json said `integrate-verify`.
-    //
-    // require_advertised_entry_files was the same dead write on the same value: an injected entry file
-    // never became any task's owned_files and never entered smoke_all_files, both of which come from the
-    // dag. Applying both here makes the plan and the DAG agree by construction. The later call is now
-    // idempotent — pin_sink_id returns None when the join is already named correctly.
-    plan_json = finalize_plan_before_dag(plan_json, &opts.prompt, sink);
-
-    // AN INVALID DAG FALLS BACK. It used to `?` out of the run — AFTER research had been paid for.
-    //
-    // `synthesize_plan` returns Ok for anything `parse_json_lenient` turns into an object and does no
-    // DAG validation at all, so a cycle, a duplicate id or a dangling depends_on — including one a
-    // REVIEW patch introduced — landed here and killed the run. The flat fallback that "always
-    // validates" was reachable only from the Err arm of synthesis, which is not the failure that
-    // actually happens.
+    // AN INVALID DAG FALLS BACK. `synthesize` returns Ok for anything lenient-parseable and does
+    // no DAG validation, so a cycle, duplicate id or dangling depends_on — including one a REVIEW
+    // patch introduced — lands here; the flat fallback costs parallelism, never the run.
     let dag = match Dag::from_planner_json(&plan_json) {
         Ok(d) => d,
         Err(e) => {
@@ -27299,19 +26202,13 @@ async fn run_linear_plan(
                 "  {} the synthesised plan will not load ({e}) — one task per slice instead",
                 style("!").yellow().bold()
             );
-            plan_json = finalize_plan_before_dag(
-                flat_plan_from_briefs(&briefs, detect_language(&opts.prompt, &tree_at_start)),
-                &opts.prompt,
-                sink,
-            );
+            plan_json =
+                finalize_plan_before_dag(flat_plan_from_briefs(&briefs, lang), user_prompt, sink);
             Dag::from_planner_json(&plan_json)
                 .map_err(|e2| anyhow!("even the flat fallback will not load: {e2}"))?
         }
     };
-    // plan_needs_detail = false: the slice owners already wrote every task's specification, which is
-    // the whole point. The detail fan exists to turn a one-line brief into a spec in 75 seconds; here
-    // there is no one-line brief to expand.
-    Ok((plan_json, dag, PlanConf::default()))
+    Ok((plan_json, dag))
 }
 
 /// The plan the DAG is built from, in the one order the three passes can run: the sink is pinned
@@ -27383,16 +26280,32 @@ fn finalize_plan_before_dag(plan_json: String, spec: &str, sink: &Arc<dyn EventS
 /// (it is what `brief_defects` already measures), and a plan where two tasks own one file is a plan the
 /// scheduler must serialise rather than parallelise.
 fn flat_plan_from_briefs(briefs: &[SliceBrief], lang: TargetLang) -> String {
+    // P1-5: with RESEARCH gone a brief declares no files, and an owns-nothing task would be
+    // REMOVED by the plan repair's rule (a) — the fallback once shed every task that way in its
+    // own test. A conventional one-module-per-slice path keeps every fallback task buildable.
+    let ext = match lang {
+        TargetLang::Python => "py",
+        TargetLang::TypeScript => "ts",
+        TargetLang::Rust => "rs",
+        TargetLang::Go => "go",
+        TargetLang::Other => "py",
+    };
     let mut claimed: std::collections::HashSet<String> = std::collections::HashSet::new();
     let mut tasks: Vec<serde_json::Value> = briefs
         .iter()
         .map(|b| {
-            let files: Vec<String> = b
+            let mut files: Vec<String> = b
                 .files
                 .iter()
                 .filter(|f| claimed.insert((*f).clone()))
                 .cloned()
                 .collect();
+            if files.is_empty() {
+                let conventional = format!("{}.{ext}", b.id.replace('-', "_"));
+                if claimed.insert(conventional.clone()) {
+                    files.push(conventional);
+                }
+            }
             serde_json::json!({
                 "id": b.id,
                 "slice": b.id,
@@ -41730,61 +40643,6 @@ mod clarify_proxy_tests {
 mod coverage_table_tests {
     use super::*;
 
-    fn known(ids: &[&str]) -> std::collections::HashSet<String> {
-        ids.iter().map(|s| s.to_string()).collect()
-    }
-
-    fn row(name: &str, owner: &str, evidence: &str) -> CoverageComponent {
-        CoverageComponent {
-            name: name.to_string(),
-            named_in_request: String::new(),
-            owner_slice_id: owner.to_string(),
-            owner_evidence: evidence.to_string(),
-            slice: None,
-        }
-    }
-
-    /// THE WHOLE POINT. Three runs reported almost nothing missing while the plan lacked webhooks, an
-    /// approval workflow, a notifier daemon, an outbox, an event ledger and a 3D field, and the run
-    /// scored 0.0023 because the scorer's checks came back UNAVAILABLE — the app had no such surface.
-    /// A layer-named slice absorbs any component you hold up against it, so an owner claimed without a
-    /// quote from that slice's objective is not an owner.
-    #[test]
-    fn an_owner_claimed_without_evidence_is_not_an_owner() {
-        let k = known(&["api-backend", "store-layer"]);
-        assert!(
-            !coverage_row_is_owned(&row("webhooks", "api-backend", ""), &k),
-            "no quote means the match was assumed, not found"
-        );
-        assert!(
-            !coverage_row_is_owned(&row("event-ledger", "store-layer", "   "), &k),
-            "whitespace is not evidence"
-        );
-        assert!(coverage_row_is_owned(
-            &row(
-                "webhooks",
-                "api-backend",
-                "receives vendor webhook callbacks at POST /hooks"
-            ),
-            &k
-        ));
-    }
-
-    /// An owner the plan does not contain cannot own anything — this is the hallucinated-id case, and it
-    /// would otherwise silently swallow a component exactly like a generous match does.
-    #[test]
-    fn an_owner_that_is_not_in_the_plan_owns_nothing() {
-        let k = known(&["api-backend"]);
-        assert!(!coverage_row_is_owned(
-            &row("notifierd", "notifier-service", "sends the notifications"),
-            &k
-        ));
-        assert!(coverage_row_is_owned(
-            &row("notifierd", "API-Backend", "runs the notifier daemon"),
-            &k
-        ));
-    }
-
     /// The request's own vocabulary survives into the slice id, because a component renamed into a layer
     /// word stops being findable in the plan — which is the failure one level up.
     #[test]
@@ -42438,54 +41296,6 @@ mod live_fleet_tests {
                 .iter()
                 .any(|r| r.starts_with("POST /api/drafts ")),
             "§5's unnamed section belongs to the primary"
-        );
-    }
-
-    /// The exact rows run 4 turned into build tasks. A hex colour and a payment volume are FACTS about the
-    /// request; the enumerator marks them by leaving `slice` empty, and the engine used to fabricate a
-    /// slice from the name anyway -- so obeying the instruction produced a task.
-    #[test]
-    fn a_row_with_no_slice_is_coverage_and_never_becomes_work() {
-        let rows: Vec<CoverageComponent> = serde_json::from_str(
-            r##"[
-              {"name":"Background color #101828","named_in_request":"#101828",
-               "owner_slice_id":"","owner_evidence":""},
-              {"name":"12,288 payment instances","named_in_request":"12,288",
-               "owner_slice_id":"","owner_evidence":""},
-              {"name":"SSE stream endpoint /api/stream","named_in_request":"GET /api/stream",
-               "owner_slice_id":"","owner_evidence":"",
-               "slice":{"id":"sse-stream","title":"SSE stream","objective":"serve /api/stream",
-                        "questions":[],"weight":3}}
-            ]"##,
-        )
-        .expect("fixture parses");
-        let (slices, coverage) = coverage_rows_to_slices(rows);
-        assert_eq!(
-            slices.len(),
-            1,
-            "only the row that PROPOSED a slice becomes work: {:?}",
-            slices.iter().map(|s| &s.id).collect::<Vec<_>>()
-        );
-        assert_eq!(slices[0].id, "sse-stream");
-        assert_eq!(
-            coverage,
-            vec!["Background color #101828", "12,288 payment instances"],
-            "the facts are reported as coverage, not silently dropped"
-        );
-    }
-
-    /// A proposed slice with a blank id cannot key a task, so it is not work either.
-    #[test]
-    fn a_proposed_slice_with_a_blank_id_is_not_work() {
-        let rows: Vec<CoverageComponent> = serde_json::from_str(
-            r#"[{"name":"nameless","named_in_request":"x","owner_slice_id":"","owner_evidence":"",
-                 "slice":{"id":"  ","title":"t","objective":"o","questions":[],"weight":3}}]"#,
-        )
-        .unwrap();
-        let (slices, _) = coverage_rows_to_slices(rows);
-        assert!(
-            slices.is_empty(),
-            "a blank id would become a task with no identity"
         );
     }
 
@@ -45057,6 +43867,156 @@ mod audit_regressions {
             .is_empty());
     }
 
+    fn two_slices() -> OpenOutput {
+        OpenOutput {
+            slices: vec![
+                OpenSlice {
+                    id: "api".into(),
+                    title: "the api".into(),
+                    objective: "serve GET /health".into(),
+                    questions: vec!["which port".into()],
+                    weight: 3,
+                },
+                OpenSlice {
+                    id: "web".into(),
+                    title: "the web".into(),
+                    objective: "draw the dashboard".into(),
+                    questions: Vec::new(),
+                    weight: 2,
+                },
+            ],
+            open_decisions: vec!["which storage backend".into()],
+        }
+    }
+
+    /// P1-5: THE PLANNER IS A STRAIGHT LINE. Driven end to end with fake model closures (the
+    /// fake-dispatcher seam), the sequence from OPEN's output is exactly
+    /// synthesis -> plan_synthesized -> review (one round) -> plan_repaired — with NO coverage,
+    /// RESEARCH, resplit or ask-proxy event between. r2 measured what those cost: 48 min of
+    /// RESEARCH with 2 of 3 nodes idle, a resplit-manufactured file collision, and a coverage
+    /// slice writing code at the tree root. SYNTHESIS takes the slices directly, open decisions
+    /// folded as "choose the conventional option".
+    #[tokio::test]
+    async fn the_planner_is_a_straight_line_from_slices_to_dag() {
+        let sink = Arc::new(RecordingSink::default());
+        let sink_dyn: Arc<dyn EventSink> = sink.clone();
+        let (plan_json, dag) = plan_slices_to_dag(
+            two_slices(),
+            "build the app",
+            Vec::new(),
+            TargetLang::Python,
+            |briefs: Vec<SliceBrief>, _tree: Vec<String>| async move {
+                // SYNTHESIS receives the slices DIRECTLY: objective, the slice's own questions,
+                // and the opener's open decisions folded as conventional-option instructions.
+                assert_eq!(briefs.len(), 2);
+                assert!(briefs[0].brief.contains("serve GET /health"));
+                assert!(briefs[0].brief.contains("which port"));
+                assert!(briefs[0].brief.contains("which storage backend"));
+                assert!(briefs[0].brief.contains("CONVENTIONAL"));
+                assert!(briefs[1].brief.contains("which storage backend"));
+                Ok(serde_json::json!({"subtasks": [
+                    {"id": "api", "slice": "api", "files": ["app/api.py"], "depends_on": []},
+                    {"id": "web", "slice": "web", "files": ["web/app.js"], "depends_on": []},
+                    {"id": "integrate-verify", "files": [], "depends_on": ["api", "web"]},
+                ]})
+                .to_string())
+            },
+            |_prompt: String, _plan: String| async move {
+                Ok((goose_swarm::PlanPatch::default(), Vec::new()))
+            },
+            &sink_dyn,
+        )
+        .await
+        .unwrap();
+        assert!(dag.tasks.contains_key("integrate-verify"));
+        assert!(plan_json.contains("app/api.py"));
+        let events = sink.0.lock().unwrap().clone();
+        let names: Vec<String> = events
+            .iter()
+            .map(|e| {
+                let name = e.get("event").and_then(|v| v.as_str()).unwrap_or("?");
+                if name == "phase" {
+                    format!(
+                        "phase:{}",
+                        e.get("phase").and_then(|v| v.as_str()).unwrap_or("?")
+                    )
+                } else {
+                    name.to_string()
+                }
+            })
+            .collect();
+        // The straight line, in order, with nothing between the phases.
+        let idx = |n: &str| {
+            names
+                .iter()
+                .position(|x| x == n)
+                .unwrap_or_else(|| panic!("missing {n} in {names:?}"))
+        };
+        assert!(idx("phase:synthesis") < idx("plan_synthesized"));
+        assert!(idx("plan_synthesized") < idx("phase:review"));
+        assert!(idx("phase:review") < idx("review_findings"));
+        assert!(idx("review_findings") < idx("plan_repaired"));
+        for dead in [
+            "phase:research",
+            "phase:ask",
+            "coverage_gap",
+            "coverage_complete",
+            "coverage_late_slices",
+            "coverage_skipped",
+            "research_completed",
+            "research_wrote_files",
+            "resplit_discarded",
+            "clarify_proxy_armed",
+            "review_added_tasks_researched",
+        ] {
+            assert!(
+                !names.iter().any(|x| x == dead),
+                "deleted planner step re-emitted {dead}: {names:?}"
+            );
+        }
+    }
+
+    /// P1-5: a SYNTHESIS that errors still yields a LOADABLE DAG — one task per slice plus the
+    /// file-less integrate-verify sink — because a bad model reply may cost parallelism, never
+    /// the run (the planning already paid for is the most expensive thing to lose).
+    #[tokio::test]
+    async fn a_synthesis_error_still_yields_a_loadable_dag() {
+        let sink = Arc::new(RecordingSink::default());
+        let sink_dyn: Arc<dyn EventSink> = sink.clone();
+        let (plan_json, dag) = plan_slices_to_dag(
+            two_slices(),
+            "build the app",
+            Vec::new(),
+            TargetLang::Python,
+            |_briefs: Vec<SliceBrief>, _tree: Vec<String>| async move {
+                Err(anyhow!("the model returned prose"))
+            },
+            |_prompt: String, _plan: String| async move {
+                Ok((goose_swarm::PlanPatch::default(), Vec::new()))
+            },
+            &sink_dyn,
+        )
+        .await
+        .unwrap();
+        assert!(dag.tasks.contains_key("api"));
+        assert!(dag.tasks.contains_key("web"));
+        assert!(dag.tasks.contains_key("integrate-verify"));
+        assert!(plan_json.contains("integrate-verify"));
+        let events = sink.0.lock().unwrap().clone();
+        assert!(
+            events
+                .iter()
+                .any(|e| e.get("event").and_then(|v| v.as_str()) == Some("synthesis_fallback")),
+            "the fallback must be stated, never silent"
+        );
+        assert!(
+            events
+                .iter()
+                .any(|e| e.get("event").and_then(|v| v.as_str()) == Some("plan_repaired")),
+            "plan_repaired is emitted actions-or-none, fallback included"
+        );
+    }
+
     /// A finding with no patch changes nothing, so the round asks ONCE for the patch it is owed. That
     /// is a follow-up carrying the round's own findings, not a second round — nothing is re-reviewed —
     /// and whatever it returns, no call follows it.
@@ -45306,64 +44266,6 @@ mod audit_regressions {
         assert_eq!(found.len(), 1, "{found:?}");
         assert!(found[0].contains("app.store"), "{found:?}");
         let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    /// OBEYING THE PROMPT MUST NOT DISCARD THE TABLE. The enumerator is told twice to "LEAVE `slice`
-    /// EMPTY"; both literal readings failed a strict `Option<OpenSlice>`, and because the components are
-    /// one document, one obedient row yielded ZERO rows for the whole part — after which the request
-    /// section was marked permanently settled.
-    #[test]
-    fn a_row_that_obeys_leave_slice_empty_does_not_discard_the_part() {
-        let out: CoverageOutput = serde_json::from_str(
-            r#"{"components":[
-                 {"name":"empty object","owner_slice_id":"","owner_evidence":"","slice":{}},
-                 {"name":"empty string","owner_slice_id":"","owner_evidence":"","slice":""},
-                 {"name":"null","owner_slice_id":"","owner_evidence":"","slice":null},
-                 {"name":"omitted","owner_slice_id":"","owner_evidence":""},
-                 {"name":"real","owner_slice_id":"","owner_evidence":"",
-                  "slice":{"id":"sse-stream","title":"t","objective":"o","questions":[],"weight":3}}
-               ]}"#,
-        )
-        .expect("a part whose rows obey the prompt must still parse");
-        let (rows, unreadable) = out.rows();
-        assert_eq!(rows.len(), 5, "every row survives");
-        assert!(unreadable.is_empty());
-        let (slices, coverage) = coverage_rows_to_slices(rows);
-        assert_eq!(
-            slices.len(),
-            1,
-            "only the real proposal is work: {slices:?}"
-        );
-        assert_eq!(slices[0].id, "sse-stream");
-        assert_eq!(coverage.len(), 4);
-    }
-
-    /// An id-less slice object routes to None rather than to a blank-id slice, which cannot key a task.
-    #[test]
-    fn an_id_less_slice_object_is_coverage_not_a_nameless_task() {
-        let c: CoverageComponent =
-            serde_json::from_str(r#"{"name":"x","slice":{"title":"t","objective":"o"}}"#).unwrap();
-        assert!(c.slice.is_none());
-    }
-
-    /// One unreadable row costs one row, not the part.
-    #[test]
-    fn one_unreadable_row_does_not_cost_the_table() {
-        let out: CoverageOutput = serde_json::from_str(
-            r#"{"components":[
-                 {"name":"good","owner_slice_id":"","owner_evidence":""},
-                 "a bare string the model should not have written",
-                 42
-               ]}"#,
-        )
-        .expect("a bad row must not fail the document");
-        let (rows, unreadable) = out.rows();
-        assert_eq!(rows.len(), 1);
-        assert_eq!(
-            unreadable.len(),
-            2,
-            "reported, not swallowed — silence here reads as 'this part found nothing'"
-        );
     }
 
     fn brief(id: &str, files: &[&str]) -> SliceBrief {
