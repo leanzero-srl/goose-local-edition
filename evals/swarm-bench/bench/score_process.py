@@ -169,11 +169,16 @@ def axis_planning(ev: List[Dict], build_score: Optional[float]) -> Dict:
 def opener_open_decisions(run_log: Optional[Path]) -> Tuple[Optional[List], str]:
     """The opener's own open_decisions list, from the durable lane log — the PRIMARY source.
 
-    WHY not the event: `low_confidence_ask.open_decisions_total/_not_asked` are DEAD fields — the
-    only live call site passes breakdown=None (swarm.rs:27124-27132 vs the computation at
-    :36704-36710, severed by the P1-5 rewire), so both read 0 unconditionally. MEASURED on r5
-    (2026-08-30): the event said total=0/not_asked=0 while the opener's final output listed FIVE
-    open decisions, of which ask_max_q surfaced three.
+    WHY not the event: on engines from the P1-5 rewire up to cfcd32908 those fields are DEAD —
+    the only live call site passed breakdown=None (swarm.rs:27124-27132 vs the computation at
+    :36704-36710), so `low_confidence_ask.open_decisions_total/_not_asked` read 0 unconditionally.
+    MEASURED on r5 (2026-08-30): the event said total=0/not_asked=0 while the opener's final
+    output listed FIVE open decisions, of which ask_max_q surfaced three. cfcd32908 (same day)
+    killed both the dead breakdown arg and the ask_max_q truncation: a post-fix emitter takes the
+    opener's own open_decisions list, so the event carries the real total/not_asked (and the
+    guessed decisions verbatim in open_decisions_not_asked_detail). The primary stays
+    authoritative in BOTH eras — it is the opener's own words, and on a post-fix run it
+    cross-checks the event instead of replacing a dead zero.
 
     WHY open.log and not its neighbours (all three MEASURED on the same run):
       * `activity/open.json` is the rolling digest, rewritten in place — its last_text held 400
@@ -229,12 +234,15 @@ def axis_clarification(ev: List[Dict],
             None, "the run never dropped below the ask floor (or the floor was unset)")
     else:
         # The asked count is primary either way: the questions ride the event verbatim. The
-        # DENOMINATOR is what the event lies about — `open_decisions_total/_not_asked` are dead
-        # (breakdown=None at the only live call site since P1-5), so asked/(asked+0) handed every
-        # run 1.0 unconditionally. r5's truth: 5 opened, 3 asked (ask_max_q truncation) = 0.6.
-        # A non-zero event total therefore CANNOT come from the dead site — it is real evidence
-        # from a pre-P1-5 (or future fixed) engine, usable when the primary artifact is gone; a
-        # zero never is, because zero is the dead field's only possible value.
+        # DENOMINATOR is what splits the eras. From P1-5 to cfcd32908 the event lied —
+        # `open_decisions_total/_not_asked` were dead (breakdown=None at the only live call
+        # site), so asked/(asked+0) handed every run 1.0 unconditionally; r5's truth by this
+        # primary: 5 opened, 3 asked (the ask_max_q truncation) = 0.6. Since cfcd32908 the event
+        # carries the opener's real total/not_asked AND the truncation is killed — a post-fix run
+        # asks every open decision, so a 1.0 here is the EXPECTED, honestly measured score, not
+        # flattery. A non-zero event total CANNOT come from the dead site — it is real evidence
+        # from a live-field engine (pre-P1-5, or cfcd32908 onward), usable when the primary
+        # artifact is gone; a zero never is, because zero is the dead field's only possible value.
         asked = sum(len(a.get("questions") or []) for a in asks)
         decisions, provenance = opener_decisions
         event_total = max((a.get("open_decisions_total") or 0) for a in asks)
