@@ -3681,7 +3681,8 @@ fn call_objective(activity_key: Option<&str>) -> &'static str {
              has already given. Rows that merely look alike are progress."
         }
         Some("open") | Some("open-resplit") => {
-            "split the request into balanced semantic slices. It must NOT write code, plan files, or tasks."
+            "split the request into balanced semantic slices, naming each slice's owned files in its \
+             objective as OWNERSHIP DECLARATIONS. It must NOT write code, plan tasks, or dependencies."
         }
         Some("synthesis") => {
             "wire already-researched slices into a task DAG — ids, files and dependencies only. It \
@@ -23826,7 +23827,9 @@ const FINDING_SOURCE_EXTS: &[&str] = &[
     ".sql",
 ];
 
-/// The opener's contract, deliberately small: no files, no deps, no task ids, no requirement map.
+/// The opener's contract, deliberately small: no files FIELD (owned files are declared inside the
+/// objective text — synthesis infers each task's paths from its slice's objective), no deps, no
+/// task ids, no requirement map.
 fn open_schema() -> serde_json::Value {
     serde_json::json!({
         "type": "object",
@@ -24779,9 +24782,11 @@ impl GooseAgentDispatcher {
              buckets.\n\n\
              Each slice gets: an id (kebab-case), a title, an objective, the QUESTIONS that must be \
              answered before it can be built, and a weight from 1 to 5 estimating how much work it is.\n\n\
-             SLICES MUST BE COMPARABLE IN SIZE. Independent machines will pick them up in parallel, so a \
-             slice more than roughly twice the work of another means one machine grinds while the others \
-             idle — split that one. But do NOT pad or merge to match a machine count: HOW MANY MACHINES \
+             SLICES MUST BE COMPARABLE IN SIZE, AND THERE ARE THREE TO SIX OF THEM. A slice more than \
+             roughly twice the work of another means one machine grinds while the others idle — split \
+             that one, and if splitting would push you past six, the overweight slice is hiding layers \
+             or shared files: rebalance WITHIN three to six rather than minting a seventh. \
+             But do NOT pad or merge to match a machine count: HOW MANY MACHINES \
              EXIST IS IRRELEVANT to how many slices this request has. The same request must yield the \
              same slices on one machine or a hundred. Do not add slices to fill idle machines, and do not \
              merge distinct concerns because the fleet is small.\n\n\
@@ -24820,7 +24825,10 @@ impl GooseAgentDispatcher {
              Also list OPEN DECISIONS: things the request genuinely leaves undecided and that a human \
              would need to choose (storage format, auth or none, which library). Only real ones — if the \
              request settles it, or convention obviously settles it, it is not an open decision.\n\n\
-             Do NOT plan files, tasks or dependencies. Do NOT write code. Call the final_output tool once \
+             NAME EACH SLICE'S OWNED FILES IN ITS OBJECTIVE, AS OWNERSHIP DECLARATIONS — a claim of \
+             territory, not a task plan. The next step reads each slice's files out of its objective, \
+             so a slice that names none forces it to guess. Do NOT plan tasks or dependencies. Do NOT \
+             write code. Call the final_output tool once \
              with the slices.{sections_block}{existing_block}"
         );
         // OPEN-1: above the arming floor the opener consumes the spec's OWN structure — an
@@ -26748,8 +26756,9 @@ fn orientation_armed(spec: &str, sections: &[SpecSection]) -> bool {
 }
 
 /// The compact index the opener consumes when `orientation_armed`: every section's heading with
-/// a measured size and a line-cut head excerpt. The detail is not lost — `briefs_from_slices`
-/// splices each claimed section's FULL text into the owning slice's brief, verbatim.
+/// a measured size and a head excerpt ending at a SENTENCE boundary. The detail is not lost —
+/// `briefs_from_slices` splices each claimed section's FULL text into the owning slice's brief,
+/// verbatim.
 fn spec_orientation(sections: &[SpecSection]) -> String {
     let mut s = String::new();
     for sec in sections {
@@ -26758,8 +26767,7 @@ fn spec_orientation(sections: &[SpecSection]) -> String {
         } else {
             &sec.heading
         };
-        let head: String = sec.body.chars().take(400).collect();
-        let head = head.rsplit_once('\n').map(|(h, _)| h).unwrap_or(&head);
+        let head = head_to_sentence_end(&sec.body, 400);
         s.push_str(&format!(
             "## {heading} [{} chars]\n{}\n\n",
             sec.body.chars().count(),
@@ -26767,6 +26775,34 @@ fn spec_orientation(sections: &[SpecSection]) -> String {
         ));
     }
     s
+}
+
+/// An index entry never ends mid-sentence. The excerpt used to cut back to the last full LINE
+/// inside the first 400 chars, and markdown wraps sentences across lines — measured on r5's
+/// live opener (open.think.log ~4404): section 7's entry ended at "`web/index.html` (structure
+/// only)," — the one sentence naming the four deliverable files, cut after the first — and the
+/// opener re-litigated "owned and written separately" four times. The cut point now extends
+/// FORWARD to the end of the sentence it lands in (terminator then whitespace) or to the
+/// paragraph break, whichever comes first. NOT a cap on model work — message formation only.
+/// Measured on the real sb-7 spec: the index grows 8,923 -> 14,074 chars, still under a third
+/// of the 53,597-char document.
+fn head_to_sentence_end(body: &str, min_chars: usize) -> String {
+    let chars: Vec<char> = body.chars().collect();
+    if chars.len() <= min_chars {
+        return body.to_string();
+    }
+    let mut end = min_chars;
+    while end < chars.len() {
+        let prev = chars[end - 1];
+        let next = chars[end];
+        if (matches!(prev, '.' | '!' | '?') && next.is_whitespace())
+            || (prev == '\n' && next == '\n')
+        {
+            break;
+        }
+        end += 1;
+    }
+    chars[..end].iter().collect()
 }
 
 /// The section headings NO slice claimed — the coverage gap, measured deterministically so it
@@ -44290,6 +44326,37 @@ mod audit_regressions {
         assert!(
             sections.iter().any(|s| s.body.contains("/api/payments")),
             "the endpoint table lives inside a section body, not lost at the cut"
+        );
+        // r5 (open.think.log ~4404): the line-cut entry ended at "`web/index.html` (structure
+        // only)," and the opener re-litigated the missing file list four times. The entry now
+        // ends at a sentence boundary, so the four-file sentence survives whole.
+        let s7 = sections
+            .iter()
+            .find(|s| s.heading.contains("frontend"))
+            .expect("sb-7 section 7 names the frontend");
+        let s7_entry = head_to_sentence_end(&s7.body, 400);
+        for f in [
+            "web/index.html",
+            "web/styles.css",
+            "web/app.js",
+            "web/viz.js",
+        ] {
+            assert!(
+                s7_entry.contains(f),
+                "the four-file sentence rides whole in section 7's index entry: missing {f}"
+            );
+        }
+        assert!(
+            s7_entry.trim_end().ends_with(['.', '!', '?']),
+            "the entry ends at a sentence boundary, never mid-list: ...{:?}",
+            s7_entry
+                .chars()
+                .rev()
+                .take(40)
+                .collect::<String>()
+                .chars()
+                .rev()
+                .collect::<String>()
         );
         let small = "# a\nbody\n# b\nbody\n# c\nbody\n";
         assert!(
