@@ -468,6 +468,11 @@ pub(super) struct FindingProvenance {
 /// Ordering rank: 0..=3 from the severity table, 4 for unsourced.
 const UNSOURCED_RANK: u8 = 4;
 
+/// The loud named absence `source_label` reports for an untagged finding. Shared with
+/// fix_order_note, whose sentence must branch on it: "authored by the unsourced (no authoring
+/// check recorded)" is not English, and that text reaches a model (the specificity gate).
+const UNSOURCED_SOURCE: &str = "unsourced (no authoring check recorded)";
+
 impl FindingProvenance {
     /// Author + push in one move: the site that writes the finding names itself.
     pub(super) fn push(&mut self, findings: &mut Vec<String>, source: FindingSource, text: String) {
@@ -500,7 +505,7 @@ impl FindingProvenance {
     pub(super) fn source_label(&self, text: &str) -> &'static str {
         match self.by_text.get(text) {
             Some(s) => s.label(),
-            None => "unsourced (no authoring check recorded)",
+            None => UNSOURCED_SOURCE,
         }
     }
 
@@ -554,22 +559,17 @@ impl FindingProvenance {
         let lines: Vec<String> = runs
             .iter()
             .map(|(a, b, sev, src)| {
-                if a == b {
-                    format!(
-                        "- finding {} is {} — authored by the {}",
-                        a + 1,
-                        sev.to_uppercase(),
-                        src
-                    )
+                let subject = if a == b {
+                    format!("finding {} is", a + 1)
                 } else {
-                    format!(
-                        "- findings {}-{} are {} — authored by the {}",
-                        a + 1,
-                        b + 1,
-                        sev.to_uppercase(),
-                        src
-                    )
-                }
+                    format!("findings {}-{} are", a + 1, b + 1)
+                };
+                let authorship = if *src == UNSOURCED_SOURCE {
+                    "with no authoring check recorded".to_string()
+                } else {
+                    format!("authored by the {src}")
+                };
+                format!("- {subject} {} — {authorship}", sev.to_uppercase())
             })
             .collect();
         format!(
@@ -581,6 +581,26 @@ impl FindingProvenance {
             lines.join("\n")
         )
     }
+}
+
+/// Shorten a long string by keeping its HEAD and its TAIL and eliding the middle. Char-based, so it
+/// never splits a multi-byte character.
+///
+/// Head-only truncation keeps the part that says WHAT was checked and discards the part that says what
+/// went WRONG, because diagnostics — tracebacks, pytest error banners, argparse dispatch tails — live at
+/// the end. Two separate defects in swarm.rs came from that: a flat 2000-char head cut hid the dispatch
+/// tail of every real entry point and fabricated "unwired/unreachable" findings, and a 400-char head cut
+/// on `complete_verify.finding_texts` rendered a pytest collect failure as a list of SUCCESSFULLY
+/// collected tests followed by `================` — the error banner beginning exactly where the
+/// truncation ended. That finding was unreadable, and it was the only evidence for the round.
+pub(super) fn elide_middle(s: &str, head: usize, tail: usize) -> String {
+    let chars: Vec<char> = s.chars().collect();
+    if chars.len() <= head + tail {
+        return s.to_string();
+    }
+    let h: String = chars[..head].iter().collect();
+    let t: String = chars[chars.len() - tail..].iter().collect();
+    format!("{h}\n\n... [middle elided — head + tail shown] ...\n\n{t}")
 }
 
 #[cfg(test)]
@@ -1146,6 +1166,22 @@ mod tests {
                 "the note must never open a numbered block of its own: {line}"
             );
         }
+        // The unsourced arm stays LOUD but must read as a sentence — the broken shape was
+        // "authored by the unsourced (no authoring check recorded)" in a model-facing brief.
+        let untagged =
+            "GET /healthz answered 500 before any check registered authorship".to_string();
+        let mut with_untagged = findings.clone();
+        with_untagged.push(untagged);
+        prov.sort_findings(&mut with_untagged);
+        let note_untagged = prov.fix_order_note(&with_untagged);
+        assert!(
+            note_untagged.contains("- finding 4 is UNSOURCED — with no authoring check recorded"),
+            "{note_untagged}"
+        );
+        assert!(
+            !note_untagged.contains("authored by the unsourced"),
+            "{note_untagged}"
+        );
         assert_eq!(prov.fix_order_note(&[]), "", "no findings, no note");
     }
 
@@ -1167,5 +1203,44 @@ mod tests {
         let after: std::collections::HashSet<String> = findings.iter().cloned().collect();
         assert_eq!(before, after, "exact strings survive byte-identical");
         assert_eq!(prov.severity_label(&untagged), "unsourced");
+    }
+
+    /// The rule that makes racing N fix agents safe instead of merely triple the cost. Every case here is
+    /// a shape the corpus actually produced: 13 of 13 archived repair rounds ended with findings
+    /// outstanding, and the count ROSE in 3 of them under the current promote-on-agent-Ok behaviour.
+    /// The diagnostic lives at the END. A head-only cut keeps "what was checked" and throws away "what
+    /// went wrong", which is how a pytest collect FAILURE was recorded as a list of successfully
+    /// collected tests: the error banner began one character past the old 400-char boundary.
+    #[test]
+    fn elision_keeps_the_end_of_a_finding_where_the_error_actually_is() {
+        // Short input is returned verbatim — no marker, no loss.
+        assert_eq!(elide_middle("short", 150, 650), "short");
+        assert_eq!(elide_middle("", 10, 10), "");
+
+        // The shape that motivated this: a banner of collected items, then the real error at the end.
+        let out = format!(
+            "pytest --collect-only errors:\n{}\n=== ERRORS ===\nImportError: cannot import name 'upsert_many'",
+            (0..80).map(|i| format!("test_store.py::test_{i}")).collect::<Vec<_>>().join("\n")
+        );
+        let e = elide_middle(&out, 150, 650);
+        assert!(
+            e.contains("pytest --collect-only errors"),
+            "the head must still name the check"
+        );
+        assert!(
+            e.contains("ImportError: cannot import name 'upsert_many'"),
+            "the ERROR must survive truncation — it is the only actionable part: {e}"
+        );
+        assert!(
+            e.contains("middle elided"),
+            "elision must be visible, never silent"
+        );
+        assert!(e.chars().count() < out.chars().count());
+
+        // Multi-byte safety: char-based, so it can never split a character.
+        let wide: String = "\u{1f9ea}".repeat(500);
+        let w = elide_middle(&wide, 10, 10);
+        assert!(w.starts_with(&"\u{1f9ea}".repeat(10)));
+        assert!(w.ends_with(&"\u{1f9ea}".repeat(10)));
     }
 }

@@ -66,7 +66,8 @@ mod attribution;
 use attribution::{attribute_findings, console_error_source, resolve_shard_ownership};
 mod findings;
 use findings::{
-    dedupe_findings_exact, engine_critical, FileGroup, FindingProvenance, FindingSource,
+    dedupe_findings_exact, elide_middle, engine_critical, FileGroup, FindingProvenance,
+    FindingSource,
 };
 mod pitfalls;
 use pitfalls::{relevant_pitfalls, DOMAIN_PITFALLS};
@@ -1982,6 +1983,10 @@ async fn handle_repair(tree: PathBuf, spec: Option<PathBuf>) -> Result<()> {
     if !tree.is_dir() {
         anyhow::bail!("{} is not a directory", tree.display());
     }
+    // Finding 9's class, same guard as handle_gate: a replay must not deposit __pycache__ debris
+    // in an ARCHIVED tree (r2's archive already carries one at root). Scoped naturally: `goose
+    // swarm repair` is its own process.
+    std::env::set_var("PYTHONDONTWRITEBYTECODE", "1");
     let spec_text = spec_for_tree(&tree, spec)?;
     let existing = existing_files_manifest(&tree);
     let lang = detect_language(&spec_text, &existing);
@@ -12580,45 +12585,6 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
         assert!(research_lookups(&[rec("developer__shell", false, Some(false), true)]).is_empty());
     }
 
-    /// The rule that makes racing N fix agents safe instead of merely triple the cost. Every case here is
-    /// a shape the corpus actually produced: 13 of 13 archived repair rounds ended with findings
-    /// outstanding, and the count ROSE in 3 of them under the current promote-on-agent-Ok behaviour.
-    /// The diagnostic lives at the END. A head-only cut keeps "what was checked" and throws away "what
-    /// went wrong", which is how a pytest collect FAILURE was recorded as a list of successfully
-    /// collected tests: the error banner began one character past the old 400-char boundary.
-    #[test]
-    fn elision_keeps_the_end_of_a_finding_where_the_error_actually_is() {
-        // Short input is returned verbatim — no marker, no loss.
-        assert_eq!(elide_middle("short", 150, 650), "short");
-        assert_eq!(elide_middle("", 10, 10), "");
-
-        // The shape that motivated this: a banner of collected items, then the real error at the end.
-        let out = format!(
-            "pytest --collect-only errors:\n{}\n=== ERRORS ===\nImportError: cannot import name 'upsert_many'",
-            (0..80).map(|i| format!("test_store.py::test_{i}")).collect::<Vec<_>>().join("\n")
-        );
-        let e = elide_middle(&out, 150, 650);
-        assert!(
-            e.contains("pytest --collect-only errors"),
-            "the head must still name the check"
-        );
-        assert!(
-            e.contains("ImportError: cannot import name 'upsert_many'"),
-            "the ERROR must survive truncation — it is the only actionable part: {e}"
-        );
-        assert!(
-            e.contains("middle elided"),
-            "elision must be visible, never silent"
-        );
-        assert!(e.chars().count() < out.chars().count());
-
-        // Multi-byte safety: char-based, so it can never split a character.
-        let wide: String = "\u{1f9ea}".repeat(500);
-        let w = elide_middle(&wide, 10, 10);
-        assert!(w.starts_with(&"\u{1f9ea}".repeat(10)));
-        assert!(w.ends_with(&"\u{1f9ea}".repeat(10)));
-    }
-
     /// G7's SECOND seam, same shape as the first. `overview_run_command` handled Python, Rust and
     /// TypeScript and then `_ => None` — so a Go app resolved to NO run command at all, and nothing
     /// could probe its entry point, on a stack the engine otherwise supports with its own smoke gate.
@@ -19034,26 +19000,6 @@ fn overview_run_command(lang: TargetLang, root: &Path, rel: &[String]) -> Option
         // of silently inheriting this one.
         TargetLang::Other => None,
     }
-}
-
-/// Shorten a long string by keeping its HEAD and its TAIL and eliding the middle. Char-based, so it
-/// never splits a multi-byte character.
-///
-/// Head-only truncation keeps the part that says WHAT was checked and discards the part that says what
-/// went WRONG, because diagnostics — tracebacks, pytest error banners, argparse dispatch tails — live at
-/// the end. Two separate defects in this file came from that: a flat 2000-char head cut hid the dispatch
-/// tail of every real entry point and fabricated "unwired/unreachable" findings, and a 400-char head cut
-/// on `complete_verify.finding_texts` rendered a pytest collect failure as a list of SUCCESSFULLY
-/// collected tests followed by `================` — the error banner beginning exactly where the
-/// truncation ended. That finding was unreadable, and it was the only evidence for the round.
-fn elide_middle(s: &str, head: usize, tail: usize) -> String {
-    let chars: Vec<char> = s.chars().collect();
-    if chars.len() <= head + tail {
-        return s.to_string();
-    }
-    let h: String = chars[..head].iter().collect();
-    let t: String = chars[chars.len() - tail..].iter().collect();
-    format!("{h}\n\n... [middle elided — head + tail shown] ...\n\n{t}")
 }
 
 /// File excerpt for the review / verify prompt. A small file is shown WHOLE; a large file shows its HEAD and
@@ -38073,7 +38019,12 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                 // Clear the prior round's findings so complete_result reports remaining_findings=0 on a
                 // green finish — the green break happens before last_findings is refreshed below, so
                 // without this it would report the stale pre-fix count for an app that is actually clean.
+                // The known-bug list has the same staleness: minors latch only in the red branch above,
+                // so a fully green round after red-with-minors would ship round-N's FIXED bugs as
+                // known-active, with an authoritative severities array beside them.
                 last_findings.clear();
+                known_active_bugs.clear();
+                known_active_bugs_severities.clear();
                 if verdict.ran {
                     eprintln!(
                         "{}",
