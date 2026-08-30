@@ -409,3 +409,9 @@ research_request_block's armed-no-claimed-sections arm wording.
   the confound itself (sink ended the SAME SECOND the re-rank sampled; gabee idle 2h47m); refused to
   state a saved-minutes number the run never measured, labeling the ~30m an estimate. 6/6: every
   self-trace corrected in at least one detail (here: smoke_fix_target had zero consumers fire in r5).
+- 2026-08-31 00:30 general-purpose (site API tiers, 07cc27b): CLEAN+. Worktree off origin/master to
+  avoid the concurrent seeder's checkout; derived the rejection message from the tier array so set
+  and error cannot drift; proved its new tests refuse the UNFIXED route (4/5 fail before, 5/5 after);
+  live before/after probes verbatim with a no-write 503-sentinel test design. The route was the last
+  seven-letter holdout — every other layer already spoke eleven. Pattern for the roster: refusal-
+  proven tests (run them against the defect first) is worth adopting in surgeon charters.
