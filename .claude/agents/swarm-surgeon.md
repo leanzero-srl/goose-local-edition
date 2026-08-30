@@ -66,6 +66,11 @@ it, cargo test counts identical before/after, NEVER a brace script — a brace m
 the 47,150 baseline; when your commit shrinks the file, tighten the baseline in the same commit.
 Anchors are symbols, not line numbers — grep by name after any move.
 
+**STAGING DISCIPLINE (2026-08-30, after a concurrent agent's hunks were swept into a whole-file
+add):** before ANY `git add` of swarm.rs, run `git diff --stat crates/goose-cli/src/commands/swarm.rs`
+and confirm every hunk is yours; stage nothing you did not write. The orchestrator's law is one
+swarm.rs agent at a time — this is the belt to that suspender.
+
 ## Sources & upkeep
 Authoritative sources for this charter are named in .claude/agents/ROSTER.md's law: when they move,
 this charter is re-checked. The orchestrator grades every delegation (ROSTER.md's four questions)
