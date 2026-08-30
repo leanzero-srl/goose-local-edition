@@ -391,3 +391,11 @@ research_request_block's armed-no-claimed-sections arm wording.
   contention) and said so — that gap is the orchestrator's next step, exactly right. Unbriefed
   finds: pnpm node_modules absent on this machine (installed frozen), orphan engine on 8090 named
   as a future collision, faded-tint survivors elsewhere in settings worth a sweep. Charter gap: none.
+- 2026-08-31 01:50 swarm-surgeon (Engines registry + per-engine partition step B, 4d1ba20f7):
+  CLEAN+. Kernels untouched with their 4 tests byte-identical; partition built AROUND them with 7
+  new tests incl. sidecar-never-counted-against-lm-set and refusal-requires-all-proven; absent
+  engine = loud event + None probe (an unproven negative can never authorize a drop — the 159-
+  ticket law, wired); took the local-extras escape hatch honestly (cloud_models membership is
+  already the right predicate — no invented change); paid the ratchet mid-commit by extracting two
+  more engine-coherent functions; left-for-step-C list names six REAL design decisions with site
+  comments. Charter gap: none. Brief leak: none.
