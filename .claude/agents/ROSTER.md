@@ -87,6 +87,11 @@ it on mechanism. Mihai 14:35: "isn't build supposed to fan out?"
 
 ## Live queue (small items, fold into the next matching brief)
 
+R6-BLOCKING (Mihai 15:45, third ask): SUPERVISION CALLS GET LANES — judge looks, the replanner,
+testgen/review side calls run keyless today (no digest/think.log/forming — invisible; the 24-min
+r5 stall ran behind one). Give every supervision model call an activity key (e.g. judge-<task>-lookN,
+replan-rN, testgen-<task>), labeled + grouped as supervision in the panel; the forming hoist then
+covers them for free. Surgeon #10 the moment #9 lands; panel grouping rides panel #5.
 - verify_tree_imports false positive: 'app.httpapi — no task owns' while app/httpapi.py IS owned
   (module-path -> file-path resolution miss) — next swarm-surgeon batch.
 SURGEON #9 (dispatch when #8 lands — swarm.rs): (0) DECISIONS-INTO-FAN, refuter-amended:
