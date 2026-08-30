@@ -156,6 +156,11 @@ type ElectronAPI = {
     startedAt?: string;
     /** The sampling knobs the live run launched with (empty object = engine defaults). */
     sampling?: SwarmSampling;
+    /** Main-owned pipeline fact: the scorer reached its verdict (rep0 line seen). A re-attaching
+     *  view restores this instead of re-deriving it from log lines it will never see again. */
+    scored?: boolean;
+    /** The newest harness output line, for the same re-attach. */
+    lastLine?: string | null;
   }>;
   /** Poster identity (~/.config/goose/benchmark/identity.json), created on first use. */
   benchmarkIdentity: () => Promise<{ installId: string; handle: string }>;

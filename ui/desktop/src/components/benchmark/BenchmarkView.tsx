@@ -386,6 +386,11 @@ export default function BenchmarkView() {
         // main.ts kept the launched knobs with the run — the strip shows the truth, not this
         // mount's defaults.
         setLaunchedSampling(sanitizeSampling(s.sampling));
+        // FINDING 17: scored/lastLine are MAIN's facts now. They used to be component state fed by a
+        // log-line regex, so this re-attach restored neither and a recreated window's strip dropped a
+        // finished 'done' back to a spinning 'score' until the child exited.
+        setScored(s.scored === true);
+        setLastLine(typeof s.lastLine === 'string' ? s.lastLine : null);
         setStatus(null);
       }
     });
@@ -405,11 +410,12 @@ export default function BenchmarkView() {
       }
     };
     const onLog = (_e: unknown, payload: unknown) => {
-      const p = payload as { line?: string };
-      if (typeof p?.line === 'string') {
-        setLastLine(p.line);
-        if (/rep0 \(/.test(p.line)) setScored(true);
-      }
+      // The regex is gone from the renderer: `scored` rides every log payload from main, which owns
+      // the fact (finding 17) — a scorer output change breaks ONE matcher in one process, and the
+      // strip can never re-derive a stale answer from lines it happened to see.
+      const p = payload as { line?: string; scored?: boolean };
+      if (typeof p?.line === 'string') setLastLine(p.line);
+      if (p?.scored === true) setScored(true);
     };
     const onFinished = (_e: unknown, payload: unknown) => {
       const p = payload as { row?: MineRow; error?: string; cancelled?: boolean };
