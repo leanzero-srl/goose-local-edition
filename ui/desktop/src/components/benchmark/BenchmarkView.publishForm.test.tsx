@@ -3,12 +3,14 @@ import { describe, it, expect, vi, afterEach } from 'vitest';
 import { IntlTestWrapper } from '../../i18n/test-utils';
 
 /**
- * THE PUBLISH FORM IS A FORM: visible labels, and an invalid field that says WHY.
+ * THE PUBLISH FORM TELLS THE TRUTH: the model id is engine truth (read-only — an editable field
+ * publishes a lie), the title is the USER'S name for the run (required, never the generated
+ * handle), and the outcome is a real state — the server's acceptance or its OWN error words —
+ * never a gray status line.
  *
- * Measured on the live app over CDP (2026-08-29): the Model input carried aria-invalid="true" with no
- * message linked to it, and both it and the Title input were named only by their placeholders — the
- * "Model *" label above the field was not associated with it. The node-count toggles were disabled
- * during a run with no reason on them.
+ * Measured on the live app over CDP (2026-08-30): Publish fired a real POST and the server's
+ * "HTTP 400: checksSummary[49].tier must be one of A|B|C|D|J|V|P." landed in a neutral paragraph
+ * that read like ordinary status; the header carried "publishing as mighty-crane-54f2".
  */
 
 vi.mock('../swarm/SwarmRunPanel', async () => {
@@ -21,7 +23,7 @@ vi.mock('../swarm/useSamplingDefaults', () => ({
   useSaveSamplingDefaults: () => () => {},
 }));
 
-import BenchmarkView, { modelFieldProblem } from './BenchmarkView';
+import BenchmarkView, { modelIdProblem, titleProblem } from './BenchmarkView';
 
 type ElectronMock = Record<string, unknown>;
 const electron = () => (window as unknown as { electron: ElectronMock }).electron;
@@ -46,7 +48,7 @@ const describedBy = (el: HTMLElement): string => {
   return document.getElementById(id!)?.textContent ?? '';
 };
 
-function mockElectron(opts: { running: boolean; modelId: string }) {
+function mockElectron(opts: { running: boolean; modelId?: string }) {
   const e = electron();
   e.benchmarkStatus = vi.fn(async () =>
     opts.running
@@ -59,51 +61,126 @@ function mockElectron(opts: { running: boolean; modelId: string }) {
       : { running: false }
   );
   e.benchmarkRead = vi.fn(async () => ({ ...MINE, modelId: opts.modelId }));
-  e.benchmarkIdentity = vi.fn(async () => ({ handle: 'mihai' }));
   e.benchmarkShots = vi.fn(async () => []);
   e.readSwarmRun = vi.fn(async () => null);
   e.fleetStatus = vi.fn(async () => ({}));
 }
 
-describe('modelFieldProblem — the one rule behind aria-invalid, the hint and the Publish tooltip', () => {
-  it('names the true reason', () => {
-    expect(modelFieldProblem('')).toMatch(/^Required/);
-    expect(modelFieldProblem('   ')).toMatch(/^Required/);
-    expect(modelFieldProblem('qwen3')).toBe('Too short — 5 of at least 8 characters.');
-    expect(modelFieldProblem('x'.repeat(121))).toBe('Too long — 121 of at most 120 characters.');
-    expect(modelFieldProblem('qwen3.6-27b-mtp')).toBeNull();
+describe('modelIdProblem / titleProblem — the two rules the hints and the Publish button read from', () => {
+  it('refuses an absent or junk engine model id with the reason', () => {
+    expect(modelIdProblem(undefined)).toMatch(/no model id from the engine/);
+    expect(modelIdProblem('')).toMatch(/no model id from the engine/);
+    expect(modelIdProblem('qwen3')).toMatch(/5-character model id — too short/);
+    expect(modelIdProblem('qwen3.6-27b-mtp')).toBeNull();
+  });
+  it('requires a user-chosen title', () => {
+    expect(titleProblem('')).toMatch(/^Title is required/);
+    expect(titleProblem('   ')).toMatch(/^Title is required/);
+    expect(titleProblem('My M4 fleet first run')).toBeNull();
   });
 });
 
 describe('the publish form', () => {
   afterEach(() => cleanup());
 
-  it('labels Model and Title visibly, and links the invalid Model field to its reason', async () => {
-    mockElectron({ running: false, modelId: 'qwen3' });
-    const { findByLabelText, getByLabelText, getByRole } = render(
+  it('renders the model id READ-ONLY from the run (labeled, copyable, never editable)', async () => {
+    mockElectron({ running: false, modelId: 'qwen3.6-27b-mtp' });
+    const { findByLabelText } = render(
       <IntlTestWrapper>
         <BenchmarkView />
       </IntlTestWrapper>
     );
     const model = (await findByLabelText(/^Model/)) as HTMLInputElement;
-    expect(model.tagName).toBe('INPUT');
-    await waitFor(() => expect(model.value).toBe('qwen3'));
-    expect(model.getAttribute('aria-invalid')).toBe('true');
-    expect(describedBy(model)).toContain('Too short — 5 of at least 8 characters.');
-    expect(getByRole('button', { name: /Publish/ }).getAttribute('title')).toContain(
-      'Too short — 5 of at least 8 characters.'
+    await waitFor(() => expect(model.value).toBe('qwen3.6-27b-mtp'));
+    expect(model.readOnly).toBe(true);
+    expect(model.disabled).toBe(false); // disabled would kill selection-for-copy
+    expect(describedBy(model)).toContain('Engine truth');
+  });
+
+  it('shows the header without the generated-handle chip', async () => {
+    mockElectron({ running: false, modelId: 'qwen3.6-27b-mtp' });
+    const { findByLabelText, queryByText } = render(
+      <IntlTestWrapper>
+        <BenchmarkView />
+      </IntlTestWrapper>
     );
+    await findByLabelText(/^Model/);
+    expect(queryByText(/publishing as/i)).toBeNull();
+  });
+
+  it('disables Publish while the title is empty, with the reason on the button', async () => {
+    mockElectron({ running: false, modelId: 'qwen3.6-27b-mtp' });
+    const { findByRole, getByLabelText } = render(
+      <IntlTestWrapper>
+        <BenchmarkView />
+      </IntlTestWrapper>
+    );
+    const publishBtn = await findByRole('button', { name: /Publish/ });
+    await waitFor(() => expect(publishBtn).toBeDisabled());
+    expect(publishBtn.getAttribute('title')).toContain('Title is required');
 
     const title = getByLabelText(/^Title/) as HTMLInputElement;
-    expect(title.tagName).toBe('INPUT');
+    expect(describedBy(title)).toContain('Title is required');
+    fireEvent.change(title, { target: { value: 'My M4 fleet first run' } });
+    expect(publishBtn).not.toBeDisabled();
+    expect(publishBtn.getAttribute('title')).toContain('Publish this result');
+  });
 
-    fireEvent.change(model, { target: { value: '' } });
-    expect(describedBy(model)).toContain('Required');
+  it('disables Publish with the reason when the run recorded no model id', async () => {
+    mockElectron({ running: false, modelId: undefined });
+    const { findByRole } = render(
+      <IntlTestWrapper>
+        <BenchmarkView />
+      </IntlTestWrapper>
+    );
+    const publishBtn = await findByRole('button', { name: /Publish/ });
+    await waitFor(() =>
+      expect(publishBtn.getAttribute('title')).toContain('no model id from the engine')
+    );
+    expect(publishBtn).toBeDisabled();
+  });
 
-    fireEvent.change(model, { target: { value: 'qwen3.6-27b-mtp' } });
-    expect(model.getAttribute('aria-invalid')).toBe('false');
-    expect(describedBy(model)).not.toContain('Too short');
-    expect(describedBy(model)).not.toContain('Required');
+  it("renders the ERROR state with the server's own words, aria-live", async () => {
+    mockElectron({ running: false, modelId: 'qwen3.6-27b-mtp' });
+    const serverWords = 'HTTP 400: checksSummary[49].tier must be one of A|B|C|D|J|V|P.';
+    electron().benchmarkPublish = vi.fn(async () => ({ ok: false, error: serverWords }));
+    const { findByRole, getByLabelText, findByText, getByRole } = render(
+      <IntlTestWrapper>
+        <BenchmarkView />
+      </IntlTestWrapper>
+    );
+    const publishBtn = await findByRole('button', { name: /Publish/ });
+    fireEvent.change(getByLabelText(/^Title/), { target: { value: 'sb-7 first try' } });
+    await waitFor(() => expect(publishBtn).not.toBeDisabled());
+    fireEvent.click(publishBtn);
+    const errorLine = await findByText(new RegExp('checksSummary\\[49\\]'));
+    expect(errorLine.textContent).toContain(serverWords);
+    expect(getByRole('status').getAttribute('aria-live')).toBe('polite');
+    expect(
+      (electron().benchmarkPublish as ReturnType<typeof vi.fn>).mock.calls[0][0]
+    ).toEqual({ title: 'sb-7 first try' }); // no model in the payload — engine truth lives in main
+  });
+
+  it('renders the ACCEPTED state with what went live: title, score, url', async () => {
+    mockElectron({ running: false, modelId: 'qwen3.6-27b-mtp' });
+    electron().benchmarkPublish = vi.fn(async () => ({
+      ok: true,
+      status: 'live',
+      url: '/agentic-benchmarks/run/brun-1234',
+    }));
+    const { findByRole, getByLabelText, findByText } = render(
+      <IntlTestWrapper>
+        <BenchmarkView />
+      </IntlTestWrapper>
+    );
+    const publishBtn = await findByRole('button', { name: /Publish/ });
+    fireEvent.change(getByLabelText(/^Title/), { target: { value: 'My M4 fleet first run' } });
+    await waitFor(() => expect(publishBtn).not.toBeDisabled());
+    fireEvent.click(publishBtn);
+    const accepted = await findByText(/Live on leanzero\.net/);
+    expect(accepted.textContent).toContain('My M4 fleet first run');
+    expect(accepted.textContent).toContain('61.0%');
+    expect(accepted.textContent).toContain('/agentic-benchmarks/run/brun-1234');
   });
 
   it('locks the tier and node-count toggles during a run with the reason on each', async () => {

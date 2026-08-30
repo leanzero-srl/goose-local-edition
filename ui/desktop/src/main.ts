@@ -2723,8 +2723,6 @@ ipcMain.handle('benchmark-read', async () => {
   }
 });
 
-ipcMain.handle('benchmark-identity', async () => ensureBenchIdentity());
-
 // Lets the view re-attach to a run in progress after navigation/remount — a run takes hours and
 // must not become invisible because the page unmounted.
 ipcMain.handle('benchmark-status', async () => {
@@ -3072,7 +3070,7 @@ ipcMain.handle('benchmark-cancel', async () => {
 
 ipcMain.handle(
   'benchmark-publish',
-  async (_event, args?: { title?: string; model?: string }) => {
+  async (_event, args?: { title?: string }) => {
     let stored: Record<string, unknown>;
     try {
       stored = JSON.parse(await fs.readFile(BENCH_RESULT, 'utf8')) as Record<string, unknown>;
@@ -3088,32 +3086,24 @@ ipcMain.handle(
         error: 'this result predates the v2 publisher — run the benchmark again to publish',
       };
     }
-    // `model` is REQUIRED (contract v2.2, 8..120 chars): the field's current value from the
-    // view, falling back to the stored engine-truth prefill. Refuse locally with the reason
-    // rather than letting the server 422 on it.
-    const model = (
-      typeof args?.model === 'string' && args.model.trim()
-        ? args.model
-        : typeof stored.modelId === 'string'
-          ? stored.modelId
-          : ''
-    ).trim();
+    // `model` is ENGINE TRUTH only (v2.4): the renderer stopped sending one, so a user-editable
+    // value can no longer publish a lie. A result whose run recorded no usable pool_resolved id
+    // refuses loudly with the reason — never a substitute.
+    const model = (typeof stored.modelId === 'string' ? stored.modelId : '').trim();
     if (model.length < 8 || model.length > 120) {
       return {
         ok: false,
         error:
-          'a model identifier (8–120 characters) is required — set the Model field to the exact model your fleet ran',
+          'this result carries no usable model id from the engine — run the benchmark again to publish',
       };
     }
-    // Persist the user's edit so it survives restarts and prefills the next publish.
-    if (model !== stored.modelId) {
-      stored.modelId = model;
-      await fs
-        .writeFile(BENCH_RESULT, JSON.stringify(stored, null, 2))
-        .catch(() => undefined);
-    }
     const identity = await ensureBenchIdentity();
+    // The title is the USER'S name for the run (v2.4, Mihai 2026-08-30: the auto-generated
+    // handle is not a title) — required, refused here with the reason, never defaulted.
     const title = typeof args?.title === 'string' ? args.title.trim().slice(0, 80) : '';
+    if (!title) {
+      return { ok: false, error: 'a title is required — name this run before publishing' };
+    }
     // Prefer the frozen snapshot written WITH the result row — the workdir is reused and wiped
     // by the next run, so reading it at publish time can attach another run's screenshots to
     // this row's score.
@@ -3156,7 +3146,7 @@ ipcMain.handle(
       ...(typeof stored.scorerVersion === 'string'
         ? { scorerVersion: stored.scorerVersion }
         : {}),
-      ...(title ? { title } : {}),
+      title,
       model,
       poster: { installId: identity.installId, handle: identity.handle },
       ...(screenshots.length > 0 ? { screenshots } : {}),
