@@ -51,6 +51,14 @@ pub enum SwarmEvent {
         error: String,
         transient: bool,
     },
+    /// A-3 (r3): a retry was dispatched back onto the device it was avoiding because that device
+    /// was the ONLY free one. Avoidance is a preference, never a wait — r2 measured the old
+    /// wait-for-a-different-slot behaviour starving the sink's body-drop retry for 11 minutes
+    /// (21:26:35Z -> 21:37:37Z, zero events) while `avoid_device` excluded the just-freed node.
+    RetryReusedAvoidedDevice {
+        task_id: String,
+        device: String,
+    },
     SchedulerStuck {
         remaining: usize,
     },

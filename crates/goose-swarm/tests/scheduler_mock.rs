@@ -4,9 +4,9 @@
 
 use async_trait::async_trait;
 use goose_swarm::{
-    Dag, DeviceCfg, Difficulty, DispatchError, DispatchRequest, Judge, JudgeConfig, JudgeOutcome,
-    JudgeRequest, PreReviewOutput, PreReviewRequest, PreReviewer, ReplanContext, Replanner,
-    Scheduler, TaskDispatcher, TaskRunOutput, TaskSpec, Verdict,
+    Dag, DeviceCfg, Difficulty, DispatchError, DispatchRequest, EventSink, Judge, JudgeConfig,
+    JudgeOutcome, JudgeRequest, PreReviewOutput, PreReviewRequest, PreReviewer, ReplanContext,
+    Replanner, Scheduler, SwarmEvent, TaskDispatcher, TaskRunOutput, TaskSpec, Verdict,
 };
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -176,16 +176,49 @@ async fn the_configured_speed_weight_decides_every_free_slot_tie() {
     );
 }
 
+/// Records the scheduler's synchronous claim-time events, so ordering asserts see the CLAIM
+/// (emitted under the state lock), never the racy start of a spawned dispatcher future.
+struct LogSink {
+    log: Arc<Mutex<Vec<String>>>,
+}
+
+impl EventSink for LogSink {
+    fn emit(&self, event: &SwarmEvent) {
+        match event {
+            SwarmEvent::TaskDispatched {
+                task_id, device, ..
+            } => self
+                .log
+                .lock()
+                .unwrap()
+                .push(format!("dispatch:{task_id}:{device}")),
+            SwarmEvent::RetryReusedAvoidedDevice { task_id, device } => self
+                .log
+                .lock()
+                .unwrap()
+                .push(format!("reused:{task_id}:{device}")),
+            _ => {}
+        }
+    }
+}
+
 #[tokio::test]
-async fn a_retry_waits_for_a_different_device_instead_of_rebinding() {
-    // r8 web-viz starvation loop, pinned: "victim" fails transient on attempt 0; at that
-    // instant the ONLY free slot is the device that just killed it ("blocker" still occupies
-    // the other). The retry must WAIT and land on a DIFFERENT device when the blocker frees —
-    // rebinding to the killer re-runs the same starvation (measured: four 420s stalls, all on
-    // the same slowest node).
+async fn a_retry_reuses_the_sole_free_device_instead_of_waiting() {
+    // A-3 (r3), superseding the r8 pin that lived here: "victim" fails transient on attempt 0;
+    // at that instant the ONLY free slot is the device that just failed it ("blocker" still
+    // occupies the other). The retry must dispatch THERE immediately — avoidance is a
+    // preference, never a wait — and the reuse must be visible as a
+    // `retry_reused_avoided_device` event.
+    //
+    // r8 pinned the OPPOSITE (wait for a different device): its harm was the 420s-x-attempt
+    // stopwatch re-killing the same slow-but-working call on every re-land. II-7 (7803faffd)
+    // deleted that stopwatch (see `no_time_wall_survives_on_the_reuse_path`), and r2 measured
+    // the wait's own harm: the sink's body-drop retry starved 11 minutes (21:26:35Z ->
+    // 21:37:37Z, zero events) waiting for a slot that idle-fill claims never released.
     let specs = vec![spec("blocker", &[], &[]), spec("victim", &[], &[])];
     let dag = Dag::from_specs(specs).unwrap();
     let rec = Arc::new(Mutex::new(Recorder::default()));
+    let log = Arc::new(Mutex::new(Vec::new()));
     let disp = Arc::new(MockDispatcher {
         rec: rec.clone(),
         delay: Duration::from_millis(30),
@@ -193,20 +226,106 @@ async fn a_retry_waits_for_a_different_device_instead_of_rebinding() {
         terminal: HashSet::new(),
         slow: ["blocker".to_string()].into_iter().collect(),
     });
-    let sched = Scheduler::new(vec![dev("other", "m-o", 1), dev("slowhost", "m-s", 1)], 3);
+    let sched = Scheduler::new(vec![dev("other", "m-o", 1), dev("slowhost", "m-s", 1)], 3)
+        .with_sink(Arc::new(LogSink { log: log.clone() }));
     let report = sched.run(dag, disp, String::new()).await.unwrap();
+    assert_eq!(report.done.len(), 2, "both tasks finish");
+    let r = rec.lock().unwrap();
+    let devs = &r.run_devices["victim"];
+    assert_eq!(devs.len(), 2, "one failed attempt + one retry: {devs:?}");
     assert_eq!(
-        report.done.len(),
-        2,
-        "both tasks finish — waiting must not deadlock"
+        devs[0], devs[1],
+        "the retry must REUSE the sole free device immediately instead of waiting for the \
+         busy rest of the fleet"
     );
+    let log = log.lock().unwrap();
+    assert!(
+        log.iter()
+            .any(|e| e == &format!("reused:victim:{}", devs[1])),
+        "the reuse is an emitted event, not an inference from device equality; log = {log:?}"
+    );
+}
+
+#[tokio::test]
+async fn a_retry_prefers_a_different_free_device_over_the_avoided_one() {
+    // The preference half of A-3: with ANY other device free at retry time, the avoided
+    // device is still skipped. "victim" fails transient after "quick" has already freed the
+    // other device — the retry must land on that other device, and no reuse event fires.
+    let specs = vec![spec("quick", &[], &[]), spec("victim", &[], &[])];
+    let dag = Dag::from_specs(specs).unwrap();
+    let rec = Arc::new(Mutex::new(Recorder::default()));
+    let log = Arc::new(Mutex::new(Vec::new()));
+    let disp = Arc::new(MockDispatcher {
+        rec: rec.clone(),
+        delay: Duration::from_millis(30),
+        fail_transient_first: ["victim".to_string()].into_iter().collect(),
+        terminal: HashSet::new(),
+        slow: ["victim".to_string()].into_iter().collect(),
+    });
+    let sched = Scheduler::new(vec![dev("other", "m-o", 1), dev("slowhost", "m-s", 1)], 3)
+        .with_sink(Arc::new(LogSink { log: log.clone() }));
+    let report = sched.run(dag, disp, String::new()).await.unwrap();
+    assert_eq!(report.done.len(), 2, "both tasks finish");
     let r = rec.lock().unwrap();
     let devs = &r.run_devices["victim"];
     assert_eq!(devs.len(), 2, "one failed attempt + one retry: {devs:?}");
     assert_ne!(
         devs[0], devs[1],
-        "the retry must land on a DIFFERENT device, not rebind to the one that killed it"
+        "with another device free the retry must still avoid the one that failed it"
     );
+    let log = log.lock().unwrap();
+    assert!(
+        !log.iter().any(|e| e.starts_with("reused:")),
+        "no reuse event when the avoided device was not the sole free one; log = {log:?}"
+    );
+}
+
+/// A-3 (r3): no time wall may survive on the reuse path. A sole-free reuse followed by a
+/// content failure must not be re-killable by a clock — r8's starvation loop was the
+/// 420s-x-attempt stopwatch re-killing every re-land, and reuse is only safe because II-7
+/// (7803faffd) deleted that stopwatch and the provider read/total cut. This pins the deletion
+/// as code (comment lines that merely record the history are ignored).
+#[test]
+fn no_time_wall_survives_on_the_reuse_path() {
+    let strip_comments = |src: &str| -> String {
+        src.lines()
+            .filter(|l| !l.trim_start().starts_with("//"))
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+    let judge = strip_comments(
+        &std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/src/judge.rs")).unwrap(),
+    );
+    for banned in [
+        "no_output_deadline_secs",
+        "is_still_producing",
+        "no_file_hint",
+    ] {
+        assert!(
+            !judge.contains(banned),
+            "judge.rs regrew `{banned}` — the II-7-deleted clock kill that made r8's \
+             same-device re-land fatal; the A-3 reuse path is only safe without it"
+        );
+    }
+    let api = strip_comments(
+        &std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../goose-providers/src/api_client.rs"
+        ))
+        .unwrap(),
+    );
+    for banned in [
+        "GOOSE_PROVIDER_READ_TIMEOUT_SECS",
+        "GOOSE_PROVIDER_TOTAL_TIMEOUT",
+        "DEFAULT_PROVIDER_TIMEOUT_SECS",
+        "read_timeout",
+    ] {
+        assert!(
+            !api.contains(banned),
+            "api_client.rs regrew `{banned}` — a provider read/total window would discard the \
+             reused slot's stream mid-generation (II-7 deleted it; only connect_timeout stays)"
+        );
+    }
 }
 
 #[tokio::test]
@@ -1279,6 +1398,80 @@ async fn pre_review_never_oversubscribes_free_nodes() {
          (an idle_jobs double-decrement would let a 3rd spawn and oversubscribe the fleet)",
         peak.load(Ordering::SeqCst)
     );
+}
+
+/// Pushes into the same ordered log the LogSink writes, so a review's start can be ordered
+/// against claim-time dispatch events.
+struct LoggingPreReviewer {
+    log: Arc<Mutex<Vec<String>>>,
+}
+
+#[async_trait]
+impl PreReviewer for LoggingPreReviewer {
+    async fn pre_review(&self, req: PreReviewRequest) -> PreReviewOutput {
+        self.log
+            .lock()
+            .unwrap()
+            .push(format!("review_start:{}", req.task_id));
+        PreReviewOutput {
+            had_findings: false,
+            summary: String::new(),
+        }
+    }
+}
+
+/// A-3 (r3) ready-work yield: an idle-fill claim must never outrank a real task's dispatch.
+/// `waiter` is READY the whole run but unplaceable (its file is held by the slow `blocker`),
+/// while `done1` completes early and becomes a pre-review candidate with 2 free devices. The
+/// old rule only yielded the LAST free slot (`idle_capacity() <= 1`), so the review claimed a
+/// node here while real work waited — the shape that held nodes through r2's 11-minute retry
+/// starvation (one pre_review call alone held a node 7,535s). Now no idle-fill claim happens
+/// while ANY task sits in `ready`: every review in the log must start after `waiter` was
+/// dispatched. (Claim order is read from the sink, which emits under the state lock; the
+/// review's own start is spawned after its claim, so the ordering is lock-guaranteed.)
+#[tokio::test]
+async fn ready_real_work_outranks_idle_fill_claims() {
+    let log = Arc::new(Mutex::new(Vec::new()));
+    let rec = Arc::new(Mutex::new(Recorder::default()));
+    // `child` gives blocker fan_out 1, so blocker deterministically claims before waiter and
+    // waiter is the one left ready-but-unplaceable.
+    let dag = Dag::from_specs(vec![
+        spec("blocker", &[], &["shared.py"]),
+        spec("waiter", &[], &["shared.py"]),
+        spec("done1", &[], &["d1.py"]),
+        spec("child", &["blocker"], &["c.py"]),
+    ])
+    .unwrap();
+    let pr = Arc::new(LoggingPreReviewer { log: log.clone() });
+    let sched = Scheduler::new(
+        vec![dev("a", "m-a", 1), dev("b", "m-b", 1), dev("c", "m-c", 1)],
+        3,
+    )
+    .with_pre_reviewer(pr)
+    .with_sink(Arc::new(LogSink { log: log.clone() }));
+    let report = sched
+        .run(dag, slow_dispatcher(&rec, 30, &["blocker"]), String::new())
+        .await
+        .unwrap();
+    assert!(
+        report.failed.is_empty(),
+        "no task fails: {:?}",
+        report.failed
+    );
+    let log = log.lock().unwrap();
+    let waiter_at = log
+        .iter()
+        .position(|e| e.starts_with("dispatch:waiter:"))
+        .expect("waiter was dispatched");
+    for (i, e) in log.iter().enumerate() {
+        if e.starts_with("review_start:") {
+            assert!(
+                i > waiter_at,
+                "an idle-fill review claimed a node while `waiter` sat READY — idle-fill \
+                 outranked a real task's dispatch; log = {log:?}"
+            );
+        }
+    }
 }
 
 /// RETRIES END ON PROGRESS, NOT ON A COUNT. This replaces `max_attempts`, which was the last counted
