@@ -135,9 +135,11 @@ fn the_banned_integrate_template_only_shrinks() {
 /// Tightened to 46,348: the forming-sidecar cluster moved to commands/swarm/supervision.rs
 /// (-224), paying for the r6 supervision-lane wiring (keyed judge/replan/review calls, the
 /// digest supervision stamp, the judge-lane event fields) in the same commit.
+/// Tightened to 46,330: the superseded-fold cluster moved to commands/swarm/supervision.rs
+/// (-41), paying for the settled-decisions delivery into the replanner's prompt (r6 addendum).
 #[test]
 fn swarm_rs_line_count_only_decreases() {
-    const SWARM_RS_LINE_BASELINE: usize = 46_348;
+    const SWARM_RS_LINE_BASELINE: usize = 46_330;
     let text = read("crates/goose-cli/src/commands/swarm.rs");
     let n = text.lines().count();
     assert!(

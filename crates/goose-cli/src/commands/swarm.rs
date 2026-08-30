@@ -38,8 +38,8 @@ use decisions::PlanDecision;
 mod supervision;
 use supervision::{
     fold_forming_event, judge_lane_key, prereview_lane_key, render_forming_file, replan_lane_key,
-    supervision_lane_kind, tail_review_lane_key, write_forming_atomic, FormingGuard, FormingReport,
-    FormingSidecar,
+    superseded_from_prior, supervision_lane_kind, tail_review_lane_key, write_forming_atomic,
+    FormingGuard, FormingReport, FormingSidecar,
 };
 mod research;
 use research::{
@@ -14955,47 +14955,6 @@ impl SaidProvenance {
     }
 }
 
-/// How many prior SAID entries a digest carries. A lane that retries more than this keeps the most
-/// recent ones — the pane's superseded list is a provenance trail, not an archive (the append-only
-/// `<task>.log` is the archive).
-const SUPERSEDED_KEEP: usize = 4;
-
-/// Fold the digest a PREVIOUS attempt (or previous call on this lane key) left on disk into the
-/// `superseded` list the new attempt's seed will carry. The old text is marked superseded rather
-/// than silently kept or erased — before this, the seed's rewrite dropped it from the digest while
-/// `<task>.log` kept showing it, which is exactly how a dead attempt's transport error read as the
-/// live answer. `said_kind` is RECOMPUTED from the old text so legacy digests (no provenance keys)
-/// classify correctly.
-fn superseded_from_prior(prior: Option<serde_json::Value>) -> Vec<serde_json::Value> {
-    let Some(prior) = prior else {
-        return Vec::new();
-    };
-    let mut out: Vec<serde_json::Value> = prior
-        .get("superseded")
-        .and_then(|v| v.as_array())
-        .cloned()
-        .unwrap_or_default();
-    let last_text = prior
-        .get("last_text")
-        .and_then(|v| v.as_str())
-        .unwrap_or("");
-    if !last_text.trim().is_empty() {
-        let field = |k: &str| prior.get(k).cloned().unwrap_or(serde_json::Value::Null);
-        out.push(serde_json::json!({
-            "attempt": field("attempt"),
-            "last_text": last_text,
-            "said_kind": said_kind_of(last_text),
-            "said_at": field("said_at"),
-            "model": field("model"),
-        }));
-    }
-    if out.len() > SUPERSEDED_KEEP {
-        let drop = out.len() - SUPERSEDED_KEEP;
-        out.drain(..drop);
-    }
-    out
-}
-
 /// The digest a worker call seeds at DISPATCH, before the first token — the panel's "processing the
 /// prompt…" state. Carries the SAID provenance from birth: the attempt number, when it was
 /// dispatched, and the prior attempt's superseded text, so there is never a digest on disk that
@@ -16136,6 +16095,15 @@ pub struct GooseAgentDispatcher {
     /// classes that are half of every score lost. The five dimension briefs already existed, wired only
     /// into the never-run sink_review path; rotating them here points the scaling mechanism at the loss.
     prereview_dim: std::sync::atomic::AtomicUsize,
+    /// Surgeon #9's find (r6 addendum): the mid-run replanner reads `Scheduler::goal` (the spec
+    /// copy), which carries USER answers but never the research-settled conventions — so a replan
+    /// round could re-open a convention the plan-time fan had settled (the r4 shadow class, by a
+    /// different door). The complete settled block (PLAN_SETTLED_DECISIONS_HEADER + Q/A pairs),
+    /// stored at the plan-time fold and appended to the replanner's prompt beside the goal.
+    /// Written per planning round (a retarget recomputes it; latest wins); empty means research
+    /// settled nothing this session — a resume without a planning round stays empty, same absence
+    /// the replanner always had.
+    settled_decisions: Mutex<String>,
     /// #136 SAFETY: the OPERATOR's spec as it stood before any model wrote into it. `opts.prompt` is APPENDED
     /// TO by model output twice — research findings (swarm.rs:19660) and clarify Q&A (:19799) — and a retarget
     /// round RE-PLANS with that enlarged prompt. Parsing delegation from the live prompt would therefore let
@@ -16286,6 +16254,7 @@ impl GooseAgentDispatcher {
             judge_seen: Mutex::new(std::collections::HashMap::new()),
             sink_review_findings: Mutex::new(Vec::new()),
             prereview_dim: std::sync::atomic::AtomicUsize::new(0),
+            settled_decisions: Mutex::new(String::new()),
             spec_frozen: Mutex::new(String::new()),
             owner_snapshots: Mutex::new(HashMap::new()),
             prompt_delivered: Mutex::new(HashMap::new()),
@@ -26948,6 +26917,13 @@ async fn run_linear_plan(
     if !research_settled.is_empty() {
         user_decisions.push_str(decisions::PLAN_SETTLED_DECISIONS_HEADER);
         user_decisions.push_str(&research_settled);
+        // The same block, for the mid-run replanner (surgeon #9's find): `ReplanContext.goal` is
+        // the spec copy, which carries user answers but not these — without them a replan round
+        // can re-open a convention the fan settled. Same provenance header, stored whole.
+        *dispatcher.settled_decisions.lock().unwrap() = format!(
+            "{}{research_settled}",
+            decisions::PLAN_SETTLED_DECISIONS_HEADER
+        );
     }
 
     // ---- SYNTHESIS + REVIEW, the straight line -----------------------------------------------
@@ -36719,8 +36695,14 @@ impl Replanner for GooseAgentDispatcher {
              one-line description is a defect. Give id/description/difficulty/model/depends_on/files, \
              then call the final_output tool."
         );
+        // The research-settled conventions ride beside the goal (surgeon #9's find): ctx.goal is
+        // the spec copy with USER answers appended, but the fan-settled block lives only on the
+        // worker channel — a replanner that never sees it can task a worker into re-opening a
+        // settled convention. Empty when research settled nothing (or on a resume with no
+        // planning round): the prompt is then byte-identical to before.
+        let settled = self.settled_decisions.lock().unwrap().clone();
         let user = format!(
-            "Goal: {}\n\nAlready created (do NOT reuse these ids): {}\n\nDone so far:\n{}\n\nFailed (do not depend on): {}\n\nStill running: {}",
+            "Goal: {}{settled}\n\nAlready created (do NOT reuse these ids): {}\n\nDone so far:\n{}\n\nFailed (do not depend on): {}\n\nStill running: {}",
             ctx.goal,
             ctx.existing_ids.join(", "),
             done,

@@ -340,3 +340,44 @@ impl Drop for FormingGuard {
         }
     }
 }
+
+/// How many prior SAID entries a digest carries. A lane that retries more than this keeps the most
+/// recent ones — the pane's superseded list is a provenance trail, not an archive (the append-only
+/// `<task>.log` is the archive).
+const SUPERSEDED_KEEP: usize = 4;
+
+/// Fold the digest a PREVIOUS attempt (or previous call on this lane key) left on disk into the
+/// `superseded` list the new attempt's seed will carry. The old text is marked superseded rather
+/// than silently kept or erased — before this, the seed's rewrite dropped it from the digest while
+/// `<task>.log` kept showing it, which is exactly how a dead attempt's transport error read as the
+/// live answer. `said_kind` is RECOMPUTED from the old text so legacy digests (no provenance keys)
+/// classify correctly.
+pub(super) fn superseded_from_prior(prior: Option<serde_json::Value>) -> Vec<serde_json::Value> {
+    let Some(prior) = prior else {
+        return Vec::new();
+    };
+    let mut out: Vec<serde_json::Value> = prior
+        .get("superseded")
+        .and_then(|v| v.as_array())
+        .cloned()
+        .unwrap_or_default();
+    let last_text = prior
+        .get("last_text")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    if !last_text.trim().is_empty() {
+        let field = |k: &str| prior.get(k).cloned().unwrap_or(serde_json::Value::Null);
+        out.push(serde_json::json!({
+            "attempt": field("attempt"),
+            "last_text": last_text,
+            "said_kind": super::said_kind_of(last_text),
+            "said_at": field("said_at"),
+            "model": field("model"),
+        }));
+    }
+    if out.len() > SUPERSEDED_KEEP {
+        let drop = out.len() - SUPERSEDED_KEEP;
+        out.drain(..drop);
+    }
+    out
+}
