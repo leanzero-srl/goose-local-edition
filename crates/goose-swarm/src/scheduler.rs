@@ -18,7 +18,7 @@ use crate::judge::{
     skeleton_only, Judge, JudgeConfig, JudgeOutcome, JudgeRequest, PreReviewRequest, PreReviewer,
     Verdict,
 };
-use crate::replan::{ReplanContext, Replanner};
+use crate::replan::{ReplanAnswer, ReplanContext, Replanner};
 use anyhow::{bail, Result};
 use serde::Serialize;
 use std::cmp::Ordering;
@@ -3890,8 +3890,8 @@ impl Scheduler {
                             // discarded (the loop's own all_terminal pass ends the run).
                             return;
                         }
-                        let specs = match replan_result {
-                            Ok(specs) => specs,
+                        let answer = match replan_result {
+                            Ok(answer) => answer,
                             Err(e) => {
                                 s.sink.emit(&SwarmEvent::Replanned {
                                     round,
@@ -3909,12 +3909,18 @@ impl Scheduler {
                                 return;
                             }
                         };
+                        let ReplanAnswer { specs, rationale } = answer;
                         if specs.is_empty() {
                             s.sink.emit(&SwarmEvent::Replanned {
                                 round,
                                 added: Vec::new(),
                                 stopped: true,
-                                reason: "planner declined (empty plan)".to_string(),
+                                // A decline WITH a stated why carries it verbatim — "nothing
+                                // useful remains" is a different fact from a bare empty list.
+                                reason: match &rationale {
+                                    Some(r) => format!("planner declined (empty plan): {r}"),
+                                    None => "planner declined (empty plan)".to_string(),
+                                },
                             });
                             // REFUND the round and remember the state instead of burning the budget. An
                             // empty answer costs one planner call and says nothing about a DAG that has
@@ -3971,13 +3977,27 @@ impl Scheduler {
                                         let fan_out = s.dag.tasks[&id].fan_out;
                                         s.ready.push(Ranked { fan_out, id });
                                     }
+                                    // The replanner's OWN stated why leads the reason — r5's live
+                                    // splice (12:36:09, frozen-rules-tests + viz-math-oracle)
+                                    // shipped reason:'' because only the hygiene actions rode
+                                    // here and that round needed none. A model that gave no
+                                    // rationale is a named absence, never ''; the hygiene pass's
+                                    // actions still ride the same event so a rewritten path is
+                                    // READ, never silent (fallback rule).
+                                    let mut reason = rationale.unwrap_or_else(|| {
+                                        "replanner gave no rationale".to_string()
+                                    });
+                                    if !splice_repairs.is_empty() {
+                                        reason = format!(
+                                            "{reason}; splice repairs: {}",
+                                            splice_repairs.join("; ")
+                                        );
+                                    }
                                     s.sink.emit(&SwarmEvent::Replanned {
                                         round,
                                         added,
                                         stopped: false,
-                                        // The hygiene pass's actions ride the success event so a
-                                        // rewritten path is READ, never silent (fallback rule).
-                                        reason: splice_repairs.join("; "),
+                                        reason,
                                     });
                                 }
                                 Err(e) => {

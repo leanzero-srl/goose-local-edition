@@ -5,8 +5,9 @@
 use async_trait::async_trait;
 use goose_swarm::{
     Dag, DeviceCfg, Difficulty, DispatchError, DispatchRequest, EventSink, Judge, JudgeConfig,
-    JudgeOutcome, JudgeRequest, PreReviewOutput, PreReviewRequest, PreReviewer, ReplanContext,
-    Replanner, Scheduler, SwarmEvent, TaskDispatcher, TaskRunOutput, TaskSpec, Verdict,
+    JudgeOutcome, JudgeRequest, PreReviewOutput, PreReviewRequest, PreReviewer, ReplanAnswer,
+    ReplanContext, Replanner, Scheduler, SwarmEvent, TaskDispatcher, TaskRunOutput, TaskSpec,
+    Verdict,
 };
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -583,9 +584,12 @@ struct MockReplanner {
 
 #[async_trait]
 impl Replanner for MockReplanner {
-    async fn replan(&self, _ctx: ReplanContext) -> anyhow::Result<Vec<TaskSpec>> {
+    async fn replan(&self, _ctx: ReplanContext) -> anyhow::Result<ReplanAnswer> {
         self.calls.fetch_add(1, Ordering::SeqCst);
-        Ok(self.rounds.lock().unwrap().pop_front().unwrap_or_default())
+        Ok(ReplanAnswer {
+            specs: self.rounds.lock().unwrap().pop_front().unwrap_or_default(),
+            rationale: Some("mock rationale".to_string()),
+        })
     }
 }
 
@@ -772,10 +776,13 @@ async fn a_completion_during_an_in_flight_replan_still_dispatches_successors() {
     }
     #[async_trait]
     impl Replanner for ParkedReplanner {
-        async fn replan(&self, _ctx: ReplanContext) -> anyhow::Result<Vec<TaskSpec>> {
+        async fn replan(&self, _ctx: ReplanContext) -> anyhow::Result<ReplanAnswer> {
             self.calls.fetch_add(1, Ordering::SeqCst);
             self.park.notified().await; // never released: the planner "thinks" for the whole run
-            Ok(Vec::new())
+            Ok(ReplanAnswer {
+                specs: Vec::new(),
+                rationale: None,
+            })
         }
     }
     let rec = Arc::new(Mutex::new(Recorder::default()));
