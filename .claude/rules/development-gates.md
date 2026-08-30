@@ -45,6 +45,17 @@ Ranked in the sweep; fixes queued as GEN-6a. Each hides a real failure behind fa
 9. Replanned lacks failed-vs-stopped (scheduler + CLI replan Err arms untagged)
 10. pillars distill unparseable → must carry a reason, not an empty distillation
 
+### The happy-path criterion (Mihai, 2026-08-30 — the sharpest form of this gate)
+
+*"fallbacks are good but only for something that should have a lot of happy paths not 0 happy
+paths."* Before any fallback: name the primary path's measured happy traffic. Many happy paths →
+the fallback is resilience. ZERO happy paths → the fallback IS the implementation and it is
+fabrication — the thing exists only to appear as though it works ("if the human doesn't see it no
+one is complaining"). The two receipts: `proxy_yes` was structurally false under benchmark, so
+REPAIR had 0 happy paths for weeks while looking implemented; the nine-week template lived inside
+an empty-ledger fallback. Corollary: prove REACHABILITY with the measured configuration — evaluate
+every flag-gated boolean with the flags as we actually run.
+
 ### The honest-empty counter-examples (what a LEGITIMATE empty looks like)
 
 - `crates/goose-swarm/src/scheduler.rs:237` — `Err(_) => "ABSENT".hash(&mut h)`: an unreadable file

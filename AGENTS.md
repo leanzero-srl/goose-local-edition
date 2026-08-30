@@ -181,7 +181,11 @@ run path, prove the empty MEANS empty (honest-empty exemplar: `scheduler.rs:237`
 distinctly). WHY: the nine-week template lived inside an empty-ledger fallback, and the GEN-6 sweep
 found 10 of these hiding real failures — one turned a pillars serialize failure into a green gate.
 HOW IT REFUSES: `development_gates.rs` ratchets the run-path `unwrap_or_default()` count — it may only
-decrease.
+decrease. THE HAPPY-PATH CRITERION (2026-08-30): a fallback is legitimate only on an arm whose
+primary path has MEASURED happy traffic; a fallback on a 0-happy-path arm is the implementation
+impersonating one — delete it and let the failure be loud. Prove reachability as-configured
+(the `proxy_yes` audit). NO HARD CODING is a prime directive: no magic values or baked-in
+names/paths/counts where a derivation exists.
 
 **2. THE SPECIFICITY GATE — no generic or template task text ever reaches a model.** "Integrate every
 module and VERIFY", "DO EVERYTHING" and their class are banned — the ban is nine weeks old and the

@@ -50,6 +50,15 @@ boundary), run one gate-auditor pass over the whole roster.
 | publish-officer | leanzero.net board publishing (guarded exact-id publisher) | next publish task |
 | cloud-campaign runner | the cloud-sb7 admission machinery | when that campaign resumes |
 
+## The works-prover fan (standing practice, Mihai 2026-08-30)
+
+After ANY batch of landed implementation: fan read-only works-provers, ONE PER CLAIM, each brief
+SHARP — the claim, the anchors, what proof counts. Never one dummy agent told "verify the batch";
+that produces an agent that "just does something to finish." Verdicts WORKS / APPEARS-TO-WORK /
+CANNOT-PROVE, quotes mandatory; APPEARS-TO-WORK findings are implemented-or-scheduled on arrival
+like any finding. The doctrine: fallbacks only on many-happy-path arms; reachability proven
+as-configured; no hard coding. First run: 2026-08-30 over the day's five landed changes.
+
 ## Grading log (newest first — one line per delegation; move closed items to the per-agent notes)
 - 2026-08-30 swarm-surgeon #5 (forming capture provider+engine, 0fd574002): CLEAN PASS — verified
   the refuter's amendment in the code ("verbatim would not have compiled" — the get_mut binding),
