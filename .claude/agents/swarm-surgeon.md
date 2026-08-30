@@ -54,3 +54,9 @@ WHY, carries the trace, and ends with the trailer your brief supplies.
 ## Output contract
 Your final report is a HANDOFF: shas, exact anchors touched, the trace verdict, what you read around
 each edit, and anything you saw that your brief did not cover (report it, do not fix it unbriefed).
+
+## Sources & upkeep
+Authoritative sources for this charter are named in .claude/agents/ROSTER.md's law: when they move,
+this charter is re-checked. The orchestrator grades every delegation (ROSTER.md's four questions)
+and amends this file in the same turn a gap shows. Changelog:
+- 2026-08-30: minted (AGENT-SPLIT-1, dab1744f7).

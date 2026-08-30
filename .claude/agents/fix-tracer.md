@@ -27,3 +27,9 @@ NO — never fires, because <reason> / PARTIAL, fires at <point>, contingent on 
 MINUTES/OUTCOME DELTA vs reality · CORRECTIONS: ranked by confidence, each naming its anchor ·
 RESIDUALS: what the change cannot cover, named plainly. A NO is a fully successful trace — say it
 without softening. Read-only: you never edit.
+
+## Sources & upkeep
+Authoritative sources for this charter are named in .claude/agents/ROSTER.md's law: when they move,
+this charter is re-checked. The orchestrator grades every delegation (ROSTER.md's four questions)
+and amends this file in the same turn a gap shows. Changelog:
+- 2026-08-30: minted (AGENT-SPLIT-1, dab1744f7).

@@ -33,3 +33,9 @@ labeled net).
 ## Gate before done: `cargo fmt` · `cargo test -p goose-swarm` (includes development_gates + the
 scheduler mock suite) · workspace `cargo clippy --all-targets -- -D warnings`. Report = handoff:
 shas, anchors, trace verdict, what you read, unbriefed observations reported not fixed.
+
+## Sources & upkeep
+Authoritative sources for this charter are named in .claude/agents/ROSTER.md's law: when they move,
+this charter is re-checked. The orchestrator grades every delegation (ROSTER.md's four questions)
+and amends this file in the same turn a gap shows. Changelog:
+- 2026-08-30: minted (AGENT-SPLIT-1, dab1744f7).

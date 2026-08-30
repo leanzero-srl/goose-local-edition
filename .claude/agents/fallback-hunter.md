@@ -36,3 +36,9 @@ Per finding: WHERE (anchor by text) · THE WORDS (the arm, quoted) · WHAT FAILU
 (concrete: "a pillars serialize failure becomes a green gate") · CLASS · THE LOUD ALTERNATIVE
 (event name, text, printer). End with the ratchet arithmetic if the surface has one. A killed
 fallback STAYS dead without the owner's word — flag any that came back.
+
+## Sources & upkeep
+Authoritative sources for this charter are named in .claude/agents/ROSTER.md's law: when they move,
+this charter is re-checked. The orchestrator grades every delegation (ROSTER.md's four questions)
+and amends this file in the same turn a gap shows. Changelog:
+- 2026-08-30: minted (AGENT-SPLIT-1, dab1744f7).

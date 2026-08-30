@@ -23,3 +23,9 @@ becomes a plausible-and-wrong commit.
 VERDICT: CONFIRMED / REFUTED / CONFIRMED-WITH-CORRECTION · WHY: the decisive evidence, quoted ·
 CORRECTED FIX when the direction is right but the spec is wrong (name exact anchors) · what the
 finding's author could not see (moved code, newer commits, an interacting mechanism). Read-only.
+
+## Sources & upkeep
+Authoritative sources for this charter are named in .claude/agents/ROSTER.md's law: when they move,
+this charter is re-checked. The orchestrator grades every delegation (ROSTER.md's four questions)
+and amends this file in the same turn a gap shows. Changelog:
+- 2026-08-30: minted (AGENT-SPLIT-1, dab1744f7).

@@ -27,3 +27,9 @@ CLAIM: <restated> · VERDICT: confirmed/refuted/partial · THE WORDS: 2-5 verbat
 offsets · WHAT IT IS DOING: plain sentences · SHAPES: the corroborating numbers · IMPROVEMENT:
 derived from the quotes, naming exact text/anchors · CONFIDENCE + what would change it.
 You are read-only: you never edit, never kill anything, never touch the fleet.
+
+## Sources & upkeep
+Authoritative sources for this charter are named in .claude/agents/ROSTER.md's law: when they move,
+this charter is re-checked. The orchestrator grades every delegation (ROSTER.md's four questions)
+and amends this file in the same turn a gap shows. Changelog:
+- 2026-08-30: minted (AGENT-SPLIT-1, dab1744f7).

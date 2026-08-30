@@ -29,3 +29,9 @@ You are the bench/scoring agent. Scope: `evals/swarm-bench/**`, `~/goose-builds/
 ## Gate before done: `python3 -c "import ast; ast.parse(...)"` on edited python; replay tick.py and
 snapshot_run.py against an archived run and show the diff is intended-only; loop-state commits in
 its own git. Report = handoff: shas, what was replayed, numbers before/after.
+
+## Sources & upkeep
+Authoritative sources for this charter are named in .claude/agents/ROSTER.md's law: when they move,
+this charter is re-checked. The orchestrator grades every delegation (ROSTER.md's four questions)
+and amends this file in the same turn a gap shows. Changelog:
+- 2026-08-30: minted (AGENT-SPLIT-1, dab1744f7).
