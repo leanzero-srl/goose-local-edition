@@ -4788,6 +4788,40 @@ mod tests {
         dir
     }
 
+    /// GEN-3 (fallback rule): a completion with no final text renders what the ledger capture
+    /// PROVES it did — the files it wrote and its last pytest outcome — and when the capture
+    /// holds neither fact it renders nothing (the dispatcher then hands dependents an honest
+    /// empty and emits `dependency_context_empty`). The "(task X completed)" stub can never
+    /// reach a dependent's "relevant context" again.
+    #[test]
+    fn an_empty_completion_says_what_it_wrote_or_nothing_at_all() {
+        let dir = r2_cut_ledger_fixture();
+        let facts = render_completed_output_from_ledger(
+            dir.path(),
+            "ledger-core-tests",
+            &["tests/test_ledger_core.py".to_string()],
+            0,
+        )
+        .expect("a capture with fs_delta and pytest rows renders facts");
+        assert!(
+            facts.contains("wrote: tests/test_ledger_core.py"),
+            "the fs_delta is the wrote-line:\n{facts}"
+        );
+        assert!(
+            facts.contains("1 failed, 0 passed"),
+            "the LAST pytest outcome is the fact carried:\n{facts}"
+        );
+        assert!(
+            !facts.contains("completed)"),
+            "the stub phrasing is gone:\n{facts}"
+        );
+        let bare = tempfile::tempdir().unwrap();
+        assert!(
+            render_completed_output_from_ledger(bare.path(), "ghost", &[], 0).is_none(),
+            "no capture, no facts — an honest None, never a stub"
+        );
+    }
+
     /// II-2b: the read-before-act block renders the facts the r2 sink re-derived by hand — the
     /// test table with each lane's last outcome, the don't-repeat run counts, the out-of-plan
     /// testgen files with their unowned imports, and the repair verdict nothing used to read.
@@ -31923,6 +31957,71 @@ fn build_task_ledger_row(
     })
 }
 
+/// GEN-3 (fallback rule): the honest replacement for the "(task X completed)" stub that used to
+/// occupy every dependent's "relevant context" slot when a worker finished with no final text.
+/// What the task DID is already recorded — its calls capture holds the fs_delta and the pytest
+/// truth `build_task_ledger_row` reads — so render THAT: the files it wrote and its last pytest
+/// outcome. `None` when the capture holds neither fact; the caller then hands dependents an
+/// honest EMPTY (nothing at all beats a contentless stub) and emits `dependency_context_empty`.
+fn render_completed_output_from_ledger(
+    root: &Path,
+    task_id: &str,
+    owned_files: &[String],
+    attempt: u32,
+) -> Option<String> {
+    let row = build_task_ledger_row(root, task_id, "done", false, owned_files, attempt);
+    let mut wrote: Vec<String> = Vec::new();
+    for key in ["appeared", "changed"] {
+        for p in row
+            .pointer(&format!("/fs_delta/{key}"))
+            .and_then(|x| x.as_array())
+            .unwrap_or(&Vec::new())
+        {
+            if let Some(s) = p.as_str() {
+                if !wrote.iter().any(|w| w == s) {
+                    wrote.push(s.to_string());
+                }
+            }
+        }
+    }
+    let pytest = row.get("last_pytest").filter(|v| !v.is_null()).map(|v| {
+        let cmd = v.get("cmd").and_then(|c| c.as_str()).unwrap_or("pytest");
+        let n = |k: &str| {
+            v.pointer(&format!("/summary/{k}"))
+                .and_then(|x| x.as_u64())
+                .unwrap_or(0)
+        };
+        if v.pointer("/summary/collect_error")
+            .and_then(|c| c.as_bool())
+            .unwrap_or(false)
+        {
+            format!("`{cmd}` → COLLECTION ERROR — the suite never ran")
+        } else {
+            format!(
+                "`{cmd}` → {} failed, {} passed{}",
+                n("failed"),
+                n("passed"),
+                if n("errors") > 0 {
+                    format!(", {} errors", n("errors"))
+                } else {
+                    String::new()
+                }
+            )
+        }
+    });
+    if wrote.is_empty() && pytest.is_none() {
+        return None;
+    }
+    let mut lines = Vec::new();
+    if !wrote.is_empty() {
+        lines.push(format!("wrote: {}", wrote.join(", ")));
+    }
+    if let Some(p) = pytest {
+        lines.push(format!("last pytest: {p}"));
+    }
+    Some(lines.join("\n"))
+}
+
 fn write_task_ledger(
     root: &Path,
     task_id: &str,
@@ -34382,8 +34481,28 @@ impl GooseAgentDispatcher {
                     req.device_id,
                     secs
                 );
+                // GEN-3 (fallback rule): a worker that finished with no final text used to hand
+                // every dependent "(task X completed)" — a contentless stub in the "relevant
+                // context" slot. Its capture already recorded what it DID (fs_delta + pytest
+                // truth), so say that instead; when the capture holds nothing either, the honest
+                // output is EMPTY — dependents read nothing rather than a stub — and the absence
+                // is a named event tick.py can print. Never a template, never a quiet default.
                 let output = if out.text.trim().is_empty() {
-                    format!("(task {} completed)", req.task_id)
+                    match render_completed_output_from_ledger(
+                        &root,
+                        &req.task_id,
+                        &req.owned_files,
+                        req.attempt,
+                    ) {
+                        Some(facts) => facts,
+                        None => {
+                            self.events.write_value(serde_json::json!({
+                                "event": "dependency_context_empty",
+                                "task_id": req.task_id,
+                            }));
+                            String::new()
+                        }
+                    }
                 } else {
                     out.text
                 };
