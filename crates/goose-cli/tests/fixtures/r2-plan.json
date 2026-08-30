@@ -1,0 +1,125 @@
+{
+ "subtasks": [
+  {
+   "id": "webhook-processing",
+   "difficulty": "hard",
+   "files": [
+    "app/webhook.py"
+   ],
+   "depends_on": [],
+   "description": "## Answers to Slice Questions **Out-of-order delivery (v+2 before v+1):** Compare incoming event's `version` against the stored row's version. If incoming version is NOT strictly greater than stored, treat as stale and ignore (increment `ignored` counter). This prevents regression: a late v+1 cannot overwrite an already-applied v+2. The vendor guarantees each event carries the full resource object"
+  },
+  {
+   "id": "api-endpoints",
+   "difficulty": "hard",
+   "files": [
+    "app/api.py",
+    "app/ledgerd/server.py",
+    "app/ledgerd/__main__.py"
+   ],
+   "depends_on": [],
+   "description": "**Slice questions answered:** 1. **Error envelope format:** Every error response uses a single structured JSON envelope: `{\"error\": {\"code\": \"<snake_case>\", \"message\": \"<human sentence>\", \"field_errors\": [{\"path\": \"...\", \"code\": \"...\"}]}}`. The `field_errors` array appears only on validation failures (HTTP 400) and uses dot paths with `[index]` for arrays. Frozen field-error codes: `required`, `no"
+  },
+  {
+   "id": "documentation",
+   "difficulty": "easy",
+   "files": [
+    "DECISIONS.md",
+    "README.md"
+   ],
+   "depends_on": [],
+   "description": "## Slice Questions Answered **Run commands to document:** Three command forms \u2014 the combined boot (`python -m app`), ledgerd alone (`python -m app.ledgerd`), and notifierd alone (`python -m app.notifierd`) \u2014 each with their required flags. **Three corner decisions to document:** D1 (brush survives streamed mutation), D2 (rejected drafts are resubmittable), D3 (table renders empty-with-progress bef"
+  },
+  {
+   "id": "notification-engine",
+   "difficulty": "easy",
+   "files": [
+    "app/notifierd/server.py",
+    "app/notifierd/__main__.py"
+   ],
+   "depends_on": [],
+   "description": "## Questions answered **How to deduplicate by event seq?** Maintain a durable `processed_events` table in `notifier.db` keyed on the ledger event `seq`. On each batch, for every event check whether its seq already exists in that table (via `INSERT OR IGNORE` or a pre-check SELECT). If it does, record the seq in the response's `duplicate` list and leave state untouched. If it is new, insert it into"
+  },
+  {
+   "id": "approval-workflow",
+   "difficulty": "hard",
+   "files": [
+    "app/auth.py",
+    "app/drafts.py",
+    "app/routes/drafts.py"
+   ],
+   "depends_on": [],
+   "description": "**Q1: How to enforce four-eyes rule?** Store `submitted_by` (the bearer token) on the draft when it transitions to `submitted`. On approve/reject, compare the current bearer token against `submitted_by` \u2014 if equal, reject with 403 `approval_forbidden`. This ensures the checker is a different person than the maker/submitter. **Q2: What's the idempotency strategy for sends?** Generate a UUID v4 `Ide"
+  },
+  {
+   "id": "sse-endpoint",
+   "difficulty": "easy",
+   "files": [
+    "app/stream.py"
+   ],
+   "depends_on": [],
+   "description": "## Answers to slice questions **How to handle subscriber connection lifecycle?** Each SSE connection is handled in its own thread. On connect, the subscriber is added to a thread-safe registry with their own batch counter starting at 1. On disconnect (socket close, exception, or client abort), the subscriber is removed from the registry. The handler sends `text/event-stream` headers immediately, t"
+  },
+  {
+   "id": "integrate-verify",
+   "difficulty": "hard",
+   "files": [],
+   "depends_on": [
+    "service-boot",
+    "vendor-sync",
+    "approval-workflow",
+    "api-endpoints",
+    "ledger-core",
+    "notification-engine",
+    "documentation",
+    "webhook-processing",
+    "frontend-ui",
+    "sse-endpoint"
+   ],
+   "description": "Integrate every module and VERIFY the whole program works end-to-end: run the test suite (python3 -m pytest), then BUILD + ACTUALLY RUN the program's ADVERTISED entry point (python3 -m <package> --help) AND run EVERY command/usage the SPEC advertises \u2014 the exact example invocations from the goal, with the SAME subcommands and argument shapes the spec shows (do NOT redesign the interface into flags"
+  },
+  {
+   "id": "frontend-ui",
+   "difficulty": "hard",
+   "files": [
+    "web/app.js",
+    "web/index.html",
+    "web/styles.css",
+    "web/viz.js"
+   ],
+   "depends_on": [],
+   "description": "## Answers to slice questions **How to render 12,288 instanced columns efficiently in pure vanilla JS/Canvas?** Use WebGL instanced rendering with `drawArraysInstanced`. Build one column geometry (rectangular prism) and upload instance attributes: x/z position, height, status color (r,g,b), brushed flag. This requires 2 draw calls for the visible scene (top faces + side faces, each instanced acros"
+  },
+  {
+   "id": "ledger-core",
+   "difficulty": "hard",
+   "files": [
+    "app/ledger_core.py"
+   ],
+   "depends_on": [],
+   "description": "## Slice Questions **How to ensure contiguous seq numbers?** Use SQLite's `AUTOINCREMENT` on the events table. SQLite guarantees strictly increasing, contiguous values with no gaps from deleted rows (AUTOINCREMENT never reuses a value). Since we only append and never delete or roll back committed inserts, seq is contiguous from 1. **What's the schema for payments and events?** Payments store local"
+  },
+  {
+   "id": "service-boot",
+   "difficulty": "easy",
+   "files": [
+    "app/__init__.py",
+    "app/cli.py",
+    "app/ledgerd/__init__.py",
+    "app/notifierd/__init__.py",
+    "app/__main__.py"
+   ],
+   "depends_on": [],
+   "description": "## Questions answered **How to handle service restart with existing db-dir?** Idempotent schema init: CREATE TABLE IF NOT EXISTS on every boot. No data loss, no duplicate application of committed work \u2014 the ledger is append-only and upserts are version-gated. **What's the boot sequence for dual services?** ledgerd binds its port first, then starts the initial sync in a background thread. notifierd"
+  },
+  {
+   "id": "vendor-sync",
+   "difficulty": "hard",
+   "files": [
+    "app/vendor_sync.py"
+   ],
+   "depends_on": [],
+   "description": "## Answers to slice questions **Dropped connections mid-walk:** Retry the same cursor once. The docs say \"Retry the SAME cursor; the resume costs exactly one extra request.\" Never restart committed work \u2014 if we've already upserted pages 1\u201350, a dropped connection on page 51 means we retry page 51's cursor, not restart from page 1. **Retry strategy for 500 errors:** Wait the advertised `Retry-After"
+  }
+ ]
+}
