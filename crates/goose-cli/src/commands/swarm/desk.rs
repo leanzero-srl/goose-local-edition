@@ -259,7 +259,8 @@ fn parse_marker_line(line: &str) -> Option<chrono::DateTime<chrono::FixedOffset>
 fn marker_holdback_len(s: &str) -> usize {
     let max = MARKER_START.len().saturating_sub(1).min(s.len());
     for k in (1..=max).rev() {
-        if s.is_char_boundary(s.len() - k) && s.ends_with(&MARKER_START[..k]) {
+        if s.is_char_boundary(s.len() - k) && s.as_bytes().ends_with(&MARKER_START.as_bytes()[..k])
+        {
             return k;
         }
     }
@@ -430,31 +431,37 @@ impl LaneWatch {
     fn drain_think_text(&mut self, sink: &dyn EventSink) {
         loop {
             if let Some(i) = self.think_text.find(MARKER_START) {
+                // All boundaries here are byte offsets of ASCII patterns, so split_at cannot
+                // land inside a multi-byte char (and split_at over indexing keeps the
+                // string_slice lint honest about it).
                 let line_start = i + 1;
-                let Some(nl_rel) = self.think_text[line_start..].find('\n') else {
-                    // Marker line still streaming in. Do not feed the head yet: the marker's
-                    // `dispatched` ts is the cutoff that keeps a future attempt's restream cut
-                    // out of THIS segment, and it is not readable until the line completes.
-                    return;
+                let (nl_rel, dispatched, looks_like_marker) = {
+                    let after = self.think_text.split_at(line_start).1;
+                    let Some(nl_rel) = after.find('\n') else {
+                        // Marker line still streaming in. Do not feed the head yet: the marker's
+                        // `dispatched` ts is the cutoff that keeps a future attempt's restream
+                        // cut out of THIS segment, and it is not readable until the line
+                        // completes.
+                        return;
+                    };
+                    let line = after.split_at(nl_rel).0;
+                    (nl_rel, parse_marker_line(line), line.ends_with(MARKER_TAIL))
                 };
                 let line_end = line_start + nl_rel;
-                let dispatched = parse_marker_line(&self.think_text[line_start..line_end]);
                 match dispatched {
                     Some(ts) => {
-                        let head = self.think_text[..i].to_string();
+                        let head = self.think_text.split_at(i).0.to_string();
                         self.feed_segment_text(&head, Some(ts), sink);
                         self.reset_attempt(Some(ts), sink);
-                        self.think_text.drain(..line_end + 1);
+                        self.think_text.drain(..=line_end);
                     }
                     None => {
                         // Not a real marker (thinking that happens to contain the prefix, or a
                         // marker whose ts does not parse). Feed through it and keep scanning; if
                         // it WAS a malformed marker the cut join is now untrustworthy — say so.
-                        let looks_like_marker =
-                            self.think_text[line_start..line_end].ends_with(MARKER_TAIL);
-                        let head = self.think_text[..line_end + 1].to_string();
+                        let head = self.think_text.split_at(line_end + 1).0.to_string();
                         self.feed_segment_text(&head, None, sink);
-                        self.think_text.drain(..line_end + 1);
+                        self.think_text.drain(..=line_end);
                         if looks_like_marker {
                             self.invalidate_segment("unparseable_attempt_marker", sink);
                         }
@@ -464,7 +471,7 @@ impl LaneWatch {
                 let hold = marker_holdback_len(&self.think_text);
                 let feed_to = self.think_text.len() - hold;
                 if feed_to > 0 {
-                    let head = self.think_text[..feed_to].to_string();
+                    let head = self.think_text.split_at(feed_to).0.to_string();
                     self.feed_segment_text(&head, None, sink);
                     self.think_text.drain(..feed_to);
                 }
@@ -512,8 +519,9 @@ impl LaneWatch {
                 Some(cut_at) => {
                     let need = cut_at - self.segment_chars;
                     let take = chars_prefix_bytes(rest, need);
-                    self.push_chars(&rest[..take]);
-                    rest = &rest[take..];
+                    let (fed, remainder) = rest.split_at(take);
+                    self.push_chars(fed);
+                    rest = remainder;
                     if self.segment_chars == cut_at {
                         self.apply_cut();
                         self.pending_cuts.pop_front();
@@ -603,25 +611,38 @@ impl LaneWatch {
     fn drain_log_text(&mut self) {
         loop {
             if let Some(i) = self.log_text.find(MARKER_START) {
+                // split_at over indexing for the same boundary-honesty as drain_think_text.
                 let line_start = i + 1;
-                let Some(nl_rel) = self.log_text[line_start..].find('\n') else {
-                    return;
+                let (nl_rel, is_marker) = {
+                    let after = self.log_text.split_at(line_start).1;
+                    let Some(nl_rel) = after.find('\n') else {
+                        return;
+                    };
+                    (
+                        nl_rel,
+                        parse_marker_line(after.split_at(nl_rel).0).is_some(),
+                    )
                 };
                 let line_end = line_start + nl_rel;
-                let is_marker = parse_marker_line(&self.log_text[line_start..line_end]).is_some();
-                let head = self.log_text[..i].to_string();
+                let (head, pseudo_line) = {
+                    let (head, rest) = self.log_text.split_at(i);
+                    (
+                        head.to_string(),
+                        rest.split_at(line_end + 1 - i).0.to_string(),
+                    )
+                };
                 self.log_tail.push_str(&head);
                 if is_marker {
                     self.log_tail.clear();
                 } else {
-                    self.log_tail.push_str(&self.log_text[i..line_end + 1]);
+                    self.log_tail.push_str(&pseudo_line);
                 }
-                self.log_text.drain(..line_end + 1);
+                self.log_text.drain(..=line_end);
             } else {
                 let hold = marker_holdback_len(&self.log_text);
                 let feed_to = self.log_text.len() - hold;
                 if feed_to > 0 {
-                    let head = self.log_text[..feed_to].to_string();
+                    let head = self.log_text.split_at(feed_to).0.to_string();
                     self.log_tail.push_str(&head);
                     self.log_text.drain(..feed_to);
                 }
