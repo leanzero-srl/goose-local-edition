@@ -3468,6 +3468,63 @@ fn nudge_delivery(
     }
 }
 
+/// The re-stream's seed message: the original task, what the judge established, the direction —
+/// and the VERBATIM TAIL of the abandoned stream's own reasoning.
+///
+/// MEASURED (r5, `judge_restream` 09:24:12Z): the directive said "Call the output tool NOW and
+/// emit the slice table with the rows you already have" — but the rows lived in the abandoned
+/// stream's tail (fully-formed slice entries, id/title/objective) and the seed carried only the
+/// judge's 971-char ESTABLISHED summary of an 87,892-char stream. The fresh attempt re-derived
+/// 37k+ chars over ~18 minutes before emitting anything. Same class as GEN-4: a directive must
+/// never assert context the seed did not deliver. The caller cuts the tail with `tail_chars(_,
+/// 2_000)` — the judge's own look-tail scale — a mechanical span on carried TEXT, not a bound on
+/// any model work.
+///
+/// An EMPTY tail is reachable (the tail mirrors the thinking channel, and a re-stream can fire on
+/// a call that emitted no thinking at all — a degenerate whitespace answer, or a tool request left
+/// in flight at nudge time), so per the fallback gate the absence is STATED, never silently
+/// omitted.
+fn restream_seed(
+    user_text: &str,
+    established: &str,
+    direction: &str,
+    wants_structured_reply: bool,
+    abandoned_tail: &str,
+) -> String {
+    format!(
+        "{user_text}\n\n\
+         SUPERVISOR NOTE — {}\
+         Your previous attempt at this task was abandoned: an independent reviewer \
+         read its reasoning and found it looping, restating the same ground without \
+         acting. {}\n\
+         Do this next: {direction}\n\
+         {}",
+        if established.is_empty() {
+            String::new()
+        } else {
+            format!("you have already established: {established}\n")
+        },
+        if abandoned_tail.is_empty() {
+            "That attempt emitted no reasoning text for the engine to carry forward. Do not \
+             re-derive what is established above and do not explain a plan."
+                .to_string()
+        } else {
+            format!(
+                "Most of that reasoning is gone. THE TAIL OF YOUR OWN ABANDONED REASONING, \
+                 VERBATIM — the content you had already formed:\n{abandoned_tail}\n\
+                 END OF THE ABANDONED TAIL. Reuse what is formed there; do not re-derive it, \
+                 do not re-derive what is established above, and do not explain a plan."
+            )
+        },
+        if wants_structured_reply {
+            "Your reply must be the required structured output now, built from \
+             what is established above."
+        } else {
+            "Take the next concrete action on your owned files now."
+        }
+    )
+}
+
 /// Cap the looks per call so a very long healthy call cannot spend unbounded judge time.
 // REMOVED: OMNI_JUDGE_MAX_LOOKS (was 6). A cap on how many times the judge may look is a cap on how
 // long a call is supervised, and the judge is now the only thing watching.
@@ -18110,7 +18167,8 @@ impl GooseAgentDispatcher {
                         // So delivery escalates on EVIDENCE, with no counter: the first nudge on a call is
                         // a steer; a later nudge with no tool call since the previous one, or a RESTART
                         // verdict, takes the re-stream — which drops the socket, wipes the anchor and
-                        // seeds a fresh attempt with what the judge established (the restream arm below).
+                        // seeds a fresh attempt with what the judge established plus the verbatim
+                        // tail of the abandoned reasoning (the restream arm below).
                         // A call that obeyed a steer, i.e. acted since it, keeps getting steers.
                         let (can_steer, delivery_reason) = nudge_delivery(
                             pending.is_empty(),
@@ -18312,31 +18370,20 @@ impl GooseAgentDispatcher {
                             // offer either.
                             //
                             // The seed is the original task, then what the judge established, then the
-                            // direction, with the abandonment stated plainly so the model does not go
-                            // looking for reasoning it can no longer see.
+                            // direction — and the VERBATIM tail of the abandoned reasoning, so a
+                            // directive that says "emit what you already have" delivers the formed
+                            // content it points at instead of asserting context that is gone. The
+                            // measured case and the empty-tail honesty rule live on `restream_seed`.
                             let abandoned_thinking_chars = thinking_chars;
                             let abandoned_tool_calls =
                                 call_records.len().saturating_sub(calls_at_stream_start);
-                            let restream_text = format!(
-                                "{user_text}\n\n\
-                                 SUPERVISOR NOTE — {}\
-                                 Your previous attempt at this task was abandoned: an independent reviewer \
-                                 read its reasoning and found it looping, restating the same ground without \
-                                 acting. None of that reasoning is in front of you now, on purpose. Do not \
-                                 re-derive what is established above and do not explain a plan.\n\
-                                 Do this next: {direction}\n\
-                                 {}",
-                                if established.is_empty() {
-                                    String::new()
-                                } else {
-                                    format!("you have already established: {established}\n")
-                                },
-                                if wants_structured_reply {
-                                    "Your reply must be the required structured output now, built from \
-                                     what is established above."
-                                } else {
-                                    "Take the next concrete action on your owned files now."
-                                }
+                            let carried_tail = tail_chars(&last_thinking, 2_000);
+                            let restream_text = restream_seed(
+                                &user_text,
+                                &established,
+                                &direction,
+                                wants_structured_reply,
+                                &carried_tail,
                             );
                             // Socket first, so the node is not asked for a second generation while the
                             // abandoned one still holds its slot; then the queue, so a stale note cannot
@@ -18360,6 +18407,7 @@ impl GooseAgentDispatcher {
                                 "abandoned_thinking_chars": abandoned_thinking_chars,
                                 "abandoned_tool_calls": abandoned_tool_calls,
                                 "established_chars": established.len(),
+                                "carried_tail_chars": carried_tail.chars().count(),
                             }));
                             stream = agent
                                 .reply(
@@ -25250,20 +25298,21 @@ fn splice_briefs(
         for t in tasks.iter_mut() {
             // A TASK WITH NO `slice` IS KEYED BY ITS OWN ID, AND GETTING THIS WRONG PRODUCES A DUPLICATE.
             //
-            // `unwrap_or_default()` gave the EMPTY STRING, which matches no brief. Synthesis always emits
-            // `slice`, so this was invisible -- until REVIEW started ADDING tasks, which carry no slice
-            // because nobody researched them, and until I then added the orphan-research block that
-            // creates a brief for exactly those tasks (`slice = t["slice"].unwrap_or(&id)`, so the brief
-            // is keyed by the task's ID).
+            // `unwrap_or_default()` gave the EMPTY STRING, which matches no brief, so a slice-less
+            // task was never `claimed` -- and when its id also named a brief, the append loop below
+            // pushed a SECOND task carrying the same id. `Dag::from_specs` bails "duplicate task id"
+            // and the run loses the plan it just spent an hour building.
             //
-            // The two disagreed. The splice looked up "" and found nothing, so the task was never
-            // `claimed`, and the append loop below then pushed a SECOND task carrying the same id --
-            // `Dag::from_specs` bails "duplicate task id" and the run loses the plan it just spent an
-            // hour building. My orphan-research fix is what armed it: before it, no brief existed for an
-            // added task, so nothing was appended.
+            // The mechanism that first armed this (an orphan-research block minting briefs keyed by
+            // task id for REVIEW-added tasks) is gone: RESEARCH is deleted (P1-5), review-added tasks
+            // keep the reviewer's own description (see the note after `review_once` in
+            // `plan_slices_to_dag`), and this splice runs at SYNTHESIS, before review ever adds a
+            // task. The hazard is not gone with it -- briefs are keyed by the opener's slice ids,
+            // synthesis reuses those ids as task ids, and a lenient-parsed plan can drop `slice`
+            // despite the schema requiring it.
             //
-            // Falling back to the task's own id makes the two sides agree and is what the orphan block
-            // already assumed.
+            // Falling back to the task's own id keys such a task by the one name a matching brief can
+            // carry, so the brief splices in and is claimed instead of appending beside it.
             let own_id = t
                 .get("id")
                 .and_then(|v| v.as_str())
@@ -44285,6 +44334,57 @@ mod audit_regressions {
             nudge_delivery(false, None, 0, &Verdict::Looping),
             (false, "tool request in flight"),
             "a tool request in flight is never steered around"
+        );
+    }
+
+    /// r5, `judge_restream` 09:24:12Z: the directive told the fresh stream to emit "the rows you
+    /// already have" while the seed carried only the judge's 971-char summary — the formed rows
+    /// lived in the abandoned tail and the fresh stream re-derived 37k+ chars over ~18 minutes.
+    /// The seed must DELIVER the tail it points at, and state the absence honestly when the
+    /// abandoned stream produced no reasoning text at all.
+    #[test]
+    fn restream_seed_carries_the_abandoned_tail_verbatim_or_states_its_absence() {
+        let tail = "| open-payments | Payments API | serve /v3/payments from the fixture |";
+        let seed = restream_seed(
+            "Build the slice table.",
+            "slice names and file ownership",
+            "Call the output tool NOW and emit the slice table with the rows you already have",
+            true,
+            tail,
+        );
+        assert!(
+            seed.contains("THE TAIL OF YOUR OWN ABANDONED REASONING, VERBATIM"),
+            "the carried span is labeled for what it is: {seed}"
+        );
+        assert!(
+            seed.contains(tail),
+            "the formed content the directive points at is IN the seed, verbatim"
+        );
+        assert!(
+            seed.contains("you have already established: slice names and file ownership"),
+            "the judge's summary still rides along"
+        );
+        assert!(
+            seed.contains("Do this next: Call the output tool NOW"),
+            "the direction survives"
+        );
+        assert!(
+            seed.contains("required structured output"),
+            "a structured-reply call is still told its deliverable"
+        );
+
+        let empty = restream_seed("Build it.", "", "act", false, "");
+        assert!(
+            empty.contains("emitted no reasoning text for the engine to carry forward"),
+            "an empty abandoned tail is STATED, never silently omitted: {empty}"
+        );
+        assert!(
+            !empty.contains("THE TAIL OF YOUR OWN ABANDONED REASONING"),
+            "no empty labeled section pretending content exists"
+        );
+        assert!(
+            empty.contains("Take the next concrete action on your owned files now."),
+            "a non-structured call keeps its action closing"
         );
     }
 
