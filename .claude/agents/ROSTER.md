@@ -59,6 +59,23 @@ CANNOT-PROVE, quotes mandatory; APPEARS-TO-WORK findings are implemented-or-sche
 like any finding. The doctrine: fallbacks only on many-happy-path arms; reachability proven
 as-configured; no hard coding. First run: 2026-08-30 over the day's five landed changes.
 
+## Surgeon #7 queue (dispatch when swarm.rs frees after #6 — the research fan)
+
+1. ASK-TRUTH honest fix (works-prover confirmed): open_decisions_total/not_asked computed from a
+   breakdown the sole call site passes as None (swarm.rs:27124-27132 vs :36704-36710) — pass the
+   real count (opened.open_decisions.len()), revive the "will be GUESSED" stderr warning, and
+   KILL the ask_max_q=3 truncation on this path (the guess-the-rest arm is a silent fallback on
+   a 0-happy-path overflow; asking 5 costs the same one prompt as asking 3). Tests must traverse
+   the primary arm (today all three pass breakdown=None — zero coverage of the computation).
+2. Drift-hazard consts (works-prover minors): the 400ms coalesce literal x3 (forming :16799,
+   digest sites :18160/:18988) -> one shared const; the 2,000-char look-tail literal x3
+   (:15650/:17648/:18782) -> one shared const.
+3. forming_write_failed lost on dispatch abort (event written only after the scoped future
+   completes) — decide: acceptable-on-a-dying-call (document) or move the emission into the guard.
+4. Forming test coverage: the open-frame and late-opening ArgsDelta arms are traversed by zero
+   tests (dead under LM Studio's measured shapes but live for id+name+args-in-one-delta providers)
+   — add one fixture each.
+
 ## Grading log (newest first — one line per delegation; move closed items to the per-agent notes)
 - 2026-08-30 swarm-surgeon #5 (forming capture provider+engine, 0fd574002): CLEAN PASS — verified
   the refuter's amendment in the code ("verbatim would not have compiled" — the get_mut binding),
