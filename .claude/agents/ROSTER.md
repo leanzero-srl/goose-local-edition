@@ -404,3 +404,8 @@ research_request_block's armed-no-claimed-sections arm wording.
   REFUSED the client-side filter that would silently drop scorer evidence (fallback gate). Also
   caught the success copy lying ("for review" after posts went live-immediately). All four asks
   landed with 10 new tests. Server-side fix dispatched same-turn. Charter gap: none.
+- 2026-08-31 01:35 fix-tracer (node-weights trace): EXEMPLARY. Replayed the OLD path against the
+  archived dispatches until they matched categorically before trusting the NEW-path walk; measured
+  the confound itself (sink ended the SAME SECOND the re-rank sampled; gabee idle 2h47m); refused to
+  state a saved-minutes number the run never measured, labeling the ~30m an estimate. 6/6: every
+  self-trace corrected in at least one detail (here: smoke_fix_target had zero consumers fire in r5).
