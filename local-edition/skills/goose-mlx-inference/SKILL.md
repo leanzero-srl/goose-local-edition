@@ -25,14 +25,31 @@ workload: the SWARM (N concurrent long-context tool-calling agents). Plan of rec
   swarm invariants and development gates apply unchanged. The knob-turning skill's "never touch
   crates/goose/**" rule does NOT block this branch's sanctioned feature work — but swarm gates do run.
 
-## The engines
-Finalists: **Rapid-MLX** (raullenchai/Rapid-MLX; tool parsers, decode speed, goose precedent) vs
-**oMLX** (jundot/omlx; continuous batching, prefix-sharing paged KV, SSD tier, memory guard).
-Verdict comes ONLY from the swarm-shaped bake-off recorded in `experiments.jsonl`. Winner gets
-forked (upstream remote, pinned tag, launched via `uvx --from git+<fork>@<tag>`); loser becomes a
-trump card. **Inherited hazard: Gated-DeltaNet hybrids (all our qwens) can silently lose
-tool-calling on prefix-cache HITs** (omlx #825, mlx-lm #980; June spike verdict chose LM Studio for
-exactly this) — every engine evaluation re-tests this dimension explicitly.
+## The engine (verdict 2026-08-31, evidence in experiments.jsonl — 8 scored runs)
+**Rapid-MLX**, forked at **github.com/leanzero-srl/Rapid-MLX** (local clone ~/Projects/Rapid-MLX,
+`upstream` remote → raullenchai/Rapid-MLX). Won on sustained-N=8 stability (rapid TTFT improved
+across runs 8.0→7.3s; omlx degraded 7.7→13.1→11.7s non-recovering), working hybrid-aware prefix
+cache (hit −26% TTFT, fidelity held), lower RSS (4.4 vs 6.5 GB). Both engines: fidelity 1.0, zero
+errors — the June DeltaNet prefix-cache footgun (omlx #825/mlx-lm #980) is dead in CURRENT
+versions, but every new engine version re-runs the bench `prefix_probe` before adoption.
+- Pinned launch (proven): `uvx --from git+https://github.com/leanzero-srl/Rapid-MLX@v0.13.1 rapid-mlx serve <models_dir>/<model> --port 8090 --served-model-name <id> --enable-prefix-cache --max-concurrent-requests 8`
+- Upstream draw runbook: in ~/Projects/Rapid-MLX: `git fetch upstream && git merge upstream/main && git push origin main --tags`; new pin = retag + bump the tag in EngineSettings::default (crates/goose-sidecar/src/engine.rs) + config.
+- Facts that void old assumptions: serves arbitrary local model dirs directly; TTL exists (`--resident-model-idle-ttl`); presence/frequency penalty per-request IS plumbed (frequency proven to bite at temp 0; presence same path, flat penalty needs margin); accepts `max_completion_tokens` (no remap entry needed); auto-config picks hermes+qwen3 for dense qwen3.5 and documents why dense DeltaNet must not take the hybrid scheduler path.
+- oMLX default is thinking ON — if it is ever re-benched, disable via `chat_template_kwargs {enable_thinking:false}` first or the numbers are 2x-wall unfair.
+
+## Where everything lives (built 2026-08-31)
+- `crates/goose-sidecar` — supervisor (spawn/health/restart+breaker/per-pid kill), Rust MemoryGate
+  (parity with gates.py G1), `hf.rs` (MLX HF search `filter=mlx`, snapshot downloads with
+  .part/resume/cancel), `engine.rs` (MlxEngineManager: stopped/mounting/running/failed,
+  restart_required = argv diff). Global manager consumed by the ACP layer.
+- ACP: 11 methods `_goose/unstable/mlxEngine/*` (crates/goose/src/acp/server/mlx_engine.rs,
+  DTOs in goose-sdk-types custom_requests.rs); settings persist under config key `mlx_engine`.
+- Desktop: "MLX Engine" nav view `ui/desktop/src/components/mlx/MlxEngineView.tsx` +
+  `src/acp/mlx-engine.ts`; capability-gated on `mlxEngine`; old Local Inference settings UI removed
+  (ModelSettingsPanel kept — ModelsBottomBar imports it).
+- Swarm boundary: `crates/goose-cli/src/commands/swarm_engine.rs` — SwarmEngine trait,
+  LmStudioEngine (verbatim), Engines registry with per-engine unservable partition; sidecar
+  registration is the open step C (six decision points commented at their sites).
 
 ## The evolution loop (this is the durable memory — update as you go)
 1. Every experiment/change lands as one row in `local-edition/mlx/experiments.jsonl`
