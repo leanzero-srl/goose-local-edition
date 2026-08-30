@@ -25472,12 +25472,17 @@ impl PlanRepairs {
         self.actions.is_empty()
     }
 
-    fn event(&self) -> serde_json::Value {
+    /// Finding 6: `source` names WHICH finalize pass emitted this. plan_slices_to_dag runs
+    /// finalize twice on the invalid-DAG arm (once on the synthesis, once on the flat
+    /// fallback), so plan_repaired legitimately fires 2x there — without the tag that reads as
+    /// the idempotence defect ("meant to fire ONCE per plan") and trips the tick's 2x warning.
+    fn event(&self, source: &str) -> serde_json::Value {
         serde_json::json!({
             "event": "plan_repaired",
             "before": self.before,
             "after": self.after,
             "actions": self.actions,
+            "source": source,
         })
     }
 }
@@ -26519,7 +26524,7 @@ where
     // PIN THE SINK BEFORE THE DAG EXISTS. finalize_plan_before_dag pins the join's exact id (six
     // exact-equality consumers read it), repairs the measured flags, injects advertised entry
     // files, and emits `plan_repaired` every time — actions or none.
-    plan_json = finalize_plan_before_dag(plan_json, user_prompt, sink);
+    plan_json = finalize_plan_before_dag(plan_json, user_prompt, sink, "plan");
 
     // AN INVALID DAG FALLS BACK. `synthesize` returns Ok for anything lenient-parseable and does
     // no DAG validation, so a cycle, duplicate id or dangling depends_on — including one a REVIEW
@@ -26541,6 +26546,9 @@ where
                 flat_plan_from_briefs(&briefs, lang, user_prompt),
                 user_prompt,
                 sink,
+                // Finding 6: the second finalize of one planning pass — tagged so the tick's
+                // fired-twice defect line can except it instead of paging on a legitimate arm.
+                "dag_fallback",
             );
             Dag::from_planner_json(&plan_json)
                 .map_err(|e2| anyhow!("even the flat fallback will not load: {e2}"))?
@@ -26762,7 +26770,12 @@ fn prepend_skeleton_task(v: &mut serde_json::Value, spec: &str) -> Option<serde_
 ///
 /// `plan_repaired` is emitted every time, actions or none, so a checkpoint can read `after` on a clean
 /// plan instead of inferring cleanliness from silence.
-fn finalize_plan_before_dag(plan_json: String, spec: &str, sink: &Arc<dyn EventSink>) -> String {
+fn finalize_plan_before_dag(
+    plan_json: String,
+    spec: &str,
+    sink: &Arc<dyn EventSink>,
+    source: &str,
+) -> String {
     let Ok(mut v) = serde_json::from_str::<serde_json::Value>(&plan_json) else {
         return plan_json;
     };
@@ -26800,7 +26813,7 @@ fn finalize_plan_before_dag(plan_json: String, spec: &str, sink: &Arc<dyn EventS
             eprintln!("      {a}");
         }
     }
-    sink.write_value(repairs.event());
+    sink.write_value(repairs.event(source));
     let added = require_advertised_entry_files(&mut v, spec);
     if !added.is_empty() {
         sink.write_value(serde_json::json!({
@@ -40704,8 +40717,8 @@ mod live_fleet_tests {
         let spec = include_str!("../../../../evals/swarm-bench/spec-build-sb7.md");
         let sink: Arc<dyn EventSink> = Arc::new(NullSink);
         let plan = include_str!("../../tests/fixtures/r2-plan.json").to_string();
-        let once = finalize_plan_before_dag(plan, spec, &sink);
-        let twice = finalize_plan_before_dag(once.clone(), spec, &sink);
+        let once = finalize_plan_before_dag(plan, spec, &sink, "plan");
+        let twice = finalize_plan_before_dag(once.clone(), spec, &sink, "plan");
         assert_eq!(once, twice, "the second finalize must be a no-op");
         let v: serde_json::Value = serde_json::from_str(&twice).unwrap();
         let skeletons = v["subtasks"]
