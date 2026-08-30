@@ -682,16 +682,6 @@ pub struct SwarmConfig {
     /// measures quality parity.
     #[serde(default)]
     pub fix_sched: bool,
-    /// Run the repro oracle: try to PROVE a reported crash by running it twice in a clean snapshot.
-    /// Was env-only (GOOSE_SWARM_REVIEW_REPRO) and therefore unreachable from the desktop app, which is
-    /// launched via `open` and never receives the caller's environment. None = the previous behaviour
-    /// DEAD LEVER, kept only so existing desktop configs round-trip. The truncation it fed is
-    /// KILLED: the planner's ASK path now puts EVERY open decision to the user (one prompt costs
-    /// the same for 5 as for 3). MEASURED before the kill: r5's probe found FIVE material open
-    /// decisions, every one on the spec's explicit "do NOT guess them" list, and the cap of 3
-    /// meant two were guessed regardless — silently. Nothing reads this any more.
-    #[serde(default)]
-    pub ask_max_q: Option<usize>,
     /// ⚠️ BAKED ON — the golden formula sets this in `Default for SwarmConfig` (F393).
     /// Let the judge SPLIT a task that is too big for one worker into file-partitioned children.
     /// MEASURED live: a 4-file api task split into `routes` + `app-entry` and BOTH delivered, where the
@@ -1219,7 +1209,6 @@ impl Default for SwarmConfig {
             cross_module_check: true,
             fix_sched: false,
             supervision_pool: false,
-            ask_max_q: Some(3),
             split: Some(true),
             smoke: true,
             complete: true,
