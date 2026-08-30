@@ -179,38 +179,38 @@ DAG is actually parallel). reasoning_chars against answer_chars is the waste.
 
 ## swarm-3node-r0
 
-- **phases**: open → ask → synthesis → review → build → integrate → repair → fix
-- **started**: 08:38:47
-- **tasks**: 9
-- **files_planned**: 25
+- **phases**: open
+- **started**: 21:32:57
+- **tasks**: 0
+- **files_planned**: 0
 - **collisions**: none
-- **sink_owns**: []
-- **chain**: 5
-- **startable**: 1
-- **brief_median**: 6054
-- **reasoning_chars**: 1476415
-- **answer_chars**: 98048
-- **code_files**: 28
-- **code_bytes**: 260399
-- **elapsed_min**: 701
-- **phase_split**: open 68m · ask 0m · synthesis 16m · review 52m · build 325m · integrate 92m · repair 1m · fix 144m
-- **before_build_min**: 137 (internal diagnosis only — never a cross-run number)
-- **vs_target**: ONLY THE SCORE COMPARES. Target 20.06% (qwen3.8-27b, one cloud agent, same model). Wall clock is NOT comparable — that run is on far faster hardware, so minutes measure the machine. Bytes are NOT a verdict — more code is not better code, and it had no planning phases to spend budget on. Cross-hardware-honest work numbers for THIS run: 260,399B delivered, 1,476,415 chars reasoned, 11 tasks completed, 0 retried.
-- **python_parses**: 20 ok / 0 SYNTAX ERROR / 0 empty
-- **web_files**: app.js, brush.js, index.html, styles.css, viz.js
-- **tasks_done**: 11/9 completed, 11 dispatched, 0 retried
+- **sink_owns**: NO SINK
+- **chain**: 0
+- **startable**: 0
+- **brief_median**: 0
+- **reasoning_chars**: 21583
+- **answer_chars**: 1726
+- **code_files**: 0
+- **code_bytes**: 0
+- **elapsed_min**: 8
+- **phase_split**: open 7m
+- **before_build_min**: 0 (internal diagnosis only — never a cross-run number)
+- **vs_target**: ONLY THE SCORE COMPARES. Target 20.06% (qwen3.8-27b, one cloud agent, same model). Wall clock is NOT comparable — that run is on far faster hardware, so minutes measure the machine. Bytes are NOT a verdict — more code is not better code, and it had no planning phases to spend budget on. Cross-hardware-honest work numbers for THIS run: 0B delivered, 21,583 chars reasoned, 0 tasks completed, 0 retried.
+- **python_parses**: 0 ok / 0 SYNTAX ERROR / 0 empty
+- **web_files**: NONE — 0.56 of the scoring weight is unreachable without a served page
+- **tasks_done**: 0/? completed, 0 dispatched, 0 retried
 - **arm**: F (fleet of 3)
-- **fixture_seed**: ddcbba021ea1eba1
-- **plan_patched**: 1
-- **plan_repaired**: 3 actions, owning-nothing 0->0, unassigned endpoints 0->0
-- **plan_loaded**: 1
-- **review_rounds**: r1:new=3
-- **judge_looks**: 153
-- **judge_nudges**: 5
+- **fixture_seed**: bb9e397c224e1303
+- **plan_patched**: 0
+- **plan_loaded**: 0
+- **review_rounds**: none
+- **judge_looks**: 2
+- **judge_nudges**: 0
 - **judge_ended**: 0
-- **drift_held**: 9
+- **drift_held**: 1
 - **tree_defects**: 0
-- **repair**: delivery_defect_steer=11 brief_defects=0 testgen=0 fix_target_selected=1 complete_verify=2 complete_result=0
+- **repair**: delivery_defect_steer=0 brief_defects=0 testgen=0 fix_target_selected=0 complete_verify=0 complete_result=0
+- **plan_repaired**: 3 actions, owning-nothing 0->0, unassigned endpoints 0->0
 - **ledger**: 16 task ledger(s) in .swarm/ledger/, ledger.json roll-up present, written=16 delivered=1
 - **score**: **0.3609** hermetic — seed ddcbba021ea1eba1 (the run's own), vendor port 8850, playwright node (inner 0.7988, pre-severity 0.7260 × crit_mult 0.4971). TWO criticals: `b_money_rendered` 0.0, factor 0.6 (wrong money — wrong exponent/digits or a cross-currency sum) and `j_workflow_journey` 0.5714, factor 0.8286 (dead primary flow — approval cannot complete through the UI). vs target 0.2006: 180% — FIRST RUN ABOVE the cloud one-agent target (its inner was 0.7662 with crit_mult 0.288; ours wins on criticals, not just inner). vs local 0.0568: 6.4×. vs published local 0.0273: 13.2×. The harness's own in-run grade concurred: 0.3497 (inner 0.7731, same seed, same two criticals). Known context: 3D field DOA (`viz.js` ReferenceError onBrushChangeTracked), 7 contract findings shipped as known bugs. Comparable verdict: `verdict-hermetic-seedddcbba02-port8850-0.3609.json` in the run dir.
 
