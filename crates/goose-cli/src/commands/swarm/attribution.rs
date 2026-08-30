@@ -1,49 +1,74 @@
 //! Endpoint-literal attribution: which FILE an unassigned gate finding belongs to, by evidence.
 //! Sibling module under the incremental-split law
-//! (development_gates::swarm_rs_line_count_only_decreases). `endpoint_literal_of` and
-//! `attribute_gate_finding` moved verbatim from swarm.rs, except the possessive-apostrophe cut in
-//! `clean` (r5: `/api/drafts's` kept its apostrophe, the tree grep hit zero files, and 6 of 8
-//! round-0 findings misrouted to the entry file).
+//! (development_gates::swarm_rs_line_count_only_decreases). `endpoint_literal_of` (since renamed
+//! `endpoint_literal_forms_of` — it now derives the verbatim placeholder form beside the prefix
+//! cut) and `attribute_gate_finding` moved verbatim from swarm.rs, except the
+//! possessive-apostrophe cut in `clean` (r5: `/api/drafts's` kept its apostrophe, the tree grep
+//! hit zero files, and 6 of 8 round-0 findings misrouted to the entry file).
 
 use super::FileGroup;
 
-/// P1-3, half one: the ENDPOINT LITERAL a gate finding names, if any. The deterministic gate's
-/// own emitters write `GET <path> returned <code>` / `POST <path> …`, so the token after an HTTP
-/// verb is the highest-confidence literal; a backticked `/…` token is the fallback for prose
-/// findings. A bare `/` is deliberately None — grepping a tree for "/" matches every file, which
-/// is attribution-shaped noise, and the entry-file fallback answers that case honestly instead.
-fn endpoint_literal_of(finding: &str) -> Option<String> {
-    // r5 (run swarm-20260830-083847650): the gate's own templates write `POST {path}'s response
-    // …`, so the raw token is `/api/drafts's`. `trim_matches` only trims at token ENDS — the
-    // trailing `s` is alphanumeric, so the apostrophe survived, the tree grep hit zero files,
-    // and the entry-file fallback misrouted 6 of 8 round-0 findings. CUT at the first
-    // disallowed character instead (after trimming any disallowed lead): `/api/drafts's` →
-    // `/api/drafts`, `/api/payments/<id>/note's` → `/api/payments/`.
-    let clean = |t: &str| {
-        t.trim_start_matches(|c: char| !(c.is_ascii_alphanumeric() || "/_-.".contains(c)))
-            .split(|c: char| !(c.is_ascii_alphanumeric() || "/_-.".contains(c)))
-            .next()
-            .unwrap_or("")
-            .to_string()
-    };
-    let mut toks = finding.split_whitespace().peekable();
-    while let Some(t) = toks.next() {
-        let verb = t.trim_matches(|c: char| !c.is_ascii_alphabetic());
-        if matches!(verb, "GET" | "POST" | "PUT" | "DELETE" | "PATCH") {
-            if let Some(path) = toks.peek() {
-                let p = clean(path);
-                if p.starts_with('/') && p.len() > 1 {
-                    return Some(p);
+/// P1-3, half one: the ENDPOINT LITERAL FORMS a gate finding names, most specific first. The
+/// deterministic gate's own emitters write `GET <path> returned <code>` / `POST <path> …`, so
+/// the token after an HTTP verb is the highest-confidence literal; a backticked `/…` token is
+/// the fallback for prose findings. A bare `/` is deliberately absent — grepping a tree for "/"
+/// matches every file, which is attribution-shaped noise, and the entry-file fallback answers
+/// that case honestly instead.
+///
+/// TWO forms per finding, deduped, verbatim first (r5, run swarm-20260830-083847650: the
+/// placeholder routes). The gate probes placeholder routes verbatim — `POST
+/// /api/payments/<id>/note's response …` — and the r5 tree holds that literal IN CODE
+/// (app/ledgerd/__init__.py's route table, `("POST", "/api/payments/<id>/note")`). Cutting at
+/// `<` reduced every such finding to its prefix (`/api/payments/`), which structurally favors
+/// whichever file mentions the prefix most — F5-F7's `/api/drafts/` even pooled THREE different
+/// routes' hits into one count. So: the VERBATIM form keeps `<>` and cuts only at the
+/// apostrophe class (any non-path, non-placeholder char); the PREFIX form is the old cut at
+/// `<`. The caller tries verbatim first and falls back when it greps zero files.
+fn endpoint_literal_forms_of(finding: &str) -> Vec<String> {
+    // r5: the gate's own templates write `POST {path}'s response …`, so the raw token is
+    // `/api/drafts's`. `trim_matches` only trims at token ENDS — the trailing `s` is
+    // alphanumeric, so the apostrophe survived, the tree grep hit zero files, and the
+    // entry-file fallback misrouted 6 of 8 round-0 findings. CUT at the first disallowed
+    // character instead (after trimming any disallowed lead): `/api/drafts's` → `/api/drafts`,
+    // `/api/payments/<id>/note's` → `/api/payments/<id>/note` (verbatim) / `/api/payments/`
+    // (prefix).
+    let form = |verbatim: bool| -> Option<String> {
+        let ok = |c: char| {
+            c.is_ascii_alphanumeric() || "/_-.".contains(c) || (verbatim && "<>".contains(c))
+        };
+        let clean = |t: &str| {
+            t.trim_start_matches(|c: char| !ok(c))
+                .split(|c: char| !ok(c))
+                .next()
+                .unwrap_or("")
+                .to_string()
+        };
+        let mut toks = finding.split_whitespace().peekable();
+        while let Some(t) = toks.next() {
+            let verb = t.trim_matches(|c: char| !c.is_ascii_alphabetic());
+            if matches!(verb, "GET" | "POST" | "PUT" | "DELETE" | "PATCH") {
+                if let Some(path) = toks.peek() {
+                    let p = clean(path);
+                    if p.starts_with('/') && p.len() > 1 {
+                        return Some(p);
+                    }
                 }
             }
         }
+        finding
+            .split('`')
+            .skip(1)
+            .step_by(2)
+            .map(clean)
+            .find(|t| t.starts_with('/') && t.len() > 1)
+    };
+    let mut forms: Vec<String> = Vec::new();
+    for lit in [form(true), form(false)].into_iter().flatten() {
+        if !forms.contains(&lit) {
+            forms.push(lit);
+        }
     }
-    finding
-        .split('`')
-        .skip(1)
-        .step_by(2)
-        .map(clean)
-        .find(|t| t.starts_with('/') && t.len() > 1)
+    forms
 }
 
 /// Comment text never counts as attribution EVIDENCE (r5, run swarm-20260830-083847650, REPAIR
@@ -119,8 +144,14 @@ pub(super) fn attribute_gate_finding_ranked(
     all_files: &[String],
     read_source: &dyn Fn(&str) -> Option<String>,
 ) -> Option<(String, Option<String>)> {
-    let literal = endpoint_literal_of(finding);
-    if let Some(lit) = &literal {
+    let literals = endpoint_literal_forms_of(finding);
+    for lit in &literals {
+        // Forms are tried most-specific first: the VERBATIM placeholder route (`/api/payments/
+        // <id>/note` — real code in r5's route table) before its prefix cut, falling through
+        // ONLY when a form greps zero files' stripped source. Within each form the ordering and
+        // tiebreaks are unchanged. (`<` after the prefix form is a boundary char below — a
+        // route table's `/api/drafts/<id>/…` entries still boundary-count for `/api/drafts/`.)
+        //
         // A DECLARED route outranks a CALL to it: `"/api/payments":` in the dispatcher is the
         // literal as a complete token, `"/api/payments?limit=100"` in the page is the literal
         // mid-URL. Boundary hits (next char ends the path) are counted first; raw substring
@@ -188,7 +219,7 @@ pub(super) fn attribute_gate_finding_ranked(
         .iter()
         .any(|m| l.contains(m))
     };
-    if literal.is_none() && !boot_shaped {
+    if literals.is_empty() && !boot_shaped {
         return None;
     }
     let entries: Vec<&String> = all_files
@@ -312,49 +343,126 @@ mod tests {
     use super::*;
 
     /// P1-3: the endpoint literal a gate finding names, straight from the gate's own emitter
-    /// shapes. A bare `/` is None on purpose — grepping a tree for "/" hits every file, and the
-    /// entry-file fallback answers that case honestly.
+    /// shapes. A bare `/` yields no forms on purpose — grepping a tree for "/" hits every file,
+    /// and the entry-file fallback answers that case honestly.
     #[test]
     fn the_endpoint_literal_comes_from_the_verb_or_backticks_never_bare_slash() {
+        // A finding without a placeholder has ONE form (verbatim == prefix, deduped).
+        let one = |s: &str| {
+            let v = endpoint_literal_forms_of(s);
+            assert!(v.len() <= 1, "expected at most one form for {s:?}: {v:?}");
+            v.into_iter().next()
+        };
         assert_eq!(
-            endpoint_literal_of(
+            one(
                 "GET /api/payments returned 404 — the spec advertises this endpoint but the app does not implement it"
             )
             .as_deref(),
             Some("/api/payments")
         );
         assert_eq!(
-            endpoint_literal_of("POST /api/sync did not complete twice").as_deref(),
+            one("POST /api/sync did not complete twice").as_deref(),
             Some("/api/sync")
         );
         assert_eq!(
-            endpoint_literal_of("the advertised `/api/health` endpoint answers 500").as_deref(),
+            one("the advertised `/api/health` endpoint answers 500").as_deref(),
             Some("/api/health")
         );
-        assert_eq!(endpoint_literal_of("GET / returned 404"), None);
-        assert_eq!(endpoint_literal_of("no route named anywhere"), None);
+        assert_eq!(one("GET / returned 404"), None);
+        assert_eq!(one("no route named anywhere"), None);
         // r5: the gate's own possessive templates (`POST {path}'s response …`) — the literal is
         // cut at the apostrophe, never carried into the tree grep.
         assert_eq!(
-            endpoint_literal_of(
+            one(
                 "POST /api/drafts's response does not carry the documented field(s) `amount_minor`, `currency`"
             )
             .as_deref(),
             Some("/api/drafts")
         );
         assert_eq!(
-            endpoint_literal_of(
-                "POST /api/webhooks/meridian's response could not be read as JSON on either probe"
-            )
-            .as_deref(),
+            one("POST /api/webhooks/meridian's response could not be read as JSON on either probe")
+                .as_deref(),
             Some("/api/webhooks/meridian")
         );
+        // A placeholder route yields TWO forms: the verbatim literal (the shape r5's route
+        // table holds in real code) first, its prefix cut second.
         assert_eq!(
-            endpoint_literal_of(
+            endpoint_literal_forms_of(
                 "POST /api/payments/<id>/note's response does not carry the documented field(s) `ok`"
-            )
-            .as_deref(),
-            Some("/api/payments/")
+            ),
+            vec![
+                "/api/payments/<id>/note".to_string(),
+                "/api/payments/".to_string()
+            ]
+        );
+    }
+
+    /// Fix 2, the r5 live-tree shape (run swarm-20260830-083847650, REPAIR round 0, F2):
+    /// `POST /api/payments/<id>/note's response …` — the verbatim placeholder literal exists IN
+    /// CODE (app/ledgerd/__init__.py:63, `("POST", "/api/payments/<id>/note")`), so the
+    /// verbatim form greps the route table directly instead of pooling prefix hits across
+    /// unrelated routes. The prefix form stays as the fallback for a placeholder route no file
+    /// spells out verbatim.
+    #[test]
+    fn a_placeholder_route_greps_verbatim_before_the_prefix_cut() {
+        let f2 = "POST /api/payments/<id>/note's response does not carry the documented \
+                  field(s) `id`, `note`, `version` — the spec's endpoint table names them for \
+                  exactly this endpoint.";
+        let all = vec![
+            "app/ledgerd/__init__.py".to_string(),
+            "web/app.js".to_string(),
+        ];
+        // The live tree's shapes verbatim: the route table declares the literal in code;
+        // app.js holds it only in its doc comment (stripped — never evidence).
+        let read = |f: &str| -> Option<String> {
+            match f {
+                "app/ledgerd/__init__.py" => Some(
+                    "    (\"GET\", \"/api/payments/<id>\"),\n\
+                     \x20   (\"POST\", \"/api/payments/<id>/note\"),\n"
+                        .into(),
+                ),
+                "web/app.js" => {
+                    Some("/*\n * POST /api/payments/<id>/note — body {note, version}\n */\n".into())
+                }
+                _ => None,
+            }
+        };
+        assert_eq!(
+            attribute_gate_finding(f2, &all, &read).as_deref(),
+            Some("app/ledgerd/__init__.py"),
+            "the verbatim literal lands on the route table that declares it"
+        );
+        // The structural half the prefix cut got wrong: a CALLER spelling the prefix many
+        // times out-counts the declaring route table under the prefix form; the verbatim form
+        // pins the declaration. (On the live r5 tree no file does this — every round-0 winner
+        // is unchanged, so this half ships as a NET.)
+        let read2 = |f: &str| -> Option<String> {
+            match f {
+                "app/ledgerd/__init__.py" => {
+                    Some("    (\"POST\", \"/api/payments/<id>/note\"),\n".into())
+                }
+                "web/app.js" => Some(
+                    "fetch(\"/api/payments/\" + id + \"/note\");\n\
+                     fetch(\"/api/payments/\" + id + \"/note\", opts);\n\
+                     fetch(\"/api/payments/\" + id);\n"
+                        .into(),
+                ),
+                _ => None,
+            }
+        };
+        assert_eq!(
+            attribute_gate_finding(f2, &all, &read2).as_deref(),
+            Some("app/ledgerd/__init__.py")
+        );
+        // And the fallback: a placeholder route NO file spells verbatim still attributes by
+        // its prefix instead of dying to the entry-file arm.
+        let read3 = |f: &str| -> Option<String> {
+            (f == "web/app.js").then(|| "fetch(\"/api/payments/\" + id + \"/note\");\n".to_string())
+        };
+        assert_eq!(
+            attribute_gate_finding(f2, &all, &read3).as_deref(),
+            Some("web/app.js"),
+            "zero verbatim greps fall back to the prefix form"
         );
     }
 

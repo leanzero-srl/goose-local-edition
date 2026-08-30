@@ -155,9 +155,13 @@ fn the_banned_integrate_template_only_shrinks() {
 /// Tightened to 45,453: `attribute_findings` moved to attribution.rs beside its cluster, paying
 /// for the fix-1 ownership seam (`resolve_shard_ownership` zip into the complete-fix fan) and
 /// the honest three-pair console exemplar in the same commit.
+/// Tightened to 45,448: the multi-file note moved to commands/swarm/briefs.rs (softened for a
+/// repair shard whose owned files all exist), paying for the II-8 mirror-read wiring
+/// (`read_calls_capture` — a redispatched fix shard's fresh shadow skips `.swarm`), the
+/// complete-fix promote-contract comment refresh and the `shard_owned_files` dead-code drop.
 #[test]
 fn swarm_rs_line_count_only_decreases() {
-    const SWARM_RS_LINE_BASELINE: usize = 45_453;
+    const SWARM_RS_LINE_BASELINE: usize = 45_448;
     let text = read("crates/goose-cli/src/commands/swarm.rs");
     let n = text.lines().count();
     assert!(

@@ -17,7 +17,7 @@
 //! same call, so no target can receive a byte twice. Mirror failures degrade loudly like primary
 //! ones — the caller notes them under a distinguishable kind (`think.log.mirror` class).
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// The write-failure kinds the appenders return: `(kind, error)` pairs the caller feeds to
 /// `note_transcript_write_failure`, which dedupes per (activity key, kind) and emits ONE
@@ -194,6 +194,24 @@ pub(super) fn append_calls_row(
         }
     }
     errs
+}
+
+/// II-8's READ half of the mirror dimension: the previous-attempt capture, primary first, mirror
+/// second. A re-dispatched FIX SHARD runs in a FRESH shadow (`copy_tree_excluding` skips
+/// `.swarm`), so the root-relative `<key>.calls.jsonl` is missing/empty even though every
+/// attempt-0 row was mirrored into the real tree at write time (fce592811) — r5's round-1
+/// re-shard of app/sync.py would have opened blind on 16 mirrored rows. Reading the mirror when
+/// the primary is empty is honest recovery of rows that EXIST, not a substitution; when both are
+/// missing/empty this returns None and the caller's absent-behavior stands unchanged (the
+/// fallback gate: never invent content for a true absence). A normal task passes `mirror: None`
+/// (`fix_shard_mirror_dir` is the one predicate) and behaves byte-identically to before.
+pub(super) fn read_calls_capture(primary: &Path, mirror: Option<PathBuf>) -> Option<String> {
+    let read = |p: &Path| {
+        std::fs::read_to_string(p)
+            .ok()
+            .filter(|t| !t.trim().is_empty())
+    };
+    read(primary).or_else(|| mirror.as_deref().and_then(read))
 }
 
 /// ONE attempt-marker line, appended to `<task>.log` and `<task>.think.log` when a call is seeded.
