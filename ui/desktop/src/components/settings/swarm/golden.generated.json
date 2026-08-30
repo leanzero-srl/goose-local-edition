@@ -77,7 +77,6 @@
   "cross_module_check": true,
   "supervision_pool": false,
   "fix_sched": false,
-  "ask_max_q": 3,
   "split": true,
   "smoke": true,
   "complete": true,
