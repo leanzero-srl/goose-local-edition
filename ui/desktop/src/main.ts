@@ -3497,7 +3497,15 @@ ipcMain.handle('read-swarm-run', async (event, workingDir: string) => {
     let heartbeat: number | null = null;
     let heartbeatExited = false;
     try {
-      const hbPath = path.join(swarmDir, 'heartbeat');
+      // BESIDE THE RUN LOG, never a fixed .swarm path. The engine writes the heartbeat next to the
+      // file --log-file names (swarm.rs derives it from log_path.parent()), so on a desktop-layout
+      // run that IS .swarm/heartbeat — but the bench harness passes --log-file <workdir>/run.jsonl,
+      // which puts the heartbeat at the workdir ROOT. Reading .swarm/heartbeat there returned null
+      // on every benchmark run (verified on the archived r4b tree: <workdir>/heartbeat exists with
+      // a fresh stamp, <workdir>/.swarm/heartbeat does not), so engineLiveness() sat on 'unknown'
+      // and a SIGKILLed engine rendered as a healthy live run forever. One derivation, no fallback:
+      // a second location for the truth would be a second place for it to rot.
+      const hbPath = path.join(path.dirname(runFilePath), 'heartbeat');
       const raw = (await fs.readFile(hbPath, 'utf8')).trim();
       heartbeatExited = raw.startsWith('EXITED:');
       const stamp = Date.parse(heartbeatExited ? raw.slice('EXITED:'.length) : raw);
