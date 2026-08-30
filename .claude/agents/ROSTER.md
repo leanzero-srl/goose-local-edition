@@ -443,3 +443,8 @@ research_request_block's armed-no-claimed-sections arm wording.
   and kept r5's stuck-shape coverage. Side-find of the day: r6a's judge once emitted an
   assistant-limit refusal as a DIRECTION — a new r7 detector class. swarm.rs 43,933→43,715.
   Unbriefed gaps it named honestly: tick.py (fixed same-turn) + panel don't know judge_restream_held.
+- 2026-08-31 02:20 fix-tracer (ladder trace): THE STRONGEST OF THE CHAIN — first outright refutation
+  of a guardrail claim, from the archive's own numbers (r5's save ran at 0.0159 vs the 0.25 trigger;
+  no recurrence measurement exists anywhere in r5's record). Replay validated against the desk rows
+  to 3-4 decimals; enumerated all ~38 ladder locals; named the eternal-hold liveness answer honestly
+  and the reader-rung remedy in gate-7 terms (words, not a counter). 8/8 pattern holds.
