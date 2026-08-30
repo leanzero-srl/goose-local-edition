@@ -559,7 +559,7 @@ pub struct SwarmConfig {
     pub clarity_probe_secs: Option<u64>,
     /// ⚠️ BAKED ON — the golden formula sets this in `Default for SwarmConfig` (F393).
     /// Fail-CLOSED the spec-clarity probe: when it DIES for a reason that taught us nothing (timeout /
-    /// agent_error / no_final_output), clamp spec-clarity to CLARITY_FAILCLOSED so the MIN drops plan
+    /// agent_error / no_final_output), clamp spec-clarity to a fail-closed 20 so the MIN drops plan
     /// confidence below the ask floor and the run ASKS instead of proceeding on cross-draft agreement ALONE
     /// (which agrees perfectly on an INVENTED product — the 2/14 conf-93-95-with-0-questions bug above).
     /// `unparseable` stays fail-open (the model DID answer, only the JSON didn't fit). Default ON (#123): a
@@ -8914,60 +8914,6 @@ mod tests {
         );
     }
 
-    /// THE RESCORE MUST NEVER FLATTER A RUN.
-    ///
-    /// When the user answers, spec-clarity is re-scored deterministically with the SAME pure function the
-    /// first score used — over (open - ANSWERED), never over 0. Every open decision is now asked (the
-    /// ask_max_q truncation is killed), but a user can still leave questions unanswered, and each of
-    /// those goose will guess. Snapping to zero there would raise a number the run did not earn —
-    /// precisely the failure the low score exists to prevent (before it, research INVENTED 5 decisions
-    /// and reported 96).
-    #[test]
-    fn rescore_credits_only_what_was_actually_answered() {
-        // The measured case: 5 open, all 5 asked and answered -> the spec really is pinned.
-        assert_eq!(
-            spec_clarity_score(true, 5),
-            30,
-            "the 30 Mihai saw: 100-16*5=20, floored to 30"
-        );
-        assert_eq!(
-            spec_clarity_score(true, 5usize.saturating_sub(5)),
-            100,
-            "all answered => pinned"
-        );
-
-        // The trap: 8 open but the cap asked only 5. THREE are still guesses.
-        let still_open = 8usize.saturating_sub(5);
-        assert_eq!(still_open, 3);
-        let rescored = spec_clarity_score(true, still_open);
-        assert_eq!(
-            rescored, 52,
-            "credit 5 answers, keep charging for the 3 nobody asked about"
-        );
-        assert!(
-            rescored < 100,
-            "a truncated ask must NEVER read as a pinned spec"
-        );
-
-        // Monotonic: answering more can only raise it, and it can never exceed a pinned spec.
-        assert!(spec_clarity_score(true, 3) > spec_clarity_score(true, 5));
-        assert!(spec_clarity_score(true, 0) >= spec_clarity_score(true, 1));
-
-        // final = min(agreement, clarity) — the SAME expression as the first score. Agreement is never
-        // touched by the rescore: it describes the DAG that actually ships, which IS the pre-answer plan.
-        let agreement = 88u8;
-        assert_eq!(
-            agreement.min(spec_clarity_score(true, 5)),
-            30,
-            "before: the spec binds"
-        );
-        assert_eq!(
-            agreement.min(spec_clarity_score(true, 0)),
-            88,
-            "after: agreement binds, not 100"
-        );
-    }
-
     #[test]
     fn spec_contract_parsing() {
         let spec =
@@ -8997,13 +8943,6 @@ mod tests {
         assert!(clarity_reason_is_fail_closed("no_final_output"));
         // FAIL-OPEN (the model DID answer, the JSON just didn't fit): unparseable stays out → no false-ask storm.
         assert!(!clarity_reason_is_fail_closed("unparseable: {truncated"));
-        // The clamp value is below the default ask floor (documented on the const) AND is not a producible
-        // spec_clarity_score, so a 20 in the breakdown is an unambiguous fail-closed sentinel — checked at
-        // runtime against every score the function can emit (a const-vs-const assert is a clippy error).
-        for n in 0..=9 {
-            assert_ne!(spec_clarity_score(true, n), CLARITY_FAILCLOSED);
-            assert_ne!(spec_clarity_score(false, n), CLARITY_FAILCLOSED);
-        }
     }
 
     // ---- #136 DELEGATED DECISIONS ----------------------------------------------------------------
@@ -9040,9 +8979,6 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
             "both are delegated by the spec's own section"
         );
         assert!(blocking.is_empty(), "nothing should block: {blocking:?}");
-        // and the confidence recovers, which is the whole point
-        assert_eq!(spec_clarity_score(true, decisions.len()), 68);
-        assert_eq!(spec_clarity_score(true, blocking.len()), 100);
 
         // B: a decision the spec NEVER MENTIONS must still block. The gate must not become a blanket silencer.
         let unmentioned = vec![
@@ -9132,27 +9068,6 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
         assert!(!regions.is_empty());
         assert!(!decision_is_delegated("typed or flat", &regions));
         assert!(!decision_is_delegated("the id", &regions));
-    }
-
-    #[test]
-    fn spec_clarity_score_is_continuous_not_a_constant() {
-        // Defined product: continuous, decreasing with each material open decision (NOT the old 100/72/50/30
-        // buckets); floored at 30 so a very-open-but-defined spec still reads "low, ask".
-        assert_eq!(spec_clarity_score(true, 0), 100);
-        assert_eq!(spec_clarity_score(true, 1), 84);
-        assert_eq!(spec_clarity_score(true, 2), 68);
-        assert_eq!(spec_clarity_score(true, 3), 52);
-        assert_eq!(spec_clarity_score(true, 9), 30); // floored, count clamped
-                                                     // Undefined product: always LOW (<= 30 so it asks regardless of agreement) but VARIES with how many
-                                                     // axes are open — so vague specs no longer all snap to a flat 20.
-        assert_eq!(spec_clarity_score(false, 0), 30);
-        assert_eq!(spec_clarity_score(false, 1), 24);
-        assert_eq!(spec_clarity_score(false, 2), 18);
-        assert_eq!(spec_clarity_score(false, 9), 8); // floored
-                                                     // Ask boundary vs a ~70 floor preserved: defined+0/1 proceed, defined+2 asks, undefined always asks.
-        assert!(spec_clarity_score(true, 1) >= 70);
-        assert!(spec_clarity_score(true, 2) < 70);
-        assert!(spec_clarity_score(false, 0) < 70);
     }
 
     #[test]
@@ -9386,28 +9301,6 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
     }
 
     #[test]
-    fn breakdown_json_absent_on_cloud_path() {
-        // No sub-signal computed (solo/cloud path) -> no key -> plan_loaded stays byte-identical.
-        assert!(breakdown_json(&PlanConf::default()).is_none());
-        let pc = PlanConf {
-            final_conf: Some(43),
-            agreement: Some(53),
-            agreement_reason: "3 drafts agree: count spread 1, file-overlap 24%".into(),
-            spec_clarity: Some(43),
-            spec_clarity_reason: "product is pinned; 1 material open decision".into(),
-            product_specified: true,
-            open_decisions: vec!["which storage backend".into()],
-            delegated_decisions: Vec::new(),
-        };
-        let b = breakdown_json(&pc).expect("breakdown present when a signal exists");
-        assert_eq!(b["final"], 43);
-        assert_eq!(b["agreement"], 53);
-        assert_eq!(b["spec_clarity"], 43);
-        assert_eq!(b["product_specified"], true);
-        assert_eq!(b["open_decisions"][0], "which storage backend");
-    }
-
-    #[test]
     fn clarify_question_resolves_optional_and_omitted_when_empty() {
         // Old JSON without `resolves` still deserializes (default empty).
         let q: ClarifyQuestion =
@@ -9427,126 +9320,6 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
         };
         let s2 = serde_json::to_string(&q2).unwrap();
         assert!(s2.contains("\"resolves\":\"storage backend\""));
-    }
-
-    #[test]
-    fn binding_signal_picks_lower_and_resolves_ties() {
-        let mk = |a: Option<u8>, c: Option<u8>, prod: bool, dec: bool| PlanConf {
-            final_conf: None,
-            agreement: a,
-            agreement_reason: String::new(),
-            spec_clarity: c,
-            spec_clarity_reason: String::new(),
-            product_specified: prod,
-            open_decisions: if dec { vec!["x".into()] } else { vec![] },
-            delegated_decisions: Vec::new(),
-        };
-        use BindingSignal::*;
-        assert_eq!(
-            mk(Some(40), Some(80), true, false).binding_signal(),
-            Some(Agreement)
-        );
-        assert_eq!(
-            mk(Some(80), Some(40), true, false).binding_signal(),
-            Some(SpecClarity)
-        );
-        assert_eq!(
-            mk(Some(50), Some(50), false, false).binding_signal(),
-            Some(SpecClarity)
-        );
-        assert_eq!(
-            mk(Some(50), Some(50), true, true).binding_signal(),
-            Some(SpecClarity)
-        );
-        assert_eq!(
-            mk(Some(50), Some(50), true, false).binding_signal(),
-            Some(Agreement)
-        );
-        assert_eq!(
-            mk(Some(50), None, true, false).binding_signal(),
-            Some(Agreement)
-        );
-        assert_eq!(
-            mk(None, Some(50), true, false).binding_signal(),
-            Some(SpecClarity)
-        );
-        assert_eq!(mk(None, None, true, false).binding_signal(), None);
-    }
-
-    #[test]
-    fn retarget_action_routes_by_signal_and_product() {
-        let mk = |a: Option<u8>, c: Option<u8>, prod: bool, dec: Vec<String>| PlanConf {
-            final_conf: None,
-            agreement: a,
-            agreement_reason: String::new(),
-            spec_clarity: c,
-            spec_clarity_reason: String::new(),
-            product_specified: prod,
-            open_decisions: dec,
-            delegated_decisions: Vec::new(),
-        };
-        assert_eq!(
-            retarget_action(&mk(Some(40), Some(80), true, vec![]), true, true),
-            RetargetAction::Redraft
-        );
-        assert_eq!(
-            retarget_action(&mk(Some(40), Some(80), true, vec![]), false, true),
-            RetargetAction::Ask
-        );
-        assert_eq!(
-            retarget_action(&mk(Some(80), Some(20), false, vec!["p".into()]), true, true),
-            RetargetAction::Ask
-        );
-        assert_eq!(
-            retarget_action(
-                &mk(Some(80), Some(50), true, vec!["lib?".into()]),
-                true,
-                true
-            ),
-            RetargetAction::ReResearch(vec!["lib?".into()])
-        );
-        assert_eq!(
-            retarget_action(&mk(Some(80), Some(50), true, vec![]), true, true),
-            RetargetAction::Ask
-        );
-        assert_eq!(
-            retarget_action(&mk(None, None, true, vec![]), true, true),
-            RetargetAction::None
-        );
-
-        // WITH NO LOOKUP TOOLS, NOTHING IS LOOKUPABLE — the same open decisions that route to ReResearch
-        // above must route to Ask. This is the deterministic half of the preference-vs-lookupable triage:
-        // the engine cannot judge whether "should splits be uneven?" is searchable, but it knows for certain
-        // that a research round with an empty tool list can only invent an answer and stamp it settled.
-        //
-        // MEASURED (loop-ab-baseline): research_tools {"available":[],"can_look_things_up":false}, and it
-        // STILL routed 5 open decisions to ReResearch as kind:"web" — tool_hint "Use the web-search tool."
-        // Result: "0 actually looked up, 5 counted as settled", spec_clarity 30 -> 100, and the ask fired 90
-        // minutes late asking about the engine's own inventions. The human answered in 1.8 minutes.
-        assert_eq!(
-            retarget_action(
-                &mk(Some(80), Some(50), true, vec!["lib?".into()]),
-                true,
-                false
-            ),
-            RetargetAction::Ask,
-            "no tools => a research round can only launder a guess; ask the human instead"
-        );
-        // Tools present: the original routing is untouched — this triage must not disable research where
-        // research can actually happen.
-        assert_eq!(
-            retarget_action(
-                &mk(Some(80), Some(50), true, vec!["lib?".into()]),
-                true,
-                true
-            ),
-            RetargetAction::ReResearch(vec!["lib?".into()])
-        );
-        // Agreement-bound is unaffected by tools: re-drafting needs no lookups.
-        assert_eq!(
-            retarget_action(&mk(Some(40), Some(80), true, vec![]), true, false),
-            RetargetAction::Redraft
-        );
     }
 
     /// Resume, against the shapes real runs actually produce.
@@ -16275,26 +16048,14 @@ fn pitfall_items() -> Vec<String> {
     items
 }
 
-/// M6 plan confidence via SELF-CONSISTENCY: how much the N drafted skeleton candidates AGREE on shape.
-/// Verbalized self-confidence is overconfident, but agreement across independent drafts is a calibrated
-/// signal — when the drafts diverge, the model doesn't really know how to decompose this (a cue to
-/// research more before committing). Pure-Rust, 0–100, plus a one-line reason.
-/// The full plan-confidence breakdown behind the single `final_conf` scalar, exposed (via an additive
-/// `plan_confidence_breakdown` event key) so the UI can show WHICH signal is low and what would raise it.
-/// `agreement`/`spec_clarity` are `None` where that signal wasn't computed (solo plan / cloud path).
+/// Plan confidence is null BY DESIGN on the live path: the cross-draft agreement metric went with the
+/// multi-draft planner (P1-5), and REVIEW's own one-round summary replaced the metric. Every live
+/// construction is `PlanConf::default()` — `final_conf` stays `None` and `plan_loaded` writes
+/// `plan_confidence: null` (unmeasured, never a fabricated 0). The sub-signal breakdown machinery
+/// (agreement / spec-clarity / `plan_confidence_breakdown`) is DELETED, not parked.
 #[derive(Clone, Debug, Default)]
 pub(crate) struct PlanConf {
     final_conf: Option<u8>,
-    agreement: Option<u8>,
-    agreement_reason: String,
-    spec_clarity: Option<u8>,
-    spec_clarity_reason: String,
-    product_specified: bool,
-    open_decisions: Vec<String>,
-    /// #136: decisions the SPEC delegated to the builder. Never asked, never counted as unclarity — but
-    /// never dropped either: the workers still have to make each call and defend it, and the operator must
-    /// be able to audit what was chosen. Empty unless the delegated_decisions_ok lever is on.
-    delegated_decisions: Vec<String>,
 }
 
 /// The turn budget for the `integrate-verify` SINK specifically. `None` = whatever workers get (so the
@@ -16320,28 +16081,6 @@ fn sink_max_turns_resolved(env: Option<String>, cfg: Option<u32>, worker_default
         .or(cfg)
         .unwrap_or(worker_default)
         .clamp(worker_default, 200)
-}
-
-fn breakdown_json(pc: &PlanConf) -> Option<serde_json::Value> {
-    if pc.agreement.is_none() && pc.spec_clarity.is_none() {
-        return None;
-    }
-    // #136: the delegated list is INSERTED below only when non-empty. A `"delegated_decisions": null` key
-    // would still be a new key in every run's JSON, and "byte-identical when the lever is off" has to mean
-    // the key is absent, not present-and-null.
-    let mut out = serde_json::json!({
-        "final": pc.final_conf,
-        "agreement": pc.agreement,
-        "agreement_reason": pc.agreement_reason,
-        "spec_clarity": pc.spec_clarity,
-        "spec_clarity_reason": pc.spec_clarity_reason,
-        "product_specified": pc.product_specified,
-        "open_decisions": pc.open_decisions,
-    });
-    if !pc.delegated_decisions.is_empty() {
-        out["delegated_decisions"] = serde_json::json!(pc.delegated_decisions);
-    }
-    Some(out)
 }
 
 /// REGRESSION (F707): the SHADOW and the BRANCH must be called with the SAME confidence value.
@@ -28664,8 +28403,6 @@ fn read_prereview_findings(cwd: &std::path::Path) -> String {
     }
 }
 
-/// Default for the spec-ambiguity probe's `product_specified` when the model omits it: assume the product IS
-/// specified, so a parse gap never spuriously forces an ask (conservative — under-ask beats over-ask here).
 #[cfg(test)]
 mod shipped_defaults_tests {
     use super::*;
@@ -39683,13 +39420,12 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             .collect(),
     );
 
-    let mut plan_evt = serde_json::json!({
+    let plan_evt = serde_json::json!({
         "event": "plan_loaded",
         "task_count": dag.tasks.len(),
-        // Cross-draft-agreement plan confidence (0-100) — surfaced so the run panel can show HOW SURE the
-        // planner was about this decomposition, not just what it produced. null when not computed. The
-        // additive `plan_confidence_breakdown` (below, only when a sub-signal was computed) carries the
-        // agreement/spec-clarity split + drivers so the panel can show WHY it's low and what would raise it.
+        // null BY DESIGN: the cross-draft agreement metric went with the multi-draft planner, and
+        // REVIEW's own one-round summary replaced the metric. The key stays so the panel reads an
+        // honest "unmeasured" — never a fabricated 0, and never a breakdown of signals nothing computes.
         "plan_confidence": plan_conf.final_conf,
         // The floor this run was held to, so the panel can say what the number MEANS instead of guessing.
         // Without it the panel judged confidence against a hardcoded band and told the user "Strong — ready
@@ -39731,9 +39467,6 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
         })).collect::<Vec<_>>(),
         "raw_plan_json": plan_json,
     });
-    if let Some(b) = breakdown_json(&plan_conf) {
-        plan_evt["plan_confidence_breakdown"] = b;
-    }
     sink.write_value(plan_evt);
 
     sink.write_value(serde_json::json!({"event": "phase", "phase": "build"}));
@@ -43095,36 +42828,6 @@ mod live_fleet_tests {
 // ================================================================================================
 
 #[cfg(test)]
-/// Which sub-signal is the binding (lower) constraint on plan confidence — decides the retarget action.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum BindingSignal {
-    Agreement,
-    SpecClarity,
-}
-
-#[cfg(test)]
-impl PlanConf {
-    /// The lower of the two computed sub-signals; `None` when neither was computed (retarget is then inert).
-    fn binding_signal(&self) -> Option<BindingSignal> {
-        match (self.agreement, self.spec_clarity) {
-            (Some(a), Some(c)) if a < c => Some(BindingSignal::Agreement),
-            (Some(a), Some(c)) if c < a => Some(BindingSignal::SpecClarity),
-            // Tie: spec-clarity binds when the product/decisions are the concern, else agreement.
-            (Some(_), Some(_)) => Some(
-                if !self.product_specified || !self.open_decisions.is_empty() {
-                    BindingSignal::SpecClarity
-                } else {
-                    BindingSignal::Agreement
-                },
-            ),
-            (Some(_), None) => Some(BindingSignal::Agreement),
-            (None, Some(_)) => Some(BindingSignal::SpecClarity),
-            (None, None) => None,
-        }
-    }
-}
-
-#[cfg(test)]
 /// #129: the post-answer re-plan decision under GOOSE_SWARM_ANSWERS_WIN_FLOOR. PURE — no env, no I/O — so
 /// it is unit-testable and foldable into the golden formula. `structural` = a language flip or a product
 /// first defined by the answer (those invalidate the drafted skeleton and ALWAYS re-plan). `post_conf` is
@@ -43177,13 +42880,6 @@ impl TargetLang {
 const BACKBONE_SKIP_CONF_FLOOR: u8 = 90;
 
 #[cfg(test)]
-/// Fail-closed spec-clarity value. A DEAD probe learned NOTHING about the spec, so it must not read as "clear."
-/// 20 is below the default ask floor (70) and every realistic config floor, so `min(agreement, 20)` forces the
-/// ASK. It is also NOT a value `spec_clarity_score` can emit (its outputs are {8,12,18,24,30,36,52,68,84,100}),
-/// so a 20 in the breakdown is an unambiguous "fail-closed clamp," never a real measurement.
-const CLARITY_FAILCLOSED: u8 = 20;
-
-#[cfg(test)]
 /// The tool-attempt OUTCOME behind a research finding — the deterministic substrate the preference-vs-
 /// researchable classifier (#94) keys its fallback off. `grounded: bool` flattens four cases the classifier
 /// must separate: no tool call at all, a failed/cut-off lookup, an MCP call that returned nothing usable,
@@ -43202,18 +42898,6 @@ enum ResearchAttempt {
     CalledEmpty,
     /// At least one successful MCP lookup (today's `grounded: true`).
     Grounded,
-}
-
-#[cfg(test)]
-/// The dynamic action to raise confidence, routed by the binding signal + `product_specified` (no new
-/// classifier): agreement-bound → re-draft toward convergence (if drafts can still grow); spec-clarity-bound
-/// with a defined product + lookupable open decisions → targeted re-research; else → ask the user.
-#[derive(Clone, Debug, PartialEq, Eq)]
-enum RetargetAction {
-    Redraft,
-    ReResearch(Vec<String>),
-    Ask,
-    None,
 }
 
 #[cfg(test)]
@@ -44468,56 +44152,6 @@ fn research_lookups(tool_calls: &[ToolCallRecord]) -> Vec<String> {
 }
 
 #[cfg(test)]
-/// `can_look_things_up`: does this run have ANY lookup tool (context7 / web-search)?
-///
-/// This is the deterministic half of the preference-vs-lookupable triage. The engine has no way to know
-/// whether "should splits be uneven?" is answerable by search — that needs judgement, and a keyword matcher
-/// would be a guess wearing a rule's clothes. But it knows something simpler and stronger: WITH NO TOOLS,
-/// NOTHING IS LOOKUPABLE. A research round with an empty tool list cannot resolve anything; it can only ask
-/// the model to invent an answer and stamp it settled.
-///
-/// MEASURED (loop-ab-baseline): research_tools {"available":[],"can_look_things_up":false}, and the retarget
-/// still routed 5 open decisions to ReResearch as kind:"web" — whose tool_hint is literally "Use the
-/// web-search tool." The engine told five 27b workers to use a tool that does not exist, then counted their
-/// guesses: "0 actually looked up, 5 counted as settled". Those guesses were appended to the prompt as
-/// "settled defaults, do not re-ask", spec_clarity jumped 30 -> 100, and the ask that finally fired 90
-/// minutes later asked about the engine's OWN INVENTIONS instead of the user's real choice.
-/// 4 of those 5 decisions were product preferences no search could ever answer. The ask resolved them in
-/// 1.8 minutes. Research spent 65 minutes failing to answer what a human answered in under two.
-fn retarget_action(
-    pc: &PlanConf,
-    can_grow_drafts: bool,
-    // may_research: may this run route an open decision to a research round at all? FALSE when the run has
-    // no lookup tools (the deterministic half of the preference-vs-lookupable triage — with no tools nothing
-    // is lookupable) OR when the triage lever is off, in which case the caller passes `true` and the routing
-    // is byte-identical to before the lever existed.
-    may_research: bool,
-) -> RetargetAction {
-    match pc.binding_signal() {
-        Some(BindingSignal::Agreement) => {
-            if can_grow_drafts {
-                RetargetAction::Redraft
-            } else {
-                RetargetAction::Ask
-            }
-        }
-        Some(BindingSignal::SpecClarity) => {
-            if !pc.product_specified {
-                RetargetAction::Ask
-            } else if !pc.open_decisions.is_empty() && may_research {
-                RetargetAction::ReResearch(pc.open_decisions.clone())
-            } else {
-                // No tools => the round could only launder a guess. Ask the human instead, ~90 min sooner,
-                // with the spec still intact (the "settled defaults" text is never appended when nothing
-                // settles), so the questions are about the REAL open choices.
-                RetargetAction::Ask
-            }
-        }
-        None => RetargetAction::None,
-    }
-}
-
-#[cfg(test)]
 fn score_skeleton(specs: &[goose_swarm::TaskSpec], worker_count: usize) -> Option<i64> {
     goose_swarm::Dag::from_specs(specs.to_vec()).ok()?;
     let wc = worker_count.max(1) as i64;
@@ -44648,25 +44282,6 @@ fn skeleton_count_clause(worker_count: usize, converge: bool) -> String {
             lo = 2 * worker_count,
             hi = 3 * worker_count
         )
-    }
-}
-
-#[cfg(test)]
-/// Additive `plan_confidence_breakdown` JSON, or `None` when no sub-signal was computed — so the cloud/default
-/// path emits no new key and stays byte-identical.
-/// CONTINUOUS spec-clarity score (0-100) from the two real signals the probe produces: is the product
-/// defined, and how many MATERIAL open decisions remain. Deliberately NOT a handful of magic constants
-/// (earlier every product-undefined spec snapped to a flat 20, which reads as faked) — it varies with the
-/// count so specs differentiate honestly, grounded in real signal (no invented smoothing). Undefined product
-/// = the dominant unknown → always low (≤30, so it asks regardless of draft agreement) but still moves with
-/// how many axes are open; defined product = 100 minus 16 per material decision, floored at 30. The ask
-/// boundary vs a ~70 floor is preserved: defined+0/1 proceed, defined+2 asks, undefined always asks.
-fn spec_clarity_score(product_specified: bool, n_decisions: usize) -> u8 {
-    let n = n_decisions.min(6) as u8;
-    if !product_specified {
-        30u8.saturating_sub(6 * n).max(8)
-    } else {
-        100u8.saturating_sub(16 * n).max(30)
     }
 }
 
