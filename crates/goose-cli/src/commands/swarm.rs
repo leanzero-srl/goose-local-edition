@@ -33,6 +33,12 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 mod judge_context;
 use judge_context::{is_intentional_empty_marker, judge_delivery_block, verify_owned_files};
+mod research;
+use research::{
+    budget_research_answer, fold_research_outcome, load_research_mini, research_fan_lanes,
+    research_mini_name, research_schema, ResearchQuestion, ResearchRow, RESEARCH_ANSWERED,
+    RESEARCH_UNANSWERED,
+};
 
 const FINAL_OUTPUT_TOOL: &str = "recipe__final_output";
 /// The one engine terminator's own words — the `judge_out_of_moves` ending's Err message, which
@@ -18043,17 +18049,39 @@ impl GooseAgentDispatcher {
                             .collect()
                     };
                     if !unsent.is_empty() {
-                        let note = format!(
-                            "DELIVERY DEFECT — this is a MEASUREMENT of the files you own, taken from \
-                             disk just now, not an opinion about your reasoning:\n{}\n\
-                             Fix the first one before anything else, at that exact path. Keep the work \
-                             you have already done.",
-                            unsent
-                                .iter()
-                                .map(|d| format!("  - {d}"))
-                                .collect::<Vec<_>>()
-                                .join("\n")
-                        );
+                        let listed = unsent
+                            .iter()
+                            .map(|d| format!("  - {d}"))
+                            .collect::<Vec<_>>()
+                            .join("\n");
+                        // WORDS REACHING A MODEL MUST BE TRUE. At the FIRST look with every owned
+                        // file absent, "DELIVERY DEFECT" is a false claim — nothing has been
+                        // delivered wrong; nothing has been delivered YET, which is the expected
+                        // state minutes into a build task. Measured ground truth, not the defect
+                        // strings: every owned path re-checked on disk here. Any later look, or a
+                        // first look where SOME file already landed (partial delivery), keeps the
+                        // defect framing — by then absence next to a sibling that exists IS a
+                        // measured fault. The supersede key stays the same either way, so a real
+                        // defect steer replaces this note instead of stacking under it.
+                        let none_written_yet = omni_looks <= 1
+                            && !owned.is_empty()
+                            && owned.iter().all(|f| !self.working_dir.join(f).exists());
+                        let note = if none_written_yet {
+                            format!(
+                                "YOUR OWNED FILES, measured from disk just now: you own these and \
+                                 none exists YET — write them:\n{listed}\n\
+                                 Start with a first minimal version of the first path, at exactly \
+                                 that path, and extend it afterwards. The deliverable is bytes on \
+                                 disk, not a file composed in your head."
+                            )
+                        } else {
+                            format!(
+                                "DELIVERY DEFECT — this is a MEASUREMENT of the files you own, taken from \
+                                 disk just now, not an opinion about your reasoning:\n{listed}\n\
+                                 Fix the first one before anything else, at that exact path. Keep the work \
+                                 you have already done."
+                            )
+                        };
                         agent
                             .steer_superseding(
                                 &session_config.id,
@@ -18066,6 +18094,7 @@ impl GooseAgentDispatcher {
                             "task_id": activity_key,
                             "look": omni_looks,
                             "defects": unsent,
+                            "framing": if none_written_yet { "none_written_yet" } else { "defect" },
                         }));
                     }
                 }
@@ -20354,8 +20383,9 @@ const BOUNDARY_PROBE_CLAUSE: &str = " SILENT-ACCEPT CHECK: an out-of-domain inpu
 /// unreachable from ANY live path (`integrate_verify_spec` is test-only).
 fn plan_sink_description(spec: &str, lang: TargetLang) -> String {
     let mut s = String::from(
-        "INTEGRATE AND VERIFY the whole program end-to-end against the spec's ADVERTISED surface \
-         (this plan-time brief is replaced at dispatch by the measured state of the built tree):\n",
+        "The end-to-end join: boot the whole program and check each advertised behavior below \
+         against the spec's own surface (this plan-time brief is replaced at dispatch by the \
+         measured state of the built tree):\n",
     );
     let pkg = spec_python_entry(spec);
     if let Some(line) = pkg.as_deref().and_then(|p| spec_boot_line(spec, p)) {
@@ -27347,170 +27377,6 @@ fn briefs_from_slices(
 // events land as each finishes; the only join feeds the one serial SYNTHESIS call); no resplit or
 // ask-proxy (OPEN's output is immutable input; open_decisions never enter the fan).
 // ================================================================================================
-
-/// One opener question, addressed by (slice, q_index) — the identity the mini filename, the
-/// activity key and the brief partition all share.
-#[derive(Clone, Debug)]
-struct ResearchQuestion {
-    slice: String,
-    q_index: usize,
-    question: String,
-}
-
-const RESEARCH_ANSWERED: &str = "answered";
-const RESEARCH_UNANSWERED: &str = "unanswered";
-
-/// One terminal research outcome. `status` is always set — answered or unanswered — which is what
-/// makes "every dispatched question terminal" a property of the type rather than of a clock.
-/// `secs` is a provenance measurement OUTPUT (how long the answer took), never an input: no time
-/// value bounds the call (gate 5 is structural — `run_agent_timed_at` carries no time parameter).
-#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
-pub(crate) struct ResearchRow {
-    slice: String,
-    q_index: usize,
-    question: String,
-    /// "answered" | "unanswered" — both TERMINAL. Nothing retries; a miss flows to REPAIR.
-    status: String,
-    answer: String,
-    /// On unanswered: "provider_error" | "empty_answer" | "judge_ended".
-    #[serde(default)]
-    reason: Option<String>,
-    #[serde(default)]
-    detail: Option<String>,
-    /// Questions the researcher RAISED but could not settle — recorded here for the operator,
-    /// NEVER dispatched (research dispatches only the opener's own questions).
-    #[serde(default)]
-    raised: Vec<String>,
-    model: String,
-    secs: u64,
-}
-
-/// The structured deliverable (A1): `{answer, raised}`. Declaring a `Response` is what arms the
-/// judge's whole ladder for these lanes — `wants_structured_reply` becomes true, the
-/// `recipe__final_output` tool exists, and (with `may_terminate: true`) the `judge_out_of_moves`
-/// ending is reachable — the progress-based terminator that makes "all questions terminal"
-/// reachable without any clock. Only `answer` is required (the permissive-schema lesson from
-/// `review_patch_schema`): `raised` legitimately defaults to empty, and an empty `answer` is
-/// classified honestly as unanswered/empty_answer rather than rejected at validation.
-fn research_schema() -> serde_json::Value {
-    serde_json::json!({
-        "type": "object",
-        "required": ["answer"],
-        "properties": {
-            "answer": {"type": "string"},
-            "raised": {"type": "array", "items": {"type": "string"}}
-        }
-    })
-}
-
-fn research_mini_name(slice: &str, q_index: usize) -> String {
-    format!("research-{}-q{}.json", activity_digest_key(slice), q_index)
-}
-
-/// The resume watermark: a mini that parses IS the question's terminal outcome and is never
-/// re-dispatched (an unanswered row stays unanswered on resume — revival would be an explicit
-/// engine decision, never a silent retry). A missing or corrupt mini means "not yet researched",
-/// so re-dispatching is the honest action, not a substitution — and a corrupt mini is already
-/// named loudly by `rebuild_ledger_rollup`'s rows_dropped.
-fn load_research_mini(root: &Path, slice: &str, q_index: usize) -> Option<ResearchRow> {
-    let p = root
-        .join(LEDGER_DIR)
-        .join(research_mini_name(slice, q_index));
-    serde_json::from_str(&std::fs::read_to_string(p).ok()?).ok()
-}
-
-/// The fan's lane pool (A3): ONE lane per host, never the raw slot-expanded pool — two calls
-/// stacked on one host degrade each other (F623; measured r16 vs r17: the same detail fan cleared
-/// 14/14 on 4 slots, then dropped three details when a host's lanes doubled the fan width).
-/// `fanout_over_fleet` then applies `order_fleet_by_speed`, so the weight-4 host is first in line
-/// instead of structurally last (r13).
-fn research_fan_lanes(slot_models: Vec<String>) -> Vec<String> {
-    one_lane_per_host(slot_models)
-}
-
-/// A per-answer SPLICE budget on the text carried into a brief — the measured-good brief size
-/// (~1,500 chars: the RESEARCH size table above `synthesize_plan` measured a 1,497-char brief at
-/// 88.7% against a 6,443-char median that lost). A render budget on splice text, never a cap on
-/// model work: the FULL answer is durable in the ledger mini, and the cut lands on a line
-/// boundary and says so (F196 — a cut that ends mid-line reads as a complete fact that is wrong).
-fn budget_research_answer(answer: &str, slice: &str, q_index: usize) -> String {
-    let budget = 1_500;
-    if answer.chars().count() <= budget {
-        return answer.trim_end().to_string();
-    }
-    let head: String = answer.chars().take(budget).collect();
-    let whole = head.rsplit_once('\n').map(|(h, _)| h).unwrap_or(&head);
-    format!(
-        "{}\n… ANSWER TRUNCATED — full text in .swarm/ledger/{}",
-        whole.trim_end(),
-        research_mini_name(slice, q_index)
-    )
-}
-
-/// Fold one lane's outcome into a TERMINAL row. Pure, so the classification is testable without
-/// a model: Ok with a non-empty answer => answered; Ok with an empty/unparseable reply =>
-/// unanswered/empty_answer (never a stub answer — the fallback gate); Err from the
-/// `judge_out_of_moves` ending => unanswered/judge_ended; any other Err =>
-/// unanswered/provider_error with the error head (300, the ledger's last_failure_tail idiom).
-fn fold_research_outcome(
-    q: &ResearchQuestion,
-    model: &str,
-    secs: u64,
-    out: Result<String, String>,
-) -> ResearchRow {
-    #[derive(serde::Deserialize, Default)]
-    struct ResearchReply {
-        #[serde(default)]
-        answer: String,
-        #[serde(default)]
-        raised: Vec<String>,
-    }
-    let mut row = ResearchRow {
-        slice: q.slice.clone(),
-        q_index: q.q_index,
-        question: q.question.clone(),
-        status: RESEARCH_UNANSWERED.to_string(),
-        answer: String::new(),
-        reason: None,
-        detail: None,
-        raised: Vec::new(),
-        model: model.to_string(),
-        secs,
-    };
-    match out {
-        Ok(raw) => match parse_json_lenient::<ResearchReply>(&raw) {
-            Some(reply) if !reply.answer.trim().is_empty() => {
-                row.status = RESEARCH_ANSWERED.to_string();
-                row.answer = reply.answer;
-                row.raised = reply.raised;
-            }
-            Some(reply) => {
-                // Parsed, but the deliverable slot is blank — a named absence, never a stub.
-                row.reason = Some("empty_answer".to_string());
-                row.raised = reply.raised;
-            }
-            None => {
-                // Nothing parseable in the reply. The head rides in `detail` so the operator
-                // can see WHAT came back instead of an answer (300, the last_failure_tail
-                // idiom) — the absence stays loud, nothing is substituted.
-                row.reason = Some("empty_answer".to_string());
-                row.detail = Some(raw.chars().take(300).collect());
-            }
-        },
-        Err(e) => {
-            // The one engine terminator's own words (emitted at exactly one site, the
-            // judge_out_of_moves ending): a lane the ENGINE ended is named as such, not
-            // laundered into a transport failure.
-            if e.contains(JUDGE_ENDED_NEEDLE) {
-                row.reason = Some("judge_ended".to_string());
-            } else {
-                row.reason = Some("provider_error".to_string());
-            }
-            row.detail = Some(e.chars().take(300).collect());
-        }
-    }
-    row
-}
 
 /// The per-slice REQUEST block for a research prompt (A5): the prompt NEVER carries the raw ~50k
 /// spec when orientation is armed — it carries the orientation index plus the slice's claimed
