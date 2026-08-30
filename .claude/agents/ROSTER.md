@@ -56,7 +56,10 @@ After ANY batch of landed implementation: fan read-only works-provers, ONE PER C
 SHARP — the claim, the anchors, what proof counts. Never one dummy agent told "verify the batch";
 that produces an agent that "just does something to finish." Verdicts WORKS / APPEARS-TO-WORK /
 CANNOT-PROVE, quotes mandatory; APPEARS-TO-WORK findings are implemented-or-scheduled on arrival
-like any finding. The doctrine: fallbacks only on many-happy-path arms; reachability proven
+like any finding. THE CHECKING LAW (Mihai 2026-08-30 14:00): a handoff is a CLAIM, not a
+delivery — the orchestrator checks every delivered build against the brief's goals before it
+counts as done; big deliveries (the research fan) get their own prover pass against their
+amendments. "This is not work to be done superficially." The doctrine: fallbacks only on many-happy-path arms; reachability proven
 as-configured; no hard coding. First run: 2026-08-30 over the day's five landed changes.
 
 ## Surgeon #7 queue (dispatch when swarm.rs frees after #6 — the research fan)
