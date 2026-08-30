@@ -4296,6 +4296,53 @@ fn repeated_post_verdict(first: &str, second: &str) -> RepeatedPost {
 mod tests {
     use super::*;
 
+    /// A-1's amendment (c) fixture: a shell child that daemonizes to PPID 1 — `sh -c '( sleep & )'`
+    /// spawned as its OWN group leader, exactly what the shell tool now produces. The direct sh
+    /// exits, the sleep reparents to init, and the group is the only remaining handle on it. The
+    /// attempt exit (the reaper guard dropping — the same object run_agent_in arms) must still
+    /// reap it. r2's task_retry path leaked precisely this shape.
+    #[cfg(unix)]
+    #[test]
+    fn attempt_exit_reaps_a_daemonized_shell_group() {
+        use goose::agents::platform_extensions::developer::process_groups;
+        use std::os::unix::process::CommandExt;
+        let mut child = std::process::Command::new("sh")
+            .args(["-c", "( sleep 300 & )"])
+            .process_group(0)
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .expect("spawn daemonizer");
+        let pgid = child.id() as i32;
+        // Reap the direct sh (the shell tool always waits its child) — an unreaped zombie would
+        // keep the group "alive" and the assertion below would test the test's own leak.
+        let _ = child.wait();
+        process_groups::register("swarm-attempt-reap-test", pgid);
+        assert!(process_groups::group_alive(pgid));
+        // The transient/task_retry exit is one of the paths that unwinds through this Drop.
+        drop(ShellGroupReaper::armed(
+            "swarm-attempt-reap-test".to_string(),
+        ));
+        let dead = (0..100).any(|_| {
+            std::thread::sleep(std::time::Duration::from_millis(20));
+            !process_groups::group_alive(pgid)
+        });
+        assert!(dead, "the retry exit must reap the daemonized group");
+    }
+
+    /// The engine's own process group must NEVER be signalled, whatever the registry holds — the
+    /// r2 death was a killpg on the shared group. Surviving this test IS the assertion.
+    #[cfg(unix)]
+    #[test]
+    fn attempt_reaper_never_signals_the_engines_own_group() {
+        use goose::agents::platform_extensions::developer::process_groups;
+        let own = unsafe { libc::getpgrp() };
+        process_groups::register("swarm-own-group-guard-test", own);
+        let mut reaper = ShellGroupReaper::armed("swarm-own-group-guard-test".to_string());
+        assert!(reaper.reap_now().is_empty());
+        assert!(process_groups::group_alive(own), "we must still be alive");
+    }
+
     #[test]
     fn answers_win_floor_keeps_answered_plan_only_when_gated_and_non_structural() {
         use PostAnswerAction::*;
@@ -15788,6 +15835,12 @@ impl GooseAgentDispatcher {
             )
             .await?;
         let session_id = session.id.clone();
+        // Every shell spawn this attempt makes gets its OWN process group, registered under this
+        // session — and the guard below reaps the survivors on EVERY way out of this function.
+        // Completes invariant 5 for the model's own spawns: see ShellGroupReaper for the r2 leak
+        // (3 PPID-1 app servers in the engine's group) this closes.
+        goose::agents::platform_extensions::developer::process_groups::enable();
+        let mut shell_reaper = ShellGroupReaper::armed(session_id.clone());
 
         let mut model_config = goose::model_config::model_config_from_user_config(
             cloud_registry_name(self.provider_name(model_id)),
@@ -17868,6 +17921,26 @@ impl GooseAgentDispatcher {
             if let Some(m) = &activity_mirror {
                 let _ = std::fs::write(m, digest.to_string());
             }
+        }
+
+        // The attempt is over: kill whatever its shell calls left running (their own groups, never
+        // the engine's), and say so in the run log — a reaped group here IS the r2 leak class
+        // caught at its source, and tick.py counts these against `orphans: 0`.
+        let reaped_shell_groups = shell_reaper.reap_now();
+        if !reaped_shell_groups.is_empty() {
+            eprintln!(
+                "  {} reaped {} leaked shell process group(s) at attempt end{}: {:?}",
+                style("⚠").yellow().bold(),
+                reaped_shell_groups.len(),
+                activity_key.map(|k| format!(" of {k}")).unwrap_or_default(),
+                reaped_shell_groups
+            );
+            self.events.write_value(serde_json::json!({
+                "event": "app_shell_groups_reaped",
+                "task_id": activity_key,
+                "attempt": attempt,
+                "pgids": reaped_shell_groups,
+            }));
         }
 
         // Stream delivers incremental Text chunks; concatenate to reconstruct the message text.
@@ -20089,6 +20162,61 @@ async fn kill_app_tree_and_drain(
     }
     for r in readers {
         let _ = r.await;
+    }
+}
+
+/// Sweeps the process groups a worker attempt's OWN shell calls spawned, at the attempt's end.
+///
+/// Invariant 5 covers the ENGINE's spawns via `spawn_grouped`/`kill_app_tree`; this closes the
+/// other half: the MODEL boots app servers through its developer shell tool, and on r2 the sink's
+/// dead attempt 0 left 3 of them as PPID-1 orphans in the ENGINE's process group — the task_retry
+/// path killed nothing, and the operator's `killpg` reap took the engine down at INTEGRATE minute
+/// 139. With `process_groups::enable()`, every shell spawn leads its own group registered under
+/// the attempt's session; this guard kills whatever of them survives the attempt.
+///
+/// It is a DROP guard on purpose: the attempt has many exits (completion, the stream-decode
+/// Transient at the #121 branch, ContentRetry, judge termination, an `?` error, cancellation of
+/// the whole dispatch future) and each of them unwinds through here — patching the branches one by
+/// one is how the retry path got missed. `reap_now()` at the normal exit reports what was killed;
+/// the Drop arm is the net for every other path and never signals the engine's own group (the
+/// registry's reaper guards that even against a pathological registration).
+struct ShellGroupReaper {
+    session_id: String,
+    armed: bool,
+}
+
+impl ShellGroupReaper {
+    fn armed(session_id: String) -> Self {
+        Self {
+            session_id,
+            armed: true,
+        }
+    }
+
+    fn reap_now(&mut self) -> Vec<i32> {
+        self.armed = false;
+        goose::agents::platform_extensions::developer::process_groups::reap_session(
+            &self.session_id,
+        )
+    }
+}
+
+impl Drop for ShellGroupReaper {
+    fn drop(&mut self) {
+        if !self.armed {
+            return;
+        }
+        let killed = goose::agents::platform_extensions::developer::process_groups::reap_session(
+            &self.session_id,
+        );
+        if !killed.is_empty() {
+            eprintln!(
+                "  {} reaped {} leaked shell process group(s) on an early attempt exit: {:?}",
+                style("⚠").yellow().bold(),
+                killed.len(),
+                killed
+            );
+        }
     }
 }
 
@@ -33879,6 +34007,10 @@ impl GooseAgentDispatcher {
                 // workhorse). The truthful destination is already printed by the `▸ run <task> → <device>`
                 // line emitted by the code that actually decides.
                 if self.stream_decode_retry && is_stream_decode_interrupt(&out.text) {
+                    // The dead attempt's app servers are ALREADY reaped: run_agent_in kills the
+                    // attempt's own shell process groups on every exit (see ShellGroupReaper), so
+                    // this Transient return can no longer leak them. r2 leaked 3 PPID-1 servers on
+                    // exactly this path, and the reap that removed them killed the engine too.
                     eprintln!(
                         "  {} {} on {} ({:.1}s) — provider stream decode error (mid-stream body drop); re-dispatching",
                         style("↻").yellow().bold(),
