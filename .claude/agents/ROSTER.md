@@ -62,7 +62,7 @@ counts as done; big deliveries (the research fan) get their own prover pass agai
 amendments. "This is not work to be done superficially." The doctrine: fallbacks only on many-happy-path arms; reachability proven
 as-configured; no hard coding. First run: 2026-08-30 over the day's five landed changes.
 
-## The module split (refute-first, run it DURING an r6 run — the engine is frozen then)
+## The module split — SUPERSEDED by the INCREMENTAL-SPLIT LAW (Mihai chose piece-by-piece over bulk); the law lives in swarm-surgeon.md + swarm-engine.md + the line-count ratchet
 
 swarm.rs at 42k lines is accretion, not design (Mihai 15:25: "why did one of you models decide to
 push everything in one file?"). The measured cost TODAY: one-agent-per-file serializes ALL engine
@@ -85,7 +85,7 @@ a real HTTP entry shell — split "layout by code" from "entry content owned by 
 scaffolding is not the dead contract-stub form (interface stubs replacing real sources) — argue
 it on mechanism. Mihai 14:35: "isn't build supposed to fan out?"
 
-## Surgeon #7 queue (dispatch when swarm.rs frees after #6 — the research fan)
+## Surgeon #7 queue — ALL LANDED 2026-08-30 (f2d75bebc..760fd8b32); kept for the record
 (works-prover, next fan): is plan_loaded.plan_confidence_breakdown dead post-P1-5? conf_trail.py
 and lever_check.py consume it; the ask event's twin field was confirmed dead 0/0.
 
