@@ -63,6 +63,10 @@ answers snowball into the ledger, synthesis plans over ANSWERED material; imperf
 REPAIR. Design fan in flight; implementation starts the moment swarm.rs frees. r5 completes untouched
 as the serial baseline.
 
+**Named risk (A2, refuter-found, deliberately not fixed):** a connected-but-silent stream (0 chars
+ever) is non-terminal today — the judge look predicate needs ~2k thinking chars — and the research
+fan widens that exposure N-fold. Pre-existing transport class; the tick watches age-without-chars.
+
 ## The goal, unchanged
 
 **PART II LANDED (`3a09bf427` + amendments `55cd200d6`, DESIGN-STABILITY-FIRST.md:300-560): the stateful
