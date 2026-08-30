@@ -180,6 +180,10 @@ fn the_banned_integrate_template_only_shrinks() {
 /// `require_servable` and `device_from_lms_id` (with its test) moved verbatim to
 /// commands/swarm_engine.rs, paying for `SwarmDevice.engine`, the `Engines` registry threading
 /// and the per-engine servable partition wiring in the same commit.
+/// Held at 45,096 through step C (the real SidecarEngine): `LmsProcess` + `parse_lms_ps` moved
+/// to commands/swarm_engine.rs beside the probes that produce them, paying line-for-line for
+/// the sidecar wiring (engine_models provider seam, per-engine re-warm, sidecar pool merge,
+/// live-residency union).
 #[test]
 fn swarm_rs_line_count_only_decreases() {
     const SWARM_RS_LINE_BASELINE: usize = 45_096;

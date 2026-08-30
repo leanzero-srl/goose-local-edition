@@ -3,11 +3,13 @@
 //! `SwarmEngine` is the seam a second local engine (an MLX sidecar) plugs into NEXT TO LM Studio.
 //! Step A moved the existing LM Studio free functions here verbatim from swarm.rs, fronted by one
 //! trait object. Step B (multi-engine generalization) added `EngineKind`, the `Engines` registry,
-//! and the per-engine partition of the proven-negative pool semantics — still with LM Studio as
-//! the only constructed engine (the MLX `SidecarEngine` impl is step C). Every moved body is
-//! byte-identical to its former swarm.rs self.
+//! and the per-engine partition of the proven-negative pool semantics. Step C registers a real
+//! `SidecarEngine` (goose-sidecar's supervised Rapid-MLX process, dispatched through the
+//! declarative `omlx` provider) — constructed ONLY when the config declares `mlx_engine` settings
+//! AND a pool device is tagged for it, so an untagged pool stays byte-identical.
 
-use anyhow::Result;
+use anyhow::{bail, Result};
+use goose_sidecar::engine::{EngineSettings, MlxEngineManager};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::process::Command as ProcCommand;
@@ -15,7 +17,64 @@ use std::sync::Arc;
 
 use console::style;
 
-use super::swarm::{parse_lms_ps, LmsProcess, SwarmDevice};
+use super::swarm::SwarmDevice;
+
+/// One resident/served model row as an engine's probe reports it — the exchange type every
+/// catalog probe returns and the pool builder consumes.
+#[derive(Clone, Debug, PartialEq)]
+pub struct LmsProcess {
+    pub(super) identifier: String,
+    pub(super) status: String,
+    pub(super) device: Option<String>,
+    /// LM Studio's PARALLEL column — how many requests this model instance serves at once. The swarm
+    /// uses it as the device weight so dispatch concurrency tracks the user's LM Studio concurrency.
+    pub(super) parallel: Option<u32>,
+    /// Loaded context length as the engine's catalog reports it (LM Studio `/api/v0/models`
+    /// loaded_context_length; rapid-mlx `/v1/models` context_window). None when the source has
+    /// no such figure (`lms ps` has no column for it) — absent, never invented.
+    pub(super) loaded_context_length: Option<u64>,
+}
+
+/// Parse `lms ps` output (a plain whitespace-aligned table). Splits data rows on runs of >=2 spaces
+/// (so "29.53 GB" stays one field) and reads DEVICE by its header column index. Errs if no header.
+pub(super) fn parse_lms_ps(raw: &str) -> Result<Vec<LmsProcess>> {
+    let ansi = regex::Regex::new(r"\x1b\[[0-9;]*m").unwrap();
+    let gap = regex::Regex::new(r"\s{2,}").unwrap();
+    let clean = ansi.replace_all(raw, "");
+    let lines: Vec<&str> = clean.lines().collect();
+    let header = lines
+        .iter()
+        .position(|l| l.contains("IDENTIFIER") && l.contains("DEVICE"))
+        .ok_or_else(|| anyhow::anyhow!("lms ps: header (IDENTIFIER/DEVICE) not found"))?;
+    let cols: Vec<&str> = lines[header].split_whitespace().collect();
+    let device_idx = cols.iter().position(|c| *c == "DEVICE").unwrap_or(6);
+    let status_idx = cols.iter().position(|c| *c == "STATUS").unwrap_or(2);
+    let parallel_idx = cols.iter().position(|c| *c == "PARALLEL");
+    let mut out = Vec::new();
+    for line in &lines[header + 1..] {
+        if line.trim().is_empty() {
+            continue;
+        }
+        let f: Vec<String> = gap
+            .split(line.trim())
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect();
+        if f.is_empty() {
+            continue;
+        }
+        out.push(LmsProcess {
+            identifier: f[0].clone(),
+            status: f.get(status_idx).cloned().unwrap_or_default(),
+            device: f.get(device_idx).cloned().filter(|s| !s.is_empty()),
+            parallel: parallel_idx
+                .and_then(|i| f.get(i))
+                .and_then(|s| s.parse::<u32>().ok()),
+            loaded_context_length: None,
+        });
+    }
+    Ok(out)
+}
 
 /// The engine-specific surface of the run pipeline: host resolution, residency/servability
 /// probes, and JIT warm-up. Everything engine-neutral (pool building, dispatch, judging) stays
@@ -57,9 +116,9 @@ pub(super) fn device_engine_kind(d: &SwarmDevice) -> EngineKind {
 }
 
 /// The runtime's engine registry: the global LM Studio engine (fronting the whole LM Link pool)
-/// plus zero-or-more named sidecar engines — none today; step C registers the MLX sidecar here.
-/// Constructed once per run and threaded through the same path the single step-A engine object
-/// took (run_swarm -> DispatcherRecipe -> GooseAgentDispatcher).
+/// plus zero-or-more named sidecar engines (`engines_for_run` registers the MLX sidecar when the
+/// config + pool demand it). Constructed once per run and threaded through the same path the
+/// single step-A engine object took (run_swarm -> DispatcherRecipe -> GooseAgentDispatcher).
 pub struct Engines {
     lmstudio: Arc<dyn SwarmEngine>,
     sidecars: BTreeMap<String, Arc<dyn SwarmEngine>>,
@@ -73,15 +132,32 @@ impl Engines {
         }
     }
 
+    pub fn register_sidecar(&mut self, name: &str, engine: Arc<dyn SwarmEngine>) {
+        self.sidecars.insert(name.to_string(), engine);
+    }
+
+    /// The registered engine for a KIND — `None` only for a sidecar kind nobody registered.
+    pub fn for_kind(&self, kind: EngineKind) -> Option<Arc<dyn SwarmEngine>> {
+        match kind {
+            EngineKind::LmStudio => Some(self.lmstudio.clone()),
+            EngineKind::MlxSidecar => self.sidecars.values().next().cloned(),
+        }
+    }
+
+    /// The goose provider name that dispatches to this KIND's engine ("lmstudio" / "omlx").
+    pub(super) fn provider_name_for_kind(&self, kind: EngineKind) -> Option<&'static str> {
+        self.for_kind(kind).map(|e| e.provider_name())
+    }
+
     /// The LM Studio engine directly — for the paths that are LM-Studio-specific by construction
-    /// today (planner pre-warm, dispatch re-warm, the `lms ps` pool build). Step C revisits each.
+    /// (planner pre-warm and the `lms ps` pool build; a sidecar planner is unresolved behavior).
     pub fn lmstudio(&self) -> Arc<dyn SwarmEngine> {
         self.lmstudio.clone()
     }
 
     /// The engine that hosts THIS device's model. A device naming an engine kind with no
-    /// registered engine routes to LM Studio with a LOUD named absence-event — never silently
-    /// (no config writer can produce that tag until step C, but a hand-edited config could).
+    /// registered engine (tagged mlx-sidecar without `mlx_engine` config) routes to LM Studio
+    /// with a LOUD named absence-event — never silently.
     pub fn engine_for_device(&self, d: &SwarmDevice) -> Arc<dyn SwarmEngine> {
         match device_engine_kind(d) {
             EngineKind::LmStudio => self.lmstudio.clone(),
@@ -355,6 +431,7 @@ fn probe_lms_http() -> Vec<LmsProcess> {
                 identifier: id,
                 status: "loaded".to_string(),
                 parallel: None,
+                loaded_context_length: m.get("loaded_context_length").and_then(|v| v.as_u64()),
             })
         })
         .collect()
@@ -456,6 +533,225 @@ fn probe_lms_processes() -> Result<Vec<LmsProcess>> {
     }
     // Fallback: the LM Studio HTTP server (no lms CLI needed). Empty if the server is unreachable too.
     Ok(probe_lms_http())
+}
+
+// ---------------------------------------------------------------------------------------------
+// Step C: the MLX sidecar engine — goose-sidecar's supervised Rapid-MLX process behind the trait
+// ---------------------------------------------------------------------------------------------
+
+/// Drive an engine-manager future from the SYNC trait surface. Inside the runtime (the run
+/// pipeline / dispatcher — goose-cli's runtime is multi-thread) `block_in_place` keeps the worker
+/// thread legal; outside one (unit tests, sync menu paths) a throwaway runtime drives it.
+fn block_on_engine<F: std::future::Future>(fut: F) -> F::Output {
+    match tokio::runtime::Handle::try_current() {
+        Ok(handle) => tokio::task::block_in_place(|| handle.block_on(fut)),
+        Err(_) => tokio::runtime::Runtime::new()
+            .expect("fresh tokio runtime for a sidecar engine call")
+            .block_on(fut),
+    }
+}
+
+/// The MLX sidecar: one supervised Rapid-MLX process serving one mounted model, OpenAI-compat on
+/// 127.0.0.1:{port}, dispatched through the declarative `omlx` provider (OMLX_HOST). Every probe
+/// reads the LIVE `/v1/models` catalog — facts only, nothing fabricated.
+pub struct SidecarEngine {
+    manager: Arc<MlxEngineManager>,
+    base_url: String,
+}
+
+impl SidecarEngine {
+    pub fn new(manager: Arc<MlxEngineManager>) -> Self {
+        let base_url = format!("http://127.0.0.1:{}", manager.settings().port);
+        Self { manager, base_url }
+    }
+
+    /// GET {base_url}/v1/models via curl — the same subprocess idiom as the LM Studio probes
+    /// (a blocking HTTP client inside the async runtime is the trap both avoid).
+    fn v1_models(&self) -> Option<serde_json::Value> {
+        let url = format!("{}/v1/models", self.base_url.trim_end_matches('/'));
+        let out = ProcCommand::new("curl")
+            .args(["-s", "--max-time", "6", &url])
+            .output()
+            .ok()?;
+        serde_json::from_slice::<serde_json::Value>(&out.stdout).ok()
+    }
+
+    /// (served id, context_window) per catalog entry; empty when the engine is down/unreachable.
+    fn served_entries(&self) -> Vec<(String, Option<u64>)> {
+        let Some(json) = self.v1_models() else {
+            return Vec::new();
+        };
+        let Some(arr) = json.get("data").and_then(|v| v.as_array()) else {
+            return Vec::new();
+        };
+        arr.iter()
+            .filter_map(|m| {
+                let id = m.get("id").and_then(|v| v.as_str())?.to_string();
+                Some((id, m.get("context_window").and_then(|v| v.as_u64())))
+            })
+            .collect()
+    }
+}
+
+impl SwarmEngine for SidecarEngine {
+    fn provider_name(&self) -> &'static str {
+        "omlx"
+    }
+    fn http_host(&self) -> String {
+        self.base_url.clone()
+    }
+    fn catalog_probe(&self) -> Vec<LmsProcess> {
+        self.served_entries()
+            .into_iter()
+            .map(|(id, context_window)| LmsProcess {
+                device: device_from_lms_id(&id),
+                identifier: id,
+                // A serving rapid-mlx holds its model resident — served IS loaded here.
+                status: "loaded".to_string(),
+                // rapid-mlx does not report a PARALLEL figure; absent, never invented.
+                parallel: None,
+                loaded_context_length: context_window,
+            })
+            .collect()
+    }
+    fn servable_model_ids(&self) -> Option<std::collections::HashSet<String>> {
+        // Identical None semantics to LM Studio's probe: empty/unreachable is "cannot answer",
+        // never "no models" — the per-engine guard treats it as unproven.
+        let ids: HashSet<String> = self
+            .served_entries()
+            .into_iter()
+            .map(|(id, _)| id)
+            .collect();
+        if ids.is_empty() {
+            return None;
+        }
+        Some(ids)
+    }
+    fn loaded_instance_count(&self, model_id: &str) -> usize {
+        // One supervised process serves one mounted model: 1 iff the live catalog serves it.
+        usize::from(self.served_entries().iter().any(|(id, _)| id == model_id))
+    }
+    fn ensure_loaded(&self, model_id: &str, _instances: u32) {
+        // Fast path: the live catalog already serves it — possibly mounted by ANOTHER process's
+        // manager (the desktop window); mounting again would fight over the port.
+        if self.loaded_instance_count(model_id) > 0 {
+            return;
+        }
+        // `instances` is accepted-and-ignored: the supervisor owns one process serving one model.
+        // TTL likewise — the supervisor owns the engine's lifetime, and rapid-mlx has its own
+        // --resident-model-idle-ttl if that lever is ever wanted.
+        let mut settings = self.manager.settings();
+        let Some(hf_dir) = settings.model_id.clone() else {
+            eprintln!(
+                "engine-config-absent: mlx_engine.model_id is not set — cannot mount \
+                 '{model_id}' (set the HF model directory id under config key \"mlx_engine\")"
+            );
+            return;
+        };
+        // The swarm-facing alias: the server advertises the requested pool model_id, so the
+        // fleet's node-prefix identity convention needs zero goose changes.
+        settings.served_model_name = Some(model_id.to_string());
+        self.manager.set_settings(settings);
+        let result = block_on_engine(async {
+            self.manager.mount(&hf_dir).await?;
+            // Poll the manager's own state machine to a terminal state. No wall ceiling here:
+            // the supervisor's startup handling terminates the Mounting state itself (Running or
+            // Failed), and the interval below is a lifecycle poll, not a bound on model work.
+            loop {
+                let status = self.manager.status().await;
+                match status.state.as_str() {
+                    "running" => return Ok(()),
+                    "failed" => bail!(
+                        "mlx engine mount failed for '{hf_dir}': {}",
+                        status
+                            .last_error
+                            .as_deref()
+                            .unwrap_or("(no error recorded)")
+                    ),
+                    "stopped" => bail!("mount of '{hf_dir}' was superseded (engine stopped)"),
+                    _ => tokio::time::sleep(std::time::Duration::from_millis(500)).await,
+                }
+            }
+        });
+        if let Err(e) = result {
+            eprintln!("engine-mount-failed: {e:#}");
+        }
+    }
+    fn resident_processes(&self) -> Result<Vec<LmsProcess>> {
+        Ok(self.catalog_probe())
+    }
+    fn probe_report(&self) {
+        let status = block_on_engine(self.manager.status());
+        println!("{}", style("mlx-sidecar:").bold());
+        println!("  state: {}", status.state);
+        if let Some(m) = &status.model_id {
+            println!("  mounted: {m}");
+        }
+        if let Some(e) = &status.last_error {
+            println!("  last error: {e}");
+        }
+        println!("  port: {}", self.manager.settings().port);
+        for (id, ctx) in self.served_entries() {
+            match ctx {
+                Some(c) => println!("  serves: {id} (context {c})"),
+                None => println!("  serves: {id}"),
+            }
+        }
+    }
+}
+
+/// Step-C registry construction — the ONE construction site's body. LM Studio always; the MLX
+/// sidecar iff the config declares `mlx_engine` settings AND a pool device is tagged for it.
+/// Neither condition -> the step-B registry, byte-identical.
+pub(super) fn engines_for_run(devices: &[SwarmDevice]) -> Engines {
+    let mut engines = Engines::new();
+    if !devices
+        .iter()
+        .any(|d| d.enabled && d.engine == Some(EngineKind::MlxSidecar))
+    {
+        return engines;
+    }
+    match goose::config::Config::global().get_param::<EngineSettings>("mlx_engine") {
+        Ok(settings) => {
+            let manager = Arc::new(MlxEngineManager::new());
+            manager.set_settings(settings);
+            let sidecar = SidecarEngine::new(manager);
+            // The LMSTUDIO_HOST idiom from step A: exported before the dispatcher constructs any
+            // provider, so the declarative `omlx` provider resolves to THIS sidecar.
+            std::env::set_var("OMLX_HOST", sidecar.http_host());
+            eprintln!(
+                "  · mlx-sidecar engine registered at {} (provider omlx)",
+                sidecar.http_host()
+            );
+            engines.register_sidecar("mlx-sidecar", Arc::new(sidecar));
+        }
+        Err(e) => eprintln!(
+            "engine-config-absent: a pool device is tagged engine=mlx-sidecar but config key \
+             \"mlx_engine\" did not load ({e}) — no sidecar engine registered; its devices' \
+             probes report failed (None) and dispatching to them will error"
+        ),
+    }
+    engines
+}
+
+/// Config-declared sidecar devices join the pool ADDITIVELY: reconcile discovers only the LM
+/// Studio fleet (`lms ps` cannot see a rapid-mlx server), so a device tagged engine=mlx-sidecar
+/// is declared, not discovered. Merged BEFORE the per-engine servability partition, which judges
+/// it against the SIDECAR's own catalog (a not-yet-mounted engine probes to None and is never
+/// condemned). Dedup by id, like the cloud merge.
+pub(super) fn merge_sidecar_devices(pool: &mut Vec<SwarmDevice>, configured: &[SwarmDevice]) {
+    for d in configured
+        .iter()
+        .filter(|d| d.enabled && d.engine == Some(EngineKind::MlxSidecar))
+    {
+        if !pool.iter().any(|p| p.id == d.id) {
+            eprintln!(
+                "  · sidecar node: {} → {} via mlx-sidecar",
+                d.id, d.model_id
+            );
+            pool.push(d.clone());
+        }
+    }
 }
 
 #[cfg(test)]
@@ -656,6 +952,116 @@ mod tests {
         );
         // no dash -> no derivable device
         assert_eq!(device_from_lms_id("solomodel").as_deref(), None);
+    }
+
+    /// Golden rapid-mlx `/v1/models` body — the exact field shape the manager's own
+    /// probe_model_info reads (data[].id / context_window / tool_call_parser).
+    const GOLDEN_V1_MODELS: &str = r#"{"object":"list","data":[{"id":"workhorse-qwen3-coder-30b-mlx","object":"model","context_window":262144,"tool_call_parser":"qwen3_coder"}]}"#;
+
+    /// One-thread HTTP stub serving a fixed body on every request (each probe curls separately).
+    /// The detached accept loop lives for the test binary — harmless on an ephemeral port.
+    fn serve_stub(body: &'static str) -> u16 {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind ephemeral port");
+        let port = listener.local_addr().expect("local addr").port();
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                let Ok(mut stream) = stream else { continue };
+                let mut buf = [0u8; 1024];
+                let _ = stream.read(&mut buf);
+                let resp = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    body.len(),
+                    body
+                );
+                let _ = stream.write_all(resp.as_bytes());
+            }
+        });
+        port
+    }
+
+    fn sidecar_on(port: u16) -> SidecarEngine {
+        let manager = Arc::new(MlxEngineManager::new());
+        let mut settings = manager.settings();
+        settings.port = port;
+        manager.set_settings(settings);
+        SidecarEngine::new(manager)
+    }
+
+    /// Every SidecarEngine probe is a read of the LIVE catalog: ids, loaded state, context
+    /// window, node-prefix device — and parallel stays None (rapid-mlx does not report one).
+    #[test]
+    fn sidecar_catalog_reads_v1_models_honestly() {
+        let port = serve_stub(GOLDEN_V1_MODELS);
+        let eng = sidecar_on(port);
+        assert_eq!(eng.provider_name(), "omlx");
+        assert_eq!(eng.http_host(), format!("http://127.0.0.1:{port}"));
+        let ids = eng.servable_model_ids().expect("stub serves one model");
+        assert!(ids.contains("workhorse-qwen3-coder-30b-mlx"));
+        assert_eq!(
+            eng.loaded_instance_count("workhorse-qwen3-coder-30b-mlx"),
+            1
+        );
+        assert_eq!(eng.loaded_instance_count("something-else"), 0);
+        let procs = eng.resident_processes().expect("catalog probe");
+        assert_eq!(procs.len(), 1);
+        assert_eq!(procs[0].identifier, "workhorse-qwen3-coder-30b-mlx");
+        assert_eq!(procs[0].status, "loaded");
+        assert_eq!(procs[0].device.as_deref(), Some("workhorse"));
+        assert_eq!(procs[0].parallel, None, "never invented");
+        assert_eq!(procs[0].loaded_context_length, Some(262_144));
+    }
+
+    /// A dead sidecar answers None — the identical "cannot answer" semantics of the LM probe.
+    #[test]
+    fn sidecar_probe_failure_is_none_never_empty() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+        let port = listener.local_addr().expect("local addr").port();
+        drop(listener);
+        let eng = sidecar_on(port);
+        assert_eq!(eng.servable_model_ids(), None);
+        assert_eq!(eng.loaded_instance_count("anything"), 0);
+    }
+
+    /// ensure_loaded's fast path: already-served means NO mount attempt (the engine may belong
+    /// to another process's manager — mounting again would fight over the port) and settings
+    /// untouched.
+    #[test]
+    fn sidecar_ensure_loaded_fast_paths_when_already_served() {
+        let port = serve_stub(GOLDEN_V1_MODELS);
+        let eng = sidecar_on(port);
+        eng.ensure_loaded("workhorse-qwen3-coder-30b-mlx", 1);
+        let status = tokio::runtime::Runtime::new()
+            .expect("test runtime")
+            .block_on(eng.manager.status());
+        assert_eq!(
+            status.state, "stopped",
+            "already served -> no mount attempted"
+        );
+        assert_eq!(
+            eng.manager.settings().served_model_name,
+            None,
+            "fast path leaves settings untouched"
+        );
+    }
+
+    /// The loud-refusal case: mlx_engine.model_id unset and the model not served — ensure_loaded
+    /// reports the named config absence and never attempts a mount.
+    #[test]
+    fn sidecar_ensure_loaded_refuses_loudly_without_a_configured_model_dir() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+        let port = listener.local_addr().expect("local addr").port();
+        drop(listener);
+        let eng = sidecar_on(port);
+        assert_eq!(eng.manager.settings().model_id, None, "precondition");
+        eng.ensure_loaded("workhorse-qwen3-coder-30b-mlx", 1);
+        let status = tokio::runtime::Runtime::new()
+            .expect("test runtime")
+            .block_on(eng.manager.status());
+        assert_eq!(
+            status.state, "stopped",
+            "unset mlx_engine.model_id -> loud refusal, no mount"
+        );
     }
 
     /// The config contract of step B: a device yaml WITHOUT the engine key deserializes to None

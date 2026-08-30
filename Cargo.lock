@@ -5037,6 +5037,7 @@ dependencies = [
  "goose-mcp",
  "goose-provider-types",
  "goose-providers",
+ "goose-sidecar",
  "goose-swarm",
  "indicatif 0.18.4",
  "libc",
