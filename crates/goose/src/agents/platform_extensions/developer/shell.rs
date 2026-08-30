@@ -188,6 +188,12 @@ pub struct ShellOutput {
     #[serde(default)]
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub timed_out: bool,
+    /// True when the timeout expired but the command was left RUNNING, detached in its own
+    /// registered process group (swarm own-group spawns only). The result is then a
+    /// measurement of a live process, not an error.
+    #[serde(default)]
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub still_running: bool,
     /// True if output collection was cut short after the shell exited.
     #[serde(default)]
     #[serde(skip_serializing_if = "std::ops::Not::not")]
@@ -424,6 +430,7 @@ impl ShellTool {
             stderr: stderr_result.text,
             exit_code: execution.exit_code,
             timed_out: execution.timed_out,
+            still_running: execution.detached.is_some(),
             output_truncated: execution.output_truncated,
             output_collection_error: execution.output_collection_error.clone(),
         };
@@ -447,7 +454,30 @@ impl ShellTool {
         .filter_map(|t| t.as_ref().map(truncation_notice))
         .collect();
 
-        let is_error = if execution.timed_out {
+        let is_error = if let Some(detached) = &execution.detached {
+            let ports = if detached.listening_ports.is_empty() {
+                "no listening port detected".to_string()
+            } else {
+                format!(
+                    "listening on port(s) {}",
+                    detached
+                        .listening_ports
+                        .iter()
+                        .map(|p| p.to_string())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                )
+            };
+            rendered.push_str(&format!(
+                "\n\nCommand still running after {} seconds — it was NOT killed. It continues in \
+                 background process group {} ({ports}); the output above is everything it printed \
+                 so far, and the group is registered for cleanup when this task ends. Do NOT run \
+                 this command again — probe its port or read its output files to observe it.",
+                resolve_shell_timeout(params.timeout_secs),
+                detached.pgid
+            ));
+            false
+        } else if execution.timed_out {
             rendered.push_str(&format!(
                 "\n\nCommand timed out after {} seconds",
                 resolve_shell_timeout(params.timeout_secs)
@@ -498,6 +528,7 @@ impl ShellTool {
             stderr: message.to_string(),
             exit_code,
             timed_out: false,
+            still_running: false,
             output_truncated: false,
             output_collection_error: None,
         };
@@ -514,6 +545,54 @@ struct ExecutionOutput {
     timed_out: bool,
     output_truncated: bool,
     output_collection_error: Option<String>,
+    /// II-7: set when the timeout expired on a REGISTERED own-group spawn and the process was
+    /// detached instead of killed — the caller renders a measurement, never an error.
+    detached: Option<DetachedShell>,
+}
+
+struct DetachedShell {
+    pgid: i32,
+    listening_ports: Vec<u16>,
+}
+
+/// Ports anything in a detached group is LISTENING on right now — the one fact that tells a
+/// booted server from a hung script. Best-effort by construction: any failure yields an empty
+/// list, rendered as "no listening port detected", never an error.
+#[cfg(unix)]
+async fn group_listening_ports(pgid: i32) -> Vec<u16> {
+    let Ok(pids_out) = tokio::process::Command::new("pgrep")
+        .arg("-g")
+        .arg(pgid.to_string())
+        .output()
+        .await
+    else {
+        return Vec::new();
+    };
+    let pids = String::from_utf8_lossy(&pids_out.stdout)
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(",");
+    if pids.is_empty() {
+        return Vec::new();
+    }
+    let Ok(out) = tokio::process::Command::new("lsof")
+        .args(["-nP", "-iTCP", "-sTCP:LISTEN", "-a", "-p", &pids])
+        .output()
+        .await
+    else {
+        return Vec::new();
+    };
+    let mut ports: Vec<u16> = String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .skip(1)
+        .filter_map(|l| {
+            let name = l.split_whitespace().nth(8)?;
+            name.rsplit(':').next()?.parse().ok()
+        })
+        .collect();
+    ports.sort_unstable();
+    ports.dedup();
+    ports
 }
 
 fn resolve_shell_timeout(timeout_secs: Option<u64>) -> u64 {
@@ -587,6 +666,42 @@ async fn run_command(
                 .map_err(|error| format!("Failed waiting on shell command: {}", error))?
                 .code(),
             Err(_) => {
+                // II-7: expiry is a MEASUREMENT, not an error path, when the spawn leads its own
+                // REGISTERED process group (the swarm's attempt-scoped sessions). The timeout
+                // bounds the TRANSPORT's wait on this call — never the command: a server booted
+                // by a worker is doing its job at 1800s, and killing it here manufactured the
+                // "app never binds a port" class from inside the shell tool. The process keeps
+                // running, stays in the registry `kill_app_tree`/reap_session sweeps, and is
+                // reaped at the owning attempt's terminal transition like every other group.
+                //
+                // A pipe nobody reads would block the detached process at the ~64KB buffer (or
+                // SIGPIPE it if we dropped the read ends), so the collector task is kept alive
+                // and a drainer discards its lines for the group's lifetime. Unregistered spawns
+                // (interactive goose; no session) keep the kill exactly as before.
+                #[cfg(unix)]
+                if let (Some(pgid), Some(_)) = (spawned_pgid, session_id) {
+                    let listening_ports = group_listening_ports(pgid).await;
+                    let mut lines = Vec::new();
+                    while let Ok(item) = rx.try_recv() {
+                        lines.push(item);
+                    }
+                    tokio::spawn(async move {
+                        while rx.recv().await.is_some() {}
+                        let _ = output_task.await;
+                        let _ = child.wait().await;
+                    });
+                    return Ok(ExecutionOutput {
+                        lines,
+                        exit_code: None,
+                        timed_out: false,
+                        output_truncated: false,
+                        output_collection_error: None,
+                        detached: Some(DetachedShell {
+                            pgid,
+                            listening_ports,
+                        }),
+                    });
+                }
                 timed_out = true;
                 let _ = child.start_kill();
                 let _ = child.wait().await;
@@ -646,6 +761,7 @@ async fn run_command(
         timed_out,
         output_truncated,
         output_collection_error,
+        detached: None,
     })
 }
 
@@ -916,6 +1032,71 @@ mod tests {
             !process_groups::group_alive(pgid)
         });
         assert!(gone, "the reap must kill the backgrounded survivor");
+    }
+
+    /// II-7's expired-extension fixture: on a REGISTERED own-group spawn, timeout expiry returns
+    /// a MEASUREMENT — success-shaped, "still running", process alive and detached — and the
+    /// group stays in the registry so the attempt-end reap (A-1's sweep) can clear it. The
+    /// pre-II-7 behaviour (kill + "Command timed out" error) survives only for unregistered
+    /// spawns, pinned by `shell_kills_hanging_command_after_explicit_timeout` below.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn shell_expiry_on_registered_group_measures_and_detaches_instead_of_killing() {
+        use super::super::process_groups;
+        process_groups::enable();
+        let tool = ShellTool::new_for_test().unwrap();
+        let start = std::time::Instant::now();
+        let result = tool
+            .shell_in_session(
+                ShellParams {
+                    command: "echo booted; sleep 300".to_string(),
+                    timeout_secs: Some(1),
+                },
+                None,
+                Some("shell-detach-test-session"),
+            )
+            .await;
+        assert!(
+            start.elapsed().as_secs() < 20,
+            "the transport wait must still end at the timeout"
+        );
+        assert_eq!(
+            result.is_error,
+            Some(false),
+            "a detached still-running command is a measurement, not an error: {:?}",
+            extract_text(&result)
+        );
+        let text = extract_text(&result);
+        assert!(text.contains("still running"), "{text}");
+        assert!(text.contains("process group"), "{text}");
+        assert!(
+            text.contains("booted"),
+            "output captured before expiry travels with the measurement: {text}"
+        );
+        let shell_output = extract_shell_output(&result);
+        assert!(shell_output.still_running);
+        assert!(
+            !shell_output.timed_out,
+            "still_running and timed_out are different claims and only one is true"
+        );
+        // The process is ALIVE and registered — exactly the leak-in-waiting the attempt-end
+        // reap exists for. Sweep it and prove the group empties (the `pgrep -g` half of the
+        // fixture: group_alive is the same signal-0 probe).
+        let killed = process_groups::reap_session("shell-detach-test-session");
+        assert_eq!(killed.len(), 1, "the detached group must be registered");
+        let pgid = killed[0];
+        // Async sleep, NOT std::thread::sleep: the killed leader is a zombie until the detach
+        // path's drainer task reaps it, and a blocking sleep on this single-threaded test
+        // runtime would starve that task forever — a group with a zombie still probes alive.
+        let mut gone = false;
+        for _ in 0..100 {
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+            if !process_groups::group_alive(pgid) {
+                gone = true;
+                break;
+            }
+        }
+        assert!(gone, "the attempt-end reap must clear the detached group");
     }
 
     #[cfg(not(windows))]

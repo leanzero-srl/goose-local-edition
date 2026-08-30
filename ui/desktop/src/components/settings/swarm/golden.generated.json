@@ -81,8 +81,6 @@
   "split": true,
   "smoke": true,
   "complete": true,
-  "split_secs": 300,
-  "complete_cap_secs": 3000,
   "verify_commands": true,
   "fan_e2e": true,
   "no_tools_means_ask": true,

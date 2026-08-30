@@ -701,16 +701,6 @@ pub struct SwarmConfig {
     /// ⚠️ BAKED ON — the golden formula sets this in `Default for SwarmConfig` (F393).
     #[serde(default = "default_true")]
     pub complete: bool,
-    /// Seconds a task must run before the judge may SPLIT it. The provider forced 300 on every desktop run
-    /// with a measured reason ("median 219s / p75 406s, so 900 split almost nothing while 300 splits the fat
-    /// multi-file tasks that actually cause the idle"), so 300 — not the JudgeConfig 900 — is the shipped
-    /// behaviour this default has to preserve.
-    #[serde(default = "default_split_secs")]
-    pub split_secs: u64,
-    /// Hard wall-clock cap on the fix-until-green COMPLETE loop, so a doomed build cannot spin. The provider
-    /// forced 1200; with no env and no field the cap was NONE (unbounded), which is why this is not optional.
-    #[serde(default = "default_complete_cap_secs")]
-    pub complete_cap_secs: u64,
     /// ⚠️ BAKED ON — the golden formula sets this in `Default for SwarmConfig` (F393).
     /// Actually INVOKE the commands the produced app advertises, and fail the gate when one prints an error
     /// while exiting 0. The smoke gate otherwise only ever runs `--help`, which is the single path that
@@ -1224,8 +1214,6 @@ impl Default for SwarmConfig {
             split: Some(true),
             smoke: true,
             complete: true,
-            split_secs: 300,
-            complete_cap_secs: default_complete_cap_secs(),
             verify_commands: true,
             fan_e2e: true,
             no_tools_means_ask: true,
@@ -2240,11 +2228,6 @@ fn show_pool(cfg: &SwarmConfig) {
         } else {
             style("single".to_string()).dim()
         }
-    );
-    println!(
-        "  idle-cap   worker {}s · planner {}s (NO-PROGRESS window, not wall-clock; a stalled stream re-routes / falls back)",
-        style(cfg.worker_timeout_secs).cyan(),
-        style(cfg.planner_timeout_secs).cyan()
     );
     println!(
         "  models load {}",
@@ -3685,29 +3668,10 @@ fn proxy_answer_after_secs() -> u64 {
     }
 }
 
-/// A week, in seconds: the stand-in for "no cap" at sites whose arithmetic needs a finite
-/// Duration (deadline sums, headroom division). Far beyond any run; never a real bound.
-const UNCAPPED_SECS: u64 = 604_800;
+// II-7: UNCAPPED_SECS / effective_idle_budget deleted. The week-long stand-in existed for
+// deadline arithmetic that is itself deleted; the no-cap rule is now enforced by ABSENCE — no
+// run_agent path takes a time parameter at all, so there is nothing to guard with a sentinel.
 
-/// The idle budget actually applied to a call — ALWAYS uncapped, whatever the config says.
-///
-/// `worker_timeout_secs` (420 in the live config) and `planner_timeout_secs` (900, which reaches this
-/// same parameter through `run_agent_timed`) are both DEAD: the transport already does this better, with
-/// INACTIVITY semantics that reset on every received chunk, so a slow-but-alive local generation
-/// survives indefinitely and a genuinely silent stream is cut where the bytes stop.
-///
-/// This is a FUNCTION rather than an inline `let _ = idle_secs` because the sink cap was deleted once
-/// and came back unguarded — its own note records "it survived the purge, unguarded, because
-/// `uncapped()` was removed at the same time", and the cost was integrate-verify running exactly 1800s,
-/// its cap to the second, and being logged `status=done`. A comment cannot fail a build. Re-arming a
-/// wall clock here now has to go through a tested function.
-fn effective_idle_budget(_configured_secs: u64) -> std::time::Duration {
-    std::time::Duration::from_secs(UNCAPPED_SECS)
-}
-
-/// The wall for a planner-side helper call (judge review, question answerer, per-task reviewer,
-/// test generator, finding verifier, split partitioner): the configured no-progress window with
-/// a 90s floor — or no wall at all under GOOSE_SWARM_UNCAPPED.
 /// Turn budget for small planner-side agent loops (detail specs, contract stubs). 6 was sized on
 /// qwen3.6's habits; qwen3.8 spends turns on tool reads plus deep thinking and hits it BEFORE
 /// emitting the deliverable — MEASURED uncapped r0: 6 of the first 8 detail calls returned the
@@ -3724,11 +3688,9 @@ fn planner_side_turns() -> u32 {
     1_000_000
 }
 
-fn planner_wall(_planner_timeout_secs: u64) -> u64 {
-    // No wall. A planner-side call ends when the model finishes, when the judge redirects it, or when
-    // the socket dies.
-    UNCAPPED_SECS
-}
+// II-7: planner_wall deleted — the helper-call timeout wraps it fed are unwrapped; a
+// planner-side call ends when the model finishes, when the judge redirects it, or when the
+// socket dies.
 
 // REMOVED with the spiral break: the per-kind budget table, its 12,000-char floor, and the compile-time
 // guard on that floor. The table is kept here because it is the ARGUMENT, measured over 428 terminal call
@@ -10279,20 +10241,10 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
         );
     }
 
-    /// NO CONFIGURED NUMBER MAY EVER BECOME A WALL CLOCK ON A CALL. Mihai's standing rule, and the one
-    /// that has been re-broken most: "All of the caps, all of the timers need to go, local models take a
-    /// long time to complete." The live config still carries worker_timeout_secs: 420 and
-    /// planner_timeout_secs: 900; both reach this budget, and both must be ignored.
-    #[test]
-    fn no_configured_timeout_can_ever_bound_a_call() {
-        for configured in [0u64, 1, 42, 420, 900, 1800, 604_800, u64::MAX] {
-            assert_eq!(
-                effective_idle_budget(configured).as_secs(),
-                UNCAPPED_SECS,
-                "a configured {configured}s became a real bound — a cap is back"
-            );
-        }
-    }
+    // II-7: no_configured_timeout_can_ever_bound_a_call went with effective_idle_budget itself.
+    // The rule it tested is now structural: run_agent/run_agent_in carry NO time parameter, so a
+    // configured number cannot reach a call — re-arming one means re-adding a parameter through
+    // every signature, not flipping a value past a test.
 
     /// THE THREE SENTENCES THAT DEFEATED THE OLD KEY, verbatim from the live run that measured this.
     /// They must be ONE finding, and the `STILL: ` prefix that produced 9 findings with `repeated: 0`
@@ -11580,23 +11532,10 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
             Some(true),
             "split was force-set to 1 for every desktop run"
         );
-        // The NUMERICS matter as much as the bools and I got them wrong first: dropping the force-set
-        // without these fields moved the split threshold 300 -> 900 (the JudgeConfig default), which the
-        // provider had deliberately lowered because "median 219s / p75 406s, so 900 split almost nothing",
-        // and left the fix-until-green loop with NO cap at all instead of 1200s.
-        assert_eq!(d.split_secs, 300, "provider forced SPLIT_SECS=300");
-        // The load-bearing property here is BOUNDED-AND-IDENTICAL, not the specific number: 0/absent
-        // means an unbounded fix loop, and a divergence between the two surfaces re-splits the engines.
-        // This used to pin the literal 1200 the provider forced. That number was RAISED to 3000 once it
-        // was measured to be smaller than a single fix attempt (see `default_complete_cap_secs`), and
-        // pinning the literal here made a correctness fix look like a parity regression. The value is
-        // now guarded where it belongs — `complete_cap_fits_its_own_rounds` ties it to fix_cap_secs and
-        // complete_rounds — so this asserts the property and defers the number.
-        assert!(
-            d.complete_cap_secs > 0,
-            "0/absent means an UNBOUNDED fix loop"
-        );
-        assert_eq!(d.complete_cap_secs, default_complete_cap_secs());
+        // (split_secs and complete_cap_secs left this list with II-7: the split wall clock and
+        // the repair-phase cap are deleted from the engine, so there is no numeric to keep in
+        // parity — an asserted number here would be a printed lever for a mechanism that no
+        // longer exists.)
     }
 
     /// A `swarm:` block that OMITS a key must still get the intended DEFAULT, not the type default.
@@ -12764,16 +12703,6 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
         assert_eq!(complete_stall_rounds_from(Some("nope".to_string())), 2); // unparseable -> default 2
     }
 
-    /// REGRESSION: the repair phase must be able to AFFORD the rounds it advertises.
-    ///
-    /// `complete_cap_secs` was 1200 — the same number as `fix_cap_secs()`, the cap on ONE fix
-    /// worker — so the first attempt could eat the whole phase budget and the loop broke on
-    /// `cap_deadline` before dispatching a second. Measured 4 for 4 across every cell that reached
-    /// the loop: `complete_fix_completed {secs: 1200, agent_ok: false}`, never a completed repair.
-    ///
-    /// Two knobs whose values made the advertised behaviour impossible, and nothing tied them
-    /// together. This is that tie. It is deliberately an INEQUALITY over the real functions rather
-    /// than an equality against 3000: the point is the relationship, not the number.
     /// The shadow counterfactual must be the SAME question the lever acts on.
     ///
     /// `plan_convergence.would_skip_ladder` exists so an ordinary run — lever OFF — answers "would
@@ -15934,10 +15863,6 @@ pub struct GooseAgentDispatcher {
     worker_extensions: Vec<ExtensionConfig>,
     /// The planner model (also used by the dynamic Replanner impl).
     planner_model: String,
-    /// Per-task wall-clock cap (seconds): a worker exceeding this is treated as hung and re-routed.
-    worker_timeout_secs: u64,
-    /// Shorter wall-clock cap (seconds) for planner-side calls via `run_agent_timed`.
-    planner_timeout_secs: u64,
     /// Whether the swarm may `lms load` a model (gates the transient re-warm on dispatch errors).
     allow_model_load: bool,
     /// Imposed sampling parameters applied to every model call (steadies weak local models).
@@ -16089,8 +16014,6 @@ impl GooseAgentDispatcher {
         worker_extensions: Vec<ExtensionConfig>,
         cloud_models: std::collections::HashMap<String, String>,
         planner_model: String,
-        worker_timeout_secs: u64,
-        planner_timeout_secs: u64,
         allow_model_load: bool,
         sampling: SamplingParams,
         stream_decode_retry: bool,
@@ -16115,8 +16038,6 @@ impl GooseAgentDispatcher {
             worker_max_turns,
             worker_extensions,
             planner_model,
-            worker_timeout_secs,
-            planner_timeout_secs,
             allow_model_load,
             sampling,
             pillars: std::sync::OnceLock::new(),
@@ -16240,10 +16161,9 @@ impl GooseAgentDispatcher {
             .map(|(shadow, _)| shadow.path().to_path_buf())
     }
 
-    /// `run_agent` wrapped in a wall-clock timeout (`worker_timeout_secs`). Used for PLANNER-side
-    /// calls (architect / solo plan / scouts / research / replan) so an agent that hangs at the
-    /// protocol level cannot stall the run forever — every caller degrades on Err (fallback plan,
-    /// skip scout, empty research).
+    /// `run_agent` for PLANNER-side calls (architect / solo plan / scouts / research / replan).
+    /// Carries no time bound (II-7): every caller degrades on Err (fallback plan, skip scout,
+    /// empty research), and a dead stream is the transport's to cut.
     async fn run_agent_timed(
         &self,
         model_id: &str,
@@ -16253,8 +16173,6 @@ impl GooseAgentDispatcher {
         max_turns: u32,
         extensions: &[ExtensionConfig],
     ) -> Result<RunAgentOut> {
-        // Idle-based, not wall-clock: planner_timeout_secs is a NO-PROGRESS window. A slow but
-        // progressing architect / detailer / scout runs to completion; only a stalled stream aborts.
         self.run_agent(
             model_id,
             system_prompt,
@@ -16262,7 +16180,6 @@ impl GooseAgentDispatcher {
             response,
             max_turns,
             extensions,
-            self.planner_timeout_secs,
             None,
         )
         .await
@@ -16302,7 +16219,6 @@ impl GooseAgentDispatcher {
             response,
             max_turns,
             extensions,
-            self.planner_timeout_secs,
             activity_key,
             0,    // planner-side calls never retry through the scheduler
             None, // no assistant prefill on this path
@@ -16324,7 +16240,6 @@ impl GooseAgentDispatcher {
         response: Option<Response>,
         max_turns: u32,
         extensions: &[ExtensionConfig],
-        idle_secs: u64,
         activity_key: Option<&str>,
     ) -> Result<RunAgentOut> {
         // Normal path: the agent writes the REAL project tree (self.working_dir).
@@ -16336,7 +16251,6 @@ impl GooseAgentDispatcher {
             response,
             max_turns,
             extensions,
-            idle_secs,
             activity_key,
             0,    // generic path: no scheduler attempt counter
             None, // no assistant prefill on this path
@@ -16364,7 +16278,6 @@ impl GooseAgentDispatcher {
         response: Option<Response>,
         max_turns: u32,
         extensions: &[ExtensionConfig],
-        idle_secs: u64,
         // When Some(task_id), emit a per-turn activity heartbeat to `.swarm/activity/<task_id>.json` so
         // the idle-model judge can see how many actions this worker has taken — letting it catch a
         // thrashing (many-actions, zero-output) worker by BEHAVIOR instead of waiting on the clock.
@@ -16644,30 +16557,12 @@ impl GooseAgentDispatcher {
                 let _ = std::fs::copy(p, m);
             }
         }
-        // THE ENGINE NO LONGER WATCHES FOR SILENCE. This was the last cap standing, kept as a
-        // "dead-socket detector" — and it turns out to be a redundant, coarser copy of something the
-        // TRANSPORT already does better.
-        //
-        // goose-providers/src/api_client.rs:48-59 configures reqwest with INACTIVITY semantics:
-        // `.read_timeout(..)`, which RESETS on every received chunk, plus a 30s `.connect_timeout(..)`.
-        // So a slow-but-alive generation survives indefinitely (it keeps emitting chunks), a genuinely
-        // silent stream is cut where the bytes actually stop arriving, and a dead endpoint fails at
-        // connect. That failure then surfaces as a provider error and flows into the existing transient
-        // retry path — which is exactly what this watchdog was approximating from one layer too high,
-        // with a number that could not tell prefill from death (hence the prefill-grace machinery below,
-        // which exists solely to patch that blindness).
-        //
-        // `idle_secs` is therefore ignored. The Duration below exists only because `tokio::time::timeout`
-        // needs one; it is never a real bound.
-        // Nothing reads a budget any more — the wall it fed was deleted. `effective_idle_budget` stays
-        // the ONE guarded entry point for re-arming one (see its doc comment: the sink cap came back once
-        // because a comment cannot fail a build), so it is asserted here rather than left as an unused
-        // binding that the next cleanup would delete along with the guard.
-        debug_assert_eq!(
-            effective_idle_budget(idle_secs).as_secs(),
-            UNCAPPED_SECS,
-            "a configured timeout became a real bound — a cap is back"
-        );
+        // THE ENGINE NO LONGER WATCHES FOR SILENCE (II-7 completed the deletion: idle_secs, the
+        // effective_idle_budget guard and the UNCAPPED_SECS stand-in are GONE, not parked). The
+        // transport owns dead-stream detection — a 30s connect_timeout, and provider errors flow
+        // into the existing transient retry path. Re-arming a wall here means re-adding a
+        // parameter through every signature in this chain, which is the guard now: a cap cannot
+        // come back by flipping one number.
         // PREFILL-AWARE FIRST-TOKEN BUDGET (F905 third catch, r9): prefill streams NOTHING, so a
         // large prompt on a contended node is indistinguishable from a dead stream to this
         // watchdog — r9's completed calls measured 164s TTFT at 14k prompt tokens while the
@@ -17657,7 +17552,7 @@ impl GooseAgentDispatcher {
                 // continue.
                 let probe = {
                     let mut probe_fut =
-                        Box::pin(self.run_agent(&pm, sys, user, None, 1, &[], 0, None));
+                        Box::pin(self.run_agent(&pm, sys, user, None, 1, &[], None));
                     loop {
                         tokio::select! {
                             biased;
@@ -26887,14 +26782,11 @@ impl GooseAgentDispatcher {
             goal = req.goal,
             desc = req.description,
         );
-        let text = tokio::time::timeout(
-            std::time::Duration::from_secs(planner_wall(self.planner_timeout_secs)),
-            self.run_agent(&req.judge_model_id, system, user, None, 2, &[], 0, None),
-        )
-        .await
-        .ok()
-        .and_then(|r| r.ok())
-        .map(|o| o.text)?;
+        let text = self
+            .run_agent(&req.judge_model_id, system, user, None, 2, &[], None)
+            .await
+            .ok()
+            .map(|o| o.text)?;
         // Extract the JSON array even if the model wrapped it in prose. `get` (not slice indexing) returns
         // None on an inverted/invalid range, so a reply with no array just falls through to the review.
         let start = text.find('[')?;
@@ -27269,10 +27161,6 @@ fn corrupt_store_crash(out: &str, err: &str) -> bool {
     format!("{out}\n{err}").contains("Traceback (most recent call last)")
 }
 
-fn default_split_secs() -> u64 {
-    300
-}
-
 /// A device id to its configured `speed_weight` — substring match against the `speed_weights` map
 /// (e.g. `{"worksmacstudio":3,"local":2,"gabee":1}`); default 1 = equal share.
 ///
@@ -27288,82 +27176,8 @@ fn configured_speed_weight(weights: &std::collections::HashMap<String, u32>, id:
         .unwrap_or(1)
 }
 
-/// THE PHASE BUDGET MUST FIT THE ROUNDS IT ADVERTISES. It did not, and the repair loop never once
-/// completed a fix.
-///
-/// This was 1200 — the SAME value as `fix_cap_secs()`, the cap on ONE fix worker. So the first fix
-/// attempt could consume the entire phase budget on its own, after which the loop head ran one more
-/// verify and hit `cap_deadline`, breaking before any second attempt. `complete_rounds` defaults to
-/// 2 and dispatches a fix on rounds 0 and 1, so the loop was budgeted for less than HALF of what it
-/// claimed to do.
-///
-/// MEASURED across every cell of this campaign that reached the fix loop — baseline-n1-r0, n3-r0,
-/// n3-r1, n3-r3 — `complete_fix_completed` was 4 for 4 at `secs: 1200, agent_ok: false`. Not one
-/// repair attempt ever returned. And the workers were NOT spiralling: baseline-n1-r0's fix agent
-/// made 11 tool calls, correctly diagnosed a MockStore/MagicMock inheritance bug, landed an edit,
-/// and was reading `meridian.py` to write the missing test when the timeout cut it mid-sentence.
-/// Round 1's verify then reported a DIFFERENT pytest error, which proves the edit landed and the
-/// attempt was making real progress.
-///
-/// So the loop is genuinely incremental — a killed attempt still leaves its edits in the tree and
-/// the next round's verify re-derives findings from disk — and it was being denied the second draw
-/// that incrementality is FOR.
-///
-/// 3000 = 2 attempts x 1200 + 600 for the three verifies. Safe to raise because a working app never
-/// enters this loop at all: round 0 breaks green on `verdict.findings.is_empty()`. This budget is
-/// only ever spent on an app that is RED, which is exactly when it is worth spending.
-/// `complete_cap_fits_its_own_rounds` fails the build if these drift apart again.
-fn default_complete_cap_secs() -> u64 {
-    3000
-}
-
-/// The repair budget that will ACTUALLY be used, given the rounds it will actually dispatch.
-///
-/// `complete_cap_fits_its_own_rounds` asserts the invariant on `default_complete_cap_secs()` — and only
-/// there. `load_config` merges config.yaml OVER the baked default, so a config still carrying the
-/// pre-raise `complete_cap_secs: 1200` silently reinstates the exact budget the raise to 3000 existed to
-/// eliminate, and every test still passes because no test looks at the resolved value.
-///
-/// MEASURED on baseline-n3-r0, and it is the documented failure reproduced through config instead of
-/// through the default: round 0's race ran 1207s against a resolved cap of 1200, round 1's verify found
-/// the app still RED at 1 finding, `cap_deadline` had already passed, and the loop broke WITHOUT
-/// dispatching the second fix it was budgeted for. That is the "first fix attempt consumes the entire
-/// phase budget, then one more verify hits cap_deadline" sequence `default_complete_cap_secs` was
-/// written to prevent.
-///
-/// SAY IT AS EXHAUSTION, NOT AS SLACK — an earlier version of this comment got it backwards. It read
-/// "1216s of a nominal 3000s budget, 1784s unspent", which describes a run that had budget and failed
-/// to use it. The opposite is true: the run's RESOLVED budget was 1200 and it spent 1216, SEVEN
-/// SECONDS OVER. There was no unspent budget; there was a budget too small to finish the job it was
-/// dispatched for, and the 1784s exists only in the counterfactual this function creates. The
-/// distinction matters because a firing-rate predicate written from the wrong version searched for
-/// leftover budget and found the defect in ZERO of 19 cells that contain it.
-///
-/// The correct signature, across the corpus: a qualifying cell spends 1201-1411s against its 1200s cap
-/// and ends RED WITH EXACTLY ONE FINDING. Roughly a third of runs reaching COMPLETE finish one finding
-/// short of green because repair ran out of budget mid-recovery — a specific recurring outcome rather
-/// than accounting slack, and a better reason for this function to exist.
-///
-/// LIFT, do not refuse. A cap too small for its own rounds is a stale value rather than an intent, and by
-/// the time this is known the run is mid-flight holding a red app. Lifting costs at most the rounds the
-/// operator already asked for; refusing throws the build away. It lifts to `default_cap` — the budget the
-/// engine already computed for these rounds, verify headroom included — or to `rounds × fix_cap` when even
-/// the default cannot fit them (F856: the per-fix cap now scales to 2× with tree bytes, so two scaled
-/// rounds can legitimately need 4800s against a 3000s default — budgeting the static value reinstated the
-/// exact unreachable-round defect this function exists to prevent, one scale factor later). An explicit 0
-/// means "no cap" and is honoured; a cap that already fits is returned untouched, so this can only ever
-/// raise a budget that cannot do its own job.
-fn complete_cap_fitting_rounds(resolved: u64, rounds: u64, fix_cap: u64, default_cap: u64) -> u64 {
-    if resolved == 0 {
-        return 0;
-    }
-    let need = rounds.saturating_mul(fix_cap);
-    if resolved >= need {
-        resolved
-    } else {
-        default_cap.max(resolved).max(need)
-    }
-}
+// II-7: default_complete_cap_secs / complete_cap_fitting_rounds deleted with the repair
+// wall they budgeted — the phase has no deadline to fit rounds into any more.
 
 /// Record WHY the judge passed without a semantic review. Without this every pass looks identical in
 /// the log and the one number that matters — how often the supervisor actually formed a judgement —
@@ -27446,12 +27260,6 @@ impl Judge for GooseAgentDispatcher {
             // Task-splitting is gone entirely (step 4b): taking files off a running worker is the same
             // mistake as moving it to another node.
             split_enabled: false,
-            // GOOSE_SWARM_SPLIT_SECS overrides the too-big threshold (default 900s) so a live M4 proof can
-            // trigger a split on a moderate task without waiting ~15 min for one to cross the default.
-            split_threshold_secs: std::env::var("GOOSE_SWARM_SPLIT_SECS")
-                .ok()
-                .and_then(|v| v.parse().ok())
-                .unwrap_or_else(|| load_config().split_secs),
             // #134 reasoning-spiral cap: env wins, else config.yaml, else 0 (OFF). Config-reachable so the
             // desktop can enable it (env is discarded by `open -n`).
             // Permanently off: a char count is a volume threshold, and the judge reads content.
@@ -27835,13 +27643,11 @@ impl Judge for GooseAgentDispatcher {
                 return JudgeOutcome::ok();
             }
         }
-        match tokio::time::timeout(
-            std::time::Duration::from_secs(planner_wall(self.planner_timeout_secs)),
-            self.run_agent(&req.judge_model_id, system, user, None, 2, &[], 0, None),
-        )
-        .await
+        match self
+            .run_agent(&req.judge_model_id, system, user, None, 2, &[], None)
+            .await
         {
-            Ok(Ok(o)) if is_agent_loop_filler(&o.text) => {
+            Ok(o) if is_agent_loop_filler(&o.text) => {
                 // THE JUDGE'S OWN MODEL EXHAUSTED ITS TURNS. goose's agent loop then returns its
                 // fixed meta-message ("I've reached the maximum number of actions…") instead of a
                 // verdict — a full generation on a fleet node that supervised nothing. The engine
@@ -27860,7 +27666,7 @@ impl Judge for GooseAgentDispatcher {
                 me_events_skip(&self.events, &req.task_id, "judge_turn_budget_exhausted");
                 JudgeOutcome::ok()
             }
-            Ok(Ok(o)) => {
+            Ok(o) => {
                 if let Ok(mut seen) = self.judge_seen.lock() {
                     seen.insert(seen_key, review_fp);
                 }
@@ -27935,15 +27741,12 @@ impl PreReviewer for GooseAgentDispatcher {
         let user = format!(
             "GOAL of the run: {goal}\n\nCURRENT RUN STATE:\n{run_state}\n\nOPERATOR QUESTION:\n{question}\n\nYour answer:"
         );
-        let reply = tokio::time::timeout(
-            std::time::Duration::from_secs(planner_wall(self.planner_timeout_secs)),
-            self.run_agent(model_id, system, user, None, 1, &[], 0, None),
-        )
-        .await
-        .ok()
-        .and_then(|r| r.ok())
-        .map(|o| o.text)
-        .unwrap_or_else(|| "(the answerer timed out — ask again)".to_string());
+        let reply = self
+            .run_agent(model_id, system, user, None, 1, &[], None)
+            .await
+            .ok()
+            .map(|o| o.text)
+            .unwrap_or_else(|| "(the answerer failed — ask again)".to_string());
         let adir = self.working_dir.join(".swarm").join("answers");
         let _ = std::fs::create_dir_all(&adir);
         let _ = std::fs::write(adir.join(&stem), &reply);
@@ -28078,15 +27881,12 @@ impl PreReviewer for GooseAgentDispatcher {
             desc = req.description,
             files = files_block,
         );
-        let text = tokio::time::timeout(
-            std::time::Duration::from_secs(planner_wall(self.planner_timeout_secs)),
-            self.run_agent(&req.reviewer_model_id, system, user, None, 2, &[], 0, None),
-        )
-        .await
-        .ok()
-        .and_then(|r| r.ok())
-        .map(|o| o.text)
-        .unwrap_or_default();
+        let text = self
+            .run_agent(&req.reviewer_model_id, system, user, None, 2, &[], None)
+            .await
+            .ok()
+            .map(|o| o.text)
+            .unwrap_or_default();
         let (status, findings) = text.trim().split_once('|').unwrap_or(("OK", ""));
         let findings = findings.trim();
         let had_findings = status.to_uppercase().contains("ISSUE") && !findings.is_empty();
@@ -31081,8 +30881,6 @@ struct DispatcherRecipe {
     /// model_id → provider name for CLOUD pool devices (e.g. "bedrock"). Empty on an all-local fleet.
     cloud_models: std::collections::HashMap<String, String>,
     planner_model: String,
-    worker_timeout_secs: u64,
-    planner_timeout_secs: u64,
     allow_model_load: bool,
     sampling: SamplingParams,
     stream_decode_retry: bool,
@@ -31102,8 +30900,6 @@ async fn build_swarm_dispatcher(
             r.worker_extensions,
             r.cloud_models,
             r.planner_model,
-            r.worker_timeout_secs,
-            r.planner_timeout_secs,
             r.allow_model_load,
             r.sampling,
             r.stream_decode_retry,
@@ -33261,19 +33057,14 @@ impl GooseAgentDispatcher {
         let mut req = req;
         req.speculative = true;
         req.all_files = fr.all_files.clone();
-        // F856: the twin's cap scales with the tree it must read+repair (fix_cap_secs_scaled —
-        // measured from `fr.all_files`, the exact list in hand, never the OnceCell the fresh
-        // wave dispatcher provably never fills). An empty/unreadable list sums to 0 bytes and
-        // the scale helper returns the base unchanged — old behavior exactly.
         let root = std::env::current_dir().unwrap_or_else(|_| self.working_dir.clone());
-        let fix_cap = fix_cap_secs_scaled(&root, &fr.all_files);
         // "model" like every wave-path emitter — the desktop's fleet strip keys the lane's
         // device off it, and the model-less sched event minted a phantom "?" fleet row that
         // then persisted as a 4th idle node for the rest of the run (holistic review).
         self.events.write_value(serde_json::json!({
             "event": "complete_fix_dispatched", "path": "sched",
             "round": fr.round, "task_id": req.task_id, "baseline_findings": baseline,
-            "fix_cap_secs": fix_cap, "model": req.model_id,
+            "model": req.model_id,
         }));
         let started = std::time::Instant::now();
         let guard = FixShadowGuard {
@@ -33281,43 +33072,66 @@ impl GooseAgentDispatcher {
             task_id: req.task_id.clone(),
             armed: true,
         };
-        // F889: the cap races a STILLBORN check — an attempt with zero tool calls at five
-        // minutes is aborted instead of consuming the rest of its budget (the narrate-don't-act
-        // stall; the shadow is unchanged so the grade below refuses it regardless — the only
-        // question is whether the round loses 5 minutes or 15 to learn that).
+        // II-7: the deadline arm and the stillborn floor are gone — both were a clock deciding
+        // model work, and F889's five-minute floor could not tell "narrating instead of acting"
+        // from "queued behind a sibling on a busy node" (the r2 slot-starvation blind spot). The
+        // poll survives as a LOOK cadence only: each tick MEASURES — the digest's tool_calls and
+        // the node's own lms-ps state — and emits `fix_zero_production_look` as data. NO verdict,
+        // NO break: K (how many zero-production looks mean anything) is underived until r2's
+        // healthy inter-delta gap distribution is measured, and the unchanged shadow already
+        // refuses a stillborn fix at grade time, so nothing is lost by not aborting.
         let ran = {
             let digest_path = root
                 .join(".swarm/activity")
                 .join(format!("{}.json", activity_digest_key(&req.task_id)));
             let fut = self.run_task_inner(req.clone());
             tokio::pin!(fut);
-            let deadline = tokio::time::sleep(std::time::Duration::from_secs(fix_cap));
-            tokio::pin!(deadline);
-            let started_at = std::time::Instant::now();
-            let mut poll =
-                tokio::time::interval(std::time::Duration::from_secs(FIX_STILLBORN_POLL_SECS));
+            let mut poll = tokio::time::interval(std::time::Duration::from_secs(FIX_LOOK_SECS));
             poll.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+            let mut zero_production_looks: u64 = 0;
             loop {
                 tokio::select! {
-                    r = &mut fut => break Ok(r),
-                    _ = &mut deadline => break Err("cap"),
+                    r = &mut fut => break r,
                     _ = poll.tick() => {
-                        if started_at.elapsed().as_secs() >= FIX_STILLBORN_SECS {
-                            let tool_calls = std::fs::read_to_string(&digest_path)
-                                .ok()
-                                .and_then(|c| serde_json::from_str::<serde_json::Value>(&c).ok())
-                                .and_then(|v| v.get("tool_calls").and_then(|t| t.as_u64()));
-                            if tool_calls == Some(0) {
-                                self.events.write_value(serde_json::json!({
-                                    "event": "fix_attempt_stillborn", "path": "sched",
-                                    "round": fr.round, "task_id": req.task_id,
-                                    "secs": started_at.elapsed().as_secs(),
-                                    "detail": "zero tool calls past the stillborn floor — attempt \
-                                               aborted; the unchanged shadow could never promote",
-                                }));
-                                break Err("stillborn");
-                            }
+                        let tool_calls = std::fs::read_to_string(&digest_path)
+                            .ok()
+                            .and_then(|c| serde_json::from_str::<serde_json::Value>(&c).ok())
+                            .and_then(|v| v.get("tool_calls").and_then(|t| t.as_u64()));
+                        if tool_calls != Some(0) {
+                            continue;
                         }
+                        // Zero tool calls so far: is the node even generating for us? lms ps is
+                        // the per-node truth (the parser the pool import already trusts); probed
+                        // only on the zero-calls path so healthy lanes cost nothing.
+                        let model_id = req.model_id.clone();
+                        let node_state = tokio::task::spawn_blocking(move || {
+                            probe_lms_processes()
+                                .ok()
+                                .and_then(|procs| {
+                                    procs
+                                        .into_iter()
+                                        .find(|p| p.identifier == model_id)
+                                        .map(|p| p.status)
+                                })
+                                .unwrap_or_else(|| "absent".to_string())
+                        })
+                        .await
+                        .unwrap_or_else(|_| "absent".to_string());
+                        let held = matches!(node_state.as_str(), "GENERATING" | "PROCESSINGPROMPT");
+                        if !held {
+                            zero_production_looks += 1;
+                        }
+                        self.events.write_value(serde_json::json!({
+                            "event": "fix_zero_production_look", "path": "sched",
+                            "round": fr.round, "task_id": req.task_id,
+                            "looks": zero_production_looks,
+                            "node_state": node_state,
+                            "detail": if held {
+                                "queued behind a sibling — the node is working, just not for this call"
+                            } else {
+                                "node idle and zero tool calls — a zero-production look (summons data; no verdict)"
+                            },
+                        }));
                     }
                 }
             }
@@ -33326,7 +33140,8 @@ impl GooseAgentDispatcher {
         // A shadow that was never built grades nothing: keep the Transient bail (re-shadow is
         // safe — make_shadow's insert overwrites) instead of minting a vacuous verdict.
         if self.speculative_root(&req.task_id).is_none() {
-            if let Ok(Err(DispatchError::Transient(e))) = ran {
+            if let Err(DispatchError::Transient(e)) = &ran {
+                let e = e.clone();
                 guard.disarm();
                 return Err(DispatchError::Transient(e));
             }
@@ -33353,7 +33168,7 @@ impl GooseAgentDispatcher {
             self.discard_speculative(&req.task_id).await;
         }
         guard.disarm();
-        let agent_ok = matches!(&ran, Ok(Ok(_)));
+        let agent_ok = ran.is_ok();
         self.events.write_value(serde_json::json!({
             "event": "complete_fix_completed", "path": "sched",
             "round": fr.round, "task_id": req.task_id,
@@ -33371,7 +33186,7 @@ impl GooseAgentDispatcher {
         // the shadow's fate: "tried and NOT FIXED" is precisely the fact a discarded attempt
         // leaves behind.
         {
-            let agent_text = if let Ok(Ok(o)) = &ran {
+            let agent_text = if let Ok(o) = &ran {
                 o.output.clone()
             } else {
                 String::new()
@@ -33399,7 +33214,7 @@ impl GooseAgentDispatcher {
             }
         }
         match ran {
-            Ok(Ok(mut out)) => {
+            Ok(mut out) => {
                 out.output = format!(
                     "{}\n[fix graded: verified={verified:?} baseline={baseline} promoted={promoted}]",
                     out.output
@@ -33414,7 +33229,7 @@ impl GooseAgentDispatcher {
     }
 
     /// The ordinary task body — everything run() did after kind-normalization, extracted verbatim
-    /// (F781/#16 c3) so the fix path can wrap it in a cap and a grade epilogue.
+    /// (F781/#16 c3) so the fix path can wrap it in a grade epilogue.
     /// VERIFY WHAT A TASK ACTUALLY DELIVERED, THE MOMENT IT SAYS IT IS DONE, on EVERY path that says so.
     ///
     /// Cheapest possible placement: the files are on disk, the answer is a fact, and no node is involved.
@@ -34760,7 +34575,6 @@ impl GooseAgentDispatcher {
                 None,
                 max_turns,
                 &self.worker_extensions,
-                self.worker_timeout_secs,
                 Some(&req.task_id),
                 // The scheduler's attempt counter, stamped into the digest as SAID provenance so the
                 // panel can say WHOSE text it is showing (attempt 0's error vs attempt 1's answer).
@@ -35299,30 +35113,15 @@ impl TaskDispatcher for GooseAgentDispatcher {
         let user = format!(
             "GOAL: {goal}{pillars_block}\n\nREVIEW DIMENSION ({dim_id}): {dim_brief}\n\nFiles produced:\n{files_block}\nYour one-line review:"
         );
-        let text = tokio::time::timeout(
-            // IDLE-FILL MUST STAY CHEAP. This borrowed the 900s PLANNER budget, and the tail
-            // reviewer is dispatched into every free slot on every scheduler tick — so one
-            // unbounded review can hold a whole node for a quarter of an hour. MEASURED live
-            // (run 6, the first run where this mechanism emitted an event at all): the
-            // `correctness` dimension hit the 900s ceiling TWICE, 30 node-minutes, zero findings
-            // both times — its brief asks for a wrong constant/unit/sign anywhere in the tree,
-            // an unbounded search the model simply reasons at until it is cut off. Meanwhile the
-            // reviews that DID find defects returned in 74s and 156s. A review that has not
-            // reached a conclusion in four minutes is not about to; the node is worth more back
-            // in the pool. Env-overridable for the arm that measures whether the cap costs
-            // anything.
-            // No ceiling. This was 240s (GOOSE_SWARM_TAIL_REVIEW_SECS) and the comment above argues
-            // for it on COST — an idle-fill reviewer holding a node. But cost is not a reason to cut a
-            // model mid-thought, and the fix for "this is dispatched too eagerly" is to dispatch it less
-            // eagerly, not to guillotine it once it has started. Section 8: no wall-clock anywhere.
-            std::time::Duration::from_secs(UNCAPPED_SECS),
-            self.run_agent(model_id, system, user, None, 2, &[], 0, None),
-        )
-        .await
-        .ok()
-        .and_then(|r| r.ok())
-        .map(|o| o.text)
-        .unwrap_or_default();
+        // No ceiling (II-7): the 240s idle-fill cut and the 900s planner budget it borrowed are
+        // both gone — cost is not a reason to cut a model mid-thought; the fix for "dispatched
+        // too eagerly" is to dispatch it less eagerly.
+        let text = self
+            .run_agent(model_id, system, user, None, 2, &[], None)
+            .await
+            .ok()
+            .map(|o| o.text)
+            .unwrap_or_default();
         // A weak reviewer that burns its 2 turns returns the agent-loop max-turns filler — never a real
         // finding of this dimension (the `|` parse already routes it to OK, but be explicit + robust).
         if is_agent_loop_filler(&text) {
@@ -35395,15 +35194,12 @@ impl TaskDispatcher for GooseAgentDispatcher {
         let user = format!(
             "GOAL: {goal}\n\nFINDING TO VERIFY: {finding}\n\nFiles produced:\n{files_block}\nYour one-line verdict:"
         );
-        let text = tokio::time::timeout(
-            std::time::Duration::from_secs(planner_wall(self.planner_timeout_secs)),
-            self.run_agent(model_id, system, user, None, 2, &[], 0, None),
-        )
-        .await
-        .ok()
-        .and_then(|r| r.ok())
-        .map(|o| o.text)
-        .unwrap_or_default();
+        let text = self
+            .run_agent(model_id, system, user, None, 2, &[], None)
+            .await
+            .ok()
+            .map(|o| o.text)
+            .unwrap_or_default();
         let (verdict, confidence) = text.trim().split_once('|').unwrap_or(("REFUTE", "LOW"));
         verdict.to_uppercase().contains("CONFIRM") && confidence.to_uppercase().contains("HIGH")
     }
@@ -36021,7 +35817,7 @@ fn sink_shard() -> bool {
 }
 
 /// F781/#15 (the judge's eye for the repair phase — OBSERVER first, kill rule later): a fix
-/// attempt's only bound today is fix_cap_secs; a stalled 27B twin burns the whole cap invisibly.
+/// attempt carries no bound at all now (II-7), so a stalled 27B twin burns wall time invisibly.
 /// Before any early-kill can be trusted (a false kill deletes a healthy twin — the measured
 /// red-to-green-at-the-cap rounds), measure the real progress distributions: this accumulates
 /// per-attempt samples of the shadow tree's fingerprint and reports time-to-first-change and the
@@ -36096,16 +35892,12 @@ fn tree_fingerprint(root: &std::path::Path) -> (usize, u64) {
     (count, newest)
 }
 
-/// F889: how long a fix attempt may run with ZERO tool calls before the round stops paying for
-/// it. Run 11 (watched live, Mihai's "why is this 3 hours in"): three repair workers burned 48
-/// minutes producing literally no edits — each read its file, narrated a plan, and consumed the
-/// full 15-minute cap. A worker that has not made ONE tool call after five minutes is not slow,
-/// it is the F423 narrate-don't-act stall, and every minute after that is pure wall-clock loss:
-/// its shadow is unchanged, so grade_promotion_preview will refuse it anyway. Any worker that
-/// made even one tool call keeps its full budget — the guard only stops attempts that provably
-/// never started acting.
-const FIX_STILLBORN_SECS: u64 = 300;
-const FIX_STILLBORN_POLL_SECS: u64 = 30;
+/// II-7: the cadence of the fix attempt's LOOK loop — how often the attempt is MEASURED (digest
+/// tool_calls + lms-ps node state), never how long it may run. The five-minute stillborn floor
+/// and the fix-cap deadline this file used to carry are deleted: both were clocks deciding model
+/// work, and the floor could not tell narrate-don't-act from queued-behind-a-sibling. A cadence
+/// is §II.4 MAY-STAY — it delays only a look, and no count of looks carries a verdict.
+const FIX_LOOK_SECS: u64 = 30;
 
 /// F781/#15: ONE sampler for both repair fans (race twins AND file shards) — same signal, same
 /// cadence, one implementation, so the two paths can never drift apart the way the two fix caps
@@ -36236,29 +36028,9 @@ fn pick_repair_winner(
 // splice_functions) died with CONTRACTS (P1-4): every one of them consumed the frozen stub
 // bundle, and with no bundle none could ever fire again.
 
-/// Hard wall-clock cap (seconds) for a SERIAL push-to-completion / review fix agent. The dispatcher's own
-/// worker timeout is IDLE-based, so an agent that ACTIVELY over-generates (a reasoning model thinking for
-/// many minutes without writing a file) is never re-routed — observed: a serial complete-fix burned ~35min
-/// on one node while two idled. This bounds each serial fix; on timeout the run future is dropped and the
-/// next round's deterministic verify gates the (partial) result. GOOSE_SWARM_FIX_CAP_SECS overrides
-/// (default 1200 = 20min, matching the fleet-parallel fix path); clamped to 120..=3600.
-fn fix_cap_secs() -> u64 {
-    // 1200 is the DESIGNED per-fix budget, not a stale sibling: F432's raise went to the COMPLETE
-    // loop's total (default_complete_cap_secs = 3000), sized so TWO 1200s attempts fit — and the
-    // invariant test complete_cap_fits_its_own_rounds enforces exactly that geometry (an F756
-    // attempt to raise this to 3000 was caught BY that test at the greengate and is corrected
-    // here). What the first live waves actually showed — two full rounds of twins dying at this
-    // cap with the ETag findings unchanged — indicts the shape of the repair (one monolithic
-    // twin per model), not the constant: the S1 shard design and the G-batch progress-shaped cap
-    // (rounds-without-mutation) are the fixes with evidence behind them.
-    return UNCAPPED_SECS;
-    #[allow(unreachable_code)]
-    std::env::var("GOOSE_SWARM_FIX_CAP_SECS")
-        .ok()
-        .and_then(|v| v.parse::<u64>().ok())
-        .unwrap_or(1200)
-        .clamp(120, 3600)
-}
+// II-7: fix_cap_secs / GOOSE_SWARM_FIX_CAP_SECS deleted — the serial-fix wall clock and its
+// inert UNCAPPED stand-in. A fix ends when the model finishes, when the judge redirects it, or
+// when the transport's connect path fails; never on a clock.
 
 /// GOOSE_SWARM_TEMP > config > model default (Mihai 2026-08-16: "reduce the temperature to avoid
 /// such disparity"). ONE resolution used by the dispatcher's sampling, the levers_resolved echo
@@ -36491,19 +36263,6 @@ async fn one_ruler_grade(
             .count();
     }
     (Some(n), est)
-}
-
-/// F856: the per-fix ceiling, scaled by the SAME tree-bytes factor as the sink cap (≤2×), from
-/// the file list the fix phase itself carries — NOT from the dispatcher's `sink_tree_files`
-/// OnceCell, which the adversarial review proved is never filled on the fresh fix-wave
-/// dispatcher (set_sink_tree_files has one call site, on the run-1 instance), so an OnceCell
-/// read here is a verified no-op. One helper owns the geometry for every fix dispatch site;
-/// the complete-cap lift budgets rounds against this same value so the later rounds stay
-/// reachable (MEASURED: three twins died at the flat 1200 on a 64KB tree — 1230/1314/1320s,
-/// the winner's first write at 900s — while the sink beside them scaled 1800→3600).
-fn fix_cap_secs_scaled(root: &std::path::Path, files: &[String]) -> u64 {
-    let _ = (root, files);
-    fix_cap_secs()
 }
 
 /// Name a MALFORMED tool call for the digest. There is no parsed call to read a name from — the name may
@@ -36943,11 +36702,14 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             cfg.progress_watchdog_secs.to_string(),
         );
     }
-    // Upstream #10348 applies the default extension timeout (300s) as a HARD per-command kill to developer
-    // `shell` calls that omit `timeout_secs`. Swarm WORKERS routinely run longer single commands (`cargo
-    // build`, `npm install`, a big `pytest`/`cargo test`), and our own idle watchdog already bounds a HUNG
-    // command — so give swarm shells a generous 1800s default here (the truly-runaway bound), overridable by
-    // the user's GOOSE_DEFAULT_EXTENSION_TIMEOUT. Without this, #10348 would kill legitimate long builds.
+    // Upstream #10348 applies the default extension timeout (300s) to developer `shell` calls that omit
+    // `timeout_secs`. Swarm WORKERS routinely run longer single commands (`cargo build`, `npm install`, a
+    // big `pytest`), so swarm shells get a generous 1800s default, overridable by the user's own
+    // GOOSE_DEFAULT_EXTENSION_TIMEOUT. The env STAYS under II-7 because it bounds the TRANSPORT's wait on
+    // one shell call, not the model — and since II-7 its expiry on a swarm spawn is no longer a kill: the
+    // shell tool returns a MEASUREMENT ("still running; listening on port P or not; output so far") and
+    // DETACHES the process into its own registered group, reaped at the attempt's terminal transition
+    // (shell.rs run_command + process_groups — the A-1 registry).
     if std::env::var("GOOSE_DEFAULT_EXTENSION_TIMEOUT").is_err() {
         std::env::set_var("GOOSE_DEFAULT_EXTENSION_TIMEOUT", "1800");
     }
@@ -37245,8 +37007,6 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             .map(|d| (d.model_id.clone(), d.provider_name().to_string()))
             .collect(),
         planner_model: cfg.planner_model.clone(),
-        worker_timeout_secs: cfg.worker_timeout_secs,
-        planner_timeout_secs: cfg.planner_timeout_secs,
         allow_model_load: cfg.allow_model_load,
         sampling: SamplingParams {
             temperature: swarm_temp_resolved(cfg.temperature),
@@ -37745,7 +37505,6 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                 .ok()
                 .map(|v| matches!(v.to_lowercase().as_str(), "1" | "on" | "true" | "yes"))
                 .unwrap_or_else(|| load_config().split.unwrap_or(true)),
-            "split_secs": std::env::var("GOOSE_SWARM_SPLIT_SECS").ok(),
             // The splitter defaults ON and this lever defaults OFF, so a split child's ENTIRE task
             // statement is "(split of <parent>) <child-id>" — 43 characters, after the run paid ~40%
             // of its wall-clock producing the spec that is discarded at the moment of use. It lives
@@ -37833,22 +37592,17 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             "homogeneous_models": load_config().homogeneous_models,
             "allow_model_load": load_config().allow_model_load,
             "worker_max_turns": load_config().worker_max_turns,
-            "worker_timeout_secs": load_config().worker_timeout_secs,
-            "planner_timeout_secs": load_config().planner_timeout_secs,
+            // II-7: worker_timeout_secs / planner_timeout_secs / sink_cap_secs /
+            // detail_budget_secs / spiral_thinking_chars / split_secs left this echo with the
+            // mechanisms they named. A knob absent from the engine must be absent from the map —
+            // a printed lever reads as a live lever, and measure.py trusts this map.
             "max_attempts": load_config().max_attempts,
             "max_replans": load_config().max_replans,
             "max_research_questions": load_config().max_research_questions,
             "best_of_n_skeletons": load_config().best_of_n_skeletons,
             "scout_budget_secs": load_config().scout_budget_secs,
             "scout_max_lookups": load_config().scout_max_lookups,
-            // The sink has no ceiling at all now (section 8). Reported as the uncapped marker so a
-            // reader of levers_resolved sees the regime rather than an absent key.
-            "sink_cap_secs": UNCAPPED_SECS,
-            // A lever nobody can see resolve is a lever nobody can keep: this budget decides whether a
-            // worker gets a real spec or the architect's one-liner, so the run must say what it was.
-            "detail_budget_secs": UNCAPPED_SECS,
             "struct_stop": load_config().struct_stop,
-            "spiral_thinking_chars": load_config().spiral_thinking_chars,
             "planner_weight": load_config().planner_weight,
             "ask_rounds_max": load_config().ask_rounds_max,
             "sink_max_turns": load_config().sink_max_turns,
@@ -38430,77 +38184,10 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
     let mut ov_verified = false;
     if complete_on {
         let rounds = complete_rounds();
-        // No wall on the repair phase. It ends when a round changes nothing on the tree, not on a clock.
-        let cap_requested = UNCAPPED_SECS;
-        // F856 geometry: the phase budget must fit rounds of the SCALED per-fix ceiling, not the
-        // static base — a ≥2× tree's twin may legally run to 2× fix_cap_secs, and budgeting the
-        // static value reinstates the exact "later rounds unreachable" defect the lift exists to
-        // prevent (adversarial-review finding). One value, one helper, engine-side — never a
-        // regime-file patch.
-        let fix_cap_eff = fix_cap_secs_scaled(
-            &std::env::current_dir().unwrap_or_default(),
-            &smoke_all_files,
-        );
-        let cap_secs = complete_cap_fitting_rounds(
-            cap_requested,
-            rounds as u64,
-            fix_cap_eff,
-            default_complete_cap_secs(),
-        );
-        if cap_secs != cap_requested {
-            eprintln!(
-                "complete: repair budget {cap_requested}s cannot fit its own {rounds} fix round(s) of up \
-                 to {fix_cap_eff}s — raised to {cap_secs}s so the later rounds are reachable",
-            );
-            sink.write_value(serde_json::json!({
-                "event": "complete_cap_lifted",
-                "requested_secs": cap_requested,
-                "effective_secs": cap_secs,
-                "rounds": rounds,
-                "fix_cap_secs": fix_cap_eff,
-            }));
-        }
-        let cap_deadline = Some(cap_secs)
-            .filter(|&s| s > 0)
-            .map(|s| std::time::Instant::now() + std::time::Duration::from_secs(s));
-        // THE HARNESS'S OUTER WALL (F906/F907): a repair budget that outlives the runner's
-        // own timeout is a guillotine, not a budget — r9 and r11 were both cut mid-round by
-        // the harness while this phase still believed it had time. When the harness names its
-        // absolute deadline (GOOSE_SWARM_RUN_DEADLINE_UNIX_MS), clamp the phase deadline to
-        // one fix-cap BEFORE it — the last round the headroom governor admits then finishes,
-        // and the floor/restore/overview tail runs INSIDE the wall. Reuses fix_cap_eff; no
-        // new constants. Unset (every non-harness run) = byte-identical.
-        let cap_deadline = match std::env::var("GOOSE_SWARM_RUN_DEADLINE_UNIX_MS")
-            .ok()
-            .and_then(|v| v.parse::<i64>().ok())
-            .and_then(|ms| {
-                let now_ms = std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .ok()?
-                    .as_millis() as i64;
-                // Clamp to the WALL ITSELF: the headroom governor already refuses any round
-                // that cannot finish one fix-cap before cap_deadline, so subtracting a
-                // fix-cap here double-counted the margin — r18 reached its gate with the
-                // cleanest tree ever (4 findings) and the repair phase admitted ZERO rounds
-                // because the two subtractions together demanded 2x fix_cap of runway.
-                let left_ms = ms - now_ms;
-                Some(
-                    std::time::Instant::now()
-                        + std::time::Duration::from_millis(left_ms.max(0) as u64),
-                )
-            }) {
-            Some(h) => {
-                let clamped = cap_deadline.map_or(h, |c| c.min(h));
-                if cap_deadline.is_none_or(|c| h < c) {
-                    sink.write_value(serde_json::json!({
-                        "event": "complete_cap_clamped_to_harness",
-                        "fix_cap_secs": fix_cap_eff,
-                    }));
-                }
-                Some(clamped)
-            }
-            None => cap_deadline,
-        };
+        // II-7: the repair phase carries NO wall — the requested/effective cap arithmetic, the
+        // GOOSE_SWARM_RUN_DEADLINE_UNIX_MS harness clamp and the cap_deadline they produced are
+        // deleted, not parked: the env read re-armed a real wall through the back door. The phase
+        // ends when a round changes nothing on the tree.
         // Detect from the PRODUCED file manifest, not just the spec: a language-unspecified spec whose
         // plan built a non-Python tree (e.g. a Rust CLI) would otherwise default to Python, run pytest on
         // a tree with no .py, skip (ran=false), and ship trivially green. The manifest's extensions route
@@ -39693,10 +39380,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                 // not evidence that another round is earning its wall time (rank-1 chain fix).
                 let decreasing =
                     prev_count.is_some_and(|p| verdict.findings.len() < p) && verdict.established();
-                let headroom = cap_deadline.is_none_or(|dl| {
-                    std::time::Instant::now() + std::time::Duration::from_secs(fix_cap_eff) < dl
-                });
-                if !(decreasing && headroom && round < 6) {
+                if !(decreasing && round < 6) {
                     break;
                 }
                 eprintln!(
@@ -39705,28 +39389,6 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                     prev_count.unwrap_or(0),
                     verdict.findings.len()
                 );
-            }
-            if cap_deadline.is_some_and(|dl| std::time::Instant::now() >= dl) {
-                eprintln!("complete: wall-clock cap reached — stopping the fix loop");
-                break;
-            }
-            // HEADROOM (wall-time hunt, verified): never dispatch a round the remaining
-            // completion window provably cannot finish — the SAME predicate the extension
-            // path above already applies to bonus rounds, now applied to every round.
-            // Measured: both sb-6 wall-cut runs spent their final 8-10 minutes on a round
-            // that was reaped mid-flight and landed nothing, then paid a redundant
-            // re-verify on the unchanged tree.
-            if cap_deadline.is_some_and(|dl| {
-                std::time::Instant::now() + std::time::Duration::from_secs(fix_cap_eff) >= dl
-            }) {
-                sink.write_value(serde_json::json!({
-                    "event": "complete_fix_headroom_stop",
-                    "round": round,
-                    "detail": "remaining completion window is smaller than one fix attempt — \
-                               stopping at the last verified state instead of dispatching a \
-                               doomed round",
-                }));
-                break;
             }
             // ZERO-PROMOTION CONVERGENCE (wall-time hunt, verified): set by the graded round
             // paths when nothing promoted — the real tree is then byte-identical to the tree
@@ -39864,10 +39526,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                                 progress.clone(),
                             );
                             let ran = tokio::select! {
-                                r = tokio::time::timeout(
-                                    std::time::Duration::from_secs(fix_cap_eff),
-                                    me.run(req),
-                                ) => Some(r),
+                                r = me.run(req) => Some(r),
                                 // A sibling twin already landed a strictly-better tree; stop
                                 // generating. The shadow still gets GRADED below — a cancelled
                                 // twin's partial tree has historically gone red-to-green and the
@@ -39935,7 +39594,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                                 // Recorded, but NOT what decides the twin: a timed-out or
                                 // early-close-cancelled agent whose partial writes verify better
                                 // still wins — the tree is graded, never the agent's exit.
-                                "agent_ok": matches!(ran, Some(Ok(Ok(_)))),
+                                "agent_ok": matches!(ran, Some(Ok(_))),
                                 "cancelled_by_early_close": cancelled,
                                 "verified_findings": verified,
                                 "baseline_findings": baseline,
@@ -40110,29 +39769,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                                     opts.prompt.clone(),
                                     user_decisions.clone(),
                                 );
-                                let report = match cap_deadline {
-                                    Some(dl) => {
-                                        let remaining =
-                                            dl.saturating_duration_since(std::time::Instant::now());
-                                        match tokio::time::timeout(remaining, fix_sched_run).await {
-                                            Ok(r) => r,
-                                            Err(_) => {
-                                                sink.write_value(serde_json::json!({
-                                                    "event": "fix_sched_wall_cut",
-                                                    "round": round,
-                                                    "detail": "the completion cap expired inside \
-                                                               the fix round — workers reaped, \
-                                                               promoted work kept, proceeding to \
-                                                               re-verify",
-                                                }));
-                                                Err(anyhow::anyhow!(
-                                                    "fix round cut by the completion wall cap"
-                                                ))
-                                            }
-                                        }
-                                    }
-                                    None => fix_sched_run.await,
-                                };
+                                let report = fix_sched_run.await;
                                 fresh.end_fix_round();
                                 // The fix run's review findings have no consumer yet — drained to
                                 // an informational event so they are visible, never green-blocking.
@@ -40150,17 +39787,6 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                                             "event": "complete_fix_sched_result", "round": round,
                                             "error": e.to_string(),
                                             "review_findings_dropped": dropped.len(),
-                                        }));
-                                    }
-                                }
-                                // A desktop Pause (shared pause file) can hold the fix run past
-                                // the completion cap, which is only enforced at round heads —
-                                // emit the overrun so the next round-head cap check is legible.
-                                if let Some(dl) = cap_deadline {
-                                    if std::time::Instant::now() >= dl {
-                                        sink.write_value(serde_json::json!({
-                                            "event": "complete_cap_overrun_after_fix_sched",
-                                            "round": round,
                                         }));
                                     }
                                 }
@@ -40291,12 +39917,6 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                                     // Per-file fix shard: no DAG neighborhood → contract bundle unscoped.
                                     neighborhood: Vec::new(),
                                 };
-                                // ONE rule, one implementation. This was a bare `from_secs(1200)`
-                                // while its sibling — the serial fix on the other branch of this same
-                                // `if` — used `fix_cap_secs()`, which is env-overridable and clamped
-                                // to 120..=3600. Same default, same purpose, and only one of them
-                                // could be tuned: setting GOOSE_SWARM_FIX_CAP_SECS moved the serial
-                                // path and silently left the fanned path at 20 minutes.
                                 let progress =
                                     Arc::new(std::sync::Mutex::new(FixAttemptProgress::default()));
                                 let sampler = spawn_fix_progress_sampler(
@@ -40304,11 +39924,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                                     task_id.clone(),
                                     progress.clone(),
                                 );
-                                let ran = tokio::time::timeout(
-                                    std::time::Duration::from_secs(fix_cap_eff),
-                                    me.run(req),
-                                )
-                                .await;
+                                let ran = me.run(req).await;
                                 sampler.abort();
                                 {
                                     let st = progress.lock().unwrap().clone();
@@ -40357,7 +39973,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                                     "round": round, "shard": g.file, "model": model,
                                     "task_id": task_id,
                                     "secs": started.elapsed().as_secs(),
-                                    "agent_ok": matches!(ran, Ok(Ok(_))),
+                                    "agent_ok": ran.is_ok(),
                                     "verified_findings": verified,
                                     "baseline_findings": baseline,
                                     "promoted": promoted,
@@ -40449,11 +40065,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                     "path": "serial",
                 }));
                 let fix_started = std::time::Instant::now();
-                let fix_out = tokio::time::timeout(
-                    std::time::Duration::from_secs(fix_cap_eff),
-                    smoke_fix_dispatcher.run(fix_req),
-                )
-                .await;
+                let fix_out = smoke_fix_dispatcher.run(fix_req).await;
                 sink.write_value(serde_json::json!({
                     "event": "complete_fix_completed",
                     "round": round,
@@ -40465,7 +40077,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                     // complete_verify is the only check, and saying `null` states that plainly rather
                     // than implying a grade that was never computed.
                     "verified_findings": serde_json::Value::Null,
-                    "agent_ok": matches!(fix_out, Ok(Ok(_))),
+                    "agent_ok": fix_out.is_ok(),
                     "baseline_findings": verdict.findings.len(),
                     "path": "serial",
                 }));
@@ -40569,12 +40181,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
         // the tree that SHIPS). Past the completion deadline the budget drops to one attempt:
         // the floor is the point, but not three fix-caps past the wall.
         if matches!(complete_lang, TargetLang::Python) {
-            let boot_budget: u32 = if cap_deadline.is_some_and(|dl| std::time::Instant::now() >= dl)
-            {
-                1
-            } else {
-                3
-            };
+            let boot_budget: u32 = 3;
             let mut prev_err: Option<String> = None;
             let mut attempts = 0u32;
             loop {
@@ -40645,11 +40252,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                         doc_facts: doc_facts.clone(),
                         neighborhood: Vec::new(),
                     };
-                    let _ = tokio::time::timeout(
-                        std::time::Duration::from_secs(fix_cap_eff),
-                        smoke_fix_dispatcher.run(boot_req),
-                    )
-                    .await;
+                    let _ = smoke_fix_dispatcher.run(boot_req).await;
                 } else {
                     break;
                 }
@@ -40838,14 +40441,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                     // Fix/sink dispatch: no DAG neighborhood → the contract bundle stays unscoped (full).
                     neighborhood: Vec::new(),
                 };
-                let _ = tokio::time::timeout(
-                    std::time::Duration::from_secs(fix_cap_secs_scaled(
-                        &std::env::current_dir().unwrap_or_default(),
-                        &smoke_all_files,
-                    )),
-                    smoke_fix_dispatcher.run(fix_req),
-                )
-                .await;
+                let _ = smoke_fix_dispatcher.run(fix_req).await;
                 let after =
                     run_smoke_gate(&std::env::current_dir().unwrap_or_default(), smoke_lang).await;
                 let after_value = serde_json::to_value(&after).unwrap_or(serde_json::Value::Null);
@@ -41049,14 +40645,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                     // Fix/sink dispatch: no DAG neighborhood → the contract bundle stays unscoped (full).
                     neighborhood: Vec::new(),
                 };
-                let _ = tokio::time::timeout(
-                    std::time::Duration::from_secs(fix_cap_secs_scaled(
-                        &std::env::current_dir().unwrap_or_default(),
-                        &smoke_all_files,
-                    )),
-                    smoke_fix_dispatcher.run(fix_req),
-                )
-                .await;
+                let _ = smoke_fix_dispatcher.run(fix_req).await;
                 // Re-derive the scope: the wire-fix worker may have written a NEW module.
                 let after =
                     run_ast_review(&ov_root, &app_scope_py(&ov_root, &smoke_all_files)).await;
@@ -41210,21 +40799,18 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                 json_schema: Some(run_overview_schema()),
             });
             // No ceiling on the overview call either — it is a model call like every other one.
-            let res = tokio::time::timeout(
-                std::time::Duration::from_secs(UNCAPPED_SECS),
-                smoke_fix_dispatcher.run_agent_timed(
+            let res = smoke_fix_dispatcher
+                .run_agent_timed(
                     &smoke_fix_dispatcher.planner_model,
                     system,
                     user,
                     resp,
                     4,
                     &[],
-                ),
-            )
-            .await;
+                )
+                .await;
             let parsed = res
                 .ok()
-                .and_then(|r| r.ok())
                 .and_then(|o| o.final_output)
                 .and_then(|fo| serde_json::from_str::<Overview>(&fo).ok());
             match parsed {
