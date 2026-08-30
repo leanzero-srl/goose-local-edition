@@ -321,3 +321,10 @@ research_request_block's armed-no-claimed-sections arm wording.
   shipped code via the file's own --selfcheck battery plus a mutated negative control when a bare
   import proved impossible (main() at module top). Charter gap: none — the hermetic law held. Lesson
   is MINE: verify tracked-vs-mirror before naming a path in a brief (git ls-files the path first).
+- 2026-08-30 21:25 swarm-surgeon (attribution fix + extraction, 7d1ae2f0e): CLEAN+. Both fixes landed,
+  swarm.rs 45,772→45,529 with the ratchet tightened in-commit; honest split trace (YES for the clean()
+  cut at seq 415-416, NO-labeled-NET for the sources suffix on r5 itself); shaped src_suffix as a match
+  specifically to avoid a new unwrap_or_default tripping the fallback ratchet — the gates are steering
+  construction, not just review. Bonus: named two more possessive-template emitters (GET ~21976,
+  acquired-not-persisted ~22577) already covered by the shared clean(). Charter gap: none. Independent
+  gate-8 tracer dispatched on the commit (the self-trace never suffices for a shipped fix).
