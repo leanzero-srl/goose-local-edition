@@ -23786,15 +23786,18 @@ pub(crate) struct SliceBrief {
     title: String,
     objective: String,
     brief: String,
-    /// The paths this slice's OWNER said it would create, read out of its brief's FILES section.
+    /// The paths this slice's OWNER declared it would create — the backticked OWNERSHIP
+    /// DECLARATIONS in its objective text, read back by `files_from_objective`. (The FILES
+    /// section this once named is a deleted mechanism; since 14831a321 the opener prompt says
+    /// NAME EACH SLICE'S OWNED FILES IN ITS OBJECTIVE, and this field is where the engine
+    /// keeps what it said.)
     ///
-    /// SYNTHESIS is told "files: the paths that task owns, taken from its slice's FILES section" — and
-    /// it was never shown them. `slice_index` emits id, title, objective, a 400-char head and
-    /// `extract_interface_lines`, which needs parentheses plus a def/class/fn/-> token, so a bare path
-    /// never matched. So the model invented file ownership, and the engine ENFORCED the invention:
-    /// measured on smoke-linear-1, task `cli-interface` was given `wordfreq/cli.py` while its spliced
-    /// brief declares three other files and never mentions cli.py. A task's enforced ownership can
-    /// contradict the only instruction it is given, and the two go to different phases.
+    /// Why ownership must come from the owner and never be invented downstream: SYNTHESIS sees
+    /// only the index, and when this field was empty the model invented file ownership and the
+    /// engine ENFORCED the invention — measured on smoke-linear-1, task `cli-interface` was
+    /// given `wordfreq/cli.py` while its spliced brief declares three other files and never
+    /// mentions cli.py. A task's enforced ownership can contradict the only instruction it is
+    /// given, and the two go to different phases.
     files: Vec<String>,
 }
 
@@ -24976,9 +24979,11 @@ fn slice_index(briefs: &[SliceBrief], existing: &[String], spec: &str) -> String
                 .chars()
                 .take(400)
                 .collect();
-            // THE FILES THE OWNER DECLARED. The synthesis prompt says "files: the paths that task owns,
-            // taken from its slice's FILES section" and this index is the only thing it ever sees, so
-            // until now that instruction pointed at nothing and the model made the paths up.
+            // THE FILES THE OWNER DECLARED — the objective's backticked ownership declarations,
+            // extracted by `files_from_objective`. The synthesis prompt says "files: the exact paths
+            // that task will create, inferred from its slice's objective", and this index is the only
+            // thing it ever sees; while `SliceBrief.files` shipped empty this line always took the
+            // caption path and the model made the paths up.
             let files = if b.files.is_empty() {
                 unnamed_caption.clone()
             } else {
@@ -26822,6 +26827,43 @@ fn unclaimed_sections(opened: &OpenOutput, sections: &[SpecSection]) -> Vec<Stri
         .collect()
 }
 
+/// The owner's OWNERSHIP DECLARATIONS, read back out of its objective's backticks.
+///
+/// Since 14831a321 the opener is told to NAME EACH SLICE'S OWNED FILES IN ITS OBJECTIVE — but
+/// `briefs_from_slices` still shipped `files: Vec::new()`, so `slice_files_unnamed` fired for
+/// EVERY slice on EVERY run (measured 5 and 7 on the last two runs) and every `.files` reader
+/// — the index's named-files caption, the fallback plan's declared ownership — was a dead path.
+///
+/// Conservative on purpose: only backticked tokens shaped like relative file paths — a '/' or a
+/// known source extension (`FINDING_PATH_EXTS`, the one list), no whitespace, no scheme, not
+/// absolute (`/api/ledger` is a route, not a file), no trailing '/' (a directory is territory,
+/// not a plan file) — deduped in objective order. An objective that declares nothing keeps the
+/// empty vec, and the absence event keeps firing for exactly those slices.
+fn files_from_objective(objective: &str) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for (i, seg) in objective.split('`').enumerate() {
+        if i % 2 == 0 {
+            continue;
+        }
+        let tok = seg.trim();
+        let tok = tok.strip_prefix("./").unwrap_or(tok);
+        if tok.is_empty()
+            || tok.chars().any(char::is_whitespace)
+            || tok.contains("://")
+            || tok.starts_with('/')
+            || tok.ends_with('/')
+        {
+            continue;
+        }
+        let lower = tok.to_lowercase();
+        let pathish = tok.contains('/') || FINDING_PATH_EXTS.iter().any(|e| lower.ends_with(e));
+        if pathish && !out.iter().any(|f| f == tok) {
+            out.push(tok.to_string());
+        }
+    }
+    out
+}
+
 fn briefs_from_slices(opened: &OpenOutput, spec: &str) -> Vec<SliceBrief> {
     let sections = spec_sections(spec);
     let armed = orientation_armed(spec, &sections);
@@ -26892,7 +26934,7 @@ fn briefs_from_slices(opened: &OpenOutput, spec: &str) -> Vec<SliceBrief> {
                 title: sl.title.clone(),
                 objective: sl.objective.clone(),
                 brief,
-                files: Vec::new(),
+                files: files_from_objective(&sl.objective),
             }
         })
         .collect()
@@ -27350,15 +27392,17 @@ fn finalize_plan_before_dag(
 /// counters reported the whole plan as `tasks_owning_nothing`, and `require_advertised_entry_files`
 /// degenerated (its last-resort pick is the first task owning anything, and none did), so the
 /// package-entry guarantee added after two runs shipped packages with no `__main__.py` did not run at all.
-/// `SliceBrief.files` is populated by `files_from_brief` precisely so ownership is not invented.
+/// `SliceBrief.files` is populated by `files_from_objective` precisely so ownership is not invented.
 ///
-/// FIRST CLAIMANT WINS, so ownership stays disjoint: two briefs naming the same path is the expected case
-/// (it is what `brief_defects` already measures), and a plan where two tasks own one file is a plan the
-/// scheduler must serialise rather than parallelise.
+/// FIRST CLAIMANT WINS, so ownership stays disjoint: two objectives declaring the same path is the
+/// expected case (the synthesised path measures the same collision as `shared_files` in the
+/// decomposition flags), and a plan where two tasks own one file is a plan the scheduler must
+/// serialise rather than parallelise.
 fn flat_plan_from_briefs(briefs: &[SliceBrief], lang: TargetLang, spec: &str) -> String {
-    // P1-5: with RESEARCH gone a brief declares no files, and an owns-nothing task would be
-    // REMOVED by the plan repair's rule (a) — the fallback once shed every task that way in its
-    // own test. A conventional one-module-per-slice path keeps every fallback task buildable.
+    // A slice whose objective declared no files (the `slice_files_unnamed` case) would make an
+    // owns-nothing task, and an owns-nothing task is REMOVED by the plan repair's rule (a) — the
+    // fallback once shed every task that way in its own test. A conventional one-module-per-slice
+    // path keeps every fallback task buildable.
     let ext = match lang {
         TargetLang::Python => "py",
         TargetLang::TypeScript => "ts",
@@ -44416,6 +44460,50 @@ mod audit_regressions {
             !un.is_empty() && !un.contains(&table_heading),
             "the coverage gap is measured: {} unclaimed, claimed one absent",
             un.len()
+        );
+    }
+
+    /// The opener declares ownership in objective text (14831a321) and the engine reads it
+    /// back. Before `files_from_objective`, `briefs_from_slices` shipped `files: Vec::new()`
+    /// unconditionally, so `slice_files_unnamed` fired for EVERY slice on EVERY run (measured
+    /// 5 and 7 on the last two) and the index's named-files caption was a dead path.
+    #[test]
+    fn objective_ownership_declarations_populate_slice_files() {
+        let opened = OpenOutput {
+            slices: vec![
+                OpenSlice {
+                    id: "ledgerd".into(),
+                    title: "the ledger daemon".into(),
+                    objective: "Owns `app/ledgerd/impl.py` (state machine) and `web/app.js` \
+                                (the poller, again `web/app.js`). Serves GET `/api/ledger` \
+                                (a route, not a file) per `https://example.test/docs`."
+                        .into(),
+                    questions: Vec::new(),
+                    weight: 3,
+                    sections: Vec::new(),
+                },
+                OpenSlice {
+                    id: "web".into(),
+                    title: "the dashboard".into(),
+                    objective: "draw the dashboard".into(),
+                    questions: Vec::new(),
+                    weight: 2,
+                    sections: Vec::new(),
+                },
+            ],
+            open_decisions: Vec::new(),
+        };
+        let briefs = briefs_from_slices(&opened, "build the app");
+        assert_eq!(
+            briefs[0].files,
+            vec!["app/ledgerd/impl.py".to_string(), "web/app.js".to_string()],
+            "exactly the declared paths, deduped, in objective order — routes and URLs excluded"
+        );
+        // Empty is the ARMING CONDITION for `slice_files_unnamed`: synthesize_plan emits the
+        // event per brief with `files.is_empty()`, so a slice that declared nothing still fires.
+        assert!(
+            briefs[1].files.is_empty(),
+            "a declaration-free objective keeps the empty vec and the absence event"
         );
     }
 
