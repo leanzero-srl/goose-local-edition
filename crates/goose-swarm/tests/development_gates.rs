@@ -170,9 +170,14 @@ fn the_banned_integrate_template_only_shrinks() {
 /// wiring), paying for the two r5-measured lessons taught general there — the
 /// referenced-but-never-defined identifier that severs a browser boot function, and the handler
 /// whose response omits its route's documented fields.
+/// Tightened to 44,901: the SKELETON-FIRST note moved to commands/swarm/briefs.rs beside its
+/// sibling stub note and the entry-file rule unified into one `is_entry_file` (-19), paying for
+/// the note's `repairing` disarm — the skeleton write-first order reached an entry-file repair
+/// shard at both of its dispatches in the motivating run, beside the repair body's read-first
+/// rule.
 #[test]
 fn swarm_rs_line_count_only_decreases() {
-    const SWARM_RS_LINE_BASELINE: usize = 44_920;
+    const SWARM_RS_LINE_BASELINE: usize = 44_901;
     let text = read("crates/goose-cli/src/commands/swarm.rs");
     let n = text.lines().count();
     assert!(

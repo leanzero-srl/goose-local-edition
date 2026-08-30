@@ -65,18 +65,10 @@ pub(super) fn multifile_stub_note(
     enabled: bool,
     repairing: bool,
 ) -> String {
-    let is_entry = |f: &str| {
-        f.ends_with("cli.py")
-            || f.ends_with("__main__.py")
-            || f.ends_with("main.rs")
-            || f.ends_with("index.ts")
-            || f.ends_with("cli.ts")
-            || f.ends_with("main.go")
-    };
     if !enabled
         || repairing
         || owned_files.len() <= 1
-        || owned_files.iter().any(|f| is_entry(f.as_str()))
+        || owned_files.iter().any(|f| is_entry_file(f.as_str()))
     {
         return String::new();
     }
@@ -88,6 +80,53 @@ pub(super) fn multifile_stub_note(
      APIs you need (injected below under 'API of …') and fill each body with a focused `edit`. Never finish with a \
      `pass`/stub body still in place."
         .to_string()
+}
+
+/// THE one copy of the entry-file rule: skeleton_first_note, multifile_stub_note and swarm.rs's
+/// cli-contract arming all branch on it. It was two hand-rolled closures (one here, one in
+/// swarm.rs) that could drift apart silently — the DeliveredFile::present class.
+pub(super) fn is_entry_file(f: &str) -> bool {
+    f.ends_with("cli.py")
+        || f.ends_with("__main__.py")
+        || f.ends_with("main.rs")
+        || f.ends_with("index.ts")
+        || f.ends_with("cli.ts")
+        || f.ends_with("main.go")
+}
+
+/// The SKELETON-FIRST order for an entry-file AUTHOR (GOOSE_SWARM_SKELETON_FIRST, passed in as
+/// `enabled`; `check` is the language's entry-run example). Text unchanged from its swarm.rs
+/// inline origin. Pure + unit-tested.
+///
+/// DISARMED for a REPAIR shard — the same defect class as `multifile_stub_note`'s disarm above,
+/// on the arm that stayed uncovered: a complete-fix shard owning an entry file received "your
+/// FIRST `write` emits the COMPILING SKELETON … each with a placeholder body" directly beside
+/// the repair body's "your FIRST tool call is `read` … never re-emit a LARGE file from memory".
+/// Unlike the stub note's shape this one FIRED twice in the motivating run (both dispatches of
+/// one entry-file repair shard). Its file already exists; the skeleton order is first-authoring
+/// scaffolding only. Same `repairing` predicate as the notes above, never re-derived.
+pub(super) fn skeleton_first_note(
+    owned_files: &[String],
+    enabled: bool,
+    repairing: bool,
+    check: &str,
+) -> String {
+    if !enabled || repairing || !owned_files.iter().any(|f| is_entry_file(f.as_str())) {
+        return String::new();
+    }
+    format!(
+        "\nSKELETON-FIRST (OVERRIDES the 'write the whole file in ONE write' rule below, \
+         for your ENTRY/wiring file ONLY): your entry file wires many commands, so do NOT \
+         plan the entire file then dump it in one write — that front-loads thinking, burns \
+         turns, and hides a bad import until the very end. Instead: (1) your FIRST `write` \
+         emits the COMPILING SKELETON — every import plus every command/subcommand the spec \
+         advertises REGISTERED, each with a placeholder body (`pass` / `todo!()` / \
+         `throw new Error('todo')`); (2) run `{check}` ONCE and confirm it imports and \
+         lists EVERY command; (3) THEN fill each handler body with a focused `edit`. You \
+         MUST finish with EVERY body fully implemented — a skeleton with placeholder bodies \
+         left in is NOT done and will fail verification. Write any NON-entry owned file \
+         complete in one write as usual."
+    )
 }
 
 #[cfg(test)]
@@ -118,6 +157,28 @@ mod tests {
         assert!(multi_file_note(&owned, true, &dir).contains("MUST write EVERY one"));
         assert_eq!(multi_file_note(&owned[..1], true, &dir), "");
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The skeleton order fired on a repairing entry-file shard at BOTH of its dispatches in the
+    /// motivating run, ordering "your FIRST `write` emits the COMPILING SKELETON" directly beside
+    /// the repair body's "your FIRST tool call is `read`". A repairing shard's file exists; the
+    /// order is authoring scaffolding and must never reach it. An authoring entry task keeps it.
+    #[test]
+    fn the_skeleton_order_never_reaches_a_repairing_shard() {
+        let owned = vec!["app/__main__.py".to_string()];
+        assert_eq!(
+            skeleton_first_note(&owned, true, true, "python3 -m app --help"),
+            ""
+        );
+        let note = skeleton_first_note(&owned, true, false, "python3 -m app --help");
+        assert!(note.contains("COMPILING SKELETON"));
+        assert!(note.contains("python3 -m app --help"));
+        // Non-entry owner and lever-off both stay silent, exactly as at the inline origin.
+        assert_eq!(
+            skeleton_first_note(&["app/util.py".into()], true, false, "x"),
+            ""
+        );
+        assert_eq!(skeleton_first_note(&owned, false, false, "x"), "");
     }
 
     #[test]
