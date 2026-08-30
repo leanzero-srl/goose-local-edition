@@ -34,6 +34,41 @@ type ToolCallData = HashMap<
     ),
 >;
 
+/// II-11b provider seam. MEASURED (3 raw-SSE runs, scratchpad/ii11-lmstudio-arg-streaming.md):
+/// LM Studio sends a tool call's OPEN FRAME (id + function name, empty arguments) within seconds,
+/// then buffers the ENTIRE argument body server-side — 161–172 s of total stream silence — and
+/// delivers it in ONE terminal delta. Byte progress is therefore impossible; the only honest live
+/// signal is "this named tool call is forming since T". This observer surfaces exactly that,
+/// with no MessageContent change, no Provider-trait change, and no decoding change when unset.
+#[derive(Debug, Clone)]
+pub enum ToolFormingEvent {
+    /// The first streamed delta for a tool call carried its function name (the open frame).
+    Forming {
+        id: String,
+        name: String,
+        since: std::time::Instant,
+    },
+    /// The call's terminal delta was decoded; the full ToolRequest is about to be yielded.
+    /// A stream that dies mid-call never publishes this — consumers must ALSO clear forming
+    /// state when the provider-call future completes.
+    Complete { id: String },
+}
+
+pub type ToolFormingObserver = std::sync::Arc<dyn Fn(ToolFormingEvent) + Send + Sync>;
+
+tokio::task_local! {
+    /// Set by a consumer via `TOOL_FORMING_OBSERVER.scope(observer, future)` around the future
+    /// that polls the provider stream. Task-locals do not cross `tokio::spawn`: the scope must
+    /// live in the same task that drives the stream.
+    pub static TOOL_FORMING_OBSERVER: ToolFormingObserver
+}
+
+fn notify_tool_forming(event: ToolFormingEvent) {
+    // An unset observer is the designed default (every non-swarm caller), not a swallowed
+    // failure: this is a pure side channel and the decoded output is identical either way.
+    let _ = TOOL_FORMING_OBSERVER.try_with(|observer| observer(event));
+}
+
 fn deserialize_null_default_string<'de, D>(deserializer: D) -> Result<String, D::Error>
 where
     D: serde::Deserializer<'de>,
@@ -1126,6 +1161,11 @@ where
                         if let (Some(id), Some(name)) = (&tool_call.id, &tool_call.function.name) {
                             let index = tool_call.index.unwrap_or(position as i32);
                             tool_call_data.insert(index, (id.clone(), name.clone(), tool_call.function.arguments.clone(), tool_call.extra.clone()));
+                            notify_tool_forming(ToolFormingEvent::Forming {
+                                id: id.clone(),
+                                name: name.clone(),
+                                since: std::time::Instant::now(),
+                            });
                         }
                     }
                 }
@@ -1176,6 +1216,11 @@ where
                                                     }
                                                 } else if let (Some(id), Some(name)) = (&delta_call.id, &delta_call.function.name) {
                                                     tool_call_data.insert(index, (id.clone(), name.clone(), delta_call.function.arguments.clone(), delta_call.extra.clone()));
+                                                    notify_tool_forming(ToolFormingEvent::Forming {
+                                                        id: id.clone(),
+                                                        name: name.clone(),
+                                                        since: std::time::Instant::now(),
+                                                    });
                                                 }
                                             }
                                         }
@@ -1304,6 +1349,7 @@ where
                         };
 
                         contents.push(content);
+                        notify_tool_forming(ToolFormingEvent::Complete { id: id.clone() });
                     }
                 }
 
@@ -2981,6 +3027,234 @@ data: [DONE]
 
         assert!(result.has_text_content, "Expected text content in response");
         assert_usage_yielded_once(&result, 10, 1, 11);
+
+        Ok(())
+    }
+
+    // II-11b fixtures: the measured LM Studio shape (scratchpad/ii11-lmstudio-arg-streaming.md) —
+    // reasoning deltas stream normally, the tool call's OPEN FRAME (id + name, empty arguments)
+    // arrives early, then the stream is silent for 161-172 s, then the ENTIRE argument body lands
+    // in ONE delta, then finish_reason:"tool_calls".
+    fn lmstudio_buffered_call_head() -> Vec<String> {
+        r#"
+data: {"id":"chatcmpl-lms1","object":"chat.completion.chunk","created":1756500000,"model":"mihai-qwen3.8-27b-brainwaves-mxfp8-mlx","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":"Planning the"},"finish_reason":null}]}
+data: {"id":"chatcmpl-lms1","object":"chat.completion.chunk","created":1756500000,"model":"mihai-qwen3.8-27b-brainwaves-mxfp8-mlx","choices":[{"index":0,"delta":{"reasoning_content":" file write."},"finish_reason":null}]}
+data: {"id":"chatcmpl-lms1","object":"chat.completion.chunk","created":1756500000,"model":"mihai-qwen3.8-27b-brainwaves-mxfp8-mlx","choices":[{"index":0,"delta":{"content":"\n\n"},"finish_reason":null}]}
+data: {"id":"chatcmpl-lms1","object":"chat.completion.chunk","created":1756500005,"model":"mihai-qwen3.8-27b-brainwaves-mxfp8-mlx","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_lms_1","type":"function","function":{"name":"write_file","arguments":""}}]},"finish_reason":null}]}
+"#
+        .lines()
+        .map(str::to_string)
+        .collect()
+    }
+
+    fn lmstudio_buffered_call_tail() -> Vec<String> {
+        r#"
+data: {"id":"chatcmpl-lms1","object":"chat.completion.chunk","created":1756500172,"model":"mihai-qwen3.8-27b-brainwaves-mxfp8-mlx","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{\"path\": \"src/main.py\", \"content\": \"print('hello')\\nprint('world')\\n\"}"}}]},"finish_reason":null}]}
+data: {"id":"chatcmpl-lms1","object":"chat.completion.chunk","created":1756500172,"model":"mihai-qwen3.8-27b-brainwaves-mxfp8-mlx","choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}],"usage":{"prompt_tokens":4982,"completion_tokens":122,"total_tokens":5104}}
+data: [DONE]
+"#
+        .lines()
+        .map(str::to_string)
+        .collect()
+    }
+
+    async fn decode_all(
+        lines: Vec<String>,
+    ) -> anyhow::Result<Vec<(Option<Message>, Option<ProviderUsage>)>> {
+        let stream = tokio_stream::iter(lines.into_iter().map(Ok));
+        let messages = response_to_streaming_message(stream);
+        pin!(messages);
+        let mut out = Vec::new();
+        while let Some(item) = messages.next().await {
+            out.push(item?);
+        }
+        Ok(out)
+    }
+
+    fn recording_observer() -> (
+        std::sync::Arc<std::sync::Mutex<Vec<ToolFormingEvent>>>,
+        ToolFormingObserver,
+    ) {
+        let events = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let sink = events.clone();
+        let observer: ToolFormingObserver =
+            std::sync::Arc::new(move |event| sink.lock().unwrap().push(event));
+        (events, observer)
+    }
+
+    #[tokio::test]
+    async fn test_tool_forming_observer_sees_open_frame_before_args() -> anyhow::Result<()> {
+        let (events, observer) = recording_observer();
+        let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<anyhow::Result<String>>();
+        let input = tokio_stream::wrappers::UnboundedReceiverStream::new(rx);
+
+        TOOL_FORMING_OBSERVER
+            .scope(observer, async move {
+                let messages = response_to_streaming_message(input);
+                pin!(messages);
+
+                let mut yielded: Vec<(Option<Message>, Option<ProviderUsage>)> = Vec::new();
+
+                for line in lmstudio_buffered_call_head() {
+                    tx.send(Ok(line)).unwrap();
+                }
+                // Drain until the decoder parks on the still-open input: it has consumed the
+                // open frame and now sits inside what would be the 161-172 s silence window.
+                let mut decode_err: Option<anyhow::Error> = None;
+                std::future::poll_fn(|cx| loop {
+                    match messages.as_mut().poll_next(cx) {
+                        std::task::Poll::Ready(Some(Ok(item))) => yielded.push(item),
+                        std::task::Poll::Ready(Some(Err(e))) => {
+                            decode_err = Some(e);
+                            return std::task::Poll::Ready(());
+                        }
+                        std::task::Poll::Ready(None) | std::task::Poll::Pending => {
+                            return std::task::Poll::Ready(())
+                        }
+                    }
+                })
+                .await;
+                if let Some(e) = decode_err {
+                    return Err(e);
+                }
+
+                {
+                    let seen = events.lock().unwrap();
+                    assert_eq!(
+                        seen.len(),
+                        1,
+                        "exactly the Forming event must be published during the silence window, got {seen:?}"
+                    );
+                    match &seen[0] {
+                        ToolFormingEvent::Forming { id, name, since } => {
+                            assert_eq!(id, "call_lms_1");
+                            assert_eq!(name, "write_file");
+                            assert!(since.elapsed() < std::time::Duration::from_secs(60));
+                        }
+                        other => panic!("expected Forming at the open frame, got {other:?}"),
+                    }
+                }
+
+                for line in lmstudio_buffered_call_tail() {
+                    tx.send(Ok(line)).unwrap();
+                }
+                while let Some(item) = messages.next().await {
+                    yielded.push(item?);
+                }
+
+                let seen = events.lock().unwrap();
+                assert_eq!(seen.len(), 2, "Forming then Complete, got {seen:?}");
+                match &seen[1] {
+                    ToolFormingEvent::Complete { id } => assert_eq!(id, "call_lms_1"),
+                    other => panic!("expected Complete at the terminal delta, got {other:?}"),
+                }
+
+                let tool_requests: Vec<_> = yielded
+                    .iter()
+                    .filter_map(|(m, _)| m.as_ref())
+                    .flat_map(|m| m.content.iter())
+                    .filter_map(|c| match c {
+                        MessageContent::ToolRequest(req) => req.tool_call.as_ref().ok(),
+                        _ => None,
+                    })
+                    .collect();
+                assert_eq!(tool_requests.len(), 1);
+                assert_eq!(tool_requests[0].name, "write_file");
+                let args = tool_requests[0].arguments.as_ref().expect("arguments");
+                assert_eq!(
+                    args.get("path").and_then(|v| v.as_str()),
+                    Some("src/main.py")
+                );
+
+                Ok(())
+            })
+            .await
+    }
+
+    #[tokio::test]
+    async fn test_tool_forming_observer_unset_is_byte_identical() -> anyhow::Result<()> {
+        let full: Vec<String> = lmstudio_buffered_call_head()
+            .into_iter()
+            .chain(lmstudio_buffered_call_tail())
+            .collect();
+
+        let without_observer = decode_all(full.clone()).await?;
+
+        let (events, observer) = recording_observer();
+        let with_observer = TOOL_FORMING_OBSERVER
+            .scope(observer, decode_all(full))
+            .await?;
+        assert_eq!(
+            events.lock().unwrap().len(),
+            2,
+            "the scoped run must have published Forming + Complete"
+        );
+
+        // `created` is a wall-clock stamp taken at yield time, not decoder output; zero it so
+        // the comparison is over what the decoder actually produced.
+        let normalize = |decoded: &[(Option<Message>, Option<ProviderUsage>)]| -> String {
+            let cleaned: Vec<serde_json::Value> = decoded
+                .iter()
+                .map(|(message, usage)| {
+                    let mut message = message.clone();
+                    if let Some(m) = message.as_mut() {
+                        m.created = 0;
+                    }
+                    json!({ "message": message, "usage": usage })
+                })
+                .collect();
+            serde_json::to_string(&cleaned).unwrap()
+        };
+
+        assert_eq!(
+            normalize(&with_observer),
+            normalize(&without_observer),
+            "an unset observer must not change the decoded stream by a single byte"
+        );
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_tool_forming_observer_multi_tool_calls() -> anyhow::Result<()> {
+        // The second call opens MID-burst (the inner accumulation loop's insert site), like the
+        // multi-tool bedrock capture above: both open frames must publish Forming when their
+        // name arrives, and each call publishes Complete at the terminal delta.
+        let response_lines = r#"
+data: {"id":"chatcmpl-mt1","object":"chat.completion.chunk","created":1756500000,"model":"m","choices":[{"index":0,"delta":{"role":"assistant","tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"write_file","arguments":""}}]},"finish_reason":null}]}
+data: {"id":"chatcmpl-mt1","object":"chat.completion.chunk","created":1756500000,"model":"m","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{\"path\": \"a.py\"}"}}]},"finish_reason":null}]}
+data: {"id":"chatcmpl-mt1","object":"chat.completion.chunk","created":1756500000,"model":"m","choices":[{"index":0,"delta":{"tool_calls":[{"index":1,"id":"call_2","type":"function","function":{"name":"run_tests","arguments":""}}]},"finish_reason":null}]}
+data: {"id":"chatcmpl-mt1","object":"chat.completion.chunk","created":1756500000,"model":"m","choices":[{"index":0,"delta":{"tool_calls":[{"index":1,"function":{"arguments":"{\"suite\": \"unit\"}"}}]},"finish_reason":null}]}
+data: {"id":"chatcmpl-mt1","object":"chat.completion.chunk","created":1756500000,"model":"m","choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}],"usage":{"prompt_tokens":100,"completion_tokens":20,"total_tokens":120}}
+data: [DONE]
+"#
+        .lines()
+        .map(str::to_string)
+        .collect::<Vec<_>>();
+
+        let (events, observer) = recording_observer();
+        TOOL_FORMING_OBSERVER
+            .scope(observer, decode_all(response_lines))
+            .await?;
+
+        let seen = events.lock().unwrap();
+        let shape: Vec<String> = seen
+            .iter()
+            .map(|e| match e {
+                ToolFormingEvent::Forming { id, name, .. } => format!("forming:{id}:{name}"),
+                ToolFormingEvent::Complete { id } => format!("complete:{id}"),
+            })
+            .collect();
+        assert_eq!(
+            shape,
+            vec![
+                "forming:call_1:write_file",
+                "forming:call_2:run_tests",
+                "complete:call_1",
+                "complete:call_2",
+            ],
+            "each name arrival publishes Forming; the terminal delta publishes Complete in index order"
+        );
 
         Ok(())
     }
