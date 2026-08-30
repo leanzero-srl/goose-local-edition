@@ -1,20 +1,24 @@
 """THE DEAD FIELD THAT FLATTERED EVERY RUN, pinned so it can never hand out credit again.
 
-`low_confidence_ask` carries open_decisions_total=0 / open_decisions_not_asked=0 UNCONDITIONALLY —
-the only live call site passes breakdown=None (swarm.rs:27124-27132 vs the computation at
-:36704-36710, severed by the P1-5 rewire). The old ruler computed asked/(asked+not_asked) with
-not_asked from that dead field, so every run scored 1.0 on asked_when_unsure regardless of how many
-open decisions it silently guessed. r5's truth, from primary data (the opener's final output in the
-durable .swarm/activity/open.log): FIVE open decisions, three asked (ask_max_q truncation) — the
-honest score is 0.6, and the old code reported 1.0.
+From the P1-5 rewire to cfcd32908 (2026-08-30), `low_confidence_ask` carried
+open_decisions_total=0 / open_decisions_not_asked=0 UNCONDITIONALLY — the only live call site
+passed breakdown=None (swarm.rs:27124-27132 vs the computation at :36704-36710). The old ruler
+computed asked/(asked+not_asked) with not_asked from that dead field, so every run scored 1.0 on
+asked_when_unsure regardless of how many open decisions it silently guessed. r5's truth, from
+primary data (the opener's final output in the durable .swarm/activity/open.log): FIVE open
+decisions, three asked (ask_max_q truncation) — the honest score is 0.6, and the old code
+reported 1.0. cfcd32908 killed both the dead breakdown arg and the truncation: a post-fix engine
+emits the real total/not_asked and asks EVERYTHING the opener opened, so an honest 1.0 is what a
+healthy post-fix run is EXPECTED to earn here. The fixtures below pin the PRE-fix shapes so
+archived runs keep scoring truthfully.
 
 The rules pinned here:
   * dead 0/0 fields + primary present → the primary's denominator (0.6, never 1.0);
   * primary absent + total=0 → CANNOT-MEASURE, named loudly — zero is the dead field's only
     possible output, so it can never license credit (defaulting to 1.0 IS the flattery class);
-  * primary absent + total NON-zero → usable evidence (a pre-P1-5 live-field engine — bedA-1541
-    really carries total=5/questions=5 and has no open lane log; erasing its measurement would
-    rewrite honest history);
+  * primary absent + total NON-zero → usable evidence (a live-field engine: pre-P1-5, or
+    cfcd32908 onward — bedA-1541 really carries total=5/questions=5 and has no open lane log;
+    erasing its measurement would rewrite honest history);
   * primary present AND a non-zero event total → the primary wins and the disagreement is flagged.
 """
 
