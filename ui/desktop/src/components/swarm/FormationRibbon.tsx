@@ -35,12 +35,18 @@ export function FormationRibbon({
   activeColor = SWARM_STATUS.action,
   metrics,
   evidence,
+  held = false,
 }: {
   phase: RunPhase | null;
   nodes: FormationRibbonNode[];
   activeColor?: string;
   metrics?: React.ReactNode;
   evidence?: FormationEvidence;
+  /** Engine-truth hold (run_paused with no later run_unpaused). The active chip renders in a distinct
+   *  held style — stopped-grey border, no fill — so nothing asserts work while every node is
+   *  deliberately idle, WITHOUT un-completing the phases behind it. The phase used to be nulled for
+   *  this, which returned every chip to 'upcoming': pausing erased the run's whole history. */
+  held?: boolean;
 }) {
   // The steps are THIS run's: the live pipeline plus any retired phase (research/contracts — deleted
   // from the engine) that the run's own events prove it ran. An archived run keeps its historical
@@ -76,24 +82,35 @@ export function FormationRibbon({
                   : state === 'skipped'
                     ? SWARM_STATUS.stopped
                     : 'var(--color-text-secondary)';
+            // A HELD active chip claims position, never work: stopped-grey border and ink, no fill.
+            // Prior chips keep their evidence-based complete/skipped states untouched.
+            const heldActive = held && state === 'active';
             return (
-              <li key={step.key} data-state={state} className="min-w-0">
+              <li key={step.key} data-state={state} data-held={heldActive || undefined} className="min-w-0">
                 <Tooltip>
                   <TooltipTrigger asChild>
                     <div
                       className="flex h-7 items-center justify-center gap-1 border px-2 text-xs font-semibold"
                       style={{
                         borderRadius: CHIP_RADIUS,
-                        borderColor:
-                          state === 'upcoming' ? 'var(--color-border-primary)' : (color as string),
-                        backgroundColor: state === 'active' ? activeColor : 'transparent',
-                        color: state === 'active' ? '#ffffff' : (color as string),
+                        borderColor: heldActive
+                          ? SWARM_STATUS.stopped
+                          : state === 'upcoming'
+                            ? 'var(--color-border-primary)'
+                            : (color as string),
+                        backgroundColor:
+                          state === 'active' && !heldActive ? activeColor : 'transparent',
+                        color: heldActive
+                          ? SWARM_STATUS.stopped
+                          : state === 'active'
+                            ? '#ffffff'
+                            : (color as string),
                       }}
                     >
                       {state === 'complete' ? <Check className="h-3 w-3" strokeWidth={3} /> : null}
                       <span className="truncate">
                         {step.label}
-                        {state === 'skipped' ? ' — skipped' : ''}
+                        {state === 'skipped' ? ' — skipped' : heldActive ? ' — held' : ''}
                       </span>
                     </div>
                   </TooltipTrigger>

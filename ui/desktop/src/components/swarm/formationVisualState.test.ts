@@ -38,6 +38,24 @@ describe('formation phase truth', () => {
     }
   });
 
+  // FINDING 16 of the frontend truth review: with NO active step, history must stay lit off the
+  // evidence map. Returning 'upcoming' for everything meant a held run (whose phase was nulled)
+  // erased every completed checkmark the moment Pause landed — a run four phases in read as not run.
+  it('keeps observed history complete when no step is active, and never mints a check for the furthest', () => {
+    const evidence = { open: true, synthesize: true, build: true } as const;
+    const steps = formationPhasesFor(evidence);
+    const at = (key: string) => steps.findIndex((s) => s.key === key);
+    expect(formationPhaseState(null, at('open'), evidence, steps)).toBe('complete');
+    expect(formationPhaseState(null, at('synthesize'), evidence, steps)).toBe('complete');
+    // ask sits below the furthest observed step and was never observed — skipped, exactly as it
+    // would read behind an active step.
+    expect(formationPhaseState(null, at('ask'), evidence, steps)).toBe('skipped');
+    // build is the FURTHEST observed: entered, not finished. Evidence lands on phase ENTRY, so a
+    // green check here would be unearned — it asserts neither work nor completion.
+    expect(formationPhaseState(null, at('build'), evidence, steps)).toBe('upcoming');
+    expect(formationPhaseState(null, at('integrate'), evidence, steps)).toBe('upcoming');
+  });
+
   it('maps every engine phase onto its own step', () => {
     expect(formationPhaseIndex('open')).toBe(0);
     expect(formationPhaseIndex('ask')).toBe(1);

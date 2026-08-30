@@ -699,8 +699,9 @@ export interface SwarmRunState {
   /** Friendly current-phase label (Opening / Researching / Building / Repairing / Done…). */
   phase: string;
   /** The ENGINE's own phase key — from its `phase` event and the task lifecycle, never from parsing the
-   *  label above. null before the first phase event, and while the run is held. The ribbon renders no
-   *  active step for null rather than inventing one. */
+   *  label above. null before the first phase event. A HELD run keeps its real phase here — the ribbon's
+   *  `held` prop is what renders the active chip as not-working; nulling it here erased completed
+   *  history (every chip back to 'upcoming' the moment Pause landed). */
   runPhase: RunPhase | null;
   /** Which phases the engine actually emitted, so the ribbon can mark an un-run stage skipped instead of
    *  back-filling a green check for work that never happened. */
@@ -4577,9 +4578,11 @@ export function useSwarmRun(workingDir: string | undefined, pollMs = 500): Swarm
           // scheduler has actually reached the hold it OVERRIDES the progress-derived label. The distinction
           // that matters to someone watching is not which task is next, it is "is this thing working or not".
           phase: held ? 'Paused' : phase,
-          // The RIBBON gets null while held for the same reason: a held run is not in a phase, it is
-          // stopped between them, and lighting a step would assert work that is not happening.
-          runPhase: held ? null : runPhase,
+          // The RIBBON keeps the real phase while held: nulling it made formationPhaseState return
+          // 'upcoming' for every chip, so pausing ERASED the run's completed history ("nothing has
+          // run yet" on a run four phases in). The no-work promise is kept by the ribbon's `held`
+          // prop instead — the active chip renders a stopped-grey outline, no fill, no work claim.
+          runPhase,
           runPhasesObserved,
           slices,
           proxy,
