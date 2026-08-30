@@ -375,3 +375,10 @@ research_request_block's armed-no-claimed-sections arm wording.
   {boot:2, import:1, other:7}), took the mid-flight stub-note addendum with tests. Measured README
   greps 0 TODAY because the __main__ shard rewrote it at 19:56 — checked the live state rather than
   assuming the morning's. Charter gap: none.
+- 2026-08-31 00:15 fix-tracer (independent trace of fc3e907a7): EXEMPLARY. Re-derived the ledger-row
+  counts from the raw 16 rows through the commit's own classify_command; re-ran the census repo-wide
+  including ui/desktop and evals; proved fix-2's NO at the ACTUAL attribution event via the best-tree
+  snapshot (stronger than the surgeon's today's-tree claim); and found the residual that ENGAGED in
+  the motivating run — skeleton_note's missing repairing disarm, delivered twice to the 0-edit shard.
+  5/5 pattern: every self-trace honest in verdict, incomplete in at least one detail. The independent
+  read remains the cheapest defect-finder we have.
