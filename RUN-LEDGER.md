@@ -188,28 +188,28 @@ DAG is actually parallel). reasoning_chars against answer_chars is the waste.
 - **chain**: 5
 - **startable**: 1
 - **brief_median**: 6054
-- **reasoning_chars**: 1032721
-- **answer_chars**: 70721
+- **reasoning_chars**: 1071728
+- **answer_chars**: 73940
 - **code_files**: 21
-- **code_bytes**: 182891
-- **elapsed_min**: 376
-- **phase_split**: open 68m · ask 0m · synthesis 16m · review 52m · build 238m
+- **code_bytes**: 182977
+- **elapsed_min**: 390
+- **phase_split**: open 68m · ask 0m · synthesis 16m · review 52m · build 252m
 - **before_build_min**: 137 (internal diagnosis only — never a cross-run number)
-- **vs_target**: ONLY THE SCORE COMPARES. Target 20.06% (qwen3.8-27b, one cloud agent, same model). Wall clock is NOT comparable — that run is on far faster hardware, so minutes measure the machine. Bytes are NOT a verdict — more code is not better code, and it had no planning phases to spend budget on. Cross-hardware-honest work numbers for THIS run: 182,891B delivered, 1,032,721 chars reasoned, 7 tasks completed, 0 retried.
+- **vs_target**: ONLY THE SCORE COMPARES. Target 20.06% (qwen3.8-27b, one cloud agent, same model). Wall clock is NOT comparable — that run is on far faster hardware, so minutes measure the machine. Bytes are NOT a verdict — more code is not better code, and it had no planning phases to spend budget on. Cross-hardware-honest work numbers for THIS run: 182,977B delivered, 1,071,728 chars reasoned, 8 tasks completed, 0 retried.
 - **python_parses**: 17 ok / 0 SYNTAX ERROR / 0 empty
 - **web_files**: brush.js, viz.js
-- **tasks_done**: 7/9 completed, 10 dispatched, 0 retried
+- **tasks_done**: 8/9 completed, 10 dispatched, 0 retried
 - **arm**: F (fleet of 3)
 - **fixture_seed**: ddcbba021ea1eba1
 - **plan_patched**: 1
 - **plan_repaired**: 3 actions, owning-nothing 0->0, unassigned endpoints 0->0
 - **plan_loaded**: 1
 - **review_rounds**: r1:new=3
-- **judge_looks**: 81
+- **judge_looks**: 83
 - **judge_nudges**: 4
 - **judge_ended**: 0
 - **drift_held**: 8
 - **tree_defects**: 0
 - **repair**: delivery_defect_steer=10 brief_defects=0 testgen=0 fix_target_selected=0 complete_verify=0 complete_result=0
-- **ledger**: 7 task ledger(s) in .swarm/ledger/, ledger.json roll-up present, written=7 delivered=0
+- **ledger**: 8 task ledger(s) in .swarm/ledger/, ledger.json roll-up present, written=8 delivered=0
 
