@@ -432,3 +432,8 @@ research_request_block's armed-no-claimed-sections arm wording.
   (missing launch-time receipts, not just the port pin), refused the identity-falsifying "fix", and
   left the live run untouched (verified after). The refusal IS the deliverable — it surfaced the
   closure-vs-Benchmark-view doctrine conflict as an owner decision instead of a silent workaround.
+- 2026-08-31 01:15 swarm-surgeon (three smalls, c6e511ba1): CLEAN. All three landed with the split law
+  paid (elide_middle out; 43,982→43,933); honest NET label on fix 1 and an honest deviation (the
+  inline latch is untestable without an unordered extraction — said so instead of gold-plating).
+  Left a fused doc-comment verbatim rather than editorialize — right call. Did not push (charter
+  ambiguity?) — pushed by the orchestrator; consider adding push-after-commit to the charter.
