@@ -92,6 +92,8 @@ testgen/review side calls run keyless today (no digest/think.log/forming — inv
 r5 stall ran behind one). Give every supervision model call an activity key (e.g. judge-<task>-lookN,
 replan-rN, testgen-<task>), labeled + grouped as supervision in the panel; the forming hoist then
 covers them for free. Surgeon #10 the moment #9 lands; panel grouping rides panel #5.
+- apply_split's partition refusals: zero break-test coverage (feed foreign-file, overlapping,
+  non-covering children; watch each refuse) — scheduler-surgeon, before any split latch flips.
 - ReplanContext.goal ships the whole 53.6k-char spec into the replan prompt (a large share of the
   43m call) — orientation-index treatment, same as fan A5; next swarm-surgeon batch.
 - fleet panel labels a replan call "review/test-gen" (planner-identity misattribution) — panel #5.
