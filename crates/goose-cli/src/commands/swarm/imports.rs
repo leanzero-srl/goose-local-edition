@@ -231,6 +231,7 @@ pub(super) fn tree_import_gaps(working_dir: &Path) -> Vec<(String, String)> {
 /// running one — or, worse, vanishing into "no task owns".
 ///
 /// Pure over its inputs so the r2 and r5 shapes are testable without a dispatcher.
+#[cfg(test)]
 pub(super) fn attribute_import_gap(
     rel: &str,
     module: &str,
@@ -238,6 +239,27 @@ pub(super) fn attribute_import_gap(
     states: &HashMap<String, String>,
     dispatched: &HashSet<String>,
 ) -> String {
+    // Test-only since item 5: the run path needs the owner as data (`_with_owner` below) — this
+    // line-only view remains for the r2/r5 attribution tests, which pin the LINE's wording.
+    attribute_import_gap_with_owner(rel, module, ownership, states, dispatched).0
+}
+
+/// The same attribution, with the responsible task as DATA beside the line — r5 assessment item 5
+/// (two receipts: decisions' completion event carried notifierd/ledgerd import defects; the
+/// frozen-rules-tests event carried a ledgerd one; run.jsonl seqs 172/223). The line already NAMED
+/// the owner, but `emit_delivery_defects` pushed every gap into the COMPLETING task's `defects`
+/// list, so grep-by-task_id misattributed cross-lane gaps and a worker reading its own event was
+/// invited to reason about files it must not touch. The owner here is who the defect ROUTES to:
+///   * module owned         -> that owner (their file is the missing one);
+///   * only importer owned  -> the importer's owner (the import line is theirs to fix);
+///   * neither owned        -> None — the completing task's list keeps it, explicitly unowned.
+pub(super) fn attribute_import_gap_with_owner(
+    rel: &str,
+    module: &str,
+    ownership: &HashMap<String, Vec<String>>,
+    states: &HashMap<String, String>,
+    dispatched: &HashSet<String>,
+) -> (String, Option<String>) {
     let state_of = |task: &str| -> String {
         states.get(task).cloned().unwrap_or_else(|| {
             if dispatched.contains(task) {
@@ -269,9 +291,12 @@ pub(super) fn attribute_import_gap(
                 .find(|(_, files)| files.iter().any(|f| f == cand))
                 .map(|(t, _)| t)
             {
-                return format!(
-                    "{rel} imports `{module}` — unresolved; {cand} is owned by {task}, state: {}",
-                    state_of(task)
+                return (
+                    format!(
+                        "{rel} imports `{module}` — unresolved; {cand} is owned by {task}, state: {}",
+                        state_of(task)
+                    ),
+                    Some(task.clone()),
                 );
             }
         }
@@ -281,12 +306,18 @@ pub(super) fn attribute_import_gap(
         .find(|(_, files)| files.iter().any(|f| f == rel))
         .map(|(t, _)| t)
     {
-        return format!(
-            "{rel} imports `{module}`, which no task owns — the import line is {task}'s to fix (state: {})",
-            state_of(task)
+        return (
+            format!(
+                "{rel} imports `{module}`, which no task owns — the import line is {task}'s to fix (state: {})",
+                state_of(task)
+            ),
+            Some(task.clone()),
         );
     }
-    format!("{rel} imports `{module}`, which no task has written")
+    (
+        format!("{rel} imports `{module}`, which no task has written"),
+        None,
+    )
 }
 
 #[cfg(test)]
@@ -485,6 +516,64 @@ mod tests {
             !line.contains("no task owns") && !line.contains("skeleton's to fix"),
             "the r5 misattribution must be impossible: {line}"
         );
+    }
+
+    /// THE r5 ROUTING RECEIPTS (item 5): run.jsonl seq 172 emitted, under task_id "decisions"
+    /// (owner of DECISIONS.md only), defects about app/notifierd/__init__.py and
+    /// app/ledgerd/__init__.py — other lanes' files. The owner now rides beside the line as data
+    /// so the emitter can route each gap to its owning task and keep only own + explicitly-unowned
+    /// entries on the completing task's list.
+    #[test]
+    fn the_owner_rides_beside_the_line_for_routing() {
+        let mut ownership: HashMap<String, Vec<String>> = HashMap::new();
+        ownership.insert("decisions".into(), vec!["DECISIONS.md".into()]);
+        ownership.insert(
+            "notifierd-service".into(),
+            vec!["app/notifierapi.py".into()],
+        );
+        ownership.insert(
+            "skeleton".into(),
+            vec![
+                "app/notifierd/__init__.py".into(),
+                "app/ledgerd/__init__.py".into(),
+            ],
+        );
+        let states: HashMap<String, String> = HashMap::new();
+        let dispatched: HashSet<String> = ["decisions", "skeleton", "notifierd-service"]
+            .into_iter()
+            .map(String::from)
+            .collect();
+
+        // The module's owner is the route: notifierd-service, not decisions (who completed).
+        let (line, owner) = attribute_import_gap_with_owner(
+            "app/notifierd/__init__.py",
+            "app.notifierapi",
+            &ownership,
+            &states,
+            &dispatched,
+        );
+        assert_eq!(owner.as_deref(), Some("notifierd-service"), "{line}");
+
+        // Nobody owns the module: the importing file's owner is the route.
+        let (line2, owner2) = attribute_import_gap_with_owner(
+            "app/ledgerd/__init__.py",
+            "app.ghost",
+            &ownership,
+            &states,
+            &dispatched,
+        );
+        assert_eq!(owner2.as_deref(), Some("skeleton"), "{line2}");
+
+        // Neither end owned: no route — the completing task keeps it, explicitly unowned.
+        let (line3, owner3) = attribute_import_gap_with_owner(
+            "scripts/tool.py",
+            "app.ghost",
+            &ownership,
+            &states,
+            &dispatched,
+        );
+        assert!(owner3.is_none(), "{line3}");
+        assert!(line3.contains("no task has written"), "{line3}");
     }
 
     /// `from app import store` is the shape generated code writes most, and `!module.contains('.')`
