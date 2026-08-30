@@ -328,3 +328,10 @@ research_request_block's armed-no-claimed-sections arm wording.
   construction, not just review. Bonus: named two more possessive-template emitters (GET ~21976,
   acquired-not-persisted ~22577) already covered by the shared clean(). Charter gap: none. Independent
   gate-8 tracer dispatched on the commit (the self-trace never suffices for a shipped fix).
+- 2026-08-30 21:45 fix-tracer (independent trace of 7d1ae2f0e): EXEMPLARY. Validated its replay against
+  the logged outcome 8/8 BEFORE tracing (charter discipline holding), then measured every literal's
+  boundary/raw counts on the live tree read-only, confirmed both verdicts, and caught what the surgeon's
+  self-trace missed: the F4 three-way boundary tie decided by RAW counts, a doc comment one rank from
+  winning a shard, a gate-7 misquote (1 vs 4 errors), and the five-of-six-findings-still-can't-promote
+  residual. This is why the self-trace never suffices. Charter gap: none. Brief leak: none — it was
+  handed the claim and the primary anchors only.
