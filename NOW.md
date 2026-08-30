@@ -53,6 +53,16 @@ implied, the summary was wrong and the sources win.
 
 ---
 
+## THE CURRENT THREAD (2026-08-30 13:30)
+
+**I am the boss of the research-fan implementation; Mihai nudges with vision** (his words 13:28: "be
+the boss of this implementation with me nudging you along"). Method = his TRUE doctrine: microscopic
+reading of actual information, never shapes — that is what makes it FAST. The architecture (his 13:15
+steer, memory `swarm-research-fan-vision`): OPEN's per-slice questions fan to idle nodes immediately,
+answers snowball into the ledger, synthesis plans over ANSWERED material; imperfections flow to
+REPAIR. Design fan in flight; implementation starts the moment swarm.rs frees. r5 completes untouched
+as the serial baseline.
+
 ## The goal, unchanged
 
 **PART II LANDED (`3a09bf427` + amendments `55cd200d6`, DESIGN-STABILITY-FIRST.md:300-560): the stateful
