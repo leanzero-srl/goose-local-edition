@@ -50,11 +50,13 @@ keep this file and the ledger current so restrictions and thread survive compact
 plan is the authorization for all of it — bake-off, fork, integration, UI.
 
 ## The one decision waiting
-Live-app verification of the new window (mount 9B via UI, HF search/download, sampling apply,
-old window gone), THEN the local-inference default-feature flip with degradation proof, THEN the
-swarm micro-run through the SwarmEngine path. Blocked only on cargo going quiet (surgeon step B in
-flight in swarm.rs). Before the desktop mount test: stop the manual rapid-mlx on 8090 (the manager
-needs the port; gates will refuse otherwise, correctly).
+Live desktop verification is DONE and green (see LEDGER 2026-08-31 ~01:00 — full loop incl. two
+spawn-PATH defects found+fixed). Remaining, in order: (1) swarm-surgeon step C — register the
+SidecarEngine in the Engines registry + SwarmConfig section, then a real `goose swarm` micro-run
+through the sidecar; (2) the local-inference default-feature flip decision (desktop still uses the
+flag for onboarding/dictation/ModelSettingsPanel — flipping needs a degradation pass in the
+running app; NOT flipped tonight, reasons in LEDGER); (3) morning report for Mihai. Desktop app
+left running under CDP 9897; engine unmounted; fleet untouched throughout.
 
 ## Superseded waiting-item (kept for the record)
 Bake-off verdict, pending oMLX numbers. State (2026-08-30 ~23:00): rapid-mlx 0.13.1 DONE — 3
