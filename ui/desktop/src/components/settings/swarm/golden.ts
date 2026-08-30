@@ -66,11 +66,6 @@ export interface SwarmConfig {
   /** Per-node task-share weights, keyed by a substring of the device id (e.g. {"gabee":1,"mihai":2}).
    *  Higher = a larger share of tasks; the scheduler's speed_weight_for() substring-matches these. */
   speed_weights?: Record<string, number>;
-  /** UNCAPPED regime: remove every wall-clock and volume limit — the run finishes when it finishes,
-   *  and only the judge (reads the reasoning, stops real loops), repeat-break (identical tool calls)
-   *  and dead-stream failsafes may stop a call. The desktop's route into full parity with headless
-   *  uncapped runs (GOOSE_SWARM_UNCAPPED env wins when present). Engine default false. */
-  uncapped?: boolean;
   /** Extra request-body fields merged verbatim into every LM Studio call (never cloud providers).
    *  The passthrough for LM Studio custom fields — measured: per-model custom fields (e.g. qwen3.8's
    *  thinking effort) are NOT honored per-request by current LM Studio; set those in the LM Studio
