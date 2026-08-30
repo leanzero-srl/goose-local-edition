@@ -62,6 +62,16 @@ counts as done; big deliveries (the research fan) get their own prover pass agai
 amendments. "This is not work to be done superficially." The doctrine: fallbacks only on many-happy-path arms; reachability proven
 as-configured; no hard coding. First run: 2026-08-30 over the day's five landed changes.
 
+## The module split (refute-first, run it DURING an r6 run — the engine is frozen then)
+
+swarm.rs at 42k lines is accretion, not design (Mihai 15:25: "why did one of you models decide to
+push everything in one file?"). The measured cost TODAY: one-agent-per-file serializes ALL engine
+work (#6 blocked #7 blocked forming, serially). The split: mod research / forming / supervision /
+plan / repair, inline tests out to tests/ — PURE MECHANICAL, compiler-gated (cargo test identical
+before/after), never a brace script (the 34,827-line deletion is why), rules files + roster
+re-anchored in the same commit. Payoff: parallel surgeons per module. Window: mid-run, binary
+sealed, tree free.
+
 ## Surgeon #8 candidate (refute first, then brief): code-written skeleton — the fan opens at minute zero
 
 r5 measured: planning 137m before BUILD, then the whole DAG serialized behind the skeleton ROOT
