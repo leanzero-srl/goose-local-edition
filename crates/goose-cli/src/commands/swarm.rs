@@ -5408,7 +5408,10 @@ mod tests {
             "the rename consumed the tmp — never left behind"
         );
         std::fs::write(forming_tmp(&path), "torn").expect("strand a tmp");
-        drop(FormingGuard { path: path.clone() });
+        drop(FormingGuard {
+            path: path.clone(),
+            report: None,
+        });
         assert!(!path.exists(), "guard removed the sidecar");
         assert!(!forming_tmp(&path).exists(), "guard removed the tmp too");
     }
@@ -14922,8 +14925,9 @@ struct FormingRow {
 }
 
 /// The wrapper-owned state behind the forming observer: the live map plus the write-coalesce
-/// bookkeeping. `write_error` is recorded ONCE and surfaces after the scope as a named
-/// `forming_write_failed` event (gate 1: a failed write is loud, never a silent `.ok()`).
+/// bookkeeping. `write_error` is recorded ONCE and surfaces from `FormingGuard::drop` as a named
+/// `forming_write_failed` event on every exit path, aborts included (gate 1: a failed write is
+/// loud, never a silent `.ok()`).
 #[derive(Default)]
 struct FormingSidecar {
     live: std::collections::BTreeMap<String, FormingRow>,
@@ -15072,14 +15076,40 @@ fn write_forming_atomic(path: &Path, body: &str) -> std::io::Result<()> {
 /// of the whole dispatch future all unwind through this Drop. Complete is NOT guaranteed (an
 /// errored, aborted or stall-killed stream never sends it), so scope exit is the clearing point
 /// of record.
+///
+/// `report` (Some only in the live wrapper) makes the `forming_write_failed` diagnostic ride the
+/// SAME every-exit-path guarantee: the emission used to sit after the scoped `.await`, so a
+/// scheduler abort that cancelled the dispatch future cleaned the files (this Drop) but dropped
+/// the one named record that writes had been failing — the diagnostic died with the future.
+/// Cleanup-only users (the guard-clears test) pass None.
 struct FormingGuard {
     path: PathBuf,
+    report: Option<(Arc<dyn EventSink>, String, Arc<Mutex<FormingSidecar>>)>,
 }
 
 impl Drop for FormingGuard {
     fn drop(&mut self) {
         let _ = std::fs::remove_file(&self.path);
         let _ = std::fs::remove_file(forming_tmp(&self.path));
+        if let Some((events, key, sidecar)) = self.report.take() {
+            let (write_error, held_unflushed) = {
+                // Poison-recovered so a panicking observer cannot also silence the report;
+                // the sidecar holds plain data, nothing can be torn mid-update.
+                let mut g = match sidecar.lock() {
+                    Ok(g) => g,
+                    Err(poisoned) => poisoned.into_inner(),
+                };
+                (g.write_error.take(), g.dirty)
+            };
+            if let Some(error) = write_error {
+                events.write_value(serde_json::json!({
+                    "event": "forming_write_failed",
+                    "key": key,
+                    "error": error,
+                    "held_unflushed": held_unflushed,
+                }));
+            }
+        }
     }
 }
 
@@ -16887,9 +16917,10 @@ impl GooseAgentDispatcher {
                 );
                 fold_forming_event(&mut g.live, ev);
                 if g.write_error.is_some() {
-                    // First failure was recorded and will surface as forming_write_failed after
-                    // the scope; keep folding (cheap), stop writing (gate 1: loud once, then
-                    // honest silence — not a retry storm against a broken disk).
+                    // First failure was recorded and will surface as forming_write_failed from
+                    // the guard's Drop (every exit path, aborts included); keep folding (cheap),
+                    // stop writing (gate 1: loud once, then honest silence — not a retry storm
+                    // against a broken disk).
                     return;
                 }
                 let due = frame_write
@@ -16923,6 +16954,7 @@ impl GooseAgentDispatcher {
         };
         let _guard = FormingGuard {
             path: forming_path.clone(),
+            report: Some((self.events.clone(), key.to_string(), sidecar.clone())),
         };
         let out = goose_provider_types::formats::openai::TOOL_FORMING_OBSERVER
             .scope(
@@ -16946,18 +16978,9 @@ impl GooseAgentDispatcher {
                 ),
             )
             .await;
-        let (write_error, held_unflushed) = {
-            let mut g = sidecar.lock().unwrap();
-            (g.write_error.take(), g.dirty)
-        };
-        if let Some(error) = write_error {
-            self.events.write_value(serde_json::json!({
-                "event": "forming_write_failed",
-                "key": key,
-                "error": error,
-                "held_unflushed": held_unflushed,
-            }));
-        }
+        // The forming_write_failed emission lives in FormingGuard::drop (the report field), so
+        // it survives a scheduler abort of this future exactly like the file cleanup does. On
+        // the normal path the guard drops right here, at scope exit — same event, same moment.
         out
     }
 
