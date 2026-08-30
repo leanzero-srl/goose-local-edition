@@ -21,8 +21,9 @@ honesty axis, checked against the deterministic build score.
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 AXES = ("research", "planning", "clarification", "build", "judge", "delivery")
 
@@ -165,7 +166,52 @@ def axis_planning(ev: List[Dict], build_score: Optional[float]) -> Dict:
     return checks
 
 
-def axis_clarification(ev: List[Dict]) -> Dict:
+def opener_open_decisions(run_log: Optional[Path]) -> Tuple[Optional[List], str]:
+    """The opener's own open_decisions list, from the durable lane log — the PRIMARY source.
+
+    WHY not the event: `low_confidence_ask.open_decisions_total/_not_asked` are DEAD fields — the
+    only live call site passes breakdown=None (swarm.rs:27124-27132 vs the computation at
+    :36704-36710, severed by the P1-5 rewire), so both read 0 unconditionally. MEASURED on r5
+    (2026-08-30): the event said total=0/not_asked=0 while the opener's final output listed FIVE
+    open decisions, of which ask_max_q surfaced three.
+
+    WHY open.log and not its neighbours (all three MEASURED on the same run):
+      * `activity/open.json` is the rolling digest, rewritten in place — its last_text held 400
+        chars and no open_decisions key;
+      * `activity/open.calls.jsonl` truncates the final_output call's summary to 200 chars;
+      * `activity/open.log` is append-only and complete — the final_output JSON lands whole, and
+        raw-decoding the array after the last `"open_decisions":` key recovered all five.
+
+    Returns (decisions, provenance). None NEVER means "no decisions" — it means the primary could
+    not be read, and each unreadable case is NAMED distinctly (absent file / absent key /
+    unparseable value) so a broken artifact never impersonates a missing one. The caller must
+    report the absence, never impute a number.
+    """
+    candidates = []
+    if run_log is not None:
+        base = Path(run_log).parent
+        candidates = [base / ".swarm" / "activity" / "open.log",
+                      base / "activity" / "open.log"]
+    log = next((p for p in candidates if p.is_file()), None)
+    if log is None:
+        tried = ", ".join(str(p) for p in candidates) or "no run log path given"
+        return None, f"opener lane log absent (tried {tried})"
+    text = log.read_text(errors="replace")
+    hits = list(re.finditer(r'"open_decisions"\s*:\s*\[', text))
+    if not hits:
+        return None, f"{log} carries no open_decisions key (pre-OPEN-phase run?)"
+    for m in reversed(hits):
+        try:
+            arr, _ = json.JSONDecoder().raw_decode(text, m.end() - 1)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(arr, list):
+            return arr, f"primary {log.name}: {len(arr)} open decision(s) in the opener's output"
+    return None, f"{log} has an open_decisions key but its value is UNPARSEABLE"
+
+
+def axis_clarification(ev: List[Dict],
+                       opener_decisions: Tuple[Optional[List], str]) -> Dict:
     """The ASK still emits `low_confidence_ask` / `low_confidence_answered` / the timeout — what
     changed is the TRIGGER (the opener's own open decisions, not an agreement score) and what happens
     when nobody is watching (a node answers as proxy). `confidence_rescored` is gone with the plan
@@ -182,12 +228,46 @@ def axis_clarification(ev: List[Dict]) -> Dict:
         checks["asked_when_unsure"] = g(
             None, "the run never dropped below the ask floor (or the floor was unset)")
     else:
+        # The asked count is primary either way: the questions ride the event verbatim. The
+        # DENOMINATOR is what the event lies about — `open_decisions_total/_not_asked` are dead
+        # (breakdown=None at the only live call site since P1-5), so asked/(asked+0) handed every
+        # run 1.0 unconditionally. r5's truth: 5 opened, 3 asked (ask_max_q truncation) = 0.6.
+        # A non-zero event total therefore CANNOT come from the dead site — it is real evidence
+        # from a pre-P1-5 (or future fixed) engine, usable when the primary artifact is gone; a
+        # zero never is, because zero is the dead field's only possible value.
         asked = sum(len(a.get("questions") or []) for a in asks)
-        not_asked = sum(a.get("open_decisions_not_asked") or 0 for a in asks)
-        checks["asked_when_unsure"] = g(
-            asked / (asked + not_asked) if (asked + not_asked) else 0.0,
-            f"{asked} asked, {not_asked} open decisions left unasked",
-            "an unasked open decision is a guess the run will make silently")
+        decisions, provenance = opener_decisions
+        event_total = max((a.get("open_decisions_total") or 0) for a in asks)
+        if decisions is not None:
+            total: Optional[int] = len(decisions)
+            src = provenance
+            if event_total and event_total != total:
+                src += (f" — DISAGREES with the event's open_decisions_total={event_total}; "
+                        f"the primary wins")
+        elif event_total:
+            total = event_total
+            src = (f"event open_decisions_total={event_total} — non-zero, so a live-field "
+                   f"engine; {provenance}")
+        else:
+            total = None
+            src = provenance
+        if total is None:
+            checks["asked_when_unsure"] = g(
+                None,
+                f"CANNOT-MEASURE: {asked} question(s) asked, but the open-decision count has no "
+                f"trustworthy source — {provenance}; the event's open_decisions_total=0 is the "
+                f"dead field's only possible value, not a measurement",
+                "defaulting to full credit on missing data is the flattery this check used to "
+                "commit")
+        elif total == 0:
+            checks["asked_when_unsure"] = g(
+                1.0, f"{asked} asked; the opener declared no open decisions ({src})",
+                "an unasked open decision is a guess the run will make silently")
+        else:
+            checks["asked_when_unsure"] = g(
+                asked / total,
+                f"{asked} of {total} open decisions asked ({src})",
+                "an unasked open decision is a guess the run will make silently")
 
     # WHAT REPLACED THE RESCORE CHECK. The old measure asked whether answering moved the confidence
     # number; there is no confidence number to move any more. The question that survives is whether
@@ -343,7 +423,7 @@ def evaluate(run_log: Path, vendor_trace: List[Dict], build_verdict: Optional[Di
     axes = {
         "research": axis_research(ev, vendor_trace),
         "planning": axis_planning(ev, build_score),
-        "clarification": axis_clarification(ev),
+        "clarification": axis_clarification(ev, opener_open_decisions(run_log)),
         "build": {"artifact_score": g(build_score, f"{100 * build_score:.1f}% from score_build")
                   if build_score is not None else g(None, "no build verdict")},
         "judge": axis_judge(ev, build_ok),
