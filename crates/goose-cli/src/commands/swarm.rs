@@ -51,6 +51,8 @@ use research::{
 };
 mod imports;
 use imports::{attribute_import_gap, tree_import_gaps, verify_tree_imports};
+mod transcripts;
+use transcripts::{append_attempt_marker, append_reasoning_transcript, append_thinking_transcript};
 
 const FINAL_OUTPUT_TOOL: &str = "recipe__final_output";
 /// The one engine terminator's own words — the `judge_out_of_moves` ending's Err message, which
@@ -8065,7 +8067,7 @@ mod tests {
         );
 
         // The attempt marker round-trips through the UI's split regex shape.
-        let marker = attempt_marker_line(1, &said1.dispatched_at);
+        let marker = transcripts::attempt_marker_line(1, &said1.dispatched_at);
         assert!(marker.starts_with("\n===== swarm attempt 1 · dispatched "));
         assert!(marker.ends_with(" =====\n"));
     }
@@ -14725,74 +14727,6 @@ fn activity_digest_key(task_id: &str) -> String {
         .replace('\\', "~b")
 }
 
-/// Append the reasoning produced SINCE THE LAST CALL to `<activity>.log`, and return the new index.
-///
-/// WHY THIS EXISTS. The digest's `full_reasoning` is a 24,000-char TAIL clip, so a long call's narration
-/// starts partway through — Mihai, twice, on a node whose panel began at item 25 of a 39-item list:
-/// *"the generations stop displaying past a certain number of characters"*. The clip is not gratuitous:
-/// the digest is REWRITTEN on a hot 400ms timer, so it cannot simply grow, and raising the number just
-/// moves the cliff while making every rewrite more expensive.
-///
-/// An append-only sibling has neither problem. Each write costs only the NEW text, the file is the whole
-/// narration with nothing elided, and the digest keeps its bounded tail for the judge and the live panel.
-/// Best-effort throughout: a transcript that fails to write must never disturb a run.
-/// Append buffered THINKING to `<activity>.think.log` and clear the buffer.
-///
-/// The digest carries a 2,400-character rolling window of the reasoning channel, which is why the panel's
-/// THINKING pane clears and refills instead of accumulating. This is the reasoning channel's only durable
-/// record. Best-effort: a transcript that cannot be written must never disturb a run.
-/// GEN-6a #8: the durable transcripts were best-effort-SILENT — a failed open/write left the
-/// `.think.log` frozen with no trace, and the operator read a stale log as "the worker stopped
-/// thinking". Both appenders now RETURN the write error so the caller (run_agent_in, which has
-/// the events sink) can emit `transcript_write_failed` once per activity key. The write still
-/// degrades — a transcript failure must never stop a worker — but it degrades loudly.
-fn append_thinking_transcript(activity_path: &Path, buf: &mut String) -> Option<String> {
-    if buf.is_empty() {
-        return None;
-    }
-    use std::io::Write;
-    let log = activity_path.with_extension("think.log");
-    match std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&log)
-    {
-        Ok(mut f) => match f.write_all(buf.as_bytes()) {
-            Ok(()) => {
-                buf.clear();
-                None
-            }
-            Err(e) => Some(e.to_string()),
-        },
-        Err(e) => Some(e.to_string()),
-    }
-}
-
-fn append_reasoning_transcript(
-    activity_path: &Path,
-    texts: &[String],
-    already: usize,
-) -> (usize, Option<String>) {
-    if texts.len() <= already {
-        return (already, None);
-    }
-    use std::io::Write;
-    let fresh = texts[already..].join("");
-    if fresh.is_empty() {
-        return (texts.len(), None);
-    }
-    let log = activity_path.with_extension("log");
-    let err = match std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&log)
-    {
-        Ok(mut f) => f.write_all(fresh.as_bytes()).err().map(|e| e.to_string()),
-        Err(e) => Some(e.to_string()),
-    };
-    (texts.len(), err)
-}
-
 /// A tool request whose result has not landed yet, keyed in the worker loop's `pending` map by the
 /// request id the stream will answer with.
 #[derive(Clone, Debug)]
@@ -14987,29 +14921,6 @@ fn seed_worker_digest(
         d["supervision"] = serde_json::Value::Bool(true);
     }
     d
-}
-
-/// ONE attempt-marker line, appended to `<task>.log` and `<task>.think.log` when a call is seeded.
-/// The transcripts are append-only across attempts (that is their value), so without a boundary the
-/// panel cannot tell attempt 0's final error from attempt 1's first words — the UI splits at the
-/// LAST marker into a LIVE segment plus superseded ones. Legacy logs without markers read as one
-/// live segment, exactly as before.
-fn attempt_marker_line(attempt: u32, dispatched_at: &str) -> String {
-    format!("\n===== swarm attempt {attempt} · dispatched {dispatched_at} =====\n")
-}
-
-fn append_attempt_marker(activity_path: &Path, attempt: u32, dispatched_at: &str) {
-    use std::io::Write;
-    let line = attempt_marker_line(attempt, dispatched_at);
-    for ext in ["log", "think.log"] {
-        if let Ok(mut f) = std::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(activity_path.with_extension(ext))
-        {
-            let _ = f.write_all(line.as_bytes());
-        }
-    }
 }
 
 /// What a pytest tail actually says, parsed by code instead of trusted from a tool's exit status.
@@ -17904,20 +17815,38 @@ impl GooseAgentDispatcher {
                         let none_written_yet = omni_looks <= 1
                             && !owned.is_empty()
                             && owned.iter().all(|f| !self.working_dir.join(f).exists());
+                        // The block lands in the durable `<task>.log` (the note rides the answer
+                        // channel), and it carried no time — reconstructing r5's steer sequence
+                        // needed file mtimes. The ISO stamp is DATA in the log, like the dispatch
+                        // header's; nothing reads it, nothing is bounded by it.
+                        let measured_at = chrono::Utc::now().to_rfc3339();
                         let note = if none_written_yet {
                             format!(
-                                "YOUR OWNED FILES, measured from disk just now: you own these and \
-                                 none exists YET — write them:\n{listed}\n\
+                                "YOUR OWNED FILES, measured from disk at {measured_at}: you own \
+                                 these and none exists YET — write them:\n{listed}\n\
                                  Start with a first minimal version of the first path, at exactly \
                                  that path, and extend it afterwards. The deliverable is bytes on \
                                  disk, not a file composed in your head."
                             )
                         } else {
+                            // The closing line is MEASURED, not template (r5 assessment, twice):
+                            // "Keep the work you have already done." was delivered to attempt-0
+                            // lanes whose own measurement in the same note said "nothing has
+                            // written it" — false on its face, the exact class the specificity
+                            // gate bans. The same disk stat that produced the defect lines
+                            // decides the closing: something owned exists → keep it; nothing
+                            // owned exists → name the first move instead.
+                            let closing = if owned.iter().any(|f| self.working_dir.join(f).exists())
+                            {
+                                "Keep the work you have already done."
+                            } else {
+                                "Nothing you own exists on disk yet — begin with the first file \
+                                 at that exact path."
+                            };
                             format!(
                                 "DELIVERY DEFECT — this is a MEASUREMENT of the files you own, taken from \
-                                 disk just now, not an opinion about your reasoning:\n{listed}\n\
-                                 Fix the first one before anything else, at that exact path. Keep the work \
-                                 you have already done."
+                                 disk at {measured_at}, not an opinion about your reasoning:\n{listed}\n\
+                                 Fix the first one before anything else, at that exact path. {closing}"
                             )
                         };
                         agent
@@ -18444,11 +18373,16 @@ impl GooseAgentDispatcher {
                             call_records.len(),
                             &omni_outcome.verdict,
                         );
+                        // The note lands in the durable `<task>.log`; the ISO stamp makes each
+                        // appended block datable without file mtimes, like the dispatch header
+                        // (r5 assessment: reconstructing the steer sequence needed mtimes).
+                        // Timestamp as data — nothing reads it, nothing is bounded by it.
                         let nudge_text = format!(
-                            "SUPERVISOR NOTE — an independent reviewer read this call's own reasoning.\n\
+                            "SUPERVISOR NOTE ({}) — an independent reviewer read this call's own reasoning.\n\
                              {}Do this next: {direction}\n\
                              Continue the SAME task. Do not restart work you have already done, and do not \
                              re-explain your plan.",
+                            chrono::Utc::now().to_rfc3339(),
                             if established.is_empty() {
                                 String::new()
                             } else {
