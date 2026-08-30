@@ -134,6 +134,10 @@ fn to_input(
         prev_observed_secs: prev_at,
         split_count: 0,
         attempt: 0,
+        // The archived corpus predates the GEN-4 delivery record; every replayed dispatch
+        // carried both blocks, so the hints replay with the full three-fact clause.
+        file_layout_delivered: true,
+        dep_apis_delivered: true,
     }
 }
 
