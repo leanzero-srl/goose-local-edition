@@ -1,5 +1,27 @@
 # MLX engine campaign — LEDGER
 
+## 2026-08-31 ~03:00 — SWARM E2E THROUGH THE SIDECAR: PROVEN (artifacts + event log)
+
+Rerun on the fixed binary (3d31c31e0) with the repaired single-key config,
+GOOSE_SWARM_PIN_DEVICE=workhorse-mlx: the swarm's own pre-warm MOUNTED the engine (uvx fork pin,
+8090 listener observed), config loaded clean (no config_parse_error), planner-keep guard held the
+alias, pool was exactly [workhorse-mlx], every dispatch and judge look ran with provider omlx —
+and the swarm WROTE WORKING CODE through the sidecar: src/slugify.py + src/test_slugify.py in the
+run workspace, 4/4 tests passing under an independent pytest. Phases reached:
+open→synthesis→review→execute→judge (look 7 on integrate-verify).
+
+Caveat, stated plainly: the final COMPLETE-phase banner was lost — an external kill-all stopped
+the session's background tasks at seq ~165 (run + engine tree died mid-judging; not a divergence,
+not a crash; the log's last writes are 12s before the check). The substance is proven by the
+artifacts + log; a clean-banner rerun is one command:
+`GOOSE_SWARM_PIN_DEVICE=workhorse-mlx goose swarm run "<task>"`.
+
+**Config note for Mihai:** ~/.config/goose/config.yaml on the workhorse now carries a `swarm:`
+block (sidecar device workhorse-mlx + planner_model = the 9B alias + allow_model_load) and the
+repaired `mlx_engine:` block. Any swarm run launched FROM THIS MACHINE will keep that planner
+(the keep-guard sees the device carrying it). The MacBook's fleet config is untouched. Backups of
+every config state are in the session scratchpad.
+
 ## 2026-08-31 ~02:30 — First sidecar-only swarm micro-run DIVERGED; stopped, different fix dispatched
 
 Per follow-the-test-kill-on-divergence: the run was not retried. Observed (stdout + ground truth):

@@ -399,3 +399,17 @@ research_request_block's armed-no-claimed-sections arm wording.
   already the right predicate — no invented change); paid the ratchet mid-commit by extracting two
   more engine-coherent functions; left-for-step-C list names six REAL design decisions with site
   comments. Charter gap: none. Brief leak: none.
+- 2026-08-31 02:15 swarm-surgeon (SidecarEngine registration step C, a2aec6fd4): CLEAN+. Built the
+  provider map the brief wrongly presumed existed and said so; kept sidecar models on the local-
+  extras path per the step-B ruling; curl-idiom over blocking-reqwest with the panic reason named;
+  ratchet held by moving producers beside consumers; left a copy-pasteable micro-run HOW-TO. Named
+  the residual create("lmstudio") construction risk unprompted. Charter gap: none.
+- 2026-08-31 02:50 swarm-surgeon (micro-run divergence diagnosis + repair, 3d31c31e0): CLEAN++.
+  Refuted BOTH of the orchestrator's framings from primary evidence: the binary predated step C
+  (event log build_sha + merge-base proof) and a duplicate config key silently defaulted the whole
+  swarm config (proven both directions with GOOSE_PATH_ROOT probes) — my "merged additively" claim
+  was inference, corrected. Made the silent config failure LOUD (config_parse_error → red levers
+  banner), fixed pre-warm routing with recording-double tests, guarded the configured planner, and
+  gave a justified REPORT-NOT-FIX on the speed-ranking hypothesis (mild-not-deterministic). The
+  orchestrator's lesson is mine: I handed it a wrong premise (lms ps fails here) and stale
+  observations; it verified instead of obeying — exactly what the charter demands. Charter gap: none.
