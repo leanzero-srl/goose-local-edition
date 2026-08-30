@@ -210,7 +210,7 @@ def run(entrant: str, rep: int, out_root: Path, timeout: int, port: int) -> Dict
             for child in prev.iterdir():
                 if child.name in {"graded.db", "verdict.json", "process.json",
                                   "nodeloop-result.json", "heartbeat", "vendor-trace.jsonl",
-                                  "run.jsonl", "__pycache__"}:
+                                  "run.jsonl", "trace.jsonl", "__pycache__"}:
                     continue
                 if child.is_dir():
                     shutil.copytree(child, workdir / child.name, dirs_exist_ok=True)
@@ -236,7 +236,7 @@ def run(entrant: str, rep: int, out_root: Path, timeout: int, port: int) -> Dict
             raise SystemExit(f"BENCH_SEED_TREE does not exist: {seed}")
         for child in base.iterdir():
             if child.name in {"__pycache__", ".swarm", "graded.db", "verdict.json",
-                              "process.json", "run.jsonl", "vendor-trace.jsonl",
+                              "process.json", "run.jsonl", "vendor-trace.jsonl", "trace.jsonl",
                               "nodeloop-result.json", "heartbeat"}:
                 continue
             if child.is_dir():
@@ -276,6 +276,15 @@ def run(entrant: str, rep: int, out_root: Path, timeout: int, port: int) -> Dict
         server = vendor.serve(port, trace, seed=seed)
     else:
         server = vendor.serve(port, trace)
+    # THE TRACE LIVES WITH THE RUN. trace-<entrant>-r<rep>.jsonl is keyed by the run DIR name, which
+    # the Benchmark view reuses across runs — so serve()'s truncate makes every run overwrite the
+    # previous run's trace (r2's overwrote r0's; the fixture seed survived only in its ledger row).
+    # serve() has already written the header row carrying fixture_seed, so this copy pins the seed to
+    # the run even if it dies mid-flight; the finally refreshes it complete once the vendor stops.
+    # The out_root path stays untouched for every existing reader, and a one-line .jsonl at the tree
+    # root is invisible to the engine (its source manifest collects only .py) — invocation unchanged.
+    run_trace = workdir / "trace.jsonl"
+    shutil.copy2(trace, run_trace)
     # Quality screenshots (product contract 2026-08-17): the browser probe leaves
     # <epoch>-<scenario>.png in here on every render-gate pass DURING the run and again at
     # scoring — the repair-progression evidence the published post carries. Set in our own
@@ -289,6 +298,13 @@ def run(entrant: str, rep: int, out_root: Path, timeout: int, port: int) -> Dict
                             **({"seed": seed} if sb7 else {}))
     finally:
         server.shutdown()
+        # Refresh the run's copy now the vendor has stopped appending (record() is write-through,
+        # so the out_root file is whole by the time shutdown returns) — the _sb4trees archive below
+        # then carries the complete request log, not just the header.
+        try:
+            shutil.copy2(trace, run_trace)
+        except OSError:
+            pass
 
     verdict = scorer.evaluate(ctx)
     # BENCH2/F769: ARCHIVE THE TREE at score time — the sweep wipes the workdir within seconds
