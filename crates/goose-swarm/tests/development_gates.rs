@@ -129,9 +129,10 @@ fn the_banned_integrate_template_only_shrinks() {
 /// to commands/swarm/judge_context.rs, -274; judge-look attribution +13 and the forming-sidecar
 /// mirror +46 rode the same payment).
 /// Tightened to 46,925: the dead ask_max_q lever deleted (WIDTH batch, small 3).
+/// Tightened to 46,540: the dead plan_confidence_breakdown cluster deleted (WIDTH batch, small 2).
 #[test]
 fn swarm_rs_line_count_only_decreases() {
-    const SWARM_RS_LINE_BASELINE: usize = 46_925;
+    const SWARM_RS_LINE_BASELINE: usize = 46_540;
     let text = read("crates/goose-cli/src/commands/swarm.rs");
     let n = text.lines().count();
     assert!(
