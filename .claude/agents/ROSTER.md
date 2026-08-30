@@ -87,9 +87,7 @@ it on mechanism. Mihai 14:35: "isn't build supposed to fan out?"
 
 ## Live queue (groomed 2026-08-30 17:55 — done items moved to the grading log)
 
-IN FLIGHT — surgeon #11 (the pre-build smalls batch): replan-prompt orientation treatment;
-replanned.reason; verify_tree_imports module->file false positive; still-keyless scheduler-side
-supervision calls (own key class — judge-<task> would double-write).
+DONE 18:2X — surgeon #11 landed all four (aa725c54a..321cdc13f); queue empty pre-build.
 
 R6 LAUNCH CHECKLIST (at launch, not before): research chip/lanes live over CDP on the first fan;
 the integrate-verify DISPATCH description is measured-tree, not the placeholder; supervision lanes
