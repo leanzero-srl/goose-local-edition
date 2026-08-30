@@ -51,6 +51,16 @@ boundary), run one gate-auditor pass over the whole roster.
 | cloud-campaign runner | the cloud-sb7 admission machinery | when that campaign resumes |
 
 ## Grading log (newest first — one line per delegation; move closed items to the per-agent notes)
+- 2026-08-30 swarm-surgeon #5 (forming capture provider+engine, 0fd574002): CLEAN PASS — verified
+  the refuter's amendment in the code ("verbatim would not have compiled" — the get_mut binding),
+  chose flush option (a) only AFTER reading both digest sites whole and proving option (b) added
+  no coverage during true silence, stated the residual staleness honestly (a held fragment during
+  total silence — the case where nothing new is forming), made the dirty flag earn a real read
+  (held_unflushed in the failure event), held the unwrap_or_default ratchet, and enumerated all
+  five stale UI comments for the panel brief instead of touching held files. Two unbriefed finds:
+  probe-inside-scope forming leakage (pre-existing, commented) and fix-shard forming sidecars
+  landing in the shadow dir the desktop never reads (QUEUED for a future engine brief). No
+  charter gap.
 - 2026-08-30 panel-surgeon #2 (folded durable inspector, 030ea1cb9): CLEAN PASS — nothing clears
   on phase end (history via deriveNodeHistory beside deriveFleet, ended chips, full-transcript
   on-demand IPC with engine-codec key encoding + containment check), the honesty pins are TESTS
