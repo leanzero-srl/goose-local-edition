@@ -3396,6 +3396,20 @@ const JUDGE_WAKE: std::time::Duration = std::time::Duration::from_secs(30);
 
 const OMNI_JUDGE_MIN_CHARS: usize = 2_000;
 
+/// The IO coalesce cadence every digest/sidecar write site rides — the two worker-digest write
+/// sites (main loop + judge-probe branch) and the forming observer's ArgsDelta coalescing. One
+/// constant so the three sites cannot drift apart: their comments already promised "the digest's
+/// own 400ms cadence" and only convention held them equal. An IO cadence, never a bound on model
+/// work (gate 5): expiry writes a file; nothing about the call changes.
+const DIGEST_IO_CADENCE: std::time::Duration = std::time::Duration::from_millis(400);
+
+/// The look-tail SCALE: how many chars of live reasoning ride in the digest's `last_thinking`,
+/// in the judge's own look tail, and in the re-stream seed's carried tail. One constant because
+/// the three are the SAME window by design — the judge reads what the digest carries, and the
+/// re-stream seed hands back exactly what was read. A message-formation scale on carried text,
+/// never a cap on model work (the transcripts are append-only and complete).
+const LOOK_TAIL_CHARS: usize = 2_000;
+
 /// ONE definition of "this call produced something since the judge last looked", used by EVERY judge
 /// gate that asks the question.
 ///
@@ -3484,8 +3498,8 @@ fn nudge_delivery(
 /// judge's 971-char ESTABLISHED summary of an 87,892-char stream. The fresh attempt re-derived
 /// 37k+ chars over ~18 minutes before emitting anything. Same class as GEN-4: a directive must
 /// never assert context the seed did not deliver. The caller cuts the tail with `tail_chars(_,
-/// 2_000)` — the judge's own look-tail scale — a mechanical span on carried TEXT, not a bound on
-/// any model work.
+/// LOOK_TAIL_CHARS)` — the judge's own look-tail scale, now the shared constant — a mechanical
+/// span on carried TEXT, not a bound on any model work.
 ///
 /// An EMPTY tail is reachable (the tail mirrors the thinking channel, and a re-stream can fire on
 /// a call that emitted no thinking at all — a degenerate whitespace answer, or a tool request left
@@ -15731,7 +15745,7 @@ fn build_worker_digest(
         "thinking_chars": thinking_chars,
         // Carry a generous tail of the live reasoning so the desktop's expandable per-node box shows a real
         // run of thinking, not a sliver. The compact line still clamps it; the expand shows the whole thing.
-        "last_thinking": tail_chars(last_thinking, 2000),
+        "last_thinking": tail_chars(last_thinking, LOOK_TAIL_CHARS),
         "model": model_id,
         // SAID provenance — which attempt `last_text` belongs to, when it was dispatched, when the
         // answer channel last advanced, whether the text is the model's or an agent error, and what
@@ -16880,7 +16894,7 @@ impl GooseAgentDispatcher {
                 }
                 let due = frame_write
                     || g.last_write
-                        .is_none_or(|t| t.elapsed() >= std::time::Duration::from_millis(400));
+                        .is_none_or(|t| t.elapsed() >= DIGEST_IO_CADENCE);
                 if !due {
                     g.dirty = true;
                     return;
@@ -17729,7 +17743,9 @@ impl GooseAgentDispatcher {
                     tokio::time::Instant::now() + std::time::Duration::from_secs(look_interval);
                 let tail: String = {
                     let c: Vec<char> = last_thinking.chars().collect();
-                    c[c.len().saturating_sub(2_000)..].iter().collect()
+                    c[c.len().saturating_sub(LOOK_TAIL_CHARS)..]
+                        .iter()
+                        .collect()
                 };
                 // WHAT THE COMMANDS ACTUALLY RETURNED — not just that they were run.
                 //
@@ -18239,10 +18255,8 @@ impl GooseAgentDispatcher {
                                     process_stream_event!(ev);
                                     if let Some(p) = &activity_file {
                                         let due = flush_digest_now
-                                            || last_digest_at.is_none_or(|t| {
-                                                t.elapsed()
-                                                    >= std::time::Duration::from_millis(400)
-                                            });
+                                            || last_digest_at
+                                                .is_none_or(|t| t.elapsed() >= DIGEST_IO_CADENCE);
                                         if due {
                                             said.observe_texts(texts.len(), &mut said_texts_seen);
                                             let mut d = build_worker_digest(
@@ -18863,7 +18877,7 @@ impl GooseAgentDispatcher {
                             let abandoned_thinking_chars = thinking_chars;
                             let abandoned_tool_calls =
                                 call_records.len().saturating_sub(calls_at_stream_start);
-                            let carried_tail = tail_chars(&last_thinking, 2_000);
+                            let carried_tail = tail_chars(&last_thinking, LOOK_TAIL_CHARS);
                             let restream_text = restream_seed(
                                 &user_text,
                                 &established,
@@ -19068,8 +19082,7 @@ impl GooseAgentDispatcher {
             process_stream_event!(ev);
             if let Some(p) = &activity_file {
                 let due = flush_digest_now
-                    || last_digest_at
-                        .is_none_or(|t| t.elapsed() >= std::time::Duration::from_millis(400));
+                    || last_digest_at.is_none_or(|t| t.elapsed() >= DIGEST_IO_CADENCE);
                 if due {
                     said.observe_texts(texts.len(), &mut said_texts_seen);
                     let digest = build_worker_digest(
