@@ -33,10 +33,13 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 mod judge_context;
 use judge_context::{is_intentional_empty_marker, judge_delivery_block, verify_owned_files};
+mod decisions;
+use decisions::PlanDecision;
 mod research;
 use research::{
     budget_research_answer, fold_research_outcome, load_research_mini, research_fan_lanes,
-    research_mini_name, research_schema, ResearchQuestion, ResearchRow, RESEARCH_ANSWERED,
+    research_mini_name, research_request_block, research_schema, research_system_text,
+    research_user_text, splice_claimed_sections, ResearchQuestion, ResearchRow, RESEARCH_ANSWERED,
     RESEARCH_UNANSWERED,
 };
 
@@ -26917,12 +26920,15 @@ async fn run_linear_plan(
                 resolves: String::new(),
             })
             .collect();
-        // The ASK PROXY is DELETED (P1-5): a node answering the opener's own questions is a
-        // decision code can take by rule — SYNTHESIS folds unanswered open decisions as "choose the
-        // conventional option" (briefs_from_slices), which is what the proxy's fallback text said
-        // anyway. What stays is the clarify-answers.json HANDSHAKE: the questions are written to
-        // .swarm/clarify-questions.json and a human (or the benchmark harness, which answers
-        // instantly AS the human) answers in .swarm/clarify-answers.json within `ask_wait_secs`.
+        // The ASK PROXY stays DELETED (P1-5, 0409beef5): that was one side-call racing
+        // `wait_secs` to impersonate the human — redundant with the conventional-choice fold and
+        // wrong twice (its answers landed 42s after the only reader stopped reading). What stays
+        // is the clarify-answers.json HANDSHAKE: the questions are written to
+        // .swarm/clarify-questions.json and a human MAY answer in .swarm/clarify-answers.json
+        // within `ask_wait_secs`. On the benchmark nobody answers — r5's
+        // low_confidence_ask_timeout says "no answers arrived", NOT "answered instantly as the
+        // human" — and the unanswered remainder then rides the research fan below (item 0),
+        // which is a different mechanism from the proxy: uncapped, judged, ledgered and loud.
         // If OPEN emits no open decisions, none of this fires.
         let qa = ask_clarifying_questions(
             &questions,
@@ -26950,10 +26956,16 @@ async fn run_linear_plan(
     // wrong-key defects. v2 is a different mechanism: the opener's OWN questions, one structured
     // read-only call each across one lane per host, answers spliced as FACTS beside the sources
     // (never instead of them — dep_block is untouched). See the dead-form notes on the fan block.
-    // Spawned AFTER the ASK handshake so USER DECISIONS inform research (the benchmark answers
-    // ASK in 5s; attended runs wait for the human either way), awaited before the DAG exists.
-    // MILD: a panicked fan is zero answers plus a loud event, and planning proceeds.
-    let research_rows: Vec<ResearchRow> = {
+    // Spawned AFTER the ASK handshake so whatever the user DID answer informs research (on the
+    // benchmark the window expires unanswered — r5's low_confidence_ask_timeout: "no answers
+    // arrived"), awaited before the DAG exists. MILD: a panicked fan is zero answers plus a loud
+    // event, and planning proceeds.
+    //
+    // ITEM 0 (r5 receipt): decisions the user left UNANSWERED ride the same fan, one call each;
+    // per-decision answer-absence is the ONLY trigger, so an attended run where the human
+    // answers everything dispatches none of these.
+    let still_open = decisions::still_open_after_user(&opened.open_decisions, user_decisions);
+    let fan_rows: Vec<ResearchRow> = {
         let fan = tokio::spawn({
             let dispatcher = dispatcher.clone();
             let worker_models = worker_models.clone();
@@ -26961,9 +26973,17 @@ async fn run_linear_plan(
             let spec = opts.prompt.clone();
             let decisions = user_decisions.clone();
             let tree = tree_at_start.clone();
+            let still_open = still_open.clone();
             async move {
                 dispatcher
-                    .research_fan(worker_models, &opened, &spec, &decisions, &tree)
+                    .research_fan(
+                        worker_models,
+                        &opened,
+                        &spec,
+                        &decisions,
+                        &tree,
+                        &still_open,
+                    )
                     .await
             }
         });
@@ -26978,6 +26998,47 @@ async fn run_linear_plan(
             }
         }
     };
+    // THE SPLICE POINT (amendment d): after fan.await, before plan_slices_to_dag. Decision rows
+    // leave the research vec here — the per-slice fold matches `r.slice == sl.id` and must never
+    // see them — and fold into the settled/still-open partition every brief carries.
+    let (decision_rows, research_rows): (Vec<ResearchRow>, Vec<ResearchRow>) = fan_rows
+        .into_iter()
+        .partition(|r| r.slice == decisions::DECISION_SLICE);
+    let plan_decisions =
+        decisions::partition_decisions(&opened.open_decisions, user_decisions, &decision_rows);
+    if !plan_decisions.is_empty() {
+        let by_user = plan_decisions
+            .iter()
+            .filter(|d| matches!(d.state, decisions::DecisionState::SettledByUser { .. }))
+            .count();
+        let by_research = plan_decisions
+            .iter()
+            .filter(|d| matches!(d.state, decisions::DecisionState::SettledByResearch { .. }))
+            .count();
+        let open_detail: Vec<&String> = plan_decisions
+            .iter()
+            .filter(|d| matches!(d.state, decisions::DecisionState::Open))
+            .map(|d| &d.question)
+            .collect();
+        sink.write_value(serde_json::json!({
+            "event": "decisions_settled_at_plan_time",
+            "total": plan_decisions.len(),
+            "by_user": by_user,
+            "by_research": by_research,
+            "still_open": open_detail.len(),
+            // The decisions nobody settled, VERBATIM — a count alone would force the by-hand
+            // diff the low_confidence_ask reporting already refused to require.
+            "still_open_detail": open_detail,
+        }));
+    }
+    // Amendment (c): research-settled answers ride the same verbatim worker channel as user
+    // answers (DispatchRequest.user_decisions, four dispatch sites) — under their OWN provenance
+    // header, never USER_DECISIONS_HEADER (a GEN-4 overclaim for a researched convention).
+    let research_settled = decisions::research_settled_worker_block(&plan_decisions);
+    if !research_settled.is_empty() {
+        user_decisions.push_str(decisions::PLAN_SETTLED_DECISIONS_HEADER);
+        user_decisions.push_str(&research_settled);
+    }
 
     // ---- SYNTHESIS + REVIEW, the straight line -----------------------------------------------
     // Everything from the slices to a loadable DAG lives in `plan_slices_to_dag`, injected with the
@@ -26990,6 +27051,7 @@ async fn run_linear_plan(
         tree_at_start,
         lang,
         &research_rows,
+        &plan_decisions,
         {
             let dispatcher = dispatcher.clone();
             let planner_model = cfg.planner_model.clone();
@@ -27018,8 +27080,9 @@ async fn run_linear_plan(
 }
 
 /// SYNTHESIS TAKES THE SLICES DIRECTLY (P1-5): each slice's brief IS the slice — its objective
-/// plus its own questions, with the opener's global open decisions folded in as "choose the
-/// conventional option". RESEARCH used to write these briefs over 48 measured minutes (r2) with
+/// plus its own questions, plus the decisions PARTITION (item 0: settled answers quoted verbatim;
+/// only a still-open one keeps "choose the conventional option"). RESEARCH used to write these
+/// briefs over 48 measured minutes (r2) with
 /// 2 of 3 nodes idle, and its median-4,789-char paraphrases did not prevent the five wrong-key
 /// defects — the real dependency source, which every worker now reads (dep_block + ledger block),
 /// is the authority a paraphrase never was. Pure, so the straight line is testable without a model.
@@ -27184,68 +27247,22 @@ fn files_from_objective(objective: &str) -> Vec<String> {
     out
 }
 
-/// The ONE find+splice loop for a slice's claimed sections. Both consumers — the brief a
-/// builder reads (`briefs_from_slices`) and the research prompt (`research_request_block`) —
-/// call THIS, so the heading-match rule cannot diverge between them (the digestStreamFields
-/// law: one shared join, never a hand-copied loop; the loop had already been duplicated
-/// verbatim at both sites).
-///
-/// A claimed heading that matches NO spec section is a MEASURED absence, never a silent drop:
-/// r5's boot slice claimed a typo'd heading and lost 3,501 chars from BOTH its research
-/// prompts and its brief, surfacing only through the generic `spec_sections_unclaimed` on the
-/// real heading. Each miss emits `slice_claimed_section_unmatched{slice, claimed}` — loud,
-/// MILD, never blocks; the matching sections still splice.
-fn splice_claimed_sections(
-    slice_id: &str,
-    claimed: &[String],
-    sections: &[SpecSection],
-    events: &dyn EventSink,
-) -> String {
-    let mut spliced = String::new();
-    for want in claimed {
-        let key = want.trim().to_lowercase();
-        match sections
-            .iter()
-            .find(|s| s.heading.trim().to_lowercase() == key)
-        {
-            Some(sec) => {
-                spliced.push_str(&format!("\n### {}\n{}", sec.heading, sec.body.trim()));
-            }
-            None => {
-                events.write_value(serde_json::json!({
-                    "event": "slice_claimed_section_unmatched",
-                    "slice": slice_id,
-                    "claimed": want,
-                }));
-            }
-        }
-    }
-    spliced
-}
-
 fn briefs_from_slices(
     opened: &OpenOutput,
     spec: &str,
     research: &[ResearchRow],
+    plan_decisions: &[PlanDecision],
     events: &dyn EventSink,
 ) -> Vec<SliceBrief> {
     let sections = spec_sections(spec);
     let armed = orientation_armed(spec, &sections);
-    let folded_decisions = if opened.open_decisions.is_empty() {
-        String::new()
-    } else {
-        format!(
-            "\n\nOPEN DECISIONS — unless a USER DECISIONS block in the request settles one of \
-             these, choose the most CONVENTIONAL option and note the choice in a code comment; \
-             never invent a novel one:\n{}",
-            opened
-                .open_decisions
-                .iter()
-                .map(|d| format!("- {d}"))
-                .collect::<Vec<_>>()
-                .join("\n")
-        )
-    };
+    // ITEM 0, amendment (b): the settled/still-open DECISIONS PARTITION, spliced into EVERY
+    // brief — including the docs/decisions task's own, whose description then quotes the settled
+    // choices verbatim (splice_briefs carries each brief into its task's description). Settled
+    // answers are quoted with provenance; a decision that stayed open keeps the pre-fan
+    // conventional-choice framing, verbatim. With no decisions the block is empty and every
+    // brief is byte-identical to the pre-partition form.
+    let folded_decisions = decisions::decisions_brief_block(plan_decisions);
     opened
         .slices
         .iter()
@@ -27371,104 +27388,40 @@ fn briefs_from_slices(
 // and its median-4,789-char briefs did not prevent the five wrong-key defects. v2 answers NAMED
 // questions with real read tools, and its answers ride NEXT TO dep_block, never instead of it.
 // The other dead forms cannot recur here either: SCOUT lens arrays are test-fixture only, dead in
-// the run path (`SCOUT_LENSES` lives under `#[cfg(test)]`), and the fan's ONLY input is the
-// opener's own questions — no const array exists to generify; no multi-draft vote (every lane
-// answers a DIFFERENT question, nothing scores a winner); no coverage barrier (per-answer minis +
-// events land as each finishes; the only join feeds the one serial SYNTHESIS call); no resplit or
-// ask-proxy (OPEN's output is immutable input; open_decisions never enter the fan).
+// the run path (`SCOUT_LENSES` lives under `#[cfg(test)]`), and the fan's ONLY inputs are the
+// opener's own output — its per-slice questions and its open decisions — no const array exists to
+// generify; no multi-draft vote (every lane answers a DIFFERENT question, nothing scores a
+// winner); no coverage barrier (per-answer minis + events land as each finishes; the only join
+// feeds the one serial SYNTHESIS call); no resplit.
+//
+// OPEN DECISIONS DO ENTER THE FAN NOW (item 0) — this rewrites the older pin that quarantined
+// them, and it is NOT the ask-proxy's revival. The r5 receipt that ordered it: 5 decisions asked,
+// 0 answered (the benchmark ask window folds with "no answers arrived"), every brief said "choose
+// the conventional option", and SYNTHESIS answered that vagueness with a w1 docs task that four
+// implementation tasks depended on — post-skeleton width 2 while gabee idled. The proxy
+// (0409beef5) was one capped side-call RACING `wait_secs` to impersonate the human, and was
+// deleted for redundancy-with-the-fold plus that race; the fan is the opposite mechanism —
+// uncapped, judged, ledgered and loud, one structured call per decision the user actually left
+// unanswered, terminal rows in the same minis and events as every slice question, answers spliced
+// as a quoted settled/still-open partition (decisions.rs) instead of a silent fold.
 // ================================================================================================
-
-/// The per-slice REQUEST block for a research prompt (A5): the prompt NEVER carries the raw ~50k
-/// spec when orientation is armed — it carries the orientation index plus the slice's claimed
-/// sections' FULL text, the exact splice path `briefs_from_slices` uses. Below the arming floor
-/// the whole spec is the better input, exactly as OPEN's own message formation decides it.
-fn research_request_block(
-    spec: &str,
-    sections: &[SpecSection],
-    armed: bool,
-    slice_id: &str,
-    claimed: &[String],
-    events: &dyn EventSink,
-) -> String {
-    if !armed {
-        return format!("THE REQUEST:\n{spec}");
-    }
-    let spliced = splice_claimed_sections(slice_id, claimed, sections, events);
-    let orientation = spec_orientation(sections);
-    if spliced.is_empty() {
-        format!(
-            "THE REQUEST, AS ITS ORIENTATION INDEX (this slice claimed no sections — the \
-             sections' full text lives in the request itself):\n\n{orientation}"
-        )
-    } else {
-        format!(
-            "THE REQUEST, AS ITS ORIENTATION INDEX:\n\n{orientation}\n\nTHE SPEC'S OWN SECTIONS \
-             FOR THIS SLICE — verbatim, and the authority over any paraphrase:{spliced}"
-        )
-    }
-}
-
-/// One research prompt, assembled from THIS run's facts (the specificity gate): the request
-/// block, the owning slice, the USER DECISIONS the ASK handshake resolved (A6 — the fan runs
-/// AFTER the handshake so decisions inform research), the tree as the run found it, and the
-/// question VERBATIM. Absences are stated, never papered over.
-fn research_user_text(
-    request_block: &str,
-    slice_id: &str,
-    slice_title: &str,
-    slice_objective: &str,
-    user_decisions: &str,
-    tree_at_start: &[String],
-    question: &str,
-) -> String {
-    let decisions_block = if user_decisions.trim().is_empty() {
-        String::new()
-    } else {
-        // The one USER_DECISIONS_HEADER constant, so the binding framing cannot drift from the
-        // copies the spec and every worker prompt carry.
-        format!("{USER_DECISIONS_HEADER}{user_decisions}")
-    };
-    let tree_block = if tree_at_start.is_empty() {
-        "\n\nEXISTING TREE: nothing is on disk yet — a greenfield build.".to_string()
-    } else {
-        format!(
-            "\n\nEXISTING TREE (the files already on disk — read them with your tools before \
-             answering anything they could settle):\n{}",
-            tree_at_start.join("\n")
-        )
-    };
-    format!(
-        "{request_block}\n\nTHE SLICE THIS QUESTION BELONGS TO:\n{slice_id} — {slice_title}\n\
-         {slice_objective}{decisions_block}{tree_block}\n\nTHE QUESTION:\n{question}"
-    )
-}
-
-fn research_system_text() -> String {
-    "You are answering ONE question that must be settled before this software is built. Ground \
-     your answer: read the request text you were given, read the existing tree's files with your \
-     shell and tree tools, and when the request names a documentation URL, fetch it — an answer \
-     copied from the real source beats any paraphrase. Do NOT create or edit files: you have no \
-     write or edit tool, and your structured reply IS your deliverable.\n\n\
-     Your answer is a HANDOFF to the builder: name exact files, exact key/field literals, exact \
-     endpoints or signatures where the request implies them; where the request is silent, state \
-     the most CONVENTIONAL choice and say it is a convention. If the question cannot be settled \
-     from the request or the sources, say exactly that in one line and still name the \
-     conventional choice. Keep it under a page.\n\n\
-     When you are done, call the final_output tool ONCE with {\"answer\": \"...\", \"raised\": \
-     [...]} — `raised` lists further questions you could NOT settle, for the record only: do not \
-     answer them, and nothing will dispatch them."
-        .to_string()
-}
 
 impl GooseAgentDispatcher {
     /// RESEARCH FAN v2 — one uncapped structured call per opener question, one lane per host,
-    /// spawned AFTER the ASK handshake resolves (A6: user decisions inform research; the
-    /// benchmark's 5s window costs nothing) and awaited before `plan_slices_to_dag`. Every
-    /// dispatched question ends TERMINAL — answered, or unanswered with a named reason
-    /// (empty_answer / provider_error / judge_ended) — and NOTHING retries: a miss is a loud
-    /// `research_unanswered` and the brief keeps the raw question for REPAIR. No clock anywhere;
-    /// the terminators are the judge ladder the structured reply arms and `repeat_break` on the
-    /// lanes' real tool calls.
+    /// spawned AFTER the ASK handshake resolves (A6: whatever the user DID answer informs
+    /// research — on the benchmark the ask window expires unanswered, r5's
+    /// low_confidence_ask_timeout: "no answers arrived") and awaited before
+    /// `plan_slices_to_dag`. Every dispatched question ends TERMINAL — answered, or unanswered
+    /// with a named reason (empty_answer / provider_error / judge_ended) — and NOTHING retries:
+    /// a miss is a loud `research_unanswered` and the brief keeps the raw question for REPAIR.
+    /// No clock anywhere; the terminators are the judge ladder the structured reply arms and
+    /// `repeat_break` on the lanes' real tool calls.
+    ///
+    /// `still_open_decisions` rides the same fan: one call per open decision the user left
+    /// unanswered, under the reserved `DECISION_SLICE` id — same rows, same minis, same events,
+    /// same resume watermark. The caller partitions those rows OUT before the per-slice fold
+    /// ever sees them (amendment b: `briefs_from_slices` matches `r.slice == sl.id` and must
+    /// never be handed a decision row to silently drop).
     ///
     /// NAMED LIMITATION (A2, pre-existing transport class, deliberately not widened into here):
     /// a stream that CONNECTS and then emits zero characters forever is non-terminal today — the
@@ -27481,6 +27434,7 @@ impl GooseAgentDispatcher {
         spec: &str,
         user_decisions: &str,
         tree_at_start: &[String],
+        still_open_decisions: &[(usize, String)],
     ) -> Vec<ResearchRow> {
         // ONE pass over the opener's own slices builds each question WITH its prompt prefix —
         // no later lookup exists that could miss and silently substitute an empty prompt.
@@ -27524,10 +27478,29 @@ impl GooseAgentDispatcher {
                 }
             }
         }
+        // THE UNANSWERED DECISION REMAINDER (item 0): each rides as one structured call under
+        // the reserved DECISION_SLICE id, indexed by its stable position in the opener's own
+        // list (the resume identity of its ledger mini). The prompt carries the WHOLE request —
+        // a decision is global, no claimed-section subset exists — plus whatever the user DID
+        // answer, and the fan appends the decision text exactly as it appends a slice question.
+        for (i, d) in still_open_decisions {
+            total_questions += 1;
+            match load_research_mini(&self.working_dir, decisions::DECISION_SLICE, *i) {
+                Some(row) => rows.push(row),
+                None => to_dispatch.push((
+                    ResearchQuestion {
+                        slice: decisions::DECISION_SLICE.to_string(),
+                        q_index: *i,
+                        question: d.clone(),
+                    },
+                    decisions::decision_user_text(spec, user_decisions, tree_at_start, ""),
+                )),
+            }
+        }
         if total_questions == 0 {
             // Measured absence, honest empty (the fallback gate): the opener emitted no
-            // questions — including the double-failure one-slice fallback — so there is
-            // nothing to research and the event says so.
+            // questions and left no unanswered decisions — including the double-failure
+            // one-slice fallback — so there is nothing to research and the event says so.
             self.events.write_value(serde_json::json!({
                 "event": "research_no_questions",
                 "slices": opened.slices.len(),
@@ -27679,6 +27652,7 @@ async fn plan_slices_to_dag<S, SFut, R, RFut>(
     tree_at_start: Vec<String>,
     lang: TargetLang,
     research: &[ResearchRow],
+    plan_decisions: &[PlanDecision],
     synthesize: S,
     review_fan: R,
     sink: &Arc<dyn EventSink>,
@@ -27689,7 +27663,17 @@ where
     R: FnMut(String, String) -> RFut,
     RFut: std::future::Future<Output = Result<(goose_swarm::PlanPatch, Vec<String>)>>,
 {
-    let briefs = briefs_from_slices(&opened, user_prompt, research, sink.as_ref());
+    let briefs = briefs_from_slices(
+        &opened,
+        user_prompt,
+        research,
+        plan_decisions,
+        sink.as_ref(),
+    );
+    // Amendment (e)'s arming bit, computed ONCE for both finalize passes: the decision-doc-gate
+    // repair strips implementation->docs-only deps only when decisions EXISTED and every one
+    // settled at plan time; an empty list or one open decision keeps every dep.
+    let every_decision_settled = decisions::all_settled(plan_decisions);
     // OPEN-1's absence events (the fallback rule): a slice that claimed no sections and a
     // section no slice claimed are both measured gaps, named where the tick can count them.
     {
@@ -27807,7 +27791,8 @@ where
     // PIN THE SINK BEFORE THE DAG EXISTS. finalize_plan_before_dag pins the join's exact id (six
     // exact-equality consumers read it), repairs the measured flags, injects advertised entry
     // files, and emits `plan_repaired` every time — actions or none.
-    plan_json = finalize_plan_before_dag(plan_json, user_prompt, sink, "plan");
+    plan_json =
+        finalize_plan_before_dag(plan_json, user_prompt, every_decision_settled, sink, "plan");
 
     // AN INVALID DAG FALLS BACK. `synthesize` returns Ok for anything lenient-parseable and does
     // no DAG validation, so a cycle, duplicate id or dangling depends_on — including one a REVIEW
@@ -27828,6 +27813,7 @@ where
             plan_json = finalize_plan_before_dag(
                 flat_plan_from_briefs(&briefs, lang, user_prompt),
                 user_prompt,
+                every_decision_settled,
                 sink,
                 // Finding 6: the second finalize of one planning pass — tagged so the tick's
                 // fired-twice defect line can except it instead of paging on a legitimate arm.
@@ -28056,6 +28042,9 @@ fn prepend_skeleton_task(v: &mut serde_json::Value, spec: &str) -> Option<serde_
 fn finalize_plan_before_dag(
     plan_json: String,
     spec: &str,
+    // Amendment (e): true only when open decisions existed and EVERY one settled at plan time —
+    // the arming bit for the decision-doc-gate strip. False keeps the repair chain byte-identical.
+    every_decision_settled: bool,
     sink: &Arc<dyn EventSink>,
     source: &str,
 ) -> String {
@@ -28085,7 +28074,11 @@ fn finalize_plan_before_dag(
         );
         sink.write_value(ev.clone());
     }
-    let repairs = repair_plan_flags(&mut v, spec);
+    let mut repairs = repair_plan_flags(&mut v, spec);
+    // Amendment (e), gate-6 class: the decision-doc-gate strip runs INSIDE the one door, and its
+    // actions ride the same `plan_repaired` event as every other repair — loud, MILD, never a
+    // refusal. With the bit false (any open decision, or none at all) it touches nothing.
+    decisions::repair_decision_doc_gates(&mut v, every_decision_settled, &mut repairs.actions);
     if !repairs.is_noop() {
         eprintln!(
             "  {} plan repaired before the DAG is built — {} change(s):",
@@ -36967,7 +36960,8 @@ fn phase_banner(label: &str, why: &str) {
 /// the floor, the swarm asks the USER rather than guessing — local models are weak, so asking beats a
 /// confident wrong decomposition. Interactive TTY -> cliclack prompts. Detached (no TTY: the autonomous
 /// harness or an eval) -> write the questions to `.swarm/clarify-questions.json`, emit a `low_confidence_ask`
-/// event, and BLOCK-poll for `.swarm/clarify-answers.json` (the harness answers AS the human) up to
+/// event, and BLOCK-poll for `.swarm/clarify-answers.json` (an attending harness MAY answer as the
+/// human; the benchmark leaves it unanswered — r5's timeout event says "no answers arrived") up to
 /// `wait_secs`, then proceed. Returns a Q&A block to fold into the planner findings, or "" if unanswered.
 async fn ask_clarifying_questions(
     questions: &[ClarifyQuestion],
@@ -42240,8 +42234,8 @@ mod live_fleet_tests {
         let spec = include_str!("../../../../evals/swarm-bench/spec-build-sb7.md");
         let sink: Arc<dyn EventSink> = Arc::new(NullSink);
         let plan = include_str!("../../tests/fixtures/r2-plan.json").to_string();
-        let once = finalize_plan_before_dag(plan, spec, &sink, "plan");
-        let twice = finalize_plan_before_dag(once.clone(), spec, &sink, "plan");
+        let once = finalize_plan_before_dag(plan, spec, false, &sink, "plan");
+        let twice = finalize_plan_before_dag(once.clone(), spec, false, &sink, "plan");
         assert_eq!(once, twice, "the second finalize must be a no-op");
         let v: serde_json::Value = serde_json::from_str(&twice).unwrap();
         let skeletons = v["subtasks"]
@@ -45263,7 +45257,7 @@ mod audit_regressions {
             ],
             open_decisions: Vec::new(),
         };
-        let briefs = briefs_from_slices(&opened, spec, &[], &NullSink);
+        let briefs = briefs_from_slices(&opened, spec, &[], &[], &NullSink);
         assert!(
             briefs[0].brief.contains("THE SPEC'S OWN SECTIONS")
                 && briefs[0].brief.contains("/api/payments"),
@@ -45312,7 +45306,7 @@ mod audit_regressions {
             ],
             open_decisions: Vec::new(),
         };
-        let briefs = briefs_from_slices(&opened, "build the app", &[], &NullSink);
+        let briefs = briefs_from_slices(&opened, "build the app", &[], &[], &NullSink);
         assert_eq!(
             briefs[0].files,
             vec!["app/ledgerd/impl.py".to_string(), "web/app.js".to_string()],
@@ -45457,7 +45451,7 @@ mod audit_regressions {
                 secs: 3,
             },
         ];
-        let briefs = briefs_from_slices(&opened, "build the app", &rows, &NullSink);
+        let briefs = briefs_from_slices(&opened, "build the app", &rows, &[], &NullSink);
         let b = &briefs[0].brief;
         assert!(b.contains("ANSWERS SETTLED AT PLAN TIME"));
         assert!(b.contains("Q: which port") && b.contains("A: Port 8850"));
@@ -45475,7 +45469,7 @@ mod audit_regressions {
             briefs[0].settled, "1/2 — Port 8850, from the spec's own boot table.",
             "the slice_index settled line carries answered/total and the first answer's head"
         );
-        let plain = briefs_from_slices(&opened, "build the app", &[], &NullSink);
+        let plain = briefs_from_slices(&opened, "build the app", &[], &[], &NullSink);
         assert!(
             !plain[0].brief.contains("ANSWERS SETTLED")
                 && plain[0].brief.contains("- which port")
@@ -45726,18 +45720,22 @@ mod audit_regressions {
     /// synthesis -> plan_synthesized -> review (one round) -> plan_repaired — with NO coverage,
     /// RESEARCH, resplit or ask-proxy event between. r2 measured what those cost: 48 min of
     /// RESEARCH with 2 of 3 nodes idle, a resplit-manufactured file collision, and a coverage
-    /// slice writing code at the tree root. SYNTHESIS takes the slices directly, open decisions
-    /// folded as "choose the conventional option".
+    /// slice writing code at the tree root. SYNTHESIS takes the slices directly; a decision that
+    /// stayed open after the user and the fan is folded as "choose the conventional option".
     #[tokio::test]
     async fn the_planner_is_a_straight_line_from_slices_to_dag() {
         let sink = Arc::new(RecordingSink::default());
         let sink_dyn: Arc<dyn EventSink> = sink.clone();
+        // Every decision still open (the user answered nothing, the fan settled nothing): the
+        // briefs keep the conventional-option fold, verbatim.
+        let pd = decisions::partition_decisions(&two_slices().open_decisions, "", &[]);
         let (plan_json, dag) = plan_slices_to_dag(
             two_slices(),
             "build the app",
             Vec::new(),
             TargetLang::Python,
             &[],
+            &pd,
             |briefs: Vec<SliceBrief>, _tree: Vec<String>| async move {
                 // SYNTHESIS receives the slices DIRECTLY: objective, the slice's own questions,
                 // and the opener's open decisions folded as conventional-option instructions.
@@ -45822,6 +45820,7 @@ mod audit_regressions {
             Vec::new(),
             TargetLang::Python,
             &[],
+            &[],
             |_briefs: Vec<SliceBrief>, _tree: Vec<String>| async move {
                 Err(anyhow!("the model returned prose"))
             },
@@ -45868,6 +45867,7 @@ mod audit_regressions {
             spec,
             Vec::new(),
             TargetLang::Python,
+            &[],
             &[],
             |_briefs: Vec<SliceBrief>, _tree: Vec<String>| async move {
                 Ok(serde_json::json!({"subtasks": [

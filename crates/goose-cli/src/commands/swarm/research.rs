@@ -10,7 +10,8 @@
 use std::path::Path;
 
 use super::{activity_digest_key, one_lane_per_host, parse_json_lenient};
-use super::{JUDGE_ENDED_NEEDLE, LEDGER_DIR};
+use super::{spec_orientation, EventSink, SpecSection};
+use super::{JUDGE_ENDED_NEEDLE, LEDGER_DIR, USER_DECISIONS_HEADER};
 
 /// One opener question, addressed by (slice, q_index) — the identity the mini filename, the
 /// activity key and the brief partition all share.
@@ -174,4 +175,132 @@ pub(super) fn fold_research_outcome(
         }
     }
     row
+}
+
+/// The EXISTING-TREE block both prompt builders share (`research_user_text` here and
+/// `decision_user_text` in the decisions module) — one join, so the greenfield/manifest framing
+/// cannot drift between the slice lanes and the decision lanes.
+pub(super) fn research_tree_block(tree_at_start: &[String]) -> String {
+    if tree_at_start.is_empty() {
+        "\n\nEXISTING TREE: nothing is on disk yet — a greenfield build.".to_string()
+    } else {
+        format!(
+            "\n\nEXISTING TREE (the files already on disk — read them with your tools before \
+             answering anything they could settle):\n{}",
+            tree_at_start.join("\n")
+        )
+    }
+}
+
+/// The ONE find+splice loop for a slice's claimed sections. Both consumers — the brief a
+/// builder reads (`briefs_from_slices`) and the research prompt (`research_request_block`) —
+/// call THIS, so the heading-match rule cannot diverge between them (the digestStreamFields
+/// law: one shared join, never a hand-copied loop; the loop had already been duplicated
+/// verbatim at both sites).
+///
+/// A claimed heading that matches NO spec section is a MEASURED absence, never a silent drop:
+/// r5's boot slice claimed a typo'd heading and lost 3,501 chars from BOTH its research
+/// prompts and its brief, surfacing only through the generic `spec_sections_unclaimed` on the
+/// real heading. Each miss emits `slice_claimed_section_unmatched{slice, claimed}` — loud,
+/// MILD, never blocks; the matching sections still splice.
+pub(super) fn splice_claimed_sections(
+    slice_id: &str,
+    claimed: &[String],
+    sections: &[SpecSection],
+    events: &dyn EventSink,
+) -> String {
+    let mut spliced = String::new();
+    for want in claimed {
+        let key = want.trim().to_lowercase();
+        match sections
+            .iter()
+            .find(|s| s.heading.trim().to_lowercase() == key)
+        {
+            Some(sec) => {
+                spliced.push_str(&format!("\n### {}\n{}", sec.heading, sec.body.trim()));
+            }
+            None => {
+                events.write_value(serde_json::json!({
+                    "event": "slice_claimed_section_unmatched",
+                    "slice": slice_id,
+                    "claimed": want,
+                }));
+            }
+        }
+    }
+    spliced
+}
+
+/// The per-slice REQUEST block for a research prompt (A5): the prompt NEVER carries the raw ~50k
+/// spec when orientation is armed — it carries the orientation index plus the slice's claimed
+/// sections' FULL text, the exact splice path `briefs_from_slices` uses. Below the arming floor
+/// the whole spec is the better input, exactly as OPEN's own message formation decides it.
+pub(super) fn research_request_block(
+    spec: &str,
+    sections: &[SpecSection],
+    armed: bool,
+    slice_id: &str,
+    claimed: &[String],
+    events: &dyn EventSink,
+) -> String {
+    if !armed {
+        return format!("THE REQUEST:\n{spec}");
+    }
+    let spliced = splice_claimed_sections(slice_id, claimed, sections, events);
+    let orientation = spec_orientation(sections);
+    if spliced.is_empty() {
+        format!(
+            "THE REQUEST, AS ITS ORIENTATION INDEX (this slice claimed no sections — the \
+             sections' full text lives in the request itself):\n\n{orientation}"
+        )
+    } else {
+        format!(
+            "THE REQUEST, AS ITS ORIENTATION INDEX:\n\n{orientation}\n\nTHE SPEC'S OWN SECTIONS \
+             FOR THIS SLICE — verbatim, and the authority over any paraphrase:{spliced}"
+        )
+    }
+}
+
+/// One research prompt, assembled from THIS run's facts (the specificity gate): the request
+/// block, the owning slice, the USER DECISIONS the ASK handshake resolved (A6 — the fan runs
+/// AFTER the handshake so decisions inform research), the tree as the run found it, and the
+/// question VERBATIM. Absences are stated, never papered over.
+pub(super) fn research_user_text(
+    request_block: &str,
+    slice_id: &str,
+    slice_title: &str,
+    slice_objective: &str,
+    user_decisions: &str,
+    tree_at_start: &[String],
+    question: &str,
+) -> String {
+    let decisions_block = if user_decisions.trim().is_empty() {
+        String::new()
+    } else {
+        // The one USER_DECISIONS_HEADER constant, so the binding framing cannot drift from the
+        // copies the spec and every worker prompt carry.
+        format!("{USER_DECISIONS_HEADER}{user_decisions}")
+    };
+    let tree_block = research_tree_block(tree_at_start);
+    format!(
+        "{request_block}\n\nTHE SLICE THIS QUESTION BELONGS TO:\n{slice_id} — {slice_title}\n\
+         {slice_objective}{decisions_block}{tree_block}\n\nTHE QUESTION:\n{question}"
+    )
+}
+
+pub(super) fn research_system_text() -> String {
+    "You are answering ONE question that must be settled before this software is built. Ground \
+     your answer: read the request text you were given, read the existing tree's files with your \
+     shell and tree tools, and when the request names a documentation URL, fetch it — an answer \
+     copied from the real source beats any paraphrase. Do NOT create or edit files: you have no \
+     write or edit tool, and your structured reply IS your deliverable.\n\n\
+     Your answer is a HANDOFF to the builder: name exact files, exact key/field literals, exact \
+     endpoints or signatures where the request implies them; where the request is silent, state \
+     the most CONVENTIONAL choice and say it is a convention. If the question cannot be settled \
+     from the request or the sources, say exactly that in one line and still name the \
+     conventional choice. Keep it under a page.\n\n\
+     When you are done, call the final_output tool ONCE with {\"answer\": \"...\", \"raised\": \
+     [...]} — `raised` lists further questions you could NOT settle, for the record only: do not \
+     answer them, and nothing will dispatch them."
+        .to_string()
 }
