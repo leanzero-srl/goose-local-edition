@@ -240,6 +240,64 @@ fn owned_files_fingerprint(owned_files: &[String]) -> u64 {
     h.finish()
 }
 
+/// One line per defect in a task's owned files — the SHRANK terminator's progress measurement
+/// (DESIGN-STABILITY-FIRST §9 row 7). The scheduler-side reading of the same facts the done gate's
+/// `verify_owned_files` (goose-cli swarm.rs) reads: a missing file, an empty non-marker file, a `.py`
+/// that will not parse, a `.py` whose every body is a stub. Paths resolve exactly as
+/// `owned_files_fingerprint` resolves them — against the run cwd, where workers write.
+///
+/// A copy rather than an import because the dependency points the other way (goose-cli depends on
+/// this crate), so this is the definition the gate-side one can collapse INTO; until it does, a
+/// drift between them costs only retry-termination timing, never a shipped defect — the gate still
+/// judges deliverables with its own richer set.
+///
+/// Any verify error — no python3 on the host, an unreadable file — yields NO finding. The MILD rule
+/// errs toward allowing the retry, so only positive evidence of a defect may count against a task.
+pub fn owned_files_findings(owned_files: &[String]) -> Vec<String> {
+    let mut out = Vec::new();
+    for rel in owned_files {
+        let path = std::path::Path::new(rel);
+        match std::fs::metadata(path) {
+            Err(_) => {
+                out.push(format!("{rel} does not exist"));
+                continue;
+            }
+            // An empty `__init__.py` / `py.typed` is a correct, intentional file — same carve-out
+            // the gate makes, or every well-formed package tree reads as one finding per package.
+            Ok(m) if m.len() == 0 => {
+                let base = rel.rsplit('/').next().unwrap_or(rel);
+                if !(base == "__init__.py" || base == "py.typed") {
+                    out.push(format!("{rel} exists but is EMPTY"));
+                }
+                continue;
+            }
+            Ok(_) => {}
+        }
+        if rel.ends_with(".py") {
+            // ast.parse, not py_compile: same answer, no __pycache__ written into the worker's tree.
+            if let Ok(o) = std::process::Command::new("python3")
+                .args([
+                    "-c",
+                    "import ast,sys; ast.parse(open(sys.argv[1]).read())",
+                    rel,
+                ])
+                .output()
+            {
+                if !o.status.success() {
+                    out.push(format!("{rel} DOES NOT PARSE"));
+                    continue;
+                }
+            }
+            if let Ok(body) = std::fs::read_to_string(path) {
+                if crate::judge::skeleton_only(&body) {
+                    out.push(format!("{rel} is a SKELETON — every body is a stub"));
+                }
+            }
+        }
+    }
+    out
+}
+
 /// WAS THIS FILE WRITTEN? Present on disk and non-empty.
 ///
 /// One definition, because there were two: `owned_file_written` had it as a closure and `delivered_file`
@@ -917,6 +975,11 @@ struct State {
     /// transport drop). A failure that leaves the tree exactly as the last one did is a failure that
     /// retrying will reproduce, and that is what ends the retries — rather than a count of three.
     retry_tree_hash: HashMap<TaskId, u64>,
+    /// `owned_files_findings` count as of this task's previous CONTENT failure — the other half of
+    /// the retry terminator (the SHRANK rule, §9 row 7). Written ONLY on content failures, so a
+    /// transport drop or judge kill between attempts can neither add a comparison nor reset the
+    /// baseline. A count, not a cap: nothing here bounds how many shrinking attempts a task may take.
+    retry_finding_counts: HashMap<TaskId, usize>,
     prior_hints: HashMap<TaskId, String>,
     /// Every corrective note the judge has produced this run, in order, and NEVER consumed.
     ///
@@ -1698,6 +1761,10 @@ impl State {
                 if msg.contains("the judge read this call's own reasoning") {
                     *self.omni_aborts.entry(tid.to_string()).or_insert(0) += 1;
                 }
+                // Why a CONTENT exhaustion happened, carried out of the budget block so the degraded
+                // verdict can SAY which terminator ended the retries — a run.jsonl reader must not
+                // have to diff the tree to find out. `Some` exactly when a content failure settled.
+                let mut content_settled: Option<String> = None;
                 let exhausted = {
                     // Judge kills advance n.attempts (for the epoch guard) but are SUPERVISORY, not task
                     // failures — and the judge can be wrong (a borderline over-read). Don't let a judge
@@ -1725,28 +1792,54 @@ impl State {
                         .attempts
                         .saturating_sub(judge_kills)
                         .saturating_sub(transport);
-                    // RETRY WHILE THE OUTPUT IS CHANGING — not three times.
+                    // RETRY WHILE THE OUTPUT IS IMPROVING — never a count.
                     //
-                    // max_attempts was the last count left in the engine. It never capped THINKING (judge
-                    // interventions and transport drops are both already excluded above); what it capped
-                    // was how many times a task may fail for a real reason — a missing owned file, a file
-                    // that will not compile, a stall. Retrying that forever is a loop, so something has to
-                    // end it; a literal 3 is just the wrong something. A task whose second attempt writes
-                    // materially different code deserves a third, and a task whose fifth attempt writes
-                    // the byte-identical broken file does not deserve a sixth.
+                    // max_attempts was the last count left in the engine and is retired (Scheduler::new
+                    // ignores it). It never capped THINKING (judge interventions and transport drops are
+                    // both already excluded above); what it capped was how many times a task may fail for
+                    // a real reason — a missing owned file, a file that will not compile, a stall.
+                    // Retrying that forever is a loop, so something has to end it; a literal 3 is just
+                    // the wrong something. The terminator is progress, measured two ways:
                     //
-                    // So the terminator is progress, the same rule the judge's restarts and the repair
-                    // phase use: exhausted when this failed attempt left the owned files exactly as the
-                    // previous failed attempt did. File-less tasks (verify::, e2e shards) have nothing to
-                    // fingerprint, so they fall back to "more than one real failure" — one retry, then
-                    // stop, which is what they had.
+                    //   1. BYTE-IDENTICAL (every failure class): this failed attempt left the owned
+                    //      files exactly as the previous failure did. A re-roll of a no-op is a loop.
+                    //   2. SHRANK (content failures only — DESIGN-STABILITY-FIRST §9 row 7, MILD): a
+                    //      content failure re-dispatches unless the `owned_files_findings` set failed
+                    //      to shrink across two consecutive measured attempts. 5→3→3 ends on the third;
+                    //      5→4→3→2→… retries indefinitely. Lenient on purpose: the first content
+                    //      failure has no pair to compare; an EMPTY previous set is no baseline (a
+                    //      verifier that saw nothing wrong cannot testify that nothing improved — the
+                    //      Rust compile-gate class fails on an axis this measurement does not see, and
+                    //      only the byte-identical rule may end those); and transport drops / judge
+                    //      kills are never measured, so they neither add a comparison nor reset one.
+                    //
+                    // File-less tasks (verify::, e2e shards) have nothing to measure either way, so
+                    // they keep their fallback: more than one real failure.
                     if files.is_empty() {
                         real_failures >= 2
                     } else {
                         let fp = owned_files_fingerprint(&files);
                         let unchanged = self.retry_tree_hash.get(tid) == Some(&fp);
                         self.retry_tree_hash.insert(tid.to_string(), fp);
-                        unchanged && real_failures >= 2
+                        if is_content {
+                            let curr = owned_files_findings(&files).len();
+                            let prev = self.retry_finding_counts.insert(tid.to_string(), curr);
+                            if unchanged && real_failures >= 2 {
+                                content_settled = Some(
+                                    "consecutive content failures wrote byte-identical output"
+                                        .to_string(),
+                                );
+                            } else if prev.is_some_and(|p| p > 0 && curr >= p) {
+                                content_settled = Some(format!(
+                                    "verify findings failed to shrink across consecutive content \
+                                     failures ({} → {curr})",
+                                    prev.unwrap_or(curr)
+                                ));
+                            }
+                            content_settled.is_some()
+                        } else {
+                            unchanged && real_failures >= 2
+                        }
                     }
                 };
                 if exhausted {
@@ -1755,16 +1848,25 @@ impl State {
                     // emit events for hundreds of seconds and write their file, then the stream goes silent).
                     // If the critical owned file is on disk, mark Done(degraded) + relax dependents so a single
                     // hung core task does not kill the capstone; integrate-verify + R1 gate the file honestly.
-                    // NEVER a CONTENT failure (a syntax-gate reject is a broken file), never a test task, and
-                    // only when the critical files are actually present. OFF by default => byte-identical.
-                    let degrade = self.dag.tasks.get(tid).is_some_and(|n| {
-                        should_degrade_on_stall(
-                            self.degrade_on_stall,
-                            is_content,
-                            &n.spec.id,
-                            &n.spec.owned_files,
-                        )
-                    });
+                    // For a STALL, never a content failure or a test task, and only when the critical files
+                    // are actually present; OFF by default => byte-identical.
+                    //
+                    // A SETTLED CONTENT failure (§9 row 7) ends the same way — Done(degraded) with
+                    // dependents relaxed, never Failed. This supersedes the old "NEVER a CONTENT failure"
+                    // rule that stood here: failing the task cascade-fails the subtree, which is how one
+                    // broken file became a run whose app never bound a port, while degrading ships the
+                    // tree to the gate and repair, which own the defect from here. Unconditional (not
+                    // gated on degrade_on_stall) because SHRANK is the retry policy, not a lever — a
+                    // lever that restores the cascade would restore the failure mode this deletes.
+                    let degrade = content_settled.is_some()
+                        || self.dag.tasks.get(tid).is_some_and(|n| {
+                            should_degrade_on_stall(
+                                self.degrade_on_stall,
+                                is_content,
+                                &n.spec.id,
+                                &n.spec.owned_files,
+                            )
+                        });
                     let attempts = self.attempt_log[tid].len() as u32;
                     if degrade {
                         self.dag.tasks.get_mut(tid).unwrap().state = TaskState::Done;
@@ -1774,7 +1876,12 @@ impl State {
                             judge_node: self.judge_node.clone().unwrap_or_default(),
                             verdict: "degraded_stall".to_string(),
                             confidence: 1.0,
-                            hint: if self
+                            hint: if let Some(why) = &content_settled {
+                                format!(
+                                    "content-settled: {why}; shipped as-is — the gate and repair own \
+                                     the defect"
+                                )
+                            } else if self
                                 .dag
                                 .tasks
                                 .get(tid)
@@ -3475,6 +3582,7 @@ impl Scheduler {
             abort_handles: HashMap::new(),
             kill_tree_hash: HashMap::new(),
             retry_tree_hash: HashMap::new(),
+            retry_finding_counts: HashMap::new(),
             prior_hints: HashMap::new(),
             judge_notes: Vec::new(),
             interventions: HashMap::new(),

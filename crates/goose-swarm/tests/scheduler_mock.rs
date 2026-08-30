@@ -873,7 +873,6 @@ async fn salvaged_looping_task_relaxes_dependents() {
         intervene_confidence: 0.5,
         max_interventions_per_task: 1,
         rejudge_cooldown_secs: 0,
-        terminal_min_secs: 0,
         ..JudgeConfig::default()
     };
     let sched =
@@ -1345,6 +1344,272 @@ async fn retries_continue_while_the_output_changes_and_stop_when_it_does_not() {
         report.failed
     );
     let _ = std::fs::remove_file(&path);
+}
+
+// ---------------------------------------------------------------------------------------------
+// THE SHRANK TERMINATOR (DESIGN-STABILITY-FIRST §9 row 7, MILD). A content failure re-dispatches
+// unless the output is byte-identical or the verify finding set failed to shrink across two
+// consecutive measured attempts; either way the end is Done(degraded) with dependents RELAXED —
+// never Failed + cascade. Transport drops and judge kills are never measured and never counted.
+// ---------------------------------------------------------------------------------------------
+
+/// One scripted step per attempt of the target task. Content steps write attempt-UNIQUE bytes into
+/// the first `write` owned files, so the byte-identical terminator can never fire and whatever ends
+/// the task is the finding-set rule alone.
+enum ShrankStep {
+    /// Write the first `write` owned files (attempt-unique bytes), then content-fail.
+    Content { write: usize },
+    /// A mid-stream transport drop: writes nothing, fails with the excluded error shape.
+    Drop,
+    /// Write every owned file and succeed.
+    Ok,
+}
+
+struct ShrankScript {
+    target: String,
+    steps: Vec<ShrankStep>,
+    calls: Arc<Mutex<u32>>,
+}
+
+#[async_trait]
+impl TaskDispatcher for ShrankScript {
+    async fn run(&self, req: DispatchRequest) -> Result<TaskRunOutput, DispatchError> {
+        if req.task_id != self.target {
+            return Ok(format!("ok-{}", req.task_id).into());
+        }
+        let n = {
+            let mut g = self.calls.lock().unwrap();
+            let n = *g;
+            *g += 1;
+            n as usize
+        };
+        match self.steps.get(n).unwrap_or(&ShrankStep::Ok) {
+            ShrankStep::Content { write } => {
+                for f in req.owned_files.iter().take(*write) {
+                    std::fs::write(f, format!("attempt {n} body for {f}\n")).unwrap();
+                }
+                Err(DispatchError::ContentRetry(format!(
+                    "attempt {n}: the done gate rejected the deliverable"
+                )))
+            }
+            ShrankStep::Drop => Err(DispatchError::Transient(
+                "stream decode error (mid-stream body drop)".into(),
+            )),
+            ShrankStep::Ok => {
+                for f in &req.owned_files {
+                    std::fs::write(f, format!("final body for {f}\n")).unwrap();
+                }
+                Ok(format!("output-of-{}", req.task_id).into())
+            }
+        }
+    }
+}
+
+/// A fresh temp dir of `n` owned-file paths. `.js` on purpose: the finding measure needs no python
+/// and no subprocess — a missing file is the finding.
+fn shrank_files(tag: &str, n: usize) -> Vec<String> {
+    let dir = std::env::temp_dir().join(format!("goose_shrank_{tag}"));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    (0..n)
+        .map(|i| dir.join(format!("f{i}.js")).to_string_lossy().to_string())
+        .collect()
+}
+
+fn degraded_hint(events: &EventLog) -> Option<String> {
+    events
+        .named("judge_verdict")
+        .iter()
+        .find(|v| v["verdict"] == "degraded_stall")
+        .and_then(|v| v["hint"].as_str().map(|s| s.to_string()))
+}
+
+/// Finding sets 5→3→3: the first two content failures are progress (5, then a strictly smaller 3 —
+/// retry allowed); the third measures 3 again, the set failed to shrink across two consecutive
+/// attempts, and that ENDS the task through the existing degrade path: Done(degraded), dependents
+/// relaxed, never Failed. Byte-identity cannot be what ended it — every content attempt here writes
+/// different bytes.
+#[tokio::test]
+async fn finding_set_5_3_3_ends_done_degraded_with_dependents_relaxed() {
+    let files = shrank_files("533", 5);
+    let calls = Arc::new(Mutex::new(0u32));
+    let disp = Arc::new(ShrankScript {
+        target: "m".into(),
+        steps: vec![
+            ShrankStep::Content { write: 0 }, // 5 findings: nothing written
+            ShrankStep::Content { write: 2 }, // 3 findings: two files landed
+            ShrankStep::Content { write: 2 }, // 3 findings again, new bytes — flat
+        ],
+        calls: calls.clone(),
+    });
+    let refs: Vec<&str> = files.iter().map(|s| s.as_str()).collect();
+    let dag = Dag::from_specs(vec![spec("m", &[], &refs), spec("after", &["m"], &[])]).unwrap();
+    let events = Arc::new(EventLog::default());
+    let report = Scheduler::new(vec![dev("a", "m-a", 1), dev("b", "m-b", 1)], 3)
+        .with_sink(events.clone())
+        .run(dag, disp, String::new())
+        .await
+        .unwrap();
+    assert_eq!(
+        *calls.lock().unwrap(),
+        3,
+        "the flat third attempt is the last — no fourth dispatch"
+    );
+    assert!(
+        report.failed.is_empty(),
+        "a settled content task must not cascade-fail: {:?}",
+        report.failed
+    );
+    assert!(
+        report.done.contains(&"m".to_string()) && report.done.contains(&"after".to_string()),
+        "m ends Done(degraded) and its dependent still runs: {:?}",
+        report.done
+    );
+    let hint = degraded_hint(&events).expect("a degraded_stall verdict is emitted");
+    assert!(
+        hint.contains("failed to shrink") && hint.contains("3 → 3"),
+        "the verdict names the terminator and the flat pair: {hint}"
+    );
+}
+
+/// Byte-identical consecutive CONTENT outputs end the task likewise: Done(degraded) with dependents
+/// relaxed — no longer Failed + cascade. The finding set cannot be what ends it here: the owned file
+/// exists non-empty from the first attempt, so the measured set is empty, and an empty set is no
+/// baseline. What ends it is writing the exact same bytes twice.
+#[tokio::test]
+async fn byte_identical_content_failures_end_done_degraded() {
+    struct SameBytes {
+        path: String,
+        calls: Arc<Mutex<u32>>,
+    }
+    #[async_trait]
+    impl TaskDispatcher for SameBytes {
+        async fn run(&self, req: DispatchRequest) -> Result<TaskRunOutput, DispatchError> {
+            if req.task_id != "m" {
+                return Ok(format!("ok-{}", req.task_id).into());
+            }
+            *self.calls.lock().unwrap() += 1;
+            std::fs::write(&self.path, "the same broken file, every time\n").unwrap();
+            Err(DispatchError::ContentRetry(
+                "the done gate rejected the deliverable".into(),
+            ))
+        }
+    }
+    let files = shrank_files("bytes", 1);
+    let calls = Arc::new(Mutex::new(0u32));
+    let disp = Arc::new(SameBytes {
+        path: files[0].clone(),
+        calls: calls.clone(),
+    });
+    let dag = Dag::from_specs(vec![
+        spec("m", &[], &[files[0].as_str()]),
+        spec("after", &["m"], &[]),
+    ])
+    .unwrap();
+    let events = Arc::new(EventLog::default());
+    let report = Scheduler::new(vec![dev("a", "m-a", 1), dev("b", "m-b", 1)], 3)
+        .with_sink(events.clone())
+        .run(dag, disp, String::new())
+        .await
+        .unwrap();
+    assert_eq!(
+        *calls.lock().unwrap(),
+        2,
+        "the second identical output is the last"
+    );
+    assert!(
+        report.failed.is_empty() && report.done.contains(&"after".to_string()),
+        "degraded, dependents relaxed: done={:?} failed={:?}",
+        report.done,
+        report.failed
+    );
+    let hint = degraded_hint(&events).expect("a degraded_stall verdict is emitted");
+    assert!(
+        hint.contains("byte-identical"),
+        "the verdict names byte-identity as the terminator: {hint}"
+    );
+}
+
+/// A transport drop between content attempts is NEVER counted: it adds no finding measurement and
+/// resets none, so 5 → (drop) → 3 → 3 ends exactly where 5→3→3 does — on the flat pair — after four
+/// dispatches, and the drop itself terminates nothing (the real-failure count excludes it even
+/// though the tree did not move across it).
+#[tokio::test]
+async fn transport_drop_between_content_attempts_is_not_counted() {
+    let files = shrank_files("drop", 5);
+    let calls = Arc::new(Mutex::new(0u32));
+    let disp = Arc::new(ShrankScript {
+        target: "m".into(),
+        steps: vec![
+            ShrankStep::Content { write: 0 }, // 5 findings
+            ShrankStep::Drop,                 // no measurement, no count
+            ShrankStep::Content { write: 2 }, // 3 findings — shrank, retry
+            ShrankStep::Content { write: 2 }, // 3 findings — flat, settle
+        ],
+        calls: calls.clone(),
+    });
+    let refs: Vec<&str> = files.iter().map(|s| s.as_str()).collect();
+    let dag = Dag::from_specs(vec![spec("m", &[], &refs)]).unwrap();
+    let events = Arc::new(EventLog::default());
+    let report = Scheduler::new(vec![dev("a", "m-a", 1), dev("b", "m-b", 1)], 3)
+        .with_sink(events.clone())
+        .run(dag, disp, String::new())
+        .await
+        .unwrap();
+    assert_eq!(
+        *calls.lock().unwrap(),
+        4,
+        "the drop re-dispatches uncounted; the flat pair still ends it on the fourth dispatch"
+    );
+    assert!(
+        report.done.contains(&"m".to_string()) && report.failed.is_empty(),
+        "settled, not failed: done={:?} failed={:?}",
+        report.done,
+        report.failed
+    );
+    let hint = degraded_hint(&events).expect("a degraded_stall verdict is emitted");
+    assert!(
+        hint.contains("3 → 3"),
+        "the flat pair is 3→3 — the drop contributed no measurement: {hint}"
+    );
+}
+
+/// A SHRINKING set retries INDEFINITELY — the rule is progress, never a count. Seven findings melt
+/// one per attempt (7→6→5→4→3→2→1) across seven content failures — more than double the old
+/// max_attempts of 3 — and the task still gets its eighth attempt, which lands. Only flatness or
+/// byte-identity may end a content retry.
+#[tokio::test]
+async fn a_shrinking_finding_set_retries_past_any_count() {
+    let files = shrank_files("shrink", 7);
+    let calls = Arc::new(Mutex::new(0u32));
+    let disp = Arc::new(ShrankScript {
+        target: "m".into(),
+        steps: (0..7).map(|i| ShrankStep::Content { write: i }).collect(),
+        calls: calls.clone(),
+    });
+    let refs: Vec<&str> = files.iter().map(|s| s.as_str()).collect();
+    let dag = Dag::from_specs(vec![spec("m", &[], &refs)]).unwrap();
+    let events = Arc::new(EventLog::default());
+    let report = Scheduler::new(vec![dev("a", "m-a", 1), dev("b", "m-b", 1)], 3)
+        .with_sink(events.clone())
+        .run(dag, disp, String::new())
+        .await
+        .unwrap();
+    assert_eq!(
+        *calls.lock().unwrap(),
+        8,
+        "seven shrinking failures each earn a retry; the eighth attempt lands"
+    );
+    assert!(
+        report.done.contains(&"m".to_string()) && report.failed.is_empty(),
+        "it lands by FINISHING: done={:?} failed={:?}",
+        report.done,
+        report.failed
+    );
+    assert!(
+        degraded_hint(&events).is_none(),
+        "nothing settled — the task completed on its own"
+    );
 }
 
 /// GOOSE_SWARM_DONE_GATE scoping: a `ContentRetry` (the pre-done syntax gate) must thread its error into
