@@ -315,16 +315,15 @@ fn every_dag_entry_walks_through_the_same_repairs() {
     // Door 2 — apply_split's partition validation IS its ownership repair (an exact partition
     // of the parent's already-repaired claim cannot create a second claimant or a new path):
     // its two load-bearing refusals must stand between the fn definition and its splice.
-    let split_fn = sched
-        .find("fn apply_split(")
-        .expect("apply_split exists");
+    let split_fn = sched.find("fn apply_split(").expect("apply_split exists");
     let split_splice = sched[split_fn..]
         .find(".splice_specs(")
         .map(|i| split_fn + i)
         .expect("apply_split's splice site exists inside the fn");
     let split_body = &sched[split_fn..split_splice];
     assert!(
-        split_body.contains("!orig_files.contains(f)") && split_body.contains("union != orig_files"),
+        split_body.contains("!orig_files.contains(f)")
+            && split_body.contains("union != orig_files"),
         "apply_split's partition refusals (foreign-file and non-exact-cover) must guard its \
          splice — they are this door's equivalent of repair_replan_specs"
     );
