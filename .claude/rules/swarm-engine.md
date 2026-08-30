@@ -12,10 +12,15 @@ Read `EXPERIMENTS-LEDGER.md` before proposing a change here. Most obvious improv
 No wall clock, turn ceiling, retry count or volume limit may bound model work. Local models are slow;
 that is expected, not a fault. Every terminator must be progress-based or live in the transport.
 
-- `effective_idle_budget()` returns uncapped for ANY input and has a test that says so
-  (`no_configured_timeout_can_ever_bound_a_call`). `worker_timeout_secs: 420` and
-  `planner_timeout_secs: 900` are still in `config.yaml` and are DEAD — they arrive as `idle_secs` and
-  are ignored. Do not "restore" them.
+- Since II-7 (e1e32cdda) the guard is STRUCTURAL: `run_agent`/`run_agent_in` take no time parameter,
+  `effective_idle_budget`/`planner_wall`/`UNCAPPED_SECS` and the `idle_secs` plumbing are DELETED, and
+  re-arming a cap means re-adding a parameter through every signature in the chain. `worker_timeout_secs`
+  / `planner_timeout_secs` may still appear in an old `config.yaml` and are ignored (the fields left
+  SwarmConfig's dispatcher plumbing). Do not "restore" any of them.
+- II-7 also made the 1800s `GOOSE_DEFAULT_EXTENSION_TIMEOUT` expiry a MEASUREMENT on registered swarm
+  spawns: the shell tool detaches the still-running process into its registered group (reaped at the
+  attempt's terminal transition) and tells the model "still running; port P or none; output so far" —
+  it no longer kills the command or errors the call.
 - The sink cap was deleted once and came back unguarded, because `uncapped()` was removed in the same
   purge. It cut `integrate-verify` at exactly 1800s and the run logged `status=done` — a truncated call
   and a finished one written identically into the row every verdict is read from.
