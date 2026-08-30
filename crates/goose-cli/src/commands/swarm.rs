@@ -1862,6 +1862,9 @@ async fn handle_gate(tree: PathBuf, spec: Option<PathBuf>) -> Result<()> {
     if !tree.is_dir() {
         anyhow::bail!("{} is not a directory", tree.display());
     }
+    // Finding 9: a replay must not deposit __pycache__ debris in an ARCHIVED tree — the boot
+    // and probe pythons inherit this. Scoped naturally: `goose swarm gate` is its own process.
+    std::env::set_var("PYTHONDONTWRITEBYTECODE", "1");
     let spec_text = spec_for_tree(&tree, spec)?;
     let existing = existing_files_manifest(&tree);
     let lang = detect_language(&spec_text, &existing);
@@ -4652,6 +4655,32 @@ mod tests {
                 .collect::<String>()
         };
         assert_eq!(strip(&first), strip(&second), "second pass is a no-op");
+        // Finding 9: a REPLAYED gate write (the only writer `goose swarm gate` runs) is a
+        // byte-AND-mtime no-op — an archived tree's ledger must not look freshly touched
+        // ("freshest 0s ago") because someone replayed the gate over it.
+        let gate_mini = root.join(".swarm/ledger/gate-r0.json");
+        let rollup_path = root.join(".swarm/ledger.json");
+        let mt = |p: &std::path::Path| std::fs::metadata(p).unwrap().modified().unwrap();
+        let (m_gate, m_roll) = (mt(&gate_mini), mt(&rollup_path));
+        write_gate_ledger(
+            root,
+            0,
+            "smoke",
+            &["GET /api/stream returned 404".to_string()],
+            &["POST /api/sync not probed".to_string()],
+            serde_json::json!(false),
+        )
+        .unwrap();
+        assert_eq!(
+            mt(&gate_mini),
+            m_gate,
+            "unchanged gate mini keeps its mtime"
+        );
+        assert_eq!(
+            mt(&rollup_path),
+            m_roll,
+            "unchanged roll-up keeps its mtime"
+        );
     }
 
     /// II-2b fixture: a tree + ledger cut from the r2 archive's real shapes — the lanes, the
@@ -32147,7 +32176,15 @@ fn write_ledger_mini(
     let dir = root.join(LEDGER_DIR);
     std::fs::create_dir_all(&dir).ok()?;
     let path = dir.join(file_name);
-    std::fs::write(&path, serde_json::to_string_pretty(row).ok()?).ok()?;
+    let bytes = serde_json::to_string_pretty(row).ok()?;
+    // Finding 9: an unchanged row is a byte-AND-mtime no-op, so a gate replay over an archived
+    // tree leaves its ledger looking exactly as archived ("freshest 0s ago" was a replay
+    // artifact, not run activity). The roll-up write below makes the same comparison.
+    if std::fs::read_to_string(&path).is_ok_and(|old| old == bytes) {
+        rebuild_ledger_rollup(root);
+        return Some(path);
+    }
+    std::fs::write(&path, bytes).ok()?;
     rebuild_ledger_rollup(root);
     Some(path)
 }
@@ -32592,11 +32629,12 @@ fn rebuild_ledger_rollup(root: &Path) -> Option<serde_json::Value> {
     if !rows_dropped.is_empty() {
         rollup["rows_dropped"] = serde_json::Value::from(rows_dropped);
     }
-    std::fs::write(
-        root.join(".swarm").join("ledger.json"),
-        serde_json::to_string_pretty(&rollup).ok()?,
-    )
-    .ok()?;
+    let out_path = root.join(".swarm").join("ledger.json");
+    let bytes = serde_json::to_string_pretty(&rollup).ok()?;
+    // Finding 9: identical roll-up bytes keep the archived file's mtime (see write_ledger_mini).
+    if !std::fs::read_to_string(&out_path).is_ok_and(|old| old == bytes) {
+        std::fs::write(&out_path, bytes).ok()?;
+    }
     Some(rollup)
 }
 
