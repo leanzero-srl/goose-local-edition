@@ -4534,7 +4534,7 @@ mod tests {
             "GET /api/stream returned 404 (advertised SSE endpoint, in `app/stream.py`)"
                 .to_string(),
         ];
-        let desc = smoke_fix_description(&findings, TargetLang::Python, "");
+        let desc = smoke_fix_description(&findings, TargetLang::Python, "", "");
         assert_eq!(parse_numbered_findings(&desc), findings);
         assert!(parse_numbered_findings("no numbers here").is_empty());
     }
@@ -4633,6 +4633,7 @@ mod tests {
                 description: &smoke_fix_description(
                     &["GET /api/stream returned 404".to_string()],
                     TargetLang::Python,
+                    "",
                     "",
                 ),
                 output: "FINDING 1: NOT FIXED — added route but SSE headers still wrong",
@@ -4840,6 +4841,7 @@ mod tests {
                     &["GET /api/stream returned 404 (advertised SSE endpoint)".to_string()],
                     TargetLang::Python,
                     "",
+                    "",
                 ),
                 output: "FINDING 1: NOT FIXED — registered the route on the wrong handler class",
                 promoted: false,
@@ -5005,6 +5007,83 @@ mod tests {
             )
             .is_none(),
             "an empty/unreadable ledger must leave the template dispatch untouched"
+        );
+    }
+
+    /// II-4: a round-0 NOT FIXED verdict reaches the round-1 shard's text VERBATIM — the fresh
+    /// per-round Scheduler discards its SharedContext, so the on-disk repair ledger is the only
+    /// channel between rounds, and this is the splice that reads it.
+    #[test]
+    fn a_round0_not_fixed_verdict_reaches_the_round1_shard_text() {
+        let dir = r2_cut_ledger_fixture();
+        let rollup = read_ledger_rollup(dir.path());
+        let findings = vec!["GET /api/stream returned 404 (advertised SSE endpoint)".to_string()];
+        let history = render_repair_history(
+            rollup.as_ref(),
+            &["app/stream.py".to_string()],
+            &findings,
+            1,
+        );
+        assert!(history.chars().count() <= 3_500, "one dep-file budget");
+        assert!(
+            history.contains(
+                "round 0, fix::r0::app/stream.py: FINDING 1 NOT FIXED — registered the route \
+                 on the wrong handler class"
+            ),
+            "the prior verdict arrives verbatim:\n{history}"
+        );
+        assert!(
+            history.contains("GATE round 0"),
+            "the round's gate row frames the findings:\n{history}"
+        );
+        let desc = smoke_fix_description(&findings, TargetLang::Python, "", &history);
+        assert!(
+            desc.contains("FINDING 1 NOT FIXED — registered the route on the wrong handler class"),
+            "findings and prior attempts arrive in ONE message"
+        );
+        assert_eq!(
+            parse_numbered_findings(&desc),
+            findings,
+            "the history block must not corrupt the numbered-findings recovery"
+        );
+        // The owning tasks' rows arrive when the shard's files overlap a builder's.
+        let owner_history = render_repair_history(
+            rollup.as_ref(),
+            &["tests/test_ledger_core.py".to_string()],
+            &[],
+            1,
+        );
+        assert!(
+            owner_history.contains("`ledger-core-tests` built these files"),
+            "the shard learns who built what it repairs:\n{owner_history}"
+        );
+        // This round's own verdicts are not "prior" — round 0 must not read round 0 back.
+        let same_round = render_repair_history(
+            rollup.as_ref(),
+            &["app/stream.py".to_string()],
+            &findings,
+            0,
+        );
+        assert!(!same_round.contains("NOT FIXED"));
+        // No ledger, no history — and an empty history keeps the description byte-identical.
+        assert_eq!(render_repair_history(None, &[], &findings, 1), "");
+        assert_eq!(
+            smoke_fix_description(&findings, TargetLang::Python, "", ""),
+            smoke_fix_description(&findings, TargetLang::Python, "", " \n "),
+        );
+        // And the fix_round_specs path threads it into a shard's description on its own.
+        let specs = fix_round_specs(
+            &["pytest failure in `app/stream.py`: SSE handler wrong".to_string()],
+            &["app/stream.py".to_string()],
+            1,
+            TargetLang::Python,
+            "",
+            rollup.as_ref(),
+        );
+        assert!(
+            specs[0].description.contains("FINDING 1 NOT FIXED"),
+            "the sched-path shard carries the verdict too:\n{}",
+            specs[0].description
         );
     }
 
@@ -12512,6 +12591,7 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
             ],
             TargetLang::Python,
             "",
+            "",
         );
         assert!(d.contains("ImportError cannot import name bar from baz"));
         assert!(d.contains("--collect-only"));
@@ -12539,6 +12619,7 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
             &["the page renders no rows".to_string()],
             TargetLang::Python,
             "| GET | /api/payments | list them |\n",
+            "",
         );
         assert!(
             with_surface.contains("WHAT THIS APP ADVERTISES"),
@@ -12548,6 +12629,7 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
         let ts = smoke_fix_description(
             &["`npm run build` failed".to_string()],
             TargetLang::TypeScript,
+            "",
             "",
         );
         assert!(ts.contains("npm run build"));
@@ -13874,7 +13956,7 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
             "the second sync re-fetched 247 rows".to_string(),
         ];
         let all = vec!["app/api.py".to_string(), "app/store.py".to_string()];
-        let specs = fix_round_specs(&findings, &all, 2, TargetLang::Python, "");
+        let specs = fix_round_specs(&findings, &all, 2, TargetLang::Python, "", None);
         let ids: Vec<&str> = specs.iter().map(|t| t.id.as_str()).collect();
         assert_eq!(
             ids,
@@ -13906,7 +13988,7 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
         // collide with the join id — '#' never appears in a normalized file id.
         let tricky = vec!["join.py:1: broken".to_string(), "no file here".to_string()];
         let all2 = vec!["join.py".to_string()];
-        let specs2 = fix_round_specs(&tricky, &all2, 0, TargetLang::Python, "");
+        let specs2 = fix_round_specs(&tricky, &all2, 0, TargetLang::Python, "", None);
         let ids2: Vec<&str> = specs2.iter().map(|t| t.id.as_str()).collect();
         assert_eq!(ids2, ["fix::r0::join.py", "fix::r0::#join"]);
         assert!(
@@ -13915,11 +13997,11 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
         );
         // No file-less findings -> no join at all.
         let only_file = vec!["app/api.py:1: x".to_string()];
-        let specs3 = fix_round_specs(&only_file, &all, 1, TargetLang::Python, "");
+        let specs3 = fix_round_specs(&only_file, &all, 1, TargetLang::Python, "", None);
         assert_eq!(specs3.len(), 1);
         assert!(!specs3.iter().any(|t| t.id.ends_with("#join")));
         // No findings -> no tasks.
-        assert!(fix_round_specs(&[], &all, 0, TargetLang::Python, "").is_empty());
+        assert!(fix_round_specs(&[], &all, 0, TargetLang::Python, "", None).is_empty());
     }
 
     /// F881 REGRESSION (run 8, score 0.601): the repair round RACED whole-tree twins even though its
@@ -32571,12 +32653,153 @@ fn shard_owned_files(
     owned
 }
 
+/// II-4, the repair shard's splice (budget one dep-file, 3,500 chars): this round's gate row,
+/// the PRIOR rounds' verdicts touching this shard's findings or files, and the owning tasks'
+/// ledger rows — pure over the roll-up so a round-1 shard is testable against a round-0 fixture.
+/// Round N+1 shards measurably re-tried what round N tried (prompt comment above
+/// smoke_fix_description); the fresh per-round Scheduler discards its SharedContext, so this
+/// on-disk history is the only channel that survives between rounds. Overflow drop order: the
+/// owning-task rows first, then the gate row — NEVER a prior NOT FIXED verdict, which is the one
+/// line whose loss re-schedules a failed approach; a line-boundary cut is the last resort.
+fn render_repair_history(
+    rollup: Option<&serde_json::Value>,
+    shard_files: &[String],
+    findings: &[String],
+    round: usize,
+) -> String {
+    const BUDGET: usize = 3_500;
+    let Some(rollup) = rollup else {
+        return String::new();
+    };
+    let mut verdicts = String::new();
+    if let Some(rounds) = rollup.pointer("/repair/rounds").and_then(|r| r.as_array()) {
+        for r in rounds {
+            let r_round = r.get("round").and_then(|x| x.as_u64()).unwrap_or(0) as usize;
+            if r_round >= round {
+                continue;
+            }
+            let shard = r.get("shard").and_then(|x| x.as_str()).unwrap_or("?");
+            let owns_overlap = r
+                .get("owned_files")
+                .and_then(|o| o.as_array())
+                .is_some_and(|a| {
+                    a.iter()
+                        .filter_map(|f| f.as_str())
+                        .any(|f| shard_files.iter().any(|sf| sf == f))
+                });
+            for v in r
+                .get("verdicts")
+                .and_then(|v| v.as_array())
+                .unwrap_or(&Vec::new())
+            {
+                let finding = v.get("finding").and_then(|f| f.as_str()).unwrap_or("");
+                let matches_finding = findings.iter().any(|f| f == finding);
+                if !owns_overlap && !matches_finding {
+                    continue;
+                }
+                verdicts.push_str(&format!(
+                    "  - round {r_round}, {shard}: FINDING {} {} — {}\n",
+                    v.get("n").and_then(|n| n.as_u64()).unwrap_or(0),
+                    v.get("verdict").and_then(|x| x.as_str()).unwrap_or("?"),
+                    v.get("detail").and_then(|d| d.as_str()).unwrap_or(""),
+                ));
+            }
+        }
+    }
+    let verdicts_block = if verdicts.is_empty() {
+        String::new()
+    } else {
+        format!(
+            "WHAT PRIOR ROUNDS ALREADY TRIED on these findings/files (a NOT FIXED approach must \
+             not be retried as-is — try something different in kind):\n{verdicts}"
+        )
+    };
+    let gate_block = rollup
+        .get("gate")
+        .and_then(|g| g.as_array())
+        .and_then(|gates| {
+            gates
+                .iter()
+                .find(|g| g.get("round").and_then(|r| r.as_u64()) == Some(round as u64))
+                .or(gates.last())
+        })
+        .map(|g| {
+            let n = g
+                .get("findings")
+                .and_then(|f| f.as_array())
+                .map_or(0, |a| a.len());
+            let inc = g
+                .get("inconclusive")
+                .and_then(|f| f.as_array())
+                .map_or(0, |a| a.len());
+            format!(
+                "GATE round {}: {n} finding(s) against the RUNNING app, {inc} check(s) \
+                 inconclusive — your numbered findings above are drawn from this measurement.\n",
+                g.get("round").and_then(|r| r.as_u64()).unwrap_or(0)
+            )
+        })
+        .unwrap_or_default();
+    let mut owners = String::new();
+    if let Some(tasks) = rollup.get("tasks").and_then(|t| t.as_object()) {
+        for (id, t) in tasks {
+            let owns_overlap = t
+                .get("owned_files")
+                .and_then(|o| o.as_array())
+                .is_some_and(|a| {
+                    a.iter()
+                        .filter_map(|f| f.get("path").and_then(|p| p.as_str()))
+                        .any(|f| shard_files.iter().any(|sf| sf == f))
+                });
+            if !owns_overlap {
+                continue;
+            }
+            let fail = t
+                .get("commands")
+                .and_then(|c| c.as_object())
+                .and_then(|c| {
+                    c.iter()
+                        .filter_map(|(_, v)| v.get("last_failure_tail").and_then(|x| x.as_str()))
+                        .find(|tl| !tl.is_empty())
+                })
+                .unwrap_or("");
+            owners.push_str(&format!(
+                "  - `{id}` built these files ({} attempt(s), {}){}\n",
+                t.get("attempts").and_then(|a| a.as_u64()).unwrap_or(1),
+                t.get("status").and_then(|x| x.as_str()).unwrap_or("?"),
+                if fail.is_empty() {
+                    String::new()
+                } else {
+                    format!("; its last failure: {}", tail_chars(fail, 200))
+                },
+            ));
+        }
+    }
+    let owners_block = if owners.is_empty() {
+        String::new()
+    } else {
+        format!("WHO BUILT THE FILES you are repairing:\n{owners}")
+    };
+    let full = format!("{gate_block}{verdicts_block}{owners_block}");
+    if full.chars().count() <= BUDGET {
+        return full;
+    }
+    let without_owners = format!("{gate_block}{verdicts_block}");
+    if without_owners.chars().count() <= BUDGET {
+        return without_owners;
+    }
+    if verdicts_block.chars().count() <= BUDGET {
+        return verdicts_block;
+    }
+    truncate_block_at_line(&verdicts_block, BUDGET)
+}
+
 fn fix_round_specs(
     findings: &[String],
     all_files: &[String],
     round: usize,
     lang: TargetLang,
     spec: &str,
+    rollup: Option<&serde_json::Value>,
 ) -> Vec<goose_swarm::TaskSpec> {
     let (groups, unassigned) = group_findings_by_file(findings, all_files);
     let fix_ids: Vec<String> = groups
@@ -32587,20 +32810,33 @@ fn fix_round_specs(
     let mut specs: Vec<goose_swarm::TaskSpec> = groups
         .into_iter()
         .zip(fix_ids.iter())
-        .map(|(g, id)| goose_swarm::TaskSpec {
-            id: id.clone(),
-            description: smoke_fix_description(&g.findings, lang, spec),
-            difficulty: goose_swarm::Difficulty::Hard,
-            preferred_model: None,
-            owned_files: shard_owned_files(&g.file, all_files, &taken),
-            deps: Vec::new(),
-            subsplit: Vec::new(),
+        .map(|(g, id)| {
+            let owned = shard_owned_files(&g.file, all_files, &taken);
+            goose_swarm::TaskSpec {
+                id: id.clone(),
+                description: smoke_fix_description(
+                    &g.findings,
+                    lang,
+                    spec,
+                    &render_repair_history(rollup, &owned, &g.findings, round),
+                ),
+                difficulty: goose_swarm::Difficulty::Hard,
+                preferred_model: None,
+                owned_files: owned,
+                deps: Vec::new(),
+                subsplit: Vec::new(),
+            }
         })
         .collect();
     if !unassigned.is_empty() {
         specs.push(goose_swarm::TaskSpec {
             id: format!("fix::r{round}::#join"),
-            description: smoke_fix_description(&unassigned, lang, spec),
+            description: smoke_fix_description(
+                &unassigned,
+                lang,
+                spec,
+                &render_repair_history(rollup, &[], &unassigned, round),
+            ),
             difficulty: goose_swarm::Difficulty::Hard,
             preferred_model: None,
             owned_files: all_files.to_vec(),
@@ -32635,8 +32871,23 @@ fn fix_round_specs(
 /// generic gate: number them, demand one verdict line each, and say plainly that a silent finding is one
 /// the next worker repeats. `{verify}` stays, demoted to what it is — a regression check that the repair
 /// did not break the build, not proof the defect is gone. No counter, no threshold, no cap.
-fn smoke_fix_description(findings: &[String], lang: TargetLang, spec: &str) -> String {
+/// `history` (II-4) is the repair ledger's read-before-act splice — this round's gate row, the
+/// prior rounds' verdicts for THIS shard's findings, and the owning tasks' ledger rows — so
+/// findings and what was already tried arrive in ONE message: the fresh per-round Scheduler
+/// discards its SharedContext, and the on-disk ledger is the only thing that survives it.
+/// Empty history renders this function byte-identical to its pre-II-4 output.
+fn smoke_fix_description(
+    findings: &[String],
+    lang: TargetLang,
+    spec: &str,
+    history: &str,
+) -> String {
     let verify = verify_recipe(lang);
+    let history_block = if history.trim().is_empty() {
+        String::new()
+    } else {
+        format!("\n\n{}", history.trim_end())
+    };
     // WHAT THE APP WAS ADVERTISED TO DO. The fix worker was the only party in the phase that never saw
     // the request: `DispatchRequest` carries no spec, TEST is given the whole prompt and RATE is given
     // the request, but FIX got a finding and nothing else. So "an advertised endpoint is missing" arrived
@@ -32684,9 +32935,10 @@ fn smoke_fix_description(findings: &[String], lang: TargetLang, spec: &str) -> S
          FINDING <n>: NOT FIXED — <what you tried and what still fails>\n\
          FINDING <n>: NOT REAL — <the output that rules it out>\n\
          Write the line even for the ones you could not close. A finding you leave silent is one the next \
-         worker repeats from scratch, having no idea you already tried.{}{}",
+         worker repeats from scratch, having no idea you already tried.{}{}{}",
         fix_evidence_pointers(findings),
-        surface_block
+        surface_block,
+        history_block
     )
 }
 
@@ -41585,7 +41837,17 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                 let dev = dev_id.clone();
                 let decisions = user_decisions.clone();
                 let facts = doc_facts.clone();
-                let desc = smoke_fix_description(&verdict.findings, complete_lang, &opts.prompt);
+                let desc = smoke_fix_description(
+                    &verdict.findings,
+                    complete_lang,
+                    &opts.prompt,
+                    &render_repair_history(
+                        read_ledger_rollup(&cwd).as_ref(),
+                        &smoke_all_files,
+                        &verdict.findings,
+                        round as usize,
+                    ),
+                );
                 let wave_prompt = opts.prompt.clone();
                 let wave_cwd = cwd.clone();
                 // F862: the ruler flags the round graded with — the twins grade with the same.
@@ -41828,6 +42090,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                     round as usize,
                     complete_lang,
                     &opts.prompt,
+                    read_ledger_rollup(&cwd).as_ref(),
                 );
                 match goose_swarm::Dag::from_specs(specs) {
                     Err(e) => {
@@ -42032,18 +42295,25 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                                     "task_id": task_id, "baseline_findings": baseline,
                                 }));
                                 let started = std::time::Instant::now();
+                                let shard_owned = shard_owned_files(&g.file, &all_files, &taken);
                                 let req = DispatchRequest {
                                     task_id: task_id.clone(),
                                     description: smoke_fix_description(
                                         &g.findings,
                                         complete_lang,
                                         &fan_prompt,
+                                        &render_repair_history(
+                                            read_ledger_rollup(&fan_cwd).as_ref(),
+                                            &shard_owned,
+                                            &g.findings,
+                                            round as usize,
+                                        ),
                                     ),
                                     device_id: dev,
                                     model_id: model.clone(),
                                     context_slice: String::new(),
                                     attempt: round,
-                                    owned_files: shard_owned_files(&g.file, &all_files, &taken),
+                                    owned_files: shard_owned,
                                     all_files,
                                     prior_hint: None,
                                     subsplit: Vec::new(),
@@ -42200,6 +42470,12 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                             &unassigned,
                             complete_lang,
                             &opts.prompt,
+                            &render_repair_history(
+                                read_ledger_rollup(&cwd).as_ref(),
+                                &smoke_all_files,
+                                &unassigned,
+                                round as usize,
+                            ),
                         ),
                         device_id: dev_id,
                         model_id: model_id.clone(),
@@ -42278,6 +42554,12 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                         &verdict.findings,
                         complete_lang,
                         &opts.prompt,
+                        &render_repair_history(
+                            read_ledger_rollup(&cwd).as_ref(),
+                            &smoke_all_files,
+                            &verdict.findings,
+                            round as usize,
+                        ),
                     ),
                     device_id: dev_id,
                     model_id,
@@ -42678,7 +42960,19 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                 eprintln!("smoke gate: dispatching ONE corrective fix attempt ...");
                 let fix_req = DispatchRequest {
                     task_id: "smoke-fix".to_string(),
-                    description: smoke_fix_description(&smoke.findings, smoke_lang, &opts.prompt),
+                    description: smoke_fix_description(
+                        &smoke.findings,
+                        smoke_lang,
+                        &opts.prompt,
+                        &render_repair_history(
+                            // Same root the smoke gate itself just measured.
+                            read_ledger_rollup(&std::env::current_dir().unwrap_or_default())
+                                .as_ref(),
+                            &smoke_all_files,
+                            &smoke.findings,
+                            0,
+                        ),
+                    ),
                     device_id: dev_id,
                     model_id,
                     context_slice: String::new(),
