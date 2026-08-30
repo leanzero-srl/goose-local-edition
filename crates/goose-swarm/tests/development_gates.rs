@@ -266,3 +266,31 @@ fn every_dag_entry_walks_through_the_same_repairs() {
         );
     }
 }
+
+/// GATE 7 — READ THE WORDS (Mihai 2026-08-30, twice in ten minutes: "read the WORDS not the
+/// fucking shape... to come up with ACTUAL improvements"). The words decide; shapes corroborate.
+/// This asserts the practice cannot be compaction-lost from the docs that arm every session.
+#[test]
+fn the_read_the_words_gate_is_carried() {
+    for (doc, needle) in [
+        ("AGENTS.md", "READ-THE-WORDS GATE"),
+        (
+            ".claude/rules/development-gates.md",
+            "THE READ-THE-WORDS GATE",
+        ),
+    ] {
+        assert!(
+            read(doc).contains(needle),
+            "{doc} lost the READ-THE-WORDS gate"
+        );
+    }
+    let home = std::env::var("HOME").expect("HOME set");
+    let skill = std::fs::read_to_string(
+        std::path::Path::new(&home).join(".agents/skills/goose-swarm-campaign/SKILL.md"),
+    )
+    .expect("campaign skill readable");
+    assert!(
+        skill.contains("READ THE WORDS FIRST") && skill.contains("tail -c 4000"),
+        "the campaign skill lost the words-first checkpoint procedure"
+    );
+}
