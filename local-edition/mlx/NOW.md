@@ -49,14 +49,21 @@ act on best knowledge; no questions; maintain house rules + agentic discipline; 
 keep this file and the ledger current so restrictions and thread survive compaction. The approved
 plan is the authorization for all of it — bake-off, fork, integration, UI.
 
-## The one decision waiting
-Live desktop verification is DONE and green (see LEDGER 2026-08-31 ~01:00 — full loop incl. two
-spawn-PATH defects found+fixed). Remaining, in order: (1) swarm-surgeon step C — register the
-SidecarEngine in the Engines registry + SwarmConfig section, then a real `goose swarm` micro-run
-through the sidecar; (2) the local-inference default-feature flip decision (desktop still uses the
-flag for onboarding/dictation/ModelSettingsPanel — flipping needs a degradation pass in the
-running app; NOT flipped tonight, reasons in LEDGER); (3) morning report for Mihai. Desktop app
-left running under CDP 9897; engine unmounted; fleet untouched throughout.
+## The one decision waiting — MORNING STATE (2026-08-31 ~03:00)
+EVERYTHING GREEN except two named holds. Done tonight: bake-off (8 runs, verdict Rapid-MLX),
+fork live (leanzero-srl/Rapid-MLX @v0.13.1, uvx pin proven), goose-sidecar crate (supervisor +
+gates), 11 ACP methods, desktop MLX Engine window verified in the RUNNING app (mount/sampling/
+HF-download/delete, two spawn defects + gate-banner bug found live and fixed), SwarmEngine
+boundary steps A/B/C in swarm.rs (surgeon; per-engine partition; TRACE YES), and the SWARM E2E
+through the sidecar — real artifacts, 4/4 tests (LEDGER ~03:00; final banner lost to an external
+kill-all of background tasks — rerun is one command).
+HOLDS, both with reasons in LEDGER: (1) local-inference default-feature flip — the flag still
+gates live desktop surfaces (onboarding/dictation/ModelSettingsPanel); needs Mihai's call on those
+surfaces' fate. (2) Mixed-pool (LM planner + sidecar worker) run — blocked on the fleet's
+LM_API_TOKEN, which lives on the MacBook.
+MORNING one-liners: clean-banner swarm rerun (command in LEDGER); `just run-ui` to reopen the
+desktop (app was killed with the task sweep); provide LM token for the mixed run.
+Branch pushed to origin through the latest commit.
 
 ## Superseded waiting-item (kept for the record)
 Bake-off verdict, pending oMLX numbers. State (2026-08-30 ~23:00): rapid-mlx 0.13.1 DONE — 3
