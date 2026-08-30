@@ -398,3 +398,9 @@ research_request_block's armed-no-claimed-sections arm wording.
   retracted; corrected my brief's "10 tasks" to the real 11. Unbriefed find worth doing: a
   drift-guard test pinning the panel's supervisionLaneKind mirror to the engine's fixtures — the
   doc said EXACTLY while five kinds behind; queue with the priorities surgeon batch.
+- 2026-08-31 01:20 panel-surgeon (Benchmark publish flow, e564bc236): CLEAN+. Read the FAILURE'S WORDS
+  from the live app over CDP instead of theorizing — the 400's verbatim tier message named the real
+  blocker (server allowlist predates sb-7.0-rc's T/X/R/E tiers; MAX_CHECKS 90 vs 91) — and correctly
+  REFUSED the client-side filter that would silently drop scorer evidence (fallback gate). Also
+  caught the success copy lying ("for review" after posts went live-immediately). All four asks
+  landed with 10 new tests. Server-side fix dispatched same-turn. Charter gap: none.
