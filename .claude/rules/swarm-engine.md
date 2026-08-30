@@ -5,6 +5,10 @@ paths:
 
 # swarm.rs — the engine. 42,000 lines, and six ways to break it silently.
 
+**THE INCREMENTAL-SPLIT LAW (2026-08-30): new code goes in `commands/swarm/<area>.rs` siblings,
+never appended here; wiring lines added here are paid for by extracting an equal-or-larger cluster
+in the same commit. The gate test `swarm_rs_line_count_only_decreases` refuses growth.**
+
 Read `EXPERIMENTS-LEDGER.md` before proposing a change here. Most obvious improvements have been tried.
 
 ## NO CAPS. This is Mihai's hardest rule and it has been broken by accident twice.

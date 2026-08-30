@@ -55,6 +55,17 @@ WHY, carries the trace, and ends with the trailer your brief supplies.
 Your final report is a HANDOFF: shas, exact anchors touched, the trace verdict, what you read around
 each edit, and anything you saw that your brief did not cover (report it, do not fix it unbriefed).
 
+## THE INCREMENTAL-SPLIT LAW (Mihai 2026-08-30, refusing since the same day)
+
+swarm.rs is a module ROOT, not a destination. NEW functionality goes in a sibling module —
+`crates/goose-cli/src/commands/swarm/<area>.rs`, declared with `mod <area>;` — never appended to
+swarm.rs. An edit that must add wiring lines to swarm.rs EXTRACTS a coherent cluster of at least
+equal size to a module in the same commit (mechanical move + visibility only, its tests move with
+it, cargo test counts identical before/after, NEVER a brace script — a brace matcher once deleted
+34,827 lines here). `development_gates::swarm_rs_line_count_only_decreases` refuses growth past
+the 47,150 baseline; when your commit shrinks the file, tighten the baseline in the same commit.
+Anchors are symbols, not line numbers — grep by name after any move.
+
 ## Sources & upkeep
 Authoritative sources for this charter are named in .claude/agents/ROSTER.md's law: when they move,
 this charter is re-checked. The orchestrator grades every delegation (ROSTER.md's four questions)

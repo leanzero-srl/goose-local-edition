@@ -104,6 +104,31 @@ fn the_banned_integrate_template_only_shrinks() {
     }
 }
 
+/// THE INCREMENTAL-SPLIT RATCHET (Mihai, 2026-08-30 15:35: "please stop making swarm.rs so
+/// fucking big... as we're making changes instead of adding to it let's add it to separate files").
+/// swarm.rs is a module ROOT: new functionality goes in `commands/swarm/<area>.rs` siblings, and an
+/// edit that must add wiring lines here extracts at least as many in the same commit. Baseline
+/// 47,150 measured at the law's birth; it may only DECREASE. This is the refusing form — a charter
+/// alone is advice, and advice does not survive a compaction.
+#[test]
+fn swarm_rs_line_count_only_decreases() {
+    const SWARM_RS_LINE_BASELINE: usize = 47_150;
+    let text = read("crates/goose-cli/src/commands/swarm.rs");
+    let n = text.lines().count();
+    assert!(
+        n <= SWARM_RS_LINE_BASELINE,
+        "swarm.rs grew to {n} lines (baseline {SWARM_RS_LINE_BASELINE}). New code goes in \
+         commands/swarm/<area>.rs modules; if this change needs wiring lines here, extract a \
+         cluster of at least equal size in the same commit, then tighten the baseline."
+    );
+    if n < SWARM_RS_LINE_BASELINE {
+        eprintln!(
+            "swarm.rs is {n} lines < baseline {SWARM_RS_LINE_BASELINE}: tighten \
+             SWARM_RS_LINE_BASELINE in the same commit so the ratchet holds the gain"
+        );
+    }
+}
+
 /// THE SPECIFICITY GATE, part (b). "DO EVERYTHING" is the other named member of the generic-task
 /// class the owner banned ("I will ask for the millionth time, the gazillionth time"). It is at zero
 /// in the run path and stays there.
