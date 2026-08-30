@@ -77,6 +77,15 @@ as-configured; no hard coding. First run: 2026-08-30 over the day's five landed 
    — add one fixture each.
 
 ## Grading log (newest first — one line per delegation; move closed items to the per-agent notes)
+- 2026-08-30 panel-surgeon #3 (forming UI + follow-ups, 66a302bfb/871dc729e): CLEAN PASS — the
+  join needed NO code change and the surgeon said so instead of touching it (the whole-object
+  pass-through IS the law working); forming outranks both channels in laneLiveLine with the rank
+  pinned by test; the replay test made hermetic without clocks (stalest-heartbeat-first ordering,
+  snapshot-once); the torn-read catch KEPT and relabeled for old binaries' archives rather than
+  deleted. Four unbriefed observations; QUEUED for a future panel brief: the !hasWork stacked
+  empty pane, structured-call full view. Its "parent moved under me" narrative misread cf2d573d8
+  (my ROSTER-only commit) — harmless, noted. Typecheck contradiction with the IDE LSP settled by
+  running the gate myself: clean; the LSP view is stale.
 - 2026-08-30 swarm-surgeon #5 (forming capture provider+engine, 0fd574002): CLEAN PASS — verified
   the refuter's amendment in the code ("verbatim would not have compiled" — the get_mut binding),
   chose flush option (a) only AFTER reading both digest sites whole and proving option (b) added
