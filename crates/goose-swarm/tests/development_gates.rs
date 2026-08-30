@@ -119,11 +119,14 @@ fn do_everything_never_reaches_a_model() {
 /// substitution: a failed read/parse/call impersonating legitimate emptiness. The GEN-6 sweep
 /// (2026-08-30) ranked 10 of these that hide real failures — the worst turned a pillars serialize
 /// failure into a green gate. Baseline 130 measured at HEAD bce2901d9 (swarm.rs 104, scheduler.rs 24,
-/// dag.rs 1, patch.rs 1). The count may only DECREASE. If you legitimately need a new one, prove the
-/// empty MEANS empty in a comment at the call site (honest-empty exemplar: scheduler.rs hashes
-/// "ABSENT" distinctly instead of hashing nothing) and adjust the baseline in the SAME commit — the
-/// diff then shows the proof next to the licence.
-const UNWRAP_OR_DEFAULT_BASELINE: usize = 130;
+/// dag.rs 1, patch.rs 1); TIGHTENED to 128 by GEN-6a, which converted the evidence-hiding sites
+/// (scheduler replan laundering, the pillars serialize/panic pair, distill parse) into named
+/// events. The survivors are the honest-empty class: json field reads and format-string absences
+/// where empty genuinely means empty. The count may only DECREASE. If you legitimately need a new
+/// one, prove the empty MEANS empty in a comment at the call site (honest-empty exemplar:
+/// scheduler.rs hashes "ABSENT" distinctly instead of hashing nothing) and adjust the baseline in
+/// the SAME commit — the diff then shows the proof next to the licence.
+const UNWRAP_OR_DEFAULT_BASELINE: usize = 128;
 
 #[test]
 fn run_path_silent_empty_fallbacks_only_shrink() {

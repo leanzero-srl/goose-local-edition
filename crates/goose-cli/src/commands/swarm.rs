@@ -1306,6 +1306,12 @@ fn merge_json(base: &mut serde_json::Value, over: serde_json::Value) {
 /// a swarm block existed, which is always. Merging the raw config OVER `SwarmConfig::default()` fixes the
 /// entire class at once, and makes the resolvers correct too (a `cfg.unwrap_or(false)` now sees the merged
 /// `Some(golden)`). Falls back to the old typed read on any serialization hiccup, so it can only be safer.
+/// GEN-6a #2 (fallback rule): the one durable note of a swarm-config parse failure. load_config
+/// runs on hot paths with no event sink, so a broken config block used to silently run the
+/// DEFAULTS while levers_resolved echoed those defaults as if chosen — the operator's yaml was
+/// ignored and nothing said so. levers_resolved reads this note into the event.
+static CONFIG_PARSE_ERROR: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+
 fn load_config() -> SwarmConfig {
     let cfg = Config::global();
     let Ok(mut base) = serde_json::to_value(SwarmConfig::default()) else {
@@ -1316,7 +1322,11 @@ fn load_config() -> SwarmConfig {
     if let Ok(raw) = cfg.get(SWARM_CONFIG_KEY, false) {
         merge_json(&mut base, raw);
     }
-    serde_json::from_value(base).unwrap_or_else(|_| {
+    serde_json::from_value(base).unwrap_or_else(|e| {
+        let _ = CONFIG_PARSE_ERROR.set(format!(
+            "swarm config block failed to deserialize ({e}) — the run is on DEFAULTS, not the \
+             operator's config"
+        ));
         cfg.get_param::<SwarmConfig>(SWARM_CONFIG_KEY)
             .unwrap_or_default()
     })
@@ -4822,6 +4832,58 @@ mod tests {
         );
     }
 
+    /// GEN-6a #3 (fallback rule): a ledger mini that fails to parse must not be silently
+    /// dropped — the roll-up names it in `rows_dropped`, the read-before-act block SAYS the
+    /// table is incomplete, and an intact ledger's roll-up bytes are unchanged.
+    #[test]
+    fn a_corrupt_ledger_mini_is_named_never_silently_dropped() {
+        let dir = r2_cut_ledger_fixture();
+        let root = dir.path();
+        let clean = read_ledger_rollup(root).expect("fixture roll-up exists");
+        assert!(
+            clean.get("rows_dropped").is_none(),
+            "an intact ledger carries no rows_dropped field at all"
+        );
+        std::fs::write(root.join(".swarm/ledger/corrupt-row.json"), "{not json").unwrap();
+        let rollup = rebuild_ledger_rollup(root).expect("rebuild still succeeds");
+        let dropped = rollup["rows_dropped"]
+            .as_array()
+            .expect("the dropped row is named");
+        assert_eq!(dropped.len(), 1);
+        assert_eq!(dropped[0]["file"], "corrupt-row.json");
+        assert!(
+            dropped[0]["error"].as_str().unwrap().contains("key"),
+            "the parse error travels with the file name: {:?}",
+            dropped[0]["error"]
+        );
+        let block = render_ledger_block(root, "integrate-verify", &[], &[], 7_000, None);
+        assert!(
+            block.contains("UNREADABLE") && block.contains("corrupt-row.json"),
+            "the reader is TOLD the table is incomplete:\n{block}"
+        );
+    }
+
+    /// GEN-6a #5/#6: a package.json that EXISTS but does not parse is a broken file, not an
+    /// absent one — the TS smoke gate reports inconclusive-with-reason instead of a clean skip.
+    #[tokio::test]
+    async fn a_malformed_package_json_is_inconclusive_not_a_clean_skip() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("package.json"), "{\"name\": ").unwrap();
+        let r = smoke_typescript(dir.path()).await;
+        assert!(!r.ran && r.findings.is_empty(), "never a finding");
+        assert!(
+            r.inconclusive
+                .iter()
+                .any(|i| i.contains("package.json exists but does not parse")),
+            "the reason is stated: {:?}",
+            r.inconclusive
+        );
+        // No package.json at all stays an honest, reasonless skip — the gate does not apply.
+        let bare = tempfile::tempdir().unwrap();
+        let skipped = smoke_typescript(bare.path()).await;
+        assert!(!skipped.ran && skipped.inconclusive.is_empty());
+    }
+
     /// II-2b: the read-before-act block renders the facts the r2 sink re-derived by hand — the
     /// test table with each lane's last outcome, the don't-repeat run counts, the out-of-plan
     /// testgen files with their unowned imports, and the repair verdict nothing used to read.
@@ -6354,6 +6416,7 @@ mod tests {
             findings: vec![],
             demote_eligible: vec!["kanban.db".to_string()],
             partial: false,
+            parse_error: None,
         };
         assert_eq!(
             new_demote_survivors(&complete, &before),
@@ -6601,6 +6664,16 @@ mod tests {
         let broken = parse_ast_review("not json");
         assert!(!broken.ran);
         assert!(broken.demote_eligible.is_empty());
+        // GEN-6a #7: ran=false must carry WHY — a broken reviewer and a review that did not
+        // apply were indistinguishable, and both read as a clean tree.
+        assert!(
+            broken
+                .parse_error
+                .as_deref()
+                .is_some_and(|e| e.contains("not json")),
+            "{:?}",
+            broken.parse_error
+        );
     }
 
     // ---- CONTEXTUAL PITFALL RETRIEVAL (the author finally gets the fact library) -------------------
@@ -12248,6 +12321,10 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
         let bad = parse_ast_review("Traceback (most recent call last): SyntaxError");
         assert!(!bad.ran);
         assert!(bad.findings.is_empty());
+        assert!(
+            bad.parse_error.is_some(),
+            "a reviewer traceback is a broken gate, not a clean tree (GEN-6a #7)"
+        );
     }
 
     #[test]
@@ -14388,41 +14465,56 @@ fn activity_digest_key(task_id: &str) -> String {
 /// The digest carries a 2,400-character rolling window of the reasoning channel, which is why the panel's
 /// THINKING pane clears and refills instead of accumulating. This is the reasoning channel's only durable
 /// record. Best-effort: a transcript that cannot be written must never disturb a run.
-fn append_thinking_transcript(activity_path: &Path, buf: &mut String) {
+/// GEN-6a #8: the durable transcripts were best-effort-SILENT — a failed open/write left the
+/// `.think.log` frozen with no trace, and the operator read a stale log as "the worker stopped
+/// thinking". Both appenders now RETURN the write error so the caller (run_agent_in, which has
+/// the events sink) can emit `transcript_write_failed` once per activity key. The write still
+/// degrades — a transcript failure must never stop a worker — but it degrades loudly.
+fn append_thinking_transcript(activity_path: &Path, buf: &mut String) -> Option<String> {
     if buf.is_empty() {
-        return;
+        return None;
     }
     use std::io::Write;
     let log = activity_path.with_extension("think.log");
-    if let Ok(mut f) = std::fs::OpenOptions::new()
+    match std::fs::OpenOptions::new()
         .create(true)
         .append(true)
         .open(&log)
     {
-        if f.write_all(buf.as_bytes()).is_ok() {
-            buf.clear();
-        }
+        Ok(mut f) => match f.write_all(buf.as_bytes()) {
+            Ok(()) => {
+                buf.clear();
+                None
+            }
+            Err(e) => Some(e.to_string()),
+        },
+        Err(e) => Some(e.to_string()),
     }
 }
 
-fn append_reasoning_transcript(activity_path: &Path, texts: &[String], already: usize) -> usize {
+fn append_reasoning_transcript(
+    activity_path: &Path,
+    texts: &[String],
+    already: usize,
+) -> (usize, Option<String>) {
     if texts.len() <= already {
-        return already;
+        return (already, None);
     }
     use std::io::Write;
     let fresh = texts[already..].join("");
     if fresh.is_empty() {
-        return texts.len();
+        return (texts.len(), None);
     }
     let log = activity_path.with_extension("log");
-    if let Ok(mut f) = std::fs::OpenOptions::new()
+    let err = match std::fs::OpenOptions::new()
         .create(true)
         .append(true)
         .open(&log)
     {
-        let _ = f.write_all(fresh.as_bytes());
-    }
-    texts.len()
+        Ok(mut f) => f.write_all(fresh.as_bytes()).err().map(|e| e.to_string()),
+        Err(e) => Some(e.to_string()),
+    };
+    (texts.len(), err)
 }
 
 /// A tool request whose result has not landed yet, keyed in the worker loop's `pending` map by the
@@ -15803,6 +15895,10 @@ pub struct GooseAgentDispatcher {
     /// NONE-ON-DISK redirect fired: the worker has NO dependency source, and telling it "you
     /// already have the injected dependency APIs" would send it hunting for missing context.
     prompt_delivered: Mutex<HashMap<String, (bool, bool)>>,
+    /// GEN-6a #8: activity key + log kind pairs whose transcript-write failure was already
+    /// reported, so `transcript_write_failed` fires once per key instead of on every 400ms
+    /// flush of a permanently-broken path.
+    transcript_failures: Mutex<std::collections::HashSet<String>>,
     /// `worker_thinking_chars` as of the LAST judge observation of each task, so the judge can see a
     /// DELTA rather than a level. F143: `test-meridian` was killed for "stuck re-reading" while its
     /// tool_calls sat at 3 and its reasoning climbed 5,818 -> 8,784 — a single snapshot cannot tell a
@@ -15934,6 +16030,7 @@ impl GooseAgentDispatcher {
             spec_frozen: Mutex::new(String::new()),
             owner_snapshots: Mutex::new(HashMap::new()),
             prompt_delivered: Mutex::new(HashMap::new()),
+            transcript_failures: Mutex::new(std::collections::HashSet::new()),
             judge_prev_thinking: Mutex::new(HashMap::new()),
             judge_prev_calls: Mutex::new(HashMap::new()),
             stream_decode_retry,
@@ -17449,12 +17546,24 @@ impl GooseAgentDispatcher {
                                             if let Some(m) = &activity_mirror {
                                                 let _ = std::fs::write(m, d.to_string());
                                             }
-                                            transcript_at = append_reasoning_transcript(
+                                            let (at, werr) = append_reasoning_transcript(
                                                 p,
                                                 &texts,
                                                 transcript_at,
                                             );
-                                            append_thinking_transcript(p, &mut think_unflushed);
+                                            transcript_at = at;
+                                            if let Some(e) = werr {
+                                                self.note_transcript_write_failure(p, "log", &e);
+                                            }
+                                            if let Some(e) =
+                                                append_thinking_transcript(p, &mut think_unflushed)
+                                            {
+                                                self.note_transcript_write_failure(
+                                                    p,
+                                                    "think.log",
+                                                    &e,
+                                                );
+                                            }
                                             append_calls_jsonl(
                                                 p,
                                                 said.attempt,
@@ -18257,8 +18366,14 @@ impl GooseAgentDispatcher {
                     if let Some(m) = &activity_mirror {
                         let _ = std::fs::write(m, digest.to_string());
                     }
-                    transcript_at = append_reasoning_transcript(p, &texts, transcript_at);
-                    append_thinking_transcript(p, &mut think_unflushed);
+                    let (at, werr) = append_reasoning_transcript(p, &texts, transcript_at);
+                    transcript_at = at;
+                    if let Some(e) = werr {
+                        self.note_transcript_write_failure(p, "log", &e);
+                    }
+                    if let Some(e) = append_thinking_transcript(p, &mut think_unflushed) {
+                        self.note_transcript_write_failure(p, "think.log", &e);
+                    }
                     append_calls_jsonl(p, said.attempt, &call_records, &mut calls_jsonl_at);
                     last_digest_at = Some(tokio::time::Instant::now());
                     flush_digest_now = false;
@@ -18297,8 +18412,13 @@ impl GooseAgentDispatcher {
                 obj.insert("phase".to_string(), serde_json::Value::from("done"));
             }
             let _ = std::fs::write(p, digest.to_string());
-            let _ = append_reasoning_transcript(p, &texts, transcript_at);
-            append_thinking_transcript(p, &mut think_unflushed);
+            let (_, werr) = append_reasoning_transcript(p, &texts, transcript_at);
+            if let Some(e) = werr {
+                self.note_transcript_write_failure(p, "log", &e);
+            }
+            if let Some(e) = append_thinking_transcript(p, &mut think_unflushed) {
+                self.note_transcript_write_failure(p, "think.log", &e);
+            }
             // The stragglers (pending drained above with unknown ok), then the per-attempt snapshot
             // row: the terminal digest (minus `calls`, already captured row by row) plus the
             // fs_delta for this attempt's window — written BEFORE any re-dispatch can reseed the
@@ -18423,12 +18543,31 @@ impl GooseAgentDispatcher {
         {
             Ok(o) => o,
             Err(e) => {
+                // GEN-6a #10 (fallback rule): a failed distillation call must not read
+                // downstream as "the app has no pillars" — the reason is an event.
+                self.events.write_value(serde_json::json!({
+                    "event": "pillars_distill_failed",
+                    "reason": format!("distillation call failed: {e}"),
+                }));
                 eprintln!("  pillars: distillation failed ({e}) — skipping");
                 return Pillars::default();
             }
         };
         let raw = out.final_output.unwrap_or_default();
-        let mut p: Pillars = serde_json::from_str(&raw).unwrap_or_default();
+        let mut p: Pillars = match serde_json::from_str(&raw) {
+            Ok(p) => p,
+            Err(e) => {
+                // GEN-6a #10: an UNPARSEABLE distillation is a model/schema failure, not an
+                // empty distillation — carry the reason instead of impersonating "none".
+                self.events.write_value(serde_json::json!({
+                    "event": "pillars_distill_failed",
+                    "reason": format!("distillation unparseable: {e}"),
+                    "raw_head": raw.chars().take(200).collect::<String>(),
+                }));
+                eprintln!("  pillars: distillation unparseable ({e}) — skipping");
+                Pillars::default()
+            }
+        };
         p.pillars.truncate(7);
         p
     }
@@ -19458,12 +19597,23 @@ async fn run_smoke_gate(root: &Path, lang: TargetLang) -> SmokeResult {
 /// timeout is inconclusive (None -> never a finding), so a missing shell / hanging check can't false-fail.
 async fn run_pillar_checks(root: &Path) -> Vec<String> {
     let text = match std::fs::read_to_string(root.join(".swarm").join("pillars.json")) {
+        // Honest empty: no pillars.json means pillars were off or none distilled — no checks.
         Ok(t) => t,
         Err(_) => return Vec::new(),
     };
     let pillars: Pillars = match serde_json::from_str(&text) {
         Ok(p) => p,
-        Err(_) => return Vec::new(),
+        Err(e) => {
+            // GEN-6a #1's read half: a pillars.json that EXISTS but does not parse means the
+            // COMPLETE gate is about to run zero checks over a file that was supposed to carry
+            // them — say so loudly instead of green-skipping. (The write half no longer
+            // produces this file corrupt: a serialize failure is an event, not an empty write.)
+            eprintln!(
+                "  ! pillars.json exists but does not parse ({e}) — pillar checks CANNOT run; \
+                 the complete gate is weaker than the run believes"
+            );
+            return Vec::new();
+        }
     };
     let mut findings = Vec::new();
     for p in &pillars.pillars {
@@ -19856,8 +20006,25 @@ async fn smoke_typescript(root: &Path) -> SmokeResult {
     let pkg: serde_json::Value = match std::fs::read_to_string(&pkg_path) {
         Ok(s) => match serde_json::from_str(&s) {
             Ok(v) => v,
-            Err(_) => return SmokeResult::skipped(),
+            Err(e) => {
+                // GEN-6a #5/#6 (fallback rule): a package.json that EXISTS but does not parse
+                // is a BROKEN file the build wrote, not an absent one — reading it as "not a
+                // TS project" turned a real defect into a clean skip. Inconclusive-with-reason:
+                // still never a finding (a broken manifest is not proof the app is broken), but
+                // no longer indistinguishable from a tree the gate does not apply to.
+                let mut r = SmokeResult::skipped();
+                r.inconclusive
+                    .push(format!("package.json exists but does not parse: {e}"));
+                return r;
+            }
         },
+        Err(e) if pkg_path.exists() => {
+            let mut r = SmokeResult::skipped();
+            r.inconclusive
+                .push(format!("package.json exists but cannot be read: {e}"));
+            return r;
+        }
+        // No package.json at all: honestly not a TS/Node tree — the gate does not apply.
         Err(_) => return SmokeResult::skipped(),
     };
     let mut findings: Vec<String> = Vec::new();
@@ -28284,6 +28451,10 @@ struct AstReviewResult {
     /// The scan did not see every file (the cap/size ceiling tripped). A partial scan must never read as a
     /// clean tree, and must never license a demote — it cannot prove a module is imported by nothing.
     partial: bool,
+    /// GEN-6a #7: WHY `ran` is false when the reviewer produced output that did not parse.
+    /// `ran=false` with zero findings used to be indistinguishable from "no python to review";
+    /// the reason is the difference between a gate that did not apply and a gate that broke.
+    parse_error: Option<String>,
 }
 
 /// Parse the AST reviewer's JSON stdout. Pure — unit-tested. Any parse failure degrades to `ran=false`
@@ -28305,8 +28476,15 @@ fn parse_ast_review(stdout: &str) -> AstReviewResult {
             findings: r.findings,
             demote_eligible: r.demote_eligible,
             partial: false,
+            parse_error: None,
         },
-        Err(_) => AstReviewResult::default(),
+        Err(e) => AstReviewResult {
+            parse_error: Some(format!(
+                "reviewer stdout unparseable ({e}): {}",
+                stdout.trim().chars().take(160).collect::<String>()
+            )),
+            ..AstReviewResult::default()
+        },
     }
 }
 
@@ -28370,6 +28548,12 @@ async fn run_ast_review(root: &Path, scope: &AppScope) -> AstReviewResult {
     };
     let mut r = parse_ast_review(&out);
     r.partial = !scope.dropped.is_empty();
+    if let Some(e) = &r.parse_error {
+        // GEN-6a #7: a reviewer that PRODUCED output nobody could read is a broken gate, not a
+        // clean tree — every caller reads ran=false as "did not apply", so the reason must be
+        // said here or it is said nowhere.
+        eprintln!("  ! AST review broke rather than passed: {e}");
+    }
     r
 }
 
@@ -32197,15 +32381,28 @@ fn rebuild_ledger_rollup(root: &Path) -> Option<serde_json::Value> {
     let mut tasks: std::collections::BTreeMap<String, serde_json::Value> = Default::default();
     let mut gates: Vec<serde_json::Value> = Vec::new();
     let mut repairs: Vec<serde_json::Value> = Vec::new();
+    // GEN-6a #3 (fallback rule): a mini that fails to read or parse used to `continue` silently,
+    // so a dependent read a TRUNCATED roll-up as the whole history. The dropped rows are named
+    // in the roll-up itself; render_ledger_block states them and the writers emit
+    // `ledger_row_unreadable`. Sorted for the roll-up's idempotence (read_dir order is not).
+    let mut rows_dropped: Vec<serde_json::Value> = Vec::new();
     for e in std::fs::read_dir(&dir).ok()?.flatten() {
         if e.path().extension().and_then(|x| x.to_str()) != Some("json") {
             continue;
         }
-        let Some(v) = std::fs::read_to_string(e.path())
-            .ok()
-            .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok())
-        else {
-            continue;
+        let fname = e.file_name().to_string_lossy().into_owned();
+        let v = match std::fs::read_to_string(e.path()) {
+            Ok(t) => match serde_json::from_str::<serde_json::Value>(&t) {
+                Ok(v) => v,
+                Err(err) => {
+                    rows_dropped.push(serde_json::json!({"file": fname, "error": err.to_string()}));
+                    continue;
+                }
+            },
+            Err(err) => {
+                rows_dropped.push(serde_json::json!({"file": fname, "error": err.to_string()}));
+                continue;
+            }
         };
         match v.get("kind").and_then(|k| k.as_str()) {
             Some("task") => {
@@ -32290,7 +32487,13 @@ fn rebuild_ledger_rollup(root: &Path) -> Option<serde_json::Value> {
             }
         }
     }
-    let rollup = serde_json::json!({
+    rows_dropped.sort_by_key(|r| {
+        r.get("file")
+            .and_then(|f| f.as_str())
+            .unwrap_or("")
+            .to_string()
+    });
+    let mut rollup = serde_json::json!({
         "tasks": tasks,
         "gate": gates,
         "repair": { "rounds": repairs },
@@ -32298,6 +32501,10 @@ fn rebuild_ledger_rollup(root: &Path) -> Option<serde_json::Value> {
         "last_full_suite": last_full_suite,
         "open_defects": open_defects,
     });
+    // Absent when clean, so an intact ledger's roll-up bytes are unchanged.
+    if !rows_dropped.is_empty() {
+        rollup["rows_dropped"] = serde_json::Value::from(rows_dropped);
+    }
     std::fs::write(
         root.join(".swarm").join("ledger.json"),
         serde_json::to_string_pretty(&rollup).ok()?,
@@ -32376,6 +32583,28 @@ fn render_ledger_block(
         "MEASURED STATE OF THIS TREE — read before acting. Every line is a stat, a command \
          record, or a gate probe from this run's own ledger; trust it over re-deriving.\n",
     );
+    // GEN-6a #3: an incomplete table must SAY it is incomplete — a truncated roll-up read as
+    // whole is how a dependent builds on history that is not there.
+    if let Some(dropped) = rollup.get("rows_dropped").and_then(|d| d.as_array()) {
+        if !dropped.is_empty() {
+            never.push_str(&format!(
+                "WARNING — {} ledger row(s) were UNREADABLE and are missing from this table \
+                 (the history below is INCOMPLETE): {}\n",
+                dropped.len(),
+                dropped
+                    .iter()
+                    .map(|r| {
+                        format!(
+                            "{} ({})",
+                            r.get("file").and_then(|f| f.as_str()).unwrap_or("?"),
+                            r.get("error").and_then(|e| e.as_str()).unwrap_or("?")
+                        )
+                    })
+                    .collect::<Vec<_>>()
+                    .join("; ")
+            ));
+        }
+    }
     let open_defects: Vec<&str> = rollup
         .get("open_defects")
         .and_then(|d| d.as_array())
@@ -32964,6 +33193,32 @@ impl GooseAgentDispatcher {
     ///
     /// One function because there are two returns that mean "done" — the normal completion and the
     /// progress-watchdog salvage — and only the first ever ran it.
+    /// GEN-6a #8 (fallback rule): a durable transcript that silently stops growing is evidence
+    /// hidden — the operator reads the frozen log as "the worker went quiet". One event + one
+    /// stderr line per (activity key, log kind); the write itself still degrades, because a
+    /// transcript failure must never stop a worker.
+    fn note_transcript_write_failure(&self, activity_path: &Path, which: &str, err: &str) {
+        let key = format!(
+            "{}/{which}",
+            activity_path
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("?")
+        );
+        if self.transcript_failures.lock().unwrap().insert(key.clone()) {
+            self.events.write_value(serde_json::json!({
+                "event": "transcript_write_failed",
+                "activity_key": key,
+                "error": err,
+            }));
+            eprintln!(
+                "  {} transcript write FAILED for {key}: {err} — the durable log is frozen; \
+                 the rolling digest is the only record until this clears",
+                style("!").red().bold()
+            );
+        }
+    }
+
     fn emit_delivery_defects(
         &self,
         task_id: &str,
@@ -33040,6 +33295,19 @@ impl GooseAgentDispatcher {
                 "status": status,
                 "path": path.display().to_string(),
             }));
+            // GEN-6a #3: the write just rebuilt the roll-up, so its dropped-row list is the
+            // freshest statement of what the ledger CANNOT read — put it in the event stream
+            // where tick.py counts absences, not only in the file.
+            if let Some(dropped) = read_ledger_rollup(root)
+                .and_then(|r| r.get("rows_dropped").cloned())
+                .filter(|d| d.as_array().is_some_and(|a| !a.is_empty()))
+            {
+                self.events.write_value(serde_json::json!({
+                    "event": "ledger_row_unreadable",
+                    "task_id": req.task_id,
+                    "rows": dropped,
+                }));
+            }
         }
     }
 
@@ -35068,20 +35336,19 @@ impl Replanner for GooseAgentDispatcher {
         let response = Some(Response {
             json_schema: Some(plan_schema()),
         });
-        let out = match self
+        // GEN-6a #9 (fallback rule): these arms used to launder every failure into Ok(vec![]),
+        // which the scheduler reads as "the planner DECLINED" — a transport fault or an
+        // unparseable answer became a decision and armed the declined-state suppression. A
+        // failure is an Err now; the scheduler's failed arm names it in the Replanned event.
+        // Only a missing final_output stays a decline: the model genuinely produced no plan.
+        let out = self
             .run_agent_timed(&self.planner_model, system, user, response, 10, &[])
-            .await
-        {
-            Ok(o) => o,
-            Err(_) => return Ok(Vec::new()),
-        };
+            .await?;
         let Some(fo) = out.final_output else {
             return Ok(Vec::new());
         };
-        let mut specs = match goose_swarm::specs_from_plan_json(&fo) {
-            Ok(s) => s,
-            Err(_) => return Ok(Vec::new()),
-        };
+        let mut specs = goose_swarm::specs_from_plan_json(&fo)
+            .map_err(|e| anyhow!("replan output unparseable: {e}"))?;
         let existing: std::collections::HashSet<&str> =
             ctx.existing_ids.iter().map(|s| s.as_str()).collect();
         specs.retain(|s| !existing.contains(s.id.as_str()));
@@ -37226,6 +37493,16 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             dst.insert(k.clone(), v.clone());
         }
     }
+    // GEN-6a #2: if the swarm config block failed to parse, every lever above is a DEFAULT the
+    // operator did not choose — the echo must say so or it certifies a configuration that is
+    // not in force. Absent on a clean parse, so healthy runs' events are unchanged.
+    if let Some(err) = CONFIG_PARSE_ERROR.get() {
+        levers_event["config_parse_error"] = serde_json::Value::from(err.as_str());
+        eprintln!(
+            "  {} {err} — every lever below is a default, not a choice",
+            style("!").red().bold()
+        );
+    }
     sink.write_value(levers_event);
 
     // The user's verbatim answers, hoisted so they outlive the plan loop and can reach EVERY worker.
@@ -37439,18 +37716,51 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             "distill the app's non-negotiable acceptance criteria + inject them into every worker",
         );
         // Spawned before CONTRACTS (see pillars_handle above) — by now it usually finished
-        // alongside the contracts fan; a panicked task degrades to empty pillars (the injection
-        // no-ops), exactly the pre-existing any-failure contract.
-        let pillars = handle.await.unwrap_or_default();
+        // alongside the contracts fan. GEN-6a #1 (fallback rule): a panicked distill task is a
+        // FAILURE with a name, not an empty distillation.
+        let pillars = match handle.await {
+            Ok(p) => p,
+            Err(e) => {
+                sink.write_value(serde_json::json!({
+                    "event": "pillars_distill_failed",
+                    "reason": format!("distill task panicked: {e}"),
+                }));
+                eprintln!("  pillars: distill task panicked ({e}) — no pillars injected");
+                Default::default()
+            }
+        };
         if pillars.pillars.is_empty() {
             eprintln!("  pillars: none distilled — skipping injection");
         } else {
             let dir = std::env::current_dir().unwrap_or_default().join(".swarm");
             let _ = std::fs::create_dir_all(&dir);
-            let _ = std::fs::write(
-                dir.join("pillars.json"),
-                serde_json::to_string_pretty(&pillars).unwrap_or_default(),
-            );
+            // GEN-6a #1, the worst of the ten: `to_string_pretty(...).unwrap_or_default()` wrote
+            // an EMPTY pillars.json on a serialize failure, run_pillar_checks failed to parse it
+            // and returned zero findings — a broken write became a GREEN complete gate. A file
+            // that cannot be serialized is now an event, never an empty file impersonating one.
+            match serde_json::to_string_pretty(&pillars) {
+                Ok(json) => {
+                    if let Err(e) = std::fs::write(dir.join("pillars.json"), json) {
+                        sink.write_value(serde_json::json!({
+                            "event": "pillars_write_failed",
+                            "error": e.to_string(),
+                        }));
+                        eprintln!(
+                            "  ! pillars.json write failed ({e}) — pillar checks will not run"
+                        );
+                    }
+                }
+                Err(e) => {
+                    sink.write_value(serde_json::json!({
+                        "event": "pillars_write_failed",
+                        "error": e.to_string(),
+                    }));
+                    eprintln!(
+                        "  ! pillars serialize failed ({e}) — pillar checks will not run; \
+                         NOT writing an empty pillars.json in its place"
+                    );
+                }
+            }
             sink.write_value(serde_json::json!({
                 "event": "pillars",
                 "count": pillars.pillars.len(),
