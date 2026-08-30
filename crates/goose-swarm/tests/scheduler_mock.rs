@@ -1723,6 +1723,70 @@ async fn byte_identical_content_failures_end_done_degraded() {
     );
 }
 
+/// Finding 7 (the SHRANK×A-3 ping-pong): avoid_device alternates devices on retry, and a
+/// per-device-deterministic worker writes A/B/A/B — every output differs from the IMMEDIATELY
+/// previous one, so the old last-value compare never fired and the loop retried forever with
+/// zero progress. The fingerprint history is a SET now: a repeat of ANY prior failed tree is
+/// no-progress and ends the task through the same Done(degraded) path. Still purely
+/// progress-based — the budget below (6) is deliberately larger than the 3 dispatches it takes.
+#[tokio::test]
+async fn a_device_ping_pong_of_repeated_outputs_still_ends() {
+    struct PerDeviceBytes {
+        path: String,
+        calls: Arc<Mutex<u32>>,
+    }
+    #[async_trait]
+    impl TaskDispatcher for PerDeviceBytes {
+        async fn run(&self, req: DispatchRequest) -> Result<TaskRunOutput, DispatchError> {
+            if req.task_id != "m" {
+                return Ok(format!("ok-{}", req.task_id).into());
+            }
+            *self.calls.lock().unwrap() += 1;
+            std::fs::write(
+                &self.path,
+                format!("deterministic output of device {}\n", req.device_id),
+            )
+            .unwrap();
+            Err(DispatchError::ContentRetry(
+                "the done gate rejected the deliverable".into(),
+            ))
+        }
+    }
+    let files = shrank_files("pingpong", 1);
+    let calls = Arc::new(Mutex::new(0u32));
+    let disp = Arc::new(PerDeviceBytes {
+        path: files[0].clone(),
+        calls: calls.clone(),
+    });
+    let dag = Dag::from_specs(vec![
+        spec("m", &[], &[files[0].as_str()]),
+        spec("after", &["m"], &[]),
+    ])
+    .unwrap();
+    let events = Arc::new(EventLog::default());
+    let report = Scheduler::new(vec![dev("a", "m-a", 1), dev("b", "m-b", 1)], 6)
+        .with_sink(events.clone())
+        .run(dag, disp, String::new())
+        .await
+        .unwrap();
+    assert_eq!(
+        *calls.lock().unwrap(),
+        3,
+        "A, B, then A again — the first repeat of ANY prior failed tree is the last dispatch"
+    );
+    assert!(
+        report.failed.is_empty() && report.done.contains(&"after".to_string()),
+        "degraded, dependents relaxed: done={:?} failed={:?}",
+        report.done,
+        report.failed
+    );
+    let hint = degraded_hint(&events).expect("a degraded_stall verdict is emitted");
+    assert!(
+        hint.contains("byte-identical"),
+        "the verdict names byte-identity as the terminator: {hint}"
+    );
+}
+
 /// A transport drop between content attempts is NEVER counted: it adds no finding measurement and
 /// resets none, so 5 → (drop) → 3 → 3 ends exactly where 5→3→3 does — on the flat pair — after four
 /// dispatches, and the drop itself terminates nothing (the real-failure count excludes it even
