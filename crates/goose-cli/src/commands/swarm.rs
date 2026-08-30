@@ -38,8 +38,9 @@ use decisions::PlanDecision;
 mod supervision;
 use supervision::{
     fold_forming_event, judge_lane_key, prereview_lane_key, render_forming_file, replan_lane_key,
-    superseded_from_prior, supervision_lane_kind, tail_review_lane_key, write_forming_atomic,
-    FormingGuard, FormingReport, FormingSidecar,
+    schedjudge_lane_key, superseded_from_prior, supervision_lane_kind, tail_review_lane_key,
+    verify_lane_key, write_forming_atomic, FormingGuard, FormingReport, FormingSidecar,
+    ASK_ANSWER_LANE, PILLARS_LANE, REFLECT_LANE,
 };
 mod research;
 use research::{
@@ -16382,31 +16383,7 @@ impl GooseAgentDispatcher {
             .map(|(shadow, _)| shadow.path().to_path_buf())
     }
 
-    /// `run_agent` for PLANNER-side calls (architect / solo plan / scouts / research / replan).
-    /// Carries no time bound (II-7): every caller degrades on Err (fallback plan, skip scout,
-    /// empty research), and a dead stream is the transport's to cut.
-    async fn run_agent_timed(
-        &self,
-        model_id: &str,
-        system_prompt: String,
-        user_text: String,
-        response: Option<Response>,
-        max_turns: u32,
-        extensions: &[ExtensionConfig],
-    ) -> Result<RunAgentOut> {
-        self.run_agent(
-            model_id,
-            system_prompt,
-            user_text,
-            response,
-            max_turns,
-            extensions,
-            None,
-        )
-        .await
-    }
-
-    /// Like `run_agent_timed` but at a specific per-call temperature (None = shared default). Skeleton
+    /// Like `run_agent` but at a specific per-call temperature (None = shared default). Skeleton
     /// drafting uses this to draft at a LOW temperature so independent drafts converge — steadying the weak
     /// fleet's structural decomposition (higher, less-noisy agreement) without touching worker/coding calls.
     #[allow(clippy::too_many_arguments)]
@@ -19067,8 +19044,20 @@ impl GooseAgentDispatcher {
         let user = format!(
             "{research_block}## App spec\n{user_prompt}\n\n## The chosen plan (architecture already decided)\n{plan_json}\n\nDistill the pillars now."
         );
+        // Keyed `pillars` (r6 supervision lanes, batch 2): one planner call per run at plan time,
+        // previously keyless — no digest, no think.log, invisible to the desktop while it
+        // generated. Everything else is parity with the old `run_agent_timed` route (attempt 0,
+        // no prefill, temp None, read_only false, may_terminate false).
         let out = match self
-            .run_agent_timed(planner_model, system, user, response, 8, &[])
+            .run_agent(
+                planner_model,
+                system,
+                user,
+                response,
+                8,
+                &[],
+                Some(PILLARS_LANE),
+            )
             .await
         {
             Ok(o) => o,
@@ -27825,6 +27814,11 @@ impl GooseAgentDispatcher {
             goal = req.goal,
             desc = req.description,
         );
+        // HONESTLY NOT KEYED (r6 supervision lanes, batch 2): this call is UNREACHABLE at HEAD —
+        // `judge()` pins `split_enabled: false` ("task-splitting is gone entirely", step 4b), so
+        // `is_split_candidate` can never pass and no model call happens here. Keying dead code
+        // would be capture theater; if splitting ever returns, mint `split-<task>` in
+        // supervision.rs alongside its classifier arm.
         let text = self
             .run_agent(&req.judge_model_id, system, user, None, 2, &[], None)
             .await
@@ -28714,8 +28708,22 @@ impl Judge for GooseAgentDispatcher {
                 return Ok(JudgeOutcome::ok());
             }
         }
+        // Keyed `schedjudge-<task>` (r6 supervision lanes, batch 2): r5's 43 scheduler-judge
+        // looks were attributable only by event — no lane, no digest, no think.log. NOT
+        // `judge-<task>` (surgeon #10): the omni judge owns that key for the same task, and a
+        // shared key would interleave two reviews into one digest. One lane per reviewed task;
+        // each review folds the prior into `superseded`.
+        let schedjudge_lane = schedjudge_lane_key(&req.task_id);
         match self
-            .run_agent(&req.judge_model_id, system, user, None, 2, &[], None)
+            .run_agent(
+                &req.judge_model_id,
+                system,
+                user,
+                None,
+                2,
+                &[],
+                Some(&schedjudge_lane),
+            )
             .await
         {
             Ok(o) if is_agent_loop_filler(&o.text) => {
@@ -28820,8 +28828,11 @@ impl PreReviewer for GooseAgentDispatcher {
         let user = format!(
             "GOAL of the run: {goal}\n\nCURRENT RUN STATE:\n{run_state}\n\nOPERATOR QUESTION:\n{question}\n\nYour answer:"
         );
+        // Keyed `ask-answer` (r6 supervision lanes, batch 2): one lane for the run — the
+        // in-flight set serializes questions, and each new answer folds the prior into
+        // `superseded`, so the lane reads as the run's Q&A history.
         let reply = self
-            .run_agent(model_id, system, user, None, 1, &[], None)
+            .run_agent(model_id, system, user, None, 1, &[], Some(ASK_ANSWER_LANE))
             .await
             .ok()
             .map(|o| o.text)
@@ -31009,8 +31020,11 @@ async fn reflect_on_success(
          (these are the mistakes this stack invites):\n{lessons}{prior_block}\n\nWrite the skill.",
         snap.files.join("\n")
     );
+    // Keyed `reflect` (r6 supervision lanes, batch 2): one call per successful run, at the end —
+    // previously the run's last generation was its only invisible one. Parity with the old
+    // `run_agent_timed` route otherwise.
     match dispatcher
-        .run_agent_timed(model, system, user, None, 4, &[])
+        .run_agent(model, system, user, None, 4, &[], Some(REFLECT_LANE))
         .await
     {
         Ok(o) => o.text.trim().to_string(),
@@ -36345,6 +36359,10 @@ impl TaskDispatcher for GooseAgentDispatcher {
         finding: &str,
         goal: &str,
         files: &[String],
+        // The finding's index in its drained sink-review batch — the fan runs verifications
+        // CONCURRENTLY, so each needs its own lane (`verify-<idx>`); a shared key would have
+        // parallel lanes fighting over one digest file.
+        lane_idx: usize,
     ) -> bool {
         // Read-only SKEPTIC (a DIFFERENT model than raised the finding): hand it the finding + the real
         // files and ask it to REFUTE. Only a CONFIRM|HIGH survives; fail-closed on anything else (REFUTE /
@@ -36400,8 +36418,11 @@ impl TaskDispatcher for GooseAgentDispatcher {
         // A-2: dropping the finding on a transport failure stays — fail-closed is this verifier's
         // documented design (an unverified finding must never drive a fix) — but the drop is NAMED,
         // because a refutation and a dead judge model are different facts and the log showed one.
+        //
+        // Keyed `verify-<idx>` (r6 supervision lanes, batch 2), one lane per batch item.
+        let verify_lane = verify_lane_key(lane_idx);
         let text = match self
-            .run_agent(model_id, system, user, None, 2, &[], None)
+            .run_agent(model_id, system, user, None, 2, &[], Some(&verify_lane))
             .await
             .map_err(|e| clip_tail(&e.to_string(), 400))
             .and_then(|o| {
@@ -40718,12 +40739,17 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                 "sink-review",
                 sink.as_ref(),
                 fleet_slots.clone(),
-                prewarmed.clone(),
-                move |finding, model| {
+                // Enumerated so each concurrent verification gets its own `verify-<idx>` lane;
+                // order is preserved, so the alignment-safe zip below is untouched.
+                prewarmed.iter().cloned().enumerate().collect::<Vec<_>>(),
+                move |(idx, finding), model| {
                     let me = me.clone();
                     let goal = goal.clone();
                     let files = files.clone();
-                    async move { me.verify_finding(&model, &finding, &goal, &files).await }
+                    async move {
+                        me.verify_finding(&model, &finding, &goal, &files, idx)
+                            .await
+                    }
                 },
             )
             .await;

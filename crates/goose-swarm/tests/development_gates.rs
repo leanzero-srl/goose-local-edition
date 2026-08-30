@@ -137,9 +137,13 @@ fn the_banned_integrate_template_only_shrinks() {
 /// digest supervision stamp, the judge-lane event fields) in the same commit.
 /// Tightened to 46,330: the superseded-fold cluster moved to commands/swarm/supervision.rs
 /// (-41), paying for the settled-decisions delivery into the replanner's prompt (r6 addendum).
+/// Tightened to 45,990: the cross-task import scan/attribution cluster moved to
+/// commands/swarm/imports.rs (-454) and the dead run_agent_timed delegate deleted, paying for
+/// the pre-build smalls batch (plan-wide ownership publication, replan orientation + rationale,
+/// six supervision-call keys) across its four commits.
 #[test]
 fn swarm_rs_line_count_only_decreases() {
-    const SWARM_RS_LINE_BASELINE: usize = 46_330;
+    const SWARM_RS_LINE_BASELINE: usize = 45_990;
     let text = read("crates/goose-cli/src/commands/swarm.rs");
     let n = text.lines().count();
     assert!(

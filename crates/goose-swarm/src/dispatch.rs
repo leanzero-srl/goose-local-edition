@@ -183,12 +183,15 @@ pub trait TaskDispatcher: Send + Sync {
     /// true only if the skeptic independently CONFIRMS the finding is a real defect with HIGH confidence, i.e.
     /// it SURVIVES refutation. FAIL-CLOSED: default false, and any refute / low-confidence / parse-or-timeout
     /// failure returns false — an unverified finding can never drive a fix. Read-only => no write-race.
+    /// `lane_idx` is the finding's index in its batch: the real impl runs these CONCURRENTLY and
+    /// keys each call's activity lane (`verify-<idx>`) with it.
     async fn verify_finding(
         &self,
         _model_id: &str,
         _finding: &str,
         _goal: &str,
         _files: &[String],
+        _lane_idx: usize,
     ) -> bool {
         false
     }
