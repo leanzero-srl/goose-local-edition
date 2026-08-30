@@ -2238,3 +2238,227 @@ pub struct SetToolPermissionsRequest {
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, JsonRpcResponse)]
 pub struct SetToolPermissionsResponse {}
+
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct MlxEngineSettingsDto {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model_id: Option<String>,
+    pub models_dir: String,
+    pub port: u16,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context_limit: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub temperature: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub top_p: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub top_k: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub min_p: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repetition_penalty: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub presence_penalty: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub frequency_penalty: Option<f64>,
+    pub spawn_command: Vec<String>,
+}
+
+/// Live MLX engine state. `state` is one of "stopped" | "mounting" | "running" | "failed".
+/// `context_window` / `tool_call_parser` come from a live `/v1/models` probe and are never
+/// fabricated: a failed probe leaves them unset and reports `probe_error` instead.
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct MlxEngineStatusDto {
+    pub state: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub base_url: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pid: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context_window: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_call_parser: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub probe_error: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gate_message: Option<String>,
+    pub available_memory_gb: f64,
+    pub total_memory_gb: f64,
+    /// True when the persisted settings would spawn the running engine differently
+    /// (model, port, sampling): the engine keeps running with its old arguments until
+    /// the user remounts.
+    pub restart_required: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_error: Option<String>,
+}
+
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct MlxLocalModelDto {
+    pub id: String,
+    pub size_bytes: u64,
+    pub complete: bool,
+}
+
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct MlxHfModelHitDto {
+    pub id: String,
+    pub downloads: u64,
+    pub likes: u64,
+    pub updated_at: String,
+}
+
+/// Snapshot download progress. `state` is one of
+/// "queued" | "downloading" | "done" | "failed" | "cancelled".
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct MlxDownloadProgressDto {
+    pub state: String,
+    pub total_bytes: u64,
+    pub downloaded_bytes: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub current_file: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+/// Read the MLX engine's live status, including a `/v1/models` probe when running.
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, JsonRpcRequest)]
+#[request(
+    method = "_goose/unstable/mlxEngine/status",
+    response = MlxEngineStatusResponse
+)]
+#[serde(rename_all = "camelCase")]
+pub struct MlxEngineStatusRequest {}
+
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, JsonRpcResponse)]
+#[serde(rename_all = "camelCase")]
+pub struct MlxEngineStatusResponse {
+    pub status: MlxEngineStatusDto,
+}
+
+/// Mount a local model into the MLX engine. Returns once mounting has started;
+/// poll status for running/failed.
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, JsonRpcRequest)]
+#[request(method = "_goose/unstable/mlxEngine/mount", response = EmptyResponse)]
+#[serde(rename_all = "camelCase")]
+pub struct MlxEngineMountRequest {
+    pub model_id: String,
+}
+
+/// Stop the MLX engine and unmount its model.
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, JsonRpcRequest)]
+#[request(method = "_goose/unstable/mlxEngine/unmount", response = EmptyResponse)]
+#[serde(rename_all = "camelCase")]
+pub struct MlxEngineUnmountRequest {}
+
+/// Read the persisted MLX engine settings.
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, JsonRpcRequest)]
+#[request(
+    method = "_goose/unstable/mlxEngine/settingsRead",
+    response = MlxEngineSettingsResponse
+)]
+#[serde(rename_all = "camelCase")]
+pub struct MlxEngineSettingsReadRequest {}
+
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, JsonRpcResponse)]
+#[serde(rename_all = "camelCase")]
+pub struct MlxEngineSettingsResponse {
+    pub settings: MlxEngineSettingsDto,
+}
+
+/// Persist MLX engine settings. A running engine keeps its old arguments; status reports
+/// `restartRequired` until the model is remounted.
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, JsonRpcRequest)]
+#[request(
+    method = "_goose/unstable/mlxEngine/settingsUpdate",
+    response = MlxEngineSettingsResponse
+)]
+#[serde(rename_all = "camelCase")]
+pub struct MlxEngineSettingsUpdateRequest {
+    pub settings: MlxEngineSettingsDto,
+}
+
+/// List models present in the configured models dir.
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, JsonRpcRequest)]
+#[request(
+    method = "_goose/unstable/mlxEngine/modelsList",
+    response = MlxEngineModelsListResponse
+)]
+#[serde(rename_all = "camelCase")]
+pub struct MlxEngineModelsListRequest {}
+
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, JsonRpcResponse)]
+#[serde(rename_all = "camelCase")]
+pub struct MlxEngineModelsListResponse {
+    pub models: Vec<MlxLocalModelDto>,
+}
+
+/// Delete a downloaded model from the models dir.
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, JsonRpcRequest)]
+#[request(method = "_goose/unstable/mlxEngine/modelDelete", response = EmptyResponse)]
+#[serde(rename_all = "camelCase")]
+pub struct MlxEngineModelDeleteRequest {
+    pub model_id: String,
+}
+
+/// Search HuggingFace for MLX models, sorted by downloads.
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, JsonRpcRequest)]
+#[request(
+    method = "_goose/unstable/mlxEngine/hfSearch",
+    response = MlxEngineHfSearchResponse
+)]
+#[serde(rename_all = "camelCase")]
+pub struct MlxEngineHfSearchRequest {
+    pub query: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub limit: Option<u32>,
+}
+
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, JsonRpcResponse)]
+#[serde(rename_all = "camelCase")]
+pub struct MlxEngineHfSearchResponse {
+    pub hits: Vec<MlxHfModelHitDto>,
+}
+
+/// Start a background snapshot download of a HuggingFace repo into the models dir.
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, JsonRpcRequest)]
+#[request(method = "_goose/unstable/mlxEngine/download", response = EmptyResponse)]
+#[serde(rename_all = "camelCase")]
+pub struct MlxEngineDownloadRequest {
+    pub repo_id: String,
+}
+
+/// Poll download progress for a repo. `progress` is unset when no download was tracked.
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, JsonRpcRequest)]
+#[request(
+    method = "_goose/unstable/mlxEngine/downloadProgress",
+    response = MlxEngineDownloadProgressResponse
+)]
+#[serde(rename_all = "camelCase")]
+pub struct MlxEngineDownloadProgressRequest {
+    pub repo_id: String,
+}
+
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, JsonRpcResponse)]
+#[serde(rename_all = "camelCase")]
+pub struct MlxEngineDownloadProgressResponse {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub progress: Option<MlxDownloadProgressDto>,
+}
+
+/// Cancel an active download for a repo.
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, JsonRpcRequest)]
+#[request(
+    method = "_goose/unstable/mlxEngine/downloadCancel",
+    response = EmptyResponse
+)]
+#[serde(rename_all = "camelCase")]
+pub struct MlxEngineDownloadCancelRequest {
+    pub repo_id: String,
+}

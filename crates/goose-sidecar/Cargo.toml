@@ -4,12 +4,17 @@ version = "0.1.0"
 edition = "2021"
 description = "Supervisor for local inference engine sidecars (spawn, health, restart, memory gate)"
 
+[features]
+rustls-tls = ["reqwest/rustls"]
+native-tls = ["reqwest/native-tls"]
+
 [dependencies]
 anyhow = { workspace = true }
-reqwest = { workspace = true }
+dirs = { workspace = true }
+reqwest = { workspace = true, features = ["query"] }
 serde = { workspace = true }
 serde_json = { workspace = true }
-tokio = { workspace = true, features = ["process", "time", "sync", "macros", "rt-multi-thread", "io-util"] }
+tokio = { workspace = true, features = ["fs", "process", "time", "sync", "macros", "rt-multi-thread", "io-util"] }
 tracing = { workspace = true }
 sysinfo = { version = "0.37", default-features = false, features = ["system"] }
 
@@ -17,4 +22,5 @@ sysinfo = { version = "0.37", default-features = false, features = ["system"] }
 libc = "0.2"
 
 [dev-dependencies]
+tempfile = { workspace = true }
 tokio = { workspace = true, features = ["full"] }
