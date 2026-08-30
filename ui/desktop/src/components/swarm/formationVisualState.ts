@@ -40,7 +40,7 @@ export const FORMATION_PHASES: ReadonlyArray<{ key: RunPhase; label: string; tip
   {
     key: 'research',
     label: 'Research',
-    tip: 'Every node owns one slice: it answers that slice’s questions, then writes that module’s full specification.',
+    tip: 'The fleet answers the opener’s own questions in parallel — one read-only call per question; answers splice into the briefs as facts beside the sources.',
   },
   {
     key: 'synthesize',
@@ -73,12 +73,14 @@ export const FORMATION_PHASES: ReadonlyArray<{ key: RunPhase; label: string; tip
 
 export type FormationPhaseState = 'complete' | 'active' | 'upcoming' | 'skipped';
 
-/** Phases DELETED from the engine (P1-5 removed the RESEARCH fan, P1-4 removed CONTRACTS). They are
- *  retired, not erased: archived run.jsonl files still carry their `phase` events, so a run with
- *  EVIDENCE of one renders it as a historical step — but a new run must not be offered a chip for a
- *  stage the engine can no longer reach (it would sit permanently "skipped", claiming a route that
- *  does not exist). */
-export const RETIRED_PHASES: ReadonlyArray<RunPhase> = ['research', 'contracts'];
+/** Phases DELETED from the engine. Retired, not erased: archived run.jsonl files still carry their
+ *  `phase` events, so a run with EVIDENCE of one renders it as a historical step — but a new run must
+ *  not be offered a chip for a stage the engine can no longer reach (it would sit permanently
+ *  "skipped", claiming a route that does not exist). CONTRACTS stays retired (P1-4). RESEARCH left
+ *  this list when the v2 fan shipped: the engine researches again (the opener's own questions, fanned
+ *  read-only between ASK and SYNTHESIS), so the chip is a live stage — it emits no `phase` event, and
+ *  foldRunPhase derives it from the fan's research_* events instead. */
+export const RETIRED_PHASES: ReadonlyArray<RunPhase> = ['contracts'];
 
 /** The steps the ribbon actually draws for THIS run: the live pipeline, plus any retired phase the
  *  run's own events prove it ran. Evidence is set the moment a phase event is seen (foldRunPhase), so

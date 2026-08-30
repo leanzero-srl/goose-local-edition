@@ -26,14 +26,15 @@ describe('FormationRibbon', () => {
       'data-state',
       'upcoming'
     );
-    // RETIRED phases are not offered without evidence: RESEARCH and CONTRACTS are deleted from the
-    // engine (P1-5/P1-4), so a run with no proof it ran them draws neither chip — Review sits
-    // immediately before Build. The deleted Plan stage must not reappear either.
+    // RETIRED phases are not offered without evidence: CONTRACTS is deleted from the engine (P1-4),
+    // so a run with no proof it ran it draws no chip — Review sits immediately before Build.
+    // RESEARCH is LIVE again (the v2 fan) and is always offered. The deleted Plan stage must not
+    // reappear either.
     const labels = within(phases)
       .getAllByRole('listitem')
       .map((li) => li.textContent?.trim());
     expect(labels.indexOf('Review')).toBe(labels.indexOf('Build') - 1);
-    expect(within(phases).queryByText('Research')).not.toBeInTheDocument();
+    expect(labels.indexOf('Research')).toBe(labels.indexOf('Synthesize') - 1);
     expect(within(phases).queryByText('Contracts')).not.toBeInTheDocument();
     expect(within(phases).getByText('Ask').closest('li')).toHaveAttribute('data-state', 'complete');
     expect(within(phases).queryByText('Plan')).not.toBeInTheDocument();
