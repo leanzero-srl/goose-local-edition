@@ -1015,11 +1015,13 @@ pub struct SwarmConfig {
     pub doc_fetch: bool,
     /// ⚠️ BAKED ON — the golden formula sets this in `Default for SwarmConfig` (F393).
     /// SWARM-COHERENCE Phase-1 (Tier-A, deterministic — no model). When injecting an already-built
-    /// dependency's source into a consumer's prompt, inject only its DETERMINISTICALLY-EXTRACTED exported
-    /// SIGNATURES (function/method signatures with bodies removed; type/const/var declarations kept) instead
-    /// of the full body. Smaller, exact, no body noise — the same ground truth a `.mli`/stub gives a team.
-    /// Falls back to the full body when extraction yields nothing (unknown language / no recognizable
-    /// surface). `None`/OFF => the dep body is injected verbatim exactly as before = byte-identical.
+    /// dependency's source into a consumer's prompt, inject a DETERMINISTICALLY-EXTRACTED excerpt
+    /// instead of the full body. P1-6: SHIPS OFF, and the ON form is `shape_excerpt` (signatures PLUS
+    /// the lines carrying key literals, routes and returned dicts), because the signature-only tier
+    /// WITHHELD BEHAVIOUR: r0's top critical was built against a stub that said nothing about the
+    /// data — `sync.py` read `items` where the vendor sends `data`, `amount` for `amount_minor` →
+    /// `sync_completeness` 0/12288, crit ×0.6 — and r2 repeated the same 0/12288 (score.log:39).
+    /// OFF (the default) injects the real body, line-boundary-truncated with an honest marker.
     /// GOOSE_SWARM_DEP_SIGNATURES env overrides.
     #[serde(default)]
     pub dep_signatures: Option<bool>,
@@ -1280,7 +1282,7 @@ impl Default for SwarmConfig {
             research_tools: false,
             doc_prefetch: true,
             doc_fetch: false,
-            dep_signatures: Some(true),
+            dep_signatures: Some(false),
             think_off_test_authors: None,
             force_write_tool: None,
             act_now_nudge: Some(true),
@@ -26580,13 +26582,71 @@ mod shipped_defaults_tests {
         );
     }
 
-    /// The two verified defects that ship ON. Both had a switch already written and both were OFF,
-    /// so every run this campaign measured carried the defect.
-    ///
-    /// kind_prompt OFF hands a test-author the IMPLEMENTER reading rule — "Read AT MOST the ONE file
-    /// you will edit" — which for a test-author is its own test file, i.e. it is told not to read the
-    /// SOURCE MODULE whose signatures it must assert against. dep_signatures OFF injects the
-    /// dependency's whole body truncated mid-token (3 of 4 blocks cut, one failing ast.parse).
+    /// P1-6: the ON-form excerpt carries the BEHAVIOUR a signature deletes. A ledgerd-shaped
+    /// dependency returns {"data": [...]} whose rows carry `amount_minor` — the two literals r0's
+    /// consumer guessed wrong (`items`, `amount`) at the cost of sync_completeness 0/12288,
+    /// repeated verbatim by r2 (score.log:39). The excerpt must hand both to the worker within
+    /// the existing 3,500-char per-file budget, with grep-n line numbers licensing the follow-up
+    /// `sed -n` read.
+    #[test]
+    fn the_shape_excerpt_carries_the_key_literals_a_signature_deletes() {
+        let src = r#"import json
+
+def fetch_page(cursor=None):
+    """One page of vendor payments."""
+    resp = call_vendor(cursor)
+    body = json.loads(resp)
+    rows = body["data"]
+    total = body.get("total")
+    return {"data": [normalize(r) for r in rows], "next_cursor": body.get("next_cursor"), "total": total}
+
+def normalize(r):
+    return {"id": r["id"], "amount_minor": r["amount_minor"], "currency": r["currency"]}
+"#;
+        let ex = shape_excerpt(src, goose_swarm::SigLang::Python);
+        assert!(
+            ex.contains("\"data\""),
+            "the vendor's envelope key must reach the worker:\n{ex}"
+        );
+        assert!(
+            ex.contains("amount_minor"),
+            "the row's unit-bearing key must reach the worker:\n{ex}"
+        );
+        assert!(ex.contains("def fetch_page"), "signatures stay:\n{ex}");
+        assert!(
+            ex.chars().count() <= 3_500,
+            "the excerpt must fit the per-file budget ({} chars)",
+            ex.chars().count()
+        );
+        assert!(
+            ex.lines().any(|l| l
+                .split_once(':')
+                .map(|(n, _)| n.parse::<usize>().is_ok())
+                .unwrap_or(false)),
+            "shape lines carry grep-n style line numbers:\n{ex}"
+        );
+        // A file with no shape lines degrades to plain signatures; nothing extractable -> the
+        // caller's full-body fallback (empty here).
+        assert!(!shape_excerpt(
+            "def f(a: int) -> int:\n    return a\n",
+            goose_swarm::SigLang::Python
+        )
+        .contains("DATA SHAPES"));
+        // And the first-wave redirect survives: a worker with no dependency on disk yet is told
+        // so, under the same heading its prompts point at (P1-4 rewired it off the deleted
+        // frozen-interfaces bundle; P1-6 keeps it).
+        assert!(
+            include_str!("swarm.rs").contains("## API of dependencies — NONE ON DISK YET"),
+            "the first-wave NONE ON DISK YET redirect must stay"
+        );
+    }
+
+    /// The defaults that carry a measured verdict. kind_prompt ships ON (a test-author handed the
+    /// implementer reading rule is told not to read the module it asserts against). dep_signatures
+    /// ships OFF (P1-6): the signature-only tier WITHHELD BEHAVIOUR — r0's `sync.py` read `items`
+    /// where the vendor sends `data` and `amount` for `amount_minor` (sync_completeness 0/12288,
+    /// crit ×0.6), and r2 repeated the same 0/12288 — while the mid-token truncation that once
+    /// argued FOR signatures was fixed independently by the line-boundary cut (F196).
     ///
     /// A serde(default) would silently re-zero kind_prompt for any config.yaml omitting the key, so
     /// the field carries default_true and this test pins BOTH paths.
@@ -26638,10 +26698,14 @@ mod shipped_defaults_tests {
     }
 
     #[test]
-    fn the_two_verified_defect_fixes_default_on() {
+    fn the_measured_prompt_levers_ship_at_their_verdicts() {
         let d = SwarmConfig::default();
         assert!(d.kind_prompt, "kind_prompt must ship ON");
-        assert_eq!(d.dep_signatures, Some(true), "dep_signatures must ship ON");
+        assert_eq!(
+            d.dep_signatures,
+            Some(false),
+            "dep_signatures must ship OFF — a signature withholds the data shape (P1-6)"
+        );
         assert_eq!(
             d.act_now_nudge,
             Some(true),
@@ -31169,6 +31233,57 @@ fn force_write_tool() -> bool {
     )
 }
 
+/// P1-6: does this line carry the DATA'S SHAPE — a string-key access, a quoted key literal
+/// (dict/JSON keys, and the stdlib route dispatch `if path == "/api/x":`), a decorator (routes
+/// included), or a returned dict? These are exactly the lines a signature deletes and exactly the
+/// lines r0's five worst defects needed: `sync.py` read `items` where the vendor sends `data` and
+/// `amount` for `amount_minor` because no line of the real shape ever reached its prompt.
+fn is_shape_line(l: &str) -> bool {
+    let t = l.trim();
+    if t.is_empty() || t.starts_with('#') || t.starts_with("//") {
+        return false;
+    }
+    t.starts_with('@')
+        || t.contains(".get(\"")
+        || t.contains(".get('")
+        || t.contains("[\"")
+        || t.contains("['")
+        || t.contains("\":")
+        || t.contains("':")
+        || t.contains("return {")
+}
+
+/// P1-6: the excerpt a worker gets for a built dependency when the signature tier is ON —
+/// signatures PLUS the shape-carrying lines, each with its 1-based line number (grep -n style) so
+/// the licensed follow-up read (`sed -n 'A,Bp'`) starts from a real anchor. A SIGNATURE IS NOT A
+/// BEHAVIOUR; this is the smallest excerpt that carries both. Bounded by the caller's existing
+/// budgets (14,000 total / 3,500 per file) — they bound prompt size, never model work.
+fn shape_excerpt(source: &str, lang: goose_swarm::SigLang) -> String {
+    let sigs = goose_swarm::extract_signatures(source, lang);
+    let shape: Vec<String> = source
+        .lines()
+        .enumerate()
+        .filter(|(_, l)| is_shape_line(l) && !sigs.contains(l.trim()))
+        .map(|(i, l)| format!("{}: {}", i + 1, l.trim_end()))
+        .collect();
+    if shape.is_empty() {
+        return sigs;
+    }
+    let mut out = sigs.trim_end().to_string();
+    if !out.is_empty() {
+        out.push('\n');
+    }
+    out.push_str(
+        "# DATA SHAPES & ROUTES — the lines carrying key literals, routes and returned dicts \
+         (line: text; read around any of them with `sed -n 'A,Bp'`):\n",
+    );
+    for l in shape {
+        out.push_str(&l);
+        out.push('\n');
+    }
+    out
+}
+
 fn dep_signatures_on() -> bool {
     swarm_gate_cfg_bundle(
         "GOOSE_SWARM_DEP_SIGNATURES",
@@ -33441,15 +33556,17 @@ impl GooseAgentDispatcher {
                     if trimmed.is_empty() {
                         continue;
                     }
-                    // Tier-A: replace the full body with extracted signatures when the lever is on. Falls
-                    // back to the full body if extraction yields nothing (unknown language / no surface),
-                    // so ON never injects an empty API. OFF => `api_source` is `trimmed` => byte-identical.
+                    // Tier-A (P1-6): when the lever is on, the excerpt is `shape_excerpt` —
+                    // signatures PLUS the shape-carrying lines — never signatures alone, which
+                    // withheld the behaviour r0's five worst defects needed. Falls back to the
+                    // full body if extraction yields nothing, so ON never injects an empty API.
+                    // OFF (the shipped default) => `api_source` is `trimmed` => the real body.
                     let api_source: std::borrow::Cow<str> = if dep_sig_on {
-                        let sigs = goose_swarm::extract_signatures(trimmed, sig_lang);
-                        if sigs.trim().is_empty() {
+                        let excerpt = shape_excerpt(trimmed, sig_lang);
+                        if excerpt.trim().is_empty() {
                             std::borrow::Cow::Borrowed(trimmed)
                         } else {
-                            std::borrow::Cow::Owned(sigs)
+                            std::borrow::Cow::Owned(excerpt)
                         }
                     } else {
                         std::borrow::Cow::Borrowed(trimmed)
@@ -33475,7 +33592,9 @@ impl GooseAgentDispatcher {
                     };
                     dep_budget = dep_budget.saturating_sub(capped.chars().count().min(budget));
                     dep_block.push_str(&format!(
-                        "## API of {f} (a dependency you import — use it from here, do NOT `cat` it):\n```\n{capped}\n```\n\n"
+                        "## API of {f} (a dependency you import — build against THIS; for any \
+                         symbol, key or route it does not show, read the real file TARGETED: \
+                         `grep -n '<name>' {f}` then `sed -n 'A,Bp' {f}` — never a whole-file cat):\n```\n{capped}\n```\n\n"
                     ));
                 }
             }

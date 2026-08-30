@@ -113,7 +113,7 @@
   "research_tools": false,
   "doc_prefetch": true,
   "doc_fetch": false,
-  "dep_signatures": true,
+  "dep_signatures": false,
   "think_off_test_authors": null,
   "force_write_tool": null,
   "act_now_nudge": true,
