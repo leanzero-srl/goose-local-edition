@@ -31,6 +31,8 @@ use std::path::{Path, PathBuf};
 use std::process::Command as ProcCommand;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
+
+use super::swarm_engine::{default_engine, probe_lms_http, resolve_lms, SwarmEngine};
 mod judge_context;
 use judge_context::{is_intentional_empty_marker, judge_delivery_block, verify_owned_files};
 mod decisions;
@@ -2681,7 +2683,7 @@ fn pool_menu() -> Result<()> {
                     cfg.worker_extensions.push(choice.to_string());
                 }
             }
-            "probe" => probe_fleet(),
+            "probe" => default_engine().probe_report(),
             "import" => match probe_lms_processes() {
                 Ok(procs) if !procs.is_empty() => {
                     let summary = import_processes(&mut cfg, &procs, 1, true);
@@ -2725,7 +2727,7 @@ fn pool_op(pc: PoolCommand) -> Result<()> {
             return Ok(());
         }
         PoolCommand::Probe => {
-            probe_fleet();
+            default_engine().probe_report();
             return Ok(());
         }
         PoolCommand::Import { weight, disabled } => {
@@ -2774,36 +2776,8 @@ fn pool_op(pc: PoolCommand) -> Result<()> {
     Ok(())
 }
 
-/// Resolve the `lms` CLI binary. A Finder-launched desktop app does NOT inherit the shell PATH, so a bare
-/// `lms` is not found — the GUI swarm bailed with "no models loaded" despite a loaded fleet. Check an
-/// explicit override, then LM Studio's default install locations, else fall back to PATH.
-fn resolve_lms() -> String {
-    if let Ok(p) = std::env::var("SWARM_LMS_PATH") {
-        if !p.trim().is_empty() {
-            return p;
-        }
-    }
-    if let Ok(home) = std::env::var("HOME") {
-        for rel in [".lmstudio/bin/lms", ".cache/lm-studio/bin/lms"] {
-            let cand = std::path::Path::new(&home).join(rel);
-            if cand.is_file() {
-                return cand.to_string_lossy().into_owned();
-            }
-        }
-    }
-    "lms".to_string()
-}
-
-/// The LM Studio HTTP host for the fallback probe (LMSTUDIO_HOST, else the default local server).
-fn lms_http_host() -> String {
-    std::env::var("LMSTUDIO_HOST")
-        .ok()
-        .filter(|s| !s.trim().is_empty())
-        .unwrap_or_else(|| "http://localhost:1234".to_string())
-}
-
 /// Node/device name from an LM Link model id: the prefix before the first '-' (mihai-, workhorse-, gabee-).
-fn device_from_lms_id(id: &str) -> Option<String> {
+pub(super) fn device_from_lms_id(id: &str) -> Option<String> {
     // NODE-FIRST: the fleet's per-host aliases put the node at the START of the id, and since the
     // qwen3.8 roll-over they carry the publisher inside them (`mihai-qwen/qwen3.8-27b`) — stripping
     // the namespace first collapsed all three nodes to "qwen3.8". Only when the first segment has
@@ -2815,79 +2789,6 @@ fn device_from_lms_id(id: &str) -> Option<String> {
         id.rsplit('/').next().unwrap_or(id)
     };
     seg.split_once('-').map(|(prefix, _)| prefix.to_string())
-}
-
-/// Discover loaded models straight from the LM Studio HTTP server (native /api/v0/models) — the fallback
-/// for when the `lms` CLI is missing/unreachable (a Finder-launched desktop app has no lms on PATH). The
-/// HTTP server MUST be up for the swarm to call the models at all, so it is the robust source. Uses `curl`
-/// (a system binary present on the minimal GUI PATH) to avoid a blocking HTTP call inside the async
-/// runtime. Returns loaded, non-embedding models as LmsProcess entries (device derived from the id prefix).
-fn probe_lms_http() -> Vec<LmsProcess> {
-    let url = format!("{}/api/v0/models", lms_http_host().trim_end_matches('/'));
-    let Ok(out) = ProcCommand::new("curl")
-        .args(["-s", "--max-time", "6", &url])
-        .output()
-    else {
-        return Vec::new();
-    };
-    let Ok(json) = serde_json::from_slice::<serde_json::Value>(&out.stdout) else {
-        return Vec::new();
-    };
-    let Some(arr) = json.get("data").and_then(|v| v.as_array()) else {
-        return Vec::new();
-    };
-    arr.iter()
-        .filter(|m| {
-            m.get("state").and_then(|v| v.as_str()) == Some("loaded")
-                && m.get("type").and_then(|v| v.as_str()) != Some("embeddings")
-        })
-        .filter_map(|m| {
-            let id = m
-                .get("id")
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_string();
-            if id.is_empty() {
-                return None;
-            }
-            Some(LmsProcess {
-                device: device_from_lms_id(&id),
-                identifier: id,
-                status: "loaded".to_string(),
-                parallel: None,
-            })
-        })
-        .collect()
-}
-
-/// The model ids the ENDPOINT will actually serve — i.e. the only ids a worker can dispatch to.
-///
-/// `None` means the probe itself failed (endpoint down, curl missing, unparseable body). That is NOT the
-/// same as "no models", and the caller must never gate on it: an instrument reporting zero has been wrong
-/// seven times in this project, and gating a whole run off a failed probe would be the eighth.
-///
-/// WHY THIS IS NOT `lms ps`: `lms ps` lists what is RESIDENT; `/v1/models` lists what is SERVABLE, and they
-/// disagree in exactly the case that costs a run. MEASURED 2026-07-17: `lms ps` showed
-/// `workhorse-qwopus3.6-27b-coder-mlx` IDLE and loaded, while POSTing to it returned
-/// `400 Invalid model identifier` — the Mac Studio had dropped off the LAN and LM Link had withdrawn the
-/// alias, but the resident list still carried it. The pool is built from `lms ps`, so the swarm cheerfully
-/// dispatched a third of its tasks into an instant 400.
-fn endpoint_model_ids() -> Option<std::collections::HashSet<String>> {
-    let url = format!("{}/v1/models", lms_http_host().trim_end_matches('/'));
-    let out = ProcCommand::new("curl")
-        .args(["-s", "--max-time", "6", &url])
-        .output()
-        .ok()?;
-    let json = serde_json::from_slice::<serde_json::Value>(&out.stdout).ok()?;
-    let arr = json.get("data")?.as_array()?;
-    let ids: std::collections::HashSet<String> = arr
-        .iter()
-        .filter_map(|m| m.get("id").and_then(|i| i.as_str()).map(str::to_string))
-        .collect();
-    if ids.is_empty() {
-        return None;
-    }
-    Some(ids)
 }
 
 /// Drop devices the endpoint will not serve, so a dead node cannot silently eat a third of the run.
@@ -2952,70 +2853,18 @@ fn all_resident_unservable(
     }
 }
 
-fn probe_fleet() {
-    println!("\n{}", style("lms ps:").bold());
-    match ProcCommand::new(resolve_lms()).arg("ps").output() {
-        Ok(out) => print!("{}", String::from_utf8_lossy(&out.stdout)),
-        Err(e) => println!("  (lms ps failed: {e})"),
-    }
-    println!("{}", style("endpoint model ids:").bold());
-    let models_url = format!("{}/v1/models", lms_http_host().trim_end_matches('/'));
-    match ProcCommand::new("curl")
-        .args(["-s", "--max-time", "6", &models_url])
-        .output()
-    {
-        Ok(out) => {
-            let body = String::from_utf8_lossy(&out.stdout);
-            if let Ok(v) = serde_json::from_str::<serde_json::Value>(&body) {
-                if let Some(arr) = v.get("data").and_then(|d| d.as_array()) {
-                    for m in arr {
-                        if let Some(id) = m.get("id").and_then(|i| i.as_str()) {
-                            println!("  {id}");
-                        }
-                    }
-                }
-            }
-        }
-        Err(e) => println!("  (curl failed: {e})"),
-    }
-}
-
-/// Count currently-loaded instances of a model across the fleet (`lms ps`).
-fn loaded_instance_count(model_id: &str) -> usize {
-    match ProcCommand::new(resolve_lms()).arg("ps").output() {
-        Ok(out) => String::from_utf8_lossy(&out.stdout)
-            .lines()
-            .filter(|l| l.contains(model_id))
-            .count(),
-        Err(_) => 0,
-    }
-}
-
-/// Ensure up to `instances` copies of a model are loaded — and NEVER more than already present, so
-/// repeated runs / pre-warms don't stack duplicate instances (the cause of "3 instances on one box").
-/// Default `instances` is 1, so goose never spins up extras unless the user raises it.
-fn ensure_loaded(model_id: &str, instances: u32) {
-    let want = instances.max(1) as usize;
-    let have = loaded_instance_count(model_id);
-    for _ in have..want {
-        let _ = ProcCommand::new(resolve_lms())
-            .args(["load", model_id, "-y", "--ttl", "3600"])
-            .output();
-    }
-}
-
 // ---------------------------------------------------------------------------------------------
 // Fleet import — parse `lms ps` and add every loaded model (one per machine, or several) to the pool
 // ---------------------------------------------------------------------------------------------
 
 #[derive(Clone, Debug, PartialEq)]
-struct LmsProcess {
-    identifier: String,
-    status: String,
-    device: Option<String>,
+pub struct LmsProcess {
+    pub(super) identifier: String,
+    pub(super) status: String,
+    pub(super) device: Option<String>,
     /// LM Studio's PARALLEL column — how many requests this model instance serves at once. The swarm
     /// uses it as the device weight so dispatch concurrency tracks the user's LM Studio concurrency.
-    parallel: Option<u32>,
+    pub(super) parallel: Option<u32>,
 }
 
 /// Parse `lms ps` output (a plain whitespace-aligned table). Splits data rows on runs of >=2 spaces
@@ -15440,6 +15289,8 @@ pub struct GooseAgentDispatcher {
     planner_model: String,
     /// Whether the swarm may `lms load` a model (gates the transient re-warm on dispatch errors).
     allow_model_load: bool,
+    /// The engine boundary the re-warm goes through (always LmStudioEngine today).
+    engine: Arc<dyn SwarmEngine>,
     /// Imposed sampling parameters applied to every model call (steadies weak local models).
     sampling: SamplingParams,
     /// APP PILLARS (GOOSE_SWARM_GOALS): a small set of distilled, app-level acceptance criteria (the
@@ -15620,6 +15471,7 @@ impl GooseAgentDispatcher {
         sampling: SamplingParams,
         stream_decode_retry: bool,
         repeat_break: bool,
+        engine: Arc<dyn SwarmEngine>,
     ) -> Result<Self> {
         let provider = goose::providers::create("lmstudio", vec![]).await?;
         let session_root = std::env::temp_dir().join("goose-swarm-sessions");
@@ -15641,6 +15493,7 @@ impl GooseAgentDispatcher {
             worker_extensions,
             planner_model,
             allow_model_load,
+            engine,
             sampling,
             pillars: std::sync::OnceLock::new(),
             sink_tree_files: std::sync::OnceLock::new(),
@@ -31380,6 +31233,9 @@ struct DispatcherRecipe {
     sampling: SamplingParams,
     stream_decode_retry: bool,
     repeat_break: bool,
+    /// The engine boundary (always LmStudioEngine today) — carried by value like every other
+    /// constructor arg so a fix-round dispatcher rebuild shares the exact same engine object.
+    engine: Arc<dyn SwarmEngine>,
 }
 
 async fn build_swarm_dispatcher(
@@ -31399,6 +31255,7 @@ async fn build_swarm_dispatcher(
             r.sampling,
             r.stream_decode_retry,
             r.repeat_break,
+            r.engine,
         )
         .await?,
     ))
@@ -35436,7 +35293,7 @@ impl GooseAgentDispatcher {
                         && !self.cloud_models.contains_key(&req.model_id)
                         && (s.contains("Model is unloaded") || s.contains("connection"))
                     {
-                        ensure_loaded(&req.model_id, 1);
+                        self.engine.ensure_loaded(&req.model_id, 1);
                     }
                     Err(DispatchError::Transient(s))
                 } else {
@@ -36765,13 +36622,16 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
     // on PATH — e.g. a Finder-launched desktop app) targets the CONFIGURED endpoint, not just the default.
     std::env::set_var("LMSTUDIO_HOST", &cfg.endpoint);
     suppress_inherited_hints();
+    // The one engine boundary: constructed unconditionally as LmStudioEngine today, threaded through
+    // the run pipeline (servable probe, pre-warm, dispatcher re-warm) so a second engine has a seam.
+    let engine = default_engine();
     // Auto-use what's loaded: the worker pool is derived from the models RESIDENT on the fleet
     // (`lms ps`), so the swarm runs on what's actually loaded — never spinning up the (possibly
     // stale) configured models over them. The configured pool is only a fallback for an empty fleet.
     let (fleet_pool, fleet_planner) = reconcile_pool_with_fleet(&cfg);
     // A model can be RESIDENT (`lms ps`) and yet UNSERVABLE (`/v1/models`), and the pool above is built from
     // the resident list. Intersect them before anything is dispatched — see drop_unservable_devices.
-    let served = endpoint_model_ids();
+    let served = engine.servable_model_ids();
     // #128 no-start guard: if the endpoint proves it can serve models (non-empty /v1/models) but NONE of them
     // are our resident pool's — every alias withdrawn — refuse now instead of dispatching the whole run into
     // ~2s-per-attempt 400s and a dead run. `drop_unservable_devices` never empties the pool (it assumes a broken
@@ -37266,10 +37126,10 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             .iter()
             .any(|d| d.is_cloud() && d.model_id == cfg.planner_model)
         {
-            ensure_loaded(&cfg.planner_model, 1);
+            engine.ensure_loaded(&cfg.planner_model, 1);
         }
         for d in enabled.iter().filter(|d| !d.is_cloud()) {
-            ensure_loaded(&d.model_id, d.instances);
+            engine.ensure_loaded(&d.model_id, d.instances);
         }
     } else {
         eprintln!(
@@ -37394,6 +37254,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
         },
         stream_decode_retry: stream_decode_retry_enabled(cfg.stream_decode_retry),
         repeat_break: repeat_break_enabled(cfg.repeat_break),
+        engine: engine.clone(),
     };
     let dispatcher = build_swarm_dispatcher(dispatcher_recipe.clone(), sink.clone()).await?;
 
