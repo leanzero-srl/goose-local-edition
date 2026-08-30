@@ -427,3 +427,8 @@ research_request_block's armed-no-claimed-sections arm wording.
   (ownership pairings now claim in severity order); downgraded the headline to PARTIAL per the
   gate's own template while crediting the body's honesty. The severest->fastest pairing is a
   scheduling probability, not a structural gate — recorded for r6 reading.
+- 2026-08-31 01:00 bench-scorer (closure config r6, d5bd48d46): CLEAN+. Authored the config with real
+  hashes and stated-null absences, probed one layer past the first refusal to prove unfixability
+  (missing launch-time receipts, not just the port pin), refused the identity-falsifying "fix", and
+  left the live run untouched (verified after). The refusal IS the deliverable — it surfaced the
+  closure-vs-Benchmark-view doctrine conflict as an owner decision instead of a silent workaround.
