@@ -91,7 +91,10 @@ async fn startup_failure_reports_exit_and_stderr() {
         "-c".to_string(),
         "import sys; print('boom: no metal device', file=sys.stderr); sys.exit(3)".to_string(),
     ];
-    let err = Sidecar::start(config).await.unwrap_err().to_string();
+    let err = match Sidecar::start(config).await {
+        Ok(_) => panic!("start unexpectedly succeeded"),
+        Err(e) => e.to_string(),
+    };
     assert!(err.contains("exited during startup"), "err was: {err}");
     assert!(
         err.contains("boom: no metal device"),
