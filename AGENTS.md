@@ -226,6 +226,20 @@ once something has COMPLETED (its own value theory is "harden the completed work
 2026-08-30: "note this down in our agentic mechanism, or even better add it to our gates - make it a
 practice."
 
+**7. THE READ-THE-WORDS GATE — no loop, quality or efficacy judgment from shapes alone; the WORDS
+decide.** Mihai, 2026-08-30, after catching it twice in ten minutes: *"I have asked for 9 weeks for
+you to read the WORDS not the fucking shape... You need to read the WORDS on both what it forms and
+what it thinks to come up with ACTUAL improvements."* The r4-relaunch loop was diagnosable in one
+`tail -c 4000` — a verbatim ten-item checklist cycling "This is good… now let me check if there are
+any other issues" with the exit (`final_output`) never taken — and the improvement list (an exit
+ramp in the reviewer prompt; hand the judge the words across looks, not a ratio about them) falls
+straight out of READING it. The shingle ratio only corroborates; it names no fix. HOW IT REFUSES:
+operator side — every loop/efficacy diagnosis starts with the tail WORDS of `<task>.think.log` AND
+`<task>.log` (the skill's checkpoint procedure carries the exact commands), and an OBSERVATIONS/note
+entry claiming a loop without QUOTING the looping words is invalid on sight; engine side — the judge
+is handed verbatim spans (current tail + a span from a prior look), never only counters, so it can
+SEE "same text as last look"; `development_gates.rs` asserts both docs and the skill carry this.
+
 ## Never
 
 - Never: Recreate `ui/desktop/src/api` or add `@hey-api/openapi-ts` to `ui/desktop`

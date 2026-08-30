@@ -180,6 +180,40 @@ The mechanisms:
 Refusing test: `development_gates.rs` asserts the scheduler's splice site reaches `splice_specs` only
 through `repair_replan_specs`, and that `repair_sink_files` stays in the repair chain.
 
+## 7. THE READ-THE-WORDS GATE — the words decide; shapes only corroborate
+
+Ordered by Mihai 2026-08-30, after catching the same miss twice in ten minutes on the r4-relaunch
+looping reviewer. First: *"why don't you read the last 2000-4000 characters to understand what the
+thinking sequence actually is?!"* — the diagnosis had been delivered as a shingle-duplication ratio.
+Then, when the very next action was grepping detector thresholds instead of staying with the text:
+*"JESUS FUCK ok listen I have asked for 9 weeks for you to read the WORDS not the fucking shape or
+whatever motherfucking hell... You need to read the WORDS on both what it forms and what it thinks
+to come up with ACTUAL improvements. Stop wasting my money please."*
+
+What the words held that the shape did not: `tail -c 4000` of the lane's think.log showed a verbatim
+ten-item checklist cycling — dependencies, files, difficulties, slices, models, descriptions,
+integration, coverage, MUST-FIX, summaries — every item "This is good", the cycle closing with "Now
+let me check if there are any other issues:", and the exit (`final_output`) never taken. From READING
+that, the improvements are immediate and specific: (1) the reviewer needs an EXIT RAMP in its prompt
+— an exhausted checklist means CALL final_output, re-checking a clean list is the failure mode;
+(2) the judge must be shown the WORDS across looks (current tail + a verbatim span from a prior look)
+so "same text as last look" is visible — a rolling 2k window reads each pass as coherent checking,
+which is why looks 2-6 said OK over a 78%-duplicate stream; (3) the drift-hold must not eat the one
+correct direction when recurrence is measured. The ratio (78%) corroborated the loop; it proposed
+NONE of these. The words proposed all three.
+
+The rule, both sides:
+- OPERATOR: before any claim of looping, drift, judge efficacy, or output quality — read the tail
+  WORDS: `tail -c 4000 <task>.think.log` and `tail -c 4000 <task>.log`. A note/OBSERVATIONS entry
+  that claims a loop without QUOTING the looping words is invalid on sight. Stats come second, as
+  corroboration, never as the diagnosis.
+- ENGINE: supervision reads text, not only counters. The judge's prompt carries verbatim spans
+  (current tail AND a span from an earlier look or 20-40k back), and its verdicts quote what they
+  acted on. A detector may SUMMON; only a reader may judge.
+
+Refusing test: `development_gates.rs` asserts both agentic docs and the campaign skill carry the
+read-the-words step.
+
 ## What each gate cost — the rebukes, verbatim
 
 His words (each ≤80 chars), the rule they produced, and the gate that now refuses it:
@@ -199,6 +233,7 @@ His words (each ≤80 chars), the rule they produced, and the gate that now refu
 | "FUCK YOU PLEASE DO ALL OF THESE IN PARALLEL … I HAVE TO CHASE FOR YOU" | batch independent calls; fan out (CLAUDE.md) | working style |
 | "don't let them rot in a fucking backlog" | implement-don't-backlog (memory, prime) | working style |
 | "add it to our gates to avoid in the future - make it a practice" | one door into the DAG; the join owns nothing structurally | 6 ONE-DOOR |
+| "read the WORDS not the fucking shape... stop wasting my money" | words first, quoted; shapes corroborate only | 7 READ-WORDS |
 | "so let's gates that stop this madness from ever unfolding" | this file and its refusing tests | all |
 
 The refusing tests live in `crates/goose-swarm/tests/development_gates.rs`. A doc regression (this file
