@@ -3759,6 +3759,13 @@ fn call_objective(activity_key: Option<&str>) -> &'static str {
              disk, and it has no file tools: never direct it to create or edit one. It must NOT write \
              the implementation."
         }
+        Some(k) if k.starts_with("research-") => {
+            "answer ONE named question about the request as a HANDOFF — exact files, exact \
+             key/field literals, conventions stated as conventions. It must NOT write code and \
+             has no file-writing tools; its structured reply IS its deliverable. Different \
+             research questions legitimately cover similar ground — it is stuck only if its OWN \
+             answer stops advancing."
+        }
         Some(k) if k.starts_with("apptest-") => {
             "exercise the BUILT app from one angle and report the defects it observes, with the files \
              each touches. It must NOT fix anything and must not edit a single file — a call reporting \
@@ -9893,7 +9900,14 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
             );
         }
         // The engine's own read-and-decide calls are described as not writing code.
-        for engine_key in ["open", "synthesis", "review", "proxy-answer", "rate"] {
+        for engine_key in [
+            "open",
+            "synthesis",
+            "review",
+            "proxy-answer",
+            "rate",
+            "research-payments-q0",
+        ] {
             assert!(
                 call_objective(Some(engine_key)).contains("NOT write code"),
                 "{engine_key} should be described as a call that does not write code"
@@ -24254,6 +24268,10 @@ pub(crate) struct SliceBrief {
     /// mentions cli.py. A task's enforced ownership can contradict the only instruction it is
     /// given, and the two go to different phases.
     files: Vec<String>,
+    /// RESEARCH FAN v2's one-line settled digest for `slice_index` — "answered/total — first
+    /// answer's head", empty when no research row exists for the slice, so SYNTHESIS sees what
+    /// got settled without being handed prose to restate.
+    settled: String,
 }
 
 /// EVERY EXTENSION A DEFECT MAY NAME. One list, because there were two and they disagreed.
@@ -25446,13 +25464,22 @@ fn slice_index(briefs: &[SliceBrief], existing: &[String], spec: &str) -> String
             } else {
                 b.files.join(", ")
             };
+            // RESEARCH FAN v2: what got settled at plan time, one line — so an answer like
+            // "the hand-off interface is X" can inform files/deps without handing SYNTHESIS
+            // prose to restate. Absent when no research row exists for the slice.
+            let settled = if b.settled.is_empty() {
+                String::new()
+            } else {
+                format!("settled at plan time: {}\n", b.settled)
+            };
             format!(
-                "### slice `{}` — {}\nobjective: {}\nsummary: {}\nfiles it will create: {}\ninterface:\n{}",
+                "### slice `{}` — {}\nobjective: {}\nsummary: {}\nfiles it will create: {}\n{}interface:\n{}",
                 b.id,
                 b.title,
                 b.objective,
                 head,
                 files,
+                settled,
                 if signatures.is_empty() {
                     "  (none stated)".to_string()
                 } else {
@@ -27141,11 +27168,40 @@ async fn run_linear_plan(
         }
     }
 
-    // RESEARCH is DELETED (P1-5, full autonomy 2026-08-30). r2: 48 minutes of RESEARCH with 2 of 3
-    // nodes idle >=8 min twice, and the briefs (median 4,789 chars) did not prevent the five
-    // wrong-key defects — a planner's paraphrase of a dependency is strictly worse than the
-    // dependency's real source, which every worker now receives (dep_block + the ledger block).
-    // SYNTHESIS takes the slices DIRECTLY: see briefs_from_slices.
+    // ---- RESEARCH FAN v2 (v1 stays dead) ------------------------------------------------------
+    // v1 — prose briefs REPLACING dependency sources — is deleted (P1-5) and stays deleted: r2
+    // paid 48 minutes with 2 of 3 nodes idle and its paraphrases did not prevent the five
+    // wrong-key defects. v2 is a different mechanism: the opener's OWN questions, one structured
+    // read-only call each across one lane per host, answers spliced as FACTS beside the sources
+    // (never instead of them — dep_block is untouched). See the dead-form notes on the fan block.
+    // Spawned AFTER the ASK handshake so USER DECISIONS inform research (the benchmark answers
+    // ASK in 5s; attended runs wait for the human either way), awaited before the DAG exists.
+    // MILD: a panicked fan is zero answers plus a loud event, and planning proceeds.
+    let research_rows: Vec<ResearchRow> = {
+        let fan = tokio::spawn({
+            let dispatcher = dispatcher.clone();
+            let worker_models = worker_models.clone();
+            let opened = opened.clone();
+            let spec = opts.prompt.clone();
+            let decisions = user_decisions.clone();
+            let tree = tree_at_start.clone();
+            async move {
+                dispatcher
+                    .research_fan(worker_models, &opened, &spec, &decisions, &tree)
+                    .await
+            }
+        });
+        match fan.await {
+            Ok(rows) => rows,
+            Err(e) => {
+                sink.write_value(serde_json::json!({
+                    "event": "research_fan_panicked",
+                    "error": e.to_string(),
+                }));
+                Vec::new()
+            }
+        }
+    };
 
     // ---- SYNTHESIS + REVIEW, the straight line -----------------------------------------------
     // Everything from the slices to a loadable DAG lives in `plan_slices_to_dag`, injected with the
@@ -27157,6 +27213,7 @@ async fn run_linear_plan(
         &opts.prompt,
         tree_at_start,
         lang,
+        &research_rows,
         {
             let dispatcher = dispatcher.clone();
             let planner_model = cfg.planner_model.clone();
@@ -27351,7 +27408,11 @@ fn files_from_objective(objective: &str) -> Vec<String> {
     out
 }
 
-fn briefs_from_slices(opened: &OpenOutput, spec: &str) -> Vec<SliceBrief> {
+fn briefs_from_slices(
+    opened: &OpenOutput,
+    spec: &str,
+    research: &[ResearchRow],
+) -> Vec<SliceBrief> {
     let sections = spec_sections(spec);
     let armed = orientation_armed(spec, &sections);
     let folded_decisions = if opened.open_decisions.is_empty() {
@@ -27374,11 +27435,43 @@ fn briefs_from_slices(opened: &OpenOutput, spec: &str) -> Vec<SliceBrief> {
         .iter()
         .map(|sl| {
             let mut brief = sl.objective.clone();
-            if !sl.questions.is_empty() {
+            // RESEARCH FAN v2: the slice's own questions, partitioned against what the fan
+            // settled. An answered question moves OUT of the QUESTIONS block and into a
+            // settled-facts block ABOVE it; an unanswered one stays exactly as before — the
+            // absence already rode `research_unanswered` and the brief carries the raw
+            // question, never a fabricated answer (the fallback gate). With no research rows
+            // the brief is byte-identical to the pre-fan form.
+            let slice_rows: Vec<&ResearchRow> =
+                research.iter().filter(|r| r.slice == sl.id).collect();
+            let answered: std::collections::HashMap<usize, &&ResearchRow> = slice_rows
+                .iter()
+                .filter(|r| r.status == RESEARCH_ANSWERED)
+                .map(|r| (r.q_index, r))
+                .collect();
+            let mut answers_block = String::new();
+            let mut open_questions: Vec<&String> = Vec::new();
+            for (i, q) in sl.questions.iter().enumerate() {
+                if let Some(row) = answered.get(&i) {
+                    answers_block.push_str(&format!(
+                        "\nQ: {q}\nA: {}\n",
+                        budget_research_answer(&row.answer, &row.slice, row.q_index)
+                    ));
+                } else {
+                    open_questions.push(q);
+                }
+            }
+            if !answers_block.is_empty() {
+                brief.push_str(&format!(
+                    "\n\nANSWERS SETTLED AT PLAN TIME — facts gathered from the request before \
+                     building; build to these unless the spec or a USER DECISIONS block \
+                     contradicts them:{answers_block}"
+                ));
+            }
+            if !open_questions.is_empty() {
                 brief.push_str(&format!(
                     "\n\nQUESTIONS this slice must settle in its implementation (conventional \
                      answers unless the request says otherwise):\n{}",
-                    sl.questions
+                    open_questions
                         .iter()
                         .map(|q| format!("- {q}"))
                         .collect::<Vec<_>>()
@@ -27416,15 +27509,473 @@ fn briefs_from_slices(opened: &OpenOutput, spec: &str) -> Vec<SliceBrief> {
                 }
             }
             brief.push_str(&folded_decisions);
+            // The one-line settled digest slice_index renders for SYNTHESIS — answered/total
+            // plus the first answer's head, cut exactly the way the index's own summary line
+            // is (non-empty lines joined, sentence-end cut within 400).
+            let settled = if slice_rows.is_empty() {
+                String::new()
+            } else {
+                let first_answer_head = sl.questions.iter().enumerate().find_map(|(i, _)| {
+                    answered.get(&i).map(|r| {
+                        head_to_sentence_end(
+                            &r.answer
+                                .lines()
+                                .filter(|l| !l.trim().is_empty())
+                                .take(3)
+                                .collect::<Vec<_>>()
+                                .join(" "),
+                            400,
+                        )
+                    })
+                });
+                match first_answer_head {
+                    Some(h) => {
+                        format!("{}/{} — {}", answered.len(), slice_rows.len(), h.trim_end())
+                    }
+                    None => format!("{}/{}", answered.len(), slice_rows.len()),
+                }
+            };
             SliceBrief {
                 id: sl.id.clone(),
                 title: sl.title.clone(),
                 objective: sl.objective.clone(),
                 brief,
                 files: files_from_objective(&sl.objective),
+                settled,
             }
         })
         .collect()
+}
+
+// ================================================================================================
+// RESEARCH FAN v2 — "questions are the research tasks" (the owner's architecture: one node reads
+// what is required, immediately shares research tasks, the answers snowball, then the orchestrator
+// takes a look). The fan answers the OPENER'S OWN per-slice questions — one uncapped structured
+// call per question, one lane per host — and splices the answers back through the sanctioned
+// channels only: Q/A blocks in `briefs_from_slices`, the settled line in `slice_index`, a
+// droppable section in `render_ledger_block`. Research adds no tasks, writes no files, and never
+// dispatches a question a researcher RAISED (recorded on the row for the operator, nothing more).
+//
+// Why v1 stays dead (P1-5) and this is not its revival: v1 wrote prose BRIEFS that replaced the
+// dependency sources workers read — a planner's paraphrase is strictly worse than the real source,
+// and its median-4,789-char briefs did not prevent the five wrong-key defects. v2 answers NAMED
+// questions with real read tools, and its answers ride NEXT TO dep_block, never instead of it.
+// The other dead forms cannot recur here either: SCOUT lens arrays are test-fixture only, dead in
+// the run path (`SCOUT_LENSES` lives under `#[cfg(test)]`), and the fan's ONLY input is the
+// opener's own questions — no const array exists to generify; no multi-draft vote (every lane
+// answers a DIFFERENT question, nothing scores a winner); no coverage barrier (per-answer minis +
+// events land as each finishes; the only join feeds the one serial SYNTHESIS call); no resplit or
+// ask-proxy (OPEN's output is immutable input; open_decisions never enter the fan).
+// ================================================================================================
+
+/// One opener question, addressed by (slice, q_index) — the identity the mini filename, the
+/// activity key and the brief partition all share.
+#[derive(Clone, Debug)]
+struct ResearchQuestion {
+    slice: String,
+    q_index: usize,
+    question: String,
+}
+
+const RESEARCH_ANSWERED: &str = "answered";
+const RESEARCH_UNANSWERED: &str = "unanswered";
+
+/// One terminal research outcome. `status` is always set — answered or unanswered — which is what
+/// makes "every dispatched question terminal" a property of the type rather than of a clock.
+/// `secs` is a provenance measurement OUTPUT (how long the answer took), never an input: no time
+/// value bounds the call (gate 5 is structural — `run_agent_timed_at` carries no time parameter).
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+pub(crate) struct ResearchRow {
+    slice: String,
+    q_index: usize,
+    question: String,
+    /// "answered" | "unanswered" — both TERMINAL. Nothing retries; a miss flows to REPAIR.
+    status: String,
+    answer: String,
+    /// On unanswered: "provider_error" | "empty_answer" | "judge_ended".
+    #[serde(default)]
+    reason: Option<String>,
+    #[serde(default)]
+    detail: Option<String>,
+    /// Questions the researcher RAISED but could not settle — recorded here for the operator,
+    /// NEVER dispatched (research dispatches only the opener's own questions).
+    #[serde(default)]
+    raised: Vec<String>,
+    model: String,
+    secs: u64,
+}
+
+/// The structured deliverable (A1): `{answer, raised}`. Declaring a `Response` is what arms the
+/// judge's whole ladder for these lanes — `wants_structured_reply` becomes true, the
+/// `recipe__final_output` tool exists, and (with `may_terminate: true`) the `judge_out_of_moves`
+/// ending is reachable — the progress-based terminator that makes "all questions terminal"
+/// reachable without any clock. Only `answer` is required (the permissive-schema lesson from
+/// `review_patch_schema`): `raised` legitimately defaults to empty, and an empty `answer` is
+/// classified honestly as unanswered/empty_answer rather than rejected at validation.
+fn research_schema() -> serde_json::Value {
+    serde_json::json!({
+        "type": "object",
+        "required": ["answer"],
+        "properties": {
+            "answer": {"type": "string"},
+            "raised": {"type": "array", "items": {"type": "string"}}
+        }
+    })
+}
+
+fn research_mini_name(slice: &str, q_index: usize) -> String {
+    format!("research-{}-q{}.json", activity_digest_key(slice), q_index)
+}
+
+/// The resume watermark: a mini that parses IS the question's terminal outcome and is never
+/// re-dispatched (an unanswered row stays unanswered on resume — revival would be an explicit
+/// engine decision, never a silent retry). A missing or corrupt mini means "not yet researched",
+/// so re-dispatching is the honest action, not a substitution — and a corrupt mini is already
+/// named loudly by `rebuild_ledger_rollup`'s rows_dropped.
+fn load_research_mini(root: &Path, slice: &str, q_index: usize) -> Option<ResearchRow> {
+    let p = root
+        .join(LEDGER_DIR)
+        .join(research_mini_name(slice, q_index));
+    serde_json::from_str(&std::fs::read_to_string(p).ok()?).ok()
+}
+
+/// The fan's lane pool (A3): ONE lane per host, never the raw slot-expanded pool — two calls
+/// stacked on one host degrade each other (F623; measured r16 vs r17: the same detail fan cleared
+/// 14/14 on 4 slots, then dropped three details when a host's lanes doubled the fan width).
+/// `fanout_over_fleet` then applies `order_fleet_by_speed`, so the weight-4 host is first in line
+/// instead of structurally last (r13).
+fn research_fan_lanes(slot_models: Vec<String>) -> Vec<String> {
+    one_lane_per_host(slot_models)
+}
+
+/// A per-answer SPLICE budget on the text carried into a brief — the measured-good brief size
+/// (~1,500 chars: the RESEARCH size table above `synthesize_plan` measured a 1,497-char brief at
+/// 88.7% against a 6,443-char median that lost). A render budget on splice text, never a cap on
+/// model work: the FULL answer is durable in the ledger mini, and the cut lands on a line
+/// boundary and says so (F196 — a cut that ends mid-line reads as a complete fact that is wrong).
+fn budget_research_answer(answer: &str, slice: &str, q_index: usize) -> String {
+    let budget = 1_500;
+    if answer.chars().count() <= budget {
+        return answer.trim_end().to_string();
+    }
+    let head: String = answer.chars().take(budget).collect();
+    let whole = head.rsplit_once('\n').map(|(h, _)| h).unwrap_or(&head);
+    format!(
+        "{}\n… ANSWER TRUNCATED — full text in .swarm/ledger/{}",
+        whole.trim_end(),
+        research_mini_name(slice, q_index)
+    )
+}
+
+/// Fold one lane's outcome into a TERMINAL row. Pure, so the classification is testable without
+/// a model: Ok with a non-empty answer => answered; Ok with an empty/unparseable reply =>
+/// unanswered/empty_answer (never a stub answer — the fallback gate); Err from the
+/// `judge_out_of_moves` ending => unanswered/judge_ended; any other Err =>
+/// unanswered/provider_error with the error head (300, the ledger's last_failure_tail idiom).
+fn fold_research_outcome(
+    q: &ResearchQuestion,
+    model: &str,
+    secs: u64,
+    out: Result<String, String>,
+) -> ResearchRow {
+    #[derive(serde::Deserialize, Default)]
+    struct ResearchReply {
+        #[serde(default)]
+        answer: String,
+        #[serde(default)]
+        raised: Vec<String>,
+    }
+    let mut row = ResearchRow {
+        slice: q.slice.clone(),
+        q_index: q.q_index,
+        question: q.question.clone(),
+        status: RESEARCH_UNANSWERED.to_string(),
+        answer: String::new(),
+        reason: None,
+        detail: None,
+        raised: Vec::new(),
+        model: model.to_string(),
+        secs,
+    };
+    match out {
+        Ok(raw) => match parse_json_lenient::<ResearchReply>(&raw) {
+            Some(reply) if !reply.answer.trim().is_empty() => {
+                row.status = RESEARCH_ANSWERED.to_string();
+                row.answer = reply.answer;
+                row.raised = reply.raised;
+            }
+            Some(reply) => {
+                // Parsed, but the deliverable slot is blank — a named absence, never a stub.
+                row.reason = Some("empty_answer".to_string());
+                row.raised = reply.raised;
+            }
+            None => {
+                // Nothing parseable in the reply. The head rides in `detail` so the operator
+                // can see WHAT came back instead of an answer (300, the last_failure_tail
+                // idiom) — the absence stays loud, nothing is substituted.
+                row.reason = Some("empty_answer".to_string());
+                row.detail = Some(raw.chars().take(300).collect());
+            }
+        },
+        Err(e) => {
+            // The one engine terminator's own words (emitted at exactly one site, the
+            // judge_out_of_moves ending): a lane the ENGINE ended is named as such, not
+            // laundered into a transport failure.
+            if e.contains("owed a structured reply and never made one") {
+                row.reason = Some("judge_ended".to_string());
+            } else {
+                row.reason = Some("provider_error".to_string());
+            }
+            row.detail = Some(e.chars().take(300).collect());
+        }
+    }
+    row
+}
+
+/// The per-slice REQUEST block for a research prompt (A5): the prompt NEVER carries the raw ~50k
+/// spec when orientation is armed — it carries the orientation index plus the slice's claimed
+/// sections' FULL text, the exact splice path `briefs_from_slices` uses. Below the arming floor
+/// the whole spec is the better input, exactly as OPEN's own message formation decides it.
+fn research_request_block(
+    spec: &str,
+    sections: &[SpecSection],
+    armed: bool,
+    claimed: &[String],
+) -> String {
+    if !armed {
+        return format!("THE REQUEST:\n{spec}");
+    }
+    let mut spliced = String::new();
+    for want in claimed {
+        let key = want.trim().to_lowercase();
+        if let Some(sec) = sections
+            .iter()
+            .find(|s| s.heading.trim().to_lowercase() == key)
+        {
+            spliced.push_str(&format!("\n### {}\n{}", sec.heading, sec.body.trim()));
+        }
+    }
+    let orientation = spec_orientation(sections);
+    if spliced.is_empty() {
+        format!(
+            "THE REQUEST, AS ITS ORIENTATION INDEX (this slice claimed no sections — the \
+             sections' full text lives in the request itself):\n\n{orientation}"
+        )
+    } else {
+        format!(
+            "THE REQUEST, AS ITS ORIENTATION INDEX:\n\n{orientation}\n\nTHE SPEC'S OWN SECTIONS \
+             FOR THIS SLICE — verbatim, and the authority over any paraphrase:{spliced}"
+        )
+    }
+}
+
+/// One research prompt, assembled from THIS run's facts (the specificity gate): the request
+/// block, the owning slice, the USER DECISIONS the ASK handshake resolved (A6 — the fan runs
+/// AFTER the handshake so decisions inform research), the tree as the run found it, and the
+/// question VERBATIM. Absences are stated, never papered over.
+fn research_user_text(
+    request_block: &str,
+    slice_id: &str,
+    slice_title: &str,
+    slice_objective: &str,
+    user_decisions: &str,
+    tree_at_start: &[String],
+    question: &str,
+) -> String {
+    let decisions_block = if user_decisions.trim().is_empty() {
+        String::new()
+    } else {
+        // The one USER_DECISIONS_HEADER constant, so the binding framing cannot drift from the
+        // copies the spec and every worker prompt carry.
+        format!("{USER_DECISIONS_HEADER}{user_decisions}")
+    };
+    let tree_block = if tree_at_start.is_empty() {
+        "\n\nEXISTING TREE: nothing is on disk yet — a greenfield build.".to_string()
+    } else {
+        format!(
+            "\n\nEXISTING TREE (the files already on disk — read them with your tools before \
+             answering anything they could settle):\n{}",
+            tree_at_start.join("\n")
+        )
+    };
+    format!(
+        "{request_block}\n\nTHE SLICE THIS QUESTION BELONGS TO:\n{slice_id} — {slice_title}\n\
+         {slice_objective}{decisions_block}{tree_block}\n\nTHE QUESTION:\n{question}"
+    )
+}
+
+fn research_system_text() -> String {
+    "You are answering ONE question that must be settled before this software is built. Ground \
+     your answer: read the request text you were given, read the existing tree's files with your \
+     shell and tree tools, and when the request names a documentation URL, fetch it — an answer \
+     copied from the real source beats any paraphrase. Do NOT create or edit files: you have no \
+     write or edit tool, and your structured reply IS your deliverable.\n\n\
+     Your answer is a HANDOFF to the builder: name exact files, exact key/field literals, exact \
+     endpoints or signatures where the request implies them; where the request is silent, state \
+     the most CONVENTIONAL choice and say it is a convention. If the question cannot be settled \
+     from the request or the sources, say exactly that in one line and still name the \
+     conventional choice. Keep it under a page.\n\n\
+     When you are done, call the final_output tool ONCE with {\"answer\": \"...\", \"raised\": \
+     [...]} — `raised` lists further questions you could NOT settle, for the record only: do not \
+     answer them, and nothing will dispatch them."
+        .to_string()
+}
+
+impl GooseAgentDispatcher {
+    /// RESEARCH FAN v2 — one uncapped structured call per opener question, one lane per host,
+    /// spawned AFTER the ASK handshake resolves (A6: user decisions inform research; the
+    /// benchmark's 5s window costs nothing) and awaited before `plan_slices_to_dag`. Every
+    /// dispatched question ends TERMINAL — answered, or unanswered with a named reason
+    /// (empty_answer / provider_error / judge_ended) — and NOTHING retries: a miss is a loud
+    /// `research_unanswered` and the brief keeps the raw question for REPAIR. No clock anywhere;
+    /// the terminators are the judge ladder the structured reply arms and `repeat_break` on the
+    /// lanes' real tool calls.
+    ///
+    /// NAMED LIMITATION (A2, pre-existing transport class, deliberately not widened into here):
+    /// a stream that CONNECTS and then emits zero characters forever is non-terminal today — the
+    /// judge's look predicate needs ~2,000 thinking chars before it reads a lane — and this fan
+    /// multiplies that exposure by the question count. Carried as a named risk, not fixed here.
+    pub(crate) async fn research_fan(
+        self: &Arc<Self>,
+        worker_models: Vec<String>,
+        opened: &OpenOutput,
+        spec: &str,
+        user_decisions: &str,
+        tree_at_start: &[String],
+    ) -> Vec<ResearchRow> {
+        // ONE pass over the opener's own slices builds each question WITH its prompt prefix —
+        // no later lookup exists that could miss and silently substitute an empty prompt.
+        let sections = spec_sections(spec);
+        let armed = orientation_armed(spec, &sections);
+        let mut total_questions = 0usize;
+        let mut rows: Vec<ResearchRow> = Vec::new();
+        let mut to_dispatch: Vec<(ResearchQuestion, String)> = Vec::new();
+        for sl in &opened.slices {
+            if sl.questions.is_empty() {
+                continue;
+            }
+            let prefix = research_user_text(
+                &research_request_block(spec, &sections, armed, &sl.sections),
+                &sl.id,
+                &sl.title,
+                &sl.objective,
+                user_decisions,
+                tree_at_start,
+                "",
+            );
+            for (i, q) in sl.questions.iter().enumerate() {
+                total_questions += 1;
+                match load_research_mini(&self.working_dir, &sl.id, i) {
+                    Some(row) => rows.push(row),
+                    None => to_dispatch.push((
+                        ResearchQuestion {
+                            slice: sl.id.clone(),
+                            q_index: i,
+                            question: q.clone(),
+                        },
+                        prefix.clone(),
+                    )),
+                }
+            }
+        }
+        if total_questions == 0 {
+            // Measured absence, honest empty (the fallback gate): the opener emitted no
+            // questions — including the double-failure one-slice fallback — so there is
+            // nothing to research and the event says so.
+            self.events.write_value(serde_json::json!({
+                "event": "research_no_questions",
+                "slices": opened.slices.len(),
+            }));
+            return Vec::new();
+        }
+        if to_dispatch.is_empty() {
+            return rows;
+        }
+        phase_banner(
+            "RESEARCH",
+            "every host answers the opener's own questions in parallel",
+        );
+        let lanes = research_fan_lanes(worker_models);
+        let me = self.clone();
+        let fan_rows = fanout_over_fleet(
+            lanes,
+            to_dispatch,
+            move |(q, prefix): (ResearchQuestion, String), model: String| {
+                let me = me.clone();
+                async move {
+                    let key = format!("research-{}-q{}", q.slice, q.q_index);
+                    me.events.write_value(serde_json::json!({
+                        "event": "research_dispatched",
+                        "slice": q.slice,
+                        "q_index": q.q_index,
+                        // A hard head cut: this feeds an event, not a model (the
+                        // head_to_sentence_end rule's own exemption), at final_text's 200.
+                        "question": q.question.chars().take(200).collect::<String>(),
+                        "model": model,
+                        "activity_key": key,
+                    }));
+                    let user_text = format!("{prefix}{}", q.question);
+                    let t = std::time::Instant::now();
+                    let out = me
+                        .run_agent_timed_at(
+                            &model,
+                            research_system_text(),
+                            user_text,
+                            // A1: the structured deliverable arms wants_structured_reply and,
+                            // with may_terminate below, the judge_out_of_moves ending.
+                            Some(Response {
+                                json_schema: Some(research_schema()),
+                            }),
+                            planner_side_turns(),
+                            // A4: the REAL toolset under the read-only quarantine — the
+                            // developer builtin arrives filtered to shell+tree (no write/edit)
+                            // and the run's research MCP extensions ride along, so a lane can
+                            // read the tree and fetch the vendor docs instead of paraphrasing.
+                            &me.worker_extensions,
+                            None,
+                            Some(&key),
+                            true, // read_only: the II-12 research-write quarantine
+                            true, // may_terminate: a lost lane costs one answer, never a phase
+                        )
+                        .await;
+                    let secs = t.elapsed().as_secs();
+                    let folded = match out {
+                        Ok(o) => Ok(o.final_output.unwrap_or(o.text)),
+                        Err(e) => Err(e.to_string()),
+                    };
+                    let row = fold_research_outcome(&q, &model, secs, folded);
+                    // The mini is written for BOTH outcomes — the absence is a fact the ledger
+                    // holds — and the events are the loud channel tick.py counts.
+                    write_research_ledger(&me.working_dir, &row);
+                    if row.status == RESEARCH_ANSWERED {
+                        me.events.write_value(serde_json::json!({
+                            "event": "research_answered",
+                            "slice": row.slice,
+                            "q_index": row.q_index,
+                            "chars": row.answer.chars().count(),
+                            "raised": row.raised.len(),
+                            "secs": row.secs,
+                            "model": row.model,
+                        }));
+                    } else {
+                        me.events.write_value(serde_json::json!({
+                            "event": "research_unanswered",
+                            "slice": row.slice,
+                            "q_index": row.q_index,
+                            "reason": row.reason,
+                            "detail": row.detail,
+                            "secs": row.secs,
+                            "model": row.model,
+                        }));
+                    }
+                    row
+                }
+            },
+        )
+        .await;
+        rows.extend(fan_rows);
+        rows
+    }
 }
 
 /// The straight-line planner core, from OPEN's output to a loadable DAG:
@@ -27432,12 +27983,15 @@ fn briefs_from_slices(opened: &OpenOutput, spec: &str) -> Vec<SliceBrief> {
 /// (finalize_plan_before_dag) -> DAG, with the flat one-task-per-slice fallback at both failure
 /// points so a bad model reply costs parallelism, never the run. `synthesize` and `review_fan`
 /// are injected so the whole sequence runs in a test without a model — the fake-dispatcher seam
-/// that proves no coverage/research/resplit/proxy step remains between the phases (P1-5).
+/// that proves no coverage/resplit/proxy step remains between the phases (P1-5; the v2 research
+/// fan runs BEFORE this, in `run_linear_plan`, and enters here only as data).
+#[allow(clippy::too_many_arguments)]
 async fn plan_slices_to_dag<S, SFut, R, RFut>(
     opened: OpenOutput,
     user_prompt: &str,
     tree_at_start: Vec<String>,
     lang: TargetLang,
+    research: &[ResearchRow],
     synthesize: S,
     review_fan: R,
     sink: &Arc<dyn EventSink>,
@@ -27448,7 +28002,7 @@ where
     R: FnMut(String, String) -> RFut,
     RFut: std::future::Future<Output = Result<(goose_swarm::PlanPatch, Vec<String>)>>,
 {
-    let briefs = briefs_from_slices(&opened, user_prompt);
+    let briefs = briefs_from_slices(&opened, user_prompt, research);
     // OPEN-1's absence events (the fallback rule): a slice that claimed no sections and a
     // section no slice claimed are both measured gaps, named where the tick can count them.
     {
@@ -33466,6 +34020,22 @@ fn write_gate_ledger(
     write_ledger_mini(root, &format!("gate-r{round}.json"), &row)
 }
 
+/// RESEARCH FAN v2's row, through the same funnel as every other mini so idempotency and the
+/// rollup rebuild come free. Written for answered AND unanswered outcomes — the absence is a
+/// fact the ledger holds (the fallback gate) — and the mini's presence is the resume watermark
+/// `load_research_mini` reads. `ts` is provenance (data, never an input to anything).
+fn write_research_ledger(root: &Path, row: &ResearchRow) -> Option<std::path::PathBuf> {
+    let mut v = serde_json::to_value(row).ok()?;
+    if let Some(o) = v.as_object_mut() {
+        o.insert("kind".to_string(), serde_json::json!("research"));
+        o.insert(
+            "ts".to_string(),
+            serde_json::json!(chrono::Utc::now().to_rfc3339()),
+        );
+    }
+    write_ledger_mini(root, &research_mini_name(&row.slice, row.q_index), &v)
+}
+
 /// What one repair shard reported, verdict lines parsed and PAIRED with the findings they judge
 /// — a bare "FINDING 2: NOT FIXED" is only actionable next round alongside what finding 2 was.
 struct RepairLedgerRow<'a> {
@@ -33524,6 +34094,7 @@ fn rebuild_ledger_rollup(root: &Path) -> Option<serde_json::Value> {
     let mut tasks: std::collections::BTreeMap<String, serde_json::Value> = Default::default();
     let mut gates: Vec<serde_json::Value> = Vec::new();
     let mut repairs: Vec<serde_json::Value> = Vec::new();
+    let mut research: Vec<serde_json::Value> = Vec::new();
     // GEN-6a #3 (fallback rule): a mini that fails to read or parse used to `continue` silently,
     // so a dependent read a TRUNCATED roll-up as the whole history. The dropped rows are named
     // in the roll-up itself; render_ledger_block states them and the writers emit
@@ -33555,6 +34126,9 @@ fn rebuild_ledger_rollup(root: &Path) -> Option<serde_json::Value> {
             }
             Some("gate") => gates.push(v),
             Some("repair") => repairs.push(v),
+            // RESEARCH FAN v2: without this arm a research mini would fall into `_ => {}` and
+            // be silently invisible to every rollup reader — captured vs invisible is this line.
+            Some("research") => research.push(v),
             _ => {}
         }
     }
@@ -33566,6 +34140,15 @@ fn rebuild_ledger_rollup(root: &Path) -> Option<serde_json::Value> {
                 .and_then(|s| s.as_str())
                 .unwrap_or("")
                 .to_string(),
+        )
+    });
+    research.sort_by_key(|r| {
+        (
+            r.get("slice")
+                .and_then(|s| s.as_str())
+                .unwrap_or("")
+                .to_string(),
+            r.get("q_index").and_then(|x| x.as_u64()).unwrap_or(0),
         )
     });
     let tests_run_total: u64 = tasks
@@ -33648,11 +34231,17 @@ fn rebuild_ledger_rollup(root: &Path) -> Option<serde_json::Value> {
     if !rows_dropped.is_empty() {
         rollup["rows_dropped"] = serde_json::Value::from(rows_dropped);
     }
+    // Absent when no research ran, for the same byte-stability reason.
+    if !research.is_empty() {
+        rollup["research"] = serde_json::Value::from(research);
+    }
     let out_path = root.join(".swarm").join("ledger.json");
     let bytes = serde_json::to_string_pretty(&rollup).ok()?;
     // Finding 9: identical roll-up bytes keep the archived file's mtime (see write_ledger_mini).
     if !std::fs::read_to_string(&out_path).is_ok_and(|old| old == bytes) {
-        std::fs::write(&out_path, bytes).ok()?;
+        // tmp+rename (the forming capture's own atomic writer): the roll-up is read on a poll
+        // by every dispatch's render and by the desktop, so a torn read must be impossible.
+        write_forming_atomic(&out_path, &bytes).ok()?;
     }
     Some(rollup)
 }
@@ -33710,6 +34299,11 @@ fn render_ledger_block(
             .is_none_or(|v| v.is_empty())
         && rollup
             .pointer("/repair/rounds")
+            .and_then(|r| r.as_array())
+            .is_none_or(|v| v.is_empty())
+        // A plan-time-only ledger (research rows, nothing built yet) still INFORMS.
+        && rollup
+            .get("research")
             .and_then(|r| r.as_array())
             .is_none_or(|v| v.is_empty())
     {
@@ -33938,9 +34532,38 @@ fn render_ledger_block(
         }
     }
 
-    // Droppables, least-durable last per the §II.2 drop order (judge_established would sit
-    // first here once captured; today the ledger holds none). Dropped whole on overflow —
+    // Droppables, in drop order: the plan-time research answers go first (they are the
+    // judge_established class this slot was reserved for — settled decisions, not measured
+    // state), then ok-only command classes, then lane self-reports. Dropped whole on overflow —
     // never a defect, a gate finding, or a NOT FIXED verdict.
+    let research_section = {
+        let mut s = String::new();
+        for r in rollup
+            .get("research")
+            .and_then(|r| r.as_array())
+            .unwrap_or(&Vec::new())
+        {
+            if r.get("status").and_then(|x| x.as_str()) != Some(RESEARCH_ANSWERED) {
+                // An unanswered question is not re-stated here: its absence already rode
+                // `research_unanswered` and the owning brief carries the raw question.
+                continue;
+            }
+            let q = r.get("question").and_then(|x| x.as_str()).unwrap_or("?");
+            let a = r.get("answer").and_then(|x| x.as_str()).unwrap_or("");
+            s.push_str(&format!(
+                "  - Q: {q}\n    A: {}\n",
+                head_to_sentence_end(a, 400).replace('\n', " ")
+            ));
+        }
+        if s.is_empty() {
+            s
+        } else {
+            format!(
+                "SETTLED AT PLAN TIME — research answers (rank below the measured state above; \
+                 the spec and USER DECISIONS outrank these):\n{s}"
+            )
+        }
+    };
     let ok_classes = {
         let mut s = String::new();
         for (id, t) in &ordered_tasks {
@@ -33995,12 +34618,17 @@ fn render_ledger_block(
     };
 
     let _ = all_files; // manifest facts arrive via fs_delta's outside_manifest, computed at write
-    let full = format!("{never}{mid}{ok_classes}{final_texts}");
+    let full = format!("{never}{mid}{research_section}{ok_classes}{final_texts}");
     if full.chars().count() <= budget {
         return full;
     }
-    // §II.2 drop order: (judge_established — none captured yet), then ok-only command
-    // classes, then final_text; a defect, gate finding or NOT FIXED verdict is never dropped.
+    // §II.2 drop order: the research answers first (settled plan-time facts, the least durable
+    // against the measured tree), then ok-only command classes, then final_text; a defect, gate
+    // finding or NOT FIXED verdict is never dropped.
+    let without_research = format!("{never}{mid}{ok_classes}{final_texts}");
+    if without_research.chars().count() <= budget {
+        return without_research;
+    }
     let without_ok = format!("{never}{mid}{final_texts}");
     if without_ok.chars().count() <= budget {
         return without_ok;
@@ -44974,7 +45602,7 @@ mod audit_regressions {
             ],
             open_decisions: Vec::new(),
         };
-        let briefs = briefs_from_slices(&opened, spec);
+        let briefs = briefs_from_slices(&opened, spec, &[]);
         assert!(
             briefs[0].brief.contains("THE SPEC'S OWN SECTIONS")
                 && briefs[0].brief.contains("/api/payments"),
@@ -45023,7 +45651,7 @@ mod audit_regressions {
             ],
             open_decisions: Vec::new(),
         };
-        let briefs = briefs_from_slices(&opened, "build the app");
+        let briefs = briefs_from_slices(&opened, "build the app", &[]);
         assert_eq!(
             briefs[0].files,
             vec!["app/ledgerd/impl.py".to_string(), "web/app.js".to_string()],
@@ -45034,6 +45662,320 @@ mod audit_regressions {
         assert!(
             briefs[1].files.is_empty(),
             "a declaration-free objective keeps the empty vec and the absence event"
+        );
+    }
+
+    /// RESEARCH FAN v2, the terminal fold: every outcome — a real answer, an empty or
+    /// unparseable reply, a transport failure, the judge_out_of_moves ending — lands as a
+    /// TERMINAL row (answered | unanswered + named reason), which is what makes "all dispatched
+    /// questions terminal" reachable with no clock. A miss is a loud named absence, never a
+    /// substituted answer (the fallback gate).
+    #[test]
+    fn research_terminal_fold_classifies_every_outcome() {
+        let q = ResearchQuestion {
+            slice: "payments".into(),
+            q_index: 0,
+            question: "What is the frozen payment record structure from section 2?".into(),
+        };
+        let ok = fold_research_outcome(
+            &q,
+            "workhorse-q",
+            7,
+            Ok(r#"{"answer":"The record is {id, amount_minor, currency}.","raised":["what about refunds?"]}"#.into()),
+        );
+        assert_eq!(ok.status, RESEARCH_ANSWERED);
+        assert!(ok.answer.contains("amount_minor"));
+        assert_eq!(
+            ok.raised,
+            vec!["what about refunds?".to_string()],
+            "raised questions are RECORDED on the row — never dispatched"
+        );
+        let empty = fold_research_outcome(&q, "m", 3, Ok(r#"{"answer":"  "}"#.into()));
+        assert_eq!(
+            (empty.status.as_str(), empty.reason.as_deref()),
+            ("unanswered", Some("empty_answer")),
+            "an empty reply is a named absence, never a stub answer"
+        );
+        let prose = fold_research_outcome(&q, "m", 3, Ok("no json at all".into()));
+        assert_eq!(prose.reason.as_deref(), Some("empty_answer"));
+        let judge = fold_research_outcome(
+            &q,
+            "m",
+            900,
+            Err("call owed a structured reply and never made one: 4 nudges".into()),
+        );
+        assert_eq!(
+            (judge.status.as_str(), judge.reason.as_deref()),
+            ("unanswered", Some("judge_ended")),
+            "an engine-ended lane is named as such, not laundered into a transport failure"
+        );
+        let prov = fold_research_outcome(&q, "m", 3, Err("connection reset by peer".into()));
+        assert_eq!(prov.reason.as_deref(), Some("provider_error"));
+        assert_eq!(prov.detail.as_deref(), Some("connection reset by peer"));
+        for row in [&ok, &empty, &prose, &judge, &prov] {
+            assert!(
+                row.status == RESEARCH_ANSWERED || row.status == RESEARCH_UNANSWERED,
+                "every outcome is terminal"
+            );
+        }
+    }
+
+    /// The resume watermark: a mini on disk means the question is settled history and is never
+    /// re-dispatched; its sibling without a mini stays dispatchable.
+    #[test]
+    fn research_fan_resume_skips_existing_minis() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        assert!(load_research_mini(root, "payments", 0).is_none());
+        let row = ResearchRow {
+            slice: "payments".into(),
+            q_index: 0,
+            question: "How is sync position persisted?".into(),
+            status: RESEARCH_ANSWERED.into(),
+            answer: "In the SQLite meta table, key sync_cursor.".into(),
+            reason: None,
+            detail: None,
+            raised: Vec::new(),
+            model: "workhorse-q".into(),
+            secs: 41,
+        };
+        write_research_ledger(root, &row).expect("the mini writes through the funnel");
+        let back = load_research_mini(root, "payments", 0).expect("the watermark parses back");
+        assert_eq!(back.status, RESEARCH_ANSWERED);
+        assert_eq!(back.answer, row.answer);
+        assert_eq!(back.question, row.question);
+        assert!(
+            load_research_mini(root, "payments", 1).is_none(),
+            "the sibling question is still dispatchable"
+        );
+    }
+
+    /// The brief partition: an answered question MOVES out of the QUESTIONS block into the
+    /// settled-facts block above it; an unanswered one stays verbatim; with no research rows
+    /// the brief is byte-identical to the pre-fan form; a long answer is spliced under the
+    /// measured-good budget with a stated truncation naming the durable mini.
+    #[test]
+    fn answered_questions_move_from_questions_block_to_settled_facts() {
+        let opened = OpenOutput {
+            slices: vec![OpenSlice {
+                id: "api".into(),
+                title: "the api".into(),
+                objective: "serve GET /health".into(),
+                questions: vec!["which port".into(), "which storage".into()],
+                weight: 3,
+                sections: Vec::new(),
+            }],
+            open_decisions: Vec::new(),
+        };
+        let rows = vec![
+            ResearchRow {
+                slice: "api".into(),
+                q_index: 0,
+                question: "which port".into(),
+                status: RESEARCH_ANSWERED.into(),
+                answer: "Port 8850, from the spec's own boot table.".into(),
+                reason: None,
+                detail: None,
+                raised: Vec::new(),
+                model: "m".into(),
+                secs: 12,
+            },
+            ResearchRow {
+                slice: "api".into(),
+                q_index: 1,
+                question: "which storage".into(),
+                status: RESEARCH_UNANSWERED.into(),
+                answer: String::new(),
+                reason: Some("provider_error".into()),
+                detail: Some("connection reset".into()),
+                raised: Vec::new(),
+                model: "m".into(),
+                secs: 3,
+            },
+        ];
+        let briefs = briefs_from_slices(&opened, "build the app", &rows);
+        let b = &briefs[0].brief;
+        assert!(b.contains("ANSWERS SETTLED AT PLAN TIME"));
+        assert!(b.contains("Q: which port") && b.contains("A: Port 8850"));
+        let questions_at = b.find("QUESTIONS this slice must settle").unwrap();
+        assert!(
+            b.find("ANSWERS SETTLED AT PLAN TIME").unwrap() < questions_at,
+            "the settled facts sit ABOVE the open questions"
+        );
+        let from_questions = b.split_at(questions_at).1;
+        assert!(
+            from_questions.contains("- which storage") && !from_questions.contains("- which port"),
+            "the answered question left the QUESTIONS block; the unanswered one stayed:\n{b}"
+        );
+        assert_eq!(
+            briefs[0].settled, "1/2 — Port 8850, from the spec's own boot table.",
+            "the slice_index settled line carries answered/total and the first answer's head"
+        );
+        let plain = briefs_from_slices(&opened, "build the app", &[]);
+        assert!(
+            !plain[0].brief.contains("ANSWERS SETTLED")
+                && plain[0].brief.contains("- which port")
+                && plain[0].brief.contains("- which storage")
+                && plain[0].settled.is_empty(),
+            "no research rows => the pre-fan brief, byte for byte"
+        );
+        let long = "a fact line that keeps going and going.\n".repeat(60);
+        let cut = budget_research_answer(&long, "api", 0);
+        assert!(cut.chars().count() < long.chars().count());
+        assert!(
+            cut.contains("ANSWER TRUNCATED — full text in .swarm/ledger/research-api-q0.json"),
+            "a cut answer says so and names the durable mini"
+        );
+        assert!(
+            cut.lines()
+                .rev()
+                .nth(1)
+                .unwrap()
+                .ends_with("going and going."),
+            "the cut lands on a line boundary"
+        );
+    }
+
+    /// A5 + A6: when orientation is armed the research prompt carries the orientation index and
+    /// the slice's claimed sections' FULL text — NEVER the raw spec — plus the USER DECISIONS
+    /// block and the question verbatim. Below the floor the whole spec is the input, as-is.
+    #[test]
+    fn research_prompt_carries_decisions_and_never_the_raw_spec_when_armed() {
+        let filler =
+            "This sentence pads the specification body across the arming floor. ".repeat(100);
+        let spec = format!(
+            "# Alpha\n{filler}The deep claimed fact is CLAIMED_DEEP_MARKER.\n\n\
+             # Beta\n{filler}The deep unclaimed fact is UNCLAIMED_DEEP_MARKER.\n\n\
+             # Gamma\nA short tail section.\n"
+        );
+        let sections = spec_sections(&spec);
+        assert!(
+            orientation_armed(&spec, &sections),
+            "the fixture must cross the real arming floor"
+        );
+        let block = research_request_block(&spec, &sections, true, &["Alpha".to_string()]);
+        let text = research_user_text(
+            &block,
+            "payments",
+            "the payments service",
+            "sync payments from the vendor",
+            "Q: which separator?\nA: pipe-separated CSV.\n",
+            &["app/__main__.py".to_string()],
+            "What is the frozen payment record structure from section 2?",
+        );
+        assert!(
+            text.contains("CLAIMED_DEEP_MARKER"),
+            "the claimed section's FULL text rides in"
+        );
+        assert!(
+            !text.contains("UNCLAIMED_DEEP_MARKER"),
+            "an unclaimed section arrives only as its orientation head — the raw spec never rides"
+        );
+        assert!(
+            text.contains("USER DECISIONS") && text.contains("pipe-separated CSV"),
+            "the ASK handshake's decisions inform every research call (A6)"
+        );
+        assert!(text.contains("THE QUESTION:\nWhat is the frozen payment record structure"));
+        assert!(
+            text.contains("app/__main__.py"),
+            "the existing tree rides in"
+        );
+        // Below the floor: the spec as-is is the better input, exactly like OPEN's own message.
+        let small = "build a tiny thing";
+        let small_block = research_request_block(small, &spec_sections(small), false, &[]);
+        assert_eq!(small_block, format!("THE REQUEST:\n{small}"));
+    }
+
+    /// A3: the fan's lane pool is ONE lane per host, never the raw slot-expanded pool (F623 —
+    /// two calls stacked on one host degrade each other).
+    #[test]
+    fn research_fan_pool_is_one_lane_per_host() {
+        let lanes = research_fan_lanes(vec![
+            "gabee-q".to_string(),
+            "gabee-q".to_string(),
+            "mihai-q".to_string(),
+            "mihai-q".to_string(),
+            "workhorse-q".to_string(),
+            "workhorse-q".to_string(),
+        ]);
+        assert_eq!(
+            lanes,
+            vec!["gabee-q", "mihai-q", "workhorse-q"],
+            "a 3-host weight-2 fleet fans 3 research lanes, not 6"
+        );
+    }
+
+    /// The ledger round-trip: a research mini rides `write_ledger_mini`'s funnel into the
+    /// rollup's new `research` arm (without which it would be silently invisible), renders as
+    /// the FIRST-dropped droppable in the ledger block, and never outranks a gate finding.
+    #[test]
+    fn a_research_row_joins_the_rollup_and_renders_below_defects() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let mk = |q_index: usize, status: &str, question: &str, answer: &str| ResearchRow {
+            slice: "payments".into(),
+            q_index,
+            question: question.into(),
+            status: status.into(),
+            answer: answer.into(),
+            reason: (status == RESEARCH_UNANSWERED).then(|| "provider_error".to_string()),
+            detail: None,
+            raised: Vec::new(),
+            model: "m".into(),
+            secs: 5,
+        };
+        write_research_ledger(
+            root,
+            &mk(
+                0,
+                RESEARCH_ANSWERED,
+                "what shape is /api/health",
+                "A JSON object {status, last_sync}.",
+            ),
+        )
+        .unwrap();
+        write_research_ledger(
+            root,
+            &mk(1, RESEARCH_UNANSWERED, "what about the webhook secret", ""),
+        )
+        .unwrap();
+        write_gate_ledger(
+            root,
+            1,
+            "smoke",
+            &["GET /api/stream returned 404".to_string()],
+            &[],
+            serde_json::json!({"established": false}),
+        )
+        .unwrap();
+        let rollup = read_ledger_rollup(root).expect("the rollup rebuilt");
+        let research = rollup.get("research").and_then(|r| r.as_array()).unwrap();
+        assert_eq!(research.len(), 2, "both outcomes are captured, sorted");
+        assert_eq!(research[0].get("q_index").and_then(|x| x.as_u64()), Some(0));
+        let full = render_ledger_block(root, "integrate-verify", &[], &[], 7_000, None);
+        assert!(
+            full.contains("SETTLED AT PLAN TIME") && full.contains("{status, last_sync}"),
+            "the answered row renders for the sink and REPAIR:\n{full}"
+        );
+        assert!(
+            !full.contains("webhook secret"),
+            "an unanswered question is not restated here — its absence already rode the event"
+        );
+        let squeezed = render_ledger_block(
+            root,
+            "integrate-verify",
+            &[],
+            &[],
+            full.chars().count() - 1,
+            None,
+        );
+        assert!(
+            !squeezed.contains("SETTLED AT PLAN TIME"),
+            "research drops FIRST on overflow"
+        );
+        assert!(
+            squeezed.contains("GET /api/stream returned 404"),
+            "the gate finding always outranks it:\n{squeezed}"
         );
     }
 
@@ -45077,6 +46019,7 @@ mod audit_regressions {
             "build the app",
             Vec::new(),
             TargetLang::Python,
+            &[],
             |briefs: Vec<SliceBrief>, _tree: Vec<String>| async move {
                 // SYNTHESIS receives the slices DIRECTLY: objective, the slice's own questions,
                 // and the opener's open decisions folded as conventional-option instructions.
@@ -45160,6 +46103,7 @@ mod audit_regressions {
             "build the app",
             Vec::new(),
             TargetLang::Python,
+            &[],
             |_briefs: Vec<SliceBrief>, _tree: Vec<String>| async move {
                 Err(anyhow!("the model returned prose"))
             },
@@ -45206,6 +46150,7 @@ mod audit_regressions {
             spec,
             Vec::new(),
             TargetLang::Python,
+            &[],
             |_briefs: Vec<SliceBrief>, _tree: Vec<String>| async move {
                 Ok(serde_json::json!({"subtasks": [
                     {"id": "api", "slice": "api", "files": ["app/api.py"], "depends_on": []},
@@ -45513,6 +46458,7 @@ mod audit_regressions {
             objective: String::new(),
             files: files.iter().map(|f| f.to_string()).collect(),
             brief: format!("spec for {id}"),
+            settled: String::new(),
         }
     }
 
