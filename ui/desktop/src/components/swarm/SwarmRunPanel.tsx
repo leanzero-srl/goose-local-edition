@@ -44,6 +44,7 @@ import {
   type SwarmRunState,
   type ClarifyProxy,
   type RunOverview as RunOverviewData,
+  type RunVerdict,
   cleanTaskTitle,
   isPlanningDigestKey,
   saidKindOf,
@@ -4638,7 +4639,7 @@ const PlanningZone: React.FC<{
  * These are deliberately NOT rendered as failures. Amber, its own heading, and a sentence that says the run
  * passed — a red list here would be a false red, which this panel exists to prevent as much as a false green.
  */
-const KnownActiveBugs: React.FC<{ bugs: string[] }> = ({ bugs }) => {
+const KnownActiveBugs: React.FC<{ bugs: string[]; verdict: RunVerdict | null }> = ({ bugs, verdict }) => {
   const [open, setOpen] = useState(true);
   if (bugs.length === 0) return null;
   return (
@@ -4646,7 +4647,14 @@ const KnownActiveBugs: React.FC<{ bugs: string[] }> = ({ bugs }) => {
       <ZoneHeader
         hue={SWARM_STATUS.running}
         label="Known active bugs"
-        explain="the run passed — these are what it passed WITH"
+        // "the run passed" may only be claimed when the engine's verdict says so — on a FAILED gate the
+        // same list is simply what was still broken at the end, and the old caption asserted a pass from
+        // bug presence alone (the truth-layer sin: a claim driven by nothing that could invalidate it).
+        explain={
+          verdict && !verdict.passed
+            ? 'still active when the run ended'
+            : 'the run passed — these are what it passed WITH'
+        }
         collapsed={!open}
         onToggle={() => setOpen((o) => !o)}
         right={
@@ -4867,6 +4875,53 @@ const RunOverview: React.FC<{
 // The clear ENDING a run was missing: a solid terminal banner so a finished/stopped run never sits in limbo
 // (tasks green, no "running", no "done"). Done = green, finished-with-failures = red, stopped-without-a-
 // completion-signal (killed/crashed) = solid slate. Carries the tally + total time + the output directory.
+/**
+ * THE POST-VERDICT TAIL — verdict in, run not finished. Between complete_result and run_finished the
+ * engine still works (the persona reflection is a full model call; r5's took 3.5 minutes) with no task
+ * lane and "0 working" in the fleet — a finished-but-silent stretch Mihai read as a lock-up, on the
+ * exact phase where r0 once genuinely hung. This banner states the verdict the moment it exists and
+ * says what the engine is still doing, driven by the events/digests: the `reflect` supervision digest
+ * while it is open (HEAD engines stream it; older engines wrote nothing until persona_learned), else
+ * the generic record-writing line. Flips to TerminalBanner when run_finished lands.
+ */
+const WrapUpBanner: React.FC<{
+  verdict: RunVerdict;
+  bugCount: number;
+  activityDigests: Record<string, unknown>;
+}> = ({ verdict, bugCount, activityDigests }) => {
+  const reflect = activityDigests['reflect'] as { phase?: string } | undefined;
+  const what =
+    reflect && reflect.phase !== 'done'
+      ? 'learning a reusable stack skill from this build'
+      : 'writing the final run record (stack skill + overview)';
+  const color = verdict.passed
+    ? verdict.verified
+      ? SWARM_STATUS.solidDone
+      : SWARM_STATUS.solidRunning
+    : SWARM_STATUS.solidError;
+  const headline = verdict.passed
+    ? `Verdict is in — PASSED${verdict.verified ? ', verified end-to-end' : ' (not verified)'}${bugCount > 0 ? ` · ${bugCount} known bug${bugCount === 1 ? '' : 's'} ship` : ''}`
+    : `Verdict is in — FAILED${verdict.remainingFindings != null ? ` · ${verdict.remainingFindings} finding${verdict.remainingFindings === 1 ? '' : 's'} remain` : ''}`;
+  return (
+    <div className="border-b border-border-primary" data-testid="wrapup-banner">
+      <div className="flex items-center gap-2 px-3 py-2 text-white" style={{ backgroundColor: color }}>
+        {verdict.passed ? (
+          <Check className="h-4 w-4 shrink-0" strokeWidth={2.5} />
+        ) : (
+          <AlertTriangle className="h-4 w-4 shrink-0" strokeWidth={2.5} />
+        )}
+        <span className="text-xs font-semibold">{headline}</span>
+      </div>
+      <div className="flex items-center gap-1.5 px-3 py-1.5 text-[11px] text-text-secondary bg-background-secondary">
+        <Loader2 className="h-3 w-3 shrink-0 animate-spin" style={{ color: SWARM_STATUS.action }} />
+        <span>
+          Wrapping up — {what}. The run record closes when this lands.
+        </span>
+      </div>
+    </div>
+  );
+};
+
 const TerminalBanner: React.FC<{
   outcome: 'done' | 'failed' | 'stopped';
   summary: RunSummary | null;
@@ -4874,7 +4929,19 @@ const TerminalBanner: React.FC<{
   durationLabel: string | null;
   outputDir?: string;
   deviceOrder: string[];
-}> = ({ outcome, summary, totals, durationLabel, outputDir, deviceOrder }) => {
+  /** The engine's own gate verdict (complete_result, revision folded). When present it OWNS the
+   *  headline — "Build complete" said nothing about whether the run PASSED, and Mihai watched a
+   *  passed+verified r5 and asked where on screen that was stated. Null on runs whose engine never
+   *  ran the gate (and on 'stopped'), which keep the task-count headline. */
+  verdict: RunVerdict | null;
+  /** run.knownActiveBugs.length — the SAME array the Known active bugs section renders, so the
+   *  banner's chip can never count something the body doesn't show. */
+  bugCount: number;
+  /** The engine-stamped run command (run_overview) — part of the verdict surface: "it passed" and
+   *  "here is how you run it" belong in the same glance. */
+  runCommand: string | null;
+  runCommandVerified: boolean;
+}> = ({ outcome, summary, totals, durationLabel, outputDir, deviceOrder, verdict, bugCount, runCommand, runCommandVerified }) => {
   const done = summary?.done ?? totals.done;
   const failed = summary?.failed ?? totals.failed;
   const tasks = totals.tasks;
@@ -4883,19 +4950,69 @@ const TerminalBanner: React.FC<{
     failed: { color: STATUS_COLOR.error, Icon: AlertTriangle, title: `Finished — ${failed} task${failed === 1 ? '' : 's'} failed` },
     stopped: { color: STOPPED, Icon: CircleSlash, title: 'Run stopped' },
   }[outcome];
-  const { color, Icon, title } = cfg;
+  // THE VERDICT HEADLINE. Engine truth in the engine's own words: PASSED requires the gate's word,
+  // "verified" is only said while the engine's green stands (complete_result_revised retracts it in
+  // state, not just the feed). Solid saturated bands only — green for passed+verified, amber for a
+  // passed-but-unverified ship, red for failed. A 'stopped' run has no verdict to claim.
+  const v = outcome !== 'stopped' ? verdict : null;
+  const color = v
+    ? v.passed
+      ? v.verified
+        ? SWARM_STATUS.solidDone
+        : SWARM_STATUS.solidRunning
+      : SWARM_STATUS.solidError
+    : cfg.color;
+  const Icon = v ? (v.passed ? Check : AlertTriangle) : cfg.Icon;
+  const title = v
+    ? v.passed
+      ? v.verified
+        ? 'PASSED — verified end-to-end'
+        : 'PASSED — but the engine retracted its verification'
+      : `FAILED${v.remainingFindings != null ? ` — ${v.remainingFindings} finding${v.remainingFindings === 1 ? '' : 's'} remain` : ''}`
+    : cfg.title;
   const parts = [
     `${done}/${tasks} task${tasks === 1 ? '' : 's'} done`,
     outcome !== 'failed' && failed ? `${failed} failed` : null,
     durationLabel ? `in ${durationLabel}` : null,
   ].filter(Boolean);
   return (
-    <div className="border-b border-border-primary">
+    <div className="border-b border-border-primary" data-testid="terminal-banner">
       <div className="flex items-center gap-2 px-3 py-2 text-white" style={{ backgroundColor: color }}>
         <Icon className="h-4 w-4 shrink-0" strokeWidth={2.5} />
         <span className="text-xs font-semibold">{title}</span>
         <span className="text-[11px] tabular-nums">{parts.join(' · ')}</span>
+        {v && bugCount > 0 ? (
+          // The honesty chip: a green run still shipped these. Strong solid amber, white text — the
+          // full list is the Known active bugs section below, same array, same count.
+          <span
+            className="ml-auto text-[11px] px-2 py-0.5 font-semibold tabular-nums shrink-0"
+            style={{ backgroundColor: SWARM_STATUS.solidRunning, borderRadius: CHIP_RADIUS, border: '1px solid rgba(255,255,255,0.9)' }}
+            data-testid="verdict-bug-chip"
+          >
+            {bugCount} known bug{bugCount === 1 ? '' : 's'} shipped
+          </span>
+        ) : null}
       </div>
+      {v?.passedMeans ? (
+        // The engine's own definition of what "passed" asserts, verbatim — the honesty line that keeps
+        // PASSED from over-claiming (criticals closed; minors ship as known bugs, listed below).
+        <div className="px-3 py-1.5 text-[11px] text-text-secondary bg-background-secondary">
+          Passed means: {v.passedMeans}
+          {v.shipped ? ` · shipped: ${v.shipped}` : ''}
+        </div>
+      ) : null}
+      {v && runCommand ? (
+        <div className="flex items-center gap-1.5 px-3 py-1.5 text-[11px] bg-background-secondary border-t border-border-primary min-w-0">
+          <Terminal className="h-3 w-3 shrink-0 text-text-secondary" />
+          <span className="text-text-secondary shrink-0">Run it:</span>
+          <code className="font-mono text-text-primary truncate">{runCommand}</code>
+          {runCommandVerified ? (
+            <span className="text-[10px] font-semibold shrink-0" style={{ color: STATUS_COLOR.done }}>
+              — goose ran this command itself
+            </span>
+          ) : null}
+        </div>
+      ) : null}
       {outcome === 'stopped' ? (
         <div className="px-3 py-1.5 text-[11px] text-text-secondary bg-background-secondary">
           {/* Absorbs the liveness banner's exited explanation — outcome 'stopped' keys on the same
@@ -5395,6 +5512,17 @@ export const SwarmRunPanel: React.FC<{
           is a question awaiting YOUR answer; two input boxes at once would be a puzzle). */}
       {!ended && !clarifyPending && runDir ? <NoteBox workingDir={runDir} /> : null}
 
+      {/* The verdict surface. The moment complete_result lands the top of the panel says PASSED/FAILED —
+          first as the wrap-up banner (verdict in, engine still writing its record), then as the terminal
+          banner when run_finished arrives. Both are driven by the event stream, never file presence. */}
+      {!ended && run.verdict ? (
+        <WrapUpBanner
+          verdict={run.verdict}
+          bugCount={run.knownActiveBugs.length}
+          activityDigests={run.activityDigests}
+        />
+      ) : null}
+
       {ended && outcome ? (
         <TerminalBanner
           outcome={outcome}
@@ -5403,6 +5531,10 @@ export const SwarmRunPanel: React.FC<{
           durationLabel={durationLabel}
           outputDir={workingDir}
           deviceOrder={deviceOrder}
+          verdict={run.verdict}
+          bugCount={run.knownActiveBugs.length}
+          runCommand={run.overview?.runCommand ?? null}
+          runCommandVerified={!!run.overview?.runCommandVerified}
         />
       ) : null}
 
@@ -5418,7 +5550,7 @@ export const SwarmRunPanel: React.FC<{
 
       {/* The imperfections a green run shipped with. Mounted whenever the engine has rated defects — during
           the repair phase as well as at the end, because that is when they are actionable. */}
-      <KnownActiveBugs bugs={run.knownActiveBugs} />
+      <KnownActiveBugs bugs={run.knownActiveBugs} verdict={run.verdict} />
 
       {/* Mid-run questions the swarm answered (finding 10) — otherwise the answers live only in dotfiles. */}
       <SwarmQA qa={run.qa} />

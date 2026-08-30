@@ -601,6 +601,21 @@ export interface RunOverview {
   next: string[];
 }
 
+/** THE RUN'S VERDICT — complete_result, the engine's own end-to-end gate, verbatim. MEASURED on r5
+ *  (2026-08-30): the run passed, verified, and the only on-screen mention was the known-bugs caption —
+ *  Mihai: "IF THE RUN PASSED then where in the UI is this being passed on or mentioned?". This is
+ *  run-level state through the same reducer as run_finished/run_overview (never a lane field).
+ *  `verified` folds complete_result_revised (the engine's retraction) — a retracted green must UPDATE
+ *  this state, not only append a feed line. `passedMeans` is the engine's own honesty line about what
+ *  "passed" asserts and ships to the screen verbatim. */
+export interface RunVerdict {
+  passed: boolean;
+  verified: boolean;
+  passedMeans: string | null;
+  remainingFindings: number | null;
+  shipped: string | null;
+}
+
 /** The OPEN phase's cut of the request, plus what RESEARCH produced from it. `weights` are the opener's own
  *  effort estimates (a lopsided cut is the shape that leaves a node idle), `briefChars` the size of the spec
  *  each slice owner wrote back. */
@@ -739,6 +754,11 @@ export interface SwarmRunState {
    *  and defects_rated.minors while the run is still going). These are NOT failures: the run passed, and
    *  these are what is imperfect about what it passed with. Rendered as their own list, never as errors. */
   knownActiveBugs: string[];
+  /** The engine's own end-to-end verdict (complete_result, revised by complete_result_revised) — null until
+   *  the gate has run. Non-null with finished=false is the POST-VERDICT TAIL (persona reflection, overview,
+   *  final report): the verdict is in but the engine is still wrapping up, and the panel must say so — r5's
+   *  3.5-minute silent tail read as a hang on the exact phase where r0 once genuinely hung. */
+  verdict: RunVerdict | null;
   /** Cross-draft-agreement plan confidence (0-100) — how sure the planner was about the decomposition.
    *  null before planning finishes / when not computed. Updates live as the swarm retargets to raise it. */
   planConfidence: number | null;
@@ -835,6 +855,7 @@ const EMPTY: SwarmRunState = {
   sinkRenamedFrom: null,
   synthesisFallback: null,
   knownActiveBugs: [],
+  verdict: null,
   planConfidence: null,
   confidence: null,
   askFloor: null,
@@ -1242,6 +1263,7 @@ export function buildActivity(events: Array<Record<string, unknown>>): {
   sinkRenamedFrom: string | null;
   synthesisFallback: { error: string; tasks: number } | null;
   knownActiveBugs: string[];
+  verdict: RunVerdict | null;
 } {
   const feed: ActivityItem[] = [];
   const vfeed: ActivityItem[] = [];
@@ -1264,6 +1286,7 @@ export function buildActivity(events: Array<Record<string, unknown>>): {
   let sinkRenamedFrom: string | null = null;
   let synthesisFallback: { error: string; tasks: number } | null = null;
   let knownActiveBugs: string[] = [];
+  let verdict: RunVerdict | null = null;
   let finished = false;
   let cseq = 0;
   let vseq = 0;
@@ -1645,6 +1668,32 @@ export function buildActivity(events: Array<Record<string, unknown>>): {
       case 'complete_result': {
         const bugs = arr(e['known_active_bugs']).map(String);
         if (bugs.length > 0) knownActiveBugs = bugs;
+        // THE VERDICT, verbatim from the engine's own gate — r5 shipped {passed, verified, 7 remaining}
+        // and the only screen mention was the known-bugs caption. From here until run_finished the run is
+        // in its post-verdict tail (persona reflection, overview, final report), so the phase label says
+        // that instead of sitting on 'Repairing' — the silent 3.5-minute tail read as a hang.
+        verdict = {
+          passed: e['passed'] === true,
+          verified: e['verified'] === true,
+          passedMeans: str(e['passed_means']) || null,
+          remainingFindings: num(e['remaining_findings']),
+          shipped: str(e['shipped']) || null,
+        };
+        const vt = verdict.passed
+          ? `Verdict — PASSED${verdict.verified ? ', verified end-to-end' : ' (not verified)'}${bugs.length > 0 ? ` · ${bugs.length} known bug${bugs.length === 1 ? '' : 's'} ship` : ''}`
+          : `Verdict — FAILED${verdict.remainingFindings != null ? ` · ${verdict.remainingFindings} finding${verdict.remainingFindings === 1 ? '' : 's'} remain` : ''}`;
+        const tone = verdict.passed ? ('good' as const) : ('bad' as const);
+        compact({ kind: verdict.passed ? 'done' : 'fail', text: vt, tone });
+        verbose({
+          kind: verdict.passed ? 'done' : 'fail',
+          text: vt,
+          tone,
+          sub:
+            [verdict.passedMeans, verdict.shipped ? `shipped: ${verdict.shipped}` : '']
+              .filter(Boolean)
+              .join('\n') || undefined,
+        });
+        phase = 'Wrapping up';
         break;
       }
       case 'complete_result_revised': {
@@ -1660,6 +1709,31 @@ export function buildActivity(events: Array<Record<string, unknown>>): {
             : `Not verified — the engine retracted its green (${why || 'revised'})`;
         compact({ kind: 'fail', text, tone: 'bad' });
         verbose({ kind: 'fail', text, tone: 'bad', sub: mods.join('\n') || undefined });
+        // The retraction must UPDATE the verdict state, not only append a feed line — the verdict block
+        // reads this, and a green "verified" banner over a retracted green is the exact lie this event
+        // exists to prevent. `passed` is deliberately untouched (the engine never flips it red either).
+        if (verdict) verdict.verified = e['verified'] === true;
+        break;
+      }
+      case 'persona_learned': {
+        // The post-verdict tail's one model call (reflect_on_success). The written:false twin must render
+        // too — a reflection that came back empty or failed to write must not look like a learned skill.
+        const stack = str(e['stack_key']);
+        if (e['written'] === true) {
+          verbose({
+            kind: 'done',
+            tone: 'good',
+            text: `Learned a reusable skill for the ${stack || 'app'} stack`,
+            sub: str(e['path']) || undefined,
+          });
+        } else {
+          verbose({
+            kind: 'review',
+            tone: 'warn',
+            text: `Stack skill not written${stack ? ` (${stack})` : ''}`,
+            sub: str(e['reason']) || undefined,
+          });
+        }
         break;
       }
       case 'judge_look':
@@ -2520,6 +2594,7 @@ export function buildActivity(events: Array<Record<string, unknown>>): {
     sinkRenamedFrom,
     synthesisFallback,
     knownActiveBugs,
+    verdict,
   };
 }
 
@@ -3511,7 +3586,16 @@ export function isPlanningDigestKey(key: string): boolean {
   );
 }
 
-export type SupervisionLaneKind = 'judge' | 'replan' | 'prereview' | 'tailreview';
+export type SupervisionLaneKind =
+  | 'judge'
+  | 'replan'
+  | 'prereview'
+  | 'tailreview'
+  | 'schedjudge'
+  | 'verify'
+  | 'ask'
+  | 'pillars'
+  | 'reflect';
 
 /**
  * Which r6 supervision class a lane KEY belongs to — null for every worker/planner lane. Mirrors the
@@ -3525,6 +3609,12 @@ export function supervisionLaneKind(key: string): SupervisionLaneKind | null {
   if (/^replan-r\d+$/.test(key)) return 'replan';
   if (key.startsWith('prereview-')) return 'prereview';
   if (key.startsWith('tail-review-')) return 'tailreview';
+  if (key.startsWith('schedjudge-')) return 'schedjudge';
+  // Digit-exact like replan-r<n>: `verify-endpoints` is a name a plan could give a build task.
+  if (/^verify-\d+$/.test(key)) return 'verify';
+  if (key === 'ask-answer') return 'ask';
+  if (key === 'pillars') return 'pillars';
+  if (key === 'reflect') return 'reflect';
   return null;
 }
 
@@ -3553,6 +3643,12 @@ function digestLabel(key: string): string {
   if (supervisionKind === 'replan') return `Replanning · round ${key.slice('replan-r'.length)}`;
   if (supervisionKind === 'prereview') return `Pre-review · ${key.slice('prereview-'.length)}`;
   if (supervisionKind === 'tailreview') return `Tail review · ${key.slice('tail-review-'.length)}`;
+  if (supervisionKind === 'schedjudge')
+    return `Semantic review · ${key.slice('schedjudge-'.length)}`;
+  if (supervisionKind === 'verify') return `Verifying finding ${key.slice('verify-'.length)}`;
+  if (supervisionKind === 'ask') return 'Answering your question';
+  if (supervisionKind === 'pillars') return 'Distilling the plan into pillars';
+  if (supervisionKind === 'reflect') return 'Learning a reusable stack skill';
   if (key.startsWith('verify-e2e::')) return 'End-to-end verify';
   if (key.startsWith('verify::')) return `Verifying ${key.slice('verify::'.length)}`;
   if (key.startsWith('complete-fix::')) return 'Repairing verify findings';
@@ -4901,6 +4997,7 @@ export function useSwarmRun(workingDir: string | undefined, pollMs = 500): Swarm
           sinkRenamedFrom,
           synthesisFallback,
           knownActiveBugs,
+          verdict,
         } = buildActivity(data.events);
         // Gated BEFORE the fold, so a previous run's leftover digest cannot mint a lane, claim a node or
         // stamp a checklist row anywhere downstream. Every consumer below reads the gated pair.
@@ -4990,6 +5087,7 @@ export function useSwarmRun(workingDir: string | undefined, pollMs = 500): Swarm
           sinkRenamedFrom,
           synthesisFallback,
           knownActiveBugs,
+          verdict,
           planConfidence,
           confidence,
           askFloor,
