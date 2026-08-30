@@ -65,6 +65,7 @@ import {
   SWARM_STATUS,
   nextRevealedText,
   usePrefersReducedMotion,
+  usePageVisible,
 } from './formationVisualState';
 import { engineLiveness, isEngineSilent } from './swarmRunLiveness';
 
@@ -865,21 +866,32 @@ export function revealStep(args: {
   return nextRevealedText(args);
 }
 
-function useSmoothText(target: string, charsPerSec = 110): string {
+/**
+ * THE TYPEWRITER MUST NOT OUTLIVE ITS ANIMATION LOOP. A hidden/occluded window suspends rAF entirely,
+ * and `shown` only advanced inside rAF — so the painted text froze at its last frame (measured over CDP
+ * on the live r0 benchmark, 2026-08-30: the committed `text` prop moved from a 1,253-char paragraph to
+ * "💭 Hmm wait, …" across 10s while the DOM held 507 stale chars ending mid-word for the whole sampled
+ * window). The React path was healthy; the last link lied. A hidden page is treated exactly like
+ * reduced motion: deliver the target directly, and resume typing from it when the page is seen again.
+ * Exported for the fixture test that pins this.
+ */
+export function useSmoothText(target: string, charsPerSec = 110): string {
   const [shown, setShown] = useState('');
   const reduceMotion = usePrefersReducedMotion();
+  const pageVisible = usePageVisible();
+  const snap = reduceMotion || !pageVisible;
   const targetRef = useRef(target);
   targetRef.current = target;
   const shownRef = useRef('');
 
   useEffect(() => {
-    if (!reduceMotion) return;
+    if (!snap) return;
     shownRef.current = target;
     setShown(target);
-  }, [reduceMotion, target]);
+  }, [snap, target]);
 
   useEffect(() => {
-    if (reduceMotion) return;
+    if (snap) return;
     let raf = 0;
     let last = Date.now();
     const tick = () => {
@@ -902,8 +914,8 @@ function useSmoothText(target: string, charsPerSec = 110): string {
     };
     raf = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf);
-  }, [charsPerSec, reduceMotion]);
-  return reduceMotion ? target : shown;
+  }, [charsPerSec, snap]);
+  return snap ? target : shown;
 }
 
 // The per-node live-generation line — typewriter-smoothed so it flows instead of jumping every poll, and
