@@ -52,7 +52,7 @@ Each needs its PRO and CON stated in the hint, so a user knows what they are buy
 
 | Lever | PRO — what it buys | CON — what it costs |
 |---|---|---|
-| `ask_floor` / `ask_max_q` | goose asks instead of inventing your product. Measured: a run found 5 open decisions on the spec's own "do NOT guess" list. | Interrupts the build and waits on you. Set to 0 for unattended runs. |
+| `ask_floor` | goose asks instead of inventing your product. Measured: a run found 5 open decisions on the spec's own "do NOT guess" list. | Interrupts the build and waits on you. Set to 0 for unattended runs. (`ask_max_q` moved to DELETE: the truncation it configured is killed — see §3.) |
 | `fan_verify` | Per-module checks fan across the fleet instead of one serial sink. Pairs with `fan_e2e`. | Adds N tasks. On its own it does not touch the end-to-end run, which was the real bottleneck. |
 | `fan_e2e` | Shards the whole-app end-to-end check by COMMAND across the fleet. MEASURED h1-e2e-2 vs h1-treat-4 on the same spec: execute wall 65.9 -> 33.5 min, occupancy 28.8% -> 41.7%, biggest task 47% -> 21% of node-busy time, app still 9/9. | n=1. Needs `fan_verify`. A terminally-failed shard cascades into the join (see plan B6); not yet observed. |
 | `parallel_tests` | Tests start the moment their module lands, overlapping the build. | More subtasks on a slow fleet; unmeasured. |
@@ -71,6 +71,7 @@ Each needs its PRO and CON stated in the hint, so a user knows what they are buy
 |---|---|
 | `unwired_demotes_verified` | **MEASURED AND HURT.** The only lever with an explicit DO-NOT-SHIP verdict, backed by a reproduced false positive on a good app. |
 | `review_repro`, `repro_demotes_verified` | Already deleted (`cd739001c`). Their implementation lived inside the dead `review_fanout` gate, so the toggles reported on something that could not happen. |
+| `ask_max_q` | Inert since the truncation kill (`cfcd32908`): the ASK handshake asks EVERY open decision, and the engine reads the key nowhere (struct field + default only). The measured harm the lever's hint described — 5 material decisions found, 3 asked, 2 guessed silently — is exactly what the kill fixed, so the control could only lie about a cap that no longer exists. Removed from the panel, `DEFAULTS` and `PRESET_KEYS` (2026-08-30); the type field stays so a config.yaml still carrying the key round-trips untouched. |
 
 Dead engine features with no UI toggle were removed separately: `browser_verify`, `review_fanout`,
 `review_verify`, `review_fix`, `review_fix_parallel` — ~1,636 lines that could never execute.

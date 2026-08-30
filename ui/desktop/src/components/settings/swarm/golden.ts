@@ -74,10 +74,10 @@ export interface SwarmConfig {
   /** Confidence floor (1-100) below which the swarm asks the USER clarifying questions before building,
    *  instead of guessing. 0 / undefined = never ask. Surfaced live in the run panel's clarify prompt. */
   ask_floor?: number;
-  /** How many clarifying questions goose may ask at once. Default 3.
-   *  MEASURED: a run's probe found FIVE material open decisions — every one of them on the spec's explicit
-   *  "do NOT guess them" list — and the cap of 3 meant two were guessed anyway, silently. This cap is the
-   *  difference between asking about the user's product and inventing part of it. */
+  /** ENGINE-DEAD, kept only so a config.yaml that still carries the key round-trips through the panel
+   *  untouched. The truncation it configured is KILLED (cfcd32908): the ASK handshake asks EVERY open
+   *  decision — the measured harm (5 material decisions found, 3 asked, 2 guessed silently) is what the
+   *  kill fixed. No control reads or writes this; it is not in DEFAULTS or PRESET_KEYS. */
   ask_max_q?: number;
   /** Bind the ask's OPTIONS to the spec: never offer a choice the spec already ruled out, and never ask
    *  about something the spec fixed. Default OFF.
@@ -318,7 +318,7 @@ export const DEFAULTS: SwarmConfig = {
   homogeneous_models: false, // baked — heterogeneous fleet is the common case
   allow_model_load: false, // baked — warm fleet only unless asked
   ask_floor: 80, // baked Some(80) — never build below the bar; ask instead (+5 weak-planner bump -> 85)
-  ask_max_q: 3, // baked Some(3)
+  // ask_max_q is deliberately absent: engine-dead (see the interface note) — a reset must not re-write it.
   review: false, // baked false — the AST dead-code review is an OPTIONAL extra check (see the panel)
 };
 
@@ -342,7 +342,6 @@ export const PRESET_KEYS: (keyof SwarmConfig)[] = [
   'homogeneous_models',
   'allow_model_load',
   'ask_floor',
-  'ask_max_q',
   'review',
 ];
 
