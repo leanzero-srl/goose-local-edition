@@ -64,15 +64,24 @@ class RssSampler(threading.Thread):
     def __init__(self, pid):
         super().__init__(daemon=True)
         self.pid, self.max_rss_kb, self.stop = pid, 0, threading.Event()
+        self.samples, self.last_error = 0, None
 
     def run(self):
         while not self.stop.is_set():
             try:
                 out = subprocess.check_output(["ps", "-o", "rss=", "-p", str(self.pid)], text=True)
-                self.max_rss_kb = max(self.max_rss_kb, int(out.strip() or 0))
-            except Exception:
-                pass
+                self.max_rss_kb = max(self.max_rss_kb, int(out.strip()))
+                self.samples += 1
+            except (subprocess.CalledProcessError, ValueError) as e:
+                self.last_error = str(e)
             self.stop.wait(2.0)
+
+    def report(self):
+        if self.samples == 0:
+            return {"engine_max_rss_gb": None,
+                    "rss_sampling_failed": "0 samples for pid %s: %s" % (self.pid, self.last_error)}
+        return {"engine_max_rss_gb": round(self.max_rss_kb / (1024 ** 2), 2),
+                "rss_samples": self.samples}
 
 
 def stream_chat(base, model, messages, timeout, extra=None):
@@ -136,10 +145,9 @@ def stream_chat(base, model, messages, timeout, extra=None):
     else:
         ctok, tsrc = int(sum(len(p) for p in text_parts) / 4) + sum(
             (len(c["arguments"]) + len(c["name"])) // 4 for c in calls.values()), "estimate"
-    decode_s = max(total - (ttft or 0), 1e-6)
     return {"error": None, "ttft_s": ttft, "total_s": total, "finish": finish,
             "completion_tokens": ctok, "tokens_source": tsrc,
-            "decode_tps": ctok / decode_s, "text": "".join(text_parts),
+            "req_tps": ctok / max(total, 1e-6), "text": "".join(text_parts),
             "tool_calls": [calls[k] for k in sorted(calls)]}
 
 
@@ -201,7 +209,7 @@ def run_concurrency(base, model, n, timeout):
 def summarize(results, wall):
     ok_rows = [r for r in results if not r["error"]]
     ttfts = [r["ttft_s"] for r in ok_rows if r["ttft_s"] is not None]
-    tps = [r["decode_tps"] for r in ok_rows]
+    tps = [r["req_tps"] for r in ok_rows]
     fid = [r for r in results if r.get("tool_ok")]
     total_tokens = sum(r["completion_tokens"] for r in ok_rows)
     return {
@@ -212,8 +220,8 @@ def summarize(results, wall):
         "ttft_mean_s": round(statistics.mean(ttfts), 3) if ttfts else None,
         "ttft_p95_s": round(sorted(ttfts)[int(0.95 * (len(ttfts) - 1))], 3) if ttfts else None,
         "ttft_stdev_s": round(statistics.stdev(ttfts), 3) if len(ttfts) > 1 else 0.0,
-        "decode_tps_mean": round(statistics.mean(tps), 1) if tps else None,
-        "decode_tps_stdev": round(statistics.stdev(tps), 1) if len(tps) > 1 else 0.0,
+        "req_tps_mean": round(statistics.mean(tps), 1) if tps else None,
+        "req_tps_stdev": round(statistics.stdev(tps), 1) if len(tps) > 1 else 0.0,
         "tokens_estimated": sum(1 for r in ok_rows if r["tokens_source"] == "estimate"),
         "aggregate_tps": round(total_tokens / wall, 1) if wall else None,
         "wall_s": round(wall, 1),
@@ -279,7 +287,7 @@ def main():
     if sampler:
         sampler.stop.set()
         sampler.join(3)
-        report["engine_max_rss_gb"] = round(sampler.max_rss_kb / (1024 ** 2), 2)
+        report.update(sampler.report())
 
     error_rate = all_errors / all_rows if all_rows else 1.0
     verdict = "pass" if error_rate <= 0.2 and not report["prefix_probe"]["footgun_detected"] else \
