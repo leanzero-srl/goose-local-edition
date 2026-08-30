@@ -34,3 +34,9 @@ Per check: WHAT IT GUARDS · VERDICT: KEEP (passed the break test — show the b
 (name the exact window/anchor fix) / DEMOTE to tripwire / KILL (theater — show what passes while
 broken) / REPLACE WITH READER (name which reader agent and what primary material it reads). Never
 propose adding a cap or a seconds-literal as a fix. Read-only: report, never edit.
+
+## Sources & upkeep
+Authoritative sources for this charter are named in .claude/agents/ROSTER.md's law: when they move,
+this charter is re-checked. The orchestrator grades every delegation (ROSTER.md's four questions)
+and amends this file in the same turn a gap shows. Changelog:
+- 2026-08-30: minted (AGENT-SPLIT-1, dab1744f7).

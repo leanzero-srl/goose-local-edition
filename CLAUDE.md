@@ -56,7 +56,10 @@ thread.
 
 The last five are read-only by charter — they report, the orchestrator decides. A kill or a shipped
 fix needs the matching reader's independent verdict (gates 7/8); a third-party finding needs the
-refuter pattern before implementation.
+refuter pattern before implementation. **The roster improves itself**: after EVERY delegation, grade
+the return on ROSTER.md's four questions (charter gap / unclear / bloat / brief leak) and amend the
+charter in the same turn; the same work briefed inline a third time with no charter mints an agent.
+`.claude/agents/ROSTER.md` is the mechanism and its memory.
 
 ## Working in this repo without drowning in it
 

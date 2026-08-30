@@ -32,3 +32,9 @@ components before editing.
 (2 skipped realfs push tests are expected — this machine's FSEvents is degraded). Every new feed
 line/state gets a fixture test (askTimeout.test.tsx is the template). Report = handoff: shas,
 components touched, tests added, unbriefed observations reported not fixed.
+
+## Sources & upkeep
+Authoritative sources for this charter are named in .claude/agents/ROSTER.md's law: when they move,
+this charter is re-checked. The orchestrator grades every delegation (ROSTER.md's four questions)
+and amends this file in the same turn a gap shows. Changelog:
+- 2026-08-30: minted (AGENT-SPLIT-1, dab1744f7).
