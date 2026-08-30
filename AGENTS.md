@@ -240,6 +240,23 @@ entry claiming a loop without QUOTING the looping words is invalid on sight; eng
 is handed verbatim spans (current tail + a span from a prior look), never only counters, so it can
 SEE "same text as last look"; `development_gates.rs` asserts both docs and the skill carry this.
 
+**8. THE TRACE GATE — an engine change ships WITH its trace, or ships labeled a net.** Mihai,
+2026-08-30: *"do you have a gate installed when making these engine changes to run the changes
+mentally and see if they would make a difference?... Have you considered actually reading the code
+and not just skimming it?... install gates around this to be more specific at all times, to be more
+exact."* The receipt: the "recurrence corroborates drift" fix shipped minutes earlier could NOT have
+fired anywhere in r4b's actual look sequence — DRIFTING came at look 1 with the meter under its 8k
+span floor, and every later look said OK — and the commit never said so, because nobody walked the
+motivating run's real values through the new branch. THE RULE: a change that claims to fix a
+measured behavior carries, in its commit message, the trace — the motivating run's actual events
+and numbers walked through the new path, branch by branch, ending "would have changed the outcome:
+YES at <event, value> / NO, because <reason>". A NO may still ship, labeled A NET, never as the fix.
+And the reading half: before editing, read the surrounding functions WHOLE and follow the value to
+every consumer — a commit that cannot name what was read around the edit is skimming. HOW IT
+REFUSES: `development_gates.rs` pins this gate's presence here and in development-gates.md; the
+knob-turning/campaign skills carry the trace template; and in review, a fix-commit with no trace
+block is sent back on sight.
+
 ## Never
 
 - Never: Recreate `ui/desktop/src/api` or add `@hey-api/openapi-ts` to `ui/desktop`
