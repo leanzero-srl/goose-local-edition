@@ -221,6 +221,23 @@ describe('finding 8 — a wiped-and-restreamed lane has an on-screen cause', () 
     expect(row?.sub).toContain('41,213');
   });
 
+  it('says what crossed the cut when the event carries carried_tail_chars (engine 63ebe140b)', () => {
+    const { verbose } = buildActivity([
+      START,
+      { ...RESTREAM, established_chars: 971, carried_tail_chars: 2000 },
+    ]);
+    const row = verbose.find((r) => r.text.includes('wiped and re-streamed ledgerd-core'));
+    expect(row?.sub).toContain('carried across the cut: 971 established chars');
+    expect(row?.sub).toContain('+ 2,000 chars of the formed tail');
+  });
+
+  it('omits the formed-tail clause on a pre-63ebe140b event rather than inventing a number', () => {
+    const { verbose } = buildActivity([START, RESTREAM]);
+    const row = verbose.find((r) => r.text.includes('wiped and re-streamed ledgerd-core'));
+    expect(row?.sub).toContain('carried across the cut: 900 established chars');
+    expect(row?.sub).not.toContain('formed tail');
+  });
+
   it('stamps the lane with a restream count that survives a retry (event carry, not a digest field)', () => {
     const folded = foldEvents(
       [

@@ -211,6 +211,14 @@ type ElectronAPI = {
     } | null;
     pauseRequested: boolean;
   } | null>;
+  /** The WHOLE durable `<task>.log` / `<task>.think.log` for one lane, read on user action only —
+   *  the poll's bounded tail read stays bounded. `runDir` is readSwarmRun's resolved `dir`.
+   *  null = the file is not on disk (that absence is stated by the caller, never papered over). */
+  readSwarmActivityLog: (
+    runDir: string,
+    taskKey: string,
+    channel: 'thinking' | 'transcript'
+  ) => Promise<{ text: string; bytes: number } | null>;
   writeFile: (directory: string, content: string) => Promise<boolean>;
   /** Subscribe to the main process's fs.watch push for swarm run directories. The delta is a CHANGE
    *  HINT carrying no run data — read through readSwarmRun when it arrives. fs.watch can drop an
@@ -366,6 +374,8 @@ const electronAPI: ElectronAPI = {
   getBinaryPath: (binaryName: string) => ipcRenderer.invoke('get-binary-path', binaryName),
   readFile: (filePath: string) => ipcRenderer.invoke('read-file', filePath),
   readSwarmRun: (workingDir: string) => ipcRenderer.invoke('read-swarm-run', workingDir),
+  readSwarmActivityLog: (runDir: string, taskKey: string, channel: 'thinking' | 'transcript') =>
+    ipcRenderer.invoke('read-swarm-activity-log', runDir, taskKey, channel),
   onSwarmDelta: (callback: (delta: SwarmDelta) => void) => {
     const handler = (_event: Electron.IpcRendererEvent, delta: SwarmDelta) => callback(delta);
     ipcRenderer.on('swarm:delta', handler);
