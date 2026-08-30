@@ -24,10 +24,11 @@ class) that tick.py prints; never a template, never a quiet default.**
   see, the arm emits an event first (then degrades loudly), or it does not exist.
 - The enforcement points that already exist: GEN-1's arming predicate (the sink description arms on
   SPEC SURFACE non-empty, not ledger non-empty — the facts are computed unconditionally); GEN-5's
-  dispatch-time brief floor (a worker description below a named-fact floor — chars + at least one owned
-  file + one concrete objective fact — emits a `plan_flag` WARNING event, never a stop, and the tick
-  prints it); SW-6's supervision_reply gate (provider failures can no longer be laundered into verdicts
-  as error-closer text; failed-look events at every site; nothing applied on Err).
+  dispatch-time brief floor (landed 2026-08-30: `thin_brief_missing` at the dispatch seam — a worker
+  description below the named-fact floor — chars + at least one owned file + one concrete objective
+  fact — emits a `thin_brief{task, chars, missing}` WARNING event, never a stop, and tick.py prints a
+  `thin briefs:` line); SW-6's supervision_reply gate (provider failures can no longer be laundered
+  into verdicts as error-closer text; failed-look events at every site; nothing applied on Err).
 
 ### The suspect catalogue — the ten evidence-hiders (GEN-6 sweep, 2026-08-30 07:29)
 

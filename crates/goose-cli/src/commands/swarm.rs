@@ -5053,6 +5053,43 @@ mod tests {
         );
     }
 
+    /// GEN-5: the brief guard is a MEASURING instrument for the "no one-line spec" checkpoint.
+    /// It classifies; it may never stop, downgrade or re-route (the dispatcher only ever emits
+    /// a `thin_brief` warning event from its result). Pinned here: a substantive brief clears
+    /// the floor, the one-line spec misses all three named facts, and a task that owns nothing
+    /// is not charged for naming no file.
+    #[test]
+    fn a_thin_brief_is_measured_never_stopped() {
+        let rich = "Implement the ledger core: `app/ledger_core.py` must expose \
+                    post_entry(db, amount_minor, currency) and rebuild_balances(db), persisting \
+                    through sqlite3.Connection; amounts are integer cents (never floats); \
+                    `python3 -m pytest tests/test_ledger_core.py` must pass. The API layer \
+                    imports these two functions exactly as named — keep the signatures stable.";
+        assert!(
+            thin_brief_missing(rich, &["app/ledger_core.py".to_string()], "ledger-core").is_empty(),
+            "a substantive brief clears the named-fact floor"
+        );
+        assert_eq!(
+            thin_brief_missing(
+                "Build the ledger",
+                &["app/ledger_core.py".to_string()],
+                "ledger-core"
+            ),
+            vec!["min_chars", "owned_file", "objective_fact"],
+            "the one-line spec misses every named fact, and each miss is named"
+        );
+        assert!(
+            thin_brief_missing(rich, &[], "integrate-verify").is_empty(),
+            "a task owning nothing is not charged for naming no file"
+        );
+        // A basename mention counts as naming the owned file — plans often drop the directory.
+        let by_basename = format!("{rich} Write ledger_core.py first.");
+        assert!(
+            !thin_brief_missing(&by_basename, &["app/ledger_core.py".to_string()], "core")
+                .contains(&"owned_file")
+        );
+    }
+
     /// II-4: a round-0 NOT FIXED verdict reaches the round-1 shard's text VERBATIM — the fresh
     /// per-round Scheduler discards its SharedContext, so the on-disk repair ledger is the only
     /// channel between rounds, and this is the splice that reads it.
@@ -32829,6 +32866,60 @@ fn sink_semantic_description(
     }
 }
 
+/// GEN-5: the dispatch-time brief guard's char floor — a MEASURING instrument for the
+/// "no one-line spec" checkpoint, which until now had no instrument at all. 240 is the
+/// codebase's existing "substantive detail" bar (thin_integrate_verify_spec is >240 chars and
+/// passes it), reused rather than invented. This bounds NOTHING: a brief below the floor
+/// ships exactly as it is — the guard emits a warning event and may never stop, downgrade or
+/// re-route a dispatch (MILD; a gate here would be a cap by another name).
+const THIN_BRIEF_MIN_CHARS: usize = 240;
+
+/// What a dispatched description is missing against the named-fact floor: enough chars, at
+/// least one of the task's own owned files named (path or basename; skipped for a task owning
+/// nothing — a verifier's brief has no file to name), and at least one concrete objective
+/// token beyond the task's own title words (a path-, call- or identifier-shaped token — a
+/// heuristic, acceptable for a warning that measures and never gates). Empty = floor met.
+fn thin_brief_missing(
+    description: &str,
+    owned_files: &[String],
+    task_id: &str,
+) -> Vec<&'static str> {
+    let mut missing = Vec::new();
+    if description.chars().count() < THIN_BRIEF_MIN_CHARS {
+        missing.push("min_chars");
+    }
+    if !owned_files.is_empty() {
+        let named = owned_files.iter().any(|f| {
+            description.contains(f.as_str())
+                || std::path::Path::new(f)
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .is_some_and(|b| description.contains(b))
+        });
+        if !named {
+            missing.push("owned_file");
+        }
+    }
+    let title_words: std::collections::HashSet<&str> = task_id.split(['-', '_']).collect();
+    let concrete = description.split_whitespace().any(|raw| {
+        let t = raw
+            .trim_matches(|c: char| ",.;:!?\"'()".contains(c))
+            .trim_matches('`');
+        if t.chars().count() < 3 || title_words.contains(t) || t.eq_ignore_ascii_case(task_id) {
+            return false;
+        }
+        t.contains('/')
+            || t.contains('(')
+            || t.contains('_')
+            || t.contains("::")
+            || t.split('.').filter(|p| !p.is_empty()).count() >= 2
+    });
+    if !concrete {
+        missing.push("objective_fact");
+    }
+    missing
+}
+
 /// F790-3: the operator questions waiting in `<root>/.swarm/questions/*.txt` that have no
 /// answer in `<root>/.swarm/answers/<same-stem>.txt` yet, oldest first. Pure over the
 /// filesystem so the discovery rule is testable: the answer file's existence IS the
@@ -34145,6 +34236,22 @@ impl GooseAgentDispatcher {
                 "chars": b.chars().count(),
                 "desc_sha": content_hash(b.as_bytes()).chars().take(8).collect::<String>(),
             }));
+        }
+        // GEN-5: the dispatch-time brief guard — MEASURING, never stopping. A description
+        // below the named-fact floor ships exactly as it is; the event is the instrument the
+        // "no one-line spec" checkpoint never had, and tick.py prints a `thin briefs:` line
+        // when any exist. Attempt 0 only: the brief is the PLAN's artifact and does not change
+        // across re-dispatches, so one event per task is the honest count.
+        if req.attempt == 0 && !req.speculative {
+            let missing = thin_brief_missing(effective_description, &req.owned_files, &req.task_id);
+            if !missing.is_empty() {
+                self.events.write_value(serde_json::json!({
+                    "event": "thin_brief",
+                    "task_id": req.task_id,
+                    "chars": effective_description.chars().count(),
+                    "missing": missing,
+                }));
+            }
         }
         // II-8: a re-dispatch must not start blind. The generic transient hint GUESSES ("any file
         // you had written is still on disk") and on r2 that guess was false — ledger-core-tests'
