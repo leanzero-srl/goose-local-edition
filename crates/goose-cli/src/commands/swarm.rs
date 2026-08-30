@@ -4343,6 +4343,143 @@ mod tests {
         assert!(process_groups::group_alive(own), "we must still be alive");
     }
 
+    /// II-1's parser, on r2's REAL tails (pulled from the archived run's activity digests). The
+    /// load-bearing case is the first: a failing suite behind `| tail` recorded `ok: true`, and
+    /// the counts are the only honest bit.
+    #[test]
+    fn parse_pytest_summary_reads_r2s_real_output_shapes() {
+        // ledger-core-tests attempt 0 (ok:true in the live digest — the false green):
+        let s = parse_pytest_summary(
+            "=================== 7 failed, 19 passed, 13 warnings in 0.29s ===================",
+        )
+        .unwrap();
+        assert_eq!((s.passed, s.failed, s.errors), (19, 7, 0));
+        assert!(!s.collect_error);
+
+        // integrate-verify's clean run:
+        let s = parse_pytest_summary(
+            "============================== 43 passed in 1.40s ==============================",
+        )
+        .unwrap();
+        assert_eq!((s.passed, s.failed, s.errors), (43, 0, 0));
+
+        // A failed-only bar with warnings — passed must read 0, not inherit an earlier line:
+        let s = parse_pytest_summary(
+            "===== 43 passed in 1.36s =====\n======================== 1 failed, 9 warnings in 0.07s =========================",
+        )
+        .unwrap();
+        assert_eq!((s.passed, s.failed), (0, 1));
+
+        // The bare non-bar form slice-camera-system produced:
+        let s = parse_pytest_summary("15 passed, 2 failed").unwrap();
+        assert_eq!((s.passed, s.failed), (15, 2));
+
+        // Short-summary names, verbatim from r2:
+        let s = parse_pytest_summary(
+            "FAILED tests/test_ledger_core.py::TestUpsertIdempotency::test_reversal_idempotent\n\
+             FAILED tests/test_ledger_concurrency.py::TestStress::test_high_volume_concurrent_writes\n\
+             ========================= 2 failed, 24 passed in 1.11s =========================",
+        )
+        .unwrap();
+        assert_eq!(s.failures.len(), 2);
+        assert!(s.failures[0].contains("test_reversal_idempotent"));
+
+        // The testgen-poison collect error (task ids imported as modules):
+        let s = parse_pytest_summary(
+            "==================================== ERRORS ====================================\n\
+             ImportError while importing test module 'test_interfaces.py'.\n\
+             E   ModuleNotFoundError: No module named 'app.approval_workflow'\n\
+             ERROR test_interfaces.py\n\
+             !!!!!!!!!!!!!!!!!!! Interrupted: 1 error during collection !!!!!!!!!!!!!!!!!!!!\n\
+             =========================== 1 error in 0.12s ===========================",
+        )
+        .unwrap();
+        assert!(s.collect_error);
+        assert_eq!(s.errors, 1);
+        assert_eq!(s.failures, vec!["test_interfaces.py".to_string()]);
+
+        // Non-pytest output must yield None — prose 'error' words included (real r2 strings):
+        assert!(parse_pytest_summary(
+            "urllib.error.HTTPError: HTTP Error 500: Internal Server Error"
+        )
+        .is_none());
+        assert!(parse_pytest_summary("            consecutive_errors = 0").is_none());
+        assert!(parse_pytest_summary("ledger-core: all checks passed").is_none());
+        assert!(parse_pytest_summary("").is_none());
+
+        // "no tests ran" is a real (empty) run, not a parse miss:
+        let s = parse_pytest_summary("no tests ran in 0.01s").unwrap();
+        assert_eq!((s.passed, s.failed), (0, 0));
+    }
+
+    /// II-1's isolation fixture: attempt 0's captured calls SURVIVE the digest reseed that a
+    /// re-dispatch performs (the seed erased r2's ledger-core-tests attempt 0), and the watermark
+    /// never duplicates a row across the multiple write sites.
+    #[test]
+    fn calls_jsonl_survives_the_redispatch_seed_and_never_duplicates() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("ledger-core-tests.json");
+        let mut records: Vec<(String, String, Option<bool>, String)> = vec![(
+            "shell".into(),
+            "python3 -m pytest".into(),
+            Some(true),
+            "=== 7 failed, 19 passed in 0.29s ===".into(),
+        )];
+        let mut at = 0usize;
+        append_calls_jsonl(&p, 0, &records, &mut at);
+        // The same records again (a second digest flush) must append nothing.
+        append_calls_jsonl(&p, 0, &records, &mut at);
+        // The RE-DISPATCH: the seed overwrites the digest file itself — the erase II-1 outlives.
+        let said = SaidProvenance::at_dispatch(1);
+        std::fs::write(&p, seed_worker_digest("m", &said).to_string()).unwrap();
+        records.push((
+            "write".into(),
+            "write app/x.py".into(),
+            Some(true),
+            "ok".into(),
+        ));
+        let mut at1 = 1usize; // fresh attempt's watermark starts past nothing of its own
+        append_calls_jsonl(&p, 1, &records, &mut at1);
+        let lines: Vec<serde_json::Value> =
+            std::fs::read_to_string(p.with_extension("calls.jsonl"))
+                .unwrap()
+                .lines()
+                .map(|l| serde_json::from_str(l).unwrap())
+                .collect();
+        assert_eq!(
+            lines.len(),
+            2,
+            "attempt 0's row survived, attempt 1 appended"
+        );
+        assert_eq!(lines[0]["attempt"], 0);
+        assert_eq!(lines[0]["pytest"]["failed"], 7);
+        assert_eq!(lines[1]["attempt"], 1);
+    }
+
+    /// II-1 fs_delta: writes are attributed by the attempt's WINDOW, and out-of-manifest paths
+    /// are named — the stat that catches what a self-report denies (r2's testgen root files).
+    #[test]
+    fn fs_delta_attributes_the_window_and_flags_out_of_manifest_writes() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join("app")).unwrap();
+        std::fs::write(dir.path().join("app/api.py"), "x = 1\n").unwrap();
+        let before = snapshot_tree_files(dir.path());
+        std::fs::write(dir.path().join("app/api.py"), "x = 2  # grown\n").unwrap();
+        std::fs::write(dir.path().join("test_interfaces.py"), "import app\n").unwrap();
+        // Engine bookkeeping must never show up in the delta.
+        std::fs::create_dir_all(dir.path().join(".swarm")).unwrap();
+        std::fs::write(dir.path().join(".swarm/x.json"), "{}").unwrap();
+        let after = snapshot_tree_files(dir.path());
+        let manifest = vec!["app/api.py".to_string()];
+        let delta = fs_delta_between(&before, &after, Some(&manifest));
+        assert_eq!(delta["appeared"], serde_json::json!(["test_interfaces.py"]));
+        assert_eq!(delta["changed"], serde_json::json!(["app/api.py"]));
+        assert_eq!(
+            delta["outside_manifest"],
+            serde_json::json!(["test_interfaces.py"])
+        );
+    }
+
     #[test]
     fn answers_win_floor_keeps_answered_plan_only_when_gated_and_non_structural() {
         use PostAnswerAction::*;
@@ -14425,6 +14562,212 @@ fn append_attempt_marker(activity_path: &Path, attempt: u32, dispatched_at: &str
     }
 }
 
+/// What a pytest tail actually says, parsed by code instead of trusted from a tool's exit status.
+///
+/// WHY (r2): the live sink's digest recorded `ok: true` on a run whose tail read "32 failed, 46
+/// passed" — the suite ran behind `| tail`, the pipeline exited 0, and nothing downstream ever
+/// read the counts. Every consumer of "did the tests pass" was reading the WRONG bit. This is the
+/// measurement, attached to the captured call row; it changes no behaviour and gates nothing.
+#[derive(Debug, PartialEq, Eq, Serialize)]
+struct PytestSummary {
+    passed: u32,
+    failed: u32,
+    errors: u32,
+    /// A collection/import failure — the suite never ran, whatever the counts say. r2's testgen
+    /// root files (imports of task ids as modules) produced exactly this shape.
+    collect_error: bool,
+    /// Names from the short-summary `FAILED path::test` / `ERROR path` lines, capped so a huge
+    /// suite cannot bloat a capture row.
+    failures: Vec<String>,
+}
+
+/// Pure parse of a pytest output tail into counts + failure names; `None` when the text carries no
+/// pytest signature at all. Tolerant of the real shapes r2 produced: the `=== N failed, M passed,
+/// K warnings in Xs ===` bar, a bare "15 passed, 2 failed", "no tests ran", and the
+/// collection-error banner. The LAST count-bearing line wins — a tail can hold several runs.
+fn parse_pytest_summary(tail: &str) -> Option<PytestSummary> {
+    let mut counts: Option<(u32, u32, u32)> = None;
+    let mut failures: Vec<String> = Vec::new();
+    const MAX_FAILURE_NAMES: usize = 30;
+    for line in tail.lines() {
+        let trimmed = line.trim();
+        // Short-summary attribution lines. Requiring a `.py`/`::` token keeps prose like
+        // "ERROR 500" out — every real pytest line names a file or a nodeid.
+        for prefix in ["FAILED ", "ERROR "] {
+            if let Some(rest) = trimmed.strip_prefix(prefix) {
+                if let Some(name) = rest.split_whitespace().next() {
+                    if (name.contains(".py") || name.contains("::"))
+                        && failures.len() < MAX_FAILURE_NAMES
+                        && !failures.iter().any(|f| f == name)
+                    {
+                        failures.push(name.to_string());
+                    }
+                }
+            }
+        }
+        if trimmed.contains("no tests ran") {
+            counts = Some((0, 0, 0));
+            continue;
+        }
+        // Count tokens: a digit word immediately followed by passed/failed/error(s). Windows over
+        // alphanumeric tokens dodge the prose false-positives ("HTTP Error 500", "errors (`400`)").
+        let toks: Vec<&str> = trimmed
+            .split(|c: char| !c.is_ascii_alphanumeric())
+            .filter(|t| !t.is_empty())
+            .collect();
+        let (mut lp, mut lf, mut le) = (None, None, None);
+        for w in toks.windows(2) {
+            if let Ok(n) = w[0].parse::<u32>() {
+                match w[1] {
+                    "passed" => lp = Some(n),
+                    "failed" => lf = Some(n),
+                    "error" | "errors" => le = Some(n),
+                    _ => {}
+                }
+            }
+        }
+        if lp.is_some() || lf.is_some() || le.is_some() {
+            // ALL THREE reset from this line: "1 failed, 9 warnings" means 0 passed on THIS run,
+            // not whatever an earlier bar in the same tail said.
+            counts = Some((lp.unwrap_or(0), lf.unwrap_or(0), le.unwrap_or(0)));
+        }
+    }
+    let collect_error = tail.contains("error during collection")
+        || tail.contains("errors during collection")
+        || tail.contains("ImportError while importing test module");
+    if counts.is_none() && !collect_error && failures.is_empty() {
+        return None;
+    }
+    let (passed, failed, errors) = counts.unwrap_or((0, 0, 0));
+    Some(PytestSummary {
+        passed,
+        failed,
+        errors,
+        collect_error,
+        failures,
+    })
+}
+
+/// II-1: append the NEW completed call records to the append-only `<task>.calls.jsonl`.
+///
+/// The digest is REWRITTEN in place and RESEEDED at every re-dispatch — that seed is what erased
+/// ledger-core-tests' 12-minute attempt 0 and the sink's 46-call attempt 0 on r2. This sibling is
+/// append-only across attempts (the `.log`/`.think.log` rule applied to calls), so an attempt's
+/// work survives its own death. `already` is the caller's watermark into `call_records`; rows are
+/// never rewritten and never duplicated. Best-effort like the transcripts: a failed write must
+/// never disturb a run.
+fn append_calls_jsonl(
+    activity_path: &Path,
+    attempt: u32,
+    call_records: &[(String, String, Option<bool>, String)],
+    already: &mut usize,
+) {
+    if call_records.len() <= *already {
+        return;
+    }
+    let path = activity_path.with_extension("calls.jsonl");
+    let Ok(mut f) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)
+    else {
+        return;
+    };
+    let ts = chrono::Utc::now().to_rfc3339();
+    for (name, summary, ok, result) in &call_records[*already..] {
+        let mut row = serde_json::json!({
+            "ts": ts,
+            "attempt": attempt,
+            "name": name,
+            "summary": summary,
+            "ok": ok,
+            "result_tail": tail_chars(result, 2000),
+        });
+        if let Some(py) = parse_pytest_summary(result) {
+            row["pytest"] = serde_json::to_value(py).unwrap_or(serde_json::Value::Null);
+        }
+        if f.write_all(format!("{row}\n").as_bytes()).is_err() {
+            return;
+        }
+    }
+    *already = call_records.len();
+}
+
+/// II-1 fs_delta, half 1: a cheap (path → mtime secs, size) map of the tree, taken at attempt
+/// start. Excludes the engine's own bookkeeping and cache dirs so the delta is the APP's files.
+fn snapshot_tree_files(root: &Path) -> std::collections::BTreeMap<String, (i64, u64)> {
+    const SKIP_DIRS: [&str; 6] = [
+        ".swarm",
+        ".git",
+        "__pycache__",
+        "node_modules",
+        ".venv",
+        "target",
+    ];
+    let mut out = std::collections::BTreeMap::new();
+    let mut stack = vec![root.to_path_buf()];
+    while let Some(dir) = stack.pop() {
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let name = entry.file_name().to_string_lossy().into_owned();
+            let Ok(meta) = entry.metadata() else { continue };
+            if meta.is_dir() {
+                if !SKIP_DIRS.contains(&name.as_str()) {
+                    stack.push(path);
+                }
+                continue;
+            }
+            let mtime = meta
+                .modified()
+                .ok()
+                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                .map(|d| d.as_secs() as i64)
+                .unwrap_or(0);
+            if let Ok(rel) = path.strip_prefix(root) {
+                out.insert(rel.to_string_lossy().into_owned(), (mtime, meta.len()));
+            }
+        }
+    }
+    out
+}
+
+/// II-1 fs_delta, half 2: what appeared/changed during THIS attempt's window, and which of those
+/// paths no planned task owns. Attribution by WINDOW is the whole point: r2's testgen calls wrote
+/// test_interfaces.py at the tree root inside a call window whose self-report said "no landable
+/// fenced test block" — a stat catches what a self-report denies.
+fn fs_delta_between(
+    before: &std::collections::BTreeMap<String, (i64, u64)>,
+    after: &std::collections::BTreeMap<String, (i64, u64)>,
+    manifest: Option<&Vec<String>>,
+) -> serde_json::Value {
+    let mut appeared: Vec<&String> = Vec::new();
+    let mut changed: Vec<&String> = Vec::new();
+    for (path, sig) in after {
+        match before.get(path) {
+            None => appeared.push(path),
+            Some(prev) if prev != sig => changed.push(path),
+            Some(_) => {}
+        }
+    }
+    let outside_manifest: Vec<&&String> = manifest
+        .map(|m| {
+            appeared
+                .iter()
+                .chain(changed.iter())
+                .filter(|p| !m.iter().any(|f| f == **p))
+                .collect()
+        })
+        .unwrap_or_default();
+    serde_json::json!({
+        "appeared": appeared,
+        "changed": changed,
+        "outside_manifest": outside_manifest,
+    })
+}
+
 /// Build the `.swarm/activity/<key>.json` digest a worker/scout/planner call refreshes as it streams. The judge
 /// reads only tool_calls/errors/recent/last_text; every other key is inert to it (unknown-key-tolerant reader) and
 /// powers the desktop panel's live per-node view. Two dev-verbosity additions over the old inline block: (1) each
@@ -16102,6 +16445,18 @@ impl GooseAgentDispatcher {
         let mut flush_digest_now = false;
         // How many text chunks have already reached the append-only transcript beside the digest.
         let mut transcript_at: usize = 0;
+        // II-1: watermark into `call_records` for the append-only `<task>.calls.jsonl` — appended at
+        // BOTH digest write sites (the main loop and the judge-probe branch, the AGENTS.md invariant
+        // pair) plus the terminal flush, so an attempt's calls survive the digest reseed that erased
+        // r2's ledger-core-tests attempt 0 and the sink's 46-call attempt 0.
+        let mut calls_jsonl_at: usize = 0;
+        // II-1 fs_delta: the tree as this attempt found it. The end-of-attempt delta attributes
+        // out-of-manifest writes to their WINDOW — the stat that caught r2's testgen root files
+        // against an engine self-report that denied them.
+        let fs_before = activity_file
+            .as_ref()
+            .map(|_| snapshot_tree_files(&work_dir));
+        let attempt_started = std::time::Instant::now();
         // Thinking produced since the last flush to `<task>.think.log`. The digest keeps only a rolling
         // 2,400-char window, so without this the reasoning channel has no durable record at all.
         let mut think_unflushed = String::new();
@@ -17095,6 +17450,12 @@ impl GooseAgentDispatcher {
                                                 transcript_at,
                                             );
                                             append_thinking_transcript(p, &mut think_unflushed);
+                                            append_calls_jsonl(
+                                                p,
+                                                said.attempt,
+                                                &call_records,
+                                                &mut calls_jsonl_at,
+                                            );
                                             last_digest_at = Some(tokio::time::Instant::now());
                                             flush_digest_now = false;
                                         }
@@ -17876,6 +18237,7 @@ impl GooseAgentDispatcher {
                     }
                     transcript_at = append_reasoning_transcript(p, &texts, transcript_at);
                     append_thinking_transcript(p, &mut think_unflushed);
+                    append_calls_jsonl(p, said.attempt, &call_records, &mut calls_jsonl_at);
                     last_digest_at = Some(tokio::time::Instant::now());
                     flush_digest_now = false;
                 }
@@ -17915,6 +18277,37 @@ impl GooseAgentDispatcher {
             let _ = std::fs::write(p, digest.to_string());
             let _ = append_reasoning_transcript(p, &texts, transcript_at);
             append_thinking_transcript(p, &mut think_unflushed);
+            // The stragglers (pending drained above with unknown ok), then the per-attempt snapshot
+            // row: the terminal digest (minus `calls`, already captured row by row) plus the
+            // fs_delta for this attempt's window — written BEFORE any re-dispatch can reseed the
+            // digest, which is the erase that cost r2 its two biggest attempts' evidence.
+            append_calls_jsonl(p, said.attempt, &call_records, &mut calls_jsonl_at);
+            let mut snapshot = digest.clone();
+            if let Some(obj) = snapshot.as_object_mut() {
+                obj.remove("calls");
+            }
+            let fs_delta = fs_before.as_ref().map(|before| {
+                fs_delta_between(
+                    before,
+                    &snapshot_tree_files(&work_dir),
+                    self.sink_tree_files.get(),
+                )
+            });
+            let end_row = serde_json::json!({
+                "kind": "attempt_end",
+                "ts": chrono::Utc::now().to_rfc3339(),
+                "attempt": said.attempt,
+                "elapsed_secs": attempt_started.elapsed().as_secs(),
+                "fs_delta": fs_delta,
+                "digest": snapshot,
+            });
+            if let Ok(mut f) = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(p.with_extension("calls.jsonl"))
+            {
+                let _ = f.write_all(format!("{end_row}\n").as_bytes());
+            }
             // The mirrored copy MUST receive this terminal phase="done" too, or the panel would hold
             // a mirrored fix node at "working" forever — the shadow (and its digest) is deleted the
             // moment the round ends, so the mirror is the only copy left to correct.
@@ -34011,6 +34404,61 @@ impl GooseAgentDispatcher {
                     // attempt's own shell process groups on every exit (see ShellGroupReaper), so
                     // this Transient return can no longer leak them. r2 leaked 3 PPID-1 servers on
                     // exactly this path, and the reap that removed them killed the engine too.
+                    //
+                    // II-1 amendment: every drop SELF-CLASSIFIES. r2 lost ~52 min to two of these
+                    // and the post-mortem had to reconstruct what was generating, for how long,
+                    // and whether a provider read window did the cutting — from mtimes. This event
+                    // records those measurements at the moment of the drop (data only, the retry
+                    // behaviour is byte-identical): silence measured off the digest's own mtime,
+                    // the read window read from the live env (null = no window in force, II-7's
+                    // world — its deletion ships with this as the receipt), and what the digest
+                    // last saw the call doing. The scheduler-side task_retry event stays untouched
+                    // (scheduler.rs is another lane); join on task_id + attempt.
+                    let digest_path = root
+                        .join(".swarm")
+                        .join("activity")
+                        .join(format!("{}.json", activity_digest_key(&req.task_id)));
+                    let silence_secs_at_drop = std::fs::metadata(&digest_path)
+                        .and_then(|m| m.modified())
+                        .ok()
+                        .and_then(|t| t.elapsed().ok())
+                        .map(|d| d.as_secs());
+                    let digest: Option<serde_json::Value> = std::fs::read_to_string(&digest_path)
+                        .ok()
+                        .and_then(|s| serde_json::from_str(&s).ok());
+                    let dg = |k: &str| digest.as_ref().and_then(|d| d.get(k).cloned());
+                    let last_call = digest
+                        .as_ref()
+                        .and_then(|d| d.get("calls")?.as_array()?.last()?.get("summary")?.as_str())
+                        .map(|s| s.chars().take(200).collect::<String>());
+                    let provider_error_class = out
+                        .text
+                        .lines()
+                        .rev()
+                        .find(|l| {
+                            let low = l.to_lowercase();
+                            low.contains("stream decode") || low.contains("network error")
+                        })
+                        .map(|l| l.trim().chars().take(200).collect::<String>())
+                        .unwrap_or_else(|| "stream decode error".to_string());
+                    self.events.write_value(serde_json::json!({
+                        "event": "task_transient_drop",
+                        "task_id": req.task_id,
+                        "device": req.device_id,
+                        "attempt": req.attempt,
+                        "elapsed_secs": secs,
+                        "silence_secs_at_drop": silence_secs_at_drop,
+                        "live_read_window_secs": std::env::var("GOOSE_PROVIDER_READ_TIMEOUT_SECS")
+                            .ok()
+                            .and_then(|v| v.parse::<u64>().ok()),
+                        "provider_error_class": provider_error_class,
+                        "generating": {
+                            "tool_calls": dg("tool_calls"),
+                            "thinking_chars": dg("thinking_chars"),
+                            "last_call": last_call,
+                            "text_chars": out.text.chars().count(),
+                        },
+                    }));
                     eprintln!(
                         "  {} {} on {} ({:.1}s) — provider stream decode error (mid-stream body drop); re-dispatching",
                         style("↻").yellow().bold(),
