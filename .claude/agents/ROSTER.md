@@ -383,3 +383,11 @@ research_request_block's armed-no-claimed-sections arm wording.
   charter gap) and swarm_engine.rs escapes run_path_files (dispatched as step-B item 6). Brief leak:
   stale line anchors from a pre-pull exploration — the surgeon re-located by surface strings as its
   charter directs; keep giving surfaces, drop the numbers. Charter gap: none.
+- 2026-08-31 01:10 panel-surgeon (MLX Engine window + local-inference UI removal, 881403086):
+  CLEAN+. Registered the view with a capability gate so older goosed shows no dead nav; kept a
+  precise not-removed list with import receipts (ModelSettingsPanel ← ModelsBottomBar; the flag
+  still gates dictation/onboarding/swarm-tab); honest 0-vs-unset payload semantics with fixtures;
+  window.confirm spy proves the ban held; REFUSED to claim live verification (CDP down, cargo
+  contention) and said so — that gap is the orchestrator's next step, exactly right. Unbriefed
+  finds: pnpm node_modules absent on this machine (installed frozen), orphan engine on 8090 named
+  as a future collision, faded-tint survivors elsewhere in settings worth a sweep. Charter gap: none.

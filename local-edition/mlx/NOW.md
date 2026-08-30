@@ -50,6 +50,13 @@ keep this file and the ledger current so restrictions and thread survive compact
 plan is the authorization for all of it — bake-off, fork, integration, UI.
 
 ## The one decision waiting
+Live-app verification of the new window (mount 9B via UI, HF search/download, sampling apply,
+old window gone), THEN the local-inference default-feature flip with degradation proof, THEN the
+swarm micro-run through the SwarmEngine path. Blocked only on cargo going quiet (surgeon step B in
+flight in swarm.rs). Before the desktop mount test: stop the manual rapid-mlx on 8090 (the manager
+needs the port; gates will refuse otherwise, correctly).
+
+## Superseded waiting-item (kept for the record)
 Bake-off verdict, pending oMLX numbers. State (2026-08-30 ~23:00): rapid-mlx 0.13.1 DONE — 3
 concordant runs in experiments.jsonl (fidelity 1.0 at N=1/4/8, TTFT ~1.7/3.8/7.5s, aggregate up to
 ~50 tps, no hybrid footgun, RSS max 4.4 GB, serves ~/.goose/models path directly, hermes parser
