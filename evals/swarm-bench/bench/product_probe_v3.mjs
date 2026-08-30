@@ -429,6 +429,23 @@ function labelPoseDecisive(rows) {
 }
 
 // ── selfcheck: identities + hand anchors; no browser, no app ─────────────────────────────────
+// Console-error source attribution (r5 REPAIR r0 receipt: the render gate's finding carried
+// consoleErrors.texts[0] with no file, so viz.js's ReferenceError parked as a known_bug while
+// contract nits got fix shards). URL -> server-relative path; '' means unknown, never fabricated.
+function urlToRelPath(u) {
+  try {
+    const parsed = new URL(String(u));
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return '';
+    return parsed.pathname.replace(/^\/+/, '');
+  } catch {
+    return '';
+  }
+}
+function stackFirstRelPath(stack) {
+  const m = /https?:\/\/[^\s)]+/.exec(String(stack || ''));
+  return m ? urlToRelPath(m[0].replace(/(:\d+){1,2}$/, '')) : '';
+}
+
 function selfcheck() {
   const failures = [];
   const near = (a, b, tol, what) => {
@@ -504,6 +521,15 @@ function selfcheck() {
     if (!rectsOverlap(A, B, 5)) failures.push('c rectsOverlap');
     if (!rectsClear(A, C, 5)) failures.push('c rectsClear');
     if (rectsOverlap(A, C, 0) || rectsClear(A, B, 5)) failures.push('c rect predicates inverted');
+  }
+  // console-error source attribution: URL -> server-relative path, '' when unknown
+  {
+    if (urlToRelPath('http://127.0.0.1:54622/web/viz.js') !== 'web/viz.js') failures.push('s url relpath');
+    if (urlToRelPath('about:blank') !== '') failures.push('s non-http not empty');
+    if (urlToRelPath('http://127.0.0.1:54622/') !== '') failures.push('s bare root not empty');
+    const stk = 'ReferenceError: x is not defined\n    at onLoad (http://127.0.0.1:54622/web/viz.js:1124:5)';
+    if (stackFirstRelPath(stk) !== 'web/viz.js') failures.push('s stack line:col strip');
+    if (stackFirstRelPath(undefined) !== '') failures.push('s missing stack not empty');
   }
   const ok = failures.length === 0;
   process.stdout.write(JSON.stringify({ selfcheck: ok ? 'ok' : 'fail', failures }) + '\n');
@@ -1590,13 +1616,21 @@ async function main() {
   }
 
   const consoleErrorTexts = [];
+  const consoleErrorSources = [];    // sources[i] names texts[i]'s file; '' = unknown (old-probe shape)
   page.on('console', (m) => {
-    if (m.type() === 'error') consoleErrorTexts.push(m.text());
+    if (m.type() !== 'error') return;
+    consoleErrorTexts.push(m.text());
+    const loc = m.location() || {};
+    consoleErrorSources.push(urlToRelPath(loc.url));
   });
-  page.on('pageerror', (e) => consoleErrorTexts.push(String(e)));
+  page.on('pageerror', (e) => {
+    consoleErrorTexts.push(String(e));
+    consoleErrorSources.push(stackFirstRelPath(e && e.stack));
+  });
   const consoleErrors = () => ({
     count: consoleErrorTexts.length,
     texts: consoleErrorTexts.slice(0, 3).map((t) => String(t).slice(0, 300)),
+    sources: consoleErrorSources.slice(0, 3).map((s) => String(s).slice(0, 200)),
   });
   let navigations = -1;                                  // first goto is not a reload
   page.on('framenavigated', (f) => { if (f === page.mainFrame()) navigations++; });
