@@ -51,6 +51,11 @@ boundary), run one gate-auditor pass over the whole roster.
 | cloud-campaign runner | the cloud-sb7 admission machinery | when that campaign resumes |
 
 ## Grading log (newest first — one line per delegation; move closed items to the per-agent notes)
+- 2026-08-30 words-reader #1 (r5 opener, live): CLEAN PASS — contract followed exactly (quotes with
+  offsets, shapes after words, improvements derived from quotes, falsifier named); refuted the
+  orchestrator's implied stall and found two prompt defects + a missing bound instead. No charter
+  gap, no brief leak. Its falsifier ("if the next ~5k chars re-open the S4 fork, that becomes real
+  cycling and the judge's empty next an undelivered steer") adopted as the live watch.
 
 - 2026-08-30 ui-truth batch (general-purpose, pre-roster): two spec deviations argued correctly by
   the agent (F8 event-carry vs digest-join, F22 not-independently-shippable) → panel-surgeon's
