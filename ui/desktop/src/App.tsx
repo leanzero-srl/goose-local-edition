@@ -33,6 +33,7 @@ import SettingsView, { SettingsViewOptions } from './components/settings/Setting
 import SessionsView from './components/sessions/SessionsView';
 import SchedulesView from './components/schedule/SchedulesView';
 import LoopView from './components/loop/LoopView';
+import MlxEngineView from './components/mlx/MlxEngineView';
 import BenchmarkView from './components/benchmark/BenchmarkView';
 import BenchmarkAutoOpen from './components/benchmark/BenchmarkAutoOpen';
 import ProviderSettings from './components/settings/providers/ProviderSettingsPage';
@@ -270,6 +271,10 @@ const BenchmarkRoute = () => {
 
 const LoopRoute = () => {
   return <LoopView />;
+};
+
+const MlxEngineRoute = () => {
+  return <MlxEngineView />;
 };
 
 const SkillsRoute = () => {
@@ -723,6 +728,7 @@ export function AppInner() {
               <Route path="schedules" element={<SchedulesRoute />} />
               <Route path="recipes" element={<RecipesRoute />} />
               <Route path="loop" element={<LoopRoute />} />
+              <Route path="mlx-engine" element={<MlxEngineRoute />} />
               <Route path="benchmark" element={<BenchmarkRoute />} />
               <Route path="skills" element={<SkillsRoute />} />
               <Route path="memories" element={<MemoriesRoute />} />

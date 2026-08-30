@@ -3,6 +3,7 @@ import { getAcpFeatureCapabilities } from '../acp/capabilities';
 
 interface FeaturesContextValue {
   localInference: boolean;
+  mlxEngine: boolean;
   isLoading: boolean;
 }
 
@@ -10,6 +11,7 @@ const FeaturesContext = createContext<FeaturesContextValue | null>(null);
 
 export function FeaturesProvider({ children }: { children: React.ReactNode }) {
   const [localInference, setLocalInference] = useState(false);
+  const [mlxEngine, setMlxEngine] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
@@ -17,6 +19,7 @@ export function FeaturesProvider({ children }: { children: React.ReactNode }) {
       try {
         const capabilities = await getAcpFeatureCapabilities();
         setLocalInference(capabilities.localInference);
+        setMlxEngine(capabilities.mlxEngine ?? false);
       } catch (error) {
         console.warn('[FeaturesContext] Failed to fetch features:', error);
       } finally {
@@ -28,9 +31,10 @@ export function FeaturesProvider({ children }: { children: React.ReactNode }) {
   const value = useMemo<FeaturesContextValue>(
     () => ({
       localInference,
+      mlxEngine,
       isLoading,
     }),
-    [localInference, isLoading]
+    [localInference, mlxEngine, isLoading]
   );
 
   return <FeaturesContext.Provider value={value}>{children}</FeaturesContext.Provider>;

@@ -3,6 +3,7 @@ import { getAcpInitializeResponse } from './acpConnection';
 
 export interface AcpFeatureCapabilities {
   localInference: boolean;
+  mlxEngine: boolean;
 }
 
 export async function getAcpFeatureCapabilities(): Promise<AcpFeatureCapabilities> {
@@ -10,11 +11,19 @@ export async function getAcpFeatureCapabilities(): Promise<AcpFeatureCapabilitie
 
   return {
     localInference: hasLocalInferenceCapability(initializeResponse),
+    mlxEngine: hasGooseCapability(initializeResponse, 'mlxEngine'),
   };
 }
 
 export function hasLocalInferenceCapability(
   initializeResponse: Pick<InitializeResponse, 'agentCapabilities'>
+): boolean {
+  return hasGooseCapability(initializeResponse, 'localInference');
+}
+
+export function hasGooseCapability(
+  initializeResponse: Pick<InitializeResponse, 'agentCapabilities'>,
+  capability: string
 ): boolean {
   const agentCapabilities = initializeResponse.agentCapabilities;
   if (!agentCapabilities) {
@@ -31,7 +40,7 @@ export function hasLocalInferenceCapability(
     return false;
   }
 
-  return 'localInference' in goose;
+  return capability in goose;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

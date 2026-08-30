@@ -25,6 +25,7 @@ import { motion } from 'framer-motion';
 import { toast } from 'react-toastify';
 import { useNavigationContext } from './NavigationContext';
 import { useConfig } from '../ConfigContext';
+import { useFeatures } from '../../contexts/FeaturesContext';
 import { useNavigationSessions } from '../../hooks/useNavigationSessions';
 import {
   NAV_ITEMS,
@@ -565,15 +566,19 @@ export const Navigation: React.FC<{ className?: string }> = ({ className }) => {
 
   const appsExtensionEnabled = !!extensionsList?.find((ext) => ext.name === 'apps')?.enabled;
   const { isLocal } = useEdition();
+  const { mlxEngine } = useFeatures();
 
   const visibleItems = useMemo<NavItem[]>(() => {
     return NAV_ITEMS.filter((item) => {
       if (item.path === '/apps') return appsExtensionEnabled;
       // Benchmark measures a local fleet, so it has no meaning in an upstream-flavoured build.
       if (item.path === '/benchmark') return isLocal;
+      // MLX Engine only exists when the connected agent actually advertises the capability —
+      // a nav entry to a surface the backend cannot serve would be a lie.
+      if (item.path === '/mlx-engine') return mlxEngine;
       return true;
     });
-  }, [appsExtensionEnabled, isLocal]);
+  }, [appsExtensionEnabled, isLocal, mlxEngine]);
 
   const isActive = useCallback((path: string) => location.pathname === path, [location.pathname]);
 
