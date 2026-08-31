@@ -272,7 +272,7 @@ fn the_banned_integrate_template_only_shrinks() {
 /// drift verdict on "fresh content" that was backlog draining through the meter).
 #[test]
 fn swarm_rs_line_count_only_decreases() {
-    const SWARM_RS_LINE_BASELINE: usize = 42_202;
+    const SWARM_RS_LINE_BASELINE: usize = 41_922;
     let text = read("crates/goose-cli/src/commands/swarm.rs");
     let n = text.lines().count();
     assert!(
