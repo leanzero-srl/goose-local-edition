@@ -277,12 +277,49 @@ pub(super) fn delivery_promise_due(
     owns_files && drift_verdict && drift_streak >= 2 && calls_since_nudge == 0
 }
 
+/// IS THE STREAM DELIVERING AT THE MOMENT OF THE WIPE? (r6c web-viz, look 14.)
+///
+/// The restream is the one delivery that DESTROYS work: it drops the socket and replaces the
+/// conversation with an empty one. Every fact the ladder decides on is a fact about what the call
+/// has FINISHED — reasoning chars flushed, tool calls recorded, owned bytes on disk — and a model
+/// streaming a large tool-call ARGUMENT has finished none of them. MEASURED: web-viz composed
+/// `web/viz.js` (38,927 bytes, 979 lines) inside a single `write` call whose arguments streamed
+/// for ~43 minutes; across that window `thinking_chars` was frozen at 156,267 (looks 13, 14, 15),
+/// `calls.jsonl` had not moved since 15:28:09Z, and the owned file did not exist. At look 14
+/// (18:36:54Z) every ladder input therefore said "stopped", and the clamp (`durable_clamped_
+/// produced`) correctly zeroed the meter's stale 14,487 — so the ladder's last arm reads
+/// "no write progress and the stream has stopped advancing" and takes the restream, SIXTEEN
+/// MINUTES AND THIRTY-NINE KILOBYTES before that same stream landed the file at 18:53:35Z.
+///
+/// So the wipe is re-checked against the ONE channel that shows a delivery in flight. Both inputs
+/// are progress facts measured across this look — no clock, no counter, no cap:
+///   * `forming` argument bytes GREW since this look was triggered — a tool call is being
+///     composed right now and it is bigger than it was;
+///   * or an owned file grew — the deliverable itself moved.
+///
+/// GROWTH, not presence: a frame that is open but frozen has stopped, and the ladder keeps its
+/// escape (the r5 87k-char loop and the r6a wedge are both unaffected — a looping reasoning
+/// stream opens no frame at all). Deliberately NOT here: durable think growth and the raw tool
+/// call count — those are exactly what a loop produces, and reading them as "delivering" would
+/// disarm the restream for the cases it exists for.
+///
+/// The read is one file stat+parse at the delivery seam (`forming_args_bytes`), so it sees the
+/// stream as it is when the socket is about to be dropped, not as the probe's input described it
+/// twenty minutes earlier.
+pub(super) fn stream_woke(
+    forming_bytes_at_look: Option<u64>,
+    forming_bytes_now: Option<u64>,
+    owned_grew_since_look: bool,
+) -> bool {
+    owned_grew_since_look || forming_bytes_now.unwrap_or(0) > forming_bytes_at_look.unwrap_or(0)
+}
+
 /// The three ways a wanted nudge can land. `Steer` interrupts the stream at a chunk boundary and
 /// KEEPS the partial; `Restream` drops the socket, wipes the conversation and seeds a fresh
 /// attempt; `Hold` delivers NOTHING this look — the call is watched for one more look instead,
 /// the same shape as the DRIFTING hold. Each variant carries the measured reason so the artefact
 /// says why, not just what.
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum NudgeDelivery {
     Steer(&'static str),
     Restream(&'static str),
@@ -471,6 +508,7 @@ pub(super) fn restream_seed(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use goose_swarm::Verdict;
 
     /// THE INVERSION THAT COST EIGHTEEN NUDGES ON ONE READ-ONLY OBSERVER.
     ///
@@ -964,6 +1002,45 @@ mod tests {
             NudgeDelivery::Steer("write progress since the previous nudge")
         );
         assert!(!delivery_promise_due(false, true, 5, 0));
+    }
+
+    /// r6c web-viz, look 14 (18:36:54Z) — THE COUNTERFACTUAL THIS GUARD EXISTS FOR. Every ladder
+    /// input said "stopped": think frozen at 156,267 chars across looks 13/14/15, so the durable
+    /// clamp zeroed the meter's stale 14,487; calls.jsonl frozen since 15:28:09Z; web/viz.js
+    /// absent. The ladder's last arm therefore takes the restream — while that very stream was
+    /// 16 minutes and 39 KB into the `write` whose arguments became the 979-line web/viz.js at
+    /// 18:53:35Z. The forming sidecar is the only channel that saw it.
+    #[test]
+    fn a_restream_is_aborted_while_a_tool_argument_stream_is_still_growing() {
+        assert_eq!(
+            nudge_delivery(true, Some(false), &Verdict::Drifting, false, false, false),
+            NudgeDelivery::Restream(
+                "steer ignored: no write progress since the previous nudge and the stream has \
+                 stopped advancing"
+            ),
+            "the ladder still reaches the wipe on the r6c facts — the abort is the seam's job"
+        );
+        assert!(
+            stream_woke(Some(12_000), Some(31_500), false),
+            "a growing tool-call argument stream is a delivery in flight"
+        );
+        // The same look one probe later (19:00:18Z): the write COMPLETED, the frame is gone and
+        // the owned file exists — the delivery is on disk and the wipe is refused on that.
+        assert!(stream_woke(Some(31_500), None, true));
+        // And a frame that OPENED during the probe counts from nothing.
+        assert!(stream_woke(None, Some(1_400), false));
+    }
+
+    /// The escape stays open, or the guard would be a cap on the restream. A frozen frame has
+    /// STOPPED, and the loops the restream exists for (r5's 87k-char reasoning loop, r6a's wedge)
+    /// open no frame at all — so neither is shielded.
+    #[test]
+    fn a_frozen_or_absent_argument_stream_still_walks_the_ladder() {
+        assert!(!stream_woke(Some(9_000), Some(9_000), false));
+        assert!(!stream_woke(None, None, false));
+        // A frame that completed with nothing else moving is not, by itself, a delivery: the
+        // owned/write-progress facts decide that, exactly as they did before this guard.
+        assert!(!stream_woke(Some(9_000), None, false));
     }
 
     /// The steer note asserts only what was delivered (the GEN-4 class): the direction always,

@@ -326,6 +326,41 @@ pub(super) fn render_forming_file(
     Some(serde_json::json!({ "forming": rows }).to_string())
 }
 
+/// THE READER of what `render_forming_file` writes: argument bytes across the frames open RIGHT
+/// NOW, for the one supervision question no other meter can answer — is this stream mid-delivery?
+///
+/// It lives beside the writer so the two cannot drift on the shape (`forming[].args_bytes`).
+/// MEASURED (r6c web-viz): the lane's ONE delivery of the run — `web/viz.js`, 38,927 bytes — was
+/// streamed as a single `write` tool call's arguments while `thinking_chars` sat at exactly
+/// 156,267 across looks 13, 14 and 15 (18:13:49Z -> 19:00:18Z), `calls.jsonl` was frozen at its
+/// 15:28:09Z entry, and the owned file did not exist. Reasoning, answer, calls and owned bytes
+/// all read DEAD; the argument stream was the whole delivery, and only this sidecar saw it.
+///
+/// The three answers are distinct on purpose (gate 1 — an absence must not impersonate a
+/// measurement):
+///   * `None` — the file is ABSENT, which is the writer's own honest empty: `render_forming_file`
+///     returns None when the live map is empty and the observer then UNLINKS the file. Nothing is
+///     forming.
+///   * `Some(n)` — at least one frame is open and `n` argument bytes have arrived across them.
+///   * a present-but-unparseable body reads as `Some(0)`: a frame IS open (the writer only ever
+///     creates this file for an open frame) and its size is unknown, so it can never be read as
+///     GROWTH. The ambiguity resolves toward the pre-existing behavior, never toward inventing
+///     progress. (The writer is tmp+rename atomic, so this arm needs a corrupt disk to reach.)
+pub(super) fn forming_args_bytes(sidecar: &Path) -> Option<u64> {
+    let body = std::fs::read_to_string(sidecar).ok()?;
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(&body) else {
+        return Some(0);
+    };
+    Some(
+        v["forming"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|r| r["args_bytes"].as_u64())
+            .sum(),
+    )
+}
+
 /// `<path>.tmp` for the atomic write below — same directory, so the rename is atomic in-dir.
 pub(super) fn forming_tmp(path: &Path) -> PathBuf {
     let mut os = path.as_os_str().to_os_string();
@@ -1014,5 +1049,62 @@ mod reply_tests {
         assert_eq!(oread.hint, "write the file now");
         // HIGH but no real correction -> stays OK (a vague reply can never kill a healthy worker).
         assert_eq!(parse_judge_reply("VERDICT|HIGH|").verdict, Verdict::Ok);
+    }
+
+    /// THE READER MATCHES THE WRITER, and the three answers stay distinct (gate 1). Built from
+    /// `render_forming_file`'s own output so a shape change breaks here, not silently at the
+    /// delivery seam where a missed growth becomes a wiped delivery (r6c web-viz, look 14).
+    #[test]
+    fn forming_args_bytes_reads_what_render_forming_file_writes() {
+        let dir = std::env::temp_dir().join(format!(
+            "goose-forming-read-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("web-viz.forming.json");
+
+        // Absent = the writer's honest empty: render returns None and the observer unlinks.
+        assert_eq!(forming_args_bytes(&path), None);
+
+        let mut live = std::collections::BTreeMap::new();
+        fold_forming_event(
+            &mut live,
+            goose_provider_types::formats::openai::ToolFormingEvent::Forming {
+                id: "call-1".into(),
+                name: "write".into(),
+                since: std::time::Instant::now(),
+            },
+        );
+        fold_forming_event(
+            &mut live,
+            goose_provider_types::formats::openai::ToolFormingEvent::ArgsDelta {
+                id: "call-1".into(),
+                delta: "x".repeat(12_000),
+            },
+        );
+        std::fs::write(
+            &path,
+            render_forming_file(&live).expect("an open frame renders"),
+        )
+        .unwrap();
+        assert_eq!(forming_args_bytes(&path), Some(12_000));
+
+        // The r6c growth across one look cycle: same frame, more argument bytes.
+        fold_forming_event(
+            &mut live,
+            goose_provider_types::formats::openai::ToolFormingEvent::ArgsDelta {
+                id: "call-1".into(),
+                delta: "y".repeat(19_500),
+            },
+        );
+        std::fs::write(&path, render_forming_file(&live).unwrap()).unwrap();
+        assert_eq!(forming_args_bytes(&path), Some(31_500));
+
+        // Present but unreadable can never read as GROWTH — a frame is open, its size unknown.
+        std::fs::write(&path, "{not json").unwrap();
+        assert_eq!(forming_args_bytes(&path), Some(0));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
