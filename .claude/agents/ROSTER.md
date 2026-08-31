@@ -611,3 +611,11 @@ research_request_block's armed-no-claimed-sections arm wording.
   not-kill (the content is real; the channel is wrong). Also caught judge-web-viz's 46m look gap and
   the provider chat-ism leak (already fixed for r6d at 331a1a09c). File-progress ladder amendment
   dispatched. Charter gap: none.
+- 2026-08-31 16:35 swarm-surgeon (wrong-channel ladder, 7728ea236): CLEAN+. Derived directive-pending
+  from lane state after PROVING no rung marker exists at the omni seam (the brief's fallback,
+  correctly taken); the tracker mirrors tool_calls_at_last_nudge's two mutation sites exactly so a
+  fresh attempt structurally cannot trip it; trace YES at the first post-12:07 wanted nudge with the
+  delivering-builder and r6a-opener negatives walked; wipe class closed twice over. Honest unbriefed
+  finds: the seed carries think-tail not answer-tail for wrong-channel lanes (defensible either way,
+  recorded); TWO disagreeing on-disk predicates pre-exist (is_file vs exists — drill-deeper class,
+  queue for r6e). swarm.rs 42,764→42,747. Charter gap: none.
