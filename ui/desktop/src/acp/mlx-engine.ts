@@ -31,15 +31,43 @@ export interface MlxEngineStatus {
   gateVerdict?: 'allow' | 'warn' | 'block';
   /** Persisted settings would spawn the running engine differently; remount to apply. */
   restartRequired: boolean;
+  /**
+   * Set while the manager is NOT running yet something already listens on the configured
+   * port — an unsupervised engine orphaned by a previous session. Unmount reclaims it.
+   * Optional defensively: older agents do not send it.
+   */
+  strayListenerPort?: number;
   availableMemoryGb: number;
   totalMemoryGb: number;
   lastError?: string;
+}
+
+/**
+ * Per-model sampling/context profile. Sampling is PER MODEL: the engine spawns each
+ * mounted model with the flags from ITS entry in `MlxEngineSettings.modelProfiles`.
+ * An absent key means "engine default"; an explicit 0 is a real value — keep them apart.
+ */
+export interface MlxModelProfile {
+  temperature?: number;
+  topP?: number;
+  topK?: number;
+  minP?: number;
+  repetitionPenalty?: number;
+  presencePenalty?: number;
+  frequencyPenalty?: number;
+  contextLimit?: number;
 }
 
 export interface MlxEngineSettings {
   modelId?: string;
   modelsDir: string;
   port: number;
+  /**
+   * LEGACY flat sampling/context fields. READ-ONLY compatibility: the backend still sends
+   * them until its one-time migration into `modelProfiles` has run, and it MIGRATES any it
+   * receives — so writing them back would clobber profile edits. Never include them in an
+   * update payload; `sanitizeSettingsForWrite` in MlxEngineView strips them.
+   */
   contextLimit?: number;
   temperature?: number;
   topP?: number;
@@ -48,7 +76,11 @@ export interface MlxEngineSettings {
   repetitionPenalty?: number;
   presencePenalty?: number;
   frequencyPenalty?: number;
+  /** Swarm-facing model id advertised by the engine (`--served-model-name`). */
+  servedModelName?: string;
   spawnCommand: string[];
+  /** Per-model sampling/context profiles keyed by HF model id — the source of truth. */
+  modelProfiles: Record<string, MlxModelProfile>;
 }
 
 export interface MlxLocalModel {
@@ -62,6 +94,46 @@ export interface MlxHfModelHit {
   downloads: number;
   likes: number;
   updatedAt: string;
+}
+
+export type MlxBrowseSort = 'downloads' | 'newest';
+
+export interface MlxBrowseParams {
+  query?: string;
+  author?: string;
+  /** Normalized bit-width tag ('4-bit', '8-bit', …) — matches HF tags server-side. */
+  quant?: string;
+  /** Architecture tag ('qwen3_5', 'llama', …) — matches HF tags server-side. */
+  arch?: string;
+  sort: MlxBrowseSort;
+  /** A previous page's `nextCursor`; every other parameter is already baked into it. */
+  cursor?: string;
+  /** Page size, default 20, capped at 50 by the backend. */
+  limit?: number;
+}
+
+/**
+ * One MLX browse hit. `quant`/`arch` are DERIVED display fields (tags first, name
+ * patterns as fallback) — they describe the hit, they are not proof the server filtered
+ * on them unless the request set the corresponding filter.
+ */
+export interface MlxBrowseHit {
+  id: string;
+  /** The publisher prefix of `id`. */
+  author: string;
+  downloads: number;
+  likes: number;
+  createdAt?: string;
+  lastModified?: string;
+  tags: string[];
+  quant?: string;
+  arch?: string;
+}
+
+export interface MlxBrowsePage {
+  hits: MlxBrowseHit[];
+  /** Opaque continuation for the next page; absent on the last page. */
+  nextCursor?: string;
 }
 
 export type MlxDownloadState = 'queued' | 'downloading' | 'done' | 'failed' | 'cancelled';
@@ -133,6 +205,22 @@ export async function mlxEngineHfSearch(query: string, limit?: number): Promise<
   if (limit != null) params.limit = limit;
   const response = await call<{ hits: MlxHfModelHit[] }>('_goose/unstable/mlxEngine/hfSearch', params);
   return response.hits;
+}
+
+/**
+ * Paginated MLX-only Hugging Face browse. All four filters are SERVER-side; pass a page's
+ * `nextCursor` back as `cursor` to append the next page. Undefined optional params are
+ * omitted on the wire.
+ */
+export async function mlxEngineBrowse(params: MlxBrowseParams): Promise<MlxBrowsePage> {
+  const payload: Record<string, unknown> = { sort: params.sort };
+  if (params.query != null && params.query !== '') payload.query = params.query;
+  if (params.author != null && params.author !== '') payload.author = params.author;
+  if (params.quant != null && params.quant !== '') payload.quant = params.quant;
+  if (params.arch != null && params.arch !== '') payload.arch = params.arch;
+  if (params.cursor != null) payload.cursor = params.cursor;
+  if (params.limit != null) payload.limit = params.limit;
+  return await call<MlxBrowsePage>('_goose/unstable/mlxEngine/browse', payload);
 }
 
 export async function mlxEngineDownload(repoId: string): Promise<void> {
