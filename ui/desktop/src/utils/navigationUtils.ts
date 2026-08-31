@@ -17,7 +17,8 @@ export type View =
   | 'loading'
   | 'recipes'
   | 'skills'
-  | 'permission';
+  | 'permission'
+  | 'mlxEngine';
 
 export type ViewOptions = {
   showEnvVars?: boolean;
@@ -74,6 +75,9 @@ export const createNavigationHandler = (navigate: NavigateFunction) => {
         break;
       case 'extensions':
         navigate('/extensions', { state: options });
+        break;
+      case 'mlxEngine':
+        navigate('/mlx-engine', { state: options });
         break;
       default:
         navigate('/', { state: options });

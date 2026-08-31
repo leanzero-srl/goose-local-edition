@@ -1,7 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, type RenderOptions, screen } from '@testing-library/react';
+import { render, type RenderOptions, screen, waitFor } from '@testing-library/react';
 import ModelsBottomBar from './ModelsBottomBar';
 import { IntlTestWrapper } from '../../../../i18n/test-utils';
+import type { MlxEngineStatus } from '../../../../acp/mlx-engine';
 
 const renderWithIntl = (ui: React.ReactElement, options?: RenderOptions) =>
   render(ui, { wrapper: IntlTestWrapper, ...options });
@@ -13,11 +14,13 @@ let mockCurrentModel: string | null = 'config-model';
 let mockCurrentProvider: string | null = 'config-provider';
 const mockGetProviders = vi.fn();
 const mockOnModelChanged = vi.fn();
+const mockChangeModel = vi.fn();
 
 vi.mock('../../../ModelAndProviderContext', () => ({
   useModelAndProvider: () => ({
     currentModel: mockCurrentModel,
     currentProvider: mockCurrentProvider,
+    changeModel: mockChangeModel,
   }),
 }));
 
@@ -25,6 +28,24 @@ vi.mock('../../../ConfigContext', () => ({
   useConfig: () => ({
     getProviders: mockGetProviders,
   }),
+}));
+
+let mockMlxCapability = false;
+vi.mock('../../../../contexts/FeaturesContext', () => ({
+  useFeatures: () => ({
+    localInference: false,
+    mlxEngine: mockMlxCapability,
+    isLoading: false,
+  }),
+}));
+
+let mockMlxStatus: MlxEngineStatus | null = null;
+const mockPollEnabled = vi.fn();
+vi.mock('../../../mlx/useMlxEngineStatus', () => ({
+  useMlxEngineStatusPoll: (enabled: boolean) => {
+    mockPollEnabled(enabled);
+    return { status: enabled ? mockMlxStatus : null, error: null };
+  },
 }));
 
 vi.mock('../modelInterface', () => ({
@@ -54,12 +75,26 @@ vi.mock('../../../ui/scroll-area', () => ({
   ScrollArea: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
 }));
 
+function runningStatus(servedModelId?: string): MlxEngineStatus {
+  return {
+    state: 'running',
+    modelId: 'mlx-community/Qwen3-30B-A3B-4bit',
+    servedModelId,
+    restartRequired: false,
+    availableMemoryGb: 40,
+    totalMemoryGb: 64,
+  };
+}
+
 describe('ModelsBottomBar', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockCurrentModel = 'config-model';
     mockCurrentProvider = 'config-provider';
+    mockMlxCapability = false;
+    mockMlxStatus = null;
     mockGetProviders.mockResolvedValue([]);
+    mockChangeModel.mockResolvedValue(true);
   });
 
   it('shows a loading placeholder while the active session model is still loading', async () => {
@@ -105,5 +140,138 @@ describe('ModelsBottomBar', () => {
 
     expect(screen.getByText('config-model')).toBeInTheDocument();
     expect(screen.queryByTestId('model-loading-state')).not.toBeInTheDocument();
+  });
+
+  describe('MLX session sync', () => {
+    it('syncs the session onto the served id when already on omlx and the engine is running', async () => {
+      mockMlxCapability = true;
+      mockMlxStatus = runningStatus('qwen3-30b-served');
+      renderWithIntl(
+        <ModelsBottomBar
+          sessionId="session-123"
+          dropdownRef={createDropdownRef()}
+          setView={vi.fn()}
+          sessionModel="stale-served-id"
+          sessionProvider="omlx"
+          onModelChanged={mockOnModelChanged}
+          sessionLoaded={true}
+        />
+      );
+
+      await waitFor(() => {
+        expect(mockChangeModel).toHaveBeenCalledTimes(1);
+      });
+      expect(mockChangeModel).toHaveBeenCalledWith('session-123', {
+        name: 'qwen3-30b-served',
+        provider: 'omlx',
+        subtext: 'Leanzero MLX',
+      });
+      await waitFor(() => {
+        expect(mockOnModelChanged).toHaveBeenCalledWith({
+          model: 'qwen3-30b-served',
+          provider: 'omlx',
+        });
+      });
+    });
+
+    it('does not sync when the session already uses the served id', async () => {
+      mockMlxCapability = true;
+      mockMlxStatus = runningStatus('qwen3-30b-served');
+      renderWithIntl(
+        <ModelsBottomBar
+          sessionId="session-123"
+          dropdownRef={createDropdownRef()}
+          setView={vi.fn()}
+          sessionModel="qwen3-30b-served"
+          sessionProvider="omlx"
+          onModelChanged={mockOnModelChanged}
+          sessionLoaded={true}
+        />
+      );
+
+      await new Promise((r) => setTimeout(r, 20));
+      expect(mockChangeModel).not.toHaveBeenCalled();
+    });
+
+    it('never yanks a session off a cloud provider, and does not even poll for one', async () => {
+      mockMlxCapability = true;
+      mockMlxStatus = runningStatus('qwen3-30b-served');
+      renderWithIntl(
+        <ModelsBottomBar
+          sessionId="session-123"
+          dropdownRef={createDropdownRef()}
+          setView={vi.fn()}
+          sessionModel="claude-sonnet-4"
+          sessionProvider="anthropic"
+          onModelChanged={mockOnModelChanged}
+          sessionLoaded={true}
+        />
+      );
+
+      await new Promise((r) => setTimeout(r, 20));
+      expect(mockChangeModel).not.toHaveBeenCalled();
+      expect(mockPollEnabled).toHaveBeenCalledWith(false);
+      expect(mockPollEnabled).not.toHaveBeenCalledWith(true);
+    });
+
+    it('never syncs while the engine is mounting', async () => {
+      mockMlxCapability = true;
+      mockMlxStatus = { ...runningStatus('qwen3-30b-served'), state: 'mounting' };
+      renderWithIntl(
+        <ModelsBottomBar
+          sessionId="session-123"
+          dropdownRef={createDropdownRef()}
+          setView={vi.fn()}
+          sessionModel="stale-served-id"
+          sessionProvider="omlx"
+          onModelChanged={mockOnModelChanged}
+          sessionLoaded={true}
+        />
+      );
+
+      await new Promise((r) => setTimeout(r, 20));
+      expect(mockChangeModel).not.toHaveBeenCalled();
+    });
+
+    it('never clears the session model when the engine is down', async () => {
+      mockMlxCapability = true;
+      mockMlxStatus = null;
+      renderWithIntl(
+        <ModelsBottomBar
+          sessionId="session-123"
+          dropdownRef={createDropdownRef()}
+          setView={vi.fn()}
+          sessionModel="qwen3-30b-served"
+          sessionProvider="omlx"
+          onModelChanged={mockOnModelChanged}
+          sessionLoaded={true}
+        />
+      );
+
+      await new Promise((r) => setTimeout(r, 20));
+      expect(mockChangeModel).not.toHaveBeenCalled();
+      expect(mockOnModelChanged).not.toHaveBeenCalled();
+      expect(screen.getByText('qwen3-30b-served')).toBeInTheDocument();
+    });
+
+    it('capability off: no polling, no syncing — the legacy selector as it always was', async () => {
+      mockMlxCapability = false;
+      mockMlxStatus = runningStatus('qwen3-30b-served');
+      renderWithIntl(
+        <ModelsBottomBar
+          sessionId="session-123"
+          dropdownRef={createDropdownRef()}
+          setView={vi.fn()}
+          sessionModel="stale-served-id"
+          sessionProvider="omlx"
+          onModelChanged={mockOnModelChanged}
+          sessionLoaded={true}
+        />
+      );
+
+      await new Promise((r) => setTimeout(r, 20));
+      expect(mockChangeModel).not.toHaveBeenCalled();
+      expect(mockPollEnabled).not.toHaveBeenCalledWith(true);
+    });
   });
 });

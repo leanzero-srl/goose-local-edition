@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
+  Check,
   Cpu,
   Download,
   Folder,
@@ -503,8 +504,13 @@ function EngineSection(props: EngineSectionProps) {
   } = props;
 
   const state = status?.state ?? null;
+  const mountedModelId = status?.modelId ?? null;
+  const selectionIsMounted =
+    state === 'running' && !!mountModelId && mountModelId === mountedModelId;
   const canMount =
     !!mountModelId && !engineBusy && (state === 'stopped' || state === 'failed' || state === null);
+  const canSwitch =
+    state === 'running' && !!mountModelId && mountModelId !== mountedModelId && !engineBusy;
   const canUnmount = !engineBusy && (state === 'running' || state === 'mounting');
 
   return (
@@ -609,15 +615,49 @@ function EngineSection(props: EngineSectionProps) {
               disabled={engineBusy || state === 'mounting'}
             />
           </div>
-          <Button
-            onClick={onMount}
-            disabled={!canMount}
-            className="font-bold text-white hover:opacity-90"
-            style={{ backgroundColor: GREEN, borderRadius: 3 }}
-          >
-            <Play className="w-4 h-4" />
-            Mount
-          </Button>
+          {/* The primary button tells the truth about the LIVE engine, not just mount intent:
+              mounting -> spinner; selection already mounted -> "Mounted" as a disabled status;
+              a different selection while running -> "Switch model" (the backend shuts the old
+              model down); otherwise the plain Mount action. */}
+          {state === 'mounting' ? (
+            <Button
+              disabled
+              className="font-bold text-white"
+              style={{ backgroundColor: GREEN, borderRadius: 3 }}
+            >
+              <Loader2 className="w-4 h-4 animate-spin" />
+              Mounting
+            </Button>
+          ) : selectionIsMounted ? (
+            <Button
+              disabled
+              className="font-bold text-white"
+              style={{ backgroundColor: GREEN, borderRadius: 3 }}
+            >
+              <Check className="w-4 h-4" />
+              Mounted
+            </Button>
+          ) : state === 'running' ? (
+            <Button
+              onClick={onMount}
+              disabled={!canSwitch}
+              className="font-bold text-white hover:opacity-90"
+              style={{ backgroundColor: GREEN, borderRadius: 3 }}
+            >
+              <Play className="w-4 h-4" />
+              Switch model
+            </Button>
+          ) : (
+            <Button
+              onClick={onMount}
+              disabled={!canMount}
+              className="font-bold text-white hover:opacity-90"
+              style={{ backgroundColor: GREEN, borderRadius: 3 }}
+            >
+              <Play className="w-4 h-4" />
+              Mount
+            </Button>
+          )}
           <Button
             onClick={onUnmount}
             disabled={!canUnmount}
@@ -1311,6 +1351,12 @@ const MlxEngineView: React.FC = () => {
   const [saveError, setSaveError] = useState<string | null>(null);
 
   const defaultedPicker = useRef(false);
+  const userPickedModel = useRef(false);
+
+  const pickMountModel = useCallback((id: string | null) => {
+    userPickedModel.current = true;
+    setMountModelId(id);
+  }, []);
 
   const refreshStatus = useCallback(async () => {
     try {
@@ -1374,15 +1420,25 @@ const MlxEngineView: React.FC = () => {
     })();
   }, [refreshModels]);
 
-  // Default the picker once to the mounted (or persisted) model without clobbering a user pick.
+  // Picker follows truth: while the engine is running or mounting and the user has not
+  // explicitly picked something else this visit, the picker shows the mounted model — so a
+  // window opened onto an already-running engine reads "Mounted", never a stale "Mount".
+  // An explicit user selection is never overridden. With the engine down, the picker defaults
+  // once to the persisted model.
   useEffect(() => {
+    if (userPickedModel.current) return;
+    if ((status?.state === 'running' || status?.state === 'mounting') && status.modelId) {
+      defaultedPicker.current = true;
+      setMountModelId(status.modelId);
+      return;
+    }
     if (defaultedPicker.current) return;
     const candidate = status?.modelId ?? settings?.modelId;
     if (candidate) {
       defaultedPicker.current = true;
       setMountModelId(candidate);
     }
-  }, [status?.modelId, settings?.modelId]);
+  }, [status?.state, status?.modelId, settings?.modelId]);
 
   const onMount = useCallback(() => {
     if (!mountModelId) return;
@@ -1530,7 +1586,7 @@ const MlxEngineView: React.FC = () => {
                 settings={settings}
                 models={models}
                 mountModelId={mountModelId}
-                setMountModelId={setMountModelId}
+                setMountModelId={pickMountModel}
                 mountError={mountError}
                 engineBusy={engineBusy}
                 onMount={onMount}

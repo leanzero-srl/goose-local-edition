@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback, useRef } from 'react';
-import { Bot, ExternalLink } from 'lucide-react';
+import { Bot, Cpu, ExternalLink, Loader2 } from 'lucide-react';
 import { defineMessages, useIntl } from '../../../../i18n';
 
 import {
@@ -29,6 +29,14 @@ import Model, {
 import { getPredefinedModelsFromEnv, shouldShowPredefinedModels } from '../predefinedModelsUtils';
 import type { ProviderDetails, ProviderType, ThinkingEffort } from '../../../../types/providers';
 import { trackModelChanged } from '../../../../utils/analytics';
+import { useFeatures } from '../../../../contexts/FeaturesContext';
+import { useMlxEngineStatusPoll } from '../../../mlx/useMlxEngineStatus';
+import type { MlxEngineStatus } from '../../../../acp/mlx-engine';
+import {
+  keepProviderInLeanzeroSelector,
+  MLX_ENTRY_LABEL,
+  MLX_PROVIDER_ID,
+} from '../leanzeroSelectorPolicy';
 
 const i18n = defineMessages({
   thinkingEffortOff: {
@@ -238,6 +246,93 @@ function findPreferredModel(
   return validModels[0].value;
 }
 
+// Solid saturated palette for the Leanzero MLX entry — same language as the engine window.
+const MLX_GREEN = '#2ecc71';
+const MLX_AMBER = '#f5a623';
+const MLX_RED = '#e5484d';
+const MLX_SLATE = '#64748b';
+const MLX_AZURE = '#2e8bff';
+
+/**
+ * The model area for the "Leanzero MLX" selector entry. There is no model list to pick
+ * from here: chat rides whatever the engine actually serves, so this panel renders the
+ * live engine truth — served model when running, the honest "no model mounted" otherwise —
+ * and hands the user to the engine window for mounting.
+ */
+function MlxEngineEntryPanel({
+  status,
+  statusError,
+  onOpenEngine,
+}: {
+  status: MlxEngineStatus | null;
+  statusError: string | null;
+  onOpenEngine: () => void;
+}) {
+  const state = statusError ? 'unreachable' : (status?.state ?? 'loading');
+  const chipColor =
+    state === 'running'
+      ? MLX_GREEN
+      : state === 'mounting'
+        ? MLX_AMBER
+        : state === 'failed' || state === 'unreachable'
+          ? MLX_RED
+          : MLX_SLATE;
+  const servedId = status?.servedModelId ?? status?.modelId ?? null;
+
+  return (
+    <div
+      className="border border-border-primary p-3 flex flex-col gap-2"
+      style={{ borderRadius: 3 }}
+      data-testid="mlx-entry-panel"
+    >
+      <div className="flex items-center gap-2 min-w-0">
+        <span
+          className={`inline-flex items-center gap-1.5 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-white shrink-0 ${
+            state === 'mounting' ? 'animate-pulse' : ''
+          }`}
+          style={{ backgroundColor: chipColor, borderRadius: 3 }}
+        >
+          {state === 'mounting' && <Loader2 className="w-3 h-3 animate-spin" />}
+          {state}
+        </span>
+        {state === 'running' && servedId ? (
+          <span className="font-mono text-sm font-semibold text-text-primary truncate">
+            {servedId}
+          </span>
+        ) : state === 'mounting' && status?.modelId ? (
+          <span className="font-mono text-sm text-text-primary truncate">{status.modelId}</span>
+        ) : (
+          <span className="text-sm text-text-secondary">no model mounted</span>
+        )}
+      </div>
+      {statusError && (
+        <span className="text-xs font-semibold break-words" style={{ color: MLX_RED }}>
+          {statusError}
+        </span>
+      )}
+      {state === 'running' ? (
+        <span className="text-xs text-text-secondary">
+          Chat uses the model the engine serves — mount a different one from the engine window.
+        </span>
+      ) : state === 'mounting' ? (
+        <span className="text-xs text-text-secondary">
+          Mounting — selectable once the engine reports running.
+        </span>
+      ) : (
+        <Button
+          size="sm"
+          onClick={onOpenEngine}
+          className="self-start font-bold text-white hover:opacity-90"
+          style={{ backgroundColor: MLX_AZURE, borderRadius: 3 }}
+        >
+          <Cpu className="w-3.5 h-3.5" />
+          Open Leanzero MLX
+        </Button>
+      )}
+    </div>
+  );
+}
+
 type SwitchModelModalProps = {
   sessionId: string | null;
   onClose: () => void;
@@ -273,6 +368,10 @@ export const SwitchModelModal = ({
     currentModel: configModel,
     currentProvider: configProvider,
   } = useModelAndProvider();
+  // Leanzero edition: with the MLX engine capability on, the selector shows cloud providers
+  // plus the dedicated engine entry; the entry's model area follows the LIVE engine status.
+  const { mlxEngine: mlxCapability } = useFeatures();
+  const { status: mlxStatus, error: mlxStatusError } = useMlxEngineStatusPoll(mlxCapability);
   // Use session-specific model/provider if available, otherwise fall back to config defaults
   const currentModel = sessionModel ?? configModel;
   const currentProvider = sessionProvider ?? configProvider;
@@ -339,6 +438,8 @@ export const SwitchModelModal = ({
 
   useEffect(() => {
     if (!provider || !model) return;
+    // The MLX entry serves local models — no thinking-effort metadata to resolve.
+    if (mlxCapability && provider === MLX_PROVIDER_ID) return;
 
     const selectedOption = modelOptions
       .flatMap((group) => group.options)
@@ -355,7 +456,7 @@ export const SwitchModelModal = ({
     }, 400);
 
     return () => clearTimeout(timeout);
-  }, [model, provider, modelOptions, resolveSelectedModelReasoning]);
+  }, [model, provider, modelOptions, resolveSelectedModelReasoning, mlxCapability]);
 
   // Validate form data
   const validateForm = useCallback(() => {
@@ -482,8 +583,15 @@ export const SwitchModelModal = ({
         const providersResponse = await acpListProviderDetails();
         const activeProviders = providersResponse.filter((provider) => provider.is_configured);
         setActiveProvidersList(activeProviders);
+        // Leanzero edition UI policy (presentation only — nothing is removed from code):
+        // capability on -> list the cloud providers plus one "Leanzero MLX" entry, and hide
+        // every other local provider row. Capability off -> the selector is exactly as before.
+        const listedProviders = mlxCapability
+          ? activeProviders.filter(({ name }) => keepProviderInLeanzeroSelector(name))
+          : activeProviders;
         setProviderOptions([
-          ...activeProviders.map(({ metadata, name }) => ({
+          ...(mlxCapability ? [{ value: MLX_PROVIDER_ID, label: MLX_ENTRY_LABEL }] : []),
+          ...listedProviders.map(({ metadata, name }) => ({
             value: name,
             label: metadata.display_name,
           })),
@@ -496,10 +604,22 @@ export const SwitchModelModal = ({
         console.error('Failed to query providers:', error);
       }
     })();
-  }, [usePredefinedModels, intl]);
+  }, [usePredefinedModels, intl, mlxCapability]);
+
+  // The Leanzero MLX entry binds the model to what the engine actually serves: running ->
+  // the served id, anything else -> empty (submit stays blocked; "no model mounted" is the
+  // honest signal). A user picking the entry never gets a stale or invented model id.
+  useEffect(() => {
+    if (!mlxCapability || provider !== MLX_PROVIDER_ID) return;
+    const served = mlxStatus?.state === 'running' ? (mlxStatus.servedModelId ?? '') : '';
+    setModel(served);
+    setIsCustomModel(false);
+  }, [mlxCapability, provider, mlxStatus?.state, mlxStatus?.servedModelId]);
 
   useEffect(() => {
     if (!provider || usePredefinedModels) return;
+    // The MLX entry has no model list to fetch — its panel renders the live status instead.
+    if (mlxCapability && provider === MLX_PROVIDER_ID) return;
     if (fetchedProviders.current.has(provider)) {
       setLoadingModels(false);
       return;
@@ -589,7 +709,7 @@ export const SwitchModelModal = ({
       cancelled = true;
       setLoadingModels(false);
     };
-  }, [provider, activeProvidersList, usePredefinedModels, intl]);
+  }, [provider, activeProvidersList, usePredefinedModels, intl, mlxCapability]);
 
   const filteredModelOptions = provider
     ? modelOptions.filter((group) => group.options[0]?.provider === provider)
@@ -598,6 +718,8 @@ export const SwitchModelModal = ({
   useEffect(() => {
     // Don't auto-select if user explicitly cleared the model
     if (!provider || loadingModels || model || isCustomModel || userClearedModel) return;
+    // The MLX entry's model comes from the live engine status only — never a saved/preferred pick.
+    if (mlxCapability && provider === MLX_PROVIDER_ID) return;
 
     // Use saved model from provider config if available
     const providerInfo = activeProvidersList.find((p) => p.name === provider);
@@ -624,6 +746,7 @@ export const SwitchModelModal = ({
     isCustomModel,
     userClearedModel,
     activeProvidersList,
+    mlxCapability,
   ]);
 
   const handlePredefinedModelChange = (model: Model) => {
@@ -837,7 +960,21 @@ export const SwitchModelModal = ({
 
               {provider && (
                 <>
-                  {provider === 'local' &&
+                  {mlxCapability && provider === MLX_PROVIDER_ID ? (
+                    <div className="flex flex-col gap-1">
+                      <MlxEngineEntryPanel
+                        status={mlxStatus}
+                        statusError={mlxStatusError}
+                        onOpenEngine={() => {
+                          setView('mlxEngine');
+                          onClose();
+                        }}
+                      />
+                      {attemptedSubmit && validationErrors.model && (
+                        <div className="text-red-500 text-sm mt-1">{validationErrors.model}</div>
+                      )}
+                    </div>
+                  ) : provider === 'local' &&
                   !loadingModels &&
                   filteredModelOptions.flatMap((g) => g.options).filter((o) => o.value !== 'custom')
                     .length === 0 ? (
