@@ -413,3 +413,10 @@ research_request_block's armed-no-claimed-sections arm wording.
   gave a justified REPORT-NOT-FIX on the speed-ranking hypothesis (mild-not-deterministic). The
   orchestrator's lesson is mine: I handed it a wrong premise (lms ps fails here) and stale
   observations; it verified instead of obeying — exactly what the charter demands. Charter gap: none.
+- 2026-08-31 13:25 panel-surgeon (sampling tab from owner feedback, 9b826b4cb): CLEAN++. Verified
+  drafts already lived at shell level before moving (no invented state); extracted ONE shared
+  RestartRequiredBanner instead of duplicating; live-verified its own change end-to-end (booted the
+  app, 18 checks ALL PASS, inspected its own screenshots, restored the user's saved 1.2, killed the
+  app per-pid, reaped a leftover wrapper); flagged the locale decimal-comma display quirk as
+  pre-existing rather than absorbing scope; noted the stale driver-script phase for future runs.
+  Charter gap: none. Brief leak: none.
