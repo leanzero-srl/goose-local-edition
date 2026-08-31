@@ -32,7 +32,9 @@ use std::process::Command as ProcCommand;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 mod judge_context;
-use judge_context::{is_intentional_empty_marker, judge_delivery_block, verify_owned_files};
+use judge_context::{
+    is_intentional_empty_marker, judge_delivery_block, owned_files_from_run_log, verify_owned_files,
+};
 mod ladder;
 use ladder::{
     calls_since_nudge, nudge_arm, nudge_delivery, produced_since_look, restream_seed,
@@ -22484,49 +22486,6 @@ fn slugify_slice_id(name: &str) -> String {
     out.trim_end_matches('-').chars().take(48).collect()
 }
 
-/// Every path any task DECLARED IT OWNS on this run, read back out of the tree's own event log.
-///
-/// `swarm verify` took its ownership list only from a hand-typed `--owns`, so replaying the verifier
-/// over a corpus of archived runs could never reach the four detectors that iterate that list. The
-/// engine now writes a `task_owns` row per dispatch; this reads them back, de-duplicated and sorted,
-/// so a sweep verifies what the run actually built rather than what the operator remembered to type.
-///
-/// Best-effort by construction: an unreadable log, a run from before the event existed, or a tree with
-/// no `.swarm` directory all yield an empty list, and the caller says so rather than printing "clean".
-fn owned_files_from_run_log(working_dir: &Path) -> Vec<String> {
-    let mut out: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
-    let Ok(rd) = std::fs::read_dir(working_dir.join(".swarm")) else {
-        return Vec::new();
-    };
-    for e in rd.flatten() {
-        let p = e.path();
-        if p.extension().and_then(|x| x.to_str()) != Some("jsonl") {
-            continue;
-        }
-        let Ok(body) = std::fs::read_to_string(&p) else {
-            continue;
-        };
-        for line in body.lines() {
-            let Ok(v) = serde_json::from_str::<serde_json::Value>(line) else {
-                continue;
-            };
-            if v.get("event").and_then(|e| e.as_str()) != Some("task_owns") {
-                continue;
-            }
-            for f in v
-                .get("owned_files")
-                .and_then(|f| f.as_array())
-                .into_iter()
-                .flatten()
-                .filter_map(|f| f.as_str())
-            {
-                out.insert(f.to_string());
-            }
-        }
-    }
-    out.into_iter().collect()
-}
-
 /// Cut a request into `n` portions of roughly equal CHARACTER COUNT, in order, never splitting a paragraph.
 ///
 /// NOTHING TO DO WITH ANY DEVICE WEIGHT. This function sees only the request text and a lane count; it
@@ -31452,7 +31411,21 @@ impl GooseAgentDispatcher {
         if owned_files.is_empty() {
             return;
         }
-        let mut defects = verify_owned_files(root, owned_files);
+        // THE LANE VIEW, not the raw verify — the same seam as the judge prompt and the defect
+        // steer (r6c seq 1954; `lane_defect_view` carries the receipt). This event, its stderr
+        // line and the desktop otherwise read a raw "web/index.html references `viz.js`, which
+        // does not exist" as THIS task's gap even when web/viz.js is a sibling's in-flight
+        // deliverable — the exact words a supervisor turned into an ownership collision. One
+        // shared view, so the completion event can never drift from the steer on the same defect;
+        // refs the lane itself owns, and refs no task owns, keep today's lines exactly.
+        let mut defects = judge_context::lane_defect_view(
+            root,
+            task_id,
+            owned_files,
+            &self.owned_files_by_task.lock().unwrap(),
+            &imports::ledger_task_states(root),
+            &self.dispatched_tasks.lock().unwrap(),
+        );
         // AND THE CROSS-TASK CHECK, on the same free pass. A task can deliver its own file perfectly and
         // still leave the tree unrunnable by importing something nobody wrote. Run it here rather than on
         // a cadence: a task completing is exactly when the tree changed, so there is nothing to schedule
@@ -42715,32 +42688,5 @@ mod audit_regressions {
             d["tasks_owning_nothing"].as_array().unwrap().is_empty(),
             "integrate-verify owns nothing BY DESIGN and must stay exempt"
         );
-    }
-
-    /// Four of the verifier's five detectors iterate the owned list, so a corpus sweep with no `--owns`
-    /// could only ever run the import check — and printed the flat word "clean".
-    #[test]
-    fn the_owned_files_a_run_declared_can_be_read_back_out_of_its_log() {
-        let dir = tmp("runlog");
-        std::fs::create_dir_all(dir.join(".swarm")).unwrap();
-        std::fs::write(
-            dir.join(".swarm/run.jsonl"),
-            "{\"event\":\"phase\",\"phase\":\"build\"}\n\
-             {\"event\":\"task_owns\",\"task_id\":\"store\",\"owned_files\":[\"app/store.py\"]}\n\
-             {\"event\":\"task_owns\",\"task_id\":\"store\",\"owned_files\":[\"app/store.py\"]}\n\
-             {\"event\":\"task_owns\",\"task_id\":\"api\",\"owned_files\":[\"app/api.py\"]}\n\
-             not json at all\n",
-        )
-        .unwrap();
-        assert_eq!(
-            owned_files_from_run_log(&dir),
-            vec!["app/api.py".to_string(), "app/store.py".to_string()],
-            "de-duplicated, sorted, and unbothered by a truncated line"
-        );
-        assert!(
-            owned_files_from_run_log(&tmp("runlog-empty")).is_empty(),
-            "a tree with no .swarm directory yields nothing, and the caller must SAY so"
-        );
-        let _ = std::fs::remove_dir_all(&dir);
     }
 }

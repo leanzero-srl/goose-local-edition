@@ -289,6 +289,49 @@ pub(super) fn verify_owned_files(working_dir: &Path, owned: &[String]) -> Vec<St
     out
 }
 
+/// Every path any task DECLARED IT OWNS on this run, read back out of the tree's own event log.
+///
+/// `swarm verify` took its ownership list only from a hand-typed `--owns`, so replaying the verifier
+/// over a corpus of archived runs could never reach the four detectors that iterate that list. The
+/// engine now writes a `task_owns` row per dispatch; this reads them back, de-duplicated and sorted,
+/// so a sweep verifies what the run actually built rather than what the operator remembered to type.
+///
+/// Best-effort by construction: an unreadable log, a run from before the event existed, or a tree with
+/// no `.swarm` directory all yield an empty list, and the caller says so rather than printing "clean".
+pub(super) fn owned_files_from_run_log(working_dir: &Path) -> Vec<String> {
+    let mut out: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    let Ok(rd) = std::fs::read_dir(working_dir.join(".swarm")) else {
+        return Vec::new();
+    };
+    for e in rd.flatten() {
+        let p = e.path();
+        if p.extension().and_then(|x| x.to_str()) != Some("jsonl") {
+            continue;
+        }
+        let Ok(body) = std::fs::read_to_string(&p) else {
+            continue;
+        };
+        for line in body.lines() {
+            let Ok(v) = serde_json::from_str::<serde_json::Value>(line) else {
+                continue;
+            };
+            if v.get("event").and_then(|e| e.as_str()) != Some("task_owns") {
+                continue;
+            }
+            for f in v
+                .get("owned_files")
+                .and_then(|f| f.as_array())
+                .into_iter()
+                .flatten()
+                .filter_map(|f| f.as_str())
+            {
+                out.insert(f.to_string());
+            }
+        }
+    }
+    out.into_iter().collect()
+}
+
 /// Every dangling static reference in an HTML file, as (resolved tree path, raw ref) DATA — the
 /// ownership routing in `lane_defect_view` needs the target as a path to match against the plan's
 /// ownership map, never re-parsed out of a formatted line (the same rule that split
@@ -490,5 +533,32 @@ mod tests {
             "{view:?}"
         );
         let _ = std::fs::remove_dir_all(&d);
+    }
+
+    /// Four of the verifier's five detectors iterate the owned list, so a corpus sweep with no `--owns`
+    /// could only ever run the import check — and printed the flat word "clean".
+    #[test]
+    fn the_owned_files_a_run_declared_can_be_read_back_out_of_its_log() {
+        let dir = tmp("runlog");
+        std::fs::create_dir_all(dir.join(".swarm")).unwrap();
+        std::fs::write(
+            dir.join(".swarm/run.jsonl"),
+            "{\"event\":\"phase\",\"phase\":\"build\"}\n\
+             {\"event\":\"task_owns\",\"task_id\":\"store\",\"owned_files\":[\"app/store.py\"]}\n\
+             {\"event\":\"task_owns\",\"task_id\":\"store\",\"owned_files\":[\"app/store.py\"]}\n\
+             {\"event\":\"task_owns\",\"task_id\":\"api\",\"owned_files\":[\"app/api.py\"]}\n\
+             not json at all\n",
+        )
+        .unwrap();
+        assert_eq!(
+            owned_files_from_run_log(&dir),
+            vec!["app/api.py".to_string(), "app/store.py".to_string()],
+            "de-duplicated, sorted, and unbothered by a truncated line"
+        );
+        assert!(
+            owned_files_from_run_log(&tmp("runlog-empty")).is_empty(),
+            "a tree with no .swarm directory yields nothing, and the caller must SAY so"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
