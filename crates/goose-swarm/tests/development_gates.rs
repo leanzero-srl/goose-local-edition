@@ -259,9 +259,13 @@ fn the_banned_integrate_template_only_shrinks() {
 /// shifting-loop test moved to commands/swarm/ladder.rs, paying for the escalation clause's
 /// write-progress facts (`ladder::escalation_moved` — the judge is told "read-only — no owned
 /// bytes written" instead of a raw action count) and the aux read path's poison recovery.
+/// Tightened to 42,548 (r6c promised-delivery): the steer's SUPERVISOR NOTE format moved to
+/// commands/swarm/ladder.rs as `steer_note`, paying for the `delivery_promise_due` wiring at
+/// the omni seam (a drift hold's promise on a zero-action files-owing lane now delivers by
+/// seeded restream instead of deferring behind think-advance forever).
 #[test]
 fn swarm_rs_line_count_only_decreases() {
-    const SWARM_RS_LINE_BASELINE: usize = 42_551;
+    const SWARM_RS_LINE_BASELINE: usize = 42_548;
     let text = read("crates/goose-cli/src/commands/swarm.rs");
     let n = text.lines().count();
     assert!(
