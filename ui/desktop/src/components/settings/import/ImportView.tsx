@@ -488,7 +488,7 @@ export default function ImportView() {
           <div>
             <h2 className="text-sm font-semibold text-text-primary">Import from Claude Code</h2>
             <p className="text-xs text-text-secondary">
-              Bring your Claude Code skills, memory, and MCP servers into Goose Local Edition. Only what's
+              Bring your Claude Code skills, memory, and MCP servers into Goose Swarm. Only what's
               present is shown.
             </p>
           </div>

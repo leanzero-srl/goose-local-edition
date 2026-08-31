@@ -1,7 +1,6 @@
 import { ScrollArea } from '../ui/scroll-area';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../ui/tabs';
 import { View, ViewOptions } from '../../utils/navigationUtils';
-import ModelsSection from './models/ModelsSection';
 import ExternalBackendSection from './app/ExternalBackendSection';
 import AppSettingsSection from './app/AppSettingsSection';
 import ConfigSettings from './config/ConfigSettings';
@@ -9,7 +8,6 @@ import PromptsSettingsSection from './PromptsSettingsSection';
 import type { ExtensionConfig } from '../../types/extensions';
 import { MainPanelLayout } from '../Layout/MainPanelLayout';
 import {
-  Bot,
   Share2,
   Monitor,
   MessageSquare,
@@ -36,10 +34,6 @@ const i18n = defineMessages({
   title: {
     id: 'settingsView.title',
     defaultMessage: 'Settings',
-  },
-  tabModels: {
-    id: 'settingsView.tabModels',
-    defaultMessage: 'Models',
   },
   tabChat: {
     id: 'settingsView.tabChat',
@@ -75,22 +69,25 @@ export type SettingsViewOptions = {
 
 export default function SettingsView({
   onClose,
-  setView,
   viewOptions,
 }: {
   onClose: () => void;
-  setView: (view: View, viewOptions?: ViewOptions) => void;
+  // Kept in the props contract for callers; unused since the Models tab left the settings nav.
+  setView?: (view: View, viewOptions?: ViewOptions) => void;
   viewOptions: SettingsViewOptions;
 }) {
-  const [activeTab, setActiveTab] = useState('models');
   const hasTrackedInitialTab = useRef(false);
   const { localInference } = useFeatures();
   const { edition } = useEdition();
   const isLocalEdition = edition === 'local';
   // The Swarm tab is the local-fleet config surface. It is relevant whenever the user works with local
-  // models — the Local Edition look OR the local-inference capability — not just the cosmetic Edition
-  // toggle. Swarm is a first-class provider now, so its settings must be reachable on their own merit.
+  // models — the Goose Swarm (local edition) look OR the local-inference capability — not just the
+  // cosmetic Edition toggle. Swarm is a first-class provider now, so its settings must be reachable on
+  // their own merit.
   const showSwarm = isLocalEdition || localInference;
+  // The Models tab left the settings nav (provider management consolidates into the LeanZero Swarm
+  // view); the first visible tab is the default.
+  const [activeTab, setActiveTab] = useState(() => (showSwarm ? 'swarm' : 'chat'));
   const intl = useIntl();
 
   const handleTabChange = (tab: string) => {
@@ -101,10 +98,11 @@ export default function SettingsView({
   // Determine initial tab based on section prop
   useEffect(() => {
     if (viewOptions.section) {
-      // Map section names to tab values
+      // Map section names to tab values. 'models' deep links land on the nearest surviving surface
+      // now that the Models tab is gone.
       const sectionToTab: Record<string, string> = {
         update: 'app',
-        models: 'models',
+        models: showSwarm ? 'swarm' : 'chat',
         modes: 'chat',
         sharing: 'sharing',
         styles: 'chat',
@@ -121,12 +119,12 @@ export default function SettingsView({
         setActiveTab(targetTab);
       }
     }
-  }, [viewOptions.section]);
+  }, [viewOptions.section, showSwarm]);
 
-  // Reset active tab if the Import tab (Local Edition only) becomes unavailable
+  // Reset active tab if the Import tab (local edition only) becomes unavailable
   useEffect(() => {
     if (!isLocalEdition && activeTab === 'import') {
-      setActiveTab('models');
+      setActiveTab('chat');
     }
   }, [isLocalEdition, activeTab]);
 
@@ -171,14 +169,6 @@ export default function SettingsView({
             >
               <div className="px-1">
                 <TabsList className="w-full mb-2 justify-start overflow-x-auto flex-nowrap">
-                  <TabsTrigger
-                    value="models"
-                    className="flex gap-2"
-                    data-testid="settings-models-tab"
-                  >
-                    <Bot className="h-4 w-4" />
-                    {intl.formatMessage(i18n.tabModels)}
-                  </TabsTrigger>
                   {showSwarm && (
                     <TabsTrigger
                       value="swarm"
@@ -239,13 +229,6 @@ export default function SettingsView({
               </div>
 
               <ScrollArea className="flex-1 px-2">
-                <TabsContent
-                  value="models"
-                  className="mt-0 focus-visible:outline-none focus-visible:ring-0"
-                >
-                  <ModelsSection setView={setView} />
-                </TabsContent>
-
                 {showSwarm && (
                   <TabsContent
                     value="swarm"

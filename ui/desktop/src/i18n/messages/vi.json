@@ -41,14 +41,14 @@
   "appsView.noAppsTitle": {
     "defaultMessage": "Không có ứng dụng nào"
   },
-  "appsView.retry": {
-    "defaultMessage": "Thử lại"
-  },
   "appsView.retiredChatApp": {
     "defaultMessage": "Chat app retired"
   },
   "appsView.retiredChatAppDetail": {
     "defaultMessage": "We removed this feature because MCP sampling is no longer supported."
+  },
+  "appsView.retry": {
+    "defaultMessage": "Thử lại"
   },
   "appsView.title": {
     "defaultMessage": "Ứng dụng"
@@ -116,11 +116,20 @@
   "backButton.back": {
     "defaultMessage": "Quay lại"
   },
+  "baseChat.dismiss": {
+    "defaultMessage": "Dismiss"
+  },
   "baseChat.failedToLoadSession": {
     "defaultMessage": "Không thể tải phiên"
   },
   "baseChat.goHome": {
     "defaultMessage": "Về trang chủ"
+  },
+  "baseChat.promptFailed": {
+    "defaultMessage": "That message did not go through"
+  },
+  "baseChat.promptFailedHint": {
+    "defaultMessage": "Your conversation is safe. Send again to retry."
   },
   "bottomMenuExtensionSelection.extensionUpdated": {
     "defaultMessage": "Đã cập nhật tiện ích mở rộng"
@@ -917,6 +926,15 @@
   "dirSwitcher.recentDirectories": {
     "defaultMessage": "Thư mục gần đây"
   },
+  "editionSelector.edition": {
+    "defaultMessage": "Edition"
+  },
+  "editionSelector.local": {
+    "defaultMessage": "Goose Swarm"
+  },
+  "editionSelector.standard": {
+    "defaultMessage": "goose"
+  },
   "elicitationRequest.accept": {
     "defaultMessage": "Chấp nhận"
   },
@@ -1343,42 +1361,6 @@
   "hub.goodMorning": {
     "defaultMessage": "Chào buổi sáng"
   },
-  "huggingFaceModelSearch.download": {
-    "defaultMessage": "Tải xuống"
-  },
-  "huggingFaceModelSearch.downloaded": {
-    "defaultMessage": "Đã tải xuống"
-  },
-  "huggingFaceModelSearch.downloading": {
-    "defaultMessage": "Đang tải xuống…"
-  },
-  "huggingFaceModelSearch.loadingVariants": {
-    "defaultMessage": "Đang tải các biến thể..."
-  },
-  "huggingFaceModelSearch.noGgufModels": {
-    "defaultMessage": "Không tìm thấy mô hình cục bộ tương thích nào cho truy vấn này."
-  },
-  "huggingFaceModelSearch.recommended": {
-    "defaultMessage": "Được khuyến nghị"
-  },
-  "huggingFaceModelSearch.searchError": {
-    "defaultMessage": "Lỗi tìm kiếm: {details}"
-  },
-  "huggingFaceModelSearch.searchFailed": {
-    "defaultMessage": "Tìm kiếm thất bại. Vui lòng thử lại."
-  },
-  "huggingFaceModelSearch.searchHuggingFace": {
-    "defaultMessage": "Tìm kiếm HuggingFace"
-  },
-  "huggingFaceModelSearch.searchNoData": {
-    "defaultMessage": "Tìm kiếm không trả về dữ liệu nào."
-  },
-  "huggingFaceModelSearch.searchPlaceholder": {
-    "defaultMessage": "Tìm kiếm mô hình cục bộ..."
-  },
-  "huggingFaceModelSearch.tooLarge": {
-    "defaultMessage": "Có thể không vừa với bộ nhớ (mô hình {size}, khả dụng {available})"
-  },
   "huggingFaceSignInPrompt.failedToConfigure": {
     "defaultMessage": "Không thể đăng nhập vào Hugging Face: {error}"
   },
@@ -1709,75 +1691,6 @@
   "loadingGoose.waiting": {
     "defaultMessage": "goose đang chờ…"
   },
-  "localInferenceSettings.deleteConfirm": {
-    "defaultMessage": "Xóa mô hình này? Bạn có thể tải lại sau."
-  },
-  "localInferenceSettings.description": {
-    "defaultMessage": "Tải xuống và quản lý các mô hình LLM cục bộ để suy luận mà không cần khóa API. Tìm kiếm các mô hình GGUF hoặc MLX trên HuggingFace, hoặc sử dụng các lựa chọn nổi bật bên dưới."
-  },
-  "localInferenceSettings.dismiss": {
-    "defaultMessage": "Bỏ qua"
-  },
-  "localInferenceSettings.download": {
-    "defaultMessage": "Tải xuống"
-  },
-  "localInferenceSettings.downloadCancelled": {
-    "defaultMessage": "Đã hủy tải xuống"
-  },
-  "localInferenceSettings.downloadFailed": {
-    "defaultMessage": "Tải xuống thất bại"
-  },
-  "localInferenceSettings.downloadProgress": {
-    "defaultMessage": "{downloaded} / {total} ({percent}%)"
-  },
-  "localInferenceSettings.downloadedModels": {
-    "defaultMessage": "Các mô hình đã tải xuống"
-  },
-  "localInferenceSettings.downloading": {
-    "defaultMessage": "Đang tải xuống"
-  },
-  "localInferenceSettings.featuredModels": {
-    "defaultMessage": "Mô hình nổi bật"
-  },
-  "localInferenceSettings.huggingFaceSignInNote": {
-    "defaultMessage": "Đăng nhập để tăng giới hạn tốc độ khi tìm kiếm và tải xuống mô hình, và để truy cập các kho lưu trữ Hugging Face riêng tư hoặc bị giới hạn."
-  },
-  "localInferenceSettings.modelSettings": {
-    "defaultMessage": "Cài đặt mô hình"
-  },
-  "localInferenceSettings.modelSettingsTitle": {
-    "defaultMessage": "Cài đặt mô hình"
-  },
-  "localInferenceSettings.noModels": {
-    "defaultMessage": "Không có mô hình nào khả dụng"
-  },
-  "localInferenceSettings.recommended": {
-    "defaultMessage": "Được đề xuất"
-  },
-  "localInferenceSettings.remaining": {
-    "defaultMessage": "Còn lại {time}"
-  },
-  "localInferenceSettings.retry": {
-    "defaultMessage": "Thử lại"
-  },
-  "localInferenceSettings.showAllFeatured": {
-    "defaultMessage": "Hiển thị tất cả nổi bật (thêm {count})"
-  },
-  "localInferenceSettings.showRecommendedOnly": {
-    "defaultMessage": "Chỉ hiển thị được đề xuất"
-  },
-  "localInferenceSettings.title": {
-    "defaultMessage": "Mô hình suy luận cục bộ"
-  },
-  "localInferenceSettings.vision": {
-    "defaultMessage": "Thị giác"
-  },
-  "localInferenceSettings.visionEncoderDownloading": {
-    "defaultMessage": "Đang tải bộ mã hóa thị giác…"
-  },
-  "localInferenceSettings.visionEncoderNotDownloaded": {
-    "defaultMessage": "Bộ mã hóa thị giác chưa được tải xuống"
-  },
   "localModelManager.active": {
     "defaultMessage": "Đang hoạt động"
   },
@@ -1858,6 +1771,150 @@
   },
   "localModelPicker.useModel": {
     "defaultMessage": "Sử dụng {modelId}"
+  },
+  "loopModal.browseYaml": {
+    "defaultMessage": "Browse for YAML file..."
+  },
+  "loopModal.cancel": {
+    "defaultMessage": "Cancel"
+  },
+  "loopModal.createLoop": {
+    "defaultMessage": "Create Loop"
+  },
+  "loopModal.createNewLoop": {
+    "defaultMessage": "Create New Loop"
+  },
+  "loopModal.creating": {
+    "defaultMessage": "Creating..."
+  },
+  "loopModal.deepLink": {
+    "defaultMessage": "Deep link"
+  },
+  "loopModal.deepLinkPlaceholder": {
+    "defaultMessage": "Paste goose://recipe link here..."
+  },
+  "loopModal.failedParseRecipe": {
+    "defaultMessage": "Failed to parse recipe from file."
+  },
+  "loopModal.failedReadFile": {
+    "defaultMessage": "Failed to read the selected file."
+  },
+  "loopModal.invalidDeepLink": {
+    "defaultMessage": "Invalid deep link. Please use a goose://recipe link."
+  },
+  "loopModal.invalidFileType": {
+    "defaultMessage": "Invalid file type: Please select a YAML file (.yaml or .yml)"
+  },
+  "loopModal.loopIdRequired": {
+    "defaultMessage": "Loop name is required."
+  },
+  "loopModal.maxIterationsHelp": {
+    "defaultMessage": "Hard cap on iterations regardless of the stop check."
+  },
+  "loopModal.maxIterationsLabel": {
+    "defaultMessage": "Max iterations:"
+  },
+  "loopModal.maxIterationsRequired": {
+    "defaultMessage": "Max iterations must be at least 1."
+  },
+  "loopModal.nameLabel": {
+    "defaultMessage": "Name:"
+  },
+  "loopModal.namePlaceholder": {
+    "defaultMessage": "e.g., nightly-refine-loop"
+  },
+  "loopModal.provideValidRecipe": {
+    "defaultMessage": "Please provide a valid recipe source."
+  },
+  "loopModal.recipeDescription": {
+    "defaultMessage": "Description: {description}"
+  },
+  "loopModal.recipeParsed": {
+    "defaultMessage": "Recipe parsed successfully"
+  },
+  "loopModal.recipeTitle": {
+    "defaultMessage": "Title: {title}"
+  },
+  "loopModal.scheduleLabel": {
+    "defaultMessage": "Schedule:"
+  },
+  "loopModal.selected": {
+    "defaultMessage": "Selected: {path}"
+  },
+  "loopModal.sourceLabel": {
+    "defaultMessage": "Recipe:"
+  },
+  "loopModal.stateArtifactHelp": {
+    "defaultMessage": "Optional file the recipe writes each iteration; its contents carry into the next."
+  },
+  "loopModal.stateArtifactLabel": {
+    "defaultMessage": "State artifact:"
+  },
+  "loopModal.stateArtifactPlaceholder": {
+    "defaultMessage": "e.g., state.md"
+  },
+  "loopModal.stopCheckHelp": {
+    "defaultMessage": "Optional shell command run after each iteration; exit 0 stops the loop."
+  },
+  "loopModal.stopCheckLabel": {
+    "defaultMessage": "Stop check command:"
+  },
+  "loopModal.stopCheckPlaceholder": {
+    "defaultMessage": "e.g., test -f done.flag"
+  },
+  "loopModal.subtitle": {
+    "defaultMessage": "A loop runs a recipe repeatedly until a stop check passes or the iteration cap is reached."
+  },
+  "loopModal.yaml": {
+    "defaultMessage": "YAML"
+  },
+  "loopView.confirmDelete": {
+    "defaultMessage": "Remove loop \"{id}\"? The recipe will be kept."
+  },
+  "loopView.createLoop": {
+    "defaultMessage": "Create Loop"
+  },
+  "loopView.deleteConfirm": {
+    "defaultMessage": "Remove"
+  },
+  "loopView.deleteTitle": {
+    "defaultMessage": "Remove loop"
+  },
+  "loopView.description": {
+    "defaultMessage": "Loops run a recipe repeatedly on a schedule until a stop check passes or the iteration cap is reached."
+  },
+  "loopView.errorPrefix": {
+    "defaultMessage": "Error: {error}"
+  },
+  "loopView.lastRun": {
+    "defaultMessage": "Last run: {date}"
+  },
+  "loopView.loop": {
+    "defaultMessage": "Loop"
+  },
+  "loopView.loopCreated": {
+    "defaultMessage": "Loop Created"
+  },
+  "loopView.loopCreatedMsg": {
+    "defaultMessage": "Successfully created loop \"{id}\""
+  },
+  "loopView.maxIterations": {
+    "defaultMessage": "{count} max iterations"
+  },
+  "loopView.noLoops": {
+    "defaultMessage": "No loops yet"
+  },
+  "loopView.refresh": {
+    "defaultMessage": "Refresh"
+  },
+  "loopView.refreshing": {
+    "defaultMessage": "Refreshing..."
+  },
+  "loopView.stateArtifact": {
+    "defaultMessage": "State: {file}"
+  },
+  "loopView.stopCheck": {
+    "defaultMessage": "Stop check: {command}"
   },
   "markdownContent.cancel": {
     "defaultMessage": "Hủy"
@@ -2246,8 +2303,14 @@
   "modelsBottomBar.changeModel": {
     "defaultMessage": "Thay đổi mô hình"
   },
+  "modelsBottomBar.changeProvider": {
+    "defaultMessage": "Change Provider"
+  },
   "modelsBottomBar.currentModel": {
     "defaultMessage": "Mô hình hiện tại"
+  },
+  "modelsBottomBar.leanzeroWebsite": {
+    "defaultMessage": "LeanZero website"
   },
   "modelsBottomBar.loadingModel": {
     "defaultMessage": "Đang tải mô hình..."
@@ -2264,44 +2327,32 @@
   "modelsBottomBar.selectModel": {
     "defaultMessage": "Chọn mô hình"
   },
+  "modelsBottomBar.swarmDocs": {
+    "defaultMessage": "Documentation"
+  },
   "modelsSection.resetDescription": {
     "defaultMessage": "Xóa các cài đặt mô hình và nhà cung cấp đã chọn để bắt đầu lại từ đầu"
   },
   "modelsSection.resetTitle": {
     "defaultMessage": "Đặt lại nhà cung cấp và mô hình"
   },
-  "navigation.itemApps": {
-    "defaultMessage": "Ứng dụng"
-  },
-  "navigation.itemExtensions": {
-    "defaultMessage": "Tiện ích mở rộng"
+  "navigation.itemBenchmark": {
+    "defaultMessage": "Benchmark"
   },
   "navigation.itemHome": {
     "defaultMessage": "Trò chuyện mới"
   },
-  "navigation.itemRecipes": {
-    "defaultMessage": "Công thức"
+  "navigation.itemMemories": {
+    "defaultMessage": "Memories"
   },
-  "navigation.itemScheduler": {
-    "defaultMessage": "Bộ lập lịch"
-  },
-  "navigation.itemSessions": {
-    "defaultMessage": "Lịch sử phiên"
+  "navigation.itemMlx": {
+    "defaultMessage": "Leanzero MLX"
   },
   "navigation.itemSettings": {
     "defaultMessage": "Cài đặt"
   },
   "navigation.itemSkills": {
     "defaultMessage": "Kỹ năng"
-  },
-  "navigationPanel.chats": {
-    "defaultMessage": "Cuộc trò chuyện"
-  },
-  "navigationPanel.noChats": {
-    "defaultMessage": "Không có cuộc trò chuyện gần đây"
-  },
-  "navigationPanel.untitledSession": {
-    "defaultMessage": "Phiên chưa đặt tên"
   },
   "onboardingGuard.checkProviderErrorDescription": {
     "defaultMessage": "Máy chủ có thể đang khởi động hoặc tạm thời không khả dụng."
@@ -3623,6 +3674,12 @@
   "sessionActionsHeader.loadingJson": {
     "defaultMessage": "Đang tải JSON..."
   },
+  "sessionActionsHeader.makeRecipe": {
+    "defaultMessage": "Make recipe from this conversation"
+  },
+  "sessionActionsHeader.makeRecipeError": {
+    "defaultMessage": "Could not create a recipe from this conversation"
+  },
   "sessionActionsHeader.renameFailed": {
     "defaultMessage": "Không thể đổi tên phiên: {error}"
   },
@@ -3827,6 +3884,15 @@
   "settings.dockIcon.title": {
     "defaultMessage": "Biểu tượng dock"
   },
+  "settings.edition.description": {
+    "defaultMessage": "The Goose Swarm skin — LeanZero branding, the fleet fan-in view, and azure accents. This is the look and identity only; it is separate from the engine. To actually build with your local fleet, pick Swarm LeanZero in the model selector. The Swarm LeanZero settings tab stays available whenever you run local models, regardless of this setting."
+  },
+  "settings.edition.preview": {
+    "defaultMessage": "Swarm LeanZero — the fan-in view"
+  },
+  "settings.edition.title": {
+    "defaultMessage": "Goose Swarm"
+  },
   "settings.help.description": {
     "defaultMessage": "Giúp chúng tôi cải thiện goose bằng cách báo cáo sự cố hoặc yêu cầu tính năng mới"
   },
@@ -3986,12 +4052,6 @@
   "settingsView.tabKeyboard": {
     "defaultMessage": "Bàn phím"
   },
-  "settingsView.tabLocalInference": {
-    "defaultMessage": "Suy luận cục bộ"
-  },
-  "settingsView.tabModels": {
-    "defaultMessage": "Mô hình"
-  },
   "settingsView.tabPrompts": {
     "defaultMessage": "Lời nhắc"
   },
@@ -4018,6 +4078,24 @@
   },
   "shortcutRecorder.save": {
     "defaultMessage": "Lưu"
+  },
+  "shortcutRefused.close": {
+    "defaultMessage": "Closing this window would drop the live benchmark view. Use File > Close if you really mean it."
+  },
+  "shortcutRefused.navigate": {
+    "defaultMessage": "Leaving the Benchmark view is one-way while a run is live; use File > New Chat if you really mean it."
+  },
+  "shortcutRefused.quit": {
+    "defaultMessage": "Quitting would orphan the run and lose its score. Use Goose > Quit if you really mean it."
+  },
+  "shortcutRefused.reload": {
+    "defaultMessage": "Reloading would discard the live log and swarm panel state."
+  },
+  "shortcutRefused.spawn": {
+    "defaultMessage": "Cmd+N would open a second window and a second backend on the live run. Use File > New Chat Window if you really mean it."
+  },
+  "shortcutRefused.title": {
+    "defaultMessage": "Shortcut ignored while a benchmark is running"
   },
   "skillsView.addSkill": {
     "defaultMessage": "Thêm kỹ năng"

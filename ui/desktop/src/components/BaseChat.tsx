@@ -615,15 +615,15 @@ export default function BaseChat({
                 className="text-[10px] font-bold uppercase tracking-wide text-white px-1.5 py-px no-drag"
                 style={{ backgroundColor: 'var(--color-action-solid, #1d4ed8)', borderRadius: 6 }}
                 data-testid="local-edition-badge"
-                title="Goose Local Edition"
+                title="Goose Swarm"
               >
-                local
+                swarm
               </span>
             )}
             {isLocal && (
               <span
                 className="no-drag flex flex-row items-center gap-1 text-[11px] leading-none text-text-secondary"
-                title="Goose Local Edition — powered by LeanZero"
+                title="Goose Swarm — powered by LeanZero"
               >
                 <span>powered by</span>
                 <a

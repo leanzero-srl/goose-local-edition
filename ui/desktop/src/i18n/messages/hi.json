@@ -41,14 +41,14 @@
   "appsView.noAppsTitle": {
     "defaultMessage": "कोई ऐप्स उपलब्ध नहीं"
   },
-  "appsView.retry": {
-    "defaultMessage": "पुनः प्रयास करें"
-  },
   "appsView.retiredChatApp": {
     "defaultMessage": "Chat app retired"
   },
   "appsView.retiredChatAppDetail": {
     "defaultMessage": "We removed this feature because MCP sampling is no longer supported."
+  },
+  "appsView.retry": {
+    "defaultMessage": "पुनः प्रयास करें"
   },
   "appsView.title": {
     "defaultMessage": "ऐप्स"
@@ -65,14 +65,14 @@
   "authSettings.deleteCredential": {
     "defaultMessage": "क्रेडेंशियल हटाएँ"
   },
-  "authSettings.deleted": {
-    "defaultMessage": "क्रेडेंशियल हटा दिया गया"
-  },
   "authSettings.deleteMessage": {
     "defaultMessage": "{provider} के लिए {name} क्रेडेंशियल हटाएं?"
   },
   "authSettings.deleteTitle": {
     "defaultMessage": "क्रेडेंशियल हटाएँ"
+  },
+  "authSettings.deleted": {
+    "defaultMessage": "क्रेडेंशियल हटा दिया गया"
   },
   "authSettings.description": {
     "defaultMessage": "goose द्वारा स्थानीय रूप से संग्रहीत प्रदाता क्रेडेंशियल प्रबंधित करें।"
@@ -98,11 +98,11 @@
   "authSettings.reauthorize": {
     "defaultMessage": "पुन: प्राधिकृत करें"
   },
-  "authSettings.signedIn": {
-    "defaultMessage": "क्रेडेंशियल कॉन्फ़िगर किया गया"
-  },
   "authSettings.signIn": {
     "defaultMessage": "साइन इन करें"
+  },
+  "authSettings.signedIn": {
+    "defaultMessage": "क्रेडेंशियल कॉन्फ़िगर किया गया"
   },
   "authSettings.storageProviderCache": {
     "defaultMessage": "प्रदाता कैश"
@@ -116,17 +116,20 @@
   "backButton.back": {
     "defaultMessage": "वापस"
   },
+  "baseChat.dismiss": {
+    "defaultMessage": "Dismiss"
+  },
   "baseChat.failedToLoadSession": {
     "defaultMessage": "सत्र लोड करने में विफल"
   },
   "baseChat.goHome": {
     "defaultMessage": "घर जाओ"
   },
-  "bottomMenuExtensionSelection.extensionsForNewChats": {
-    "defaultMessage": "नई चैट के लिए एक्सटेंशन"
+  "baseChat.promptFailed": {
+    "defaultMessage": "That message did not go through"
   },
-  "bottomMenuExtensionSelection.extensionsForThisSession": {
-    "defaultMessage": "इस चैट सत्र के लिए एक्सटेंशन"
+  "baseChat.promptFailedHint": {
+    "defaultMessage": "Your conversation is safe. Send again to retry."
   },
   "bottomMenuExtensionSelection.extensionUpdated": {
     "defaultMessage": "एक्सटेंशन अपडेट किया गया"
@@ -136,6 +139,12 @@
   },
   "bottomMenuExtensionSelection.extensionWillBeEnabled": {
     "defaultMessage": "नई चैट में {name} सक्षम किया जाएगा"
+  },
+  "bottomMenuExtensionSelection.extensionsForNewChats": {
+    "defaultMessage": "नई चैट के लिए एक्सटेंशन"
+  },
+  "bottomMenuExtensionSelection.extensionsForThisSession": {
+    "defaultMessage": "इस चैट सत्र के लिए एक्सटेंशन"
   },
   "bottomMenuExtensionSelection.manageExtensions": {
     "defaultMessage": "एक्सटेंशन प्रबंधित करें"
@@ -638,11 +647,11 @@
   "customProviderForm.attachments": {
     "defaultMessage": "अनुलग्नक"
   },
-  "customProviderForm.authentication": {
-    "defaultMessage": "प्रमाणीकरण"
-  },
   "customProviderForm.authHint": {
     "defaultMessage": "Ollama जैसे स्थानीय एलएलएम को आमतौर पर API कुंजी की आवश्यकता नहीं होती है।"
+  },
+  "customProviderForm.authentication": {
+    "defaultMessage": "प्रमाणीकरण"
   },
   "customProviderForm.availableModels": {
     "defaultMessage": "उपलब्ध मॉडल (अल्पविराम से अलग)"
@@ -917,6 +926,15 @@
   "dirSwitcher.recentDirectories": {
     "defaultMessage": "हाल की निर्देशिकाएँ"
   },
+  "editionSelector.edition": {
+    "defaultMessage": "Edition"
+  },
+  "editionSelector.local": {
+    "defaultMessage": "Goose Swarm"
+  },
+  "editionSelector.standard": {
+    "defaultMessage": "goose"
+  },
   "elicitationRequest.accept": {
     "defaultMessage": "स्वीकार करो"
   },
@@ -941,20 +959,17 @@
   "elicitationRequest.waitingForResponse": {
     "defaultMessage": "आपकी प्रतिक्रिया की प्रतीक्षा में ({timeRemaining} शेष)"
   },
-  "environmentBadge.dev": {
-    "defaultMessage": "देव"
-  },
   "envVarsSection.add": {
     "defaultMessage": "जोड़ें"
   },
   "envVarsSection.bothRequired": {
     "defaultMessage": "वेरिएबल नाम और मान दोनों दर्ज किए जाने चाहिए"
   },
-  "envVarsSection.environmentVariables": {
-    "defaultMessage": "पर्यावरण चर"
-  },
   "envVarsSection.envVarsDescription": {
     "defaultMessage": "पर्यावरण चर के लिए कुंजी-मान जोड़े जोड़ें। दोनों फ़ील्ड भरने के बाद जोड़ने के लिए \"+\" बटन पर क्लिक करें। मौजूदा गुप्त मानों को संशोधित करने के लिए संपादन बटन पर क्लिक करें।"
+  },
+  "envVarsSection.environmentVariables": {
+    "defaultMessage": "पर्यावरण चर"
   },
   "envVarsSection.noSpaces": {
     "defaultMessage": "वेरिएबल नाम में रिक्त स्थान नहीं हो सकते"
@@ -964,6 +979,9 @@
   },
   "envVarsSection.variableName": {
     "defaultMessage": "परिवर्तनीय नाम"
+  },
+  "environmentBadge.dev": {
+    "defaultMessage": "देव"
   },
   "errorBoundary.errorGeneric": {
     "defaultMessage": "एक त्रुटि पाई गई।"
@@ -1124,6 +1142,9 @@
   "extensionModal.unsavedChangesTitle": {
     "defaultMessage": "सहेजे न गए परिवर्तन"
   },
+  "extensionTimeoutField.timeoutLabel": {
+    "defaultMessage": "समयबाह्य"
+  },
   "extensionsSection.addCustomExtension": {
     "defaultMessage": "कस्टम एक्सटेंशन जोड़ें"
   },
@@ -1159,9 +1180,6 @@
   },
   "extensionsView.searchPlaceholder": {
     "defaultMessage": "एक्सटेंशन खोजें..."
-  },
-  "extensionTimeoutField.timeoutLabel": {
-    "defaultMessage": "समयबाह्य"
   },
   "externalBackendSection.certFingerprint": {
     "defaultMessage": "प्रमाणपत्र फ़िंगरप्रिंट (वैकल्पिक)"
@@ -1343,50 +1361,14 @@
   "hub.goodMorning": {
     "defaultMessage": "सुप्रभात"
   },
-  "huggingFaceModelSearch.download": {
-    "defaultMessage": "डाउनलोड करें"
-  },
-  "huggingFaceModelSearch.downloaded": {
-    "defaultMessage": "डाउनलोड"
-  },
-  "huggingFaceModelSearch.downloading": {
-    "defaultMessage": "डाउनलोड हो रहा है..."
-  },
-  "huggingFaceModelSearch.loadingVariants": {
-    "defaultMessage": "वेरिएंट लोड हो रहा है..."
-  },
-  "huggingFaceModelSearch.noGgufModels": {
-    "defaultMessage": "इस क्वेरी के लिए कोई GGUF मॉडल नहीं मिला."
-  },
-  "huggingFaceModelSearch.recommended": {
-    "defaultMessage": "अनुशंसित"
-  },
-  "huggingFaceModelSearch.searchError": {
-    "defaultMessage": "खोज त्रुटि: {details}"
-  },
-  "huggingFaceModelSearch.searchFailed": {
-    "defaultMessage": "खोज विफल रही. कृपया पुन: प्रयास करें।"
-  },
-  "huggingFaceModelSearch.searchHuggingFace": {
-    "defaultMessage": "हगिंगफेस खोजें"
-  },
-  "huggingFaceModelSearch.searchNoData": {
-    "defaultMessage": "खोज से कोई डेटा नहीं मिला."
-  },
-  "huggingFaceModelSearch.searchPlaceholder": {
-    "defaultMessage": "जीजीयूएफ मॉडल खोजें..."
-  },
-  "huggingFaceModelSearch.tooLarge": {
-    "defaultMessage": "मेमोरी में फ़िट नहीं हो सकता ({size} मॉडल, {available} उपलब्ध)"
-  },
   "huggingFaceSignInPrompt.failedToConfigure": {
     "defaultMessage": "हगिंग फेस में साइन इन करने में विफल: {error}"
   },
-  "huggingFaceSignInPrompt.signedIn": {
-    "defaultMessage": "हगिंग फेस ने साइन इन किया"
-  },
   "huggingFaceSignInPrompt.signIn": {
     "defaultMessage": "साइन इन करें"
+  },
+  "huggingFaceSignInPrompt.signedIn": {
+    "defaultMessage": "हगिंग फेस ने साइन इन किया"
   },
   "huggingFaceSignInPrompt.signingIn": {
     "defaultMessage": "साइन इन किया जा रहा है..."
@@ -1421,14 +1403,14 @@
   "importRecipeForm.expectedRecipeStructure": {
     "defaultMessage": "अपेक्षित रेसिपी संरचना"
   },
-  "importRecipeForm.importing": {
-    "defaultMessage": "आयात किया जा रहा है..."
-  },
   "importRecipeForm.importRecipeButton": {
     "defaultMessage": "रेसिपी आयात करें"
   },
   "importRecipeForm.importRecipeTitle": {
     "defaultMessage": "रेसिपी आयात करें"
+  },
+  "importRecipeForm.importing": {
+    "defaultMessage": "आयात किया जा रहा है..."
   },
   "importRecipeForm.or": {
     "defaultMessage": "या"
@@ -1528,6 +1510,18 @@
   },
   "jsonSchemaForm.submit": {
     "defaultMessage": "सबमिट करें"
+  },
+  "keyValueEditor.addValue": {
+    "defaultMessage": "पूर्व-कॉन्फ़िगर मान जोड़ें"
+  },
+  "keyValueEditor.defaultKeyPlaceholder": {
+    "defaultMessage": "पैरामीटर नाम..."
+  },
+  "keyValueEditor.defaultValuePlaceholder": {
+    "defaultMessage": "पैरामीटर मान..."
+  },
+  "keyValueEditor.removeValue": {
+    "defaultMessage": "पूर्व-कॉन्फ़िगर मान {key} हटाएं"
   },
   "keyboardShortcuts.alwaysOnTopDescription": {
     "defaultMessage": "विंडो को हमेशा शीर्ष पर टॉगल करें"
@@ -1673,18 +1667,6 @@
   "keyboardShortcuts.toggleNavigationLabel": {
     "defaultMessage": "नेविगेशन टॉगल करें"
   },
-  "keyValueEditor.addValue": {
-    "defaultMessage": "पूर्व-कॉन्फ़िगर मान जोड़ें"
-  },
-  "keyValueEditor.defaultKeyPlaceholder": {
-    "defaultMessage": "पैरामीटर नाम..."
-  },
-  "keyValueEditor.defaultValuePlaceholder": {
-    "defaultMessage": "पैरामीटर मान..."
-  },
-  "keyValueEditor.removeValue": {
-    "defaultMessage": "पूर्व-कॉन्फ़िगर मान {key} हटाएं"
-  },
   "launcher.placeholder": {
     "defaultMessage": "goose से कुछ भी पूछें..."
   },
@@ -1708,75 +1690,6 @@
   },
   "loadingGoose.waiting": {
     "defaultMessage": "goose इंतज़ार कर रहा है..."
-  },
-  "localInferenceSettings.deleteConfirm": {
-    "defaultMessage": "यह मॉडल हटाएं? आप इसे बाद में पुनः डाउनलोड कर सकते हैं."
-  },
-  "localInferenceSettings.description": {
-    "defaultMessage": "API कुंजियों के बिना अनुमान के लिए स्थानीय एलएलएम मॉडल डाउनलोड और प्रबंधित करें। किसी भी जीजीयूएफ मॉडल के लिए हगिंगफेस खोजें या नीचे दिए गए चुनिंदा विकल्पों का उपयोग करें।"
-  },
-  "localInferenceSettings.dismiss": {
-    "defaultMessage": "खारिज करें"
-  },
-  "localInferenceSettings.download": {
-    "defaultMessage": "डाउनलोड करें"
-  },
-  "localInferenceSettings.downloadCancelled": {
-    "defaultMessage": "डाउनलोड रद्द किया गया"
-  },
-  "localInferenceSettings.downloadedModels": {
-    "defaultMessage": "डाउनलोड किए गए मॉडल"
-  },
-  "localInferenceSettings.downloadFailed": {
-    "defaultMessage": "डाउनलोड विफल रहा"
-  },
-  "localInferenceSettings.downloading": {
-    "defaultMessage": "डाउनलोड हो रहा है"
-  },
-  "localInferenceSettings.downloadProgress": {
-    "defaultMessage": "{downloaded} / {total} ({percent}%)"
-  },
-  "localInferenceSettings.featuredModels": {
-    "defaultMessage": "विशेष रुप से प्रदर्शित मॉडल"
-  },
-  "localInferenceSettings.huggingFaceSignInNote": {
-    "defaultMessage": "मॉडल खोजते और डाउनलोड करते समय दर सीमा बढ़ाने के लिए और निजी या गेटेड हगिंग फेस रिपॉजिटरी तक पहुंचने के लिए साइन इन करें।"
-  },
-  "localInferenceSettings.modelSettings": {
-    "defaultMessage": "मॉडल Settings"
-  },
-  "localInferenceSettings.modelSettingsTitle": {
-    "defaultMessage": "मॉडल सेटिंग्स"
-  },
-  "localInferenceSettings.noModels": {
-    "defaultMessage": "कोई मॉडल उपलब्ध नहीं"
-  },
-  "localInferenceSettings.recommended": {
-    "defaultMessage": "अनुशंसित"
-  },
-  "localInferenceSettings.remaining": {
-    "defaultMessage": "{time} शेष"
-  },
-  "localInferenceSettings.retry": {
-    "defaultMessage": "पुनः प्रयास करें"
-  },
-  "localInferenceSettings.showAllFeatured": {
-    "defaultMessage": "सभी विशेष रुप से प्रदर्शित दिखाएँ ({count} अधिक)"
-  },
-  "localInferenceSettings.showRecommendedOnly": {
-    "defaultMessage": "केवल अनुशंसित दिखाएं"
-  },
-  "localInferenceSettings.title": {
-    "defaultMessage": "स्थानीय अनुमान मॉडल"
-  },
-  "localInferenceSettings.vision": {
-    "defaultMessage": "दृष्टि"
-  },
-  "localInferenceSettings.visionEncoderDownloading": {
-    "defaultMessage": "विज़न एनकोडर डाउनलोड हो रहा है..."
-  },
-  "localInferenceSettings.visionEncoderNotDownloaded": {
-    "defaultMessage": "विज़न एनकोडर डाउनलोड नहीं हुआ"
   },
   "localModelManager.active": {
     "defaultMessage": "सक्रिय"
@@ -1817,11 +1730,11 @@
   "localModelPicker.checkingModels": {
     "defaultMessage": "उपलब्ध मॉडलों की जाँच की जा रही है..."
   },
-  "localModelPicker.downloading": {
-    "defaultMessage": "डाउनलोड हो रहा है {modelId}"
-  },
   "localModelPicker.downloadModel": {
     "defaultMessage": "डाउनलोड करें {modelId} ({size})"
+  },
+  "localModelPicker.downloading": {
+    "defaultMessage": "डाउनलोड हो रहा है {modelId}"
   },
   "localModelPicker.failedToLoad": {
     "defaultMessage": "उपलब्ध मॉडल लोड करने में विफल. कृपया पुन: प्रयास करें।"
@@ -1858,6 +1771,150 @@
   },
   "localModelPicker.useModel": {
     "defaultMessage": "{modelId} का प्रयोग करें"
+  },
+  "loopModal.browseYaml": {
+    "defaultMessage": "Browse for YAML file..."
+  },
+  "loopModal.cancel": {
+    "defaultMessage": "Cancel"
+  },
+  "loopModal.createLoop": {
+    "defaultMessage": "Create Loop"
+  },
+  "loopModal.createNewLoop": {
+    "defaultMessage": "Create New Loop"
+  },
+  "loopModal.creating": {
+    "defaultMessage": "Creating..."
+  },
+  "loopModal.deepLink": {
+    "defaultMessage": "Deep link"
+  },
+  "loopModal.deepLinkPlaceholder": {
+    "defaultMessage": "Paste goose://recipe link here..."
+  },
+  "loopModal.failedParseRecipe": {
+    "defaultMessage": "Failed to parse recipe from file."
+  },
+  "loopModal.failedReadFile": {
+    "defaultMessage": "Failed to read the selected file."
+  },
+  "loopModal.invalidDeepLink": {
+    "defaultMessage": "Invalid deep link. Please use a goose://recipe link."
+  },
+  "loopModal.invalidFileType": {
+    "defaultMessage": "Invalid file type: Please select a YAML file (.yaml or .yml)"
+  },
+  "loopModal.loopIdRequired": {
+    "defaultMessage": "Loop name is required."
+  },
+  "loopModal.maxIterationsHelp": {
+    "defaultMessage": "Hard cap on iterations regardless of the stop check."
+  },
+  "loopModal.maxIterationsLabel": {
+    "defaultMessage": "Max iterations:"
+  },
+  "loopModal.maxIterationsRequired": {
+    "defaultMessage": "Max iterations must be at least 1."
+  },
+  "loopModal.nameLabel": {
+    "defaultMessage": "Name:"
+  },
+  "loopModal.namePlaceholder": {
+    "defaultMessage": "e.g., nightly-refine-loop"
+  },
+  "loopModal.provideValidRecipe": {
+    "defaultMessage": "Please provide a valid recipe source."
+  },
+  "loopModal.recipeDescription": {
+    "defaultMessage": "Description: {description}"
+  },
+  "loopModal.recipeParsed": {
+    "defaultMessage": "Recipe parsed successfully"
+  },
+  "loopModal.recipeTitle": {
+    "defaultMessage": "Title: {title}"
+  },
+  "loopModal.scheduleLabel": {
+    "defaultMessage": "Schedule:"
+  },
+  "loopModal.selected": {
+    "defaultMessage": "Selected: {path}"
+  },
+  "loopModal.sourceLabel": {
+    "defaultMessage": "Recipe:"
+  },
+  "loopModal.stateArtifactHelp": {
+    "defaultMessage": "Optional file the recipe writes each iteration; its contents carry into the next."
+  },
+  "loopModal.stateArtifactLabel": {
+    "defaultMessage": "State artifact:"
+  },
+  "loopModal.stateArtifactPlaceholder": {
+    "defaultMessage": "e.g., state.md"
+  },
+  "loopModal.stopCheckHelp": {
+    "defaultMessage": "Optional shell command run after each iteration; exit 0 stops the loop."
+  },
+  "loopModal.stopCheckLabel": {
+    "defaultMessage": "Stop check command:"
+  },
+  "loopModal.stopCheckPlaceholder": {
+    "defaultMessage": "e.g., test -f done.flag"
+  },
+  "loopModal.subtitle": {
+    "defaultMessage": "A loop runs a recipe repeatedly until a stop check passes or the iteration cap is reached."
+  },
+  "loopModal.yaml": {
+    "defaultMessage": "YAML"
+  },
+  "loopView.confirmDelete": {
+    "defaultMessage": "Remove loop \"{id}\"? The recipe will be kept."
+  },
+  "loopView.createLoop": {
+    "defaultMessage": "Create Loop"
+  },
+  "loopView.deleteConfirm": {
+    "defaultMessage": "Remove"
+  },
+  "loopView.deleteTitle": {
+    "defaultMessage": "Remove loop"
+  },
+  "loopView.description": {
+    "defaultMessage": "Loops run a recipe repeatedly on a schedule until a stop check passes or the iteration cap is reached."
+  },
+  "loopView.errorPrefix": {
+    "defaultMessage": "Error: {error}"
+  },
+  "loopView.lastRun": {
+    "defaultMessage": "Last run: {date}"
+  },
+  "loopView.loop": {
+    "defaultMessage": "Loop"
+  },
+  "loopView.loopCreated": {
+    "defaultMessage": "Loop Created"
+  },
+  "loopView.loopCreatedMsg": {
+    "defaultMessage": "Successfully created loop \"{id}\""
+  },
+  "loopView.maxIterations": {
+    "defaultMessage": "{count} max iterations"
+  },
+  "loopView.noLoops": {
+    "defaultMessage": "No loops yet"
+  },
+  "loopView.refresh": {
+    "defaultMessage": "Refresh"
+  },
+  "loopView.refreshing": {
+    "defaultMessage": "Refreshing..."
+  },
+  "loopView.stateArtifact": {
+    "defaultMessage": "State: {file}"
+  },
+  "loopView.stopCheck": {
+    "defaultMessage": "Stop check: {command}"
   },
   "markdownContent.cancel": {
     "defaultMessage": "रद्द करें"
@@ -1985,9 +2042,6 @@
   "messageQueue.paused": {
     "defaultMessage": "रुका हुआ"
   },
-  "messageQueue.queued": {
-    "defaultMessage": "पंक्तिबद्ध"
-  },
   "messageQueue.queuePaused": {
     "defaultMessage": "कतार रोक दी गई"
   },
@@ -1996,6 +2050,9 @@
   },
   "messageQueue.queuePausedExpanded": {
     "defaultMessage": "रुकावट के कारण कतार रुकी. \"अभी भेजें\" का उपयोग करें या फिर से शुरू करने के लिए एक नया संदेश जोड़ें।"
+  },
+  "messageQueue.queued": {
+    "defaultMessage": "पंक्तिबद्ध"
   },
   "messageQueue.removeFromQueue": {
     "defaultMessage": "इस संदेश को कतार से हटाएँ"
@@ -2042,11 +2099,35 @@
   "microphoneSelector.test": {
     "defaultMessage": "परीक्षण"
   },
-  "modelAndProviderContext.modelChangedTitle": {
-    "defaultMessage": "मॉडल बदल गया"
+  "modeSelectionItem.autonomousDescription": {
+    "defaultMessage": "पूर्ण फ़ाइल संशोधन क्षमताएं, फ़ाइलों को स्वतंत्र रूप से संपादित करें, बनाएं और हटाएं।"
+  },
+  "modeSelectionItem.autonomousLabel": {
+    "defaultMessage": "स्वायत्त"
+  },
+  "modeSelectionItem.chatOnlyDescription": {
+    "defaultMessage": "टूल या एक्सटेंशन का उपयोग किए बिना चयनित प्रदाता से बातचीत करें।"
+  },
+  "modeSelectionItem.chatOnlyLabel": {
+    "defaultMessage": "केवल चैट करें"
+  },
+  "modeSelectionItem.manualDescription": {
+    "defaultMessage": "सभी टूल, एक्सटेंशन और फ़ाइल संशोधनों के लिए मानव अनुमोदन की आवश्यकता होगी"
+  },
+  "modeSelectionItem.manualLabel": {
+    "defaultMessage": "मैनुअल"
+  },
+  "modeSelectionItem.smartDescription": {
+    "defaultMessage": "जोखिम स्तर के आधार पर समझदारी से निर्धारित करें कि किन कार्यों को अनुमोदन की आवश्यकता है"
+  },
+  "modeSelectionItem.smartLabel": {
+    "defaultMessage": "होशियार"
   },
   "modelAndProviderContext.modelChangeFailed": {
     "defaultMessage": "{provider}/{model} विफल"
+  },
+  "modelAndProviderContext.modelChangedTitle": {
+    "defaultMessage": "मॉडल बदल गया"
   },
   "modelAndProviderContext.selectModel": {
     "defaultMessage": "मॉडल का चयन करें"
@@ -2059,27 +2140,6 @@
   },
   "modelAndProviderContext.unknownProviderTitle": {
     "defaultMessage": "प्रदाता का नाम लुकअप"
-  },
-  "modelsBottomBar.changeModel": {
-    "defaultMessage": "मॉडल बदलें"
-  },
-  "modelsBottomBar.currentModel": {
-    "defaultMessage": "वर्तमान मॉडल"
-  },
-  "modelsBottomBar.loadingModel": {
-    "defaultMessage": "मॉडल लोड हो रहा है..."
-  },
-  "modelsBottomBar.localModelSettings": {
-    "defaultMessage": "स्थानीय मॉडल Settings"
-  },
-  "modelsBottomBar.localModelSettingsTitle": {
-    "defaultMessage": "स्थानीय मॉडल Settings — {modelName}"
-  },
-  "modelsBottomBar.resolvedModel": {
-    "defaultMessage": "हल किया गया मॉडल"
-  },
-  "modelsBottomBar.selectModel": {
-    "defaultMessage": "मॉडल का चयन करें"
   },
   "modelSettingsButtons.configureProviders": {
     "defaultMessage": "प्रदाताओं को कॉन्फ़िगर करें"
@@ -2240,68 +2300,59 @@
   "modelSettingsPanel.topP": {
     "defaultMessage": "शीर्ष पी"
   },
+  "modelsBottomBar.changeModel": {
+    "defaultMessage": "मॉडल बदलें"
+  },
+  "modelsBottomBar.changeProvider": {
+    "defaultMessage": "Change Provider"
+  },
+  "modelsBottomBar.currentModel": {
+    "defaultMessage": "वर्तमान मॉडल"
+  },
+  "modelsBottomBar.leanzeroWebsite": {
+    "defaultMessage": "LeanZero website"
+  },
+  "modelsBottomBar.loadingModel": {
+    "defaultMessage": "मॉडल लोड हो रहा है..."
+  },
+  "modelsBottomBar.localModelSettings": {
+    "defaultMessage": "स्थानीय मॉडल Settings"
+  },
+  "modelsBottomBar.localModelSettingsTitle": {
+    "defaultMessage": "स्थानीय मॉडल Settings — {modelName}"
+  },
+  "modelsBottomBar.resolvedModel": {
+    "defaultMessage": "हल किया गया मॉडल"
+  },
+  "modelsBottomBar.selectModel": {
+    "defaultMessage": "मॉडल का चयन करें"
+  },
+  "modelsBottomBar.swarmDocs": {
+    "defaultMessage": "Documentation"
+  },
   "modelsSection.resetDescription": {
     "defaultMessage": "नए सिरे से शुरुआत करने के लिए अपने चयनित मॉडल और प्रदाता सेटिंग्स को साफ़ करें"
   },
   "modelsSection.resetTitle": {
     "defaultMessage": "प्रदाता और मॉडल रीसेट करें"
   },
-  "modeSelectionItem.autonomousDescription": {
-    "defaultMessage": "पूर्ण फ़ाइल संशोधन क्षमताएं, फ़ाइलों को स्वतंत्र रूप से संपादित करें, बनाएं और हटाएं।"
-  },
-  "modeSelectionItem.autonomousLabel": {
-    "defaultMessage": "स्वायत्त"
-  },
-  "modeSelectionItem.chatOnlyDescription": {
-    "defaultMessage": "टूल या एक्सटेंशन का उपयोग किए बिना चयनित प्रदाता से बातचीत करें।"
-  },
-  "modeSelectionItem.chatOnlyLabel": {
-    "defaultMessage": "केवल चैट करें"
-  },
-  "modeSelectionItem.manualDescription": {
-    "defaultMessage": "सभी टूल, एक्सटेंशन और फ़ाइल संशोधनों के लिए मानव अनुमोदन की आवश्यकता होगी"
-  },
-  "modeSelectionItem.manualLabel": {
-    "defaultMessage": "मैनुअल"
-  },
-  "modeSelectionItem.smartDescription": {
-    "defaultMessage": "जोखिम स्तर के आधार पर समझदारी से निर्धारित करें कि किन कार्यों को अनुमोदन की आवश्यकता है"
-  },
-  "modeSelectionItem.smartLabel": {
-    "defaultMessage": "होशियार"
-  },
-  "navigation.itemApps": {
-    "defaultMessage": "ऐप्स"
-  },
-  "navigation.itemExtensions": {
-    "defaultMessage": "एक्सटेंशन"
+  "navigation.itemBenchmark": {
+    "defaultMessage": "Benchmark"
   },
   "navigation.itemHome": {
     "defaultMessage": "नई चैट"
   },
-  "navigation.itemRecipes": {
-    "defaultMessage": "व्यंजन विधि"
+  "navigation.itemMemories": {
+    "defaultMessage": "Memories"
   },
-  "navigation.itemScheduler": {
-    "defaultMessage": "अनुसूचक"
-  },
-  "navigation.itemSessions": {
-    "defaultMessage": "सत्र इतिहास"
+  "navigation.itemMlx": {
+    "defaultMessage": "Leanzero MLX"
   },
   "navigation.itemSettings": {
     "defaultMessage": "Settings"
   },
   "navigation.itemSkills": {
     "defaultMessage": "कौशल"
-  },
-  "navigationPanel.chats": {
-    "defaultMessage": "चैट"
-  },
-  "navigationPanel.noChats": {
-    "defaultMessage": "कोई हालिया चैट नहीं"
-  },
-  "navigationPanel.untitledSession": {
-    "defaultMessage": "शीर्षकहीन सत्र"
   },
   "onboardingGuard.checkProviderErrorDescription": {
     "defaultMessage": "सर्वर चालू हो सकता है या अस्थायी रूप से अनुपलब्ध हो सकता है।"
@@ -2549,11 +2600,11 @@
   "promptsSettings.edit": {
     "defaultMessage": "संपादित करें"
   },
-  "promptsSettings.editingLabel": {
-    "defaultMessage": "संपादन: {name}"
-  },
   "promptsSettings.editPromptTitle": {
     "defaultMessage": "संपादित करें: {name}"
+  },
+  "promptsSettings.editingLabel": {
+    "defaultMessage": "संपादन: {name}"
   },
   "promptsSettings.enterPromptContent": {
     "defaultMessage": "प्रॉम्प्ट सामग्री दर्ज करें..."
@@ -2663,11 +2714,11 @@
   "providerConfigForm.noApiKey": {
     "defaultMessage": "क्या आपके पास API कुंजी नहीं है?"
   },
-  "providerConfigForm.signingIn": {
-    "defaultMessage": "साइन इन किया जा रहा है..."
-  },
   "providerConfigForm.signInWith": {
     "defaultMessage": "{providerName} के साथ साइन इन करें"
+  },
+  "providerConfigForm.signingIn": {
+    "defaultMessage": "साइन इन किया जा रहा है..."
   },
   "providerConfigurationModal.addApiKeyDescription": {
     "defaultMessage": "इस प्रदाता को goose में एकीकृत करने के लिए अपनी API कुंजी जोड़ें"
@@ -2729,11 +2780,11 @@
   "providerConfigurationModal.seeDocumentation": {
     "defaultMessage": "अधिक विवरण के लिए <link>दस्तावेज़ीकरण</link> देखें।"
   },
-  "providerConfigurationModal.signingIn": {
-    "defaultMessage": "साइन इन किया जा रहा है..."
-  },
   "providerConfigurationModal.signInWith": {
     "defaultMessage": "{providerName} के साथ साइन इन करें"
+  },
+  "providerConfigurationModal.signingIn": {
+    "defaultMessage": "साइन इन किया जा रहा है..."
   },
   "providerGrid.addProvider": {
     "defaultMessage": "प्रदाता जोड़ें"
@@ -2963,6 +3014,39 @@
   "recipeNameField.formatHint": {
     "defaultMessage": "स्वचालित रूप से स्वरूपित किया जाएगा (लोअरकेस, रिक्त स्थान के लिए डैश)"
   },
+  "recipeWarningModal.cancel": {
+    "defaultMessage": "रद्द करें"
+  },
+  "recipeWarningModal.descriptionLabel": {
+    "defaultMessage": "विवरण:"
+  },
+  "recipeWarningModal.firstTimeDescription": {
+    "defaultMessage": "आप एक ऐसी रेसिपी को क्रियान्वित करने वाले हैं जिसे आपने पहले नहीं चलाया है।"
+  },
+  "recipeWarningModal.hiddenCharsWarning": {
+    "defaultMessage": "इस रेसिपी में छिपे हुए पात्र हैं जिन्हें आपकी सुरक्षा के लिए अनदेखा कर दिया जाएगा, क्योंकि उनका उपयोग दुर्भावनापूर्ण उद्देश्यों के लिए किया जा सकता है।"
+  },
+  "recipeWarningModal.instructionsLabel": {
+    "defaultMessage": "निर्देश:"
+  },
+  "recipeWarningModal.newRecipeWarningTitle": {
+    "defaultMessage": "⚠️ नई रेसिपी चेतावनी"
+  },
+  "recipeWarningModal.recipePreview": {
+    "defaultMessage": "पकाने की विधि पूर्वावलोकन:"
+  },
+  "recipeWarningModal.securityWarningTitle": {
+    "defaultMessage": "⚠️ सुरक्षा चेतावनी"
+  },
+  "recipeWarningModal.titleLabel": {
+    "defaultMessage": "शीर्षक:"
+  },
+  "recipeWarningModal.trustAndExecute": {
+    "defaultMessage": "भरोसा करें और अमल करें"
+  },
+  "recipeWarningModal.trustSource": {
+    "defaultMessage": "केवल तभी आगे बढ़ें जब आप इस रेसिपी के स्रोत पर भरोसा करते हों।"
+  },
   "recipesView.addSchedule": {
     "defaultMessage": "शेड्यूल जोड़ें"
   },
@@ -3137,39 +3221,6 @@
   "recipesView.yamlFiles": {
     "defaultMessage": "YAML फ़ाइलें"
   },
-  "recipeWarningModal.cancel": {
-    "defaultMessage": "रद्द करें"
-  },
-  "recipeWarningModal.descriptionLabel": {
-    "defaultMessage": "विवरण:"
-  },
-  "recipeWarningModal.firstTimeDescription": {
-    "defaultMessage": "आप एक ऐसी रेसिपी को क्रियान्वित करने वाले हैं जिसे आपने पहले नहीं चलाया है।"
-  },
-  "recipeWarningModal.hiddenCharsWarning": {
-    "defaultMessage": "इस रेसिपी में छिपे हुए पात्र हैं जिन्हें आपकी सुरक्षा के लिए अनदेखा कर दिया जाएगा, क्योंकि उनका उपयोग दुर्भावनापूर्ण उद्देश्यों के लिए किया जा सकता है।"
-  },
-  "recipeWarningModal.instructionsLabel": {
-    "defaultMessage": "निर्देश:"
-  },
-  "recipeWarningModal.newRecipeWarningTitle": {
-    "defaultMessage": "⚠️ नई रेसिपी चेतावनी"
-  },
-  "recipeWarningModal.recipePreview": {
-    "defaultMessage": "पकाने की विधि पूर्वावलोकन:"
-  },
-  "recipeWarningModal.securityWarningTitle": {
-    "defaultMessage": "⚠️ सुरक्षा चेतावनी"
-  },
-  "recipeWarningModal.titleLabel": {
-    "defaultMessage": "शीर्षक:"
-  },
-  "recipeWarningModal.trustAndExecute": {
-    "defaultMessage": "भरोसा करें और अमल करें"
-  },
-  "recipeWarningModal.trustSource": {
-    "defaultMessage": "केवल तभी आगे बढ़ें जब आप इस रेसिपी के स्रोत पर भरोसा करते हों।"
-  },
   "resetProviderSection.resetButton": {
     "defaultMessage": "प्रदाता और मॉडल रीसेट करें"
   },
@@ -3203,11 +3254,11 @@
   "scheduleDetailView.cronExpression": {
     "defaultMessage": "क्रोन अभिव्यक्ति:"
   },
-  "scheduleDetailView.currentlyRunning": {
-    "defaultMessage": "वर्तमान में चल रहा है"
-  },
   "scheduleDetailView.currentSession": {
     "defaultMessage": "वर्तमान सत्र:"
+  },
+  "scheduleDetailView.currentlyRunning": {
+    "defaultMessage": "वर्तमान में चल रहा है"
   },
   "scheduleDetailView.dir": {
     "defaultMessage": "निदेशक: {path}"
@@ -3266,6 +3317,12 @@
   "scheduleDetailView.noSessions": {
     "defaultMessage": "इस शेड्यूल के लिए कोई सत्र नहीं मिला."
   },
+  "scheduleDetailView.pauseSchedule": {
+    "defaultMessage": "शेड्यूल रोकें"
+  },
+  "scheduleDetailView.pauseUnpauseError": {
+    "defaultMessage": "रोकें/रोकें त्रुटि"
+  },
   "scheduleDetailView.paused": {
     "defaultMessage": "रुका हुआ"
   },
@@ -3274,12 +3331,6 @@
   },
   "scheduleDetailView.pausedWarning": {
     "defaultMessage": "यह शेड्यूल रुका हुआ है और स्वचालित रूप से नहीं चलेगा. इसे मैन्युअल रूप से ट्रिगर करने के लिए \"रन शेड्यूल नाउ\" का उपयोग करें या स्वचालित निष्पादन को फिर से शुरू करने के लिए अनपॉज़ करें।"
-  },
-  "scheduleDetailView.pauseSchedule": {
-    "defaultMessage": "शेड्यूल रोकें"
-  },
-  "scheduleDetailView.pauseUnpauseError": {
-    "defaultMessage": "रोकें/रोकें त्रुटि"
   },
   "scheduleDetailView.processStarted": {
     "defaultMessage": "प्रक्रिया प्रारंभ:"
@@ -3326,17 +3377,17 @@
   "scheduleDetailView.sessionId": {
     "defaultMessage": "सत्र आईडी: {id}"
   },
-  "scheduleDetailView.unpausedMsg": {
-    "defaultMessage": "रोका गया \"{id}\""
-  },
   "scheduleDetailView.unpauseSchedule": {
     "defaultMessage": "शेड्यूल को फिर से रोकें"
   },
-  "scheduleDetailView.updatedMsg": {
-    "defaultMessage": "अपडेट किया गया \"{id}\""
+  "scheduleDetailView.unpausedMsg": {
+    "defaultMessage": "रोका गया \"{id}\""
   },
   "scheduleDetailView.updateScheduleError": {
     "defaultMessage": "अद्यतन शेड्यूल त्रुटि"
+  },
+  "scheduleDetailView.updatedMsg": {
+    "defaultMessage": "अपडेट किया गया \"{id}\""
   },
   "scheduleDetailView.viewingScheduleId": {
     "defaultMessage": "शेड्यूल आईडी देखना: {id}"
@@ -3461,11 +3512,11 @@
   "schedulesView.pause": {
     "defaultMessage": "विराम"
   },
-  "schedulesView.paused": {
-    "defaultMessage": "रुका हुआ"
-  },
   "schedulesView.pauseError": {
     "defaultMessage": "शेड्यूल त्रुटि रोकें"
+  },
+  "schedulesView.paused": {
+    "defaultMessage": "रुका हुआ"
   },
   "schedulesView.refresh": {
     "defaultMessage": "ताज़ा करें"
@@ -3485,9 +3536,6 @@
   "schedulesView.schedulePausedMsg": {
     "defaultMessage": "सफलतापूर्वक रोका गया शेड्यूल \"{id}\""
   },
-  "schedulesView.scheduler": {
-    "defaultMessage": "अनुसूचक"
-  },
   "schedulesView.scheduleUnpaused": {
     "defaultMessage": "शेड्यूल अनरोका"
   },
@@ -3499,6 +3547,9 @@
   },
   "schedulesView.scheduleUpdatedMsg": {
     "defaultMessage": "सफलतापूर्वक अद्यतन शेड्यूल \"{id}\""
+  },
+  "schedulesView.scheduler": {
+    "defaultMessage": "अनुसूचक"
   },
   "schedulesView.unpauseError": {
     "defaultMessage": "शेड्यूल त्रुटि को रोकें"
@@ -3602,14 +3653,14 @@
   "sessionActionsHeader.copyText": {
     "defaultMessage": "Copy text"
   },
-  "sessionActionsHeader.duplicated": {
-    "defaultMessage": "Session duplicated"
-  },
   "sessionActionsHeader.duplicateFailed": {
     "defaultMessage": "Failed to duplicate session: {error}"
   },
   "sessionActionsHeader.duplicateSession": {
     "defaultMessage": "Duplicate session"
+  },
+  "sessionActionsHeader.duplicated": {
+    "defaultMessage": "Session duplicated"
   },
   "sessionActionsHeader.fullTextTitle": {
     "defaultMessage": "Text value"
@@ -3623,8 +3674,11 @@
   "sessionActionsHeader.loadingJson": {
     "defaultMessage": "Loading JSON..."
   },
-  "sessionActionsHeader.renamed": {
-    "defaultMessage": "Session renamed"
+  "sessionActionsHeader.makeRecipe": {
+    "defaultMessage": "Make recipe from this conversation"
+  },
+  "sessionActionsHeader.makeRecipeError": {
+    "defaultMessage": "Could not create a recipe from this conversation"
   },
   "sessionActionsHeader.renameFailed": {
     "defaultMessage": "Failed to rename session: {error}"
@@ -3637,6 +3691,9 @@
   },
   "sessionActionsHeader.renameTitle": {
     "defaultMessage": "Rename Session"
+  },
+  "sessionActionsHeader.renamed": {
+    "defaultMessage": "Session renamed"
   },
   "sessionActionsHeader.save": {
     "defaultMessage": "Save"
@@ -3655,6 +3712,24 @@
   },
   "sessionIndicators.streaming": {
     "defaultMessage": "स्ट्रीमिंग"
+  },
+  "sessionViewComponents.empty.description": {
+    "defaultMessage": "इस सत्र में कोई संदेश नहीं है"
+  },
+  "sessionViewComponents.empty.title": {
+    "defaultMessage": "कोई संदेश नहीं मिला"
+  },
+  "sessionViewComponents.error.loading": {
+    "defaultMessage": "सत्र विवरण लोड करने में त्रुटि"
+  },
+  "sessionViewComponents.error.tryAgain": {
+    "defaultMessage": "पुनः प्रयास करें"
+  },
+  "sessionViewComponents.role.assistant": {
+    "defaultMessage": "Goose"
+  },
+  "sessionViewComponents.role.user": {
+    "defaultMessage": "आप"
   },
   "sessions.action.delete": {
     "defaultMessage": "सत्र हटाएँ"
@@ -3713,9 +3788,6 @@
   "sessions.import": {
     "defaultMessage": "आयात सत्र"
   },
-  "sessions.importing": {
-    "defaultMessage": "आयात किया जा रहा है..."
-  },
   "sessions.importNostr": {
     "defaultMessage": "लिंक आयात करें"
   },
@@ -3727,6 +3799,9 @@
   },
   "sessions.importNostr.title": {
     "defaultMessage": "नोस्ट्र सत्र आयात करें"
+  },
+  "sessions.importing": {
+    "defaultMessage": "आयात किया जा रहा है..."
   },
   "sessions.loadingMore": {
     "defaultMessage": "अधिक सत्र लोड हो रहे हैं..."
@@ -3755,26 +3830,26 @@
   "sessions.toast.copied": {
     "defaultMessage": "क्लिपबोर्ड पर कॉपी किया गया"
   },
-  "sessions.toast.deleted": {
-    "defaultMessage": "सत्र सफलतापूर्वक हटा दिया गया"
-  },
   "sessions.toast.deleteFailed": {
     "defaultMessage": "सत्र \"{name}\" हटाने में विफल: {error}"
   },
-  "sessions.toast.duplicated": {
-    "defaultMessage": "सत्र \"{name}\" सफलतापूर्वक दोहराया गया"
+  "sessions.toast.deleted": {
+    "defaultMessage": "सत्र सफलतापूर्वक हटा दिया गया"
   },
   "sessions.toast.duplicateFailed": {
     "defaultMessage": "सत्र की नकल करने में विफल: {error}"
   },
+  "sessions.toast.duplicated": {
+    "defaultMessage": "सत्र \"{name}\" सफलतापूर्वक दोहराया गया"
+  },
   "sessions.toast.exported": {
     "defaultMessage": "सत्र सफलतापूर्वक निर्यात किया गया"
   },
-  "sessions.toast.imported": {
-    "defaultMessage": "सत्र सफलतापूर्वक आयात किया गया"
-  },
   "sessions.toast.importFailed": {
     "defaultMessage": "सत्र आयात करने में विफल: {error}"
+  },
+  "sessions.toast.imported": {
+    "defaultMessage": "सत्र सफलतापूर्वक आयात किया गया"
   },
   "sessions.toast.shareNostr": {
     "defaultMessage": "एन्क्रिप्टेड नोस्ट्र शेयर लिंक बनाया गया"
@@ -3782,29 +3857,11 @@
   "sessions.toast.shareNostrFailed": {
     "defaultMessage": "Nostr शेयर लिंक बनाने में विफल: {error}"
   },
-  "sessions.toast.updated": {
-    "defaultMessage": "सत्र विवरण सफलतापूर्वक अपडेट किया गया"
-  },
   "sessions.toast.updateFailed": {
     "defaultMessage": "सत्र विवरण अद्यतन करने में विफल: {error}"
   },
-  "sessionViewComponents.empty.description": {
-    "defaultMessage": "इस सत्र में कोई संदेश नहीं है"
-  },
-  "sessionViewComponents.empty.title": {
-    "defaultMessage": "कोई संदेश नहीं मिला"
-  },
-  "sessionViewComponents.error.loading": {
-    "defaultMessage": "सत्र विवरण लोड करने में त्रुटि"
-  },
-  "sessionViewComponents.error.tryAgain": {
-    "defaultMessage": "पुनः प्रयास करें"
-  },
-  "sessionViewComponents.role.assistant": {
-    "defaultMessage": "Goose"
-  },
-  "sessionViewComponents.role.user": {
-    "defaultMessage": "आप"
+  "sessions.toast.updated": {
+    "defaultMessage": "सत्र विवरण सफलतापूर्वक अपडेट किया गया"
   },
   "settings.appearance.description": {
     "defaultMessage": "कॉन्फ़िगर करें कि goose आपके सिस्टम पर कैसे दिखाई देता है"
@@ -3826,6 +3883,15 @@
   },
   "settings.dockIcon.title": {
     "defaultMessage": "डॉक आइकन"
+  },
+  "settings.edition.description": {
+    "defaultMessage": "The Goose Swarm skin — LeanZero branding, the fleet fan-in view, and azure accents. This is the look and identity only; it is separate from the engine. To actually build with your local fleet, pick Swarm LeanZero in the model selector. The Swarm LeanZero settings tab stays available whenever you run local models, regardless of this setting."
+  },
+  "settings.edition.preview": {
+    "defaultMessage": "Swarm LeanZero — the fan-in view"
+  },
+  "settings.edition.title": {
+    "defaultMessage": "Goose Swarm"
   },
   "settings.help.description": {
     "defaultMessage": "समस्याओं की रिपोर्ट करके या नई सुविधाओं का अनुरोध करके goose को बेहतर बनाने में हमारी सहायता करें"
@@ -3986,12 +4052,6 @@
   "settingsView.tabKeyboard": {
     "defaultMessage": "कीबोर्ड"
   },
-  "settingsView.tabLocalInference": {
-    "defaultMessage": "स्थानीय अनुमान"
-  },
-  "settingsView.tabModels": {
-    "defaultMessage": "मॉडल"
-  },
   "settingsView.tabPrompts": {
     "defaultMessage": "संकेत"
   },
@@ -4018,6 +4078,24 @@
   },
   "shortcutRecorder.save": {
     "defaultMessage": "सहेजें"
+  },
+  "shortcutRefused.close": {
+    "defaultMessage": "Closing this window would drop the live benchmark view. Use File > Close if you really mean it."
+  },
+  "shortcutRefused.navigate": {
+    "defaultMessage": "Leaving the Benchmark view is one-way while a run is live; use File > New Chat if you really mean it."
+  },
+  "shortcutRefused.quit": {
+    "defaultMessage": "Quitting would orphan the run and lose its score. Use Goose > Quit if you really mean it."
+  },
+  "shortcutRefused.reload": {
+    "defaultMessage": "Reloading would discard the live log and swarm panel state."
+  },
+  "shortcutRefused.spawn": {
+    "defaultMessage": "Cmd+N would open a second window and a second backend on the live run. Use File > New Chat Window if you really mean it."
+  },
+  "shortcutRefused.title": {
+    "defaultMessage": "Shortcut ignored while a benchmark is running"
   },
   "skillsView.addSkill": {
     "defaultMessage": "कौशल जोड़ें"
@@ -4346,11 +4424,11 @@
   "themeSelector.theme": {
     "defaultMessage": "थीम"
   },
-  "toolApprovalButtons.allowedOnce": {
-    "defaultMessage": "एक बार अनुमति दी गई"
-  },
   "toolApprovalButtons.allowOnce": {
     "defaultMessage": "एक बार अनुमति दें"
+  },
+  "toolApprovalButtons.allowedOnce": {
+    "defaultMessage": "एक बार अनुमति दी गई"
   },
   "toolApprovalButtons.alwaysAllow": {
     "defaultMessage": "हमेशा अनुमति दें"
@@ -4433,17 +4511,17 @@
   "updateSection.disableAutoDownloadDesc": {
     "defaultMessage": "सक्षम होने पर, Goose आपको नई संस्करणों की सूचना देगा लेकिन उन्हें स्वचालित रूप से डाउनलोड नहीं करेगा।"
   },
-  "updateSection.downloadingProgress": {
-    "defaultMessage": "अपडेट डाउनलोड हो रहा है... {percent}%"
-  },
-  "updateSection.downloadingUpdate": {
-    "defaultMessage": "अपडेट डाउनलोड हो रहा है..."
-  },
   "updateSection.downloadNow": {
     "defaultMessage": "अभी डाउनलोड करें"
   },
   "updateSection.downloadReady": {
     "defaultMessage": "अपडेट डाउनलोड हो गया है और इंस्टॉल करने के लिए तैयार है!"
+  },
+  "updateSection.downloadingProgress": {
+    "defaultMessage": "अपडेट डाउनलोड हो रहा है... {percent}%"
+  },
+  "updateSection.downloadingUpdate": {
+    "defaultMessage": "अपडेट डाउनलोड हो रहा है..."
   },
   "updateSection.installAndRestart": {
     "defaultMessage": "स्थापित करें और पुनः प्रारंभ करें"
@@ -4469,11 +4547,11 @@
   "updateSection.readyInstallManual": {
     "defaultMessage": "✓ अपडेट तैयार है! इंस्टॉलेशन निर्देशों के लिए \"इंस्टॉल करें और पुनरारंभ करें\" पर क्लिक करें।"
   },
-  "updateSection.updateAvailable": {
-    "defaultMessage": "उपलब्ध अद्यतन!"
-  },
   "updateSection.upToDate": {
     "defaultMessage": "(अप टू डेट)"
+  },
+  "updateSection.updateAvailable": {
+    "defaultMessage": "उपलब्ध अद्यतन!"
   },
   "updateSection.versionAvailable": {
     "defaultMessage": "→ {version} उपलब्ध"
