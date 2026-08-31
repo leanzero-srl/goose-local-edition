@@ -9,6 +9,7 @@ import {
   Play,
   RefreshCw,
   Search,
+  SlidersHorizontal,
   Square,
   Trash2,
   X,
@@ -256,6 +257,44 @@ function SolidBanner({
   );
 }
 
+/**
+ * The restart-required banner is a fact about the whole engine, not one tab: settings were
+ * saved but the live process still runs the old ones. It renders on BOTH the Engine and
+ * Sampling tabs from the same status + handlers — one truth, two viewports.
+ */
+function RestartRequiredBanner({
+  status,
+  settings,
+  engineBusy,
+  onRemount,
+}: {
+  status: MlxEngineStatus | null;
+  settings: MlxEngineSettings | null;
+  engineBusy: boolean;
+  onRemount: () => void;
+}) {
+  if (!status?.restartRequired) return null;
+  return (
+    <SolidBanner
+      color={AMBER}
+      label="Restart required"
+      text="Settings changed — remount to apply."
+      action={
+        <Button
+          size="sm"
+          onClick={onRemount}
+          disabled={engineBusy || !(status.modelId ?? settings?.modelId)}
+          className="shrink-0 font-bold text-white hover:opacity-90"
+          style={{ backgroundColor: '#1a1a1a', borderRadius: 3 }}
+        >
+          <RefreshCw className="w-3.5 h-3.5" />
+          Remount
+        </Button>
+      }
+    />
+  );
+}
+
 /** Strong memory bar: solid azure used-fill on a bordered track, bold numbers beside it. */
 function MemoryBar({ availableGb, totalGb }: { availableGb: number; totalGb: number }) {
   const usedGb = Math.max(0, totalGb - availableGb);
@@ -446,12 +485,6 @@ interface EngineSectionProps {
   onMount: () => void;
   onUnmount: () => void;
   onRemount: () => void;
-  drafts: NumericDrafts | null;
-  setDraft: (key: NumericSettingKey, text: string) => void;
-  savedDrafts: NumericDrafts | null;
-  onSaveSettings: () => void;
-  saving: boolean;
-  saveError: string | null;
 }
 
 function EngineSection(props: EngineSectionProps) {
@@ -467,19 +500,12 @@ function EngineSection(props: EngineSectionProps) {
     onMount,
     onUnmount,
     onRemount,
-    drafts,
-    setDraft,
-    savedDrafts,
-    onSaveSettings,
-    saving,
-    saveError,
   } = props;
 
   const state = status?.state ?? null;
   const canMount =
     !!mountModelId && !engineBusy && (state === 'stopped' || state === 'failed' || state === null);
   const canUnmount = !engineBusy && (state === 'running' || state === 'mounting');
-  const dirty = drafts != null && savedDrafts != null && !draftsEqual(drafts, savedDrafts);
 
   return (
     <div className="flex flex-col gap-4 pb-8">
@@ -496,25 +522,12 @@ function EngineSection(props: EngineSectionProps) {
       {status?.state === 'failed' && status.lastError && status.lastError !== mountError && (
         <SolidBanner color={RED} label="Engine failed" text={status.lastError} />
       )}
-      {status?.restartRequired && (
-        <SolidBanner
-          color={AMBER}
-          label="Restart required"
-          text="Settings changed — remount to apply."
-          action={
-            <Button
-              size="sm"
-              onClick={onRemount}
-              disabled={engineBusy || !(status.modelId ?? settings?.modelId)}
-              className="shrink-0 font-bold text-white hover:opacity-90"
-              style={{ backgroundColor: '#1a1a1a', borderRadius: 3 }}
-            >
-              <RefreshCw className="w-3.5 h-3.5" />
-              Remount
-            </Button>
-          }
-        />
-      )}
+      <RestartRequiredBanner
+        status={status}
+        settings={settings}
+        engineBusy={engineBusy}
+        onRemount={onRemount}
+      />
 
       {/* Status card */}
       <div
@@ -621,6 +634,84 @@ function EngineSection(props: EngineSectionProps) {
         </span>
       </div>
 
+      {/* Spawn command — visible, not editable here: the owner sees exactly what would run. */}
+      {settings && (
+        <div
+          className="border border-border-primary bg-background-primary p-4 flex flex-col gap-1"
+          style={{ borderRadius: 3 }}
+        >
+          <span className="text-[10px] font-semibold uppercase tracking-wider text-text-secondary">
+            Spawn command
+          </span>
+          <span className="font-mono text-xs text-text-primary break-all">
+            {settings.spawnCommand.join(' ')}
+          </span>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// SAMPLING tab — the drafts live in the shell, so unsaved edits survive tab
+// switches; this section only renders them.
+// ---------------------------------------------------------------------------
+
+interface SamplingSectionProps {
+  status: MlxEngineStatus | null;
+  settings: MlxEngineSettings | null;
+  engineBusy: boolean;
+  onRemount: () => void;
+  drafts: NumericDrafts | null;
+  setDraft: (key: NumericSettingKey, text: string) => void;
+  savedDrafts: NumericDrafts | null;
+  onSaveSettings: () => void;
+  saving: boolean;
+  saveError: string | null;
+}
+
+function SamplingSection(props: SamplingSectionProps) {
+  const {
+    status,
+    settings,
+    engineBusy,
+    onRemount,
+    drafts,
+    setDraft,
+    savedDrafts,
+    onSaveSettings,
+    saving,
+    saveError,
+  } = props;
+
+  const dirty = drafts != null && savedDrafts != null && !draftsEqual(drafts, savedDrafts);
+
+  return (
+    <div className="flex flex-col gap-4 pb-8">
+      <RestartRequiredBanner
+        status={status}
+        settings={settings}
+        engineBusy={engineBusy}
+        onRemount={onRemount}
+      />
+
+      <div className="flex flex-col gap-1">
+        <span className="text-sm text-text-secondary">
+          Engine-level defaults applied when a model is mounted — they apply to whichever model is
+          mounted, and per-request values sent by goose override them.
+        </span>
+        <span className="text-sm">
+          {status?.modelId ? (
+            <>
+              <span className="text-text-secondary">Currently mounted: </span>
+              <span className="font-mono font-semibold text-text-primary">{status.modelId}</span>
+            </>
+          ) : (
+            <span className="text-text-secondary">no model mounted</span>
+          )}
+        </span>
+      </div>
+
       {/* Sampling + context settings */}
       <div
         className="border border-border-primary bg-background-primary p-4 flex flex-col gap-4"
@@ -672,21 +763,6 @@ function EngineSection(props: EngineSectionProps) {
           <span className="text-sm text-text-secondary">Loading settings…</span>
         )}
       </div>
-
-      {/* Spawn command — visible, not editable here: the owner sees exactly what would run. */}
-      {settings && (
-        <div
-          className="border border-border-primary bg-background-primary p-4 flex flex-col gap-1"
-          style={{ borderRadius: 3 }}
-        >
-          <span className="text-[10px] font-semibold uppercase tracking-wider text-text-secondary">
-            Spawn command
-          </span>
-          <span className="font-mono text-xs text-text-primary break-all">
-            {settings.spawnCommand.join(' ')}
-          </span>
-        </div>
-      )}
     </div>
   );
 }
@@ -817,6 +893,7 @@ interface ModelsSectionProps {
   mountedModelId: string | null;
   refreshModels: () => void;
   saveSettings: (next: MlxEngineSettings) => Promise<void>;
+  onOpenSampling: () => void;
 }
 
 function ModelsSection({
@@ -825,6 +902,7 @@ function ModelsSection({
   mountedModelId,
   refreshModels,
   saveSettings,
+  onOpenSampling,
 }: ModelsSectionProps) {
   const [dirDialogOpen, setDirDialogOpen] = useState(false);
   const [dirSaving, setDirSaving] = useState(false);
@@ -1153,6 +1231,17 @@ function ModelsSection({
                 </span>
                 <Button
                   size="xs"
+                  onClick={onOpenSampling}
+                  className="font-bold text-white hover:opacity-90 shrink-0"
+                  style={{ backgroundColor: VIOLET, borderRadius: 3 }}
+                  aria-label={`Sampling for ${model.id}`}
+                  title="Engine-level sampling defaults — opens the Sampling tab"
+                >
+                  <SlidersHorizontal className="w-3 h-3" />
+                  Sampling
+                </Button>
+                <Button
+                  size="xs"
                   onClick={() => {
                     setDeleteError(null);
                     setPendingDelete(model);
@@ -1200,7 +1289,7 @@ function ModelsSection({
 // The view
 // ---------------------------------------------------------------------------
 
-type MlxTab = 'engine' | 'models';
+type MlxTab = 'engine' | 'models' | 'sampling';
 
 const STATUS_POLL_MS = 2000;
 
@@ -1427,13 +1516,14 @@ const MlxEngineView: React.FC = () => {
                   {models.length}
                 </span>
               )}
+              {tabBtn('sampling', 'Sampling')}
             </div>
           </div>
         </div>
 
         <div className="flex-1 min-h-0 relative px-8">
           <ScrollArea className="h-full">
-            {tab === 'engine' ? (
+            {tab === 'engine' && (
               <EngineSection
                 status={status}
                 statusError={statusError}
@@ -1446,20 +1536,30 @@ const MlxEngineView: React.FC = () => {
                 onMount={onMount}
                 onUnmount={onUnmount}
                 onRemount={onRemount}
-                drafts={drafts}
-                setDraft={setDraft}
-                savedDrafts={savedDrafts}
-                onSaveSettings={onSaveSettings}
-                saving={saving}
-                saveError={saveError}
               />
-            ) : (
+            )}
+            {tab === 'models' && (
               <ModelsSection
                 settings={settings}
                 models={models}
                 mountedModelId={status?.modelId ?? null}
                 refreshModels={refreshModels}
                 saveSettings={saveSettings}
+                onOpenSampling={() => setTab('sampling')}
+              />
+            )}
+            {tab === 'sampling' && (
+              <SamplingSection
+                status={status}
+                settings={settings}
+                engineBusy={engineBusy}
+                onRemount={onRemount}
+                drafts={drafts}
+                setDraft={setDraft}
+                savedDrafts={savedDrafts}
+                onSaveSettings={onSaveSettings}
+                saving={saving}
+                saveError={saveError}
               />
             )}
           </ScrollArea>

@@ -273,6 +273,134 @@ describe('MlxEngineView engine tab', () => {
 });
 
 // ---------------------------------------------------------------------------
+// The sampling tab: owner feedback said the knobs were invisible — they now
+// live on their own top-level tab. Drafts sit in the shell, so unsaved edits
+// survive tab switches; the restart banner renders here too, from the same
+// status and handlers as the engine tab.
+// ---------------------------------------------------------------------------
+
+const ALL_SAMPLING_LABELS = [
+  'Temperature',
+  'Top P',
+  'Top K',
+  'Min P',
+  'Repetition penalty',
+  'Presence penalty',
+  'Frequency penalty',
+  'Context limit (tokens)',
+];
+
+describe('MlxEngineView sampling tab', () => {
+  it('renders all seven sampling fields plus the context limit, and names the mounted model', async () => {
+    mockStatus.mockResolvedValue(
+      statusOf({ state: 'running', modelId: 'mlx-community/Qwen3-30B-A3B-4bit' })
+    );
+    const { unmount } = render(<MlxEngineView />);
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Sampling' })).toBeInTheDocument();
+    });
+    await userEvent.click(screen.getByRole('button', { name: 'Sampling' }));
+    await waitFor(() => {
+      expect(screen.getByLabelText('Temperature')).toBeInTheDocument();
+    });
+    for (const label of ALL_SAMPLING_LABELS) {
+      expect(screen.getByLabelText(label)).toBeInTheDocument();
+    }
+    expect(screen.getByRole('button', { name: 'Save' })).toBeInTheDocument();
+    // The honest caption: engine-level defaults, per-request values win.
+    expect(
+      screen.getByText(/per-request values sent by goose override them/)
+    ).toBeInTheDocument();
+    expect(screen.getByText('Currently mounted:')).toBeInTheDocument();
+    expect(screen.getByText('mlx-community/Qwen3-30B-A3B-4bit')).toBeInTheDocument();
+    unmount();
+  });
+
+  it('with nothing mounted the sampling tab says so plainly', async () => {
+    const { unmount } = render(<MlxEngineView />);
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Sampling' })).toBeInTheDocument();
+    });
+    await userEvent.click(screen.getByRole('button', { name: 'Sampling' }));
+    await waitFor(() => {
+      expect(screen.getByText('no model mounted')).toBeInTheDocument();
+    });
+    expect(screen.queryByText('Currently mounted:')).not.toBeInTheDocument();
+    unmount();
+  });
+
+  it('the restart-required banner renders on the sampling tab and Remount works from there', async () => {
+    mockStatus.mockResolvedValue(
+      statusOf({
+        state: 'running',
+        modelId: 'mlx-community/Qwen3-30B-A3B-4bit',
+        restartRequired: true,
+      })
+    );
+    const { unmount } = render(<MlxEngineView />);
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Sampling' })).toBeInTheDocument();
+    });
+    await userEvent.click(screen.getByRole('button', { name: 'Sampling' }));
+    await waitFor(() => {
+      expect(screen.getByText('Settings changed — remount to apply.')).toBeInTheDocument();
+    });
+    await userEvent.click(screen.getByRole('button', { name: /Remount/ }));
+    await waitFor(() => {
+      expect(mockUnmount).toHaveBeenCalledTimes(1);
+      expect(mockMount).toHaveBeenCalledWith('mlx-community/Qwen3-30B-A3B-4bit');
+    });
+    unmount();
+  });
+
+  it('unsaved sampling edits survive switching tabs', async () => {
+    const { unmount } = render(<MlxEngineView />);
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Sampling' })).toBeInTheDocument();
+    });
+    await userEvent.click(screen.getByRole('button', { name: 'Sampling' }));
+    await waitFor(() => {
+      expect(screen.getByLabelText('Presence penalty')).toBeInTheDocument();
+    });
+    await userEvent.type(screen.getByLabelText('Presence penalty'), '0.5');
+    expect(screen.getByLabelText('Presence penalty')).toHaveValue(0.5);
+    expect(screen.getByText('unsaved')).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('button', { name: /Models/ }));
+    await waitFor(() => {
+      expect(screen.getByText('/Users/x/mlx-models')).toBeInTheDocument();
+    });
+    await userEvent.click(screen.getByRole('button', { name: 'Sampling' }));
+    await waitFor(() => {
+      expect(screen.getByLabelText('Presence penalty')).toHaveValue(0.5);
+    });
+    expect(screen.getByText('unsaved')).toBeInTheDocument();
+    unmount();
+  });
+
+  it('the per-model Sampling affordance on the Models tab jumps to the Sampling tab', async () => {
+    const { unmount } = render(<MlxEngineView />);
+    await waitFor(() => {
+      expect(screen.getByText('Models')).toBeInTheDocument();
+    });
+    await userEvent.click(screen.getByRole('button', { name: /Models/ }));
+    await waitFor(() => {
+      expect(
+        screen.getByLabelText('Sampling for mlx-community/Qwen3-30B-A3B-4bit')
+      ).toBeInTheDocument();
+    });
+    await userEvent.click(screen.getByLabelText('Sampling for mlx-community/Qwen3-30B-A3B-4bit'));
+    await waitFor(() => {
+      expect(
+        screen.getByText(/per-request values sent by goose override them/)
+      ).toBeInTheDocument();
+    });
+    expect(screen.getByLabelText('Presence penalty')).toBeInTheDocument();
+    unmount();
+  });
+});
+
+// ---------------------------------------------------------------------------
 // The models tab: folder truth, list truth (header counts what the body shows),
 // partial downloads flagged, download start renders a real progress row.
 // ---------------------------------------------------------------------------
