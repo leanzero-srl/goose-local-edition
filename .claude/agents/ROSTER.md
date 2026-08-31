@@ -506,3 +506,10 @@ research_request_block's armed-no-claimed-sections arm wording.
   q0's raised ntf_<seq> convention) — evidence B's mechanism pays. New design finding parked: a judge
   steer DICTATED technical content ("vendor send follows as background step") and the lane was right
   to ignore it — steers command emission, never author design. Charter gap: none.
+- 2026-08-31 12:35 tick-surgeon #5: EXEMPLARY. Closed its own tick-4 hole (ntf-q1 verified verbatim
+  vs L362-364); SNOWBALL CONFIRMED with the words ("use the sibling-slice convention already recorded
+  for this store" — cross-host, via the ledger block, before timing could explain it); caught a FIFTH
+  contradiction (q1's in-memory notifications counter vs q3's SELECT COUNT(*), L360-361 grounding q3);
+  false-raised STOPPED growing (7/18 total — the new 7 all genuine); two nudges obeyed with
+  timestamps. New engine-defect candidate: ok-verdict judge_look events blank established/next while
+  the judge's formed words carried substance — the archive loses clean-look words. Charter gap: none.
