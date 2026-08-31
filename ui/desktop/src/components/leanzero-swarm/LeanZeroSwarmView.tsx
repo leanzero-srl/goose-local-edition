@@ -86,7 +86,7 @@ const LeanZeroSwarmView: React.FC = () => {
           <ScrollArea className="h-full">
             {tab === 'mlx' && <MlxEngineView />}
             {tab === 'cloud' && <CloudProvidersSection />}
-            {tab === 'swarm' && <SwarmNodesSection />}
+            {tab === 'swarm' && <SwarmNodesSection onOpenCloudProviders={() => setTab('cloud')} />}
           </ScrollArea>
         </div>
       </div>
