@@ -1,5 +1,29 @@
 # MLX engine campaign — LEDGER
 
+## 2026-08-31 late afternoon — HF browser round two backend (c19c28a7f, first mlx-backend delegation)
+
+Owner's hardcoded-filters call-out proven correct beyond the complaint: the crawl found **80
+archs** where the list had 37. Measured facts now on record:
+- The filter vocab is CRAWLED, not hardcoded: HF's models-tags-by-type has NO arch bucket and only
+  2 quants (measured, refused); a 15-request bounded crawl (10 pages by downloads + 5 by newest,
+  named constants) yields 80 archs (config.model_type doubles as a tag on 100% of 708 carrying
+  one — every vocab entry is server-side filterable), 7 bit-widths + 7 precision families, 175
+  authors; 1h TTL cache, stale serves carry refreshError explicitly.
+- Browse rows carry sizeBytesEstimate from safetensors dtype counts — 0.003% off the true sum on
+  3 verified repos; exact list-mode bytes DON'T exist (usedStorage → 400 with proof; siblings
+  sizes null); the N+1 per-row pattern was refused per the pagination mandate.
+- HF resolve URLs honor Range through BOTH redirect classes (non-LFS 307→206, LFS 302→CDN 206
+  with Content-Range total == tree size); resume is append-proven byte-for-byte by live test;
+  pause keeps .part; CANCEL NOW DELETES the partial repo dir (the owner's stuck-row complaint).
+- Completeness follows model.safetensors.index.json shards + config.json; his fixture dirs were
+  pre-first-shard cancels (never the masquerade case — that needed one finished shard, now pinned).
+- modelsList carries diskAvailableBytes/diskTotalBytes (statvfs, df-verified to the KiB).
+- Wire additions: browseFilters, modelCard (README capped 1 MiB with truncation flag),
+  downloadPause, downloadResume (works on untracked disk residue), progress state "paused" +
+  restartedFiles. Per-endpoint request budgets stated in the report.
+UI round two in flight (type-ahead comboboxes, fullscreen model card, lifecycle buttons, disk bar,
+narrow-width reactivity).
+
 ## 2026-08-31 afternoon — Mihai's first hands-on: three UI corrections, all shipped same-day
 
 Backend for the round (6d4b5d7bc): per-model sampling profiles with live-config migration proven
