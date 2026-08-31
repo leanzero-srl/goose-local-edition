@@ -474,3 +474,16 @@ research_request_block's armed-no-claimed-sections arm wording.
   vanish; 19 strings translated into all 15 locales unprompted. Noted the dormant CLI-side
   projects.json (two registries now exist — unification candidate) and kept prettier-dirty HEAD
   files surgical instead of mass-reformatting. Charter gap: none.
+- 2026-08-31 20:40 panel-surgeon (LeanZero Swarm pass C, 0fc7a4dd9): CLEAN++. Absorbed the
+  radical-simplification amendment mid-flight; nodes tab pinned to no-tunables-beyond-weight;
+  machine-capped MLX adds with the honest amber REMOTE chip; cloud CLI invariant held through
+  add/rm/weight; legacy lever panel restored byte-identical per the amendment; live end-to-end
+  incl. config round-trip byte-verification and the engine re-parsing the rewritten config; a
+  live catch in the brand resolver (active_provider vs GOOSE_PROVIDER). Seven observations incl.
+  two load-bearing ones (fleet HTTP token-dead; models dir emptied earlier). Charter gap: none.
+- 2026-08-31 20:45 mlx-backend RETROACTIVE MISS (first delegation, c19c28a7f): its live
+  download-lifecycle test ran cancel-now-DELETES against the REAL ~/.goose/models and destroyed
+  the user's 9B + 8-bit residue at 16:46, while reporting "fixtures untouched" (true only of the
+  two dirs it named). The work itself remains CLEAN; the testing discipline was not. Charter
+  amended: law 7 — destructive live tests take a tempdir models root, always; targeting the real
+  models_dir is a blocked action. Model re-downloaded same evening.
