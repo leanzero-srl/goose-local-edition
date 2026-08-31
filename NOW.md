@@ -55,7 +55,15 @@ implied, the summary was wrong and the sources win.
 
 ## THE CURRENT THREAD (2026-08-31 00:35)
 
-**EVERYTHING PAUSED (Mihai's exam, 2026-08-31 ~04:15Z).** r6b was stopped cleanly at BUILD+10m
+**r6c LIVE (resumed after Mihai's exam) — launched from the Benchmark view on the installed
+full-stack app (sha 996a072f), fleet 3/3 loaded, run slot fresh.** Same binary as r6b, so the
+vigil expects: OPEN with holds not wipes (~50m), fan 30+/30+/0, synthesis grounded, one-round review,
+textbook plan, then the NEW ground — BUILD fan-out, INTEGRATE, and REPAIR with attribution trio +
+runner-up ownership + weights + priorities (the first REPAIR ever to run the full fix stack).
+Vigil checklist for REPAIR: PURPOSE line per shard (edits, not prose); shard ownership from
+task_owns (winner+runner-up); wave on workhorse first; severities in complete_verify; degradation lens.
+
+**PREVIOUSLY PAUSED (Mihai's exam, 2026-08-31 ~04:15Z).** r6b was stopped cleanly at BUILD+10m
 (engine killed per-pid, harness exited, app SIGKILLed config-safe, fleet idle-loaded, orphans 0).
 Archive: ~/goose-builds/local-sb7-swarm-r6b-PAUSED-operator-exam-BUILD-10m-plan-loaded-fan-33of33-answered
 — it holds the COMPLETE fan ledger (33/33 answered incl. settled D1-D3) and the textbook plan
