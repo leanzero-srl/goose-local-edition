@@ -1,4 +1,94 @@
 {
+  "addNode.addButton": {
+    "defaultMessage": "नोड जोड़ें"
+  },
+  "addNode.cancel": {
+    "defaultMessage": "रद्द करें"
+  },
+  "addNode.description": {
+    "defaultMessage": "नोड यह चुनकर बनता है कि उसे कौन चलाएगा: पहले प्रदाता चुनें, फिर मॉडल।"
+  },
+  "addNode.done": {
+    "defaultMessage": "हो गया"
+  },
+  "addNode.duplicateId": {
+    "defaultMessage": "{id} नाम का नोड पहले से मौजूद है — कोई और नाम चुनें।"
+  },
+  "addNode.lmstudioAuto": {
+    "defaultMessage": "LM Studio नोड अपने आप खोजे जाते हैं: {endpoint} पर फ़्लीट में मौजूद हर मॉडल खुद ही पूल में शामिल हो जाता है, इसलिए हाथ से कुछ जोड़ने की ज़रूरत नहीं। LM Studio (या LM Link) में मॉडल लोड करें और वह नोड सूची में दिखेगा।"
+  },
+  "addNode.lmstudioLive": {
+    "defaultMessage": "{count,plural,one{अभी # नोड लाइव है} other{अभी # नोड लाइव हैं}}"
+  },
+  "addNode.lmstudioOffline": {
+    "defaultMessage": "फ़्लीट ऑफ़लाइन"
+  },
+  "addNode.machineAllTaken": {
+    "defaultMessage": "हर खोजी गई मशीन के पास पहले से MLX नोड है — पहले एक हटाएँ, या क्लाउड नोड जोड़ें (वे असीमित हैं)।"
+  },
+  "addNode.machineCap": {
+    "defaultMessage": "{count,plural,one{# स्वार्म मशीन} other{# स्वार्म मशीनें}} अभी MLX नोड के बिना — हर मशीन पर ठीक एक होता है।"
+  },
+  "addNode.machineLabel": {
+    "defaultMessage": "मशीन — प्रत्येक पर एक MLX नोड"
+  },
+  "addNode.machineLocalTag": {
+    "defaultMessage": "यह मशीन"
+  },
+  "addNode.machineNoneDiscovered": {
+    "defaultMessage": "कोई स्वार्म मशीन नहीं मिली (LM Studio / lms पहुंच से बाहर) — नोड इसी मशीन के लिए बनेगा; नीचे नाम दें।"
+  },
+  "addNode.machinePlaceholder": {
+    "defaultMessage": "मशीन चुनें…"
+  },
+  "addNode.machineRemoteTag": {
+    "defaultMessage": "दूरस्थ"
+  },
+  "addNode.mlxAliasPreview": {
+    "defaultMessage": "सर्व किया गया मॉडल ID: {alias}"
+  },
+  "addNode.mlxLabelLabel": {
+    "defaultMessage": "नोड का नाम"
+  },
+  "addNode.mlxLabelPlaceholder": {
+    "defaultMessage": "जैसे workhorse"
+  },
+  "addNode.mlxModelLabel": {
+    "defaultMessage": "मॉडल — इंजन के मॉडल फ़ोल्डर से"
+  },
+  "addNode.mlxModelPlaceholder": {
+    "defaultMessage": "मॉडल चुनें…"
+  },
+  "addNode.mlxNoModels": {
+    "defaultMessage": "इंजन के मॉडल फ़ोल्डर में अभी कोई पूर्ण मॉडल नहीं — पहले LeanZero MLX टैब से एक डाउनलोड करें।"
+  },
+  "addNode.mlxOneModel": {
+    "defaultMessage": "एक LeanZero MLX इंजन केवल एक ही मॉडल चलाता है: सभी MLX नोड वही साझा करते हैं जो इंजन ने माउंट किया है, इसलिए हर नोड के लिए अलग मॉडल अभी संभव नहीं। यह नोड जोड़ने से इंजन यहाँ चुने गए मॉडल पर सेट हो जाएगा।"
+  },
+  "addNode.providerLabel": {
+    "defaultMessage": "प्रदाता"
+  },
+  "addNode.providerPlaceholder": {
+    "defaultMessage": "प्रदाता चुनें…"
+  },
+  "addNode.reassignButton": {
+    "defaultMessage": "हटाएँ और फिर से जोड़ें"
+  },
+  "addNode.reassignNotice": {
+    "defaultMessage": "पुनःनियुक्ति बदल देती है कि इस नोड को कौन चलाता है: {id} पूल से हटाकर यहाँ चुने गए प्रदाता के तहत फिर से जोड़ा जाएगा।"
+  },
+  "addNode.reassignTitle": {
+    "defaultMessage": "{id} की पुनःनियुक्ति"
+  },
+  "addNode.remoteAwaiting": {
+    "defaultMessage": "दूरस्थ मशीन का MLX नोड पूल में सहेजा जाता है पर फ़्लीट रूटिंग की प्रतीक्षा करता है — प्रति-नोड इंजन एंडपॉइंट बाद के चरण में आएँगे। आज केवल इस मशीन का नोड सेवा देता है।"
+  },
+  "addNode.title": {
+    "defaultMessage": "नोड जोड़ें"
+  },
+  "addNode.weightLabel": {
+    "defaultMessage": "भार — जितना अधिक, कार्यों का उतना बड़ा हिस्सा"
+  },
   "alertBox.autoCompactAt": {
     "defaultMessage": "ऑटो कॉम्पैक्ट पर"
   },
@@ -229,6 +319,21 @@
   },
   "chatSettings.responseStylesTitle": {
     "defaultMessage": "प्रतिक्रिया शैलियाँ"
+  },
+  "cloudProviders.configuredCount": {
+    "defaultMessage": "{total} में से {configured} कॉन्फ़िगर"
+  },
+  "cloudProviders.description": {
+    "defaultMessage": "उन क्लाउड प्रदाताओं की साख जिन्हें यह ऐप कॉल कर सकता है — कुंजियाँ goose के गुप्त भंडार में एन्क्रिप्ट होती हैं। स्थानीय बैकएंड (LM Studio, MLX इंजन) को साख की ज़रूरत नहीं और वे दूसरे टैब में हैं।"
+  },
+  "cloudProviders.loadFailed": {
+    "defaultMessage": "प्रदाता सूची लोड नहीं हो सकी।"
+  },
+  "cloudProviders.loading": {
+    "defaultMessage": "प्रदाता लोड हो रहे हैं…"
+  },
+  "cloudProviders.retry": {
+    "defaultMessage": "फिर कोशिश करें"
   },
   "configSettings.configReset": {
     "defaultMessage": "कॉन्फ़िगरेशन रीसेट"
@@ -1670,6 +1775,15 @@
   "launcher.placeholder": {
     "defaultMessage": "goose से कुछ भी पूछें..."
   },
+  "leanzeroSwarm.subtitle": {
+    "defaultMessage": "पूरे स्वार्म के लिए एक जगह: अपना MLX इंजन, क्लाउड प्रदाता साख, और वह नोड पूल जिससे स्वार्म बनाता है।"
+  },
+  "leanzeroSwarm.tabCloud": {
+    "defaultMessage": "क्लाउड प्रदाता"
+  },
+  "leanzeroSwarm.tabSwarm": {
+    "defaultMessage": "स्वार्म सेटिंग्स"
+  },
   "loadingGoose.compacting": {
     "defaultMessage": "goose बातचीत को संक्षिप्त कर रहा है..."
   },
@@ -2342,11 +2456,11 @@
   "navigation.itemHome": {
     "defaultMessage": "नई चैट"
   },
+  "navigation.itemLeanzeroSwarm": {
+    "defaultMessage": "LeanZero Swarm"
+  },
   "navigation.itemMemories": {
     "defaultMessage": "Memories"
-  },
-  "navigation.itemMlx": {
-    "defaultMessage": "Leanzero MLX"
   },
   "navigation.itemSettings": {
     "defaultMessage": "Settings"
@@ -4306,6 +4420,54 @@
   },
   "subRecipeModal.subtitle": {
     "defaultMessage": "ऐसी सबरेसिपी कॉन्फ़िगर करें जिसे रेसिपी निष्पादन के दौरान टूल की तरह कॉल किया जा सके"
+  },
+  "swarmSettings.addNode": {
+    "defaultMessage": "नोड जोड़ें"
+  },
+  "swarmSettings.autoChip": {
+    "defaultMessage": "स्वतः"
+  },
+  "swarmSettings.autoChipTitle": {
+    "defaultMessage": "LM Studio से लाइव खोजा गया — पूल में अपने आप शामिल होता है"
+  },
+  "swarmSettings.awaitingChip": {
+    "defaultMessage": "फ़्लीट रूटिंग की प्रतीक्षा"
+  },
+  "swarmSettings.awaitingChipTitle": {
+    "defaultMessage": "दूरस्थ मशीन का MLX नोड — पूल में सहेजा गया, प्रति-नोड रूटिंग आने पर सेवा देगा"
+  },
+  "swarmSettings.noNodes": {
+    "defaultMessage": "अभी कोई नोड नहीं — एक जोड़ें, या {endpoint} पर LM Studio शुरू करें ताकि वह खोजा जा सके।"
+  },
+  "swarmSettings.nodesDesc": {
+    "defaultMessage": "स्वार्म द्वारा चलाया जाने वाला हर नोड — कॉन्फ़िगर की गई पंक्तियाँ और वह सब जो LM Studio में अभी मौजूद है। भार: जितना अधिक, कार्यों का उतना बड़ा हिस्सा।"
+  },
+  "swarmSettings.nodesTitle": {
+    "defaultMessage": "नोड"
+  },
+  "swarmSettings.reassignAria": {
+    "defaultMessage": "प्रदाता पुनःनियुक्त करें"
+  },
+  "swarmSettings.reassignConfirm": {
+    "defaultMessage": "नया प्रदाता चुनें"
+  },
+  "swarmSettings.reassignMessage": {
+    "defaultMessage": "{id} को कौन चलाता है, यह बदलने के लिए नोड को हटाकर अगले चुने गए प्रदाता के तहत फिर से जोड़ा जाता है। नया जोड़ पूरा होने तक कुछ नहीं बदलता।"
+  },
+  "swarmSettings.reassignTitle": {
+    "defaultMessage": "प्रदाता पुनःनियुक्त करें"
+  },
+  "swarmSettings.removeAria": {
+    "defaultMessage": "नोड हटाएँ"
+  },
+  "swarmSettings.removeConfirm": {
+    "defaultMessage": "हटाएँ"
+  },
+  "swarmSettings.removeMessage": {
+    "defaultMessage": "{id} स्वार्म पूल से निकल जाएगा। किसी मॉडल फ़ाइल को छुआ नहीं जाता; आप इसे कभी भी फिर से जोड़ सकते हैं।"
+  },
+  "swarmSettings.removeTitle": {
+    "defaultMessage": "नोड हटाएँ"
   },
   "switchModelModal.backToModelList": {
     "defaultMessage": "मॉडल सूची पर वापस जाएँ"

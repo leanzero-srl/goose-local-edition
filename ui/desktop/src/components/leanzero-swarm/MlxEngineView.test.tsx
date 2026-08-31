@@ -214,24 +214,27 @@ describe('formatGb', () => {
 });
 
 // ---------------------------------------------------------------------------
-// The rename: the window says Leanzero MLX, powered by Rapid-MLX, and the nav
-// item carries the same name.
+// Pass C: the engine content is the LeanZero MLX TAB of the LeanZero Swarm view.
+// The page header moved to LeanZeroSwarmView; this panel keeps the sub-tab bar,
+// the live state badge and the powered-by line. The nav carries the VIEW's name.
 // ---------------------------------------------------------------------------
 
-describe('Leanzero MLX naming', () => {
-  it('the header is titled Leanzero MLX with a visible powered-by line', async () => {
+describe('LeanZero MLX panel naming', () => {
+  it('the panel shows the engine sub-tabs, the state badge and the powered-by line', async () => {
     const { unmount } = render(<MlxEngineView />);
-    expect(screen.getByRole('heading', { name: 'Leanzero MLX' })).toBeInTheDocument();
     expect(screen.getByText('Powered by Rapid-MLX')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /^Engine$/ })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Sampling/ })).toBeInTheDocument();
     await waitFor(() => {
       expect(screen.getAllByTestId('mlx-state-badge').length).toBeGreaterThan(0);
     });
     unmount();
   });
 
-  it('the nav item for /mlx-engine is labelled Leanzero MLX', () => {
-    const item = NAV_ITEMS.find((i) => i.path === '/mlx-engine');
-    expect(item?.label).toBe('Leanzero MLX');
+  it('the nav item is /leanzero-swarm labelled LeanZero Swarm (old /mlx-engine path is gone)', () => {
+    expect(NAV_ITEMS.find((i) => i.path === '/mlx-engine')).toBeUndefined();
+    const item = NAV_ITEMS.find((i) => i.path === '/leanzero-swarm');
+    expect(item?.label).toBe('LeanZero Swarm');
   });
 });
 
@@ -431,6 +434,11 @@ describe('MlxEngineView mount card truth', () => {
     const { unmount } = render(<MlxEngineView />);
     await waitFor(() => {
       expect(screen.getByText('Settings changed — remount to apply.')).toBeInTheDocument();
+    });
+    // The banner commits on the FIRST status render; the picker-follows-truth effect that turns
+    // the primary button into "Mounted" lands one commit later — wait for it, then assert.
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /Mounted/ })).toBeInTheDocument();
     });
     expect(screen.getByRole('button', { name: /Mounted/ })).toBeDisabled();
     expect(screen.getByRole('button', { name: /Remount/ })).toBeEnabled();

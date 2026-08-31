@@ -1,4 +1,94 @@
 {
+  "addNode.addButton": {
+    "defaultMessage": "新增節點"
+  },
+  "addNode.cancel": {
+    "defaultMessage": "取消"
+  },
+  "addNode.description": {
+    "defaultMessage": "節點由「誰來服務它」決定:先選提供方,再選模型。"
+  },
+  "addNode.done": {
+    "defaultMessage": "完成"
+  },
+  "addNode.duplicateId": {
+    "defaultMessage": "已存在名為 {id} 的節點 — 請換一個名稱。"
+  },
+  "addNode.lmstudioAuto": {
+    "defaultMessage": "LM Studio 節點會被自動發現:{endpoint} 上艦隊中常駐的每個模型都會自行加入節點池,無需手動新增。在 LM Studio(或 LM Link)載入一個模型,它就會出現在節點清單裡。"
+  },
+  "addNode.lmstudioLive": {
+    "defaultMessage": "{count,plural,one{目前 # 個節點上線} other{目前 # 個節點上線}}"
+  },
+  "addNode.lmstudioOffline": {
+    "defaultMessage": "艦隊離線"
+  },
+  "addNode.machineAllTaken": {
+    "defaultMessage": "每台已發現的機器都已有 MLX 節點 — 請先移除一個,或新增雲端節點(數量不限)。"
+  },
+  "addNode.machineCap": {
+    "defaultMessage": "{count,plural,one{還有 # 台蜂群機器沒有 MLX 節點} other{還有 # 台蜂群機器沒有 MLX 節點}} — 每台機器恰好承載一個。"
+  },
+  "addNode.machineLabel": {
+    "defaultMessage": "機器 — 每台一個 MLX 節點"
+  },
+  "addNode.machineLocalTag": {
+    "defaultMessage": "本機"
+  },
+  "addNode.machineNoneDiscovered": {
+    "defaultMessage": "未發現蜂群機器(LM Studio / lms 無法連線)— 節點將為本機建立;請在下方命名。"
+  },
+  "addNode.machinePlaceholder": {
+    "defaultMessage": "選擇機器…"
+  },
+  "addNode.machineRemoteTag": {
+    "defaultMessage": "遠端"
+  },
+  "addNode.mlxAliasPreview": {
+    "defaultMessage": "對外提供的模型 ID:{alias}"
+  },
+  "addNode.mlxLabelLabel": {
+    "defaultMessage": "節點名稱"
+  },
+  "addNode.mlxLabelPlaceholder": {
+    "defaultMessage": "例如 workhorse"
+  },
+  "addNode.mlxModelLabel": {
+    "defaultMessage": "模型 — 來自引擎的模型資料夾"
+  },
+  "addNode.mlxModelPlaceholder": {
+    "defaultMessage": "選擇模型…"
+  },
+  "addNode.mlxNoModels": {
+    "defaultMessage": "引擎的模型資料夾中還沒有完整的模型 — 請先在 LeanZero MLX 分頁下載一個。"
+  },
+  "addNode.mlxOneModel": {
+    "defaultMessage": "一個 LeanZero MLX 引擎只服務一個模型:所有 MLX 節點共享引擎目前掛載的模型,暫時無法為每個節點配置不同的模型。新增此節點會讓引擎指向你在這裡選擇的模型。"
+  },
+  "addNode.providerLabel": {
+    "defaultMessage": "提供方"
+  },
+  "addNode.providerPlaceholder": {
+    "defaultMessage": "選擇提供方…"
+  },
+  "addNode.reassignButton": {
+    "defaultMessage": "移除並重新新增"
+  },
+  "addNode.reassignNotice": {
+    "defaultMessage": "重新指派會改變服務此節點的提供方:{id} 將從節點池中移除,並在你此處選擇的提供方下重新新增。"
+  },
+  "addNode.reassignTitle": {
+    "defaultMessage": "重新指派 {id}"
+  },
+  "addNode.remoteAwaiting": {
+    "defaultMessage": "遠端機器的 MLX 節點會儲存到節點池,但等待艦隊路由 — 逐節點引擎端點將於後續階段提供。今天只有本機的節點在服務。"
+  },
+  "addNode.title": {
+    "defaultMessage": "新增節點"
+  },
+  "addNode.weightLabel": {
+    "defaultMessage": "權重 — 越高分到的任務越多"
+  },
   "alertBox.autoCompactAt": {
     "defaultMessage": "自動壓縮於"
   },
@@ -229,6 +319,21 @@
   },
   "chatSettings.responseStylesTitle": {
     "defaultMessage": "回應樣式"
+  },
+  "cloudProviders.configuredCount": {
+    "defaultMessage": "已設定 {configured}/{total}"
+  },
+  "cloudProviders.description": {
+    "defaultMessage": "此應用程式可呼叫的雲端提供方憑證 — 金鑰會加密存入 goose 的機密儲存庫。本機後端(LM Studio、MLX 引擎)無需憑證,位於其他分頁。"
+  },
+  "cloudProviders.loadFailed": {
+    "defaultMessage": "無法載入提供方清單。"
+  },
+  "cloudProviders.loading": {
+    "defaultMessage": "正在載入提供方…"
+  },
+  "cloudProviders.retry": {
+    "defaultMessage": "重試"
   },
   "configSettings.configReset": {
     "defaultMessage": "設定已重設"
@@ -1670,6 +1775,15 @@
   "launcher.placeholder": {
     "defaultMessage": "向 goose 詢問任何問題…"
   },
+  "leanzeroSwarm.subtitle": {
+    "defaultMessage": "整個蜂群的統一入口:自研 MLX 引擎、雲端提供方憑證,以及蜂群建置所用的節點池。"
+  },
+  "leanzeroSwarm.tabCloud": {
+    "defaultMessage": "雲端提供方"
+  },
+  "leanzeroSwarm.tabSwarm": {
+    "defaultMessage": "蜂群設定"
+  },
   "loadingGoose.compacting": {
     "defaultMessage": "goose 正在壓縮對話…"
   },
@@ -2342,11 +2456,11 @@
   "navigation.itemHome": {
     "defaultMessage": "新交談"
   },
+  "navigation.itemLeanzeroSwarm": {
+    "defaultMessage": "LeanZero Swarm"
+  },
   "navigation.itemMemories": {
     "defaultMessage": "Memories"
-  },
-  "navigation.itemMlx": {
-    "defaultMessage": "Leanzero MLX"
   },
   "navigation.itemSettings": {
     "defaultMessage": "設定"
@@ -4306,6 +4420,54 @@
   },
   "subRecipeModal.subtitle": {
     "defaultMessage": "設定可在配方執行期間作為工具呼叫的子配方"
+  },
+  "swarmSettings.addNode": {
+    "defaultMessage": "新增節點"
+  },
+  "swarmSettings.autoChip": {
+    "defaultMessage": "自動"
+  },
+  "swarmSettings.autoChipTitle": {
+    "defaultMessage": "從 LM Studio 即時發現 — 自動加入節點池"
+  },
+  "swarmSettings.awaitingChip": {
+    "defaultMessage": "等待艦隊路由"
+  },
+  "swarmSettings.awaitingChipTitle": {
+    "defaultMessage": "遠端機器的 MLX 節點 — 已儲存在節點池,待逐節點路由上線後提供服務"
+  },
+  "swarmSettings.noNodes": {
+    "defaultMessage": "還沒有節點 — 新增一個,或在 {endpoint} 啟動 LM Studio 以便被發現。"
+  },
+  "swarmSettings.nodesDesc": {
+    "defaultMessage": "蜂群執行的每個節點 — 已設定的列,加上 LM Studio 目前常駐的模型。權重:越高分到的任務越多。"
+  },
+  "swarmSettings.nodesTitle": {
+    "defaultMessage": "節點"
+  },
+  "swarmSettings.reassignAria": {
+    "defaultMessage": "重新指派提供方"
+  },
+  "swarmSettings.reassignConfirm": {
+    "defaultMessage": "選擇新提供方"
+  },
+  "swarmSettings.reassignMessage": {
+    "defaultMessage": "更改服務 {id} 的提供方的方式是:先移除該節點,再在接下來選擇的提供方下重新新增。在新的新增完成之前不會有任何變化。"
+  },
+  "swarmSettings.reassignTitle": {
+    "defaultMessage": "重新指派提供方"
+  },
+  "swarmSettings.removeAria": {
+    "defaultMessage": "移除節點"
+  },
+  "swarmSettings.removeConfirm": {
+    "defaultMessage": "移除"
+  },
+  "swarmSettings.removeMessage": {
+    "defaultMessage": "{id} 將離開蜂群節點池。不會動到任何模型檔案;你隨時可以再把它加回來。"
+  },
+  "swarmSettings.removeTitle": {
+    "defaultMessage": "移除節點"
   },
   "switchModelModal.backToModelList": {
     "defaultMessage": "返回模型清單"

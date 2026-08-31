@@ -1,4 +1,94 @@
 {
+  "addNode.addButton": {
+    "defaultMessage": "Tambah node"
+  },
+  "addNode.cancel": {
+    "defaultMessage": "Batal"
+  },
+  "addNode.description": {
+    "defaultMessage": "Node dibuat dengan memilih apa yang melayaninya: pilih penyedia, lalu model."
+  },
+  "addNode.done": {
+    "defaultMessage": "Selesai"
+  },
+  "addNode.duplicateId": {
+    "defaultMessage": "Node bernama {id} sudah ada — pilih nama lain."
+  },
+  "addNode.lmstudioAuto": {
+    "defaultMessage": "Node LM Studio ditemukan secara otomatis: setiap model yang residen di armada pada {endpoint} bergabung ke pool dengan sendirinya, jadi tidak ada yang perlu ditambahkan manual. Muat model di LM Studio (atau LM Link) dan ia akan muncul di daftar Node."
+  },
+  "addNode.lmstudioLive": {
+    "defaultMessage": "{count,plural,one{# node aktif sekarang} other{# node aktif sekarang}}"
+  },
+  "addNode.lmstudioOffline": {
+    "defaultMessage": "armada offline"
+  },
+  "addNode.machineAllTaken": {
+    "defaultMessage": "Setiap mesin yang ditemukan sudah punya node MLX — hapus satu dulu, atau tambah node cloud (tak terbatas)."
+  },
+  "addNode.machineCap": {
+    "defaultMessage": "{count,plural,one{# mesin swarm} other{# mesin swarm}} belum punya node MLX — tiap mesin membawa tepat satu."
+  },
+  "addNode.machineLabel": {
+    "defaultMessage": "Mesin — satu node MLX per mesin"
+  },
+  "addNode.machineLocalTag": {
+    "defaultMessage": "mesin ini"
+  },
+  "addNode.machineNoneDiscovered": {
+    "defaultMessage": "Tidak ada mesin swarm yang ditemukan (LM Studio / lms tak terjangkau) — node dibuat untuk MESIN INI; beri nama di bawah."
+  },
+  "addNode.machinePlaceholder": {
+    "defaultMessage": "Pilih mesin…"
+  },
+  "addNode.machineRemoteTag": {
+    "defaultMessage": "jarak jauh"
+  },
+  "addNode.mlxAliasPreview": {
+    "defaultMessage": "ID model yang disajikan: {alias}"
+  },
+  "addNode.mlxLabelLabel": {
+    "defaultMessage": "Nama node"
+  },
+  "addNode.mlxLabelPlaceholder": {
+    "defaultMessage": "mis. workhorse"
+  },
+  "addNode.mlxModelLabel": {
+    "defaultMessage": "Model — dari folder model mesin"
+  },
+  "addNode.mlxModelPlaceholder": {
+    "defaultMessage": "Pilih model…"
+  },
+  "addNode.mlxNoModels": {
+    "defaultMessage": "Belum ada model lengkap di folder model mesin — unduh dulu satu di tab LeanZero MLX."
+  },
+  "addNode.mlxOneModel": {
+    "defaultMessage": "Satu mesin LeanZero MLX melayani SATU model: semua node MLX berbagi apa pun yang dimuat mesin, jadi model berbeda per node belum mungkin. Menambahkan node ini mengarahkan mesin ke model yang kamu pilih di sini."
+  },
+  "addNode.providerLabel": {
+    "defaultMessage": "Penyedia"
+  },
+  "addNode.providerPlaceholder": {
+    "defaultMessage": "Pilih penyedia…"
+  },
+  "addNode.reassignButton": {
+    "defaultMessage": "Hapus & tambah ulang"
+  },
+  "addNode.reassignNotice": {
+    "defaultMessage": "Penugasan ulang mengubah apa yang melayani node ini: {id} DIHAPUS dari pool lalu ditambahkan lagi di bawah penyedia yang kamu pilih di sini."
+  },
+  "addNode.reassignTitle": {
+    "defaultMessage": "Tugaskan ulang {id}"
+  },
+  "addNode.remoteAwaiting": {
+    "defaultMessage": "Node MLX mesin jarak jauh disimpan ke pool tapi MENUNGGU PERUTEAN ARMADA — endpoint mesin per node hadir di fase berikutnya. Hari ini hanya node mesin ini yang dilayani."
+  },
+  "addNode.title": {
+    "defaultMessage": "Tambah node"
+  },
+  "addNode.weightLabel": {
+    "defaultMessage": "Bobot — makin tinggi, makin besar bagian tugasnya"
+  },
   "alertBox.autoCompactAt": {
     "defaultMessage": "Padatkan otomatis pada"
   },
@@ -229,6 +319,21 @@
   },
   "chatSettings.responseStylesTitle": {
     "defaultMessage": "Gaya Respons"
+  },
+  "cloudProviders.configuredCount": {
+    "defaultMessage": "{configured} dari {total} terkonfigurasi"
+  },
+  "cloudProviders.description": {
+    "defaultMessage": "Kredensial penyedia cloud yang bisa dipanggil aplikasi ini — kunci dienkripsi ke penyimpanan rahasia goose. Backend lokal (LM Studio, mesin MLX) tidak butuh kredensial dan ada di tab lain."
+  },
+  "cloudProviders.loadFailed": {
+    "defaultMessage": "Tidak bisa memuat daftar penyedia."
+  },
+  "cloudProviders.loading": {
+    "defaultMessage": "Memuat penyedia…"
+  },
+  "cloudProviders.retry": {
+    "defaultMessage": "Coba lagi"
   },
   "configSettings.configReset": {
     "defaultMessage": "Konfigurasi Disetel Ulang"
@@ -1670,6 +1775,15 @@
   "launcher.placeholder": {
     "defaultMessage": "Tanyakan apa saja kepada goose..."
   },
+  "leanzeroSwarm.subtitle": {
+    "defaultMessage": "Satu tempat untuk seluruh swarm: mesin MLX internal, kredensial penyedia cloud, dan pool node yang dipakai swarm untuk membangun."
+  },
+  "leanzeroSwarm.tabCloud": {
+    "defaultMessage": "Penyedia Cloud"
+  },
+  "leanzeroSwarm.tabSwarm": {
+    "defaultMessage": "Pengaturan Swarm"
+  },
   "loadingGoose.compacting": {
     "defaultMessage": "goose sedang meringkas percakapan..."
   },
@@ -2342,11 +2456,11 @@
   "navigation.itemHome": {
     "defaultMessage": "Obrolan Baru"
   },
+  "navigation.itemLeanzeroSwarm": {
+    "defaultMessage": "LeanZero Swarm"
+  },
   "navigation.itemMemories": {
     "defaultMessage": "Memories"
-  },
-  "navigation.itemMlx": {
-    "defaultMessage": "Leanzero MLX"
   },
   "navigation.itemSettings": {
     "defaultMessage": "Pengaturan"
@@ -4306,6 +4420,54 @@
   },
   "subRecipeModal.subtitle": {
     "defaultMessage": "Konfigurasikan subresep yang dapat dipanggil sebagai alat selama eksekusi resep"
+  },
+  "swarmSettings.addNode": {
+    "defaultMessage": "Tambah node"
+  },
+  "swarmSettings.autoChip": {
+    "defaultMessage": "auto"
+  },
+  "swarmSettings.autoChipTitle": {
+    "defaultMessage": "Ditemukan langsung dari LM Studio — bergabung ke pool secara otomatis"
+  },
+  "swarmSettings.awaitingChip": {
+    "defaultMessage": "menunggu perutean armada"
+  },
+  "swarmSettings.awaitingChipTitle": {
+    "defaultMessage": "Node MLX mesin jarak jauh — tersimpan di pool, dilayani saat perutean per node hadir"
+  },
+  "swarmSettings.noNodes": {
+    "defaultMessage": "Belum ada node — tambahkan satu, atau jalankan LM Studio di {endpoint} agar ditemukan."
+  },
+  "swarmSettings.nodesDesc": {
+    "defaultMessage": "Setiap node yang dijalankan swarm — baris terkonfigurasi plus apa pun yang residen di LM Studio sekarang. Bobot: makin tinggi, makin besar bagian tugasnya."
+  },
+  "swarmSettings.nodesTitle": {
+    "defaultMessage": "Node"
+  },
+  "swarmSettings.reassignAria": {
+    "defaultMessage": "Tugaskan ulang penyedia"
+  },
+  "swarmSettings.reassignConfirm": {
+    "defaultMessage": "Pilih penyedia baru"
+  },
+  "swarmSettings.reassignMessage": {
+    "defaultMessage": "Mengubah apa yang melayani {id} bekerja dengan MENGHAPUS node lalu MENAMBAHKANNYA LAGI di bawah penyedia yang dipilih berikutnya. Tidak ada yang berubah sampai penambahan baru selesai."
+  },
+  "swarmSettings.reassignTitle": {
+    "defaultMessage": "Tugaskan ulang penyedia"
+  },
+  "swarmSettings.removeAria": {
+    "defaultMessage": "Hapus node"
+  },
+  "swarmSettings.removeConfirm": {
+    "defaultMessage": "Hapus"
+  },
+  "swarmSettings.removeMessage": {
+    "defaultMessage": "{id} keluar dari pool swarm. Tidak ada berkas model yang disentuh; kamu bisa menambahkannya lagi kapan saja."
+  },
+  "swarmSettings.removeTitle": {
+    "defaultMessage": "Hapus node"
   },
   "switchModelModal.backToModelList": {
     "defaultMessage": "Kembali ke daftar model"

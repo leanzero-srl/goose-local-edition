@@ -15,15 +15,18 @@ export interface NavItem {
  * Top-level nav items (excluding Settings which is pinned to the bottom).
  *
  * Goose Swarm pass A declutter: the nav shows ONLY New Chat, Skills, Memories, Benchmark and the
- * Leanzero MLX entry. Recipes, Apps, Scheduler, Loop, Extensions and Session History left the nav
+ * LeanZero Swarm entry. Recipes, Apps, Scheduler, Loop, Extensions and Session History left the nav
  * on purpose — their routes and views stay in code and reachable by URL (see App.tsx routes).
+ *
+ * Pass C: the "Leanzero MLX" entry became "LeanZero Swarm" — the three-tab management view
+ * (LeanZero MLX | Cloud Providers | Swarm Settings). /mlx-engine redirects to /leanzero-swarm.
  */
 export const NAV_ITEMS: NavItem[] = [
   { id: 'home', path: '/', label: 'New Chat', icon: MessageSquarePlus },
   { id: 'skills', path: '/skills', label: 'Skills', icon: Zap },
   { id: 'memories', path: '/memories', label: 'Memories', icon: Brain },
   { id: 'benchmark', path: '/benchmark', label: 'Benchmark', icon: Gauge },
-  { id: 'mlx', path: '/mlx-engine', label: 'Leanzero MLX', icon: Cpu },
+  { id: 'leanzero-swarm', path: '/leanzero-swarm', label: 'LeanZero Swarm', icon: Cpu },
 ];
 
 /** Settings is rendered separately, pinned to the bottom of the sidebar. */
@@ -53,9 +56,9 @@ const navItemMessages = defineMessages({
     id: 'navigation.itemBenchmark',
     defaultMessage: 'Benchmark',
   },
-  mlx: {
-    id: 'navigation.itemMlx',
-    defaultMessage: 'Leanzero MLX',
+  'leanzero-swarm': {
+    id: 'navigation.itemLeanzeroSwarm',
+    defaultMessage: 'LeanZero Swarm',
   },
   settings: {
     id: 'navigation.itemSettings',

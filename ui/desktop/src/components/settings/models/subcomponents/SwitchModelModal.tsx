@@ -30,7 +30,7 @@ import { getPredefinedModelsFromEnv, shouldShowPredefinedModels } from '../prede
 import type { ProviderDetails, ProviderType, ThinkingEffort } from '../../../../types/providers';
 import { trackModelChanged } from '../../../../utils/analytics';
 import { useFeatures } from '../../../../contexts/FeaturesContext';
-import { useMlxEngineStatusPoll } from '../../../mlx/useMlxEngineStatus';
+import { useMlxEngineStatusPoll } from '../../../leanzero-swarm/useMlxEngineStatus';
 import type { MlxEngineStatus } from '../../../../acp/mlx-engine';
 import {
   keepProviderInLeanzeroSelector,

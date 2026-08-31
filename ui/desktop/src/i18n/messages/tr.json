@@ -1,4 +1,94 @@
 {
+  "addNode.addButton": {
+    "defaultMessage": "Düğüm ekle"
+  },
+  "addNode.cancel": {
+    "defaultMessage": "İptal"
+  },
+  "addNode.description": {
+    "defaultMessage": "Bir düğüm, onu neyin sunacağını seçerek oluşturulur: önce bir sağlayıcı, sonra bir model seçin."
+  },
+  "addNode.done": {
+    "defaultMessage": "Bitti"
+  },
+  "addNode.duplicateId": {
+    "defaultMessage": "{id} adında bir düğüm zaten var — başka bir ad seçin."
+  },
+  "addNode.lmstudioAuto": {
+    "defaultMessage": "LM Studio düğümleri otomatik keşfedilir: {endpoint} adresindeki filoda yerleşik her model havuza kendiliğinden katılır, elle eklenecek bir şey yoktur. LM Studio'da (veya LM Link'te) bir model yükleyin, Düğümler listesinde görünsün."
+  },
+  "addNode.lmstudioLive": {
+    "defaultMessage": "{count,plural,one{şu anda # düğüm çalışıyor} other{şu anda # düğüm çalışıyor}}"
+  },
+  "addNode.lmstudioOffline": {
+    "defaultMessage": "filo çevrimdışı"
+  },
+  "addNode.machineAllTaken": {
+    "defaultMessage": "Keşfedilen her makinenin zaten MLX düğümü var — önce birini kaldırın veya bulut düğümleri ekleyin (onlar sınırsız)."
+  },
+  "addNode.machineCap": {
+    "defaultMessage": "{count,plural,one{MLX düğümü olmayan # sürü makinesi} other{MLX düğümü olmayan # sürü makinesi}} — her makine tam olarak bir tane taşır."
+  },
+  "addNode.machineLabel": {
+    "defaultMessage": "Makine — her birine bir MLX düğümü"
+  },
+  "addNode.machineLocalTag": {
+    "defaultMessage": "bu makine"
+  },
+  "addNode.machineNoneDiscovered": {
+    "defaultMessage": "Sürü makinesi bulunamadı (LM Studio / lms erişilemiyor) — düğüm BU makine için oluşturulur; aşağıda adlandırın."
+  },
+  "addNode.machinePlaceholder": {
+    "defaultMessage": "Bir makine seçin…"
+  },
+  "addNode.machineRemoteTag": {
+    "defaultMessage": "uzak"
+  },
+  "addNode.mlxAliasPreview": {
+    "defaultMessage": "Sunulan model kimliği: {alias}"
+  },
+  "addNode.mlxLabelLabel": {
+    "defaultMessage": "Düğüm adı"
+  },
+  "addNode.mlxLabelPlaceholder": {
+    "defaultMessage": "örn. workhorse"
+  },
+  "addNode.mlxModelLabel": {
+    "defaultMessage": "Model — motorun model klasöründen"
+  },
+  "addNode.mlxModelPlaceholder": {
+    "defaultMessage": "Bir model seçin…"
+  },
+  "addNode.mlxNoModels": {
+    "defaultMessage": "Motorun model klasöründe henüz tam bir model yok — önce LeanZero MLX sekmesinden bir tane indirin."
+  },
+  "addNode.mlxOneModel": {
+    "defaultMessage": "Bir LeanZero MLX motoru TEK bir model sunar: tüm MLX düğümleri motorun bağladığını paylaşır, bu yüzden düğüm başına farklı model henüz mümkün değil. Bu düğümü eklemek motoru burada seçtiğiniz modele yönlendirir."
+  },
+  "addNode.providerLabel": {
+    "defaultMessage": "Sağlayıcı"
+  },
+  "addNode.providerPlaceholder": {
+    "defaultMessage": "Bir sağlayıcı seçin…"
+  },
+  "addNode.reassignButton": {
+    "defaultMessage": "Kaldır ve yeniden ekle"
+  },
+  "addNode.reassignNotice": {
+    "defaultMessage": "Yeniden atama bu düğümü neyin sunacağını değiştirir: {id} havuzdan KALDIRILIR ve burada seçtiğiniz sağlayıcı altında yeniden eklenir."
+  },
+  "addNode.reassignTitle": {
+    "defaultMessage": "{id} yeniden ata"
+  },
+  "addNode.remoteAwaiting": {
+    "defaultMessage": "Uzak bir makinenin MLX düğümü havuza kaydedilir ama FİLO YÖNLENDİRMESİNİ BEKLER — düğüm başına motor uç noktaları sonraki bir aşamada gelir. Bugün yalnızca bu makinenin düğümü hizmet verir."
+  },
+  "addNode.title": {
+    "defaultMessage": "Düğüm ekle"
+  },
+  "addNode.weightLabel": {
+    "defaultMessage": "Ağırlık — yükseldikçe görevlerden daha büyük pay alır"
+  },
   "alertBox.autoCompactAt": {
     "defaultMessage": "Otomatik sıkıştırma eşiği"
   },
@@ -229,6 +319,21 @@
   },
   "chatSettings.responseStylesTitle": {
     "defaultMessage": "Yanıt Stilleri"
+  },
+  "cloudProviders.configuredCount": {
+    "defaultMessage": "{total} sağlayıcıdan {configured} tanesi yapılandırıldı"
+  },
+  "cloudProviders.description": {
+    "defaultMessage": "Bu uygulamanın çağırabildiği bulut sağlayıcılarının kimlik bilgileri — anahtarlar goose gizli deposuna şifrelenerek yazılır. Yerel arka uçların (LM Studio, MLX motoru) kimlik bilgisine ihtiyacı yoktur ve diğer sekmelerde yaşarlar."
+  },
+  "cloudProviders.loadFailed": {
+    "defaultMessage": "Sağlayıcı listesi yüklenemedi."
+  },
+  "cloudProviders.loading": {
+    "defaultMessage": "Sağlayıcılar yükleniyor…"
+  },
+  "cloudProviders.retry": {
+    "defaultMessage": "Yeniden dene"
   },
   "configSettings.configReset": {
     "defaultMessage": "Yapılandırma Sıfırlama"
@@ -1670,6 +1775,15 @@
   "launcher.placeholder": {
     "defaultMessage": "goose'a herhangi bir şey sorun..."
   },
+  "leanzeroSwarm.subtitle": {
+    "defaultMessage": "Tüm sürü için tek yer: şirket içi MLX motoru, bulut sağlayıcı kimlik bilgileri ve sürünün inşa ettiği düğüm havuzu."
+  },
+  "leanzeroSwarm.tabCloud": {
+    "defaultMessage": "Bulut Sağlayıcıları"
+  },
+  "leanzeroSwarm.tabSwarm": {
+    "defaultMessage": "Sürü Ayarları"
+  },
   "loadingGoose.compacting": {
     "defaultMessage": "goose konuşmayı sıkıştırıyor..."
   },
@@ -2342,11 +2456,11 @@
   "navigation.itemHome": {
     "defaultMessage": "Yeni Sohbet"
   },
+  "navigation.itemLeanzeroSwarm": {
+    "defaultMessage": "LeanZero Swarm"
+  },
   "navigation.itemMemories": {
     "defaultMessage": "Memories"
-  },
-  "navigation.itemMlx": {
-    "defaultMessage": "Leanzero MLX"
   },
   "navigation.itemSettings": {
     "defaultMessage": "Ayarlar"
@@ -4306,6 +4420,54 @@
   },
   "subRecipeModal.subtitle": {
     "defaultMessage": "Tarif yürütme sırasında araç olarak çağrılabilecek bir alt tarif yapılandırın"
+  },
+  "swarmSettings.addNode": {
+    "defaultMessage": "Düğüm ekle"
+  },
+  "swarmSettings.autoChip": {
+    "defaultMessage": "oto"
+  },
+  "swarmSettings.autoChipTitle": {
+    "defaultMessage": "LM Studio'dan canlı keşfedildi — havuza otomatik katılır"
+  },
+  "swarmSettings.awaitingChip": {
+    "defaultMessage": "filo yönlendirmesi bekliyor"
+  },
+  "swarmSettings.awaitingChipTitle": {
+    "defaultMessage": "Uzak makinenin MLX düğümü — havuzda kayıtlı, düğüm başına yönlendirme gelince hizmet verir"
+  },
+  "swarmSettings.noNodes": {
+    "defaultMessage": "Henüz düğüm yok — bir tane ekleyin veya keşfedilmesi için {endpoint} adresinde LM Studio'yu başlatın."
+  },
+  "swarmSettings.nodesDesc": {
+    "defaultMessage": "Sürünün çalıştırdığı her düğüm — yapılandırılmış satırlar artı LM Studio'da şu an yerleşik olanlar. Ağırlık: yükseldikçe görevlerden daha büyük pay alır."
+  },
+  "swarmSettings.nodesTitle": {
+    "defaultMessage": "Düğümler"
+  },
+  "swarmSettings.reassignAria": {
+    "defaultMessage": "Sağlayıcıyı yeniden ata"
+  },
+  "swarmSettings.reassignConfirm": {
+    "defaultMessage": "Yeni sağlayıcı seç"
+  },
+  "swarmSettings.reassignMessage": {
+    "defaultMessage": "{id} düğümünü neyin sunacağını değiştirmek, düğümü KALDIRIP bir sonraki seçilen sağlayıcı altında YENİDEN EKLEYEREK çalışır. Yeni ekleme tamamlanana dek hiçbir şey değişmez."
+  },
+  "swarmSettings.reassignTitle": {
+    "defaultMessage": "Sağlayıcıyı yeniden ata"
+  },
+  "swarmSettings.removeAria": {
+    "defaultMessage": "Düğümü kaldır"
+  },
+  "swarmSettings.removeConfirm": {
+    "defaultMessage": "Kaldır"
+  },
+  "swarmSettings.removeMessage": {
+    "defaultMessage": "{id} sürü havuzundan çıkar. Hiçbir model dosyasına dokunulmaz; istediğiniz zaman yeniden ekleyebilirsiniz."
+  },
+  "swarmSettings.removeTitle": {
+    "defaultMessage": "Düğümü kaldır"
   },
   "switchModelModal.backToModelList": {
     "defaultMessage": "Model listesine geri dön"

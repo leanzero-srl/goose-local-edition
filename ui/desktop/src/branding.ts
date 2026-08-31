@@ -8,3 +8,10 @@ export const LEANZERO_DOCS_URL = 'https://leanzero.net/portfolio/goose-local-edi
 // this is only the user-facing display name.
 export const SWARM_PROVIDER_ID = 'swarm';
 export const SWARM_DISPLAY_NAME = 'Swarm LeanZero';
+
+// Where this app's bug reports and feature requests go: OUR fork, never the parent goose repo
+// (queued fix #8 — Report-a-Bug/Request-a-Feature/Diagnostics used to file against the parent's
+// tracker, sending users of this build to a project that does not ship it). The fork carries the
+// same .github/ISSUE_TEMPLATE files, so the template query params keep working.
+export const LEANZERO_REPO_SLUG = 'leanzero-srl/goose-local-edition';
+export const LEANZERO_ISSUES_NEW_URL = `https://github.com/${LEANZERO_REPO_SLUG}/issues/new`;

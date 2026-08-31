@@ -42,6 +42,7 @@ import { formatAppName, errorMessage, formatErrorForLogging } from './utils/conv
 import { isRetiredGooseChatApp } from './utils/retiredApps';
 import type { Settings, SettingKey } from './utils/settings';
 import { defaultSettings, getKeyboardShortcuts } from './utils/settings';
+import { getBrandName } from './utils/mainBrand';
 import * as crypto from 'crypto';
 import * as yaml from 'yaml';
 import windowStateKeeper from 'electron-window-state';
@@ -176,6 +177,10 @@ function translateMenuLabels(items: MenuItem[]): void {
 
 // Settings management
 const SETTINGS_FILE = path.join(app.getPath('userData'), 'settings.json');
+
+/** Edition-aware brand for MAIN-PROCESS surfaces (tray/dialogs/notifications) — queued fix #10.
+ *  Resolved fresh per call so an edition change is picked up without a restart. */
+const brandName = () => getBrandName({ settingsFile: SETTINGS_FILE });
 const STARTUP_LOGS_DIR = path.join(app.getPath('userData'), 'logs', 'startup');
 const validLanguageSettings = new Set<Settings['language']>([
   'system',
@@ -774,7 +779,7 @@ app.on('open-url', async (_event, url) => {
 app.on('will-finish-launching', () => {
   if (process.platform === 'darwin') {
     app.setAboutPanelOptions({
-      applicationName: 'Goose',
+      applicationName: brandName(),
       applicationVersion: app.getVersion(),
     });
   }
@@ -829,7 +834,7 @@ async function handleFileOpen(filePath: string) {
 
     // Show user-friendly error notification
     new Notification({
-      title: 'Goose',
+      title: brandName(),
       body: `Could not open directory: ${path.basename(filePath)}`,
     }).show();
   }
@@ -1198,7 +1203,7 @@ const createChat = async (
       log.error('goose serve failed to start', error);
       dialog.showMessageBoxSync({
         type: 'error',
-        title: 'Goose Failed to Start',
+        title: `${brandName()} Failed to Start`,
         message: 'The backend server failed to start.',
         detail: [
           'Backend: goose serve',
@@ -1969,6 +1974,42 @@ ipcMain.handle('fleet-status', async (): Promise<Record<string, string>> => {
         resolve(map);
       } catch {
         resolve({});
+      }
+    });
+  });
+});
+
+// The swarm's MACHINES, from `lms ps --json`: each loaded model's identifier is prefixed with its
+// machine name (workhorse-…, mihai-…), and `deviceIdentifier: null` marks the LOCAL machine's own
+// models (remotes carry an LM Link device hash). Distinct prefixes = the machines a LeanZero MLX
+// node can be created for; the add-node dialog caps its list to exactly these. Empty on any error
+// so the caller degrades to the manual local-label path.
+ipcMain.handle('fleet-machines', async (): Promise<Array<{ machine: string; local: boolean }>> => {
+  return await new Promise((resolve) => {
+    const home = process.env.HOME || os.homedir();
+    const lmsHome = `${home}/.lmstudio/bin/lms`;
+    const bin = fsSync.existsSync(lmsHome) ? lmsHome : 'lms';
+    execFile(bin, ['ps', '--json'], { timeout: 4000 }, (error, stdout) => {
+      if (error) {
+        resolve([]);
+        return;
+      }
+      try {
+        const arr = JSON.parse(stdout) as Array<{
+          identifier?: string;
+          deviceIdentifier?: string | null;
+        }>;
+        const byMachine = new Map<string, boolean>();
+        for (const m of arr) {
+          if (!m.identifier) continue;
+          const dash = m.identifier.indexOf('-');
+          const machine = dash > 0 ? m.identifier.slice(0, dash) : m.identifier;
+          const local = m.deviceIdentifier == null;
+          byMachine.set(machine, (byMachine.get(machine) ?? false) || local);
+        }
+        resolve([...byMachine.entries()].map(([machine, local]) => ({ machine, local })));
+      } catch {
+        resolve([]);
       }
     });
   });
@@ -5023,7 +5064,7 @@ app.whenReady().then(async () => {
   try {
     await appMain();
   } catch (error) {
-    dialog.showErrorBox('Goose Error', `Failed to create main window: ${error}`);
+    dialog.showErrorBox(`${brandName()} Error`, `Failed to create main window: ${error}`);
     app.quit();
   }
 });

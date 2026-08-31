@@ -1,4 +1,94 @@
 {
+  "addNode.addButton": {
+    "defaultMessage": "Add node"
+  },
+  "addNode.cancel": {
+    "defaultMessage": "Cancel"
+  },
+  "addNode.description": {
+    "defaultMessage": "A node is made by choosing what serves it: pick a provider, then a model."
+  },
+  "addNode.done": {
+    "defaultMessage": "Done"
+  },
+  "addNode.duplicateId": {
+    "defaultMessage": "A node named {id} already exists — pick a different label."
+  },
+  "addNode.lmstudioAuto": {
+    "defaultMessage": "LM Studio nodes are discovered automatically: every model resident on the fleet at {endpoint} joins the pool by itself, so there is nothing to add by hand. Load a model in LM Studio (or LM Link) and it appears in the Nodes list."
+  },
+  "addNode.lmstudioLive": {
+    "defaultMessage": "{count,plural,one{# node live right now} other{# nodes live right now}}"
+  },
+  "addNode.lmstudioOffline": {
+    "defaultMessage": "fleet offline"
+  },
+  "addNode.machineAllTaken": {
+    "defaultMessage": "Every discovered swarm machine already has its MLX node — remove one first, or add cloud nodes (those are unlimited)."
+  },
+  "addNode.machineCap": {
+    "defaultMessage": "{count,plural,one{# swarm machine without an MLX node yet — each machine can carry exactly one.} other{# swarm machines without an MLX node yet — each machine can carry exactly one.}}"
+  },
+  "addNode.machineLabel": {
+    "defaultMessage": "Machine — one MLX node each"
+  },
+  "addNode.machineLocalTag": {
+    "defaultMessage": "this machine"
+  },
+  "addNode.machineNoneDiscovered": {
+    "defaultMessage": "No swarm machines discovered (LM Studio / lms unreachable) — the node is created for THIS machine; name it below."
+  },
+  "addNode.machinePlaceholder": {
+    "defaultMessage": "Pick a machine…"
+  },
+  "addNode.machineRemoteTag": {
+    "defaultMessage": "remote"
+  },
+  "addNode.mlxAliasPreview": {
+    "defaultMessage": "Served model id: {alias}"
+  },
+  "addNode.mlxLabelLabel": {
+    "defaultMessage": "Node label"
+  },
+  "addNode.mlxLabelPlaceholder": {
+    "defaultMessage": "e.g. workhorse"
+  },
+  "addNode.mlxModelLabel": {
+    "defaultMessage": "Model — from the engine’s models folder"
+  },
+  "addNode.mlxModelPlaceholder": {
+    "defaultMessage": "Pick a model…"
+  },
+  "addNode.mlxNoModels": {
+    "defaultMessage": "No complete models in the engine’s models folder yet — download one in the LeanZero MLX tab first."
+  },
+  "addNode.mlxOneModel": {
+    "defaultMessage": "One LeanZero MLX engine serves ONE model: every MLX node shares whatever the engine has mounted, so a different model per node is not possible yet. Adding this node points the engine at the model you pick here."
+  },
+  "addNode.providerLabel": {
+    "defaultMessage": "Provider"
+  },
+  "addNode.providerPlaceholder": {
+    "defaultMessage": "Pick a provider…"
+  },
+  "addNode.reassignButton": {
+    "defaultMessage": "Remove & re-add"
+  },
+  "addNode.reassignNotice": {
+    "defaultMessage": "Reassigning changes what serves this node: {id} is REMOVED from the pool and re-added under the provider you pick here."
+  },
+  "addNode.reassignTitle": {
+    "defaultMessage": "Reassign {id}"
+  },
+  "addNode.remoteAwaiting": {
+    "defaultMessage": "A remote machine’s MLX node is saved to the pool but AWAITS FLEET ROUTING — the per-node engine endpoints ship in a later phase. Only this machine’s node is served today."
+  },
+  "addNode.title": {
+    "defaultMessage": "Add node"
+  },
+  "addNode.weightLabel": {
+    "defaultMessage": "Weight — higher gets a bigger share of the tasks"
+  },
   "alertBox.autoCompactAt": {
     "defaultMessage": "Auto compact at"
   },
@@ -229,6 +319,21 @@
   },
   "chatSettings.responseStylesTitle": {
     "defaultMessage": "Response Styles"
+  },
+  "cloudProviders.configuredCount": {
+    "defaultMessage": "{configured} of {total} configured"
+  },
+  "cloudProviders.description": {
+    "defaultMessage": "Credentials for the cloud providers this app can call — keys are encrypted into your goose secret store. Local backends (LM Studio, the MLX engine) need no credentials and live in the other tabs."
+  },
+  "cloudProviders.loadFailed": {
+    "defaultMessage": "Could not load the provider list."
+  },
+  "cloudProviders.loading": {
+    "defaultMessage": "Loading providers…"
+  },
+  "cloudProviders.retry": {
+    "defaultMessage": "Retry"
   },
   "configSettings.configReset": {
     "defaultMessage": "Configuration Reset"
@@ -1670,6 +1775,15 @@
   "launcher.placeholder": {
     "defaultMessage": "Ask goose anything..."
   },
+  "leanzeroSwarm.subtitle": {
+    "defaultMessage": "One place for the whole swarm: the in-house MLX engine, cloud provider credentials, and the node pool the swarm builds with."
+  },
+  "leanzeroSwarm.tabCloud": {
+    "defaultMessage": "Cloud Providers"
+  },
+  "leanzeroSwarm.tabSwarm": {
+    "defaultMessage": "Swarm Settings"
+  },
   "loadingGoose.compacting": {
     "defaultMessage": "goose is compacting the conversation..."
   },
@@ -2342,11 +2456,11 @@
   "navigation.itemHome": {
     "defaultMessage": "New Chat"
   },
+  "navigation.itemLeanzeroSwarm": {
+    "defaultMessage": "LeanZero Swarm"
+  },
   "navigation.itemMemories": {
     "defaultMessage": "Memories"
-  },
-  "navigation.itemMlx": {
-    "defaultMessage": "Leanzero MLX"
   },
   "navigation.itemSettings": {
     "defaultMessage": "Settings"
@@ -4306,6 +4420,54 @@
   },
   "subRecipeModal.subtitle": {
     "defaultMessage": "Configure a subrecipe that can be called as a tool during recipe execution"
+  },
+  "swarmSettings.addNode": {
+    "defaultMessage": "Add node"
+  },
+  "swarmSettings.autoChip": {
+    "defaultMessage": "auto"
+  },
+  "swarmSettings.autoChipTitle": {
+    "defaultMessage": "Discovered live from LM Studio — joins the pool automatically"
+  },
+  "swarmSettings.awaitingChip": {
+    "defaultMessage": "awaiting fleet routing"
+  },
+  "swarmSettings.awaitingChipTitle": {
+    "defaultMessage": "A remote machine’s MLX node — saved in the pool, served once per-node engine routing ships"
+  },
+  "swarmSettings.noNodes": {
+    "defaultMessage": "No nodes yet — add one, or start LM Studio at {endpoint} to be discovered."
+  },
+  "swarmSettings.nodesDesc": {
+    "defaultMessage": "Every node the swarm runs — configured rows plus whatever LM Studio has resident right now. Weight: higher gets a bigger share of the tasks."
+  },
+  "swarmSettings.nodesTitle": {
+    "defaultMessage": "Nodes"
+  },
+  "swarmSettings.reassignAria": {
+    "defaultMessage": "Reassign provider"
+  },
+  "swarmSettings.reassignConfirm": {
+    "defaultMessage": "Pick new provider"
+  },
+  "swarmSettings.reassignMessage": {
+    "defaultMessage": "Changing what serves {id} works by REMOVING the node and RE-ADDING it under the provider you pick next. Nothing changes until the new add commits."
+  },
+  "swarmSettings.reassignTitle": {
+    "defaultMessage": "Reassign provider"
+  },
+  "swarmSettings.removeAria": {
+    "defaultMessage": "Remove node"
+  },
+  "swarmSettings.removeConfirm": {
+    "defaultMessage": "Remove"
+  },
+  "swarmSettings.removeMessage": {
+    "defaultMessage": "{id} leaves the swarm pool. No model files are touched; you can add it again any time."
+  },
+  "swarmSettings.removeTitle": {
+    "defaultMessage": "Remove node"
   },
   "switchModelModal.backToModelList": {
     "defaultMessage": "Back to model list"

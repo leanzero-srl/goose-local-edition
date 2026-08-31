@@ -1,4 +1,94 @@
 {
+  "addNode.addButton": {
+    "defaultMessage": "Thêm nút"
+  },
+  "addNode.cancel": {
+    "defaultMessage": "Hủy"
+  },
+  "addNode.description": {
+    "defaultMessage": "Một nút được tạo bằng cách chọn thứ phục vụ nó: chọn nhà cung cấp, rồi chọn mô hình."
+  },
+  "addNode.done": {
+    "defaultMessage": "Xong"
+  },
+  "addNode.duplicateId": {
+    "defaultMessage": "Đã có nút tên {id} — hãy chọn tên khác."
+  },
+  "addNode.lmstudioAuto": {
+    "defaultMessage": "Các nút LM Studio được phát hiện tự động: mọi mô hình thường trú trong đội máy tại {endpoint} tự gia nhập nhóm, nên không có gì phải thêm thủ công. Nạp một mô hình trong LM Studio (hoặc LM Link) và nó sẽ xuất hiện trong danh sách Nút."
+  },
+  "addNode.lmstudioLive": {
+    "defaultMessage": "{count,plural,one{# nút đang chạy ngay lúc này} other{# nút đang chạy ngay lúc này}}"
+  },
+  "addNode.lmstudioOffline": {
+    "defaultMessage": "đội máy ngoại tuyến"
+  },
+  "addNode.machineAllTaken": {
+    "defaultMessage": "Mọi máy phát hiện được đều đã có nút MLX — hãy gỡ một cái trước, hoặc thêm nút đám mây (không giới hạn)."
+  },
+  "addNode.machineCap": {
+    "defaultMessage": "{count,plural,one{# máy trong bầy} other{# máy trong bầy}} chưa có nút MLX — mỗi máy mang đúng một nút."
+  },
+  "addNode.machineLabel": {
+    "defaultMessage": "Máy — mỗi máy một nút MLX"
+  },
+  "addNode.machineLocalTag": {
+    "defaultMessage": "máy này"
+  },
+  "addNode.machineNoneDiscovered": {
+    "defaultMessage": "Không phát hiện máy nào trong bầy (LM Studio / lms không truy cập được) — nút được tạo cho MÁY NÀY; đặt tên bên dưới."
+  },
+  "addNode.machinePlaceholder": {
+    "defaultMessage": "Chọn máy…"
+  },
+  "addNode.machineRemoteTag": {
+    "defaultMessage": "từ xa"
+  },
+  "addNode.mlxAliasPreview": {
+    "defaultMessage": "ID mô hình đang phục vụ: {alias}"
+  },
+  "addNode.mlxLabelLabel": {
+    "defaultMessage": "Tên nút"
+  },
+  "addNode.mlxLabelPlaceholder": {
+    "defaultMessage": "vd. workhorse"
+  },
+  "addNode.mlxModelLabel": {
+    "defaultMessage": "Mô hình — từ thư mục mô hình của động cơ"
+  },
+  "addNode.mlxModelPlaceholder": {
+    "defaultMessage": "Chọn mô hình…"
+  },
+  "addNode.mlxNoModels": {
+    "defaultMessage": "Chưa có mô hình hoàn chỉnh trong thư mục mô hình của động cơ — hãy tải một cái ở tab LeanZero MLX trước."
+  },
+  "addNode.mlxOneModel": {
+    "defaultMessage": "Một động cơ LeanZero MLX chỉ phục vụ MỘT mô hình: mọi nút MLX dùng chung thứ động cơ đã gắn, nên mỗi nút một mô hình khác nhau là chưa thể. Thêm nút này sẽ trỏ động cơ tới mô hình bạn chọn ở đây."
+  },
+  "addNode.providerLabel": {
+    "defaultMessage": "Nhà cung cấp"
+  },
+  "addNode.providerPlaceholder": {
+    "defaultMessage": "Chọn nhà cung cấp…"
+  },
+  "addNode.reassignButton": {
+    "defaultMessage": "Gỡ & thêm lại"
+  },
+  "addNode.reassignNotice": {
+    "defaultMessage": "Gán lại sẽ thay đổi thứ phục vụ nút này: {id} bị GỠ khỏi nhóm và được thêm lại dưới nhà cung cấp bạn chọn ở đây."
+  },
+  "addNode.reassignTitle": {
+    "defaultMessage": "Gán lại {id}"
+  },
+  "addNode.remoteAwaiting": {
+    "defaultMessage": "Nút MLX của máy từ xa được lưu vào nhóm nhưng CHỜ ĐỊNH TUYẾN ĐỘI MÁY — endpoint động cơ theo từng nút sẽ có ở giai đoạn sau. Hôm nay chỉ nút của máy này được phục vụ."
+  },
+  "addNode.title": {
+    "defaultMessage": "Thêm nút"
+  },
+  "addNode.weightLabel": {
+    "defaultMessage": "Trọng số — càng cao càng nhận phần việc lớn hơn"
+  },
   "alertBox.autoCompactAt": {
     "defaultMessage": "Tự động nén tại"
   },
@@ -229,6 +319,21 @@
   },
   "chatSettings.responseStylesTitle": {
     "defaultMessage": "Phong cách phản hồi"
+  },
+  "cloudProviders.configuredCount": {
+    "defaultMessage": "Đã cấu hình {configured} trên {total}"
+  },
+  "cloudProviders.description": {
+    "defaultMessage": "Thông tin xác thực của các nhà cung cấp đám mây mà ứng dụng này có thể gọi — khóa được mã hóa vào kho bí mật của goose. Backend cục bộ (LM Studio, động cơ MLX) không cần thông tin xác thực và nằm ở các tab khác."
+  },
+  "cloudProviders.loadFailed": {
+    "defaultMessage": "Không tải được danh sách nhà cung cấp."
+  },
+  "cloudProviders.loading": {
+    "defaultMessage": "Đang tải nhà cung cấp…"
+  },
+  "cloudProviders.retry": {
+    "defaultMessage": "Thử lại"
   },
   "configSettings.configReset": {
     "defaultMessage": "Đặt lại cấu hình"
@@ -1670,6 +1775,15 @@
   "launcher.placeholder": {
     "defaultMessage": "Hỏi goose bất cứ điều gì..."
   },
+  "leanzeroSwarm.subtitle": {
+    "defaultMessage": "Một nơi cho cả bầy: động cơ MLX tự phát triển, thông tin xác thực nhà cung cấp đám mây, và nhóm nút mà bầy dùng để xây dựng."
+  },
+  "leanzeroSwarm.tabCloud": {
+    "defaultMessage": "Nhà cung cấp đám mây"
+  },
+  "leanzeroSwarm.tabSwarm": {
+    "defaultMessage": "Cài đặt bầy"
+  },
   "loadingGoose.compacting": {
     "defaultMessage": "goose đang nén cuộc trò chuyện..."
   },
@@ -2342,11 +2456,11 @@
   "navigation.itemHome": {
     "defaultMessage": "Trò chuyện mới"
   },
+  "navigation.itemLeanzeroSwarm": {
+    "defaultMessage": "LeanZero Swarm"
+  },
   "navigation.itemMemories": {
     "defaultMessage": "Memories"
-  },
-  "navigation.itemMlx": {
-    "defaultMessage": "Leanzero MLX"
   },
   "navigation.itemSettings": {
     "defaultMessage": "Cài đặt"
@@ -4306,6 +4420,54 @@
   },
   "subRecipeModal.subtitle": {
     "defaultMessage": "Định cấu hình một công thức con có thể được gọi như công cụ trong quá trình thực thi công thức"
+  },
+  "swarmSettings.addNode": {
+    "defaultMessage": "Thêm nút"
+  },
+  "swarmSettings.autoChip": {
+    "defaultMessage": "tự động"
+  },
+  "swarmSettings.autoChipTitle": {
+    "defaultMessage": "Được phát hiện trực tiếp từ LM Studio — tự động gia nhập nhóm"
+  },
+  "swarmSettings.awaitingChip": {
+    "defaultMessage": "chờ định tuyến đội máy"
+  },
+  "swarmSettings.awaitingChipTitle": {
+    "defaultMessage": "Nút MLX của máy từ xa — đã lưu trong nhóm, phục vụ khi có định tuyến theo nút"
+  },
+  "swarmSettings.noNodes": {
+    "defaultMessage": "Chưa có nút nào — thêm một cái, hoặc khởi động LM Studio tại {endpoint} để được phát hiện."
+  },
+  "swarmSettings.nodesDesc": {
+    "defaultMessage": "Mọi nút mà bầy chạy — các hàng đã cấu hình cộng với những gì LM Studio đang thường trú lúc này. Trọng số: càng cao càng nhận phần việc lớn hơn."
+  },
+  "swarmSettings.nodesTitle": {
+    "defaultMessage": "Nút"
+  },
+  "swarmSettings.reassignAria": {
+    "defaultMessage": "Gán lại nhà cung cấp"
+  },
+  "swarmSettings.reassignConfirm": {
+    "defaultMessage": "Chọn nhà cung cấp mới"
+  },
+  "swarmSettings.reassignMessage": {
+    "defaultMessage": "Thay đổi thứ phục vụ {id} hoạt động bằng cách GỠ nút rồi THÊM LẠI dưới nhà cung cấp được chọn tiếp theo. Không gì thay đổi cho tới khi lần thêm mới hoàn tất."
+  },
+  "swarmSettings.reassignTitle": {
+    "defaultMessage": "Gán lại nhà cung cấp"
+  },
+  "swarmSettings.removeAria": {
+    "defaultMessage": "Gỡ nút"
+  },
+  "swarmSettings.removeConfirm": {
+    "defaultMessage": "Gỡ"
+  },
+  "swarmSettings.removeMessage": {
+    "defaultMessage": "{id} rời khỏi nhóm của bầy. Không tệp mô hình nào bị đụng tới; bạn có thể thêm lại bất cứ lúc nào."
+  },
+  "swarmSettings.removeTitle": {
+    "defaultMessage": "Gỡ nút"
   },
   "switchModelModal.backToModelList": {
     "defaultMessage": "Quay lại danh sách mô hình"

@@ -27,6 +27,10 @@ export interface SwarmDeviceRow {
   /** This node SUPERVISES rather than builds: it takes the judge, review and synthesis calls and is kept
    *  out of the build pool. Put the strongest model here. Mirrors SwarmDevice.supervision. */
   supervision?: boolean;
+  /** Which LOCAL engine hosts this device's model. Absent = LM Studio; "mlx-sidecar" = the LeanZero MLX
+   *  engine (its model_id must equal the engine's served alias — mlx_engine.served_model_name). Mirrors
+   *  SwarmDevice.engine; optional and passthrough-preserving so configs without it round-trip untouched. */
+  engine?: string | null;
 }
 
 export interface SwarmConfig {
@@ -380,20 +384,46 @@ export function presetPatch(values: SwarmConfig): Partial<SwarmConfig> {
  *  cloud node was added, the three local nodes disappeared from the settings list while still being in the
  *  pool the engine ran. A node-first list that shows a subset of the nodes is worse than no list.
  */
-export function nodeRows(
-  devices: SwarmDeviceRow[],
-  fleetModels: string[]
-): Array<{ id: string; modelId: string; provider: string | null; supervises: boolean; configured: boolean }> {
-  const rows = devices.map((d) => ({
+export interface NodeRow {
+  id: string;
+  modelId: string;
+  provider: string | null;
+  /** Local engine serving a configured local node: null = LM Studio, 'mlx-sidecar' = LeanZero MLX. */
+  engine: string | null;
+  /** SwarmDevice.host passthrough — an mlx-sidecar row with a host is a REMOTE machine's node
+   *  ("awaiting fleet routing" until the per-node engine endpoints land). */
+  host: string | null;
+  weight: number;
+  supervises: boolean;
+  enabled: boolean;
+  configured: boolean;
+}
+
+export function nodeRows(devices: SwarmDeviceRow[], fleetModels: string[]): NodeRow[] {
+  const rows: NodeRow[] = devices.map((d) => ({
     id: d.id,
     modelId: d.model_id,
     provider: d.provider ?? null,
+    engine: d.engine ?? null,
+    host: d.host ?? null,
+    weight: d.weight,
     supervises: d.supervision === true,
+    enabled: d.enabled !== false,
     configured: true,
   }));
   for (const m of fleetModels) {
     if (devices.some((d) => d.model_id === m)) continue;
-    rows.push({ id: m, modelId: m, provider: null, supervises: false, configured: false });
+    rows.push({
+      id: m,
+      modelId: m,
+      provider: null,
+      engine: null,
+      host: null,
+      weight: 1,
+      supervises: false,
+      enabled: true,
+      configured: false,
+    });
   }
   return rows;
 }

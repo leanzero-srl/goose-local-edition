@@ -124,6 +124,47 @@ export function SolidBanner({
   );
 }
 
+// Custom −/number/+ stepper for a node's relative task-share weight (no native slider/select, per
+// UI rules). Shared by the Nodes card and the add-node dialog so both write the same 1-9 range.
+export function WeightStepper({
+  value,
+  onChange,
+  label = 'weight',
+}: {
+  value: number;
+  onChange: (v: number) => void;
+  label?: string;
+}) {
+  const clamp = (v: number) => Math.max(1, Math.min(9, v));
+  const btn =
+    'h-6 w-6 flex items-center justify-center border border-border-primary text-text-secondary hover:text-text-primary hover:border-text-secondary transition-colors leading-none';
+  return (
+    <div className="flex items-center gap-1.5">
+      <button
+        type="button"
+        onClick={() => onChange(clamp(value - 1))}
+        className={btn}
+        style={{ borderRadius: 3 }}
+        aria-label={`Less work (${label})`}
+      >
+        −
+      </button>
+      <span className="w-4 text-center font-bold tabular-nums" style={{ color: AZURE }}>
+        {value}
+      </span>
+      <button
+        type="button"
+        onClick={() => onChange(clamp(value + 1))}
+        className={btn}
+        style={{ borderRadius: 3 }}
+        aria-label={`More work (${label})`}
+      >
+        +
+      </button>
+    </div>
+  );
+}
+
 export interface DownloadLifecycleHandlers {
   onPause: () => void;
   onResume: () => void;

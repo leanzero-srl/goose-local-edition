@@ -16,6 +16,7 @@ import * as fs from 'fs/promises';
 import log from './logger';
 import { githubUpdater } from './githubUpdater';
 import { loadRecentDirs } from './recentDirs';
+import { getBrandName } from './mainBrand';
 import { errorMessage } from './conversionUtils';
 import {
   trackUpdateCheckStarted,
@@ -759,6 +760,10 @@ function updateTrayIcon(hasUpdate: boolean) {
   }
 
   const isDev = !app.isPackaged;
+  // Edition-aware tray brand (queued fix #10): "Goose Swarm" for the local edition.
+  const brand = getBrandName({
+    settingsFile: path.join(app.getPath('userData'), 'settings.json'),
+  });
   let iconPath: string;
 
   if (hasUpdate) {
@@ -768,7 +773,7 @@ function updateTrayIcon(hasUpdate: boolean) {
     } else {
       iconPath = path.join(process.resourcesPath, 'images', 'iconTemplateUpdate.png');
     }
-    trayRef.setToolTip('Goose - Update Available');
+    trayRef.setToolTip(`${brand} - Update Available`);
   } else {
     // Use normal icon
     if (isDev) {
@@ -776,7 +781,7 @@ function updateTrayIcon(hasUpdate: boolean) {
     } else {
       iconPath = path.join(process.resourcesPath, 'images', 'iconTemplate.png');
     }
-    trayRef.setToolTip('Goose');
+    trayRef.setToolTip(brand);
   }
 
   const icon = nativeImage.createFromPath(iconPath);

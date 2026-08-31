@@ -71,9 +71,10 @@ export const Navigation: React.FC<{ className?: string }> = ({ className }) => {
     return NAV_ITEMS.filter((item) => {
       // Benchmark measures a local fleet, so it has no meaning in an upstream-flavoured build.
       if (item.path === '/benchmark') return isLocal;
-      // MLX Engine only exists when the connected agent actually advertises the capability —
-      // a nav entry to a surface the backend cannot serve would be a lie.
-      if (item.path === '/mlx-engine') return mlxEngine;
+      // LeanZero Swarm carries the swarm settings and cloud credentials for the local edition,
+      // and the MLX engine tab whenever the agent advertises that capability — so it shows for
+      // either fact, and only vanishes in an upstream-flavoured build with no MLX engine.
+      if (item.path === '/leanzero-swarm') return isLocal || mlxEngine;
       return true;
     });
   }, [isLocal, mlxEngine]);

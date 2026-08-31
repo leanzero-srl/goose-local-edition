@@ -213,8 +213,12 @@ package-ui:
 # One-time prereq: the stable self-signed cert -- run `just setup-signing-identity`.
 # Unlike an ad-hoc `--sign -` build, which Squirrel rejects across versions, this signs
 # every build with the SAME stable cert so auto-update validates build-to-build.
-# Usage: just release-fork 1.41.1
+# Usage: just release-fork 2.0.1
 release-fork version:
+    # OWN-VERSION FLOOR: the fork's line is 2.x, above upstream's 1.x forever (the update feed
+    # orders by semver, so publishing a 1.x here would silently regress every installed 2.x app
+    # to "up to date" against a lower number). Refuse anything below 2.0.0, loudly.
+    @if [ "$(echo '{{version}}' | cut -d. -f1)" -lt 2 ] 2>/dev/null || ! echo '{{version}}' | grep -Eq '^[0-9]+(\.[0-9]+)*$'; then echo "release-fork: REFUSED — version '{{version}}' is below the 2.0.0 own-version floor (or not a plain semver). The fork's line is >= 2.x forever; a 1.x release would regress the own update feed."; exit 1; fi
     # STAMP THE BUILD SO A RUN CAN SAY WHICH BINARY PRODUCED IT.
     # The engine's levers_resolved event reports these. Without them it fell back to CARGO_PKG_VERSION,
     # which is the workspace crate version (1.41.0) and has not moved in 54 desktop releases — so every

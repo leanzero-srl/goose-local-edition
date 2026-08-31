@@ -4,6 +4,7 @@ import { Button } from './button';
 import { toastError } from '../../toasts';
 import { defineMessages, useIntl } from '../../i18n';
 import { getDiagnosticsReport } from '../../acp/diagnostics';
+import { LEANZERO_ISSUES_NEW_URL } from '../../branding';
 
 const i18n = defineMessages({
   reportProblem: {
@@ -188,7 +189,7 @@ Add any other context about the problem here.
         labels: 'bug',
       });
 
-      window.open(`https://github.com/aaif-goose/goose/issues/new?${params.toString()}`, '_blank');
+      window.open(`${LEANZERO_ISSUES_NEW_URL}?${params.toString()}`, '_blank');
       onClose();
     } catch {
       toastError({

@@ -167,4 +167,56 @@ describe('nodeRows — the Nodes list is node-first and shows every node', () =>
     expect(rows.find((r) => r.modelId === 'workhorse-qwen3.8-27b')?.supervises).toBe(true);
     expect(rows.filter((r) => r.supervises)).toHaveLength(1);
   });
+
+  /** Pass C: the row carries WHAT SERVES IT. engine:'mlx-sidecar' is a LeanZero MLX node (violet
+   *  chip); a discovered LM Studio model has no engine; enabled flows through so a disabled row
+   *  can render as such instead of silently looking active. */
+  it('carries engine and enabled through — the mlx-sidecar row is distinguishable', () => {
+    const rows = nodeRows(
+      [
+        {
+          id: 'workhorse-mlx',
+          model_id: 'workhorse-qwen3.5-9b-4bit-mlx',
+          weight: 2,
+          enabled: true,
+          instances: 1,
+          engine: 'mlx-sidecar',
+        },
+        { id: 'gabee', model_id: 'gabee-qwen3.8-27b', weight: 1, enabled: false },
+      ],
+      ['gabee-qwen3.8-27b', 'mihai-qwen3.8-27b']
+    );
+    const mlx = rows.find((r) => r.id === 'workhorse-mlx');
+    expect(mlx?.engine).toBe('mlx-sidecar');
+    expect(mlx?.enabled).toBe(true);
+    expect(mlx?.host).toBeNull(); // the LOCAL machine's node has no host
+    expect(mlx?.weight).toBe(2); // ONE weight per node = SwarmDevice.weight (owner amendment)
+    const gabee = rows.find((r) => r.id === 'gabee');
+    expect(gabee?.engine).toBeNull();
+    expect(gabee?.enabled).toBe(false);
+    // the discovered row (no device) defaults to enabled, engine null
+    const mihai = rows.find((r) => r.id === 'mihai-qwen3.8-27b');
+    expect(mihai?.configured).toBe(false);
+    expect(mihai?.enabled).toBe(true);
+    expect(mihai?.engine).toBeNull();
+  });
+
+  it('a REMOTE mlx node (host set) carries the host through — the amber "awaiting routing" fact', () => {
+    const rows = nodeRows(
+      [
+        {
+          id: 'mihai-mlx',
+          model_id: 'mihai-smollm-135m-instruct-4bit-mlx',
+          weight: 2,
+          enabled: true,
+          instances: 1,
+          engine: 'mlx-sidecar',
+          host: 'mihai',
+        },
+      ],
+      []
+    );
+    expect(rows[0].host).toBe('mihai');
+    expect(rows[0].engine).toBe('mlx-sidecar');
+  });
 });
