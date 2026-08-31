@@ -33,7 +33,17 @@ import { startGooseServe, findGooseBinaryPath } from './gooseServe';
 import { GooseServeLeaseRegistry, type GooseServeLease } from './gooseServeLeaseRegistry';
 import { acpWebSocketUrlFromHttpBase, normalizeAcpHttpBaseUrl } from './acp/url';
 import { expandTilde } from './utils/pathUtils';
-import { BENCH_SPEC_FILE, BENCH_RENDER_PROBE, tierOf } from './benchTierPayload';
+import { BENCH_SPEC_FILE, BENCH_RENDER_PROBE, newestTier, newestTierScorer } from './benchTierPayload';
+import {
+  outcomeFromSlot,
+  findLaunchRow,
+  upsertArchivedRow,
+  catalogMismatchOf,
+  frozenPublishRefusal,
+  type BenchSessionRow,
+  type BenchSessionOutcome,
+  type BenchCatalogBenchmark,
+} from './benchSessions';
 import log from './utils/logger';
 import { ensureWinShims } from './utils/winShims';
 import { addRecentDir, loadRecentDirs } from './utils/recentDirs';
@@ -2285,13 +2295,22 @@ ipcMain.handle('select-import-session-file', async () => {
 // <workingDir>/.swarm/run-<id>.jsonl and a per-turn digest per worker to <workingDir>/.swarm/activity/<task>.json.
 // This returns the newest run's parsed events + the activity digests; the renderer folds them into node lanes.
 // ── Benchmark ────────────────────────────────────────────────────────────────────────────────
-// Three handlers the renderer cannot do itself: spawning the swarm engine, reading the result off
-// disk, and POSTing to leanzero.net. The last one MUST live here — the renderer CSP allowlist
-// (utils/csp.ts) permits only loopback and github, so a renderer-side fetch to the site is blocked.
+// The handlers the renderer cannot do itself: spawning the swarm engine, reading results and the
+// session index off disk, and talking to leanzero.net (publish POST + catalog GET). The network
+// ones MUST live here — the renderer CSP allowlist (utils/csp.ts) permits only loopback and
+// github, so a renderer-side fetch to the site is blocked.
 
 const BENCH_DIR = path.join(os.homedir(), '.config', 'goose', 'benchmark');
 const BENCH_RESULT = path.join(BENCH_DIR, 'result.json');
 const BENCH_IDENTITY = path.join(BENCH_DIR, 'identity.json');
+// Session index + site-catalog cache. The session DATA lives under userData (benchSessionsRoot);
+// only the small index and the cached catalog sit beside result.json in the config dir.
+const BENCH_SESSIONS_INDEX = path.join(BENCH_DIR, 'sessions.json');
+const BENCH_CATALOG_CACHE = path.join(BENCH_DIR, 'catalog.json');
+// ONE URL for both directions: benchmark-publish POSTs runs to it, benchmark-catalog GETs the
+// benchmark catalog (current/frozen + baselines) from it. Lives in MAIN by design — the renderer
+// CSP allowlist blocks leanzero.net.
+const BENCH_SITE_API = 'https://leanzero.net/api/benchmark-runs';
 
 // Poster identity per PRODUCT-CONTRACT.md: created once, on the first benchmark run. The handle is
 // the public pseudonym; installId groups a poster's runs server-side and is NEVER displayed. Fixed
@@ -2491,6 +2510,9 @@ interface ActiveBenchRun {
   scored: boolean;
   /** The newest harness output line, restored to a re-attaching view alongside `scored`. */
   lastLine: string | null;
+  /** The engine's run id, null until <workdir>/.swarm/current-run.json appears (the engine writes
+   *  it before any phase starts). The session index row is reconciled with it the moment it lands. */
+  runId: string | null;
 }
 let activeBenchRun: ActiveBenchRun | null = null;
 
@@ -2715,6 +2737,177 @@ const pickBenchShots = async (workdir: string): Promise<BenchShot[]> => {
   return out;
 };
 
+// ── Benchmark sessions — the on-disk index + slot archival ──────────────────────────────────────
+// Data layout: a run executes in the live-run slot (runs/build/swarm-<n>node-r0 — the loop-state
+// scripts hardcode the 3-node one, so the slot stays THE live-run location between runs). When the
+// NEXT run launches, the previous slot is MOVED to sessions/<runId>/ and its index row stamped with
+// the honest outcome derived from what the slot actually holds. Operator-renamed archive siblings
+// in runs/build are never app sessions and are never touched.
+
+const benchSessionsRoot = (): string => path.join(app.getPath('userData'), 'benchmark', 'sessions');
+
+const readBenchSessionRows = async (): Promise<BenchSessionRow[]> => {
+  let raw: string;
+  try {
+    raw = await fs.readFile(BENCH_SESSIONS_INDEX, 'utf8');
+  } catch {
+    return []; // no index yet is the normal first-run state
+  }
+  try {
+    const parsed = JSON.parse(raw) as { sessions?: unknown };
+    return Array.isArray(parsed.sessions) ? (parsed.sessions as BenchSessionRow[]) : [];
+  } catch (err) {
+    // A CORRUPT index is not an empty one — preserve the evidence beside the file and start a
+    // fresh index loudly, never overwrite the broken bytes silently.
+    const backup = `${BENCH_SESSIONS_INDEX}.corrupt-${Date.now()}`;
+    await fs.writeFile(backup, raw).catch(() => {});
+    console.error(`[benchmark-sessions] index unparseable — preserved at ${backup}:`, err);
+    return [];
+  }
+};
+
+const writeBenchSessionRows = async (rows: BenchSessionRow[]): Promise<void> => {
+  await fs.mkdir(BENCH_DIR, { recursive: true });
+  await fs.writeFile(BENCH_SESSIONS_INDEX, JSON.stringify({ sessions: rows }, null, 2));
+};
+
+const stampBenchLaunchRow = async (
+  key: { startedAt: string; slotDir: string },
+  patch: Partial<BenchSessionRow>
+): Promise<void> => {
+  const rows = await readBenchSessionRows();
+  const idx = findLaunchRow(rows, key);
+  if (idx < 0) return;
+  rows[idx] = { ...rows[idx], ...patch };
+  await writeBenchSessionRows(rows);
+};
+
+const readCurrentRunId = async (workdir: string): Promise<string | null> => {
+  try {
+    const cr = JSON.parse(
+      await fs.readFile(path.join(workdir, '.swarm', 'current-run.json'), 'utf8')
+    ) as { run_id?: unknown };
+    return typeof cr.run_id === 'string' && cr.run_id.length > 0 ? cr.run_id : null;
+  } catch {
+    return null; // the engine writes it before any phase — absence means the run never reached OPEN
+  }
+};
+
+/** What a session's data dir testifies, verdict first: a verdict.json is a finished run (carry its
+ *  score/tiers), engine events without one are did_not_finish, neither is did_not_start. */
+const deriveSlotOutcome = async (
+  dataDir: string
+): Promise<{
+  outcome: BenchSessionOutcome;
+  score?: number;
+  tiers?: Record<string, number>;
+  scorerVersion?: string;
+}> => {
+  try {
+    const v = JSON.parse(await fs.readFile(path.join(dataDir, 'verdict.json'), 'utf8')) as {
+      score?: unknown;
+      tiers?: Record<string, { mean?: unknown } | undefined>;
+      scorer_version?: unknown;
+    };
+    return {
+      outcome: outcomeFromSlot(true, true),
+      ...(typeof v.score === 'number' ? { score: v.score } : {}),
+      tiers: {
+        A: typeof v.tiers?.A?.mean === 'number' ? v.tiers.A.mean : 0,
+        B: typeof v.tiers?.B?.mean === 'number' ? v.tiers.B.mean : 0,
+        C: typeof v.tiers?.C?.mean === 'number' ? v.tiers.C.mean : 0,
+        D: typeof v.tiers?.D?.mean === 'number' ? v.tiers.D.mean : 0,
+      },
+      ...(typeof v.scorer_version === 'string' ? { scorerVersion: v.scorer_version } : {}),
+    };
+  } catch {
+    /* no verdict — the event log decides between did_not_finish and did_not_start */
+  }
+  let hasEvents = false;
+  const logPath = await benchRunLog(dataDir);
+  if (logPath) {
+    const raw = await fs.readFile(logPath, 'utf8').catch(() => '');
+    hasEvents = raw.split('\n').some((l) => l.trim().length > 0);
+  }
+  return { outcome: outcomeFromSlot(false, hasEvents) };
+};
+
+/** endedAt for an archived slot: the newest mtime among the run's own write targets. */
+const newestSlotMtimeIso = async (dataDir: string): Promise<string> => {
+  const candidates = [
+    dataDir,
+    path.join(dataDir, 'verdict.json'),
+    path.join(dataDir, '.swarm', 'heartbeat'),
+  ];
+  const logPath = await benchRunLog(dataDir);
+  if (logPath) candidates.push(logPath);
+  let newest = 0;
+  for (const c of candidates) {
+    const m = await fs
+      .stat(c)
+      .then((s) => s.mtimeMs)
+      .catch(() => 0);
+    if (m > newest) newest = m;
+  }
+  return new Date(newest || Date.now()).toISOString();
+};
+
+/** MOVE the previous run out of the slot before the pre-launch wipe, and stamp its index row with
+ *  the outcome the slot's contents prove. A slot without current-run.json holds no app run — the
+ *  wipe stays the truthful path for it. Errors here propagate: silently wiping a slot we failed to
+ *  archive would destroy the previous run's evidence. */
+const archiveBenchSlot = async (workdir: string): Promise<void> => {
+  let startedAt: string | null = null;
+  try {
+    const cr = JSON.parse(
+      await fs.readFile(path.join(workdir, '.swarm', 'current-run.json'), 'utf8')
+    ) as { started_at?: unknown };
+    startedAt = typeof cr.started_at === 'string' ? cr.started_at : null;
+  } catch {
+    return; // no current-run.json → nothing to archive
+  }
+  const runId = await readCurrentRunId(workdir);
+  if (!runId) return;
+  const derived = await deriveSlotOutcome(workdir);
+  const endedAt = await newestSlotMtimeIso(workdir);
+  const dest = path.join(benchSessionsRoot(), runId);
+  await fs.mkdir(benchSessionsRoot(), { recursive: true });
+  await fs.rm(dest, { recursive: true, force: true });
+  await fs.rename(workdir, dest);
+  const rows = upsertArchivedRow(await readBenchSessionRows(), {
+    runId,
+    slotDir: workdir,
+    startedAt: startedAt ?? endedAt,
+    outcome: derived.outcome,
+    endedAt,
+    ...(derived.score != null ? { score: derived.score } : {}),
+    ...(derived.tiers ? { tiers: derived.tiers } : {}),
+    ...(derived.scorerVersion ? { scorerVersion: derived.scorerVersion } : {}),
+  });
+  await writeBenchSessionRows(rows);
+};
+
+// ── Site catalog cache ──────────────────────────────────────────────────────────────────────────
+
+const readBenchCatalogCache = async (): Promise<{
+  benchmarks: BenchCatalogBenchmark[];
+  fetchedAt: string;
+} | null> => {
+  try {
+    const parsed = JSON.parse(await fs.readFile(BENCH_CATALOG_CACHE, 'utf8')) as {
+      benchmarks?: unknown;
+      fetchedAt?: unknown;
+    };
+    if (!Array.isArray(parsed.benchmarks)) return null;
+    return {
+      benchmarks: parsed.benchmarks as BenchCatalogBenchmark[],
+      fetchedAt: typeof parsed.fetchedAt === 'string' ? parsed.fetchedAt : '',
+    };
+  } catch {
+    return null; // no cache yet — the caller reports the named absence
+  }
+};
+
 ipcMain.handle('benchmark-read', async () => {
   try {
     return JSON.parse(await fs.readFile(BENCH_RESULT, 'utf8'));
@@ -2723,12 +2916,163 @@ ipcMain.handle('benchmark-read', async () => {
   }
 });
 
+// The site's benchmark catalog: which benchmarks exist, which is current, which are frozen, and
+// their baseline boards. Fetched here (renderer CSP blocks the host), cached to disk so the app
+// keeps a last-known truth offline. On fetch failure the cache serves with stale:true; with no
+// cache at all the answer is the NAMED absence {error:'catalog unreachable'} — never invented rows.
+ipcMain.handle('benchmark-catalog', async () => {
+  try {
+    // Transport timeout only (a dead endpoint), same class as the engine's connect-30.
+    const res = await fetch(BENCH_SITE_API, { signal: AbortSignal.timeout(15000) });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const body = (await res.json()) as { benchmarks?: unknown };
+    if (!Array.isArray(body.benchmarks)) {
+      throw new Error('catalog response carried no benchmarks array');
+    }
+    const fetchedAt = new Date().toISOString();
+    await fs.mkdir(BENCH_DIR, { recursive: true });
+    await fs.writeFile(
+      BENCH_CATALOG_CACHE,
+      JSON.stringify({ fetchedAt, benchmarks: body.benchmarks }, null, 2)
+    );
+    return { ok: true, benchmarks: body.benchmarks, fetchedAt };
+  } catch (err) {
+    const cached = await readBenchCatalogCache();
+    if (cached) {
+      return { ok: true, stale: true, benchmarks: cached.benchmarks, fetchedAt: cached.fetchedAt };
+    }
+    return {
+      error: 'catalog unreachable',
+      detail: err instanceof Error ? err.message : String(err),
+    };
+  }
+});
+
+// Every benchmark run this app has launched, honest outcomes only. 'running' is asserted by the
+// LIVE process — never by the index alone: a row left 'running' by a crash is re-derived from
+// where its data lives right now and the correction is STAMPED back (an invalidating fact updates
+// state, it does not merely sit beside it).
+ipcMain.handle('benchmark-sessions', async () => {
+  const rows = await readBenchSessionRows();
+  const active = activeBenchRun;
+  let dirty = false;
+  for (const r of rows) {
+    const isActive =
+      active != null && r.slotDir === active.workdir && r.startedAt === active.startedAt;
+    if (isActive) {
+      if (active.runId != null && r.runId == null) {
+        r.runId = active.runId;
+        dirty = true;
+      }
+      continue;
+    }
+    if (r.outcome === 'running') {
+      const dataDir =
+        r.slot && r.slotDir
+          ? r.slotDir
+          : r.runId
+            ? path.join(benchSessionsRoot(), r.runId)
+            : null;
+      const exists = dataDir
+        ? await fs.stat(dataDir).then(
+            () => true,
+            () => false
+          )
+        : false;
+      if (exists && dataDir) {
+        const d = await deriveSlotOutcome(dataDir);
+        r.outcome = d.outcome;
+        if (d.score != null) r.score = d.score;
+        if (d.tiers) r.tiers = d.tiers;
+        if (d.scorerVersion) r.scorerVersion = d.scorerVersion;
+        r.endedAt = await newestSlotMtimeIso(dataDir);
+      } else {
+        // It launched and its data is gone — finished cannot be proven, so it is not claimed.
+        r.outcome = 'did_not_finish';
+      }
+      dirty = true;
+    }
+  }
+  if (dirty) await writeBenchSessionRows(rows);
+  // publishable = finished AND it IS the stored latest result (publish reads BENCH_RESULT, the
+  // "last completed run") AND its benchmark is not frozen per the cached catalog.
+  let latestResultStartedAt: string | null = null;
+  try {
+    const stored = JSON.parse(await fs.readFile(BENCH_RESULT, 'utf8')) as {
+      runMeta?: { startedAt?: unknown };
+    };
+    latestResultStartedAt =
+      typeof stored.runMeta?.startedAt === 'string' ? stored.runMeta.startedAt : null;
+  } catch {
+    /* no stored result yet — nothing is publishable */
+  }
+  const cachedCatalog = await readBenchCatalogCache();
+  const frozen = new Set(
+    (cachedCatalog?.benchmarks ?? [])
+      .filter((b) => b?.frozen === true)
+      .map((b) => String(b.scorerVersion))
+  );
+  const sessions = rows
+    .slice()
+    .sort((a, b) => (a.startedAt < b.startedAt ? 1 : -1))
+    .map((r) => ({
+      runId: r.runId,
+      scorerVersion: r.scorerVersion,
+      startedAt: r.startedAt,
+      ...(r.endedAt ? { endedAt: r.endedAt } : {}),
+      outcome: r.outcome,
+      ...(r.score != null ? { score: r.score } : {}),
+      ...(r.tiers ? { tiers: r.tiers } : {}),
+      ...(r.nodes != null ? { nodes: r.nodes } : {}),
+      publishable:
+        r.outcome === 'finished' &&
+        latestResultStartedAt != null &&
+        r.startedAt === latestResultStartedAt &&
+        !frozen.has(r.scorerVersion),
+    }));
+  return { sessions };
+});
+
+ipcMain.handle('benchmark-delete-session', async (_event, runId: string) => {
+  if (typeof runId !== 'string' || runId.length === 0) {
+    return { ok: false, error: 'a session runId is required' };
+  }
+  if (runId.includes('..') || runId.includes('/') || runId.includes('\\')) {
+    return { ok: false, error: 'invalid session id' };
+  }
+  const rows = await readBenchSessionRows();
+  const idx = rows.findIndex((r) => r.runId === runId);
+  if (idx < 0) return { ok: false, error: `no session ${runId}` };
+  const row = rows[idx];
+  const active = activeBenchRun;
+  if (
+    active &&
+    ((active.runId != null && active.runId === runId) ||
+      (row.slotDir === active.workdir && row.startedAt === active.startedAt))
+  ) {
+    return { ok: false, error: 'this session is running — cancel the run before deleting it' };
+  }
+  await fs.rm(path.join(benchSessionsRoot(), runId), { recursive: true, force: true });
+  if (row.slot && row.slotDir && (!active || active.workdir !== row.slotDir)) {
+    // Data still in the live-run slot. Delete ONLY an exact slot dir under our own runs/build —
+    // operator-renamed archive siblings there are never app sessions and are never touched.
+    const parentOk = path.dirname(row.slotDir) === path.join(benchWorkRoot(), 'runs', 'build');
+    const nameOk = /^swarm-\d+node-r0$/.test(path.basename(row.slotDir));
+    if (parentOk && nameOk) {
+      await fs.rm(row.slotDir, { recursive: true, force: true });
+    }
+  }
+  rows.splice(idx, 1);
+  await writeBenchSessionRows(rows);
+  return { ok: true };
+});
+
 // Lets the view re-attach to a run in progress after navigation/remount — a run takes hours and
 // must not become invisible because the page unmounted.
 ipcMain.handle('benchmark-status', async () => {
   if (!activeBenchRun) return { running: false };
-  const { workdir, nodes, startedAt, sampling, scored, lastLine } = activeBenchRun;
-  return { running: true, workdir, nodes, startedAt, sampling, scored, lastLine };
+  const { workdir, nodes, startedAt, sampling, scored, lastLine, runId } = activeBenchRun;
+  return { running: true, workdir, nodes, startedAt, sampling, scored, lastLine, runId };
 });
 
 ipcMain.handle('benchmark-shots', async (_event, workdir?: string) => {
@@ -2745,16 +3089,26 @@ ipcMain.handle('benchmark-shots', async (_event, workdir?: string) => {
   return pickBenchShots(dir);
 });
 
-ipcMain.handle('benchmark-run', async (_event, nodes: number, tier?: string, sampling?: RunSampling) => {
+ipcMain.handle('benchmark-run', async (_event, nodes: number, sampling?: RunSampling) => {
   if (activeBenchRun) {
     throw new Error('a benchmark run is already in progress');
   }
   const runSampling = cleanSampling(sampling);
-  // sb-6 ("VendorSync Pro" — the hard tier): same engine, same pipeline, a different frozen
-  // ruler. The payload carries both scorers; the tier only switches which spec/probe/scorer the
-  // harness wires up, so a run is always scored by exactly one frozen version end to end.
+  // LATEST-ONLY (2026-08-31): the renderer no longer chooses a tier — the app always runs the
+  // newest benchmark it bundles, derived from the tier data (numeric version, never a hardcoded
+  // name). The payload carries every scorer; the tier switches which spec/probe/scorer the harness
+  // wires up, so a run is always scored by exactly one frozen version end to end.
+  const tier = newestTier();
   const sb6 = tier === 'sb-6';
   const sb7 = tier === 'sb-7';
+  // Site-vs-bundle drift, from the CACHED catalog only — launching must never wait on the network
+  // (the view refreshes the cache via benchmark-catalog). When the site's current benchmark is not
+  // the bundled newest, the run still launches the bundled one (the app cannot run a spec it does
+  // not ship) and benchmark-started carries the mismatch so the view can say an update is needed.
+  const catalogMismatch = catalogMismatchOf(
+    (await readBenchCatalogCache())?.benchmarks,
+    newestTierScorer()
+  );
   const payloadDir = resolveBenchPayloadDir();
   const runner = path.join(payloadDir, 'bench', 'run_build.py');
   // The engine the run measures: the exact binary this app ships (or the dev build), never a PATH
@@ -2769,12 +3123,32 @@ ipcMain.handle('benchmark-run', async (_event, nodes: number, tier?: string, sam
   await fs.mkdir(outRoot, { recursive: true });
   const entrant = `swarm-${nodes}node`;
   const workdir = path.join(outRoot, `${entrant}-r0`);
-  // run_build.py wipes the workdir itself, but only once it gets that far — a runner that dies
+  // The previous run is a SESSION, not garbage: move it out of the slot (with its honest outcome
+  // stamped into the index) before anything wipes. Only then clear whatever remains —
+  // run_build.py wipes the workdir itself, but only once it gets that far; a runner that dies
   // before then (bad python, import error) would leave the PREVIOUS run's verdict in place and
-  // the close handler would report it as this run's success. Clear it first so a missing verdict
-  // is always the truthful failure signal.
+  // the close handler would report it as this run's success. A cleared slot keeps a missing
+  // verdict the truthful failure signal.
+  await archiveBenchSlot(workdir);
   await fs.rm(workdir, { recursive: true, force: true });
   const startedAt = new Date().toISOString();
+  // The provisional session row for THIS launch. runId is unknown until the engine writes
+  // .swarm/current-run.json; the poll below reconciles it. 'running' here is provisional by
+  // construction — benchmark-sessions asserts 'running' only from activeBenchRun, never this row.
+  const launchKey = { startedAt, slotDir: workdir };
+  {
+    const rows = await readBenchSessionRows();
+    rows.push({
+      runId: null,
+      scorerVersion: newestTierScorer(),
+      startedAt,
+      outcome: 'running',
+      nodes,
+      slot: true,
+      slotDir: workdir,
+    });
+    await writeBenchSessionRows(rows);
+  }
   const sendSafe = (channel: string, payload: unknown) => {
     // BROADCAST, never the sender captured at run time. A benchmark run outlives windows: after a
     // mid-run window recreation the closed-over sender.isDestroyed() was true forever, so every
@@ -2826,11 +3200,7 @@ ipcMain.handle('benchmark-run', async (_event, nodes: number, tier?: string, sam
           GOOSE_SWARM_JUDGE: '0',
           // The render gate is inert without the probe path, and without the gate there are no
           // repair rounds and no screenshots — the product story of the run.
-          GOOSE_SWARM_RENDER_PROBE: path.join(
-            payloadDir,
-            'bench',
-            BENCH_RENDER_PROBE[tierOf(tier)]
-          ),
+          GOOSE_SWARM_RENDER_PROBE: path.join(payloadDir, 'bench', BENCH_RENDER_PROBE[tier]),
           // sb-5.2 comparability rail: the baked baselines are v2-spec product-regime numbers, so
           // a user run must be scored by the same scorer against the same spec or the board
           // cannot hold both.
@@ -2845,7 +3215,7 @@ ipcMain.handle('benchmark-run', async (_event, nodes: number, tier?: string, sam
           // meridian-client / local-store / http-api. The sb-7 spec is 54,146 characters and asks for
           // ledgerd, notifierd, webhooks, an outbox, an event ledger and a 3D field. None of it was
           // present, and the run looked completely healthy while building the wrong product.
-          BENCH_SPEC: path.join(payloadDir, BENCH_SPEC_FILE[tierOf(tier)]),
+          BENCH_SPEC: path.join(payloadDir, BENCH_SPEC_FILE[tier]),
           // The FULL tuned regime (REGIME.env parity, minus harness-only keys and resolved
           // paths): a user's benchmark must run the same engine configuration the baked
           // baselines and the campaign's numbers ran, or the board compares different swarms.
@@ -2889,7 +3259,27 @@ ipcMain.handle('benchmark-run', async (_event, nodes: number, tier?: string, sam
       sampling: runSampling,
       scored: false,
       lastLine: null,
+      runId: null,
     };
+    // Reconcile the session row's runId the moment the engine publishes current-run.json (written
+    // before any phase starts). A cheap local-file poll, cleared on first hit and on run end.
+    let reconcileInFlight = false;
+    const reconcileRunId = setInterval(() => {
+      if (reconcileInFlight) return;
+      reconcileInFlight = true;
+      void (async () => {
+        try {
+          const id = await readCurrentRunId(workdir);
+          if (id) {
+            clearInterval(reconcileRunId);
+            if (activeBenchRun && activeBenchRun.workdir === workdir) activeBenchRun.runId = id;
+            await stampBenchLaunchRow(launchKey, { runId: id });
+          }
+        } finally {
+          reconcileInFlight = false;
+        }
+      })();
+    }, 2000);
     // Two-phase: hand the renderer the workdir IMMEDIATELY so it can point the live swarm panel
     // at the run, then resolve with the scored row on completion as before. scored/lastLine ride
     // along so a view (re)mounting off either payload restores the same facts the status poll serves.
@@ -2900,6 +3290,9 @@ ipcMain.handle('benchmark-run', async (_event, nodes: number, tier?: string, sam
       sampling: runSampling,
       scored: false,
       lastLine: null,
+      tier,
+      scorerVersion: newestTierScorer(),
+      ...(catalogMismatch ? { catalogMismatch } : {}),
     });
 
     let tail = '';
@@ -2924,7 +3317,13 @@ ipcMain.handle('benchmark-run', async (_event, nodes: number, tier?: string, sam
     child.stdout?.on('data', onData('stdout'));
     child.stderr?.on('data', onData('stderr'));
     child.on('error', (err) => {
+      clearInterval(reconcileRunId);
       activeBenchRun = null;
+      // The runner never spawned — the engine never started, so the session honestly did not start.
+      void stampBenchLaunchRow(launchKey, {
+        outcome: 'did_not_start',
+        endedAt: new Date().toISOString(),
+      });
       sendSafe('benchmark-finished', { error: err.message });
       reject(
         new Error(
@@ -2935,10 +3334,19 @@ ipcMain.handle('benchmark-run', async (_event, nodes: number, tier?: string, sam
     child.on('close', async () => {
       // Keep activeBenchRun set until the result is ON DISK — a status poll that sees
       // "not running" must find the fresh row, never the previous one.
+      clearInterval(reconcileRunId);
       const wasCancelled = activeBenchRun?.cancelled === true;
       const finishedAt = new Date().toISOString();
+      // The session row's runId: the reconcile poll's hit if it landed, else one final read now.
+      const sessionRunId = activeBenchRun?.runId ?? (await readCurrentRunId(workdir));
       if (wasCancelled) {
         activeBenchRun = null;
+        // A cancelled run started and did not finish — that is its honest state.
+        await stampBenchLaunchRow(launchKey, {
+          ...(sessionRunId ? { runId: sessionRunId } : {}),
+          outcome: 'did_not_finish',
+          endedAt: finishedAt,
+        });
         sendSafe('benchmark-finished', { cancelled: true });
         reject(new Error('run cancelled'));
         return;
@@ -3023,11 +3431,30 @@ ipcMain.handle('benchmark-run', async (_event, nodes: number, tier?: string, sam
         } catch {
           // No snapshot is a degraded publish (falls back to the live workdir), never a failed run.
         }
+        // Stamp the session row from the SAME verdict the result row was minted from, before the
+        // finished event — a sessions read racing the close must never see 'running' beside a
+        // result that exists.
+        await stampBenchLaunchRow(launchKey, {
+          ...(sessionRunId ? { runId: sessionRunId } : {}),
+          outcome: 'finished',
+          endedAt: finishedAt,
+          ...(typeof v.score === 'number' ? { score: v.score } : {}),
+          tiers: row.tiers,
+          ...(typeof v.scorer_version === 'string' ? { scorerVersion: v.scorer_version } : {}),
+        });
         activeBenchRun = null;
         sendSafe('benchmark-finished', { row });
         resolvePromise(row);
       } catch {
         activeBenchRun = null;
+        // No verdict. The slot decides between did_not_finish (engine events exist) and
+        // did_not_start (the run never reached OPEN) — the same rule archival applies.
+        const derived = await deriveSlotOutcome(workdir);
+        await stampBenchLaunchRow(launchKey, {
+          ...(sessionRunId ? { runId: sessionRunId } : {}),
+          outcome: derived.outcome,
+          endedAt: finishedAt,
+        });
         sendSafe('benchmark-finished', { error: `no verdict produced. ${tail.slice(-400)}` });
         reject(new Error(`no verdict produced. ${tail.slice(-400)}`));
       }
@@ -3086,6 +3513,13 @@ ipcMain.handle(
         error: 'this result predates the v2 publisher — run the benchmark again to publish',
       };
     }
+    // Frozen gate, from the CACHED catalog: the same refusal the server would return, without
+    // burning the POST. The server stays the authority — it refuses frozen benchmarks too.
+    const frozenRefusal = frozenPublishRefusal(
+      (await readBenchCatalogCache())?.benchmarks,
+      typeof stored.scorerVersion === 'string' ? stored.scorerVersion : ''
+    );
+    if (frozenRefusal) return frozenRefusal;
     // `model` is ENGINE TRUTH only (v2.4): the renderer stopped sending one, so a user-editable
     // value can no longer publish a lie. A result whose run recorded no usable pool_resolved id
     // refuses loudly with the reason — never a substitute.
@@ -3228,7 +3662,7 @@ ipcMain.handle(
       if (findingsHeld.length > 0) payload.findingsHeld = findingsHeld;
     }
     try {
-      const res = await fetch('https://leanzero.net/api/benchmark-runs', {
+      const res = await fetch(BENCH_SITE_API, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),

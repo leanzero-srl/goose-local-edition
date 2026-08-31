@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { BENCH_SPEC_FILE, BENCH_RENDER_PROBE, tierOf } from './benchTierPayload';
-import { TIERS } from './components/benchmark/baselines';
+import { BENCH_SPEC_FILE, BENCH_RENDER_PROBE, newestTier, newestTierScorer } from './benchTierPayload';
+import { TIERS, TIER_SCORER } from './components/benchmark/baselines';
 
 describe('every benchmark tier carries its OWN spec and probe', () => {
   /** THE DEFECT THIS EXISTS FOR. The mapping was a ternary with no sb-7 branch, and BENCH_SPEC overrides
@@ -26,10 +26,13 @@ describe('every benchmark tier carries its OWN spec and probe', () => {
     expect(BENCH_RENDER_PROBE['sb-7']).toBe('product_probe_v3.mjs');
   });
 
-  it('resolves the tier argument, defaulting to the comparability tier', () => {
-    expect(tierOf('sb-7')).toBe('sb-7');
-    expect(tierOf('sb-6')).toBe('sb-6');
-    expect(tierOf(undefined)).toBe('sb-5.3');
-    expect(tierOf('nonsense')).toBe('sb-5.3');
+  it('derives the newest bundled tier from the data — the latest-only launch tier', () => {
+    // Latest-only: benchmark-run takes no tier argument and always launches this. Derived by
+    // numeric version so it is never a hardcoded name and never depends on TIERS's array order.
+    expect(newestTier()).toBe('sb-7');
+    expect(TIERS).toContain(newestTier());
+    expect(BENCH_SPEC_FILE[newestTier()]).toBeTruthy();
+    expect(BENCH_RENDER_PROBE[newestTier()]).toBeTruthy();
+    expect(newestTierScorer()).toBe(TIER_SCORER[newestTier()]);
   });
 });
