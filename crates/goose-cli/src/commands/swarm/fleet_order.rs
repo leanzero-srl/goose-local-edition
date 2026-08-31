@@ -6,7 +6,10 @@
 //! (`order_fleet_by_speed`, `one_lane_per_host`) and the operator's `speed_weights` substring
 //! resolution (`configured_speed_weight`).
 
+use console::style;
 use goose_swarm::DeviceCfg;
+
+use super::{gen_entry_id, probe_lms_processes, LmsProcess, SwarmDevice};
 
 /// A device id to its configured `speed_weight` — substring match against the `speed_weights` map
 /// (e.g. `{"worksmacstudio":3,"local":2,"gabee":1}`); default 1 = equal share.
@@ -322,6 +325,228 @@ pub(super) fn order_fleet_by_speed(
     }
     out
 }
+
+/// "Auto-use what's loaded": build the worker pool from the models currently resident on the fleet
+/// (`lms ps`) so the swarm runs on what's actually loaded, not (possibly stale) configured model_ids.
+/// Returns (pool, planner_model). An empty pool means the fleet has nothing loaded (caller bootstraps
+/// or bails). Weights: explicit device override, else speed_weight, else LM Studio PARALLEL, else 1.
+pub(super) fn reconcile_pool_with_fleet(
+    cfg: &super::SwarmConfig,
+) -> (Vec<SwarmDevice>, Option<String>) {
+    let procs = match probe_lms_processes() {
+        Ok(p) => p,
+        Err(_) => return (Vec::new(), None),
+    };
+    // One worker per DISTINCT loaded identifier (LM Link routes by identifier); first host wins.
+    let mut seen = std::collections::HashSet::new();
+    let mut resident: Vec<&LmsProcess> = Vec::new();
+    for p in &procs {
+        if !p.identifier.is_empty() && seen.insert(p.identifier.clone()) {
+            resident.push(p);
+        }
+    }
+    if resident.is_empty() {
+        return (Vec::new(), None);
+    }
+    let pool: Vec<SwarmDevice> = resident
+        .iter()
+        .map(|p| SwarmDevice {
+            id: gen_entry_id(cfg, p.device.as_deref(), &p.identifier),
+            model_id: p.identifier.clone(),
+            // Weight = an explicit configured override for this model_id (USER WINS — never clamped: a
+            // weight above the probed PARALLEL is a legit throughput tactic since agent tasks are bursty, so
+            // an extra slot overlaps the idle LM Studio window between an agent's LLM calls), else the
+            // configured speed_weight for this host/model (so "a slower machine does less work" actually
+            // shapes DISPATCH, not just planner pick — backlog #6), else LM Studio's PARALLEL for this
+            // instance, else 1. K6: if an override EXCEEDS the probed PARALLEL we WARN but keep the value.
+            weight: {
+                let user_w = cfg
+                    .devices
+                    .iter()
+                    .find(|d| d.model_id == p.identifier)
+                    .map(|d| d.weight);
+                if let (Some(w), Some(par)) = (user_w, p.parallel) {
+                    if w > par {
+                        eprintln!(
+                            "  {} pool weight {w} for {} exceeds LM Studio PARALLEL {par} — kept (oversubscribing can overlap the idle gaps between an agent's LLM calls; if requests just queue with no gain, lower it)",
+                            style("⚠").yellow(),
+                            p.identifier,
+                        );
+                    }
+                }
+                // Concurrency = the node's real capacity: an explicit device override, else LM Studio's
+                // PARALLEL, else 1. NOT the speed_weight — LM Studio serves one request per model at a time,
+                // so weight > PARALLEL just QUEUES requests on that node and STARVES an idle one (observed:
+                // workhorse w3 got 3 tasks, 2 queued, while gabee sat READY). "Faster host does MORE work" is
+                // handled separately by pick_device's speed_weight-weighted ROUTING (DeviceCfg.speed_weight),
+                // which spreads proportionally more tasks to the fast node OVER TIME via work-stealing (it
+                // finishes first and grabs the next ready task) — the correct lever, without oversubscribing.
+                user_w.or(p.parallel).unwrap_or(1).max(1)
+            },
+            enabled: true,
+            instances: 1,
+            host: p.device.clone(),
+            provider: None,
+            // Discovery rebuilds the local pool from `lms ps`, so anything the user set per node has to be
+            // carried across or it is silently lost every run. Matched on model_id, which is what LM Link
+            // actually routes by.
+            speed_weight: cfg
+                .devices
+                .iter()
+                .find(|d| d.model_id == p.identifier)
+                .and_then(|d| d.speed_weight),
+            supervision: cfg
+                .devices
+                .iter()
+                .find(|d| d.model_id == p.identifier)
+                .and_then(|d| d.supervision),
+        })
+        .collect();
+    // Planner: keep the configured planner if it is resident; else pick the best resident model for
+    // the hardest job (the architect skeleton). The quality bar and the rank are the NAMED functions
+    // below (`planner_grade`, `planner_rank`) so the mid-run aux router applies the SAME bar as this
+    // pick, never a copy.
+    let planner = if resident.iter().any(|p| p.identifier == cfg.planner_model) {
+        Some(cfg.planner_model.clone())
+    } else {
+        resident
+            .iter()
+            .filter(|p| planner_grade(&p.identifier))
+            .max_by_key(|p| planner_rank(&cfg.speed_weights, p.device.as_deref(), &p.identifier))
+            .or_else(|| {
+                resident.iter().max_by_key(|p| {
+                    planner_rank(&cfg.speed_weights, p.device.as_deref(), &p.identifier)
+                })
+            })
+            .map(|p| p.identifier.clone())
+    };
+    (pool, planner)
+}
+
+/// The planner QUALITY bar (candidate filter): a model plausibly strong enough for planner-side
+/// work — 27B-class, dense, or a coder build. Named (rather than inlined in the planner pick)
+/// so the mid-run aux router below applies the SAME bar instead of a copy.
+pub(super) fn planner_grade(identifier: &str) -> bool {
+    let n = identifier.to_lowercase();
+    n.contains("27b") || n.contains("dense") || n.contains("coder")
+}
+
+/// The planner pick's rank. QUALITY outranks speed: a low-quant model (q5/q4/q3/q2) fails the
+/// structured skeleton, so prefer a NOT-low-quant model FIRST, then the fastest host (highest
+/// configured speed_weight). speed_weight keys match device+identifier (some identifiers omit
+/// the host) — the haystack is exactly what the pool reconciliation always built.
+pub(super) fn planner_rank(
+    speed_weights: &std::collections::HashMap<String, u32>,
+    host: Option<&str>,
+    identifier: &str,
+) -> (u8, u32) {
+    let ident = identifier.to_lowercase();
+    let quant_ok = u8::from(
+        !(ident.contains("q2_")
+            || ident.contains("q3_")
+            || ident.contains("q4_")
+            || ident.contains("q5")),
+    );
+    let hay = format!("{} {}", host.unwrap_or(""), ident);
+    let speed = speed_weights
+        .iter()
+        .find(|(pat, _)| hay.contains(pat.as_str()))
+        .map(|(_, w)| *w)
+        .unwrap_or(1);
+    (quant_ok, speed)
+}
+
+/// The models a MID-RUN aux call (an omni-judge look, the dynamic replanner) may run on: every
+/// LOCAL pool device passing the planner's quality bar, best rank first — that order breaks
+/// in-flight ties after the planner in `least_loaded_aux_model`. Quant is a FILTER here (not
+/// only a rank tier) because an aux verdict from a low-quant build is exactly the misread the
+/// quality bar exists to prevent. Cloud devices are excluded: aux looks are frequent, and the
+/// frozen behavior this replaces was local-planner-only — on a cloud-only pool the candidate
+/// list is empty and the planner keeps every aux call, byte-identical to before.
+pub(super) fn aux_candidate_models(
+    speed_weights: &std::collections::HashMap<String, u32>,
+    pool: &[SwarmDevice],
+) -> Vec<String> {
+    let mut cands: Vec<&SwarmDevice> = pool
+        .iter()
+        .filter(|d| {
+            !d.is_cloud()
+                && planner_grade(&d.model_id)
+                && planner_rank(speed_weights, d.host.as_deref(), &d.model_id).0 == 1
+        })
+        .collect();
+    cands.sort_by(|a, b| {
+        planner_rank(speed_weights, b.host.as_deref(), &b.model_id)
+            .cmp(&planner_rank(speed_weights, a.host.as_deref(), &a.model_id))
+            .then_with(|| a.model_id.cmp(&b.model_id))
+    });
+    cands.into_iter().map(|d| d.model_id.clone()).collect()
+}
+
+/// The live pick for a mid-run aux call: the candidate with the fewest in-flight dispatcher
+/// calls; the PLANNER wins ties (a candidate needs strictly fewer to displace it), so an idle
+/// fleet resolves byte-identically to the frozen planner identity. Returns the chosen model AND
+/// its live count, for the routing event. A model with no map entry has zero calls in flight —
+/// that empty means empty. A preference, never a refusal: whatever the counts say, SOME model is
+/// returned and the call proceeds.
+pub(super) fn least_loaded_aux_model(
+    planner: &str,
+    ranked_candidates: &[String],
+    inflight: &std::collections::HashMap<String, u32>,
+) -> (String, u32) {
+    let load = |m: &str| inflight.get(m).copied().unwrap_or(0);
+    let mut best = (planner.to_string(), load(planner));
+    for m in ranked_candidates {
+        let c = load(m);
+        if c < best.1 {
+            best = (m.clone(), c);
+        }
+    }
+    best
+}
+
+/// The live load meter behind `least_loaded_aux_model`, held for the LIFE of one dispatcher
+/// call: increment at `run_agent_in_inner`'s door, decrement on Drop — which covers Err returns
+/// AND cancellation (the omni-judge probe future is dropped when the supervised stream ends
+/// first; a plain decrement after the await would leak that count forever, and a leaked count
+/// routes every later aux call away from a healthy node). Poisoned-lock arms still count for
+/// the same reason. MEASURED need (r6c 18:38): worker + judge-ledgerd-core + judge-web-viz +
+/// replan-r0 all streaming/queued on the planner's node while two hosts sat READY.
+pub(super) struct InflightGuard<'a> {
+    map: &'a std::sync::Mutex<std::collections::HashMap<String, u32>>,
+    model: String,
+}
+
+impl<'a> InflightGuard<'a> {
+    pub(super) fn enter(
+        map: &'a std::sync::Mutex<std::collections::HashMap<String, u32>>,
+        model: &str,
+    ) -> Self {
+        let mut g = match map.lock() {
+            Ok(g) => g,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        *g.entry(model.to_string()).or_insert(0) += 1;
+        drop(g);
+        Self {
+            map,
+            model: model.to_string(),
+        }
+    }
+}
+
+impl Drop for InflightGuard<'_> {
+    fn drop(&mut self) {
+        let mut g = match self.map.lock() {
+            Ok(g) => g,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        if let Some(c) = g.get_mut(&self.model) {
+            *c = c.saturating_sub(1);
+        }
+    }
+}
+
 #[cfg(test)]
 mod fan_order_tests {
     use super::*;
@@ -795,5 +1020,127 @@ mod fleet_slot_tests {
             .flat_map(|d| std::iter::repeat_n(d.model_id.clone(), (d.weight as usize).max(1)))
             .collect();
         assert_eq!(live.len(), 3, "weight is capacity, not one slot per device");
+    }
+}
+
+#[cfg(test)]
+mod aux_routing_tests {
+    use super::*;
+
+    fn sd(id: &str, model: &str, host: Option<&str>) -> SwarmDevice {
+        SwarmDevice {
+            id: id.to_string(),
+            model_id: model.to_string(),
+            weight: 1,
+            enabled: true,
+            instances: 1,
+            host: host.map(String::from),
+            provider: None,
+            speed_weight: None,
+            supervision: None,
+        }
+    }
+
+    /// THE r6c 18:38 SHAPE: worker + judge-ledgerd-core + judge-web-viz + replan-r0 all on the
+    /// planner's node (in-flight 3) while the other two quality hosts sat READY. The pick must
+    /// leave the pile and take the idle host; among equally-idle candidates the better-ranked
+    /// (faster) one wins because the candidate list arrives rank-ordered.
+    #[test]
+    fn a_loaded_planner_routes_aux_to_the_idle_quality_candidate() {
+        let weights = std::collections::HashMap::from([
+            ("workhorse".to_string(), 3u32),
+            ("mihai".to_string(), 2u32),
+            ("gabee".to_string(), 1u32),
+        ]);
+        let pool = [
+            sd("gabee-qwen", "gabee-qwen3.8-27b", Some("gabee")),
+            sd("workhorse-qwen", "workhorse-qwen3.8-27b", Some("workhorse")),
+            sd("mihai-qwen", "mihai-qwen3.8-27b", Some("mihai")),
+        ];
+        let cands = aux_candidate_models(&weights, &pool);
+        assert_eq!(
+            cands,
+            vec![
+                "workhorse-qwen3.8-27b".to_string(),
+                "mihai-qwen3.8-27b".to_string(),
+                "gabee-qwen3.8-27b".to_string(),
+            ],
+            "candidates arrive best-rank-first so idle ties resolve to the faster host"
+        );
+        let inflight = std::collections::HashMap::from([
+            ("workhorse-qwen3.8-27b".to_string(), 3u32),
+            ("gabee-qwen3.8-27b".to_string(), 1u32),
+        ]);
+        let (model, seen) = least_loaded_aux_model("workhorse-qwen3.8-27b", &cands, &inflight);
+        assert_eq!(model, "mihai-qwen3.8-27b", "the idle host serves the look");
+        assert_eq!(seen, 0, "and the event can say what the pick saw");
+    }
+
+    /// An idle fleet must resolve byte-identically to the frozen planner pick: the planner wins
+    /// every tie, including the all-zeros tie, so the fix is a preference that only shows under
+    /// measured load.
+    #[test]
+    fn an_idle_fleet_keeps_every_aux_call_on_the_planner() {
+        let cands = vec![
+            "workhorse-qwen3.8-27b".to_string(),
+            "mihai-qwen3.8-27b".to_string(),
+        ];
+        let (model, seen) =
+            least_loaded_aux_model("workhorse-qwen3.8-27b", &cands, &Default::default());
+        assert_eq!(model, "workhorse-qwen3.8-27b");
+        assert_eq!(seen, 0);
+        // Equal non-zero load is still a tie the planner keeps.
+        let even = std::collections::HashMap::from([
+            ("workhorse-qwen3.8-27b".to_string(), 1u32),
+            ("mihai-qwen3.8-27b".to_string(), 1u32),
+        ]);
+        let (model, _) = least_loaded_aux_model("workhorse-qwen3.8-27b", &cands, &even);
+        assert_eq!(
+            model, "workhorse-qwen3.8-27b",
+            "strictly fewer displaces, equal never does"
+        );
+    }
+
+    /// The candidate list applies the planner's own quality bar: no low-quant build may serve a
+    /// judge look however idle its node is, a small non-27b/dense/coder model is not a candidate,
+    /// and cloud devices are excluded (the frozen behavior was local-planner-only). An empty
+    /// candidate list leaves the planner serving every aux call.
+    #[test]
+    fn aux_candidates_apply_the_planner_quality_bar() {
+        let weights = std::collections::HashMap::new();
+        let mut cloud = sd("bedrock-big", "big-27b-cloud", None);
+        cloud.provider = Some("bedrock".to_string());
+        let pool = [
+            sd("gabee-q4", "gabee-27b-q4_k_m", Some("gabee")),
+            sd("mihai-tiny", "mihai-qwen-4b", Some("mihai")),
+            cloud,
+        ];
+        assert!(
+            aux_candidate_models(&weights, &pool).is_empty(),
+            "low-quant, small and cloud devices are all outside the bar"
+        );
+        let (model, _) =
+            least_loaded_aux_model("planner-27b", &[], &std::collections::HashMap::new());
+        assert_eq!(
+            model, "planner-27b",
+            "no candidates -> the planner keeps the call"
+        );
+    }
+
+    /// The guard is the whole counting story: entry increments, drop decrements — including the
+    /// drop that comes from a CANCELLED future, which is just a drop. A leaked count would route
+    /// every later aux call away from a healthy node forever.
+    #[test]
+    fn the_inflight_guard_counts_entry_and_every_exit() {
+        let map = std::sync::Mutex::new(std::collections::HashMap::new());
+        {
+            let _a = InflightGuard::enter(&map, "m1");
+            let _b = InflightGuard::enter(&map, "m1");
+            let _c = InflightGuard::enter(&map, "m2");
+            assert_eq!(map.lock().unwrap().get("m1"), Some(&2));
+            assert_eq!(map.lock().unwrap().get("m2"), Some(&1));
+        }
+        assert_eq!(map.lock().unwrap().get("m1"), Some(&0));
+        assert_eq!(map.lock().unwrap().get("m2"), Some(&0));
     }
 }
