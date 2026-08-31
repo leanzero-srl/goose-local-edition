@@ -152,6 +152,55 @@ describe('the benchmark sections and their sessions', () => {
     expect(screen.getAllByText('2.7%').length).toBeGreaterThanOrEqual(1);
   });
 
+  it('a stored result carrying runId joins its OWN session exactly — never the newer finished sibling', async () => {
+    // Two finished sb-7 sessions; mine/result.json NAMES the older one by runId. The exact join
+    // must win over the newest-finished-of-era heuristic (kept only for pre-runId rows).
+    const olderFinished = {
+      runId: 's-fin-old',
+      scorerVersion: 'sb-7.0-rc',
+      startedAt: '2026-08-26T09:00:00.000Z',
+      endedAt: '2026-08-26T10:30:00.000Z',
+      outcome: 'finished',
+      score: 0.51,
+      tiers: { A: 0.5, B: 0.5, C: 0.5, D: 0.5 },
+      publishable: false,
+    };
+    mockElectron({ sessions: [...SESSIONS, olderFinished] });
+    electron().benchmarkRead = vi.fn(async () => ({
+      label: 'Your fleet · 3 nodes',
+      score: 0.51,
+      tiers: { A: 0.5, B: 0.5, C: 0.5, D: 0.5 },
+      nodes: 3,
+      mine: true,
+      scorerVersion: 'sb-7.0-rc',
+      runId: 's-fin-old',
+      runMeta: {
+        startedAt: '2026-08-26T09:00:00.000Z',
+        finishedAt: '2026-08-26T10:30:00.000Z',
+        engineEvents: 424,
+        repairRounds: 2,
+      },
+    }));
+    render(
+      <IntlTestWrapper>
+        <BenchmarkView />
+      </IntlTestWrapper>
+    );
+
+    // Newest-first in the era: s-fin (Aug 29) renders before s-fin-old (Aug 26). The NEWER
+    // finished session must not borrow the stored result's runMeta tiles…
+    const finishedChips = await screen.findAllByText('Finished');
+    fireEvent.click(finishedChips[0].closest('button')!);
+    await screen.findByText('Claude Opus 5');
+    expect(screen.queryByText('Repair rounds')).toBeNull();
+
+    // …while the session the row NAMES carries them.
+    fireEvent.click(screen.getAllByText('Finished')[1].closest('button')!);
+    await screen.findByText('Repair rounds');
+    expect(screen.getByText('Engine events')).toBeInTheDocument();
+    expect(screen.getByText('424')).toBeInTheDocument();
+  });
+
   it('deletes a session through the custom confirm dialog, never a native confirm', async () => {
     mockElectron();
     render(

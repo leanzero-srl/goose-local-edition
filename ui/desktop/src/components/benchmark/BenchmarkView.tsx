@@ -73,6 +73,9 @@ interface MineRow extends BenchmarkRow {
   verdict?: VerdictDetail;
   /** Engine-truth model identifier (pool_resolved, host prefixes stripped) — the Model prefill. */
   modelId?: string;
+  /** The engine's run id main stamps at close (null when .swarm/current-run.json never appeared) —
+   *  the exact mine↔session join. Absent on rows written by builds before the stamp landed. */
+  runId?: string | null;
 }
 
 interface BenchShot {
@@ -988,6 +991,12 @@ export default function BenchmarkView() {
   // similar score must not borrow them.
   const mineSessionKey = useMemo(() => {
     if (!mine) return null;
+    // Rows stamped with the engine's run id name their session — join on it EXACTLY. A newer
+    // finished sibling in the era must not borrow this result; and if the named session was
+    // deleted, the result attributes to nothing rather than to a neighbour.
+    if (mine.runId) return mine.runId;
+    // Newest-finished-of-era heuristic: ONLY the fallback for rows written by builds older than
+    // the runId stamp — new rows never reach this branch.
     const candidates = sessions.filter(
       (s) => s.outcome === 'finished' && s.scorerVersion === mine.scorerVersion
     );
