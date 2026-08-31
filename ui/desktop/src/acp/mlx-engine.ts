@@ -15,6 +15,11 @@ export type MlxEngineState = 'stopped' | 'mounting' | 'running' | 'failed';
 export interface MlxEngineStatus {
   state: MlxEngineState;
   modelId?: string;
+  /**
+   * The id the live engine serves on its API — differs from `modelId` (the HF directory)
+   * when a served-model alias is configured. Chat requests MUST use this id.
+   */
+  servedModelId?: string;
   baseUrl?: string;
   pid?: number;
   contextWindow?: number;

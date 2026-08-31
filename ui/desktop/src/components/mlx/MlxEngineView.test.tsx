@@ -273,6 +273,127 @@ describe('MlxEngineView engine tab', () => {
 });
 
 // ---------------------------------------------------------------------------
+// Mount card truth: the primary button and the picker report the LIVE engine,
+// not just mount intent. A window opened onto a running engine says "Mounted";
+// a different selection while running offers "Switch model"; an explicit user
+// pick is never overridden by the status poll.
+// ---------------------------------------------------------------------------
+
+const OTHER_MODEL = 'mlx-community/Other-Model-4bit';
+const COMPLETE_MODELS: MlxLocalModel[] = [
+  { id: 'mlx-community/Qwen3-30B-A3B-4bit', sizeBytes: 17 * GB, complete: true },
+  { id: OTHER_MODEL, sizeBytes: 4 * GB, complete: true },
+];
+
+/** Flip visibility off/on so the 2s status poll refreshes immediately. */
+function forceStatusRefresh() {
+  Object.defineProperty(document, 'visibilityState', { value: 'hidden', configurable: true });
+  document.dispatchEvent(new Event('visibilitychange'));
+  Object.defineProperty(document, 'visibilityState', { value: 'visible', configurable: true });
+  document.dispatchEvent(new Event('visibilitychange'));
+}
+
+describe('MlxEngineView mount card truth', () => {
+  it('running with the mounted model selected shows a DISABLED "Mounted" status button', async () => {
+    mockStatus.mockResolvedValue(
+      statusOf({ state: 'running', modelId: 'mlx-community/Qwen3-30B-A3B-4bit' })
+    );
+    const { unmount } = render(<MlxEngineView />);
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /Mounted/ })).toBeInTheDocument();
+    });
+    expect(screen.getByRole('button', { name: /Mounted/ })).toBeDisabled();
+    expect(screen.queryByRole('button', { name: /^Mount$/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Switch model/ })).not.toBeInTheDocument();
+    unmount();
+  });
+
+  it('running with restartRequired keeps "Mounted" disabled — the amber banner owns the action', async () => {
+    mockStatus.mockResolvedValue(
+      statusOf({
+        state: 'running',
+        modelId: 'mlx-community/Qwen3-30B-A3B-4bit',
+        restartRequired: true,
+      })
+    );
+    const { unmount } = render(<MlxEngineView />);
+    await waitFor(() => {
+      expect(screen.getByText('Settings changed — remount to apply.')).toBeInTheDocument();
+    });
+    expect(screen.getByRole('button', { name: /Mounted/ })).toBeDisabled();
+    expect(screen.getByRole('button', { name: /Remount/ })).toBeEnabled();
+    unmount();
+  });
+
+  it('running with a DIFFERENT selection offers an enabled "Switch model" that mounts the selection', async () => {
+    mockStatus.mockResolvedValue(
+      statusOf({ state: 'running', modelId: 'mlx-community/Qwen3-30B-A3B-4bit' })
+    );
+    mockModelsList.mockResolvedValue(COMPLETE_MODELS);
+    const { unmount } = render(<MlxEngineView />);
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /Mounted/ })).toBeInTheDocument();
+    });
+    await userEvent.click(screen.getAllByRole('combobox')[0]);
+    await userEvent.click(await screen.findByRole('option', { name: /Other-Model-4bit/ }));
+    const switchButton = await screen.findByRole('button', { name: /Switch model/ });
+    expect(switchButton).toBeEnabled();
+    await userEvent.click(switchButton);
+    await waitFor(() => {
+      expect(mockMount).toHaveBeenCalledWith(OTHER_MODEL);
+    });
+    unmount();
+  });
+
+  it('mounting shows a disabled spinner button, never an actionable Mount', async () => {
+    mockStatus.mockResolvedValue(
+      statusOf({ state: 'mounting', modelId: 'mlx-community/Qwen3-30B-A3B-4bit' })
+    );
+    const { unmount } = render(<MlxEngineView />);
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /Mounting/ })).toBeInTheDocument();
+    });
+    expect(screen.getByRole('button', { name: /Mounting/ })).toBeDisabled();
+    expect(screen.queryByRole('button', { name: /^Mount$/ })).not.toBeInTheDocument();
+    unmount();
+  });
+
+  it('stopped still offers the plain Mount action', async () => {
+    mockStatus.mockResolvedValue(statusOf({ state: 'stopped' }));
+    const { unmount } = render(<MlxEngineView />);
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /^Mount$/ })).toBeEnabled();
+    });
+    unmount();
+  });
+
+  it('an explicit user selection is never overridden when the engine reports a mounted model', async () => {
+    mockStatus.mockResolvedValue(statusOf({ state: 'stopped' }));
+    mockModelsList.mockResolvedValue(COMPLETE_MODELS);
+    const { unmount } = render(<MlxEngineView />);
+    await waitFor(() => {
+      expect(screen.getAllByRole('combobox').length).toBeGreaterThan(0);
+    });
+    await userEvent.click(screen.getAllByRole('combobox')[0]);
+    await userEvent.click(await screen.findByRole('option', { name: /Other-Model-4bit/ }));
+    expect(screen.getByText(OTHER_MODEL)).toBeInTheDocument();
+
+    mockStatus.mockResolvedValue(
+      statusOf({ state: 'running', modelId: 'mlx-community/Qwen3-30B-A3B-4bit' })
+    );
+    forceStatusRefresh();
+    await waitFor(() => {
+      expect(screen.getAllByTestId('mlx-state-badge')[0]).toHaveTextContent('running');
+    });
+    // The user's pick survives: the button offers Switch model, not the Mounted status.
+    expect(screen.getByText(OTHER_MODEL)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Switch model/ })).toBeEnabled();
+    expect(screen.queryByRole('button', { name: /Mounted/ })).not.toBeInTheDocument();
+    unmount();
+  });
+});
+
+// ---------------------------------------------------------------------------
 // The sampling tab: owner feedback said the knobs were invisible — they now
 // live on their own top-level tab. Drafts sit in the shell, so unsaved edits
 // survive tab switches; the restart banner renders here too, from the same

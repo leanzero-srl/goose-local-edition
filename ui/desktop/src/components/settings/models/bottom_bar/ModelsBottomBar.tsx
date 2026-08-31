@@ -1,6 +1,9 @@
 import { Sliders, Bot, LoaderCircle, Settings, BookOpen, ExternalLink } from 'lucide-react';
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useModelAndProvider } from '../../../ModelAndProviderContext';
+import { useFeatures } from '../../../../contexts/FeaturesContext';
+import { useMlxEngineStatusPoll } from '../../../mlx/useMlxEngineStatus';
+import { MLX_ENTRY_LABEL, MLX_PROVIDER_ID } from '../leanzeroSelectorPolicy';
 import { LeanZero } from '../../../icons';
 import { LEANZERO_DOCS_URL, LEANZERO_WEBSITE_URL, SWARM_PROVIDER_ID } from '../../../../branding';
 import { SwitchModelModal } from '../subcomponents/SwitchModelModal';
@@ -85,10 +88,49 @@ export default function ModelsBottomBar({
 }: ModelsBottomBarProps) {
   // ChatInput owns the override state and passes effective model/provider as sessionModel/sessionProvider.
   // Fall back to config defaults when no session-specific model is available.
-  const { currentModel: configModel, currentProvider: configProvider } = useModelAndProvider();
+  const {
+    currentModel: configModel,
+    currentProvider: configProvider,
+    changeModel,
+  } = useModelAndProvider();
   const currentModel = sessionModel ?? configModel;
   const currentProvider = sessionProvider ?? configProvider;
   const isSwarm = currentProvider === SWARM_PROVIDER_ID;
+
+  // Session sync for the Leanzero MLX entry: ONLY when the session already rides the engine.
+  // A remount that changes the served id updates the session to it via the SAME changeModel
+  // path the selector uses. A session on a cloud provider is never yanked onto the engine,
+  // and an engine that is mounting/stopped/failed never touches the session model.
+  const { mlxEngine: mlxCapability } = useFeatures();
+  const isMlxSession = currentProvider === MLX_PROVIDER_ID;
+  const { status: mlxStatus } = useMlxEngineStatusPoll(mlxCapability && isMlxSession);
+  const mlxSyncAttemptRef = useRef<string | null>(null);
+  const mlxServedModelId = mlxStatus?.state === 'running' ? mlxStatus.servedModelId : undefined;
+  useEffect(() => {
+    if (!mlxCapability || !isMlxSession) return;
+    if (!mlxServedModelId || mlxServedModelId === currentModel) return;
+    // One attempt per (session, served id): a failed change surfaces its own toast and must
+    // not retry on every poll tick; success flips currentModel and ends the divergence.
+    const attemptKey = `${sessionId ?? 'none'}|${mlxServedModelId}`;
+    if (mlxSyncAttemptRef.current === attemptKey) return;
+    mlxSyncAttemptRef.current = attemptKey;
+    void (async () => {
+      const ok = await changeModel(sessionId, {
+        name: mlxServedModelId,
+        provider: MLX_PROVIDER_ID,
+        subtext: MLX_ENTRY_LABEL,
+      });
+      if (ok) onModelChanged({ model: mlxServedModelId, provider: MLX_PROVIDER_ID });
+    })();
+  }, [
+    mlxCapability,
+    isMlxSession,
+    mlxServedModelId,
+    currentModel,
+    sessionId,
+    changeModel,
+    onModelChanged,
+  ]);
 
   const intl = useIntl();
   const [displayProvider, setDisplayProvider] = useState<string | null>(null);
