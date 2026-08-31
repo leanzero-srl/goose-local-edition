@@ -757,3 +757,7 @@ research_request_block's armed-no-claimed-sections arm wording.
   — the stale-snapshot save), withdrew it formally, and converted the counterfactual into the
   apply-time-re-check design finding our fresh fixes need. Also caught the judge steering on 100%
   false JS defects with the exact line quoted (regex flag misparse + hoisting). Charter gap: none.
+- 2026-08-31 23:00 tick-surgeon #29: EXEMPLARY at 68.4k/13. Went beyond reading to OPERATOR
+  VERIFICATION (ran node --check itself, checked the index.html script order) — closing the gap its
+  own tick-28 caveat named; caught the lane diagnosing our checker bug in its own words; and
+  flagged the ledgerd-api ownership smell BEFORE it becomes an edit. Charter gap: none.
