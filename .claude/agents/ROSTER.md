@@ -703,3 +703,9 @@ research_request_block's armed-no-claimed-sections arm wording.
   the engine fix was dispatchable from its words alone. Also kept ledgerd-core honest (self-caught
   pages=0 defect = advancing, not stalling) and correctly re-attributed this half-hour's workhorse
   pile to dep-shape rather than the routing defect. Charter gap: none.
+- 2026-08-31 21:00 tick-surgeon #25: EXEMPLARY at 58.5k/8. Tracked the composition positionally
+  (-20k span renderPick vs tail rAF loop = end-of-file, burst imminent) instead of just counting
+  chars; caught the judge stop-boilerplate leak in look11's NEXT with the exact injected sentence
+  (orchestrator verified it already covered at HEAD, 16243); and flagged the ledgerd-core cap-vs-
+  completion race BEFORE it happens with the lane's own words ("About 13k tokens remaining").
+  Charter gap: none.
