@@ -3,6 +3,7 @@ import { Plus, Trash2 } from 'lucide-react';
 import { ConfirmationModal } from '../ui/ConfirmationModal';
 import { useConfig } from '../ConfigContext';
 import { useFleet, deviceFromModelId } from '../swarm/useFleet';
+import { useLmStudioFleetVisible } from '../../hooks/useLmStudioFleetVisible';
 import {
   type SwarmConfig,
   type SwarmDeviceRow,
@@ -19,8 +20,7 @@ const i18nMsg = defineMessages({
   nodesTitle: { id: 'swarmSettings.nodesTitle', defaultMessage: 'Nodes' },
   nodesDesc: {
     id: 'swarmSettings.nodesDesc',
-    defaultMessage:
-      'Every node the swarm runs — configured rows plus whatever LM Studio has resident right now. Weight: higher gets a bigger share of the tasks.',
+    defaultMessage: 'Every node the swarm runs. Weight: higher gets a bigger share of the tasks.',
   },
   addNode: { id: 'swarmSettings.addNode', defaultMessage: 'Add node' },
   autoChip: { id: 'swarmSettings.autoChip', defaultMessage: 'auto' },
@@ -52,7 +52,7 @@ const i18nMsg = defineMessages({
   reassignConfirm: { id: 'swarmSettings.reassignConfirm', defaultMessage: 'Pick new provider' },
   noNodes: {
     id: 'swarmSettings.noNodes',
-    defaultMessage: 'No nodes yet — add one, or start LM Studio at {endpoint} to be discovered.',
+    defaultMessage: 'No nodes yet — add one with “Add node”.',
   },
 });
 
@@ -77,7 +77,11 @@ function providerChipOf(row: NodeRow): { seg: string; chip: string } {
 export default function SwarmNodesSection() {
   const intl = useIntl();
   const { read, upsert } = useConfig();
-  const fleet = useFleet();
+  // LEGACY surface (pass E follow-up): LM Studio-DISCOVERED rows join this list only when the
+  // 'showLmStudioFleet' setting is on (default off) — same switch as every other LM Studio surface.
+  // Configured rows are config truth and always render.
+  const lmStudioVisible = useLmStudioFleetVisible();
+  const fleet = useFleet(5000, undefined, lmStudioVisible);
   const [cfg, setCfg] = useState<SwarmConfig>(DEFAULTS);
 
   const reloadSwarm = useCallback(async () => {

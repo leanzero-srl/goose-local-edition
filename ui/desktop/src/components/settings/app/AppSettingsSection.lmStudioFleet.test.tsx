@@ -4,9 +4,12 @@ import AppSettingsSection from './AppSettingsSection';
 import { IntlTestWrapper } from '../../../i18n/test-utils';
 
 /**
- * Pass E — LM Studio surfaces are DISABLED, NOT DELETED: the fleet preview's discovered rows hide
- * behind the 'showLmStudioFleet' setting (default FALSE) and the Settings > App toggle brings them
- * back. useFleet itself is untouched; the consumer gates via its `enabled` argument.
+ * Pass E + follow-up — Settings > App:
+ *  - the 'showLmStudioFleet' toggle lives here (default FALSE) and persists; it now governs the
+ *    LM Studio surfaces elsewhere (nodes-tab discovered rows, run-panel lms dots, recipe wizard);
+ *  - the legacy "Goose Swarm" card — edition switcher + LM Studio fan-in preview — is GONE from
+ *    this page (SHOW_EDITION_CARD), so no fleet discovery ever runs from App settings, toggle on
+ *    or off.
  */
 
 let fleetCalls: Array<boolean | undefined> = [];
@@ -27,7 +30,9 @@ vi.mock('../../swarm/useFleet', () => ({
 vi.mock('./UpdateSection', () => ({ default: () => null }));
 vi.mock('./TelemetrySettings', () => ({ default: () => null }));
 vi.mock('../../GooseSidebar/ThemeSelector', () => ({ default: () => null }));
-vi.mock('../../GooseSidebar/EditionSelector', () => ({ default: () => null }));
+vi.mock('../../GooseSidebar/EditionSelector', () => ({
+  default: () => <div data-testid="edition-selector" />,
+}));
 
 type ElectronMock = Record<string, unknown>;
 const electron = () => (window as unknown as { electron: ElectronMock }).electron;
@@ -51,24 +56,34 @@ beforeEach(() => {
   };
 });
 
-describe('LM Studio fleet behind the switch (pass E)', () => {
-  it('hides discovered fleet rows by default and says so honestly', async () => {
+describe('Settings > App (pass E follow-up)', () => {
+  it('has the LM Studio toggle, default off, and NO legacy Goose Swarm card', async () => {
     mount();
-    await waitFor(() => expect(screen.getByTestId('show-lmstudio-fleet-toggle')).toBeInTheDocument());
-    // Discovery is disabled — useFleet was called with enabled=false, no live row rendered.
-    expect(fleetCalls.every((v) => v === false)).toBe(true);
+    await waitFor(() =>
+      expect(screen.getByTestId('show-lmstudio-fleet-toggle')).toBeInTheDocument()
+    );
+    expect(
+      screen.getByTestId('show-lmstudio-fleet-toggle').getAttribute('data-state')
+    ).toBe('unchecked');
+    // The edition card and its fan-in preview are gone wholesale.
+    expect(screen.queryByText('Goose Swarm')).toBeNull();
+    expect(screen.queryByText('Swarm LeanZero — the fan-in view')).toBeNull();
+    expect(screen.queryByTestId('edition-selector')).toBeNull();
     expect(screen.queryByText(/workhorse-model · live/)).toBeNull();
-    expect(screen.getByText(/LM Studio fleet hidden \(legacy\)/)).toBeInTheDocument();
+    // No fleet discovery runs from this page.
+    expect(fleetCalls.every((v) => v === false)).toBe(true);
   });
 
-  it('brings the rows back when the toggle is flipped, and persists the setting', async () => {
+  it('flipping the toggle persists the setting but never resurrects the fleet preview here', async () => {
     mount();
     const toggle = await screen.findByTestId('show-lmstudio-fleet-toggle');
     fireEvent.click(toggle);
-    await waitFor(() => expect(screen.getByText(/workhorse-model · live/)).toBeInTheDocument());
-    expect(electron().setSetting).toBeTruthy();
-    const setSetting = electron().setSetting as ReturnType<typeof vi.fn>;
-    expect(setSetting).toHaveBeenCalledWith('showLmStudioFleet', true);
-    expect(screen.queryByText(/LM Studio fleet hidden \(legacy\)/)).toBeNull();
+    await waitFor(() => {
+      const setSetting = electron().setSetting as ReturnType<typeof vi.fn>;
+      expect(setSetting).toHaveBeenCalledWith('showLmStudioFleet', true);
+    });
+    expect(screen.queryByText(/workhorse-model · live/)).toBeNull();
+    expect(screen.queryByText('Swarm LeanZero — the fan-in view')).toBeNull();
+    expect(fleetCalls.every((v) => v === false)).toBe(true);
   });
 });
