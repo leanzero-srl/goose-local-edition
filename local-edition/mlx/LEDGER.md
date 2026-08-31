@@ -1,5 +1,26 @@
 # MLX engine campaign — LEDGER
 
+## 2026-08-31 night — Goose Swarm 2.0.0: pass A shipped, parent updates severed, DMG published
+
+Pass A (40fa6c5c2, panel-surgeon): edition now derives from the provider like the Rust resolver
+(the blocker was defaultSettings.edition masquerading as an explicit choice); Benchmark restored;
+rebrand "Goose Swarm" everywhere user-visible; nav = [New Chat, Skills, Memories, Benchmark,
+Leanzero MLX, Settings]; Settings loses Models. UPDATE SEVERANCE: the parent's owner/repo was
+define-baked into packaged builds at bundle time — repointed to leanzero-srl/goose-local-edition
+with a network-log proof and a zero-parent-marker pin test across all four update-path files.
+Version line broken to 2.0.0 (own line, above upstream 1.x forever).
+
+DMG: signing identity minted on this machine (just setup-signing-identity; first release-fork run
+failed loud on the missing cert), then `just release-fork 2.0.0` sealed
+ui/desktop/out/make/Goose-2.0.0.dmg (211 MB, stable self-signed identity). **Release v2.0.0
+PUBLISHED on leanzero-srl/goose-local-edition with latest-mac.yml + DMG + zip — the own update
+feed is live; installed 1.41.x builds roll forward into Goose Swarm.**
+
+Operational lesson banked to memory: the harness reaps backgrounded process trees ~60s after a
+turn ends (this was every "mystery kill" incl. the 03:00 swarm run) — anything that must survive
+launches via open/launchd or nohup+disown to ppid 1. The app now runs from the SEALED 2.0.0
+bundle under launchd (ppid 1). Pass B (Projects tree) in flight; pass C queued.
+
 ## 2026-08-31 evening — Goose Swarm restructure recon (facts that size passes B and C)
 
 - "Merge main for Benchmark" measured a NO-OP: 0 behind / 868 ahead; Benchmark was hidden by the
