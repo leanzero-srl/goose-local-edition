@@ -257,7 +257,7 @@ fn the_banned_integrate_template_only_shrinks() {
 /// wiring at the omni seam in the same commit.
 #[test]
 fn swarm_rs_line_count_only_decreases() {
-    const SWARM_RS_LINE_BASELINE: usize = 42_635;
+    const SWARM_RS_LINE_BASELINE: usize = 42_577;
     let text = read("crates/goose-cli/src/commands/swarm.rs");
     let n = text.lines().count();
     assert!(
