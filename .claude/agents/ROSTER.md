@@ -648,3 +648,15 @@ research_request_block's armed-no-claimed-sections arm wording.
   one — judge-web-viz silent 4->8 polls since 14:14Z). impl.py read is the delivery standard: 1115B
   judged RIGHT-SIZED with the reason (init owns the HTTP frame; bind-before-workers so a down vendor
   can't delay the socket — a researched invariant IN the adapter). Charter gap: none.
+- 2026-08-31 18:05 tick-surgeon #19: EXEMPLARY at 56.7k/10. The priority watch answered with the
+  primary chain: judge-web-viz proved ALIVE (look6 17:40 broke the silence) and its OWN verdict
+  ("DRIFTING|HIGH… write viz.js… ETA=20m") now concurs with our wrong-channel read — formed frozen
+  1h44m while think advances real WebGL design, restream evidence pack fully assembled with fields.
+  New find with quotes: judges deliberate ETA token placement ("Append '| ETA=8m'? That breaks the
+  4-field format. Hmm.") — folded into the same-turn surgeon pass. Charter gap: none.
+- 2026-08-31 18:20 swarm-surgeon (3 judge-seam smalls, 24fa10ba6): CLEAN. Traced all three (EDIT 1
+  honest NO->NET; 2 and 3 YES), quoted the 19 blank-OK events and the ETA deliberation, read the
+  parser before writing the instruction. BRIEF LEAK (mine): my brief gave a wrong evidence path
+  (.swarm/run-*.jsonl — events live at the run ROOT as run.jsonl) and wrong verdict case ("OK" —
+  recorded lowercase "ok"). Orchestrator briefs citing run.jsonl must state: run root, lowercase
+  verdicts.
