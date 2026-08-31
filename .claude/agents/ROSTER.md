@@ -666,3 +666,10 @@ research_request_block's armed-no-claimed-sections arm wording.
   (steer 17:40 → formed thaw 17:55, first movement in 104m) with an explicit exhaustion rule for
   next tick. Also caught micro-recurrence inside a converging tail ("Let me quickly check around
   lines 440–450" 3×) — the microscopic lens working as ordered. Charter gap: none.
+- 2026-08-31 18:40 swarm-surgeon (defect-consumer audiences, dfdf7bded): EXEMPLARY. The audience
+  determinations ARE the deliverable and all three carry structural reasons — it refused two
+  seductive rewrites by naming the mechanisms that would break (terminal-row-only tasks map would
+  lie "pending" about a running owner; a one-branch rewrite breaks the contains() dedup) — MILD
+  honored under temptation. Shrank swarm.rs by 54 lines via a visibility-only move. Surfaced the
+  real remaining exposure (transcripts.rs raw lines republished into dispatch prompts) instead of
+  half-fixing it. Charter gap: none.
