@@ -1,5 +1,19 @@
 # NOW — MLX in-house engine campaign (branch goose/mlx-inferencing)
 
+## CURRENT CHAPTER (2026-08-31 evening): the Goose Swarm restructure
+Mihai's five-phase UI reorg: (1) "merge main for Benchmark" — MEASURED no-op, we contain all of
+main (0 behind / 868 ahead); Benchmark was hidden because the renderer's edition is a stored
+setting defaulting 'standard' (never provider-derived like edition.rs) — same root cause as the
+.local-edition CSS scope being absent. Pass A (in flight, panel-surgeon): edition derives from
+provider (fragments incl. mlx), rebrand "Goose Local Edition"→"Goose Swarm", nav declutter to
+[New Chat, Skills, Memories, Benchmark, Leanzero MLX, Settings], drop Settings>Models. (2) Recon
+in flight (Explore): session working-dir metadata + swarm-settings/provider-credential plumbing.
+(3) Pending passes: B = ChatGPT-style Projects tree (projects as local paths, sessions grouped
+under them, new-session inherits the project's cwd); C = "LeanZero Swarm" three-tab view (LeanZero
+MLX | Cloud Providers | Swarm Settings with node creation + per-node provider [mlx-or-cloud] +
+weight), plus components/mlx → leanzero-swarm namespace rename. (4) After Pass A: build the FULL
+DMG via `just release-fork 1.41.103` (Mihai: "build the full DMG to check"), again at the end.
+
 **Read this FIRST after any compaction, before anything else in this dir.** Budget ~2k tokens.
 Rule: when the thread changes, this file changes IN THE SAME COMMIT.
 
