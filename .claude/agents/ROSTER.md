@@ -752,3 +752,8 @@ research_request_block's armed-no-claimed-sections arm wording.
   stat, where a trigger-site stat would NOT have fired). Found a second instance in the same lane
   unprompted. The best kind of surgeon return: the brief was wrong in the details and the fix is
   right because it said so. Charter gap: none.
+- 2026-08-31 22:30 tick-surgeon #28: EXEMPLARY — the return that pays for the whole mechanism. It
+  refuted ITS OWN tick-27 recommendation from the primary record (delivery 18:53Z vs verdict 19:00Z
+  — the stale-snapshot save), withdrew it formally, and converted the counterfactual into the
+  apply-time-re-check design finding our fresh fixes need. Also caught the judge steering on 100%
+  false JS defects with the exact line quoted (regex flag misparse + hoisting). Charter gap: none.
