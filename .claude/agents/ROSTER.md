@@ -741,3 +741,8 @@ research_request_block's armed-no-claimed-sections arm wording.
   have made the whole feature inert (sb-7.0-rc vs sb-7.0 era key), drilled the baseline cap against
   production data before choosing the policy (fleet rows always ride), and verified the deploy on
   the live URL before reporting. Charter gap: n/a (general-purpose).
+- 2026-08-31 22:40 panel-surgeon (view redesign, 50a74f370): EXEMPLARY. Every design ban honored
+  (solid chips, ConfirmationModal, no rails/tints/native), the named-absence rule applied where the
+  baked fallback used to live, and the honest boundary stated first in its own report: in-app
+  verification is UNVERIFIED until a rebuild — exactly the verify-in-the-running-app doctrine,
+  self-applied. Charter gap: none.
