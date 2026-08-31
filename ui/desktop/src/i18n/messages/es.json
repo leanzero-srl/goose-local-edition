@@ -1397,9 +1397,6 @@
   "goosehintsSection.title": {
     "defaultMessage": "Pistas del proyecto (.goosehints)"
   },
-  "groupedExtensionLoadingToast.askGoose": {
-    "defaultMessage": "Pregunta a goose"
-  },
   "groupedExtensionLoadingToast.collapseDetails": {
     "defaultMessage": "Contraer detalles"
   },
@@ -1697,29 +1694,17 @@
   "keyboardShortcuts.loading": {
     "defaultMessage": "Cargando..."
   },
-  "keyboardShortcuts.newChatDescription": {
-    "defaultMessage": "Crear un nuevo chat en la ventana actual"
-  },
-  "keyboardShortcuts.newChatLabel": {
-    "defaultMessage": "Nuevo chat"
-  },
   "keyboardShortcuts.newChatWindowDescription": {
     "defaultMessage": "Abrir una nueva ventana de Goose"
   },
   "keyboardShortcuts.newChatWindowLabel": {
-    "defaultMessage": "Nueva ventana de chat"
+    "defaultMessage": "Nueva ventana"
   },
   "keyboardShortcuts.openDirectoryDescription": {
     "defaultMessage": "Abrir el diálogo de selección de directorio"
   },
   "keyboardShortcuts.openDirectoryLabel": {
     "defaultMessage": "Abrir directorio"
-  },
-  "keyboardShortcuts.quickLauncherDescription": {
-    "defaultMessage": "Abrir la superposición del lanzador rápido"
-  },
-  "keyboardShortcuts.quickLauncherLabel": {
-    "defaultMessage": "Lanzador rápido"
   },
   "keyboardShortcuts.reassignShortcut": {
     "defaultMessage": "Reasignar atajo"
@@ -2453,9 +2438,6 @@
   "navigation.itemBenchmark": {
     "defaultMessage": "Benchmark"
   },
-  "navigation.itemHome": {
-    "defaultMessage": "Nuevo chat"
-  },
   "navigation.itemLeanzeroSwarm": {
     "defaultMessage": "LeanZero Swarm"
   },
@@ -2589,7 +2571,7 @@
     "defaultMessage": "Selecciona una opción..."
   },
   "parameterInputModal.startNewChat": {
-    "defaultMessage": "Iniciar nuevo chat (sin receta)"
+    "defaultMessage": "Salir de la configuración de la receta"
   },
   "parameterInputModal.startRecipe": {
     "defaultMessage": "Iniciar receta"
@@ -2689,6 +2671,21 @@
   },
   "progressiveMessageList.searchHint": {
     "defaultMessage": "Pulsa Cmd/Ctrl+F para cargar todos los mensajes de inmediato y buscar"
+  },
+  "projectLanding.addFailed": {
+    "defaultMessage": "No se pudo añadir la carpeta del proyecto"
+  },
+  "projectLanding.addProject": {
+    "defaultMessage": "Añadir un proyecto"
+  },
+  "projectLanding.emptyHint": {
+    "defaultMessage": "Añade una carpeta de proyecto y luego inicia sesiones desde la barra lateral."
+  },
+  "projectLanding.headline": {
+    "defaultMessage": "Las sesiones empiezan desde un proyecto"
+  },
+  "projectLanding.pickHint": {
+    "defaultMessage": "Elige un proyecto en la barra lateral y usa su «+ Nueva sesión aquí»."
   },
   "projectsSection.addProject": {
     "defaultMessage": "Añadir una carpeta de proyecto"

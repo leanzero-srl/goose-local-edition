@@ -1397,9 +1397,6 @@
   "goosehintsSection.title": {
     "defaultMessage": "プロジェクトヒント（.goosehints）"
   },
-  "groupedExtensionLoadingToast.askGoose": {
-    "defaultMessage": "Gooseに聞く"
-  },
   "groupedExtensionLoadingToast.collapseDetails": {
     "defaultMessage": "詳細を折りたたむ"
   },
@@ -1697,29 +1694,17 @@
   "keyboardShortcuts.loading": {
     "defaultMessage": "読み込み中..."
   },
-  "keyboardShortcuts.newChatDescription": {
-    "defaultMessage": "現在のウィンドウで新しいチャットを作成"
-  },
-  "keyboardShortcuts.newChatLabel": {
-    "defaultMessage": "新規チャット"
-  },
   "keyboardShortcuts.newChatWindowDescription": {
     "defaultMessage": "新しいGooseウィンドウを開く"
   },
   "keyboardShortcuts.newChatWindowLabel": {
-    "defaultMessage": "新規チャットウィンドウ"
+    "defaultMessage": "新規ウィンドウ"
   },
   "keyboardShortcuts.openDirectoryDescription": {
     "defaultMessage": "ディレクトリ選択ダイアログを開く"
   },
   "keyboardShortcuts.openDirectoryLabel": {
     "defaultMessage": "ディレクトリを開く"
-  },
-  "keyboardShortcuts.quickLauncherDescription": {
-    "defaultMessage": "クイックランチャーのオーバーレイを開く"
-  },
-  "keyboardShortcuts.quickLauncherLabel": {
-    "defaultMessage": "クイックランチャー"
   },
   "keyboardShortcuts.reassignShortcut": {
     "defaultMessage": "ショートカットを再割り当て"
@@ -2453,9 +2438,6 @@
   "navigation.itemBenchmark": {
     "defaultMessage": "Benchmark"
   },
-  "navigation.itemHome": {
-    "defaultMessage": "新規チャット"
-  },
   "navigation.itemLeanzeroSwarm": {
     "defaultMessage": "LeanZero Swarm"
   },
@@ -2589,7 +2571,7 @@
     "defaultMessage": "オプションを選択..."
   },
   "parameterInputModal.startNewChat": {
-    "defaultMessage": "新規チャットを開始（レシピなし）"
+    "defaultMessage": "レシピ設定を終了"
   },
   "parameterInputModal.startRecipe": {
     "defaultMessage": "レシピを開始"
@@ -2689,6 +2671,21 @@
   },
   "progressiveMessageList.searchHint": {
     "defaultMessage": "検索のためにすべてのメッセージをすぐ読み込むには Cmd/Ctrl+F を押してください"
+  },
+  "projectLanding.addFailed": {
+    "defaultMessage": "プロジェクトフォルダーを追加できませんでした"
+  },
+  "projectLanding.addProject": {
+    "defaultMessage": "プロジェクトを追加"
+  },
+  "projectLanding.emptyHint": {
+    "defaultMessage": "プロジェクトフォルダーを追加し、サイドバーからセッションを開始してください。"
+  },
+  "projectLanding.headline": {
+    "defaultMessage": "セッションはプロジェクトから始まります"
+  },
+  "projectLanding.pickHint": {
+    "defaultMessage": "サイドバーでプロジェクトを選び、その「+ ここで新しいセッション」を使ってください。"
   },
   "projectsSection.addProject": {
     "defaultMessage": "プロジェクトフォルダを追加"

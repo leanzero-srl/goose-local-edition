@@ -210,7 +210,10 @@ function StateBadge({ state }: { state: MlxEngineState }) {
       className={`inline-flex items-center gap-1.5 rounded px-2.5 py-1 text-xs font-bold uppercase tracking-wider ${
         state === 'mounting' ? 'animate-pulse' : ''
       }`}
-      style={{ backgroundColor: STATE_COLOR[state], color: state === 'mounting' ? INK_DARK : '#fff' }}
+      style={{
+        backgroundColor: STATE_COLOR[state],
+        color: state === 'mounting' ? INK_DARK : '#fff',
+      }}
     >
       {state === 'mounting' && <Loader2 className="h-3 w-3 animate-spin" />}
       {state}
@@ -276,7 +279,10 @@ function MemoryBar({ availableGb, totalGb }: { availableGb: number; totalGb: num
           style={{ width: `${pct}%`, backgroundColor: tight ? AMBER : AZURE }}
         />
       </div>
-      <span className="shrink-0 text-xs font-bold tabular-nums" style={{ color: tight ? AMBER : AZURE }}>
+      <span
+        className="shrink-0 text-xs font-bold tabular-nums"
+        style={{ color: tight ? AMBER : AZURE }}
+      >
         {availableGb.toFixed(1)} GB free
       </span>
       <span className="shrink-0 text-xs tabular-nums text-text-secondary">
@@ -311,7 +317,10 @@ function DiskBar({ availableBytes, totalBytes }: { availableBytes: number; total
           style={{ width: `${pct}%`, backgroundColor: tight ? AMBER : TEAL }}
         />
       </div>
-      <span className="shrink-0 text-xs font-bold tabular-nums" style={{ color: tight ? AMBER : TEAL }}>
+      <span
+        className="shrink-0 text-xs font-bold tabular-nums"
+        style={{ color: tight ? AMBER : TEAL }}
+      >
         {formatGb(availableBytes)} free
       </span>
       <span className="shrink-0 text-xs tabular-nums text-text-secondary">
@@ -383,7 +392,9 @@ function Segmented<T extends string>({
             aria-pressed={active}
             title={opt.title}
             className={`flex items-center gap-2 px-3 py-1.5 text-sm font-bold transition-colors ${
-              active ? 'text-white' : 'bg-background-secondary text-text-secondary hover:text-text-primary'
+              active
+                ? 'text-white'
+                : 'bg-background-secondary text-text-secondary hover:text-text-primary'
             }`}
             style={active ? { backgroundColor: activeColor } : undefined}
           >
@@ -488,7 +499,11 @@ function ModelOptionLabel({ option }: { option: ModelOption }) {
       <span className="shrink-0 text-xs font-bold tabular-nums" style={{ color: AZURE }}>
         {formatGb(option.model.sizeBytes)}
       </span>
-      {!option.model.complete && <Chip color={AMBER} ink={INK_DARK}>partial download</Chip>}
+      {!option.model.complete && (
+        <Chip color={AMBER} ink={INK_DARK}>
+          partial download
+        </Chip>
+      )}
     </span>
   );
 }
@@ -515,7 +530,9 @@ function ModelPicker({
       options={options}
       value={selected}
       isDisabled={disabled}
-      placeholder={models.length === 0 ? 'No models in the models folder yet' : 'Pick a model to mount'}
+      placeholder={
+        models.length === 0 ? 'No models in the models folder yet' : 'Pick a model to mount'
+      }
       isOptionDisabled={(o) => !(o as ModelOption).model.complete}
       formatOptionLabel={(o) => <ModelOptionLabel option={o as ModelOption} />}
       onChange={(o) => onChange(o ? (o as ModelOption).value : null)}
@@ -643,9 +660,7 @@ function EngineSection(props: EngineSectionProps) {
 
   return (
     <div className="flex flex-col gap-4 pb-8">
-      {statusError && (
-        <SolidBanner color={RED} label="Engine unreachable" text={statusError} />
-      )}
+      {statusError && <SolidBanner color={RED} label="Engine unreachable" text={statusError} />}
       {status?.gateMessage && status.gateVerdict === 'block' && (
         <SolidBanner color={RED} label="Mount blocked" text={status.gateMessage} />
       )}
@@ -752,12 +767,20 @@ function EngineSection(props: EngineSectionProps) {
               a different selection while running -> "Switch model" (the backend shuts the old
               model down); otherwise the plain Mount action. */}
           {state === 'mounting' ? (
-            <Button disabled className="rounded font-bold text-white" style={{ backgroundColor: GREEN }}>
+            <Button
+              disabled
+              className="rounded font-bold text-white"
+              style={{ backgroundColor: GREEN }}
+            >
               <Loader2 className="w-4 h-4 animate-spin" />
               Mounting
             </Button>
           ) : selectionIsMounted ? (
-            <Button disabled className="rounded font-bold text-white" style={{ backgroundColor: GREEN }}>
+            <Button
+              disabled
+              className="rounded font-bold text-white"
+              style={{ backgroundColor: GREEN }}
+            >
               <Check className="w-4 h-4" />
               Mounted
             </Button>
@@ -888,7 +911,11 @@ function SamplingSection(props: SamplingSectionProps) {
           label="Model profile"
           right={
             <>
-              {dirty && <Chip color={AMBER} ink={INK_DARK}>unsaved</Chip>}
+              {dirty && (
+                <Chip color={AMBER} ink={INK_DARK}>
+                  unsaved
+                </Chip>
+              )}
               <Button
                 size="sm"
                 onClick={onSaveSettings}
@@ -943,9 +970,9 @@ function SamplingSection(props: SamplingSectionProps) {
           )}
         </div>
         <CardFooter>
-          A blank field sends nothing — the engine keeps its own default. Profiles apply at
-          mount, per model: saving never touches a live process, and the status reports restart
-          required until the mounted model is remounted.
+          A blank field sends nothing — the engine keeps its own default. Profiles apply at mount,
+          per model: saving never touches a live process, and the status reports restart required
+          until the mounted model is remounted.
         </CardFooter>
       </Card>
     </div>
@@ -1034,7 +1061,14 @@ interface BrowseHitRowProps {
   onOpenCard: () => void;
 }
 
-function BrowseHitRow({ hit, sort, progress, startError, handlers, onOpenCard }: BrowseHitRowProps) {
+function BrowseHitRow({
+  hit,
+  sort,
+  progress,
+  startError,
+  handlers,
+  onOpenCard,
+}: BrowseHitRowProps) {
   return (
     <div
       className="cursor-pointer border-t border-border-primary px-3 py-2 transition-colors hover:bg-background-secondary"
@@ -1139,30 +1173,32 @@ function BrowseHitRow({ hit, sort, progress, startError, handlers, onOpenCard }:
   );
 }
 
-interface HfBrowserProps {
-  downloads: Record<string, MlxDownloadProgress>;
-  downloadErrors: Record<string, string>;
-  handlers: DownloadHandlers;
-  filters: MlxBrowseFilters | null;
-  filtersError: string | null;
-  onOpenCard: (repoId: string) => void;
+/**
+ * The Hugging Face browser's state, LIFTED into ModelsSection so the [Hugging Face | Downloaded]
+ * sub-tab switch can unmount the browser's markup without losing query/filters/hits/pagination.
+ * It still resets when the Models tab itself is left — exactly the pre-split behavior.
+ */
+interface HfBrowserState {
+  queryText: string;
+  setQueryText: (v: string) => void;
+  commitQuery: () => void;
+  author: string | null;
+  setAuthor: (v: string | null) => void;
+  quant: string | null;
+  setQuant: (v: string | null) => void;
+  arch: string | null;
+  setArch: (v: string | null) => void;
+  sort: MlxBrowseSort;
+  setSort: (v: MlxBrowseSort) => void;
+  hits: MlxBrowseHit[] | null;
+  nextCursor: string | null;
+  loading: boolean;
+  loadingMore: boolean;
+  error: string | null;
+  loadMore: () => void;
 }
 
-/**
- * Paginated MLX-only Hugging Face browser. Every filter is applied SERVER-side through
- * `_goose/unstable/mlxEngine/browse`; changing any filter/sort/search resets pagination
- * (an epoch guard drops stale in-flight pages), and Load more appends via `nextCursor`.
- * Filter vocabularies come from the backend's live crawl (`browseFilters`), loaded once
- * per view-open by the shell; free text beyond them passes through as-is.
- */
-function HfBrowser({
-  downloads,
-  downloadErrors,
-  handlers,
-  filters,
-  filtersError,
-  onOpenCard,
-}: HfBrowserProps) {
+function useHfBrowserState(): HfBrowserState {
   const [queryText, setQueryText] = useState('');
   const [appliedQuery, setAppliedQuery] = useState('');
   const [author, setAuthor] = useState<string | null>(null);
@@ -1235,6 +1271,74 @@ function HfBrowser({
   }, [baseParams, nextCursor]);
 
   const commitQuery = useCallback(() => setAppliedQuery(queryText.trim()), [queryText]);
+
+  return {
+    queryText,
+    setQueryText,
+    commitQuery,
+    author,
+    setAuthor,
+    quant,
+    setQuant,
+    arch,
+    setArch,
+    sort,
+    setSort,
+    hits,
+    nextCursor,
+    loading,
+    loadingMore,
+    error,
+    loadMore,
+  };
+}
+
+interface HfBrowserProps {
+  browser: HfBrowserState;
+  downloads: Record<string, MlxDownloadProgress>;
+  downloadErrors: Record<string, string>;
+  handlers: DownloadHandlers;
+  filters: MlxBrowseFilters | null;
+  filtersError: string | null;
+  onOpenCard: (repoId: string) => void;
+}
+
+/**
+ * Paginated MLX-only Hugging Face browser (presentation — state lives in useHfBrowserState).
+ * Every filter is applied SERVER-side through `_goose/unstable/mlxEngine/browse`; changing any
+ * filter/sort/search resets pagination (an epoch guard drops stale in-flight pages), and Load
+ * more appends via `nextCursor`. Filter vocabularies come from the backend's live crawl
+ * (`browseFilters`), loaded once per view-open by the shell; free text beyond them passes
+ * through as-is.
+ */
+function HfBrowser({
+  browser,
+  downloads,
+  downloadErrors,
+  handlers,
+  filters,
+  filtersError,
+  onOpenCard,
+}: HfBrowserProps) {
+  const {
+    queryText,
+    setQueryText,
+    commitQuery,
+    author,
+    setAuthor,
+    quant,
+    setQuant,
+    arch,
+    setArch,
+    sort,
+    setSort,
+    hits,
+    nextCursor,
+    loading,
+    loadingMore,
+    error,
+    loadMore,
+  } = browser;
 
   return (
     <Card>
@@ -1360,12 +1464,57 @@ function HfBrowser({
         {filters != null
           ? ` — vocabularies sampled live from ${filters.sampledRepos} MLX repos; type in a filter to search them, or apply any free text.`
           : ' — type in a filter to search its vocabulary, or apply any free text.'}{' '}
-        A model whose quant appears only in its name is excluded by those filters but still
-        findable via search. Click a row for its full model card.
+        A model whose quant appears only in its name is excluded by those filters but still findable
+        via search. Click a row for its full model card.
       </CardFooter>
     </Card>
   );
 }
+
+/**
+ * Downloads with no inline row on the ACTIVE sub-tab still render here, so a running download is
+ * visible from BOTH [Hugging Face | Downloaded] — same shell-owned state, one row per repo per
+ * pane (the inactive pane is unmounted, so `mlx-download-*` testids stay unique).
+ */
+function ActiveDownloadsCard({
+  entries,
+  errors,
+  handlers,
+}: {
+  entries: Array<[string, MlxDownloadProgress]>;
+  errors: Record<string, string>;
+  handlers: DownloadHandlers;
+}) {
+  if (entries.length === 0) return null;
+  return (
+    <Card>
+      <CardHeader label="Active downloads">
+        <Chip color={AZURE}>{entries.length}</Chip>
+      </CardHeader>
+      <div>
+        {entries.map(([repoId, progress]) => (
+          <div key={repoId} className="border-t border-border-primary px-3 py-2.5 first:border-t-0">
+            <span className="min-w-0 truncate font-mono text-sm text-text-primary">{repoId}</span>
+            {errors[repoId] && (
+              <div className="mt-1 break-words text-xs font-semibold" style={{ color: RED }}>
+                {errors[repoId]}
+              </div>
+            )}
+            <DownloadProgressRow
+              repoId={repoId}
+              progress={progress}
+              onPause={() => handlers.onPause(repoId)}
+              onResume={() => handlers.onResume(repoId)}
+              onCancel={() => handlers.onCancel(repoId)}
+            />
+          </div>
+        ))}
+      </div>
+    </Card>
+  );
+}
+
+type ModelsSubTab = 'hf' | 'downloaded';
 
 interface ModelsSectionProps {
   settings: MlxEngineSettings | null;
@@ -1398,6 +1547,12 @@ function ModelsSection({
   filters,
   filtersError,
 }: ModelsSectionProps) {
+  // Owner amendment: the Models area splits into [Hugging Face | Downloaded] — the local models
+  // used to sit at the bottom of one long column and were hard to see. The browser's state lives
+  // in the section (useHfBrowserState) so switching sub-tabs never loses query/filters/pages.
+  const [view, setView] = useState<ModelsSubTab>('hf');
+  const browser = useHfBrowserState();
+
   const [dirDialogOpen, setDirDialogOpen] = useState(false);
   const [dirSaving, setDirSaving] = useState(false);
   const [dirError, setDirError] = useState<string | null>(null);
@@ -1407,6 +1562,18 @@ function ModelsSection({
   const [pendingDelete, setPendingDelete] = useState<MlxLocalModel | null>(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
+
+  // Every tracked download must be visible on the ACTIVE sub-tab: rows already shown inline
+  // (browse hits on Hugging Face, local models on Downloaded) stay where they are; the rest
+  // render in the Active downloads card above the pane content.
+  const hfOrphanDownloads = useMemo(() => {
+    const hitIds = new Set((browser.hits ?? []).map((h) => h.id));
+    return Object.entries(downloads).filter(([repoId]) => !hitIds.has(repoId));
+  }, [browser.hits, downloads]);
+  const downloadedOrphanDownloads = useMemo(() => {
+    const localIds = new Set(models.map((m) => m.id));
+    return Object.entries(downloads).filter(([repoId]) => !localIds.has(repoId));
+  }, [models, downloads]);
 
   const saveDir = useCallback(
     async (dir: string) => {
@@ -1444,162 +1611,214 @@ function ModelsSection({
 
   return (
     <div className="flex flex-col gap-4 pb-8">
-      {/* Models folder */}
-      <Card>
-        <CardHeader label="Models folder" />
-        <div className="flex flex-col gap-2 px-3 py-3">
-          <div className="flex items-center gap-2">
-            <Folder className="w-4 h-4 shrink-0" style={{ color: AZURE }} />
-            <span
-              className="min-w-0 flex-1 truncate rounded border border-border-primary bg-background-secondary px-2.5 py-1.5 font-mono text-sm text-text-primary"
-              title={settings?.modelsDir}
-            >
-              {settings?.modelsDir ?? '…'}
-            </span>
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={() => {
-                setDirError(null);
-                setDirDialogOpen(true);
-              }}
-              disabled={!settings}
-              className="rounded"
-            >
-              <Pencil className="w-3.5 h-3.5" />
-              Edit
-            </Button>
-          </div>
-          {disk && <DiskBar availableBytes={disk.availableBytes} totalBytes={disk.totalBytes} />}
-        </div>
-        <CardFooter>
-          One directory used by downloads and mounts alike; the bar is the free space on its
-          volume.
-        </CardFooter>
-      </Card>
-
-      {/* Hugging Face browser */}
-      <HfBrowser
-        downloads={downloads}
-        downloadErrors={downloadErrors}
-        handlers={downloadHandlers}
-        filters={filters}
-        filtersError={filtersError}
-        onOpenCard={setCardRepoId}
+      {/* Second-level switch (owner): the browser and the local library are separate tabs so
+          neither buries the other. Styled like every other segmented control in this view. */}
+      <Segmented<ModelsSubTab>
+        options={[
+          { value: 'hf', label: 'Hugging Face', title: 'Browse and download MLX models' },
+          {
+            value: 'downloaded',
+            label: (
+              <>
+                Downloaded
+                <span
+                  className="rounded px-1 py-px text-[10px] font-bold tabular-nums text-white"
+                  style={{ backgroundColor: view === 'downloaded' ? INK_DARK : SLATE }}
+                >
+                  {models.length}
+                </span>
+              </>
+            ),
+            title: 'Local models, the models folder and disk space',
+          },
+        ]}
+        value={view}
+        onChange={setView}
       />
 
-      {/* Local models */}
-      <Card>
-        <CardHeader
-          label="Downloaded models"
-          right={
-            <Button size="xs" variant="outline" onClick={refreshModels} className="rounded">
-              <RefreshCw className="w-3 h-3" />
-              Refresh
-            </Button>
-          }
-        >
-          <Chip color={AZURE}>{models.length}</Chip>
-        </CardHeader>
-        {deleteError && (
-          <div className="px-3 pt-3">
-            <SolidBanner color={RED} label="Delete failed" text={deleteError} />
-          </div>
-        )}
-        {models.length === 0 ? (
-          <div className="px-3 py-3 text-sm text-text-secondary">
-            Nothing downloaded yet — browse Hugging Face above.
-          </div>
-        ) : (
-          <div>
-            {models.map((model) => {
-              const incomplete = model.missingFiles > 0 || !model.complete;
-              return (
-                <div
-                  key={model.id}
-                  className="border-t border-border-primary px-3 py-2.5 first:border-t-0"
-                >
-                  {/* Same wrap pattern as browse rows: the id keeps a readable floor and the
-                      chip/action cluster wraps under it at narrow widths. */}
-                  <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1">
-                    <HardDrive
-                      className="w-4 h-4 shrink-0"
-                      style={{ color: incomplete ? AMBER : AZURE }}
-                    />
-                    <span className="min-w-[220px] flex-1 truncate font-mono text-sm text-text-primary">
-                      {model.id}
-                    </span>
-                    {model.id === mountedModelId && <Chip color={GREEN}>mounted</Chip>}
-                    {incomplete && (
-                      <Chip
-                        color={AMBER}
-                        ink={INK_DARK}
-                        title="Files the repo's safetensors index names are absent or unfinished — Resume continues the download"
-                      >
-                        incomplete — missing {model.missingFiles} file(s)
-                      </Chip>
-                    )}
-                    <span className="shrink-0 text-xs font-bold tabular-nums" style={{ color: AZURE }}>
-                      {formatGb(model.sizeBytes)}
-                    </span>
-                    {incomplete ? (
-                      <Button
-                        size="xs"
-                        onClick={() => downloadHandlers.onResume(model.id)}
-                        className="shrink-0 rounded font-bold text-white hover:opacity-90"
-                        style={{ backgroundColor: GREEN }}
-                        aria-label={`Resume ${model.id}`}
-                        title="Resume the download — complete files are skipped, partials continue"
-                      >
-                        <Play className="w-3 h-3" />
-                        Resume
-                      </Button>
-                    ) : (
-                      <Button
-                        size="xs"
-                        onClick={() => onOpenSampling(model.id)}
-                        className="shrink-0 rounded font-bold text-white hover:opacity-90"
-                        style={{ backgroundColor: VIOLET }}
-                        aria-label={`Sampling for ${model.id}`}
-                        title="This model's sampling profile — opens the Sampling tab"
-                      >
-                        <SlidersHorizontal className="w-3 h-3" />
-                        Sampling
-                      </Button>
-                    )}
-                    <Button
-                      size="xs"
-                      onClick={() => {
-                        setDeleteError(null);
-                        setPendingDelete(model);
-                      }}
-                      className="shrink-0 rounded font-bold text-white hover:opacity-90"
-                      style={{ backgroundColor: RED }}
-                      aria-label={`Delete ${model.id}`}
+      {view === 'hf' && (
+        <>
+          <ActiveDownloadsCard
+            entries={hfOrphanDownloads}
+            errors={downloadErrors}
+            handlers={downloadHandlers}
+          />
+          <HfBrowser
+            browser={browser}
+            downloads={downloads}
+            downloadErrors={downloadErrors}
+            handlers={downloadHandlers}
+            filters={filters}
+            filtersError={filtersError}
+            onOpenCard={setCardRepoId}
+          />
+        </>
+      )}
+
+      {view === 'downloaded' && (
+        <>
+          <ActiveDownloadsCard
+            entries={downloadedOrphanDownloads}
+            errors={downloadErrors}
+            handlers={downloadHandlers}
+          />
+
+          {/* Local models */}
+          <Card>
+            <CardHeader
+              label="Downloaded models"
+              right={
+                <Button size="xs" variant="outline" onClick={refreshModels} className="rounded">
+                  <RefreshCw className="w-3 h-3" />
+                  Refresh
+                </Button>
+              }
+            >
+              <Chip color={AZURE}>{models.length}</Chip>
+            </CardHeader>
+            {deleteError && (
+              <div className="px-3 pt-3">
+                <SolidBanner color={RED} label="Delete failed" text={deleteError} />
+              </div>
+            )}
+            {models.length === 0 ? (
+              <div className="px-3 py-3 text-sm text-text-secondary">
+                Nothing downloaded yet — browse the Hugging Face tab.
+              </div>
+            ) : (
+              <div>
+                {models.map((model) => {
+                  const incomplete = model.missingFiles > 0 || !model.complete;
+                  return (
+                    <div
+                      key={model.id}
+                      className="border-t border-border-primary px-3 py-2.5 first:border-t-0"
                     >
-                      <Trash2 className="w-3 h-3" />
-                    </Button>
-                  </div>
-                  {downloadErrors[model.id] && (
-                    <div className="mt-1 break-words text-xs font-semibold" style={{ color: RED }}>
-                      {downloadErrors[model.id]}
+                      {/* Same wrap pattern as browse rows: the id keeps a readable floor and the
+                      chip/action cluster wraps under it at narrow widths. */}
+                      <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1">
+                        <HardDrive
+                          className="w-4 h-4 shrink-0"
+                          style={{ color: incomplete ? AMBER : AZURE }}
+                        />
+                        <span className="min-w-[220px] flex-1 truncate font-mono text-sm text-text-primary">
+                          {model.id}
+                        </span>
+                        {model.id === mountedModelId && <Chip color={GREEN}>mounted</Chip>}
+                        {incomplete && (
+                          <Chip
+                            color={AMBER}
+                            ink={INK_DARK}
+                            title="Files the repo's safetensors index names are absent or unfinished — Resume continues the download"
+                          >
+                            incomplete — missing {model.missingFiles} file(s)
+                          </Chip>
+                        )}
+                        <span
+                          className="shrink-0 text-xs font-bold tabular-nums"
+                          style={{ color: AZURE }}
+                        >
+                          {formatGb(model.sizeBytes)}
+                        </span>
+                        {incomplete ? (
+                          <Button
+                            size="xs"
+                            onClick={() => downloadHandlers.onResume(model.id)}
+                            className="shrink-0 rounded font-bold text-white hover:opacity-90"
+                            style={{ backgroundColor: GREEN }}
+                            aria-label={`Resume ${model.id}`}
+                            title="Resume the download — complete files are skipped, partials continue"
+                          >
+                            <Play className="w-3 h-3" />
+                            Resume
+                          </Button>
+                        ) : (
+                          <Button
+                            size="xs"
+                            onClick={() => onOpenSampling(model.id)}
+                            className="shrink-0 rounded font-bold text-white hover:opacity-90"
+                            style={{ backgroundColor: VIOLET }}
+                            aria-label={`Sampling for ${model.id}`}
+                            title="This model's sampling profile — opens the Sampling tab"
+                          >
+                            <SlidersHorizontal className="w-3 h-3" />
+                            Sampling
+                          </Button>
+                        )}
+                        <Button
+                          size="xs"
+                          onClick={() => {
+                            setDeleteError(null);
+                            setPendingDelete(model);
+                          }}
+                          className="shrink-0 rounded font-bold text-white hover:opacity-90"
+                          style={{ backgroundColor: RED }}
+                          aria-label={`Delete ${model.id}`}
+                        >
+                          <Trash2 className="w-3 h-3" />
+                        </Button>
+                      </div>
+                      {downloadErrors[model.id] && (
+                        <div
+                          className="mt-1 break-words text-xs font-semibold"
+                          style={{ color: RED }}
+                        >
+                          {downloadErrors[model.id]}
+                        </div>
+                      )}
+                      {downloads[model.id] && (
+                        <DownloadProgressRow
+                          repoId={model.id}
+                          progress={downloads[model.id]}
+                          onPause={() => downloadHandlers.onPause(model.id)}
+                          onResume={() => downloadHandlers.onResume(model.id)}
+                          onCancel={() => downloadHandlers.onCancel(model.id)}
+                        />
+                      )}
                     </div>
-                  )}
-                  {downloads[model.id] && (
-                    <DownloadProgressRow
-                      repoId={model.id}
-                      progress={downloads[model.id]}
-                      onPause={() => downloadHandlers.onPause(model.id)}
-                      onResume={() => downloadHandlers.onResume(model.id)}
-                      onCancel={() => downloadHandlers.onCancel(model.id)}
-                    />
-                  )}
-                </div>
-              );
-            })}
-          </div>
-        )}
-      </Card>
+                  );
+                })}
+              </div>
+            )}
+          </Card>
+
+          {/* Models folder + disk — the local library's home, so it lives on the Downloaded tab. */}
+          <Card>
+            <CardHeader label="Models folder" />
+            <div className="flex flex-col gap-2 px-3 py-3">
+              <div className="flex items-center gap-2">
+                <Folder className="w-4 h-4 shrink-0" style={{ color: AZURE }} />
+                <span
+                  className="min-w-0 flex-1 truncate rounded border border-border-primary bg-background-secondary px-2.5 py-1.5 font-mono text-sm text-text-primary"
+                  title={settings?.modelsDir}
+                >
+                  {settings?.modelsDir ?? '…'}
+                </span>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => {
+                    setDirError(null);
+                    setDirDialogOpen(true);
+                  }}
+                  disabled={!settings}
+                  className="rounded"
+                >
+                  <Pencil className="w-3.5 h-3.5" />
+                  Edit
+                </Button>
+              </div>
+              {disk && (
+                <DiskBar availableBytes={disk.availableBytes} totalBytes={disk.totalBytes} />
+              )}
+            </div>
+            <CardFooter>
+              One directory used by downloads and mounts alike; the bar is the free space on its
+              volume.
+            </CardFooter>
+          </Card>
+        </>
+      )}
 
       {cardRepoId != null && (
         <ModelCardModal
@@ -2015,9 +2234,7 @@ const MlxEngineView: React.FC = () => {
     [settings, samplingModelId]
   );
   const draftsForSelected =
-    samplingModelId != null
-      ? (profileDrafts[samplingModelId] ?? savedDraftsForSelected)
-      : null;
+    samplingModelId != null ? (profileDrafts[samplingModelId] ?? savedDraftsForSelected) : null;
 
   const setProfileDraft = useCallback(
     (key: NumericSettingKey, text: string) => {
@@ -2075,7 +2292,9 @@ const MlxEngineView: React.FC = () => {
         type="button"
         onClick={() => setTab(t)}
         className={`flex items-center gap-2 px-4 py-2 text-sm font-bold transition-colors ${
-          active ? 'text-white' : 'bg-background-secondary text-text-secondary hover:text-text-primary'
+          active
+            ? 'text-white'
+            : 'bg-background-secondary text-text-secondary hover:text-text-primary'
         }`}
         style={active ? { backgroundColor: SEGMENT_ACTIVE } : undefined}
         aria-pressed={active}

@@ -1397,9 +1397,6 @@
   "goosehintsSection.title": {
     "defaultMessage": "프로젝트 힌트 (.goosehints)"
   },
-  "groupedExtensionLoadingToast.askGoose": {
-    "defaultMessage": "goose에게 묻기"
-  },
   "groupedExtensionLoadingToast.collapseDetails": {
     "defaultMessage": "세부정보 접기"
   },
@@ -1697,29 +1694,17 @@
   "keyboardShortcuts.loading": {
     "defaultMessage": "로드 중..."
   },
-  "keyboardShortcuts.newChatDescription": {
-    "defaultMessage": "현재 창에서 새 채팅을 만듭니다."
-  },
-  "keyboardShortcuts.newChatLabel": {
-    "defaultMessage": "새 채팅"
-  },
   "keyboardShortcuts.newChatWindowDescription": {
     "defaultMessage": "새 Goose 창을 엽니다."
   },
   "keyboardShortcuts.newChatWindowLabel": {
-    "defaultMessage": "새 채팅 창"
+    "defaultMessage": "새 창"
   },
   "keyboardShortcuts.openDirectoryDescription": {
     "defaultMessage": "디렉터리 선택 대화상자를 엽니다."
   },
   "keyboardShortcuts.openDirectoryLabel": {
     "defaultMessage": "디렉터리 열기"
-  },
-  "keyboardShortcuts.quickLauncherDescription": {
-    "defaultMessage": "빠른 실행기 오버레이를 엽니다."
-  },
-  "keyboardShortcuts.quickLauncherLabel": {
-    "defaultMessage": "빠른 실행기"
   },
   "keyboardShortcuts.reassignShortcut": {
     "defaultMessage": "단축키 재지정"
@@ -2453,9 +2438,6 @@
   "navigation.itemBenchmark": {
     "defaultMessage": "Benchmark"
   },
-  "navigation.itemHome": {
-    "defaultMessage": "새 채팅"
-  },
   "navigation.itemLeanzeroSwarm": {
     "defaultMessage": "LeanZero Swarm"
   },
@@ -2589,7 +2571,7 @@
     "defaultMessage": "옵션을 선택하세요..."
   },
   "parameterInputModal.startNewChat": {
-    "defaultMessage": "새 채팅 시작(레시피 없음)"
+    "defaultMessage": "레시피 설정 종료"
   },
   "parameterInputModal.startRecipe": {
     "defaultMessage": "레시피 시작"
@@ -2689,6 +2671,21 @@
   },
   "progressiveMessageList.searchHint": {
     "defaultMessage": "검색을 위해 모든 메시지를 즉시 로드하려면 Cmd/Ctrl+F를 누르세요."
+  },
+  "projectLanding.addFailed": {
+    "defaultMessage": "프로젝트 폴더를 추가할 수 없습니다"
+  },
+  "projectLanding.addProject": {
+    "defaultMessage": "프로젝트 추가"
+  },
+  "projectLanding.emptyHint": {
+    "defaultMessage": "프로젝트 폴더를 추가한 뒤 사이드바에서 세션을 시작하세요."
+  },
+  "projectLanding.headline": {
+    "defaultMessage": "세션은 프로젝트에서 시작됩니다"
+  },
+  "projectLanding.pickHint": {
+    "defaultMessage": "사이드바에서 프로젝트를 선택하고 “+ 여기서 새 세션”을 사용하세요."
   },
   "projectsSection.addProject": {
     "defaultMessage": "프로젝트 폴더 추가"

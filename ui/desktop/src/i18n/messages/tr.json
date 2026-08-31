@@ -1397,9 +1397,6 @@
   "goosehintsSection.title": {
     "defaultMessage": "Proje İpuçları (.goosehints)"
   },
-  "groupedExtensionLoadingToast.askGoose": {
-    "defaultMessage": "goose'a sorun"
-  },
   "groupedExtensionLoadingToast.collapseDetails": {
     "defaultMessage": "Ayrıntıları daralt"
   },
@@ -1697,29 +1694,17 @@
   "keyboardShortcuts.loading": {
     "defaultMessage": "Yükleniyor..."
   },
-  "keyboardShortcuts.newChatDescription": {
-    "defaultMessage": "Geçerli pencerede yeni bir sohbet oluşturun"
-  },
-  "keyboardShortcuts.newChatLabel": {
-    "defaultMessage": "Yeni Sohbet"
-  },
   "keyboardShortcuts.newChatWindowDescription": {
     "defaultMessage": "Yeni bir Goose penceresi aç"
   },
   "keyboardShortcuts.newChatWindowLabel": {
-    "defaultMessage": "Yeni Sohbet Penceresi"
+    "defaultMessage": "Yeni Pencere"
   },
   "keyboardShortcuts.openDirectoryDescription": {
     "defaultMessage": "Dizin seçimi iletişim kutusunu aç"
   },
   "keyboardShortcuts.openDirectoryLabel": {
     "defaultMessage": "Dizini Aç"
-  },
-  "keyboardShortcuts.quickLauncherDescription": {
-    "defaultMessage": "Hızlı başlatıcı katmanını aç"
-  },
-  "keyboardShortcuts.quickLauncherLabel": {
-    "defaultMessage": "Hızlı Başlatıcı"
   },
   "keyboardShortcuts.reassignShortcut": {
     "defaultMessage": "Kısayolu Yeniden Ata"
@@ -2453,9 +2438,6 @@
   "navigation.itemBenchmark": {
     "defaultMessage": "Benchmark"
   },
-  "navigation.itemHome": {
-    "defaultMessage": "Yeni Sohbet"
-  },
   "navigation.itemLeanzeroSwarm": {
     "defaultMessage": "LeanZero Swarm"
   },
@@ -2589,7 +2571,7 @@
     "defaultMessage": "Bir seçenek seçin..."
   },
   "parameterInputModal.startNewChat": {
-    "defaultMessage": "Yeni Sohbet Başlat (Tarif Yok)"
+    "defaultMessage": "Tarif Kurulumundan Çık"
   },
   "parameterInputModal.startRecipe": {
     "defaultMessage": "Tarifi Başlat"
@@ -2689,6 +2671,21 @@
   },
   "progressiveMessageList.searchHint": {
     "defaultMessage": "Arama amacıyla tüm mesajları anında yüklemek için Cmd/Ctrl+F tuşlarına basın"
+  },
+  "projectLanding.addFailed": {
+    "defaultMessage": "Proje klasörü eklenemedi"
+  },
+  "projectLanding.addProject": {
+    "defaultMessage": "Proje ekle"
+  },
+  "projectLanding.emptyHint": {
+    "defaultMessage": "Bir proje klasörü ekleyin, ardından oturumları kenar çubuğundan başlatın."
+  },
+  "projectLanding.headline": {
+    "defaultMessage": "Oturumlar bir projeden başlar"
+  },
+  "projectLanding.pickHint": {
+    "defaultMessage": "Kenar çubuğundan bir proje seçin ve onun “+ Burada yeni oturum” seçeneğini kullanın."
   },
   "projectsSection.addProject": {
     "defaultMessage": "Proje klasörü ekle"

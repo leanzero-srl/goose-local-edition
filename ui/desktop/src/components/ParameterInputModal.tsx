@@ -18,7 +18,8 @@ const i18n = defineMessages({
   },
   startNewChat: {
     id: 'parameterInputModal.startNewChat',
-    defaultMessage: 'Start New Chat (No Recipe)',
+    // Pass D (owner): this escape hatch lands on the project landing — it starts nothing.
+    defaultMessage: 'Exit Recipe Setup',
   },
   recipeParameters: {
     id: 'parameterInputModal.recipeParameters',

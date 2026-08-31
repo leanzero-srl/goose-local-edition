@@ -1397,9 +1397,6 @@
   "goosehintsSection.title": {
     "defaultMessage": "專案提示 (.goosehints)"
   },
-  "groupedExtensionLoadingToast.askGoose": {
-    "defaultMessage": "詢問 goose"
-  },
   "groupedExtensionLoadingToast.collapseDetails": {
     "defaultMessage": "收合詳細資料"
   },
@@ -1697,29 +1694,17 @@
   "keyboardShortcuts.loading": {
     "defaultMessage": "載入中…"
   },
-  "keyboardShortcuts.newChatDescription": {
-    "defaultMessage": "在目前視窗中建立新的對話"
-  },
-  "keyboardShortcuts.newChatLabel": {
-    "defaultMessage": "新對話"
-  },
   "keyboardShortcuts.newChatWindowDescription": {
     "defaultMessage": "開啟新的 Goose 視窗"
   },
   "keyboardShortcuts.newChatWindowLabel": {
-    "defaultMessage": "新對話視窗"
+    "defaultMessage": "新視窗"
   },
   "keyboardShortcuts.openDirectoryDescription": {
     "defaultMessage": "開啟目錄選擇對話框"
   },
   "keyboardShortcuts.openDirectoryLabel": {
     "defaultMessage": "開啟目錄"
-  },
-  "keyboardShortcuts.quickLauncherDescription": {
-    "defaultMessage": "開啟快速啟動器覆蓋層"
-  },
-  "keyboardShortcuts.quickLauncherLabel": {
-    "defaultMessage": "快速啟動器"
   },
   "keyboardShortcuts.reassignShortcut": {
     "defaultMessage": "重新指派快速鍵"
@@ -2453,9 +2438,6 @@
   "navigation.itemBenchmark": {
     "defaultMessage": "Benchmark"
   },
-  "navigation.itemHome": {
-    "defaultMessage": "新交談"
-  },
   "navigation.itemLeanzeroSwarm": {
     "defaultMessage": "LeanZero Swarm"
   },
@@ -2589,7 +2571,7 @@
     "defaultMessage": "選取一個選項..."
   },
   "parameterInputModal.startNewChat": {
-    "defaultMessage": "開始新交談（無配方）"
+    "defaultMessage": "退出配方設定"
   },
   "parameterInputModal.startRecipe": {
     "defaultMessage": "啟動配方"
@@ -2689,6 +2671,21 @@
   },
   "progressiveMessageList.searchHint": {
     "defaultMessage": "按 Cmd/Ctrl+F 立即載入所有訊息以進行搜尋"
+  },
+  "projectLanding.addFailed": {
+    "defaultMessage": "無法新增專案資料夾"
+  },
+  "projectLanding.addProject": {
+    "defaultMessage": "新增專案"
+  },
+  "projectLanding.emptyHint": {
+    "defaultMessage": "新增一個專案資料夾，然後從側邊欄開始交談。"
+  },
+  "projectLanding.headline": {
+    "defaultMessage": "交談從專案開始"
+  },
+  "projectLanding.pickHint": {
+    "defaultMessage": "在側邊欄選擇一個專案，使用它的「+ 在此新增交談」。"
   },
   "projectsSection.addProject": {
     "defaultMessage": "新增專案資料夾"

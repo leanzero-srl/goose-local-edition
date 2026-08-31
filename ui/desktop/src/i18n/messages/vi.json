@@ -1397,9 +1397,6 @@
   "goosehintsSection.title": {
     "defaultMessage": "Gợi ý dự án (.goosehints)"
   },
-  "groupedExtensionLoadingToast.askGoose": {
-    "defaultMessage": "Hỏi goose"
-  },
   "groupedExtensionLoadingToast.collapseDetails": {
     "defaultMessage": "Thu gọn chi tiết"
   },
@@ -1697,29 +1694,17 @@
   "keyboardShortcuts.loading": {
     "defaultMessage": "Đang tải..."
   },
-  "keyboardShortcuts.newChatDescription": {
-    "defaultMessage": "Tạo một cuộc trò chuyện mới trong cửa sổ hiện tại"
-  },
-  "keyboardShortcuts.newChatLabel": {
-    "defaultMessage": "Trò chuyện mới"
-  },
   "keyboardShortcuts.newChatWindowDescription": {
     "defaultMessage": "Mở một cửa sổ Goose mới"
   },
   "keyboardShortcuts.newChatWindowLabel": {
-    "defaultMessage": "Cửa sổ trò chuyện mới"
+    "defaultMessage": "Cửa sổ mới"
   },
   "keyboardShortcuts.openDirectoryDescription": {
     "defaultMessage": "Mở hộp thoại chọn thư mục"
   },
   "keyboardShortcuts.openDirectoryLabel": {
     "defaultMessage": "Mở thư mục"
-  },
-  "keyboardShortcuts.quickLauncherDescription": {
-    "defaultMessage": "Mở lớp phủ trình khởi chạy nhanh"
-  },
-  "keyboardShortcuts.quickLauncherLabel": {
-    "defaultMessage": "Trình khởi chạy nhanh"
   },
   "keyboardShortcuts.reassignShortcut": {
     "defaultMessage": "Gán lại phím tắt"
@@ -2453,9 +2438,6 @@
   "navigation.itemBenchmark": {
     "defaultMessage": "Benchmark"
   },
-  "navigation.itemHome": {
-    "defaultMessage": "Trò chuyện mới"
-  },
   "navigation.itemLeanzeroSwarm": {
     "defaultMessage": "LeanZero Swarm"
   },
@@ -2589,7 +2571,7 @@
     "defaultMessage": "Chọn một lựa chọn..."
   },
   "parameterInputModal.startNewChat": {
-    "defaultMessage": "Bắt đầu trò chuyện mới (Không dùng công thức)"
+    "defaultMessage": "Thoát thiết lập công thức"
   },
   "parameterInputModal.startRecipe": {
     "defaultMessage": "Bắt đầu công thức"
@@ -2689,6 +2671,21 @@
   },
   "progressiveMessageList.searchHint": {
     "defaultMessage": "Nhấn Cmd/Ctrl+F để tải ngay tất cả tin nhắn nhằm tìm kiếm"
+  },
+  "projectLanding.addFailed": {
+    "defaultMessage": "Không thể thêm thư mục dự án"
+  },
+  "projectLanding.addProject": {
+    "defaultMessage": "Thêm dự án"
+  },
+  "projectLanding.emptyHint": {
+    "defaultMessage": "Thêm một thư mục dự án, sau đó bắt đầu phiên từ thanh bên."
+  },
+  "projectLanding.headline": {
+    "defaultMessage": "Phiên bắt đầu từ một dự án"
+  },
+  "projectLanding.pickHint": {
+    "defaultMessage": "Chọn một dự án trong thanh bên và dùng “+ Phiên mới tại đây” của nó."
   },
   "projectsSection.addProject": {
     "defaultMessage": "Thêm thư mục dự án"

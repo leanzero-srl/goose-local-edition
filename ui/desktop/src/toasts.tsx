@@ -1,14 +1,9 @@
 import { toast, ToastOptions } from 'react-toastify';
 import { Button } from './components/ui/button';
-import { Tooltip, TooltipContent, TooltipTrigger } from './components/ui/Tooltip';
-import Copy from './components/icons/Copy';
-import { startNewSession } from './sessions';
-import { useNavigation } from './hooks/useNavigation';
 import {
   GroupedExtensionLoadingToast,
   ExtensionLoadingStatus,
 } from './components/GroupedExtensionLoadingToast';
-import { getInitialWorkingDir } from './utils/workingDir';
 
 export interface ToastServiceOptions {
   silent?: boolean;
@@ -167,19 +162,12 @@ type ToastErrorProps = {
   title: string;
   msg: string;
   traceback?: string;
+  // Kept in the contract for callers; the "Ask goose" recovery button it powered was removed in
+  // pass D (owner): it silently created a project-less session. Sessions start from projects only.
   recoverHints?: string;
 };
 
-function ToastErrorContent({
-  title,
-  msg,
-  traceback,
-  recoverHints,
-}: Omit<ToastErrorProps, 'setView'>) {
-  const setView = useNavigation();
-  const showRecovery = recoverHints && setView;
-  const hasBoth = traceback && showRecovery;
-
+function ToastErrorContent({ title, msg, traceback }: ToastErrorProps) {
   const handleCopyError = async () => {
     if (traceback) {
       try {
@@ -197,34 +185,17 @@ function ToastErrorContent({
         {msg && <div>{msg}</div>}
       </div>
       <div className="flex-none flex items-center gap-2">
-        {showRecovery && (
-          <Button onClick={() => startNewSession(recoverHints, setView, getInitialWorkingDir())}>
-            Ask goose
-          </Button>
-        )}
-        {hasBoth && (
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button onClick={handleCopyError} shape="round" aria-label="Copy error">
-                <Copy className="h-4 w-4" />
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent side="bottom" className="z-[10000]">
-              Copy error
-            </TooltipContent>
-          </Tooltip>
-        )}
-        {traceback && !hasBoth && <Button onClick={handleCopyError}>Copy error</Button>}
+        {traceback && <Button onClick={handleCopyError}>Copy error</Button>}
       </div>
     </div>
   );
 }
 
-export function toastError({ title, msg, traceback, recoverHints }: ToastErrorProps) {
-  return toast.error(
-    <ToastErrorContent title={title} msg={msg} traceback={traceback} recoverHints={recoverHints} />,
-    { ...commonToastOptions, autoClose: traceback ? false : 5000 }
-  );
+export function toastError({ title, msg, traceback }: ToastErrorProps) {
+  return toast.error(<ToastErrorContent title={title} msg={msg} traceback={traceback} />, {
+    ...commonToastOptions,
+    autoClose: traceback ? false : 5000,
+  });
 }
 
 type ToastLoadingProps = {

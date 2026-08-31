@@ -141,12 +141,12 @@ describe('ParameterInputModal', () => {
       expect(defaultProps.onClose).toHaveBeenCalled();
     });
 
-    it('calls onClose when "Start New Chat" option is selected', async () => {
+    it('calls onClose when "Exit Recipe Setup" is selected (lands on the project landing)', async () => {
       const user = userEvent.setup();
       renderWithIntl(<ParameterInputModal {...defaultProps} />);
 
       await user.click(screen.getByText('Cancel'));
-      await user.click(screen.getByText('Start New Chat (No Recipe)'));
+      await user.click(screen.getByText('Exit Recipe Setup'));
 
       expect(defaultProps.onClose).toHaveBeenCalledTimes(1);
     });

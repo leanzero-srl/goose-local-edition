@@ -16,17 +16,13 @@ import {
   KeyRound,
   DownloadCloud,
 } from 'lucide-react';
-import { LeanZero } from '../icons';
-import { SWARM_DISPLAY_NAME } from '../../branding';
 import ImportView from './import/ImportView';
 import { useState, useEffect, useRef } from 'react';
 import ChatSettingsSection from './chat/ChatSettingsSection';
 import KeyboardShortcutsSection from './keyboard/KeyboardShortcutsSection';
 import AuthSettingsSection from './auth/AuthSettingsSection';
-import SwarmSettingsSection from './swarm/SwarmSettingsSection';
 import { CONFIGURATION_ENABLED } from '../../updates';
 import { trackSettingsTabViewed } from '../../utils/analytics';
-import { useFeatures } from '../../contexts/FeaturesContext';
 import { useEdition } from '../../contexts/EditionContext';
 import { defineMessages, useIntl } from '../../i18n';
 
@@ -77,17 +73,12 @@ export default function SettingsView({
   viewOptions: SettingsViewOptions;
 }) {
   const hasTrackedInitialTab = useRef(false);
-  const { localInference } = useFeatures();
   const { edition } = useEdition();
   const isLocalEdition = edition === 'local';
-  // The Swarm tab is the local-fleet config surface. It is relevant whenever the user works with local
-  // models — the Goose Swarm (local edition) look OR the local-inference capability — not just the
-  // cosmetic Edition toggle. Swarm is a first-class provider now, so its settings must be reachable on
-  // their own merit.
-  const showSwarm = isLocalEdition || localInference;
-  // The Models tab left the settings nav (provider management consolidates into the LeanZero Swarm
-  // view); the first visible tab is the default.
-  const [activeTab, setActiveTab] = useState(() => (showSwarm ? 'swarm' : 'chat'));
+  // The Models tab left the settings nav in pass A (provider management consolidates into the
+  // LeanZero Swarm view), and the owner removed the Swarm LeanZero tab too — the LeanZero Swarm
+  // view's nodes tab is the only swarm surface now. SwarmSettingsSection stays in code, unrouted.
+  const [activeTab, setActiveTab] = useState('chat');
   const intl = useIntl();
 
   const handleTabChange = (tab: string) => {
@@ -99,10 +90,10 @@ export default function SettingsView({
   useEffect(() => {
     if (viewOptions.section) {
       // Map section names to tab values. 'models' deep links land on the nearest surviving surface
-      // now that the Models tab is gone.
+      // now that the Models and Swarm tabs are gone.
       const sectionToTab: Record<string, string> = {
         update: 'app',
-        models: showSwarm ? 'swarm' : 'chat',
+        models: 'chat',
         modes: 'chat',
         sharing: 'sharing',
         styles: 'chat',
@@ -119,7 +110,7 @@ export default function SettingsView({
         setActiveTab(targetTab);
       }
     }
-  }, [viewOptions.section, showSwarm]);
+  }, [viewOptions.section]);
 
   // Reset active tab if the Import tab (local edition only) becomes unavailable
   useEffect(() => {
@@ -169,16 +160,6 @@ export default function SettingsView({
             >
               <div className="px-1">
                 <TabsList className="w-full mb-2 justify-start overflow-x-auto flex-nowrap">
-                  {showSwarm && (
-                    <TabsTrigger
-                      value="swarm"
-                      className="flex gap-2"
-                      data-testid="settings-swarm-tab"
-                    >
-                      <LeanZero className="h-4 w-4" />
-                      {SWARM_DISPLAY_NAME}
-                    </TabsTrigger>
-                  )}
                   {isLocalEdition && (
                     <TabsTrigger
                       value="import"
@@ -229,15 +210,6 @@ export default function SettingsView({
               </div>
 
               <ScrollArea className="flex-1 px-2">
-                {showSwarm && (
-                  <TabsContent
-                    value="swarm"
-                    className="mt-0 focus-visible:outline-none focus-visible:ring-0"
-                  >
-                    <SwarmSettingsSection />
-                  </TabsContent>
-                )}
-
                 {isLocalEdition && (
                   <TabsContent
                     value="import"

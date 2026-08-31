@@ -1397,9 +1397,6 @@
   "goosehintsSection.title": {
     "defaultMessage": "प्रोजेक्ट संकेत (.goosehints)"
   },
-  "groupedExtensionLoadingToast.askGoose": {
-    "defaultMessage": "पूछें goose"
-  },
   "groupedExtensionLoadingToast.collapseDetails": {
     "defaultMessage": "विवरण संक्षिप्त करें"
   },
@@ -1697,29 +1694,17 @@
   "keyboardShortcuts.loading": {
     "defaultMessage": "लोड हो रहा है..."
   },
-  "keyboardShortcuts.newChatDescription": {
-    "defaultMessage": "वर्तमान विंडो में एक नई चैट बनाएं"
-  },
-  "keyboardShortcuts.newChatLabel": {
-    "defaultMessage": "नई चैट"
-  },
   "keyboardShortcuts.newChatWindowDescription": {
     "defaultMessage": "एक नई Goose विंडो खोलें"
   },
   "keyboardShortcuts.newChatWindowLabel": {
-    "defaultMessage": "नई चैट विंडो"
+    "defaultMessage": "नई विंडो"
   },
   "keyboardShortcuts.openDirectoryDescription": {
     "defaultMessage": "निर्देशिका चयन संवाद खोलें"
   },
   "keyboardShortcuts.openDirectoryLabel": {
     "defaultMessage": "निर्देशिका खोलें"
-  },
-  "keyboardShortcuts.quickLauncherDescription": {
-    "defaultMessage": "त्वरित लॉन्चर ओवरले खोलें"
-  },
-  "keyboardShortcuts.quickLauncherLabel": {
-    "defaultMessage": "त्वरित लॉन्चर"
   },
   "keyboardShortcuts.reassignShortcut": {
     "defaultMessage": "शॉर्टकट पुन: असाइन करें"
@@ -2453,9 +2438,6 @@
   "navigation.itemBenchmark": {
     "defaultMessage": "Benchmark"
   },
-  "navigation.itemHome": {
-    "defaultMessage": "नई चैट"
-  },
   "navigation.itemLeanzeroSwarm": {
     "defaultMessage": "LeanZero Swarm"
   },
@@ -2589,7 +2571,7 @@
     "defaultMessage": "एक विकल्प चुनें..."
   },
   "parameterInputModal.startNewChat": {
-    "defaultMessage": "नई चैट शुरू करें (कोई रेसिपी नहीं)"
+    "defaultMessage": "रेसिपी सेटअप से बाहर निकलें"
   },
   "parameterInputModal.startRecipe": {
     "defaultMessage": "रेसिपी शुरू करें"
@@ -2689,6 +2671,21 @@
   },
   "progressiveMessageList.searchHint": {
     "defaultMessage": "खोज के लिए सभी संदेशों को तुरंत लोड करने के लिए Cmd/Ctrl+F दबाएँ"
+  },
+  "projectLanding.addFailed": {
+    "defaultMessage": "प्रोजेक्ट फ़ोल्डर जोड़ा नहीं जा सका"
+  },
+  "projectLanding.addProject": {
+    "defaultMessage": "प्रोजेक्ट जोड़ें"
+  },
+  "projectLanding.emptyHint": {
+    "defaultMessage": "एक प्रोजेक्ट फ़ोल्डर जोड़ें, फिर साइडबार से सत्र शुरू करें।"
+  },
+  "projectLanding.headline": {
+    "defaultMessage": "सत्र किसी प्रोजेक्ट से शुरू होते हैं"
+  },
+  "projectLanding.pickHint": {
+    "defaultMessage": "साइडबार में कोई प्रोजेक्ट चुनें और उसका “+ यहाँ नया सत्र” उपयोग करें।"
   },
   "projectsSection.addProject": {
     "defaultMessage": "प्रोजेक्ट फ़ोल्डर जोड़ें"

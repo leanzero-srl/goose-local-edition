@@ -5,10 +5,13 @@ export interface ExternalGoosedConfig {
   certFingerprint?: string;
 }
 
+// Pass D (owner): sessions start from projects only. `newChat` (Cmd+T fresh chat) and
+// `quickLauncher` (floating input that created a project-less session) left the shortcut set with
+// their affordances; a stored value under either key is simply ignored. `newChatWindow` keeps its
+// storage key but the menu item it drives is "New Window" — it opens a window on the project
+// landing and creates no session.
 export interface KeyboardShortcuts {
   focusWindow: string | null;
-  quickLauncher: string | null;
-  newChat: string | null;
   newChatWindow: string | null;
   openDirectory: string | null;
   settings: string | null;
@@ -60,8 +63,6 @@ export type SettingKey = keyof Settings;
 
 export const defaultKeyboardShortcuts: DefaultKeyboardShortcuts = {
   focusWindow: 'CommandOrControl+Alt+G',
-  quickLauncher: 'CommandOrControl+Alt+Shift+G',
-  newChat: 'CommandOrControl+T',
   newChatWindow: 'CommandOrControl+N',
   openDirectory: 'CommandOrControl+O',
   settings: 'CommandOrControl+,',
@@ -98,21 +99,9 @@ export const defaultSettings: Settings = {
 
 export function getKeyboardShortcuts(settings: Settings): KeyboardShortcuts {
   if (!settings.keyboardShortcuts && settings.globalShortcut !== undefined) {
-    const focusShortcut = settings.globalShortcut;
-    let launcherShortcut: string | null = null;
-
-    if (focusShortcut) {
-      if (focusShortcut.includes('Shift')) {
-        launcherShortcut = focusShortcut;
-      } else {
-        launcherShortcut = focusShortcut.replace(/\+([Gg])$/, '+Shift+$1');
-      }
-    }
-
     return {
       ...defaultKeyboardShortcuts,
-      focusWindow: focusShortcut,
-      quickLauncher: launcherShortcut,
+      focusWindow: settings.globalShortcut,
     };
   }
   return { ...defaultKeyboardShortcuts, ...settings.keyboardShortcuts };

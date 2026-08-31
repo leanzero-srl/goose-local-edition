@@ -22,7 +22,7 @@ import { createSession } from './sessions';
 import { acpListSessions, acpDeleteSession } from './acp/sessions';
 
 import { ChatType } from './types/chat';
-import Hub from './components/Hub';
+import ProjectLanding from './components/ProjectLanding';
 import { UserInput } from './types/message';
 
 interface PairRouteState {
@@ -75,7 +75,7 @@ const i18n = defineMessages({
   shortcutRefusedSpawn: {
     id: 'shortcutRefused.spawn',
     defaultMessage:
-      'Cmd+N would open a second window and a second backend on the live run. Use File > New Chat Window if you really mean it.',
+      'Cmd+N would open a second window and a second backend on the live run. Use File > New Window if you really mean it.',
   },
   shortcutRefusedClose: {
     id: 'shortcutRefused.close',
@@ -94,7 +94,7 @@ const i18n = defineMessages({
   shortcutRefusedNavigate: {
     id: 'shortcutRefused.navigate',
     defaultMessage:
-      'Leaving the Benchmark view is one-way while a run is live; use File > New Chat if you really mean it.',
+      'Leaving the Benchmark view is one-way while a run is live; use the menu if you really mean it.',
   },
 });
 
@@ -116,10 +116,10 @@ function PageViewTracker() {
   return null;
 }
 
-// Route Components
+// Route Components — "/" renders the project landing (pass D: no chat input on home; sessions
+// start from a project). Hub stays in code but nothing routes to it.
 const HubRouteWrapper = () => {
-  const setView = useNavigation();
-  return <Hub setView={setView} />;
+  return <ProjectLanding />;
 };
 
 export function resolveSessionInitialMessage(

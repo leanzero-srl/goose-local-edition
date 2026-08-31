@@ -18,25 +18,9 @@ const i18n = defineMessages({
     id: 'keyboardShortcuts.focusWindowDescription',
     defaultMessage: 'Bring Goose window to front from anywhere',
   },
-  quickLauncherLabel: {
-    id: 'keyboardShortcuts.quickLauncherLabel',
-    defaultMessage: 'Quick Launcher',
-  },
-  quickLauncherDescription: {
-    id: 'keyboardShortcuts.quickLauncherDescription',
-    defaultMessage: 'Open the quick launcher overlay',
-  },
-  newChatLabel: {
-    id: 'keyboardShortcuts.newChatLabel',
-    defaultMessage: 'New Chat',
-  },
-  newChatDescription: {
-    id: 'keyboardShortcuts.newChatDescription',
-    defaultMessage: 'Create a new chat in the current window',
-  },
   newChatWindowLabel: {
     id: 'keyboardShortcuts.newChatWindowLabel',
-    defaultMessage: 'New Chat Window',
+    defaultMessage: 'New Window',
   },
   newChatWindowDescription: {
     id: 'keyboardShortcuts.newChatWindowDescription',
@@ -145,7 +129,7 @@ const i18n = defineMessages({
   restartDescription: {
     id: 'keyboardShortcuts.restartDescription',
     defaultMessage:
-      'Changes to application shortcuts (like New Chat, Settings, etc.) require restarting Goose to take effect. Global shortcuts (Focus Window, Quick Launcher) work immediately.',
+      'Changes to application shortcuts (like New Window, Settings, etc.) require restarting Goose to take effect. Global shortcuts (Focus Window) work immediately.',
   },
   dismiss: {
     id: 'keyboardShortcuts.dismiss',
@@ -229,18 +213,6 @@ const shortcutConfigs: ShortcutConfig[] = [
     category: 'global',
   },
   {
-    key: 'quickLauncher',
-    label: i18n.quickLauncherLabel,
-    description: i18n.quickLauncherDescription,
-    category: 'global',
-  },
-  {
-    key: 'newChat',
-    label: i18n.newChatLabel,
-    description: i18n.newChatDescription,
-    category: 'application',
-  },
-  {
     key: 'newChatWindow',
     label: i18n.newChatWindowLabel,
     description: i18n.newChatWindowDescription,
@@ -291,7 +263,6 @@ const shortcutConfigs: ShortcutConfig[] = [
 ];
 
 const needsRestart = new Set<keyof KeyboardShortcuts>([
-  'newChat',
   'newChatWindow',
   'openDirectory',
   'settings',

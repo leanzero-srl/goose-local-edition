@@ -1397,9 +1397,6 @@
   "goosehintsSection.title": {
     "defaultMessage": "Dicas do projeto (.goosehints)"
   },
-  "groupedExtensionLoadingToast.askGoose": {
-    "defaultMessage": "Pergunte ao goose"
-  },
   "groupedExtensionLoadingToast.collapseDetails": {
     "defaultMessage": "Recolher detalhes"
   },
@@ -1697,29 +1694,17 @@
   "keyboardShortcuts.loading": {
     "defaultMessage": "Carregando..."
   },
-  "keyboardShortcuts.newChatDescription": {
-    "defaultMessage": "Criar uma nova conversa na janela atual"
-  },
-  "keyboardShortcuts.newChatLabel": {
-    "defaultMessage": "Nova Conversa"
-  },
   "keyboardShortcuts.newChatWindowDescription": {
     "defaultMessage": "Abrir uma nova janela do Goose"
   },
   "keyboardShortcuts.newChatWindowLabel": {
-    "defaultMessage": "Nova Janela de Conversa"
+    "defaultMessage": "Nova Janela"
   },
   "keyboardShortcuts.openDirectoryDescription": {
     "defaultMessage": "Abrir a caixa de diálogo de seleção de diretório"
   },
   "keyboardShortcuts.openDirectoryLabel": {
     "defaultMessage": "Abrir Diretório"
-  },
-  "keyboardShortcuts.quickLauncherDescription": {
-    "defaultMessage": "Abrir a sobreposição do iniciador rápido"
-  },
-  "keyboardShortcuts.quickLauncherLabel": {
-    "defaultMessage": "Iniciador Rápido"
   },
   "keyboardShortcuts.reassignShortcut": {
     "defaultMessage": "Reatribuir Atalho"
@@ -2453,9 +2438,6 @@
   "navigation.itemBenchmark": {
     "defaultMessage": "Benchmark"
   },
-  "navigation.itemHome": {
-    "defaultMessage": "Nova conversa"
-  },
   "navigation.itemLeanzeroSwarm": {
     "defaultMessage": "LeanZero Swarm"
   },
@@ -2589,7 +2571,7 @@
     "defaultMessage": "Selecione uma opção..."
   },
   "parameterInputModal.startNewChat": {
-    "defaultMessage": "Iniciar nova conversa (sem receita)"
+    "defaultMessage": "Sair da configuração da receita"
   },
   "parameterInputModal.startRecipe": {
     "defaultMessage": "Iniciar receita"
@@ -2689,6 +2671,21 @@
   },
   "progressiveMessageList.searchHint": {
     "defaultMessage": "Prima Cmd/Ctrl+F para carregar todas as mensagens imediatamente para pesquisa"
+  },
+  "projectLanding.addFailed": {
+    "defaultMessage": "Não foi possível adicionar a pasta do projeto"
+  },
+  "projectLanding.addProject": {
+    "defaultMessage": "Adicionar um projeto"
+  },
+  "projectLanding.emptyHint": {
+    "defaultMessage": "Adicione uma pasta de projeto e depois inicie sessões pela barra lateral."
+  },
+  "projectLanding.headline": {
+    "defaultMessage": "As sessões começam a partir de um projeto"
+  },
+  "projectLanding.pickHint": {
+    "defaultMessage": "Escolha um projeto na barra lateral e use o seu «+ Nova sessão aqui»."
   },
   "projectsSection.addProject": {
     "defaultMessage": "Adicionar uma pasta de projeto"

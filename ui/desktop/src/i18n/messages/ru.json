@@ -1397,9 +1397,6 @@
   "goosehintsSection.title": {
     "defaultMessage": "Подсказки проекта (.goosehints)"
   },
-  "groupedExtensionLoadingToast.askGoose": {
-    "defaultMessage": "Спросить goose"
-  },
   "groupedExtensionLoadingToast.collapseDetails": {
     "defaultMessage": "Свернуть детали"
   },
@@ -1697,29 +1694,17 @@
   "keyboardShortcuts.loading": {
     "defaultMessage": "Загрузка..."
   },
-  "keyboardShortcuts.newChatDescription": {
-    "defaultMessage": "Создать новый чат в текущем окне"
-  },
-  "keyboardShortcuts.newChatLabel": {
-    "defaultMessage": "Новый чат"
-  },
   "keyboardShortcuts.newChatWindowDescription": {
     "defaultMessage": "Открыть новое окно Goose"
   },
   "keyboardShortcuts.newChatWindowLabel": {
-    "defaultMessage": "Новое окно чата"
+    "defaultMessage": "Новое окно"
   },
   "keyboardShortcuts.openDirectoryDescription": {
     "defaultMessage": "Открыть диалог выбора каталога"
   },
   "keyboardShortcuts.openDirectoryLabel": {
     "defaultMessage": "Открыть каталог"
-  },
-  "keyboardShortcuts.quickLauncherDescription": {
-    "defaultMessage": "Открыть всплывающее окно быстрого запуска"
-  },
-  "keyboardShortcuts.quickLauncherLabel": {
-    "defaultMessage": "Быстрый запуск"
   },
   "keyboardShortcuts.reassignShortcut": {
     "defaultMessage": "Переназначить сочетание"
@@ -2453,9 +2438,6 @@
   "navigation.itemBenchmark": {
     "defaultMessage": "Benchmark"
   },
-  "navigation.itemHome": {
-    "defaultMessage": "Новый чат"
-  },
   "navigation.itemLeanzeroSwarm": {
     "defaultMessage": "LeanZero Swarm"
   },
@@ -2589,7 +2571,7 @@
     "defaultMessage": "Выберите вариант..."
   },
   "parameterInputModal.startNewChat": {
-    "defaultMessage": "Начать новый чат (без рецепта)"
+    "defaultMessage": "Выйти из настройки рецепта"
   },
   "parameterInputModal.startRecipe": {
     "defaultMessage": "Запустить рецепт"
@@ -2689,6 +2671,21 @@
   },
   "progressiveMessageList.searchHint": {
     "defaultMessage": "Нажмите Cmd/Ctrl+F, чтобы сразу загрузить все сообщения для поиска"
+  },
+  "projectLanding.addFailed": {
+    "defaultMessage": "Не удалось добавить папку проекта"
+  },
+  "projectLanding.addProject": {
+    "defaultMessage": "Добавить проект"
+  },
+  "projectLanding.emptyHint": {
+    "defaultMessage": "Добавьте папку проекта, затем запускайте сессии из боковой панели."
+  },
+  "projectLanding.headline": {
+    "defaultMessage": "Сессии начинаются с проекта"
+  },
+  "projectLanding.pickHint": {
+    "defaultMessage": "Выберите проект в боковой панели и используйте его «+ Новая сессия здесь»."
   },
   "projectsSection.addProject": {
     "defaultMessage": "Добавить папку проекта"

@@ -1397,9 +1397,6 @@
   "goosehintsSection.title": {
     "defaultMessage": "项目提示（.goosehints）"
   },
-  "groupedExtensionLoadingToast.askGoose": {
-    "defaultMessage": "问问 goose"
-  },
   "groupedExtensionLoadingToast.collapseDetails": {
     "defaultMessage": "收起详情"
   },
@@ -1697,29 +1694,17 @@
   "keyboardShortcuts.loading": {
     "defaultMessage": "加载中…"
   },
-  "keyboardShortcuts.newChatDescription": {
-    "defaultMessage": "在当前窗口新建一个聊天"
-  },
-  "keyboardShortcuts.newChatLabel": {
-    "defaultMessage": "新建聊天"
-  },
   "keyboardShortcuts.newChatWindowDescription": {
     "defaultMessage": "打开一个新的 Goose 窗口"
   },
   "keyboardShortcuts.newChatWindowLabel": {
-    "defaultMessage": "新聊天窗口"
+    "defaultMessage": "新窗口"
   },
   "keyboardShortcuts.openDirectoryDescription": {
     "defaultMessage": "打开目录选择对话框"
   },
   "keyboardShortcuts.openDirectoryLabel": {
     "defaultMessage": "打开目录"
-  },
-  "keyboardShortcuts.quickLauncherDescription": {
-    "defaultMessage": "打开快速启动器悬浮窗"
-  },
-  "keyboardShortcuts.quickLauncherLabel": {
-    "defaultMessage": "快速启动器"
   },
   "keyboardShortcuts.reassignShortcut": {
     "defaultMessage": "重新分配快捷键"
@@ -2453,9 +2438,6 @@
   "navigation.itemBenchmark": {
     "defaultMessage": "Benchmark"
   },
-  "navigation.itemHome": {
-    "defaultMessage": "新对话"
-  },
   "navigation.itemLeanzeroSwarm": {
     "defaultMessage": "LeanZero Swarm"
   },
@@ -2589,7 +2571,7 @@
     "defaultMessage": "选择一个选项…"
   },
   "parameterInputModal.startNewChat": {
-    "defaultMessage": "开始新聊天（不使用配方）"
+    "defaultMessage": "退出配方设置"
   },
   "parameterInputModal.startRecipe": {
     "defaultMessage": "启动配方"
@@ -2689,6 +2671,21 @@
   },
   "progressiveMessageList.searchHint": {
     "defaultMessage": "按 Cmd/Ctrl+F 立即加载全部消息以便搜索"
+  },
+  "projectLanding.addFailed": {
+    "defaultMessage": "无法添加项目文件夹"
+  },
+  "projectLanding.addProject": {
+    "defaultMessage": "添加项目"
+  },
+  "projectLanding.emptyHint": {
+    "defaultMessage": "添加一个项目文件夹，然后从侧边栏开始会话。"
+  },
+  "projectLanding.headline": {
+    "defaultMessage": "会话从项目开始"
+  },
+  "projectLanding.pickHint": {
+    "defaultMessage": "在侧边栏选择一个项目，使用它的“+ 在此新建会话”。"
   },
   "projectsSection.addProject": {
     "defaultMessage": "添加项目文件夹"
