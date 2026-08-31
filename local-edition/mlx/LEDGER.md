@@ -2,6 +2,13 @@
 
 ## 2026-08-31 afternoon — Mihai's first hands-on: three UI corrections, all shipped same-day
 
+Backend for the round (6d4b5d7bc): per-model sampling profiles with live-config migration proven
+against the verbatim config (presence 1.2 lands in the mounted model's profile and its argv);
+paginated HF browse with ALL four filters server-side-honest (filter=AND proven with a negative
+control; quant/arch match tags — name-only quants are honestly under-included, never wrong pages);
+cursor guarded against token exfiltration. Rapid-MLX has no serve-time context-length flag, so
+context_limit stays goose-side bookkeeping (matches the night's earlier finding).
+
 He used the window himself; his confusions are the spec. (1) Sampling was buried below the fold on
 the Engine tab and absent from the Models tab where he looked → Sampling is now a third top-level
 tab with a per-model shortcut from every model row (9b826b4cb, live-verified 18 checks). (2) The
