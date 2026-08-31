@@ -730,3 +730,9 @@ research_request_block's armed-no-claimed-sections arm wording.
   and separated the two lanes' fates cleanly (act on web-viz / do-not-touch ledgerd-core, with
   walk2 PROVEN). The meter-lag discovery is an engine defect nobody had seen in nine weeks of
   looking at holds. Charter gap: none.
+- 2026-08-31 22:15 panel-surgeon (sessions backend, 802ce86d3): EXEMPLARY. The contract landed
+  exactly as briefed plus honest refinements (runId null-until-reconciled instead of a fake id;
+  launch never waits on the network; delete path-pinned so operator archives are untouchable BY
+  CONSTRUCTION); proved its 1170/1170 green on a clean worktree to separate its work from the
+  sibling's in-flight failures — the check-the-property discipline applied to test hygiene.
+  Charter gap: none.
