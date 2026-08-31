@@ -719,3 +719,8 @@ research_request_block's armed-no-claimed-sections arm wording.
   through the restream branch with the held-detail quoted, and staged the complete run-cannot-end
   record in its state file before it is needed. Numbers-with-teeth: recorded web-viz.log byte size
   (2433B) after noticing tick 25 never had. Charter gap: none.
+- 2026-08-31 21:45 swarm-surgeon (promise evasion, f1d76cd17): EXEMPLARY — the walk-first brief
+  honored exactly: proved the indefinite hold from the run's own seq numbers BEFORE editing, then
+  the smallest rung that closes it (the streak as memory, no new counter), tests pinning ok-cannot-
+  disarm and Restart precedence, and an honest boundary statement (the 1-2-read-calls shape is NOT
+  covered and needs its own brief — correctly left to the r7 desk). Charter gap: none.
