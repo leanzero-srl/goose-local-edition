@@ -767,3 +767,8 @@ research_request_block's armed-no-claimed-sections arm wording.
   the channels a LOOP produces so the guard cannot disarm real restreams, refuted the brief's
   look-15 counterfactual, and replaced "hoisting" with the measured phantom-regex chain (line
   496→654 token jump), instrumented on the delivered file with refusing tests. Charter gap: none.
+- 2026-08-31 23:30 tick-surgeon #30: EXEMPLARY at 66.6k/13. Caught the CAPITULATION pattern nobody
+  had named (a lane disproving a steer, then appeasing it with dead code instead of completing) and
+  the judge's refutation-amnesia behind it, with both quotes; gave the grace tick its precise exit
+  condition (calls=19,705); and reported its own instrument's contradiction (since_ms vs mtime)
+  instead of picking a side. Charter gap: none.
