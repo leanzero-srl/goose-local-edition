@@ -37,8 +37,8 @@ use judge_context::{
 };
 mod ladder;
 use ladder::{
-    calls_since_nudge, nudge_arm, nudge_delivery, produced_since_look, restream_seed,
-    wrong_channel_stall, NudgeDelivery,
+    calls_since_nudge, drift_streak_step, nudge_arm, nudge_delivery, produced_since_look,
+    restream_seed, write_progress, wrong_channel_stall, NudgeDelivery,
 };
 mod decisions;
 use decisions::PlanDecision;
@@ -9814,58 +9814,6 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
         assert!(!proxy_yes(false, 9, false));
     }
 
-    /// DRIFT CORROBORATES; IT DOES NOT SUPPRESS FOREVER.
-    ///
-    /// DRIFTING on a producing call is held, because 33 of 34 such nudges changed nothing and cost 66
-    /// minutes of worker time. But the old rule held it whatever happened next, so a call could reach
-    /// 21,749 reasoning characters with zero tool calls, be diagnosed DRIFTING, and never be told --
-    /// measured live on run swarm-20260829-100743413, where five DRIFTING verdicts produced one nudge.
-    ///
-    /// LOOPING already acts on the SECOND agreeing look rather than the first. This is the same rule:
-    /// one DRIFTING is noise, a second with STILL no action taken is the judge saying the same thing
-    /// twice about a call that did nothing about it. Acting resets the streak, because acting is the
-    /// outcome the nudge exists to cause.
-    #[test]
-    fn drift_is_delivered_on_the_second_look_that_still_sees_no_action() {
-        // (drift_verdict, actions_since_last_look) -> (streak, delivered_when_producing)
-        let step = |streak: &mut u32, drift: bool, actions: usize| -> bool {
-            if drift && actions == 0 {
-                *streak += 1;
-            } else if actions > 0 || !drift {
-                *streak = 0;
-            }
-            drift && *streak >= 2
-        };
-
-        let mut streak = 0u32;
-        assert!(
-            !step(&mut streak, true, 0),
-            "the FIRST drifting is held — that is the 33/34 evidence"
-        );
-        assert!(
-            step(&mut streak, true, 0),
-            "a SECOND drifting with no action is corroborated"
-        );
-
-        // A call that ACTS has done the thing the nudge wanted; the case starts over.
-        let mut streak = 0u32;
-        step(&mut streak, true, 0);
-        assert!(
-            !step(&mut streak, true, 3),
-            "acting resets — this look must not deliver"
-        );
-        assert_eq!(streak, 0, "and the streak is cleared, not merely skipped");
-
-        // An OK verdict between two DRIFTINGs is disagreement, not corroboration.
-        let mut streak = 0u32;
-        step(&mut streak, true, 0);
-        step(&mut streak, false, 0);
-        assert!(
-            !step(&mut streak, true, 0),
-            "a non-drift look breaks the streak"
-        );
-    }
-
     /// THE PANEL'S DEFAULTS ARE GENERATED FROM THIS STRUCT, NOT RETYPED BESIDE IT.
     ///
     /// `golden.test.ts` carried a test titled "DEFAULTS mirrors the engine bake, so the panel can never
@@ -15255,6 +15203,17 @@ impl GooseAgentDispatcher {
         // Answer-channel chars at the last DELIVERED nudge (None before the first; the restream seam
         // resets it with the rest of the ladder) — the formed-growth half of `wrong_channel_stall`.
         let mut answer_chars_at_last_nudge: Option<usize> = None;
+        // Owned-file bytes on disk as of the last VERDICT-BEARING look: the drift streak's
+        // write-progress baseline (r6c web-viz — read-only sed/grep calls reset the old
+        // action-count streak for 3h while 0 files existed). Starts 0, so bytes already on disk
+        // read as growth on the first look — one look of grace for a lane that has delivered,
+        // never a shield. Deliberately NOT reset by the restream seam: the disk did not change
+        // at the restream, and the fresh attempt's ladder is protected by its own resets.
+        let mut omni_owned_bytes_at_last_look: u64 = 0;
+        // Owned-file bytes at the last DELIVERED nudge (None before the first; the restream seam
+        // resets it with the rest of the ladder) — the owned-file half of the ladder's
+        // write-progress obedience signal (`ladder::write_progress`).
+        let mut owned_bytes_at_last_nudge: Option<u64> = None;
         let mut repeat_hash: Option<u64> = None;
         let mut repeat_run: usize = 0usize;
         let mut repeat_run_started = tokio::time::Instant::now();
@@ -16529,17 +16488,36 @@ impl GooseAgentDispatcher {
                     // LOOPING already has the right shape and DRIFTING did not: LOOPING acts on the
                     // SECOND look that agrees, never the first. So drift corroborates the same way. One
                     // DRIFTING on a producing call is the noise the 33-of-34 measurement describes; a
-                    // second DRIFTING with STILL no action taken in between is the judge saying the same
-                    // thing twice about a call that has done nothing about it, and that is evidence, not
-                    // taste. A call that ACTS resets the streak, because acting is the outcome the nudge
-                    // was trying to cause.
+                    // second DRIFTING with STILL no progress on the deliverable in between is the judge
+                    // saying the same thing twice about a call that has done nothing about it, and that
+                    // is evidence, not taste.
+                    //
+                    // AND "DID SOMETHING ABOUT IT" IS MEASURED ON THE DELIVERABLE, NOT ON TOOL CALLS
+                    // (r6c web-viz, BUILD+294m): five DRIFTING verdicts (15:51/16:21/17:13/17:39/18:37)
+                    // were ALL held because the lane logged 1-2 READ-ONLY sed/grep calls per look window
+                    // (act=1/2/1/2/1), each one resetting the old action-count streak — while it wrote
+                    // ZERO files and its formed channel moved 772->924 bytes across five hours. A
+                    // reads-but-never-writes lane was structurally shielded from ever receiving a steer.
+                    // And the reset-on-any-non-drift-verdict was the second shield: an interleaved ok
+                    // (18:01, established="" next="") disarmed the case the 17:39 hold had just armed.
+                    // `ladder::drift_streak_step` carries the rule: WRITE progress (owned bytes grew)
+                    // resets; a read-only call does not; on a files-owing lane an interleaved ok leaves
+                    // the armed case standing — only progress on the files it owes disarms it.
+                    let owned_bytes_now: u64 = owned
+                        .iter()
+                        .map(|f| std::fs::metadata(self.working_dir.join(f)).map_or(0, |m| m.len()))
+                        .sum();
+                    let owned_grew_since_look = owned_bytes_now > omni_owned_bytes_at_last_look;
+                    omni_owned_bytes_at_last_look = owned_bytes_now;
+                    let any_owned_on_disk = owned.iter().any(|f| self.working_dir.join(f).exists());
                     let drift_verdict = omni_outcome.verdict == goose_swarm::Verdict::Drifting
                         && omni_outcome.confidence >= 0.8;
-                    if drift_verdict && actions_since_last_look == 0 {
-                        omni_drift_streak += 1;
-                    } else if actions_since_last_look > 0 || !drift_verdict {
-                        omni_drift_streak = 0;
-                    }
+                    omni_drift_streak = drift_streak_step(
+                        omni_drift_streak,
+                        drift_verdict,
+                        owned_grew_since_look,
+                        !owned.is_empty(),
+                    );
                     // Measured recurrence corroborates on its own: a DRIFTING verdict on a stream the
                     // meter reads as recurring is evidence agreeing with measurement, not taste — the
                     // same standing the tool-repeat evidence already has. r4b's one correct direction
@@ -16558,7 +16536,7 @@ impl GooseAgentDispatcher {
                             "drift_streak": omni_drift_streak,
                             "detail": "DRIFTING on a producing call -- held for one look, because 33 of 34 \
                                        such nudges changed nothing and cost 66 minutes of worker time. A \
-                                       second DRIFTING with no action taken since will be delivered.",
+                                       second DRIFTING with no write progress since will be delivered.",
                         }));
                     }
                     // A MEASURED repeat needs no corroboration from a second look. The streak exists to
@@ -16587,13 +16565,28 @@ impl GooseAgentDispatcher {
                     let answer_chars_now: usize = texts.iter().map(|t| t.chars().count()).sum();
                     let wrong_channel = wrong_channel_stall(
                         !owned.is_empty(),
-                        owned.iter().any(|f| self.working_dir.join(f).exists()),
+                        any_owned_on_disk,
                         answer_chars_at_last_nudge.map(|n| answer_chars_now.saturating_sub(n)),
                     );
+                    // THE LADDER'S OBEDIENCE SIGNAL IS WRITE PROGRESS, NOT TOOL-CALL COUNT (r6c
+                    // web-viz: read-only sed/grep between nudges read as "acted since the previous
+                    // nudge" and kept the ladder at steer forever). None = no nudge delivered this
+                    // attempt (the restream seam resets it with the rest of the ladder); Some(b) =
+                    // whether the deliverable moved since the last delivered nudge — owned bytes
+                    // grew, or (in a shape that is not the wrong-channel pour) material formed
+                    // growth, the same facts `wrong_channel_stall` reads.
+                    let write_progress_since_nudge = owned_bytes_at_last_nudge.map(|b| {
+                        write_progress(
+                            owned_bytes_now > b,
+                            !owned.is_empty(),
+                            any_owned_on_disk,
+                            answer_chars_at_last_nudge
+                                .map_or(0, |n| answer_chars_now.saturating_sub(n)),
+                        )
+                    });
                     let (can_steer, delivery_reason, held_why) = match nudge_delivery(
                         pending.is_empty(),
-                        tool_calls_at_last_nudge,
-                        call_records.len(),
+                        write_progress_since_nudge,
                         &omni_outcome.verdict,
                         advancing,
                         wrong_channel,
@@ -16853,6 +16846,7 @@ impl GooseAgentDispatcher {
                         last_direction = direction.clone();
                         tool_calls_at_last_nudge = Some(call_records.len());
                         answer_chars_at_last_nudge = Some(answer_chars_now);
+                        owned_bytes_at_last_nudge = Some(owned_bytes_now);
 
                         if can_steer {
                             // Queued into the SAME running session. The in-flight turn is not burned and
@@ -16990,6 +16984,7 @@ impl GooseAgentDispatcher {
                             // legitimately span attempts).
                             tool_calls_at_last_nudge = None;
                             answer_chars_at_last_nudge = None;
+                            owned_bytes_at_last_nudge = None;
                             nudges_used = 0;
                             last_direction.clear();
                             omni_drift_streak = 0;
