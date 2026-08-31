@@ -459,3 +459,10 @@ research_request_block's armed-no-claimed-sections arm wording.
   lingering after delete); restored the owner's disk state after a driver miss-click and said so;
   honest not-live-verified list incl. declining the 10GB residue resume per brief. Screenshots to
   ~/goose-screenshots/ — a user-visible location, better than scratchpad; adopt as the convention.
+- 2026-08-31 18:15 panel-surgeon (Goose Swarm pass A + update severance, 40fa6c5c2): CLEAN++.
+  Found the real update tie (parent owner/repo define-baked into packaged builds — source
+  defaults looked innocent); severed at the bake with a network-log proof and a four-file
+  zero-parent-marker pin test; found the load-bearing masquerade that blocked edition derivation
+  (defaultSettings.edition merged into every read as if explicitly chosen); healed pre-existing
+  i18n drift it stumbled on and said so; five unbriefed observations incl. parent-repo issue
+  links and a release-fork version-regression hazard — both queued. Charter gap: none.

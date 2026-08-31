@@ -16,3 +16,6 @@ Ratio so far: 3 implemented/resolved : 2 dropped-with-reason : 1 scheduled-with-
 
 | 6 | Download-progress rows vanish from view when switching tabs mid-download (state lives in ModelsSection; backend keeps downloading) | SCHEDULED | Next UI round — lift tracker state to the view shell |
 | 7 | Mount picker can preselect an incomplete model; Mount not gated on completeness (backend refuses loudly today) | IMPLEMENT | Next UI touch — disable Mount + incomplete tag in the picker |
+| 8 | Report-a-Bug / Request-a-Feature / Diagnostics still link the PARENT repo's issues | IMPLEMENT | Pass C — point at leanzero-srl or remove |
+| 9 | Justfile release-fork accepts a version below 2.0.0 (would silently regress the own-version line) | IMPLEMENT | Pass C round — recipe refuses <2.0.0 |
+| 10 | Tray tooltip + main-process dialogs still say plain Goose (main.ts has no edition awareness) | IMPLEMENT | Pass C — brand from one constant |
