@@ -660,3 +660,9 @@ research_request_block's armed-no-claimed-sections arm wording.
   (.swarm/run-*.jsonl — events live at the run ROOT as run.jsonl) and wrong verdict case ("OK" —
   recorded lowercase "ok"). Orchestrator briefs citing run.jsonl must state: run root, lowercase
   verdicts.
+- 2026-08-31 18:25 tick-surgeon #20: EXEMPLARY at 57.3k/9. Closed the priority watch in both
+  directions: refuted MY tick-19 "gold-plating" read with the primary quote (a real wire-format
+  bug being fixed pre-completion) and turned the web-viz hold into a measured causation chain
+  (steer 17:40 → formed thaw 17:55, first movement in 104m) with an explicit exhaustion rule for
+  next tick. Also caught micro-recurrence inside a converging tail ("Let me quickly check around
+  lines 440–450" 3×) — the microscopic lens working as ordered. Charter gap: none.
