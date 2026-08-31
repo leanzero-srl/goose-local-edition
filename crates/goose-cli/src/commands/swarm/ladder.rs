@@ -29,6 +29,38 @@ pub(super) fn produced_since_look(chars: usize, actions: usize) -> bool {
     chars >= OMNI_JUDGE_MIN_CHARS || actions > 0
 }
 
+/// THE METER'S CLAIM OF GROWTH IS CHECKED AGAINST THE DURABLE TRANSCRIPT (r6c web-viz, look 14).
+///
+/// `produced_since_last_look` is computed at a look's TRIGGER against the PREVIOUS trigger — but
+/// the verdict that consumes it lands a whole judge probe later (a full model call on the same
+/// saturated fleet; ~22 minutes live), so chars that arrived early in the trigger window read as
+/// fresh production at a verdict delivered deep into silence. MEASURED (r6c, run
+/// swarm-20260831-072930517): web-viz.think.log froze at 158,911 bytes at 18:10:25Z; look 13's
+/// verdict (18:13:49Z) and look 14's (18:36:54Z) both read thinking_total 156,267 — ZERO growth
+/// between them — yet look 14 carried produced_since_last_look 14,487 (its baseline was look 13's
+/// trigger, 141,780), `advancing` stayed true, and the drift verdict was HELD on "fresh
+/// non-recurring content" for a stream 26 minutes dead.
+///
+/// The durable `<task>.think.log` is fed by the SAME event loop that feeds the meter and flushed
+/// at digest cadence, so a full look cycle (previous verdict stat -> this verdict stat) with ZERO
+/// new bytes on disk means the stream is silent whatever the trigger-window arithmetic says.
+/// DELTAS, never absolutes: the meter counts CHARS and the file counts BYTES, so the two sizes
+/// are incomparable — grew-vs-frozen is the unit-free comparison. `None` means there is nothing
+/// to check against (no durable transcript on disk — the pre-fce592811 world where a lane had
+/// digests only — or no prior stat yet, the first verdict-bearing look): the meter stands alone,
+/// exactly the pre-fix behavior. Reader-based and progress-based: one fs metadata read per look,
+/// no clock, no cap — the only effect is that a hold's "it is producing" evidence must exist on
+/// disk. Actions still count as production on their own (`produced_since_look`).
+pub(super) fn durable_clamped_produced(
+    meter_chars: usize,
+    durable_think_grew: Option<bool>,
+) -> usize {
+    match durable_think_grew {
+        Some(false) => 0,
+        Some(true) | None => meter_chars,
+    }
+}
+
 /// WHICH ARM produced a nudge, for the artefact. Three distinct triggers reach one emit — a measured
 /// repeat, a DRIFTING verdict, and a LOOPING streak that is itself armed either by measured recurrence
 /// or by tail similarity — and the payload named none of them, so "which trigger produces useful nudges"
@@ -464,6 +496,23 @@ mod tests {
             produced_since_look(0, 5),
             "actions alone are production — there is no reasoning floor to clear as well"
         );
+    }
+
+    /// r6c look 14 pinned: the meter claimed 14,487 fresh chars while web-viz.think.log had grown
+    /// ZERO bytes across the whole look cycle — the backlog of a stream 26 minutes dead draining
+    /// through the trigger-window arithmetic. A meter claim the durable transcript does not back
+    /// is 0; a claim the transcript does back passes through untouched.
+    #[test]
+    fn a_meter_claim_the_durable_transcript_does_not_back_is_zero() {
+        // r6c look 14: meter delta 14,487, durable delta 0 -> produced 0.
+        assert_eq!(durable_clamped_produced(14_487, Some(false)), 0);
+        // The inverse: the durable file grew, so the meter's claim stands.
+        assert_eq!(durable_clamped_produced(14_487, Some(true)), 14_487);
+        // Nothing to check against (no durable transcript on disk — the pre-fce592811 world —
+        // or the first verdict-bearing look): the meter stands alone, the pre-fix behavior.
+        assert_eq!(durable_clamped_produced(14_487, None), 14_487);
+        // A zero meter is zero whatever the file did (the clamp only ever reduces).
+        assert_eq!(durable_clamped_produced(0, Some(true)), 0);
     }
 
     /// The loop case the widening above gives up must still be caught, or the fix trades one blindness
