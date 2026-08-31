@@ -460,3 +460,6 @@ research_request_block's armed-no-claimed-sections arm wording.
   kill-checkpoint field table with proof, and the doctrine (gate 7, microscopic, works-not-appears,
   purpose-over-prose, kill-pids, no-caps). Read-only toward the run; recommends, never kills. The cron
   protocol now delegates the reading to it every tick. First return graded below.
+  GOTCHA (registry): a newly minted agent file is NOT callable by subagent_type until the session
+  restarts — the roster loads at session start (works-prover hit this too). Bridge: general-purpose
+  agent instructed to read + execute the charter file. The tick cron carries that fallback.
