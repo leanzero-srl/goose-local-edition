@@ -466,3 +466,11 @@ research_request_block's armed-no-claimed-sections arm wording.
   (defaultSettings.edition merged into every read as if explicitly chosen); healed pre-existing
   i18n drift it stumbled on and said so; five unbriefed observations incl. parent-repo issue
   links and a release-fork version-regression hazard — both queued. Charter gap: none.
+- 2026-08-31 19:30 panel-surgeon (Projects tree pass B, 904cebff2): CLEAN++. One-join law held
+  (server cwd filter, no client grouping), verified the field against the SDK type AND the sealed
+  binary; ran prove-the-negative-on-the-same-object when the expected sessions were absent (DB
+  truth: recon's example dir had none here) with a positive control on a dir that did; rendered a
+  failure twin for the session fetch; unfiled uses exact-match honesty so subdir sessions never
+  vanish; 19 strings translated into all 15 locales unprompted. Noted the dormant CLI-side
+  projects.json (two registries now exist — unification candidate) and kept prettier-dirty HEAD
+  files surgical instead of mass-reformatting. Charter gap: none.
