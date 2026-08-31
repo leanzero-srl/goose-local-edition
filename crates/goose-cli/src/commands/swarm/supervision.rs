@@ -442,3 +442,141 @@ pub(super) fn superseded_from_prior(prior: Option<serde_json::Value>) -> Vec<ser
     }
     out
 }
+
+/// Why a supervision reply is NOT a usable reply. Both variants take the caller's failed-look
+/// path; they are distinguished because the omni judge names the second with the
+/// `judge_turn_budget_exhausted` vocabulary the schedjudge arm already emits.
+#[derive(Debug)]
+pub(super) enum SupervisedReplyError {
+    /// The agent loop's own provider-error closer text (A-2, `said_kind_of == "error"`): a dead
+    /// judge model arrives as `Ok` TEXT, and r2's lenient parse minted 28 `drifting` verdicts
+    /// whose hint WAS gabee's 400 body. Carries the tail-clipped error for the failed event.
+    ProviderError(String),
+    /// The reply is — or after the strip reduces to — the agent loop's turn-cap filler
+    /// (`goose::agents::MAX_TURNS_MESSAGE`): the model's single supervision turn ended in a tool
+    /// call, so the ENGINE wrote the filler instead of a verdict. r6a (run.jsonl seq 58) measured
+    /// the laundering: the reply was ONLY the filler and `parse_judge_reply`'s no-token fallback
+    /// manufactured `drifting` with the filler as `next` — an engine sentence in the verdict
+    /// channel. This state was never actually judged; a failed look, never a verdict.
+    TurnBudgetExhausted,
+}
+
+impl std::fmt::Display for SupervisedReplyError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::ProviderError(body) => f.write_str(body),
+            Self::TurnBudgetExhausted => f.write_str(
+                "no verdict — the reply was the agent loop's own turn-cap filler \
+                 (the supervisor's single turn ended in a tool call)",
+            ),
+        }
+    }
+}
+
+/// The ONE door a small-turn supervision reply (judge probe, prereview, tail review, finding
+/// verify, reflect, ask-answer) walks before any parser sees it:
+///   1. the A-2 error-closer reclassification (absorbs the old `supervision_reply`),
+///   2. a trailing `MAX_TURNS_MESSAGE` is STRIPPED — r6c (live, run.jsonl seq 312) measured a real
+///      DRIFTING verdict whose `next` ended with the filler as its own trailing line, one drift-hold
+///      away from being delivered to a worker as a judge direction. Engine-authored text never
+///      reaches a model-read direction. Stripped by the shared constant, never a duplicated literal
+///      (the JUDGE_ENDED_NEEDLE pattern: emit and matcher move together).
+///   3. what remains must not BE the filler (`is_agent_loop_filler`: empty, or the filler phrases
+///      anywhere — the same over-broad-but-safe contract the schedjudge arm already applies).
+pub(super) fn supervised_reply_text(text: &str) -> Result<String, SupervisedReplyError> {
+    if super::said_kind_of(text) == "error" {
+        return Err(SupervisedReplyError::ProviderError(super::clip_tail(
+            text, 400,
+        )));
+    }
+    let t = text.trim_end();
+    let cleaned = t
+        .strip_suffix(goose::agents::MAX_TURNS_MESSAGE)
+        .map(str::trim_end)
+        .unwrap_or(t);
+    if super::is_agent_loop_filler(cleaned) {
+        return Err(SupervisedReplyError::TurnBudgetExhausted);
+    }
+    Ok(cleaned.to_string())
+}
+
+#[cfg(test)]
+mod reply_tests {
+    use super::*;
+
+    /// r6a run.jsonl seq 58 pinned: the judge probe's reply was ONLY the engine's turn-cap filler
+    /// (built FROM the shared constant, exactly as agent.rs emits it), and the lenient parser
+    /// really does launder it into `drifting` — which is why this gate must run BEFORE the parse.
+    #[test]
+    fn a_filler_only_reply_is_a_failed_look_never_a_verdict() {
+        let r6a_reply = goose::agents::MAX_TURNS_MESSAGE.to_string();
+        assert!(matches!(
+            supervised_reply_text(&r6a_reply),
+            Err(SupervisedReplyError::TurnBudgetExhausted)
+        ));
+        assert_eq!(
+            super::super::parse_judge_reply(&r6a_reply).verdict,
+            super::super::Verdict::Drifting,
+            "the no-token fallback still manufactures DRIFTING from the filler, so the \
+             classification must happen before parse_judge_reply ever sees it"
+        );
+    }
+
+    /// r6c (live run swarm-20260831-072930517, run.jsonl seq 312) pinned: a REAL verdict whose
+    /// final line is the turn-cap filler. The verdict survives; the engine's sentence does not.
+    #[test]
+    fn a_verdict_with_trailing_filler_parses_with_a_clean_next() {
+        let r6c_shape = format!(
+            "DRIFTING|HIGH|Answer is fully worked out in its reasoning: role matrix and vendor \
+             payment call|Your next message must be a single tool call: invoke the output tool NOW \
+             and emit the structured reply. Do not add more reasoning; refine only after it is \
+             emitted.\n\n{}",
+            goose::agents::MAX_TURNS_MESSAGE
+        );
+        let clean = supervised_reply_text(&r6c_shape).expect("a real verdict is kept");
+        assert!(
+            !clean.contains("maximum number of actions"),
+            "the engine's filler must not survive into the verdict channel: {clean}"
+        );
+        let out = super::super::parse_judge_reply(&clean);
+        assert_eq!(out.verdict, super::super::Verdict::Drifting);
+        assert!(
+            out.next_action
+                .ends_with("refine only after it is emitted."),
+            "next ends at the judge's own words, not the engine's: {}",
+            out.next_action
+        );
+    }
+
+    /// The r2 provider-error shape (moved with the `supervision_reply` absorption) and two normal
+    /// verdicts, byte-untouched.
+    #[test]
+    fn provider_error_text_is_rejected_and_normal_replies_pass_untouched() {
+        let r2_shape = "Ran into this error: Request failed with status 400 Bad Request: \
+             Invalid model identifier 'qwen3-omni-30b'.\n\nPlease retry if you think this is a \
+             transient or recoverable error.";
+        match supervised_reply_text(r2_shape) {
+            Err(SupervisedReplyError::ProviderError(body)) => assert!(
+                body.contains("Invalid model identifier"),
+                "the failed event carries the error body: {body}"
+            ),
+            _ => panic!("a provider error is never a reply"),
+        }
+        // parse_judge_reply on the same text is exactly the r2 laundering — pinned here so the
+        // guard's necessity stays measured: lenient parsing DOES mint a Drifting verdict from it.
+        assert_eq!(
+            super::super::parse_judge_reply(r2_shape).verdict,
+            super::super::Verdict::Drifting,
+            "the parser still launders error text, so the gate must run BEFORE it"
+        );
+        for ok in [
+            "LOOPING|HIGH|the schema is written|write app/main.py",
+            "OK|HIGH|wrote store.py",
+        ] {
+            match supervised_reply_text(ok) {
+                Ok(t) => assert_eq!(t, ok),
+                Err(e) => panic!("a normal reply passes untouched: {e}"),
+            }
+        }
+    }
+}

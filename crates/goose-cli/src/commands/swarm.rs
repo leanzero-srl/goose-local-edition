@@ -42,9 +42,9 @@ use decisions::PlanDecision;
 mod supervision;
 use supervision::{
     fold_forming_event, judge_lane_key, prereview_lane_key, render_forming_file, replan_lane_key,
-    schedjudge_lane_key, superseded_from_prior, supervision_lane_kind, tail_review_lane_key,
-    verify_lane_key, write_forming_atomic, FormingGuard, FormingReport, FormingSidecar,
-    ASK_ANSWER_LANE, PILLARS_LANE, REFLECT_LANE,
+    schedjudge_lane_key, superseded_from_prior, supervised_reply_text, supervision_lane_kind,
+    tail_review_lane_key, verify_lane_key, write_forming_atomic, FormingGuard, FormingReport,
+    FormingSidecar, SupervisedReplyError, ASK_ANSWER_LANE, PILLARS_LANE, REFLECT_LANE,
 };
 mod orientation;
 use orientation::{
@@ -7731,36 +7731,9 @@ mod tests {
             .is_none());
     }
 
-    /// A-2: the agent loop returns provider failures as Ok TEXT (its error closers), and every
-    /// lenient supervision parser will read that text as a substantive reply. This is the one
-    /// classification gate: the exact reply shape r2's judge received for 30 minutes must classify
-    /// as a failed call, and a real verdict line must pass through untouched.
-    #[test]
-    fn supervision_reply_rejects_provider_error_text_and_passes_verdicts() {
-        let r2_shape = "Ran into this error: Request failed with status 400 Bad Request: \
-             Invalid model identifier 'qwen3-omni-30b'.\n\nPlease retry if you think this is a \
-             transient or recoverable error.";
-        let err = supervision_reply(r2_shape).expect_err("a provider error is never a reply");
-        assert!(
-            err.contains("Invalid model identifier"),
-            "the failed event carries the error body: {err}"
-        );
-        // parse_judge_reply on the same text is exactly the r2 laundering — pinned here so the
-        // guard's necessity stays measured: lenient parsing DOES mint a Drifting verdict from it.
-        assert_eq!(
-            parse_judge_reply(r2_shape).verdict,
-            Verdict::Drifting,
-            "the parser still launders error text, so the gate must run BEFORE it"
-        );
-        assert_eq!(
-            supervision_reply("LOOPING|HIGH|the schema is written|write app/main.py"),
-            Ok("LOOPING|HIGH|the schema is written|write app/main.py"),
-        );
-        assert_eq!(
-            supervision_reply("OK|HIGH|wrote store.py"),
-            Ok("OK|HIGH|wrote store.py")
-        );
-    }
+    // A-2's classification pins (the r2 error-closer shape, the parse-launders proof, verdicts
+    // passing untouched) moved to supervision.rs's `reply_tests` with the function they exercise
+    // (`supervised_reply_text`, which absorbed `supervision_reply`).
 
     /// N-7: the judge's delivery view is a measurement, and each of its four parts must actually
     /// reach the prompt text. The r2 shape is pinned end to end: an owned file with a syntax error
@@ -13762,20 +13735,9 @@ fn said_kind_of(last_text: &str) -> &'static str {
     }
 }
 
-/// A-2: a supervision call's reply, with the transport-failure disguise removed. The agent loop
-/// surfaces a provider failure as its own error-closer TEXT (agent.rs:2678 "Ran into this error:
-/// {provider_err}…"), so `run_agent` returns `Ok` and the caller reads an HTTP 400 body as a model
-/// reply. Every judge/review parser is deliberately LENIENT, which is exactly what makes it launder
-/// that text: r2's parse read gabee's 400 "Invalid model identifier" as substantive-and-not-OK and
-/// emitted 28 `drifting` verdicts whose hint WAS the error body, from 22:02:35Z until the run ended.
-/// `Err` here is the whole error text (tail-clipped), for the caller's failed event.
-fn supervision_reply(text: &str) -> Result<&str, String> {
-    if said_kind_of(text) == "error" {
-        Err(clip_tail(text, 400))
-    } else {
-        Ok(text)
-    }
-}
+// A-2's `supervision_reply` (the error-closer gate alone) is absorbed into
+// `supervision::supervised_reply_text`, which additionally strips/refuses the agent loop's
+// turn-cap filler — one door for every small-turn supervision reply.
 
 /// Provenance of the SAID text: WHICH attempt produced `last_text`, WHEN it was dispatched and when
 /// the answer channel last advanced, and what any PRIOR attempt on this lane key left behind.
@@ -16577,16 +16539,25 @@ impl GooseAgentDispatcher {
                         }
                     }
                 };
-                // A-2: the agent loop surfaces a provider failure as its own error-closer TEXT
-                // (agent.rs:2678), so a dead judge model arrives here as Ok. r2 measured the cost of
-                // parsing that text: 28 of 61 verdicts were `drifting` conf 0.5 with gabee's 400
-                // "Invalid model identifier" as the hint — a transport fault steering model work.
-                // Reclassified BEFORE the Ok arm so it takes the failed-look path below instead.
-                let probe = probe.and_then(|o| {
-                    if said_kind_of(&o.text) == "error" {
-                        Err(anyhow!("judge provider error: {}", clip_tail(&o.text, 400)))
-                    } else {
-                        Ok(o)
+                // Reclassified BEFORE the Ok arm so a non-reply takes the failed-look path below:
+                // the A-2 error-closer (r2: 28 of 61 verdicts were gabee's 400 body) and the
+                // turn-cap filler (r6a seq 58: parse_judge_reply minted `drifting` from the
+                // engine's own MAX_TURNS_MESSAGE). A real verdict with the filler as a trailing
+                // line (r6c seq 312) is kept, STRIPPED — `supervised_reply_text` carries both
+                // measurements. The filler look is named with the schedjudge arm's vocabulary and,
+                // like it, moves no streak and records nothing as judged.
+                let probe = probe.and_then(|o| match supervised_reply_text(&o.text) {
+                    Ok(text) => Ok(RunAgentOut { text, ..o }),
+                    Err(e @ SupervisedReplyError::ProviderError(_)) => {
+                        Err(anyhow!("judge provider error: {e}"))
+                    }
+                    Err(e @ SupervisedReplyError::TurnBudgetExhausted) => {
+                        me_events_skip(
+                            &self.events,
+                            activity_key.unwrap_or("call"),
+                            "judge_turn_budget_exhausted",
+                        );
+                        Err(anyhow!("{e}"))
                     }
                 });
                 let probe_err = probe.as_ref().err().map(|e| clip_tail(&e.to_string(), 400));
@@ -27080,11 +27051,14 @@ impl PreReviewer for GooseAgentDispatcher {
         // Keyed `ask-answer` (r6 supervision lanes, batch 2): one lane for the run — the
         // in-flight set serializes questions, and each new answer folds the prior into
         // `superseded`, so the lane reads as the run's Q&A history.
+        // The shared reply door: a turn-cap-filler or error-closer "answer" is the answerer
+        // FAILING, and the operator is told so in the same loud marker the transport Err uses —
+        // never handed the engine's own sentence as if the run had answered.
         let reply = self
             .run_agent(model_id, system, user, None, 1, &[], Some(ASK_ANSWER_LANE))
             .await
             .ok()
-            .map(|o| o.text)
+            .and_then(|o| supervised_reply_text(&o.text).ok())
             .unwrap_or_else(|| "(the answerer failed — ask again)".to_string());
         let adir = self.working_dir.join(".swarm").join("answers");
         let _ = std::fs::create_dir_all(&adir);
@@ -27239,7 +27213,10 @@ impl PreReviewer for GooseAgentDispatcher {
             .await
             .map_err(|e| clip_tail(&e.to_string(), 400))?
             .text;
-        supervision_reply(&text)?;
+        // `supervised_reply_text` also strips a trailing turn-cap filler (r6c seq 312's class) so
+        // ISSUES findings persisted below never carry the engine's sentence into the sink's
+        // prompt, and a filler-only reply is a PreReviewFailed, not a clean clear.
+        let text = supervised_reply_text(&text).map_err(|e| e.to_string())?;
         let (status, findings) = text.trim().split_once('|').unwrap_or(("OK", ""));
         let findings = findings.trim();
         let had_findings = status.to_uppercase().contains("ISSUE") && !findings.is_empty();
@@ -29276,7 +29253,13 @@ async fn reflect_on_success(
         .run_agent(model, system, user, None, 4, &[], Some(REFLECT_LANE))
         .await
     {
-        Ok(o) => o.text.trim().to_string(),
+        // A filler/error-closer reply must never be written into SKILL.md as a stack lesson —
+        // future runs READ that file. Empty means empty here: the caller emits `persona_learned
+        // written:false, reason "the reflection came back empty"`, so the absence is loud.
+        Ok(o) => match supervised_reply_text(&o.text) {
+            Ok(t) => t.trim().to_string(),
+            Err(_) => String::new(),
+        },
         Err(_) => String::new(),
     }
 }
@@ -34043,12 +34026,11 @@ impl TaskDispatcher for GooseAgentDispatcher {
             .await
             .map_err(|e| clip_tail(&e.to_string(), 400))?
             .text;
-        supervision_reply(&text)?;
-        // A weak reviewer that burns its 2 turns returns the agent-loop max-turns filler — never a real
-        // finding of this dimension (the `|` parse already routes it to OK, but be explicit + robust).
-        if is_agent_loop_filler(&text) {
-            return Ok(None);
-        }
+        // A weak reviewer that burns its 2 turns returns the agent-loop max-turns filler — a
+        // review that never delivered, now a named `tail_review_failed` rather than the silent
+        // Ok(None) it used to be; and a REAL `ISSUES|…` line with the filler trailing (r6c seq
+        // 312's class) keeps its findings, stripped, instead of being binned whole.
+        let text = supervised_reply_text(&text).map_err(|e| e.to_string())?;
         let (status, findings) = text.trim().split_once('|').unwrap_or(("OK", ""));
         let findings = findings.trim();
         Ok(
@@ -34132,13 +34114,10 @@ impl TaskDispatcher for GooseAgentDispatcher {
             .run_agent(model_id, system, user, None, 2, &[], Some(&verify_lane))
             .await
             .map_err(|e| clip_tail(&e.to_string(), 400))
-            .and_then(|o| {
-                if said_kind_of(&o.text) == "error" {
-                    Err(clip_tail(&o.text, 400))
-                } else {
-                    Ok(o.text)
-                }
-            }) {
+            // The shared door: error-closer text, and the turn-cap filler that used to read as a
+            // silent REFUTE|LOW (no '|'), both land in `finding_verify_failed` by name.
+            .and_then(|o| supervised_reply_text(&o.text).map_err(|e| e.to_string()))
+        {
             Ok(t) => t,
             Err(error) => {
                 self.events.write_value(serde_json::json!({
