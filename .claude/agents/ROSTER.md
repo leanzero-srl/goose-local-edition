@@ -548,3 +548,10 @@ research_request_block's armed-no-claimed-sections arm wording.
   arithmetic; caught the run's next risk class in the words — viz-q2 froze an SSE draw convention at
   ZERO tool calls before reading clarify D1 or any sibling mini ("Version-only bumps: no draw
   (convention...)") — improvement filed with the reader-based fix shape. Charter gap: none.
+- 2026-08-31 13:40 tick-surgeon #10: CLEAN+ at 62.7k/11. REFUTED its own prior suspicion with argv
+  (viz-q2 DID read clarify + 5 sibling minis before emitting — freeze-before-read didn't happen;
+  the improvement note stands only for the silent-convention half). Fan closed 26/26 with the three
+  D-decisions closed by lanes that independently AGREE with earlier console verdicts on different
+  grounds — cross-lane consistency, not copies. Skipped 3 stale judge logs under budget, said so.
+  Named the next tension precisely: the judge's emit-the-DAG-NOW steer may land before the planner
+  reaches the five contradictions. Charter gap: none.
