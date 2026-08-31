@@ -2576,6 +2576,63 @@
   "progressiveMessageList.searchHint": {
     "defaultMessage": "検索のためにすべてのメッセージをすぐ読み込むには Cmd/Ctrl+F を押してください"
   },
+  "projectsSection.addProject": {
+    "defaultMessage": "プロジェクトフォルダを追加"
+  },
+  "projectsSection.confirmRemove": {
+    "defaultMessage": "削除を確認（ファイルとチャットは残ります）"
+  },
+  "projectsSection.copyPath": {
+    "defaultMessage": "パスをコピー"
+  },
+  "projectsSection.emptyState": {
+    "defaultMessage": "プロジェクトフォルダを追加してセッションを整理しましょう"
+  },
+  "projectsSection.loadingSessions": {
+    "defaultMessage": "セッションを読み込み中…"
+  },
+  "projectsSection.moreActions": {
+    "defaultMessage": "プロジェクト操作"
+  },
+  "projectsSection.moreSessions": {
+    "defaultMessage": "さらにセッションを表示…"
+  },
+  "projectsSection.newSessionHere": {
+    "defaultMessage": "ここで新しいセッション"
+  },
+  "projectsSection.noSessionsYet": {
+    "defaultMessage": "まだセッションはありません"
+  },
+  "projectsSection.pathCopied": {
+    "defaultMessage": "プロジェクトのパスをコピーしました"
+  },
+  "projectsSection.projects": {
+    "defaultMessage": "プロジェクト"
+  },
+  "projectsSection.removeFailed": {
+    "defaultMessage": "プロジェクトを更新できませんでした"
+  },
+  "projectsSection.removeFromProjects": {
+    "defaultMessage": "プロジェクトから削除"
+  },
+  "projectsSection.retry": {
+    "defaultMessage": "再試行"
+  },
+  "projectsSection.revealInFinder": {
+    "defaultMessage": "Finder に表示"
+  },
+  "projectsSection.sessionFailed": {
+    "defaultMessage": "セッションを開始できませんでした"
+  },
+  "projectsSection.sessionsFailed": {
+    "defaultMessage": "セッションを読み込めませんでした"
+  },
+  "projectsSection.unfiled": {
+    "defaultMessage": "未分類"
+  },
+  "projectsSection.untitledSession": {
+    "defaultMessage": "無題のセッション"
+  },
   "promptsSettings.allPromptsReset": {
     "defaultMessage": "すべてのプロンプトをデフォルトにリセットしました"
   },

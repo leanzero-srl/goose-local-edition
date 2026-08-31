@@ -37,6 +37,7 @@ import { BENCH_SPEC_FILE, BENCH_RENDER_PROBE, tierOf } from './benchTierPayload'
 import log from './utils/logger';
 import { ensureWinShims } from './utils/winShims';
 import { addRecentDir, loadRecentDirs } from './utils/recentDirs';
+import { addProject, loadProjects, removeProject } from './utils/projectDirs';
 import { formatAppName, errorMessage, formatErrorForLogging } from './utils/conversionUtils';
 import { isRetiredGooseChatApp } from './utils/retiredApps';
 import type { Settings, SettingKey } from './utils/settings';
@@ -1911,10 +1912,10 @@ ipcMain.handle('open-external', async (_event, url: string) => {
   await shell.openExternal(url);
 });
 
-ipcMain.handle('directory-chooser', async () => {
+ipcMain.handle('directory-chooser', async (_event, defaultPath?: string) => {
   return dialog.showOpenDialog({
     properties: ['openDirectory', 'createDirectory'],
-    defaultPath: os.homedir(),
+    defaultPath: typeof defaultPath === 'string' && defaultPath.length > 0 ? defaultPath : os.homedir(),
   });
 });
 
@@ -1926,6 +1927,18 @@ ipcMain.handle('add-recent-dir', (_event, dir: string) => {
 
 ipcMain.handle('list-recent-dirs', () => {
   return loadRecentDirs();
+});
+
+ipcMain.handle('list-projects', () => {
+  return loadProjects();
+});
+
+ipcMain.handle('add-project', (_event, dir: string) => {
+  return addProject(typeof dir === 'string' ? dir : '');
+});
+
+ipcMain.handle('remove-project', (_event, dir: string) => {
+  return removeProject(typeof dir === 'string' ? dir : '');
 });
 
 ipcMain.handle('list-git-worktree-dirs', async (_event, dir: string) => {

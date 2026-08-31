@@ -2576,6 +2576,63 @@
   "progressiveMessageList.searchHint": {
     "defaultMessage": "Arama amacıyla tüm mesajları anında yüklemek için Cmd/Ctrl+F tuşlarına basın"
   },
+  "projectsSection.addProject": {
+    "defaultMessage": "Proje klasörü ekle"
+  },
+  "projectsSection.confirmRemove": {
+    "defaultMessage": "Kaldırmayı onayla (dosyalar ve sohbetler korunur)"
+  },
+  "projectsSection.copyPath": {
+    "defaultMessage": "Yolu kopyala"
+  },
+  "projectsSection.emptyState": {
+    "defaultMessage": "Oturumlarınızı gruplamak için bir proje klasörü ekleyin"
+  },
+  "projectsSection.loadingSessions": {
+    "defaultMessage": "Oturumlar yükleniyor…"
+  },
+  "projectsSection.moreActions": {
+    "defaultMessage": "Proje işlemleri"
+  },
+  "projectsSection.moreSessions": {
+    "defaultMessage": "Daha fazla oturum…"
+  },
+  "projectsSection.newSessionHere": {
+    "defaultMessage": "Burada yeni oturum"
+  },
+  "projectsSection.noSessionsYet": {
+    "defaultMessage": "Henüz oturum yok"
+  },
+  "projectsSection.pathCopied": {
+    "defaultMessage": "Proje yolu kopyalandı"
+  },
+  "projectsSection.projects": {
+    "defaultMessage": "Projeler"
+  },
+  "projectsSection.removeFailed": {
+    "defaultMessage": "Projeler güncellenemedi"
+  },
+  "projectsSection.removeFromProjects": {
+    "defaultMessage": "Projelerden kaldır"
+  },
+  "projectsSection.retry": {
+    "defaultMessage": "Yeniden dene"
+  },
+  "projectsSection.revealInFinder": {
+    "defaultMessage": "Finder'da göster"
+  },
+  "projectsSection.sessionFailed": {
+    "defaultMessage": "Oturum başlatılamadı"
+  },
+  "projectsSection.sessionsFailed": {
+    "defaultMessage": "Oturumlar yüklenemedi"
+  },
+  "projectsSection.unfiled": {
+    "defaultMessage": "Sınıflandırılmamış"
+  },
+  "projectsSection.untitledSession": {
+    "defaultMessage": "Adsız oturum"
+  },
   "promptsSettings.allPromptsReset": {
     "defaultMessage": "Tüm istemler varsayılanlara sıfırlandı"
   },

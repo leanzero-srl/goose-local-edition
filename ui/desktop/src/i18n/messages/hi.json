@@ -2576,6 +2576,63 @@
   "progressiveMessageList.searchHint": {
     "defaultMessage": "खोज के लिए सभी संदेशों को तुरंत लोड करने के लिए Cmd/Ctrl+F दबाएँ"
   },
+  "projectsSection.addProject": {
+    "defaultMessage": "प्रोजेक्ट फ़ोल्डर जोड़ें"
+  },
+  "projectsSection.confirmRemove": {
+    "defaultMessage": "हटाने की पुष्टि करें (फ़ाइलें और चैट बनी रहेंगी)"
+  },
+  "projectsSection.copyPath": {
+    "defaultMessage": "पथ कॉपी करें"
+  },
+  "projectsSection.emptyState": {
+    "defaultMessage": "अपने सत्रों को व्यवस्थित करने के लिए एक प्रोजेक्ट फ़ोल्डर जोड़ें"
+  },
+  "projectsSection.loadingSessions": {
+    "defaultMessage": "सत्र लोड हो रहे हैं…"
+  },
+  "projectsSection.moreActions": {
+    "defaultMessage": "प्रोजेक्ट क्रियाएँ"
+  },
+  "projectsSection.moreSessions": {
+    "defaultMessage": "और सत्र…"
+  },
+  "projectsSection.newSessionHere": {
+    "defaultMessage": "यहाँ नया सत्र"
+  },
+  "projectsSection.noSessionsYet": {
+    "defaultMessage": "अभी कोई सत्र नहीं"
+  },
+  "projectsSection.pathCopied": {
+    "defaultMessage": "प्रोजेक्ट पथ कॉपी किया गया"
+  },
+  "projectsSection.projects": {
+    "defaultMessage": "प्रोजेक्ट"
+  },
+  "projectsSection.removeFailed": {
+    "defaultMessage": "प्रोजेक्ट अपडेट नहीं हो सके"
+  },
+  "projectsSection.removeFromProjects": {
+    "defaultMessage": "प्रोजेक्ट से हटाएँ"
+  },
+  "projectsSection.retry": {
+    "defaultMessage": "पुनः प्रयास करें"
+  },
+  "projectsSection.revealInFinder": {
+    "defaultMessage": "Finder में दिखाएँ"
+  },
+  "projectsSection.sessionFailed": {
+    "defaultMessage": "सत्र शुरू नहीं हो सका"
+  },
+  "projectsSection.sessionsFailed": {
+    "defaultMessage": "सत्र लोड नहीं हो सके"
+  },
+  "projectsSection.unfiled": {
+    "defaultMessage": "अवर्गीकृत"
+  },
+  "projectsSection.untitledSession": {
+    "defaultMessage": "बिना शीर्षक सत्र"
+  },
   "promptsSettings.allPromptsReset": {
     "defaultMessage": "सभी संकेत डिफ़ॉल्ट पर रीसेट हो गए"
   },

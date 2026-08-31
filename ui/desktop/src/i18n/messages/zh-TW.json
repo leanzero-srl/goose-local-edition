@@ -2576,6 +2576,63 @@
   "progressiveMessageList.searchHint": {
     "defaultMessage": "按 Cmd/Ctrl+F 立即載入所有訊息以進行搜尋"
   },
+  "projectsSection.addProject": {
+    "defaultMessage": "新增專案資料夾"
+  },
+  "projectsSection.confirmRemove": {
+    "defaultMessage": "確認移除（保留檔案與聊天）"
+  },
+  "projectsSection.copyPath": {
+    "defaultMessage": "複製路徑"
+  },
+  "projectsSection.emptyState": {
+    "defaultMessage": "新增專案資料夾來歸類您的工作階段"
+  },
+  "projectsSection.loadingSessions": {
+    "defaultMessage": "正在載入工作階段…"
+  },
+  "projectsSection.moreActions": {
+    "defaultMessage": "專案動作"
+  },
+  "projectsSection.moreSessions": {
+    "defaultMessage": "更多工作階段…"
+  },
+  "projectsSection.newSessionHere": {
+    "defaultMessage": "在此開新工作階段"
+  },
+  "projectsSection.noSessionsYet": {
+    "defaultMessage": "還沒有工作階段"
+  },
+  "projectsSection.pathCopied": {
+    "defaultMessage": "已複製專案路徑"
+  },
+  "projectsSection.projects": {
+    "defaultMessage": "專案"
+  },
+  "projectsSection.removeFailed": {
+    "defaultMessage": "無法更新專案"
+  },
+  "projectsSection.removeFromProjects": {
+    "defaultMessage": "從專案中移除"
+  },
+  "projectsSection.retry": {
+    "defaultMessage": "重試"
+  },
+  "projectsSection.revealInFinder": {
+    "defaultMessage": "在 Finder 中顯示"
+  },
+  "projectsSection.sessionFailed": {
+    "defaultMessage": "無法開始工作階段"
+  },
+  "projectsSection.sessionsFailed": {
+    "defaultMessage": "無法載入工作階段"
+  },
+  "projectsSection.unfiled": {
+    "defaultMessage": "未歸檔"
+  },
+  "projectsSection.untitledSession": {
+    "defaultMessage": "未命名的工作階段"
+  },
   "promptsSettings.allPromptsReset": {
     "defaultMessage": "所有提示已重設為預設值"
   },

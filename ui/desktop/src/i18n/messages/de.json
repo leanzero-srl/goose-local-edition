@@ -2576,6 +2576,63 @@
   "progressiveMessageList.searchHint": {
     "defaultMessage": "Drücken Sie Cmd/Ctrl+F, um alle Nachrichten sofort für die Suche zu laden"
   },
+  "projectsSection.addProject": {
+    "defaultMessage": "Projektordner hinzufügen"
+  },
+  "projectsSection.confirmRemove": {
+    "defaultMessage": "Entfernen bestätigen (Dateien & Chats bleiben)"
+  },
+  "projectsSection.copyPath": {
+    "defaultMessage": "Pfad kopieren"
+  },
+  "projectsSection.emptyState": {
+    "defaultMessage": "Fügen Sie einen Projektordner hinzu, um Ihre Sitzungen zu bündeln"
+  },
+  "projectsSection.loadingSessions": {
+    "defaultMessage": "Sitzungen werden geladen…"
+  },
+  "projectsSection.moreActions": {
+    "defaultMessage": "Projektaktionen"
+  },
+  "projectsSection.moreSessions": {
+    "defaultMessage": "Weitere Sitzungen…"
+  },
+  "projectsSection.newSessionHere": {
+    "defaultMessage": "Neue Sitzung hier"
+  },
+  "projectsSection.noSessionsYet": {
+    "defaultMessage": "Noch keine Sitzungen"
+  },
+  "projectsSection.pathCopied": {
+    "defaultMessage": "Projektpfad kopiert"
+  },
+  "projectsSection.projects": {
+    "defaultMessage": "Projekte"
+  },
+  "projectsSection.removeFailed": {
+    "defaultMessage": "Projekte konnten nicht aktualisiert werden"
+  },
+  "projectsSection.removeFromProjects": {
+    "defaultMessage": "Aus Projekten entfernen"
+  },
+  "projectsSection.retry": {
+    "defaultMessage": "Erneut versuchen"
+  },
+  "projectsSection.revealInFinder": {
+    "defaultMessage": "Im Finder anzeigen"
+  },
+  "projectsSection.sessionFailed": {
+    "defaultMessage": "Sitzung konnte nicht gestartet werden"
+  },
+  "projectsSection.sessionsFailed": {
+    "defaultMessage": "Sitzungen konnten nicht geladen werden"
+  },
+  "projectsSection.unfiled": {
+    "defaultMessage": "Nicht zugeordnet"
+  },
+  "projectsSection.untitledSession": {
+    "defaultMessage": "Unbenannte Sitzung"
+  },
   "promptsSettings.allPromptsReset": {
     "defaultMessage": "Alle Prompts auf die Standardwerte zurückgesetzt"
   },
