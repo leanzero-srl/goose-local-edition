@@ -188,14 +188,14 @@ DAG is actually parallel). reasoning_chars against answer_chars is the waste.
 - **chain**: 0
 - **startable**: 0
 - **brief_median**: 0
-- **reasoning_chars**: 304376
-- **answer_chars**: 66723
+- **reasoning_chars**: 376584
+- **answer_chars**: 71599
 - **code_files**: 0
 - **code_bytes**: 0
-- **elapsed_min**: 75
-- **phase_split**: open 39m · ask 35m
+- **elapsed_min**: 86
+- **phase_split**: open 39m · ask 46m
 - **before_build_min**: 0 (internal diagnosis only — never a cross-run number)
-- **vs_target**: ONLY THE SCORE COMPARES. Target 20.06% (qwen3.8-27b, one cloud agent, same model). Wall clock is NOT comparable — that run is on far faster hardware, so minutes measure the machine. Bytes are NOT a verdict — more code is not better code, and it had no planning phases to spend budget on. Cross-hardware-honest work numbers for THIS run: 0B delivered, 304,376 chars reasoned, 0 tasks completed, 0 retried.
+- **vs_target**: ONLY THE SCORE COMPARES. Target 20.06% (qwen3.8-27b, one cloud agent, same model). Wall clock is NOT comparable — that run is on far faster hardware, so minutes measure the machine. Bytes are NOT a verdict — more code is not better code, and it had no planning phases to spend budget on. Cross-hardware-honest work numbers for THIS run: 0B delivered, 376,584 chars reasoned, 0 tasks completed, 0 retried.
 - **python_parses**: 0 ok / 0 SYNTAX ERROR / 0 empty
 - **web_files**: NONE — 0.56 of the scoring weight is unreachable without a served page
 - **tasks_done**: 0/? completed, 0 dispatched, 0 retried
@@ -204,10 +204,10 @@ DAG is actually parallel). reasoning_chars against answer_chars is the waste.
 - **plan_patched**: 0
 - **plan_loaded**: 0
 - **review_rounds**: none
-- **judge_looks**: 16
-- **judge_nudges**: 2
+- **judge_looks**: 19
+- **judge_nudges**: 3
 - **judge_ended**: 0
-- **drift_held**: 4
+- **drift_held**: 6
 - **tree_defects**: 0
 - **repair**: delivery_defect_steer=0 brief_defects=0 testgen=0 fix_target_selected=0 complete_verify=0 complete_result=0
 - **ledger**: 7 task ledger(s) in .swarm/ledger/, ledger.json roll-up present, written=0 delivered=0
