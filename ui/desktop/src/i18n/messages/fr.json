@@ -41,14 +41,14 @@
   "appsView.noAppsTitle": {
     "defaultMessage": "Aucune application disponible"
   },
-  "appsView.retry": {
-    "defaultMessage": "Réessayer"
-  },
   "appsView.retiredChatApp": {
     "defaultMessage": "Chat app retired"
   },
   "appsView.retiredChatAppDetail": {
     "defaultMessage": "We removed this feature because MCP sampling is no longer supported."
+  },
+  "appsView.retry": {
+    "defaultMessage": "Réessayer"
   },
   "appsView.title": {
     "defaultMessage": "Applications"
@@ -116,11 +116,20 @@
   "backButton.back": {
     "defaultMessage": "Retour"
   },
+  "baseChat.dismiss": {
+    "defaultMessage": "Dismiss"
+  },
   "baseChat.failedToLoadSession": {
     "defaultMessage": "Échec du chargement de la session"
   },
   "baseChat.goHome": {
     "defaultMessage": "Aller à l'accueil"
+  },
+  "baseChat.promptFailed": {
+    "defaultMessage": "That message did not go through"
+  },
+  "baseChat.promptFailedHint": {
+    "defaultMessage": "Your conversation is safe. Send again to retry."
   },
   "bottomMenuExtensionSelection.extensionUpdated": {
     "defaultMessage": "Extension mise à jour"
@@ -917,6 +926,15 @@
   "dirSwitcher.recentDirectories": {
     "defaultMessage": "Répertoires récents"
   },
+  "editionSelector.edition": {
+    "defaultMessage": "Edition"
+  },
+  "editionSelector.local": {
+    "defaultMessage": "Goose Swarm"
+  },
+  "editionSelector.standard": {
+    "defaultMessage": "goose"
+  },
   "elicitationRequest.accept": {
     "defaultMessage": "Accepter"
   },
@@ -1343,42 +1361,6 @@
   "hub.goodMorning": {
     "defaultMessage": "Bonjour"
   },
-  "huggingFaceModelSearch.download": {
-    "defaultMessage": "Télécharger"
-  },
-  "huggingFaceModelSearch.downloaded": {
-    "defaultMessage": "Téléchargé"
-  },
-  "huggingFaceModelSearch.downloading": {
-    "defaultMessage": "Téléchargement…"
-  },
-  "huggingFaceModelSearch.loadingVariants": {
-    "defaultMessage": "Chargement des variantes..."
-  },
-  "huggingFaceModelSearch.noGgufModels": {
-    "defaultMessage": "Aucun modèle local compatible trouvé pour cette requête."
-  },
-  "huggingFaceModelSearch.recommended": {
-    "defaultMessage": "Recommandé"
-  },
-  "huggingFaceModelSearch.searchError": {
-    "defaultMessage": "Erreur de recherche : {details}"
-  },
-  "huggingFaceModelSearch.searchFailed": {
-    "defaultMessage": "Échec de la recherche. Veuillez réessayer."
-  },
-  "huggingFaceModelSearch.searchHuggingFace": {
-    "defaultMessage": "Rechercher sur HuggingFace"
-  },
-  "huggingFaceModelSearch.searchNoData": {
-    "defaultMessage": "La recherche n'a renvoyé aucune donnée."
-  },
-  "huggingFaceModelSearch.searchPlaceholder": {
-    "defaultMessage": "Rechercher des modèles locaux..."
-  },
-  "huggingFaceModelSearch.tooLarge": {
-    "defaultMessage": "Peut ne pas tenir en mémoire (modèle de {size}, {available} disponibles)"
-  },
   "huggingFaceSignInPrompt.failedToConfigure": {
     "defaultMessage": "Échec de la connexion à Hugging Face : {error}"
   },
@@ -1709,75 +1691,6 @@
   "loadingGoose.waiting": {
     "defaultMessage": "goose patiente…"
   },
-  "localInferenceSettings.deleteConfirm": {
-    "defaultMessage": "Supprimer ce modèle ? Vous pourrez le retélécharger plus tard."
-  },
-  "localInferenceSettings.description": {
-    "defaultMessage": "Téléchargez et gérez des modèles LLM locaux pour l'inférence sans clés API. Recherchez des modèles GGUF ou MLX sur HuggingFace, ou utilisez les sélections présentées ci-dessous."
-  },
-  "localInferenceSettings.dismiss": {
-    "defaultMessage": "Ignorer"
-  },
-  "localInferenceSettings.download": {
-    "defaultMessage": "Télécharger"
-  },
-  "localInferenceSettings.downloadCancelled": {
-    "defaultMessage": "Téléchargement annulé"
-  },
-  "localInferenceSettings.downloadFailed": {
-    "defaultMessage": "Échec du téléchargement"
-  },
-  "localInferenceSettings.downloadProgress": {
-    "defaultMessage": "{downloaded} / {total} ({percent} %)"
-  },
-  "localInferenceSettings.downloadedModels": {
-    "defaultMessage": "Modèles téléchargés"
-  },
-  "localInferenceSettings.downloading": {
-    "defaultMessage": "Téléchargement en cours"
-  },
-  "localInferenceSettings.featuredModels": {
-    "defaultMessage": "Modèles en vedette"
-  },
-  "localInferenceSettings.huggingFaceSignInNote": {
-    "defaultMessage": "Connectez-vous pour augmenter les limites de débit lors de la recherche et du téléchargement de modèles, et pour accéder aux dépôts Hugging Face privés ou à accès restreint."
-  },
-  "localInferenceSettings.modelSettings": {
-    "defaultMessage": "Paramètres du modèle"
-  },
-  "localInferenceSettings.modelSettingsTitle": {
-    "defaultMessage": "Paramètres du modèle"
-  },
-  "localInferenceSettings.noModels": {
-    "defaultMessage": "Aucun modèle disponible"
-  },
-  "localInferenceSettings.recommended": {
-    "defaultMessage": "Recommandé"
-  },
-  "localInferenceSettings.remaining": {
-    "defaultMessage": "{time} restant"
-  },
-  "localInferenceSettings.retry": {
-    "defaultMessage": "Réessayer"
-  },
-  "localInferenceSettings.showAllFeatured": {
-    "defaultMessage": "Afficher tous les modèles en vedette ({count} de plus)"
-  },
-  "localInferenceSettings.showRecommendedOnly": {
-    "defaultMessage": "Afficher uniquement les modèles recommandés"
-  },
-  "localInferenceSettings.title": {
-    "defaultMessage": "Modèles d'inférence locale"
-  },
-  "localInferenceSettings.vision": {
-    "defaultMessage": "Vision"
-  },
-  "localInferenceSettings.visionEncoderDownloading": {
-    "defaultMessage": "Téléchargement de l'encodeur de vision…"
-  },
-  "localInferenceSettings.visionEncoderNotDownloaded": {
-    "defaultMessage": "Encodeur de vision non téléchargé"
-  },
   "localModelManager.active": {
     "defaultMessage": "Actif"
   },
@@ -1858,6 +1771,150 @@
   },
   "localModelPicker.useModel": {
     "defaultMessage": "Utiliser {modelId}"
+  },
+  "loopModal.browseYaml": {
+    "defaultMessage": "Browse for YAML file..."
+  },
+  "loopModal.cancel": {
+    "defaultMessage": "Cancel"
+  },
+  "loopModal.createLoop": {
+    "defaultMessage": "Create Loop"
+  },
+  "loopModal.createNewLoop": {
+    "defaultMessage": "Create New Loop"
+  },
+  "loopModal.creating": {
+    "defaultMessage": "Creating..."
+  },
+  "loopModal.deepLink": {
+    "defaultMessage": "Deep link"
+  },
+  "loopModal.deepLinkPlaceholder": {
+    "defaultMessage": "Paste goose://recipe link here..."
+  },
+  "loopModal.failedParseRecipe": {
+    "defaultMessage": "Failed to parse recipe from file."
+  },
+  "loopModal.failedReadFile": {
+    "defaultMessage": "Failed to read the selected file."
+  },
+  "loopModal.invalidDeepLink": {
+    "defaultMessage": "Invalid deep link. Please use a goose://recipe link."
+  },
+  "loopModal.invalidFileType": {
+    "defaultMessage": "Invalid file type: Please select a YAML file (.yaml or .yml)"
+  },
+  "loopModal.loopIdRequired": {
+    "defaultMessage": "Loop name is required."
+  },
+  "loopModal.maxIterationsHelp": {
+    "defaultMessage": "Hard cap on iterations regardless of the stop check."
+  },
+  "loopModal.maxIterationsLabel": {
+    "defaultMessage": "Max iterations:"
+  },
+  "loopModal.maxIterationsRequired": {
+    "defaultMessage": "Max iterations must be at least 1."
+  },
+  "loopModal.nameLabel": {
+    "defaultMessage": "Name:"
+  },
+  "loopModal.namePlaceholder": {
+    "defaultMessage": "e.g., nightly-refine-loop"
+  },
+  "loopModal.provideValidRecipe": {
+    "defaultMessage": "Please provide a valid recipe source."
+  },
+  "loopModal.recipeDescription": {
+    "defaultMessage": "Description: {description}"
+  },
+  "loopModal.recipeParsed": {
+    "defaultMessage": "Recipe parsed successfully"
+  },
+  "loopModal.recipeTitle": {
+    "defaultMessage": "Title: {title}"
+  },
+  "loopModal.scheduleLabel": {
+    "defaultMessage": "Schedule:"
+  },
+  "loopModal.selected": {
+    "defaultMessage": "Selected: {path}"
+  },
+  "loopModal.sourceLabel": {
+    "defaultMessage": "Recipe:"
+  },
+  "loopModal.stateArtifactHelp": {
+    "defaultMessage": "Optional file the recipe writes each iteration; its contents carry into the next."
+  },
+  "loopModal.stateArtifactLabel": {
+    "defaultMessage": "State artifact:"
+  },
+  "loopModal.stateArtifactPlaceholder": {
+    "defaultMessage": "e.g., state.md"
+  },
+  "loopModal.stopCheckHelp": {
+    "defaultMessage": "Optional shell command run after each iteration; exit 0 stops the loop."
+  },
+  "loopModal.stopCheckLabel": {
+    "defaultMessage": "Stop check command:"
+  },
+  "loopModal.stopCheckPlaceholder": {
+    "defaultMessage": "e.g., test -f done.flag"
+  },
+  "loopModal.subtitle": {
+    "defaultMessage": "A loop runs a recipe repeatedly until a stop check passes or the iteration cap is reached."
+  },
+  "loopModal.yaml": {
+    "defaultMessage": "YAML"
+  },
+  "loopView.confirmDelete": {
+    "defaultMessage": "Remove loop \"{id}\"? The recipe will be kept."
+  },
+  "loopView.createLoop": {
+    "defaultMessage": "Create Loop"
+  },
+  "loopView.deleteConfirm": {
+    "defaultMessage": "Remove"
+  },
+  "loopView.deleteTitle": {
+    "defaultMessage": "Remove loop"
+  },
+  "loopView.description": {
+    "defaultMessage": "Loops run a recipe repeatedly on a schedule until a stop check passes or the iteration cap is reached."
+  },
+  "loopView.errorPrefix": {
+    "defaultMessage": "Error: {error}"
+  },
+  "loopView.lastRun": {
+    "defaultMessage": "Last run: {date}"
+  },
+  "loopView.loop": {
+    "defaultMessage": "Loop"
+  },
+  "loopView.loopCreated": {
+    "defaultMessage": "Loop Created"
+  },
+  "loopView.loopCreatedMsg": {
+    "defaultMessage": "Successfully created loop \"{id}\""
+  },
+  "loopView.maxIterations": {
+    "defaultMessage": "{count} max iterations"
+  },
+  "loopView.noLoops": {
+    "defaultMessage": "No loops yet"
+  },
+  "loopView.refresh": {
+    "defaultMessage": "Refresh"
+  },
+  "loopView.refreshing": {
+    "defaultMessage": "Refreshing..."
+  },
+  "loopView.stateArtifact": {
+    "defaultMessage": "State: {file}"
+  },
+  "loopView.stopCheck": {
+    "defaultMessage": "Stop check: {command}"
   },
   "markdownContent.cancel": {
     "defaultMessage": "Annuler"
@@ -2246,8 +2303,14 @@
   "modelsBottomBar.changeModel": {
     "defaultMessage": "Changer de modèle"
   },
+  "modelsBottomBar.changeProvider": {
+    "defaultMessage": "Change Provider"
+  },
   "modelsBottomBar.currentModel": {
     "defaultMessage": "Modèle actuel"
+  },
+  "modelsBottomBar.leanzeroWebsite": {
+    "defaultMessage": "LeanZero website"
   },
   "modelsBottomBar.loadingModel": {
     "defaultMessage": "Chargement du modèle..."
@@ -2264,44 +2327,32 @@
   "modelsBottomBar.selectModel": {
     "defaultMessage": "Sélectionner un modèle"
   },
+  "modelsBottomBar.swarmDocs": {
+    "defaultMessage": "Documentation"
+  },
   "modelsSection.resetDescription": {
     "defaultMessage": "Effacez vos paramètres de modèle et de fournisseur sélectionnés pour repartir de zéro"
   },
   "modelsSection.resetTitle": {
     "defaultMessage": "Réinitialiser le fournisseur et le modèle"
   },
-  "navigation.itemApps": {
-    "defaultMessage": "Applications"
-  },
-  "navigation.itemExtensions": {
-    "defaultMessage": "Extensions"
+  "navigation.itemBenchmark": {
+    "defaultMessage": "Benchmark"
   },
   "navigation.itemHome": {
     "defaultMessage": "Nouvelle discussion"
   },
-  "navigation.itemRecipes": {
-    "defaultMessage": "Recettes"
+  "navigation.itemMemories": {
+    "defaultMessage": "Memories"
   },
-  "navigation.itemScheduler": {
-    "defaultMessage": "Planificateur"
-  },
-  "navigation.itemSessions": {
-    "defaultMessage": "Historique des sessions"
+  "navigation.itemMlx": {
+    "defaultMessage": "Leanzero MLX"
   },
   "navigation.itemSettings": {
     "defaultMessage": "Paramètres"
   },
   "navigation.itemSkills": {
     "defaultMessage": "Compétences"
-  },
-  "navigationPanel.chats": {
-    "defaultMessage": "Discussions"
-  },
-  "navigationPanel.noChats": {
-    "defaultMessage": "Aucune discussion récente"
-  },
-  "navigationPanel.untitledSession": {
-    "defaultMessage": "Session sans titre"
   },
   "onboardingGuard.checkProviderErrorDescription": {
     "defaultMessage": "Le serveur est peut-être en cours de démarrage ou temporairement indisponible."
@@ -3623,6 +3674,12 @@
   "sessionActionsHeader.loadingJson": {
     "defaultMessage": "Chargement du JSON..."
   },
+  "sessionActionsHeader.makeRecipe": {
+    "defaultMessage": "Make recipe from this conversation"
+  },
+  "sessionActionsHeader.makeRecipeError": {
+    "defaultMessage": "Could not create a recipe from this conversation"
+  },
   "sessionActionsHeader.renameFailed": {
     "defaultMessage": "Échec du renommage de la session : {error}"
   },
@@ -3827,6 +3884,15 @@
   "settings.dockIcon.title": {
     "defaultMessage": "Icône du Dock"
   },
+  "settings.edition.description": {
+    "defaultMessage": "The Goose Swarm skin — LeanZero branding, the fleet fan-in view, and azure accents. This is the look and identity only; it is separate from the engine. To actually build with your local fleet, pick Swarm LeanZero in the model selector. The Swarm LeanZero settings tab stays available whenever you run local models, regardless of this setting."
+  },
+  "settings.edition.preview": {
+    "defaultMessage": "Swarm LeanZero — the fan-in view"
+  },
+  "settings.edition.title": {
+    "defaultMessage": "Goose Swarm"
+  },
   "settings.help.description": {
     "defaultMessage": "Aidez-nous à améliorer goose en signalant des problèmes ou en demandant de nouvelles fonctionnalités"
   },
@@ -3986,12 +4052,6 @@
   "settingsView.tabKeyboard": {
     "defaultMessage": "Clavier"
   },
-  "settingsView.tabLocalInference": {
-    "defaultMessage": "Inférence locale"
-  },
-  "settingsView.tabModels": {
-    "defaultMessage": "Modèles"
-  },
   "settingsView.tabPrompts": {
     "defaultMessage": "Invites"
   },
@@ -4018,6 +4078,24 @@
   },
   "shortcutRecorder.save": {
     "defaultMessage": "Enregistrer"
+  },
+  "shortcutRefused.close": {
+    "defaultMessage": "Closing this window would drop the live benchmark view. Use File > Close if you really mean it."
+  },
+  "shortcutRefused.navigate": {
+    "defaultMessage": "Leaving the Benchmark view is one-way while a run is live; use File > New Chat if you really mean it."
+  },
+  "shortcutRefused.quit": {
+    "defaultMessage": "Quitting would orphan the run and lose its score. Use Goose > Quit if you really mean it."
+  },
+  "shortcutRefused.reload": {
+    "defaultMessage": "Reloading would discard the live log and swarm panel state."
+  },
+  "shortcutRefused.spawn": {
+    "defaultMessage": "Cmd+N would open a second window and a second backend on the live run. Use File > New Chat Window if you really mean it."
+  },
+  "shortcutRefused.title": {
+    "defaultMessage": "Shortcut ignored while a benchmark is running"
   },
   "skillsView.addSkill": {
     "defaultMessage": "Ajouter une compétence"

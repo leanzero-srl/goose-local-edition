@@ -1,17 +1,4 @@
-import {
-  AppWindow,
-  Brain,
-  Clock,
-  Cpu,
-  FileText,
-  History,
-  MessageSquarePlus,
-  Puzzle,
-  Repeat,
-  Gauge,
-  Settings,
-  Zap,
-} from 'lucide-react';
+import { Brain, Cpu, Gauge, MessageSquarePlus, Settings, Zap } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { defineMessages, type IntlShape, type MessageDescriptor } from 'react-intl';
 
@@ -24,19 +11,19 @@ export interface NavItem {
   tagAlign?: 'left' | 'right';
 }
 
-/** Top-level nav items (excluding Settings which is pinned to the bottom). */
+/**
+ * Top-level nav items (excluding Settings which is pinned to the bottom).
+ *
+ * Goose Swarm pass A declutter: the nav shows ONLY New Chat, Skills, Memories, Benchmark and the
+ * Leanzero MLX entry. Recipes, Apps, Scheduler, Loop, Extensions and Session History left the nav
+ * on purpose — their routes and views stay in code and reachable by URL (see App.tsx routes).
+ */
 export const NAV_ITEMS: NavItem[] = [
   { id: 'home', path: '/', label: 'New Chat', icon: MessageSquarePlus },
-  { id: 'recipes', path: '/recipes', label: 'Recipes', icon: FileText },
   { id: 'skills', path: '/skills', label: 'Skills', icon: Zap },
   { id: 'memories', path: '/memories', label: 'Memories', icon: Brain },
-  { id: 'apps', path: '/apps', label: 'Apps', icon: AppWindow },
-  { id: 'scheduler', path: '/schedules', label: 'Scheduler', icon: Clock },
-  { id: 'loop', path: '/loop', label: 'Loop', icon: Repeat },
-  { id: 'mlx', path: '/mlx-engine', label: 'Leanzero MLX', icon: Cpu },
   { id: 'benchmark', path: '/benchmark', label: 'Benchmark', icon: Gauge },
-  { id: 'extensions', path: '/extensions', label: 'Extensions', icon: Puzzle },
-  { id: 'sessions', path: '/sessions', label: 'Session History', icon: History },
+  { id: 'mlx', path: '/mlx-engine', label: 'Leanzero MLX', icon: Cpu },
 ];
 
 /** Settings is rendered separately, pinned to the bottom of the sidebar. */
@@ -54,10 +41,6 @@ const navItemMessages = defineMessages({
     id: 'navigation.itemHome',
     defaultMessage: 'New Chat',
   },
-  recipes: {
-    id: 'navigation.itemRecipes',
-    defaultMessage: 'Recipes',
-  },
   skills: {
     id: 'navigation.itemSkills',
     defaultMessage: 'Skills',
@@ -66,29 +49,13 @@ const navItemMessages = defineMessages({
     id: 'navigation.itemMemories',
     defaultMessage: 'Memories',
   },
-  apps: {
-    id: 'navigation.itemApps',
-    defaultMessage: 'Apps',
-  },
-  scheduler: {
-    id: 'navigation.itemScheduler',
-    defaultMessage: 'Scheduler',
-  },
-  loop: {
-    id: 'navigation.itemLoop',
-    defaultMessage: 'Loop',
+  benchmark: {
+    id: 'navigation.itemBenchmark',
+    defaultMessage: 'Benchmark',
   },
   mlx: {
     id: 'navigation.itemMlx',
     defaultMessage: 'Leanzero MLX',
-  },
-  extensions: {
-    id: 'navigation.itemExtensions',
-    defaultMessage: 'Extensions',
-  },
-  sessions: {
-    id: 'navigation.itemSessions',
-    defaultMessage: 'Session History',
   },
   settings: {
     id: 'navigation.itemSettings',

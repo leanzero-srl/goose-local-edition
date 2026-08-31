@@ -41,14 +41,14 @@
   "appsView.noAppsTitle": {
     "defaultMessage": "Tiada apl tersedia"
   },
-  "appsView.retry": {
-    "defaultMessage": "Cuba semula"
-  },
   "appsView.retiredChatApp": {
     "defaultMessage": "Chat app retired"
   },
   "appsView.retiredChatAppDetail": {
     "defaultMessage": "We removed this feature because MCP sampling is no longer supported."
+  },
+  "appsView.retry": {
+    "defaultMessage": "Cuba semula"
   },
   "appsView.title": {
     "defaultMessage": "Apl"
@@ -116,11 +116,20 @@
   "backButton.back": {
     "defaultMessage": "Kembali"
   },
+  "baseChat.dismiss": {
+    "defaultMessage": "Dismiss"
+  },
   "baseChat.failedToLoadSession": {
     "defaultMessage": "Gagal Memuatkan Sesi"
   },
   "baseChat.goHome": {
     "defaultMessage": "Pergi ke laman utama"
+  },
+  "baseChat.promptFailed": {
+    "defaultMessage": "That message did not go through"
+  },
+  "baseChat.promptFailedHint": {
+    "defaultMessage": "Your conversation is safe. Send again to retry."
   },
   "bottomMenuExtensionSelection.extensionUpdated": {
     "defaultMessage": "Sambungan Dikemas Kini"
@@ -917,6 +926,15 @@
   "dirSwitcher.recentDirectories": {
     "defaultMessage": "Direktori terkini"
   },
+  "editionSelector.edition": {
+    "defaultMessage": "Edition"
+  },
+  "editionSelector.local": {
+    "defaultMessage": "Goose Swarm"
+  },
+  "editionSelector.standard": {
+    "defaultMessage": "goose"
+  },
   "elicitationRequest.accept": {
     "defaultMessage": "Terima"
   },
@@ -1343,42 +1361,6 @@
   "hub.goodMorning": {
     "defaultMessage": "Selamat pagi"
   },
-  "huggingFaceModelSearch.download": {
-    "defaultMessage": "Muat Turun"
-  },
-  "huggingFaceModelSearch.downloaded": {
-    "defaultMessage": "Dimuat turun"
-  },
-  "huggingFaceModelSearch.downloading": {
-    "defaultMessage": "Memuat turun…"
-  },
-  "huggingFaceModelSearch.loadingVariants": {
-    "defaultMessage": "Memuatkan varian..."
-  },
-  "huggingFaceModelSearch.noGgufModels": {
-    "defaultMessage": "Tiada model tempatan serasi dijumpai untuk pertanyaan ini."
-  },
-  "huggingFaceModelSearch.recommended": {
-    "defaultMessage": "Disyorkan"
-  },
-  "huggingFaceModelSearch.searchError": {
-    "defaultMessage": "Ralat carian: {details}"
-  },
-  "huggingFaceModelSearch.searchFailed": {
-    "defaultMessage": "Carian gagal. Sila cuba lagi."
-  },
-  "huggingFaceModelSearch.searchHuggingFace": {
-    "defaultMessage": "Cari HuggingFace"
-  },
-  "huggingFaceModelSearch.searchNoData": {
-    "defaultMessage": "Carian tidak mengembalikan sebarang data."
-  },
-  "huggingFaceModelSearch.searchPlaceholder": {
-    "defaultMessage": "Cari model tempatan..."
-  },
-  "huggingFaceModelSearch.tooLarge": {
-    "defaultMessage": "Mungkin tidak muat dalam memori (model {size}, {available} tersedia)"
-  },
   "huggingFaceSignInPrompt.failedToConfigure": {
     "defaultMessage": "Gagal log masuk ke Hugging Face: {error}"
   },
@@ -1709,75 +1691,6 @@
   "loadingGoose.waiting": {
     "defaultMessage": "goose sedang menunggu…"
   },
-  "localInferenceSettings.deleteConfirm": {
-    "defaultMessage": "Padam model ini? Anda boleh memuat turunnya semula kemudian."
-  },
-  "localInferenceSettings.description": {
-    "defaultMessage": "Muat turun dan urus model LLM tempatan untuk inferens tanpa kunci API. Cari HuggingFace untuk model GGUF atau MLX, atau gunakan pilihan utama di bawah."
-  },
-  "localInferenceSettings.dismiss": {
-    "defaultMessage": "Ketepikan"
-  },
-  "localInferenceSettings.download": {
-    "defaultMessage": "Muat turun"
-  },
-  "localInferenceSettings.downloadCancelled": {
-    "defaultMessage": "Muat turun dibatalkan"
-  },
-  "localInferenceSettings.downloadFailed": {
-    "defaultMessage": "Muat turun gagal"
-  },
-  "localInferenceSettings.downloadProgress": {
-    "defaultMessage": "{downloaded} / {total} ({percent}%)"
-  },
-  "localInferenceSettings.downloadedModels": {
-    "defaultMessage": "Model Dimuat Turun"
-  },
-  "localInferenceSettings.downloading": {
-    "defaultMessage": "Memuat turun"
-  },
-  "localInferenceSettings.featuredModels": {
-    "defaultMessage": "Model Pilihan"
-  },
-  "localInferenceSettings.huggingFaceSignInNote": {
-    "defaultMessage": "Log masuk untuk meningkatkan had kadar semasa mencari dan memuat turun model, dan untuk mengakses repositori Hugging Face peribadi atau berpagar."
-  },
-  "localInferenceSettings.modelSettings": {
-    "defaultMessage": "Tetapan Model"
-  },
-  "localInferenceSettings.modelSettingsTitle": {
-    "defaultMessage": "Tetapan model"
-  },
-  "localInferenceSettings.noModels": {
-    "defaultMessage": "Tiada model tersedia"
-  },
-  "localInferenceSettings.recommended": {
-    "defaultMessage": "Disyorkan"
-  },
-  "localInferenceSettings.remaining": {
-    "defaultMessage": "{time} berbaki"
-  },
-  "localInferenceSettings.retry": {
-    "defaultMessage": "Cuba semula"
-  },
-  "localInferenceSettings.showAllFeatured": {
-    "defaultMessage": "Tunjukkan semua pilihan ({count} lagi)"
-  },
-  "localInferenceSettings.showRecommendedOnly": {
-    "defaultMessage": "Tunjukkan yang disyorkan sahaja"
-  },
-  "localInferenceSettings.title": {
-    "defaultMessage": "Model Inferens Tempatan"
-  },
-  "localInferenceSettings.vision": {
-    "defaultMessage": "Penglihatan"
-  },
-  "localInferenceSettings.visionEncoderDownloading": {
-    "defaultMessage": "Pengekod penglihatan sedang dimuat turun…"
-  },
-  "localInferenceSettings.visionEncoderNotDownloaded": {
-    "defaultMessage": "Pengekod penglihatan belum dimuat turun"
-  },
   "localModelManager.active": {
     "defaultMessage": "Aktif"
   },
@@ -1858,6 +1771,150 @@
   },
   "localModelPicker.useModel": {
     "defaultMessage": "Guna {modelId}"
+  },
+  "loopModal.browseYaml": {
+    "defaultMessage": "Browse for YAML file..."
+  },
+  "loopModal.cancel": {
+    "defaultMessage": "Cancel"
+  },
+  "loopModal.createLoop": {
+    "defaultMessage": "Create Loop"
+  },
+  "loopModal.createNewLoop": {
+    "defaultMessage": "Create New Loop"
+  },
+  "loopModal.creating": {
+    "defaultMessage": "Creating..."
+  },
+  "loopModal.deepLink": {
+    "defaultMessage": "Deep link"
+  },
+  "loopModal.deepLinkPlaceholder": {
+    "defaultMessage": "Paste goose://recipe link here..."
+  },
+  "loopModal.failedParseRecipe": {
+    "defaultMessage": "Failed to parse recipe from file."
+  },
+  "loopModal.failedReadFile": {
+    "defaultMessage": "Failed to read the selected file."
+  },
+  "loopModal.invalidDeepLink": {
+    "defaultMessage": "Invalid deep link. Please use a goose://recipe link."
+  },
+  "loopModal.invalidFileType": {
+    "defaultMessage": "Invalid file type: Please select a YAML file (.yaml or .yml)"
+  },
+  "loopModal.loopIdRequired": {
+    "defaultMessage": "Loop name is required."
+  },
+  "loopModal.maxIterationsHelp": {
+    "defaultMessage": "Hard cap on iterations regardless of the stop check."
+  },
+  "loopModal.maxIterationsLabel": {
+    "defaultMessage": "Max iterations:"
+  },
+  "loopModal.maxIterationsRequired": {
+    "defaultMessage": "Max iterations must be at least 1."
+  },
+  "loopModal.nameLabel": {
+    "defaultMessage": "Name:"
+  },
+  "loopModal.namePlaceholder": {
+    "defaultMessage": "e.g., nightly-refine-loop"
+  },
+  "loopModal.provideValidRecipe": {
+    "defaultMessage": "Please provide a valid recipe source."
+  },
+  "loopModal.recipeDescription": {
+    "defaultMessage": "Description: {description}"
+  },
+  "loopModal.recipeParsed": {
+    "defaultMessage": "Recipe parsed successfully"
+  },
+  "loopModal.recipeTitle": {
+    "defaultMessage": "Title: {title}"
+  },
+  "loopModal.scheduleLabel": {
+    "defaultMessage": "Schedule:"
+  },
+  "loopModal.selected": {
+    "defaultMessage": "Selected: {path}"
+  },
+  "loopModal.sourceLabel": {
+    "defaultMessage": "Recipe:"
+  },
+  "loopModal.stateArtifactHelp": {
+    "defaultMessage": "Optional file the recipe writes each iteration; its contents carry into the next."
+  },
+  "loopModal.stateArtifactLabel": {
+    "defaultMessage": "State artifact:"
+  },
+  "loopModal.stateArtifactPlaceholder": {
+    "defaultMessage": "e.g., state.md"
+  },
+  "loopModal.stopCheckHelp": {
+    "defaultMessage": "Optional shell command run after each iteration; exit 0 stops the loop."
+  },
+  "loopModal.stopCheckLabel": {
+    "defaultMessage": "Stop check command:"
+  },
+  "loopModal.stopCheckPlaceholder": {
+    "defaultMessage": "e.g., test -f done.flag"
+  },
+  "loopModal.subtitle": {
+    "defaultMessage": "A loop runs a recipe repeatedly until a stop check passes or the iteration cap is reached."
+  },
+  "loopModal.yaml": {
+    "defaultMessage": "YAML"
+  },
+  "loopView.confirmDelete": {
+    "defaultMessage": "Remove loop \"{id}\"? The recipe will be kept."
+  },
+  "loopView.createLoop": {
+    "defaultMessage": "Create Loop"
+  },
+  "loopView.deleteConfirm": {
+    "defaultMessage": "Remove"
+  },
+  "loopView.deleteTitle": {
+    "defaultMessage": "Remove loop"
+  },
+  "loopView.description": {
+    "defaultMessage": "Loops run a recipe repeatedly on a schedule until a stop check passes or the iteration cap is reached."
+  },
+  "loopView.errorPrefix": {
+    "defaultMessage": "Error: {error}"
+  },
+  "loopView.lastRun": {
+    "defaultMessage": "Last run: {date}"
+  },
+  "loopView.loop": {
+    "defaultMessage": "Loop"
+  },
+  "loopView.loopCreated": {
+    "defaultMessage": "Loop Created"
+  },
+  "loopView.loopCreatedMsg": {
+    "defaultMessage": "Successfully created loop \"{id}\""
+  },
+  "loopView.maxIterations": {
+    "defaultMessage": "{count} max iterations"
+  },
+  "loopView.noLoops": {
+    "defaultMessage": "No loops yet"
+  },
+  "loopView.refresh": {
+    "defaultMessage": "Refresh"
+  },
+  "loopView.refreshing": {
+    "defaultMessage": "Refreshing..."
+  },
+  "loopView.stateArtifact": {
+    "defaultMessage": "State: {file}"
+  },
+  "loopView.stopCheck": {
+    "defaultMessage": "Stop check: {command}"
   },
   "markdownContent.cancel": {
     "defaultMessage": "Batal"
@@ -2246,8 +2303,14 @@
   "modelsBottomBar.changeModel": {
     "defaultMessage": "Tukar Model"
   },
+  "modelsBottomBar.changeProvider": {
+    "defaultMessage": "Change Provider"
+  },
   "modelsBottomBar.currentModel": {
     "defaultMessage": "Model semasa"
+  },
+  "modelsBottomBar.leanzeroWebsite": {
+    "defaultMessage": "LeanZero website"
   },
   "modelsBottomBar.loadingModel": {
     "defaultMessage": "Memuatkan model..."
@@ -2264,44 +2327,32 @@
   "modelsBottomBar.selectModel": {
     "defaultMessage": "Pilih Model"
   },
+  "modelsBottomBar.swarmDocs": {
+    "defaultMessage": "Documentation"
+  },
   "modelsSection.resetDescription": {
     "defaultMessage": "Kosongkan tetapan model dan penyedia yang anda pilih untuk bermula semula"
   },
   "modelsSection.resetTitle": {
     "defaultMessage": "Set Semula Penyedia dan Model"
   },
-  "navigation.itemApps": {
-    "defaultMessage": "Apl"
-  },
-  "navigation.itemExtensions": {
-    "defaultMessage": "Sambungan"
+  "navigation.itemBenchmark": {
+    "defaultMessage": "Benchmark"
   },
   "navigation.itemHome": {
     "defaultMessage": "Sembang Baharu"
   },
-  "navigation.itemRecipes": {
-    "defaultMessage": "Resipi"
+  "navigation.itemMemories": {
+    "defaultMessage": "Memories"
   },
-  "navigation.itemScheduler": {
-    "defaultMessage": "Penjadual"
-  },
-  "navigation.itemSessions": {
-    "defaultMessage": "Sejarah Sesi"
+  "navigation.itemMlx": {
+    "defaultMessage": "Leanzero MLX"
   },
   "navigation.itemSettings": {
     "defaultMessage": "Tetapan"
   },
   "navigation.itemSkills": {
     "defaultMessage": "Kemahiran"
-  },
-  "navigationPanel.chats": {
-    "defaultMessage": "Sembang"
-  },
-  "navigationPanel.noChats": {
-    "defaultMessage": "Tiada sembang terkini"
-  },
-  "navigationPanel.untitledSession": {
-    "defaultMessage": "Sesi tanpa tajuk"
   },
   "onboardingGuard.checkProviderErrorDescription": {
     "defaultMessage": "Pelayan mungkin sedang dimulakan atau tidak tersedia buat sementara waktu."
@@ -3623,6 +3674,12 @@
   "sessionActionsHeader.loadingJson": {
     "defaultMessage": "Memuatkan JSON..."
   },
+  "sessionActionsHeader.makeRecipe": {
+    "defaultMessage": "Make recipe from this conversation"
+  },
+  "sessionActionsHeader.makeRecipeError": {
+    "defaultMessage": "Could not create a recipe from this conversation"
+  },
   "sessionActionsHeader.renameFailed": {
     "defaultMessage": "Gagal menamakan semula sesi: {error}"
   },
@@ -3827,6 +3884,15 @@
   "settings.dockIcon.title": {
     "defaultMessage": "Ikon dok"
   },
+  "settings.edition.description": {
+    "defaultMessage": "The Goose Swarm skin — LeanZero branding, the fleet fan-in view, and azure accents. This is the look and identity only; it is separate from the engine. To actually build with your local fleet, pick Swarm LeanZero in the model selector. The Swarm LeanZero settings tab stays available whenever you run local models, regardless of this setting."
+  },
+  "settings.edition.preview": {
+    "defaultMessage": "Swarm LeanZero — the fan-in view"
+  },
+  "settings.edition.title": {
+    "defaultMessage": "Goose Swarm"
+  },
   "settings.help.description": {
     "defaultMessage": "Bantu kami menambah baik goose dengan melaporkan isu atau meminta ciri baharu"
   },
@@ -3986,12 +4052,6 @@
   "settingsView.tabKeyboard": {
     "defaultMessage": "Papan Kekunci"
   },
-  "settingsView.tabLocalInference": {
-    "defaultMessage": "Inferens Tempatan"
-  },
-  "settingsView.tabModels": {
-    "defaultMessage": "Model"
-  },
   "settingsView.tabPrompts": {
     "defaultMessage": "Gesaan"
   },
@@ -4018,6 +4078,24 @@
   },
   "shortcutRecorder.save": {
     "defaultMessage": "Simpan"
+  },
+  "shortcutRefused.close": {
+    "defaultMessage": "Closing this window would drop the live benchmark view. Use File > Close if you really mean it."
+  },
+  "shortcutRefused.navigate": {
+    "defaultMessage": "Leaving the Benchmark view is one-way while a run is live; use File > New Chat if you really mean it."
+  },
+  "shortcutRefused.quit": {
+    "defaultMessage": "Quitting would orphan the run and lose its score. Use Goose > Quit if you really mean it."
+  },
+  "shortcutRefused.reload": {
+    "defaultMessage": "Reloading would discard the live log and swarm panel state."
+  },
+  "shortcutRefused.spawn": {
+    "defaultMessage": "Cmd+N would open a second window and a second backend on the live run. Use File > New Chat Window if you really mean it."
+  },
+  "shortcutRefused.title": {
+    "defaultMessage": "Shortcut ignored while a benchmark is running"
   },
   "skillsView.addSkill": {
     "defaultMessage": "Tambah Kemahiran"

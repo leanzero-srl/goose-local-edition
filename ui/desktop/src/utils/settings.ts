@@ -48,8 +48,12 @@ export interface Settings {
   showPricing: boolean;
   seenAnnouncementIds: string[];
 
-  // Goose Local Edition — the local/swarm-model UX skin (presentation only, never gates capability).
-  edition: 'standard' | 'local';
+  // Goose Swarm (edition value 'local') — the local/swarm-model UX skin (presentation only, never
+  // gates capability). OPTIONAL on purpose: absence means "never explicitly chosen", which lets the
+  // renderer derive the edition from the active provider exactly like the Rust resolver
+  // (crates/goose-cli/src/edition.rs). A default here would masquerade as an explicit choice and
+  // permanently suppress derivation.
+  edition?: 'standard' | 'local';
 }
 
 export type SettingKey = keyof Settings;
@@ -90,7 +94,6 @@ export const defaultSettings: Settings = {
   responseStyle: 'concise',
   showPricing: true,
   seenAnnouncementIds: [],
-  edition: 'standard',
 };
 
 export function getKeyboardShortcuts(settings: Settings): KeyboardShortcuts {

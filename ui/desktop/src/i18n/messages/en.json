@@ -930,10 +930,10 @@
     "defaultMessage": "Edition"
   },
   "editionSelector.local": {
-    "defaultMessage": "Local"
+    "defaultMessage": "Goose Swarm"
   },
   "editionSelector.standard": {
-    "defaultMessage": "Standard"
+    "defaultMessage": "goose"
   },
   "elicitationRequest.accept": {
     "defaultMessage": "Accept"
@@ -1361,42 +1361,6 @@
   "hub.goodMorning": {
     "defaultMessage": "Good morning"
   },
-  "huggingFaceModelSearch.download": {
-    "defaultMessage": "Download"
-  },
-  "huggingFaceModelSearch.downloaded": {
-    "defaultMessage": "Downloaded"
-  },
-  "huggingFaceModelSearch.downloading": {
-    "defaultMessage": "Downloading…"
-  },
-  "huggingFaceModelSearch.loadingVariants": {
-    "defaultMessage": "Loading variants..."
-  },
-  "huggingFaceModelSearch.noGgufModels": {
-    "defaultMessage": "No compatible local models found for this query."
-  },
-  "huggingFaceModelSearch.recommended": {
-    "defaultMessage": "Recommended"
-  },
-  "huggingFaceModelSearch.searchError": {
-    "defaultMessage": "Search error: {details}"
-  },
-  "huggingFaceModelSearch.searchFailed": {
-    "defaultMessage": "Search failed. Please try again."
-  },
-  "huggingFaceModelSearch.searchHuggingFace": {
-    "defaultMessage": "Search HuggingFace"
-  },
-  "huggingFaceModelSearch.searchNoData": {
-    "defaultMessage": "Search returned no data."
-  },
-  "huggingFaceModelSearch.searchPlaceholder": {
-    "defaultMessage": "Search for local models..."
-  },
-  "huggingFaceModelSearch.tooLarge": {
-    "defaultMessage": "May not fit in memory ({size} model, {available} available)"
-  },
   "huggingFaceSignInPrompt.failedToConfigure": {
     "defaultMessage": "Failed to sign in to Hugging Face: {error}"
   },
@@ -1726,75 +1690,6 @@
   },
   "loadingGoose.waiting": {
     "defaultMessage": "goose is waiting…"
-  },
-  "localInferenceSettings.deleteConfirm": {
-    "defaultMessage": "Delete this model? You can re-download it later."
-  },
-  "localInferenceSettings.description": {
-    "defaultMessage": "Download and manage local LLM models for inference without API keys. Search HuggingFace for GGUF or MLX models, or use the featured picks below."
-  },
-  "localInferenceSettings.dismiss": {
-    "defaultMessage": "Dismiss"
-  },
-  "localInferenceSettings.download": {
-    "defaultMessage": "Download"
-  },
-  "localInferenceSettings.downloadCancelled": {
-    "defaultMessage": "Download cancelled"
-  },
-  "localInferenceSettings.downloadFailed": {
-    "defaultMessage": "Download failed"
-  },
-  "localInferenceSettings.downloadProgress": {
-    "defaultMessage": "{downloaded} / {total} ({percent}%)"
-  },
-  "localInferenceSettings.downloadedModels": {
-    "defaultMessage": "Downloaded Models"
-  },
-  "localInferenceSettings.downloading": {
-    "defaultMessage": "Downloading"
-  },
-  "localInferenceSettings.featuredModels": {
-    "defaultMessage": "Featured Models"
-  },
-  "localInferenceSettings.huggingFaceSignInNote": {
-    "defaultMessage": "Sign in to increase rate limits when searching and downloading models, and to access private or gated Hugging Face repositories."
-  },
-  "localInferenceSettings.modelSettings": {
-    "defaultMessage": "Model Settings"
-  },
-  "localInferenceSettings.modelSettingsTitle": {
-    "defaultMessage": "Model settings"
-  },
-  "localInferenceSettings.noModels": {
-    "defaultMessage": "No models available"
-  },
-  "localInferenceSettings.recommended": {
-    "defaultMessage": "Recommended"
-  },
-  "localInferenceSettings.remaining": {
-    "defaultMessage": "{time} remaining"
-  },
-  "localInferenceSettings.retry": {
-    "defaultMessage": "Retry"
-  },
-  "localInferenceSettings.showAllFeatured": {
-    "defaultMessage": "Show all featured ({count} more)"
-  },
-  "localInferenceSettings.showRecommendedOnly": {
-    "defaultMessage": "Show recommended only"
-  },
-  "localInferenceSettings.title": {
-    "defaultMessage": "Local Inference Models"
-  },
-  "localInferenceSettings.vision": {
-    "defaultMessage": "Vision"
-  },
-  "localInferenceSettings.visionEncoderDownloading": {
-    "defaultMessage": "Vision encoder downloading…"
-  },
-  "localInferenceSettings.visionEncoderNotDownloaded": {
-    "defaultMessage": "Vision encoder not downloaded"
   },
   "localModelManager.active": {
     "defaultMessage": "Active"
@@ -2441,92 +2336,23 @@
   "modelsSection.resetTitle": {
     "defaultMessage": "Reset Provider and Model"
   },
-  "navigation.itemApps": {
-    "defaultMessage": "Apps"
-  },
-  "navigation.itemExtensions": {
-    "defaultMessage": "Extensions"
+  "navigation.itemBenchmark": {
+    "defaultMessage": "Benchmark"
   },
   "navigation.itemHome": {
     "defaultMessage": "New Chat"
   },
-  "navigation.itemLoop": {
-    "defaultMessage": "Loop"
-  },
   "navigation.itemMemories": {
     "defaultMessage": "Memories"
   },
-  "navigation.itemRecipes": {
-    "defaultMessage": "Recipes"
-  },
-  "navigation.itemScheduler": {
-    "defaultMessage": "Scheduler"
-  },
-  "navigation.itemSessions": {
-    "defaultMessage": "Session History"
+  "navigation.itemMlx": {
+    "defaultMessage": "Leanzero MLX"
   },
   "navigation.itemSettings": {
     "defaultMessage": "Settings"
   },
   "navigation.itemSkills": {
     "defaultMessage": "Skills"
-  },
-  "navigationPanel.cancel": {
-    "defaultMessage": "Cancel"
-  },
-  "navigationPanel.chatDeleted": {
-    "defaultMessage": "Chat deleted"
-  },
-  "navigationPanel.chats": {
-    "defaultMessage": "Chats"
-  },
-  "navigationPanel.confirmDelete": {
-    "defaultMessage": "Confirm delete"
-  },
-  "navigationPanel.copyPath": {
-    "defaultMessage": "Copy folder path"
-  },
-  "navigationPanel.deleteChat": {
-    "defaultMessage": "Delete chat"
-  },
-  "navigationPanel.deleteFailed": {
-    "defaultMessage": "Could not delete chat"
-  },
-  "navigationPanel.hasError": {
-    "defaultMessage": "Ended with an error"
-  },
-  "navigationPanel.kindBuild": {
-    "defaultMessage": "build"
-  },
-  "navigationPanel.kindRecipe": {
-    "defaultMessage": "recipe"
-  },
-  "navigationPanel.messages": {
-    "defaultMessage": "{count} msg"
-  },
-  "navigationPanel.moreActions": {
-    "defaultMessage": "More actions"
-  },
-  "navigationPanel.noChats": {
-    "defaultMessage": "No recent chats"
-  },
-  "navigationPanel.openNewWindow": {
-    "defaultMessage": "Open in new window"
-  },
-  "navigationPanel.pathCopied": {
-    "defaultMessage": "Folder path copied"
-  },
-  "navigationPanel.rename": {
-    "defaultMessage": "Rename"
-  },
-  "navigationPanel.revealInFinder": {
-    "defaultMessage": "Reveal folder in Finder"
-  },
-  "navigationPanel.streaming": {
-    "defaultMessage": "Working now"
-  },
-  "navigationPanel.untitledSession": {
-    "defaultMessage": "Untitled session"
   },
   "onboardingGuard.checkProviderErrorDescription": {
     "defaultMessage": "The server may be starting up or temporarily unavailable."
@@ -4059,13 +3885,13 @@
     "defaultMessage": "Dock icon"
   },
   "settings.edition.description": {
-    "defaultMessage": "The Goose Local Edition skin — LeanZero branding, the fleet fan-in view, and azure accents. This is the look and identity only; it is separate from the engine. To actually build with your local fleet, pick Swarm LeanZero in the model selector. The Swarm LeanZero settings tab stays available whenever you run local models, regardless of this setting."
+    "defaultMessage": "The Goose Swarm skin — LeanZero branding, the fleet fan-in view, and azure accents. This is the look and identity only; it is separate from the engine. To actually build with your local fleet, pick Swarm LeanZero in the model selector. The Swarm LeanZero settings tab stays available whenever you run local models, regardless of this setting."
   },
   "settings.edition.preview": {
     "defaultMessage": "Swarm LeanZero — the fan-in view"
   },
   "settings.edition.title": {
-    "defaultMessage": "Goose Local Edition"
+    "defaultMessage": "Goose Swarm"
   },
   "settings.help.description": {
     "defaultMessage": "Help us improve goose by reporting issues or requesting new features"
@@ -4225,12 +4051,6 @@
   },
   "settingsView.tabKeyboard": {
     "defaultMessage": "Keyboard"
-  },
-  "settingsView.tabLocalInference": {
-    "defaultMessage": "Local Inference"
-  },
-  "settingsView.tabModels": {
-    "defaultMessage": "Models"
   },
   "settingsView.tabPrompts": {
     "defaultMessage": "Prompts"
