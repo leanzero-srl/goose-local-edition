@@ -736,3 +736,8 @@ research_request_block's armed-no-claimed-sections arm wording.
   CONSTRUCTION); proved its 1170/1170 green on a clean worktree to separate its work from the
   sibling's in-flight failures — the check-the-property discipline applied to test hygiene.
   Charter gap: none.
+- 2026-08-31 22:30 site agent (benchmark state, 215eed1): EXEMPLARY. Refuted its own brief's alarm
+  (MAX_CHECKS=90 was a stale local tree — rebase-first caught it), found the join defect that would
+  have made the whole feature inert (sb-7.0-rc vs sb-7.0 era key), drilled the baseline cap against
+  production data before choosing the policy (fleet rows always ride), and verified the deploy on
+  the live URL before reporting. Charter gap: n/a (general-purpose).
