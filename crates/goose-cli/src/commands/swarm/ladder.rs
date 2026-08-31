@@ -123,6 +123,71 @@ pub(super) fn write_progress(
         || (formed_chars_grown >= OMNI_JUDGE_MIN_CHARS && (!owns_files || any_owned_on_disk))
 }
 
+/// The escalation prompt's "Since then it has {…}" clause — what the judge is told the call did
+/// after its last direction. A raw tool-call count launders READING into obedience (r6c web-viz,
+/// BUILD+294m: 1-2 read-only sed/grep calls per look window read as "taken 2 action(s)" for five
+/// hours while the lane wrote ZERO owned bytes), so a files-owing lane's clause carries the same
+/// write-progress facts the ladder itself escalates on (`write_progress`). A lane that owns no
+/// files keeps the plain count: its deliverable is text the judge already reads in the tail.
+pub(super) fn escalation_moved(
+    calls_since_nudge: usize,
+    owns_files: bool,
+    owned_bytes_grew: bool,
+    any_owned_on_disk: bool,
+    formed_chars_grown: usize,
+) -> String {
+    let n = calls_since_nudge;
+    if n == 0 {
+        "taken no action".to_string()
+    } else if !owns_files {
+        format!("taken {n} action(s)")
+    } else if owned_bytes_grew {
+        format!("taken {n} action(s) and its owned files grew")
+    } else if write_progress(false, true, any_owned_on_disk, formed_chars_grown) {
+        format!("taken {n} action(s) and its formed answer grew")
+    } else {
+        format!("taken {n} action(s) (read-only — no owned bytes written)")
+    }
+}
+
+/// The tail's 48-char shingle set (stride 1), for RECURRENCE comparison across judge looks.
+/// An exact tail hash cannot see the most classic loop: a repeating sentence SHIFTS through the
+/// fixed-size tail window, so every look hashes differently and the two-consecutive-LOOPING streak
+/// never arms — MEASURED live (qwen3.8 r0v2): a detail call repeated one sentence verbatim for 25+
+/// minutes at repetition rate 1.00 while the judge looked on, streak pinned at 1. Shingle overlap
+/// is shift-invariant: the same loop shows ≥ half-shared shingles on every look.
+pub(super) fn tail_shingle_set(tail: &str) -> std::collections::HashSet<u64> {
+    use std::hash::{Hash, Hasher};
+    let norm: String = tail.split_whitespace().collect::<Vec<_>>().join(" ");
+    let b: Vec<char> = norm.chars().collect();
+    let mut out = std::collections::HashSet::new();
+    // Stride 1: any window shift still shares nearly all shingles. A coarser stride is
+    // phase-sensitive — a shift not divisible by it can yield DISJOINT shingles of the same
+    // loop (the unit test caught exactly that with stride 16).
+    let (win, step) = (48usize, 1usize);
+    let mut i = 0;
+    while i + win <= b.len() {
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        b[i..i + win].iter().collect::<String>().hash(&mut h);
+        out.insert(h.finish());
+        i += step;
+    }
+    out
+}
+
+/// Do two judge-look tails show the SAME recurring content? Shift-invariant: true when at least
+/// half of the smaller set's shingles recur in the other. Pure/testable.
+pub(super) fn tails_recur(
+    a: &std::collections::HashSet<u64>,
+    b: &std::collections::HashSet<u64>,
+) -> bool {
+    if a.is_empty() || b.is_empty() {
+        return false;
+    }
+    let inter = a.intersection(b).count();
+    inter * 2 >= a.len().min(b.len())
+}
+
 /// One look's DRIFT-streak transition. The streak is DRIFTING's corroboration (delivery needs 2,
 /// like LOOPING's second agreeing look), and what resets it is WRITE PROGRESS on the lane's
 /// deliverable — never a tool-call count, and on a files-owing lane never a mere change of the
@@ -701,5 +766,65 @@ mod tests {
             s, 0,
             "a non-drift look breaks a reasoning lane's streak as before"
         );
+    }
+
+    /// THE ESCALATION TEXT READ OBEDIENCE FROM RAW COUNTS (r6c web-viz, BUILD+294m): the judge
+    /// was told "taken 2 action(s)" about 1-2 read-only sed/greps per look window, five hours
+    /// running, zero owned bytes ever written — it could not see the disobedience the ladder had
+    /// already measured. The clause now carries the write-progress facts.
+    #[test]
+    fn the_escalation_clause_tells_the_judge_reads_from_writes() {
+        assert_eq!(
+            escalation_moved(2, true, false, false, 0),
+            "taken 2 action(s) (read-only — no owned bytes written)",
+            "the r6c web-viz shape: sed/greps with no owned bytes are not obedience"
+        );
+        assert_eq!(
+            escalation_moved(2, true, true, true, 0),
+            "taken 2 action(s) and its owned files grew"
+        );
+        assert_eq!(
+            escalation_moved(1, true, false, true, OMNI_JUDGE_MIN_CHARS),
+            "taken 1 action(s) and its formed answer grew",
+            "formed growth with a delivered file on disk is the same progress write_progress counts"
+        );
+        assert_eq!(
+            escalation_moved(1, true, false, false, OMNI_JUDGE_MIN_CHARS),
+            "taken 1 action(s) (read-only — no owned bytes written)",
+            "formed growth with NO owned file on disk is the wrong-channel pour, not progress"
+        );
+        assert_eq!(
+            escalation_moved(3, false, false, false, 0),
+            "taken 3 action(s)",
+            "a reasoning lane keeps the plain count"
+        );
+        assert_eq!(
+            escalation_moved(0, true, false, false, 0),
+            "taken no action"
+        );
+    }
+
+    #[test]
+    fn a_shifting_repetition_loop_recurs_across_judge_looks() {
+        // The measured pathology: one sentence repeated verbatim; the window SHIFTS between looks.
+        let sentence = "Let me write the two files. First, `app/ledgerd/server.py`: ";
+        let looped = sentence.repeat(60);
+        let look1 = looped.get(..2000).unwrap();
+        let look2 = looped.get(137..2137).unwrap(); // shifted window — exact-hash saw "new content" here
+        let (s1, s2) = (tail_shingle_set(look1), tail_shingle_set(look2));
+        assert!(
+            tails_recur(&s1, &s2),
+            "a shifted repetition window must RECUR"
+        );
+        // Healthy advancing reasoning must NOT recur: two disjoint passages.
+        let h1 = tail_shingle_set(
+            &"the sync module pages the vendor with cursors and applies rows by version "
+                .repeat(30),
+        );
+        let h2 = tail_shingle_set(
+            &"the webhook consumer verifies signatures over raw bytes then stages txn groups "
+                .repeat(30),
+        );
+        assert!(!tails_recur(&h1, &h2), "distinct content must not recur");
     }
 }

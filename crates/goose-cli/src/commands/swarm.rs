@@ -37,8 +37,9 @@ use judge_context::{
 };
 mod ladder;
 use ladder::{
-    calls_since_nudge, drift_streak_step, nudge_arm, nudge_delivery, produced_since_look,
-    restream_seed, write_progress, wrong_channel_stall, NudgeDelivery,
+    calls_since_nudge, drift_streak_step, escalation_moved, nudge_arm, nudge_delivery,
+    produced_since_look, restream_seed, tail_shingle_set, tails_recur, write_progress,
+    wrong_channel_stall, NudgeDelivery,
 };
 mod decisions;
 use decisions::PlanDecision;
@@ -3415,41 +3416,8 @@ const OMNI_JUDGE_GROWTH_CHARS: usize = 4_000;
 // commands/swarm/desk.rs under the incremental-split law: the shadow judge desk REPLAYS the
 // meter from the durable transcripts, and live meter and replay being ONE type is what makes
 // the r7 fidelity comparison meaningful. The worker loop reaches it via `use desk::...` above.
-
-/// The tail's 48-char shingle set (16-char stride), for RECURRENCE comparison across judge looks.
-/// An exact tail hash cannot see the most classic loop: a repeating sentence SHIFTS through the
-/// fixed-size tail window, so every look hashes differently and the two-consecutive-LOOPING streak
-/// never arms — MEASURED live (qwen3.8 r0v2): a detail call repeated one sentence verbatim for 25+
-/// minutes at repetition rate 1.00 while the judge looked on, streak pinned at 1. Shingle overlap
-/// is shift-invariant: the same loop shows ≥ half-shared shingles on every look.
-fn tail_shingle_set(tail: &str) -> std::collections::HashSet<u64> {
-    use std::hash::{Hash, Hasher};
-    let norm: String = tail.split_whitespace().collect::<Vec<_>>().join(" ");
-    let b: Vec<char> = norm.chars().collect();
-    let mut out = std::collections::HashSet::new();
-    // Stride 1: any window shift still shares nearly all shingles. A coarser stride is
-    // phase-sensitive — a shift not divisible by it can yield DISJOINT shingles of the same
-    // loop (the unit test caught exactly that with stride 16).
-    let (win, step) = (48usize, 1usize);
-    let mut i = 0;
-    while i + win <= b.len() {
-        let mut h = std::collections::hash_map::DefaultHasher::new();
-        b[i..i + win].iter().collect::<String>().hash(&mut h);
-        out.insert(h.finish());
-        i += step;
-    }
-    out
-}
-
-/// Do two judge-look tails show the SAME recurring content? Shift-invariant: true when at least
-/// half of the smaller set's shingles recur in the other. Pure/testable.
-fn tails_recur(a: &std::collections::HashSet<u64>, b: &std::collections::HashSet<u64>) -> bool {
-    if a.is_empty() || b.is_empty() {
-        return false;
-    }
-    let inter = a.intersection(b).count();
-    inter * 2 >= a.len().min(b.len())
-}
+// The shingle half of the meter — `tail_shingle_set`/`tails_recur`, the LOOPING streak's
+// shift-invariant look comparison — moved to commands/swarm/ladder.rs under the same law.
 
 /// WHAT THIS CALL IS FOR, in one line, for the judge.
 ///
@@ -12680,30 +12648,6 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
     }
 
     #[test]
-    fn a_shifting_repetition_loop_recurs_across_judge_looks() {
-        // The measured pathology: one sentence repeated verbatim; the window SHIFTS between looks.
-        let sentence = "Let me write the two files. First, `app/ledgerd/server.py`: ";
-        let looped = sentence.repeat(60);
-        let look1 = looped.get(..2000).unwrap();
-        let look2 = looped.get(137..2137).unwrap(); // shifted window — exact-hash saw "new content" here
-        let (s1, s2) = (tail_shingle_set(look1), tail_shingle_set(look2));
-        assert!(
-            tails_recur(&s1, &s2),
-            "a shifted repetition window must RECUR"
-        );
-        // Healthy advancing reasoning must NOT recur: two disjoint passages.
-        let h1 = tail_shingle_set(
-            &"the sync module pages the vendor with cursors and applies rows by version "
-                .repeat(30),
-        );
-        let h2 = tail_shingle_set(
-            &"the webhook consumer verifies signatures over raw bytes then stages txn groups "
-                .repeat(30),
-        );
-        assert!(!tails_recur(&h1, &h2), "distinct content must not recur");
-    }
-
-    #[test]
     fn bind_first_hint_fires_only_on_a_crashless_tail() {
         // Alive-but-never-listens: the hint carries the bind-first diagnosis.
         assert!(
@@ -14265,7 +14209,14 @@ impl GooseAgentDispatcher {
     /// of the build waited at 0 chars behind the pile. Returns (model, its in-flight count at
     /// pick time) — the count is data for the routing event, nothing branches on it.
     fn aux_model_for_call(&self) -> (String, u32) {
-        let counts = self.inflight_by_model.lock().unwrap();
+        // Same poison-recovery idiom as `fleet_order::InflightGuard`'s enter/Drop arms: the map
+        // holds plain u32 counters, so a panic mid-increment leaves at worst an off-by-one that
+        // the next Drop corrects — a poisoned map is still readable, and the read path must not
+        // panic while the guard path recovers.
+        let counts = match self.inflight_by_model.lock() {
+            Ok(g) => g,
+            Err(poisoned) => poisoned.into_inner(),
+        };
         least_loaded_aux_model(&self.planner_model, &self.aux_models, &counts)
     }
 
@@ -15661,18 +15612,52 @@ impl GooseAgentDispatcher {
                          the assumption to check another way, the step to skip."
                     ));
                 }
+                // WHAT THIS TASK OWES THE BUILD, and whether any of it exists yet. Without this the
+                // judge cannot tell a build task from a planning call, so it reads "no tool calls, lots
+                // of reasoning" as a call thinking hard -- correct for a planner, and the exact signature
+                // of a build task composing a whole file in its head and never emitting it. Bound here,
+                // above the escalation clause, because that clause reads the same manifest; the delivery
+                // view (`owned_defects`/`owned_block`) below is the other consumer.
+                let owned = self
+                    .owned_files_by_task
+                    .lock()
+                    .unwrap()
+                    .get(activity_key.unwrap_or(""))
+                    .cloned()
+                    .unwrap_or_default();
                 if nudges_used > 0 {
                     let acted_since =
                         tool_calls_at_last_nudge.is_some_and(|n| call_records.len() > n);
-                    let moved = if acted_since {
-                        format!(
-                            "taken {} action(s)",
-                            call_records.len()
-                                - tool_calls_at_last_nudge.unwrap_or(call_records.len())
-                        )
-                    } else {
-                        "taken no action".to_string()
-                    };
+                    // OBEDIENCE IS WRITE PROGRESS, NOT THE RAW COUNT (r6c web-viz, BUILD+294m):
+                    // 1-2 read-only sed/grep calls per look window read to the judge as "taken
+                    // 2 action(s)" for five hours while the lane wrote ZERO owned bytes. The
+                    // ladder already escalates on `write_progress`; `escalation_moved` hands
+                    // the judge the SAME facts, so a reads-but-never-writes lane is visible as
+                    // disobedient instead of laundered into "it acted". Bytes are summed fresh
+                    // here (prompt-build time), not reused from the verdict site: that snapshot
+                    // is a look old by now.
+                    let owned_bytes_at_prompt: u64 = owned
+                        .iter()
+                        .map(|f| std::fs::metadata(self.working_dir.join(f)).map_or(0, |m| m.len()))
+                        .sum();
+                    let formed_grown_since_nudge = answer_chars_at_last_nudge.map_or(0, |n| {
+                        texts
+                            .iter()
+                            .map(|t| t.chars().count())
+                            .sum::<usize>()
+                            .saturating_sub(n)
+                    });
+                    let moved = escalation_moved(
+                        if acted_since {
+                            calls_since_nudge(tool_calls_at_last_nudge, call_records.len())
+                        } else {
+                            0
+                        },
+                        !owned.is_empty(),
+                        owned_bytes_at_last_nudge.is_some_and(|b| owned_bytes_at_prompt > b),
+                        owned.iter().any(|f| self.working_dir.join(f).exists()),
+                        formed_grown_since_nudge,
+                    );
                     sys.push_str(&format!(
                         "\n\nYou have already redirected this call {nudges_used} time(s). Your last \
                          direction was: \"{last_direction}\". Since then it has {moved}.\n\
@@ -15819,17 +15804,6 @@ impl GooseAgentDispatcher {
                 } else {
                     String::new()
                 };
-                // WHAT THIS TASK OWES THE BUILD, and whether any of it exists yet. Without this the
-                // judge cannot tell a build task from a planning call, so it reads "no tool calls, lots
-                // of reasoning" as a call thinking hard -- correct for a planner, and the exact signature
-                // of a build task composing a whole file in its head and never emitting it.
-                let owned = self
-                    .owned_files_by_task
-                    .lock()
-                    .unwrap()
-                    .get(activity_key.unwrap_or(""))
-                    .cloned()
-                    .unwrap_or_default();
                 // Computed ONCE and used twice — in the judge's prompt below, and as a steer in its
                 // own right; see the `delivery_defect_steer` block after this prompt is built. The
                 // LANE view, not the raw verify: a dangling ref a SIBLING task owns must read as
