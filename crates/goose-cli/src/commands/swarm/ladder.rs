@@ -61,6 +61,41 @@ pub(super) fn calls_since_nudge(at_last_nudge: Option<usize>, now: usize) -> usi
     at_last_nudge.map_or(now, |n| now.saturating_sub(n))
 }
 
+/// A FILE-OWNING lane advancing in the WRONG CHANNEL: it owes files, none exist on disk, and its
+/// FORMED (answer/chat) channel has grown past the production floor since the last delivered nudge.
+/// All three facts are progress facts — no clock, no counter cap.
+///
+/// MEASURED (r6c build, web-console at fan-out+51m): 0 owned files on disk, formed +70,600 chars —
+/// the lane's actual CSS/HTML emitted as CHAT TEXT (".env-tag { font-size: 11px; ..."), while the
+/// judge's exact-file directive ("write web/index.html NOW... no more contract deliberation before
+/// the write") rode two steers (12:04, 12:07) that changed nothing. The `advancing` hold read that
+/// pour as progress and shielded it, so the restream rung — the one delivery that carries the
+/// directive INTO a fresh attempt's seed, the mechanism that broke the skeleton's equivalent stall
+/// on the same run — never fired. Meanwhile ledgerd-core/notifierd delivered files steadily and
+/// never resembled this shape.
+///
+/// WHY the trigger is derived rather than declared: the nudge direction is the judge's FREEFORM
+/// `next_action` head (`head_to_sentence_end` at the omni seam) — the engine has no marker saying
+/// "this is an exact-file directive". But every delivered nudge CARRIES the judge's direction, so
+/// an unacted prior nudge (the `Some(n), calls_now == n` ladder state) plus this conjunction IS
+/// "directive pending, files still absent, content pouring into chat".
+///
+/// The floor is `OMNI_JUDGE_MIN_CHARS` — the SAME production floor every judge gate uses
+/// (`produced_since_look`): growth that would count as production counts as wrong-channel
+/// production. No new literal. `formed_chars_since_nudge` is `None` before the first delivered
+/// nudge and after every restream (the seam resets this with the rest of the ladder), so a fresh
+/// attempt can never trip it — the r6a wipe class stays closed. A reasoning lane (open, research,
+/// judges: `owns_files` false) is structurally exempt and keeps the chars-based `advancing` hold.
+pub(super) fn wrong_channel_stall(
+    owns_files: bool,
+    any_owned_on_disk: bool,
+    formed_chars_since_nudge: Option<usize>,
+) -> bool {
+    owns_files
+        && !any_owned_on_disk
+        && formed_chars_since_nudge.is_some_and(|c| c >= OMNI_JUDGE_MIN_CHARS)
+}
+
 /// The three ways a wanted nudge can land. `Steer` interrupts the stream at a chunk boundary and
 /// KEEPS the partial; `Restream` drops the socket, wipes the conversation and seeds a fresh
 /// attempt; `Hold` delivers NOTHING this look — the call is watched for one more look instead,
@@ -96,6 +131,16 @@ pub(super) enum NudgeDelivery {
 /// plateaued stream (under the production floor) or a recurring one (the meter's own measurement —
 /// r5's 87k-char loop, the restream that SAVED that run) still walks the ladder exactly as before.
 ///
+/// AND THE HOLD MUST WEIGH FILES, NOT ONLY CHARS, FOR A LANE THAT OWES THEM (r6c, web-console):
+/// a builder pouring its owned files into the FORMED channel is progress in the wrong channel, and
+/// the chars-based `advancing` shielded exactly that — 70,600 formed chars, 0 owned files on disk,
+/// two exact-file steers ignored, the restream never reached. So `wrong_channel` (the measured
+/// conjunction in `wrong_channel_stall`) disqualifies an advance FOR HOLD PURPOSES ONLY: the
+/// would-be hold escalates to the restream, whose seed carries the judge's directive plus the
+/// carried tail — the delivery that broke the skeleton's equivalent stall on the same run. A lane
+/// that ACTED since its nudge still gets a steer (acting is the obedience the ladder escalates on),
+/// and a reasoning lane (no owned files) keeps the plain advancing hold — the r6a wipe class.
+///
 /// `prior_nudge_calls` is the tool-call count at the previous nudge (`None` before the first — which
 /// since r6a is also every fresh attempt's state, because the restream seam resets the ladder), so
 /// "obeyed" is measured on the call's own record, not inferred from what the judge hoped.
@@ -105,6 +150,7 @@ pub(super) fn nudge_delivery(
     calls_now: usize,
     verdict: &goose_swarm::Verdict,
     advancing: bool,
+    wrong_channel: bool,
 ) -> NudgeDelivery {
     if !pending_empty {
         return NudgeDelivery::Restream("tool request in flight");
@@ -115,9 +161,14 @@ pub(super) fn nudge_delivery(
     match prior_nudge_calls {
         None => NudgeDelivery::Steer("first nudge"),
         Some(n) if calls_now > n => NudgeDelivery::Steer("acted since the previous nudge"),
-        Some(_) if advancing => NudgeDelivery::Hold(
+        Some(_) if advancing && !wrong_channel => NudgeDelivery::Hold(
             "steer not acted on, but the stream is advancing: fresh non-recurring content since \
              the last look — held, not wiped",
+        ),
+        Some(_) if advancing => NudgeDelivery::Restream(
+            "steer ignored and the advance is in the WRONG CHANNEL: this lane owes files, none \
+             exist on disk, and the formed answer channel keeps growing — the directive rides a \
+             fresh attempt's seed instead of watching file content pour into chat",
         ),
         Some(_) => NudgeDelivery::Restream(
             "steer ignored: no action since the previous nudge and the stream has stopped \
@@ -256,12 +307,12 @@ mod tests {
     fn nudge_delivery_escalates_on_measured_non_obedience() {
         use goose_swarm::Verdict;
         assert_eq!(
-            nudge_delivery(true, None, 0, &Verdict::Looping, false),
+            nudge_delivery(true, None, 0, &Verdict::Looping, false, false),
             NudgeDelivery::Steer("first nudge"),
             "the first nudge on a call is a steer: it keeps the partial and costs nothing"
         );
         assert_eq!(
-            nudge_delivery(true, Some(3), 3, &Verdict::Looping, false),
+            nudge_delivery(true, Some(3), 3, &Verdict::Looping, false, false),
             NudgeDelivery::Restream(
                 "steer ignored: no action since the previous nudge and the stream has stopped \
                  advancing"
@@ -270,18 +321,18 @@ mod tests {
              non-obedience, so the anchor goes"
         );
         assert_eq!(
-            nudge_delivery(true, Some(3), 5, &Verdict::Looping, false),
+            nudge_delivery(true, Some(3), 5, &Verdict::Looping, false, false),
             NudgeDelivery::Steer("acted since the previous nudge"),
             "a call that obeyed its steer keeps getting steers"
         );
         assert_eq!(
-            nudge_delivery(true, None, 4, &Verdict::Restart, true),
+            nudge_delivery(true, None, 4, &Verdict::Restart, true, false),
             NudgeDelivery::Restream("judge said restart"),
             "RESTART is the judge saying a fresh attempt beats continuing, even on the first \
              nudge and even mid-production — the judge is the reader and said so outright"
         );
         assert_eq!(
-            nudge_delivery(false, None, 0, &Verdict::Looping, false),
+            nudge_delivery(false, None, 0, &Verdict::Looping, false, false),
             NudgeDelivery::Restream("tool request in flight"),
             "a tool request in flight is never steered around"
         );
@@ -349,14 +400,16 @@ mod tests {
         use goose_swarm::Verdict;
         for verdict in [Verdict::Drifting, Verdict::Looping, Verdict::Ok] {
             for advancing in [false, true] {
-                for calls_now in [0usize, 3] {
-                    assert_eq!(
-                        nudge_delivery(true, None, calls_now, &verdict, advancing),
-                        NudgeDelivery::Steer("first nudge"),
-                        "a fresh attempt (prior_nudge_calls = None after the seam reset) earns \
-                         its own ladder: first delivery is a steer, never the wipe \
-                         (verdict {verdict:?}, advancing {advancing}, calls {calls_now})"
-                    );
+                for wrong in [false, true] {
+                    for calls_now in [0usize, 3] {
+                        assert_eq!(
+                            nudge_delivery(true, None, calls_now, &verdict, advancing, wrong),
+                            NudgeDelivery::Steer("first nudge"),
+                            "a fresh attempt (prior_nudge_calls = None after the seam reset) \
+                             earns its own ladder: first delivery is a steer, never the wipe \
+                             (verdict {verdict:?}, advancing {advancing}, calls {calls_now})"
+                        );
+                    }
                 }
             }
         }
@@ -369,7 +422,7 @@ mod tests {
     #[test]
     fn a_producing_non_recurring_call_after_a_nudge_is_held_not_wiped() {
         use goose_swarm::Verdict;
-        let d = nudge_delivery(true, Some(0), 0, &Verdict::Drifting, true);
+        let d = nudge_delivery(true, Some(0), 0, &Verdict::Drifting, true, false);
         assert!(
             matches!(d, NudgeDelivery::Hold(_)),
             "advancing after an unacted steer is a hold, not a restream: {d:?}"
@@ -383,15 +436,92 @@ mod tests {
     #[test]
     fn a_recurring_or_plateaued_call_after_a_nudge_still_walks_the_ladder() {
         use goose_swarm::Verdict;
-        let recurring = nudge_delivery(true, Some(3), 3, &Verdict::Looping, false);
+        let recurring = nudge_delivery(true, Some(3), 3, &Verdict::Looping, false, false);
         assert!(
             matches!(recurring, NudgeDelivery::Restream(_)),
             "recurring after an unacted steer still escalates to the restream: {recurring:?}"
         );
-        let plateaued = nudge_delivery(true, Some(0), 0, &Verdict::Drifting, false);
+        let plateaued = nudge_delivery(true, Some(0), 0, &Verdict::Drifting, false, false);
         assert!(
             matches!(plateaued, NudgeDelivery::Restream(_)),
             "plateaued after an unacted steer still escalates to the restream: {plateaued:?}"
+        );
+    }
+
+    /// THE WEB-CONSOLE SHAPE (r6c build, fan-out+51m): a file-owning lane with 0 owned files on
+    /// disk, its CSS/HTML pouring into the FORMED channel (+70,600 chars), and the judge's
+    /// exact-file directive pending across two unacted steers (12:04, 12:07). The chars-based hold
+    /// shielded it and the restream — the rung that broke the skeleton's equivalent stall — never
+    /// fired. Owned files absent + formed growing + directive pending -> restream.
+    #[test]
+    fn a_builder_pouring_owed_files_into_chat_is_restreamed_not_held() {
+        use goose_swarm::Verdict;
+        let wrong = wrong_channel_stall(true, false, Some(OMNI_JUDGE_MIN_CHARS));
+        assert!(
+            wrong,
+            "owes files + none on disk + formed grew past the production floor since the nudge \
+             IS the wrong-channel conjunction"
+        );
+        let d = nudge_delivery(true, Some(2), 2, &Verdict::Drifting, true, wrong);
+        assert!(
+            matches!(d, NudgeDelivery::Restream(_)),
+            "a formed-channel-only advance does not count as advancing for hold purposes: {d:?}"
+        );
+    }
+
+    /// THE DELIVERING-BUILDER SHAPE (r6c ledgerd-core, files landing 15:41-15:46): once ANY owned
+    /// file exists on disk the conjunction is false, so the lane keeps today's ladder — hold while
+    /// advancing, steer when it acted. And a builder whose formed channel stays under the floor
+    /// since its nudge (deliberating before the write) is likewise never tripped.
+    #[test]
+    fn a_delivering_builder_keeps_the_hold_and_the_steer() {
+        use goose_swarm::Verdict;
+        assert!(
+            !wrong_channel_stall(true, true, Some(OMNI_JUDGE_MIN_CHARS * 10)),
+            "a file on disk means the content is landing in the RIGHT channel"
+        );
+        assert!(
+            !wrong_channel_stall(true, false, Some(OMNI_JUDGE_MIN_CHARS - 1)),
+            "formed growth under the production floor is deliberation, not a wrong-channel pour"
+        );
+        assert!(
+            !wrong_channel_stall(true, false, None),
+            "no delivered nudge yet (or a fresh attempt after the seam reset) cannot trip it"
+        );
+        let held = nudge_delivery(true, Some(2), 2, &Verdict::Drifting, true, false);
+        assert!(
+            matches!(held, NudgeDelivery::Hold(_)),
+            "an advancing builder whose files are landing is held exactly as before: {held:?}"
+        );
+        assert_eq!(
+            nudge_delivery(true, Some(2), 4, &Verdict::Drifting, true, true),
+            NudgeDelivery::Steer("acted since the previous nudge"),
+            "acting since the nudge is the obedience the ladder escalates on — a steer, whatever \
+             the channel measurement says"
+        );
+    }
+
+    /// THE REASONING-LANE SHAPE (r6a's opener: 0 owned files by design). `owns_files` false makes
+    /// the conjunction structurally false, so open/research/judge lanes keep the chars-based
+    /// advancing hold — the wipe class r6a closed stays closed.
+    #[test]
+    fn a_reasoning_lane_keeps_the_chars_based_advancing_hold() {
+        use goose_swarm::Verdict;
+        assert!(
+            !wrong_channel_stall(false, false, Some(OMNI_JUDGE_MIN_CHARS * 40)),
+            "a lane that owns no files has no wrong channel — its words ARE its deliverable"
+        );
+        let d = nudge_delivery(
+            true,
+            Some(0),
+            0,
+            &Verdict::Looping,
+            true,
+            wrong_channel_stall(false, false, Some(80_000)),
+        );
+        assert!(
+            matches!(d, NudgeDelivery::Hold(_)),
+            "r6a's converging opener is still held, never wiped: {d:?}"
         );
     }
 }

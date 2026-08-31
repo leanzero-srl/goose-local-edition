@@ -443,6 +443,21 @@ pub(super) fn superseded_from_prior(prior: Option<serde_json::Value>) -> Vec<ser
     out
 }
 
+/// The goose core agent loop returns a FIXED meta-message when a weak worker exhausts its turn budget
+/// without calling final_output ("I've reached the maximum number of actions I can do without user input.
+/// Would you like me to continue?", agent.rs MAX_TURNS_MESSAGE). That filler is NOT a usable result: the
+/// detailer must fall back to the skeleton brief rather than write it as a subtask spec, and a repro-author /
+/// reviewer must not treat it as an authored command / verdict. True when the text is empty or is that filler.
+/// Moved here from swarm.rs (incremental-split law) beside its one non-root caller, the
+/// supervised-reply door below.
+pub(super) fn is_agent_loop_filler(s: &str) -> bool {
+    let t = s.trim().to_lowercase();
+    t.is_empty()
+        || t.contains("reached the maximum number of actions")
+        || t.contains("would you like me to continue")
+        || t.contains("continuing agent loop")
+}
+
 /// Why a supervision reply is NOT a usable reply. Both variants take the caller's failed-look
 /// path; they are distinguished because the omni judge names the second with the
 /// `judge_turn_budget_exhausted` vocabulary the schedjudge arm already emits.
@@ -494,7 +509,7 @@ pub(super) fn supervised_reply_text(text: &str) -> Result<String, SupervisedRepl
         .strip_suffix(goose::agents::MAX_TURNS_MESSAGE)
         .map(str::trim_end)
         .unwrap_or(t);
-    if super::is_agent_loop_filler(cleaned) {
+    if is_agent_loop_filler(cleaned) {
         return Err(SupervisedReplyError::TurnBudgetExhausted);
     }
     Ok(cleaned.to_string())
@@ -503,6 +518,29 @@ pub(super) fn supervised_reply_text(text: &str) -> Result<String, SupervisedRepl
 #[cfg(test)]
 mod reply_tests {
     use super::*;
+
+    #[test]
+    fn is_agent_loop_filler_catches_max_turns_message_and_empty() {
+        // The exact goose core agent-loop max-turns filler (agent.rs MAX_TURNS_MESSAGE) — the string that
+        // leaked into detailer specs (logstat-2, ledgr-2) and repro/verify verdicts.
+        assert!(is_agent_loop_filler(
+            "I've reached the maximum number of actions I can do without user input. Would you like me to continue?"
+        ));
+        assert!(is_agent_loop_filler(
+            "  Final output tool has not been called yet. Continuing agent loop.  "
+        ));
+        // Empty / whitespace -> filler (subsumes the old empty-only guard).
+        assert!(is_agent_loop_filler(""));
+        assert!(is_agent_loop_filler("   \n\t"));
+        // A REAL detailed subtask spec -> NOT filler (must be kept, not replaced by the brief).
+        assert!(!is_agent_loop_filler(
+            "Implement parser.py: tokenize the input into (ts, level, fields) records; skip malformed lines; \
+             numeric field values parse as numbers. Files: logstat/parser.py."
+        ));
+        assert!(!is_agent_loop_filler(
+            "def compute_ratio(a, b): guard b==0 with a clean error"
+        ));
+    }
 
     /// r6a run.jsonl seq 58 pinned: the judge probe's reply was ONLY the engine's turn-cap filler
     /// (built FROM the shared constant, exactly as agent.rs emits it), and the lenient parser
