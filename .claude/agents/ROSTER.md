@@ -619,3 +619,10 @@ research_request_block's armed-no-claimed-sections arm wording.
   finds: the seed carries think-tail not answer-tail for wrong-channel lanes (defensible either way,
   recorded); TWO disagreeing on-disk predicates pre-exist (is_file vs exists — drill-deeper class,
   queue for r6e). swarm.rs 42,764→42,747. Charter gap: none.
+- 2026-08-31 16:55 tick-surgeon #16: EXEMPLARY. The standing question answered cleanly (web-console
+  SELF-RECOVERED on nudge 3 — index.html+styles.css on disk with the frozen vocabulary verified;
+  not steer-immune on this binary; the wrong-channel fix stands on r6d's own merit). Caught the
+  sharpest engine defect yet: the judge's disk-measurement ordered a lane to fix a file ANOTHER lane
+  owns — the one-owner invariant broken by the supervisor's own words; lane self-saved. Fix
+  dispatched (ownership-filtered defect list). web-viz watch escalates: steer 2 + a run.jsonl
+  detour brewing. Charter gap: none.
