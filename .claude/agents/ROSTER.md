@@ -495,3 +495,12 @@ research_request_block's armed-no-claimed-sections arm wording.
   project-less creators (recipe/deeplink flows) as an owner decision instead of silently scoping
   them. Charter gap: none. Note: screenshots landed in-repo untracked — steer future passes to
   ~/goose-screenshots per the earlier convention.
+- 2026-08-31 23:00 panel-surgeon (pass E: clean session start, ten items, 13fa15447): CLEAN++.
+  Stale-board gate built from the truth layer's OWN 45s heartbeat constant (no invented number),
+  resident-gate opt-in so Benchmark's archived-run adoption is untouched (pinned); nodes strip
+  reads config devices with zero useFleet import and zero invented occupancy; honored the live-
+  benchmark constraint to the letter (renderer-only niced repackage, no lms/:1234 of its own);
+  auto-naming diagnosed as world 1 with the exact renderer defect (title keyed on a message_count
+  nobody maintains) and honest not-live-verified (compute paths off-limits); normalized the Rust-
+  minted "New Chat" literal at every surface rather than pretending to rename the backend.
+  Charter gap: none.
