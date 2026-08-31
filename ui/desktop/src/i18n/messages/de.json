@@ -1397,9 +1397,6 @@
   "goosehintsSection.title": {
     "defaultMessage": "Projekt-Hinweise (.goosehints)"
   },
-  "groupedExtensionLoadingToast.askGoose": {
-    "defaultMessage": "goose fragen"
-  },
   "groupedExtensionLoadingToast.collapseDetails": {
     "defaultMessage": "Details einklappen"
   },
@@ -1697,29 +1694,17 @@
   "keyboardShortcuts.loading": {
     "defaultMessage": "Wird geladen..."
   },
-  "keyboardShortcuts.newChatDescription": {
-    "defaultMessage": "Einen neuen Chat im aktuellen Fenster erstellen"
-  },
-  "keyboardShortcuts.newChatLabel": {
-    "defaultMessage": "Neuer Chat"
-  },
   "keyboardShortcuts.newChatWindowDescription": {
     "defaultMessage": "Ein neues Goose-Fenster öffnen"
   },
   "keyboardShortcuts.newChatWindowLabel": {
-    "defaultMessage": "Neues Chat-Fenster"
+    "defaultMessage": "Neues Fenster"
   },
   "keyboardShortcuts.openDirectoryDescription": {
     "defaultMessage": "Dialog zur Verzeichnisauswahl öffnen"
   },
   "keyboardShortcuts.openDirectoryLabel": {
     "defaultMessage": "Verzeichnis öffnen"
-  },
-  "keyboardShortcuts.quickLauncherDescription": {
-    "defaultMessage": "Das Schnellstart-Overlay öffnen"
-  },
-  "keyboardShortcuts.quickLauncherLabel": {
-    "defaultMessage": "Schnellstart"
   },
   "keyboardShortcuts.reassignShortcut": {
     "defaultMessage": "Tastenkürzel neu zuweisen"
@@ -2453,9 +2438,6 @@
   "navigation.itemBenchmark": {
     "defaultMessage": "Benchmark"
   },
-  "navigation.itemHome": {
-    "defaultMessage": "Neuer Chat"
-  },
   "navigation.itemLeanzeroSwarm": {
     "defaultMessage": "LeanZero Swarm"
   },
@@ -2589,7 +2571,7 @@
     "defaultMessage": "Eine Option auswählen..."
   },
   "parameterInputModal.startNewChat": {
-    "defaultMessage": "Neuen Chat starten (kein Rezept)"
+    "defaultMessage": "Rezept-Einrichtung verlassen"
   },
   "parameterInputModal.startRecipe": {
     "defaultMessage": "Rezept starten"
@@ -2689,6 +2671,21 @@
   },
   "progressiveMessageList.searchHint": {
     "defaultMessage": "Drücken Sie Cmd/Ctrl+F, um alle Nachrichten sofort für die Suche zu laden"
+  },
+  "projectLanding.addFailed": {
+    "defaultMessage": "Projektordner konnte nicht hinzugefügt werden"
+  },
+  "projectLanding.addProject": {
+    "defaultMessage": "Projekt hinzufügen"
+  },
+  "projectLanding.emptyHint": {
+    "defaultMessage": "Füge einen Projektordner hinzu und starte Sitzungen dann aus der Seitenleiste."
+  },
+  "projectLanding.headline": {
+    "defaultMessage": "Sitzungen beginnen in einem Projekt"
+  },
+  "projectLanding.pickHint": {
+    "defaultMessage": "Wähle ein Projekt in der Seitenleiste und nutze dessen „+ Neue Sitzung hier“."
   },
   "projectsSection.addProject": {
     "defaultMessage": "Projektordner hinzufügen"

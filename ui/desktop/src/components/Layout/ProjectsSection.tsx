@@ -19,8 +19,12 @@ import { useNavigation } from '../../hooks/useNavigation';
 import { useNavigationSessions, sessionToListItem } from '../../hooks/useNavigationSessions';
 import { startNewSession } from '../../sessions';
 import { acpListSessions, type SessionListItem } from '../../acp/sessions';
-import { getInitialWorkingDir } from '../../utils/workingDir';
 import { AppEvents } from '../../constants/events';
+import {
+  chooseAndAddProject,
+  removeProjectAndBroadcast,
+  type ProjectsChangedDetail,
+} from '../../utils/addProjectFlow';
 import { sessionActivityAt } from '../../utils/dateUtils';
 import type { ProjectEntry } from '../../utils/projectDirs';
 import type { Session } from '../../types/session';
@@ -575,30 +579,22 @@ export const ProjectsSection: React.FC<{ className?: string }> = ({ className })
     [expandedPaths, loadProjectSessions]
   );
 
+  // ONE add-project path (shared with the home landing): the flow broadcasts PROJECTS_CHANGED
+  // and the listener below applies it — registry update, expand the new project, load its
+  // sessions — no matter which surface ran the picker.
   const handleAddProject = useCallback(async () => {
     try {
-      const seed = getInitialWorkingDir();
-      const result = await window.electron.directoryChooser(seed || undefined);
-      if (result.canceled || result.filePaths.length === 0) return;
-      const previousPaths = new Set(projects.map((p) => p.path));
-      const next = await window.electron.addProject(result.filePaths[0]);
-      setProjects(next);
-      const added = next.filter((p) => !previousPaths.has(p.path));
-      for (const p of added) {
-        setExpandedPaths((prev) => new Set(prev).add(p.path));
-        void loadProjectSessions(p.path);
-      }
+      await chooseAndAddProject();
     } catch (error) {
       console.error('Failed to add project:', error);
       toast.error(intl.formatMessage(i18n.removeFailed));
     }
-  }, [projects, loadProjectSessions, intl]);
+  }, [intl]);
 
   const handleRemoveProject = useCallback(
     async (projectPath: string) => {
       try {
-        const next = await window.electron.removeProject(projectPath);
-        setProjects(next);
+        await removeProjectAndBroadcast(projectPath);
       } catch (error) {
         console.error('Failed to remove project:', error);
         toast.error(intl.formatMessage(i18n.removeFailed));
@@ -606,6 +602,20 @@ export const ProjectsSection: React.FC<{ className?: string }> = ({ className })
     },
     [intl]
   );
+
+  useEffect(() => {
+    const onProjectsChanged = (event: Event) => {
+      const detail = (event as CustomEvent<ProjectsChangedDetail>).detail;
+      if (!detail) return;
+      setProjects(detail.projects);
+      for (const p of detail.added) {
+        setExpandedPaths((prev) => new Set(prev).add(p.path));
+        void loadProjectSessions(p.path);
+      }
+    };
+    window.addEventListener(AppEvents.PROJECTS_CHANGED, onProjectsChanged);
+    return () => window.removeEventListener(AppEvents.PROJECTS_CHANGED, onProjectsChanged);
+  }, [loadProjectSessions]);
 
   const handleNewSession = useCallback(
     async (projectPath: string) => {

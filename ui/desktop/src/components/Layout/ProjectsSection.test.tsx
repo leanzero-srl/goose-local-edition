@@ -5,6 +5,7 @@ import { IntlProvider } from 'react-intl';
 import { ProjectsSection, isUnfiledSession, normalizeDirPath } from './ProjectsSection';
 import { acpListSessions, type SessionListItem } from '../../acp/sessions';
 import { startNewSession } from '../../sessions';
+import { AppEvents } from '../../constants/events';
 
 /**
  * The Projects tree: user-curated folders in the sidebar, each expanding to ITS sessions via the
@@ -241,6 +242,24 @@ describe('ProjectsSection', () => {
     await waitFor(() => expect(mocks.addProject).toHaveBeenCalledWith('/picked/app'));
     expect(await screen.findByText('app')).toBeInTheDocument();
     await waitFor(() => expect(acpListSessions).toHaveBeenCalledWith(null, { cwd: '/picked/app' }));
+  });
+
+  it('a PROJECTS_CHANGED broadcast from another surface (the home landing) registers AND expands', async () => {
+    electronMocks();
+    renderSection();
+    await screen.findByText('Add a project folder to scope your sessions');
+
+    const entry = { path: '/from/landing', addedAt: 9 };
+    window.dispatchEvent(
+      new CustomEvent(AppEvents.PROJECTS_CHANGED, {
+        detail: { projects: [entry], added: [entry] },
+      })
+    );
+
+    expect(await screen.findByText('landing')).toBeInTheDocument();
+    await waitFor(() =>
+      expect(acpListSessions).toHaveBeenCalledWith(null, { cwd: '/from/landing' })
+    );
   });
 });
 

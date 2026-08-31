@@ -12,6 +12,7 @@ export enum AppEvents {
   ADD_ACTIVE_SESSION = 'add-active-session',
   CLEAR_INITIAL_MESSAGE = 'clear-initial-message',
   MESSAGE_STREAM_FINISHED = 'message-stream-finished',
+  PROJECTS_CHANGED = 'projects-changed',
   SCROLL_CHAT_TO_BOTTOM = 'scroll-chat-to-bottom',
   HIDE_ALERT_POPOVER = 'hide-alert-popover',
   RESPONSE_STYLE_CHANGED = 'responseStyleChanged',

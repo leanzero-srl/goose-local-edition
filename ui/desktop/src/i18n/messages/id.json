@@ -1397,9 +1397,6 @@
   "goosehintsSection.title": {
     "defaultMessage": "Petunjuk Proyek (.goosehints)"
   },
-  "groupedExtensionLoadingToast.askGoose": {
-    "defaultMessage": "Tanya goose"
-  },
   "groupedExtensionLoadingToast.collapseDetails": {
     "defaultMessage": "Ciutkan detail"
   },
@@ -1697,29 +1694,17 @@
   "keyboardShortcuts.loading": {
     "defaultMessage": "Memuat..."
   },
-  "keyboardShortcuts.newChatDescription": {
-    "defaultMessage": "Buat obrolan baru di jendela saat ini"
-  },
-  "keyboardShortcuts.newChatLabel": {
-    "defaultMessage": "Obrolan Baru"
-  },
   "keyboardShortcuts.newChatWindowDescription": {
     "defaultMessage": "Buka jendela Goose baru"
   },
   "keyboardShortcuts.newChatWindowLabel": {
-    "defaultMessage": "Jendela Obrolan Baru"
+    "defaultMessage": "Jendela Baru"
   },
   "keyboardShortcuts.openDirectoryDescription": {
     "defaultMessage": "Buka dialog pemilihan direktori"
   },
   "keyboardShortcuts.openDirectoryLabel": {
     "defaultMessage": "Buka Direktori"
-  },
-  "keyboardShortcuts.quickLauncherDescription": {
-    "defaultMessage": "Buka lapisan peluncur cepat"
-  },
-  "keyboardShortcuts.quickLauncherLabel": {
-    "defaultMessage": "Peluncur Cepat"
   },
   "keyboardShortcuts.reassignShortcut": {
     "defaultMessage": "Tetapkan Ulang Pintasan"
@@ -2453,9 +2438,6 @@
   "navigation.itemBenchmark": {
     "defaultMessage": "Benchmark"
   },
-  "navigation.itemHome": {
-    "defaultMessage": "Obrolan Baru"
-  },
   "navigation.itemLeanzeroSwarm": {
     "defaultMessage": "LeanZero Swarm"
   },
@@ -2589,7 +2571,7 @@
     "defaultMessage": "Pilih opsi..."
   },
   "parameterInputModal.startNewChat": {
-    "defaultMessage": "Mulai Obrolan Baru (Tanpa Resep)"
+    "defaultMessage": "Keluar dari Penyiapan Resep"
   },
   "parameterInputModal.startRecipe": {
     "defaultMessage": "Mulai Resep"
@@ -2689,6 +2671,21 @@
   },
   "progressiveMessageList.searchHint": {
     "defaultMessage": "Tekan Cmd/Ctrl+F untuk segera memuat semua pesan untuk pencarian"
+  },
+  "projectLanding.addFailed": {
+    "defaultMessage": "Tidak dapat menambahkan folder proyek"
+  },
+  "projectLanding.addProject": {
+    "defaultMessage": "Tambah proyek"
+  },
+  "projectLanding.emptyHint": {
+    "defaultMessage": "Tambahkan folder proyek, lalu mulai sesi dari bilah samping."
+  },
+  "projectLanding.headline": {
+    "defaultMessage": "Sesi dimulai dari sebuah proyek"
+  },
+  "projectLanding.pickHint": {
+    "defaultMessage": "Pilih proyek di bilah samping dan gunakan “+ Sesi baru di sini” miliknya."
   },
   "projectsSection.addProject": {
     "defaultMessage": "Tambahkan folder proyek"

@@ -1397,9 +1397,6 @@
   "goosehintsSection.title": {
     "defaultMessage": "Suggerimenti del progetto (.goosehints)"
   },
-  "groupedExtensionLoadingToast.askGoose": {
-    "defaultMessage": "Chiedi a goose"
-  },
   "groupedExtensionLoadingToast.collapseDetails": {
     "defaultMessage": "Comprimi i dettagli"
   },
@@ -1697,29 +1694,17 @@
   "keyboardShortcuts.loading": {
     "defaultMessage": "Caricamento in corso..."
   },
-  "keyboardShortcuts.newChatDescription": {
-    "defaultMessage": "Crea una nuova chat nella finestra corrente"
-  },
-  "keyboardShortcuts.newChatLabel": {
-    "defaultMessage": "Nuova chat"
-  },
   "keyboardShortcuts.newChatWindowDescription": {
     "defaultMessage": "Apri una nuova finestra di Goose"
   },
   "keyboardShortcuts.newChatWindowLabel": {
-    "defaultMessage": "Nuova finestra di chat"
+    "defaultMessage": "Nuova finestra"
   },
   "keyboardShortcuts.openDirectoryDescription": {
     "defaultMessage": "Apri la finestra di selezione della directory"
   },
   "keyboardShortcuts.openDirectoryLabel": {
     "defaultMessage": "Apri directory"
-  },
-  "keyboardShortcuts.quickLauncherDescription": {
-    "defaultMessage": "Apri l'overlay dell'avvio rapido"
-  },
-  "keyboardShortcuts.quickLauncherLabel": {
-    "defaultMessage": "Avvio rapido"
   },
   "keyboardShortcuts.reassignShortcut": {
     "defaultMessage": "Riassegna scorciatoia"
@@ -2453,9 +2438,6 @@
   "navigation.itemBenchmark": {
     "defaultMessage": "Benchmark"
   },
-  "navigation.itemHome": {
-    "defaultMessage": "Nuova chat"
-  },
   "navigation.itemLeanzeroSwarm": {
     "defaultMessage": "LeanZero Swarm"
   },
@@ -2589,7 +2571,7 @@
     "defaultMessage": "Seleziona un'opzione..."
   },
   "parameterInputModal.startNewChat": {
-    "defaultMessage": "Avvia nuova chat (nessuna ricetta)"
+    "defaultMessage": "Esci dalla configurazione della ricetta"
   },
   "parameterInputModal.startRecipe": {
     "defaultMessage": "Avvia ricetta"
@@ -2689,6 +2671,21 @@
   },
   "progressiveMessageList.searchHint": {
     "defaultMessage": "Premi Cmd/Ctrl+F per caricare immediatamente tutti i messaggi per la ricerca"
+  },
+  "projectLanding.addFailed": {
+    "defaultMessage": "Impossibile aggiungere la cartella del progetto"
+  },
+  "projectLanding.addProject": {
+    "defaultMessage": "Aggiungi un progetto"
+  },
+  "projectLanding.emptyHint": {
+    "defaultMessage": "Aggiungi una cartella di progetto, poi avvia le sessioni dalla barra laterale."
+  },
+  "projectLanding.headline": {
+    "defaultMessage": "Le sessioni iniziano da un progetto"
+  },
+  "projectLanding.pickHint": {
+    "defaultMessage": "Scegli un progetto nella barra laterale e usa il suo «+ Nuova sessione qui»."
   },
   "projectsSection.addProject": {
     "defaultMessage": "Aggiungi una cartella di progetto"

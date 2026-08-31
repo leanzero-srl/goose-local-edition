@@ -1397,9 +1397,6 @@
   "goosehintsSection.title": {
     "defaultMessage": "Project Hints (.goosehints)"
   },
-  "groupedExtensionLoadingToast.askGoose": {
-    "defaultMessage": "Ask goose"
-  },
   "groupedExtensionLoadingToast.collapseDetails": {
     "defaultMessage": "Collapse details"
   },
@@ -1697,29 +1694,17 @@
   "keyboardShortcuts.loading": {
     "defaultMessage": "Loading..."
   },
-  "keyboardShortcuts.newChatDescription": {
-    "defaultMessage": "Create a new chat in the current window"
-  },
-  "keyboardShortcuts.newChatLabel": {
-    "defaultMessage": "New Chat"
-  },
   "keyboardShortcuts.newChatWindowDescription": {
     "defaultMessage": "Open a new Goose window"
   },
   "keyboardShortcuts.newChatWindowLabel": {
-    "defaultMessage": "New Chat Window"
+    "defaultMessage": "New Window"
   },
   "keyboardShortcuts.openDirectoryDescription": {
     "defaultMessage": "Open directory selection dialog"
   },
   "keyboardShortcuts.openDirectoryLabel": {
     "defaultMessage": "Open Directory"
-  },
-  "keyboardShortcuts.quickLauncherDescription": {
-    "defaultMessage": "Open the quick launcher overlay"
-  },
-  "keyboardShortcuts.quickLauncherLabel": {
-    "defaultMessage": "Quick Launcher"
   },
   "keyboardShortcuts.reassignShortcut": {
     "defaultMessage": "Reassign Shortcut"
@@ -1743,7 +1728,7 @@
     "defaultMessage": "Reset to Defaults"
   },
   "keyboardShortcuts.restartDescription": {
-    "defaultMessage": "Changes to application shortcuts (like New Chat, Settings, etc.) require restarting Goose to take effect. Global shortcuts (Focus Window, Quick Launcher) work immediately."
+    "defaultMessage": "Changes to application shortcuts (like New Window, Settings, etc.) require restarting Goose to take effect. Global shortcuts (Focus Window) work immediately."
   },
   "keyboardShortcuts.restartRequired": {
     "defaultMessage": "Restart Required"
@@ -2453,9 +2438,6 @@
   "navigation.itemBenchmark": {
     "defaultMessage": "Benchmark"
   },
-  "navigation.itemHome": {
-    "defaultMessage": "New Chat"
-  },
   "navigation.itemLeanzeroSwarm": {
     "defaultMessage": "LeanZero Swarm"
   },
@@ -2589,7 +2571,7 @@
     "defaultMessage": "Select an option..."
   },
   "parameterInputModal.startNewChat": {
-    "defaultMessage": "Start New Chat (No Recipe)"
+    "defaultMessage": "Exit Recipe Setup"
   },
   "parameterInputModal.startRecipe": {
     "defaultMessage": "Start Recipe"
@@ -2689,6 +2671,21 @@
   },
   "progressiveMessageList.searchHint": {
     "defaultMessage": "Press Cmd/Ctrl+F to load all messages immediately for search"
+  },
+  "projectLanding.addFailed": {
+    "defaultMessage": "Could not add the project folder"
+  },
+  "projectLanding.addProject": {
+    "defaultMessage": "Add a project"
+  },
+  "projectLanding.emptyHint": {
+    "defaultMessage": "Add a project folder, then start sessions from it in the sidebar."
+  },
+  "projectLanding.headline": {
+    "defaultMessage": "Sessions start from a project"
+  },
+  "projectLanding.pickHint": {
+    "defaultMessage": "Pick a project in the sidebar and use its “+ New session here”."
   },
   "projectsSection.addProject": {
     "defaultMessage": "Add a project folder"
@@ -4254,7 +4251,7 @@
     "defaultMessage": "Closing this window would drop the live benchmark view. Use File > Close if you really mean it."
   },
   "shortcutRefused.navigate": {
-    "defaultMessage": "Leaving the Benchmark view is one-way while a run is live; use File > New Chat if you really mean it."
+    "defaultMessage": "Leaving the Benchmark view is one-way while a run is live; use the menu if you really mean it."
   },
   "shortcutRefused.quit": {
     "defaultMessage": "Quitting would orphan the run and lose its score. Use Goose > Quit if you really mean it."
@@ -4263,7 +4260,7 @@
     "defaultMessage": "Reloading would discard the live log and swarm panel state."
   },
   "shortcutRefused.spawn": {
-    "defaultMessage": "Cmd+N would open a second window and a second backend on the live run. Use File > New Chat Window if you really mean it."
+    "defaultMessage": "Cmd+N would open a second window and a second backend on the live run. Use File > New Window if you really mean it."
   },
   "shortcutRefused.title": {
     "defaultMessage": "Shortcut ignored while a benchmark is running"

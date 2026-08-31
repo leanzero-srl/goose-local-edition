@@ -2,10 +2,7 @@ import { useState } from 'react';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from './ui/collapsible';
 import { ChevronDown, ChevronUp, Loader2 } from 'lucide-react';
 import { Button } from './ui/button';
-import { startNewSession } from '../sessions';
-import { useNavigation } from '../hooks/useNavigation';
 import { formatExtensionErrorMessage } from '../utils/extensionErrorUtils';
-import { getInitialWorkingDir } from '../utils/workingDir';
 import { formatExtensionName } from './settings/extensions/subcomponents/ExtensionList';
 import { defineMessages, useIntl } from '../i18n';
 
@@ -29,10 +26,6 @@ const i18n = defineMessages({
   failedToAddExtension: {
     id: 'groupedExtensionLoadingToast.failedToAddExtension',
     defaultMessage: 'Failed to add extension',
-  },
-  askGoose: {
-    id: 'groupedExtensionLoadingToast.askGoose',
-    defaultMessage: 'Ask goose',
   },
   copied: {
     id: 'groupedExtensionLoadingToast.copied',
@@ -80,7 +73,6 @@ export function GroupedExtensionLoadingToast({
 }: ExtensionLoadingToastProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [copiedExtension, setCopiedExtension] = useState<string | null>(null);
-  const setView = useNavigation();
   const intl = useIntl();
 
   const successCount = extensions.filter((ext) => ext.status === 'success').length;
@@ -160,22 +152,9 @@ export function GroupedExtensionLoadingToast({
                           <div className="text-xs opacity-75 break-words">
                             {formatExtensionErrorMessage(ext.error, intl.formatMessage(i18n.failedToAddExtension))}
                           </div>
+                          {/* Pass D (owner): the "Ask goose" recovery button is gone — it
+                              silently created a project-less session. Copy error remains. */}
                           <div className="flex gap-2">
-                            {ext.recoverHints && setView && (
-                              <Button
-                                size="sm"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  startNewSession(
-                                    ext.recoverHints,
-                                    setView,
-                                    getInitialWorkingDir()
-                                  );
-                                }}
-                              >
-                                {intl.formatMessage(i18n.askGoose)}
-                              </Button>
-                            )}
                             <Button
                               size="sm"
                               onClick={(e) => {

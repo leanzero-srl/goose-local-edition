@@ -6,8 +6,10 @@ import SettingsView from './SettingsView';
 
 /**
  * Goose Swarm pass A: the Models tab left the settings navigation (provider management consolidates
- * into the LeanZero Swarm view). This pins the tab LIST — the components stay in code, the nav entry
- * must not creep back, and the default tab must be one that actually exists.
+ * into the LeanZero Swarm view). Owner (2026-08-31): the Swarm LeanZero tab is gone too — the
+ * LeanZero Swarm view's nodes tab is the only swarm surface. This pins the tab LIST — the
+ * components stay in code, the nav entries must not creep back, and the default tab must be one
+ * that actually exists.
  */
 
 // Section bodies are out of scope here — the test targets the tab list. Each mock renders a marker.
@@ -43,8 +45,8 @@ const renderSettings = () =>
     </IntlTestWrapper>
   );
 
-describe('SettingsView tab list (models tab removed)', () => {
-  it('standard edition shows chat/sharing/prompts/keyboard/auth/app — no Models tab', () => {
+describe('SettingsView tab list (models and swarm tabs removed)', () => {
+  it('standard edition shows chat/sharing/prompts/keyboard/auth/app — no Models, no Swarm tab', () => {
     renderSettings();
     expect(screen.queryByTestId('settings-models-tab')).toBeNull();
     expect(screen.queryByTestId('settings-swarm-tab')).toBeNull();
@@ -57,18 +59,31 @@ describe('SettingsView tab list (models tab removed)', () => {
     expect(screen.getByTestId('chat-body')).toBeTruthy();
   });
 
-  it('local edition (Goose Swarm) defaults to the Swarm tab and still has no Models tab', () => {
+  it('local edition (Goose Swarm) has NO Swarm tab either and defaults to Chat', () => {
     editionState.edition = 'local';
     editionState.isLocal = true;
     try {
       renderSettings();
       expect(screen.queryByTestId('settings-models-tab')).toBeNull();
-      expect(screen.getByTestId('settings-swarm-tab').getAttribute('data-state')).toBe('active');
+      expect(screen.queryByTestId('settings-swarm-tab')).toBeNull();
+      expect(screen.queryByTestId('swarm-body')).toBeNull();
       expect(screen.getByTestId('settings-import-tab')).toBeTruthy();
-      expect(screen.getByTestId('swarm-body')).toBeTruthy();
+      expect(screen.getByTestId('settings-chat-tab').getAttribute('data-state')).toBe('active');
+      expect(screen.getByTestId('chat-body')).toBeTruthy();
     } finally {
       editionState.edition = 'standard';
       editionState.isLocal = false;
+    }
+  });
+
+  it('even with localInference advertised the Swarm tab stays gone (owner removal, not a capability gate)', () => {
+    features.localInference = true;
+    try {
+      renderSettings();
+      expect(screen.queryByTestId('settings-swarm-tab')).toBeNull();
+      expect(screen.getByTestId('settings-chat-tab').getAttribute('data-state')).toBe('active');
+    } finally {
+      features.localInference = false;
     }
   });
 });

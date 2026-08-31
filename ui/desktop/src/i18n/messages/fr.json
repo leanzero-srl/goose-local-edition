@@ -1397,9 +1397,6 @@
   "goosehintsSection.title": {
     "defaultMessage": "Indices du projet (.goosehints)"
   },
-  "groupedExtensionLoadingToast.askGoose": {
-    "defaultMessage": "Demander à goose"
-  },
   "groupedExtensionLoadingToast.collapseDetails": {
     "defaultMessage": "Réduire les détails"
   },
@@ -1697,29 +1694,17 @@
   "keyboardShortcuts.loading": {
     "defaultMessage": "Chargement..."
   },
-  "keyboardShortcuts.newChatDescription": {
-    "defaultMessage": "Créer une nouvelle discussion dans la fenêtre actuelle"
-  },
-  "keyboardShortcuts.newChatLabel": {
-    "defaultMessage": "Nouvelle discussion"
-  },
   "keyboardShortcuts.newChatWindowDescription": {
     "defaultMessage": "Ouvrir une nouvelle fenêtre Goose"
   },
   "keyboardShortcuts.newChatWindowLabel": {
-    "defaultMessage": "Nouvelle fenêtre de discussion"
+    "defaultMessage": "Nouvelle fenêtre"
   },
   "keyboardShortcuts.openDirectoryDescription": {
     "defaultMessage": "Ouvrir la boîte de dialogue de sélection de répertoire"
   },
   "keyboardShortcuts.openDirectoryLabel": {
     "defaultMessage": "Ouvrir un répertoire"
-  },
-  "keyboardShortcuts.quickLauncherDescription": {
-    "defaultMessage": "Ouvrir la superposition du lanceur rapide"
-  },
-  "keyboardShortcuts.quickLauncherLabel": {
-    "defaultMessage": "Lanceur rapide"
   },
   "keyboardShortcuts.reassignShortcut": {
     "defaultMessage": "Réattribuer le raccourci"
@@ -2453,9 +2438,6 @@
   "navigation.itemBenchmark": {
     "defaultMessage": "Benchmark"
   },
-  "navigation.itemHome": {
-    "defaultMessage": "Nouvelle discussion"
-  },
   "navigation.itemLeanzeroSwarm": {
     "defaultMessage": "LeanZero Swarm"
   },
@@ -2589,7 +2571,7 @@
     "defaultMessage": "Sélectionner une option..."
   },
   "parameterInputModal.startNewChat": {
-    "defaultMessage": "Démarrer une nouvelle discussion (sans recette)"
+    "defaultMessage": "Quitter la configuration de la recette"
   },
   "parameterInputModal.startRecipe": {
     "defaultMessage": "Démarrer la recette"
@@ -2689,6 +2671,21 @@
   },
   "progressiveMessageList.searchHint": {
     "defaultMessage": "Appuyez sur Cmd/Ctrl+F pour charger immédiatement tous les messages et effectuer une recherche"
+  },
+  "projectLanding.addFailed": {
+    "defaultMessage": "Impossible d'ajouter le dossier du projet"
+  },
+  "projectLanding.addProject": {
+    "defaultMessage": "Ajouter un projet"
+  },
+  "projectLanding.emptyHint": {
+    "defaultMessage": "Ajoutez un dossier de projet, puis démarrez des sessions depuis la barre latérale."
+  },
+  "projectLanding.headline": {
+    "defaultMessage": "Les sessions démarrent depuis un projet"
+  },
+  "projectLanding.pickHint": {
+    "defaultMessage": "Choisissez un projet dans la barre latérale et utilisez son « + Nouvelle session ici »."
   },
   "projectsSection.addProject": {
     "defaultMessage": "Ajouter un dossier de projet"

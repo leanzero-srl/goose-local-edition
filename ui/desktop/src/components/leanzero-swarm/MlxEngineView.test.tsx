@@ -597,7 +597,7 @@ describe('MlxEngineView sampling tab', () => {
 
     await userEvent.click(screen.getByRole('button', { name: /Models/ }));
     await waitFor(() => {
-      expect(screen.getByText('/Users/x/mlx-models')).toBeInTheDocument();
+      expect(screen.getByLabelText('Search Hugging Face')).toBeInTheDocument();
     });
     await userEvent.click(screen.getByRole('button', { name: 'Sampling' }));
     await waitFor(() => {
@@ -657,13 +657,14 @@ describe('MlxEngineView sampling tab', () => {
     unmount();
   });
 
-  it('the per-model Sampling affordance on the Models tab preselects that row model', async () => {
+  it('the per-model Sampling affordance on the Downloaded rows preselects that row model', async () => {
     mockModelsList.mockResolvedValue(listOf(COMPLETE_MODELS));
     const { unmount } = render(<MlxEngineView />);
     await waitFor(() => {
       expect(screen.getByText('Models')).toBeInTheDocument();
     });
     await userEvent.click(screen.getByRole('button', { name: /Models/ }));
+    await userEvent.click(screen.getByRole('button', { name: /^Downloaded/ }));
     await waitFor(() => {
       expect(screen.getByLabelText(`Sampling for ${OTHER_MODEL}`)).toBeInTheDocument();
     });
@@ -724,10 +725,36 @@ async function openModelsTab() {
   await userEvent.click(screen.getByRole('button', { name: /Models/ }));
 }
 
+/** The owner's split: local content lives on the second-level Downloaded tab. */
+async function openDownloadedTab() {
+  await openModelsTab();
+  await userEvent.click(screen.getByRole('button', { name: /^Downloaded/ }));
+}
+
 describe('MlxEngineView models tab', () => {
-  it('lists local models with sizes, flags incomplete downloads, counts what it shows', async () => {
+  it('splits into [Hugging Face | Downloaded]: the browser on one, the local library on the other', async () => {
     const { unmount } = render(<MlxEngineView />);
     await openModelsTab();
+    // Hugging Face is the default pane: the browser is here, the local library is not.
+    await waitFor(() => {
+      expect(screen.getByLabelText('Search Hugging Face')).toBeInTheDocument();
+    });
+    expect(screen.queryByText('/Users/x/mlx-models')).not.toBeInTheDocument();
+    expect(screen.queryByText(HALF)).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('button', { name: /^Downloaded/ }));
+    await waitFor(() => {
+      expect(screen.getByText('/Users/x/mlx-models')).toBeInTheDocument();
+    });
+    expect(screen.getByTestId('mlx-disk-bar')).toBeInTheDocument();
+    expect(screen.getByText(HALF)).toBeInTheDocument();
+    expect(screen.queryByLabelText('Search Hugging Face')).not.toBeInTheDocument();
+    unmount();
+  });
+
+  it('lists local models with sizes, flags incomplete downloads, counts what it shows', async () => {
+    const { unmount } = render(<MlxEngineView />);
+    await openDownloadedTab();
     await waitFor(() => {
       expect(screen.getByText('/Users/x/mlx-models')).toBeInTheDocument();
     });
@@ -742,7 +769,7 @@ describe('MlxEngineView models tab', () => {
 
   it('an incomplete model offers Resume (works for untracked residue) and its progress row', async () => {
     const { unmount } = render(<MlxEngineView />);
-    await openModelsTab();
+    await openDownloadedTab();
     await waitFor(() => {
       expect(screen.getByText('incomplete — missing 2 file(s)')).toBeInTheDocument();
     });
@@ -765,7 +792,7 @@ describe('MlxEngineView models tab', () => {
 
   it('the disk bar shows the models volume free space from the modelsList response', async () => {
     const { unmount } = render(<MlxEngineView />);
-    await openModelsTab();
+    await openDownloadedTab();
     await waitFor(() => {
       expect(screen.getByTestId('mlx-disk-bar')).toBeInTheDocument();
     });
@@ -882,7 +909,7 @@ describe('MlxEngineView models tab', () => {
     mockModelDelete.mockResolvedValue(undefined);
     const confirmSpy = vi.spyOn(window, 'confirm');
     const { unmount } = render(<MlxEngineView />);
-    await openModelsTab();
+    await openDownloadedTab();
     await waitFor(() => {
       expect(screen.getByLabelText(`Delete ${HALF}`)).toBeInTheDocument();
     });
@@ -896,6 +923,67 @@ describe('MlxEngineView models tab', () => {
       expect(mockModelDelete).toHaveBeenCalledWith(HALF);
     });
     expect(confirmSpy).not.toHaveBeenCalled();
+    unmount();
+  });
+
+  it('a running download is visible from BOTH sub-tabs (Active downloads carries the orphans)', async () => {
+    mockBrowse.mockResolvedValue({ hits: [HIT_A] });
+    mockDownloadProgress.mockResolvedValue({
+      state: 'downloading',
+      totalBytes: 4 * GB,
+      downloadedBytes: 1 * GB,
+    });
+    const { unmount } = render(<MlxEngineView />);
+    await openModelsTab();
+    await waitFor(() => {
+      expect(screen.getByText(HIT_A.id)).toBeInTheDocument();
+    });
+    // Started from the browser row: inline on the Hugging Face pane.
+    await userEvent.click(screen.getByLabelText(`Download ${HIT_A.id}`));
+    await waitFor(() => {
+      expect(screen.getByTestId(`mlx-download-${HIT_A.id}`)).toBeInTheDocument();
+    });
+
+    // The Downloaded pane shows the SAME download — HIT_A is not local, so the
+    // Active downloads card carries it. One row per repo per pane, never two.
+    await userEvent.click(screen.getByRole('button', { name: /^Downloaded/ }));
+    await waitFor(() => {
+      expect(screen.getByText('Active downloads')).toBeInTheDocument();
+    });
+    expect(screen.getAllByTestId(`mlx-download-${HIT_A.id}`)).toHaveLength(1);
+
+    // And back on Hugging Face it is inline again, still exactly once.
+    await userEvent.click(screen.getByRole('button', { name: 'Hugging Face' }));
+    await waitFor(() => {
+      expect(screen.getAllByTestId(`mlx-download-${HIT_A.id}`)).toHaveLength(1);
+    });
+    expect(screen.queryByText('Active downloads')).not.toBeInTheDocument();
+    unmount();
+  });
+
+  it('browser state (query, hits) survives a sub-tab round trip without refetching', async () => {
+    mockBrowse.mockImplementation(async (params: { query?: string }) => {
+      if (params.query === 'qwen') return { hits: [HIT_C] };
+      return { hits: [HIT_A] };
+    });
+    const { unmount } = render(<MlxEngineView />);
+    await openModelsTab();
+    await userEvent.type(screen.getByLabelText('Search Hugging Face'), 'qwen{Enter}');
+    await waitFor(() => {
+      expect(screen.getByText(HIT_C.id)).toBeInTheDocument();
+    });
+    const browseCalls = mockBrowse.mock.calls.length;
+
+    await userEvent.click(screen.getByRole('button', { name: /^Downloaded/ }));
+    await waitFor(() => {
+      expect(screen.getByText('/Users/x/mlx-models')).toBeInTheDocument();
+    });
+    await userEvent.click(screen.getByRole('button', { name: 'Hugging Face' }));
+
+    // The applied query, its results and the input text are all still there — no new fetch.
+    expect(await screen.findByText(HIT_C.id)).toBeInTheDocument();
+    expect(screen.getByLabelText('Search Hugging Face')).toHaveValue('qwen');
+    expect(mockBrowse.mock.calls.length).toBe(browseCalls);
     unmount();
   });
 });
@@ -1175,7 +1263,7 @@ describe('MlxEngineView download lifecycle', () => {
       downloadedBytes: 3 * GB,
     });
     const { unmount } = render(<MlxEngineView />);
-    await openModelsTab();
+    await openDownloadedTab();
     await waitFor(() => {
       expect(screen.getByLabelText(`Resume ${HALF}`)).toBeInTheDocument();
     });

@@ -11,7 +11,6 @@ import {
   net,
   Notification,
   powerSaveBlocker,
-  screen,
   session,
   shell,
   Tray,
@@ -99,12 +98,9 @@ const MENU_TRANSLATIONS_ZH_CN: Record<string, string> = {
   'Find Previous': '查找上一个',
   'Use Selection for Find': '用所选内容查找',
   Find: '查找',
-  'New Chat': '新建聊天',
-  'New Chat Window': '新建聊天窗口',
   'Open Directory...': '打开目录…',
   'Recent Directories': '最近的目录',
   'Focus Goose Window': '聚焦 Goose 窗口',
-  'Quick Launcher': '快速启动器',
   'Always on Top': '窗口置顶',
   'Toggle Navigation': '切换导航',
   'About Goose': '关于 Goose',
@@ -1535,80 +1531,9 @@ const createChat = async (
   return mainWindow;
 };
 
-let activeLauncherWindow: BrowserWindow | null = null;
-
-const createLauncher = () => {
-  if (activeLauncherWindow && !activeLauncherWindow.isDestroyed()) {
-    activeLauncherWindow.focus();
-    return activeLauncherWindow;
-  }
-
-  const launcherWindow = new BrowserWindow({
-    width: 600,
-    height: 80,
-    frame: false,
-    transparent: process.platform === 'darwin',
-    backgroundColor: process.platform === 'darwin' ? '#00000000' : '#ffffff',
-    webPreferences: {
-      preload: path.join(__dirname, 'preload.js'),
-      nodeIntegration: false,
-      contextIsolation: true,
-      additionalArguments: [
-        JSON.stringify({
-          ...appConfig,
-          GOOSE_LOCALE: getConfiguredGooseLocale(),
-        }),
-      ],
-      partition: 'persist:goose',
-    },
-    skipTaskbar: true,
-    alwaysOnTop: true,
-    resizable: false,
-    movable: true,
-    minimizable: false,
-    maximizable: false,
-    fullscreenable: false,
-    hasShadow: true,
-    vibrancy: process.platform === 'darwin' ? 'window' : undefined,
-  });
-
-  // Center on screen
-  const primaryDisplay = screen.getPrimaryDisplay();
-  const { width, height } = primaryDisplay.workAreaSize;
-  const windowBounds = launcherWindow.getBounds();
-
-  launcherWindow.setPosition(
-    Math.round(width / 2 - windowBounds.width / 2),
-    Math.round(height / 3 - windowBounds.height / 2)
-  );
-
-  // Load launcher window content
-  const url = getAppUrl();
-
-  url.hash = '/launcher';
-  launcherWindow.loadURL(formatUrl(url));
-  activeLauncherWindow = launcherWindow;
-
-  launcherWindow.on('closed', () => {
-    reactReadyWindows.delete(launcherWindow.id);
-    activeLauncherWindow = null;
-  });
-
-  // Destroy window when it loses focus
-  launcherWindow.on('blur', () => {
-    launcherWindow.destroy();
-  });
-
-  // Also destroy on escape key
-  launcherWindow.webContents.on('before-input-event', (event, input) => {
-    if (input.key === 'Escape') {
-      launcherWindow.destroy();
-      event.preventDefault();
-    }
-  });
-
-  return launcherWindow;
-};
+// Pass D (owner): the launcher window creator left main.ts with its affordances (menu item +
+// global shortcut) — its only job was a project-less new chat. LauncherView and the /launcher
+// route remain in the renderer.
 
 // Track tray instance
 let tray: Tray | null = null;
@@ -4230,15 +4155,6 @@ const registerGlobalShortcuts = () => {
     }
   }
 
-  if (shortcuts.quickLauncher) {
-    try {
-      globalShortcut.register(shortcuts.quickLauncher, () => {
-        createLauncher();
-      });
-    } catch (e) {
-      console.error('Error registering launcher hotkey:', e);
-    }
-  }
 };
 
 async function appMain() {
@@ -4415,28 +4331,14 @@ async function appMain() {
     // Use a counter to track the actual insertion index
     let menuIndex = 0;
 
-    if (shortcuts.newChat) {
-      fileMenu.submenu.insert(
-        menuIndex++,
-        new MenuItem({
-          label: menuT('New Chat'),
-          accelerator: shortcuts.newChat,
-          click(_menuItem, _window, event) {
-            if (refuseShortcutDuringBenchmark('navigate', event.triggeredByAccelerator === true)) {
-              return;
-            }
-            const focusedWindow = BrowserWindow.getFocusedWindow();
-            if (focusedWindow) focusedWindow.webContents.send('set-view', '');
-          },
-        })
-      );
-    }
-
+    // Pass D (owner): sessions start from projects only — the "New Chat" item (and its
+    // accelerator) is GONE, and the window spawner is honestly named "New Window": it opens a
+    // window on the project landing and creates no session.
     if (shortcuts.newChatWindow) {
       fileMenu.submenu.insert(
         menuIndex++,
         new MenuItem({
-          label: menuT('New Chat Window'),
+          label: menuT('New Window'),
           accelerator: shortcuts.newChatWindow,
           async click(_menuItem, _window, event) {
             if (refuseShortcutDuringBenchmark('spawn', event.triggeredByAccelerator === true))
@@ -4483,17 +4385,8 @@ async function appMain() {
       );
     }
 
-    if (shortcuts.quickLauncher) {
-      fileMenu.submenu.append(
-        new MenuItem({
-          label: menuT('Quick Launcher'),
-          accelerator: shortcuts.quickLauncher,
-          click() {
-            createLauncher();
-          },
-        })
-      );
-    }
+    // Pass D (owner): the Quick Launcher affordances are gone — its floating input created a
+    // project-less session on submit. The /launcher route stays in the renderer.
   }
 
   if (menu) {
