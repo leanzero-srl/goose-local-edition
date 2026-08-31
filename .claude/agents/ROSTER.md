@@ -582,3 +582,10 @@ research_request_block's armed-no-claimed-sections arm wording.
   honest split verdict (fix 2 YES at seq 1383; fix 1 a NET because the skeleton's confusion reads its
   OWN pre-repair brief — naming the REAL mechanism, prepend-before-repair, as unbriefed observation
   #1). That mechanism is now dispatched as its own fix. swarm.rs 43,208→43,085. Charter gap: none.
+- 2026-08-31 15:25 tick-surgeon #13: EXEMPLARY. The escalation call made from evidence, not the
+  window: two-span comparison proved DIFFERENT ground (routes table at -20k, probe-defect fixing at
+  tail) — zero re-derivation; the directive rung WORKED (all 5 files, self-probe found 3 real
+  defects, now fixing). Called out my instrument's false alarm (16 holds on an advancing lane —
+  the ETERNAL-HOLD line can't tell advancing from re-deriving; fixed same-turn: produced-flat
+  gating). Flagged __main__.py's delegation-vs-boots-BOTH question honestly as deferred-to-INTEGRATE.
+  Charter gap: none.
