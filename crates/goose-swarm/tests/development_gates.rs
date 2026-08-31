@@ -263,9 +263,16 @@ fn the_banned_integrate_template_only_shrinks() {
 /// commands/swarm/ladder.rs as `steer_note`, paying for the `delivery_promise_due` wiring at
 /// the omni seam (a drift hold's promise on a zero-action files-owing lane now delivers by
 /// seeded restream instead of deferring behind think-advance forever).
+/// Tightened to 42,202 (r6c durable-clamp): the judge-reply parse cluster
+/// (`parse_judge_reply`/`parse_judge_eta_mins`/`omni_judge_says_looping`) and its four tests
+/// moved to commands/swarm/supervision.rs beside `supervised_reply_text` (the reply door that
+/// must run before the parse), paying for the verdict-site durable-transcript clamp
+/// (`ladder::durable_clamped_produced` — a look's produced claim the durable think.log does
+/// not back reads as zero, so a stream dead across a whole look cycle can no longer hold a
+/// drift verdict on "fresh content" that was backlog draining through the meter).
 #[test]
 fn swarm_rs_line_count_only_decreases() {
-    const SWARM_RS_LINE_BASELINE: usize = 42_548;
+    const SWARM_RS_LINE_BASELINE: usize = 42_202;
     let text = read("crates/goose-cli/src/commands/swarm.rs");
     let n = text.lines().count();
     assert!(

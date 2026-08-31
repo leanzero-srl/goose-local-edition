@@ -16,6 +16,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use super::EventSink;
+use goose_swarm::{JudgeOutcome, Verdict};
 
 /// The rolling judge lane for one supervised task: ONE lane per task, never per look — 31+ looks
 /// on one task would mint 31 lanes and drown the board. Each look reseeds the digest (its
@@ -515,6 +516,196 @@ pub(super) fn supervised_reply_text(text: &str) -> Result<String, SupervisedRepl
     Ok(cleaned.to_string())
 }
 
+/// #135 OMNI-JUDGE probe. Asks a model whether an IN-FLIGHT call is repeating itself, from the call's own
+/// recent reasoning plus the commands it has run. This is the piece a threshold cannot do: for a plan draft,
+/// healthy and pathological look IDENTICAL by volume (healthy reach 57k chars), so only reading the text
+/// separates them.
+///
+/// Deliberately conservative — it returns true ONLY on an explicit LOOPING verdict. Anything ambiguous, any
+/// parse failure, any model error reads as "keep going", because a false abort costs a planner call that has
+/// NO retry path. It can never fail a task or a run: it aborts at most this one call, and every phase
+/// degrades gracefully (scout -> N of 3, draft -> best-of-N, detail -> skeleton brief, worker -> the
+/// existing stall path).
+/// Does this verdict mean the call needs REDIRECTING, as opposed to being left alone?
+///
+/// RESTART belongs here and was missing. `parse_judge_reply` produces it, nothing in the planner-side
+/// omni path matched on it, and the only other actuator is `drifting_now` — so a restart verdict fell
+/// through to the branch that CLEARS the looping streak and was discarded. MEASURED: at 07:36:28 on run
+/// swarm-3node-r0 the judge answered `restart` on the wedged REVIEW call and the engine did nothing with
+/// it, then went quiet. The judge's own words were "Restart the call on a fresh connection and have it
+/// produce the structured output" — which is precisely what the re-stream delivery does, so the verdict
+/// had a working actuator all along and simply was not wired to it.
+pub(super) fn omni_judge_says_looping(reply: &str) -> bool {
+    let out = parse_judge_reply(reply);
+    matches!(
+        out.verdict,
+        Verdict::Looping | Verdict::OverReading | Verdict::Restart
+    ) && out.confidence >= 0.8
+}
+
+/// Parse the semantic judge's one-line `VERDICT|CONFIDENCE|hint` reply. Conservative: anything not a
+/// clearly-flagged problem reads as OK, so a vague weak-model reply can never kill a healthy worker.
+/// CONFIDENCE gates agency — the judge acts (kill + correct) only on a verdict it marks HIGH.
+/// The judge's own estimate of how many more MINUTES a call needs, from an `ETA=<n>m` token.
+///
+/// Mihai, watching a sink spend an hour on one bug: "the estimate time needs to be updated so the judge
+/// models should update the ETA because they can tell best what time is left". He is right — the repair
+/// ETA is arithmetic over past round durations, which answers "how long did rounds take" and not "how much
+/// is left". The judge has read what the call established, what it is doing now and how fast it is
+/// producing; nothing else in the engine has that.
+///
+/// A labelled token rather than a fifth pipe field on purpose: the free-segment parser above earned its
+/// leniency the hard way, and shifting its indices to add a field would break every measured reply shape.
+/// `ETA=?` is a first-class answer — an invented number is worse than an admitted unknown.
+pub(super) fn parse_judge_eta_mins(s: &str) -> Option<u64> {
+    let up = s.to_uppercase();
+    let at = up.find("ETA")?;
+    let rest = up.get(at + 3..)?.trim_start_matches([':', '=', ' ']);
+    let digits: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
+    if digits.is_empty() {
+        return None; // "ETA=?" and anything unparseable
+    }
+    digits.parse::<u64>().ok().filter(|m| *m <= 24 * 60)
+}
+
+pub(super) fn parse_judge_reply(s: &str) -> JudgeOutcome {
+    // FOUR fields now: VERDICT|CONFIDENCE|ESTABLISHED|NEXT. Parsing stays deliberately LENIENT, because
+    // the fleet is a 27B and the old three-field parser earned that leniency the hard way: qwen-class
+    // models echo the field LABELS back (`VERDICT|CONFIDENCE|LOOPING|HIGH|<text>`), drop fields, or answer
+    // in two segments. So: pick the verdict and confidence out of wherever they land, and take the free
+    // text segments in order. One free segment means the old shape — treat it as NEXT, not ESTABLISHED,
+    // since an action is what the nudge cannot do without.
+    let is_token = |seg: &str| {
+        matches!(
+            seg.to_uppercase().trim(),
+            "VERDICT"
+                | "CONFIDENCE"
+                | "CONF"
+                | "HINT"
+                | "ESTABLISHED"
+                | "NEXT"
+                | "OK"
+                | "BROKEN_CODE"
+                | "BROKEN CODE"
+                | "LOOPING"
+                | "DRIFTING"
+                | "RESTART"
+                | "OVER_READING"
+                | "OVER READING"
+                | "SPEC_DRIFT"
+                | "SPEC DRIFT"
+                | "HIGH"
+                | "LOW"
+        )
+    };
+    // STRIP THE ETA TOKEN BEFORE ANYTHING ELSE READS THE SEGMENTS.
+    //
+    // I added `ETA=<n>m` to the judge contract tonight as a labelled token, precisely so it would not
+    // disturb the positional free-segment parse — and then did not remove it from the segments. It is
+    // not in `is_token`, so it survived the filter, became a free segment, and therefore became
+    // ESTABLISHED or NEXT. MEASURED within hours, live: nudges delivered to workers reading, in full,
+    // `ETA=0m`, `ETA=5m`, `ETA=45m`, and `Complete rating all defects and deliver the final verdict
+    // list\nETA=5m`. A direction that says only how long something will take is not a direction, and it
+    // was going out as one.
+    // EVERY occurrence, not the first. `find("ETA")` returned the FIRST match, so any earlier word
+    // CONTAINING those three letters — metadata, details, theta, beta, retain — failed the `:`/`=` guard,
+    // the line was kept whole, and the REAL `ETA=` at the end survived to become a free segment.
+    // MEASURED live 2026-08-28, after the first fix was already shipped: workers re-streamed with a
+    // direction reading, in full, `ETA=5m` and `ETA=10m`. Reproduced deterministically — "read the
+    // metadata table first" leaks, "the schema is written" does not.
+    // Byte-scanned against the ORIGINAL rather than an uppercased copy: `to_uppercase()` can CHANGE
+    // LENGTH (ß -> SS), so an index taken from it and used to slice the original is unsound.
+    let cut_eta = |l: &str| -> String {
+        let b = l.as_bytes();
+        for i in 0..b.len().saturating_sub(2) {
+            if b[i..i + 3].eq_ignore_ascii_case(b"ETA")
+                && l.is_char_boundary(i)
+                && l.get(i + 3..)
+                    .is_some_and(|r| r.trim_start().starts_with([':', '=']))
+            {
+                return l.get(..i).unwrap_or(l).trim_end().to_string();
+            }
+        }
+        l.to_string()
+    };
+    let without_eta: String = s.lines().map(cut_eta).collect::<Vec<_>>().join("\n");
+    let free: Vec<&str> = without_eta
+        .split('|')
+        .map(|h| h.trim())
+        .filter(|h| !h.is_empty() && !is_token(h))
+        .collect();
+    let (established, next_action) = match free.len() {
+        0 => (String::new(), String::new()),
+        1 => (String::new(), free[0].to_string()),
+        _ => (
+            free[free.len() - 2].to_string(),
+            free[free.len() - 1].to_string(),
+        ),
+    };
+    // THE VERDICT COMES FROM A TOKEN SEGMENT, NEVER FROM A SUBSTRING SCAN OF THE WHOLE REPLY.
+    //
+    // This was `upper.contains("RESTART")` over the entire text — including the free-form hint. So the
+    // judge's own good advice turned into a verdict about itself: `LOOPING|HIGH|est|stop and restart the
+    // server` parsed as Restart, and `BROKEN_CODE|HIGH|the worker keeps restarting the dev server`
+    // parsed as Restart at confidence 0.85, which clears the intervention bar and re-queues a live
+    // worker. The mirror case lost a real verdict — a Restart the in-call loop has no branch for falls
+    // to the `else` and wipes the looping streak and its corroboration tails.
+    //
+    // `is_token` already knows which segments are field values rather than prose, and every measured
+    // reply shape puts the verdict in one of them (`LOOPING|HIGH|…` and the label-echoing
+    // `VERDICT|CONFIDENCE|LOOPING|HIGH|…`). Reading only those is exact and keeps the leniency.
+    let tokens: Vec<String> = s
+        .split('|')
+        .map(|h| h.trim().to_uppercase())
+        .filter(|h| is_token(h))
+        .collect();
+    let said = |k: &str| tokens.iter().any(|t| t == k);
+    // Same bug, same fix: a hint containing "high priority" used to raise the confidence.
+    let confidence = if said("HIGH") { 0.85 } else { 0.5 };
+    let verdict = if said("RESTART") {
+        Verdict::Restart
+    } else if said("LOOPING") {
+        Verdict::Looping
+    } else if said("DRIFTING") {
+        Verdict::Drifting
+    } else if said("BROKEN_CODE") || said("BROKEN CODE") {
+        Verdict::BrokenCode
+    } else if said("OVER_READING") || said("OVER READING") {
+        Verdict::OverReading
+    } else if said("SPEC_DRIFT") || said("SPEC DRIFT") {
+        Verdict::SpecDrift
+    } else {
+        // No keyword. The measured qwen habit is to state a real problem as `VERDICT|HIGH|<correction>`
+        // with no verdict word at all, and dropping that would make the judge inert on this fleet. Read it
+        // as DRIFTING — a redirect — only when the model did NOT say OK and gave something substantive.
+        // DRIFTING is the safe default now that the judge can only ever nudge: the worst case is one
+        // unnecessary in-session note, not a dead worker.
+        let said_ok = s.split('|').any(|p| p.trim().eq_ignore_ascii_case("ok"));
+        let substantive = next_action.len() >= 16;
+        if !said_ok && substantive {
+            Verdict::Drifting
+        } else {
+            return JudgeOutcome::ok();
+        }
+    };
+    JudgeOutcome {
+        verdict,
+        confidence,
+        // `hint` stays the corrective one-liner every existing consumer reads; it is now the NEXT ACTION,
+        // which is what a hint was always trying to be.
+        hint: if next_action.is_empty() {
+            "Take the next concrete action on your owned files now.".to_string()
+        } else {
+            next_action.clone()
+        },
+        established,
+        next_action,
+        proposed_split: None,
+        // MODEL-AUTHORED. It may STEER; it may never fail a task.
+        deterministic: false,
+    }
+}
+
 #[cfg(test)]
 mod reply_tests {
     use super::*;
@@ -553,8 +744,8 @@ mod reply_tests {
             Err(SupervisedReplyError::TurnBudgetExhausted)
         ));
         assert_eq!(
-            super::super::parse_judge_reply(&r6a_reply).verdict,
-            super::super::Verdict::Drifting,
+            parse_judge_reply(&r6a_reply).verdict,
+            Verdict::Drifting,
             "the no-token fallback still manufactures DRIFTING from the filler, so the \
              classification must happen before parse_judge_reply ever sees it"
         );
@@ -576,8 +767,8 @@ mod reply_tests {
             !clean.contains("maximum number of actions"),
             "the engine's filler must not survive into the verdict channel: {clean}"
         );
-        let out = super::super::parse_judge_reply(&clean);
-        assert_eq!(out.verdict, super::super::Verdict::Drifting);
+        let out = parse_judge_reply(&clean);
+        assert_eq!(out.verdict, Verdict::Drifting);
         assert!(
             out.next_action
                 .ends_with("refine only after it is emitted."),
@@ -603,8 +794,8 @@ mod reply_tests {
         // parse_judge_reply on the same text is exactly the r2 laundering — pinned here so the
         // guard's necessity stays measured: lenient parsing DOES mint a Drifting verdict from it.
         assert_eq!(
-            super::super::parse_judge_reply(r2_shape).verdict,
-            super::super::Verdict::Drifting,
+            parse_judge_reply(r2_shape).verdict,
+            Verdict::Drifting,
             "the parser still launders error text, so the gate must run BEFORE it"
         );
         for ok in [
@@ -616,5 +807,212 @@ mod reply_tests {
                 Err(e) => panic!("a normal reply passes untouched: {e}"),
             }
         }
+    }
+
+    #[test]
+    /// The ETA token must never become the direction.
+    ///
+    /// Added as a labelled token so the positional free-segment parse would be undisturbed — and then
+    /// not removed from the segments, so it survived the `is_token` filter and became ESTABLISHED or
+    /// NEXT. MEASURED live within hours: workers received nudges whose entire text was `ETA=0m`.
+    fn the_eta_token_never_becomes_the_direction() {
+        let o = parse_judge_reply(
+            "LOOPING|HIGH|it has re-run one command 8 times|read the whole handler, not 25 lines\nETA=8m",
+        );
+        assert_eq!(parse_judge_eta_mins("ETA=8m"), Some(8));
+        assert!(
+            !o.next_action.contains("ETA"),
+            "ETA leaked into NEXT: {:?}",
+            o.next_action
+        );
+        assert!(
+            !o.established.contains("ETA"),
+            "ETA leaked into ESTABLISHED: {:?}",
+            o.established
+        );
+        assert!(o.next_action.contains("read the whole handler"));
+
+        // The pathological shape actually observed: the judge answered with nothing BUT an ETA.
+        let bare = parse_judge_reply("LOOPING|HIGH|ETA=0m");
+        assert!(
+            !bare.next_action.contains("ETA"),
+            "a reply carrying only an ETA must not yield 'ETA=0m' as the direction, got {:?}",
+            bare.next_action
+        );
+
+        // Inline on the same segment, and the ':' spelling.
+        let inline = parse_judge_reply("DRIFTING|HIGH|est|fix the do_GET routing ETA: 5m");
+        assert!(
+            !inline.next_action.contains("ETA"),
+            "{:?}",
+            inline.next_action
+        );
+        assert!(inline.next_action.contains("do_GET"));
+
+        // A word merely CONTAINING eta must survive — "metadata", "beta".
+        let word = parse_judge_reply("DRIFTING|HIGH|est|update the beta metadata table");
+        assert!(
+            word.next_action.contains("beta metadata"),
+            "{:?}",
+            word.next_action
+        );
+    }
+
+    #[test]
+    /// The judge's own words must never become a verdict about the judge.
+    ///
+    /// `upper.contains("RESTART")` scanned the whole reply, hint included. The hint is exactly where the
+    /// word appears in normal use — the live run's best diagnosis was "stop retrying the same port ...
+    /// or check if the server is already running", and a sibling shape is "the worker keeps restarting
+    /// the dev server". Both parsed as Verdict::Restart at 0.85, which clears the intervention bar and
+    /// re-queues a LIVE worker.
+    fn a_verdict_is_read_from_a_field_not_from_the_hint() {
+        // The hint mentions restarting. The verdict is LOOPING and must stay LOOPING.
+        let o = parse_judge_reply(
+            "LOOPING|HIGH|it has re-run one command 8 times|stop and restart the server on a new port",
+        );
+        assert_eq!(o.verdict, Verdict::Looping, "hint text became the verdict");
+
+        let o = parse_judge_reply("BROKEN_CODE|HIGH|the worker keeps restarting the dev server");
+        assert_eq!(o.verdict, Verdict::BrokenCode);
+
+        // A real RESTART verdict still parses, in both measured shapes.
+        assert_eq!(
+            parse_judge_reply("RESTART|HIGH|nothing usable yet|start again from the spec").verdict,
+            Verdict::Restart
+        );
+        assert_eq!(
+            parse_judge_reply("VERDICT|CONFIDENCE|RESTART|HIGH|est|next").verdict,
+            Verdict::Restart
+        );
+
+        // Confidence had the same bug: "high priority" in a hint used to raise it.
+        let low = parse_judge_reply("DRIFTING|LOW|est|this is a high priority fix");
+        assert!(low.confidence < 0.8, "hint text raised the confidence");
+    }
+
+    /// The retarget budget was env-ONLY, and the env NEVER REACHES THE ENGINE (LaunchServices hands the
+    /// desktop app its own environment — proven with a probe var + `ps eww`). So the campaign's documented
+    /// invariant "HELD CONSTANT every arm: ROUNDS=4" was never true on a single run: every one silently used
+    /// the default 2. config.yaml is the only channel that reaches the engine.
+    #[test]
+    /// The FOUR-field contract, and the leniency it has to keep.
+    ///
+    /// ESTABLISHED is the field the whole nudge exists for — a redirect that throws away the useful half
+    /// of a spiralling call is just a slower kill — so it has to survive the shapes a 27B actually emits.
+    /// The old three-field replies must still parse, and when only ONE free segment arrives it is the
+    /// ACTION, not the establishment: a nudge can be written without knowing what was established, but not
+    /// without knowing what to do next.
+    fn parse_judge_reply_reads_established_and_next() {
+        let full = parse_judge_reply(
+            "LOOPING|HIGH|the CSV parser needs a header row and the delimiter is a pipe|write \
+             app/parse.py with parse_ledger(path: Path) -> list[Row]",
+        );
+        assert_eq!(full.verdict, Verdict::Looping);
+        assert!(
+            full.established.contains("delimiter is a pipe"),
+            "established must survive: {:?}",
+            full.established
+        );
+        assert!(
+            full.next_action.contains("app/parse.py"),
+            "next must be the action: {:?}",
+            full.next_action
+        );
+        assert_eq!(full.hint, full.next_action, "hint IS the next action now");
+
+        // Labels echoed back (the measured qwen habit) must not be mistaken for content.
+        let echoed = parse_judge_reply(
+            "VERDICT|CONFIDENCE|ESTABLISHED|NEXT|DRIFTING|HIGH|the schema is already written|wire it into \
+             app/main.py",
+        );
+        assert_eq!(echoed.verdict, Verdict::Drifting);
+        assert!(echoed.established.contains("schema is already written"));
+        assert!(echoed.next_action.contains("app/main.py"));
+
+        // Old three-field shape: one free segment is the ACTION, established stays empty.
+        let legacy = parse_judge_reply("LOOPING|HIGH|stop re-reading and write the file now");
+        assert_eq!(legacy.verdict, Verdict::Looping);
+        assert!(legacy.established.is_empty(), "no establishment claimed");
+        assert!(legacy.next_action.contains("write the file"));
+
+        // AN EARLIER WORD CONTAINING "ETA" MUST NOT SHIELD THE REAL ETA TOKEN. `find` returned the
+        // first match, so "metadata"/"details"/"theta" failed the `:`/`=` guard and the line survived
+        // whole — workers were then re-streamed with a direction that read, in full, "ETA=5m".
+        for shield in [
+            "read the metadata table first",
+            "check the details of the outbox",
+            "theta values for the camera",
+            "retain the beta flag",
+        ] {
+            let r = parse_judge_reply(&format!(
+                "LOOPING|HIGH|{shield}|write app/main.py with parse_ledger()|ETA=5m"
+            ));
+            assert!(
+                !r.next_action.contains("ETA"),
+                "the ETA token leaked into the direction after {shield:?}: {:?}",
+                r.next_action
+            );
+            assert!(
+                r.next_action.contains("app/main.py"),
+                "the real direction must survive after {shield:?}: {:?}",
+                r.next_action
+            );
+            assert!(
+                r.established.contains(shield),
+                "established must survive: {:?}",
+                r.established
+            );
+        }
+        // The plain case must keep working.
+        let plain =
+            parse_judge_reply("LOOPING|HIGH|the schema is written|write app/main.py|ETA=45m");
+        assert!(!plain.next_action.contains("ETA"));
+        assert!(plain.next_action.contains("app/main.py"));
+
+        // RESTART is recognised and is never confused with OK.
+        assert_eq!(
+            parse_judge_reply("RESTART|HIGH||start over from the frozen contract").verdict,
+            Verdict::Restart
+        );
+    }
+
+    #[test]
+    fn parse_judge_reply_handles_qwen_formats() {
+        // Healthy: qwen echoes the field labels and reorders OK/HIGH/LOW — all must read OK (no kill).
+        for ok in [
+            "VERDICT|CONFIDENCE|OK|HIGH",
+            "VERDICT|OK|LOW|",
+            "VERDICT|CONFIDENCE|HIGH|OK",
+            "VERDICT|LOW|",
+            "VERDICT|HIGH|OK|done",
+        ] {
+            assert_eq!(
+                parse_judge_reply(ok).verdict,
+                Verdict::Ok,
+                "should be OK: {ok}"
+            );
+        }
+        // A real catch with NO verdict keyword — just HIGH + a corrective hint — must become actionable
+        // (this is the qwen format that was silently dropped before).
+        let caught = parse_judge_reply(
+            "VERDICT|HIGH|STOP retrying failing commands — write rules.py directly with a parser",
+        );
+        assert_ne!(
+            caught.verdict,
+            Verdict::Ok,
+            "keyword-less HIGH+hint must act"
+        );
+        assert!(caught.confidence >= 0.8);
+        assert!(
+            caught.hint.contains("rules.py"),
+            "hint must be the correction, not an echoed label"
+        );
+        // Explicit keyword still classifies, and the hint skips echoed labels.
+        let oread = parse_judge_reply("VERDICT|CONFIDENCE|OVER_READING|HIGH|write the file now");
+        assert_eq!(oread.verdict, Verdict::OverReading);
+        assert_eq!(oread.hint, "write the file now");
+        // HIGH but no real correction -> stays OK (a vague reply can never kill a healthy worker).
+        assert_eq!(parse_judge_reply("VERDICT|HIGH|").verdict, Verdict::Ok);
     }
 }
