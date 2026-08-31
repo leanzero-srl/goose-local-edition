@@ -36,6 +36,8 @@ import { UserInput, ImageData } from '../types/message';
 import { compressImageDataUrl } from '../utils/conversionUtils';
 import { fetchCanonicalModelInfo } from '../utils/canonical';
 import { fetchSwarmContextLimit } from './swarm/useFleet';
+import { mlxEngineStatus } from '../acp/mlx-engine';
+import { MLX_PROVIDER_ID } from './settings/models/leanzeroSelectorPolicy';
 import { PersonaChooser } from './swarm/PersonaChooser';
 import { usePersona } from './swarm/usePersona';
 import AgentSetupWizard from './swarm/AgentSetupWizard';
@@ -608,6 +610,22 @@ export default function ChatInput({
         setTokenLimit(swarmLimit ?? TOKEN_LIMIT_DEFAULT);
         setIsTokenLimitLoaded(true);
         return;
+      }
+
+      // Leanzero MLX engine: same rule as swarm — the running engine reports the context
+      // window the model actually mounted with (per-model profile), so prefer that fact
+      // over the generic fallback. Engine stopped/unreachable falls through to the chain.
+      if (provider === MLX_PROVIDER_ID) {
+        try {
+          const engine = await mlxEngineStatus();
+          if (engine.state === 'running' && engine.contextWindow != null) {
+            setTokenLimit(engine.contextWindow);
+            setIsTokenLimitLoaded(true);
+            return;
+          }
+        } catch {
+          // engine status unavailable — fall through to the normal limit chain
+        }
       }
 
       // Priority 1: Check predefined models from environment

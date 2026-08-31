@@ -31,10 +31,10 @@ import {
 } from '../ui/dialog';
 import { errorMessage } from '../../utils/conversionUtils';
 import {
+  mlxEngineBrowse,
   mlxEngineDownload,
   mlxEngineDownloadCancel,
   mlxEngineDownloadProgress,
-  mlxEngineHfSearch,
   mlxEngineModelDelete,
   mlxEngineModelsList,
   mlxEngineMount,
@@ -42,22 +42,31 @@ import {
   mlxEngineSettingsUpdate,
   mlxEngineStatus,
   mlxEngineUnmount,
+  type MlxBrowseHit,
+  type MlxBrowseSort,
   type MlxDownloadProgress,
   type MlxEngineSettings,
   type MlxEngineState,
   type MlxEngineStatus,
-  type MlxHfModelHit,
   type MlxLocalModel,
+  type MlxModelProfile,
 } from '../../acp/mlx-engine';
 
-// Solid saturated palette — the same language as the swarm surfaces. Never faded tints,
-// never a left accent rail.
+// Solid saturated palette — the benchmark register (BenchmarkView/ScoringDetail): full
+// borders, bg-background-secondary strips, solid chips. Never faded tints, never a left
+// accent rail, never a native control.
 const AZURE = '#2e8bff';
 const GREEN = '#2ecc71';
 const AMBER = '#f5a623';
 const RED = '#e5484d';
 const SLATE = '#64748b';
 const VIOLET = '#7c3aed';
+const TEAL = 'var(--color-block-teal, #13bbaf)';
+// The node ramp lives under `.local-edition`; this window also runs in builds without that
+// class, where a bare var() resolves to NOTHING and a solid fill silently turns transparent
+// (caught live 2026-08-31: the active tab label vanished). Every node var carries a fallback.
+const SEGMENT_ACTIVE = 'var(--color-node-5, #db2777)';
+const INK_DARK = '#1a1a1a';
 
 const STATE_COLOR: Record<MlxEngineState, string> = {
   running: GREEN,
@@ -100,8 +109,8 @@ export function formatDate(iso: string): string {
 }
 
 // ---------------------------------------------------------------------------
-// Sampling / context settings: text drafts, where '' means "engine default".
-// A cleared field OMITS the key from the payload; an explicit 0 sends 0.
+// Per-model sampling profiles: text drafts, where '' means "engine default".
+// A cleared field OMITS the key from the profile; an explicit 0 sends 0.
 // The two are different facts and the payload must keep them apart.
 // ---------------------------------------------------------------------------
 
@@ -145,37 +154,64 @@ const NUMERIC_KEYS: NumericSettingKey[] = [...SAMPLING_FIELDS, CONTEXT_LIMIT_FIE
   (f) => f.key
 );
 
-export function draftsFromSettings(settings: MlxEngineSettings): NumericDrafts {
+export function draftsFromProfile(profile: MlxModelProfile | undefined): NumericDrafts {
   const drafts = {} as NumericDrafts;
   for (const key of NUMERIC_KEYS) {
-    const value = settings[key];
+    const value = profile?.[key];
     drafts[key] = value == null ? '' : String(value);
   }
   return drafts;
 }
 
-/**
- * Rebuild a full settings payload from the persisted settings plus the numeric drafts.
- * Non-numeric fields (modelsDir, port, spawnCommand, modelId) pass through untouched;
- * a blank draft leaves its key ABSENT (engine default), a "0" draft sends the number 0.
- */
-export function settingsWithDrafts(
-  settings: MlxEngineSettings,
-  drafts: NumericDrafts
-): MlxEngineSettings {
-  const next: MlxEngineSettings = {
-    modelsDir: settings.modelsDir,
-    port: settings.port,
-    spawnCommand: settings.spawnCommand,
-  };
-  if (settings.modelId != null) next.modelId = settings.modelId;
+/** A blank draft leaves its key ABSENT (engine default); a "0" draft sends the number 0. */
+export function profileFromDrafts(drafts: NumericDrafts): MlxModelProfile {
+  const profile: MlxModelProfile = {};
   for (const key of NUMERIC_KEYS) {
     const text = drafts[key].trim();
     if (text === '') continue;
     const n = Number(text);
     if (Number.isNaN(n)) continue;
-    next[key] = n;
+    profile[key] = n;
   }
+  return profile;
+}
+
+export function profileHasValues(profile: MlxModelProfile): boolean {
+  return NUMERIC_KEYS.some((key) => profile[key] != null);
+}
+
+/**
+ * The ONLY shape update payloads are built from. The legacy flat sampling fields the
+ * backend still echoes (pre-migration) are STRIPPED: the backend migrates any it receives
+ * into `modelProfiles[modelId]`, so writing them back would clobber profile edits.
+ * `servedModelName` passes through — dropping it would silently un-alias the engine.
+ */
+export function sanitizeSettingsForWrite(settings: MlxEngineSettings): MlxEngineSettings {
+  const next: MlxEngineSettings = {
+    modelsDir: settings.modelsDir,
+    port: settings.port,
+    spawnCommand: settings.spawnCommand,
+    modelProfiles: { ...(settings.modelProfiles ?? {}) },
+  };
+  if (settings.modelId != null) next.modelId = settings.modelId;
+  if (settings.servedModelName != null) next.servedModelName = settings.servedModelName;
+  return next;
+}
+
+/**
+ * Full settings payload with ONE model's profile rebuilt from its drafts. Every other
+ * profile passes through untouched; an all-blank draft set removes the model's entry
+ * entirely (no profile = every field at engine default).
+ */
+export function settingsWithProfile(
+  settings: MlxEngineSettings,
+  modelId: string,
+  drafts: NumericDrafts
+): MlxEngineSettings {
+  const next = sanitizeSettingsForWrite(settings);
+  const profile = profileFromDrafts(drafts);
+  if (profileHasValues(profile)) next.modelProfiles[modelId] = profile;
+  else delete next.modelProfiles[modelId];
   return next;
 }
 
@@ -189,18 +225,20 @@ export function draftsEqual(a: NumericDrafts, b: NumericDrafts): boolean {
 
 function Chip({
   color,
+  ink = '#ffffff',
   children,
   title,
 }: {
   color: string;
+  ink?: string;
   children: React.ReactNode;
   title?: string;
 }) {
   return (
     <span
       title={title}
-      className="inline-flex items-center gap-1 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-white shrink-0"
-      style={{ backgroundColor: color, borderRadius: 3 }}
+      className="inline-flex shrink-0 items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide"
+      style={{ backgroundColor: color, color: ink }}
     >
       {children}
     </span>
@@ -211,12 +249,12 @@ function StateBadge({ state }: { state: MlxEngineState }) {
   return (
     <span
       data-testid="mlx-state-badge"
-      className={`inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-bold uppercase tracking-wider text-white ${
+      className={`inline-flex items-center gap-1.5 rounded px-2.5 py-1 text-xs font-bold uppercase tracking-wider ${
         state === 'mounting' ? 'animate-pulse' : ''
       }`}
-      style={{ backgroundColor: STATE_COLOR[state], borderRadius: 3 }}
+      style={{ backgroundColor: STATE_COLOR[state], color: state === 'mounting' ? INK_DARK : '#fff' }}
     >
-      {state === 'mounting' && <Loader2 className="w-3 h-3 animate-spin" />}
+      {state === 'mounting' && <Loader2 className="h-3 w-3 animate-spin" />}
       {state}
     </span>
   );
@@ -237,19 +275,19 @@ function SolidBanner({
   const dark = color === AMBER;
   return (
     <div
-      className="flex items-center gap-3 px-4 py-3"
-      style={{ backgroundColor: color, borderRadius: 3 }}
+      className="flex items-center gap-3 rounded px-4 py-3"
+      style={{ backgroundColor: color }}
       role="alert"
     >
       <span
-        className="text-[10px] font-black uppercase tracking-widest shrink-0"
-        style={{ color: dark ? '#1a1a1a' : '#ffffff' }}
+        className="shrink-0 text-[10px] font-black uppercase tracking-widest"
+        style={{ color: dark ? INK_DARK : '#ffffff' }}
       >
         {label}
       </span>
       <span
-        className="text-sm font-semibold flex-1 min-w-0 break-words"
-        style={{ color: dark ? '#1a1a1a' : '#ffffff' }}
+        className="min-w-0 flex-1 break-words text-sm font-semibold"
+        style={{ color: dark ? INK_DARK : '#ffffff' }}
       >
         {text}
       </span>
@@ -285,8 +323,8 @@ function RestartRequiredBanner({
           size="sm"
           onClick={onRemount}
           disabled={engineBusy || !(status.modelId ?? settings?.modelId)}
-          className="shrink-0 font-bold text-white hover:opacity-90"
-          style={{ backgroundColor: '#1a1a1a', borderRadius: 3 }}
+          className="shrink-0 rounded font-bold text-white hover:opacity-90"
+          style={{ backgroundColor: INK_DARK }}
         >
           <RefreshCw className="w-3.5 h-3.5" />
           Remount
@@ -302,10 +340,9 @@ function MemoryBar({ availableGb, totalGb }: { availableGb: number; totalGb: num
   const pct = totalGb > 0 ? Math.min(100, (usedGb / totalGb) * 100) : 0;
   const tight = totalGb > 0 && availableGb / totalGb < 0.15;
   return (
-    <div className="flex items-center gap-3 min-w-0">
+    <div className="flex min-w-0 items-center gap-3">
       <div
-        className="flex-1 h-2.5 border border-border-primary overflow-hidden"
-        style={{ borderRadius: 3 }}
+        className="h-2.5 flex-1 overflow-hidden rounded border border-border-primary"
         role="progressbar"
         aria-valuenow={Math.round(pct)}
         aria-valuemin={0}
@@ -317,12 +354,86 @@ function MemoryBar({ availableGb, totalGb }: { availableGb: number; totalGb: num
           style={{ width: `${pct}%`, backgroundColor: tight ? AMBER : AZURE }}
         />
       </div>
-      <span className="text-xs font-bold tabular-nums shrink-0" style={{ color: tight ? AMBER : AZURE }}>
+      <span className="shrink-0 text-xs font-bold tabular-nums" style={{ color: tight ? AMBER : AZURE }}>
         {availableGb.toFixed(1)} GB free
       </span>
-      <span className="text-xs text-text-secondary tabular-nums shrink-0">
+      <span className="shrink-0 text-xs tabular-nums text-text-secondary">
         of {totalGb.toFixed(1)} GB
       </span>
+    </div>
+  );
+}
+
+// Benchmark-style card scaffolding: full border, bg-background-secondary header strip with
+// a micro-caps label, optional footer strip in mono for captions.
+
+function Card({ children }: { children: React.ReactNode }) {
+  return <div className="overflow-hidden rounded border border-border-primary">{children}</div>;
+}
+
+function CardHeader({
+  label,
+  right,
+  children,
+}: {
+  label: string;
+  right?: React.ReactNode;
+  children?: React.ReactNode;
+}) {
+  return (
+    <div className="flex flex-wrap items-center gap-2 border-b border-border-primary bg-background-secondary px-3 py-2">
+      <span className="text-xs font-semibold uppercase tracking-wider text-text-secondary">
+        {label}
+      </span>
+      {children}
+      {right != null && <span className="ml-auto flex items-center gap-2">{right}</span>}
+    </div>
+  );
+}
+
+function CardFooter({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="border-t border-border-primary bg-background-secondary px-3 py-2 font-mono text-[11px] text-text-secondary">
+      {children}
+    </div>
+  );
+}
+
+/** Segmented control in the benchmark register: bordered strip, solid active fill. */
+function Segmented<T extends string>({
+  options,
+  value,
+  onChange,
+  activeColor = SEGMENT_ACTIVE,
+  disabled,
+}: {
+  options: Array<{ value: T; label: React.ReactNode; title?: string }>;
+  value: T;
+  onChange: (v: T) => void;
+  activeColor?: string;
+  disabled?: boolean;
+}) {
+  return (
+    <div className="flex self-start overflow-hidden rounded border border-border-primary">
+      {options.map((opt) => {
+        const active = opt.value === value;
+        return (
+          <button
+            key={opt.value}
+            type="button"
+            onClick={() => onChange(opt.value)}
+            disabled={disabled}
+            aria-pressed={active}
+            title={opt.title}
+            className={`flex items-center gap-2 px-3 py-1.5 text-sm font-bold transition-colors ${
+              active ? 'text-white' : 'bg-background-secondary text-text-secondary hover:text-text-primary'
+            }`}
+            style={active ? { backgroundColor: activeColor } : undefined}
+          >
+            {opt.label}
+          </button>
+        );
+      })}
     </div>
   );
 }
@@ -343,7 +454,7 @@ function NumericField({
 }) {
   const isSet = text.trim() !== '';
   const stepBtn =
-    'h-7 w-7 flex items-center justify-center border border-border-primary text-text-secondary hover:text-text-primary hover:border-text-secondary transition-colors leading-none text-sm';
+    'h-7 w-7 flex items-center justify-center rounded border border-border-primary text-text-secondary hover:text-text-primary hover:border-text-secondary transition-colors leading-none text-sm';
   const bump = (dir: 1 | -1) => {
     const base = isSet && !Number.isNaN(Number(text)) ? Number(text) : 0;
     let next = base + dir * spec.step;
@@ -353,15 +464,15 @@ function NumericField({
     onText(String(rounded));
   };
   return (
-    <div className="flex flex-col gap-1 min-w-0">
+    <div className="flex min-w-0 flex-col gap-1">
       <div className="flex items-center justify-between gap-2">
-        <span className="text-xs font-medium text-text-primary truncate">{spec.label}</span>
+        <span className="truncate text-xs font-medium text-text-primary">{spec.label}</span>
         {isSet ? (
           <button
             type="button"
             onClick={() => onText('')}
-            className="inline-flex items-center gap-1 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-white hover:opacity-90"
-            style={{ backgroundColor: AZURE, borderRadius: 3 }}
+            className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-white hover:opacity-90"
+            style={{ backgroundColor: AZURE }}
             title="Clear — fall back to the engine default"
           >
             set <X className="w-2.5 h-2.5" />
@@ -376,7 +487,6 @@ function NumericField({
         <button
           type="button"
           className={stepBtn}
-          style={{ borderRadius: 3 }}
           aria-label={`Decrease ${spec.label}`}
           onClick={() => bump(-1)}
         >
@@ -388,14 +498,12 @@ function NumericField({
           value={text}
           placeholder="engine default"
           onChange={(e) => onText(e.target.value)}
-          className="h-7 text-right text-sm tabular-nums"
-          style={{ borderRadius: 3 }}
+          className="h-7 rounded text-right text-sm tabular-nums"
           aria-label={spec.label}
         />
         <button
           type="button"
           className={stepBtn}
-          style={{ borderRadius: 3 }}
           aria-label={`Increase ${spec.label}`}
           onClick={() => bump(1)}
         >
@@ -407,7 +515,7 @@ function NumericField({
 }
 
 // ---------------------------------------------------------------------------
-// Model picker — the app's custom react-select wrapper, never a native <select>.
+// Model pickers — the app's custom react-select wrapper, never a native <select>.
 // ---------------------------------------------------------------------------
 
 interface ModelOption {
@@ -418,12 +526,12 @@ interface ModelOption {
 
 function ModelOptionLabel({ option }: { option: ModelOption }) {
   return (
-    <span className="flex items-center gap-2 min-w-0">
+    <span className="flex min-w-0 items-center gap-2">
       <span className="truncate font-mono text-sm">{option.model.id}</span>
-      <span className="text-xs font-bold tabular-nums shrink-0" style={{ color: AZURE }}>
+      <span className="shrink-0 text-xs font-bold tabular-nums" style={{ color: AZURE }}>
         {formatGb(option.model.sizeBytes)}
       </span>
-      {!option.model.complete && <Chip color={AMBER}>partial download</Chip>}
+      {!option.model.complete && <Chip color={AMBER} ink={INK_DARK}>partial download</Chip>}
     </span>
   );
 }
@@ -459,17 +567,78 @@ function ModelPicker({
   );
 }
 
+interface ProfileModelOption {
+  value: string;
+  label: string;
+  local: boolean;
+  hasProfile: boolean;
+}
+
+function ProfileModelOptionLabel({ option }: { option: ProfileModelOption }) {
+  return (
+    <span className="flex min-w-0 items-center gap-2">
+      <span className="truncate font-mono text-sm">{option.value}</span>
+      {option.hasProfile && <Chip color={VIOLET}>profile</Chip>}
+      {!option.local && (
+        <Chip color={SLATE} title="A saved profile for a model that is not in the models folder">
+          not downloaded
+        </Chip>
+      )}
+    </span>
+  );
+}
+
+/**
+ * Sampling model picker: every local model plus any model that only exists as a saved
+ * profile key — a profile must never become unreachable because its files were deleted.
+ */
+function SamplingModelPicker({
+  models,
+  profileIds,
+  value,
+  onChange,
+}: {
+  models: MlxLocalModel[];
+  profileIds: string[];
+  value: string | null;
+  onChange: (id: string | null) => void;
+}) {
+  const localIds = new Set(models.map((m) => m.id));
+  const options: ProfileModelOption[] = [
+    ...models.map((m) => ({
+      value: m.id,
+      label: m.id,
+      local: true,
+      hasProfile: profileIds.includes(m.id),
+    })),
+    ...profileIds
+      .filter((id) => !localIds.has(id))
+      .map((id) => ({ value: id, label: id, local: false, hasProfile: true })),
+  ];
+  const selected = options.find((o) => o.value === value) ?? null;
+  return (
+    <Select
+      aria-label="Sampling model"
+      options={options}
+      value={selected}
+      placeholder={options.length === 0 ? 'No local models yet' : 'Pick a model to tune'}
+      formatOptionLabel={(o) => <ProfileModelOptionLabel option={o as ProfileModelOption} />}
+      onChange={(o) => onChange(o ? (o as ProfileModelOption).value : null)}
+    />
+  );
+}
+
 // ---------------------------------------------------------------------------
 // ENGINE tab
 // ---------------------------------------------------------------------------
 
 function StatusFact({ label, children }: { label: string; children: React.ReactNode }) {
   return (
-    <div className="flex flex-col gap-0.5 min-w-0">
+    <div className="flex min-w-0 flex-col gap-0.5">
       <span className="text-[10px] font-semibold uppercase tracking-wider text-text-secondary">
         {label}
       </span>
-      <span className="text-sm text-text-primary min-w-0 truncate">{children}</span>
+      <span className="min-w-0 truncate text-sm text-text-primary">{children}</span>
     </div>
   );
 }
@@ -505,13 +674,15 @@ function EngineSection(props: EngineSectionProps) {
 
   const state = status?.state ?? null;
   const mountedModelId = status?.modelId ?? null;
+  const strayPort = state === 'stopped' ? status?.strayListenerPort : undefined;
   const selectionIsMounted =
     state === 'running' && !!mountModelId && mountModelId === mountedModelId;
   const canMount =
     !!mountModelId && !engineBusy && (state === 'stopped' || state === 'failed' || state === null);
   const canSwitch =
     state === 'running' && !!mountModelId && mountModelId !== mountedModelId && !engineBusy;
-  const canUnmount = !engineBusy && (state === 'running' || state === 'mounting');
+  const canUnmount =
+    !engineBusy && (state === 'running' || state === 'mounting' || strayPort != null);
 
   return (
     <div className="flex flex-col gap-4 pb-8">
@@ -523,6 +694,13 @@ function EngineSection(props: EngineSectionProps) {
       )}
       {status?.gateMessage && status.gateVerdict === 'warn' && (
         <SolidBanner color={AMBER} label="Memory pressure" text={status.gateMessage} />
+      )}
+      {strayPort != null && (
+        <SolidBanner
+          color={AMBER}
+          label="Unsupervised engine"
+          text={`unsupervised engine on port ${strayPort} — Unmount reclaims it`}
+        />
       )}
       {mountError && <SolidBanner color={RED} label="Mount failed" text={mountError} />}
       {status?.state === 'failed' && status.lastError && status.lastError !== mountError && (
@@ -536,14 +714,11 @@ function EngineSection(props: EngineSectionProps) {
       />
 
       {/* Status card */}
-      <div
-        className="border border-border-primary bg-background-primary p-4 flex flex-col gap-4"
-        style={{ borderRadius: 3 }}
-      >
-        <div className="flex items-center gap-3 flex-wrap">
+      <Card>
+        <CardHeader label="Engine">
           {status ? <StateBadge state={status.state} /> : <Chip color={SLATE}>loading</Chip>}
           {status?.modelId ? (
-            <span className="font-mono text-sm font-semibold text-text-primary truncate">
+            <span className="truncate font-mono text-sm font-semibold text-text-primary">
               {status.modelId}
             </span>
           ) : (
@@ -554,60 +729,58 @@ function EngineSection(props: EngineSectionProps) {
               {status.toolCallParser}
             </Chip>
           )}
-        </div>
-
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-x-6 gap-y-3">
-          <StatusFact label="Context window">
-            {status?.contextWindow != null ? (
-              <span className="font-bold tabular-nums" style={{ color: AZURE }}>
-                {status.contextWindow.toLocaleString()}
-              </span>
-            ) : (
-              <span className="text-text-secondary">—</span>
-            )}
-          </StatusFact>
-          <StatusFact label="PID">
-            {status?.pid != null ? (
-              <span className="font-mono tabular-nums">{status.pid}</span>
-            ) : (
-              <span className="text-text-secondary">—</span>
-            )}
-          </StatusFact>
-          <StatusFact label="Base URL">
-            {status?.baseUrl ? (
-              <span className="font-mono text-xs">{status.baseUrl}</span>
-            ) : (
-              <span className="text-text-secondary">—</span>
-            )}
-          </StatusFact>
-          <StatusFact label="Port (configured)">
-            {settings ? (
-              <span className="font-mono tabular-nums">{settings.port}</span>
-            ) : (
-              <span className="text-text-secondary">—</span>
-            )}
-          </StatusFact>
-        </div>
-
-        {status?.probeError && (
-          <div className="text-xs font-semibold break-words" style={{ color: RED }}>
-            Probe failed: {status.probeError}
+        </CardHeader>
+        <div className="flex flex-col gap-4 px-3 py-3">
+          <div className="grid grid-cols-2 gap-x-6 gap-y-3 md:grid-cols-4">
+            <StatusFact label="Context window">
+              {status?.contextWindow != null ? (
+                <span className="font-bold tabular-nums" style={{ color: AZURE }}>
+                  {status.contextWindow.toLocaleString()}
+                </span>
+              ) : (
+                <span className="text-text-secondary">—</span>
+              )}
+            </StatusFact>
+            <StatusFact label="PID">
+              {status?.pid != null ? (
+                <span className="font-mono tabular-nums">{status.pid}</span>
+              ) : (
+                <span className="text-text-secondary">—</span>
+              )}
+            </StatusFact>
+            <StatusFact label="Base URL">
+              {status?.baseUrl ? (
+                <span className="font-mono text-xs">{status.baseUrl}</span>
+              ) : (
+                <span className="text-text-secondary">—</span>
+              )}
+            </StatusFact>
+            <StatusFact label="Port (configured)">
+              {settings ? (
+                <span className="font-mono tabular-nums">{settings.port}</span>
+              ) : (
+                <span className="text-text-secondary">—</span>
+              )}
+            </StatusFact>
           </div>
-        )}
 
-        {status && (
-          <MemoryBar availableGb={status.availableMemoryGb} totalGb={status.totalMemoryGb} />
-        )}
-      </div>
+          {status?.probeError && (
+            <div className="break-words text-xs font-semibold" style={{ color: RED }}>
+              Probe failed: {status.probeError}
+            </div>
+          )}
+
+          {status && (
+            <MemoryBar availableGb={status.availableMemoryGb} totalGb={status.totalMemoryGb} />
+          )}
+        </div>
+      </Card>
 
       {/* Mount controls */}
-      <div
-        className="border border-border-primary bg-background-primary p-4 flex flex-col gap-3"
-        style={{ borderRadius: 3 }}
-      >
-        <span className="text-sm font-semibold text-text-primary">Mount a model</span>
-        <div className="flex items-start gap-2">
-          <div className="flex-1 min-w-0">
+      <Card>
+        <CardHeader label="Mount a model" />
+        <div className="flex items-start gap-2 px-3 py-3">
+          <div className="min-w-0 flex-1">
             <ModelPicker
               models={models}
               value={mountModelId}
@@ -620,20 +793,12 @@ function EngineSection(props: EngineSectionProps) {
               a different selection while running -> "Switch model" (the backend shuts the old
               model down); otherwise the plain Mount action. */}
           {state === 'mounting' ? (
-            <Button
-              disabled
-              className="font-bold text-white"
-              style={{ backgroundColor: GREEN, borderRadius: 3 }}
-            >
+            <Button disabled className="rounded font-bold text-white" style={{ backgroundColor: GREEN }}>
               <Loader2 className="w-4 h-4 animate-spin" />
               Mounting
             </Button>
           ) : selectionIsMounted ? (
-            <Button
-              disabled
-              className="font-bold text-white"
-              style={{ backgroundColor: GREEN, borderRadius: 3 }}
-            >
+            <Button disabled className="rounded font-bold text-white" style={{ backgroundColor: GREEN }}>
               <Check className="w-4 h-4" />
               Mounted
             </Button>
@@ -641,8 +806,8 @@ function EngineSection(props: EngineSectionProps) {
             <Button
               onClick={onMount}
               disabled={!canSwitch}
-              className="font-bold text-white hover:opacity-90"
-              style={{ backgroundColor: GREEN, borderRadius: 3 }}
+              className="rounded font-bold text-white hover:opacity-90"
+              style={{ backgroundColor: GREEN }}
             >
               <Play className="w-4 h-4" />
               Switch model
@@ -651,8 +816,8 @@ function EngineSection(props: EngineSectionProps) {
             <Button
               onClick={onMount}
               disabled={!canMount}
-              className="font-bold text-white hover:opacity-90"
-              style={{ backgroundColor: GREEN, borderRadius: 3 }}
+              className="rounded font-bold text-white hover:opacity-90"
+              style={{ backgroundColor: GREEN }}
             >
               <Play className="w-4 h-4" />
               Mount
@@ -661,40 +826,38 @@ function EngineSection(props: EngineSectionProps) {
           <Button
             onClick={onUnmount}
             disabled={!canUnmount}
-            className="font-bold text-white hover:opacity-90"
-            style={{ backgroundColor: SLATE, borderRadius: 3 }}
+            className="rounded font-bold text-white hover:opacity-90"
+            style={{ backgroundColor: SLATE }}
           >
             <Square className="w-4 h-4" />
             Unmount
           </Button>
         </div>
-        <span className="text-xs text-text-secondary">
+        <CardFooter>
           Mount returns immediately and the engine flips to mounting; the card above follows the
-          live status every 2 seconds.
-        </span>
-      </div>
+          live status every 2 seconds. Each model mounts with its own sampling profile.
+        </CardFooter>
+      </Card>
 
       {/* Spawn command — visible, not editable here: the owner sees exactly what would run. */}
       {settings && (
-        <div
-          className="border border-border-primary bg-background-primary p-4 flex flex-col gap-1"
-          style={{ borderRadius: 3 }}
-        >
-          <span className="text-[10px] font-semibold uppercase tracking-wider text-text-secondary">
-            Spawn command
-          </span>
-          <span className="font-mono text-xs text-text-primary break-all">
-            {settings.spawnCommand.join(' ')}
-          </span>
-        </div>
+        <Card>
+          <CardHeader label="Spawn command" />
+          <div className="px-3 py-2.5">
+            <span className="break-all font-mono text-xs text-text-primary">
+              {settings.spawnCommand.join(' ')}
+            </span>
+          </div>
+        </Card>
       )}
     </div>
   );
 }
 
 // ---------------------------------------------------------------------------
-// SAMPLING tab — the drafts live in the shell, so unsaved edits survive tab
-// switches; this section only renders them.
+// SAMPLING tab — per-model profiles. The drafts map lives in the shell keyed by
+// model id, so unsaved edits survive tab AND model switches; this section only
+// renders the selected model's drafts.
 // ---------------------------------------------------------------------------
 
 interface SamplingSectionProps {
@@ -702,9 +865,12 @@ interface SamplingSectionProps {
   settings: MlxEngineSettings | null;
   engineBusy: boolean;
   onRemount: () => void;
+  models: MlxLocalModel[];
+  selectedModelId: string | null;
+  onSelectModel: (id: string | null) => void;
   drafts: NumericDrafts | null;
-  setDraft: (key: NumericSettingKey, text: string) => void;
   savedDrafts: NumericDrafts | null;
+  setDraft: (key: NumericSettingKey, text: string) => void;
   onSaveSettings: () => void;
   saving: boolean;
   saveError: string | null;
@@ -716,15 +882,21 @@ function SamplingSection(props: SamplingSectionProps) {
     settings,
     engineBusy,
     onRemount,
+    models,
+    selectedModelId,
+    onSelectModel,
     drafts,
-    setDraft,
     savedDrafts,
+    setDraft,
     onSaveSettings,
     saving,
     saveError,
   } = props;
 
   const dirty = drafts != null && savedDrafts != null && !draftsEqual(drafts, savedDrafts);
+  const profileIds = Object.keys(settings?.modelProfiles ?? {});
+  const selectedIsMounted =
+    status?.modelId != null && selectedModelId != null && status.modelId === selectedModelId;
 
   return (
     <div className="flex flex-col gap-4 pb-8">
@@ -737,8 +909,8 @@ function SamplingSection(props: SamplingSectionProps) {
 
       <div className="flex flex-col gap-1">
         <span className="text-sm text-text-secondary">
-          Engine-level defaults applied when a model is mounted — they apply to whichever model is
-          mounted, and per-request values sent by goose override them.
+          Sampling is PER MODEL: each model mounts with the flags from its own profile, and
+          per-request values sent by goose override them.
         </span>
         <span className="text-sm">
           {status?.modelId ? (
@@ -752,63 +924,77 @@ function SamplingSection(props: SamplingSectionProps) {
         </span>
       </div>
 
-      {/* Sampling + context settings */}
-      <div
-        className="border border-border-primary bg-background-primary p-4 flex flex-col gap-4"
-        style={{ borderRadius: 3 }}
-      >
-        <div className="flex items-center justify-between gap-3">
-          <span className="text-sm font-semibold text-text-primary">Sampling</span>
-          <div className="flex items-center gap-2">
-            {dirty && <Chip color={AMBER}>unsaved</Chip>}
-            <Button
-              size="sm"
-              onClick={onSaveSettings}
-              disabled={!dirty || saving || !settings}
-              className="font-bold text-white hover:opacity-90"
-              style={{ backgroundColor: AZURE, borderRadius: 3 }}
-            >
-              {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : null}
-              Save
-            </Button>
+      <Card>
+        <CardHeader
+          label="Model profile"
+          right={
+            <>
+              {dirty && <Chip color={AMBER} ink={INK_DARK}>unsaved</Chip>}
+              <Button
+                size="sm"
+                onClick={onSaveSettings}
+                disabled={!dirty || saving || !settings || !selectedModelId}
+                className="rounded font-bold text-white hover:opacity-90"
+                style={{ backgroundColor: AZURE }}
+              >
+                {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : null}
+                Save
+              </Button>
+            </>
+          }
+        >
+          {selectedIsMounted && <Chip color={GREEN}>mounted</Chip>}
+        </CardHeader>
+        <div className="flex flex-col gap-4 px-3 py-3">
+          <div className="max-w-2xl">
+            <SamplingModelPicker
+              models={models}
+              profileIds={profileIds}
+              value={selectedModelId}
+              onChange={onSelectModel}
+            />
           </div>
-        </div>
-        {saveError && <SolidBanner color={RED} label="Save failed" text={saveError} />}
-        {drafts ? (
-          <>
-            <div className="grid grid-cols-2 md:grid-cols-3 gap-x-6 gap-y-4">
-              {SAMPLING_FIELDS.map((spec) => (
-                <NumericField
-                  key={spec.key}
-                  spec={spec}
-                  text={drafts[spec.key]}
-                  onText={(v) => setDraft(spec.key, v)}
-                />
-              ))}
-            </div>
-            <div className="max-w-xs">
-              <NumericField
-                spec={CONTEXT_LIMIT_FIELD}
-                text={drafts.contextLimit}
-                onText={(v) => setDraft('contextLimit', v)}
-              />
-            </div>
-            <span className="text-xs text-text-secondary">
-              A blank field sends nothing — the engine keeps its own default. Saving while a model
-              is running does not touch the live process; the status reports restart required until
-              you remount.
+          {saveError && <SolidBanner color={RED} label="Save failed" text={saveError} />}
+          {!settings ? (
+            <span className="text-sm text-text-secondary">Loading settings…</span>
+          ) : !selectedModelId || !drafts ? (
+            <span className="text-sm text-text-secondary">
+              Pick a model above to edit its sampling profile.
             </span>
-          </>
-        ) : (
-          <span className="text-sm text-text-secondary">Loading settings…</span>
-        )}
-      </div>
+          ) : (
+            <>
+              <div className="grid grid-cols-2 gap-x-6 gap-y-4 md:grid-cols-3">
+                {SAMPLING_FIELDS.map((spec) => (
+                  <NumericField
+                    key={spec.key}
+                    spec={spec}
+                    text={drafts[spec.key]}
+                    onText={(v) => setDraft(spec.key, v)}
+                  />
+                ))}
+              </div>
+              <div className="max-w-xs">
+                <NumericField
+                  spec={CONTEXT_LIMIT_FIELD}
+                  text={drafts.contextLimit}
+                  onText={(v) => setDraft('contextLimit', v)}
+                />
+              </div>
+            </>
+          )}
+        </div>
+        <CardFooter>
+          A blank field sends nothing — the engine keeps its own default. Profiles apply at
+          mount, per model: saving never touches a live process, and the status reports restart
+          required until the mounted model is remounted.
+        </CardFooter>
+      </Card>
     </div>
   );
 }
 
 // ---------------------------------------------------------------------------
-// MODELS tab
+// MODELS tab — models folder, the Hugging Face browser, local models.
 // ---------------------------------------------------------------------------
 
 function ModelsDirDialog({
@@ -843,8 +1029,7 @@ function ModelsDirDialog({
         <Input
           value={value}
           onChange={(e) => setValue(e.target.value)}
-          className="font-mono text-sm"
-          style={{ borderRadius: 3 }}
+          className="rounded font-mono text-sm"
           placeholder="/path/to/mlx-models"
           aria-label="Models folder path"
         />
@@ -856,8 +1041,8 @@ function ModelsDirDialog({
           <Button
             onClick={() => onSave(value.trim())}
             disabled={saving || value.trim() === ''}
-            className="font-bold text-white hover:opacity-90"
-            style={{ backgroundColor: AZURE, borderRadius: 3 }}
+            className="rounded font-bold text-white hover:opacity-90"
+            style={{ backgroundColor: AZURE }}
           >
             {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : null}
             Save
@@ -883,11 +1068,10 @@ function DownloadProgressRow({
       : 0;
   const active = progress.state === 'queued' || progress.state === 'downloading';
   return (
-    <div className="flex flex-col gap-1.5 mt-2" data-testid={`mlx-download-${repoId}`}>
+    <div className="mt-2 flex flex-col gap-1.5" data-testid={`mlx-download-${repoId}`}>
       <div className="flex items-center gap-2">
         <div
-          className="flex-1 h-2.5 border border-border-primary overflow-hidden"
-          style={{ borderRadius: 3 }}
+          className="h-2.5 flex-1 overflow-hidden rounded border border-border-primary"
           role="progressbar"
           aria-valuenow={Math.round(pct)}
           aria-valuemin={0}
@@ -896,7 +1080,7 @@ function DownloadProgressRow({
         >
           <div className="h-full" style={{ width: `${pct}%`, backgroundColor: AZURE }} />
         </div>
-        <span className="text-xs font-bold tabular-nums shrink-0" style={{ color: AZURE }}>
+        <span className="shrink-0 text-xs font-bold tabular-nums" style={{ color: AZURE }}>
           {formatBytesShort(progress.downloadedBytes)}
           {progress.totalBytes > 0 ? ` / ${formatBytesShort(progress.totalBytes)}` : ''}
         </span>
@@ -904,26 +1088,452 @@ function DownloadProgressRow({
           <Button
             size="xs"
             onClick={onCancel}
-            className="font-bold text-white hover:opacity-90 shrink-0"
-            style={{ backgroundColor: SLATE, borderRadius: 3 }}
+            className="shrink-0 rounded font-bold text-white hover:opacity-90"
+            style={{ backgroundColor: SLATE }}
           >
             <X className="w-3 h-3" />
             Cancel
           </Button>
         )}
       </div>
-      <div className="flex items-center gap-2 min-w-0">
+      <div className="flex min-w-0 items-center gap-2">
         {progress.state === 'queued' && <Chip color={SLATE}>queued</Chip>}
         {progress.state === 'downloading' && <Chip color={AZURE}>downloading</Chip>}
         {progress.state === 'done' && <Chip color={GREEN}>done</Chip>}
         {progress.state === 'cancelled' && <Chip color={SLATE}>cancelled</Chip>}
         {progress.currentFile && (
-          <span className="font-mono text-[11px] text-text-secondary truncate">
+          <span className="truncate font-mono text-[11px] text-text-secondary">
             {progress.currentFile}
           </span>
         )}
       </div>
     </div>
+  );
+}
+
+// ------------------------- Hugging Face browser ----------------------------
+
+const PROVIDER_CHOICES = [
+  'all',
+  'mlx-community',
+  'lmstudio-community',
+  'Qwen',
+  'unsloth',
+  'nightmedia',
+  'other',
+] as const;
+type ProviderChoice = (typeof PROVIDER_CHOICES)[number];
+
+const QUANT_CHOICES = ['all', '3-bit', '4-bit', '5-bit', '6-bit', '8-bit', 'bf16'] as const;
+type QuantChoice = (typeof QUANT_CHOICES)[number];
+
+/**
+ * The architecture tags the backend measured live on MLX repos — mirrors
+ * MEASURED_ARCH_TAGS in crates/goose-sidecar/src/hf.rs (2026-08-31), sorted for humans.
+ */
+export const ARCH_CHOICES = [
+  'cohere',
+  'deepseek_v2',
+  'deepseek_v3',
+  'ernie4_5',
+  'exaone',
+  'gemma3',
+  'gemma4',
+  'gemma4_unified',
+  'glm4',
+  'glm4_moe',
+  'glm4v',
+  'gpt_oss',
+  'granite',
+  'internvl',
+  'kimi_k2',
+  'kimi_k25',
+  'lfm2',
+  'lfm2_moe',
+  'llama',
+  'mamba',
+  'minimax',
+  'mistral',
+  'mixtral',
+  'nemotron',
+  'olmo2',
+  'phi',
+  'phi3',
+  'qwen',
+  'qwen2',
+  'qwen3',
+  'qwen3_5',
+  'qwen3_5_moe',
+  'qwen3_moe',
+  'qwen3_vl',
+  'qwen4_exp',
+  'smollm3',
+  'starcoder2',
+  'whisper',
+] as const;
+
+interface FilterOption {
+  value: string;
+  label: string;
+}
+
+const PROVIDER_OPTIONS: FilterOption[] = PROVIDER_CHOICES.map((v) => ({
+  value: v,
+  label: v === 'all' ? 'Provider: all' : v === 'other' ? 'Other…' : v,
+}));
+const QUANT_OPTIONS: FilterOption[] = QUANT_CHOICES.map((v) => ({
+  value: v,
+  label: v === 'all' ? 'Quant: all' : v,
+}));
+const ARCH_OPTIONS: FilterOption[] = [
+  { value: 'all', label: 'Arch: all' },
+  ...ARCH_CHOICES.map((v) => ({ value: v, label: v })),
+];
+
+// Distinct solid hues for author chips — deterministic per author, full-rainbow, no washes.
+const AUTHOR_HUES = [
+  'var(--color-node-1, #1d4ed8)',
+  'var(--color-node-2, #0891b2)',
+  'var(--color-node-3, #7c3aed)',
+  'var(--color-node-4, #ea580c)',
+  'var(--color-node-5, #db2777)',
+  'var(--color-node-6, #16a34a)',
+];
+
+export function authorHue(author: string): string {
+  let h = 0;
+  for (let i = 0; i < author.length; i += 1) h = (h * 31 + author.charCodeAt(i)) >>> 0;
+  return AUTHOR_HUES[h % AUTHOR_HUES.length];
+}
+
+interface BrowseHitRowProps {
+  hit: MlxBrowseHit;
+  sort: MlxBrowseSort;
+  progress: MlxDownloadProgress | undefined;
+  startError: string | undefined;
+  onDownload: () => void;
+  onCancel: () => void;
+}
+
+function BrowseHitRow({ hit, sort, progress, startError, onDownload, onCancel }: BrowseHitRowProps) {
+  const failed = progress?.state === 'failed';
+  return (
+    <div className="border-t border-border-primary px-3 py-2">
+      {/* flex-wrap + a real min width on the id: at narrow window widths the chip cluster
+          otherwise squeezed the model id down to "lmstudi…" (caught live 2026-08-31). */}
+      <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
+        <span className="min-w-[220px] flex-1 truncate font-mono text-xs font-medium text-text-primary">
+          {hit.id}
+        </span>
+        <Chip color={authorHue(hit.author)} title={`Published by ${hit.author}`}>
+          {hit.author}
+        </Chip>
+        {hit.quant && (
+          <Chip color={AZURE} title="Derived from the repo's tags or name">
+            {hit.quant}
+          </Chip>
+        )}
+        {hit.arch && (
+          <Chip color={TEAL} title="Derived from the repo's tags or name">
+            {hit.arch}
+          </Chip>
+        )}
+        <span
+          className="shrink-0 text-xs font-bold tabular-nums"
+          style={{ color: AZURE }}
+          title={`${hit.downloads.toLocaleString()} downloads`}
+        >
+          ↓ {formatCount(hit.downloads)}
+        </span>
+        <span
+          className="shrink-0 text-xs font-bold tabular-nums"
+          style={{ color: VIOLET }}
+          title={`${hit.likes.toLocaleString()} likes`}
+        >
+          ♥ {formatCount(hit.likes)}
+        </span>
+        {hit.createdAt &&
+          (sort === 'newest' ? (
+            <span
+              className="shrink-0 rounded px-1.5 py-0.5 text-[11px] font-bold tabular-nums"
+              style={{ backgroundColor: AMBER, color: INK_DARK }}
+              title={`Created ${hit.createdAt}`}
+            >
+              {formatDate(hit.createdAt)}
+            </span>
+          ) : (
+            <span
+              className="shrink-0 text-xs tabular-nums text-text-secondary"
+              title={`Created ${hit.createdAt}`}
+            >
+              {formatDate(hit.createdAt)}
+            </span>
+          ))}
+        {!progress && (
+          <Button
+            size="sm"
+            onClick={onDownload}
+            className="shrink-0 rounded font-bold text-white hover:opacity-90"
+            style={{ backgroundColor: GREEN }}
+            aria-label={`Download ${hit.id}`}
+          >
+            <Download className="w-3.5 h-3.5" />
+            Download
+          </Button>
+        )}
+        {failed && (
+          <Button
+            size="sm"
+            onClick={onDownload}
+            className="shrink-0 rounded font-bold text-white hover:opacity-90"
+            style={{ backgroundColor: RED }}
+          >
+            <RefreshCw className="w-3.5 h-3.5" />
+            Retry
+          </Button>
+        )}
+      </div>
+      {startError && (
+        <div className="mt-1 break-words text-xs font-semibold" style={{ color: RED }}>
+          {startError}
+        </div>
+      )}
+      {progress && !failed && (
+        <DownloadProgressRow repoId={hit.id} progress={progress} onCancel={onCancel} />
+      )}
+      {failed && (
+        <div className="mt-1 break-words text-xs font-semibold" style={{ color: RED }}>
+          {progress?.error ?? 'Download failed.'}
+        </div>
+      )}
+    </div>
+  );
+}
+
+interface HfBrowserProps {
+  downloads: Record<string, MlxDownloadProgress>;
+  downloadErrors: Record<string, string>;
+  onDownload: (repoId: string) => void;
+  onCancelDownload: (repoId: string) => void;
+}
+
+/**
+ * Paginated MLX-only Hugging Face browser. Every filter is applied SERVER-side through
+ * `_goose/unstable/mlxEngine/browse`; changing any filter/sort/search resets pagination
+ * (an epoch guard drops stale in-flight pages), and Load more appends via `nextCursor`.
+ */
+function HfBrowser({ downloads, downloadErrors, onDownload, onCancelDownload }: HfBrowserProps) {
+  const [queryText, setQueryText] = useState('');
+  const [appliedQuery, setAppliedQuery] = useState('');
+  const [provider, setProvider] = useState<ProviderChoice>('all');
+  const [authorText, setAuthorText] = useState('');
+  const [appliedAuthor, setAppliedAuthor] = useState('');
+  const [quant, setQuant] = useState<QuantChoice>('all');
+  const [arch, setArch] = useState<string>('all');
+  const [sort, setSort] = useState<MlxBrowseSort>('downloads');
+
+  const [hits, setHits] = useState<MlxBrowseHit[] | null>(null);
+  const [nextCursor, setNextCursor] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const epoch = useRef(0);
+
+  const author =
+    provider === 'all' ? undefined : provider === 'other' ? appliedAuthor || undefined : provider;
+
+  const baseParams = useMemo(
+    () => ({
+      sort,
+      query: appliedQuery || undefined,
+      author,
+      quant: quant === 'all' ? undefined : quant,
+      arch: arch === 'all' ? undefined : arch,
+      limit: 20,
+    }),
+    [sort, appliedQuery, author, quant, arch]
+  );
+
+  // Any filter/sort/search change lands here: fetch page 1, REPLACING the list — stale
+  // in-flight responses (including a Load more) are dropped by the epoch guard.
+  useEffect(() => {
+    const id = ++epoch.current;
+    setLoading(true);
+    setError(null);
+    setNextCursor(null);
+    void (async () => {
+      try {
+        const page = await mlxEngineBrowse(baseParams);
+        if (epoch.current !== id) return;
+        setHits(page.hits);
+        setNextCursor(page.nextCursor ?? null);
+      } catch (e) {
+        if (epoch.current !== id) return;
+        setError(errorMessage(e, 'Hugging Face browse failed.'));
+        setHits(null);
+      } finally {
+        if (epoch.current === id) setLoading(false);
+      }
+    })();
+  }, [baseParams]);
+
+  const loadMore = useCallback(() => {
+    if (!nextCursor) return;
+    const id = epoch.current;
+    setLoadingMore(true);
+    void (async () => {
+      try {
+        const page = await mlxEngineBrowse({ ...baseParams, cursor: nextCursor });
+        if (epoch.current !== id) return;
+        setHits((prev) => {
+          const seen = new Set((prev ?? []).map((h) => h.id));
+          return [...(prev ?? []), ...page.hits.filter((h) => !seen.has(h.id))];
+        });
+        setNextCursor(page.nextCursor ?? null);
+      } catch (e) {
+        if (epoch.current !== id) return;
+        setError(errorMessage(e, 'Loading the next page failed.'));
+      } finally {
+        if (epoch.current === id) setLoadingMore(false);
+      }
+    })();
+  }, [baseParams, nextCursor]);
+
+  const commitQuery = useCallback(() => setAppliedQuery(queryText.trim()), [queryText]);
+  const commitAuthor = useCallback(() => setAppliedAuthor(authorText.trim()), [authorText]);
+
+  const providerOption = PROVIDER_OPTIONS.find((o) => o.value === provider) ?? PROVIDER_OPTIONS[0];
+  const quantOption = QUANT_OPTIONS.find((o) => o.value === quant) ?? QUANT_OPTIONS[0];
+  const archOption = ARCH_OPTIONS.find((o) => o.value === arch) ?? ARCH_OPTIONS[0];
+
+  return (
+    <Card>
+      <CardHeader
+        label="Hugging Face — MLX models"
+        right={
+          <>
+            {loading && (
+              <Chip color={AMBER} ink={INK_DARK}>
+                <Loader2 className="h-2.5 w-2.5 animate-spin" />
+                loading
+              </Chip>
+            )}
+            <Chip color={AZURE}>{hits?.length ?? 0} loaded</Chip>
+          </>
+        }
+      />
+      <div className="flex flex-col gap-2.5 px-3 py-3">
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="flex min-w-[220px] flex-1 items-center gap-2">
+            <Input
+              value={queryText}
+              onChange={(e) => setQueryText(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') commitQuery();
+              }}
+              placeholder="Search MLX models by name…"
+              className="rounded text-sm"
+              aria-label="Search Hugging Face"
+            />
+            <Button
+              onClick={commitQuery}
+              className="shrink-0 rounded font-bold text-white hover:opacity-90"
+              style={{ backgroundColor: AZURE }}
+              aria-label="Search"
+            >
+              <Search className="w-4 h-4" />
+            </Button>
+          </div>
+          <Segmented<MlxBrowseSort>
+            options={[
+              { value: 'downloads', label: 'Top downloads', title: 'Most downloaded first' },
+              { value: 'newest', label: 'Latest', title: 'Newest first (created date)' },
+            ]}
+            value={sort}
+            onChange={setSort}
+          />
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="w-52">
+            <Select
+              aria-label="Provider filter"
+              options={PROVIDER_OPTIONS}
+              value={providerOption}
+              onChange={(o) => setProvider(((o as FilterOption)?.value ?? 'all') as ProviderChoice)}
+            />
+          </div>
+          {provider === 'other' && (
+            <div className="w-56">
+              <Input
+                value={authorText}
+                onChange={(e) => setAuthorText(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') commitAuthor();
+                }}
+                onBlur={commitAuthor}
+                placeholder="author (e.g. inferencerlabs)"
+                className="rounded font-mono text-sm"
+                aria-label="Author filter"
+              />
+            </div>
+          )}
+          <div className="w-40">
+            <Select
+              aria-label="Quant filter"
+              options={QUANT_OPTIONS}
+              value={quantOption}
+              onChange={(o) => setQuant(((o as FilterOption)?.value ?? 'all') as QuantChoice)}
+            />
+          </div>
+          <div className="w-48">
+            <Select
+              aria-label="Architecture filter"
+              options={ARCH_OPTIONS}
+              value={archOption}
+              onChange={(o) => setArch((o as FilterOption)?.value ?? 'all')}
+            />
+          </div>
+        </div>
+        {error && <SolidBanner color={RED} label="Browse failed" text={error} />}
+      </div>
+
+      {hits != null && hits.length === 0 && !loading && !error && (
+        <div className="border-t border-border-primary px-3 py-3 text-sm text-text-secondary">
+          No MLX models match these filters.
+        </div>
+      )}
+      {hits != null && hits.length > 0 && (
+        <div>
+          {hits.map((hit) => (
+            <BrowseHitRow
+              key={hit.id}
+              hit={hit}
+              sort={sort}
+              progress={downloads[hit.id]}
+              startError={downloadErrors[hit.id]}
+              onDownload={() => onDownload(hit.id)}
+              onCancel={() => onCancelDownload(hit.id)}
+            />
+          ))}
+        </div>
+      )}
+      {nextCursor != null && !loading && (
+        <button
+          type="button"
+          onClick={loadMore}
+          disabled={loadingMore}
+          className="flex w-full items-center justify-center gap-2 border-t border-border-primary py-2.5 text-sm font-semibold text-white transition-opacity hover:opacity-90 disabled:opacity-60"
+          style={{ backgroundColor: TEAL }}
+        >
+          {loadingMore ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+          Load more
+        </button>
+      )}
+      <CardFooter>
+        Quant and Arch filters match Hugging Face tags — a model whose quant appears only in its
+        name is excluded by those filters but still findable via search.
+      </CardFooter>
+    </Card>
   );
 }
 
@@ -933,7 +1543,7 @@ interface ModelsSectionProps {
   mountedModelId: string | null;
   refreshModels: () => void;
   saveSettings: (next: MlxEngineSettings) => Promise<void>;
-  onOpenSampling: () => void;
+  onOpenSampling: (modelId: string) => void;
 }
 
 function ModelsSection({
@@ -948,11 +1558,6 @@ function ModelsSection({
   const [dirSaving, setDirSaving] = useState(false);
   const [dirError, setDirError] = useState<string | null>(null);
 
-  const [query, setQuery] = useState('');
-  const [searching, setSearching] = useState(false);
-  const [searchError, setSearchError] = useState<string | null>(null);
-  const [hits, setHits] = useState<MlxHfModelHit[] | null>(null);
-
   const [downloads, setDownloads] = useState<Record<string, MlxDownloadProgress>>({});
   const [downloadErrors, setDownloadErrors] = useState<Record<string, string>>({});
 
@@ -966,7 +1571,7 @@ function ModelsSection({
       setDirSaving(true);
       setDirError(null);
       try {
-        await saveSettings({ ...settings, modelsDir: dir });
+        await saveSettings({ ...sanitizeSettingsForWrite(settings), modelsDir: dir });
         setDirDialogOpen(false);
         refreshModels();
       } catch (error) {
@@ -977,20 +1582,6 @@ function ModelsSection({
     },
     [settings, saveSettings, refreshModels]
   );
-
-  const runSearch = useCallback(async () => {
-    const q = query.trim();
-    if (!q) return;
-    setSearching(true);
-    setSearchError(null);
-    try {
-      setHits(await mlxEngineHfSearch(q, 25));
-    } catch (error) {
-      setSearchError(errorMessage(error, 'Hugging Face search failed.'));
-    } finally {
-      setSearching(false);
-    }
-  }, [query]);
 
   const startDownload = useCallback(async (repoId: string) => {
     setDownloadErrors((prev) => {
@@ -1076,206 +1667,91 @@ function ModelsSection({
   return (
     <div className="flex flex-col gap-4 pb-8">
       {/* Models folder */}
-      <div
-        className="border border-border-primary bg-background-primary p-4 flex flex-col gap-2"
-        style={{ borderRadius: 3 }}
-      >
-        <span className="text-sm font-semibold text-text-primary">Models folder</span>
-        <div className="flex items-center gap-2">
-          <Folder className="w-4 h-4 shrink-0" style={{ color: AZURE }} />
-          <span
-            className="flex-1 min-w-0 font-mono text-sm text-text-primary truncate border border-border-primary px-2.5 py-1.5 bg-background-secondary"
-            style={{ borderRadius: 3 }}
-            title={settings?.modelsDir}
-          >
-            {settings?.modelsDir ?? '…'}
-          </span>
-          <Button
-            size="sm"
-            variant="outline"
-            onClick={() => {
-              setDirError(null);
-              setDirDialogOpen(true);
-            }}
-            disabled={!settings}
-            style={{ borderRadius: 3 }}
-          >
-            <Pencil className="w-3.5 h-3.5" />
-            Edit
-          </Button>
-        </div>
-        <span className="text-xs text-text-secondary">
-          One directory used by downloads and mounts alike.
-        </span>
-      </div>
-
-      {/* Hugging Face search */}
-      <div
-        className="border border-border-primary bg-background-primary p-4 flex flex-col gap-3"
-        style={{ borderRadius: 3 }}
-      >
-        <span className="text-sm font-semibold text-text-primary">Hugging Face</span>
-        <div className="flex items-center gap-2">
-          <Input
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') void runSearch();
-            }}
-            placeholder="Search MLX models (e.g. qwen, mlx-community)…"
-            className="text-sm"
-            style={{ borderRadius: 3 }}
-            aria-label="Search Hugging Face"
-          />
-          <Button
-            onClick={() => void runSearch()}
-            disabled={searching || query.trim() === ''}
-            className="font-bold text-white hover:opacity-90 shrink-0"
-            style={{ backgroundColor: AZURE, borderRadius: 3 }}
-          >
-            {searching ? (
-              <Loader2 className="w-4 h-4 animate-spin" />
-            ) : (
-              <Search className="w-4 h-4" />
-            )}
-            Search
-          </Button>
-        </div>
-        {searchError && <SolidBanner color={RED} label="Search failed" text={searchError} />}
-        {hits != null && hits.length === 0 && !searching && (
-          <span className="text-sm text-text-secondary">No results for this query.</span>
-        )}
-        {hits != null && hits.length > 0 && (
-          <div className="flex flex-col">
-            {hits.map((hit) => {
-              const progress = downloads[hit.id];
-              const failed = progress?.state === 'failed';
-              const startError = downloadErrors[hit.id];
-              return (
-                <div
-                  key={hit.id}
-                  className="border border-border-primary px-3 py-2.5 mt-1.5 first:mt-0"
-                  style={{
-                    borderRadius: 3,
-                    ...(failed || startError ? { borderColor: RED, borderWidth: 2 } : {}),
-                  }}
-                >
-                  <div className="flex items-center gap-3 min-w-0">
-                    <span className="font-mono text-sm font-medium text-text-primary truncate flex-1 min-w-0">
-                      {hit.id}
-                    </span>
-                    <span
-                      className="text-xs font-bold tabular-nums shrink-0"
-                      style={{ color: AZURE }}
-                      title={`${hit.downloads.toLocaleString()} downloads`}
-                    >
-                      ↓ {formatCount(hit.downloads)}
-                    </span>
-                    <span
-                      className="text-xs font-bold tabular-nums shrink-0"
-                      style={{ color: VIOLET }}
-                      title={`${hit.likes.toLocaleString()} likes`}
-                    >
-                      ♥ {formatCount(hit.likes)}
-                    </span>
-                    <span className="text-xs text-text-secondary tabular-nums shrink-0">
-                      {formatDate(hit.updatedAt)}
-                    </span>
-                    {!progress && (
-                      <Button
-                        size="sm"
-                        onClick={() => void startDownload(hit.id)}
-                        className="font-bold text-white hover:opacity-90 shrink-0"
-                        style={{ backgroundColor: GREEN, borderRadius: 3 }}
-                      >
-                        <Download className="w-3.5 h-3.5" />
-                        Download
-                      </Button>
-                    )}
-                    {progress?.state === 'failed' && (
-                      <Button
-                        size="sm"
-                        onClick={() => void startDownload(hit.id)}
-                        className="font-bold text-white hover:opacity-90 shrink-0"
-                        style={{ backgroundColor: RED, borderRadius: 3 }}
-                      >
-                        <RefreshCw className="w-3.5 h-3.5" />
-                        Retry
-                      </Button>
-                    )}
-                  </div>
-                  {startError && (
-                    <div className="text-xs font-semibold mt-1 break-words" style={{ color: RED }}>
-                      {startError}
-                    </div>
-                  )}
-                  {progress && progress.state !== 'failed' && (
-                    <DownloadProgressRow
-                      repoId={hit.id}
-                      progress={progress}
-                      onCancel={() => void cancelDownload(hit.id)}
-                    />
-                  )}
-                  {progress?.state === 'failed' && (
-                    <div className="text-xs font-semibold mt-1 break-words" style={{ color: RED }}>
-                      {progress.error ?? 'Download failed.'}
-                    </div>
-                  )}
-                </div>
-              );
-            })}
+      <Card>
+        <CardHeader label="Models folder" />
+        <div className="flex flex-col gap-2 px-3 py-3">
+          <div className="flex items-center gap-2">
+            <Folder className="w-4 h-4 shrink-0" style={{ color: AZURE }} />
+            <span
+              className="min-w-0 flex-1 truncate rounded border border-border-primary bg-background-secondary px-2.5 py-1.5 font-mono text-sm text-text-primary"
+              title={settings?.modelsDir}
+            >
+              {settings?.modelsDir ?? '…'}
+            </span>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => {
+                setDirError(null);
+                setDirDialogOpen(true);
+              }}
+              disabled={!settings}
+              className="rounded"
+            >
+              <Pencil className="w-3.5 h-3.5" />
+              Edit
+            </Button>
           </div>
-        )}
-      </div>
+        </div>
+        <CardFooter>One directory used by downloads and mounts alike.</CardFooter>
+      </Card>
+
+      {/* Hugging Face browser */}
+      <HfBrowser
+        downloads={downloads}
+        downloadErrors={downloadErrors}
+        onDownload={(repoId) => void startDownload(repoId)}
+        onCancelDownload={(repoId) => void cancelDownload(repoId)}
+      />
 
       {/* Local models */}
-      <div
-        className="border border-border-primary bg-background-primary p-4 flex flex-col gap-3"
-        style={{ borderRadius: 3 }}
-      >
-        <div className="flex items-center gap-2">
-          <span className="text-sm font-semibold text-text-primary">Downloaded models</span>
+      <Card>
+        <CardHeader
+          label="Downloaded models"
+          right={
+            <Button size="xs" variant="outline" onClick={refreshModels} className="rounded">
+              <RefreshCw className="w-3 h-3" />
+              Refresh
+            </Button>
+          }
+        >
           <Chip color={AZURE}>{models.length}</Chip>
-          <Button
-            size="xs"
-            variant="outline"
-            onClick={refreshModels}
-            className="ml-auto"
-            style={{ borderRadius: 3 }}
-          >
-            <RefreshCw className="w-3 h-3" />
-            Refresh
-          </Button>
-        </div>
-        {deleteError && <SolidBanner color={RED} label="Delete failed" text={deleteError} />}
+        </CardHeader>
+        {deleteError && (
+          <div className="px-3 pt-3">
+            <SolidBanner color={RED} label="Delete failed" text={deleteError} />
+          </div>
+        )}
         {models.length === 0 ? (
-          <span className="text-sm text-text-secondary">
-            Nothing downloaded yet — search Hugging Face above.
-          </span>
+          <div className="px-3 py-3 text-sm text-text-secondary">
+            Nothing downloaded yet — browse Hugging Face above.
+          </div>
         ) : (
-          <div className="flex flex-col">
+          <div>
             {models.map((model) => (
               <div
                 key={model.id}
-                className="flex items-center gap-3 border border-border-primary px-3 py-2.5 mt-1.5 first:mt-0 min-w-0"
-                style={{ borderRadius: 3 }}
+                className="flex min-w-0 items-center gap-3 border-t border-border-primary px-3 py-2.5 first:border-t-0"
               >
-                <HardDrive className="w-4 h-4 shrink-0" style={{ color: model.complete ? AZURE : AMBER }} />
-                <span className="font-mono text-sm text-text-primary truncate flex-1 min-w-0">
+                <HardDrive
+                  className="w-4 h-4 shrink-0"
+                  style={{ color: model.complete ? AZURE : AMBER }}
+                />
+                <span className="min-w-0 flex-1 truncate font-mono text-sm text-text-primary">
                   {model.id}
                 </span>
                 {model.id === mountedModelId && <Chip color={GREEN}>mounted</Chip>}
-                {!model.complete && <Chip color={AMBER}>partial download</Chip>}
-                <span className="text-xs font-bold tabular-nums shrink-0" style={{ color: AZURE }}>
+                {!model.complete && <Chip color={AMBER} ink={INK_DARK}>partial download</Chip>}
+                <span className="shrink-0 text-xs font-bold tabular-nums" style={{ color: AZURE }}>
                   {formatGb(model.sizeBytes)}
                 </span>
                 <Button
                   size="xs"
-                  onClick={onOpenSampling}
-                  className="font-bold text-white hover:opacity-90 shrink-0"
-                  style={{ backgroundColor: VIOLET, borderRadius: 3 }}
+                  onClick={() => onOpenSampling(model.id)}
+                  className="shrink-0 rounded font-bold text-white hover:opacity-90"
+                  style={{ backgroundColor: VIOLET }}
                   aria-label={`Sampling for ${model.id}`}
-                  title="Engine-level sampling defaults — opens the Sampling tab"
+                  title="This model's sampling profile — opens the Sampling tab"
                 >
                   <SlidersHorizontal className="w-3 h-3" />
                   Sampling
@@ -1286,8 +1762,8 @@ function ModelsSection({
                     setDeleteError(null);
                     setPendingDelete(model);
                   }}
-                  className="font-bold text-white hover:opacity-90 shrink-0"
-                  style={{ backgroundColor: RED, borderRadius: 3 }}
+                  className="shrink-0 rounded font-bold text-white hover:opacity-90"
+                  style={{ backgroundColor: RED }}
                   aria-label={`Delete ${model.id}`}
                 >
                   <Trash2 className="w-3 h-3" />
@@ -1296,7 +1772,7 @@ function ModelsSection({
             ))}
           </div>
         )}
-      </div>
+      </Card>
 
       <ModelsDirDialog
         open={dirDialogOpen}
@@ -1345,8 +1821,10 @@ const MlxEngineView: React.FC = () => {
   const [mountError, setMountError] = useState<string | null>(null);
   const [engineBusy, setEngineBusy] = useState(false);
 
-  const [drafts, setDrafts] = useState<NumericDrafts | null>(null);
-  const [savedDrafts, setSavedDrafts] = useState<NumericDrafts | null>(null);
+  // Per-model sampling: ONLY models the user actually edited live here, keyed by model id
+  // — so two models keep separate unsaved drafts and both survive tab/model switches.
+  const [profileDrafts, setProfileDrafts] = useState<Record<string, NumericDrafts>>({});
+  const [samplingModelId, setSamplingModelId] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
 
@@ -1409,11 +1887,7 @@ const MlxEngineView: React.FC = () => {
     refreshModels();
     void (async () => {
       try {
-        const s = await mlxEngineSettingsRead();
-        setSettings(s);
-        const d = draftsFromSettings(s);
-        setDrafts(d);
-        setSavedDrafts(d);
+        setSettings(await mlxEngineSettingsRead());
       } catch (error) {
         setSaveError(errorMessage(error, 'Could not read the engine settings.'));
       }
@@ -1439,6 +1913,19 @@ const MlxEngineView: React.FC = () => {
       setMountModelId(candidate);
     }
   }, [status?.state, status?.modelId, settings?.modelId]);
+
+  // Sampling picker default: the mounted model when running, else the last-mounted
+  // settings.modelId, else the first complete local model. Once set (default, explicit
+  // pick, or the Models-tab shortcut) it is never yanked from under the user.
+  useEffect(() => {
+    if (samplingModelId != null) return;
+    const candidate =
+      (status?.state === 'running' && status.modelId) ||
+      settings?.modelId ||
+      models.find((m) => m.complete)?.id ||
+      null;
+    if (candidate) setSamplingModelId(candidate);
+  }, [samplingModelId, status?.state, status?.modelId, settings?.modelId, models]);
 
   const onMount = useCallback(() => {
     if (!mountModelId) return;
@@ -1489,36 +1976,66 @@ const MlxEngineView: React.FC = () => {
     })();
   }, [status?.modelId, settings?.modelId, refreshStatus]);
 
-  const setDraft = useCallback((key: NumericSettingKey, text: string) => {
-    setDrafts((prev) => (prev ? { ...prev, [key]: text } : prev));
-  }, []);
+  const savedDraftsForSelected = useMemo(
+    () =>
+      settings && samplingModelId
+        ? draftsFromProfile(settings.modelProfiles?.[samplingModelId])
+        : null,
+    [settings, samplingModelId]
+  );
+  const draftsForSelected =
+    samplingModelId != null
+      ? (profileDrafts[samplingModelId] ?? savedDraftsForSelected)
+      : null;
+
+  const setProfileDraft = useCallback(
+    (key: NumericSettingKey, text: string) => {
+      if (!samplingModelId || !settings) return;
+      setProfileDrafts((prev) => {
+        const base =
+          prev[samplingModelId] ?? draftsFromProfile(settings.modelProfiles?.[samplingModelId]);
+        return { ...prev, [samplingModelId]: { ...base, [key]: text } };
+      });
+    },
+    [samplingModelId, settings]
+  );
 
   const saveSettings = useCallback(
     async (next: MlxEngineSettings) => {
       const saved = await mlxEngineSettingsUpdate(next);
       setSettings(saved);
-      const d = draftsFromSettings(saved);
-      setDrafts(d);
-      setSavedDrafts(d);
       void refreshStatus();
     },
     [refreshStatus]
   );
 
-  const onSaveSettings = useCallback(() => {
-    if (!settings || !drafts) return;
+  const onSaveProfile = useCallback(() => {
+    if (!settings || !samplingModelId) return;
+    const drafts = profileDrafts[samplingModelId];
+    if (!drafts) return;
     void (async () => {
       setSaving(true);
       setSaveError(null);
       try {
-        await saveSettings(settingsWithDrafts(settings, drafts));
+        await saveSettings(settingsWithProfile(settings, samplingModelId, drafts));
+        // This model's edits are now the saved truth; other models keep their own drafts.
+        setProfileDrafts((prev) => {
+          const next = { ...prev };
+          delete next[samplingModelId];
+          return next;
+        });
       } catch (error) {
         setSaveError(errorMessage(error, 'Could not save settings.'));
       } finally {
         setSaving(false);
       }
     })();
-  }, [settings, drafts, saveSettings]);
+  }, [settings, samplingModelId, profileDrafts, saveSettings]);
+
+  const openSamplingFor = useCallback((modelId: string) => {
+    setSamplingModelId(modelId);
+    setTab('sampling');
+  }, []);
 
   const tabBtn = (t: MlxTab, label: string, extra?: React.ReactNode) => {
     const active = tab === t;
@@ -1526,10 +2043,10 @@ const MlxEngineView: React.FC = () => {
       <button
         type="button"
         onClick={() => setTab(t)}
-        className={`px-4 py-1.5 text-sm inline-flex items-center gap-2 ${
-          active ? 'font-bold text-white' : 'text-text-secondary hover:text-text-primary'
+        className={`flex items-center gap-2 px-4 py-2 text-sm font-bold transition-colors ${
+          active ? 'text-white' : 'bg-background-secondary text-text-secondary hover:text-text-primary'
         }`}
-        style={{ backgroundColor: active ? AZURE : 'transparent', borderRadius: 3 }}
+        style={active ? { backgroundColor: SEGMENT_ACTIVE } : undefined}
         aria-pressed={active}
       >
         {label}
@@ -1541,43 +2058,43 @@ const MlxEngineView: React.FC = () => {
   return (
     <MainPanelLayout>
       <div className="flex-1 flex flex-col min-h-0">
-        <div className="bg-background-primary px-8 pb-6 pt-16">
-          <div className="flex flex-col page-transition">
-            <div className="flex items-center gap-3 mb-1">
+        <div className="bg-background-primary px-8 pb-5 pt-16">
+          <header className="flex flex-col page-transition border-b border-border-primary pb-5">
+            <div className="flex items-center gap-3">
               <span
-                className="inline-flex items-center justify-center w-9 h-9 shrink-0"
-                style={{ backgroundColor: AZURE, borderRadius: 3 }}
+                className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded"
+                style={{ backgroundColor: AZURE }}
               >
                 <Cpu className="w-5 h-5 text-white" />
               </span>
-              <h1 className="text-4xl font-light">MLX Engine</h1>
+              <h1 className="text-2xl font-bold text-text-primary">Leanzero MLX</h1>
               {status && <StateBadge state={status.state} />}
             </div>
-            <p className="text-sm text-text-secondary mb-3">
-              The in-house supervised MLX sidecar: mount and unmount models, tune sampling, and
-              pull models straight from Hugging Face.
+            <p className="mt-1 text-sm font-bold" style={{ color: AZURE }}>
+              Powered by Rapid-MLX
             </p>
-            <div
-              className="inline-flex self-start border border-border-primary p-0.5 gap-0.5"
-              style={{ borderRadius: 3 }}
-            >
+            <p className="mt-1 max-w-[70ch] text-sm text-text-secondary">
+              The in-house supervised MLX engine: mount and unmount models, tune per-model
+              sampling profiles, and pull models straight from Hugging Face.
+            </p>
+            <div className="mt-3 flex self-start overflow-hidden rounded border border-border-primary">
               {tabBtn('engine', 'Engine')}
               {tabBtn(
                 'models',
                 'Models',
                 <span
-                  className="text-[10px] font-bold tabular-nums px-1 py-px text-white"
-                  style={{ backgroundColor: tab === 'models' ? '#1a1a1a' : SLATE, borderRadius: 3 }}
+                  className="rounded px-1 py-px text-[10px] font-bold tabular-nums text-white"
+                  style={{ backgroundColor: tab === 'models' ? INK_DARK : SLATE }}
                 >
                   {models.length}
                 </span>
               )}
               {tabBtn('sampling', 'Sampling')}
             </div>
-          </div>
+          </header>
         </div>
 
-        <div className="flex-1 min-h-0 relative px-8">
+        <div className="flex-1 min-h-0 relative px-8 pt-4">
           <ScrollArea className="h-full">
             {tab === 'engine' && (
               <EngineSection
@@ -1601,7 +2118,7 @@ const MlxEngineView: React.FC = () => {
                 mountedModelId={status?.modelId ?? null}
                 refreshModels={refreshModels}
                 saveSettings={saveSettings}
-                onOpenSampling={() => setTab('sampling')}
+                onOpenSampling={openSamplingFor}
               />
             )}
             {tab === 'sampling' && (
@@ -1610,10 +2127,13 @@ const MlxEngineView: React.FC = () => {
                 settings={settings}
                 engineBusy={engineBusy}
                 onRemount={onRemount}
-                drafts={drafts}
-                setDraft={setDraft}
-                savedDrafts={savedDrafts}
-                onSaveSettings={onSaveSettings}
+                models={models}
+                selectedModelId={samplingModelId}
+                onSelectModel={setSamplingModelId}
+                drafts={draftsForSelected}
+                savedDrafts={savedDraftsForSelected}
+                setDraft={setProfileDraft}
+                onSaveSettings={onSaveProfile}
                 saving={saving}
                 saveError={saveError}
               />
