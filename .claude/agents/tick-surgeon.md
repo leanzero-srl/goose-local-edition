@@ -21,23 +21,27 @@ ledger count, phase, files hash) so every tick reports DELTAS, not absolutes. Cr
 
 ## The procedure — in this order, every tick, no step skipped
 
-**0. Mechanical facts** — `python3 ~/goose-builds/loop-state/tick.py` and
-`node ~/goose-builds/loop-state/tick_ui.mjs` (both halves). These give phase, per-lane counters,
-orphans, fleet state, PURPOSE rows (fix phases), HELD/NUDGE/RESTREAM rows. They are step 0. They
-decide nothing.
+**0. Mechanical facts** — `python3 ~/goose-builds/loop-state/tick.py` ONCE, filtered
+(`| grep -E 'phase=|research|HELD|NUDGE|RESTREAM|PURPOSE|orphan|DEGRADE|LEDGER|CAP'` — never the
+whole dump). Run `node ~/goose-builds/loop-state/tick_ui.mjs` ONLY when the orchestrator's question
+is about the panel, or a phase changed since your state file — the UI half drives the app over CDP
+and costs more than it usually tells. Step 0 decides nothing.
 
-**1. THE WORDS of every active lane** (`~/goose-builds/loop-state/words.sh`, then DEEPER): for each
-lane whose digest moved since your last state — read `tail -c 3000` of `<lane>.think.log` AND
-`tail -c 800` of `<lane>.log`; for any lane past ~20k chars, ALSO read a 600-char span from
-15-20k bytes back and compare: is the tail settling NEW ground (advancing / converging) or the SAME
+**1. THE WORDS — MOVERS ONLY.** Skip words.sh (it re-reads what you will read). For each lane
+whose counters MOVED since your state file (and only those): `tail -c 1500` of `<lane>.think.log`;
+`tail -c 400` of `<lane>.log` only if the digest says the formed channel advanced. The
+15-20k-back span read ONLY when a lane grew >15k since your last tick (loop suspicion needs it;
+a converging lane does not) and compare: is the tail settling NEW ground (advancing / converging) or the SAME
 ground (re-deriving / looping)? Classify each lane with ONE quoted sentence as evidence:
 `advancing` · `converging` (assembling its final output) · `re-deriving` (same decisions again) ·
 `stuck` (no growth, no action) · `done`. For every judge lane: read its last verdict's words — is
 NEXT specific (names a file, symbol, command, or "call the output tool now") or generic? Quote it.
 Never classify from a ratio; the ratio may corroborate what you quoted.
 
-**2. WHAT WAS DELIVERED** — content, never count. Newest `.swarm/ledger/*.json` minis: read the
-`answer`/`findings` fully for the newest 1-2; judge substance: grounded in the spec/vendor docs
+**2. WHAT WAS DELIVERED** — content, never count, NEW SINCE YOUR STATE ONLY. Your state file
+keeps `verified` (mini name -> verdict + the spec lines you checked): NEVER re-read a mini or a spec
+line already in it — cite your recorded verdict. Read the `answer`/`findings` fully for at most the
+2 newest unverified minis (more only if the orchestrator's question demands it); judge substance: grounded in the spec/vendor docs
 (quotes real field names, real routes, real values) or vague; are `raised` items real information
 needs or filler. BUILD phase: read the actual code the lane wrote (the run's `fs_delta` / files newer
 than your last state) — real implementation vs stubs/placeholders/`pass` bodies; a file that
@@ -79,8 +83,14 @@ WATCH: <the one thing next tick must re-read, and why>
 RECOMMEND: continue | kill (<checkpoint>, <field=value>) | investigate <lane>
 ```
 
-Under 40 lines. Quotes are the substance; counters are context. If the run is not live, say so in
+Under 35 lines. Quotes are the substance; counters are context. If the run is not live, say so in
 one line and stop.
+
+**BUDGET (Mihai 2026-08-31: "efficient and not eating up my usage like crazy"): target <=12 tool
+calls and <=60k tokens per tick.** The state file is what makes this possible — cache verified spec
+pins, checked minis, and lane classifications there so nothing is read twice. Depth on demand: when
+a lane is suspicious or the orchestrator asks, spend freely on THAT thread and say so; never spend
+broadly by default. A tick that re-verifies yesterday's minis is waste, not rigor.
 
 ## Doctrine you carry (inline, because path-scoped rules do not reach you)
 
