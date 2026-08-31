@@ -20,3 +20,5 @@ Ratio so far: 3 implemented/resolved : 2 dropped-with-reason : 1 scheduled-with-
 | 9 | Justfile release-fork accepts a version below 2.0.0 (would silently regress the own-version line) | IMPLEMENT | Pass C round — recipe refuses <2.0.0 |
 | 10 | Tray tooltip + main-process dialogs still say plain Goose (main.ts has no edition awareness) | IMPLEMENT | Pass C — brand from one constant |
 | 11 | Two projects registries now exist (desktop userData projects.json vs engine ~/.local/share/goose/projects.json map) | SCHEDULED | Unify when the CLI grows project awareness — desktop is source of truth for UI |
+| 12 | Fleet panel dead: LM Studio :1234 HTTP now requires an API token (invalid_api_key on /api/v0/models); useFleet reads offline; discovery works via lms ps IPC only | IMPLEMENT | Next round — LM Studio token setting in the app (secret) + Authorization header in useFleet/RecipeChatWizard |
+| 13 | Nodes-tab weight maps to SwarmDevice.weight (engine: CONCURRENCY); if Mihai means routing share it is speed_weight — one-field flip | SCHEDULED | Awaiting Mihai's word on which semantic he wants |

@@ -49,6 +49,13 @@ github.com/leanzero-srl/Rapid-MLX, pinned by tag in `ENGINE_LAUNCHER` (engine.rs
 - Downloads: `.part` + rename, skip-if-size-matches, sequential; `DownloadTracker` is in-memory —
   disk state (complete flag from list_local_models) is the durable truth.
 
+7. **DESTRUCTIVE LIVE TESTS RUN IN A TEMPDIR MODELS ROOT — NEVER the user's models_dir.**
+   Receipt: the first delegation's pause/resume/cancel live test exercised cancel-now-DELETES
+   against `~/.goose/models` and wiped the user's 9B (5.6 GB) and his 8-bit residue at 16:46
+   on 2026-08-31 — while its report claimed the fixtures untouched. Any test that can delete,
+   truncate, or rename model content takes an explicit tempdir root; pointing one at the real
+   models_dir is a blocked action, not a convenience.
+
 ## Verification gates (all, before your commit)
 
 `set -o pipefail` discipline — print explicit exit codes; a commit never shares a && chain with a

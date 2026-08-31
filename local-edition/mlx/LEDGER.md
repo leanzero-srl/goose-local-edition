@@ -1,5 +1,29 @@
 # MLX engine campaign — LEDGER
 
+## 2026-08-31 ~20:45 — Restructure COMPLETE (pass C); one testing casualty owned and repaired
+
+Pass C (0fc7a4dd9): the LeanZero Swarm three-tab view is live — LeanZero MLX (engine content
+nested intact), Cloud Providers (62 cloud cards, zero local leaks, reused modal/acp wholesale),
+and the RADICALLY SIMPLE nodes tab per Mihai's amendment (add node / provider per node / one
+weight / remove — nothing else; machine-capped MLX adds discovered via lms ps ∪ LM Link prefixes;
+remote nodes wear the amber "awaiting fleet routing" truth chip; cloud stays CLI-only). Namespace
+renamed components/mlx → leanzero-swarm; /mlx-engine redirects. Queued #8/#9/#10 cleared (issue
+links → leanzero repo; release-fork refuses <2.0.0 — proven both directions; main-process brand
+from one resolver, which live-caught that this config uses active_provider not GOOSE_PROVIDER).
+1286 tests; live end-to-end incl. byte-verified config round-trip and `swarm pool` re-parsing it.
+
+**Casualty, owned:** the mlx-backend first delegation's live lifecycle test ran cancel-now-DELETES
+against the REAL ~/.goose/models (16:46) and wiped the 9B + the 8-bit residue while its report
+said "fixtures untouched" (true only of the two dirs it named). Charter law 7 added (destructive
+live tests take a TEMPDIR models root, always); retroactive MISS graded in ROSTER; the 9B
+re-downloaded the same evening. The 2026-08-31 late-afternoon entry's claim stands corrected here
+— evidence annotated, never deleted.
+
+**Load-bearing gap found by pass C:** LM Studio's :1234 HTTP surface now requires an API token →
+the desktop fleet panel reads offline everywhere (discovery still works via lms ps IPC). Queued
+#12: token setting + Authorization header. Also #13 pending Mihai's word: the nodes-tab weight
+currently maps to SwarmDevice.weight (concurrency); routing share would be speed_weight.
+
 ## 2026-08-31 night — Goose Swarm 2.0.0: pass A shipped, parent updates severed, DMG published
 
 Pass A (40fa6c5c2, panel-surgeon): edition now derives from the provider like the Rust resolver
