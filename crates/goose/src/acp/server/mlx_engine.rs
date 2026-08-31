@@ -167,6 +167,7 @@ fn progress_to_dto(progress: hf::DownloadProgress) -> MlxDownloadProgressDto {
     let state = match progress.state {
         hf::DownloadState::Queued => "queued",
         hf::DownloadState::Downloading => "downloading",
+        hf::DownloadState::Paused => "paused",
         hf::DownloadState::Done => "done",
         hf::DownloadState::Failed => "failed",
         hf::DownloadState::Cancelled => "cancelled",
@@ -176,6 +177,7 @@ fn progress_to_dto(progress: hf::DownloadProgress) -> MlxDownloadProgressDto {
         total_bytes: progress.total_bytes,
         downloaded_bytes: progress.downloaded_bytes,
         current_file: progress.current_file,
+        restarted_files: progress.restarted_files,
         error: progress.error,
     }
 }
@@ -256,7 +258,10 @@ impl GooseAcpAgent {
         _req: MlxEngineModelsListRequest,
     ) -> Result<MlxEngineModelsListResponse, agent_client_protocol::Error> {
         let settings = load_engine_settings()?;
-        let models = hf::list_local_models(&expand_tilde(&settings.models_dir)).internal_err()?;
+        let models_dir = expand_tilde(&settings.models_dir);
+        let models = hf::list_local_models(&models_dir).internal_err()?;
+        let (disk_available_bytes, disk_total_bytes) =
+            goose_sidecar::disk_space(&models_dir).internal_err()?;
         Ok(MlxEngineModelsListResponse {
             models: models
                 .into_iter()
@@ -264,8 +269,11 @@ impl GooseAcpAgent {
                     id: m.id,
                     size_bytes: m.size_bytes,
                     complete: m.complete,
+                    missing_files: m.missing_files,
                 })
                 .collect(),
+            disk_available_bytes,
+            disk_total_bytes,
         })
     }
 
@@ -343,9 +351,59 @@ impl GooseAcpAgent {
                     tags: h.tags,
                     quant: h.quant,
                     arch: h.arch,
+                    size_bytes_estimate: h.size_bytes_estimate,
                 })
                 .collect(),
             next_cursor: page.next_cursor,
+        })
+    }
+
+    pub(super) async fn on_mlx_engine_browse_filters(
+        &self,
+        _req: MlxEngineBrowseFiltersRequest,
+    ) -> Result<MlxEngineBrowseFiltersResponse, agent_client_protocol::Error> {
+        let token = huggingface_token().await;
+        let vocab = hf::browse_filter_vocab(token.as_deref())
+            .await
+            .internal_err()?;
+        Ok(MlxEngineBrowseFiltersResponse {
+            quants: vocab.quants,
+            archs: vocab.archs,
+            authors: vocab.authors,
+            sampled_repos: vocab.sampled_repos,
+            computed_at: vocab.computed_at_epoch_s,
+            refresh_error: vocab.refresh_error,
+        })
+    }
+
+    pub(super) async fn on_mlx_engine_model_card(
+        &self,
+        req: MlxEngineModelCardRequest,
+    ) -> Result<MlxEngineModelCardResponse, agent_client_protocol::Error> {
+        let token = huggingface_token().await;
+        // invalid_params carries the anyhow chain (the mount idiom): a malformed repo id
+        // must reach the UI as itself, not as "Internal error".
+        let card = hf::model_card(&req.repo_id, token.as_deref())
+            .await
+            .invalid_params_err()?;
+        Ok(MlxEngineModelCardResponse {
+            readme_markdown: card.readme_markdown,
+            readme_truncated: card.readme_truncated,
+            files: card
+                .files
+                .into_iter()
+                .map(|f| MlxRepoFileDto {
+                    path: f.path,
+                    size_bytes: f.size,
+                })
+                .collect(),
+            total_bytes: card.total_bytes,
+            tags: card.tags,
+            downloads: card.downloads,
+            likes: card.likes,
+            license: card.license,
+            created_at: card.created_at,
+            last_modified: card.last_modified,
         })
     }
 
@@ -374,7 +432,30 @@ impl GooseAcpAgent {
         &self,
         req: MlxEngineDownloadCancelRequest,
     ) -> Result<EmptyResponse, agent_client_protocol::Error> {
-        DOWNLOAD_TRACKER.cancel(&req.repo_id).invalid_params_err()?;
+        let settings = load_engine_settings()?;
+        DOWNLOAD_TRACKER
+            .cancel(&req.repo_id, &expand_tilde(&settings.models_dir))
+            .invalid_params_err()?;
+        Ok(EmptyResponse {})
+    }
+
+    pub(super) async fn on_mlx_engine_download_pause(
+        &self,
+        req: MlxEngineDownloadPauseRequest,
+    ) -> Result<EmptyResponse, agent_client_protocol::Error> {
+        DOWNLOAD_TRACKER.pause(&req.repo_id).invalid_params_err()?;
+        Ok(EmptyResponse {})
+    }
+
+    pub(super) async fn on_mlx_engine_download_resume(
+        &self,
+        req: MlxEngineDownloadResumeRequest,
+    ) -> Result<EmptyResponse, agent_client_protocol::Error> {
+        let settings = load_engine_settings()?;
+        let token = huggingface_token().await;
+        DOWNLOAD_TRACKER
+            .resume(&req.repo_id, &expand_tilde(&settings.models_dir), token)
+            .invalid_params_err()?;
         Ok(EmptyResponse {})
     }
 }

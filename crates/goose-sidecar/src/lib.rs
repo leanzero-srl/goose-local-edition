@@ -12,7 +12,7 @@ pub mod hf;
 mod memory;
 mod subprocess;
 
-pub use memory::{dir_size_bytes, measure, GateResult, MemoryGate, Verdict, GIB};
+pub use memory::{dir_size_bytes, disk_space, measure, GateResult, MemoryGate, Verdict, GIB};
 
 use std::collections::VecDeque;
 use std::process::Stdio;

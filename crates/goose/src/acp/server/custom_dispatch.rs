@@ -1012,6 +1012,38 @@ impl GooseAcpAgent {
         self.on_mlx_engine_download_progress(req).await
     }
 
+    #[custom_method(MlxEngineBrowseFiltersRequest)]
+    async fn dispatch_mlx_engine_browse_filters(
+        &self,
+        req: MlxEngineBrowseFiltersRequest,
+    ) -> Result<MlxEngineBrowseFiltersResponse, agent_client_protocol::Error> {
+        self.on_mlx_engine_browse_filters(req).await
+    }
+
+    #[custom_method(MlxEngineModelCardRequest)]
+    async fn dispatch_mlx_engine_model_card(
+        &self,
+        req: MlxEngineModelCardRequest,
+    ) -> Result<MlxEngineModelCardResponse, agent_client_protocol::Error> {
+        self.on_mlx_engine_model_card(req).await
+    }
+
+    #[custom_method(MlxEngineDownloadPauseRequest)]
+    async fn dispatch_mlx_engine_download_pause(
+        &self,
+        req: MlxEngineDownloadPauseRequest,
+    ) -> Result<EmptyResponse, agent_client_protocol::Error> {
+        self.on_mlx_engine_download_pause(req).await
+    }
+
+    #[custom_method(MlxEngineDownloadResumeRequest)]
+    async fn dispatch_mlx_engine_download_resume(
+        &self,
+        req: MlxEngineDownloadResumeRequest,
+    ) -> Result<EmptyResponse, agent_client_protocol::Error> {
+        self.on_mlx_engine_download_resume(req).await
+    }
+
     #[custom_method(MlxEngineDownloadCancelRequest)]
     async fn dispatch_mlx_engine_download_cancel(
         &self,
