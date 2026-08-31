@@ -3,7 +3,8 @@ import { cleanup, render as rtlRender, screen, waitFor, within } from '@testing-
 import userEvent from '@testing-library/user-event';
 import { IntlTestWrapper } from '../../i18n/test-utils';
 import SwarmNodesSection from './SwarmNodesSection';
-import { ADD_NODE_PROVIDER_OPTIONS } from './AddNodeDialog';
+import { deriveProviderOptions, SHOW_LMSTUDIO_PROVIDER } from './AddNodeDialog';
+import { CLOUD_PROVIDERS } from './cloud';
 import type { SwarmConfig, SwarmDeviceRow } from '../settings/swarm/golden';
 
 // ---------------------------------------------------------------------------
@@ -44,6 +45,13 @@ vi.mock('../swarm/useFleet', () => ({
 let lmStudioVisible = false;
 vi.mock('../../hooks/useLmStudioFleetVisible', () => ({
   useLmStudioFleetVisible: () => lmStudioVisible,
+}));
+
+// The configured-provider join for the add dialog: registry ids acpListProviderDetails reports
+// as configured on this machine (mutable per test).
+let providerDetails: Array<{ name: string; is_configured: boolean }> = [];
+vi.mock('../../acp/providers', () => ({
+  acpListProviderDetails: async () => providerDetails,
 }));
 
 const mockMlxModelsList = vi.fn();
@@ -100,6 +108,13 @@ beforeEach(() => {
   vi.clearAllMocks();
   localStorage.clear();
   lmStudioVisible = false;
+  // zai holds a key on the fixture machine; the other engine families do not.
+  providerDetails = [
+    { name: 'zai', is_configured: true },
+    { name: 'aws_bedrock', is_configured: false },
+    { name: 'google', is_configured: false },
+    { name: 'anthropic', is_configured: true }, // non-swarm provider: never becomes a node option
+  ];
   fleetState.models = ['gabee-qwen3.8-27b'];
   mockRead.mockResolvedValue(BASE_CFG);
   mockUpsert.mockResolvedValue(undefined);
@@ -305,29 +320,68 @@ describe('the simplified Nodes tab', () => {
   });
 });
 
-describe('Add node — provider list (pass E follow-up)', () => {
-  it('the shipped option list is [LeanZero MLX, ...cloud] with no lmstudio value', () => {
-    expect(ADD_NODE_PROVIDER_OPTIONS.map((o) => o.value)).toEqual([
-      'mlx',
-      'bedrock',
+describe('Add node — DERIVED provider list (pass E follow-up, owner)', () => {
+  it('derives [mlx, ...every CLOUD_PROVIDERS entry] from the ONE mirror — never a hardcoded list', () => {
+    const opts = deriveProviderOptions(new Set(['zai']), false);
+    // The cloud slice IS the mirror, 1:1 and in order: a provider added to CLOUD_PROVIDERS
+    // appears here with no other change.
+    expect(opts.map((o) => o.value)).toEqual(['mlx', ...CLOUD_PROVIDERS.map((c) => c.cli)]);
+    expect(opts.slice(1).map((o) => o.label)).toEqual(CLOUD_PROVIDERS.map((c) => c.label));
+  });
+
+  it('the mirror carries the engine CLOUD_DEFS registry ids (the join keys)', () => {
+    expect(CLOUD_PROVIDERS.map((c) => c.registry)).toEqual([
+      'aws_bedrock',
       'zai',
       'google',
-      'deepseek',
+      'custom_deepseek',
     ]);
   });
 
-  it('offers LeanZero MLX and the cloud providers — never LM Studio', async () => {
+  it('configured -> selectable; unconfigured -> the no-key state; unknown read -> selectable', () => {
+    const opts = deriveProviderOptions(new Set(['zai', 'google']), false);
+    const byValue = Object.fromEntries(opts.map((o) => [o.value, o.configured]));
+    expect(byValue).toMatchObject({ mlx: true, zai: true, google: true, bedrock: false, deepseek: false });
+    // A failed provider-details read must not dead-end the dialog: everything stays selectable
+    // and the engine-side CloudPane check governs.
+    expect(deriveProviderOptions(null, false).every((o) => o.configured)).toBe(true);
+  });
+
+  it('lmstudio is absent by default (code gate off) and present only when BOTH gates open', () => {
+    expect(SHOW_LMSTUDIO_PROVIDER).toBe(false);
+    expect(deriveProviderOptions(new Set(), false).some((o) => o.value === 'lmstudio')).toBe(false);
+    const withLm = deriveProviderOptions(new Set(), true);
+    expect(withLm.some((o) => o.value === 'lmstudio')).toBe(true);
+    expect(withLm[0].value).toBe('mlx'); // MLX stays first
+  });
+
+  it('renders true configured state: zai plain, the key-less families badged, no LM Studio', async () => {
     render();
     await userEvent.click(await screen.findByTestId('swarm-add-node'));
     await userEvent.click(screen.getAllByRole('combobox')[0]);
     const opts = await screen.findAllByRole('option');
     const names = opts.map((o) => o.textContent ?? '');
     expect(names.some((n) => n.includes('LeanZero MLX'))).toBe(true);
-    expect(names.some((n) => n.includes('Amazon Bedrock'))).toBe(true);
-    expect(names.some((n) => n.includes('Z.ai'))).toBe(true);
-    expect(names.some((n) => n.includes('Google Gemini'))).toBe(true);
-    expect(names.some((n) => n.includes('DeepSeek'))).toBe(true);
     expect(names.some((n) => /LM Studio/i.test(n))).toBe(false);
+    expect(screen.queryByTestId('provider-no-key-zai')).toBeNull();
+    expect(screen.getByTestId('provider-no-key-bedrock')).toBeInTheDocument();
+    expect(screen.getByTestId('provider-no-key-google')).toBeInTheDocument();
+    expect(screen.getByTestId('provider-no-key-deepseek')).toBeInTheDocument();
+  });
+
+  it('picking a key-less provider shows the no-key state whose action deep-links to Cloud Providers', async () => {
+    const openCloud = vi.fn();
+    rtlRender(<SwarmNodesSection onOpenCloudProviders={openCloud} />, {
+      wrapper: IntlTestWrapper,
+    });
+    await userEvent.click(await screen.findByTestId('swarm-add-node'));
+    await userEvent.click(screen.getAllByRole('combobox')[0]);
+    await userEvent.click(await screen.findByRole('option', { name: /Amazon Bedrock/ }));
+    await waitFor(() => expect(screen.getByTestId('add-node-no-key-pane')).toBeInTheDocument());
+    // the add pane must NOT render for a key-less family
+    expect(mockSwarmCloud).not.toHaveBeenCalled();
+    await userEvent.click(screen.getByTestId('add-node-configure-cloud'));
+    expect(openCloud).toHaveBeenCalledTimes(1);
   });
 });
 

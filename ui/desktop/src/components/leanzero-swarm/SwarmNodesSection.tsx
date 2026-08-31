@@ -74,7 +74,13 @@ function providerChipOf(row: NodeRow): { seg: string; chip: string } {
  * strip retires it. Cloud rows are mutated ONLY through the engine CLI (the invariant); a weight
  * change on one is therefore CLI rm→add with the new weight.
  */
-export default function SwarmNodesSection() {
+export default function SwarmNodesSection({
+  onOpenCloudProviders,
+}: {
+  /** Deep-link target for the add-dialog's "no key" state — the parent view opens its Cloud
+   *  Providers tab. */
+  onOpenCloudProviders?: () => void;
+} = {}) {
   const intl = useIntl();
   const { read, upsert } = useConfig();
   // LEGACY surface (pass E follow-up): LM Studio-DISCOVERED rows join this list only when the
@@ -387,6 +393,7 @@ export default function SwarmNodesSection() {
         onCommitLocal={commitLocalRow}
         onCloudChanged={reloadSwarm}
         onCloudAdded={onCloudAdded}
+        onOpenCloudProviders={onOpenCloudProviders}
       />
 
       <ConfirmationModal

@@ -30,6 +30,8 @@ import {
   type SwarmMachine,
 } from './nodes';
 import type { SwarmDeviceRow } from '../settings/swarm/golden';
+import { acpListProviderDetails } from '../../acp/providers';
+import { useLmStudioFleetVisible } from '../../hooks/useLmStudioFleetVisible';
 import { defineMessages, useIntl } from '../../i18n';
 
 const i18n = defineMessages({
@@ -46,6 +48,21 @@ const i18n = defineMessages({
   },
   providerLabel: { id: 'addNode.providerLabel', defaultMessage: 'Provider' },
   providerPlaceholder: { id: 'addNode.providerPlaceholder', defaultMessage: 'Pick a provider…' },
+  providersCaption: {
+    id: 'addNode.providersCaption',
+    defaultMessage:
+      'Node providers are the ones the swarm engine supports — more cloud families arrive with engine support.',
+  },
+  noKeyBadge: { id: 'addNode.noKeyBadge', defaultMessage: 'no key' },
+  noKeyPane: {
+    id: 'addNode.noKeyPane',
+    defaultMessage:
+      '{label} has no API key on this machine yet. Add it under Cloud Providers, then come back to add the node.',
+  },
+  configureCloud: {
+    id: 'addNode.configureCloud',
+    defaultMessage: 'Configure in Cloud Providers',
+  },
   mlxOneModel: {
     id: 'addNode.mlxOneModel',
     defaultMessage:
@@ -127,21 +144,45 @@ export interface ProviderOption {
   value: string; // 'mlx' | 'lmstudio' | cloud cli name
   label: string;
   chip: string;
+  /** Cloud rows only: does this machine hold the provider's key (acpListProviderDetails joined on
+   *  CLOUD_PROVIDERS.registry)? false renders the explicit "no key — configure in Cloud Providers"
+   *  state instead of the add pane. Non-cloud rows and an unreadable provider list are true — the
+   *  CloudPane's own engine-side check remains the last word, so nothing dead-ends on a stale read. */
+  configured: boolean;
 }
 
 // Pass E follow-up (owner): LM Studio leaves the add-node provider list — discovery was automatic
-// anyway, so the entry only ever explained itself. Hidden, not deleted: the pane and this flag stay.
-const SHOW_LMSTUDIO_PROVIDER = false;
+// anyway, so the entry only ever explained itself. Hidden, not deleted: the pane and this flag stay,
+// and even when re-enabled the entry still rides the runtime showLmStudioFleet setting.
+export const SHOW_LMSTUDIO_PROVIDER = false;
 
-/** The provider choices the dialog offers, in order — exported so the pin test asserts the SHIPPED
- *  list rather than a copy of it: [LeanZero MLX, ...cloud providers], no LM Studio. */
-export const ADD_NODE_PROVIDER_OPTIONS: ProviderOption[] = [
-  { value: 'mlx', label: MLX_CHIP.seg, chip: MLX_CHIP.chip },
-  ...(SHOW_LMSTUDIO_PROVIDER
-    ? [{ value: 'lmstudio', label: LOCAL_CHIP.seg, chip: LOCAL_CHIP.chip }]
-    : []),
-  ...CLOUD_PROVIDERS.map((c) => ({ value: c.cli, label: c.label, chip: c.chip })),
-];
+/**
+ * The provider choices, DERIVED — never a hardcoded list (owner): [LeanZero MLX] first, then every
+ * engine-supported cloud family from the ONE CLOUD_PROVIDERS mirror, each joined with this
+ * machine's actual configuration state. Configure a new key for an engine-supported provider and
+ * its row flips to selectable with no code change; a cloud family the engine does not support
+ * cannot be offered at all (the pool CLI would refuse it).
+ *
+ * `configuredRegistryIds` = provider-registry ids reported configured by acpListProviderDetails
+ * (null = the list could not be read; rows stay selectable and the engine-side check governs).
+ */
+export function deriveProviderOptions(
+  configuredRegistryIds: ReadonlySet<string> | null,
+  includeLmStudio: boolean
+): ProviderOption[] {
+  return [
+    { value: 'mlx', label: MLX_CHIP.seg, chip: MLX_CHIP.chip, configured: true },
+    ...(includeLmStudio
+      ? [{ value: 'lmstudio', label: LOCAL_CHIP.seg, chip: LOCAL_CHIP.chip, configured: true }]
+      : []),
+    ...CLOUD_PROVIDERS.map((c) => ({
+      value: c.cli,
+      label: c.label,
+      chip: c.chip,
+      configured: configuredRegistryIds == null ? true : configuredRegistryIds.has(c.registry),
+    })),
+  ];
+}
 
 interface MachineOption {
   value: string;
@@ -186,6 +227,7 @@ export default function AddNodeDialog({
   onCommitLocal,
   onCloudChanged,
   onCloudAdded,
+  onOpenCloudProviders,
 }: {
   open: boolean;
   onClose: () => void;
@@ -202,6 +244,8 @@ export default function AddNodeDialog({
   onCloudChanged: () => Promise<void>;
   /** A cloud ADD landed — in reassign mode the parent removes the old row here. */
   onCloudAdded: (modelId: string) => Promise<void>;
+  /** Deep-link for the "no key" state: closes the dialog and opens the Cloud Providers tab. */
+  onOpenCloudProviders?: () => void;
 }) {
   const intl = useIntl();
   const [provider, setProvider] = useState<string | null>(null);
@@ -214,6 +258,10 @@ export default function AddNodeDialog({
   const [weight, setWeight] = useState(2);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /** Provider-registry ids this machine has configured — read fresh at each dialog open; null
+   *  means the read failed (rows stay selectable, the engine-side check governs). */
+  const [configuredProviders, setConfiguredProviders] = useState<ReadonlySet<string> | null>(null);
+  const lmStudioVisible = useLmStudioFleetVisible();
 
   // Reset per open; a reassign seeds the label/weight from the node being reassigned.
   useEffect(() => {
@@ -232,6 +280,28 @@ export default function AddNodeDialog({
       setWeight(2);
     }
   }, [open, reassign]);
+
+  // The configured-provider join, fresh per open: which engine-supported cloud families actually
+  // hold a key on this machine right now.
+  useEffect(() => {
+    if (!open) return undefined;
+    let alive = true;
+    void (async () => {
+      try {
+        const details = await acpListProviderDetails();
+        if (alive) {
+          setConfiguredProviders(
+            new Set(details.filter((d) => d.is_configured).map((d) => d.name))
+          );
+        }
+      } catch {
+        if (alive) setConfiguredProviders(null);
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [open]);
 
   // MLX pane data: the engine's local models + the swarm's machines, loaded when the pane opens.
   useEffect(() => {
@@ -259,11 +329,17 @@ export default function AddNodeDialog({
     }
   }, [open, provider, mlxModels, machines]);
 
-  const providerOptions = ADD_NODE_PROVIDER_OPTIONS;
+  const providerOptions = useMemo(
+    () => deriveProviderOptions(configuredProviders, SHOW_LMSTUDIO_PROVIDER && lmStudioVisible),
+    [configuredProviders, lmStudioVisible]
+  );
   const selectedProvider = providerOptions.find((o) => o.value === provider) ?? null;
   const activeCloud: CloudProviderDef | undefined = CLOUD_PROVIDERS.find(
     (c) => c.cli === provider
   );
+  // The explicit no-key STATE: the row is pickable, and picking it explains + deep-links instead
+  // of pretending an add pane could work without a key.
+  const activeCloudUnconfigured = !!activeCloud && selectedProvider?.configured === false;
 
   // The machine cap: one MLX node per swarm machine, minus those already added. In reassign mode
   // the node being reassigned does not block its own machine.
@@ -375,6 +451,15 @@ export default function AddNodeDialog({
                     style={{ backgroundColor: opt.chip }}
                   />
                   <span className="text-sm">{opt.label}</span>
+                  {!opt.configured && (
+                    <span
+                      className="rounded px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide"
+                      style={{ backgroundColor: AMBER, color: INK_DARK }}
+                      data-testid={`provider-no-key-${opt.value}`}
+                    >
+                      {intl.formatMessage(i18n.noKeyBadge)}
+                    </span>
+                  )}
                 </span>
               );
             }}
@@ -383,6 +468,9 @@ export default function AddNodeDialog({
               setError(null);
             }}
           />
+          <span className="text-xs text-text-secondary">
+            {intl.formatMessage(i18n.providersCaption)}
+          </span>
         </div>
 
         {provider === 'mlx' && (
@@ -529,7 +617,28 @@ export default function AddNodeDialog({
           </div>
         )}
 
-        {activeCloud && (
+        {activeCloudUnconfigured && activeCloud && (
+          <div className="flex flex-col gap-3" data-testid="add-node-no-key-pane">
+            <SolidBanner
+              color={AMBER}
+              label={intl.formatMessage(i18n.noKeyBadge)}
+              text={intl.formatMessage(i18n.noKeyPane, { label: activeCloud.label })}
+            />
+            <Button
+              onClick={() => {
+                onClose();
+                onOpenCloudProviders?.();
+              }}
+              className="self-start rounded font-bold text-white hover:opacity-90"
+              style={{ backgroundColor: activeCloud.chip }}
+              data-testid="add-node-configure-cloud"
+            >
+              {intl.formatMessage(i18n.configureCloud)}
+            </Button>
+          </div>
+        )}
+
+        {activeCloud && !activeCloudUnconfigured && (
           <div className="flex flex-col gap-3">
             <div className="flex items-center gap-3">
               <span className="text-xs font-semibold uppercase tracking-wider text-text-secondary">
