@@ -55,7 +55,18 @@ implied, the summary was wrong and the sources win.
 
 ## THE CURRENT THREAD (2026-08-31 00:35)
 
-**r6a KILLED at OPEN 49m; r6b relaunches once the ladder fix lands.** The kill (follow-the-test):
+**EVERYTHING PAUSED (Mihai's exam, 2026-08-31 ~04:15Z).** r6b was stopped cleanly at BUILD+10m
+(engine killed per-pid, harness exited, app SIGKILLed config-safe, fleet idle-loaded, orphans 0).
+Archive: ~/goose-builds/local-sb7-swarm-r6b-PAUSED-operator-exam-BUILD-10m-plan-loaded-fan-33of33-answered
+— it holds the COMPLETE fan ledger (33/33 answered incl. settled D1-D3) and the textbook plan
+(8 tasks, sink owns 0, patched-not-reemitted, one-door repaired). r6b's measured wins before the
+pause: ladder fix vindicated (1 steer + 8 holds, zero wipes, OPEN emitted); fan 33/33/0; synthesis
+grounded; review one round, 1 finding 0 patches. TO RESUME (r6c): pkill stray Goose; open -n
+/Applications/Goose.app --args --remote-debugging-port=9897; bench_dispatch.mjs 9897 sb-7 3 —
+the installed app already carries the full stack (sha 996a072f). Vigil ticks: respond one-line
+'paused' until Mihai says go.
+
+**r6a KILLED at OPEN 49m (prior state).** The kill (follow-the-test):
 five nudge->restream cycles, zero tool calls, runway shrinking per cycle because the steer-ignored
 state SURVIVES a restream — look 1 on each fresh attempt read the OLD nudge as ignored and wiped it
 (archive ...r6a-KILLED-open-ladder-5-restream-cycles...). Fix in flight (surgeon): restream resets
