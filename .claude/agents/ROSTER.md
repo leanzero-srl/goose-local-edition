@@ -420,3 +420,8 @@ research_request_block's armed-no-claimed-sections arm wording.
   app per-pid, reaped a leftover wrapper); flagged the locale decimal-comma display quirk as
   pre-existing rather than absorbing scope; noted the stale driver-script phase for future runs.
   Charter gap: none. Brief leak: none.
+- 2026-08-31 15:00 (not a roster agent — mint tracking): SECOND inline-briefed mlx-backend task
+  (general-purpose: ACP backend c7be09fd0, then profiles+browse 6d4b5d7bc; both CLEAN+ with
+  measure-first discipline and negative controls). A third mlx-backend brief mints an `mlx-backend`
+  charter per the repetition rule — carry the measure-with-curl-first law and the no-client-side-
+  filtered-pagination law into it.
