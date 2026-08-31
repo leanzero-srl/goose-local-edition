@@ -188,15 +188,15 @@ DAG is actually parallel). reasoning_chars against answer_chars is the waste.
 - **chain**: 4
 - **startable**: 1
 - **brief_median**: 21104
-- **reasoning_chars**: 1016922
-- **answer_chars**: 202592
-- **code_files**: 0
-- **code_bytes**: 0
-- **elapsed_min**: 231
-- **phase_split**: open 39m · ask 126m · synthesis 13m · review 28m · build 22m
+- **reasoning_chars**: 1059946
+- **answer_chars**: 208901
+- **code_files**: 5
+- **code_bytes**: 15020
+- **elapsed_min**: 261
+- **phase_split**: open 39m · ask 126m · synthesis 13m · review 28m · build 53m
 - **before_build_min**: 208 (internal diagnosis only — never a cross-run number)
-- **vs_target**: ONLY THE SCORE COMPARES. Target 20.06% (qwen3.8-27b, one cloud agent, same model). Wall clock is NOT comparable — that run is on far faster hardware, so minutes measure the machine. Bytes are NOT a verdict — more code is not better code, and it had no planning phases to spend budget on. Cross-hardware-honest work numbers for THIS run: 0B delivered, 1,016,922 chars reasoned, 0 tasks completed, 0 retried.
-- **python_parses**: 0 ok / 0 SYNTAX ERROR / 0 empty
+- **vs_target**: ONLY THE SCORE COMPARES. Target 20.06% (qwen3.8-27b, one cloud agent, same model). Wall clock is NOT comparable — that run is on far faster hardware, so minutes measure the machine. Bytes are NOT a verdict — more code is not better code, and it had no planning phases to spend budget on. Cross-hardware-honest work numbers for THIS run: 15,020B delivered, 1,059,946 chars reasoned, 0 tasks completed, 0 retried.
+- **python_parses**: 5 ok / 0 SYNTAX ERROR / 0 empty
 - **web_files**: NONE — 0.56 of the scoring weight is unreachable without a served page
 - **tasks_done**: 0/8 completed, 1 dispatched, 0 retried
 - **arm**: F (fleet of 3)
@@ -205,7 +205,7 @@ DAG is actually parallel). reasoning_chars against answer_chars is the waste.
 - **plan_repaired**: 5 actions, owning-nothing 0->0, unassigned endpoints 0->0
 - **plan_loaded**: 1
 - **review_rounds**: r1:new=3
-- **judge_looks**: 57
+- **judge_looks**: 64
 - **judge_nudges**: 9
 - **judge_ended**: 0
 - **drift_held**: 23
