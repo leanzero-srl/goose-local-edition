@@ -87,6 +87,18 @@ export interface MlxLocalModel {
   id: string;
   sizeBytes: number;
   complete: boolean;
+  /**
+   * Files provably missing or unfinished — shards the model's safetensors index names
+   * that are absent/empty, plus `.part` leftovers. 0 when complete.
+   */
+  missingFiles: number;
+}
+
+export interface MlxModelsList {
+  models: MlxLocalModel[];
+  /** Free bytes an unprivileged writer can use on the models dir's volume. */
+  diskAvailableBytes: number;
+  diskTotalBytes: number;
 }
 
 export interface MlxHfModelHit {
@@ -128,6 +140,52 @@ export interface MlxBrowseHit {
   tags: string[];
   quant?: string;
   arch?: string;
+  /**
+   * ESTIMATE of the weight payload in bytes, derived from the server's safetensors dtype
+   * counts (excludes tokenizer/config files). Absent = unknown — show nothing, never a dash.
+   */
+  sizeBytesEstimate?: number;
+}
+
+/**
+ * Filter vocabularies for the browse UI, aggregated live from a bounded HuggingFace crawl
+ * and cached backend-side (~1h TTL). Every value is server-side filterable; free text
+ * beyond them still passes to the browse filters. Frequency-ordered.
+ */
+export interface MlxBrowseFilters {
+  quants: string[];
+  archs: string[];
+  authors: string[];
+  /** Distinct repos the vocabulary was aggregated from — a top-N sample, not a census. */
+  sampledRepos: number;
+  /** Unix epoch seconds when the crawl ran. */
+  computedAt: number;
+  /** Present when the vocabulary is served stale because a TTL refresh failed. */
+  refreshError?: string;
+}
+
+export interface MlxRepoFile {
+  path: string;
+  sizeBytes: number;
+}
+
+/**
+ * Everything the fullscreen model-card modal needs for one repo. A repo without a README
+ * yields no `readmeMarkdown` — an absent field, not an error.
+ */
+export interface MlxModelCard {
+  readmeMarkdown?: string;
+  /** True when the README exceeded the backend's cap and was cut. */
+  readmeTruncated: boolean;
+  files: MlxRepoFile[];
+  /** Exact sum of every file size the repo tree lists. */
+  totalBytes: number;
+  tags: string[];
+  downloads: number;
+  likes: number;
+  license?: string;
+  createdAt?: string;
+  lastModified?: string;
 }
 
 export interface MlxBrowsePage {
@@ -136,13 +194,28 @@ export interface MlxBrowsePage {
   nextCursor?: string;
 }
 
-export type MlxDownloadState = 'queued' | 'downloading' | 'done' | 'failed' | 'cancelled';
+export type MlxDownloadState =
+  | 'queued'
+  | 'downloading'
+  | 'paused'
+  | 'done'
+  | 'failed'
+  | 'cancelled';
 
+/**
+ * Snapshot download progress. A "cancelled" download has no on-disk claim any more —
+ * the backend deleted its partial repo dir — so a cancelled row may simply be dropped.
+ */
 export interface MlxDownloadProgress {
   state: MlxDownloadState;
   totalBytes: number;
   downloadedBytes: number;
   currentFile?: string;
+  /**
+   * Files this attempt restarted from zero because their on-disk `.part` or the server's
+   * range answer disagreed with the repo tree's size. Absent on the wire when empty.
+   */
+  restartedFiles?: string[];
   error?: string;
 }
 
@@ -188,12 +261,8 @@ export async function mlxEngineSettingsUpdate(
   return response.settings;
 }
 
-export async function mlxEngineModelsList(): Promise<MlxLocalModel[]> {
-  const response = await call<{ models: MlxLocalModel[] }>(
-    '_goose/unstable/mlxEngine/modelsList',
-    {}
-  );
-  return response.models;
+export async function mlxEngineModelsList(): Promise<MlxModelsList> {
+  return await call<MlxModelsList>('_goose/unstable/mlxEngine/modelsList', {});
 }
 
 export async function mlxEngineModelDelete(modelId: string): Promise<void> {
@@ -238,6 +307,34 @@ export async function mlxEngineDownloadProgress(
   return response.progress ?? null;
 }
 
+/**
+ * Cancel a download AND delete its on-disk claim: every `.part` and the whole partial
+ * repo directory. For an active task the deletion runs as the task stops (poll progress
+ * until "cancelled"); for a paused/failed one it has already run when this returns.
+ */
 export async function mlxEngineDownloadCancel(repoId: string): Promise<void> {
   await call('_goose/unstable/mlxEngine/downloadCancel', { repoId });
+}
+
+/** Pause an active download; every `.part` stays on disk for a later resume. */
+export async function mlxEngineDownloadPause(repoId: string): Promise<void> {
+  await call('_goose/unstable/mlxEngine/downloadPause', { repoId });
+}
+
+/**
+ * Resume a paused/failed download — or partial residue on disk from an earlier session
+ * that was never tracked by this one. Complete files are skipped, `.part` files continue
+ * via HTTP Range; a mismatched partial restarts from zero and lands in `restartedFiles`.
+ */
+export async function mlxEngineDownloadResume(repoId: string): Promise<void> {
+  await call('_goose/unstable/mlxEngine/downloadResume', { repoId });
+}
+
+/** Cached backend-side (~1h TTL) — the first call after a cold start pays the crawl. */
+export async function mlxEngineBrowseFilters(): Promise<MlxBrowseFilters> {
+  return await call<MlxBrowseFilters>('_goose/unstable/mlxEngine/browseFilters', {});
+}
+
+export async function mlxEngineModelCard(repoId: string): Promise<MlxModelCard> {
+  return await call<MlxModelCard>('_goose/unstable/mlxEngine/modelCard', { repoId });
 }

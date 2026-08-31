@@ -32,9 +32,12 @@ import {
 import { errorMessage } from '../../utils/conversionUtils';
 import {
   mlxEngineBrowse,
+  mlxEngineBrowseFilters,
   mlxEngineDownload,
   mlxEngineDownloadCancel,
+  mlxEngineDownloadPause,
   mlxEngineDownloadProgress,
+  mlxEngineDownloadResume,
   mlxEngineModelDelete,
   mlxEngineModelsList,
   mlxEngineMount,
@@ -42,6 +45,7 @@ import {
   mlxEngineSettingsUpdate,
   mlxEngineStatus,
   mlxEngineUnmount,
+  type MlxBrowseFilters,
   type MlxBrowseHit,
   type MlxBrowseSort,
   type MlxDownloadProgress,
@@ -51,22 +55,34 @@ import {
   type MlxLocalModel,
   type MlxModelProfile,
 } from '../../acp/mlx-engine';
+import {
+  AMBER,
+  AZURE,
+  Chip,
+  DownloadProgressRow,
+  GREEN,
+  INK_DARK,
+  RED,
+  SLATE,
+  SolidBanner,
+  TEAL,
+  VIOLET,
+  authorHue,
+  formatCount,
+  formatDate,
+  formatGb,
+} from './primitives';
+import { FilterCombobox } from './FilterCombobox';
+import { ModelCardModal } from './ModelCardModal';
 
-// Solid saturated palette — the benchmark register (BenchmarkView/ScoringDetail): full
-// borders, bg-background-secondary strips, solid chips. Never faded tints, never a left
-// accent rail, never a native control.
-const AZURE = '#2e8bff';
-const GREEN = '#2ecc71';
-const AMBER = '#f5a623';
-const RED = '#e5484d';
-const SLATE = '#64748b';
-const VIOLET = '#7c3aed';
-const TEAL = 'var(--color-block-teal, #13bbaf)';
+// Formatters and the author hue stay importable from this module — tests and older
+// callers reach them here.
+export { authorHue, formatBytesShort, formatCount, formatDate, formatGb } from './primitives';
+
 // The node ramp lives under `.local-edition`; this window also runs in builds without that
 // class, where a bare var() resolves to NOTHING and a solid fill silently turns transparent
 // (caught live 2026-08-31: the active tab label vanished). Every node var carries a fallback.
 const SEGMENT_ACTIVE = 'var(--color-node-5, #db2777)';
-const INK_DARK = '#1a1a1a';
 
 const STATE_COLOR: Record<MlxEngineState, string> = {
   running: GREEN,
@@ -74,39 +90,6 @@ const STATE_COLOR: Record<MlxEngineState, string> = {
   failed: RED,
   stopped: SLATE,
 };
-
-const GB = 1024 * 1024 * 1024;
-
-export function formatGb(bytes: number): string {
-  if (bytes <= 0) return 'unknown size';
-  const gb = bytes / GB;
-  if (gb >= 10) return `${gb.toFixed(0)} GB`;
-  if (gb >= 0.1) return `${gb.toFixed(1)} GB`;
-  return `${(bytes / (1024 * 1024)).toFixed(0)} MB`;
-}
-
-export function formatBytesShort(bytes: number): string {
-  if (bytes <= 0) return '0 B';
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
-  if (bytes < GB) return `${(bytes / (1024 * 1024)).toFixed(0)} MB`;
-  return `${(bytes / GB).toFixed(2)} GB`;
-}
-
-export function formatCount(n: number): string {
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
-  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
-  return `${n}`;
-}
-
-export function formatDate(iso: string): string {
-  const t = Date.parse(iso);
-  if (Number.isNaN(t)) return iso;
-  return new Date(t).toLocaleDateString(undefined, {
-    year: 'numeric',
-    month: 'short',
-    day: 'numeric',
-  });
-}
 
 // ---------------------------------------------------------------------------
 // Per-model sampling profiles: text drafts, where '' means "engine default".
@@ -220,30 +203,8 @@ export function draftsEqual(a: NumericDrafts, b: NumericDrafts): boolean {
 }
 
 // ---------------------------------------------------------------------------
-// Small solid building blocks
+// Small solid building blocks (Chip/SolidBanner/formatters live in ./primitives)
 // ---------------------------------------------------------------------------
-
-function Chip({
-  color,
-  ink = '#ffffff',
-  children,
-  title,
-}: {
-  color: string;
-  ink?: string;
-  children: React.ReactNode;
-  title?: string;
-}) {
-  return (
-    <span
-      title={title}
-      className="inline-flex shrink-0 items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide"
-      style={{ backgroundColor: color, color: ink }}
-    >
-      {children}
-    </span>
-  );
-}
 
 function StateBadge({ state }: { state: MlxEngineState }) {
   return (
@@ -257,42 +218,6 @@ function StateBadge({ state }: { state: MlxEngineState }) {
       {state === 'mounting' && <Loader2 className="h-3 w-3 animate-spin" />}
       {state}
     </span>
-  );
-}
-
-/** Solid full-width banner. Red carries backend text VERBATIM — never paraphrased. */
-function SolidBanner({
-  color,
-  label,
-  text,
-  action,
-}: {
-  color: string;
-  label: string;
-  text: string;
-  action?: React.ReactNode;
-}) {
-  const dark = color === AMBER;
-  return (
-    <div
-      className="flex items-center gap-3 rounded px-4 py-3"
-      style={{ backgroundColor: color }}
-      role="alert"
-    >
-      <span
-        className="shrink-0 text-[10px] font-black uppercase tracking-widest"
-        style={{ color: dark ? INK_DARK : '#ffffff' }}
-      >
-        {label}
-      </span>
-      <span
-        className="min-w-0 flex-1 break-words text-sm font-semibold"
-        style={{ color: dark ? INK_DARK : '#ffffff' }}
-      >
-        {text}
-      </span>
-      {action}
-    </div>
   );
 }
 
@@ -359,6 +284,41 @@ function MemoryBar({ availableGb, totalGb }: { availableGb: number; totalGb: num
       </span>
       <span className="shrink-0 text-xs tabular-nums text-text-secondary">
         of {totalGb.toFixed(1)} GB
+      </span>
+    </div>
+  );
+}
+
+/**
+ * Disk space on the models dir's volume, styled like the Engine tab's memory bar: solid
+ * used-fill on a bordered track, bold "{free} free of {total}" beside it. Numbers come
+ * from the modelsList response (statvfs), never fabricated.
+ */
+function DiskBar({ availableBytes, totalBytes }: { availableBytes: number; totalBytes: number }) {
+  const usedBytes = Math.max(0, totalBytes - availableBytes);
+  const pct = totalBytes > 0 ? Math.min(100, (usedBytes / totalBytes) * 100) : 0;
+  const tight = totalBytes > 0 && availableBytes / totalBytes < 0.1;
+  return (
+    <div className="flex min-w-0 items-center gap-3" data-testid="mlx-disk-bar">
+      <HardDrive className="h-4 w-4 shrink-0" style={{ color: tight ? AMBER : TEAL }} />
+      <div
+        className="h-2.5 flex-1 overflow-hidden rounded border border-border-primary"
+        role="progressbar"
+        aria-valuenow={Math.round(pct)}
+        aria-valuemin={0}
+        aria-valuemax={100}
+        aria-label="Disk space used on the models volume"
+      >
+        <div
+          className="h-full"
+          style={{ width: `${pct}%`, backgroundColor: tight ? AMBER : TEAL }}
+        />
+      </div>
+      <span className="shrink-0 text-xs font-bold tabular-nums" style={{ color: tight ? AMBER : TEAL }}>
+        {formatGb(availableBytes)} free
+      </span>
+      <span className="shrink-0 text-xs tabular-nums text-text-secondary">
+        of {formatGb(totalBytes)}
       </span>
     </div>
   );
@@ -779,8 +739,10 @@ function EngineSection(props: EngineSectionProps) {
       {/* Mount controls */}
       <Card>
         <CardHeader label="Mount a model" />
-        <div className="flex items-start gap-2 px-3 py-3">
-          <div className="min-w-0 flex-1">
+        {/* flex-wrap + a min width on the picker: at ~800px the two buttons otherwise
+            crushed the model picker into unreadability. */}
+        <div className="flex flex-wrap items-start gap-2 px-3 py-3">
+          <div className="min-w-[220px] flex-1">
             <ModelPicker
               models={models}
               value={mountModelId}
@@ -1053,157 +1015,17 @@ function ModelsDirDialog({
   );
 }
 
-function DownloadProgressRow({
-  repoId,
-  progress,
-  onCancel,
-}: {
-  repoId: string;
-  progress: MlxDownloadProgress;
-  onCancel: () => void;
-}) {
-  const pct =
-    progress.totalBytes > 0
-      ? Math.min(100, (progress.downloadedBytes / progress.totalBytes) * 100)
-      : 0;
-  const active = progress.state === 'queued' || progress.state === 'downloading';
-  return (
-    <div className="mt-2 flex flex-col gap-1.5" data-testid={`mlx-download-${repoId}`}>
-      <div className="flex items-center gap-2">
-        <div
-          className="h-2.5 flex-1 overflow-hidden rounded border border-border-primary"
-          role="progressbar"
-          aria-valuenow={Math.round(pct)}
-          aria-valuemin={0}
-          aria-valuemax={100}
-          aria-label={`Download progress for ${repoId}`}
-        >
-          <div className="h-full" style={{ width: `${pct}%`, backgroundColor: AZURE }} />
-        </div>
-        <span className="shrink-0 text-xs font-bold tabular-nums" style={{ color: AZURE }}>
-          {formatBytesShort(progress.downloadedBytes)}
-          {progress.totalBytes > 0 ? ` / ${formatBytesShort(progress.totalBytes)}` : ''}
-        </span>
-        {active && (
-          <Button
-            size="xs"
-            onClick={onCancel}
-            className="shrink-0 rounded font-bold text-white hover:opacity-90"
-            style={{ backgroundColor: SLATE }}
-          >
-            <X className="w-3 h-3" />
-            Cancel
-          </Button>
-        )}
-      </div>
-      <div className="flex min-w-0 items-center gap-2">
-        {progress.state === 'queued' && <Chip color={SLATE}>queued</Chip>}
-        {progress.state === 'downloading' && <Chip color={AZURE}>downloading</Chip>}
-        {progress.state === 'done' && <Chip color={GREEN}>done</Chip>}
-        {progress.state === 'cancelled' && <Chip color={SLATE}>cancelled</Chip>}
-        {progress.currentFile && (
-          <span className="truncate font-mono text-[11px] text-text-secondary">
-            {progress.currentFile}
-          </span>
-        )}
-      </div>
-    </div>
-  );
-}
-
 // ------------------------- Hugging Face browser ----------------------------
 
-const PROVIDER_CHOICES = [
-  'all',
-  'mlx-community',
-  'lmstudio-community',
-  'Qwen',
-  'unsloth',
-  'nightmedia',
-  'other',
-] as const;
-type ProviderChoice = (typeof PROVIDER_CHOICES)[number];
-
-const QUANT_CHOICES = ['all', '3-bit', '4-bit', '5-bit', '6-bit', '8-bit', 'bf16'] as const;
-type QuantChoice = (typeof QUANT_CHOICES)[number];
-
 /**
- * The architecture tags the backend measured live on MLX repos — mirrors
- * MEASURED_ARCH_TAGS in crates/goose-sidecar/src/hf.rs (2026-08-31), sorted for humans.
+ * Per-download lifecycle handlers keyed by repo id — ONE cluster passed from the shell
+ * (where the tracking state lives) down through every surface that renders a download.
  */
-export const ARCH_CHOICES = [
-  'cohere',
-  'deepseek_v2',
-  'deepseek_v3',
-  'ernie4_5',
-  'exaone',
-  'gemma3',
-  'gemma4',
-  'gemma4_unified',
-  'glm4',
-  'glm4_moe',
-  'glm4v',
-  'gpt_oss',
-  'granite',
-  'internvl',
-  'kimi_k2',
-  'kimi_k25',
-  'lfm2',
-  'lfm2_moe',
-  'llama',
-  'mamba',
-  'minimax',
-  'mistral',
-  'mixtral',
-  'nemotron',
-  'olmo2',
-  'phi',
-  'phi3',
-  'qwen',
-  'qwen2',
-  'qwen3',
-  'qwen3_5',
-  'qwen3_5_moe',
-  'qwen3_moe',
-  'qwen3_vl',
-  'qwen4_exp',
-  'smollm3',
-  'starcoder2',
-  'whisper',
-] as const;
-
-interface FilterOption {
-  value: string;
-  label: string;
-}
-
-const PROVIDER_OPTIONS: FilterOption[] = PROVIDER_CHOICES.map((v) => ({
-  value: v,
-  label: v === 'all' ? 'Provider: all' : v === 'other' ? 'Other…' : v,
-}));
-const QUANT_OPTIONS: FilterOption[] = QUANT_CHOICES.map((v) => ({
-  value: v,
-  label: v === 'all' ? 'Quant: all' : v,
-}));
-const ARCH_OPTIONS: FilterOption[] = [
-  { value: 'all', label: 'Arch: all' },
-  ...ARCH_CHOICES.map((v) => ({ value: v, label: v })),
-];
-
-// Distinct solid hues for author chips — deterministic per author, full-rainbow, no washes.
-const AUTHOR_HUES = [
-  'var(--color-node-1, #1d4ed8)',
-  'var(--color-node-2, #0891b2)',
-  'var(--color-node-3, #7c3aed)',
-  'var(--color-node-4, #ea580c)',
-  'var(--color-node-5, #db2777)',
-  'var(--color-node-6, #16a34a)',
-];
-
-export function authorHue(author: string): string {
-  let h = 0;
-  for (let i = 0; i < author.length; i += 1) h = (h * 31 + author.charCodeAt(i)) >>> 0;
-  return AUTHOR_HUES[h % AUTHOR_HUES.length];
+export interface DownloadHandlers {
+  onDownload: (repoId: string) => void;
+  onPause: (repoId: string) => void;
+  onResume: (repoId: string) => void;
+  onCancel: (repoId: string) => void;
 }
 
 interface BrowseHitRowProps {
@@ -1211,14 +1033,22 @@ interface BrowseHitRowProps {
   sort: MlxBrowseSort;
   progress: MlxDownloadProgress | undefined;
   startError: string | undefined;
-  onDownload: () => void;
-  onCancel: () => void;
+  handlers: DownloadHandlers;
+  onOpenCard: () => void;
 }
 
-function BrowseHitRow({ hit, sort, progress, startError, onDownload, onCancel }: BrowseHitRowProps) {
-  const failed = progress?.state === 'failed';
+function BrowseHitRow({ hit, sort, progress, startError, handlers, onOpenCard }: BrowseHitRowProps) {
   return (
-    <div className="border-t border-border-primary px-3 py-2">
+    <div
+      className="cursor-pointer border-t border-border-primary px-3 py-2 transition-colors hover:bg-background-secondary"
+      onClick={onOpenCard}
+      role="button"
+      tabIndex={0}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' && e.target === e.currentTarget) onOpenCard();
+      }}
+      aria-label={`Open model card for ${hit.id}`}
+    >
       {/* flex-wrap + a real min width on the id: at narrow window widths the chip cluster
           otherwise squeezed the model id down to "lmstudi…" (caught live 2026-08-31). */}
       <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
@@ -1237,6 +1067,15 @@ function BrowseHitRow({ hit, sort, progress, startError, onDownload, onCancel }:
           <Chip color={TEAL} title="Derived from the repo's tags or name">
             {hit.arch}
           </Chip>
+        )}
+        {hit.sizeBytesEstimate != null && (
+          <span
+            className="shrink-0 text-xs font-bold tabular-nums"
+            style={{ color: TEAL }}
+            title="estimated from tensor dtypes; exact size on the model card"
+          >
+            ~{formatGb(hit.sizeBytesEstimate)}
+          </span>
         )}
         <span
           className="shrink-0 text-xs font-bold tabular-nums"
@@ -1272,7 +1111,10 @@ function BrowseHitRow({ hit, sort, progress, startError, onDownload, onCancel }:
         {!progress && (
           <Button
             size="sm"
-            onClick={onDownload}
+            onClick={(e) => {
+              e.stopPropagation();
+              handlers.onDownload(hit.id);
+            }}
             className="shrink-0 rounded font-bold text-white hover:opacity-90"
             style={{ backgroundColor: GREEN }}
             aria-label={`Download ${hit.id}`}
@@ -1281,30 +1123,20 @@ function BrowseHitRow({ hit, sort, progress, startError, onDownload, onCancel }:
             Download
           </Button>
         )}
-        {failed && (
-          <Button
-            size="sm"
-            onClick={onDownload}
-            className="shrink-0 rounded font-bold text-white hover:opacity-90"
-            style={{ backgroundColor: RED }}
-          >
-            <RefreshCw className="w-3.5 h-3.5" />
-            Retry
-          </Button>
-        )}
       </div>
       {startError && (
         <div className="mt-1 break-words text-xs font-semibold" style={{ color: RED }}>
           {startError}
         </div>
       )}
-      {progress && !failed && (
-        <DownloadProgressRow repoId={hit.id} progress={progress} onCancel={onCancel} />
-      )}
-      {failed && (
-        <div className="mt-1 break-words text-xs font-semibold" style={{ color: RED }}>
-          {progress?.error ?? 'Download failed.'}
-        </div>
+      {progress && (
+        <DownloadProgressRow
+          repoId={hit.id}
+          progress={progress}
+          onPause={() => handlers.onPause(hit.id)}
+          onResume={() => handlers.onResume(hit.id)}
+          onCancel={() => handlers.onCancel(hit.id)}
+        />
       )}
     </div>
   );
@@ -1313,23 +1145,32 @@ function BrowseHitRow({ hit, sort, progress, startError, onDownload, onCancel }:
 interface HfBrowserProps {
   downloads: Record<string, MlxDownloadProgress>;
   downloadErrors: Record<string, string>;
-  onDownload: (repoId: string) => void;
-  onCancelDownload: (repoId: string) => void;
+  handlers: DownloadHandlers;
+  filters: MlxBrowseFilters | null;
+  filtersError: string | null;
+  onOpenCard: (repoId: string) => void;
 }
 
 /**
  * Paginated MLX-only Hugging Face browser. Every filter is applied SERVER-side through
  * `_goose/unstable/mlxEngine/browse`; changing any filter/sort/search resets pagination
  * (an epoch guard drops stale in-flight pages), and Load more appends via `nextCursor`.
+ * Filter vocabularies come from the backend's live crawl (`browseFilters`), loaded once
+ * per view-open by the shell; free text beyond them passes through as-is.
  */
-function HfBrowser({ downloads, downloadErrors, onDownload, onCancelDownload }: HfBrowserProps) {
+function HfBrowser({
+  downloads,
+  downloadErrors,
+  handlers,
+  filters,
+  filtersError,
+  onOpenCard,
+}: HfBrowserProps) {
   const [queryText, setQueryText] = useState('');
   const [appliedQuery, setAppliedQuery] = useState('');
-  const [provider, setProvider] = useState<ProviderChoice>('all');
-  const [authorText, setAuthorText] = useState('');
-  const [appliedAuthor, setAppliedAuthor] = useState('');
-  const [quant, setQuant] = useState<QuantChoice>('all');
-  const [arch, setArch] = useState<string>('all');
+  const [author, setAuthor] = useState<string | null>(null);
+  const [quant, setQuant] = useState<string | null>(null);
+  const [arch, setArch] = useState<string | null>(null);
   const [sort, setSort] = useState<MlxBrowseSort>('downloads');
 
   const [hits, setHits] = useState<MlxBrowseHit[] | null>(null);
@@ -1339,16 +1180,13 @@ function HfBrowser({ downloads, downloadErrors, onDownload, onCancelDownload }: 
   const [error, setError] = useState<string | null>(null);
   const epoch = useRef(0);
 
-  const author =
-    provider === 'all' ? undefined : provider === 'other' ? appliedAuthor || undefined : provider;
-
   const baseParams = useMemo(
     () => ({
       sort,
       query: appliedQuery || undefined,
-      author,
-      quant: quant === 'all' ? undefined : quant,
-      arch: arch === 'all' ? undefined : arch,
+      author: author ?? undefined,
+      quant: quant ?? undefined,
+      arch: arch ?? undefined,
       limit: 20,
     }),
     [sort, appliedQuery, author, quant, arch]
@@ -1400,11 +1238,6 @@ function HfBrowser({ downloads, downloadErrors, onDownload, onCancelDownload }: 
   }, [baseParams, nextCursor]);
 
   const commitQuery = useCallback(() => setAppliedQuery(queryText.trim()), [queryText]);
-  const commitAuthor = useCallback(() => setAppliedAuthor(authorText.trim()), [authorText]);
-
-  const providerOption = PROVIDER_OPTIONS.find((o) => o.value === provider) ?? PROVIDER_OPTIONS[0];
-  const quantOption = QUANT_OPTIONS.find((o) => o.value === quant) ?? QUANT_OPTIONS[0];
-  const archOption = ARCH_OPTIONS.find((o) => o.value === arch) ?? ARCH_OPTIONS[0];
 
   return (
     <Card>
@@ -1454,45 +1287,41 @@ function HfBrowser({ downloads, downloadErrors, onDownload, onCancelDownload }: 
           />
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <div className="w-52">
-            <Select
-              aria-label="Provider filter"
-              options={PROVIDER_OPTIONS}
-              value={providerOption}
-              onChange={(o) => setProvider(((o as FilterOption)?.value ?? 'all') as ProviderChoice)}
-            />
-          </div>
-          {provider === 'other' && (
-            <div className="w-56">
-              <Input
-                value={authorText}
-                onChange={(e) => setAuthorText(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') commitAuthor();
-                }}
-                onBlur={commitAuthor}
-                placeholder="author (e.g. inferencerlabs)"
-                className="rounded font-mono text-sm"
-                aria-label="Author filter"
-              />
-            </div>
+          <FilterCombobox
+            label="Provider"
+            value={author}
+            options={filters?.authors ?? []}
+            onChange={setAuthor}
+            chipColor={author != null ? authorHue(author) : SLATE}
+          />
+          <FilterCombobox
+            label="Quant"
+            value={quant}
+            options={filters?.quants ?? []}
+            onChange={setQuant}
+            chipColor={AZURE}
+          />
+          <FilterCombobox
+            label="Arch"
+            value={arch}
+            options={filters?.archs ?? []}
+            onChange={setArch}
+            chipColor={TEAL}
+          />
+          {filters?.refreshError != null && (
+            <Chip
+              color={AMBER}
+              ink={INK_DARK}
+              title={`Vocabulary refresh failed — serving the previous crawl. ${filters.refreshError}`}
+            >
+              vocabulary may be stale
+            </Chip>
           )}
-          <div className="w-40">
-            <Select
-              aria-label="Quant filter"
-              options={QUANT_OPTIONS}
-              value={quantOption}
-              onChange={(o) => setQuant(((o as FilterOption)?.value ?? 'all') as QuantChoice)}
-            />
-          </div>
-          <div className="w-48">
-            <Select
-              aria-label="Architecture filter"
-              options={ARCH_OPTIONS}
-              value={archOption}
-              onChange={(o) => setArch((o as FilterOption)?.value ?? 'all')}
-            />
-          </div>
+          {filtersError != null && (
+            <Chip color={AMBER} ink={INK_DARK} title={filtersError}>
+              filter vocabulary unavailable — free text still works
+            </Chip>
+          )}
         </div>
         {error && <SolidBanner color={RED} label="Browse failed" text={error} />}
       </div>
@@ -1511,8 +1340,8 @@ function HfBrowser({ downloads, downloadErrors, onDownload, onCancelDownload }: 
               sort={sort}
               progress={downloads[hit.id]}
               startError={downloadErrors[hit.id]}
-              onDownload={() => onDownload(hit.id)}
-              onCancel={() => onCancelDownload(hit.id)}
+              handlers={handlers}
+              onOpenCard={() => onOpenCard(hit.id)}
             />
           ))}
         </div>
@@ -1530,8 +1359,12 @@ function HfBrowser({ downloads, downloadErrors, onDownload, onCancelDownload }: 
         </button>
       )}
       <CardFooter>
-        Quant and Arch filters match Hugging Face tags — a model whose quant appears only in its
-        name is excluded by those filters but still findable via search.
+        Filters match Hugging Face tags server-side
+        {filters != null
+          ? ` — vocabularies sampled live from ${filters.sampledRepos} MLX repos; type in a filter to search them, or apply any free text.`
+          : ' — type in a filter to search its vocabulary, or apply any free text.'}{' '}
+        A model whose quant appears only in its name is excluded by those filters but still
+        findable via search. Click a row for its full model card.
       </CardFooter>
     </Card>
   );
@@ -1540,26 +1373,39 @@ function HfBrowser({ downloads, downloadErrors, onDownload, onCancelDownload }: 
 interface ModelsSectionProps {
   settings: MlxEngineSettings | null;
   models: MlxLocalModel[];
+  disk: { availableBytes: number; totalBytes: number } | null;
   mountedModelId: string | null;
   refreshModels: () => void;
   saveSettings: (next: MlxEngineSettings) => Promise<void>;
   onOpenSampling: (modelId: string) => void;
+  downloads: Record<string, MlxDownloadProgress>;
+  downloadErrors: Record<string, string>;
+  downloadHandlers: DownloadHandlers;
+  onModelDeleted: (modelId: string) => void;
+  filters: MlxBrowseFilters | null;
+  filtersError: string | null;
 }
 
 function ModelsSection({
   settings,
   models,
+  disk,
   mountedModelId,
   refreshModels,
   saveSettings,
   onOpenSampling,
+  downloads,
+  downloadErrors,
+  downloadHandlers,
+  onModelDeleted,
+  filters,
+  filtersError,
 }: ModelsSectionProps) {
   const [dirDialogOpen, setDirDialogOpen] = useState(false);
   const [dirSaving, setDirSaving] = useState(false);
   const [dirError, setDirError] = useState<string | null>(null);
 
-  const [downloads, setDownloads] = useState<Record<string, MlxDownloadProgress>>({});
-  const [downloadErrors, setDownloadErrors] = useState<Record<string, string>>({});
+  const [cardRepoId, setCardRepoId] = useState<string | null>(null);
 
   const [pendingDelete, setPendingDelete] = useState<MlxLocalModel | null>(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);
@@ -1583,78 +1429,13 @@ function ModelsSection({
     [settings, saveSettings, refreshModels]
   );
 
-  const startDownload = useCallback(async (repoId: string) => {
-    setDownloadErrors((prev) => {
-      const next = { ...prev };
-      delete next[repoId];
-      return next;
-    });
-    setDownloads((prev) => ({
-      ...prev,
-      [repoId]: { state: 'queued', totalBytes: 0, downloadedBytes: 0 },
-    }));
-    try {
-      await mlxEngineDownload(repoId);
-    } catch (error) {
-      setDownloads((prev) => {
-        const next = { ...prev };
-        delete next[repoId];
-        return next;
-      });
-      setDownloadErrors((prev) => ({
-        ...prev,
-        [repoId]: errorMessage(error, 'Download failed to start.'),
-      }));
-    }
-  }, []);
-
-  const cancelDownload = useCallback(async (repoId: string) => {
-    try {
-      await mlxEngineDownloadCancel(repoId);
-    } catch (error) {
-      setDownloadErrors((prev) => ({
-        ...prev,
-        [repoId]: errorMessage(error, 'Cancel failed.'),
-      }));
-    }
-  }, []);
-
-  // Poll live downloads every second — the bar shows real bytes, never a fake animation.
-  const activeKey = useMemo(
-    () =>
-      Object.entries(downloads)
-        .filter(([, p]) => p.state === 'queued' || p.state === 'downloading')
-        .map(([id]) => id)
-        .sort()
-        .join('\n'),
-    [downloads]
-  );
-  useEffect(() => {
-    if (activeKey === '') return undefined;
-    const repoIds = activeKey.split('\n');
-    const timer = setInterval(() => {
-      for (const repoId of repoIds) {
-        void (async () => {
-          try {
-            const progress = await mlxEngineDownloadProgress(repoId);
-            if (!progress) return;
-            setDownloads((prev) => ({ ...prev, [repoId]: progress }));
-            if (progress.state === 'done') refreshModels();
-          } catch {
-            // transient poll failure — keep the last real numbers rather than inventing any
-          }
-        })();
-      }
-    }, 1000);
-    return () => clearInterval(timer);
-  }, [activeKey, refreshModels]);
-
   const confirmDelete = useCallback(async () => {
     if (!pendingDelete) return;
     setDeleting(true);
     setDeleteError(null);
     try {
       await mlxEngineModelDelete(pendingDelete.id);
+      onModelDeleted(pendingDelete.id);
       setPendingDelete(null);
       refreshModels();
     } catch (error) {
@@ -1662,7 +1443,7 @@ function ModelsSection({
     } finally {
       setDeleting(false);
     }
-  }, [pendingDelete, refreshModels]);
+  }, [pendingDelete, refreshModels, onModelDeleted]);
 
   return (
     <div className="flex flex-col gap-4 pb-8">
@@ -1692,16 +1473,22 @@ function ModelsSection({
               Edit
             </Button>
           </div>
+          {disk && <DiskBar availableBytes={disk.availableBytes} totalBytes={disk.totalBytes} />}
         </div>
-        <CardFooter>One directory used by downloads and mounts alike.</CardFooter>
+        <CardFooter>
+          One directory used by downloads and mounts alike; the bar is the free space on its
+          volume.
+        </CardFooter>
       </Card>
 
       {/* Hugging Face browser */}
       <HfBrowser
         downloads={downloads}
         downloadErrors={downloadErrors}
-        onDownload={(repoId) => void startDownload(repoId)}
-        onCancelDownload={(repoId) => void cancelDownload(repoId)}
+        handlers={downloadHandlers}
+        filters={filters}
+        filtersError={filtersError}
+        onOpenCard={setCardRepoId}
       />
 
       {/* Local models */}
@@ -1728,51 +1515,107 @@ function ModelsSection({
           </div>
         ) : (
           <div>
-            {models.map((model) => (
-              <div
-                key={model.id}
-                className="flex min-w-0 items-center gap-3 border-t border-border-primary px-3 py-2.5 first:border-t-0"
-              >
-                <HardDrive
-                  className="w-4 h-4 shrink-0"
-                  style={{ color: model.complete ? AZURE : AMBER }}
-                />
-                <span className="min-w-0 flex-1 truncate font-mono text-sm text-text-primary">
-                  {model.id}
-                </span>
-                {model.id === mountedModelId && <Chip color={GREEN}>mounted</Chip>}
-                {!model.complete && <Chip color={AMBER} ink={INK_DARK}>partial download</Chip>}
-                <span className="shrink-0 text-xs font-bold tabular-nums" style={{ color: AZURE }}>
-                  {formatGb(model.sizeBytes)}
-                </span>
-                <Button
-                  size="xs"
-                  onClick={() => onOpenSampling(model.id)}
-                  className="shrink-0 rounded font-bold text-white hover:opacity-90"
-                  style={{ backgroundColor: VIOLET }}
-                  aria-label={`Sampling for ${model.id}`}
-                  title="This model's sampling profile — opens the Sampling tab"
+            {models.map((model) => {
+              const incomplete = model.missingFiles > 0 || !model.complete;
+              return (
+                <div
+                  key={model.id}
+                  className="border-t border-border-primary px-3 py-2.5 first:border-t-0"
                 >
-                  <SlidersHorizontal className="w-3 h-3" />
-                  Sampling
-                </Button>
-                <Button
-                  size="xs"
-                  onClick={() => {
-                    setDeleteError(null);
-                    setPendingDelete(model);
-                  }}
-                  className="shrink-0 rounded font-bold text-white hover:opacity-90"
-                  style={{ backgroundColor: RED }}
-                  aria-label={`Delete ${model.id}`}
-                >
-                  <Trash2 className="w-3 h-3" />
-                </Button>
-              </div>
-            ))}
+                  {/* Same wrap pattern as browse rows: the id keeps a readable floor and the
+                      chip/action cluster wraps under it at narrow widths. */}
+                  <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1">
+                    <HardDrive
+                      className="w-4 h-4 shrink-0"
+                      style={{ color: incomplete ? AMBER : AZURE }}
+                    />
+                    <span className="min-w-[220px] flex-1 truncate font-mono text-sm text-text-primary">
+                      {model.id}
+                    </span>
+                    {model.id === mountedModelId && <Chip color={GREEN}>mounted</Chip>}
+                    {incomplete && (
+                      <Chip
+                        color={AMBER}
+                        ink={INK_DARK}
+                        title="Files the repo's safetensors index names are absent or unfinished — Resume continues the download"
+                      >
+                        incomplete — missing {model.missingFiles} file(s)
+                      </Chip>
+                    )}
+                    <span className="shrink-0 text-xs font-bold tabular-nums" style={{ color: AZURE }}>
+                      {formatGb(model.sizeBytes)}
+                    </span>
+                    {incomplete ? (
+                      <Button
+                        size="xs"
+                        onClick={() => downloadHandlers.onResume(model.id)}
+                        className="shrink-0 rounded font-bold text-white hover:opacity-90"
+                        style={{ backgroundColor: GREEN }}
+                        aria-label={`Resume ${model.id}`}
+                        title="Resume the download — complete files are skipped, partials continue"
+                      >
+                        <Play className="w-3 h-3" />
+                        Resume
+                      </Button>
+                    ) : (
+                      <Button
+                        size="xs"
+                        onClick={() => onOpenSampling(model.id)}
+                        className="shrink-0 rounded font-bold text-white hover:opacity-90"
+                        style={{ backgroundColor: VIOLET }}
+                        aria-label={`Sampling for ${model.id}`}
+                        title="This model's sampling profile — opens the Sampling tab"
+                      >
+                        <SlidersHorizontal className="w-3 h-3" />
+                        Sampling
+                      </Button>
+                    )}
+                    <Button
+                      size="xs"
+                      onClick={() => {
+                        setDeleteError(null);
+                        setPendingDelete(model);
+                      }}
+                      className="shrink-0 rounded font-bold text-white hover:opacity-90"
+                      style={{ backgroundColor: RED }}
+                      aria-label={`Delete ${model.id}`}
+                    >
+                      <Trash2 className="w-3 h-3" />
+                    </Button>
+                  </div>
+                  {downloadErrors[model.id] && (
+                    <div className="mt-1 break-words text-xs font-semibold" style={{ color: RED }}>
+                      {downloadErrors[model.id]}
+                    </div>
+                  )}
+                  {downloads[model.id] && (
+                    <DownloadProgressRow
+                      repoId={model.id}
+                      progress={downloads[model.id]}
+                      onPause={() => downloadHandlers.onPause(model.id)}
+                      onResume={() => downloadHandlers.onResume(model.id)}
+                      onCancel={() => downloadHandlers.onCancel(model.id)}
+                    />
+                  )}
+                </div>
+              );
+            })}
           </div>
         )}
       </Card>
+
+      {cardRepoId != null && (
+        <ModelCardModal
+          repoId={cardRepoId}
+          onClose={() => setCardRepoId(null)}
+          progress={downloads[cardRepoId]}
+          startError={downloadErrors[cardRepoId]}
+          onDownload={() => downloadHandlers.onDownload(cardRepoId)}
+          onPause={() => downloadHandlers.onPause(cardRepoId)}
+          onResume={() => downloadHandlers.onResume(cardRepoId)}
+          onCancel={() => downloadHandlers.onCancel(cardRepoId)}
+        />
+      )}
 
       <ModelsDirDialog
         open={dirDialogOpen}
@@ -1816,6 +1659,16 @@ const MlxEngineView: React.FC = () => {
   const [statusError, setStatusError] = useState<string | null>(null);
   const [settings, setSettings] = useState<MlxEngineSettings | null>(null);
   const [models, setModels] = useState<MlxLocalModel[]>([]);
+  const [disk, setDisk] = useState<{ availableBytes: number; totalBytes: number } | null>(null);
+
+  // Download tracking lives in the VIEW SHELL, not the Models tab: switching tabs
+  // mid-download must keep the rows live and the poll running while the view is open.
+  const [downloads, setDownloads] = useState<Record<string, MlxDownloadProgress>>({});
+  const [downloadErrors, setDownloadErrors] = useState<Record<string, string>>({});
+
+  const [browseFilters, setBrowseFilters] = useState<MlxBrowseFilters | null>(null);
+  const [browseFiltersError, setBrowseFiltersError] = useState<string | null>(null);
+  const browseFiltersRequested = useRef(false);
 
   const [mountModelId, setMountModelId] = useState<string | null>(null);
   const [mountError, setMountError] = useState<string | null>(null);
@@ -1875,13 +1728,194 @@ const MlxEngineView: React.FC = () => {
   const refreshModels = useCallback(() => {
     void (async () => {
       try {
-        setModels(await mlxEngineModelsList());
+        const list = await mlxEngineModelsList();
+        setModels(list.models);
+        setDisk({ availableBytes: list.diskAvailableBytes, totalBytes: list.diskTotalBytes });
       } catch (error) {
         // The models list failing is a real fact; show it where models are picked.
         setMountError(errorMessage(error, 'Could not list local models.'));
       }
     })();
   }, []);
+
+  // Filter vocabularies load once per view-open (cached backend-side), on the first
+  // visit to the Models tab; a failure leaves free text working and says so.
+  useEffect(() => {
+    if (tab !== 'models' || browseFiltersRequested.current) return;
+    browseFiltersRequested.current = true;
+    void (async () => {
+      try {
+        setBrowseFilters(await mlxEngineBrowseFilters());
+      } catch (error) {
+        setBrowseFiltersError(errorMessage(error, 'Could not load the filter vocabularies.'));
+      }
+    })();
+  }, [tab]);
+
+  const setDownloadError = useCallback((repoId: string, message: string) => {
+    setDownloadErrors((prev) => ({ ...prev, [repoId]: message }));
+  }, []);
+
+  const clearDownloadError = useCallback((repoId: string) => {
+    setDownloadErrors((prev) => {
+      if (!(repoId in prev)) return prev;
+      const next = { ...prev };
+      delete next[repoId];
+      return next;
+    });
+  }, []);
+
+  /**
+   * Pull one download's real progress. "cancelled" DROPS the row — the backend deleted
+   * its partial repo dir — and refreshes the local list so the dir's absence shows.
+   */
+  const syncProgress = useCallback(
+    async (repoId: string, opts: { dropIfUntracked?: boolean } = {}) => {
+      try {
+        const progress = await mlxEngineDownloadProgress(repoId);
+        if (!progress) {
+          if (opts.dropIfUntracked) {
+            setDownloads((prev) => {
+              const next = { ...prev };
+              delete next[repoId];
+              return next;
+            });
+          }
+          return;
+        }
+        if (progress.state === 'cancelled') {
+          setDownloads((prev) => {
+            const next = { ...prev };
+            delete next[repoId];
+            return next;
+          });
+          refreshModels();
+          return;
+        }
+        setDownloads((prev) => ({ ...prev, [repoId]: progress }));
+        if (progress.state === 'done') refreshModels();
+      } catch {
+        // transient poll failure — keep the last real numbers rather than inventing any
+      }
+    },
+    [refreshModels]
+  );
+
+  const startDownload = useCallback(
+    async (repoId: string) => {
+      clearDownloadError(repoId);
+      setDownloads((prev) => ({
+        ...prev,
+        [repoId]: { state: 'queued', totalBytes: 0, downloadedBytes: 0 },
+      }));
+      try {
+        await mlxEngineDownload(repoId);
+      } catch (error) {
+        setDownloads((prev) => {
+          const next = { ...prev };
+          delete next[repoId];
+          return next;
+        });
+        setDownloadError(repoId, errorMessage(error, 'Download failed to start.'));
+      }
+    },
+    [clearDownloadError, setDownloadError]
+  );
+
+  const pauseDownload = useCallback(
+    async (repoId: string) => {
+      try {
+        await mlxEngineDownloadPause(repoId);
+      } catch (error) {
+        setDownloadError(repoId, errorMessage(error, 'Pause failed.'));
+      }
+      await syncProgress(repoId);
+    },
+    [setDownloadError, syncProgress]
+  );
+
+  /** Also the entry point for UNTRACKED partial residue on disk (incomplete local models). */
+  const resumeDownload = useCallback(
+    async (repoId: string) => {
+      clearDownloadError(repoId);
+      setDownloads((prev) =>
+        prev[repoId] != null
+          ? prev
+          : { ...prev, [repoId]: { state: 'queued', totalBytes: 0, downloadedBytes: 0 } }
+      );
+      try {
+        await mlxEngineDownloadResume(repoId);
+      } catch (error) {
+        setDownloadError(repoId, errorMessage(error, 'Resume failed.'));
+      }
+      // Real state replaces the optimistic entry; a refused untracked resume drops it.
+      await syncProgress(repoId, { dropIfUntracked: true });
+    },
+    [clearDownloadError, setDownloadError, syncProgress]
+  );
+
+  const cancelDownload = useCallback(
+    async (repoId: string) => {
+      try {
+        await mlxEngineDownloadCancel(repoId);
+      } catch (error) {
+        setDownloadError(repoId, errorMessage(error, 'Cancel failed.'));
+        return;
+      }
+      // Paused/failed cancels delete synchronously — this sync sees "cancelled" and the
+      // row disappears now. An active cancel stops between chunks; the 1s poll below
+      // keeps following it until the backend reports "cancelled".
+      await syncProgress(repoId, { dropIfUntracked: true });
+    },
+    [setDownloadError, syncProgress]
+  );
+
+  const downloadHandlers = useMemo<DownloadHandlers>(
+    () => ({
+      onDownload: (repoId) => void startDownload(repoId),
+      onPause: (repoId) => void pauseDownload(repoId),
+      onResume: (repoId) => void resumeDownload(repoId),
+      onCancel: (repoId) => void cancelDownload(repoId),
+    }),
+    [startDownload, pauseDownload, resumeDownload, cancelDownload]
+  );
+
+  /**
+   * Deleting a model orphans any finished download row for it (caught live: a deleted
+   * model's row kept saying "done" and the Download action never came back). Drop it.
+   */
+  const clearDownloadFor = useCallback(
+    (repoId: string) => {
+      setDownloads((prev) => {
+        if (!(repoId in prev)) return prev;
+        const next = { ...prev };
+        delete next[repoId];
+        return next;
+      });
+      clearDownloadError(repoId);
+    },
+    [clearDownloadError]
+  );
+
+  // Poll live downloads every second — real bytes, never a fake animation. This runs at
+  // the shell so it survives tab switches; it stops only when nothing is active.
+  const activeDownloadKey = useMemo(
+    () =>
+      Object.entries(downloads)
+        .filter(([, p]) => p.state === 'queued' || p.state === 'downloading')
+        .map(([id]) => id)
+        .sort()
+        .join('\n'),
+    [downloads]
+  );
+  useEffect(() => {
+    if (activeDownloadKey === '') return undefined;
+    const repoIds = activeDownloadKey.split('\n');
+    const timer = setInterval(() => {
+      for (const repoId of repoIds) void syncProgress(repoId);
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [activeDownloadKey, syncProgress]);
 
   useEffect(() => {
     refreshModels();
@@ -2115,10 +2149,17 @@ const MlxEngineView: React.FC = () => {
               <ModelsSection
                 settings={settings}
                 models={models}
+                disk={disk}
                 mountedModelId={status?.modelId ?? null}
                 refreshModels={refreshModels}
                 saveSettings={saveSettings}
                 onOpenSampling={openSamplingFor}
+                downloads={downloads}
+                downloadErrors={downloadErrors}
+                downloadHandlers={downloadHandlers}
+                onModelDeleted={clearDownloadFor}
+                filters={browseFilters}
+                filtersError={browseFiltersError}
               />
             )}
             {tab === 'sampling' && (
