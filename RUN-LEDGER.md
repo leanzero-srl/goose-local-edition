@@ -188,14 +188,14 @@ DAG is actually parallel). reasoning_chars against answer_chars is the waste.
 - **chain**: 4
 - **startable**: 1
 - **brief_median**: 21104
-- **reasoning_chars**: 1059946
-- **answer_chars**: 208901
+- **reasoning_chars**: 1060257
+- **answer_chars**: 209920
 - **code_files**: 5
-- **code_bytes**: 15020
-- **elapsed_min**: 261
-- **phase_split**: open 39m · ask 126m · synthesis 13m · review 28m · build 53m
+- **code_bytes**: 15507
+- **elapsed_min**: 264
+- **phase_split**: open 39m · ask 126m · synthesis 13m · review 28m · build 55m
 - **before_build_min**: 208 (internal diagnosis only — never a cross-run number)
-- **vs_target**: ONLY THE SCORE COMPARES. Target 20.06% (qwen3.8-27b, one cloud agent, same model). Wall clock is NOT comparable — that run is on far faster hardware, so minutes measure the machine. Bytes are NOT a verdict — more code is not better code, and it had no planning phases to spend budget on. Cross-hardware-honest work numbers for THIS run: 15,020B delivered, 1,059,946 chars reasoned, 0 tasks completed, 0 retried.
+- **vs_target**: ONLY THE SCORE COMPARES. Target 20.06% (qwen3.8-27b, one cloud agent, same model). Wall clock is NOT comparable — that run is on far faster hardware, so minutes measure the machine. Bytes are NOT a verdict — more code is not better code, and it had no planning phases to spend budget on. Cross-hardware-honest work numbers for THIS run: 15,507B delivered, 1,060,257 chars reasoned, 0 tasks completed, 0 retried.
 - **python_parses**: 5 ok / 0 SYNTAX ERROR / 0 empty
 - **web_files**: NONE — 0.56 of the scoring weight is unreachable without a served page
 - **tasks_done**: 0/8 completed, 1 dispatched, 0 retried
