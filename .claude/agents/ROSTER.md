@@ -714,3 +714,8 @@ research_request_block's armed-no-claimed-sections arm wording.
   NET with the dependency stated — "the two fixes are load-bearing together" — instead of claiming
   the fix. Hoisted a binding 150 lines to avoid a stale manifest read. Shrank swarm.rs again.
   Charter gap: none.
+- 2026-08-31 21:25 tick-surgeon #26: EXEMPLARY at 57.6k/7. Moved the falsifier one honest level
+  (compose → audit → audit-the-audit) instead of freezing it, caught the delivery promise EVADED
+  through the restream branch with the held-detail quoted, and staged the complete run-cannot-end
+  record in its state file before it is needed. Numbers-with-teeth: recorded web-viz.log byte size
+  (2433B) after noticing tick 25 never had. Charter gap: none.
