@@ -761,3 +761,9 @@ research_request_block's armed-no-claimed-sections arm wording.
   VERIFICATION (ran node --check itself, checked the index.html script order) — closing the gap its
   own tick-28 caveat named; caught the lane diagnosing our checker bug in its own words; and
   flagged the ledgerd-api ownership smell BEFORE it becomes an edit. Charter gap: none.
+- 2026-08-31 23:15 swarm-surgeon (apply-time guard + lexer, de6f0d9bf/5032c44a2): THE EXEMPLAR.
+  Refused the brief's guard as theatre with the mechanism (no await between verdict and wipe),
+  found the one channel that actually moves during a one-write delivery (forming args), excluded
+  the channels a LOOP produces so the guard cannot disarm real restreams, refuted the brief's
+  look-15 counterfactual, and replaced "hoisting" with the measured phantom-regex chain (line
+  496→654 token jump), instrumented on the delivered file with refusing tests. Charter gap: none.
