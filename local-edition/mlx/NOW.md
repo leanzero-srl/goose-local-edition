@@ -1,6 +1,16 @@
 # NOW — MLX in-house engine campaign (branch goose/mlx-inferencing)
 
 ## CURRENT CHAPTER (2026-08-31 evening): the Goose Swarm restructure
+PASS E (in flight, ~22:30, Mihai reviewing live): (1) sessions are SESSIONS not chats incl.
+default title; (2) stale swarm board GATED — a new session never shows a previous run's
+planning/ETA (heartbeat-fresh or session-owned only; read-only toward .swarm); (3) honest Nodes
+strip on blank sessions from configured devices (mlx violet + cloud chips, no fake occupancy);
+(4) LM Studio session-UI rows behind settings 'showLmStudioFleet' DEFAULT FALSE — disabled never
+deleted; (5) LIVE FLEET BENCHMARK RUNNING — zero LM Studio contact, renderer-only niced rebuild,
+no cargo; (6) extensions icon removed from session bar; (7) no pricing UI on omlx sessions;
+(8) "Make recipe from this conversation" removed from the name menu; (9) AI auto-naming of
+sessions surfaces in the header (investigate existing backend naming first — report which world);
+(10) bigger rename hitbox. Publishing still HELD.
 PASS D (in flight, ~21:15, amended ~21:30): Mihai — "New chat button removed. Sessions are
 started from project only." Nav loses New Chat; every other new-chat affordance removed or
 redirected; home route becomes a project-directed landing; per-project "+ New session" is the
