@@ -87,6 +87,43 @@ pub fn measure() -> (u64, u64) {
     (sys.available_memory(), sys.total_memory())
 }
 
+/// (available, total) bytes of the filesystem holding `path`, via statvfs on the
+/// nearest existing ancestor (the models dir may not exist before the first download —
+/// its future volume is still the ancestor's). `f_frsize` is the unit statvfs reports
+/// blocks in (verified against `df` on macOS); `f_bavail` is what an unprivileged
+/// writer can actually use.
+#[cfg(unix)]
+// The statvfs field widths differ across unix targets, so the casts are load-bearing
+// on some and "unnecessary" on others.
+#[allow(clippy::unnecessary_cast)]
+pub fn disk_space(path: &Path) -> anyhow::Result<(u64, u64)> {
+    use std::os::unix::ffi::OsStrExt;
+    let target = path
+        .ancestors()
+        .find(|p| p.exists())
+        .ok_or_else(|| anyhow::anyhow!("no existing ancestor for {}", path.display()))?;
+    let c_path = std::ffi::CString::new(target.as_os_str().as_bytes())
+        .map_err(|_| anyhow::anyhow!("path {} contains a NUL byte", target.display()))?;
+    let mut stat: libc::statvfs = unsafe { std::mem::zeroed() };
+    let rc = unsafe { libc::statvfs(c_path.as_ptr(), &mut stat) };
+    anyhow::ensure!(
+        rc == 0,
+        "statvfs({}) failed: {}",
+        target.display(),
+        std::io::Error::last_os_error()
+    );
+    let frsize = stat.f_frsize as u64;
+    Ok((stat.f_bavail as u64 * frsize, stat.f_blocks as u64 * frsize))
+}
+
+#[cfg(not(unix))]
+pub fn disk_space(path: &Path) -> anyhow::Result<(u64, u64)> {
+    anyhow::bail!(
+        "disk space measurement for {} is unix-only in this build",
+        path.display()
+    )
+}
+
 pub fn dir_size_bytes(path: &Path) -> u64 {
     let mut total = 0u64;
     let mut stack = vec![path.to_path_buf()];

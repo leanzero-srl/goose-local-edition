@@ -2347,6 +2347,9 @@ pub struct MlxLocalModelDto {
     pub id: String,
     pub size_bytes: u64,
     pub complete: bool,
+    /// Files provably missing or unfinished — shards the model's safetensors index
+    /// names that are absent/empty, plus `.part` leftovers. 0 when complete.
+    pub missing_files: u32,
 }
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema)]
@@ -2359,7 +2362,9 @@ pub struct MlxHfModelHitDto {
 }
 
 /// Snapshot download progress. `state` is one of
-/// "queued" | "downloading" | "done" | "failed" | "cancelled".
+/// "queued" | "downloading" | "paused" | "done" | "failed" | "cancelled".
+/// A cancelled download has no on-disk claim (its partial repo dir is deleted), so a
+/// "cancelled" row may simply be dropped from the UI.
 #[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct MlxDownloadProgressDto {
@@ -2368,6 +2373,10 @@ pub struct MlxDownloadProgressDto {
     pub downloaded_bytes: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub current_file: Option<String>,
+    /// Files this attempt restarted from zero because their on-disk `.part` or the
+    /// server's range answer disagreed with the repo tree's size.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub restarted_files: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
 }
@@ -2442,6 +2451,9 @@ pub struct MlxEngineModelsListRequest {}
 #[serde(rename_all = "camelCase")]
 pub struct MlxEngineModelsListResponse {
     pub models: Vec<MlxLocalModelDto>,
+    /// Free bytes an unprivileged writer can use on the models dir's volume.
+    pub disk_available_bytes: u64,
+    pub disk_total_bytes: u64,
 }
 
 /// Delete a downloaded model from the models dir.
@@ -2497,7 +2509,9 @@ pub struct MlxEngineDownloadProgressResponse {
     pub progress: Option<MlxDownloadProgressDto>,
 }
 
-/// Cancel an active download for a repo.
+/// Cancel a download AND delete its on-disk claim: every `.part` and the whole partial
+/// repo directory are removed. Works on active and paused/failed downloads; the state
+/// becomes "cancelled" once the deletion has run.
 #[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, JsonRpcRequest)]
 #[request(
     method = "_goose/unstable/mlxEngine/downloadCancel",
@@ -2528,6 +2542,12 @@ pub struct MlxBrowseHitDto {
     pub quant: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub arch: Option<String>,
+    /// ESTIMATE of the weight payload in bytes, derived from the server's safetensors
+    /// dtype counts (measured within 0.003% of the true safetensors byte sum, but it
+    /// excludes tokenizer/config files). Absent when the server carries no safetensors
+    /// info — never a guess.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub size_bytes_estimate: Option<u64>,
 }
 
 /// Paginated MLX-only HuggingFace browse. All filters apply server-side: `query`
@@ -2567,4 +2587,105 @@ pub struct MlxEngineBrowseResponse {
     /// Opaque continuation for the next page; absent on the last page.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub next_cursor: Option<String>,
+}
+
+/// Filter vocabularies for the browse UI, aggregated live from HuggingFace (a bounded
+/// crawl of MLX listings, cached in-process with a ~1h TTL — the first call pays the
+/// crawl, later calls are instant). Values are raw filterable tag/author strings; free
+/// text beyond them still passes to the browse filters.
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, JsonRpcRequest)]
+#[request(
+    method = "_goose/unstable/mlxEngine/browseFilters",
+    response = MlxEngineBrowseFiltersResponse
+)]
+#[serde(rename_all = "camelCase")]
+pub struct MlxEngineBrowseFiltersRequest {}
+
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, JsonRpcResponse)]
+#[serde(rename_all = "camelCase")]
+pub struct MlxEngineBrowseFiltersResponse {
+    /// Quant tags observed live ("4-bit", "8-bit", "bf16", "mxfp4", …), ordered by
+    /// observed frequency.
+    pub quants: Vec<String>,
+    /// Architectures (`config.model_type` values) observed live, each also usable as a
+    /// server-side tag filter; ordered by observed frequency.
+    pub archs: Vec<String>,
+    /// Publishers observed live, ordered by observed frequency.
+    pub authors: Vec<String>,
+    /// Distinct repos the vocabulary was aggregated from — a top-N sample of the MLX
+    /// corpus (by downloads plus by newest), not an exhaustive census.
+    pub sampled_repos: u32,
+    /// Unix epoch seconds when the crawl ran.
+    pub computed_at: u64,
+    /// Present when this vocabulary is served stale because a TTL refresh failed;
+    /// carries the refresh failure.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub refresh_error: Option<String>,
+}
+
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct MlxRepoFileDto {
+    pub path: String,
+    pub size_bytes: u64,
+}
+
+/// Everything the fullscreen model-card modal needs for one repo: README markdown,
+/// the file listing with sizes, and repo metadata. A repo without a README yields no
+/// `readmeMarkdown` — that is an absent field, not an error.
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, JsonRpcRequest)]
+#[request(
+    method = "_goose/unstable/mlxEngine/modelCard",
+    response = MlxEngineModelCardResponse
+)]
+#[serde(rename_all = "camelCase")]
+pub struct MlxEngineModelCardRequest {
+    pub repo_id: String,
+}
+
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, JsonRpcResponse)]
+#[serde(rename_all = "camelCase")]
+pub struct MlxEngineModelCardResponse {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub readme_markdown: Option<String>,
+    /// True when the README exceeded the 1 MiB cap and was cut.
+    pub readme_truncated: bool,
+    pub files: Vec<MlxRepoFileDto>,
+    /// Exact sum of every file size the repo tree lists.
+    pub total_bytes: u64,
+    pub tags: Vec<String>,
+    pub downloads: u64,
+    pub likes: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub license: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub created_at: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_modified: Option<String>,
+}
+
+/// Pause an active download: the task stops cleanly between chunks and every `.part`
+/// stays on disk for a later resume. Loud on an unknown or inactive repo.
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, JsonRpcRequest)]
+#[request(
+    method = "_goose/unstable/mlxEngine/downloadPause",
+    response = EmptyResponse
+)]
+#[serde(rename_all = "camelCase")]
+pub struct MlxEngineDownloadPauseRequest {
+    pub repo_id: String,
+}
+
+/// Resume a paused/failed/cancelled download — or partial files left on disk by an
+/// earlier session. Complete files are skipped, `.part` files continue via HTTP Range;
+/// a file whose partial no longer matches the repo tree restarts from zero and is
+/// reported in `restartedFiles`. Loud on an unknown repo with nothing on disk.
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, JsonRpcRequest)]
+#[request(
+    method = "_goose/unstable/mlxEngine/downloadResume",
+    response = EmptyResponse
+)]
+#[serde(rename_all = "camelCase")]
+pub struct MlxEngineDownloadResumeRequest {
+    pub repo_id: String,
 }
