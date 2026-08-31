@@ -498,3 +498,11 @@ research_request_block's armed-no-claimed-sections arm wording.
   shared-const pattern) is dispatched. NO-CAPS ruling parked for Mihai: whether a 1-turn supervision
   Q&A reply counts as "model work" — the repo's own comment calls a turn count "a volume cap wearing
   a different hat", but every measured harm was the filler leak, not the cap ending healthy looks.
+- 2026-08-31 12:25 tick-surgeon #4: EXEMPLARY. Both WATCH items closed with quotes (api-q2 SHIPPED the
+  poisoned source:'send' — a builder following it verbatim throws IntegrityError against core-q0's
+  CHECK; false-raised now 7/11; judge look3 abandoned correctly, its pre-abandon think crediting the
+  lane's shift "from deliberation to composition"). Corrected its OWN tick-3 prediction honestly
+  (api-q4 needed a 4th nudge, not free emission). Caught the snowball WORKING in notifierd-q2 (adopted
+  q0's raised ntf_<seq> convention) — evidence B's mechanism pays. New design finding parked: a judge
+  steer DICTATED technical content ("vendor send follows as background step") and the lane was right
+  to ignore it — steers command emission, never author design. Charter gap: none.
