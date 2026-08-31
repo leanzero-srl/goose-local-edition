@@ -50,6 +50,7 @@ thread.
 | `panel-surgeon` | desktop swarm UI (the one digest join, truth-layer rules, design bans) |
 | `bench-scorer` | scoring + harness/instrument edits (hermetic law, five wrong-number mechanisms) |
 | `words-reader` | gate 7's independent reader: quotes and diagnoses model output from primary logs |
+| `tick-surgeon` | EVERY vigil tick: reads every active lane's words, verifies delivered content, applies kill checkpoints with proof, notes improvements with quotes — the microscopic vigil itself (tick.py is its step 0) |
 | `fix-tracer` | gate 8's independent tracer: walks a run's real values through a change |
 | `fallback-hunter` | finds silent substitutions, designs the loud alternative per the fallback gate |
 | `gate-auditor` | audits deterministic checks for theater: keep the refusers, kill the superficial |
