@@ -685,3 +685,9 @@ research_request_block's armed-no-claimed-sections arm wording.
   re-derivation) instead of pattern-matching to a kill, and produced the sibling burst precedent
   (165k think → 9-edit burst) that makes "converging" testable next tick. Substance reads on both
   replan deliverables with symbols and execution proof. Charter gap: none.
+- 2026-08-31 20:00 tick-surgeon #23: EXEMPLARY at 58.6k/12. Ran the falsification test and
+  discriminated correctly — frozen calls but the words MOVED from verifying to composing source
+  (quoted the draft), so converging holds and the kill stays sheathed; caught the steering ladder
+  re-arming (ok reset the streak, drifting re-armed) one look from the build's first delivery; and
+  closed two watch items with file-level proof (outbox.py:86 wrapper, impl.py rewrite). Charter
+  gap: none.
