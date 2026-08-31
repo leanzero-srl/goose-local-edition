@@ -709,3 +709,8 @@ research_request_block's armed-no-claimed-sections arm wording.
   (orchestrator verified it already covered at HEAD, 16243); and flagged the ledgerd-core cap-vs-
   completion race BEFORE it happens with the lane's own words ("About 13k tokens remaining").
   Charter gap: none.
+- 2026-08-31 21:10 swarm-surgeon (trace follow-ups, aadbe6275): EXEMPLARY. Traced its own edit to a
+  NO (the clause never rendered in r6c because no nudge was ever delivered) and shipped it labeled
+  NET with the dependency stated — "the two fixes are load-bearing together" — instead of claiming
+  the fix. Hoisted a binding 150 lines to avoid a stale manifest read. Shrank swarm.rs again.
+  Charter gap: none.
