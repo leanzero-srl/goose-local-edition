@@ -1,11 +1,14 @@
 # NOW — MLX in-house engine campaign (branch goose/mlx-inferencing)
 
 ## CURRENT CHAPTER (2026-08-31 evening): the Goose Swarm restructure
-PASS D (in flight, ~21:15): Mihai — "New chat button removed. Sessions are started from project
-only." Nav loses New Chat; every other new-chat affordance (menu accelerator, dock/tray, empty-
-state buttons) removed or redirected; home route becomes a project-directed landing; the per-
-project "+ New session" is the ONLY creation path. Publishing HELD until Mihai calls the
-restructure complete (2.0.0 + 2.0.1 already on the feed).
+PASS D (in flight, ~21:15, amended ~21:30): Mihai — "New chat button removed. Sessions are
+started from project only." Nav loses New Chat; every other new-chat affordance removed or
+redirected; home route becomes a project-directed landing; per-project "+ New session" is the
+ONLY creation path. AMENDED IN: the Models area splits into [Hugging Face | Downloaded]
+second-level tabs (downloaded was buried below the browser; folder row + disk bar move to
+Downloaded; progress rows visible on both), and the legacy "Swarm LeanZero" lever tab is REMOVED
+from Settings (section stays in code; the simple nodes tab is the only swarm surface now).
+Publishing HELD until Mihai calls the restructure complete (2.0.0 + 2.0.1 already on the feed).
 AMENDMENT (Mihai, ~20:00): the Swarm Settings tab is RADICALLY SIMPLE — Add node / provider per
 node / one weight per node, NOTHING else ("I don't want all of those levers… That is it.
 Seriously."); the legacy lever section stays in Settings untouched until the golden-formula strip.
