@@ -901,9 +901,21 @@ where
         signature: String,
     }
 
+    fn block_index(event_data: &Value) -> Option<i32> {
+        event_data
+            .get("index")
+            .and_then(|v| v.as_i64())
+            .map(|index| index as i32)
+    }
+
     try_stream! {
-        let mut accumulated_tool_calls: std::collections::HashMap<String, (String, String)> = std::collections::HashMap::new();
-        let mut current_tool_id: Option<String> = None;
+        struct StreamingToolCall {
+            id: String,
+            name: String,
+            arguments: String,
+        }
+
+        let mut accumulated_tool_calls: std::collections::HashMap<i32, StreamingToolCall> = std::collections::HashMap::new();
         let mut final_usage: Option<ProviderUsage> = None;
         let mut message_id: Option<String> = None;
         let mut thinking: Option<ThinkingState> = None;
@@ -958,11 +970,16 @@ where
                     if let Some(content_block) = event.data.get("content_block") {
                         match content_block.get(TYPE_FIELD).and_then(|v| v.as_str()) {
                             Some(TOOL_USE_TYPE) => {
-                                if let Some(id) = content_block.get("id").and_then(|v| v.as_str()) {
-                                    current_tool_id = Some(id.to_string());
-                                    if let Some(name) = content_block.get("name").and_then(|v| v.as_str()) {
-                                        accumulated_tool_calls.insert(id.to_string(), (name.to_string(), String::new()));
-                                    }
+                                if let (Some(index), Some(id), Some(name)) = (
+                                    block_index(&event.data),
+                                    content_block.get("id").and_then(|v| v.as_str()),
+                                    content_block.get("name").and_then(|v| v.as_str()),
+                                ) {
+                                    accumulated_tool_calls.insert(index, StreamingToolCall {
+                                        id: id.to_string(),
+                                        name: name.to_string(),
+                                        arguments: String::new(),
+                                    });
                                 }
                             }
                             Some(THINKING_TYPE) => {
@@ -1003,10 +1020,10 @@ where
                                 yield (Some(message), None);
                             }
                             Ok(ContentBlockDelta::InputJsonDelta { partial_json }) => {
-                                if let Some(tool_id) = &current_tool_id {
-                                    if let Some((_name, args)) = accumulated_tool_calls.get_mut(tool_id) {
-                                        args.push_str(&partial_json);
-                                    }
+                                if let Some(call) = block_index(&event.data)
+                                    .and_then(|index| accumulated_tool_calls.get_mut(&index))
+                                {
+                                    call.arguments.push_str(&partial_json);
                                 }
                             }
                             Ok(ContentBlockDelta::ThinkingDelta { thinking: t }) => {
@@ -1035,17 +1052,18 @@ where
                             yield (Some(message), None);
                         }
                     }
-                    if let Some(tool_id) = current_tool_id.take() {
-                        if let Some((name, args)) = accumulated_tool_calls.remove(&tool_id) {
-                            let parsed_args = if args.is_empty() {
+                    if let Some(index) = block_index(&event.data) {
+                        if let Some(call) = accumulated_tool_calls.remove(&index) {
+                            let StreamingToolCall { id, name, arguments } = call;
+                            let parsed_args = if arguments.is_empty() {
                                 json!({})
                             } else {
-                                match crate::json::parse_tool_arguments(&args) {
+                                match crate::json::parse_tool_arguments(&arguments) {
                                     Some(parsed) => parsed,
                                     None => {
-                                        let message_text = crate::json::truncation_error_message(&args)
+                                        let message_text = crate::json::truncation_error_message(&arguments)
                                             .unwrap_or_else(|| {
-                                                format!("Could not parse tool arguments: {args}")
+                                                format!("Could not parse tool arguments: {arguments}")
                                             });
                                         let error = ErrorData::new(
                                             ErrorCode::INVALID_PARAMS,
@@ -1055,7 +1073,7 @@ where
                                         let mut message = Message::new(
                                             Role::Assistant,
                                             chrono::Utc::now().timestamp(),
-                                            vec![MessageContentBlock::tool_request(tool_id, Err(error))],
+                                            vec![MessageContentBlock::tool_request_with_provider_index(id, Err(error), None, index)],
                                         );
                                         message.id = message_id.clone();
                                         yield (Some(message), None);
@@ -1069,7 +1087,7 @@ where
                             let mut message = Message::new(
                                 rmcp::model::Role::Assistant,
                                 chrono::Utc::now().timestamp(),
-                                vec![MessageContentBlock::tool_request(tool_id, Ok(tool_call))],
+                                vec![MessageContentBlock::tool_request_with_provider_index(id, Ok(tool_call), None, index)],
                             );
                             message.id = message_id.clone();
                             yield (Some(message), None);
@@ -1158,10 +1176,10 @@ where
         // content_block_stop, so its args are truncated rather than complete.
         if !accumulated_tool_calls.is_empty() {
             let truncated_by_limit = stop_reason.as_deref() == Some("max_tokens");
-            let mut ids: Vec<String> = accumulated_tool_calls.keys().cloned().collect();
-            ids.sort();
-            for id in ids {
-                if let Some((_name, args)) = accumulated_tool_calls.remove(&id) {
+            let mut indices: Vec<i32> = accumulated_tool_calls.keys().copied().collect();
+            indices.sort();
+            for index in indices {
+                if let Some(StreamingToolCall { id, arguments: args, .. }) = accumulated_tool_calls.remove(&index) {
                     let guidance = if truncated_by_limit {
                         "The model's response was truncated — it hit the output token limit while generating this tool call. \
                          Try increasing max_tokens for this provider or breaking the task into smaller steps."
@@ -1178,7 +1196,7 @@ where
                     let mut message = Message::new(
                         Role::Assistant,
                         chrono::Utc::now().timestamp(),
-                        vec![MessageContentBlock::tool_request(id, Err(error))],
+                        vec![MessageContentBlock::tool_request_with_provider_index(id, Err(error), None, index)],
                     );
                     message.id = message_id.clone();
                     yield (Some(message), None);
@@ -2428,6 +2446,74 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_streaming_reassembles_interleaved_parallel_tool_calls() {
+        let events = concat!(
+            r#"data: {"type":"message_start","message":{"id":"msg_par","role":"assistant","content":[],"model":"claude-opus-4-6","usage":{"input_tokens":5,"output_tokens":0}}}"#,
+            "\n",
+            r#"data: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"tool_a","name":"search","input":{}}}"#,
+            "\n",
+            r#"data: {"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"tool_b","name":"write","input":{}}}"#,
+            "\n",
+            r#"data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\"path\":"}}"#,
+            "\n",
+            r#"data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"query\":"}}"#,
+            "\n",
+            r#"data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"\"/tmp/a.md\"}"}}"#,
+            "\n",
+            r#"data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"\"rust\"}"}}"#,
+            "\n",
+            r#"data: {"type":"content_block_stop","index":1}"#,
+            "\n",
+            r#"data: {"type":"content_block_stop","index":0}"#,
+            "\n",
+            r#"data: {"type":"message_delta","delta":{"stop_reason":"tool_use"},"usage":{"output_tokens":20}}"#,
+            "\n",
+            r#"data: {"type":"message_stop"}"#,
+        );
+
+        let requests = collect_tool_requests(events).await;
+
+        assert_eq!(requests.len(), 2);
+        let write = requests
+            .iter()
+            .find(|r| r.id == "tool_b")
+            .expect("write tool request");
+        assert_eq!(write.provider_index(), Some(1));
+        let write_call = write.tool_call.as_ref().expect("write args parsed");
+        assert_eq!(write_call.name, "write");
+        assert_eq!(
+            write_call.arguments.as_ref().unwrap()["path"],
+            json!("/tmp/a.md")
+        );
+
+        let search = requests
+            .iter()
+            .find(|r| r.id == "tool_a")
+            .expect("search tool request");
+        assert_eq!(search.provider_index(), Some(0));
+        let search_call = search.tool_call.as_ref().expect("search args parsed");
+        assert_eq!(search_call.name, "search");
+        assert_eq!(
+            search_call.arguments.as_ref().unwrap()["query"],
+            json!("rust")
+        );
+    }
+
+    async fn collect_tool_requests(events: &str) -> Vec<crate::conversation::message::ToolRequest> {
+        let mut requests = Vec::new();
+        for result in collect_stream_results(events).await {
+            if let Ok((Some(msg), _usage)) = result {
+                for content in &msg.content {
+                    if let MessageContentBlock::ToolRequest(req) = content {
+                        requests.push(req.clone());
+                    }
+                }
+            }
+        }
+        requests
+    }
+
+    #[tokio::test]
     async fn test_streaming_preserves_cache_tokens_through_delta_merge() {
         let events = concat!(
             r#"data: {"type":"message_start","message":{"id":"msg_1","role":"assistant","content":[],"model":"claude-opus-4-6","usage":{"input_tokens":7,"cache_creation_input_tokens":10000,"cache_read_input_tokens":5000,"output_tokens":0}}}"#,
@@ -2737,6 +2823,41 @@ mod tests {
             "expected actionable truncation message, got: {}",
             msg
         );
+    }
+
+    #[tokio::test]
+    async fn test_streaming_unfinished_tool_calls_keep_provider_indices() {
+        let events = concat!(
+            r#"data: {"type":"message_start","message":{"id":"msg_t3","role":"assistant","content":[],"model":"claude-opus-4-6","usage":{"input_tokens":10,"output_tokens":0}}}"#,
+            "\n",
+            r#"data: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"tool_open_a","name":"search","input":{}}}"#,
+            "\n",
+            r#"data: {"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"tool_open_b","name":"write","input":{}}}"#,
+            "\n",
+            r#"data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"query\":\"ru"}}"#,
+            "\n",
+            r#"data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\"path\":\"/re"}}"#,
+            "\n",
+            r#"data: {"type":"message_delta","delta":{"stop_reason":"max_tokens"},"usage":{"output_tokens":8192}}"#,
+            "\n",
+            r#"data: {"type":"message_stop"}"#,
+        );
+
+        let requests = collect_tool_requests(events).await;
+
+        assert_eq!(requests.len(), 2);
+        let indexed: Vec<(String, Option<i32>)> = requests
+            .iter()
+            .map(|r| (r.id.clone(), r.provider_index()))
+            .collect();
+        assert_eq!(
+            indexed,
+            vec![
+                ("tool_open_a".to_string(), Some(0)),
+                ("tool_open_b".to_string(), Some(1)),
+            ]
+        );
+        assert!(requests.iter().all(|r| r.tool_call.is_err()));
     }
 
     #[tokio::test]
