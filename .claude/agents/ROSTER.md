@@ -520,3 +520,10 @@ research_request_block's armed-no-claimed-sections arm wording.
   ~20k chars burned re-mining; b7516297b's spec-path+index fix is exactly the remedy, r6d measures it.
   Its ASK-FOLD waited=5s suspicion: answered from doctrine — the 5s bounds waiting on a HUMAN under
   benchmark mode (plan §5's exempt class), not model work; no code read needed. Charter gap: none.
+- 2026-08-31 12:55 swarm-surgeon (filler door, 331a1a09c): EXEMPLARY. The brief named one seam; the
+  per-arm audit found SEVEN and the two worst were unbriefed (prereview riding filler into the SINK's
+  prompt; reflect shipping filler into SKILL.md read by FUTURE runs). One shared named door
+  (supervised_reply_text in supervision.rs), schedjudge's vocabulary reused, MAX_TURNS_MESSAGE made
+  pub via the JUDGE_ENDED_NEEDLE pattern, both traces YES on archived events. Reported HEAD's failing
+  now_doc_recipe honestly instead of silently fixing out-of-scope — orchestrator trued the citation
+  (test now reads ladder.rs; NOW.md names the symbol; 3/3 green). Charter gap: none.
