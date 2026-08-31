@@ -15,3 +15,4 @@ SCHEDULED requires a named condition, not a vague "later".
 Ratio so far: 3 implemented/resolved : 2 dropped-with-reason : 1 scheduled-with-condition (#3).
 
 | 6 | Download-progress rows vanish from view when switching tabs mid-download (state lives in ModelsSection; backend keeps downloading) | SCHEDULED | Next UI round — lift tracker state to the view shell |
+| 7 | Mount picker can preselect an incomplete model; Mount not gated on completeness (backend refuses loudly today) | IMPLEMENT | Next UI touch — disable Mount + incomplete tag in the picker |

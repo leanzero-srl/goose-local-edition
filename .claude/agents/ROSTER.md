@@ -446,3 +446,16 @@ research_request_block's armed-no-claimed-sections arm wording.
   spawn PATH, per-model profiles as the only sampling read path, exact-wire-name reporting for the
   panel-surgeon handoff. First delegation: dynamic filter vocabularies + sizes + model card +
   pause/resume/cancel-deletes + disk space.
+- 2026-08-31 17:20 mlx-backend first delegation (dynamic vocab/sizes/card/lifecycle, c19c28a7f,
+  ran as general-purpose under the charter file pre-registry-refresh): CLEAN++. Refused HF's own
+  tags endpoint WITH evidence (no arch bucket, grep-zero for qwen3_5); proved every vocab arch is
+  server-filterable (708/708); refused the sizes N+1 under the pagination mandate and shipped a
+  0.003%-verified estimate labeled as one; Range-resume proven byte-for-byte through both redirect
+  classes; corrected the orchestrator's masquerade theory from the on-disk evidence (fixtures were
+  pre-shard cancels) while still pinning the REAL masquerade case by test. Charter held end to end.
+- 2026-08-31 17:50 panel-surgeon (HF browser round two, 532858ab9): CLEAN++. All seven items;
+  shared DownloadProgressRow unified three render sites; queued item #6 (tab-switch progress)
+  fixed in passing as briefed; two live-caught defects fixed (frameless-titlebar overlap, done-row
+  lingering after delete); restored the owner's disk state after a driver miss-click and said so;
+  honest not-live-verified list incl. declining the 10GB residue resume per brief. Screenshots to
+  ~/goose-screenshots/ — a user-visible location, better than scratchpad; adopt as the convention.
