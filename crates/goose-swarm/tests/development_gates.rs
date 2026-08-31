@@ -251,9 +251,13 @@ fn the_banned_integrate_template_only_shrinks() {
 /// `planner_grade`/`planner_rank` there), paying for the mid-run aux router wiring in the same
 /// commit — the `InflightGuard` door count in `run_agent_in_inner`, `aux_model_for_call`, the
 /// omni-look and replanner reroutes, and the `aux_routed` event.
+/// Tightened to 42,635 (r6c steer-delivery write-progress arms): the inline drift-streak rule
+/// and its test moved to commands/swarm/ladder.rs as `drift_streak_step` (with `write_progress`
+/// beside `wrong_channel_stall`), paying for the owned-bytes baselines and the write-progress
+/// wiring at the omni seam in the same commit.
 #[test]
 fn swarm_rs_line_count_only_decreases() {
-    const SWARM_RS_LINE_BASELINE: usize = 42_640;
+    const SWARM_RS_LINE_BASELINE: usize = 42_635;
     let text = read("crates/goose-cli/src/commands/swarm.rs");
     let n = text.lines().count();
     assert!(
