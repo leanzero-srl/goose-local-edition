@@ -5,7 +5,9 @@
 
 use super::*;
 use crate::config::ConfigError;
-use goose_sidecar::engine::{expand_tilde, global_manager, EngineSettings, MlxEngineManager};
+use goose_sidecar::engine::{
+    expand_tilde, global_manager, EngineSettings, MlxEngineManager, ModelProfile,
+};
 use goose_sidecar::hf::{self, DownloadTracker};
 use std::sync::LazyLock;
 
@@ -13,12 +15,22 @@ const MLX_ENGINE_CONFIG_KEY: &str = "mlx_engine";
 
 static DOWNLOAD_TRACKER: LazyLock<DownloadTracker> = LazyLock::new(DownloadTracker::new);
 
+/// Every settings load runs the legacy-flats → per-model-profile migration and persists
+/// it the one time it changes anything, so all paths (status, mount, read, list) see
+/// profile truth. Older configs kept sampling in flat engine-wide fields; profiles are
+/// per model.
 fn load_engine_settings() -> Result<EngineSettings, agent_client_protocol::Error> {
-    match Config::global().get_param::<EngineSettings>(MLX_ENGINE_CONFIG_KEY) {
-        Ok(settings) => Ok(settings),
-        Err(ConfigError::NotFound(_)) => Ok(EngineSettings::default()),
-        Err(e) => Err(e).internal_err_ctx("reading mlx_engine config"),
+    let mut settings = match Config::global().get_param::<EngineSettings>(MLX_ENGINE_CONFIG_KEY) {
+        Ok(settings) => settings,
+        Err(ConfigError::NotFound(_)) => EngineSettings::default(),
+        Err(e) => return Err(e).internal_err_ctx("reading mlx_engine config"),
+    };
+    if settings.migrate_legacy() {
+        Config::global()
+            .set_param(MLX_ENGINE_CONFIG_KEY, &settings)
+            .internal_err_ctx("persisting migrated mlx_engine config")?;
     }
+    Ok(settings)
 }
 
 fn synced_manager() -> Result<&'static MlxEngineManager, agent_client_protocol::Error> {
@@ -37,6 +49,32 @@ async fn huggingface_token() -> Option<String> {
     }
 }
 
+fn profile_to_dto(profile: ModelProfile) -> MlxModelProfileDto {
+    MlxModelProfileDto {
+        temperature: profile.temperature,
+        top_p: profile.top_p,
+        top_k: profile.top_k,
+        min_p: profile.min_p,
+        repetition_penalty: profile.repetition_penalty,
+        presence_penalty: profile.presence_penalty,
+        frequency_penalty: profile.frequency_penalty,
+        context_limit: profile.context_limit,
+    }
+}
+
+fn profile_from_dto(dto: MlxModelProfileDto) -> ModelProfile {
+    ModelProfile {
+        temperature: dto.temperature,
+        top_p: dto.top_p,
+        top_k: dto.top_k,
+        min_p: dto.min_p,
+        repetition_penalty: dto.repetition_penalty,
+        presence_penalty: dto.presence_penalty,
+        frequency_penalty: dto.frequency_penalty,
+        context_limit: dto.context_limit,
+    }
+}
+
 fn settings_to_dto(settings: EngineSettings) -> MlxEngineSettingsDto {
     MlxEngineSettingsDto {
         model_id: settings.model_id,
@@ -52,6 +90,11 @@ fn settings_to_dto(settings: EngineSettings) -> MlxEngineSettingsDto {
         frequency_penalty: settings.frequency_penalty,
         served_model_name: settings.served_model_name,
         spawn_command: settings.spawn_command,
+        model_profiles: settings
+            .model_profiles
+            .into_iter()
+            .map(|(id, p)| (id, profile_to_dto(p)))
+            .collect(),
     }
 }
 
@@ -70,6 +113,11 @@ fn settings_from_dto(dto: MlxEngineSettingsDto) -> EngineSettings {
         frequency_penalty: dto.frequency_penalty,
         served_model_name: dto.served_model_name,
         spawn_command: dto.spawn_command,
+        model_profiles: dto
+            .model_profiles
+            .into_iter()
+            .map(|(id, p)| (id, profile_from_dto(p)))
+            .collect(),
     }
 }
 
@@ -150,7 +198,10 @@ impl GooseAcpAgent {
         &self,
         req: MlxEngineSettingsUpdateRequest,
     ) -> Result<MlxEngineSettingsResponse, agent_client_protocol::Error> {
-        let settings = settings_from_dto(req.settings);
+        let mut settings = settings_from_dto(req.settings);
+        // A legacy UI state may still send flat sampling fields — same migration,
+        // so what persists is always profile truth.
+        settings.migrate_legacy();
         Config::global()
             .set_param(MLX_ENGINE_CONFIG_KEY, &settings)
             .internal_err_ctx("persisting mlx_engine config")?;
@@ -206,6 +257,53 @@ impl GooseAcpAgent {
                     updated_at: h.updated_at,
                 })
                 .collect(),
+        })
+    }
+
+    pub(super) async fn on_mlx_engine_browse(
+        &self,
+        req: MlxEngineBrowseRequest,
+    ) -> Result<MlxEngineBrowseResponse, agent_client_protocol::Error> {
+        let sort = match req.sort.as_str() {
+            "downloads" => hf::BrowseSort::Downloads,
+            "newest" => hf::BrowseSort::Newest,
+            other => {
+                return Err(anyhow::anyhow!(
+                    "invalid sort '{other}': expected \"downloads\" or \"newest\""
+                ))
+                .invalid_params_err()
+            }
+        };
+        let params = hf::BrowseParams {
+            query: req.query,
+            author: req.author,
+            quant: req.quant,
+            arch: req.arch,
+            sort,
+            cursor: req.cursor,
+            limit: req.limit.unwrap_or(20),
+        };
+        let token = huggingface_token().await;
+        let page = hf::browse_mlx_models(&params, token.as_deref())
+            .await
+            .internal_err()?;
+        Ok(MlxEngineBrowseResponse {
+            hits: page
+                .hits
+                .into_iter()
+                .map(|h| MlxBrowseHitDto {
+                    id: h.id,
+                    author: h.author,
+                    downloads: h.downloads,
+                    likes: h.likes,
+                    created_at: h.created_at,
+                    last_modified: h.last_modified,
+                    tags: h.tags,
+                    quant: h.quant,
+                    arch: h.arch,
+                })
+                .collect(),
+            next_cursor: page.next_cursor,
         })
     }
 

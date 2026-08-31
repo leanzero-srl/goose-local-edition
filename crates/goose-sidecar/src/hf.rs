@@ -1,9 +1,12 @@
-//! HuggingFace Hub access for the MLX engine: MLX-only model search, repo file listing,
-//! background snapshot downloads into a local models dir, and local model inventory.
+//! HuggingFace Hub access for the MLX engine: MLX-only model search and paginated
+//! browse, repo file listing, background snapshot downloads into a local models dir,
+//! and local model inventory.
 //!
 //! Every network shape here was verified against the live API: `filter=mlx` is the
-//! parameter that actually restricts results to MLX repos (`library=mlx` does not), and
-//! `expand[]` is required for `lastModified`/`downloads`/`likes` to appear in search hits.
+//! parameter that actually restricts results to MLX repos (`library=mlx` does not),
+//! `expand[]` is required for `lastModified`/`downloads`/`likes`/`createdAt`/`tags` to
+//! appear in hits, repeated `filter` params AND-combine, and pagination rides the Link
+//! rel="next" header.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -115,6 +118,302 @@ pub async fn search_mlx_models(
         .context("GET huggingface.co/api/models (search)")?;
     let body = read_success_body(resp, "HuggingFace model search").await?;
     serde_json::from_str(&body).context("parsing HuggingFace search response")
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BrowseSort {
+    Downloads,
+    Newest,
+}
+
+#[derive(Debug, Clone)]
+pub struct BrowseParams {
+    pub query: Option<String>,
+    pub author: Option<String>,
+    pub quant: Option<String>,
+    pub arch: Option<String>,
+    pub sort: BrowseSort,
+    /// Opaque continuation from a previous page's `next_cursor` (the Link rel="next"
+    /// URL). When set, every other parameter is already baked into it.
+    pub cursor: Option<String>,
+    pub limit: u32,
+}
+
+impl Default for BrowseParams {
+    fn default() -> Self {
+        Self {
+            query: None,
+            author: None,
+            quant: None,
+            arch: None,
+            sort: BrowseSort::Downloads,
+            cursor: None,
+            limit: 20,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BrowseHit {
+    pub id: String,
+    /// The `publisher` prefix of `id`.
+    pub author: String,
+    pub downloads: u64,
+    pub likes: u64,
+    pub created_at: Option<String>,
+    pub last_modified: Option<String>,
+    pub tags: Vec<String>,
+    /// DERIVED display field: the repo's `N-bit` tag when present, else parsed from
+    /// the repo name (`(\d+)[-_]?bit`). Not what the server filtered on unless the
+    /// caller also set `BrowseParams::quant`.
+    pub quant: Option<String>,
+    /// DERIVED display field: the most specific measured architecture tag present,
+    /// else a boundary-checked keyword match against the repo name.
+    pub arch: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BrowsePage {
+    pub hits: Vec<BrowseHit>,
+    pub next_cursor: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct BrowseApiHit {
+    id: String,
+    #[serde(default)]
+    downloads: u64,
+    #[serde(default)]
+    likes: u64,
+    #[serde(default, rename = "createdAt")]
+    created_at: Option<String>,
+    #[serde(default, rename = "lastModified")]
+    last_modified: Option<String>,
+    #[serde(default)]
+    tags: Vec<String>,
+}
+
+/// Architecture (`config.model_type`) tags measured live on MLX repos (2026-08-31):
+/// every entry returned hits for `filter=mlx&filter=<tag>`, sampled from 250 real tag
+/// arrays plus per-family probes. `baichuan` returned zero MLX hits and is deliberately
+/// absent. Derivation picks the LONGEST entry that matches, so `qwen3_5` beats `qwen`.
+const MEASURED_ARCH_TAGS: &[&str] = &[
+    "qwen3_5_moe",
+    "qwen3_5",
+    "qwen3_moe",
+    "qwen3_vl",
+    "qwen4_exp",
+    "qwen3",
+    "qwen2",
+    "qwen",
+    "gemma4_unified",
+    "gemma4",
+    "gemma3",
+    "glm4_moe",
+    "glm4v",
+    "glm4",
+    "deepseek_v3",
+    "deepseek_v2",
+    "kimi_k25",
+    "kimi_k2",
+    "lfm2_moe",
+    "lfm2",
+    "gpt_oss",
+    "smollm3",
+    "starcoder2",
+    "ernie4_5",
+    "mixtral",
+    "mistral",
+    "phi3",
+    "phi",
+    "llama",
+    "granite",
+    "olmo2",
+    "minimax",
+    "mamba",
+    "cohere",
+    "nemotron",
+    "exaone",
+    "whisper",
+    "internvl",
+];
+
+fn is_bit_tag(tag: &str) -> bool {
+    tag.strip_suffix("-bit")
+        .is_some_and(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()))
+}
+
+/// `(\d+)[-_]?bit` over the lowercased id; first digit-backed occurrence wins,
+/// normalized to the tag form `N-bit`.
+fn quant_from_name(id: &str) -> Option<String> {
+    let lower = id.to_ascii_lowercase();
+    let bytes = lower.as_bytes();
+    for (i, _) in lower.match_indices("bit") {
+        let mut end = i;
+        if end > 0 && matches!(bytes[end - 1], b'-' | b'_') {
+            end -= 1;
+        }
+        let mut start = end;
+        while start > 0 && bytes[start - 1].is_ascii_digit() {
+            start -= 1;
+        }
+        if start < end {
+            return Some(format!("{}-bit", &lower[start..end]));
+        }
+    }
+    None
+}
+
+pub fn derive_quant(id: &str, tags: &[String]) -> Option<String> {
+    tags.iter()
+        .find(|t| is_bit_tag(t))
+        .cloned()
+        .or_else(|| quant_from_name(id))
+}
+
+/// Keyword occurs in the `[.-/]→_` normalized name at a token boundary: nothing
+/// alphanumeric immediately before it, no letter immediately after (a trailing digit
+/// is allowed so `llama31` still reads as llama).
+fn name_contains_keyword(norm: &str, keyword: &str) -> bool {
+    let bytes = norm.as_bytes();
+    let mut from = 0;
+    while let Some(pos) = norm[from..].find(keyword) {
+        let start = from + pos;
+        let end = start + keyword.len();
+        let before_ok = start == 0
+            || !(bytes[start - 1].is_ascii_lowercase() || bytes[start - 1].is_ascii_digit());
+        let after_ok = end == norm.len() || !bytes[end].is_ascii_lowercase();
+        if before_ok && after_ok {
+            return true;
+        }
+        from = start + 1;
+    }
+    false
+}
+
+pub fn derive_arch(id: &str, tags: &[String]) -> Option<String> {
+    if let Some(best) = MEASURED_ARCH_TAGS
+        .iter()
+        .filter(|a| tags.iter().any(|t| t == **a))
+        .max_by_key(|a| a.len())
+    {
+        return Some((*best).to_string());
+    }
+    let norm: String = id
+        .to_ascii_lowercase()
+        .chars()
+        .map(|c| if matches!(c, '.' | '-' | '/') { '_' } else { c })
+        .collect();
+    MEASURED_ARCH_TAGS
+        .iter()
+        .filter(|a| name_contains_keyword(&norm, a))
+        .max_by_key(|a| a.len())
+        .map(|a| a.to_string())
+}
+
+/// Accepts `4`, `4bit`, `4-bit`, `4_bit` (any case) and yields the HF tag form `4-bit`.
+/// Anything else is refused loudly — a quant filter that cannot become a real tag would
+/// silently return the unfiltered listing.
+fn normalize_quant_filter(input: &str) -> Result<String> {
+    let s = input.trim().to_ascii_lowercase();
+    let digits_end = s
+        .bytes()
+        .position(|b| !b.is_ascii_digit())
+        .unwrap_or(s.len());
+    let (digits, rest) = s.split_at(digits_end);
+    ensure!(
+        !digits.is_empty() && matches!(rest, "" | "bit" | "-bit" | "_bit"),
+        "invalid quant filter '{input}': expected a bit width like '4-bit'"
+    );
+    Ok(format!("{digits}-bit"))
+}
+
+/// Paginated MLX model browse. Every filter is applied SERVER-SIDE, each shape measured
+/// live (2026-08-31): repeated `filter` params AND-combine (`filter=4-bit` alone returns
+/// non-MLX repos; combined with `filter=mlx`, only repos carrying both tags),
+/// `author`/`search` restrict as documented, `sort=createdAt&direction=-1` with
+/// `expand[]=createdAt` pages in strictly descending creation order, and the Link
+/// rel="next" header carries the whole query (HF rewrites `expand[]=` to `expand=`
+/// there; the API honors both). The quant/arch filters match HF *tags*, so repos whose
+/// bit width appears only in the NAME (18 of the top 50 mlx-community repos) are not
+/// returned by a quant filter — honest under-inclusion, never wrong pagination.
+pub async fn browse_mlx_models(params: &BrowseParams, token: Option<&str>) -> Result<BrowsePage> {
+    let client = api_client()?;
+    let mut req = match &params.cursor {
+        Some(cursor) => {
+            let prefix = format!("{HF_BASE}/api/models?");
+            ensure!(
+                cursor.starts_with(&prefix),
+                "invalid browse cursor: expected a previous page's '{prefix}…' URL"
+            );
+            client.get(cursor)
+        }
+        None => {
+            let mut query: Vec<(&str, String)> = vec![("filter", "mlx".to_string())];
+            if let Some(quant) = &params.quant {
+                query.push(("filter", normalize_quant_filter(quant)?));
+            }
+            if let Some(arch) = &params.arch {
+                let arch = arch.trim().to_ascii_lowercase();
+                ensure!(!arch.is_empty(), "arch filter is empty");
+                query.push(("filter", arch));
+            }
+            if let Some(search) = params.query.as_deref().map(str::trim) {
+                if !search.is_empty() {
+                    query.push(("search", search.to_string()));
+                }
+            }
+            if let Some(author) = params.author.as_deref().map(str::trim) {
+                if !author.is_empty() {
+                    query.push(("author", author.to_string()));
+                }
+            }
+            match params.sort {
+                BrowseSort::Downloads => query.push(("sort", "downloads".to_string())),
+                BrowseSort::Newest => {
+                    query.push(("sort", "createdAt".to_string()));
+                    query.push(("direction", "-1".to_string()));
+                }
+            }
+            query.push(("limit", params.limit.clamp(1, 50).to_string()));
+            for field in ["downloads", "likes", "createdAt", "lastModified", "tags"] {
+                query.push(("expand[]", field.to_string()));
+            }
+            client.get(format!("{HF_BASE}/api/models")).query(&query)
+        }
+    };
+    if let Some(token) = token {
+        req = req.bearer_auth(token);
+    }
+    let resp = req
+        .send()
+        .await
+        .context("GET huggingface.co/api/models (browse)")?;
+    let next_cursor = next_page_url(resp.headers());
+    let body = read_success_body(resp, "HuggingFace model browse").await?;
+    let raw: Vec<BrowseApiHit> =
+        serde_json::from_str(&body).context("parsing HuggingFace browse response")?;
+    let hits = raw
+        .into_iter()
+        .map(|h| {
+            let quant = derive_quant(&h.id, &h.tags);
+            let arch = derive_arch(&h.id, &h.tags);
+            let author = h.id.split('/').next().unwrap_or_default().to_string();
+            BrowseHit {
+                author,
+                downloads: h.downloads,
+                likes: h.likes,
+                created_at: h.created_at,
+                last_modified: h.last_modified,
+                quant,
+                arch,
+                tags: h.tags,
+                id: h.id,
+            }
+        })
+        .collect();
+    Ok(BrowsePage { hits, next_cursor })
 }
 
 #[derive(Debug, Deserialize)]
@@ -587,6 +886,263 @@ mod tests {
         assert!(
             !by_id("pub/no-weights").complete,
             "no safetensors must mark incomplete"
+        );
+    }
+
+    fn tags(list: &[&str]) -> Vec<String> {
+        list.iter().map(|s| s.to_string()).collect()
+    }
+
+    /// Real tag arrays captured live from the HF API on 2026-08-31.
+    #[test]
+    fn quant_and_arch_derivation_on_real_hf_fixtures() {
+        // Tagged 4-bit AND gpt_oss although the NAME says MXFP4-Q8 — tags must win.
+        let gpt_oss = tags(&[
+            "mlx",
+            "safetensors",
+            "gpt_oss",
+            "vllm",
+            "text-generation",
+            "conversational",
+            "base_model:openai/gpt-oss-20b",
+            "base_model:quantized:openai/gpt-oss-20b",
+            "license:apache-2.0",
+            "4-bit",
+            "region:us",
+        ]);
+        let id = "mlx-community/gpt-oss-20b-MXFP4-Q8";
+        assert_eq!(derive_quant(id, &gpt_oss), Some("4-bit".to_string()));
+        assert_eq!(derive_arch(id, &gpt_oss), Some("gpt_oss".to_string()));
+
+        // No bit tag at all — quant must come from the NAME; arch must prefer the
+        // model_type tag qwen2 over the looser qwen also present.
+        let qwen25 = tags(&[
+            "transformers",
+            "safetensors",
+            "qwen2",
+            "text-generation",
+            "code",
+            "codeqwen",
+            "chat",
+            "qwen",
+            "qwen-coder",
+            "mlx",
+            "conversational",
+            "en",
+            "base_model:Qwen/Qwen2.5-Coder-7B",
+            "base_model:finetune:Qwen/Qwen2.5-Coder-7B",
+            "license:apache-2.0",
+            "text-generation-inference",
+            "endpoints_compatible",
+            "region:us",
+        ]);
+        let id = "mlx-community/Qwen2.5-Coder-7B-Instruct-4bit";
+        assert_eq!(derive_quant(id, &qwen25), Some("4-bit".to_string()));
+        assert_eq!(derive_arch(id, &qwen25), Some("qwen2".to_string()));
+
+        // qwen3_5 model_type tag plus 4-bit tag.
+        let qwen38 = tags(&[
+            "mlx",
+            "safetensors",
+            "qwen3_5",
+            "image-text-to-text",
+            "conversational",
+            "base_model:Qwen/Qwen3.8-27B",
+            "base_model:quantized:Qwen/Qwen3.8-27B",
+            "license:apache-2.0",
+            "4-bit",
+            "region:us",
+        ]);
+        let id = "mlx-community/Qwen3.8-27B-4bit";
+        assert_eq!(derive_quant(id, &qwen38), Some("4-bit".to_string()));
+        assert_eq!(derive_arch(id, &qwen38), Some("qwen3_5".to_string()));
+
+        // Tag is kimi_k25 (measured, in the set); quant from tag.
+        let kimi = tags(&[
+            "mlx",
+            "safetensors",
+            "kimi_k25",
+            "text-generation",
+            "conversational",
+            "custom_code",
+            "base_model:moonshotai/Kimi-K2.5",
+            "base_model:quantized:moonshotai/Kimi-K2.5",
+            "license:other",
+            "4-bit",
+            "region:us",
+        ]);
+        let id = "mlx-community/Kimi-K2.5";
+        assert_eq!(derive_quant(id, &kimi), Some("4-bit".to_string()));
+        assert_eq!(derive_arch(id, &kimi), Some("kimi_k25".to_string()));
+
+        // ASR model: no bit tag, no bit in name, no measured arch — both honestly None.
+        let parakeet = tags(&[
+            "mlx",
+            "safetensors",
+            "automatic-speech-recognition",
+            "speech",
+            "audio",
+            "FastConformer",
+            "Conformer",
+            "Parakeet",
+            "base_model:nvidia/parakeet-tdt-0.6b-v2",
+            "base_model:finetune:nvidia/parakeet-tdt-0.6b-v2",
+            "license:cc-by-4.0",
+            "region:us",
+        ]);
+        let id = "mlx-community/parakeet-tdt-0.6b-v2";
+        assert_eq!(derive_quant(id, &parakeet), None);
+        assert_eq!(derive_arch(id, &parakeet), None);
+    }
+
+    #[test]
+    fn quant_name_fallback_shapes() {
+        let no_tags: Vec<String> = Vec::new();
+        for (id, expect) in [
+            ("pub/Model-4bit", Some("4-bit")),
+            ("pub/Model-8-bit", Some("8-bit")),
+            ("pub/Model_6_bit", Some("6-bit")),
+            ("pub/Orbit-Explorer", None),
+            ("pub/plain-model", None),
+        ] {
+            assert_eq!(
+                derive_quant(id, &no_tags),
+                expect.map(str::to_string),
+                "id: {id}"
+            );
+        }
+    }
+
+    #[test]
+    fn arch_name_fallback_respects_token_boundaries() {
+        let no_tags: Vec<String> = Vec::new();
+        for (id, expect) in [
+            ("mlx-community/Qwen3.5-9B-MLX-4bit", Some("qwen3_5")),
+            ("mlx-community/Llama-3.1-8B-Instruct-4bit", Some("llama")),
+            ("mlx-community/Kimi-K2.5", Some("kimi_k2")),
+            ("pub/Phi-3-mini", Some("phi")),
+            // "phi" inside a longer word must not match.
+            ("pub/Sapphire-Model", None),
+            ("pub/Delphi-Tools", None),
+        ] {
+            assert_eq!(
+                derive_arch(id, &no_tags),
+                expect.map(str::to_string),
+                "id: {id}"
+            );
+        }
+    }
+
+    #[test]
+    fn quant_filter_normalization_is_loud_on_garbage() {
+        for input in ["4", "4bit", "4-Bit", "4_bit", " 4-bit "] {
+            assert_eq!(
+                normalize_quant_filter(input).unwrap(),
+                "4-bit",
+                "input: {input}"
+            );
+        }
+        assert_eq!(normalize_quant_filter("16bit").unwrap(), "16-bit");
+        for bad in ["", "bit", "four-bit", "4bits", "mxfp4", "-4bit"] {
+            assert!(
+                normalize_quant_filter(bad).is_err(),
+                "'{bad}' must be refused"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn browse_cursor_must_be_an_hf_models_url() {
+        let params = BrowseParams {
+            cursor: Some("https://evil.example/steal?token".to_string()),
+            ..Default::default()
+        };
+        let err = browse_mlx_models(&params, Some("secret"))
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("invalid browse cursor"), "got: {err}");
+    }
+
+    // Live API tests: `cargo test -p goose-sidecar -- --ignored` runs them once against
+    // the real HF API; the shapes they pin were measured with curl on 2026-08-31.
+
+    #[tokio::test]
+    #[ignore = "hits huggingface.co; run with --features rustls-tls -- --ignored"]
+    async fn live_browse_two_page_pagination_via_cursor() {
+        let params = BrowseParams {
+            author: Some("mlx-community".to_string()),
+            limit: 5,
+            ..Default::default()
+        };
+        let page1 = browse_mlx_models(&params, None).await.unwrap();
+        assert_eq!(page1.hits.len(), 5);
+        let cursor = page1
+            .next_cursor
+            .clone()
+            .expect("page 1 must have a next cursor");
+
+        let page2 = browse_mlx_models(
+            &BrowseParams {
+                cursor: Some(cursor),
+                ..Default::default()
+            },
+            None,
+        )
+        .await
+        .unwrap();
+        assert_eq!(page2.hits.len(), 5);
+        let ids1: std::collections::HashSet<_> = page1.hits.iter().map(|h| &h.id).collect();
+        assert!(
+            page2.hits.iter().all(|h| !ids1.contains(&h.id)),
+            "pages overlap"
+        );
+        let min1 = page1.hits.iter().map(|h| h.downloads).min().unwrap();
+        let max2 = page2.hits.iter().map(|h| h.downloads).max().unwrap();
+        assert!(
+            max2 <= min1,
+            "page 2 must continue the downloads ordering: {max2} > {min1}"
+        );
+    }
+
+    #[tokio::test]
+    #[ignore = "hits huggingface.co; run with --features rustls-tls -- --ignored"]
+    async fn live_browse_author_filter_is_server_side() {
+        let params = BrowseParams {
+            author: Some("mlx-community".to_string()),
+            limit: 10,
+            ..Default::default()
+        };
+        let page = browse_mlx_models(&params, None).await.unwrap();
+        assert!(!page.hits.is_empty());
+        for hit in &page.hits {
+            assert_eq!(hit.author, "mlx-community", "id: {}", hit.id);
+            assert!(hit.id.starts_with("mlx-community/"), "id: {}", hit.id);
+        }
+    }
+
+    #[tokio::test]
+    #[ignore = "hits huggingface.co; run with --features rustls-tls -- --ignored"]
+    async fn live_browse_newest_returns_descending_created_at() {
+        let params = BrowseParams {
+            sort: BrowseSort::Newest,
+            limit: 10,
+            ..Default::default()
+        };
+        let page = browse_mlx_models(&params, None).await.unwrap();
+        assert!(page.hits.len() >= 2);
+        let dates: Vec<&String> = page
+            .hits
+            .iter()
+            .map(|h| {
+                h.created_at
+                    .as_ref()
+                    .expect("expand[]=createdAt must deliver createdAt")
+            })
+            .collect();
+        assert!(
+            dates.windows(2).all(|w| w[0] >= w[1]),
+            "createdAt not descending: {dates:?}"
         );
     }
 
