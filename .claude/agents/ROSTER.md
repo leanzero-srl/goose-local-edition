@@ -448,3 +448,8 @@ research_request_block's armed-no-claimed-sections arm wording.
   no recurrence measurement exists anywhere in r5's record). Replay validated against the desk rows
   to 3-4 decimals; enumerated all ~38 ladder locals; named the eternal-hold liveness answer honestly
   and the reader-rung remedy in gate-7 terms (words, not a counter). 8/8 pattern holds.
+- 2026-08-31 09:05 swarm-surgeon (fan fold, ecc7f168d): EXEMPLARY — REFUTED THE BRIEF from the archive
+  before building (0 of 48 raises ever dispatched; the growth curve was a queue drain), then shipped
+  the part that was real (raises fold into briefs — previously unread), refused to mint a one-value
+  generation field as hardcoding, and named the actual fan cost driver (933s/question mean, two
+  65-min outliers). The orchestrator's brief committed the shape-not-words error the gates exist for.
