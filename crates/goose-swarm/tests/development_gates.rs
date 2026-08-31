@@ -243,9 +243,12 @@ fn the_banned_integrate_template_only_shrinks() {
 /// sibling-owned dangling ref into a do-not-write line naming the owner and its measured state).
 /// Raised to 42,746 (brief-authorized, r6e smalls): +5 lines of event/prompt fidelity in place —
 /// `wrong_channel` on `judge_restream_held`, OK-verdict ESTABLISHED, ETA own-line placement.
+/// Tightened to 42,692 (r6e lane-view extension): `emit_delivery_defects` routes through
+/// `lane_defect_view` (+15 wired), paid for by moving `owned_files_from_run_log` + its test to
+/// judge_context.rs (-69) per the split law.
 #[test]
 fn swarm_rs_line_count_only_decreases() {
-    const SWARM_RS_LINE_BASELINE: usize = 42_746;
+    const SWARM_RS_LINE_BASELINE: usize = 42_692;
     let text = read("crates/goose-cli/src/commands/swarm.rs");
     let n = text.lines().count();
     assert!(
