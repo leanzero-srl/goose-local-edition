@@ -501,6 +501,9 @@ pub struct Usage {
     pub reasoning_tokens: Option<i32>,
     pub model: String,
     pub provider_metadata_json: Option<String>,
+    /// Provider-specific response fields as a JSON object, present only when the
+    /// provider reported fields with no canonical `Usage` equivalent.
+    pub additional_data_json: Option<String>,
 }
 
 impl Usage {
@@ -514,6 +517,11 @@ impl Usage {
             reasoning_tokens: None,
             model: usage.model.clone(),
             provider_metadata_json: Some(serde_json::to_string(usage)?),
+            additional_data_json: usage
+                .additional_data
+                .as_ref()
+                .map(serde_json::to_string)
+                .transpose()?,
         })
     }
 }
@@ -1360,6 +1368,43 @@ mod tests {
 
         assert_eq!(tool.name.as_ref(), "lookup");
         assert_eq!(tool.input_schema["type"], "object");
+    }
+
+    #[test]
+    fn usage_exposes_provider_additional_data() {
+        let mut provider_usage = ProviderUsage::new(
+            "claude-sonnet-4-5".to_string(),
+            goose_providers::conversation::token_usage::Usage::new(Some(10), Some(5), None),
+        );
+        provider_usage.additional_data = Some(
+            serde_json::json!({ "service_tier": "fast" })
+                .as_object()
+                .unwrap()
+                .clone(),
+        );
+
+        let additional_data_json = Usage::from_provider_usage(&provider_usage)
+            .unwrap()
+            .additional_data_json
+            .expect("additional data should be exposed");
+
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&additional_data_json).unwrap(),
+            serde_json::json!({ "service_tier": "fast" })
+        );
+    }
+
+    #[test]
+    fn usage_omits_provider_additional_data_when_absent() {
+        let provider_usage = ProviderUsage::new(
+            "claude-sonnet-4-5".to_string(),
+            goose_providers::conversation::token_usage::Usage::new(Some(10), Some(5), None),
+        );
+
+        assert!(Usage::from_provider_usage(&provider_usage)
+            .unwrap()
+            .additional_data_json
+            .is_none());
     }
 
     #[test]

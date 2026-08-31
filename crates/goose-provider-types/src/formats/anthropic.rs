@@ -13,7 +13,7 @@ use rmcp::model::{
     ResourceContents, Role, Tool,
 };
 use rmcp::object as json_object;
-use serde_json::{json, Value};
+use serde_json::{json, Map, Value};
 use std::collections::HashSet;
 use std::fmt;
 use std::str::FromStr;
@@ -663,6 +663,18 @@ pub fn get_usage(data: &Value) -> Result<Usage> {
     }
 }
 
+/// Anthropic response fields that have no canonical `ProviderUsage` equivalent.
+const ADDITIONAL_USAGE_FIELDS: [&str; 1] = ["service_tier"];
+
+pub fn get_additional_data(data: &Value) -> Option<Map<String, Value>> {
+    let usage = data.get("usage")?.as_object()?;
+    let additional: Map<String, Value> = ADDITIONAL_USAGE_FIELDS
+        .iter()
+        .filter_map(|field| Some(((*field).to_string(), usage.get(*field)?.clone())))
+        .collect();
+    (!additional.is_empty()).then_some(additional)
+}
+
 fn provider_usage_with_cost(
     model: String,
     usage: Usage,
@@ -896,6 +908,7 @@ where
         let mut message_id: Option<String> = None;
         let mut thinking: Option<ThinkingState> = None;
         let mut stop_reason: Option<String> = None;
+        let mut additional_data: Option<Map<String, Value>> = None;
 
         while let Some(line_result) = stream.next().await {
             let line = line_result?;
@@ -925,6 +938,7 @@ where
             match event.event_type.as_str() {
                 EVENT_MESSAGE_START => {
                     if let Some(message_data) = event.data.get("message") {
+                        additional_data = get_additional_data(message_data);
                         if let Some(id) = message_data.get("id").and_then(|v| v.as_str()) {
                             message_id = Some(id.to_string());
                         }
@@ -1104,6 +1118,7 @@ where
                             if let Some(mut usage) = final_usage.take() {
                                 usage.finish_reasons = Some(vec![STOP_REASON_REFUSAL.to_string()]);
                                 usage.response_id = message_id.clone();
+                                usage.additional_data = additional_data.clone();
                                 yield (None, Some(usage));
                             }
                             Err(ProviderError::Refusal { details, category })?;
@@ -1185,6 +1200,7 @@ where
             if let Some(id) = message_id {
                 usage.response_id = Some(id);
             }
+            usage.additional_data = additional_data;
             yield (None, Some(usage));
         }
     }
@@ -2443,6 +2459,57 @@ mod tests {
             Some(&["end_turn".to_string()][..])
         );
         assert_eq!(usage.response_id.as_deref(), Some("msg_1"));
+    }
+
+    async fn streamed_usage(events: &str) -> ProviderUsage {
+        collect_stream_results(events)
+            .await
+            .into_iter()
+            .filter_map(|r| r.ok().and_then(|(_, usage)| usage))
+            .next_back()
+            .expect("stream should yield usage")
+    }
+
+    #[tokio::test]
+    async fn test_streaming_surfaces_additional_usage_data() {
+        let events = concat!(
+            r#"data: {"type":"message_start","message":{"id":"msg_1","role":"assistant","content":[],"model":"claude-sonnet-4-5","usage":{"input_tokens":7,"output_tokens":0,"service_tier":"fast"}}}"#,
+            "\n",
+            r#"data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}"#,
+            "\n",
+            r#"data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Hi"}}"#,
+            "\n",
+            r#"data: {"type":"content_block_stop","index":0}"#,
+            "\n",
+            r#"data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":25}}"#,
+            "\n",
+            r#"data: {"type":"message_stop"}"#,
+        );
+
+        let additional = streamed_usage(events)
+            .await
+            .additional_data
+            .expect("additional data should be reported");
+        assert_eq!(additional["service_tier"], json!("fast"));
+    }
+
+    #[tokio::test]
+    async fn test_streaming_omits_additional_usage_data_when_absent() {
+        let events = concat!(
+            r#"data: {"type":"message_start","message":{"id":"msg_1","role":"assistant","content":[],"model":"claude-sonnet-4-5","usage":{"input_tokens":7,"output_tokens":0}}}"#,
+            "\n",
+            r#"data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}"#,
+            "\n",
+            r#"data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Hi"}}"#,
+            "\n",
+            r#"data: {"type":"content_block_stop","index":0}"#,
+            "\n",
+            r#"data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":25}}"#,
+            "\n",
+            r#"data: {"type":"message_stop"}"#,
+        );
+
+        assert!(streamed_usage(events).await.additional_data.is_none());
     }
 
     #[tokio::test]
