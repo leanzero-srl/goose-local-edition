@@ -527,3 +527,11 @@ research_request_block's armed-no-claimed-sections arm wording.
   pub via the JUDGE_ENDED_NEEDLE pattern, both traces YES on archived events. Reported HEAD's failing
   now_doc_recipe honestly instead of silently fixing out-of-scope — orchestrator trued the citation
   (test now reads ladder.rs; NOW.md names the symbol; 3/3 green). Charter gap: none.
+- 2026-08-31 13:00 tick-surgeon #7: CLEAN+ at 60.4k/7 calls (budget holding with quality intact).
+  Closed the core-q4 watch honestly (the nudge WORKED — emission 12m later after due diligence;
+  obeyed-count now 3/4 verified); snowball adoption confirmed in a LANDED mini (web-console-q1
+  carrying q0's data-brushed/data-state + exponents agreeing with viz-q0 cross-slice); false-raised
+  flat a second tick (7/22). Second brief-elision instance named (q2's role-discovery agony) —
+  strengthens the slicer-embeds-subsections improvement already queued. Deferred one spec check
+  transparently (cached as a watch item, not silently skipped) — exactly the budget discipline
+  intended. Charter gap: none.
