@@ -15711,7 +15711,9 @@ impl GooseAgentDispatcher {
                      VERDICT      OK | DRIFTING | LOOPING | RESTART\n\
                      CONFIDENCE   HIGH | LOW\n\
                      ESTABLISHED  what this call has actually worked out that is worth keeping. Draw it from \
-                     what it SAID; do not invent. Leave empty only if it has established nothing.\n\
+                     what it SAID; do not invent. Fill this on an OK verdict too — one line of what the \
+                     call has worked out so far, so the next look can see what changed since this one. \
+                     Leave empty only if it has established nothing.\n\
                      NEXT         the single most concrete next action toward the goal. Name the file, the \
                      command, or the function. Never \"continue\" or \"proceed\".\n\
                      ASK FOR THE SMALLEST ACTION THAT LEAVES A TRACE, NEVER THE WHOLE DELIVERABLE. \
@@ -15744,7 +15746,9 @@ impl GooseAgentDispatcher {
                      you list in ESTABLISHED would beat continuing. Never for a call that is merely slow.\n\
                      You may never request termination. Your job is to redirect.\n\n\
                      Finally, end your reply with a token of the form ETA=<n>m — your honest estimate of \
-                     how many more MINUTES this call needs to finish the job it was given. You are the \
+                     how many more MINUTES this call needs to finish the job it was given. Put it on its \
+                     OWN line, after the four-field line — never appended to that line as a fifth pipe \
+                     field. You are the \
                      only party that can judge this: you have read what it has established, what it is \
                      doing now, and how fast it is producing. Base it on the work you can see REMAINING, \
                      not on how long it has already taken. ETA=0m means it is essentially done. If you \
@@ -16672,6 +16676,7 @@ impl GooseAgentDispatcher {
                             "actions_since_last_look": actions_since_last_look,
                             "drift_streak": omni_drift_streak,
                             "recurring": recur.recurring(),
+                            "wrong_channel": wrong_channel,
                             "detail": why,
                         }));
                         eprintln!(

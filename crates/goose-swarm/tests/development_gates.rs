@@ -241,9 +241,11 @@ fn the_banned_integrate_template_only_shrinks() {
 /// at the judge seam (r6c seq 1954: the disk-measured defect list ordered web-console to fix
 /// web-viz's web/viz.js "at that exact path" — `judge_context::lane_defect_view` now reshapes a
 /// sibling-owned dangling ref into a do-not-write line naming the owner and its measured state).
+/// Raised to 42,746 (brief-authorized, r6e smalls): +5 lines of event/prompt fidelity in place —
+/// `wrong_channel` on `judge_restream_held`, OK-verdict ESTABLISHED, ETA own-line placement.
 #[test]
 fn swarm_rs_line_count_only_decreases() {
-    const SWARM_RS_LINE_BASELINE: usize = 42_741;
+    const SWARM_RS_LINE_BASELINE: usize = 42_746;
     let text = read("crates/goose-cli/src/commands/swarm.rs");
     let n = text.lines().count();
     assert!(
