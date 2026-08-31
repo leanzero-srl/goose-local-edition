@@ -2576,6 +2576,63 @@
   "progressiveMessageList.searchHint": {
     "defaultMessage": "按 Cmd/Ctrl+F 立即加载全部消息以便搜索"
   },
+  "projectsSection.addProject": {
+    "defaultMessage": "添加项目文件夹"
+  },
+  "projectsSection.confirmRemove": {
+    "defaultMessage": "确认移除（保留文件和聊天）"
+  },
+  "projectsSection.copyPath": {
+    "defaultMessage": "复制路径"
+  },
+  "projectsSection.emptyState": {
+    "defaultMessage": "添加项目文件夹来归类你的会话"
+  },
+  "projectsSection.loadingSessions": {
+    "defaultMessage": "正在加载会话…"
+  },
+  "projectsSection.moreActions": {
+    "defaultMessage": "项目操作"
+  },
+  "projectsSection.moreSessions": {
+    "defaultMessage": "更多会话…"
+  },
+  "projectsSection.newSessionHere": {
+    "defaultMessage": "在此新建会话"
+  },
+  "projectsSection.noSessionsYet": {
+    "defaultMessage": "还没有会话"
+  },
+  "projectsSection.pathCopied": {
+    "defaultMessage": "已复制项目路径"
+  },
+  "projectsSection.projects": {
+    "defaultMessage": "项目"
+  },
+  "projectsSection.removeFailed": {
+    "defaultMessage": "无法更新项目"
+  },
+  "projectsSection.removeFromProjects": {
+    "defaultMessage": "从项目中移除"
+  },
+  "projectsSection.retry": {
+    "defaultMessage": "重试"
+  },
+  "projectsSection.revealInFinder": {
+    "defaultMessage": "在 Finder 中显示"
+  },
+  "projectsSection.sessionFailed": {
+    "defaultMessage": "无法开始会话"
+  },
+  "projectsSection.sessionsFailed": {
+    "defaultMessage": "无法加载会话"
+  },
+  "projectsSection.unfiled": {
+    "defaultMessage": "未归档"
+  },
+  "projectsSection.untitledSession": {
+    "defaultMessage": "无标题会话"
+  },
   "promptsSettings.allPromptsReset": {
     "defaultMessage": "所有提示词已重置为默认"
   },

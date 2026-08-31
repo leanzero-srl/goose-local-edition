@@ -2576,6 +2576,63 @@
   "progressiveMessageList.searchHint": {
     "defaultMessage": "Pulsa Cmd/Ctrl+F para cargar todos los mensajes de inmediato y buscar"
   },
+  "projectsSection.addProject": {
+    "defaultMessage": "Añadir una carpeta de proyecto"
+  },
+  "projectsSection.confirmRemove": {
+    "defaultMessage": "Confirmar eliminación (conserva archivos y chats)"
+  },
+  "projectsSection.copyPath": {
+    "defaultMessage": "Copiar ruta"
+  },
+  "projectsSection.emptyState": {
+    "defaultMessage": "Añade una carpeta de proyecto para agrupar tus sesiones"
+  },
+  "projectsSection.loadingSessions": {
+    "defaultMessage": "Cargando sesiones…"
+  },
+  "projectsSection.moreActions": {
+    "defaultMessage": "Acciones del proyecto"
+  },
+  "projectsSection.moreSessions": {
+    "defaultMessage": "Más sesiones…"
+  },
+  "projectsSection.newSessionHere": {
+    "defaultMessage": "Nueva sesión aquí"
+  },
+  "projectsSection.noSessionsYet": {
+    "defaultMessage": "Aún no hay sesiones"
+  },
+  "projectsSection.pathCopied": {
+    "defaultMessage": "Ruta del proyecto copiada"
+  },
+  "projectsSection.projects": {
+    "defaultMessage": "Proyectos"
+  },
+  "projectsSection.removeFailed": {
+    "defaultMessage": "No se pudieron actualizar los proyectos"
+  },
+  "projectsSection.removeFromProjects": {
+    "defaultMessage": "Quitar de proyectos"
+  },
+  "projectsSection.retry": {
+    "defaultMessage": "Reintentar"
+  },
+  "projectsSection.revealInFinder": {
+    "defaultMessage": "Mostrar en Finder"
+  },
+  "projectsSection.sessionFailed": {
+    "defaultMessage": "No se pudo iniciar una sesión"
+  },
+  "projectsSection.sessionsFailed": {
+    "defaultMessage": "No se pudieron cargar las sesiones"
+  },
+  "projectsSection.unfiled": {
+    "defaultMessage": "Sin clasificar"
+  },
+  "projectsSection.untitledSession": {
+    "defaultMessage": "Sesión sin título"
+  },
   "promptsSettings.allPromptsReset": {
     "defaultMessage": "Todos los prompts se restablecieron a sus valores por defecto"
   },

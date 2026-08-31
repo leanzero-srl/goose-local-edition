@@ -1,6 +1,7 @@
 import Electron, { contextBridge, ipcRenderer, webUtils } from 'electron';
 import { Recipe } from './recipe';
 import type { GooseApp } from './types/apps';
+import type { ProjectEntry } from './utils/projectDirs';
 import type { Settings, SettingKey } from './utils/settings';
 import { defaultSettings } from './utils/settings';
 
@@ -122,7 +123,7 @@ type ElectronAPI = {
   reactReady: () => void;
   getConfig: () => Record<string, unknown>;
   hideWindow: () => void;
-  directoryChooser: () => Promise<Electron.OpenDialogReturnValue>;
+  directoryChooser: (defaultPath?: string) => Promise<Electron.OpenDialogReturnValue>;
   createChatWindow: (options?: CreateChatWindowOptions) => void;
   logInfo: (txt: string) => void;
   showNotification: (data: NotificationData) => void;
@@ -335,6 +336,10 @@ type ElectronAPI = {
   addRecentDir: (dir: string) => Promise<boolean>;
   listRecentDirs: () => Promise<string[]>;
   listGitWorktreeDirs: (dir: string) => Promise<string[]>;
+  /** User-curated Projects registry (projects.json). Add/remove edit the registry ONLY. */
+  listProjects: () => Promise<ProjectEntry[]>;
+  addProject: (dir: string) => Promise<ProjectEntry[]>;
+  removeProject: (dir: string) => Promise<ProjectEntry[]>;
   /** LM Studio's live per-node status via `lms ps --json`: { identifier: 'generating'|'processingPrompt'|'idle' }. */
   fleetStatus: () => Promise<Record<string, string>>;
 };
@@ -357,7 +362,7 @@ const electronAPI: ElectronAPI = {
     return config;
   },
   hideWindow: () => ipcRenderer.send('hide-window'),
-  directoryChooser: () => ipcRenderer.invoke('directory-chooser'),
+  directoryChooser: (defaultPath?: string) => ipcRenderer.invoke('directory-chooser', defaultPath),
   createChatWindow: (options?: CreateChatWindowOptions) =>
     ipcRenderer.send('create-chat-window', options || {}),
   logInfo: (txt: string) => ipcRenderer.send('logInfo', txt),
@@ -529,6 +534,9 @@ const electronAPI: ElectronAPI = {
   addRecentDir: (dir: string) => ipcRenderer.invoke('add-recent-dir', dir),
   listRecentDirs: () => ipcRenderer.invoke('list-recent-dirs'),
   listGitWorktreeDirs: (dir: string) => ipcRenderer.invoke('list-git-worktree-dirs', dir),
+  listProjects: () => ipcRenderer.invoke('list-projects'),
+  addProject: (dir: string) => ipcRenderer.invoke('add-project', dir),
+  removeProject: (dir: string) => ipcRenderer.invoke('remove-project', dir),
 };
 
 function getAppLocale(): unknown {

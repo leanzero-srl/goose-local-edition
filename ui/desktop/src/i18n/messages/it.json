@@ -2576,6 +2576,63 @@
   "progressiveMessageList.searchHint": {
     "defaultMessage": "Premi Cmd/Ctrl+F per caricare immediatamente tutti i messaggi per la ricerca"
   },
+  "projectsSection.addProject": {
+    "defaultMessage": "Aggiungi una cartella di progetto"
+  },
+  "projectsSection.confirmRemove": {
+    "defaultMessage": "Conferma rimozione (mantiene file e chat)"
+  },
+  "projectsSection.copyPath": {
+    "defaultMessage": "Copia percorso"
+  },
+  "projectsSection.emptyState": {
+    "defaultMessage": "Aggiungi una cartella di progetto per raggruppare le tue sessioni"
+  },
+  "projectsSection.loadingSessions": {
+    "defaultMessage": "Caricamento sessioni…"
+  },
+  "projectsSection.moreActions": {
+    "defaultMessage": "Azioni del progetto"
+  },
+  "projectsSection.moreSessions": {
+    "defaultMessage": "Altre sessioni…"
+  },
+  "projectsSection.newSessionHere": {
+    "defaultMessage": "Nuova sessione qui"
+  },
+  "projectsSection.noSessionsYet": {
+    "defaultMessage": "Ancora nessuna sessione"
+  },
+  "projectsSection.pathCopied": {
+    "defaultMessage": "Percorso del progetto copiato"
+  },
+  "projectsSection.projects": {
+    "defaultMessage": "Progetti"
+  },
+  "projectsSection.removeFailed": {
+    "defaultMessage": "Impossibile aggiornare i progetti"
+  },
+  "projectsSection.removeFromProjects": {
+    "defaultMessage": "Rimuovi dai progetti"
+  },
+  "projectsSection.retry": {
+    "defaultMessage": "Riprova"
+  },
+  "projectsSection.revealInFinder": {
+    "defaultMessage": "Mostra nel Finder"
+  },
+  "projectsSection.sessionFailed": {
+    "defaultMessage": "Impossibile avviare una sessione"
+  },
+  "projectsSection.sessionsFailed": {
+    "defaultMessage": "Impossibile caricare le sessioni"
+  },
+  "projectsSection.unfiled": {
+    "defaultMessage": "Non archiviate"
+  },
+  "projectsSection.untitledSession": {
+    "defaultMessage": "Sessione senza titolo"
+  },
   "promptsSettings.allPromptsReset": {
     "defaultMessage": "Tutti i prompt ripristinati ai valori predefiniti"
   },

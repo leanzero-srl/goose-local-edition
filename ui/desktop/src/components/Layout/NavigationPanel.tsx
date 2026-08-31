@@ -3,6 +3,7 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import { useEdition } from '../../contexts/EditionContext';
 import { motion } from 'framer-motion';
 import { useNavigationContext } from './NavigationContext';
+import { ProjectsSection } from './ProjectsSection';
 import { useFeatures } from '../../contexts/FeaturesContext';
 import {
   NAV_ITEMS,
@@ -53,9 +54,10 @@ export const NavRow: React.FC<NavRowProps> = ({ item, active, onClick }) => {
 };
 
 /**
- * Goose Swarm pass A: the sidebar is nav rows + Settings, nothing else. The recent-chats (CHATS)
- * section that lived between them was removed on purpose — a Projects tree replaces it in a later
- * pass — so the space between the nav and Settings stays deliberately clean.
+ * Goose Swarm sidebar: nav rows, then the Projects tree (pass B — user-curated project folders,
+ * each expanding to its own sessions via the server-side cwd filter), then Settings pinned to the
+ * bottom. The old recent-chats CHATS section was removed in pass A; the Projects tree is its
+ * replacement, with "Unfiled" catching sessions that belong to no registered project.
  */
 export const Navigation: React.FC<{ className?: string }> = ({ className }) => {
   const { isNavExpanded } = useNavigationContext();
@@ -112,8 +114,8 @@ export const Navigation: React.FC<{ className?: string }> = ({ className }) => {
         ))}
       </div>
 
-      {/* Reserved: the Projects tree lands here in a later pass. */}
-      <div className="flex-1 min-h-0" />
+      {/* Projects tree — the pass-B replacement for the removed CHATS section. */}
+      <ProjectsSection className="flex-1 mt-3" />
 
       {/* Settings pinned to bottom */}
       <div className="px-2 pt-2 pb-2 border-t border-border-secondary">

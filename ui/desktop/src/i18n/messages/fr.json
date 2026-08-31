@@ -2576,6 +2576,63 @@
   "progressiveMessageList.searchHint": {
     "defaultMessage": "Appuyez sur Cmd/Ctrl+F pour charger immédiatement tous les messages et effectuer une recherche"
   },
+  "projectsSection.addProject": {
+    "defaultMessage": "Ajouter un dossier de projet"
+  },
+  "projectsSection.confirmRemove": {
+    "defaultMessage": "Confirmer le retrait (conserve fichiers et discussions)"
+  },
+  "projectsSection.copyPath": {
+    "defaultMessage": "Copier le chemin"
+  },
+  "projectsSection.emptyState": {
+    "defaultMessage": "Ajoutez un dossier de projet pour regrouper vos sessions"
+  },
+  "projectsSection.loadingSessions": {
+    "defaultMessage": "Chargement des sessions…"
+  },
+  "projectsSection.moreActions": {
+    "defaultMessage": "Actions du projet"
+  },
+  "projectsSection.moreSessions": {
+    "defaultMessage": "Plus de sessions…"
+  },
+  "projectsSection.newSessionHere": {
+    "defaultMessage": "Nouvelle session ici"
+  },
+  "projectsSection.noSessionsYet": {
+    "defaultMessage": "Aucune session pour l'instant"
+  },
+  "projectsSection.pathCopied": {
+    "defaultMessage": "Chemin du projet copié"
+  },
+  "projectsSection.projects": {
+    "defaultMessage": "Projets"
+  },
+  "projectsSection.removeFailed": {
+    "defaultMessage": "Impossible de mettre à jour les projets"
+  },
+  "projectsSection.removeFromProjects": {
+    "defaultMessage": "Retirer des projets"
+  },
+  "projectsSection.retry": {
+    "defaultMessage": "Réessayer"
+  },
+  "projectsSection.revealInFinder": {
+    "defaultMessage": "Afficher dans le Finder"
+  },
+  "projectsSection.sessionFailed": {
+    "defaultMessage": "Impossible de démarrer une session"
+  },
+  "projectsSection.sessionsFailed": {
+    "defaultMessage": "Impossible de charger les sessions"
+  },
+  "projectsSection.unfiled": {
+    "defaultMessage": "Non classées"
+  },
+  "projectsSection.untitledSession": {
+    "defaultMessage": "Session sans titre"
+  },
   "promptsSettings.allPromptsReset": {
     "defaultMessage": "Toutes les invites ont été réinitialisées aux valeurs par défaut"
   },

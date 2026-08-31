@@ -2576,6 +2576,63 @@
   "progressiveMessageList.searchHint": {
     "defaultMessage": "Нажмите Cmd/Ctrl+F, чтобы сразу загрузить все сообщения для поиска"
   },
+  "projectsSection.addProject": {
+    "defaultMessage": "Добавить папку проекта"
+  },
+  "projectsSection.confirmRemove": {
+    "defaultMessage": "Подтвердить удаление (файлы и чаты сохранятся)"
+  },
+  "projectsSection.copyPath": {
+    "defaultMessage": "Скопировать путь"
+  },
+  "projectsSection.emptyState": {
+    "defaultMessage": "Добавьте папку проекта, чтобы сгруппировать сеансы"
+  },
+  "projectsSection.loadingSessions": {
+    "defaultMessage": "Загрузка сеансов…"
+  },
+  "projectsSection.moreActions": {
+    "defaultMessage": "Действия с проектом"
+  },
+  "projectsSection.moreSessions": {
+    "defaultMessage": "Ещё сеансы…"
+  },
+  "projectsSection.newSessionHere": {
+    "defaultMessage": "Новый сеанс здесь"
+  },
+  "projectsSection.noSessionsYet": {
+    "defaultMessage": "Пока нет сеансов"
+  },
+  "projectsSection.pathCopied": {
+    "defaultMessage": "Путь к проекту скопирован"
+  },
+  "projectsSection.projects": {
+    "defaultMessage": "Проекты"
+  },
+  "projectsSection.removeFailed": {
+    "defaultMessage": "Не удалось обновить проекты"
+  },
+  "projectsSection.removeFromProjects": {
+    "defaultMessage": "Убрать из проектов"
+  },
+  "projectsSection.retry": {
+    "defaultMessage": "Повторить"
+  },
+  "projectsSection.revealInFinder": {
+    "defaultMessage": "Показать в Finder"
+  },
+  "projectsSection.sessionFailed": {
+    "defaultMessage": "Не удалось начать сеанс"
+  },
+  "projectsSection.sessionsFailed": {
+    "defaultMessage": "Не удалось загрузить сеансы"
+  },
+  "projectsSection.unfiled": {
+    "defaultMessage": "Без проекта"
+  },
+  "projectsSection.untitledSession": {
+    "defaultMessage": "Сеанс без названия"
+  },
   "promptsSettings.allPromptsReset": {
     "defaultMessage": "Все промпты сброшены к значениям по умолчанию"
   },

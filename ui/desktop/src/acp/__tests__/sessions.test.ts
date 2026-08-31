@@ -1,7 +1,12 @@
 import type { SessionInfo } from '@agentclientprotocol/sdk';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { getAcpClient } from '../acpConnection';
-import { acpGetSessionListItem, acpLoadSession, sessionInfoToSession } from '../sessions';
+import {
+  acpGetSessionListItem,
+  acpListSessions,
+  acpLoadSession,
+  sessionInfoToSession,
+} from '../sessions';
 
 vi.mock('../acpConnection', () => ({
   getAcpClient: vi.fn(),
@@ -103,6 +108,69 @@ describe('ACP sessions', () => {
       lastMessageAt: '2026-01-01T00:01:00Z',
       providerId: 'anthropic',
       modelId: 'claude-sonnet-4-5',
+    });
+  });
+});
+
+describe('acpListSessions cwd filter (Projects tree data path)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  function clientWithList() {
+    const client = {
+      listSessions: vi
+        .fn()
+        .mockResolvedValue({ sessions: [sessionInfo()], nextCursor: 'cursor-2' }),
+    };
+    vi.mocked(getAcpClient).mockResolvedValue(
+      client as unknown as Awaited<ReturnType<typeof getAcpClient>>
+    );
+    return client;
+  }
+
+  it('sends cwd as a TOP-LEVEL request field so filtering happens server-side', async () => {
+    const client = clientWithList();
+
+    const page = await acpListSessions(null, { cwd: '/Users/workhorse/Projects/goose' });
+
+    expect(client.listSessions).toHaveBeenCalledWith({
+      cwd: '/Users/workhorse/Projects/goose',
+      _meta: { types: ['user', 'scheduled'] },
+    });
+    expect(page.sessions).toHaveLength(1);
+    expect(page.nextCursor).toBe('cursor-2');
+  });
+
+  it('passes the cursor together with cwd (the server hash-binds the cursor to the filter)', async () => {
+    const client = clientWithList();
+
+    await acpListSessions('cursor-1', { cwd: '/proj' });
+
+    expect(client.listSessions).toHaveBeenCalledWith({
+      cursor: 'cursor-1',
+      cwd: '/proj',
+      _meta: { types: ['user', 'scheduled'] },
+    });
+  });
+
+  it('omits cwd entirely when no filter is given', async () => {
+    const client = clientWithList();
+
+    await acpListSessions();
+
+    const request = client.listSessions.mock.calls[0][0] as Record<string, unknown>;
+    expect('cwd' in request).toBe(false);
+  });
+
+  it('combines cwd with the keyword filter in _meta', async () => {
+    const client = clientWithList();
+
+    await acpListSessions(null, { cwd: '/proj', keyword: 'fix' });
+
+    expect(client.listSessions).toHaveBeenCalledWith({
+      cwd: '/proj',
+      _meta: { types: ['user', 'scheduled'], query: 'fix' },
     });
   });
 });

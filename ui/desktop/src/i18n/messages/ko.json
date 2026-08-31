@@ -2576,6 +2576,63 @@
   "progressiveMessageList.searchHint": {
     "defaultMessage": "검색을 위해 모든 메시지를 즉시 로드하려면 Cmd/Ctrl+F를 누르세요."
   },
+  "projectsSection.addProject": {
+    "defaultMessage": "프로젝트 폴더 추가"
+  },
+  "projectsSection.confirmRemove": {
+    "defaultMessage": "제거 확인 (파일과 채팅은 유지됨)"
+  },
+  "projectsSection.copyPath": {
+    "defaultMessage": "경로 복사"
+  },
+  "projectsSection.emptyState": {
+    "defaultMessage": "프로젝트 폴더를 추가해 세션을 정리하세요"
+  },
+  "projectsSection.loadingSessions": {
+    "defaultMessage": "세션 불러오는 중…"
+  },
+  "projectsSection.moreActions": {
+    "defaultMessage": "프로젝트 작업"
+  },
+  "projectsSection.moreSessions": {
+    "defaultMessage": "세션 더 보기…"
+  },
+  "projectsSection.newSessionHere": {
+    "defaultMessage": "여기에 새 세션"
+  },
+  "projectsSection.noSessionsYet": {
+    "defaultMessage": "아직 세션이 없습니다"
+  },
+  "projectsSection.pathCopied": {
+    "defaultMessage": "프로젝트 경로가 복사되었습니다"
+  },
+  "projectsSection.projects": {
+    "defaultMessage": "프로젝트"
+  },
+  "projectsSection.removeFailed": {
+    "defaultMessage": "프로젝트를 업데이트할 수 없습니다"
+  },
+  "projectsSection.removeFromProjects": {
+    "defaultMessage": "프로젝트에서 제거"
+  },
+  "projectsSection.retry": {
+    "defaultMessage": "다시 시도"
+  },
+  "projectsSection.revealInFinder": {
+    "defaultMessage": "Finder에서 보기"
+  },
+  "projectsSection.sessionFailed": {
+    "defaultMessage": "세션을 시작할 수 없습니다"
+  },
+  "projectsSection.sessionsFailed": {
+    "defaultMessage": "세션을 불러올 수 없습니다"
+  },
+  "projectsSection.unfiled": {
+    "defaultMessage": "미분류"
+  },
+  "projectsSection.untitledSession": {
+    "defaultMessage": "제목 없는 세션"
+  },
   "promptsSettings.allPromptsReset": {
     "defaultMessage": "모든 프롬프트가 기본값으로 재설정됩니다."
   },

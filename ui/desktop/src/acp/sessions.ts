@@ -133,6 +133,12 @@ function sessionInfoToListItem(s: SessionInfo): SessionListItem {
 
 export interface SessionListFilter {
   keyword?: string;
+  /**
+   * Exact working-directory filter (absolute path). Applied SERVER-SIDE — the agent's
+   * list_sessions binds its cursor to a hash of this filter, so pagination stays consistent
+   * per directory. This is the Projects tree's data path; never re-filter client-side.
+   */
+  cwd?: string;
 }
 
 const SESSION_LIST_TYPES = ['user', 'scheduled'] as const;
@@ -145,6 +151,9 @@ export async function acpListSessions(
   const request: ListSessionsRequest = {};
   if (cursor) {
     request.cursor = cursor;
+  }
+  if (filter?.cwd) {
+    request.cwd = filter.cwd;
   }
   const meta: Record<string, unknown> = { types: SESSION_LIST_TYPES };
   const keyword = filter?.keyword?.trim();

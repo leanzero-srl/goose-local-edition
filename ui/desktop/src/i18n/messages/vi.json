@@ -2576,6 +2576,63 @@
   "progressiveMessageList.searchHint": {
     "defaultMessage": "Nhấn Cmd/Ctrl+F để tải ngay tất cả tin nhắn nhằm tìm kiếm"
   },
+  "projectsSection.addProject": {
+    "defaultMessage": "Thêm thư mục dự án"
+  },
+  "projectsSection.confirmRemove": {
+    "defaultMessage": "Xác nhận gỡ bỏ (giữ nguyên tệp & cuộc trò chuyện)"
+  },
+  "projectsSection.copyPath": {
+    "defaultMessage": "Sao chép đường dẫn"
+  },
+  "projectsSection.emptyState": {
+    "defaultMessage": "Thêm một thư mục dự án để gom các phiên của bạn"
+  },
+  "projectsSection.loadingSessions": {
+    "defaultMessage": "Đang tải phiên…"
+  },
+  "projectsSection.moreActions": {
+    "defaultMessage": "Thao tác dự án"
+  },
+  "projectsSection.moreSessions": {
+    "defaultMessage": "Thêm phiên…"
+  },
+  "projectsSection.newSessionHere": {
+    "defaultMessage": "Phiên mới tại đây"
+  },
+  "projectsSection.noSessionsYet": {
+    "defaultMessage": "Chưa có phiên nào"
+  },
+  "projectsSection.pathCopied": {
+    "defaultMessage": "Đã sao chép đường dẫn dự án"
+  },
+  "projectsSection.projects": {
+    "defaultMessage": "Dự án"
+  },
+  "projectsSection.removeFailed": {
+    "defaultMessage": "Không thể cập nhật dự án"
+  },
+  "projectsSection.removeFromProjects": {
+    "defaultMessage": "Gỡ khỏi dự án"
+  },
+  "projectsSection.retry": {
+    "defaultMessage": "Thử lại"
+  },
+  "projectsSection.revealInFinder": {
+    "defaultMessage": "Hiện trong Finder"
+  },
+  "projectsSection.sessionFailed": {
+    "defaultMessage": "Không thể bắt đầu phiên"
+  },
+  "projectsSection.sessionsFailed": {
+    "defaultMessage": "Không thể tải phiên"
+  },
+  "projectsSection.unfiled": {
+    "defaultMessage": "Chưa phân loại"
+  },
+  "projectsSection.untitledSession": {
+    "defaultMessage": "Phiên không tên"
+  },
   "promptsSettings.allPromptsReset": {
     "defaultMessage": "Tất cả lời nhắc đã được đặt lại về mặc định"
   },

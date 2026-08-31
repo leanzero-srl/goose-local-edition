@@ -2576,6 +2576,63 @@
   "progressiveMessageList.searchHint": {
     "defaultMessage": "Prima Cmd/Ctrl+F para carregar todas as mensagens imediatamente para pesquisa"
   },
+  "projectsSection.addProject": {
+    "defaultMessage": "Adicionar uma pasta de projeto"
+  },
+  "projectsSection.confirmRemove": {
+    "defaultMessage": "Confirmar remoção (mantém arquivos e chats)"
+  },
+  "projectsSection.copyPath": {
+    "defaultMessage": "Copiar caminho"
+  },
+  "projectsSection.emptyState": {
+    "defaultMessage": "Adicione uma pasta de projeto para agrupar suas sessões"
+  },
+  "projectsSection.loadingSessions": {
+    "defaultMessage": "Carregando sessões…"
+  },
+  "projectsSection.moreActions": {
+    "defaultMessage": "Ações do projeto"
+  },
+  "projectsSection.moreSessions": {
+    "defaultMessage": "Mais sessões…"
+  },
+  "projectsSection.newSessionHere": {
+    "defaultMessage": "Nova sessão aqui"
+  },
+  "projectsSection.noSessionsYet": {
+    "defaultMessage": "Ainda não há sessões"
+  },
+  "projectsSection.pathCopied": {
+    "defaultMessage": "Caminho do projeto copiado"
+  },
+  "projectsSection.projects": {
+    "defaultMessage": "Projetos"
+  },
+  "projectsSection.removeFailed": {
+    "defaultMessage": "Não foi possível atualizar os projetos"
+  },
+  "projectsSection.removeFromProjects": {
+    "defaultMessage": "Remover dos projetos"
+  },
+  "projectsSection.retry": {
+    "defaultMessage": "Tentar novamente"
+  },
+  "projectsSection.revealInFinder": {
+    "defaultMessage": "Mostrar no Finder"
+  },
+  "projectsSection.sessionFailed": {
+    "defaultMessage": "Não foi possível iniciar uma sessão"
+  },
+  "projectsSection.sessionsFailed": {
+    "defaultMessage": "Não foi possível carregar as sessões"
+  },
+  "projectsSection.unfiled": {
+    "defaultMessage": "Sem projeto"
+  },
+  "projectsSection.untitledSession": {
+    "defaultMessage": "Sessão sem título"
+  },
   "promptsSettings.allPromptsReset": {
     "defaultMessage": "Todos os prompts repostos para as predefinições"
   },

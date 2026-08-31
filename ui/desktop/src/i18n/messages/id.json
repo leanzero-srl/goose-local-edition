@@ -2576,6 +2576,63 @@
   "progressiveMessageList.searchHint": {
     "defaultMessage": "Tekan Cmd/Ctrl+F untuk segera memuat semua pesan untuk pencarian"
   },
+  "projectsSection.addProject": {
+    "defaultMessage": "Tambahkan folder proyek"
+  },
+  "projectsSection.confirmRemove": {
+    "defaultMessage": "Konfirmasi hapus (file & chat tetap ada)"
+  },
+  "projectsSection.copyPath": {
+    "defaultMessage": "Salin jalur"
+  },
+  "projectsSection.emptyState": {
+    "defaultMessage": "Tambahkan folder proyek untuk mengelompokkan sesi Anda"
+  },
+  "projectsSection.loadingSessions": {
+    "defaultMessage": "Memuat sesi…"
+  },
+  "projectsSection.moreActions": {
+    "defaultMessage": "Tindakan proyek"
+  },
+  "projectsSection.moreSessions": {
+    "defaultMessage": "Sesi lainnya…"
+  },
+  "projectsSection.newSessionHere": {
+    "defaultMessage": "Sesi baru di sini"
+  },
+  "projectsSection.noSessionsYet": {
+    "defaultMessage": "Belum ada sesi"
+  },
+  "projectsSection.pathCopied": {
+    "defaultMessage": "Jalur proyek disalin"
+  },
+  "projectsSection.projects": {
+    "defaultMessage": "Proyek"
+  },
+  "projectsSection.removeFailed": {
+    "defaultMessage": "Tidak dapat memperbarui proyek"
+  },
+  "projectsSection.removeFromProjects": {
+    "defaultMessage": "Hapus dari proyek"
+  },
+  "projectsSection.retry": {
+    "defaultMessage": "Coba lagi"
+  },
+  "projectsSection.revealInFinder": {
+    "defaultMessage": "Tampilkan di Finder"
+  },
+  "projectsSection.sessionFailed": {
+    "defaultMessage": "Tidak dapat memulai sesi"
+  },
+  "projectsSection.sessionsFailed": {
+    "defaultMessage": "Tidak dapat memuat sesi"
+  },
+  "projectsSection.unfiled": {
+    "defaultMessage": "Tanpa kategori"
+  },
+  "projectsSection.untitledSession": {
+    "defaultMessage": "Sesi tanpa judul"
+  },
   "promptsSettings.allPromptsReset": {
     "defaultMessage": "Semua prompt disetel ulang ke default"
   },

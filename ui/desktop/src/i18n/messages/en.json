@@ -2576,6 +2576,63 @@
   "progressiveMessageList.searchHint": {
     "defaultMessage": "Press Cmd/Ctrl+F to load all messages immediately for search"
   },
+  "projectsSection.addProject": {
+    "defaultMessage": "Add a project folder"
+  },
+  "projectsSection.confirmRemove": {
+    "defaultMessage": "Confirm remove (keeps files & chats)"
+  },
+  "projectsSection.copyPath": {
+    "defaultMessage": "Copy path"
+  },
+  "projectsSection.emptyState": {
+    "defaultMessage": "Add a project folder to scope your sessions"
+  },
+  "projectsSection.loadingSessions": {
+    "defaultMessage": "Loading sessions…"
+  },
+  "projectsSection.moreActions": {
+    "defaultMessage": "Project actions"
+  },
+  "projectsSection.moreSessions": {
+    "defaultMessage": "More sessions…"
+  },
+  "projectsSection.newSessionHere": {
+    "defaultMessage": "New session here"
+  },
+  "projectsSection.noSessionsYet": {
+    "defaultMessage": "No sessions yet"
+  },
+  "projectsSection.pathCopied": {
+    "defaultMessage": "Project path copied"
+  },
+  "projectsSection.projects": {
+    "defaultMessage": "Projects"
+  },
+  "projectsSection.removeFailed": {
+    "defaultMessage": "Could not update projects"
+  },
+  "projectsSection.removeFromProjects": {
+    "defaultMessage": "Remove from projects"
+  },
+  "projectsSection.retry": {
+    "defaultMessage": "Retry"
+  },
+  "projectsSection.revealInFinder": {
+    "defaultMessage": "Reveal in Finder"
+  },
+  "projectsSection.sessionFailed": {
+    "defaultMessage": "Could not start a session"
+  },
+  "projectsSection.sessionsFailed": {
+    "defaultMessage": "Couldn't load sessions"
+  },
+  "projectsSection.unfiled": {
+    "defaultMessage": "Unfiled"
+  },
+  "projectsSection.untitledSession": {
+    "defaultMessage": "Untitled session"
+  },
   "promptsSettings.allPromptsReset": {
     "defaultMessage": "All prompts reset to defaults"
   },
