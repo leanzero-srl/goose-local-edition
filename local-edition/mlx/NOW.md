@@ -11,8 +11,11 @@ in flight (Explore): session working-dir metadata + swarm-settings/provider-cred
 (3) Pending passes: B = ChatGPT-style Projects tree (projects as local paths, sessions grouped
 under them, new-session inherits the project's cwd); C = "LeanZero Swarm" three-tab view (LeanZero
 MLX | Cloud Providers | Swarm Settings with node creation + per-node provider [mlx-or-cloud] +
-weight), plus components/mlx → leanzero-swarm namespace rename. (4) After Pass A: build the FULL
-DMG via `just release-fork 1.41.103` (Mihai: "build the full DMG to check"), again at the end.
+weight), plus components/mlx → leanzero-swarm namespace rename. (4) UPDATE SEVERANCE (Mihai):
+the app must never check the parent goose for updates again + own versioning — folded into Pass A;
+version line breaks to 2.0.0 (above upstream 1.x forever; installed 1.41.x updates forward once
+our feed publishes). (5) After Pass A: build the FULL DMG via `just release-fork 2.0.0` (Mihai:
+"build the full DMG to check"), again at the end of the restructure.
 
 **Read this FIRST after any compaction, before anything else in this dir.** Budget ~2k tokens.
 Rule: when the thread changes, this file changes IN THE SAME COMMIT.
