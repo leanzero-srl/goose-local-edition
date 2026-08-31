@@ -777,3 +777,9 @@ research_request_block's armed-no-claimed-sections arm wording.
   discharged the stub watch via the lane's own re-verification, and armed the sharpest kind of
   next-watch: a named fallback in the APP-UNDER-TEST's planned dispatch, to be read in the landed
   text. Charter gap: none.
+- 2026-09-01 00:30 tick-surgeon #32: EXEMPLARY at 66.2k/22. Discharged the empty-200 watch by
+  reading the LANDED dispatch text and classifying each arm against the substitution class
+  (honest-arm analysis, gate-1 vocabulary applied to the app's own code); caught the silent
+  verification downgrade with the honest-handoff nuance intact; and read the sink's first 9 calls
+  closely enough to confirm it found the two defects the skipped smoke would have caught.
+  Charter gap: none.
