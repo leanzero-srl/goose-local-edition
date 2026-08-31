@@ -21,6 +21,7 @@
  * file asserts every tier in TIERS has a distinct spec and probe — so adding sb-8 and forgetting this
  * file fails the build instead of quietly running sb-7's spec.
  */
+import { TIERS, TIER_SCORER } from './components/benchmark/baselines';
 import type { BenchTier } from './components/benchmark/baselines';
 
 export const BENCH_SPEC_FILE: Record<BenchTier, string> = {
@@ -35,7 +36,18 @@ export const BENCH_RENDER_PROBE: Record<BenchTier, string> = {
   'sb-7': 'product_probe_v3.mjs',
 };
 
-/** The tier a `benchmark-run` argument names, defaulting to the comparability tier when absent. */
-export function tierOf(raw: string | undefined): BenchTier {
-  return raw === 'sb-7' ? 'sb-7' : raw === 'sb-6' ? 'sb-6' : 'sb-5.3';
+/**
+ * The newest benchmark this app bundles — the ONLY tier `benchmark-run` launches (latest-only,
+ * 2026-08-31: the app offers no benchmark choice). Derived from the tier data by numeric version
+ * ("sb-7" → 7), never from a hardcoded name or array position, so shipping sb-8 in TIERS moves the
+ * launcher automatically and forgetting this file's mappings still fails the completeness test.
+ */
+export function newestTier(): BenchTier {
+  return TIERS.reduce((a, b) => (parseFloat(b.slice(3)) > parseFloat(a.slice(3)) ? b : a));
+}
+
+/** The scorer identity the newest tier is measured by — what session rows and the site catalog
+ *  compare on (the catalog's `current`/`frozen` entries are keyed by scorerVersion). */
+export function newestTierScorer(): string {
+  return TIER_SCORER[newestTier()];
 }
