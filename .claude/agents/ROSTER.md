@@ -542,3 +542,9 @@ research_request_block's armed-no-claimed-sections arm wording.
   invariant-4 worry keeps narrowing to reasoning-only calls, run-scale evidence for the r7 desk
   question. Recorded its own 2-call rediscovery cost in state so it never re-pays it. Charter gap:
   none.
+- 2026-08-31 13:25 tick-surgeon #9: CLEAN+ at 57.4k/9 calls. Closed its own argv gap (console-q2
+  quarantine PROVEN from raw calls.jsonl: 5 reads, fs_delta empty — the probe POSTs are a design for
+  the built UI, never executed); both new minis verified against cached pins incl. re-derived dim
+  arithmetic; caught the run's next risk class in the words — viz-q2 froze an SSE draw convention at
+  ZERO tool calls before reading clarify D1 or any sibling mini ("Version-only bumps: no draw
+  (convention...)") — improvement filed with the reader-based fix shape. Charter gap: none.
