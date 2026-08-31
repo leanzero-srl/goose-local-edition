@@ -562,3 +562,9 @@ research_request_block's armed-no-claimed-sections arm wording.
   the top-priority thread). Review lanes independently converging on the same D2 fix is the
   fan-grounding paying at review. Armed a real checkpoint: plan_patched must go >0 before
   plan_loaded with review-5's patch pending. Charter gap: none. plan.json persistence dispatched.
+- 2026-08-31 14:25 swarm-surgeon (plan sidecars, 389283e02): CLEAN+. Both stages persisted (plan.json
+  at synthesis with the full 133k-char briefs — verified that IS the brief-carrying representation,
+  briefs are not spliced later; plan-loaded.json only when bytes differ, resume arm honest); pure
+  sidecar proven against all three .swarm readers with the module doc forbidding a load-bearing
+  reader; honest NET label; paid the wiring by moving the resume cluster (43,423→43,208). The vigil
+  can now audit briefs directly from r6d onward. Charter gap: none.
