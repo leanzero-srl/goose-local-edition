@@ -641,3 +641,10 @@ research_request_block's armed-no-claimed-sections arm wording.
   missing viz.js ("even if viz.js is missing, the page won't throw" — pitfall-lesson-19 behavior in
   the built code); sync.py carries the researched cursor semantics verbatim. New r6e item: judge ok
   with EMPTY next while the owned file is absent. Charter gap: none.
+- 2026-08-31 18:15 tick-surgeon #18: CLEAN+ at 55.4k/9. Held the trip condition honestly — the
+  scavenge is NOT complete (each quoted step settles new ground: the full records format, ordering,
+  server-side day), so no restream call yet; but assembled the evidence pack for the HARD TRIP next
+  tick and put desk_silent FIRST in the read order (a dead stream needs a different call than a slow
+  one — judge-web-viz silent 4->8 polls since 14:14Z). impl.py read is the delivery standard: 1115B
+  judged RIGHT-SIZED with the reason (init owns the HTTP frame; bind-before-workers so a down vendor
+  can't delay the socket — a researched invariant IN the adapter). Charter gap: none.
