@@ -234,7 +234,7 @@ const i18n = defineMessages({
   },
   noSavedRecipesDescription: {
     id: 'recipesView.noSavedRecipesDescription',
-    defaultMessage: 'Recipe saved from chats will show up here.',
+    defaultMessage: 'Recipes saved from sessions will show up here.',
   },
   noMatchingRecipes: {
     id: 'recipesView.noMatchingRecipes',
@@ -283,7 +283,7 @@ const i18n = defineMessages({
   },
   slashCommandDescription: {
     id: 'recipesView.slashCommandDescription',
-    defaultMessage: 'Set a slash command to quickly run this recipe from any chat',
+    defaultMessage: 'Set a slash command to quickly run this recipe from any session',
   },
   slashCommandPlaceholder: {
     id: 'recipesView.slashCommandPlaceholder',
@@ -291,7 +291,7 @@ const i18n = defineMessages({
   },
   slashCommandUsageHint: {
     id: 'recipesView.slashCommandUsageHint',
-    defaultMessage: 'Use /{command} in any chat to run this recipe',
+    defaultMessage: 'Use /{command} in any session to run this recipe',
   },
   remove: {
     id: 'recipesView.remove',

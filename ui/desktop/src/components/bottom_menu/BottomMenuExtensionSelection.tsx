@@ -26,11 +26,11 @@ const i18n = defineMessages({
   },
   extensionsForNewChats: {
     id: 'bottomMenuExtensionSelection.extensionsForNewChats',
-    defaultMessage: 'Extensions for new chats',
+    defaultMessage: 'Extensions for new sessions',
   },
   extensionsForThisSession: {
     id: 'bottomMenuExtensionSelection.extensionsForThisSession',
-    defaultMessage: 'Extensions for this chat session',
+    defaultMessage: 'Extensions for this session',
   },
   noExtensionsFound: {
     id: 'bottomMenuExtensionSelection.noExtensionsFound',
@@ -46,11 +46,11 @@ const i18n = defineMessages({
   },
   extensionWillBeEnabled: {
     id: 'bottomMenuExtensionSelection.extensionWillBeEnabled',
-    defaultMessage: '{name} will be enabled in new chats',
+    defaultMessage: '{name} will be enabled in new sessions',
   },
   extensionWillBeDisabled: {
     id: 'bottomMenuExtensionSelection.extensionWillBeDisabled',
-    defaultMessage: '{name} will be disabled in new chats',
+    defaultMessage: '{name} will be disabled in new sessions',
   },
 });
 

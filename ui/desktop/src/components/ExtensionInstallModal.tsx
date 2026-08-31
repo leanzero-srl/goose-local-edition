@@ -81,7 +81,7 @@ const i18n = defineMessages({
   },
   alreadyInstalledMessage: {
     id: 'extensionInstallModal.alreadyInstalledMessage',
-    defaultMessage: "''{name}'' extension has already been installed successfully. Start a new chat session to use it.",
+    defaultMessage: "''{name}'' extension has already been installed successfully. Start a new session to use it.",
   },
   installing: {
     id: 'extensionInstallModal.installing',

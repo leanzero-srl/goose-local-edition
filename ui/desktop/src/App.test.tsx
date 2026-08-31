@@ -107,7 +107,7 @@ vi.mock('./contexts/ChatContext', () => ({
     clearRecipe: vi.fn(),
     contextKey: 'hub',
   }),
-  DEFAULT_CHAT_TITLE: 'New Chat', // Keep this from HEAD
+  DEFAULT_CHAT_TITLE: 'New Session',
 }));
 
 vi.mock('./components/ui/ConfirmationModal', () => ({

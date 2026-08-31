@@ -17,7 +17,7 @@ import { toast } from 'react-toastify';
 import { useConfig } from '../ConfigContext';
 import { useNavigation } from '../../hooks/useNavigation';
 import { useNavigationSessions, sessionToListItem } from '../../hooks/useNavigationSessions';
-import { startNewSession } from '../../sessions';
+import { startNewSession, displaySessionListName } from '../../sessions';
 import { acpListSessions, type SessionListItem } from '../../acp/sessions';
 import { AppEvents } from '../../constants/events';
 import {
@@ -66,7 +66,7 @@ const i18n = defineMessages({
   },
   confirmRemove: {
     id: 'projectsSection.confirmRemove',
-    defaultMessage: 'Confirm remove (keeps files & chats)',
+    defaultMessage: 'Confirm remove (keeps files & sessions)',
   },
   noSessionsYet: {
     id: 'projectsSection.noSessionsYet',
@@ -257,9 +257,8 @@ const SessionLeafRow: React.FC<{
   active: boolean;
   onClick: () => void;
 }> = ({ session, active, onClick }) => {
-  const intl = useIntl();
   const when = timeAgo(sessionActivityAt(session));
-  const name = session.name || intl.formatMessage(i18n.untitledSession);
+  const name = displaySessionListName(session.name);
   return (
     <button
       onClick={onClick}

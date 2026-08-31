@@ -49,6 +49,9 @@ export interface Settings {
   language: LanguageSetting;
   responseStyle: string;
   showPricing: boolean;
+  /** LM Studio fleet surfaces (discovered rows, fan-in preview, lms-ps node dots) are LEGACY and
+   *  hidden by default — flip in Settings > App to bring them back. Nothing is deleted. */
+  showLmStudioFleet: boolean;
   seenAnnouncementIds: string[];
 
   // Goose Swarm (edition value 'local') — the local/swarm-model UX skin (presentation only, never
@@ -94,6 +97,7 @@ export const defaultSettings: Settings = {
   language: 'system',
   responseStyle: 'concise',
   showPricing: true,
+  showLmStudioFleet: false,
   seenAnnouncementIds: [],
 };
 

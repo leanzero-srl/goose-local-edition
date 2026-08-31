@@ -61,7 +61,7 @@ const i18n = defineMessages({
   restartNote: {
     id: 'externalBackendSection.restartNote',
     defaultMessage:
-      'Changes apply to new chat windows. Restart Goose to update existing windows.',
+      'Changes apply to new session windows. Restart Goose to update existing windows.',
   },
   urlProtocolError: {
     id: 'externalBackendSection.urlProtocolError',

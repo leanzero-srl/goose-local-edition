@@ -99,6 +99,11 @@ const getContextAlertType = (totalTokens: number, tokenLimit: number): AlertType
 // Manual compact trigger message - must match backend constant
 const MANUAL_COMPACT_TRIGGER = '/compact';
 
+// Pass E (owner): the extensions affordance leaves the session input bar — extensions management
+// already left the nav in pass A, and enabled extensions keep working exactly as configured.
+// Hidden, not deleted: flip to bring the selector back.
+const SHOW_EXTENSIONS_SELECTOR = false;
+
 const i18n = defineMessages({
   dictationError: {
     id: 'chatInput.dictationError',
@@ -1750,8 +1755,9 @@ export default function ChatInput({
 
         {!isBottomBarNarrow && (
           <>
-            {/* Right: cost tracker (when enabled) */}
-            {COST_TRACKING_ENABLED && (
+            {/* Right: cost tracker (when enabled). Never for the LeanZero MLX provider — local
+                inference has no price, so a cost readout there is a fabricated number (pass E). */}
+            {COST_TRACKING_ENABLED && effectiveProvider !== MLX_PROVIDER_ID && (
               <CostTracker
                 inputTokens={accumulatedInputTokens}
                 outputTokens={accumulatedOutputTokens}
@@ -1768,12 +1774,14 @@ export default function ChatInput({
               alerts={alerts}
             />
 
-            {/* Right: extension selector */}
-            <BottomMenuExtensionSelection
-              sessionId={sessionId}
-              nextChatExtensionDraft={nextChatExtensionDraft}
-              onNextChatExtensionDraftChange={onNextChatExtensionDraftChange}
-            />
+            {/* Right: extension selector — hidden per pass E (SHOW_EXTENSIONS_SELECTOR) */}
+            {SHOW_EXTENSIONS_SELECTOR && (
+              <BottomMenuExtensionSelection
+                sessionId={sessionId}
+                nextChatExtensionDraft={nextChatExtensionDraft}
+                onNextChatExtensionDraftChange={onNextChatExtensionDraftChange}
+              />
+            )}
 
             {/* Right: diagnostics */}
             {sessionId && (

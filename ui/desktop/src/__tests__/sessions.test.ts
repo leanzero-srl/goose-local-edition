@@ -1,5 +1,9 @@
 import { describe, it, expect } from 'vitest';
-import { getSessionDisplayName, shouldShowNewChatTitle } from '../sessions';
+import {
+  displaySessionListName,
+  getSessionDisplayName,
+  shouldShowNewChatTitle,
+} from '../sessions';
 import { MAX_RECENT_SESSIONS, prependUnique } from '../hooks/useNavigationSessions';
 import type { SessionListItem } from '../acp/sessions';
 import type { Session } from '../types/session';
@@ -30,29 +34,73 @@ function makeListItem(overrides: Partial<SessionListItem> = {}): SessionListItem
   };
 }
 
-describe('shouldShowNewChatTitle', () => {
-  it('returns true for an empty session without a user-set name', () => {
-    const session = makeSession({ message_count: 0, user_set_name: false });
+describe('shouldShowNewChatTitle — name-based, never message_count (pass E)', () => {
+  it("returns true for the engine's stored placeholder name", () => {
+    const session = makeSession({ name: 'New Chat', user_set_name: false });
     expect(shouldShowNewChatTitle(session)).toBe(true);
   });
 
-  it('returns false when the session has messages', () => {
-    const session = makeSession({ message_count: 3, user_set_name: false });
+  it('returns true for an empty or whitespace name', () => {
+    expect(shouldShowNewChatTitle(makeSession({ name: '' }))).toBe(true);
+    expect(shouldShowNewChatTitle(makeSession({ name: '   ' }))).toBe(true);
+  });
+
+  it('returns true for the default title itself', () => {
+    expect(shouldShowNewChatTitle(makeSession({ name: 'New Session' }))).toBe(true);
+  });
+
+  // The backend auto-names after the first turns via session_info_update; the renderer's
+  // message_count is NOT maintained while streaming, so the generated name must win even
+  // when the stale metadata still says message_count === 0.
+  it('returns false for a backend-generated name even with message_count 0', () => {
+    const session = makeSession({
+      name: 'MLX confirmation',
+      message_count: 0,
+      user_set_name: false,
+    });
     expect(shouldShowNewChatTitle(session)).toBe(false);
   });
 
   it('returns false when the user has set a custom name', () => {
-    const session = makeSession({ message_count: 0, user_set_name: true });
+    const session = makeSession({ name: 'My work', user_set_name: true });
     expect(shouldShowNewChatTitle(session)).toBe(false);
   });
 
   it('returns false when the session has a recipe', () => {
     const session = makeSession({
-      message_count: 0,
+      name: 'New Chat',
       user_set_name: false,
       recipe: { title: 'Recipe', steps: [] } as unknown as Session['recipe'],
     });
     expect(shouldShowNewChatTitle(session)).toBe(false);
+  });
+});
+
+describe('getSessionDisplayName titles a fresh session "New Session"', () => {
+  it('normalizes the engine placeholder to the session title', () => {
+    const session = makeSession({ name: 'New Chat', user_set_name: false });
+    expect(getSessionDisplayName(session)).toBe('New Session');
+  });
+
+  it('shows the backend-generated name once the session is named', () => {
+    const session = makeSession({
+      name: 'MLX confirmation',
+      message_count: 0,
+      user_set_name: false,
+    });
+    expect(getSessionDisplayName(session)).toBe('MLX confirmation');
+  });
+});
+
+describe('displaySessionListName — list rows never say "New Chat"', () => {
+  it('normalizes the engine placeholder and emptiness to "New Session"', () => {
+    expect(displaySessionListName('New Chat')).toBe('New Session');
+    expect(displaySessionListName('')).toBe('New Session');
+    expect(displaySessionListName(undefined)).toBe('New Session');
+  });
+
+  it('keeps a real name untouched', () => {
+    expect(displaySessionListName('MLX confirmation')).toBe('MLX confirmation');
   });
 });
 

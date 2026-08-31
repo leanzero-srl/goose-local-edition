@@ -54,6 +54,7 @@ import {
 import { ZoneHeader, ZONE_HUES } from './ZoneHeader';
 import { SWARM_LOG_MODES, useSwarmLogMode, type SwarmLogMode } from './useVerboseSwarm';
 import { useFleetStatus } from './useFleet';
+import { useLmStudioFleetVisible } from '../../hooks/useLmStudioFleetVisible';
 import { Tooltip, TooltipTrigger, TooltipContent } from '../ui/Tooltip';
 import InlineMarkdown from './InlineMarkdown';
 import StructuredContent, { CodeBlock } from './StructuredContent';
@@ -5032,8 +5033,11 @@ export const SwarmRunPanel: React.FC<{
   // $HOME, so everything run-relative — the pause sentinel, the notes inbox, activity file paths —
   // must target this. Passing the session dir instead writes where the engine never looks.
   const runDir = run.runDir ?? workingDir;
-  // LM Studio's OWN live per-node status (lms ps --json) — the ground-truth generating/idle dot per node.
-  const nodeStatus = useFleetStatus();
+  // LM Studio's OWN live per-node status (lms ps --json) — the ground-truth generating/idle dot per
+  // node. LEGACY surface: polled only when the 'showLmStudioFleet' setting is on (default off); off,
+  // the panel renders its digest-only view exactly as when lms is unavailable.
+  const lmStudioVisible = useLmStudioFleetVisible();
+  const nodeStatus = useFleetStatus(1500, lmStudioVisible);
   const [mode, setMode] = useSwarmLogMode();
   const verbose = mode !== 'compact';
   const dev = mode === 'developer';

@@ -7,6 +7,18 @@ import { AppEvents } from './constants/events';
 import { acpChatSessionController } from './acp/chatSessionController';
 import { getConfiguredGooseExtensions, gooseExtensionName } from './acp/extensions';
 
+/** The engine's own stored placeholder for an unnamed session (acp/server/new_session.rs). The
+ *  renderer never shows it verbatim — it normalizes to DEFAULT_CHAT_TITLE ("New Session"). */
+const ENGINE_PLACEHOLDER_NAME = 'New Chat';
+
+/** List-surface twin of getSessionDisplayName for rows that only carry a name string
+ *  (SessionListItem): the engine placeholder and emptiness both read "New Session". */
+export function displaySessionListName(name: string | null | undefined): string {
+  const trimmed = (name ?? '').trim();
+  if (trimmed === '' || trimmed === ENGINE_PLACEHOLDER_NAME) return DEFAULT_CHAT_TITLE;
+  return trimmed;
+}
+
 export function getSessionDisplayName(session: Session): string {
   if (session.user_set_name) {
     return session.name;
@@ -20,8 +32,20 @@ export function getSessionDisplayName(session: Session): string {
   return session.name;
 }
 
+/**
+ * Show the default title only while the session has NO real name. This used to key on
+ * `message_count === 0`, but the renderer's in-memory session metadata does not maintain
+ * message_count as a conversation streams — so when the backend auto-named the session after the
+ * first turns (session_manager::maybe_update_name → session_info_update → SESSION_RENAMED), the
+ * header kept saying the default title over a real generated name. The name itself is the fact
+ * that matters: placeholder (or empty) means unnamed, anything else is the session's name.
+ */
 export function shouldShowNewChatTitle(session: Session): boolean {
-  return !session.user_set_name && session.message_count === 0 && !session.recipe?.title;
+  if (session.user_set_name || session.recipe?.title) {
+    return false;
+  }
+  const name = (session.name ?? '').trim();
+  return name === '' || name === ENGINE_PLACEHOLDER_NAME || name === DEFAULT_CHAT_TITLE;
 }
 
 export function resumeSession(session: Session, setView: setViewType) {

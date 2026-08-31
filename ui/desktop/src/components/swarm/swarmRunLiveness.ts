@@ -57,6 +57,29 @@ export function isEngineSilent(
   return liveness.state === 'exited' || liveness.state === 'silent';
 }
 
+/**
+ * Should a SESSION surface adopt a run it finds already sitting in the working dir's .swarm/?
+ *
+ * The stale-board complaint (pass E): opening a NEW session in a project whose folder still holds a
+ * finished run's files put the PREVIOUS run's board on screen — planning lanes, an ETA, "1127h ago".
+ * File presence is not run truth. A resident run is adopted only when
+ *   - it STARTED under this mount (its run_started stamp is at/after the hook's mount — the run this
+ *     session kicked off), or
+ *   - the engine is provably ALIVE right now (fresh heartbeat, the same 45s window the liveness
+ *     banner uses — no invented constant).
+ * Exited, silent and heartbeat-less leftovers render NOTHING in a fresh session. This gates ADOPTION
+ * only: once a run is on screen, no timer ever hides it (the no-timer-hides-a-run rule above), and
+ * surfaces that exist to inspect finished runs (BenchmarkView) never apply this gate.
+ */
+export function shouldAdoptResidentRun(
+  run: Pick<SwarmRunLiveness, 'heartbeat' | 'heartbeatExited'> & { startedAt: number | null },
+  mountedAt: number,
+  now = Date.now()
+): boolean {
+  if (run.startedAt != null && run.startedAt >= mountedAt) return true;
+  return engineLiveness(run, now).state === 'alive';
+}
+
 /** Does this session get the split conversation/run workspace? Presence and progress only — no timers. */
 export function shouldSplitSwarmWorkspace({
   isLocal,

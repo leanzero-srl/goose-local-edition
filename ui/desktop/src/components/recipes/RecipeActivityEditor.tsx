@@ -9,7 +9,7 @@ const i18n = defineMessages({
   },
   activitiesDescription: {
     id: 'recipeActivityEditor.activitiesDescription',
-    defaultMessage: 'The top-line prompts and activity buttons that will display in the recipe chat window.',
+    defaultMessage: 'The top-line prompts and activity buttons that will display in the recipe session window.',
   },
   messageLabel: {
     id: 'recipeActivityEditor.messageLabel',
