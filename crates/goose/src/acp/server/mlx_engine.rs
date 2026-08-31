@@ -9,9 +9,30 @@ use goose_sidecar::engine::{
     expand_tilde, global_manager, EngineSettings, MlxEngineManager, ModelProfile,
 };
 use goose_sidecar::hf::{self, DownloadTracker};
-use std::sync::LazyLock;
+use std::sync::{LazyLock, Mutex as StdMutex, OnceLock};
 
 const MLX_ENGINE_CONFIG_KEY: &str = "mlx_engine";
+
+/// True when the operator exported OMLX_HOST before goosed started — their value wins
+/// forever. Otherwise goosed owns the variable and keeps it aligned to `mlx_engine.port`,
+/// so the omlx declarative provider reaches the supervised engine without manual env glue
+/// (live-caught 2026-08-31: chat silently pointed at the :8000 default while the engine
+/// served on :8090).
+static OMLX_HOST_USER_OWNED: OnceLock<bool> = OnceLock::new();
+
+pub(super) fn align_omlx_host_env() {
+    let user_owned = *OMLX_HOST_USER_OWNED.get_or_init(|| std::env::var_os("OMLX_HOST").is_some());
+    if user_owned {
+        return;
+    }
+    let port = match Config::global().get_param::<EngineSettings>(MLX_ENGINE_CONFIG_KEY) {
+        Ok(settings) => settings.port,
+        Err(_) => EngineSettings::default().port,
+    };
+    std::env::set_var("OMLX_HOST", format!("http://127.0.0.1:{port}"));
+}
+
+static LAST_ENGINE_STATE: StdMutex<String> = StdMutex::new(String::new());
 
 static DOWNLOAD_TRACKER: LazyLock<DownloadTracker> = LazyLock::new(DownloadTracker::new);
 
@@ -30,6 +51,7 @@ fn load_engine_settings() -> Result<EngineSettings, agent_client_protocol::Error
             .set_param(MLX_ENGINE_CONFIG_KEY, &settings)
             .internal_err_ctx("persisting migrated mlx_engine config")?;
     }
+    align_omlx_host_env();
     Ok(settings)
 }
 
@@ -130,6 +152,7 @@ fn status_to_dto(status: goose_sidecar::engine::EngineStatus) -> MlxEngineStatus
         context_window: status.context_window,
         tool_call_parser: status.tool_call_parser,
         served_model_id: status.served_model_id,
+        stray_listener_port: status.stray_listener_port,
         probe_error: status.probe_error,
         gate_message: status.gate_message,
         gate_verdict: status.gate_verdict,
@@ -163,8 +186,25 @@ impl GooseAcpAgent {
         _req: MlxEngineStatusRequest,
     ) -> Result<MlxEngineStatusResponse, agent_client_protocol::Error> {
         let manager = synced_manager()?;
+        let status = manager.status().await;
+        let entered_running = {
+            let mut last = LAST_ENGINE_STATE.lock().unwrap();
+            let entered = status.state == "running" && *last != "running";
+            *last = status.state.clone();
+            entered
+        };
+        if entered_running {
+            // The engine just came up serving a (possibly new) model id; without a refresh
+            // the provider inventory rejects it on the next model switch.
+            if let Err(e) = self
+                .start_provider_inventory_refresh(&["omlx".to_string()])
+                .await
+            {
+                warn!(error = ?e, "omlx inventory refresh after engine start failed");
+            }
+        }
         Ok(MlxEngineStatusResponse {
-            status: status_to_dto(manager.status().await),
+            status: status_to_dto(status),
         })
     }
 
