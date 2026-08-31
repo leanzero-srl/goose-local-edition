@@ -453,3 +453,10 @@ research_request_block's armed-no-claimed-sections arm wording.
   the part that was real (raises fold into briefs — previously unread), refused to mint a one-value
   generation field as hardcoding, and named the actual fan cost driver (933s/question mean, two
   65-min outliers). The orchestrator's brief committed the shape-not-words error the gates exist for.
+- 2026-08-31 09:30 MINTED tick-surgeon (Mihai: "let's have a proper tick-surgeon then that is invested
+  into this!") after the vigil degraded to tick.py|grep + commit and a shape-read produced a phantom
+  snowball loop. Charter carries the three tick rules inline (words + generations, delivered content,
+  quoted improvement notes), a fixed-shape report, its own delta memory (.vigil/last_tick.json), the
+  kill-checkpoint field table with proof, and the doctrine (gate 7, microscopic, works-not-appears,
+  purpose-over-prose, kill-pids, no-caps). Read-only toward the run; recommends, never kills. The cron
+  protocol now delegates the reading to it every tick. First return graded below.
