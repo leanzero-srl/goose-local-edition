@@ -440,3 +440,9 @@ research_request_block's armed-no-claimed-sections arm wording.
   wire mismatch (bf16 refusal + flattened browse error) REPORTED with a probe screenshot instead of
   worked around — both fixed crates-side same hour (3b849a3de). 1202 tests; real-HF live drive with
   19 screenshots; app left running with the model mounted for the owner. Charter gap: none.
+- 2026-08-31 16:10 MINTED mlx-backend (third inline-briefed mlx-backend task tripped the rule).
+  Charter distills the two clean general-purpose passes: measure-first with negative controls,
+  pagination-never-lies, loud-absence with the invalid_params idiom, per-pid supervision + fixed
+  spawn PATH, per-model profiles as the only sampling read path, exact-wire-name reporting for the
+  panel-surgeon handoff. First delegation: dynamic filter vocabularies + sizes + model card +
+  pause/resume/cancel-deletes + disk space.
