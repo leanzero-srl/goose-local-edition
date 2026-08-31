@@ -1,4 +1,94 @@
 {
+  "addNode.addButton": {
+    "defaultMessage": "Ajouter un nœud"
+  },
+  "addNode.cancel": {
+    "defaultMessage": "Annuler"
+  },
+  "addNode.description": {
+    "defaultMessage": "Un nœud se crée en choisissant ce qui le sert : choisissez un fournisseur, puis un modèle."
+  },
+  "addNode.done": {
+    "defaultMessage": "Terminé"
+  },
+  "addNode.duplicateId": {
+    "defaultMessage": "Un nœud nommé {id} existe déjà — choisissez un autre nom."
+  },
+  "addNode.lmstudioAuto": {
+    "defaultMessage": "Les nœuds LM Studio sont découverts automatiquement : chaque modèle résident sur la flotte à {endpoint} rejoint le pool de lui-même, il n'y a donc rien à ajouter à la main. Chargez un modèle dans LM Studio (ou LM Link) et il apparaîtra dans la liste des nœuds."
+  },
+  "addNode.lmstudioLive": {
+    "defaultMessage": "{count,plural,one{# nœud en ligne en ce moment} other{# nœuds en ligne en ce moment}}"
+  },
+  "addNode.lmstudioOffline": {
+    "defaultMessage": "flotte hors ligne"
+  },
+  "addNode.machineAllTaken": {
+    "defaultMessage": "Chaque machine découverte a déjà son nœud MLX — retirez-en un d'abord, ou ajoutez des nœuds cloud (illimités)."
+  },
+  "addNode.machineCap": {
+    "defaultMessage": "{count,plural,one{# machine de l'essaim} other{# machines de l'essaim}} encore sans nœud MLX — chaque machine en porte exactement un."
+  },
+  "addNode.machineLabel": {
+    "defaultMessage": "Machine — un nœud MLX chacune"
+  },
+  "addNode.machineLocalTag": {
+    "defaultMessage": "cette machine"
+  },
+  "addNode.machineNoneDiscovered": {
+    "defaultMessage": "Aucune machine de l'essaim découverte (LM Studio / lms injoignable) — le nœud est créé pour CETTE machine ; nommez-le ci-dessous."
+  },
+  "addNode.machinePlaceholder": {
+    "defaultMessage": "Choisissez une machine…"
+  },
+  "addNode.machineRemoteTag": {
+    "defaultMessage": "distante"
+  },
+  "addNode.mlxAliasPreview": {
+    "defaultMessage": "ID du modèle servi : {alias}"
+  },
+  "addNode.mlxLabelLabel": {
+    "defaultMessage": "Nom du nœud"
+  },
+  "addNode.mlxLabelPlaceholder": {
+    "defaultMessage": "p. ex. workhorse"
+  },
+  "addNode.mlxModelLabel": {
+    "defaultMessage": "Modèle — depuis le dossier de modèles du moteur"
+  },
+  "addNode.mlxModelPlaceholder": {
+    "defaultMessage": "Choisissez un modèle…"
+  },
+  "addNode.mlxNoModels": {
+    "defaultMessage": "Aucun modèle complet dans le dossier de modèles du moteur — téléchargez-en d'abord un dans l'onglet LeanZero MLX."
+  },
+  "addNode.mlxOneModel": {
+    "defaultMessage": "Un moteur LeanZero MLX sert UN seul modèle : tous les nœuds MLX partagent ce que le moteur a monté, un modèle différent par nœud n'est pas encore possible. Ajouter ce nœud pointe le moteur vers le modèle choisi ici."
+  },
+  "addNode.providerLabel": {
+    "defaultMessage": "Fournisseur"
+  },
+  "addNode.providerPlaceholder": {
+    "defaultMessage": "Choisissez un fournisseur…"
+  },
+  "addNode.reassignButton": {
+    "defaultMessage": "Retirer et ré-ajouter"
+  },
+  "addNode.reassignNotice": {
+    "defaultMessage": "La réaffectation change ce qui sert ce nœud : {id} est RETIRÉ du pool puis ré-ajouté sous le fournisseur choisi ici."
+  },
+  "addNode.reassignTitle": {
+    "defaultMessage": "Réaffecter {id}"
+  },
+  "addNode.remoteAwaiting": {
+    "defaultMessage": "Le nœud MLX d'une machine distante est enregistré dans le pool mais ATTEND LE ROUTAGE DE LA FLOTTE — les endpoints par nœud arrivent dans une phase ultérieure. Seul le nœud de cette machine est servi aujourd'hui."
+  },
+  "addNode.title": {
+    "defaultMessage": "Ajouter un nœud"
+  },
+  "addNode.weightLabel": {
+    "defaultMessage": "Poids — plus il est élevé, plus grande est la part des tâches"
+  },
   "alertBox.autoCompactAt": {
     "defaultMessage": "Compactage automatique à"
   },
@@ -229,6 +319,21 @@
   },
   "chatSettings.responseStylesTitle": {
     "defaultMessage": "Styles de réponse"
+  },
+  "cloudProviders.configuredCount": {
+    "defaultMessage": "{configured} sur {total} configurés"
+  },
+  "cloudProviders.description": {
+    "defaultMessage": "Les identifiants des fournisseurs cloud que cette app peut appeler — les clés sont chiffrées dans le coffre de secrets goose. Les backends locaux (LM Studio, le moteur MLX) n'ont pas besoin d'identifiants et vivent dans les autres onglets."
+  },
+  "cloudProviders.loadFailed": {
+    "defaultMessage": "Impossible de charger la liste des fournisseurs."
+  },
+  "cloudProviders.loading": {
+    "defaultMessage": "Chargement des fournisseurs…"
+  },
+  "cloudProviders.retry": {
+    "defaultMessage": "Réessayer"
   },
   "configSettings.configReset": {
     "defaultMessage": "Configuration réinitialisée"
@@ -1670,6 +1775,15 @@
   "launcher.placeholder": {
     "defaultMessage": "Demandez n'importe quoi à goose..."
   },
+  "leanzeroSwarm.subtitle": {
+    "defaultMessage": "Un seul endroit pour tout l'essaim : le moteur MLX maison, les identifiants des fournisseurs cloud et le pool de nœuds avec lequel l'essaim construit."
+  },
+  "leanzeroSwarm.tabCloud": {
+    "defaultMessage": "Fournisseurs cloud"
+  },
+  "leanzeroSwarm.tabSwarm": {
+    "defaultMessage": "Réglages de l'essaim"
+  },
   "loadingGoose.compacting": {
     "defaultMessage": "goose compacte la conversation..."
   },
@@ -2342,11 +2456,11 @@
   "navigation.itemHome": {
     "defaultMessage": "Nouvelle discussion"
   },
+  "navigation.itemLeanzeroSwarm": {
+    "defaultMessage": "LeanZero Swarm"
+  },
   "navigation.itemMemories": {
     "defaultMessage": "Memories"
-  },
-  "navigation.itemMlx": {
-    "defaultMessage": "Leanzero MLX"
   },
   "navigation.itemSettings": {
     "defaultMessage": "Paramètres"
@@ -4306,6 +4420,54 @@
   },
   "subRecipeModal.subtitle": {
     "defaultMessage": "Configurez une sous-recette qui peut être appelée en tant qu'outil lors de l'exécution de la recette"
+  },
+  "swarmSettings.addNode": {
+    "defaultMessage": "Ajouter un nœud"
+  },
+  "swarmSettings.autoChip": {
+    "defaultMessage": "auto"
+  },
+  "swarmSettings.autoChipTitle": {
+    "defaultMessage": "Découvert en direct depuis LM Studio — rejoint le pool automatiquement"
+  },
+  "swarmSettings.awaitingChip": {
+    "defaultMessage": "en attente de routage"
+  },
+  "swarmSettings.awaitingChipTitle": {
+    "defaultMessage": "Nœud MLX d'une machine distante — enregistré dans le pool, servi quand le routage par nœud arrivera"
+  },
+  "swarmSettings.noNodes": {
+    "defaultMessage": "Aucun nœud pour l'instant — ajoutez-en un, ou lancez LM Studio à {endpoint} pour être découvert."
+  },
+  "swarmSettings.nodesDesc": {
+    "defaultMessage": "Chaque nœud que l'essaim fait tourner — les lignes configurées plus ce que LM Studio a de résident en ce moment. Poids : plus il est élevé, plus grande est la part des tâches."
+  },
+  "swarmSettings.nodesTitle": {
+    "defaultMessage": "Nœuds"
+  },
+  "swarmSettings.reassignAria": {
+    "defaultMessage": "Réaffecter le fournisseur"
+  },
+  "swarmSettings.reassignConfirm": {
+    "defaultMessage": "Choisir un nouveau fournisseur"
+  },
+  "swarmSettings.reassignMessage": {
+    "defaultMessage": "Changer ce qui sert {id} se fait en RETIRANT le nœud puis en le RÉ-AJOUTANT sous le fournisseur choisi ensuite. Rien ne change tant que le nouvel ajout n'est pas validé."
+  },
+  "swarmSettings.reassignTitle": {
+    "defaultMessage": "Réaffecter le fournisseur"
+  },
+  "swarmSettings.removeAria": {
+    "defaultMessage": "Retirer le nœud"
+  },
+  "swarmSettings.removeConfirm": {
+    "defaultMessage": "Retirer"
+  },
+  "swarmSettings.removeMessage": {
+    "defaultMessage": "{id} quitte le pool de l'essaim. Aucun fichier de modèle n'est touché ; vous pourrez le ré-ajouter à tout moment."
+  },
+  "swarmSettings.removeTitle": {
+    "defaultMessage": "Retirer le nœud"
   },
   "switchModelModal.backToModelList": {
     "defaultMessage": "Retour à la liste des modèles"

@@ -1,4 +1,94 @@
 {
+  "addNode.addButton": {
+    "defaultMessage": "Tambah nod"
+  },
+  "addNode.cancel": {
+    "defaultMessage": "Batal"
+  },
+  "addNode.description": {
+    "defaultMessage": "Nod dibuat dengan memilih apa yang melayaninya: pilih penyedia, kemudian model."
+  },
+  "addNode.done": {
+    "defaultMessage": "Selesai"
+  },
+  "addNode.duplicateId": {
+    "defaultMessage": "Nod bernama {id} sudah wujud — pilih nama lain."
+  },
+  "addNode.lmstudioAuto": {
+    "defaultMessage": "Nod LM Studio ditemui secara automatik: setiap model yang residen pada armada di {endpoint} menyertai kumpulan dengan sendirinya, jadi tiada apa yang perlu ditambah secara manual. Muatkan model dalam LM Studio (atau LM Link) dan ia akan muncul dalam senarai Nod."
+  },
+  "addNode.lmstudioLive": {
+    "defaultMessage": "{count,plural,one{# nod aktif sekarang} other{# nod aktif sekarang}}"
+  },
+  "addNode.lmstudioOffline": {
+    "defaultMessage": "armada luar talian"
+  },
+  "addNode.machineAllTaken": {
+    "defaultMessage": "Setiap mesin yang ditemui sudah ada nod MLX — buang satu dahulu, atau tambah nod awan (tanpa had)."
+  },
+  "addNode.machineCap": {
+    "defaultMessage": "{count,plural,one{# mesin swarm} other{# mesin swarm}} masih tanpa nod MLX — setiap mesin membawa tepat satu."
+  },
+  "addNode.machineLabel": {
+    "defaultMessage": "Mesin — satu nod MLX setiap satu"
+  },
+  "addNode.machineLocalTag": {
+    "defaultMessage": "mesin ini"
+  },
+  "addNode.machineNoneDiscovered": {
+    "defaultMessage": "Tiada mesin swarm ditemui (LM Studio / lms tidak boleh dicapai) — nod dibuat untuk MESIN INI; namakannya di bawah."
+  },
+  "addNode.machinePlaceholder": {
+    "defaultMessage": "Pilih mesin…"
+  },
+  "addNode.machineRemoteTag": {
+    "defaultMessage": "jauh"
+  },
+  "addNode.mlxAliasPreview": {
+    "defaultMessage": "ID model yang disajikan: {alias}"
+  },
+  "addNode.mlxLabelLabel": {
+    "defaultMessage": "Nama nod"
+  },
+  "addNode.mlxLabelPlaceholder": {
+    "defaultMessage": "cth. workhorse"
+  },
+  "addNode.mlxModelLabel": {
+    "defaultMessage": "Model — dari folder model enjin"
+  },
+  "addNode.mlxModelPlaceholder": {
+    "defaultMessage": "Pilih model…"
+  },
+  "addNode.mlxNoModels": {
+    "defaultMessage": "Belum ada model lengkap dalam folder model enjin — muat turun satu dahulu di tab LeanZero MLX."
+  },
+  "addNode.mlxOneModel": {
+    "defaultMessage": "Satu enjin LeanZero MLX melayani SATU model: semua nod MLX berkongsi apa yang dimuatkan enjin, jadi model berbeza bagi setiap nod belum boleh dilakukan. Menambah nod ini menghala enjin ke model yang anda pilih di sini."
+  },
+  "addNode.providerLabel": {
+    "defaultMessage": "Penyedia"
+  },
+  "addNode.providerPlaceholder": {
+    "defaultMessage": "Pilih penyedia…"
+  },
+  "addNode.reassignButton": {
+    "defaultMessage": "Buang & tambah semula"
+  },
+  "addNode.reassignNotice": {
+    "defaultMessage": "Penugasan semula mengubah apa yang melayani nod ini: {id} DIBUANG dari kumpulan dan ditambah semula di bawah penyedia yang anda pilih di sini."
+  },
+  "addNode.reassignTitle": {
+    "defaultMessage": "Tugaskan semula {id}"
+  },
+  "addNode.remoteAwaiting": {
+    "defaultMessage": "Nod MLX mesin jauh disimpan ke kumpulan tetapi MENUNGGU PENGHALAAN ARMADA — endpoint enjin per nod tiba dalam fasa kemudian. Hari ini hanya nod mesin ini yang dilayani."
+  },
+  "addNode.title": {
+    "defaultMessage": "Tambah nod"
+  },
+  "addNode.weightLabel": {
+    "defaultMessage": "Pemberat — lebih tinggi mendapat bahagian tugasan yang lebih besar"
+  },
   "alertBox.autoCompactAt": {
     "defaultMessage": "Padatkan automatik pada"
   },
@@ -229,6 +319,21 @@
   },
   "chatSettings.responseStylesTitle": {
     "defaultMessage": "Gaya Respons"
+  },
+  "cloudProviders.configuredCount": {
+    "defaultMessage": "{configured} daripada {total} dikonfigurasi"
+  },
+  "cloudProviders.description": {
+    "defaultMessage": "Kelayakan penyedia awan yang boleh dipanggil aplikasi ini — kunci disulitkan ke dalam stor rahsia goose. Backend tempatan (LM Studio, enjin MLX) tidak memerlukan kelayakan dan berada di tab lain."
+  },
+  "cloudProviders.loadFailed": {
+    "defaultMessage": "Senarai penyedia tidak dapat dimuatkan."
+  },
+  "cloudProviders.loading": {
+    "defaultMessage": "Memuatkan penyedia…"
+  },
+  "cloudProviders.retry": {
+    "defaultMessage": "Cuba lagi"
   },
   "configSettings.configReset": {
     "defaultMessage": "Konfigurasi Ditetapkan Semula"
@@ -1670,6 +1775,15 @@
   "launcher.placeholder": {
     "defaultMessage": "Tanya goose apa sahaja..."
   },
+  "leanzeroSwarm.subtitle": {
+    "defaultMessage": "Satu tempat untuk seluruh swarm: enjin MLX dalaman, kelayakan penyedia awan, dan kumpulan nod yang digunakan swarm untuk membina."
+  },
+  "leanzeroSwarm.tabCloud": {
+    "defaultMessage": "Penyedia Awan"
+  },
+  "leanzeroSwarm.tabSwarm": {
+    "defaultMessage": "Tetapan Swarm"
+  },
   "loadingGoose.compacting": {
     "defaultMessage": "goose sedang memadatkan perbualan..."
   },
@@ -2342,11 +2456,11 @@
   "navigation.itemHome": {
     "defaultMessage": "Sembang Baharu"
   },
+  "navigation.itemLeanzeroSwarm": {
+    "defaultMessage": "LeanZero Swarm"
+  },
   "navigation.itemMemories": {
     "defaultMessage": "Memories"
-  },
-  "navigation.itemMlx": {
-    "defaultMessage": "Leanzero MLX"
   },
   "navigation.itemSettings": {
     "defaultMessage": "Tetapan"
@@ -4306,6 +4420,54 @@
   },
   "subRecipeModal.subtitle": {
     "defaultMessage": "Konfigurasikan subresipi yang boleh dipanggil sebagai alat semasa pelaksanaan resipi"
+  },
+  "swarmSettings.addNode": {
+    "defaultMessage": "Tambah nod"
+  },
+  "swarmSettings.autoChip": {
+    "defaultMessage": "auto"
+  },
+  "swarmSettings.autoChipTitle": {
+    "defaultMessage": "Ditemui secara langsung daripada LM Studio — menyertai kumpulan secara automatik"
+  },
+  "swarmSettings.awaitingChip": {
+    "defaultMessage": "menunggu penghalaan armada"
+  },
+  "swarmSettings.awaitingChipTitle": {
+    "defaultMessage": "Nod MLX mesin jauh — tersimpan dalam kumpulan, dilayani apabila penghalaan per nod tiba"
+  },
+  "swarmSettings.noNodes": {
+    "defaultMessage": "Belum ada nod — tambah satu, atau mulakan LM Studio di {endpoint} untuk ditemui."
+  },
+  "swarmSettings.nodesDesc": {
+    "defaultMessage": "Setiap nod yang dijalankan swarm — baris yang dikonfigurasi serta apa sahaja yang residen dalam LM Studio sekarang. Pemberat: lebih tinggi mendapat bahagian tugasan yang lebih besar."
+  },
+  "swarmSettings.nodesTitle": {
+    "defaultMessage": "Nod"
+  },
+  "swarmSettings.reassignAria": {
+    "defaultMessage": "Tugaskan semula penyedia"
+  },
+  "swarmSettings.reassignConfirm": {
+    "defaultMessage": "Pilih penyedia baharu"
+  },
+  "swarmSettings.reassignMessage": {
+    "defaultMessage": "Mengubah apa yang melayani {id} berfungsi dengan MEMBUANG nod dan MENAMBAHNYA SEMULA di bawah penyedia yang dipilih seterusnya. Tiada apa yang berubah sehingga penambahan baharu selesai."
+  },
+  "swarmSettings.reassignTitle": {
+    "defaultMessage": "Tugaskan semula penyedia"
+  },
+  "swarmSettings.removeAria": {
+    "defaultMessage": "Buang nod"
+  },
+  "swarmSettings.removeConfirm": {
+    "defaultMessage": "Buang"
+  },
+  "swarmSettings.removeMessage": {
+    "defaultMessage": "{id} keluar dari kumpulan swarm. Tiada fail model disentuh; anda boleh menambahnya semula bila-bila masa."
+  },
+  "swarmSettings.removeTitle": {
+    "defaultMessage": "Buang nod"
   },
   "switchModelModal.backToModelList": {
     "defaultMessage": "Kembali ke senarai model"

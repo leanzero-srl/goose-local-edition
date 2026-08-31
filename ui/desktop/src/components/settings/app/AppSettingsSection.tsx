@@ -23,6 +23,7 @@ import BlockLogoBlack from './icons/block-lockup_black.png';
 import BlockLogoWhite from './icons/block-lockup_white.png';
 import TelemetrySettings from './TelemetrySettings';
 import { trackSettingToggled } from '../../../utils/analytics';
+import { LEANZERO_ISSUES_NEW_URL } from '../../../branding';
 import type { LanguageSetting } from '../../../utils/settings';
 
 const i18n = defineMessages({
@@ -561,10 +562,7 @@ export default function AppSettingsSection({ scrollToSection }: AppSettingsSecti
           <div className="flex space-x-4">
             <Button
               onClick={() => {
-                window.open(
-                  'https://github.com/aaif-goose/goose/issues/new?template=bug_report.md',
-                  '_blank'
-                );
+                window.open(`${LEANZERO_ISSUES_NEW_URL}?template=bug_report.md`, '_blank');
               }}
               variant="secondary"
               size="sm"
@@ -573,10 +571,7 @@ export default function AppSettingsSection({ scrollToSection }: AppSettingsSecti
             </Button>
             <Button
               onClick={() => {
-                window.open(
-                  'https://github.com/aaif-goose/goose/issues/new?template=feature_request.md',
-                  '_blank'
-                );
+                window.open(`${LEANZERO_ISSUES_NEW_URL}?template=feature_request.md`, '_blank');
               }}
               variant="secondary"
               size="sm"

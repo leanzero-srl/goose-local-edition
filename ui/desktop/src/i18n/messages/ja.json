@@ -1,4 +1,94 @@
 {
+  "addNode.addButton": {
+    "defaultMessage": "ノードを追加"
+  },
+  "addNode.cancel": {
+    "defaultMessage": "キャンセル"
+  },
+  "addNode.description": {
+    "defaultMessage": "ノードは何がそれを担うかを選んで作ります。プロバイダーを選び、次にモデルを選択してください。"
+  },
+  "addNode.done": {
+    "defaultMessage": "完了"
+  },
+  "addNode.duplicateId": {
+    "defaultMessage": "{id} という名前のノードは既に存在します — 別の名前を選んでください。"
+  },
+  "addNode.lmstudioAuto": {
+    "defaultMessage": "LM Studio のノードは自動的に検出されます。{endpoint} のフリートに常駐しているモデルは自動でプールに加わるため、手動で追加するものはありません。LM Studio(または LM Link)でモデルをロードすると、ノード一覧に表示されます。"
+  },
+  "addNode.lmstudioLive": {
+    "defaultMessage": "{count,plural,one{現在 # ノードが稼働中} other{現在 # ノードが稼働中}}"
+  },
+  "addNode.lmstudioOffline": {
+    "defaultMessage": "フリートはオフライン"
+  },
+  "addNode.machineAllTaken": {
+    "defaultMessage": "発見されたすべてのマシンに既に MLX ノードがあります — まず 1 つ削除するか、クラウドノード(無制限)を追加してください。"
+  },
+  "addNode.machineCap": {
+    "defaultMessage": "{count,plural,one{MLX ノード未設定のスウォームマシンが # 台} other{MLX ノード未設定のスウォームマシンが # 台}} — 各マシンはちょうど 1 つを持てます。"
+  },
+  "addNode.machineLabel": {
+    "defaultMessage": "マシン — 1 台につき MLX ノード 1 つ"
+  },
+  "addNode.machineLocalTag": {
+    "defaultMessage": "このマシン"
+  },
+  "addNode.machineNoneDiscovered": {
+    "defaultMessage": "スウォームのマシンが見つかりません(LM Studio / lms に到達不可)— ノードはこのマシン用に作成されます。下で名前を付けてください。"
+  },
+  "addNode.machinePlaceholder": {
+    "defaultMessage": "マシンを選択…"
+  },
+  "addNode.machineRemoteTag": {
+    "defaultMessage": "リモート"
+  },
+  "addNode.mlxAliasPreview": {
+    "defaultMessage": "提供中のモデル ID: {alias}"
+  },
+  "addNode.mlxLabelLabel": {
+    "defaultMessage": "ノード名"
+  },
+  "addNode.mlxLabelPlaceholder": {
+    "defaultMessage": "例: workhorse"
+  },
+  "addNode.mlxModelLabel": {
+    "defaultMessage": "モデル — エンジンのモデルフォルダーから"
+  },
+  "addNode.mlxModelPlaceholder": {
+    "defaultMessage": "モデルを選択…"
+  },
+  "addNode.mlxNoModels": {
+    "defaultMessage": "エンジンのモデルフォルダーに完全なモデルがまだありません — まず LeanZero MLX タブでダウンロードしてください。"
+  },
+  "addNode.mlxOneModel": {
+    "defaultMessage": "1 つの LeanZero MLX エンジンは 1 つのモデルのみを提供します。すべての MLX ノードはエンジンがマウントしているものを共有するため、ノードごとに別モデルはまだできません。このノードを追加すると、ここで選んだモデルにエンジンが切り替わります。"
+  },
+  "addNode.providerLabel": {
+    "defaultMessage": "プロバイダー"
+  },
+  "addNode.providerPlaceholder": {
+    "defaultMessage": "プロバイダーを選択…"
+  },
+  "addNode.reassignButton": {
+    "defaultMessage": "削除して再追加"
+  },
+  "addNode.reassignNotice": {
+    "defaultMessage": "再割り当てはこのノードの担い手を変えます。{id} はプールから削除され、ここで選んだプロバイダーの下で再追加されます。"
+  },
+  "addNode.reassignTitle": {
+    "defaultMessage": "{id} を再割り当て"
+  },
+  "addNode.remoteAwaiting": {
+    "defaultMessage": "リモートマシンの MLX ノードはプールに保存されますが、フリートルーティング待ちです — ノードごとのエンジンエンドポイントは後のフェーズで提供されます。現在はこのマシンのノードのみが稼働します。"
+  },
+  "addNode.title": {
+    "defaultMessage": "ノードを追加"
+  },
+  "addNode.weightLabel": {
+    "defaultMessage": "重み — 高いほどタスクの取り分が大きくなります"
+  },
   "alertBox.autoCompactAt": {
     "defaultMessage": "自動圧縮の実行タイミング"
   },
@@ -229,6 +319,21 @@
   },
   "chatSettings.responseStylesTitle": {
     "defaultMessage": "回答スタイル"
+  },
+  "cloudProviders.configuredCount": {
+    "defaultMessage": "{total} 中 {configured} 件設定済み"
+  },
+  "cloudProviders.description": {
+    "defaultMessage": "このアプリが呼び出せるクラウドプロバイダーの認証情報 — キーは goose のシークレットストアに暗号化して保存されます。ローカルバックエンド(LM Studio、MLX エンジン)には認証情報は不要で、他のタブにあります。"
+  },
+  "cloudProviders.loadFailed": {
+    "defaultMessage": "プロバイダー一覧を読み込めませんでした。"
+  },
+  "cloudProviders.loading": {
+    "defaultMessage": "プロバイダーを読み込み中…"
+  },
+  "cloudProviders.retry": {
+    "defaultMessage": "再試行"
   },
   "configSettings.configReset": {
     "defaultMessage": "設定をリセットしました"
@@ -1670,6 +1775,15 @@
   "launcher.placeholder": {
     "defaultMessage": "gooseに何でも聞いて..."
   },
+  "leanzeroSwarm.subtitle": {
+    "defaultMessage": "スウォーム全体をひとつの場所で: 自社製 MLX エンジン、クラウドプロバイダーの認証情報、そしてスウォームがビルドに使うノードプール。"
+  },
+  "leanzeroSwarm.tabCloud": {
+    "defaultMessage": "クラウドプロバイダー"
+  },
+  "leanzeroSwarm.tabSwarm": {
+    "defaultMessage": "スウォーム設定"
+  },
   "loadingGoose.compacting": {
     "defaultMessage": "gooseが会話を圧縮しています..."
   },
@@ -2342,11 +2456,11 @@
   "navigation.itemHome": {
     "defaultMessage": "新規チャット"
   },
+  "navigation.itemLeanzeroSwarm": {
+    "defaultMessage": "LeanZero Swarm"
+  },
   "navigation.itemMemories": {
     "defaultMessage": "Memories"
-  },
-  "navigation.itemMlx": {
-    "defaultMessage": "Leanzero MLX"
   },
   "navigation.itemSettings": {
     "defaultMessage": "設定"
@@ -4306,6 +4420,54 @@
   },
   "subRecipeModal.subtitle": {
     "defaultMessage": "レシピ実行中にツールとして呼び出せるサブレシピを設定します"
+  },
+  "swarmSettings.addNode": {
+    "defaultMessage": "ノードを追加"
+  },
+  "swarmSettings.autoChip": {
+    "defaultMessage": "自動"
+  },
+  "swarmSettings.autoChipTitle": {
+    "defaultMessage": "LM Studio からライブで検出 — 自動的にプールへ加わります"
+  },
+  "swarmSettings.awaitingChip": {
+    "defaultMessage": "ルーティング待ち"
+  },
+  "swarmSettings.awaitingChipTitle": {
+    "defaultMessage": "リモートマシンの MLX ノード — プールに保存済み。ノードごとのルーティングが来たら稼働します"
+  },
+  "swarmSettings.noNodes": {
+    "defaultMessage": "ノードはまだありません — 追加するか、{endpoint} で LM Studio を起動すると検出されます。"
+  },
+  "swarmSettings.nodesDesc": {
+    "defaultMessage": "スウォームが動かすすべてのノード — 設定済みの行に加え、LM Studio に現在常駐しているもの。重み: 高いほどタスクの取り分が大きくなります。"
+  },
+  "swarmSettings.nodesTitle": {
+    "defaultMessage": "ノード"
+  },
+  "swarmSettings.reassignAria": {
+    "defaultMessage": "プロバイダーを再割り当て"
+  },
+  "swarmSettings.reassignConfirm": {
+    "defaultMessage": "新しいプロバイダーを選択"
+  },
+  "swarmSettings.reassignMessage": {
+    "defaultMessage": "{id} の担い手を変えるには、ノードを削除し、次に選ぶプロバイダーの下で再追加します。新しい追加が確定するまで何も変わりません。"
+  },
+  "swarmSettings.reassignTitle": {
+    "defaultMessage": "プロバイダーを再割り当て"
+  },
+  "swarmSettings.removeAria": {
+    "defaultMessage": "ノードを削除"
+  },
+  "swarmSettings.removeConfirm": {
+    "defaultMessage": "削除"
+  },
+  "swarmSettings.removeMessage": {
+    "defaultMessage": "{id} はスウォームのプールから外れます。モデルファイルには触れません。いつでも再追加できます。"
+  },
+  "swarmSettings.removeTitle": {
+    "defaultMessage": "ノードを削除"
   },
   "switchModelModal.backToModelList": {
     "defaultMessage": "モデル一覧に戻る"

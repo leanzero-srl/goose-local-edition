@@ -1,4 +1,94 @@
 {
+  "addNode.addButton": {
+    "defaultMessage": "Adicionar nó"
+  },
+  "addNode.cancel": {
+    "defaultMessage": "Cancelar"
+  },
+  "addNode.description": {
+    "defaultMessage": "Um nó nasce escolhendo o que o serve: escolha um provedor e depois um modelo."
+  },
+  "addNode.done": {
+    "defaultMessage": "Concluído"
+  },
+  "addNode.duplicateId": {
+    "defaultMessage": "Já existe um nó chamado {id} — escolha outro nome."
+  },
+  "addNode.lmstudioAuto": {
+    "defaultMessage": "Os nós do LM Studio são descobertos automaticamente: cada modelo residente na frota em {endpoint} entra no pool por conta própria, então não há nada para adicionar manualmente. Carregue um modelo no LM Studio (ou LM Link) e ele aparecerá na lista de nós."
+  },
+  "addNode.lmstudioLive": {
+    "defaultMessage": "{count,plural,one{# nó ativo agora} other{# nós ativos agora}}"
+  },
+  "addNode.lmstudioOffline": {
+    "defaultMessage": "frota offline"
+  },
+  "addNode.machineAllTaken": {
+    "defaultMessage": "Cada máquina descoberta já tem seu nó MLX — remova um primeiro, ou adicione nós de nuvem (esses são ilimitados)."
+  },
+  "addNode.machineCap": {
+    "defaultMessage": "{count,plural,one{# máquina do enxame} other{# máquinas do enxame}} ainda sem nó MLX — cada máquina carrega exatamente um."
+  },
+  "addNode.machineLabel": {
+    "defaultMessage": "Máquina — um nó MLX cada"
+  },
+  "addNode.machineLocalTag": {
+    "defaultMessage": "esta máquina"
+  },
+  "addNode.machineNoneDiscovered": {
+    "defaultMessage": "Nenhuma máquina do enxame descoberta (LM Studio / lms inacessível) — o nó é criado para ESTA máquina; nomeie-o abaixo."
+  },
+  "addNode.machinePlaceholder": {
+    "defaultMessage": "Escolha uma máquina…"
+  },
+  "addNode.machineRemoteTag": {
+    "defaultMessage": "remota"
+  },
+  "addNode.mlxAliasPreview": {
+    "defaultMessage": "ID do modelo servido: {alias}"
+  },
+  "addNode.mlxLabelLabel": {
+    "defaultMessage": "Nome do nó"
+  },
+  "addNode.mlxLabelPlaceholder": {
+    "defaultMessage": "ex.: workhorse"
+  },
+  "addNode.mlxModelLabel": {
+    "defaultMessage": "Modelo — da pasta de modelos do motor"
+  },
+  "addNode.mlxModelPlaceholder": {
+    "defaultMessage": "Escolha um modelo…"
+  },
+  "addNode.mlxNoModels": {
+    "defaultMessage": "Ainda não há modelos completos na pasta de modelos do motor — baixe um primeiro na aba LeanZero MLX."
+  },
+  "addNode.mlxOneModel": {
+    "defaultMessage": "Um motor LeanZero MLX serve UM único modelo: todos os nós MLX compartilham o que o motor montou, então um modelo diferente por nó ainda não é possível. Adicionar este nó aponta o motor para o modelo escolhido aqui."
+  },
+  "addNode.providerLabel": {
+    "defaultMessage": "Provedor"
+  },
+  "addNode.providerPlaceholder": {
+    "defaultMessage": "Escolha um provedor…"
+  },
+  "addNode.reassignButton": {
+    "defaultMessage": "Remover e readicionar"
+  },
+  "addNode.reassignNotice": {
+    "defaultMessage": "Reatribuir muda o que serve este nó: {id} é REMOVIDO do pool e readicionado sob o provedor que você escolher aqui."
+  },
+  "addNode.reassignTitle": {
+    "defaultMessage": "Reatribuir {id}"
+  },
+  "addNode.remoteAwaiting": {
+    "defaultMessage": "O nó MLX de uma máquina remota é salvo no pool mas AGUARDA O ROTEAMENTO DA FROTA — os endpoints por nó chegam numa fase posterior. Hoje só o nó desta máquina é servido."
+  },
+  "addNode.title": {
+    "defaultMessage": "Adicionar nó"
+  },
+  "addNode.weightLabel": {
+    "defaultMessage": "Peso — quanto mais alto, maior a parte das tarefas"
+  },
   "alertBox.autoCompactAt": {
     "defaultMessage": "Compactação automática em"
   },
@@ -229,6 +319,21 @@
   },
   "chatSettings.responseStylesTitle": {
     "defaultMessage": "Estilos de resposta"
+  },
+  "cloudProviders.configuredCount": {
+    "defaultMessage": "{configured} de {total} configurados"
+  },
+  "cloudProviders.description": {
+    "defaultMessage": "Credenciais dos provedores de nuvem que este app pode chamar — as chaves são criptografadas no cofre de segredos do goose. Backends locais (LM Studio, o motor MLX) não precisam de credenciais e vivem nas outras abas."
+  },
+  "cloudProviders.loadFailed": {
+    "defaultMessage": "Não foi possível carregar a lista de provedores."
+  },
+  "cloudProviders.loading": {
+    "defaultMessage": "Carregando provedores…"
+  },
+  "cloudProviders.retry": {
+    "defaultMessage": "Tentar novamente"
   },
   "configSettings.configReset": {
     "defaultMessage": "Configuração reposta"
@@ -1670,6 +1775,15 @@
   "launcher.placeholder": {
     "defaultMessage": "Pergunte qualquer coisa ao goose..."
   },
+  "leanzeroSwarm.subtitle": {
+    "defaultMessage": "Um só lugar para todo o enxame: o motor MLX próprio, as credenciais dos provedores de nuvem e o pool de nós com que o enxame constrói."
+  },
+  "leanzeroSwarm.tabCloud": {
+    "defaultMessage": "Provedores de nuvem"
+  },
+  "leanzeroSwarm.tabSwarm": {
+    "defaultMessage": "Configurações do enxame"
+  },
   "loadingGoose.compacting": {
     "defaultMessage": "o goose está compactando a conversa..."
   },
@@ -2342,11 +2456,11 @@
   "navigation.itemHome": {
     "defaultMessage": "Nova conversa"
   },
+  "navigation.itemLeanzeroSwarm": {
+    "defaultMessage": "LeanZero Swarm"
+  },
   "navigation.itemMemories": {
     "defaultMessage": "Memories"
-  },
-  "navigation.itemMlx": {
-    "defaultMessage": "Leanzero MLX"
   },
   "navigation.itemSettings": {
     "defaultMessage": "Definições"
@@ -4306,6 +4420,54 @@
   },
   "subRecipeModal.subtitle": {
     "defaultMessage": "Configure uma subrreceita que pode ser invocada como ferramenta durante a execução da receita"
+  },
+  "swarmSettings.addNode": {
+    "defaultMessage": "Adicionar nó"
+  },
+  "swarmSettings.autoChip": {
+    "defaultMessage": "auto"
+  },
+  "swarmSettings.autoChipTitle": {
+    "defaultMessage": "Descoberto ao vivo do LM Studio — entra no pool automaticamente"
+  },
+  "swarmSettings.awaitingChip": {
+    "defaultMessage": "aguardando roteamento"
+  },
+  "swarmSettings.awaitingChipTitle": {
+    "defaultMessage": "Nó MLX de uma máquina remota — salvo no pool, servido quando o roteamento por nó chegar"
+  },
+  "swarmSettings.noNodes": {
+    "defaultMessage": "Ainda não há nós — adicione um, ou inicie o LM Studio em {endpoint} para ser descoberto."
+  },
+  "swarmSettings.nodesDesc": {
+    "defaultMessage": "Cada nó que o enxame executa — linhas configuradas mais o que o LM Studio tem residente agora. Peso: quanto mais alto, maior a parte das tarefas."
+  },
+  "swarmSettings.nodesTitle": {
+    "defaultMessage": "Nós"
+  },
+  "swarmSettings.reassignAria": {
+    "defaultMessage": "Reatribuir provedor"
+  },
+  "swarmSettings.reassignConfirm": {
+    "defaultMessage": "Escolher novo provedor"
+  },
+  "swarmSettings.reassignMessage": {
+    "defaultMessage": "Mudar o que serve {id} funciona REMOVENDO o nó e READICIONANDO-O sob o provedor escolhido em seguida. Nada muda até a nova adição ser concluída."
+  },
+  "swarmSettings.reassignTitle": {
+    "defaultMessage": "Reatribuir provedor"
+  },
+  "swarmSettings.removeAria": {
+    "defaultMessage": "Remover nó"
+  },
+  "swarmSettings.removeConfirm": {
+    "defaultMessage": "Remover"
+  },
+  "swarmSettings.removeMessage": {
+    "defaultMessage": "{id} sai do pool do enxame. Nenhum arquivo de modelo é tocado; você pode readicioná-lo a qualquer momento."
+  },
+  "swarmSettings.removeTitle": {
+    "defaultMessage": "Remover nó"
   },
   "switchModelModal.backToModelList": {
     "defaultMessage": "Voltar à lista de modelos"

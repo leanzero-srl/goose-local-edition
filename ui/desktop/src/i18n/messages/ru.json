@@ -1,4 +1,94 @@
 {
+  "addNode.addButton": {
+    "defaultMessage": "Добавить узел"
+  },
+  "addNode.cancel": {
+    "defaultMessage": "Отмена"
+  },
+  "addNode.description": {
+    "defaultMessage": "Узел создаётся выбором того, что его обслуживает: выберите провайдера, затем модель."
+  },
+  "addNode.done": {
+    "defaultMessage": "Готово"
+  },
+  "addNode.duplicateId": {
+    "defaultMessage": "Узел с именем {id} уже существует — выберите другое имя."
+  },
+  "addNode.lmstudioAuto": {
+    "defaultMessage": "Узлы LM Studio обнаруживаются автоматически: каждая модель, резидентная во флоте на {endpoint}, сама присоединяется к пулу — добавлять вручную нечего. Загрузите модель в LM Studio (или LM Link), и она появится в списке узлов."
+  },
+  "addNode.lmstudioLive": {
+    "defaultMessage": "{count,plural,one{# узел сейчас в работе} other{# узлов сейчас в работе}}"
+  },
+  "addNode.lmstudioOffline": {
+    "defaultMessage": "флот не в сети"
+  },
+  "addNode.machineAllTaken": {
+    "defaultMessage": "У каждой обнаруженной машины уже есть MLX-узел — сначала удалите один или добавьте облачные узлы (они не ограничены)."
+  },
+  "addNode.machineCap": {
+    "defaultMessage": "{count,plural,one{# машина роя} other{# машин роя}} ещё без MLX-узла — каждая машина несёт ровно один."
+  },
+  "addNode.machineLabel": {
+    "defaultMessage": "Машина — по одному MLX-узлу на каждую"
+  },
+  "addNode.machineLocalTag": {
+    "defaultMessage": "эта машина"
+  },
+  "addNode.machineNoneDiscovered": {
+    "defaultMessage": "Машины роя не обнаружены (LM Studio / lms недоступны) — узел создаётся для ЭТОЙ машины; назовите его ниже."
+  },
+  "addNode.machinePlaceholder": {
+    "defaultMessage": "Выберите машину…"
+  },
+  "addNode.machineRemoteTag": {
+    "defaultMessage": "удалённая"
+  },
+  "addNode.mlxAliasPreview": {
+    "defaultMessage": "ID обслуживаемой модели: {alias}"
+  },
+  "addNode.mlxLabelLabel": {
+    "defaultMessage": "Имя узла"
+  },
+  "addNode.mlxLabelPlaceholder": {
+    "defaultMessage": "напр. workhorse"
+  },
+  "addNode.mlxModelLabel": {
+    "defaultMessage": "Модель — из папки моделей движка"
+  },
+  "addNode.mlxModelPlaceholder": {
+    "defaultMessage": "Выберите модель…"
+  },
+  "addNode.mlxNoModels": {
+    "defaultMessage": "В папке моделей движка ещё нет полных моделей — сначала скачайте одну на вкладке LeanZero MLX."
+  },
+  "addNode.mlxOneModel": {
+    "defaultMessage": "Один движок LeanZero MLX обслуживает ОДНУ модель: все MLX-узлы делят то, что движок смонтировал, поэтому разная модель на узел пока невозможна. Добавление этого узла направит движок на выбранную здесь модель."
+  },
+  "addNode.providerLabel": {
+    "defaultMessage": "Провайдер"
+  },
+  "addNode.providerPlaceholder": {
+    "defaultMessage": "Выберите провайдера…"
+  },
+  "addNode.reassignButton": {
+    "defaultMessage": "Удалить и добавить заново"
+  },
+  "addNode.reassignNotice": {
+    "defaultMessage": "Переназначение меняет то, что обслуживает этот узел: {id} УДАЛЯЕТСЯ из пула и добавляется заново под выбранным здесь провайдером."
+  },
+  "addNode.reassignTitle": {
+    "defaultMessage": "Переназначить {id}"
+  },
+  "addNode.remoteAwaiting": {
+    "defaultMessage": "MLX-узел удалённой машины сохраняется в пул, но ЖДЁТ МАРШРУТИЗАЦИИ ФЛОТА — поузловые эндпоинты движка появятся в следующей фазе. Сегодня обслуживается только узел этой машины."
+  },
+  "addNode.title": {
+    "defaultMessage": "Добавить узел"
+  },
+  "addNode.weightLabel": {
+    "defaultMessage": "Вес — чем выше, тем большая доля задач"
+  },
   "alertBox.autoCompactAt": {
     "defaultMessage": "Автосжимать при"
   },
@@ -229,6 +319,21 @@
   },
   "chatSettings.responseStylesTitle": {
     "defaultMessage": "Стили ответов"
+  },
+  "cloudProviders.configuredCount": {
+    "defaultMessage": "Настроено {configured} из {total}"
+  },
+  "cloudProviders.description": {
+    "defaultMessage": "Учётные данные облачных провайдеров, которых может вызывать это приложение — ключи шифруются в хранилище секретов goose. Локальным бэкендам (LM Studio, движок MLX) учётные данные не нужны, они живут на других вкладках."
+  },
+  "cloudProviders.loadFailed": {
+    "defaultMessage": "Не удалось загрузить список провайдеров."
+  },
+  "cloudProviders.loading": {
+    "defaultMessage": "Загрузка провайдеров…"
+  },
+  "cloudProviders.retry": {
+    "defaultMessage": "Повторить"
   },
   "configSettings.configReset": {
     "defaultMessage": "Конфигурация сброшена"
@@ -1670,6 +1775,15 @@
   "launcher.placeholder": {
     "defaultMessage": "Спросите goose о чем угодно..."
   },
+  "leanzeroSwarm.subtitle": {
+    "defaultMessage": "Одно место для всего роя: собственный движок MLX, учётные данные облачных провайдеров и пул узлов, которым рой строит."
+  },
+  "leanzeroSwarm.tabCloud": {
+    "defaultMessage": "Облачные провайдеры"
+  },
+  "leanzeroSwarm.tabSwarm": {
+    "defaultMessage": "Настройки роя"
+  },
   "loadingGoose.compacting": {
     "defaultMessage": "goose сжимает разговор..."
   },
@@ -2342,11 +2456,11 @@
   "navigation.itemHome": {
     "defaultMessage": "Новый чат"
   },
+  "navigation.itemLeanzeroSwarm": {
+    "defaultMessage": "LeanZero Swarm"
+  },
   "navigation.itemMemories": {
     "defaultMessage": "Memories"
-  },
-  "navigation.itemMlx": {
-    "defaultMessage": "Leanzero MLX"
   },
   "navigation.itemSettings": {
     "defaultMessage": "Настройки"
@@ -4306,6 +4420,54 @@
   },
   "subRecipeModal.subtitle": {
     "defaultMessage": "Настройте подрецепт, который можно вызывать как инструмент при выполнении рецепта"
+  },
+  "swarmSettings.addNode": {
+    "defaultMessage": "Добавить узел"
+  },
+  "swarmSettings.autoChip": {
+    "defaultMessage": "авто"
+  },
+  "swarmSettings.autoChipTitle": {
+    "defaultMessage": "Обнаружен вживую из LM Studio — присоединяется к пулу автоматически"
+  },
+  "swarmSettings.awaitingChip": {
+    "defaultMessage": "ждёт маршрутизации"
+  },
+  "swarmSettings.awaitingChipTitle": {
+    "defaultMessage": "MLX-узел удалённой машины — сохранён в пуле, заработает с поузловой маршрутизацией"
+  },
+  "swarmSettings.noNodes": {
+    "defaultMessage": "Узлов пока нет — добавьте один или запустите LM Studio на {endpoint}, чтобы он был обнаружен."
+  },
+  "swarmSettings.nodesDesc": {
+    "defaultMessage": "Каждый узел, который запускает рой — настроенные строки плюс всё, что сейчас резидентно в LM Studio. Вес: чем выше, тем большая доля задач."
+  },
+  "swarmSettings.nodesTitle": {
+    "defaultMessage": "Узлы"
+  },
+  "swarmSettings.reassignAria": {
+    "defaultMessage": "Переназначить провайдера"
+  },
+  "swarmSettings.reassignConfirm": {
+    "defaultMessage": "Выбрать нового провайдера"
+  },
+  "swarmSettings.reassignMessage": {
+    "defaultMessage": "Смена того, что обслуживает {id}, работает через УДАЛЕНИЕ узла и ПОВТОРНОЕ ДОБАВЛЕНИЕ под следующим выбранным провайдером. Ничего не меняется, пока новое добавление не завершится."
+  },
+  "swarmSettings.reassignTitle": {
+    "defaultMessage": "Переназначить провайдера"
+  },
+  "swarmSettings.removeAria": {
+    "defaultMessage": "Удалить узел"
+  },
+  "swarmSettings.removeConfirm": {
+    "defaultMessage": "Удалить"
+  },
+  "swarmSettings.removeMessage": {
+    "defaultMessage": "{id} покидает пул роя. Файлы моделей не затрагиваются; вы можете добавить его снова в любой момент."
+  },
+  "swarmSettings.removeTitle": {
+    "defaultMessage": "Удалить узел"
   },
   "switchModelModal.backToModelList": {
     "defaultMessage": "Назад к списку моделей"

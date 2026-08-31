@@ -2,7 +2,7 @@ import { Sliders, Bot, LoaderCircle, Settings, BookOpen, ExternalLink } from 'lu
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useModelAndProvider } from '../../../ModelAndProviderContext';
 import { useFeatures } from '../../../../contexts/FeaturesContext';
-import { useMlxEngineStatusPoll } from '../../../mlx/useMlxEngineStatus';
+import { useMlxEngineStatusPoll } from '../../../leanzero-swarm/useMlxEngineStatus';
 import { MLX_ENTRY_LABEL, MLX_PROVIDER_ID } from '../leanzeroSelectorPolicy';
 import { LeanZero } from '../../../icons';
 import { LEANZERO_DOCS_URL, LEANZERO_WEBSITE_URL, SWARM_PROVIDER_ID } from '../../../../branding';

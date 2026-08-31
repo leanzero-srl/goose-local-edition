@@ -41,7 +41,7 @@ vi.mock('../../../../contexts/FeaturesContext', () => ({
 
 let mockMlxStatus: MlxEngineStatus | null = null;
 const mockPollEnabled = vi.fn();
-vi.mock('../../../mlx/useMlxEngineStatus', () => ({
+vi.mock('../../../leanzero-swarm/useMlxEngineStatus', () => ({
   useMlxEngineStatusPoll: (enabled: boolean) => {
     mockPollEnabled(enabled);
     return { status: enabled ? mockMlxStatus : null, error: null };

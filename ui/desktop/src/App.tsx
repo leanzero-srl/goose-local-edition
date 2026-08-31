@@ -4,6 +4,7 @@ import {
   HashRouter,
   Routes,
   Route,
+  Navigate,
   useNavigate,
   useLocation,
   useSearchParams,
@@ -33,7 +34,7 @@ import SettingsView, { SettingsViewOptions } from './components/settings/Setting
 import SessionsView from './components/sessions/SessionsView';
 import SchedulesView from './components/schedule/SchedulesView';
 import LoopView from './components/loop/LoopView';
-import MlxEngineView from './components/mlx/MlxEngineView';
+import LeanZeroSwarmView from './components/leanzero-swarm/LeanZeroSwarmView';
 import BenchmarkView from './components/benchmark/BenchmarkView';
 import BenchmarkAutoOpen from './components/benchmark/BenchmarkAutoOpen';
 import ProviderSettings from './components/settings/providers/ProviderSettingsPage';
@@ -273,8 +274,8 @@ const LoopRoute = () => {
   return <LoopView />;
 };
 
-const MlxEngineRoute = () => {
-  return <MlxEngineView />;
+const LeanZeroSwarmRoute = () => {
+  return <LeanZeroSwarmView />;
 };
 
 const SkillsRoute = () => {
@@ -728,7 +729,9 @@ export function AppInner() {
               <Route path="schedules" element={<SchedulesRoute />} />
               <Route path="recipes" element={<RecipesRoute />} />
               <Route path="loop" element={<LoopRoute />} />
-              <Route path="mlx-engine" element={<MlxEngineRoute />} />
+              <Route path="leanzero-swarm" element={<LeanZeroSwarmRoute />} />
+              {/* The old engine-window path stays alive as a redirect — no dead links. */}
+              <Route path="mlx-engine" element={<Navigate to="/leanzero-swarm" replace />} />
               <Route path="benchmark" element={<BenchmarkRoute />} />
               <Route path="skills" element={<SkillsRoute />} />
               <Route path="memories" element={<MemoriesRoute />} />

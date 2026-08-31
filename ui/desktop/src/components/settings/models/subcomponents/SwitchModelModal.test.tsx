@@ -28,7 +28,7 @@ vi.mock('../../../../contexts/FeaturesContext', () => ({
 
 let mockMlxStatus: MlxEngineStatus | null = null;
 let mockMlxStatusError: string | null = null;
-vi.mock('../../../mlx/useMlxEngineStatus', () => ({
+vi.mock('../../../leanzero-swarm/useMlxEngineStatus', () => ({
   useMlxEngineStatusPoll: () => ({ status: mockMlxStatus, error: mockMlxStatusError }),
 }));
 

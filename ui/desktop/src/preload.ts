@@ -342,6 +342,8 @@ type ElectronAPI = {
   removeProject: (dir: string) => Promise<ProjectEntry[]>;
   /** LM Studio's live per-node status via `lms ps --json`: { identifier: 'generating'|'processingPrompt'|'idle' }. */
   fleetStatus: () => Promise<Record<string, string>>;
+  /** The swarm's MACHINES from `lms ps --json` (identifier prefixes; deviceIdentifier null = local). */
+  fleetMachines: () => Promise<Array<{ machine: string; local: boolean }>>;
 };
 
 type AppConfigAPI = {
@@ -396,6 +398,7 @@ const electronAPI: ElectronAPI = {
   benchmarkPublish: (args?: { title?: string; model?: string }) =>
     ipcRenderer.invoke('benchmark-publish', args),
   fleetStatus: () => ipcRenderer.invoke('fleet-status'),
+  fleetMachines: () => ipcRenderer.invoke('fleet-machines'),
   writeFile: (filePath: string, content: string) =>
     ipcRenderer.invoke('write-file', filePath, content),
   swarmAddNote: (workingDir: string, text: string) =>

@@ -1,7 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Check,
-  Cpu,
   Download,
   Folder,
   HardDrive,
@@ -15,8 +14,6 @@ import {
   Trash2,
   X,
 } from 'lucide-react';
-import { MainPanelLayout } from '../Layout/MainPanelLayout';
-import { ScrollArea } from '../ui/scroll-area';
 import { Button } from '../ui/button';
 import { Input } from '../ui/input';
 import { Select } from '../ui/Select';
@@ -2089,100 +2086,84 @@ const MlxEngineView: React.FC = () => {
     );
   };
 
+  // The page shell (MainPanelLayout, the LeanZero Swarm header, the top-level tab bar and the
+  // scroll area) belongs to LeanZeroSwarmView — this component is the LeanZero MLX tab's content:
+  // the engine sub-tabs (Engine / Models / Sampling) plus everything under them, unchanged.
   return (
-    <MainPanelLayout>
-      <div className="flex-1 flex flex-col min-h-0">
-        <div className="bg-background-primary px-8 pb-5 pt-16">
-          <header className="flex flex-col page-transition border-b border-border-primary pb-5">
-            <div className="flex items-center gap-3">
-              <span
-                className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded"
-                style={{ backgroundColor: AZURE }}
-              >
-                <Cpu className="w-5 h-5 text-white" />
-              </span>
-              <h1 className="text-2xl font-bold text-text-primary">Leanzero MLX</h1>
-              {status && <StateBadge state={status.state} />}
-            </div>
-            <p className="mt-1 text-sm font-bold" style={{ color: AZURE }}>
-              Powered by Rapid-MLX
-            </p>
-            <p className="mt-1 max-w-[70ch] text-sm text-text-secondary">
-              The in-house supervised MLX engine: mount and unmount models, tune per-model
-              sampling profiles, and pull models straight from Hugging Face.
-            </p>
-            <div className="mt-3 flex self-start overflow-hidden rounded border border-border-primary">
-              {tabBtn('engine', 'Engine')}
-              {tabBtn(
-                'models',
-                'Models',
-                <span
-                  className="rounded px-1 py-px text-[10px] font-bold tabular-nums text-white"
-                  style={{ backgroundColor: tab === 'models' ? INK_DARK : SLATE }}
-                >
-                  {models.length}
-                </span>
-              )}
-              {tabBtn('sampling', 'Sampling')}
-            </div>
-          </header>
+    <div className="flex flex-col gap-4">
+      <div className="flex flex-wrap items-center gap-3">
+        <div className="flex self-start overflow-hidden rounded border border-border-primary">
+          {tabBtn('engine', 'Engine')}
+          {tabBtn(
+            'models',
+            'Models',
+            <span
+              className="rounded px-1 py-px text-[10px] font-bold tabular-nums text-white"
+              style={{ backgroundColor: tab === 'models' ? INK_DARK : SLATE }}
+            >
+              {models.length}
+            </span>
+          )}
+          {tabBtn('sampling', 'Sampling')}
         </div>
-
-        <div className="flex-1 min-h-0 relative px-8 pt-4">
-          <ScrollArea className="h-full">
-            {tab === 'engine' && (
-              <EngineSection
-                status={status}
-                statusError={statusError}
-                settings={settings}
-                models={models}
-                mountModelId={mountModelId}
-                setMountModelId={pickMountModel}
-                mountError={mountError}
-                engineBusy={engineBusy}
-                onMount={onMount}
-                onUnmount={onUnmount}
-                onRemount={onRemount}
-              />
-            )}
-            {tab === 'models' && (
-              <ModelsSection
-                settings={settings}
-                models={models}
-                disk={disk}
-                mountedModelId={status?.modelId ?? null}
-                refreshModels={refreshModels}
-                saveSettings={saveSettings}
-                onOpenSampling={openSamplingFor}
-                downloads={downloads}
-                downloadErrors={downloadErrors}
-                downloadHandlers={downloadHandlers}
-                onModelDeleted={clearDownloadFor}
-                filters={browseFilters}
-                filtersError={browseFiltersError}
-              />
-            )}
-            {tab === 'sampling' && (
-              <SamplingSection
-                status={status}
-                settings={settings}
-                engineBusy={engineBusy}
-                onRemount={onRemount}
-                models={models}
-                selectedModelId={samplingModelId}
-                onSelectModel={setSamplingModelId}
-                drafts={draftsForSelected}
-                savedDrafts={savedDraftsForSelected}
-                setDraft={setProfileDraft}
-                onSaveSettings={onSaveProfile}
-                saving={saving}
-                saveError={saveError}
-              />
-            )}
-          </ScrollArea>
-        </div>
+        {status && <StateBadge state={status.state} />}
+        {/* pr-3: without it the ScrollArea's right edge shaved the final glyph off "Rapid-MLX"
+            (caught live on the packaged build, 2026-08-31). */}
+        <span className="ml-auto shrink-0 pr-3 text-sm font-bold" style={{ color: AZURE }}>
+          Powered by Rapid-MLX
+        </span>
       </div>
-    </MainPanelLayout>
+
+      {tab === 'engine' && (
+        <EngineSection
+          status={status}
+          statusError={statusError}
+          settings={settings}
+          models={models}
+          mountModelId={mountModelId}
+          setMountModelId={pickMountModel}
+          mountError={mountError}
+          engineBusy={engineBusy}
+          onMount={onMount}
+          onUnmount={onUnmount}
+          onRemount={onRemount}
+        />
+      )}
+      {tab === 'models' && (
+        <ModelsSection
+          settings={settings}
+          models={models}
+          disk={disk}
+          mountedModelId={status?.modelId ?? null}
+          refreshModels={refreshModels}
+          saveSettings={saveSettings}
+          onOpenSampling={openSamplingFor}
+          downloads={downloads}
+          downloadErrors={downloadErrors}
+          downloadHandlers={downloadHandlers}
+          onModelDeleted={clearDownloadFor}
+          filters={browseFilters}
+          filtersError={browseFiltersError}
+        />
+      )}
+      {tab === 'sampling' && (
+        <SamplingSection
+          status={status}
+          settings={settings}
+          engineBusy={engineBusy}
+          onRemount={onRemount}
+          models={models}
+          selectedModelId={samplingModelId}
+          onSelectModel={setSamplingModelId}
+          drafts={draftsForSelected}
+          savedDrafts={savedDraftsForSelected}
+          setDraft={setProfileDraft}
+          onSaveSettings={onSaveProfile}
+          saving={saving}
+          saveError={saveError}
+        />
+      )}
+    </div>
   );
 };
 
