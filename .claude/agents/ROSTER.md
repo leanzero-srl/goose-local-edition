@@ -478,3 +478,13 @@ research_request_block's armed-no-claimed-sections arm wording.
   research_request_block and the lane's 11 shell calls (grepping sibling think.logs for spec text).
   Named four holes honestly (no research_planned event; no per-look node-time; three looks pending).
   Two specifics fed to the in-flight grounding surgeon same-tick. Charter gap: none.
+- 2026-08-31 12:10 tick-surgeon #3: EXEMPLARY. Answered both questions with the words (api-q2 STILL
+  shipping "send" while it READ core-q0's CHECK vocabulary — 6 calls into the ledger — the sharpest
+  form of the grounding defect: the material was in front of it and the prompt's "pick a convention"
+  overrode it); the raised audit measured 6 FALSE / 4 GENUINE with the spec line refuting each false
+  one. Steer-obeyed-in-stream observed (api-q3 tightening on the nudge's exact list). Honest holes.
+  Charter gap: none.
+- 2026-08-31 12:10 swarm-surgeon (research grounding, b7516297b): CLEAN+. Both addenda folded; the
+  system sentence directly targets the "not the lane's to pick" defect surgeon #3 measured; events
+  landed (planned/context/phase/not-persisted, all derived); honest same-instant NET label; orientation
+  cluster extracted to pay the wiring (43,684→43,444). tick.py taught the new events same-turn.
