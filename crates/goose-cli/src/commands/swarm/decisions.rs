@@ -217,16 +217,17 @@ pub(super) fn research_settled_worker_block(decisions: &[PlanDecision]) -> Strin
     out
 }
 
-/// One decision lane's prompt PREFIX (the fan appends the decision text itself, exactly as the
-/// slice path appends its question to a `research_user_text` prefix). The full request rides
-/// whole: a decision is global — no claimed-section subset exists to splice — and "answer
-/// strictly from the request" requires the request. User-settled decisions ride under the ONE
-/// `USER_DECISIONS_HEADER` constant so settled choices inform the still-open ones.
+/// One decision lane's prompt HEAD (the fan adds the snowball block and the decision text under
+/// THE OPEN DECISION at dispatch through `research_user_text`, exactly as the slice path does
+/// for its question). The full request rides whole: a decision is global — no claimed-section
+/// subset exists to splice — and "answer strictly from the request" requires the request.
+/// User-settled decisions ride under the ONE `USER_DECISIONS_HEADER` constant so settled
+/// choices inform the still-open ones; the SOURCES block is the same one every slice lane gets.
 pub(super) fn decision_user_text(
     spec: &str,
     user_decisions: &str,
     tree_at_start: &[String],
-    decision: &str,
+    sources_block: &str,
 ) -> String {
     let decisions_block = if user_decisions.trim().is_empty() {
         String::new()
@@ -234,10 +235,9 @@ pub(super) fn decision_user_text(
         format!("{USER_DECISIONS_HEADER}{user_decisions}")
     };
     format!(
-        "THE REQUEST:\n{spec}{decisions_block}{}\n\nThe OPEN DECISION below was put to the user \
-         and the user did not answer it. Answer STRICTLY from the request; where the request is \
-         silent, name the most CONVENTIONAL choice and say it is a convention.\n\n\
-         THE OPEN DECISION:\n{decision}",
+        "THE REQUEST:\n{spec}{decisions_block}{}{sources_block}\n\nThe OPEN DECISION below was \
+         put to the user and the user did not answer it. Answer STRICTLY from the request; where \
+         the request is silent, name the most CONVENTIONAL choice and say it is a convention.",
         super::research::research_tree_block(tree_at_start)
     )
 }

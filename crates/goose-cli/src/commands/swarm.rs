@@ -46,12 +46,19 @@ use supervision::{
     verify_lane_key, write_forming_atomic, FormingGuard, FormingReport, FormingSidecar,
     ASK_ANSWER_LANE, PILLARS_LANE, REFLECT_LANE,
 };
+mod orientation;
+use orientation::{
+    head_to_sentence_end, orientation_armed, spec_orientation, spec_sections, unclaimed_sections,
+    SpecSection,
+};
 mod research;
 use research::{
-    budget_research_answer, emit_research_outcome, fold_research_outcome, fold_research_panic,
-    load_research_mini, raised_questions_brief_block, research_fan_lanes, research_mini_name,
-    research_request_block, research_schema, research_system_text, research_user_text,
-    splice_claimed_sections, ResearchQuestion, ResearchRow, RESEARCH_ANSWERED,
+    announce_research_phase, budget_research_answer, emit_research_outcome, emit_research_planned,
+    fold_research_outcome, fold_research_panic, load_research_mini, persist_request_text,
+    raised_questions_brief_block, research_dispatch_text, research_fan_lanes, research_mini_name,
+    research_prompt_head, research_request_block, research_schema, research_sources_block,
+    research_system_text, splice_claimed_sections, ResearchQuestion, ResearchRow,
+    RESEARCH_ANSWERED,
 };
 mod imports;
 use imports::{attribute_import_gap_with_owner, tree_import_gaps, verify_tree_imports};
@@ -25114,137 +25121,6 @@ async fn run_linear_plan(
     Ok((plan_json, dag, PlanConf::default()))
 }
 
-/// SYNTHESIS TAKES THE SLICES DIRECTLY (P1-5): each slice's brief IS the slice — its objective
-/// plus its own questions, plus the decisions PARTITION (item 0: settled answers quoted verbatim;
-/// only a still-open one keeps "choose the conventional option"). RESEARCH used to write these
-/// briefs over 48 measured minutes (r2) with
-/// 2 of 3 nodes idle, and its median-4,789-char paraphrases did not prevent the five wrong-key
-/// defects — the real dependency source, which every worker now reads (dep_block + ledger block),
-/// is the authority a paraphrase never was. Pure, so the straight line is testable without a model.
-/// OPEN-1: one heading-delimited section of the operator's spec, cut by the document's OWN
-/// structure (`#`..`######` headings; tables stay inside their section's body). The spec is
-/// split by CODE so the opener never has to swallow the whole document to orient itself —
-/// Mihai 08-30 07:30: "the benchmark prompt is ~50k tokens and the orientation is simple —
-/// SPLIT THAT FILE and detail what needs detailing; OPEN must not swallow 50k in one prompt."
-struct SpecSection {
-    heading: String,
-    body: String,
-}
-
-fn spec_sections(spec: &str) -> Vec<SpecSection> {
-    let mut out: Vec<SpecSection> = Vec::new();
-    let mut cur = SpecSection {
-        heading: String::new(),
-        body: String::new(),
-    };
-    for line in spec.lines() {
-        let t = line.trim_start();
-        let hashes = t.chars().take_while(|c| *c == '#').count();
-        let is_heading = (1..=6).contains(&hashes) && {
-            let (_, rest) = t.split_at(hashes);
-            rest.starts_with(' ') && !rest.trim().is_empty()
-        };
-        if is_heading {
-            if !cur.heading.is_empty() || !cur.body.trim().is_empty() {
-                out.push(cur);
-            }
-            let (_, rest) = t.split_at(hashes);
-            cur = SpecSection {
-                heading: rest.trim().to_string(),
-                body: String::new(),
-            };
-        } else {
-            cur.body.push_str(line);
-            cur.body.push('\n');
-        }
-    }
-    if !cur.heading.is_empty() || !cur.body.trim().is_empty() {
-        out.push(cur);
-    }
-    out
-}
-
-/// OPEN-1's arming floor. NOT a cap on model work (nothing is bounded or terminated by it) —
-/// it decides MESSAGE FORMATION only: below it, the whole spec is the better opener input and
-/// the prompt stays byte-identical; above it, with real document structure to lean on, the
-/// opener reads the orientation index and the engine splices each section's full text into the
-/// briefs afterwards. 12k chars is comfortably above any toy spec and ~4x below sb-7's 54k.
-const SPEC_ORIENTATION_MIN_CHARS: usize = 12_000;
-
-fn orientation_armed(spec: &str, sections: &[SpecSection]) -> bool {
-    sections.len() >= 3 && spec.chars().count() >= SPEC_ORIENTATION_MIN_CHARS
-}
-
-/// The compact index the opener consumes when `orientation_armed`: every section's heading with
-/// a measured size and a head excerpt ending at a SENTENCE boundary. The detail is not lost —
-/// `briefs_from_slices` splices each claimed section's FULL text into the owning slice's brief,
-/// verbatim.
-fn spec_orientation(sections: &[SpecSection]) -> String {
-    let mut s = String::new();
-    for sec in sections {
-        let heading = if sec.heading.is_empty() {
-            "(preamble)"
-        } else {
-            &sec.heading
-        };
-        let head = head_to_sentence_end(&sec.body, 400);
-        s.push_str(&format!(
-            "## {heading} [{} chars]\n{}\n\n",
-            sec.body.chars().count(),
-            head.trim_end()
-        ));
-    }
-    s
-}
-
-/// A model-read head cut never ends mid-sentence — shared by the orientation index, the
-/// slice-index summary, the judge's steer direction and the ledger row's final_text (the
-/// head-cuts whose consumer is a prompt; cuts that feed only an event or a log line stay
-/// hard cuts). The excerpt used to cut back to the last full LINE
-/// inside the first 400 chars, and markdown wraps sentences across lines — measured on r5's
-/// live opener (open.think.log ~4404): section 7's entry ended at "`web/index.html` (structure
-/// only)," — the one sentence naming the four deliverable files, cut after the first — and the
-/// opener re-litigated "owned and written separately" four times. The cut point now extends
-/// FORWARD to the end of the sentence it lands in (terminator then whitespace) or to the
-/// paragraph break, whichever comes first. NOT a cap on model work — message formation only.
-/// Measured on the real sb-7 spec: the index grows 8,923 -> 14,074 chars, still under a third
-/// of the 53,597-char document.
-fn head_to_sentence_end(body: &str, min_chars: usize) -> String {
-    let chars: Vec<char> = body.chars().collect();
-    if chars.len() <= min_chars {
-        return body.to_string();
-    }
-    let mut end = min_chars;
-    while end < chars.len() {
-        let prev = chars[end - 1];
-        let next = chars[end];
-        if (matches!(prev, '.' | '!' | '?') && next.is_whitespace())
-            || (prev == '\n' && next == '\n')
-        {
-            break;
-        }
-        end += 1;
-    }
-    chars[..end].iter().collect()
-}
-
-/// The section headings NO slice claimed — the coverage gap, measured deterministically so it
-/// can be an event instead of a hope that the opener's own read-back caught it.
-fn unclaimed_sections(opened: &OpenOutput, sections: &[SpecSection]) -> Vec<String> {
-    let claimed: std::collections::HashSet<String> = opened
-        .slices
-        .iter()
-        .flat_map(|sl| sl.sections.iter())
-        .map(|h| h.trim().to_lowercase())
-        .collect();
-    sections
-        .iter()
-        .filter(|s| !s.heading.is_empty())
-        .filter(|s| !claimed.contains(&s.heading.trim().to_lowercase()))
-        .map(|s| s.heading.clone())
-        .collect()
-}
-
 /// The owner's OWNERSHIP DECLARATIONS, read back out of its objective's backticks.
 ///
 /// Since 14831a321 the opener is told to NAME EACH SLICE'S OWNED FILES IN ITS OBJECTIVE — but
@@ -25479,10 +25355,15 @@ impl GooseAgentDispatcher {
         tree_at_start: &[String],
         still_open_decisions: &[(usize, String)],
     ) -> Vec<ResearchRow> {
-        // ONE pass over the opener's own slices builds each question WITH its prompt prefix —
-        // no later lookup exists that could miss and silently substitute an empty prompt.
+        // ONE pass over the opener's own slices builds each question WITH its prompt HEAD —
+        // no later lookup exists that could miss and silently substitute an empty prompt. The
+        // one dispatch-time addition is the snowball block (`research_dispatch_text`): the minis
+        // answered before THIS lane left, whose emptiness on a first dispatch is honest.
         let sections = spec_sections(spec);
         let armed = orientation_armed(spec, &sections);
+        let index_sections = if armed { sections.len() } else { 0 };
+        let request_path = persist_request_text(&self.working_dir, spec, self.events.as_ref());
+        let sources = research_sources_block(request_path.as_deref(), spec, tree_at_start);
         let mut total_questions = 0usize;
         let mut rows: Vec<ResearchRow> = Vec::new();
         let mut to_dispatch: Vec<(ResearchQuestion, String)> = Vec::new();
@@ -25490,7 +25371,7 @@ impl GooseAgentDispatcher {
             if sl.questions.is_empty() {
                 continue;
             }
-            let prefix = research_user_text(
+            let head = research_prompt_head(
                 &research_request_block(
                     spec,
                     &sections,
@@ -25504,7 +25385,7 @@ impl GooseAgentDispatcher {
                 &sl.objective,
                 user_decisions,
                 tree_at_start,
-                "",
+                &sources,
             );
             for (i, q) in sl.questions.iter().enumerate() {
                 total_questions += 1;
@@ -25516,7 +25397,7 @@ impl GooseAgentDispatcher {
                             q_index: i,
                             question: q.clone(),
                         },
-                        prefix.clone(),
+                        head.clone(),
                     )),
                 }
             }
@@ -25536,7 +25417,7 @@ impl GooseAgentDispatcher {
                         q_index: *i,
                         question: d.clone(),
                     },
-                    decisions::decision_user_text(spec, user_decisions, tree_at_start, ""),
+                    decisions::decision_user_text(spec, user_decisions, tree_at_start, &sources),
                 )),
             }
         }
@@ -25550,25 +25431,23 @@ impl GooseAgentDispatcher {
             }));
             return Vec::new();
         }
-        if to_dispatch.is_empty() {
-            return rows;
-        }
-        phase_banner(
-            "RESEARCH",
-            "every host answers the opener's own questions in parallel",
-        );
-        let lanes = research_fan_lanes(worker_models);
-        let me = self.clone();
         // (slice, q_index, question) per dispatched item, in dispatch order, so a panicked
         // lane's Err — which arrives positionally — can be folded into a terminal row below.
         let dispatched: Vec<ResearchQuestion> =
             to_dispatch.iter().map(|(q, _)| q.clone()).collect();
+        emit_research_planned(self.events.as_ref(), &dispatched, &rows);
+        if to_dispatch.is_empty() {
+            return rows;
+        }
+        announce_research_phase(self.events.as_ref());
+        let lanes = research_fan_lanes(worker_models);
+        let me = self.clone();
         let fan_rows = fanout_over_fleet(
             "research",
             self.events.as_ref(),
             lanes,
             to_dispatch,
-            move |(q, prefix): (ResearchQuestion, String), model: String| {
+            move |(q, head): (ResearchQuestion, String), model: String| {
                 let me = me.clone();
                 async move {
                     let key = format!("research-{}-q{}", q.slice, q.q_index);
@@ -25582,7 +25461,14 @@ impl GooseAgentDispatcher {
                         "model": model,
                         "activity_key": key,
                     }));
-                    let user_text = format!("{prefix}{}", q.question);
+                    let user_text = research_dispatch_text(
+                        &me.working_dir,
+                        me.events.as_ref(),
+                        &head,
+                        &q,
+                        &key,
+                        index_sections,
+                    );
                     let t = std::time::Instant::now();
                     let out = me
                         .run_agent_timed_at(
@@ -42529,74 +42415,6 @@ mod audit_regressions {
             .is_empty());
     }
 
-    /// OPEN-1: on a real 54k-char spec the opener consumes an orientation index cut at the
-    /// document's own headings — never the whole document — while a small spec stays
-    /// byte-identical (not armed). The index carries every heading; tables stay in bodies.
-    #[test]
-    fn the_opener_orientation_replaces_the_whole_spec() {
-        let spec = include_str!("../../../../evals/swarm-bench/spec-build-sb7.md");
-        let sections = spec_sections(spec);
-        assert!(
-            orientation_armed(spec, &sections),
-            "sb-7 (54k chars, {} sections) arms the orientation",
-            sections.len()
-        );
-        let orientation = spec_orientation(&sections);
-        for sec in sections.iter().filter(|s| !s.heading.is_empty()) {
-            assert!(
-                orientation.contains(&sec.heading),
-                "every heading is in the index: {}",
-                sec.heading
-            );
-        }
-        assert!(
-            orientation.chars().count() * 3 < spec.chars().count(),
-            "the index is a fraction of the document: {} vs {}",
-            orientation.chars().count(),
-            spec.chars().count()
-        );
-        assert!(
-            sections.iter().any(|s| s.body.contains("/api/payments")),
-            "the endpoint table lives inside a section body, not lost at the cut"
-        );
-        // r5 (open.think.log ~4404): the line-cut entry ended at "`web/index.html` (structure
-        // only)," and the opener re-litigated the missing file list four times. The entry now
-        // ends at a sentence boundary, so the four-file sentence survives whole.
-        let s7 = sections
-            .iter()
-            .find(|s| s.heading.contains("frontend"))
-            .expect("sb-7 section 7 names the frontend");
-        let s7_entry = head_to_sentence_end(&s7.body, 400);
-        for f in [
-            "web/index.html",
-            "web/styles.css",
-            "web/app.js",
-            "web/viz.js",
-        ] {
-            assert!(
-                s7_entry.contains(f),
-                "the four-file sentence rides whole in section 7's index entry: missing {f}"
-            );
-        }
-        assert!(
-            s7_entry.trim_end().ends_with(['.', '!', '?']),
-            "the entry ends at a sentence boundary, never mid-list: ...{:?}",
-            s7_entry
-                .chars()
-                .rev()
-                .take(40)
-                .collect::<String>()
-                .chars()
-                .rev()
-                .collect::<String>()
-        );
-        let small = "# a\nbody\n# b\nbody\n# c\nbody\n";
-        assert!(
-            !orientation_armed(small, &spec_sections(small)),
-            "a small spec keeps the whole-text opener prompt byte-identical"
-        );
-    }
-
     /// OPEN-1's detailing half: a slice's claimed sections arrive in its brief VERBATIM (the
     /// builder reads the spec's own words, not a planner paraphrase); a slice that claimed none
     /// gets the orientation map plus a stated absence (the fallback rule), and
@@ -42867,64 +42685,6 @@ mod audit_regressions {
                 .ends_with("going and going."),
             "the cut lands on a line boundary"
         );
-    }
-
-    /// A5 + A6: when orientation is armed the research prompt carries the orientation index and
-    /// the slice's claimed sections' FULL text — NEVER the raw spec — plus the USER DECISIONS
-    /// block and the question verbatim. Below the floor the whole spec is the input, as-is.
-    #[test]
-    fn research_prompt_carries_decisions_and_never_the_raw_spec_when_armed() {
-        let filler =
-            "This sentence pads the specification body across the arming floor. ".repeat(100);
-        let spec = format!(
-            "# Alpha\n{filler}The deep claimed fact is CLAIMED_DEEP_MARKER.\n\n\
-             # Beta\n{filler}The deep unclaimed fact is UNCLAIMED_DEEP_MARKER.\n\n\
-             # Gamma\nA short tail section.\n"
-        );
-        let sections = spec_sections(&spec);
-        assert!(
-            orientation_armed(&spec, &sections),
-            "the fixture must cross the real arming floor"
-        );
-        let block = research_request_block(
-            &spec,
-            &sections,
-            true,
-            "s1",
-            &["Alpha".to_string()],
-            &NullSink,
-        );
-        let text = research_user_text(
-            &block,
-            "payments",
-            "the payments service",
-            "sync payments from the vendor",
-            "Q: which separator?\nA: pipe-separated CSV.\n",
-            &["app/__main__.py".to_string()],
-            "What is the frozen payment record structure from section 2?",
-        );
-        assert!(
-            text.contains("CLAIMED_DEEP_MARKER"),
-            "the claimed section's FULL text rides in"
-        );
-        assert!(
-            !text.contains("UNCLAIMED_DEEP_MARKER"),
-            "an unclaimed section arrives only as its orientation head — the raw spec never rides"
-        );
-        assert!(
-            text.contains("USER DECISIONS") && text.contains("pipe-separated CSV"),
-            "the ASK handshake's decisions inform every research call (A6)"
-        );
-        assert!(text.contains("THE QUESTION:\nWhat is the frozen payment record structure"));
-        assert!(
-            text.contains("app/__main__.py"),
-            "the existing tree rides in"
-        );
-        // Below the floor: the spec as-is is the better input, exactly like OPEN's own message.
-        let small = "build a tiny thing";
-        let small_block =
-            research_request_block(small, &spec_sections(small), false, "s1", &[], &NullSink);
-        assert_eq!(small_block, format!("THE REQUEST:\n{small}"));
     }
 
     /// r5's silent 3,501-char loss, pinned. The boot slice claimed a typo'd heading; the splice

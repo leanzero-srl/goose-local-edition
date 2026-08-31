@@ -208,9 +208,15 @@ fn the_banned_integrate_template_only_shrinks() {
 /// raised research questions into the owning slice's brief (`raised_questions_brief_block`) and
 /// the per-question `research_raised_folded` event — r6b's 48 raised questions had reached no
 /// builder and no tick.
+/// Tightened to 43,444: the spec-orientation cluster (`SpecSection`, `spec_sections`,
+/// `orientation_armed`, `spec_orientation`, `head_to_sentence_end`, `unclaimed_sections` and
+/// their sb-7 test) moved to commands/swarm/orientation.rs (-257), and the research prompt test
+/// moved with the prompt builders it exercises to research.rs, paying for the research fan's
+/// grounding wiring in the same commit (r6c: the request file, the snowball block at dispatch,
+/// `research_context`, `research_planned`, `phase: research`).
 #[test]
 fn swarm_rs_line_count_only_decreases() {
-    const SWARM_RS_LINE_BASELINE: usize = 43_684;
+    const SWARM_RS_LINE_BASELINE: usize = 43_444;
     let text = read("crates/goose-cli/src/commands/swarm.rs");
     let n = text.lines().count();
     assert!(
