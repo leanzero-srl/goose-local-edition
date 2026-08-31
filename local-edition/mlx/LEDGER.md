@@ -1,5 +1,20 @@
 # MLX engine campaign — LEDGER
 
+## 2026-08-31 afternoon — Mihai's first hands-on: three UI corrections, all shipped same-day
+
+He used the window himself; his confusions are the spec. (1) Sampling was buried below the fold on
+the Engine tab and absent from the Models tab where he looked → Sampling is now a third top-level
+tab with a per-model shortcut from every model row (9b826b4cb, live-verified 18 checks). (2) The
+chat window's multi-provider model selector coexisted with the MLX window and read as "all these
+providers" → chat now rides the MLX engine alone when the mlxEngine capability is present: the
+selector UI is replaced by a state chip showing the SERVED model (click → MLX window), session
+provider/model auto-syncs to the running engine, and the legacy selector stays in code behind the
+capability gate (in flight). Backend: status now carries served_model_id (d906d90a8) because the
+served alias, not the HF dir id, is what chat requests must name. (3) The mount card always
+offered green "Mount" even with a model mounted → button matrix now tells the truth: Mounted
+(disabled, green) / Switch model / Mount / mounting-spinner, picker follows the mounted model
+without overriding explicit user picks (in flight, same commit as 2).
+
 ## 2026-08-31 ~03:00 — SWARM E2E THROUGH THE SIDECAR: PROVEN (artifacts + event log)
 
 Rerun on the fixed binary (3d31c31e0) with the repaired single-key config,
