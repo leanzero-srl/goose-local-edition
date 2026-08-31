@@ -633,3 +633,11 @@ research_request_block's armed-no-claimed-sections arm wording.
   three unbriefed siblings honestly: the completion event/watchdog/verify sweep still render the raw
   line (r6e queue); web_refs has the same hazard one level down; and web-console's look 4 is 3h out
   with NO verdict — the A2 silent class on a judge lane, handed to the tick-surgeon. Charter gap: none.
+- 2026-08-31 17:45 tick-surgeon #17: EXEMPLARY. Both watches closed with primary data: the 3h silent
+  look was already resolved (judge_look_abandoned 13:42 — my watch carried stale data; no orphan,
+  slot released), and the web-viz investigate returned NOT-a-loop/NOT-defiance with the mechanism
+  (a research mini answered with a POINTER into run.jsonl instead of extracted text — the lane is
+  ledger-driven through a detour both steers predate). Delivered reads first-rate: app.js GUARDS the
+  missing viz.js ("even if viz.js is missing, the page won't throw" — pitfall-lesson-19 behavior in
+  the built code); sync.py carries the researched cursor semantics verbatim. New r6e item: judge ok
+  with EMPTY next while the owned file is absent. Charter gap: none.
