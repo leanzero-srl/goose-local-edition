@@ -604,3 +604,10 @@ research_request_block's armed-no-claimed-sections arm wording.
   hold zero files — 46k of formatMoney JS composed in web-console's HEAD, an engine disk-measured
   injection ignored — the compose-in-head class at fleet scale, with the skeleton's proven remedy
   (the exact-file directive rung) proposed as the fix shape. Charter gap: none.
+- 2026-08-31 16:15 tick-surgeon #15: EXEMPLARY. First-bytes read with content (db.py's WAL/busy_timeout/
+  CHECK constraints — the fan's research visibly IN the code); named the run's sharpest new shape:
+  web-console emitting its owned files as FORMED TEXT (70.6k) — progress in the wrong channel, two
+  exact-file steers absorbed, the ladder holding it as "advancing". Correctly recommended investigate-
+  not-kill (the content is real; the channel is wrong). Also caught judge-web-viz's 46m look gap and
+  the provider chat-ism leak (already fixed for r6d at 331a1a09c). File-progress ladder amendment
+  dispatched. Charter gap: none.
