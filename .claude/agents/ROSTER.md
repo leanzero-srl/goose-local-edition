@@ -576,3 +576,9 @@ research_request_block's armed-no-claimed-sections arm wording.
   live) and review-camera's patch vanished at the merge with no event — both dispatched. Skeleton at
   23m/8 attempts/0 files re-deriving under HELD restreams = the ladder-tracer's predicted shielded
   shape; one-tick escalation window set. Charter gap: none.
+- 2026-08-31 15:10 swarm-surgeon (prose rewrite + merge drops, 6c4423e81): CLEAN+. Enumerated the
+  whole repair chain (9 stages, one path-renamer); found the merge rule from the join loop
+  (first-lane-wins by task id in section order) and traced r6c's exact drop to the HashSet::insert;
+  honest split verdict (fix 2 YES at seq 1383; fix 1 a NET because the skeleton's confusion reads its
+  OWN pre-repair brief — naming the REAL mechanism, prepend-before-repair, as unbriefed observation
+  #1). That mechanism is now dispatched as its own fix. swarm.rs 43,208→43,085. Charter gap: none.
