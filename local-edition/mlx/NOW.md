@@ -1,6 +1,12 @@
 # NOW — MLX in-house engine campaign (branch goose/mlx-inferencing)
 
 ## CURRENT CHAPTER (2026-08-31 evening): the Goose Swarm restructure
+AMENDMENT (Mihai, ~20:00): the Swarm Settings tab is RADICALLY SIMPLE — Add node / provider per
+node / one weight per node, NOTHING else ("I don't want all of those levers… That is it.
+Seriously."); the legacy lever section stays in Settings untouched until the golden-formula strip.
+MLX nodes auto-cap to the swarm's discovered MACHINES (LM Link surface): 5-machine swarm = 5
+addable LeanZero MLX nodes; cloud unlimited. Remote-machine MLX nodes addable but wear a solid
+"awaiting fleet routing" chip until per-node engine endpoints ship (never fake reachability).
 Mihai's five-phase UI reorg: (1) "merge main for Benchmark" — MEASURED no-op, we contain all of
 main (0 behind / 868 ahead); Benchmark was hidden because the renderer's edition is a stored
 setting defaulting 'standard' (never provider-derived like edition.rs) — same root cause as the
