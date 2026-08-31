@@ -535,3 +535,10 @@ research_request_block's armed-no-claimed-sections arm wording.
   strengthens the slicer-embeds-subsections improvement already queued. Deferred one spec check
   transparently (cached as a watch item, not silently skipped) — exactly the budget discipline
   intended. Charter gap: none.
+- 2026-08-31 13:15 tick-surgeon #8: CLEAN+ at 57.7k/11 calls. Closed both watches honestly (console-q2
+  EXITED the 0-tools class — 5 ledger reads after the steer, quarantine inferred from words with the
+  inference LABELED and the argv-proof gap named for next tick; the deferred hex/table-empty pin
+  closed with the lanes' "convention" claim vindicated). Nudge->action now 4-for-5 verified — the
+  invariant-4 worry keeps narrowing to reasoning-only calls, run-scale evidence for the r7 desk
+  question. Recorded its own 2-call rediscovery cost in state so it never re-pays it. Charter gap:
+  none.
