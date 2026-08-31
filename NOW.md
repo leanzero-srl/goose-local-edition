@@ -68,7 +68,8 @@ task_owns (winner+runner-up); wave on workhorse first; severities in complete_ve
 Archive: ~/goose-builds/local-sb7-swarm-r6b-PAUSED-operator-exam-BUILD-10m-plan-loaded-fan-33of33-answered
 — it holds the COMPLETE fan ledger (33/33 answered incl. settled D1-D3) and the textbook plan
 (8 tasks, sink owns 0, patched-not-reemitted, one-door repaired). r6b's measured wins before the
-pause: ladder fix vindicated (1 steer + 8 holds, zero wipes, OPEN emitted); fan 33/33/0; synthesis
+pause: ladder fix vindicated (nudge_delivery() in commands/swarm/ladder.rs decides steer vs hold
+vs seeded re-stream; 1 steer + 8 holds, zero wipes, OPEN emitted); fan 33/33/0; synthesis
 grounded; review one round, 1 finding 0 patches. TO RESUME (r6c): pkill stray Goose; open -n
 /Applications/Goose.app --args --remote-debugging-port=9897; bench_dispatch.mjs 9897 sb-7 3 —
 the installed app already carries the full stack (sha 996a072f). Vigil ticks: respond one-line

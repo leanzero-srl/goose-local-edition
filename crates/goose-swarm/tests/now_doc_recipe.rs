@@ -104,7 +104,9 @@ fn judge_measurements_name_the_run_they_came_from() {
 /// old line for a day. It now asserts the symbol NOW.md names, and NOW.md must name it.
 #[test]
 fn the_cited_steer_default_still_exists_in_the_engine() {
-    let engine = read("crates/goose-cli/src/commands/swarm.rs");
+    // 1fe842a8e moved the delivery cluster to commands/swarm/ladder.rs (incremental-split law);
+    // this citation moved with it — the exact staleness this test caught on 2026-08-31.
+    let engine = read("crates/goose-cli/src/commands/swarm/ladder.rs");
     let doc = read("NOW.md");
     assert!(
         doc.contains("nudge_delivery"),
@@ -113,8 +115,8 @@ fn the_cited_steer_default_still_exists_in_the_engine() {
     );
     assert!(
         engine.contains("fn nudge_delivery("),
-        "NOW.md cites `nudge_delivery()` as the judge's delivery decision (steer vs seeded re-stream). \
-         That fn is gone from swarm.rs, so the doc's delivery claim must be re-measured rather than left \
-         standing."
+        "NOW.md cites `nudge_delivery()` (ladder.rs) as the judge's delivery decision (steer vs hold vs \
+         seeded re-stream). That fn is gone from ladder.rs, so the doc's delivery claim must be \
+         re-measured rather than left standing."
     );
 }
