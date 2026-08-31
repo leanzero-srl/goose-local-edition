@@ -7957,21 +7957,6 @@ mod tests {
     }
 
     #[test]
-    fn cli_contract_note_fires_only_for_entry_when_enabled() {
-        // Entry file + enabled -> a non-empty CLI-structure contract mentioning nested/global/units.
-        let note = cli_contract_note(true, true);
-        assert!(note.contains("CLI STRUCTURE CONTRACT"));
-        assert!(note.contains("NESTED") && note.contains("GLOBAL"));
-        // POSITIONAL-vs-flag + no-rename rules (UNIQ16 drifted positionals to flags + renamed --from/--to).
-        assert!(note.contains("POSITIONAL") && note.contains("do NOT rename"));
-        // Keyword-subcommand-name rule (UNIQ26 registered `import_` for the spec's `import` -> `store import` failed).
-        assert!(note.contains("reserved word") && note.contains("add_parser(\"import\")"));
-        // Disabled, or no entry file among the owned set -> empty (no-op, byte-identical default-off path).
-        assert!(cli_contract_note(true, false).is_empty());
-        assert!(cli_contract_note(false, true).is_empty());
-    }
-
-    #[test]
     fn ask_replan_defaults_off_and_opts_in() {
         // Default (unset) now REUSES the plan (skip the re-plan, per the UNIQ12/UNIQ12b A/B); opt INTO the
         // re-plan only with an explicit on-value.
@@ -29859,54 +29844,6 @@ fn render_pillars_block(p: &Pillars) -> String {
     )
 }
 
-/// GOOSE_SWARM_CLI_CONTRACT (default ON): whether to inject the CLI-STRUCTURE contract into the entry worker.
-fn cli_contract_enabled() -> bool {
-    std::env::var("GOOSE_SWARM_CLI_CONTRACT")
-        .map(|v| {
-            !matches!(
-                v.trim().to_lowercase().as_str(),
-                "0" | "off" | "false" | "no"
-            )
-        })
-        .unwrap_or(true)
-}
-
-/// The entry file DEFINES the app's command-line interface, and it is the module the weak worker most often
-/// drifts on the SHAPE of — verified twice: UNIQ9 built `checkin NAME DATE` (positional) instead of the spec's
-/// `checkin NAME --date DATE`; UNIQ10 built flat `group-add` + per-command positional db + cents display instead
-/// of the spec's nested `group add` + a GLOBAL `--db` before the subcommand + dollars. In both the ENGINE was
-/// correct but the interface violated the spec, so spec-drift review failed the entry (and blocked its
-/// dependents). This note freezes the interface CONTRACT for the entry worker: preserve the spec's exact command
-/// tree, option placement, units and value syntax. Pure + unit-tested.
-fn cli_contract_note(has_entry_file: bool, enabled: bool) -> String {
-    if !enabled || !has_entry_file {
-        return String::new();
-    }
-    "\nCLI STRUCTURE CONTRACT (your entry file IS the command-line interface — match the spec's SHAPE exactly; \
-     spec-drift review verifies this and FAILS a working-but-wrong-shaped CLI):\n\
-     - NESTED subcommands stay NESTED: if the spec writes `group add NAME` / `member add GROUP NAME`, implement \
-       a `group` command WITH an `add` subcommand — NOT a flat hyphenated `group-add`.\n\
-     - GLOBAL options stay GLOBAL: if the spec shows an option BEFORE the subcommand (e.g. `--db PATH init`), \
-       parse it at the top level so it works before ANY subcommand — NOT as a per-command positional argument.\n\
-     - Match each argument's POSITIONAL-vs-FLAG form EXACTLY as the spec writes it: a BARE word after the \
-       subcommand (e.g. `product add SKU`, `warehouse add NAME`, `stock level SKU`) is a POSITIONAL argument — keep \
-       it positional, do NOT convert it into a `--sku`/`--name` flag; conversely a `--flag VALUE` stays a flag, not \
-       a positional. Converting the spec's positionals into flags (or vice-versa) is a spec-drift FAILURE even when \
-       the logic is correct.\n\
-     - Use the spec's EXACT option and command names — do NOT rename or 'improve' them: `--from`/`--to` must stay \
-       `--from`/`--to` (not `--source`/`--dest`), `--reorder` must stay `--reorder` (not `--reorder-level`). Match \
-       value UNITS (dollars with 2 decimals vs raw cents) and share/pair SYNTAX (`name=value`, not `name:value`). A \
-       CLI that computes correctly but does not accept the spec's exact invocations is a spec-drift FAILURE — do not \
-       silently re-shape the interface for convenience.\n\
-     - Subcommand NAMES passed to add_parser() are STRINGS, not Python identifiers: use the spec's EXACT subcommand \
-       name even when it is a Python reserved word — write `add_parser(\"import\")`, `add_parser(\"class\")`, \
-       `add_parser(\"del\")`, NOT `\"import_\"`/`\"import2\"`/`\"import_cmd\"`. Trailing-underscore keyword-avoidance \
-       is for Python VARIABLE/function names ONLY (`import_parser = subparsers.add_parser(\"import\")` is correct); \
-       the CLI-facing subcommand string must stay verbatim so `prog import --file` works. Renaming the subcommand \
-       `import` to `import_` makes the spec's `import` invocation fail = spec-drift.\n"
-        .to_string()
-}
-
 /// WEB-TRIPLET VOCABULARY (F870, the authoring-time half). swarm-3node-r0's css worker
 /// designed 36 class rules, its html worker wrote id-only markup, and its js worker invented
 /// a third vocabulary for generated rows — three honest workers, zero shared names, an
@@ -31807,9 +31744,9 @@ impl GooseAgentDispatcher {
                     repairing,
                     lang.entry_run_example(),
                 );
-                let cli_note = cli_contract_note(
+                let cli_note = briefs::cli_contract_note(
                     req.owned_files.iter().any(|f| briefs::is_entry_file(f)),
-                    cli_contract_enabled(),
+                    briefs::cli_contract_enabled(),
                 );
                 let multifile_note =
                     briefs::multifile_stub_note(&req.owned_files, skeleton_first, repairing);
@@ -32607,7 +32544,12 @@ impl GooseAgentDispatcher {
              and wastes the turn — ALWAYS include the `path`. Same for `edit`: pass `path` every time.\n\
              - Write each file COMPLETE in ONE `write` and move on. Do NOT write a rough draft then refine \
              it with a chain of small `edit`s — plan the whole file first, then write it once. Every extra \
-             round-trip costs ~30-60s on a local model and is the main reason tasks run slow.\n\
+             round-trip costs ~30-60s on a local model and is the main reason tasks run slow. EXCEPTION: a \
+             SUPERVISOR NOTE asking for a FIRST MINIMAL VERSION of a file OVERRIDES this rule — a minimal \
+             version IS a complete file (it parses/loads clean and exports the named API; stub bodies are \
+             fine), which you then EXTEND with further complete writes. When such a note arrives, the bytes \
+             on disk are the deliverable; composing more of the file in your reasoning instead of writing \
+             it is the failure mode the note is correcting.\n\
              - If a test or command fails, read the ERROR TEXT first — it names the file, line and symbol. \
              Re-read a file ONLY if the error points at something you do not already have in front of you; \
              do NOT reflexively `cat` the whole file before every fix. Never speculate about \
