@@ -188,30 +188,30 @@ DAG is actually parallel). reasoning_chars against answer_chars is the waste.
 - **chain**: 4
 - **startable**: 1
 - **brief_median**: 21104
-- **reasoning_chars**: 1466875
-- **answer_chars**: 312394
-- **code_files**: 17
-- **code_bytes**: 118789
-- **elapsed_min**: 443
-- **phase_split**: open 39m · ask 126m · synthesis 13m · review 28m · build 235m
+- **reasoning_chars**: 1664210
+- **answer_chars**: 337374
+- **code_files**: 21
+- **code_bytes**: 133504
+- **elapsed_min**: 591
+- **phase_split**: open 39m · ask 126m · synthesis 13m · review 28m · build 383m
 - **before_build_min**: 208 (internal diagnosis only — never a cross-run number)
-- **vs_target**: ONLY THE SCORE COMPARES. Target 20.06% (qwen3.8-27b, one cloud agent, same model). Wall clock is NOT comparable — that run is on far faster hardware, so minutes measure the machine. Bytes are NOT a verdict — more code is not better code, and it had no planning phases to spend budget on. Cross-hardware-honest work numbers for THIS run: 118,789B delivered, 1,466,875 chars reasoned, 4 tasks completed, 0 retried.
-- **python_parses**: 12 ok / 0 SYNTAX ERROR / 0 empty
+- **vs_target**: ONLY THE SCORE COMPARES. Target 20.06% (qwen3.8-27b, one cloud agent, same model). Wall clock is NOT comparable — that run is on far faster hardware, so minutes measure the machine. Bytes are NOT a verdict — more code is not better code, and it had no planning phases to spend budget on. Cross-hardware-honest work numbers for THIS run: 133,504B delivered, 1,664,210 chars reasoned, 6 tasks completed, 0 retried.
+- **python_parses**: 15 ok / 0 SYNTAX ERROR / 0 empty
 - **web_files**: app.js, index.html, styles.css
-- **tasks_done**: 4/8 completed, 6 dispatched, 0 retried
+- **tasks_done**: 6/8 completed, 8 dispatched, 0 retried
 - **arm**: F (fleet of 3)
 - **fixture_seed**: d32de873c1f2be83
 - **plan_patched**: 1
 - **plan_repaired**: 5 actions, owning-nothing 0->0, unassigned endpoints 0->0
 - **plan_loaded**: 1
 - **review_rounds**: r1:new=3
-- **judge_looks**: 79
-- **judge_nudges**: 11
+- **judge_looks**: 91
+- **judge_nudges**: 12
 - **judge_ended**: 0
-- **drift_held**: 30
+- **drift_held**: 33
 - **tree_defects**: 0
-- **repair**: delivery_defect_steer=7 brief_defects=0 testgen=0 fix_target_selected=0 complete_verify=0 complete_result=0
-- **ledger**: 30 task ledger(s) in .swarm/ledger/, ledger.json roll-up present, written=4 delivered=0
+- **repair**: delivery_defect_steer=9 brief_defects=0 testgen=0 fix_target_selected=0 complete_verify=0 complete_result=0
+- **ledger**: 32 task ledger(s) in .swarm/ledger/, ledger.json roll-up present, written=6 delivered=0
 - **score**: **0.3609** hermetic — seed ddcbba021ea1eba1 (the run's own), vendor port 8850, playwright node (inner 0.7988, pre-severity 0.7260 × crit_mult 0.4971). TWO criticals: `b_money_rendered` 0.0, factor 0.6 (wrong money — wrong exponent/digits or a cross-currency sum) and `j_workflow_journey` 0.5714, factor 0.8286 (dead primary flow — approval cannot complete through the UI). vs target 0.2006: 180% — FIRST RUN ABOVE the cloud one-agent target (its inner was 0.7662 with crit_mult 0.288; ours wins on criticals, not just inner). vs local 0.0568: 6.4×. vs published local 0.0273: 13.2×. The harness's own in-run grade concurred: 0.3497 (inner 0.7731, same seed, same two criticals). Known context: 3D field DOA (`viz.js` ReferenceError onBrushChangeTracked), 7 contract findings shipped as known bugs. Comparable verdict: `verdict-hermetic-seedddcbba02-port8850-0.3609.json` in the run dir.
 
 ## fakerun
