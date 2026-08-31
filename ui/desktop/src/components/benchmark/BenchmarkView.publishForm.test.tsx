@@ -48,7 +48,7 @@ const describedBy = (el: HTMLElement): string => {
   return document.getElementById(id!)?.textContent ?? '';
 };
 
-function mockElectron(opts: { running: boolean; modelId?: string }) {
+function mockElectron(opts: { running: boolean; modelId?: string; frozen?: boolean }) {
   const e = electron();
   e.benchmarkStatus = vi.fn(async () =>
     opts.running
@@ -64,6 +64,37 @@ function mockElectron(opts: { running: boolean; modelId?: string }) {
   e.benchmarkShots = vi.fn(async () => []);
   e.readSwarmRun = vi.fn(async () => null);
   e.fleetStatus = vi.fn(async () => ({}));
+  // The catalog/session contract the redesigned view renders from: one era, one finished
+  // publishable session that IS the stored result — the publish form lives in its detail.
+  e.benchmarkCatalog = vi.fn(async () => ({
+    ok: true,
+    fetchedAt: '2026-08-30T08:00:00.000Z',
+    stale: false,
+    benchmarks: [
+      {
+        scorerVersion: 'sb-5.3',
+        title: 'VendorSync',
+        current: !opts.frozen,
+        frozen: opts.frozen === true,
+        baselines: [{ label: 'Claude Opus 5', score: 0.9142, model: 'claude-opus-5' }],
+      },
+    ],
+  }));
+  e.benchmarkSessions = vi.fn(async () => ({
+    sessions: [
+      {
+        runId: 'brun-mine',
+        scorerVersion: 'sb-5.3',
+        startedAt: '2026-08-28T09:00:00.000Z',
+        endedAt: '2026-08-28T12:00:00.000Z',
+        outcome: 'finished',
+        score: 0.61,
+        tiers: MINE.tiers,
+        publishable: true,
+      },
+    ],
+  }));
+  e.benchmarkDeleteSession = vi.fn(async () => ({ ok: true }));
 }
 
 describe('modelIdProblem / titleProblem — the two rules the hints and the Publish button read from', () => {
@@ -161,6 +192,27 @@ describe('the publish form', () => {
     ).toEqual({ title: 'sb-7 first try' }); // no model in the payload — engine truth lives in main
   });
 
+  it("surfaces main's frozen refusal verbatim — the {ok:false, status:'error', message} shape", async () => {
+    mockElectron({ running: false, modelId: 'qwen3.6-27b-mtp' });
+    const refusal = 'benchmark sb-5.3 is frozen — submissions closed by the site';
+    electron().benchmarkPublish = vi.fn(async () => ({
+      ok: false,
+      status: 'error',
+      message: refusal,
+    }));
+    const { findByRole, getByLabelText, findByText } = render(
+      <IntlTestWrapper>
+        <BenchmarkView />
+      </IntlTestWrapper>
+    );
+    const publishBtn = await findByRole('button', { name: /Publish/ });
+    fireEvent.change(getByLabelText(/^Title/), { target: { value: 'stale cache try' } });
+    await waitFor(() => expect(publishBtn).not.toBeDisabled());
+    fireEvent.click(publishBtn);
+    const errorLine = await findByText(/Publish failed:/);
+    expect(errorLine.textContent).toContain(refusal);
+  });
+
   it('renders the ACCEPTED state with what went live: title, score, url', async () => {
     mockElectron({ running: false, modelId: 'qwen3.6-27b-mtp' });
     electron().benchmarkPublish = vi.fn(async () => ({
@@ -183,22 +235,41 @@ describe('the publish form', () => {
     expect(accepted.textContent).toContain('/agentic-benchmarks/run/brun-1234');
   });
 
-  it('locks the tier and node-count toggles during a run with the reason on each', async () => {
+  it('locks the node-count toggles during a run with the reason — and offers NO benchmark chooser', async () => {
     mockElectron({ running: true, modelId: 'qwen3.6-27b-mtp' });
-    const { findByRole, getByRole } = render(
+    const { findByRole, getByRole, queryByRole } = render(
       <IntlTestWrapper>
         <BenchmarkView />
       </IntlTestWrapper>
     );
-    const two = await findByRole('button', { name: '2' });
-    await waitFor(() => expect(two).toBeDisabled());
+    await findByRole('button', { name: '2' });
+    // Re-query inside waitFor: the controls move from the idle section into the live-run block
+    // when the re-attach lands, so the first-found node is replaced, not mutated.
+    await waitFor(() => expect(getByRole('button', { name: '2' })).toBeDisabled());
+    const two = getByRole('button', { name: '2' });
     expect(two.getAttribute('title')).toMatch(/Locked while a run is live/);
     expect(describedBy(two)).toMatch(/locked while the run is live/);
 
-    const tier = getByRole('button', { name: 'sb-5.3' });
-    expect(tier).toBeDisabled();
-    expect(tier.getAttribute('title')).toMatch(/Locked while a run is live/);
-    expect(describedBy(tier)).toMatch(/locked while the run is live/);
+    // The tier chooser is GONE: the user cannot choose a benchmark — only the catalog's current
+    // one is runnable. 'sb-5.3' survives only as the era section's scorer stamp, never a button.
+    expect(queryByRole('button', { name: 'sb-5.3' })).toBeNull();
+    expect(queryByRole('button', { name: /sb-6/ })).toBeNull();
+    expect(queryByRole('button', { name: /sb-7/ })).toBeNull();
+  });
+
+  it('disables Publish on a FROZEN era with submissions-closed as the reason', async () => {
+    mockElectron({ running: false, modelId: 'qwen3.6-27b-mtp', frozen: true });
+    const { findByRole, getByLabelText } = render(
+      <IntlTestWrapper>
+        <BenchmarkView />
+      </IntlTestWrapper>
+    );
+    const publishBtn = await findByRole('button', { name: /Publish/ });
+    fireEvent.change(getByLabelText(/^Title/), { target: { value: 'frozen era try' } });
+    await waitFor(() =>
+      expect(publishBtn.getAttribute('title')).toContain('Benchmark frozen — submissions closed')
+    );
+    expect(publishBtn).toBeDisabled();
   });
 
   it('describes the node buttons by what they do when nothing locks them', async () => {

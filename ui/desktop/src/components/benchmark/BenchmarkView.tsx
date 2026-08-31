@@ -1,17 +1,24 @@
-import { useCallback, useEffect, useId, useMemo, useState } from 'react';
-import { Gauge, Play, Upload, Loader2, XCircle, BadgeCheck } from 'lucide-react';
-import { MainPanelLayout } from '../Layout/MainPanelLayout';
+import { useCallback, useEffect, useId, useMemo, useState, type ReactNode } from 'react';
 import {
-  BASELINES_BY_TIER,
-  COMPARABLE_SCORER,
-  DEFAULT_TIER,
-  TIERS,
-  TIER_SCORER,
-  type BenchTier,
-  TIER_LABELS,
-  type BenchmarkRow,
-  type Tier,
-} from './baselines';
+  Gauge,
+  Play,
+  Upload,
+  Loader2,
+  XCircle,
+  BadgeCheck,
+  ChevronDown,
+  ChevronRight,
+  Trash2,
+} from 'lucide-react';
+import { MainPanelLayout } from '../Layout/MainPanelLayout';
+import { TIER_LABELS, type BenchmarkRow, type Tier } from './baselines';
+import type {
+  BenchSession,
+  CatalogBaseline,
+  CatalogBenchmark,
+  CatalogMismatch,
+  SessionOutcome,
+} from './bridge';
 import { ScoreBars } from './ScoreBars';
 import { TierBreakdown } from './TierBreakdown';
 import { ScoringDetail, type VerdictDetail } from './ScoringDetail';
@@ -86,6 +93,7 @@ const PHASES: Array<{ key: BenchPhase; label: string }> = [
 // Same status palette as SwarmRunPanel so a phase reads the same across the app.
 const PHASE_ACTIVE = '#f5a623';
 const PHASE_DONE = '#2ecc71';
+const STATE_ERROR = '#e5484d';
 
 function fmtElapsed(ms: number): string {
   const s = Math.max(0, Math.floor(ms / 1000));
@@ -324,16 +332,396 @@ function StatTile({ label, value, color }: { label: string; value: string; color
   );
 }
 
+/** Solid saturated chip per outcome — every state names itself; a dead run never looks finished. */
+const OUTCOME_COLORS: Record<SessionOutcome, string> = {
+  running: PHASE_ACTIVE,
+  finished: PHASE_DONE,
+  did_not_finish: STATE_ERROR,
+  did_not_start: '#8e44ad',
+};
+const OUTCOME_WORDS: Record<SessionOutcome, string> = {
+  running: 'Running',
+  finished: 'Finished',
+  did_not_finish: 'Did not finish',
+  did_not_start: 'Did not start',
+};
+
+function OutcomeChip({ session }: { session: BenchSession }) {
+  const color = OUTCOME_COLORS[session.outcome];
+  const dark = session.outcome === 'running';
+  return (
+    <span
+      className="flex items-center gap-1.5 rounded px-2 py-0.5 text-[11px] font-bold"
+      style={{ backgroundColor: color, color: dark ? '#1a1a1a' : '#fff' }}
+    >
+      {session.outcome === 'running' && (
+        <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-[#1a1a1a]" aria-hidden />
+      )}
+      {OUTCOME_WORDS[session.outcome]}
+      {session.outcome === 'finished' && (
+        <span className="tabular-nums">
+          {session.score != null ? ` · ${(session.score * 100).toFixed(1)}%` : ' · score missing'}
+        </span>
+      )}
+    </span>
+  );
+}
+
+/** One session under its benchmark's section: started stamp, honest state, delete. Keyed by runId. */
+function SessionRow({
+  session,
+  selected,
+  onSelect,
+  onDelete,
+}: {
+  session: BenchSession;
+  selected: boolean;
+  onSelect: () => void;
+  onDelete: () => void;
+}) {
+  const when = fmtWhen(session.startedAt) ?? session.startedAt;
+  // Deleting needs the engine's runId; the just-launched row has none yet (and the running
+  // session refuses deletion in main anyway).
+  const undeletable =
+    session.outcome === 'running'
+      ? 'A running session cannot be deleted — cancel the run first'
+      : session.runId == null
+        ? 'This session has no run id yet — it appears moments after launch'
+        : null;
+  return (
+    <div
+      className="flex items-center gap-3 rounded border-2 px-3 py-2"
+      style={{
+        borderColor: selected ? 'var(--color-block-teal)' : 'var(--color-border-primary)',
+      }}
+    >
+      <button
+        type="button"
+        onClick={onSelect}
+        aria-pressed={selected}
+        title="Show this session's result"
+        className="flex flex-1 items-center gap-3 text-left"
+      >
+        <span className="text-sm font-semibold tabular-nums text-text-primary">{when}</span>
+        <OutcomeChip session={session} />
+      </button>
+      <button
+        type="button"
+        onClick={onDelete}
+        disabled={undeletable != null}
+        aria-label={`Delete session ${session.runId ?? session.startedAt}`}
+        title={undeletable ?? 'Delete this session'}
+        className="rounded p-1.5 text-text-secondary hover:text-[#e5484d] disabled:opacity-40"
+      >
+        <Trash2 className="h-4 w-4" />
+      </button>
+    </div>
+  );
+}
+
+/** Node count + Run/Cancel. Rendered inside the CURRENT benchmark's section while idle (the user
+ *  cannot choose a benchmark — only the latest is runnable) and inside the live-run block while
+ *  running (so Cancel sits beside what it cancels). Never both at once. */
+function RunControls({
+  nodes,
+  onNodes,
+  running,
+  cancelling,
+  onRun,
+  onCancel,
+  lockedId,
+}: {
+  nodes: NodeChoice;
+  onNodes: (n: NodeChoice) => void;
+  running: boolean;
+  cancelling: boolean;
+  onRun: () => void;
+  onCancel: () => void;
+  lockedId: string;
+}) {
+  const lockedWhy = 'Locked while a run is live — the node count is fixed at launch';
+  return (
+    <div className="flex flex-wrap items-center gap-3">
+      <span className="text-sm text-text-secondary">Nodes</span>
+      <div className="flex overflow-hidden rounded border border-border-primary">
+        {NODE_CHOICES.map((n) => (
+          <button
+            key={n}
+            type="button"
+            onClick={() => onNodes(n)}
+            disabled={running}
+            aria-pressed={nodes === n}
+            aria-describedby={running ? lockedId : undefined}
+            title={running ? lockedWhy : `Run on ${n} node${n === 1 ? '' : 's'}`}
+            className={`px-4 py-2 text-sm font-semibold tabular-nums transition-colors ${
+              nodes === n
+                ? 'bg-[var(--color-block-teal)] text-white'
+                : 'bg-background-secondary text-text-secondary hover:text-text-primary'
+            }`}
+          >
+            {n}
+          </button>
+        ))}
+      </div>
+      {running && (
+        <span id={lockedId} className="text-xs font-semibold text-text-secondary">
+          locked while the run is live
+        </span>
+      )}
+
+      {running ? (
+        <button
+          type="button"
+          onClick={onCancel}
+          disabled={cancelling}
+          title={
+            cancelling
+              ? 'Cancelling — the engine, the vendor sim and the scorer are being stopped'
+              : 'Stop this run'
+          }
+          className="ml-auto flex items-center gap-2 rounded bg-background-danger px-4 py-2 text-sm font-semibold text-white disabled:opacity-50"
+        >
+          {cancelling ? <Loader2 className="h-4 w-4 animate-spin" /> : <XCircle className="h-4 w-4" />}
+          {cancelling ? 'Cancelling…' : 'Cancel run'}
+        </button>
+      ) : (
+        <button
+          type="button"
+          onClick={onRun}
+          className="ml-auto flex items-center gap-2 rounded bg-[var(--color-block-teal)] px-4 py-2 text-sm font-semibold text-white"
+        >
+          <Play className="h-4 w-4" />
+          Run benchmark
+        </button>
+      )}
+    </div>
+  );
+}
+
 /**
- * The benchmark is two buttons and a node choice. Everything else on the page is the result.
- *
- * Baselines are BAKED, never run by the user: the frozen sb-5.2 cloud ladder ships as versioned
- * data, so a user's run costs them nothing and every board is comparable. Their own result is
- * added to the same roster and marked as theirs — but ONLY when the scorer versions match.
+ * The selected session's result, rendered INSIDE its own benchmark's section — a session compares
+ * only within its own era. Every outcome renders its own truth: a run that died before scoring
+ * says so in words; it never borrows the look of a finished one.
+ */
+function SessionDetail({
+  session,
+  baselines,
+  catalogAbsent,
+  fromCatalog,
+  mine,
+  mineMatched,
+  shots,
+  publishSlot,
+}: {
+  session: BenchSession;
+  baselines: CatalogBaseline[];
+  catalogAbsent: boolean;
+  fromCatalog: boolean;
+  mine: MineRow | null;
+  mineMatched: boolean;
+  shots: BenchShot[];
+  publishSlot: ReactNode;
+}) {
+  const when = fmtWhen(session.startedAt) ?? session.startedAt;
+
+  if (session.outcome === 'running') {
+    return (
+      <div
+        className="rounded border-2 px-4 py-3 text-sm font-semibold text-text-primary"
+        style={{ borderColor: PHASE_ACTIVE }}
+      >
+        This session is running — the result lands here when the run finishes. The live run panel
+        above is the engine truth in the meantime.
+      </div>
+    );
+  }
+  if (session.outcome === 'did_not_start') {
+    return (
+      <div
+        className="rounded px-4 py-3 text-sm font-bold text-white"
+        style={{ backgroundColor: OUTCOME_COLORS.did_not_start }}
+      >
+        Started {when} — this run did not start: the engine never launched, so nothing was built and
+        there is no score.
+      </div>
+    );
+  }
+  if (session.outcome === 'did_not_finish') {
+    return (
+      <div
+        className="rounded px-4 py-3 text-sm font-bold text-white"
+        style={{ backgroundColor: STATE_ERROR }}
+      >
+        Started {when} — this run did not finish: it ended before the scorer reached a verdict, so
+        it has no score.
+      </div>
+    );
+  }
+
+  const ownRow: BenchmarkRow | null =
+    session.score == null
+      ? null
+      : {
+          label: 'Your fleet',
+          score: session.score,
+          tiers: session.tiers,
+          mine: true,
+          scorerVersion: session.scorerVersion,
+        };
+  const rows: BenchmarkRow[] = [
+    ...baselines.map((b) => ({
+      label: b.label || b.model,
+      score: b.score,
+      scorerVersion: session.scorerVersion,
+    })),
+    ...(ownRow ? [ownRow] : []),
+  ].sort((a, b) => b.score - a.score);
+
+  const started = Date.parse(session.startedAt);
+  const ended = session.endedAt ? Date.parse(session.endedAt) : NaN;
+  const wallMs = !Number.isNaN(started) && !Number.isNaN(ended) ? ended - started : null;
+
+  return (
+    <div className="flex flex-col gap-6">
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+        <StatTile
+          label="Score"
+          value={session.score != null ? `${(session.score * 100).toFixed(1)}%` : 'missing'}
+          color={session.score != null ? 'var(--color-block-teal)' : STATE_ERROR}
+        />
+        {wallMs != null && (
+          <StatTile label="Wall time" value={fmtElapsed(wallMs)} color="var(--color-node-2)" />
+        )}
+        {mineMatched && mine?.runMeta && (
+          <StatTile
+            label="Repair rounds"
+            value={String(mine.runMeta.repairRounds)}
+            color="var(--color-node-4)"
+          />
+        )}
+        {mineMatched && mine?.runMeta && (
+          <StatTile
+            label="Engine events"
+            value={mine.runMeta.engineEvents.toLocaleString()}
+            color="var(--color-node-1)"
+          />
+        )}
+      </div>
+
+      {mineMatched && shots.length > 0 && (
+        <section>
+          <h3 className="text-xs font-bold uppercase tracking-widest text-text-secondary">
+            What it built — before and after repairs
+          </h3>
+          <div className="mt-3">
+            <ShotsStrip shots={shots} />
+          </div>
+        </section>
+      )}
+
+      <section>
+        <h3 className="text-xs font-bold uppercase tracking-widest text-text-secondary">Overall</h3>
+        {baselines.length === 0 ? (
+          <p
+            className="mt-3 rounded px-4 py-3 text-sm font-bold text-white"
+            style={{ backgroundColor: STATE_ERROR }}
+          >
+            {catalogAbsent
+              ? 'Catalog unreachable — no comparison rows.'
+              : fromCatalog
+                ? 'The catalog publishes no baselines for this benchmark yet — your score stands alone.'
+                : `The catalog carries no comparison rows for ${session.scorerVersion}.`}
+          </p>
+        ) : (
+          <ScoreBars rows={rows} />
+        )}
+      </section>
+
+      <section>
+        <h3 className="text-xs font-bold uppercase tracking-widest text-text-secondary">
+          Where the points went
+        </h3>
+        <p className="mb-3 mt-1 max-w-[70ch] text-sm text-text-secondary">
+          {TIER_LABELS.A} · {TIER_LABELS.B} · {TIER_LABELS.C} · {TIER_LABELS.D}. A build can be
+          perfectly structured and still score nothing on behaviour — the split is the diagnosis.
+        </p>
+        {ownRow && session.tiers ? (
+          <TierBreakdown rows={[ownRow]} />
+        ) : (
+          <p className="rounded border border-border-primary bg-background-secondary px-4 py-3 text-sm text-text-primary">
+            This session recorded no per-tier split.
+          </p>
+        )}
+      </section>
+
+      <section>
+        <h3 className="text-xs font-bold uppercase tracking-widest text-text-secondary">
+          How this score was built
+        </h3>
+        {mineMatched && mine?.verdict ? (
+          <>
+            <p className="mb-4 mt-1 max-w-[80ch] text-sm text-text-secondary">
+              Every number below is scorer evidence from YOUR run — the exact checks it ran, what
+              each one saw, and what the misses cost. The formula:{' '}
+              <span className="font-bold text-text-primary">
+                60% core build + 15% journey + 10% visual + 5% performance + 10% hard block
+              </span>
+              .
+            </p>
+            <ScoringDetail verdict={mine.verdict} score={mine.score} />
+          </>
+        ) : mineMatched ? (
+          <p className="mt-3 rounded border border-border-primary bg-background-secondary px-4 py-3 text-sm text-text-primary">
+            This stored result predates the detailed verdict — the full check-by-check breakdown
+            appears from your next run.
+          </p>
+        ) : (
+          <p className="mt-3 rounded border border-border-primary bg-background-secondary px-4 py-3 text-sm text-text-primary">
+            The check-by-check breakdown is kept with the latest stored result only — this session
+            shows its score and tier split.
+          </p>
+        )}
+      </section>
+
+      {publishSlot}
+    </div>
+  );
+}
+
+type CatalogState =
+  | { kind: 'loading' }
+  | { kind: 'ok'; benchmarks: CatalogBenchmark[]; fetchedAt?: string; stale: boolean }
+  | { kind: 'absent'; message: string };
+
+interface EraSection {
+  scorerVersion: string;
+  title: string;
+  current: boolean;
+  frozen: boolean;
+  baselines: CatalogBaseline[];
+  /** False when the era exists only because sessions reference it — the catalog never named it. */
+  fromCatalog: boolean;
+  sessions: BenchSession[];
+}
+
+const startMs = (s: BenchSession): number => {
+  const t = Date.parse(s.startedAt);
+  return Number.isNaN(t) ? 0 : t;
+};
+
+/** Stable identity for a session row: the engine's runId, or — for the just-launched row whose
+ *  runId is still null (it reconciles ~2s in, when .swarm/current-run.json appears) — its
+ *  startedAt stamp, which never changes for a given session. Never an index. */
+const sessionKey = (s: BenchSession): string => s.runId ?? `start-${s.startedAt}`;
+
+/**
+ * The benchmark page: one expand/collapse section per benchmark era, RETRIEVED from the site's
+ * catalog — never baked. The CURRENT era carries the only Run button (the user cannot choose a
+ * benchmark); every era lists its own sessions with honest outcomes, and a session's result
+ * compares only against its own era's published baselines.
  */
 export default function BenchmarkView() {
   const [nodes, setNodes] = useState<NodeChoice>(3);
-  const [tier, setTier] = useState<BenchTier>(DEFAULT_TIER);
   // The strip's editable values — what the NEXT run will use. Prefilled from the shared defaults
   // (localStorage `swarmSamplingDefaults`); passed into benchmarkRun where set knobs become env.
   const [sampling, setSampling] = useState<SamplingSettings>(() => loadSamplingDefaults());
@@ -352,6 +740,15 @@ export default function BenchmarkView() {
   const [lastLine, setLastLine] = useState<string | null>(null);
   const [scored, setScored] = useState(false);
   const [now, setNow] = useState(() => Date.now());
+  const [catalog, setCatalog] = useState<CatalogState>({ kind: 'loading' });
+  const [sessions, setSessions] = useState<BenchSession[]>([]);
+  const [selectedKey, setSelectedKey] = useState<string | null>(null);
+  // The 'benchmark-started' fact that the site's current benchmark outruns this app's bundle —
+  // each new launch restates or clears it, so a stale notice cannot outlive an app update.
+  const [catalogMismatch, setCatalogMismatch] = useState<CatalogMismatch | null>(null);
+  const [expandedByEra, setExpandedByEra] = useState<Record<string, boolean>>({});
+  const [deleteTarget, setDeleteTarget] = useState<BenchSession | null>(null);
+  const [deleting, setDeleting] = useState(false);
 
   // Live engine truth for the active run — the ONE poller on this route. It drives the phase strip
   // (present/finished) and is handed to SwarmRunPanel as `run`, so the panel renders from this state
@@ -381,8 +778,46 @@ export default function BenchmarkView() {
     }
   }, [loadShots]);
 
+  // Called unconditionally on mount: main's frozen publish gate and the catalogMismatch check
+  // run off the CACHED catalog, and this mount call is what refreshes that cache.
+  const loadCatalog = useCallback(async () => {
+    try {
+      const c = await window.electron.benchmarkCatalog?.();
+      if (c && c.ok !== false && Array.isArray(c.benchmarks)) {
+        setCatalog({
+          kind: 'ok',
+          benchmarks: c.benchmarks,
+          fetchedAt: c.fetchedAt,
+          stale: c.stale === true,
+        });
+      } else {
+        // The stated absence — the view says "catalog unreachable" and shows NO comparison rows;
+        // it never falls back to invented bars (the baked boards this replaced are deleted).
+        setCatalog({
+          kind: 'absent',
+          message: c?.error ?? (c ? 'the catalog carried no benchmark list' : 'this build has no catalog bridge'),
+        });
+      }
+    } catch (err) {
+      setCatalog({ kind: 'absent', message: err instanceof Error ? err.message : String(err) });
+    }
+  }, []);
+
+  const loadSessions = useCallback(async () => {
+    try {
+      const r = await window.electron.benchmarkSessions?.();
+      if (r && Array.isArray(r.sessions)) setSessions(r.sessions);
+      // No bridge (older preload) leaves the list as-is: an unreadable history must not
+      // impersonate an empty one.
+    } catch {
+      // read failure: keep the last known list rather than flashing an empty history
+    }
+  }, []);
+
   useEffect(() => {
     void loadExisting();
+    void loadCatalog();
+    void loadSessions();
     // Re-attach to a run started before this mount — a run takes hours and must survive navigation.
     void window.electron.benchmarkStatus?.().then((s) => {
       if (s?.running && s.workdir) {
@@ -400,19 +835,29 @@ export default function BenchmarkView() {
         setStatus(null);
       }
     });
-  }, [loadExisting]);
+  }, [loadExisting, loadCatalog, loadSessions]);
 
   // Stream the harness's lifecycle from main: workdir on start, stdout/stderr lines, terminal row.
   useEffect(() => {
     const onStarted = (_e: unknown, payload: unknown) => {
-      const p = payload as { workdir?: string; startedAt?: string; sampling?: unknown };
+      const p = payload as {
+        workdir?: string;
+        startedAt?: string;
+        sampling?: unknown;
+        tier?: string;
+        scorerVersion?: string;
+        catalogMismatch?: CatalogMismatch;
+      };
       if (p?.workdir) {
+        setCatalogMismatch(p.catalogMismatch ?? null);
         setActiveWorkdir(p.workdir);
         setRunStartedAt(p.startedAt ? Date.parse(p.startedAt) : Date.now());
         setLaunchedSampling(sanitizeSampling(p.sampling));
         setScored(false);
         setLastLine(null);
         setShots([]);
+        // The new session appears in its era's list the moment main registers it.
+        void loadSessions();
       }
     };
     const onLog = (_e: unknown, payload: unknown) => {
@@ -439,6 +884,9 @@ export default function BenchmarkView() {
       } else if (p?.error) {
         setStatus(`The run failed: ${p.error}`);
       }
+      // The terminating event also updates the session row — running must flip to its real
+      // outcome, never linger because only a feed line changed.
+      void loadSessions();
     };
     window.electron.on('benchmark-started', onStarted);
     window.electron.on('benchmark-log', onLog);
@@ -448,7 +896,7 @@ export default function BenchmarkView() {
       window.electron.off('benchmark-log', onLog);
       window.electron.off('benchmark-finished', onFinished);
     };
-  }, [loadShots]);
+  }, [loadShots, loadSessions]);
 
   // Elapsed ticker while a run is live — and the safety net for a window recreated mid-run: the
   // 'benchmark-finished' event went to the old (destroyed) window, so also poll main's status and
@@ -467,11 +915,12 @@ export default function BenchmarkView() {
           setRunStartedAt(null);
           setLaunchedSampling(null);
           void loadExisting();
+          void loadSessions();
         }
       });
     }, 1000);
     return () => clearInterval(iv);
-  }, [running, activeWorkdir, loadExisting]);
+  }, [running, activeWorkdir, loadExisting, loadSessions]);
 
   const phase: BenchPhase = useMemo(() => {
     if (scored) return 'done';
@@ -480,21 +929,71 @@ export default function BenchmarkView() {
     return 'boot';
   }, [scored, swarm.present, swarm.finished]);
 
-  // The board follows the SELECTED tier; a stored result whose scorer matches a different tier
-  // flips the view to that tier's board (so finishing an sb-6 run shows the sb-6 ladder).
-  const comparable = mine != null && mine.scorerVersion === TIER_SCORER[tier];
-  const rows = useMemo<BenchmarkRow[]>(
-    () =>
-      (comparable && mine ? [...BASELINES_BY_TIER[tier], mine] : BASELINES_BY_TIER[tier])
-        .slice()
-        .sort((a: BenchmarkRow, b: BenchmarkRow) => b.score - a.score),
-    [comparable, mine, tier]
-  );
+  // One section per era: the catalog's benchmarks, plus any era that exists only in the session
+  // history (sessions from previous benchmarks may display even after the site moves on).
+  const sections = useMemo<EraSection[]>(() => {
+    const map = new Map<string, EraSection>();
+    if (catalog.kind === 'ok') {
+      for (const b of catalog.benchmarks) {
+        map.set(b.scorerVersion, { ...b, fromCatalog: true, sessions: [] });
+      }
+    }
+    for (const s of sessions) {
+      if (!map.has(s.scorerVersion)) {
+        map.set(s.scorerVersion, {
+          scorerVersion: s.scorerVersion,
+          title: s.scorerVersion,
+          current: false,
+          frozen: false,
+          baselines: [],
+          fromCatalog: false,
+          sessions: [],
+        });
+      }
+      map.get(s.scorerVersion)!.sessions.push(s);
+    }
+    const list = [...map.values()];
+    for (const sec of list) sec.sessions.sort((a, b) => startMs(b) - startMs(a));
+    list.sort(
+      (a, b) =>
+        Number(b.current) - Number(a.current) ||
+        b.scorerVersion.localeCompare(a.scorerVersion, undefined, { numeric: true })
+    );
+    return list;
+  }, [catalog, sessions]);
+
+  const currentEra = catalog.kind === 'ok' ? catalog.benchmarks.find((b) => b.current) : undefined;
+
+  // Default selection: the running session (its live truth is the page's point), else the newest.
+  // When a running row's key changes (null runId reconciling into the real one ~2s in), the old
+  // key stops matching and this re-picks the same live session under its new identity.
   useEffect(() => {
-    const mineScorer = mine?.scorerVersion;
-    const owningTier = TIERS.find((t) => TIER_SCORER[t] === mineScorer);
-    if (owningTier) setTier(owningTier);
-  }, [mine?.scorerVersion]);
+    if (sessions.length === 0) {
+      if (selectedKey != null) setSelectedKey(null);
+      return;
+    }
+    if (selectedKey != null && sessions.some((s) => sessionKey(s) === selectedKey)) return;
+    const live = sessions.find((s) => s.outcome === 'running');
+    const newest = sessions.slice().sort((a, b) => startMs(b) - startMs(a))[0];
+    setSelectedKey(sessionKey(live ?? newest));
+  }, [sessions, selectedKey]);
+
+  const selectedSession = useMemo(
+    () => sessions.find((s) => sessionKey(s) === selectedKey) ?? null,
+    [sessions, selectedKey]
+  );
+
+  // The stored result (mine/result.json) is THE LAST run's row — attribute its verdict, shots and
+  // publishability only to the newest finished session of its own era; an older sibling with a
+  // similar score must not borrow them.
+  const mineSessionKey = useMemo(() => {
+    if (!mine) return null;
+    const candidates = sessions.filter(
+      (s) => s.outcome === 'finished' && s.scorerVersion === mine.scorerVersion
+    );
+    if (candidates.length === 0) return null;
+    return sessionKey(candidates.reduce((a, b) => (startMs(b) > startMs(a) ? b : a)));
+  }, [mine, sessions]);
 
   const run = useCallback(async () => {
     setRunning(true);
@@ -502,7 +1001,8 @@ export default function BenchmarkView() {
     setStatus(null);
     setLaunchedSampling(sampling);
     try {
-      const result = await window.electron.benchmarkRun?.(nodes, tier, sampling);
+      // No tier argument — the user cannot choose a benchmark; main runs the newest bundled one.
+      const result = await window.electron.benchmarkRun?.(nodes, sampling);
       if (result) {
         setMine(result as MineRow);
         setStatus('Run complete.');
@@ -517,8 +1017,9 @@ export default function BenchmarkView() {
       setActiveWorkdir(null);
       setRunStartedAt(null);
       setLaunchedSampling(null);
+      void loadSessions();
     }
-  }, [nodes, tier, sampling, loadShots]);
+  }, [nodes, sampling, loadShots, loadSessions]);
 
   const cancel = useCallback(async () => {
     setConfirmCancel(false);
@@ -535,6 +1036,27 @@ export default function BenchmarkView() {
     }
   }, []);
 
+  const confirmDelete = useCallback(async () => {
+    // The delete IPC takes the engine's runId; a row without one cannot be deleted (its delete
+    // control is disabled with the reason, so reaching here without an id is a race, not a path).
+    if (!deleteTarget?.runId) return;
+    setDeleting(true);
+    try {
+      const res = await window.electron.benchmarkDeleteSession?.(deleteTarget.runId);
+      if (res && res.ok === false) {
+        setStatus(`Delete failed: ${res.error ?? 'the delete handler gave no reason'}`);
+      } else {
+        if (selectedKey === sessionKey(deleteTarget)) setSelectedKey(null);
+        await loadSessions();
+      }
+    } catch (err) {
+      setStatus(`Delete failed: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setDeleting(false);
+      setDeleteTarget(null);
+    }
+  }, [deleteTarget, selectedKey, loadSessions]);
+
   const publish = useCallback(async () => {
     if (!mine) return;
     const chosen = title.trim();
@@ -550,9 +1072,14 @@ export default function BenchmarkView() {
           url: typeof res.url === 'string' ? res.url : null,
         });
       } else {
-        // The server's OWN words (its 4xx body travels through main.ts verbatim) — never a
-        // generic message; "unknown" appears only when the handler itself returned nothing.
-        setPub({ kind: 'error', message: res?.error ?? 'the publish handler returned no response' });
+        // The server's OWN words (its 4xx body travels through main.ts verbatim), or main's
+        // server-shaped refusal (`message` — e.g. the frozen-benchmark gate answered from the
+        // cached catalog). Never a generic line; "no response" appears only when the handler
+        // itself returned nothing.
+        setPub({
+          kind: 'error',
+          message: res?.error ?? res?.message ?? 'the publish handler returned no response',
+        });
       }
     } catch (err) {
       setPub({ kind: 'error', message: err instanceof Error ? err.message : String(err) });
@@ -563,23 +1090,166 @@ export default function BenchmarkView() {
   const publishable = mine != null && mine.runMeta != null;
   const modelProblem = modelIdProblem(mine?.modelId);
   const publishTitleProblem = titleProblem(title);
-  const mineFinished = fmtWhen(mine?.runMeta?.finishedAt);
   const uid = useId();
   const lockedId = `${uid}-locked`;
   const modelId = `${uid}-model`;
   const modelHintId = `${uid}-model-hint`;
   const titleId = `${uid}-title`;
   const titleHintId = `${uid}-title-hint`;
+
+  const selectedEra = selectedSession
+    ? sections.find((sec) => sec.scorerVersion === selectedSession.scorerVersion)
+    : undefined;
+  const selectedFrozen = selectedEra?.frozen === true;
   const publishWhy = !publishable
     ? 'Run the benchmark (v2) first'
     : running
       ? 'Publishing waits for the run in progress to finish'
-      : modelProblem
-        ? modelProblem
-        : publishTitleProblem
-          ? publishTitleProblem
-          : null;
-  const lockedWhy = 'Locked while a run is live — the tier and node count are fixed at launch';
+      : selectedFrozen
+        ? 'Benchmark frozen — submissions closed'
+        : selectedSession && selectedSession.publishable === false
+          ? 'This session is not publishable — its stored result predates the v2 publisher'
+          : modelProblem
+            ? modelProblem
+            : publishTitleProblem
+              ? publishTitleProblem
+              : null;
+
+  // Publish belongs to the selected session's detail, and ONLY when that session is the one the
+  // stored result describes — publishing posts mine/result.json, nothing else.
+  const publishSection =
+    mine && selectedSession && sessionKey(selectedSession) === mineSessionKey ? (
+      <section className="rounded border border-border-primary p-4">
+        <h2 className="text-xs font-bold uppercase tracking-widest text-text-secondary">
+          Publish to leanzero.net
+        </h2>
+        <p className="mt-1 max-w-[70ch] text-sm text-text-secondary">
+          Posts your score, the full check-by-check breakdown and the before/after screenshots
+          under the title you choose. The result appears on the leanzero.net board immediately.
+        </p>
+        <div className="mt-3 flex flex-col gap-3">
+          <div className="max-w-[560px]">
+            <label
+              htmlFor={modelId}
+              className="mb-1 block text-xs font-bold uppercase tracking-wider text-text-secondary"
+            >
+              Model{' '}
+              <span className="font-medium normal-case tracking-normal">
+                (from the run — not editable)
+              </span>
+            </label>
+            {/* READ-ONLY, not disabled: readOnly keeps the field labeled, focusable and
+                selectable-for-copy; disabled would kill all three. The model id is engine
+                truth (pool_resolved) — an editable field here publishes a lie. */}
+            <Input
+              id={modelId}
+              value={mine.modelId ?? ''}
+              readOnly
+              className="cursor-default bg-background-secondary"
+              aria-describedby={modelHintId}
+            />
+            <p id={modelHintId} className="mt-1 text-[11px] text-text-secondary">
+              Engine truth from this run's pool — publishing sends exactly this.
+              {modelProblem && (
+                <span className="ml-1 font-bold" style={{ color: STATE_ERROR }}>
+                  {modelProblem}
+                </span>
+              )}
+            </p>
+          </div>
+          <div className="flex flex-wrap items-end gap-3">
+            <div className="w-full max-w-[360px]">
+              <label
+                htmlFor={titleId}
+                className="mb-1 block text-xs font-bold uppercase tracking-wider text-text-secondary"
+              >
+                Title <span style={{ color: STATE_ERROR }}>*</span>
+              </label>
+              <Input
+                id={titleId}
+                value={title}
+                onChange={(e) => setTitle(e.target.value.slice(0, 80))}
+                maxLength={80}
+                placeholder="e.g. My M4 fleet first run"
+                disabled={publishing}
+                title={publishing ? 'Locked while publishing' : undefined}
+                aria-invalid={publishTitleProblem != null}
+                aria-describedby={titleHintId}
+              />
+              <p id={titleHintId} className="mt-1 text-[11px] text-text-secondary">
+                Your name for this run — the public title on the board.
+                {publishTitleProblem && (
+                  <span className="ml-1 font-bold" style={{ color: STATE_ERROR }}>
+                    {publishTitleProblem}
+                  </span>
+                )}
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={publish}
+              disabled={publishWhy != null || publishing}
+              title={
+                publishing
+                  ? 'Publishing — waiting for leanzero.net'
+                  : (publishWhy ?? 'Publish this result to leanzero.net')
+              }
+              className="flex items-center gap-2 rounded bg-[var(--color-block-teal)] px-4 py-2 text-sm font-semibold text-white disabled:opacity-40"
+            >
+              {publishing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
+              {publishing ? 'Publishing…' : 'Publish'}
+            </button>
+          </div>
+        </div>
+        {selectedFrozen && (
+          <p className="mt-2 text-xs font-bold" style={{ color: PHASE_ACTIVE }}>
+            Benchmark frozen — submissions closed.
+          </p>
+        )}
+        {!publishable && (
+          <p className="mt-2 text-xs text-text-secondary">
+            This result predates the v2 publisher — run the benchmark again to publish.
+          </p>
+        )}
+        {/* The publish outcome — a solid saturated state block, never a gray status line.
+            aria-live so the change is announced; the error carries the SERVER'S words. */}
+        <div aria-live="polite" role="status">
+          {pub.kind === 'accepted' && (
+            <div
+              className="mt-3 flex items-start gap-2 rounded px-4 py-3 text-sm font-semibold text-white"
+              style={{ backgroundColor: PHASE_DONE }}
+            >
+              <BadgeCheck className="mt-0.5 h-4 w-4 shrink-0" />
+              <span>
+                Live on leanzero.net — &ldquo;{pub.title}&rdquo; ·{' '}
+                {(pub.score * 100).toFixed(1)}%{pub.url ? ` · leanzero.net${pub.url}` : ''}
+              </span>
+            </div>
+          )}
+          {pub.kind === 'error' && (
+            <div
+              className="mt-3 flex items-start gap-2 rounded px-4 py-3 text-sm font-semibold text-white"
+              style={{ backgroundColor: STATE_ERROR }}
+            >
+              <XCircle className="mt-0.5 h-4 w-4 shrink-0" />
+              <span>Publish failed: {pub.message}</span>
+            </div>
+          )}
+        </div>
+      </section>
+    ) : null;
+
+  const runControls = (
+    <RunControls
+      nodes={nodes}
+      onNodes={setNodes}
+      running={running}
+      cancelling={cancelling}
+      onRun={() => void run()}
+      onCancel={() => setConfirmCancel(true)}
+      lockedId={lockedId}
+    />
+  );
 
   return (
     <MainPanelLayout>
@@ -612,90 +1282,37 @@ export default function BenchmarkView() {
             onSaveDefaults={() => saveDefaults(sampling)}
           />
 
-          <section className="mt-3 flex flex-wrap items-center gap-3">
-            <span className="text-sm text-text-secondary">Benchmark</span>
-            <div className="flex overflow-hidden rounded border border-border-primary">
-              {TIERS.map((t) => (
-                <button
-                  key={t}
-                  type="button"
-                  onClick={() => setTier(t)}
-                  disabled={running}
-                  aria-pressed={tier === t}
-                  aria-describedby={running ? lockedId : undefined}
-                  title={`${
-                    t === 'sb-7'
-                      ? 'Meridian Payments Console — the current tier: full web console, 3D scene, concurrency and resilience under seeded SIGKILL (scorer sb-7.0-rc, UNCALIBRATED)'
-                      : t === 'sb-6'
-                        ? 'VendorSync Pro — the hard tier: raw-WebGL 3D, webhooks, optimistic concurrency (scorer sb-6.0)'
-                        : 'VendorSync — the standard tier (scorer sb-5.3)'
-                  }${running ? `. ${lockedWhy}` : ''}`}
-                  className={`px-4 py-2 text-sm font-bold transition-colors ${
-                    tier === t
-                      ? 'bg-[var(--color-node-5)] text-white'
-                      : 'bg-background-secondary text-text-secondary hover:text-text-primary'
-                  }`}
-                >
-                  {t === 'sb-7' ? 'sb-7 · rc' : t === 'sb-6' ? 'sb-6 · HARD' : 'sb-5.3'}
-                </button>
-              ))}
-            </div>
-            <span className="text-sm text-text-secondary">Nodes</span>
-            <div className="flex overflow-hidden rounded border border-border-primary">
-              {NODE_CHOICES.map((n) => (
-                <button
-                  key={n}
-                  type="button"
-                  onClick={() => setNodes(n)}
-                  disabled={running}
-                  aria-pressed={nodes === n}
-                  aria-describedby={running ? lockedId : undefined}
-                  title={running ? lockedWhy : `Run on ${n} node${n === 1 ? '' : 's'}`}
-                  className={`px-4 py-2 text-sm font-semibold tabular-nums transition-colors ${
-                    nodes === n
-                      ? 'bg-[var(--color-block-teal)] text-white'
-                      : 'bg-background-secondary text-text-secondary hover:text-text-primary'
-                  }`}
-                >
-                  {n}
-                </button>
-              ))}
-            </div>
-            {running && (
-              <span id={lockedId} className="text-xs font-semibold text-text-secondary">
-                locked while the run is live
-              </span>
-            )}
-
-            {running ? (
-              <button
-                type="button"
-                onClick={() => setConfirmCancel(true)}
-                disabled={cancelling}
-                title={cancelling ? 'Cancelling — the engine, the vendor sim and the scorer are being stopped' : 'Stop this run'}
-                className="ml-auto flex items-center gap-2 rounded bg-background-danger px-4 py-2 text-sm font-semibold text-white disabled:opacity-50"
-              >
-                {cancelling ? (
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                ) : (
-                  <XCircle className="h-4 w-4" />
-                )}
-                {cancelling ? 'Cancelling…' : 'Cancel run'}
-              </button>
-            ) : (
-              <button
-                type="button"
-                onClick={run}
-                className="ml-auto flex items-center gap-2 rounded bg-[var(--color-block-teal)] px-4 py-2 text-sm font-semibold text-white"
-              >
-                <Play className="h-4 w-4" />
-                Run benchmark
-              </button>
-            )}
-          </section>
+          {catalog.kind === 'absent' && (
+            <p
+              className="mt-6 rounded px-4 py-3 text-sm font-bold text-white"
+              style={{ backgroundColor: STATE_ERROR }}
+            >
+              Catalog unreachable — no comparison rows. Sessions on this machine still render below;
+              baselines return when leanzero.net is reachable. ({catalog.message})
+            </p>
+          )}
+          {catalog.kind === 'ok' && catalog.stale && (
+            <p
+              className="mt-6 inline-flex rounded px-2.5 py-1 text-xs font-bold"
+              style={{ backgroundColor: PHASE_ACTIVE, color: '#1a1a1a' }}
+            >
+              catalog cached {fmtWhen(catalog.fetchedAt) ?? catalog.fetchedAt ?? 'at an unknown time'}
+            </p>
+          )}
+          {catalogMismatch && (
+            <p
+              className="mt-6 rounded px-4 py-3 text-sm font-bold"
+              style={{ backgroundColor: PHASE_ACTIVE, color: '#1a1a1a' }}
+            >
+              The site&rsquo;s current benchmark is {catalogMismatch.siteCurrent}, but this app
+              bundles {catalogMismatch.bundled} — the site&rsquo;s current benchmark needs an app
+              update.
+            </p>
+          )}
 
           {running && (
             <section className="mt-6 flex flex-col gap-4">
+              {runControls}
               <PhaseStrip
                 phase={phase}
                 lastLine={lastLine}
@@ -705,264 +1322,128 @@ export default function BenchmarkView() {
             </section>
           )}
 
+          {/* No catalog current era to host the Run button — the controls still render (main owns
+              which benchmark a run launches), just without a section to live in. */}
+          {!running && currentEra == null && <section className="mt-6">{runControls}</section>}
+
           {status && (
             <p className="mt-4 rounded border border-border-primary bg-background-secondary px-4 py-3 text-sm text-text-primary">
               {status}
             </p>
           )}
 
-          {mine && !comparable && (
-            <p className="mt-4 rounded border-2 border-[var(--color-node-5)] px-4 py-3 text-sm font-semibold text-text-primary">
-              {/* NAME THE SAME CONSTANT THE PREDICATE USES. `comparable` compares against
-                  TIER_SCORER[tier], but this printed COMPARABLE_SCORER — so the banner read "scored by
-                  sb-5.3, but the board runs on sb-5.3", telling the operator two identical versions were
-                  incompatible. */}
-              Your last result was scored by {mine.scorerVersion}, but this board runs on{' '}
-              {TIER_SCORER[tier]} — the numbers are not comparable, so your row sits out. Run the
-              benchmark again to enter the board.
-            </p>
-          )}
-
-          {mine && !running && (
-            <section className="mt-8">
-              <h2 className="text-xs font-bold uppercase tracking-widest text-text-secondary">
-                Your last run{mineFinished ? ` · completed ${mineFinished}` : ''}
-              </h2>
-              <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-4">
-                <StatTile
-                  label="Score"
-                  value={`${(mine.score * 100).toFixed(1)}%`}
-                  color="var(--color-block-teal)"
-                />
-                {typeof mine.wallSecs === 'number' && (
-                  <StatTile
-                    label="Wall time"
-                    value={fmtElapsed(mine.wallSecs * 1000)}
-                    color="var(--color-node-2)"
-                  />
-                )}
-                {mine.runMeta && (
-                  <StatTile
-                    label="Repair rounds"
-                    value={String(mine.runMeta.repairRounds)}
-                    color="var(--color-node-4)"
-                  />
-                )}
-                {mine.runMeta && (
-                  <StatTile
-                    label="Engine events"
-                    value={mine.runMeta.engineEvents.toLocaleString()}
-                    color="var(--color-node-1)"
-                  />
-                )}
-              </div>
-            </section>
-          )}
-
-          {shots.length > 0 && !running && (
-            <section className="mt-8">
-              <h2 className="text-xs font-bold uppercase tracking-widest text-text-secondary">
-                What it built — before and after repairs
-              </h2>
-              <div className="mt-3">
-                <ShotsStrip shots={shots} />
-              </div>
-            </section>
-          )}
-
-          {running && mine && comparable && (
-            // PREVIOUS RESULT zone — a NEW run is in progress, so the "Your fleet" row below is the
-            // PREVIOUS run's stored result. Same zone-header register as the swarm panel, solid amber
-            // (the run-in-progress color), full border, no washes — never ambiguous against the live run.
-            <div className="mt-8 rounded border-2" style={{ borderColor: PHASE_ACTIVE }}>
-              <ZoneHeader
-                hue={PHASE_ACTIVE}
-                label="Previous result"
-                explain="your last completed run — replaced when this run finishes"
-                className="pt-2"
-                right={
-                  <span className="text-xs font-bold tabular-nums" style={{ color: PHASE_ACTIVE }}>
-                    {(mine.score * 100).toFixed(1)}%{mineFinished ? ` · ${mineFinished}` : ''}
-                  </span>
-                }
-              />
-              <p className="px-3 pb-3 pt-1 text-sm text-text-primary">
-                The &ldquo;Your fleet&rdquo; rows below are your last completed run — the run in
-                progress replaces them when it finishes.
-              </p>
-            </div>
-          )}
-
-          <section className="mt-8">
-            <h2 className="text-xs font-bold uppercase tracking-widest text-text-secondary">
-              Overall
-            </h2>
-            <ScoreBars rows={rows} />
-          </section>
-
-          <section className="mt-10">
-            <h2 className="text-xs font-bold uppercase tracking-widest text-text-secondary">
-              Where the points went
-            </h2>
-            <p className="mb-3 mt-1 max-w-[70ch] text-sm text-text-secondary">
-              {TIER_LABELS.A} · {TIER_LABELS.B} · {TIER_LABELS.C} · {TIER_LABELS.D}. A build can be
-              perfectly structured and still score nothing on behaviour — the split is the diagnosis.
-            </p>
-            <TierBreakdown rows={rows} />
-          </section>
-
-          {mine && !running && (
-            <section className="mt-10">
-              <h2 className="text-xs font-bold uppercase tracking-widest text-text-secondary">
-                How this score was built
-              </h2>
-              {mine.verdict ? (
-                <>
-                  <p className="mb-4 mt-1 max-w-[80ch] text-sm text-text-secondary">
-                    Every number below is scorer evidence from YOUR run — the exact checks it ran,
-                    what each one saw, and what the misses cost. The formula:{' '}
-                    <span className="font-bold text-text-primary">
-                      60% core build + 15% journey + 10% visual + 5% performance + 10% hard block
-                    </span>
-                    .
-                  </p>
-                  <ScoringDetail verdict={mine.verdict} score={mine.score} />
-                </>
-              ) : (
-                <p className="mt-3 rounded border border-border-primary bg-background-secondary px-4 py-3 text-sm text-text-primary">
-                  This stored result predates the detailed verdict — the full check-by-check
-                  breakdown appears from your next run.
-                </p>
-              )}
-            </section>
-          )}
-
-          {mine && (
-            <section className="mt-10 rounded border border-border-primary p-4">
-              <h2 className="text-xs font-bold uppercase tracking-widest text-text-secondary">
-                Publish to leanzero.net
-              </h2>
-              <p className="mt-1 max-w-[70ch] text-sm text-text-secondary">
-                Posts your score, the full check-by-check breakdown and the before/after
-                screenshots under the title you choose. The result appears on the leanzero.net
-                board immediately.
-              </p>
-              <div className="mt-3 flex flex-col gap-3">
-                <div className="max-w-[560px]">
-                  <label
-                    htmlFor={modelId}
-                    className="mb-1 block text-xs font-bold uppercase tracking-wider text-text-secondary"
-                  >
-                    Model{' '}
-                    <span className="font-medium normal-case tracking-normal">
-                      (from the run — not editable)
-                    </span>
-                  </label>
-                  {/* READ-ONLY, not disabled: readOnly keeps the field labeled, focusable and
-                      selectable-for-copy; disabled would kill all three. The model id is engine
-                      truth (pool_resolved) — an editable field here publishes a lie. */}
-                  <Input
-                    id={modelId}
-                    value={mine.modelId ?? ''}
-                    readOnly
-                    className="cursor-default bg-background-secondary"
-                    aria-describedby={modelHintId}
-                  />
-                  <p id={modelHintId} className="mt-1 text-[11px] text-text-secondary">
-                    Engine truth from this run's pool — publishing sends exactly this.
-                    {modelProblem && (
-                      <span className="ml-1 font-bold" style={{ color: '#e5484d' }}>
-                        {modelProblem}
-                      </span>
-                    )}
-                  </p>
-                </div>
-                <div className="flex flex-wrap items-end gap-3">
-                  <div className="w-full max-w-[360px]">
-                    <label
-                      htmlFor={titleId}
-                      className="mb-1 block text-xs font-bold uppercase tracking-wider text-text-secondary"
-                    >
-                      Title <span style={{ color: '#e5484d' }}>*</span>
-                    </label>
-                    <Input
-                      id={titleId}
-                      value={title}
-                      onChange={(e) => setTitle(e.target.value.slice(0, 80))}
-                      maxLength={80}
-                      placeholder="e.g. My M4 fleet first run"
-                      disabled={publishing}
-                      title={publishing ? 'Locked while publishing' : undefined}
-                      aria-invalid={publishTitleProblem != null}
-                      aria-describedby={titleHintId}
-                    />
-                    <p id={titleHintId} className="mt-1 text-[11px] text-text-secondary">
-                      Your name for this run — the public title on the board.
-                      {publishTitleProblem && (
-                        <span className="ml-1 font-bold" style={{ color: '#e5484d' }}>
-                          {publishTitleProblem}
-                        </span>
-                      )}
-                    </p>
-                  </div>
+          <div className="mt-6 flex flex-col gap-3">
+            {sections.map((sec) => {
+              const selInSection =
+                selectedSession != null && selectedSession.scorerVersion === sec.scorerVersion;
+              // Open by default: the CURRENT era, the era holding the selected session (the
+              // latest session's result shows without a click), and everything when the catalog
+              // is absent. An explicit user toggle always wins.
+              const expanded =
+                expandedByEra[sec.scorerVersion] ??
+                (sec.current || selInSection || catalog.kind !== 'ok');
+              return (
+                <section
+                  key={sec.scorerVersion}
+                  className="rounded border border-border-primary"
+                >
                   <button
                     type="button"
-                    onClick={publish}
-                    disabled={publishWhy != null || publishing}
-                    title={
-                      publishing
-                        ? 'Publishing — waiting for leanzero.net'
-                        : (publishWhy ?? 'Publish this result to leanzero.net')
+                    onClick={() =>
+                      setExpandedByEra((prev) => ({ ...prev, [sec.scorerVersion]: !expanded }))
                     }
-                    className="flex items-center gap-2 rounded bg-[var(--color-block-teal)] px-4 py-2 text-sm font-semibold text-white disabled:opacity-40"
+                    aria-expanded={expanded}
+                    className="flex w-full flex-wrap items-center gap-3 px-4 py-3 text-left"
                   >
-                    {publishing ? (
-                      <Loader2 className="h-4 w-4 animate-spin" />
+                    {expanded ? (
+                      <ChevronDown className="h-4 w-4 shrink-0 text-text-secondary" />
                     ) : (
-                      <Upload className="h-4 w-4" />
+                      <ChevronRight className="h-4 w-4 shrink-0 text-text-secondary" />
                     )}
-                    {publishing ? 'Publishing…' : 'Publish'}
-                  </button>
-                </div>
-              </div>
-              {!publishable && (
-                <p className="mt-2 text-xs text-text-secondary">
-                  This result predates the v2 publisher — run the benchmark again to publish.
-                </p>
-              )}
-              {/* The publish outcome — a solid saturated state block, never a gray status line.
-                  aria-live so the change is announced; the error carries the SERVER'S words. */}
-              <div aria-live="polite" role="status">
-                {pub.kind === 'accepted' && (
-                  <div
-                    className="mt-3 flex items-start gap-2 rounded px-4 py-3 text-sm font-semibold text-white"
-                    style={{ backgroundColor: PHASE_DONE }}
-                  >
-                    <BadgeCheck className="mt-0.5 h-4 w-4 shrink-0" />
-                    <span>
-                      Live on leanzero.net — &ldquo;{pub.title}&rdquo; ·{' '}
-                      {(pub.score * 100).toFixed(1)}%{pub.url ? ` · leanzero.net${pub.url}` : ''}
+                    <span className="text-base font-bold text-text-primary">{sec.title}</span>
+                    <span className="font-mono text-xs text-text-secondary">{sec.scorerVersion}</span>
+                    {sec.current ? (
+                      <span
+                        className="rounded px-2 py-0.5 text-[10px] font-extrabold tracking-wider text-white"
+                        style={{ backgroundColor: PHASE_DONE }}
+                      >
+                        CURRENT
+                      </span>
+                    ) : sec.frozen ? (
+                      <span
+                        className="rounded px-2 py-0.5 text-[10px] font-extrabold tracking-wider"
+                        style={{ backgroundColor: PHASE_ACTIVE, color: '#1a1a1a' }}
+                      >
+                        FROZEN
+                      </span>
+                    ) : null}
+                    <span className="ml-auto text-xs font-semibold tabular-nums text-text-secondary">
+                      {sec.sessions.length} session{sec.sessions.length === 1 ? '' : 's'}
                     </span>
-                  </div>
-                )}
-                {pub.kind === 'error' && (
-                  <div
-                    className="mt-3 flex items-start gap-2 rounded px-4 py-3 text-sm font-semibold text-white"
-                    style={{ backgroundColor: '#e5484d' }}
-                  >
-                    <XCircle className="mt-0.5 h-4 w-4 shrink-0" />
-                    <span>Publish failed: {pub.message}</span>
-                  </div>
-                )}
-              </div>
-            </section>
-          )}
+                  </button>
+                  {expanded && (
+                    <div className="flex flex-col gap-3 border-t border-border-primary px-4 py-4">
+                      {sec.current && !running && runControls}
+                      {sec.frozen && (
+                        <p className="text-xs font-bold" style={{ color: PHASE_ACTIVE }}>
+                          Frozen on the site — sessions stay viewable; submissions are closed.
+                        </p>
+                      )}
+                      {sec.sessions.length === 0 ? (
+                        <p className="text-sm text-text-secondary">
+                          {sec.current
+                            ? 'No sessions yet — Run benchmark starts the first one.'
+                            : 'No sessions from this benchmark on this machine.'}
+                        </p>
+                      ) : (
+                        <div className="flex flex-col gap-2">
+                          {sec.sessions.map((s) => (
+                            <SessionRow
+                              key={sessionKey(s)}
+                              session={s}
+                              selected={sessionKey(s) === selectedKey}
+                              onSelect={() => setSelectedKey(sessionKey(s))}
+                              onDelete={() => setDeleteTarget(s)}
+                            />
+                          ))}
+                        </div>
+                      )}
+                      {selInSection && selectedSession && (
+                        <div
+                          className="mt-2 border-t-2 pt-4"
+                          style={{ borderColor: 'var(--color-block-teal)' }}
+                        >
+                          <SessionDetail
+                            session={selectedSession}
+                            baselines={sec.baselines}
+                            catalogAbsent={catalog.kind === 'absent'}
+                            fromCatalog={sec.fromCatalog}
+                            mine={mine}
+                            mineMatched={sessionKey(selectedSession) === mineSessionKey}
+                            shots={shots}
+                            publishSlot={publishSection}
+                          />
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </section>
+              );
+            })}
+            {sections.length === 0 && catalog.kind !== 'absent' && (
+              <p className="rounded border border-border-primary bg-background-secondary px-4 py-3 text-sm text-text-primary">
+                {catalog.kind === 'loading'
+                  ? 'Loading the benchmark catalog…'
+                  : 'The catalog names no benchmarks and this machine has no sessions yet.'}
+              </p>
+            )}
+          </div>
 
           <footer className="mt-10 border-t border-border-primary pt-4 text-xs text-text-secondary">
-            Baselines were captured on our own fleet against this exact frozen spec ({COMPARABLE_SCORER})
-            and ship with the app, so your run costs you nothing and every board is comparable.
-            Scores below 100 are expected: the finesse tier is graded against a theoretical optimum,
-            and a perfect score would mean the task had stopped measuring.
+            Comparison rows are retrieved from leanzero.net's published board for each benchmark —
+            nothing is baked into the app, so a shipped number can never outlive the board it came
+            from. Scores below 100 are expected: the finesse tier is graded against a theoretical
+            optimum, and a perfect score would mean the task had stopped measuring.
           </footer>
         </div>
       </div>
@@ -976,6 +1457,26 @@ export default function BenchmarkView() {
         confirmVariant="destructive"
         onConfirm={() => void cancel()}
         onCancel={() => setConfirmCancel(false)}
+      />
+
+      <ConfirmationModal
+        isOpen={deleteTarget != null}
+        title="Delete this benchmark session?"
+        message={
+          deleteTarget
+            ? `Started ${fmtWhen(deleteTarget.startedAt) ?? deleteTarget.startedAt} · ${OUTCOME_WORDS[deleteTarget.outcome]}${
+                deleteTarget.outcome === 'finished' && deleteTarget.score != null
+                  ? ` at ${(deleteTarget.score * 100).toFixed(1)}%`
+                  : ''
+              }. The session and its stored result are removed from this machine — anything already published stays on the board.`
+            : ''
+        }
+        confirmLabel="Delete session"
+        cancelLabel="Keep it"
+        confirmVariant="destructive"
+        isSubmitting={deleting}
+        onConfirm={() => void confirmDelete()}
+        onCancel={() => setDeleteTarget(null)}
       />
     </MainPanelLayout>
   );

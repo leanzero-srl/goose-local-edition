@@ -1,10 +1,10 @@
 /**
- * Baked baseline results. Captured on our fleet against the frozen spec and shipped as data, so a
- * user never pays to run frontier models and every board is directly comparable.
- *
- * Regenerated only when we ship: `evals/swarm-bench/bench/sweep.py` writes the verdicts,
- * and each row carries the scorer version it was measured by — rows from different versions are not
- * comparable and must not sit in one table.
+ * Shared benchmark vocabulary: the tier taxonomy, the scorer-version rail, and the row shape the
+ * charts render. The BAKED baseline boards that used to live here are GONE (2026-08-31): every
+ * comparison row is now RETRIEVED from the site's catalog (`benchmarkCatalog` IPC, typed in
+ * ./bridge.ts) — a hardcoded score can silently outlive the board it came from, and the sb-7 row
+ * baked here did exactly that. When the catalog is unreachable the view states the absence
+ * loudly; it never invents rows.
  */
 
 export type Tier = 'A' | 'B' | 'C' | 'D';
@@ -12,7 +12,8 @@ export type Tier = 'A' | 'B' | 'C' | 'D';
 export interface BenchmarkRow {
   label: string;
   score: number; // 0..1 overall
-  tiers: Record<Tier, number>; // 0..1 per tier
+  /** 0..1 per tier — absent on catalog baselines, which publish only the overall number. */
+  tiers?: Partial<Record<Tier, number>>;
   nodes?: number;
   mine?: boolean;
   scorerVersion: string;
@@ -20,23 +21,20 @@ export interface BenchmarkRow {
 }
 
 /**
- * The comparability rail. Rows measured by a different scorer are NOT comparable and must not sit
- * in the same chart — the view keeps a mismatched user row off the board and says why. The app
- * offers two runnable tiers; each carries its own frozen scorer version and baseline set, and the
- * website's board keeps every era viewable behind its scorer selector.
+ * The runnable-tier vocabulary main.ts's spec/probe mapping is keyed by (benchTierPayload.ts).
+ * Which benchmark the user can RUN is the catalog's `current` flag, not a choice made here —
+ * the view offers no tier chooser.
  */
 export type BenchTier = 'sb-5.3' | 'sb-6' | 'sb-7';
 export const TIERS: BenchTier[] = ['sb-5.3', 'sb-6', 'sb-7'];
-export const DEFAULT_TIER: BenchTier = 'sb-5.3';
 export const TIER_SCORER: Record<BenchTier, string> = {
   'sb-5.3': 'sb-5.3',
   'sb-6': 'sb-6.0',
   // sb-7 ships UNCALIBRATED — score_sb7.py reports itself as sb-7.0-rc and sb7-thresholds.json
-  // carries "calibrated": false. The board keeps the rc identity so an rc number is never quietly
+  // carries "calibrated": false. The rc identity is kept so an rc number is never quietly
   // compared against a calibrated one.
   'sb-7': 'sb-7.0-rc',
 };
-export const COMPARABLE_SCORER = TIER_SCORER[DEFAULT_TIER];
 
 export const TIER_LABELS: Record<Tier, string> = {
   A: 'A structure',
@@ -44,102 +42,6 @@ export const TIER_LABELS: Record<Tier, string> = {
   C: 'C vendor contract',
   D: 'D finesse',
 };
-
-export const TIER_WEIGHTS: Record<Tier, number> = { A: 0.25, B: 0.3, C: 0.25, D: 0.2 };
-
-// The FROZEN baselines per tier, measured on this harness's own Bedrock entrant pipeline.
-// sb-5.3 = the rendered-means-seen rescore of the archived cloud trees (median rep per model);
-// sb-6.0 = the hard-tier calibration runs against the frozen thresholds file. The sb-5.2-era
-// numbers live on the website's historic board, not here — the app only offers runnable tiers.
-export const BASELINES_BY_TIER: Record<BenchTier, BenchmarkRow[]> = {
-  'sb-5.3': [
-    {
-      // The stable rep (r0: identical across two probe passes; the rep spread is 0.889-0.960,
-      // so treat any gap under ~0.05 to this number as within the baseline's own noise).
-      label: 'Claude Opus 5',
-      score: 0.9142,
-      tiers: { A: 1.0, B: 1.0, C: 0.9, D: 0.875 },
-      scorerVersion: 'sb-5.3',
-      wallSecs: 1170,
-    },
-    {
-      label: 'Claude Sonnet 5',
-      score: 0.4971,
-      tiers: { A: 1.0, B: 0.438, C: 0.3, D: 0.638 },
-      scorerVersion: 'sb-5.3',
-      wallSecs: 410,
-    },
-    {
-      label: 'Claude Haiku 4.5',
-      score: 0.4615,
-      tiers: { A: 0.833, B: 0.365, C: 0.1, D: 0.625 },
-      scorerVersion: 'sb-5.3',
-      wallSecs: 318,
-    },
-  ],
-  // sb-6 board (2026-08-19, post inner-vs-outer fixes d731134aa: proportional excellence
-  // slice, status-vocabulary error-banner fix, tableHash view-refresh): serial hermetic
-  // re-scores at each tree's advertised vendor port (version stays sb-6.0 until declared
-  // stable — fix provenance is F895-F899).
-  // Luna/Terra are engine-kill floors (session cut by the compaction bug fixed in
-  // 19b4ed6ef) — floors, not ceilings; disclosed on the website run pages.
-  'sb-6': [
-    {
-      label: 'GPT-5.6 Sol',
-      score: 0.9956,
-      tiers: { A: 1.0, B: 1.0, C: 1.0, D: 1.0 },
-      scorerVersion: 'sb-6.0',
-      wallSecs: 1890,
-    },
-    {
-      label: 'Claude Opus 5',
-      score: 0.9307,
-      tiers: { A: 1.0, B: 1.0, C: 1.0, D: 1.0 },
-      scorerVersion: 'sb-6.0',
-      wallSecs: 2208,
-    },
-    {
-      label: 'GPT-5.6 Luna',
-      score: 0.8671,
-      tiers: { A: 1.0, B: 1.0, C: 1.0, D: 1.0 },
-      scorerVersion: 'sb-6.0',
-      wallSecs: 237,
-    },
-    {
-      label: 'Claude Sonnet 5',
-      score: 0.8635,
-      tiers: { A: 1.0, B: 1.0, C: 1.0, D: 0.86 },
-      scorerVersion: 'sb-6.0',
-      wallSecs: 1790,
-    },
-    {
-      label: 'GPT-5.6 Terra',
-      score: 0.3252,
-      tiers: { A: 1.0, B: 1.0, C: 1.0, D: 1.0 },
-      scorerVersion: 'sb-6.0',
-      wallSecs: 390,
-    },
-    {
-      label: 'Claude Haiku 4.5',
-      score: 0.1887,
-      tiers: { A: 0.8786, B: 0.9468, C: 0.8809, D: 0.8 },
-      scorerVersion: 'sb-6.0',
-      wallSecs: 463,
-    },
-  ],
-  // sb-7 has ONE published number so far: the local fleet's own last run. It is the thing to beat,
-  // and it is deliberately the only row — an rc scorer has no calibrated field to compare against.
-  'sb-7': [
-    {
-      label: 'Local fleet — 3x qwen3.8-27b (published)',
-      score: 0.0273,
-      tiers: { A: 0.4625, B: 0.2247, C: 0.0, D: 0.5571 },
-      scorerVersion: 'sb-7.0-rc',
-      wallSecs: 9093,
-    },
-  ],
-};
-export const BASELINES: BenchmarkRow[] = BASELINES_BY_TIER[DEFAULT_TIER];
 
 /** Solid, saturated, and distinct — mirrors --color-node-* rather than tinting one hue. */
 export const TIER_COLORS: Record<Tier, string> = {

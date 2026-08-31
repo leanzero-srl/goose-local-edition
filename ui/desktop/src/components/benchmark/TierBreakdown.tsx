@@ -43,7 +43,7 @@ export function TierBreakdown({ rows }: { rows: BenchmarkRow[] }) {
             </div>
             <div className="flex flex-1 gap-2">
               {TIERS.map((tier) => {
-                const value = Math.min(1, Math.max(0, row.tiers[tier] ?? 0));
+                const value = Math.min(1, Math.max(0, row.tiers?.[tier] ?? 0));
                 return (
                   <div key={tier} className="flex-1">
                     <div
