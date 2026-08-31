@@ -783,3 +783,8 @@ research_request_block's armed-no-claimed-sections arm wording.
   verification downgrade with the honest-handoff nuance intact; and read the sink's first 9 calls
   closely enough to confirm it found the two defects the skipped smoke would have caught.
   Charter gap: none.
+- 2026-09-01 01:00 tick-surgeon #33: EXEMPLARY at 60.7k/13. The boot proof done right — the exact
+  advertised command quoted, lsof on both ports, and the orphan discipline applied in reverse
+  (verified the flagged server as the sink's OWN registered boot and said do-not-kill with the
+  lineage). Read the battery's honest-empty SSE arm against the docs instead of calling it a
+  failure. Charter gap: none.
