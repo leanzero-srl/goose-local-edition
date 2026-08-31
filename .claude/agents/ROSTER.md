@@ -589,3 +589,11 @@ research_request_block's armed-no-claimed-sections arm wording.
   the ETERNAL-HOLD line can't tell advancing from re-deriving; fixed same-turn: produced-flat
   gating). Flagged __main__.py's delegation-vs-boots-BOTH question honestly as deferred-to-INTEGRATE.
   Charter gap: none.
+- 2026-08-31 15:40 swarm-surgeon (skeleton brief post-repair, 044cafed6): EXEMPLARY. Chose regenerate
+  over reorder by ANALYSIS — read all five repairs and proved reorder breaks three (skeleton must be
+  first claimant; package-owner ties shift; sink-strip home vanishes); the seam sits inside the chain
+  so both DAG arms walk it (one door held). Trace honest to the archive: SEEDED not wholly-caused,
+  with the confusion's six span offsets enumerated. Paid the ratchet by moving the whole skeleton
+  cluster out (swarm.rs 43,085→42,764) with boundary-asserted line-range deletion, no brace script.
+  Named the one uncovered seam (replan renames after skeleton dispatch — usually moot, recorded).
+  Charter gap: none.
