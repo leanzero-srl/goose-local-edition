@@ -626,3 +626,10 @@ research_request_block's armed-no-claimed-sections arm wording.
   owns — the one-owner invariant broken by the supervisor's own words; lane self-saved. Fix
   dispatched (ownership-filtered defect list). web-viz watch escalates: steer 2 + a run.jsonl
   detour brewing. Charter gap: none.
+- 2026-08-31 17:15 swarm-surgeon (ownership-filtered defects, ad8212f20): CLEAN+. Found the real seam
+  (verify_owned_files' HTML arm feeding both the look prompt AND delivery_defect_steer), derived
+  owner+state from the ledger/dispatch tables (no hardcoding), proved r6c carried exactly one
+  cross-owned line (the steer fired once), preserved every non-judge consumer byte-identical. Named
+  three unbriefed siblings honestly: the completion event/watchdog/verify sweep still render the raw
+  line (r6e queue); web_refs has the same hazard one level down; and web-console's look 4 is 3h out
+  with NO verdict — the A2 silent class on a judge lane, handed to the tick-surgeon. Charter gap: none.
