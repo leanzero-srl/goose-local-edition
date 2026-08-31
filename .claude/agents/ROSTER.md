@@ -724,3 +724,9 @@ research_request_block's armed-no-claimed-sections arm wording.
   the smallest rung that closes it (the streak as memory, no new counter), tests pinning ok-cannot-
   disarm and Restart precedence, and an honest boundary statement (the 1-2-read-calls shape is NOT
   covered and needs its own brief — correctly left to the r7 desk). Charter gap: none.
+- 2026-08-31 22:00 tick-surgeon #27: EXEMPLARY at 63.6k/9 — the sharpest single read of the vigil.
+  Refuted the judge's own "advancing" verdicts with three numbers (meter 141k→156k vs durable
+  158,911 by 21:10 — backlog drain, not production), fired the staged record on its named fields,
+  and separated the two lanes' fates cleanly (act on web-viz / do-not-touch ledgerd-core, with
+  walk2 PROVEN). The meter-lag discovery is an engine defect nobody had seen in nine weeks of
+  looking at holds. Charter gap: none.
