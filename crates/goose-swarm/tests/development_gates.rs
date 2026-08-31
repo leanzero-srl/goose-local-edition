@@ -202,9 +202,15 @@ fn the_banned_integrate_template_only_shrinks() {
 /// advancing HOLD (a restream may only take a stream that has stopped) and the restream seam's
 /// ladder reset (a fresh attempt starts at nudge 0 — the ignored-steer memory no longer outlives
 /// the stream it measured).
+/// Tightened to 43,684: the research fan's terminal-row emission (`emit_research_outcome`, one
+/// funnel for the two verbatim `research_unanswered` writers) and the panicked-lane row
+/// (`fold_research_panic`) moved to commands/swarm/research.rs (-31), paying for the fold of
+/// raised research questions into the owning slice's brief (`raised_questions_brief_block`) and
+/// the per-question `research_raised_folded` event — r6b's 48 raised questions had reached no
+/// builder and no tick.
 #[test]
 fn swarm_rs_line_count_only_decreases() {
-    const SWARM_RS_LINE_BASELINE: usize = 43_715;
+    const SWARM_RS_LINE_BASELINE: usize = 43_684;
     let text = read("crates/goose-cli/src/commands/swarm.rs");
     let n = text.lines().count();
     assert!(
