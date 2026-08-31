@@ -80,7 +80,6 @@ libc = "0.2.186"
 [features]
 default = [
     "code-mode",
-    "local-inference",
     "tui",
     "aws-providers",
     "telemetry",
@@ -128,7 +127,9 @@ native-tls = [
 env-lock.workspace = true
 tempfile = { workspace = true }
 test-case = { workspace = true }
-tokio = { workspace = true }
+# test-util was previously enabled transitively via the local-inference default feature;
+# the swarm tests' start_paused clocks need it declared, not inherited.
+tokio = { workspace = true, features = ["test-util"] }
 
 [package.metadata.cargo-machete]
 ignored = [
