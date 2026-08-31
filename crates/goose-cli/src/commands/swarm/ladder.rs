@@ -222,6 +222,29 @@ pub(super) fn drift_streak_step(
     }
 }
 
+/// IS THE DRIFT HOLD'S PROMISE DUE? (r6c web-viz, tick 26 — the full walk is on
+/// `nudge_delivery`'s promise paragraph.) All four inputs are progress facts; none is a new
+/// counter or a clock:
+///   * `owns_files` — only a files-owing lane; a reasoning lane keeps the advancing hold (the
+///     r6a wipe class stays closed);
+///   * `drift_verdict` — the promise is drift-shaped ("A second DRIFTING ... will be
+///     delivered"), so only a drift-class look collects it;
+///   * `drift_streak >= 2` — the EXISTING streak is the promise's memory: the hold at streak 1
+///     made the promise, and write progress is what resets the streak (`drift_streak_step`),
+///     so an armed streak means zero write progress across every held look — no new state;
+///   * `calls_since_nudge == 0` — zero actions since the delivered steer. This is what tells
+///     "cannot be reached any other way" from "reading before writing": a lane making tool
+///     calls has turn boundaries a steer lands on and keeps today's hold; web-viz's
+///     calls.jsonl was frozen 162 minutes while think advanced 30k+.
+pub(super) fn delivery_promise_due(
+    owns_files: bool,
+    drift_verdict: bool,
+    drift_streak: u32,
+    calls_since_nudge: usize,
+) -> bool {
+    owns_files && drift_verdict && drift_streak >= 2 && calls_since_nudge == 0
+}
+
 /// The three ways a wanted nudge can land. `Steer` interrupts the stream at a chunk boundary and
 /// KEEPS the partial; `Restream` drops the socket, wipes the conversation and seeds a fresh
 /// attempt; `Hold` delivers NOTHING this look — the call is watched for one more look instead,
@@ -277,12 +300,31 @@ pub(super) enum NudgeDelivery {
 /// attempt — which since r6a is also every fresh attempt's state, because the restream seam
 /// resets the ladder — so "obeyed" is measured on the deliverable's own record, not inferred
 /// from what the judge hoped.
+///
+/// AND A PROMISED DELIVERY CANNOT BE DEFERRED BY THINK-ADVANCE FOREVER (r6c web-viz, tick 26).
+/// The drift hold's own event promises "A second DRIFTING with no write progress since will be
+/// delivered" — and on a ZERO-ACTION lane the promise deferred indefinitely: after the one steer
+/// (17:09:15, "write web/viz.js NOW ... bytes on disk at web/viz.js are the deliverable") the
+/// lane took zero tool calls (calls.jsonl frozen since 15:28), wrote zero owned bytes
+/// (web/viz.js never existed), moved its formed channel ~170 chars in 64 minutes (2,433 bytes
+/// TOTAL — under the wrong-channel floor), and produced 13-17k fresh NON-recurring think chars
+/// per look, composing and then auditing the file in reasoning. Every rung was unreachable:
+/// Steer needs `None`/`Some(true)`, the wrong-channel restream needs formed growth, the plain
+/// restream needs the stream to stop — so 17:51's hold promised and 18:13's look held again
+/// ("the stream is advancing"), and would forever. `promise_due` (`delivery_promise_due`) is
+/// the escape: the promise exists (the files-owing lane's armed drift streak), the verdict is
+/// drift-class again, and the lane has taken zero actions since the delivered steer — measured
+/// non-obedience with no other reachable delivery — so the would-be hold escalates to the
+/// restream, whose seed carries the directive plus the composed tail. A lane with real writes
+/// since its nudge still steers (`Some(true)` outranks), a lane making calls keeps today's hold
+/// (a steer can land where turns happen), and a reasoning lane is structurally exempt.
 pub(super) fn nudge_delivery(
     pending_empty: bool,
     write_progress_since_nudge: Option<bool>,
     verdict: &goose_swarm::Verdict,
     advancing: bool,
     wrong_channel: bool,
+    promise_due: bool,
 ) -> NudgeDelivery {
     if !pending_empty {
         return NudgeDelivery::Restream("tool request in flight");
@@ -293,6 +335,12 @@ pub(super) fn nudge_delivery(
     match write_progress_since_nudge {
         None => NudgeDelivery::Steer("first nudge"),
         Some(true) => NudgeDelivery::Steer("write progress since the previous nudge"),
+        Some(false) if advancing && !wrong_channel && promise_due => NudgeDelivery::Restream(
+            "steer ignored and the promised delivery is due: zero actions and zero write \
+             progress since the steer on this files-owing lane, with only think advancing — \
+             the directive rides a fresh attempt's seed instead of deferring the promise \
+             another look",
+        ),
         Some(false) if advancing && !wrong_channel => NudgeDelivery::Hold(
             "steer not acted on, but the stream is advancing: fresh non-recurring content since \
              the last look — held, not wiped",
@@ -307,6 +355,28 @@ pub(super) fn nudge_delivery(
              stopped advancing",
         ),
     }
+}
+
+/// The steer's SUPERVISOR NOTE, queued into the SAME running session as the next user message
+/// (moved verbatim from the swarm.rs call site under the incremental-split law, paying for the
+/// promise wiring). The note lands in the durable `<task>.log`; the ISO stamp makes each
+/// appended block datable without file mtimes, like the dispatch header (r5 assessment:
+/// reconstructing the steer sequence needed mtimes). Timestamp as data — nothing reads it,
+/// nothing is bounded by it. An empty ESTABLISHED is omitted, never rendered as an empty claim
+/// (the GEN-4 class: assert only what was actually delivered).
+pub(super) fn steer_note(established: &str, direction: &str) -> String {
+    format!(
+        "SUPERVISOR NOTE ({}) — an independent reviewer read this call's own reasoning.\n\
+         {}Do this next: {direction}\n\
+         Continue the SAME task. Do not restart work you have already done, and do not \
+         re-explain your plan.",
+        chrono::Utc::now().to_rfc3339(),
+        if established.is_empty() {
+            String::new()
+        } else {
+            format!("You have already established: {established}\n")
+        }
+    )
 }
 
 /// The re-stream's seed message: the original task, what the judge established, the direction —
@@ -440,12 +510,12 @@ mod tests {
     fn nudge_delivery_escalates_on_measured_non_obedience() {
         use goose_swarm::Verdict;
         assert_eq!(
-            nudge_delivery(true, None, &Verdict::Looping, false, false),
+            nudge_delivery(true, None, &Verdict::Looping, false, false, false),
             NudgeDelivery::Steer("first nudge"),
             "the first nudge on a call is a steer: it keeps the partial and costs nothing"
         );
         assert_eq!(
-            nudge_delivery(true, Some(false), &Verdict::Looping, false, false),
+            nudge_delivery(true, Some(false), &Verdict::Looping, false, false, false),
             NudgeDelivery::Restream(
                 "steer ignored: no write progress since the previous nudge and the stream has \
                  stopped advancing"
@@ -454,25 +524,25 @@ mod tests {
              non-obedience, so the anchor goes"
         );
         assert_eq!(
-            nudge_delivery(true, Some(true), &Verdict::Looping, false, false),
+            nudge_delivery(true, Some(true), &Verdict::Looping, false, false, false),
             NudgeDelivery::Steer("write progress since the previous nudge"),
             "a call that moved its deliverable since the steer keeps getting steers"
         );
         assert_eq!(
-            nudge_delivery(true, None, &Verdict::Restart, true, false),
+            nudge_delivery(true, None, &Verdict::Restart, true, false, false),
             NudgeDelivery::Restream("judge said restart"),
             "RESTART is the judge saying a fresh attempt beats continuing, even on the first \
              nudge and even mid-production — the judge is the reader and said so outright; \
              this verdict is NEVER held"
         );
         assert_eq!(
-            nudge_delivery(true, Some(true), &Verdict::Restart, true, false),
+            nudge_delivery(true, Some(true), &Verdict::Restart, true, false, true),
             NudgeDelivery::Restream("judge said restart"),
             "not even write progress holds a RESTART — the reader's outright verdict outranks \
              every arm below it"
         );
         assert_eq!(
-            nudge_delivery(false, None, &Verdict::Looping, false, false),
+            nudge_delivery(false, None, &Verdict::Looping, false, false, false),
             NudgeDelivery::Restream("tool request in flight"),
             "a tool request in flight is never steered around"
         );
@@ -541,13 +611,16 @@ mod tests {
         for verdict in [Verdict::Drifting, Verdict::Looping, Verdict::Ok] {
             for advancing in [false, true] {
                 for wrong in [false, true] {
-                    assert_eq!(
-                        nudge_delivery(true, None, &verdict, advancing, wrong),
-                        NudgeDelivery::Steer("first nudge"),
-                        "a fresh attempt (write_progress_since_nudge = None after the seam \
-                         reset) earns its own ladder: first delivery is a steer, never the wipe \
-                         (verdict {verdict:?}, advancing {advancing}, wrong {wrong})"
-                    );
+                    for promise in [false, true] {
+                        assert_eq!(
+                            nudge_delivery(true, None, &verdict, advancing, wrong, promise),
+                            NudgeDelivery::Steer("first nudge"),
+                            "a fresh attempt (write_progress_since_nudge = None after the seam \
+                             reset) earns its own ladder: first delivery is a steer, never the \
+                             wipe (verdict {verdict:?}, advancing {advancing}, wrong {wrong}, \
+                             promise {promise})"
+                        );
+                    }
                 }
             }
         }
@@ -560,7 +633,7 @@ mod tests {
     #[test]
     fn a_producing_non_recurring_call_after_a_nudge_is_held_not_wiped() {
         use goose_swarm::Verdict;
-        let d = nudge_delivery(true, Some(false), &Verdict::Drifting, true, false);
+        let d = nudge_delivery(true, Some(false), &Verdict::Drifting, true, false, false);
         assert!(
             matches!(d, NudgeDelivery::Hold(_)),
             "advancing after an unacted steer is a hold, not a restream: {d:?}"
@@ -574,12 +647,12 @@ mod tests {
     #[test]
     fn a_recurring_or_plateaued_call_after_a_nudge_still_walks_the_ladder() {
         use goose_swarm::Verdict;
-        let recurring = nudge_delivery(true, Some(false), &Verdict::Looping, false, false);
+        let recurring = nudge_delivery(true, Some(false), &Verdict::Looping, false, false, false);
         assert!(
             matches!(recurring, NudgeDelivery::Restream(_)),
             "recurring after an unacted steer still escalates to the restream: {recurring:?}"
         );
-        let plateaued = nudge_delivery(true, Some(false), &Verdict::Drifting, false, false);
+        let plateaued = nudge_delivery(true, Some(false), &Verdict::Drifting, false, false, false);
         assert!(
             matches!(plateaued, NudgeDelivery::Restream(_)),
             "plateaued after an unacted steer still escalates to the restream: {plateaued:?}"
@@ -605,7 +678,7 @@ mod tests {
             "and the SAME pour is not write progress — counting it would shield the pour from \
              the restream via the obedience steer"
         );
-        let d = nudge_delivery(true, Some(false), &Verdict::Drifting, true, wrong);
+        let d = nudge_delivery(true, Some(false), &Verdict::Drifting, true, wrong, false);
         assert!(
             matches!(d, NudgeDelivery::Restream(_)),
             "a formed-channel-only advance does not count as advancing for hold purposes: {d:?}"
@@ -640,13 +713,13 @@ mod tests {
             write_progress(true, true, false, 0),
             "an owned file appearing or growing is write progress whatever the formed channel did"
         );
-        let held = nudge_delivery(true, Some(false), &Verdict::Drifting, true, false);
+        let held = nudge_delivery(true, Some(false), &Verdict::Drifting, true, false, false);
         assert!(
             matches!(held, NudgeDelivery::Hold(_)),
             "an advancing builder whose files are landing is held exactly as before: {held:?}"
         );
         assert_eq!(
-            nudge_delivery(true, Some(true), &Verdict::Drifting, true, true),
+            nudge_delivery(true, Some(true), &Verdict::Drifting, true, true, true),
             NudgeDelivery::Steer("write progress since the previous nudge"),
             "moving the deliverable since the nudge is the obedience the ladder escalates on — a \
              steer, whatever the channel measurement says"
@@ -671,11 +744,12 @@ mod tests {
             &Verdict::Looping,
             true,
             wrong_channel_stall(false, false, Some(80_000)),
+            delivery_promise_due(false, true, 5, 0),
         );
         assert!(
             matches!(d, NudgeDelivery::Hold(_)),
             "r6a's converging opener (thinking advancing, formed flat) is still held, never \
-             wiped: {d:?}"
+             wiped — a no-files lane's promise is never due: {d:?}"
         );
         assert!(
             write_progress(false, false, false, OMNI_JUDGE_MIN_CHARS),
@@ -751,6 +825,22 @@ mod tests {
             delivered(s, true),
             "the second DRIFTING with zero write progress DELIVERS despite the ok between"
         );
+        // And on a ZERO-ACTION lane the delivery is the seeded restream — the interleaved ok
+        // could not disarm the promise either, and think-advance does not defer it (tick 26:
+        // the advancing hold otherwise absorbs every corroborated drift forever).
+        assert!(delivery_promise_due(true, true, s, 0));
+        let due = nudge_delivery(
+            true,
+            Some(false),
+            &goose_swarm::Verdict::Drifting,
+            true,
+            false,
+            true,
+        );
+        assert!(
+            matches!(due, NudgeDelivery::Restream(_)),
+            "a due promise on a zero-action lane delivers by restream, not another hold: {due:?}"
+        );
 
         // Write progress between disarms even on a files-owing lane:
         let mut s = 0u32;
@@ -766,6 +856,88 @@ mod tests {
             s, 0,
             "a non-drift look breaks a reasoning lane's streak as before"
         );
+    }
+
+    /// THE PROMISE-EVASION SEQUENCE (r6c web-viz, tick 26, run swarm-20260831-072930517):
+    /// 17:51:37 `judge_drift_held` (streak 1, actions 0) promised "A second DRIFTING with no
+    /// write progress since will be delivered"; 18:13:49 the second DRIFTING arrived (streak 2,
+    /// actions 0, recurring false, 16,901 fresh think chars) and was HELD AGAIN via the
+    /// advancing branch — and would be forever, because the lane composes and audits web/viz.js
+    /// in REASONING: zero tool calls (no boundary for pending), zero owned bytes (no
+    /// `Some(true)` steer), formed frozen at 2,433 bytes total (~170 chars in 64 minutes — no
+    /// wrong-channel restream), think always past the floor (no plateaued restream).
+    #[test]
+    fn a_due_promise_on_a_zero_action_lane_is_not_deferred_by_think_advance() {
+        use goose_swarm::Verdict;
+        // 17:51 DRIFTING arms and promises; the promise is being MADE, not yet due.
+        let mut s = 0u32;
+        s = drift_streak_step(s, true, false, true);
+        assert!(
+            !delivery_promise_due(true, true, s, 0),
+            "streak 1 is the hold that makes the promise — nothing delivers on the first drift"
+        );
+        // 18:13 second DRIFTING, zero actions and zero write progress since the steer: due,
+        // and the delivery is the seeded restream carrying the directive plus the composed tail.
+        s = drift_streak_step(s, true, false, true);
+        assert!(delivery_promise_due(true, true, s, 0));
+        let d = nudge_delivery(true, Some(false), &Verdict::Drifting, true, false, true);
+        assert!(
+            matches!(d, NudgeDelivery::Restream(_)),
+            "the promised second DRIFTING on a zero-action lane delivers, not holds: {d:?}"
+        );
+
+        // A write between the two driftings disarms the whole case: the streak resets and the
+        // obedience arm steers — an advancing lane with real writes keeps today's ladder.
+        let mut s = 0u32;
+        s = drift_streak_step(s, true, false, true);
+        s = drift_streak_step(s, true, true, true);
+        assert_eq!(s, 0, "write progress resets the promise's memory");
+        assert!(!delivery_promise_due(true, true, s, 0));
+        assert_eq!(
+            nudge_delivery(true, Some(true), &Verdict::Drifting, true, false, false),
+            NudgeDelivery::Steer("write progress since the previous nudge"),
+            "a lane that moved its deliverable is steered, never wiped"
+        );
+
+        // A lane making tool calls since its steer keeps the hold: a steer can land where
+        // turns happen, so the promise is reachable by today's rungs.
+        assert!(!delivery_promise_due(true, true, 3, 2));
+        let held = nudge_delivery(true, Some(false), &Verdict::Drifting, true, false, false);
+        assert!(
+            matches!(held, NudgeDelivery::Hold(_)),
+            "reading-before-writing with calls flowing keeps the advancing hold: {held:?}"
+        );
+
+        // Write progress since the nudge outranks even a set flag (the streak-reset race: a
+        // write between the nudge and the last look), and a reasoning lane is never due.
+        assert_eq!(
+            nudge_delivery(true, Some(true), &Verdict::Drifting, true, false, true),
+            NudgeDelivery::Steer("write progress since the previous nudge")
+        );
+        assert!(!delivery_promise_due(false, true, 5, 0));
+    }
+
+    /// The steer note asserts only what was delivered (the GEN-4 class): the direction always,
+    /// ESTABLISHED only when the judge produced one — an empty summary is omitted, never
+    /// rendered as an empty claim.
+    #[test]
+    fn the_steer_note_carries_the_direction_and_omits_an_empty_established() {
+        let note = steer_note(
+            "spec contracts extracted; file design settled in-head",
+            "write web/viz.js NOW as a first minimal version",
+        );
+        assert!(note.contains("SUPERVISOR NOTE ("));
+        assert!(
+            note.contains("You have already established: spec contracts extracted; file design")
+        );
+        assert!(note.contains("Do this next: write web/viz.js NOW as a first minimal version"));
+        assert!(note.contains("Continue the SAME task."));
+        let bare = steer_note("", "act");
+        assert!(
+            !bare.contains("You have already established"),
+            "an empty ESTABLISHED is omitted: {bare}"
+        );
+        assert!(bare.contains("Do this next: act"));
     }
 
     /// THE ESCALATION TEXT READ OBEDIENCE FROM RAW COUNTS (r6c web-viz, BUILD+294m): the judge

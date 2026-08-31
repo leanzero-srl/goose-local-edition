@@ -37,9 +37,9 @@ use judge_context::{
 };
 mod ladder;
 use ladder::{
-    calls_since_nudge, drift_streak_step, escalation_moved, nudge_arm, nudge_delivery,
-    produced_since_look, restream_seed, tail_shingle_set, tails_recur, write_progress,
-    wrong_channel_stall, NudgeDelivery,
+    calls_since_nudge, delivery_promise_due, drift_streak_step, escalation_moved, nudge_arm,
+    nudge_delivery, produced_since_look, restream_seed, steer_note, tail_shingle_set, tails_recur,
+    write_progress, wrong_channel_stall, NudgeDelivery,
 };
 mod decisions;
 use decisions::PlanDecision;
@@ -16543,12 +16543,23 @@ impl GooseAgentDispatcher {
                                 .map_or(0, |n| answer_chars_now.saturating_sub(n)),
                         )
                     });
+                    // THE PROMISE'S DUE TEST (r6c web-viz, 17:51:37 hold -> 18:13:49 held-again):
+                    // the drift hold promises delivery, and on a lane with zero actions and zero
+                    // write progress every rung stays unreachable while think advances — the
+                    // facts and the walk live on `delivery_promise_due` / `nudge_delivery`.
+                    let promise_due = delivery_promise_due(
+                        !owned.is_empty(),
+                        drift_verdict,
+                        omni_drift_streak,
+                        calls_since_nudge(tool_calls_at_last_nudge, call_records.len()),
+                    );
                     let (can_steer, delivery_reason, held_why) = match nudge_delivery(
                         pending.is_empty(),
                         write_progress_since_nudge,
                         &omni_outcome.verdict,
                         advancing,
                         wrong_channel,
+                        promise_due,
                     ) {
                         NudgeDelivery::Steer(reason) => (true, reason, None),
                         NudgeDelivery::Restream(reason) => (false, reason, None),
@@ -16650,22 +16661,8 @@ impl GooseAgentDispatcher {
                         // A call that obeyed a steer, i.e. acted since it, keeps getting steers.
                         // `can_steer`/`delivery_reason` were decided above (`nudge_delivery`),
                         // before the hold gate — a held delivery never reaches this block.
-                        // The note lands in the durable `<task>.log`; the ISO stamp makes each
-                        // appended block datable without file mtimes, like the dispatch header
-                        // (r5 assessment: reconstructing the steer sequence needed mtimes).
-                        // Timestamp as data — nothing reads it, nothing is bounded by it.
-                        let nudge_text = format!(
-                            "SUPERVISOR NOTE ({}) — an independent reviewer read this call's own reasoning.\n\
-                             {}Do this next: {direction}\n\
-                             Continue the SAME task. Do not restart work you have already done, and do not \
-                             re-explain your plan.",
-                            chrono::Utc::now().to_rfc3339(),
-                            if established.is_empty() {
-                                String::new()
-                            } else {
-                                format!("You have already established: {established}\n")
-                            }
-                        );
+                        // The note's format and its ISO-stamp rationale live on `steer_note`.
+                        let nudge_text = steer_note(&established, &direction);
                         // WHICH ARM FIRED, IN THE ARTEFACT. Three distinct triggers reach this emit —
                         // a measured repeat, a DRIFTING verdict, and a LOOPING streak (itself armed either
                         // by measured recurrence or by tail similarity) — and the payload named none of
