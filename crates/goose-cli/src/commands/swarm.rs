@@ -98,9 +98,10 @@ mod fleet_order;
 #[cfg(test)]
 use fleet_order::fleet_slot_models;
 use fleet_order::{
-    configured_speed_weight, live_fleet_slots, measured_rate_for, one_lane_per_host,
-    order_fleet_by_speed, publish_fleet_speed_weights, rank_fix_target,
-    resolved_fleet_speed_weights, unmatched_speed_weight_patterns,
+    aux_candidate_models, configured_speed_weight, least_loaded_aux_model, live_fleet_slots,
+    measured_rate_for, one_lane_per_host, order_fleet_by_speed, publish_fleet_speed_weights,
+    rank_fix_target, reconcile_pool_with_fleet, resolved_fleet_speed_weights,
+    unmatched_speed_weight_patterns, InflightGuard,
 };
 
 const FINAL_OUTPUT_TOOL: &str = "recipe__final_output";
@@ -3143,117 +3144,6 @@ fn short_model(identifier: &str) -> String {
         .chars()
         .take(28)
         .collect()
-}
-
-/// "Auto-use what's loaded": build the worker pool from the models currently resident on the fleet
-/// (`lms ps`) so the swarm runs on what's actually loaded, not (possibly stale) configured model_ids.
-/// Returns (pool, planner_model). An empty pool means the fleet has nothing loaded (caller bootstraps
-/// or bails). Weights: explicit device override, else speed_weight, else LM Studio PARALLEL, else 1.
-fn reconcile_pool_with_fleet(cfg: &SwarmConfig) -> (Vec<SwarmDevice>, Option<String>) {
-    let procs = match probe_lms_processes() {
-        Ok(p) => p,
-        Err(_) => return (Vec::new(), None),
-    };
-    // One worker per DISTINCT loaded identifier (LM Link routes by identifier); first host wins.
-    let mut seen = std::collections::HashSet::new();
-    let mut resident: Vec<&LmsProcess> = Vec::new();
-    for p in &procs {
-        if !p.identifier.is_empty() && seen.insert(p.identifier.clone()) {
-            resident.push(p);
-        }
-    }
-    if resident.is_empty() {
-        return (Vec::new(), None);
-    }
-    let pool: Vec<SwarmDevice> = resident
-        .iter()
-        .map(|p| SwarmDevice {
-            id: gen_entry_id(cfg, p.device.as_deref(), &p.identifier),
-            model_id: p.identifier.clone(),
-            // Weight = an explicit configured override for this model_id (USER WINS — never clamped: a
-            // weight above the probed PARALLEL is a legit throughput tactic since agent tasks are bursty, so
-            // an extra slot overlaps the idle LM Studio window between an agent's LLM calls), else the
-            // configured speed_weight for this host/model (so "a slower machine does less work" actually
-            // shapes DISPATCH, not just planner pick — backlog #6), else LM Studio's PARALLEL for this
-            // instance, else 1. K6: if an override EXCEEDS the probed PARALLEL we WARN but keep the value.
-            weight: {
-                let user_w = cfg
-                    .devices
-                    .iter()
-                    .find(|d| d.model_id == p.identifier)
-                    .map(|d| d.weight);
-                if let (Some(w), Some(par)) = (user_w, p.parallel) {
-                    if w > par {
-                        eprintln!(
-                            "  {} pool weight {w} for {} exceeds LM Studio PARALLEL {par} — kept (oversubscribing can overlap the idle gaps between an agent's LLM calls; if requests just queue with no gain, lower it)",
-                            style("⚠").yellow(),
-                            p.identifier,
-                        );
-                    }
-                }
-                // Concurrency = the node's real capacity: an explicit device override, else LM Studio's
-                // PARALLEL, else 1. NOT the speed_weight — LM Studio serves one request per model at a time,
-                // so weight > PARALLEL just QUEUES requests on that node and STARVES an idle one (observed:
-                // workhorse w3 got 3 tasks, 2 queued, while gabee sat READY). "Faster host does MORE work" is
-                // handled separately by pick_device's speed_weight-weighted ROUTING (DeviceCfg.speed_weight),
-                // which spreads proportionally more tasks to the fast node OVER TIME via work-stealing (it
-                // finishes first and grabs the next ready task) — the correct lever, without oversubscribing.
-                user_w.or(p.parallel).unwrap_or(1).max(1)
-            },
-            enabled: true,
-            instances: 1,
-            host: p.device.clone(),
-            provider: None,
-            // Discovery rebuilds the local pool from `lms ps`, so anything the user set per node has to be
-            // carried across or it is silently lost every run. Matched on model_id, which is what LM Link
-            // actually routes by.
-            speed_weight: cfg
-                .devices
-                .iter()
-                .find(|d| d.model_id == p.identifier)
-                .and_then(|d| d.speed_weight),
-            supervision: cfg
-                .devices
-                .iter()
-                .find(|d| d.model_id == p.identifier)
-                .and_then(|d| d.supervision),
-        })
-        .collect();
-    // Planner: keep the configured planner if it is resident; else pick the best resident model for the
-    // hardest job (the architect skeleton). QUALITY outranks speed here: a low-quant model (q5/q4/q3/q2)
-    // fails the structured skeleton, so prefer a NOT-low-quant model FIRST, then the fastest host
-    // (highest speed_weight). speed_weight keys match device+identifier (some identifiers omit the host).
-    let planner_rank = |p: &&LmsProcess| -> (u8, u32) {
-        let ident = p.identifier.to_lowercase();
-        let quant_ok = u8::from(
-            !(ident.contains("q2_")
-                || ident.contains("q3_")
-                || ident.contains("q4_")
-                || ident.contains("q5")),
-        );
-        let hay = format!("{} {}", p.device.as_deref().unwrap_or(""), ident);
-        let speed = cfg
-            .speed_weights
-            .iter()
-            .find(|(pat, _)| hay.contains(pat.as_str()))
-            .map(|(_, w)| *w)
-            .unwrap_or(1);
-        (quant_ok, speed)
-    };
-    let planner = if resident.iter().any(|p| p.identifier == cfg.planner_model) {
-        Some(cfg.planner_model.clone())
-    } else {
-        resident
-            .iter()
-            .filter(|p| {
-                let n = p.identifier.to_lowercase();
-                n.contains("27b") || n.contains("dense") || n.contains("coder")
-            })
-            .max_by_key(|p| planner_rank(p))
-            .or_else(|| resident.iter().max_by_key(|p| planner_rank(p)))
-            .map(|p| p.identifier.clone())
-    };
-    (pool, planner)
 }
 
 fn gen_entry_id(cfg: &SwarmConfig, device: Option<&str>, identifier: &str) -> String {
@@ -14373,6 +14263,22 @@ pub struct GooseAgentDispatcher {
     spec_set_reported: Mutex<std::collections::HashSet<String>>,
     /// #136: gate for the repeated-identical-tool-call breaker. Resolved once at construction (default OFF).
     repeat_break: bool,
+    /// Mid-run AUX routing candidates (r6c 18:38): every omni-judge look and the dynamic replanner
+    /// used to pin to the frozen `planner_model` while live load sat elsewhere — worker +
+    /// judge-ledgerd-core + judge-web-viz + replan-r0 ALL streaming/queued on the planner's node
+    /// (+3 QUEUED in LM Studio) while two hosts sat READY, and look8 — the first delivery-armed
+    /// look of the build — waited at 0 chars behind the pile. The pool models passing the
+    /// planner's own quality bar (`fleet_order::aux_candidate_models`), best rank first; the
+    /// planner itself always competes and wins ties, so an idle fleet resolves byte-identically
+    /// to the frozen pick. Empty on a cloud-only pool (planner keeps every aux call).
+    aux_models: Vec<String>,
+    /// Live in-flight calls per model id, counted at the ONE door every dispatcher call passes
+    /// (`run_agent_in_inner`) — workers, judges and aux calls uniformly, which is why this is NOT
+    /// a mirror of the scheduler's `DeviceRt.in_flight` (that counts scheduled tasks only, across
+    /// ~16 mutation sites). Guarded increment/decrement (`fleet_order::InflightGuard`), so an Err
+    /// or a cancelled probe future decrements too. Read by `aux_model_for_call`: a routing
+    /// PREFERENCE, never a cap — nothing here refuses or bounds model work.
+    inflight_by_model: Mutex<HashMap<String, u32>>,
     /// The run's event stream. The dispatcher is the ONLY place that knows what a worker prompt actually
     /// contained, and the scheduler's `task_dispatched` fires before the prompt is built — so without this
     /// there is no way to record that a user's note was delivered. Measured: a note was written, the engine
@@ -14418,6 +14324,18 @@ impl GooseAgentDispatcher {
         Ok(p)
     }
 
+    /// The model to serve a MID-RUN aux call (an omni-judge look, the dynamic replanner): the
+    /// least-loaded quality-bar candidate by the live door counter, ties to the frozen planner —
+    /// so an idle fleet resolves byte-identically to `self.planner_model`. MEASURED (r6c 18:38):
+    /// ledgerd-core's worker + judge-ledgerd-core + judge-web-viz + replan-r0 all streaming or
+    /// queued on the planner's node while two hosts sat READY, and the first delivery-armed look
+    /// of the build waited at 0 chars behind the pile. Returns (model, its in-flight count at
+    /// pick time) — the count is data for the routing event, nothing branches on it.
+    fn aux_model_for_call(&self) -> (String, u32) {
+        let counts = self.inflight_by_model.lock().unwrap();
+        least_loaded_aux_model(&self.planner_model, &self.aux_models, &counts)
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub async fn new(
         working_dir: PathBuf,
@@ -14427,6 +14345,7 @@ impl GooseAgentDispatcher {
         worker_extensions: Vec<ExtensionConfig>,
         cloud_models: std::collections::HashMap<String, String>,
         planner_model: String,
+        aux_models: Vec<String>,
         allow_model_load: bool,
         sampling: SamplingParams,
         stream_decode_retry: bool,
@@ -14473,6 +14392,8 @@ impl GooseAgentDispatcher {
             defects_told: Mutex::new(HashMap::new()),
             spec_set_reported: Mutex::new(std::collections::HashSet::new()),
             repeat_break,
+            aux_models,
+            inflight_by_model: Mutex::new(HashMap::new()),
         })
     }
 
@@ -14910,6 +14831,11 @@ impl GooseAgentDispatcher {
         // only the `Err` is withheld.
         may_terminate: bool,
     ) -> Result<RunAgentOut> {
+        // The ONE door every dispatcher call passes — count this call against its model so
+        // `aux_model_for_call` weighs LIVE load. The guard decrements on every way out: Ok, Err,
+        // and a dropped future (the omni-judge probe is cancelled when its supervised stream
+        // ends first). A measurement, never a gate: nothing reads this to refuse work.
+        let _inflight = InflightGuard::enter(&self.inflight_by_model, model_id);
         let agent_config = AgentConfig::new(
             self.session_manager.clone(),
             self.permission_manager.clone(),
@@ -16076,7 +16002,11 @@ impl GooseAgentDispatcher {
                         ran.join("\n")
                     }
                 );
-                let pm = self.planner_model.clone();
+                // LIVE-LOAD ROUTED, not the frozen planner identity (r6c 18:38): every look used
+                // to clone `self.planner_model`, so a worker, two judge lanes and a replan round
+                // all queued on one node while two hosts sat READY. Re-picked per look — the
+                // planner still wins every tie, so an idle fleet behaves byte-identically.
+                let (pm, pm_inflight) = self.aux_model_for_call();
                 // THE JUDGE'S OWN GENERATION GETS A LANE (r6 blocker; Mihai's third ask). One
                 // ROLLING lane per supervised task — `judge-<task_id>` — never per look: each look
                 // reseeds the digest (attempt = look number, prior look folded into `superseded`)
@@ -16098,11 +16028,13 @@ impl GooseAgentDispatcher {
                     "look": omni_looks,
                     "thinking_chars": thinking_chars,
                     // WHO SERVED THE LOOK. r5 wrote 43 judge_look events no reader could attribute
-                    // to a node — every look runs on the planner identity, resolved once at pool
-                    // reconciliation, and for the local fleet the model id IS the node key (the
-                    // three distinct identifiers; telemetry joins on the same key).
+                    // to a node — for the local fleet the model id IS the node key (the three
+                    // distinct identifiers; telemetry joins on the same key). Since the r6c fix
+                    // this is the LIVE `aux_model_for_call` pick, not the frozen planner, and
+                    // `inflight` says what the pick saw — a reroute is readable from the event.
                     "model": pm.as_str(),
                     "provider": self.provider_name(&pm),
+                    "inflight": pm_inflight,
                 }));
                 // A DEFECT IS A FACT, AND IT SHOULD NOT WAIT FOR AN OPINION.
                 //
@@ -29211,6 +29143,9 @@ struct DispatcherRecipe {
     /// model_id → provider name for CLOUD pool devices (e.g. "bedrock"). Empty on an all-local fleet.
     cloud_models: std::collections::HashMap<String, String>,
     planner_model: String,
+    /// Mid-run aux routing candidates (see the dispatcher field of the same name): the resolved
+    /// pool through `fleet_order::aux_candidate_models`, computed once beside `planner_model`.
+    aux_models: Vec<String>,
     allow_model_load: bool,
     sampling: SamplingParams,
     stream_decode_retry: bool,
@@ -29230,6 +29165,7 @@ async fn build_swarm_dispatcher(
             r.worker_extensions,
             r.cloud_models,
             r.planner_model,
+            r.aux_models,
             r.allow_model_load,
             r.sampling,
             r.stream_decode_retry,
@@ -33613,9 +33549,20 @@ impl Replanner for GooseAgentDispatcher {
         // One lane per round; everything else is parity with the old `run_agent_timed` route
         // (temp None, read_only false, may_terminate false, attempt 0).
         let lane = replan_lane_key(ctx.round);
+        // Routed like every mid-run aux call — least-loaded quality-bar candidate, planner wins
+        // ties (`aux_model_for_call`). r6c 18:38: replan-r0 queued on the planner's node behind a
+        // worker and two judge lanes while two hosts sat READY. The event is the reroute's
+        // artifact: model + the in-flight count the pick saw, so tick can print reroutes.
+        let (aux_model, aux_inflight) = self.aux_model_for_call();
+        self.events.write_value(serde_json::json!({
+            "event": "aux_routed",
+            "lane": lane,
+            "model": aux_model,
+            "inflight": aux_inflight,
+        }));
         let out = self
             .run_agent_timed_at(
-                &self.planner_model,
+                &aux_model,
                 system,
                 user,
                 response,
@@ -35187,6 +35134,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             .map(|d| (d.model_id.clone(), d.provider_name().to_string()))
             .collect(),
         planner_model: cfg.planner_model.clone(),
+        aux_models: aux_candidate_models(&cfg.speed_weights, &enabled),
         allow_model_load: cfg.allow_model_load,
         sampling: SamplingParams {
             temperature: swarm_temp_resolved(cfg.temperature),

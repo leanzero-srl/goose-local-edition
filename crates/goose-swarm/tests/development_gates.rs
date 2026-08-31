@@ -246,9 +246,14 @@ fn the_banned_integrate_template_only_shrinks() {
 /// Tightened to 42,692 (r6e lane-view extension): `emit_delivery_defects` routes through
 /// `lane_defect_view` (+15 wired), paid for by moving `owned_files_from_run_log` + its test to
 /// judge_context.rs (-69) per the split law.
+/// Tightened to 42,640 (r6c aux live-load routing): `reconcile_pool_with_fleet` moved to
+/// commands/swarm/fleet_order.rs (-111, its planner pick now calling the named
+/// `planner_grade`/`planner_rank` there), paying for the mid-run aux router wiring in the same
+/// commit — the `InflightGuard` door count in `run_agent_in_inner`, `aux_model_for_call`, the
+/// omni-look and replanner reroutes, and the `aux_routed` event.
 #[test]
 fn swarm_rs_line_count_only_decreases() {
-    const SWARM_RS_LINE_BASELINE: usize = 42_692;
+    const SWARM_RS_LINE_BASELINE: usize = 42_640;
     let text = read("crates/goose-cli/src/commands/swarm.rs");
     let n = text.lines().count();
     assert!(
