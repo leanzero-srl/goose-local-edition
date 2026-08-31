@@ -513,3 +513,10 @@ research_request_block's armed-no-claimed-sections arm wording.
   false-raised STOPPED growing (7/18 total — the new 7 all genuine); two nudges obeyed with
   timestamps. New engine-defect candidate: ok-verdict judge_look events blank established/next while
   the judge's formed words carried substance — the archive loses clean-look words. Charter gap: none.
+- 2026-08-31 12:45 tick-surgeon #6: CLEAN+ and ON BUDGET (62.7k tokens / 12 calls — at the new target
+  before the tightened charter even reached it; the state file is doing its job). Closed the tick-5
+  hole (all 5 stale judge lanes abandoned cleanly, none leaked); best find: web-viz-q0 MINING run.jsonl
+  to recover spec sections its brief omitted ("the full layout math IS embedded in run.jsonl") —
+  ~20k chars burned re-mining; b7516297b's spec-path+index fix is exactly the remedy, r6d measures it.
+  Its ASK-FOLD waited=5s suspicion: answered from doctrine — the 5s bounds waiting on a HUMAN under
+  benchmark mode (plan §5's exempt class), not model work; no code read needed. Charter gap: none.
