@@ -69,7 +69,11 @@ use tracing::{debug, error, info, instrument, warn};
 const DEFAULT_MAX_TURNS: u32 = 1000;
 const DEFAULT_STOP_HOOK_BLOCK_CAP: u32 = 8;
 const COMPACTION_THINKING_TEXT: &str = "goose is compacting the conversation...";
-const MAX_TURNS_MESSAGE: &str = "I've reached the maximum number of actions I can do without user input. Would you like me to continue?";
+/// Public because the swarm's supervision seams must strip/recognize EXACTLY the sentence the loop
+/// emits (r6a seq 58: a judge probe's reply was ONLY this filler and the lenient verdict parser
+/// minted a DRIFTING from it). One constant at emit and matcher — the JUDGE_ENDED_NEEDLE pattern —
+/// so a rewording here moves the matcher with it instead of silently un-arming it.
+pub const MAX_TURNS_MESSAGE: &str = "I've reached the maximum number of actions I can do without user input. Would you like me to continue?";
 const MAX_EMPTY_TURN_RETRIES: u32 = 3;
 const EMPTY_TURN_MESSAGE: &str =
     "The model returned an empty response. Please resend your message to continue.";

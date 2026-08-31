@@ -214,9 +214,13 @@ fn the_banned_integrate_template_only_shrinks() {
 /// moved with the prompt builders it exercises to research.rs, paying for the research fan's
 /// grounding wiring in the same commit (r6c: the request file, the snowball block at dispatch,
 /// `research_context`, `research_planned`, `phase: research`).
+/// Tightened to 43,423: `supervision_reply` and its test absorbed into
+/// commands/swarm/supervision.rs's `supervised_reply_text` (the one reply door, which also
+/// strips/refuses the agent loop's turn-cap filler — r6a seq 58's fabricated DRIFTING), paying
+/// for the omni-judge seam's filler classification wiring in the same commit.
 #[test]
 fn swarm_rs_line_count_only_decreases() {
-    const SWARM_RS_LINE_BASELINE: usize = 43_444;
+    const SWARM_RS_LINE_BASELINE: usize = 43_423;
     let text = read("crates/goose-cli/src/commands/swarm.rs");
     let n = text.lines().count();
     assert!(
