@@ -2,7 +2,7 @@ use agent_client_protocol::schema::v1::{AvailableCommand, ContentBlock, McpServe
 use agent_client_protocol::{JsonRpcRequest, JsonRpcResponse};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 mod recipe;
 pub use recipe::*;
@@ -2239,6 +2239,29 @@ pub struct SetToolPermissionsRequest {
 #[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, JsonRpcResponse)]
 pub struct SetToolPermissionsResponse {}
 
+/// Per-model sampling/context profile. Sampling is per MODEL: the engine spawns each
+/// mounted model with the flags from ITS profile in `MlxEngineSettingsDto::model_profiles`.
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct MlxModelProfileDto {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub temperature: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub top_p: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub top_k: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub min_p: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repetition_penalty: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub presence_penalty: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub frequency_penalty: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context_limit: Option<u32>,
+}
+
 #[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct MlxEngineSettingsDto {
@@ -2246,6 +2269,9 @@ pub struct MlxEngineSettingsDto {
     pub model_id: Option<String>,
     pub models_dir: String,
     pub port: u16,
+    /// LEGACY flat sampling/context fields, accepted inbound for old UI states and
+    /// migrated server-side into `model_profiles[model_id]`. Responses carry them
+    /// only until that one-time migration has run; profiles are the source of truth.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub context_limit: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -2267,6 +2293,10 @@ pub struct MlxEngineSettingsDto {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub served_model_name: Option<String>,
     pub spawn_command: Vec<String>,
+    /// Per-model sampling/context profiles keyed by HF model id — the source of truth
+    /// for the flags each model mounts with.
+    #[serde(default)]
+    pub model_profiles: BTreeMap<String, MlxModelProfileDto>,
 }
 
 /// Live MLX engine state. `state` is one of "stopped" | "mounting" | "running" | "failed".
@@ -2472,4 +2502,65 @@ pub struct MlxEngineDownloadProgressResponse {
 #[serde(rename_all = "camelCase")]
 pub struct MlxEngineDownloadCancelRequest {
     pub repo_id: String,
+}
+
+/// One MLX browse hit. `quant`/`arch` are DERIVED display fields (the repo's tags
+/// first, name patterns as fallback) — they describe the hit, they are not proof the
+/// server filtered on them unless the request set the corresponding filter.
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct MlxBrowseHitDto {
+    pub id: String,
+    /// The `publisher` prefix of `id`.
+    pub author: String,
+    pub downloads: u64,
+    pub likes: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub created_at: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_modified: Option<String>,
+    pub tags: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub quant: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub arch: Option<String>,
+}
+
+/// Paginated MLX-only HuggingFace browse. All filters apply server-side: `query`
+/// searches names, `author` restricts the publisher, `quant` ("4-bit", "8-bit", …)
+/// and `arch` ("qwen3_5", "llama", …) AND-combine as HF tag filters — so a quant
+/// filter cannot see repos whose bit width appears only in the repo NAME. `sort` is
+/// "downloads" or "newest" (createdAt descending). Pass `nextCursor` from a response
+/// back as `cursor` for the next page; other parameters are baked into it.
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, JsonRpcRequest)]
+#[request(
+    method = "_goose/unstable/mlxEngine/browse",
+    response = MlxEngineBrowseResponse
+)]
+#[serde(rename_all = "camelCase")]
+pub struct MlxEngineBrowseRequest {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub query: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub author: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub quant: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub arch: Option<String>,
+    /// "downloads" | "newest"
+    pub sort: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cursor: Option<String>,
+    /// Page size, default 20, capped at 50.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub limit: Option<u32>,
+}
+
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, JsonRpcResponse)]
+#[serde(rename_all = "camelCase")]
+pub struct MlxEngineBrowseResponse {
+    pub hits: Vec<MlxBrowseHitDto>,
+    /// Opaque continuation for the next page; absent on the last page.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub next_cursor: Option<String>,
 }

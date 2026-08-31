@@ -5,6 +5,7 @@
 //! or `Failed`. Callers poll `status()`, which also probes the live engine's `/v1/models`
 //! for its context window and tool-call parser and never fabricates either.
 
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex as StdMutex, OnceLock};
 use std::time::Duration;
@@ -23,12 +24,39 @@ pub const ENGINE_LAUNCHER: [&str; 4] = [
     "rapid-mlx",
 ];
 
+/// Per-model sampling and context settings. Sampling is per MODEL, not per engine:
+/// each mounted model pulls its own profile from `EngineSettings::model_profiles`.
+/// `context_limit` is profile state for goose's own context bookkeeping — Rapid-MLX
+/// 0.13.1 has no context-length serve flag (`--max-tokens` caps generation, a
+/// different knob), so it emits no argv.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ModelProfile {
+    pub temperature: Option<f64>,
+    pub top_p: Option<f64>,
+    pub top_k: Option<u32>,
+    pub min_p: Option<f64>,
+    pub repetition_penalty: Option<f64>,
+    pub presence_penalty: Option<f64>,
+    pub frequency_penalty: Option<f64>,
+    pub context_limit: Option<u32>,
+}
+
+impl ModelProfile {
+    fn is_empty(&self) -> bool {
+        *self == Self::default()
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct EngineSettings {
     pub model_id: Option<String>,
     pub models_dir: String,
     pub port: u16,
+    /// LEGACY flat sampling/context fields. Older persisted configs and UI states still
+    /// carry them; `migrate_legacy` folds them into `model_profiles` and clears them.
+    /// They are NOT read by `build_serve_command` — profiles are the source of truth.
     pub context_limit: Option<u32>,
     pub temperature: Option<f64>,
     pub top_p: Option<f64>,
@@ -42,6 +70,8 @@ pub struct EngineSettings {
     /// directory id is served as-is.
     pub served_model_name: Option<String>,
     pub spawn_command: Vec<String>,
+    /// Per-model sampling/context profiles, keyed by the HF model id.
+    pub model_profiles: BTreeMap<String, ModelProfile>,
 }
 
 impl Default for EngineSettings {
@@ -60,7 +90,52 @@ impl Default for EngineSettings {
             frequency_penalty: None,
             served_model_name: None,
             spawn_command: ENGINE_LAUNCHER.iter().map(|s| s.to_string()).collect(),
+            model_profiles: BTreeMap::new(),
         }
+    }
+}
+
+impl EngineSettings {
+    /// One-time migration of the legacy flat sampling/context fields into
+    /// `model_profiles[model_id]`. The flats predate profiles, so they only fill
+    /// profile fields still unset, and are cleared either way. Without a `model_id`
+    /// there is no honest profile key — the flats stay put and this returns `false`
+    /// (migration needs a model).
+    pub fn migrate_legacy(&mut self) -> bool {
+        let flats = ModelProfile {
+            temperature: self.temperature,
+            top_p: self.top_p,
+            top_k: self.top_k,
+            min_p: self.min_p,
+            repetition_penalty: self.repetition_penalty,
+            presence_penalty: self.presence_penalty,
+            frequency_penalty: self.frequency_penalty,
+            context_limit: self.context_limit,
+        };
+        if flats.is_empty() {
+            return false;
+        }
+        let Some(model_id) = self.model_id.clone() else {
+            return false;
+        };
+        self.temperature = None;
+        self.top_p = None;
+        self.top_k = None;
+        self.min_p = None;
+        self.repetition_penalty = None;
+        self.presence_penalty = None;
+        self.frequency_penalty = None;
+        self.context_limit = None;
+        let profile = self.model_profiles.entry(model_id).or_default();
+        profile.temperature = profile.temperature.or(flats.temperature);
+        profile.top_p = profile.top_p.or(flats.top_p);
+        profile.top_k = profile.top_k.or(flats.top_k);
+        profile.min_p = profile.min_p.or(flats.min_p);
+        profile.repetition_penalty = profile.repetition_penalty.or(flats.repetition_penalty);
+        profile.presence_penalty = profile.presence_penalty.or(flats.presence_penalty);
+        profile.frequency_penalty = profile.frequency_penalty.or(flats.frequency_penalty);
+        profile.context_limit = profile.context_limit.or(flats.context_limit);
+        true
     }
 }
 
@@ -96,13 +171,18 @@ pub fn build_serve_command(settings: &EngineSettings, model_id: &str) -> Vec<Str
         "--max-concurrent-requests".to_string(),
         "8".to_string(),
     ]);
+    let default_profile = ModelProfile::default();
+    let profile = settings
+        .model_profiles
+        .get(model_id)
+        .unwrap_or(&default_profile);
     let float_flags = [
-        ("--default-temperature", settings.temperature),
-        ("--default-top-p", settings.top_p),
-        ("--default-min-p", settings.min_p),
-        ("--default-repetition-penalty", settings.repetition_penalty),
-        ("--default-presence-penalty", settings.presence_penalty),
-        ("--default-frequency-penalty", settings.frequency_penalty),
+        ("--default-temperature", profile.temperature),
+        ("--default-top-p", profile.top_p),
+        ("--default-min-p", profile.min_p),
+        ("--default-repetition-penalty", profile.repetition_penalty),
+        ("--default-presence-penalty", profile.presence_penalty),
+        ("--default-frequency-penalty", profile.frequency_penalty),
     ];
     for (flag, value) in float_flags {
         if let Some(value) = value {
@@ -110,7 +190,7 @@ pub fn build_serve_command(settings: &EngineSettings, model_id: &str) -> Vec<Str
             argv.push(value.to_string());
         }
     }
-    if let Some(top_k) = settings.top_k {
+    if let Some(top_k) = profile.top_k {
         argv.push("--default-top-k".to_string());
         argv.push(top_k.to_string());
     }
@@ -189,7 +269,11 @@ impl MlxEngineManager {
         }
     }
 
-    pub fn set_settings(&self, settings: EngineSettings) {
+    /// Legacy flat sampling fields migrate into profiles here, in memory, so EVERY
+    /// consumer (the ACP layer persists the migration; the swarm engine registry does
+    /// not) spawns from profile truth even when handed an un-migrated config.
+    pub fn set_settings(&self, mut settings: EngineSettings) {
+        settings.migrate_legacy();
         *self.settings.lock().unwrap() = settings;
     }
 
@@ -439,13 +523,8 @@ mod tests {
             .any(|a| a.ends_with("mlx-community/Qwen3.5-9B-MLX-4bit")));
     }
 
-    #[test]
-    fn serve_command_golden_with_all_sampling_flags() {
-        let settings = EngineSettings {
-            model_id: Some("mlx-community/Qwen3.5-9B-MLX-4bit".to_string()),
-            models_dir: "/opt/models".to_string(),
-            port: 8090,
-            context_limit: Some(32768),
+    fn full_profile() -> ModelProfile {
+        ModelProfile {
             temperature: Some(0.7),
             top_p: Some(0.95),
             top_k: Some(40),
@@ -453,8 +532,20 @@ mod tests {
             repetition_penalty: Some(1.1),
             presence_penalty: Some(0.5),
             frequency_penalty: Some(0.25),
-            served_model_name: None,
-            spawn_command: ENGINE_LAUNCHER.iter().map(|s| s.to_string()).collect(),
+            context_limit: Some(32768),
+        }
+    }
+
+    #[test]
+    fn serve_command_golden_with_all_sampling_flags_from_profile() {
+        let settings = EngineSettings {
+            model_id: Some("mlx-community/Qwen3.5-9B-MLX-4bit".to_string()),
+            models_dir: "/opt/models".to_string(),
+            model_profiles: BTreeMap::from([(
+                "mlx-community/Qwen3.5-9B-MLX-4bit".to_string(),
+                full_profile(),
+            )]),
+            ..Default::default()
         };
         let argv = build_serve_command(&settings, "mlx-community/Qwen3.5-9B-MLX-4bit");
         assert_eq!(
@@ -497,7 +588,7 @@ mod tests {
         let argv = build_serve_command(&settings, "pub/model");
         assert!(
             argv.iter().all(|a| !a.starts_with("--default-")),
-            "unset sampling fields must emit no flags: {argv:?}"
+            "absent profile must emit no sampling flags: {argv:?}"
         );
         let model_path = &argv[5];
         assert!(
@@ -505,6 +596,228 @@ mod tests {
             "tilde was not expanded: {model_path}"
         );
         assert!(model_path.ends_with("/.goose/models/pub/model"));
+    }
+
+    #[test]
+    fn serve_command_ignores_unmigrated_legacy_flats() {
+        let settings = EngineSettings {
+            model_id: Some("pub/model".to_string()),
+            temperature: Some(0.7),
+            presence_penalty: Some(1.2),
+            ..Default::default()
+        };
+        let argv = build_serve_command(&settings, "pub/model");
+        assert!(
+            argv.iter().all(|a| !a.starts_with("--default-")),
+            "legacy flats must not reach argv — profiles are the source of truth: {argv:?}"
+        );
+    }
+
+    #[test]
+    fn serve_command_gives_each_model_its_own_profile_flags() {
+        let settings = EngineSettings {
+            model_profiles: BTreeMap::from([
+                (
+                    "pub/alpha".to_string(),
+                    ModelProfile {
+                        temperature: Some(0.2),
+                        top_k: Some(20),
+                        ..Default::default()
+                    },
+                ),
+                (
+                    "pub/beta".to_string(),
+                    ModelProfile {
+                        presence_penalty: Some(1.2),
+                        ..Default::default()
+                    },
+                ),
+            ]),
+            ..Default::default()
+        };
+        let alpha = build_serve_command(&settings, "pub/alpha");
+        let beta = build_serve_command(&settings, "pub/beta");
+
+        let flag_value = |argv: &[String], flag: &str| {
+            argv.iter()
+                .position(|a| a == flag)
+                .map(|i| argv[i + 1].clone())
+        };
+        assert_eq!(
+            flag_value(&alpha, "--default-temperature"),
+            Some("0.2".to_string())
+        );
+        assert_eq!(
+            flag_value(&alpha, "--default-top-k"),
+            Some("20".to_string())
+        );
+        assert_eq!(flag_value(&alpha, "--default-presence-penalty"), None);
+
+        assert_eq!(
+            flag_value(&beta, "--default-presence-penalty"),
+            Some("1.2".to_string())
+        );
+        assert_eq!(flag_value(&beta, "--default-temperature"), None);
+        assert_eq!(flag_value(&beta, "--default-top-k"), None);
+    }
+
+    /// `status()` computes `restart_required = build_serve_command(&settings, mounted) != running_argv`;
+    /// this test pins that comparison's per-model semantics: editing the MOUNTED model's
+    /// profile changes its argv (flips restart_required), editing a DIFFERENT model's
+    /// profile leaves the mounted argv identical (does not).
+    #[test]
+    fn profile_edits_flip_restart_argv_only_for_the_mounted_model() {
+        let mounted = "pub/mounted";
+        let mut settings = EngineSettings {
+            model_id: Some(mounted.to_string()),
+            model_profiles: BTreeMap::from([(
+                mounted.to_string(),
+                ModelProfile {
+                    temperature: Some(0.7),
+                    ..Default::default()
+                },
+            )]),
+            ..Default::default()
+        };
+        let running_argv = build_serve_command(&settings, mounted);
+
+        settings.model_profiles.insert(
+            "pub/other".to_string(),
+            ModelProfile {
+                temperature: Some(0.1),
+                top_k: Some(5),
+                ..Default::default()
+            },
+        );
+        assert_eq!(
+            build_serve_command(&settings, mounted),
+            running_argv,
+            "a different model's profile edit must not require a restart"
+        );
+
+        settings
+            .model_profiles
+            .get_mut(mounted)
+            .unwrap()
+            .temperature = Some(0.9);
+        assert_ne!(
+            build_serve_command(&settings, mounted),
+            running_argv,
+            "the mounted model's profile edit must require a restart"
+        );
+    }
+
+    #[test]
+    fn migrate_legacy_moves_flats_into_the_model_profile_once() {
+        let mut settings = EngineSettings {
+            model_id: Some("pub/model".to_string()),
+            presence_penalty: Some(1.2),
+            temperature: Some(0.7),
+            context_limit: Some(32768),
+            ..Default::default()
+        };
+        assert!(settings.migrate_legacy());
+
+        let profile = &settings.model_profiles["pub/model"];
+        assert_eq!(profile.presence_penalty, Some(1.2));
+        assert_eq!(profile.temperature, Some(0.7));
+        assert_eq!(profile.context_limit, Some(32768));
+        assert_eq!(settings.presence_penalty, None);
+        assert_eq!(settings.temperature, None);
+        assert_eq!(settings.context_limit, None);
+
+        assert!(!settings.migrate_legacy(), "second run must be a no-op");
+    }
+
+    /// The exact `mlx_engine` value persisted in the live config on 2026-08-31 (flat
+    /// presence_penalty 1.2, explicit nulls, no model_profiles key): it must
+    /// deserialize as-is and migrate the penalty into the mounted model's profile.
+    #[test]
+    fn migrate_legacy_handles_the_live_config_shape() {
+        let live = r#"{
+            "model_id": "mlx-community/Qwen3.5-9B-MLX-4bit",
+            "served_model_name": "workhorse-qwen3.5-9b-4bit-mlx",
+            "models_dir": "~/.goose/models",
+            "port": 8090,
+            "context_limit": null,
+            "temperature": null,
+            "top_p": null,
+            "top_k": null,
+            "min_p": null,
+            "repetition_penalty": null,
+            "presence_penalty": 1.2,
+            "frequency_penalty": null,
+            "spawn_command": [
+                "uvx",
+                "--from",
+                "git+https://github.com/leanzero-srl/Rapid-MLX@v0.13.1",
+                "rapid-mlx"
+            ]
+        }"#;
+        let mut settings: EngineSettings = serde_json::from_str(live).unwrap();
+        assert!(settings.migrate_legacy());
+        assert_eq!(settings.presence_penalty, None);
+        let profile = &settings.model_profiles["mlx-community/Qwen3.5-9B-MLX-4bit"];
+        assert_eq!(profile.presence_penalty, Some(1.2));
+
+        let argv = build_serve_command(&settings, "mlx-community/Qwen3.5-9B-MLX-4bit");
+        let pos = argv
+            .iter()
+            .position(|a| a == "--default-presence-penalty")
+            .expect("migrated penalty must reach the serve argv");
+        assert_eq!(argv[pos + 1], "1.2");
+    }
+
+    #[test]
+    fn migrate_legacy_without_model_id_leaves_flats_untouched() {
+        let mut settings = EngineSettings {
+            presence_penalty: Some(1.2),
+            ..Default::default()
+        };
+        assert!(!settings.migrate_legacy());
+        assert_eq!(settings.presence_penalty, Some(1.2));
+        assert!(settings.model_profiles.is_empty());
+    }
+
+    #[test]
+    fn migrate_legacy_never_clobbers_existing_profile_values() {
+        let mut settings = EngineSettings {
+            model_id: Some("pub/model".to_string()),
+            temperature: Some(0.3),
+            top_p: Some(0.9),
+            model_profiles: BTreeMap::from([(
+                "pub/model".to_string(),
+                ModelProfile {
+                    temperature: Some(0.8),
+                    ..Default::default()
+                },
+            )]),
+            ..Default::default()
+        };
+        assert!(settings.migrate_legacy());
+        let profile = &settings.model_profiles["pub/model"];
+        assert_eq!(
+            profile.temperature,
+            Some(0.8),
+            "explicit profile value must win over the legacy flat"
+        );
+        assert_eq!(
+            profile.top_p,
+            Some(0.9),
+            "unset profile field takes the flat"
+        );
+        assert_eq!(settings.temperature, None, "flats clear either way");
+        assert_eq!(settings.top_p, None);
+    }
+
+    #[test]
+    fn migrate_legacy_with_no_flats_is_a_no_op() {
+        let mut settings = EngineSettings {
+            model_id: Some("pub/model".to_string()),
+            ..Default::default()
+        };
+        assert!(!settings.migrate_legacy());
+        assert!(settings.model_profiles.is_empty());
     }
 
     #[tokio::test]

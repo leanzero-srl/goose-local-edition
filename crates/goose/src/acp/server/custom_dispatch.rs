@@ -988,6 +988,14 @@ impl GooseAcpAgent {
         self.on_mlx_engine_hf_search(req).await
     }
 
+    #[custom_method(MlxEngineBrowseRequest)]
+    async fn dispatch_mlx_engine_browse(
+        &self,
+        req: MlxEngineBrowseRequest,
+    ) -> Result<MlxEngineBrowseResponse, agent_client_protocol::Error> {
+        self.on_mlx_engine_browse(req).await
+    }
+
     #[custom_method(MlxEngineDownloadRequest)]
     async fn dispatch_mlx_engine_download(
         &self,
