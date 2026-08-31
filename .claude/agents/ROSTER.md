@@ -788,3 +788,9 @@ research_request_block's armed-no-claimed-sections arm wording.
   (verified the flagged server as the sink's OWN registered boot and said do-not-kill with the
   lineage). Read the battery's honest-empty SSE arm against the docs instead of calling it a
   failure. Charter gap: none.
+- 2026-09-01 01:30 tick-surgeon #34: EXEMPLARY at 68.9k/18. Closed INTEGRATE with per-leg quotes,
+  ran the full fix-stack audit against every named field in one pass (severities/sources/wave/
+  PURPOSE/ownership), applied the degradation lens and correctly attributed the scary rows to
+  BUILD-era consolidation with the empirical cover named, and flagged the phantom-vs-real
+  contradiction WITH both sides quoted. The criticals-in-briefs watch is exactly the right next
+  read. Charter gap: none.
