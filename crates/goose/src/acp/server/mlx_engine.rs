@@ -81,6 +81,7 @@ fn status_to_dto(status: goose_sidecar::engine::EngineStatus) -> MlxEngineStatus
         pid: status.pid,
         context_window: status.context_window,
         tool_call_parser: status.tool_call_parser,
+        served_model_id: status.served_model_id,
         probe_error: status.probe_error,
         gate_message: status.gate_message,
         gate_verdict: status.gate_verdict,

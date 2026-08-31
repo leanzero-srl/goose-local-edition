@@ -2286,6 +2286,10 @@ pub struct MlxEngineStatusDto {
     pub context_window: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tool_call_parser: Option<String>,
+    /// The id the live engine serves on its API (/v1/models) — the id chat requests must use;
+    /// differs from `model_id` (the HF directory) when `served_model_name` aliases it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub served_model_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub probe_error: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
