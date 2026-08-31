@@ -260,20 +260,7 @@ pub(super) fn attribute_import_gap_with_owner(
     states: &HashMap<String, String>,
     dispatched: &HashSet<String>,
 ) -> (String, Option<String>) {
-    let state_of = |task: &str| -> String {
-        states.get(task).cloned().unwrap_or_else(|| {
-            if dispatched.contains(task) {
-                // Dispatched but no ledger row yet: the attempt has not reached a terminal
-                // transition, so the honest state is "still running".
-                "running".to_string()
-            } else {
-                // In the plan's ownership map but never dispatched: the import is a PLANNED
-                // dependency whose owner has not started. "running" here would claim work that
-                // is not happening (the r5 mechanism, from the other direction).
-                "pending (not yet dispatched)".to_string()
-            }
-        })
-    };
+    let state_of = |task: &str| task_state_label(task, states, dispatched);
     // A module resolves as `<m>.py` or `<m>/__init__.py`, at the tree root or under src/ — the
     // same two roots `tree_import_gaps` checks. Relative modules (leading dot) resolve against
     // the importing file's package and are left to the importing-file-owner case below.
@@ -318,6 +305,45 @@ pub(super) fn attribute_import_gap_with_owner(
         format!("{rel} imports `{module}`, which no task has written"),
         None,
     )
+}
+
+/// One vocabulary for "what is this task doing right now", shared by the import-gap attribution
+/// above and the judge's lane defect view (`judge_context::lane_defect_view`):
+///   * a terminal ledger row wins ("done" / "retrying" / "failed", as the minis recorded it);
+///   * dispatched but no row yet — the attempt has not reached a terminal transition, so the
+///     honest state is "running";
+///   * in the plan's ownership map but never dispatched — a PLANNED dependency whose owner has
+///     not started; "running" here would claim work that is not happening (the r5 mechanism,
+///     from the other direction).
+pub(super) fn task_state_label(
+    task: &str,
+    states: &HashMap<String, String>,
+    dispatched: &HashSet<String>,
+) -> String {
+    states.get(task).cloned().unwrap_or_else(|| {
+        if dispatched.contains(task) {
+            "running".to_string()
+        } else {
+            "pending (not yet dispatched)".to_string()
+        }
+    })
+}
+
+/// Per-task terminal state as the ledger minis recorded it ("done" / "retrying" / "failed").
+/// A task absent here has no terminal row yet — `task_state_label` reads that as "running".
+/// Best-effort: no ledger, no states, and every gap simply attributes with state "running".
+pub(super) fn ledger_task_states(root: &Path) -> HashMap<String, String> {
+    let mut out = HashMap::new();
+    if let Some(rollup) = super::read_ledger_rollup(root) {
+        if let Some(tasks) = rollup.get("tasks").and_then(|t| t.as_object()) {
+            for (id, row) in tasks {
+                if let Some(status) = row.get("status").and_then(|s| s.as_str()) {
+                    out.insert(id.clone(), status.to_string());
+                }
+            }
+        }
+    }
+    out
 }
 
 #[cfg(test)]

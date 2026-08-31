@@ -236,9 +236,14 @@ fn the_banned_integrate_template_only_shrinks() {
 /// at the nudge-delivery seam (r6c: web-console poured 70,600 chars of its owned files' CSS/HTML
 /// into CHAT TEXT with 0 owned files on disk, and the chars-based `advancing` hold shielded it
 /// from the restream rung — `ladder::wrong_channel_stall`).
+/// Tightened to 42,741: `ledger_task_states` moved to commands/swarm/imports.rs beside the
+/// attribution vocabulary it feeds (`task_state_label`), paying for the lane-defect-view wiring
+/// at the judge seam (r6c seq 1954: the disk-measured defect list ordered web-console to fix
+/// web-viz's web/viz.js "at that exact path" — `judge_context::lane_defect_view` now reshapes a
+/// sibling-owned dangling ref into a do-not-write line naming the owner and its measured state).
 #[test]
 fn swarm_rs_line_count_only_decreases() {
-    const SWARM_RS_LINE_BASELINE: usize = 42_747;
+    const SWARM_RS_LINE_BASELINE: usize = 42_741;
     let text = read("crates/goose-cli/src/commands/swarm.rs");
     let n = text.lines().count();
     assert!(
