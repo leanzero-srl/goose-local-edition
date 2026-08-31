@@ -504,3 +504,9 @@ research_request_block's armed-no-claimed-sections arm wording.
   nobody maintains) and honest not-live-verified (compute paths off-limits); normalized the Rust-
   minted "New Chat" literal at every surface rather than pretending to rename the backend.
   Charter gap: none.
+- 2026-08-31 23:25 panel-surgeon (pass E follow-up: add-node providers + settings-app cleanup,
+  2825c6c70): CLEAN+. Reported the full Settings>App block inventory with per-block disposition so
+  an owner misread is visible at a glance; caught that the nodes list ALSO rendered discovered LM
+  rows and gated them under the same toggle unprompted-but-directed; left the MLX pane's one-shot
+  machine discovery ungated with the reason stated (functional plumbing, fires only on open).
+  Charter gap: none.
