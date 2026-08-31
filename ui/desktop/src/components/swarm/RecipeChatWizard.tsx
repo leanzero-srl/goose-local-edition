@@ -4,6 +4,7 @@ import { toast } from 'react-toastify';
 import { LeanZero } from '../icons';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '../ui/dropdown-menu';
 import { useFleet } from './useFleet';
+import { useLmStudioFleetVisible } from '../../hooks/useLmStudioFleetVisible';
 import type { Recipe } from '../../recipe';
 import { saveRecipe } from '../../recipe/recipe_management';
 import { CHIP_RADIUS, SWARM_STATUS } from './formationVisualState';
@@ -79,7 +80,9 @@ export function RecipeChatWizard({
   onClose: () => void;
   onSaved: (recipe: Recipe) => void;
 }) {
-  const fleet = useFleet();
+  // LEGACY surface: LM Studio model discovery runs only when 'showLmStudioFleet' is on (default
+  // off). Off, the wizard shows its honest offline path — it cannot draft without a served model.
+  const fleet = useFleet(5000, undefined, useLmStudioFleetVisible());
   const [picked, setPicked] = useState<string | null>(null);
   const autoModel = fleet.models.find((m) => /coder/i.test(m)) ?? fleet.models[0] ?? null;
   // Use the user's pick if it's still loaded, else fall back to the auto-chosen coder model.

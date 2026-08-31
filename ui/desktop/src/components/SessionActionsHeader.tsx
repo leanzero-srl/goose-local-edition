@@ -127,6 +127,10 @@ const i18n = defineMessages({
   },
 });
 
+// Pass E (owner): "Make recipe from this conversation" leaves the session menu — recipes left the
+// nav in pass A. Hidden, not deleted: flip to bring the entry (and its modal flow) back.
+const SHOW_MAKE_RECIPE = false;
+
 const LONG_STRING_THRESHOLD = 180;
 const STRING_PREVIEW_START = 96;
 const STRING_PREVIEW_END = 56;
@@ -485,13 +489,16 @@ export default function SessionActionsHeader({
       >
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
+            {/* Pass E: renaming was hard to hit — the whole title is one generous click target
+                (taller, wider padding, pointer cursor, visible hover), not a thin text sliver. */}
             <button
               type="button"
-              className="flex h-7 max-w-full items-center gap-1 rounded-md px-2.5 text-text-primary transition-colors hover:bg-background-secondary focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-border-active"
+              data-testid="session-title-trigger"
+              className="flex h-9 max-w-full cursor-pointer items-center gap-1.5 rounded-md px-4 py-2 text-text-primary transition-colors hover:bg-background-secondary focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-border-active"
               aria-label={intl.formatMessage(i18n.actionsLabel)}
             >
-              <span className="truncate text-xs font-medium">{title}</span>
-              <ChevronDown className="size-3.5 text-text-secondary" />
+              <span className="truncate text-sm font-medium">{title}</span>
+              <ChevronDown className="size-4 text-text-secondary" />
             </button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="center" className="w-56">
@@ -515,14 +522,16 @@ export default function SessionActionsHeader({
               )}
               {intl.formatMessage(i18n.viewJson)}
             </DropdownMenuItem>
-            <DropdownMenuItem disabled={isMakingRecipe} onSelect={() => void handleMakeRecipe()}>
-              {isMakingRecipe ? (
-                <LoaderCircle className="size-4 animate-spin" />
-              ) : (
-                <ChefHat className="size-4" />
-              )}
-              {intl.formatMessage(i18n.makeRecipe)}
-            </DropdownMenuItem>
+            {SHOW_MAKE_RECIPE && (
+              <DropdownMenuItem disabled={isMakingRecipe} onSelect={() => void handleMakeRecipe()}>
+                {isMakingRecipe ? (
+                  <LoaderCircle className="size-4 animate-spin" />
+                ) : (
+                  <ChefHat className="size-4" />
+                )}
+                {intl.formatMessage(i18n.makeRecipe)}
+              </DropdownMenuItem>
+            )}
           </DropdownMenuContent>
         </DropdownMenu>
       </div>

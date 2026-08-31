@@ -25,6 +25,8 @@ vi.mock('../ConfigContext', () => ({
 
 vi.mock('../../sessions', () => ({
   startNewSession: vi.fn(),
+  displaySessionListName: (name: string | null | undefined) =>
+    !name || name === 'New Chat' ? 'New Session' : name,
 }));
 
 vi.mock('../../acp/sessions', () => ({
@@ -189,7 +191,7 @@ describe('ProjectsSection', () => {
     renderSection();
     fireEvent.contextMenu(await screen.findByText('goose'));
     fireEvent.click(await screen.findByText('Remove from projects'));
-    fireEvent.click(await screen.findByText('Confirm remove (keeps files & chats)'));
+    fireEvent.click(await screen.findByText('Confirm remove (keeps files & sessions)'));
 
     await waitFor(() => expect(mocks.removeProject).toHaveBeenCalledWith('/proj/goose'));
     await waitFor(() => expect(screen.queryByText('goose')).not.toBeInTheDocument());

@@ -65,9 +65,15 @@ export function deviceFromModelId(id: string): string {
  * (gabee/mihai/workhorse via deviceFromModelId) so the panel can cross-check the goose digest against it.
  * Empty when LM Studio / lms is unavailable, so the caller degrades to the digest-only view.
  */
-export function useFleetStatus(pollMs = 1500): Record<string, string> {
+export function useFleetStatus(pollMs = 1500, enabled = true): Record<string, string> {
   const [status, setStatus] = useState<Record<string, string>>({});
   useEffect(() => {
+    if (!enabled) {
+      // LM Studio surfaces disabled (showLmStudioFleet, default off): no lms polling, no statuses —
+      // callers degrade to their digest-only view exactly as when lms is unavailable.
+      setStatus({});
+      return undefined;
+    }
     let alive = true;
     const poll = async () => {
       try {
@@ -88,7 +94,7 @@ export function useFleetStatus(pollMs = 1500): Record<string, string> {
       alive = false;
       clearInterval(t);
     };
-  }, [pollMs]);
+  }, [pollMs, enabled]);
   return status;
 }
 
@@ -107,7 +113,7 @@ async function fetchWithTimeout(url: string, ms: number): Promise<Response> {
  * `online: false` means the endpoint is unreachable (LM Studio not running) — the caller shows an
  * explicit offline state rather than fabricating data.
  */
-export function useFleet(pollMs = 5000, endpoint = DEFAULT_ENDPOINT): FleetState {
+export function useFleet(pollMs = 5000, endpoint = DEFAULT_ENDPOINT, enabled = true): FleetState {
   const [state, setState] = useState<FleetState>({
     lanes: [],
     models: [],
@@ -117,6 +123,12 @@ export function useFleet(pollMs = 5000, endpoint = DEFAULT_ENDPOINT): FleetState
   });
 
   useEffect(() => {
+    if (!enabled) {
+      // LM Studio surfaces disabled (showLmStudioFleet, default off): no discovery fetches, and the
+      // state reads exactly like an unreachable endpoint — no fabricated rows.
+      setState({ lanes: [], models: [], online: false, loading: false, endpoint });
+      return undefined;
+    }
     let alive = true;
 
     const tick = async () => {
@@ -148,7 +160,7 @@ export function useFleet(pollMs = 5000, endpoint = DEFAULT_ENDPOINT): FleetState
       alive = false;
       clearInterval(iv);
     };
-  }, [pollMs, endpoint]);
+  }, [pollMs, endpoint, enabled]);
 
   return state;
 }

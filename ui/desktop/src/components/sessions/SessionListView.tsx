@@ -1,5 +1,6 @@
 import { AppEvents } from '../../constants/events';
 import React, { useEffect, useState, useRef, useCallback, useMemo, startTransition } from 'react';
+import { displaySessionListName } from '../../sessions';
 import { defineMessages, useIntl } from '../../i18n';
 import {
   MessageSquareText,
@@ -57,7 +58,7 @@ const i18n = defineMessages({
   saving: { id: 'sessions.saving', defaultMessage: 'Saving...' },
   sessionUpdated: { id: 'sessions.toast.updated', defaultMessage: 'Session description updated successfully' },
   sessionUpdateFailed: { id: 'sessions.toast.updateFailed', defaultMessage: 'Failed to update session description: {error}' },
-  chatHistory: { id: 'sessions.chatHistory', defaultMessage: 'Chat history' },
+  chatHistory: { id: 'sessions.chatHistory', defaultMessage: 'Session history' },
   importSession: { id: 'sessions.import', defaultMessage: 'Import Session' },
   importNostrSession: { id: 'sessions.importNostr', defaultMessage: 'Import Link' },
   importNostrTitle: { id: 'sessions.importNostr.title', defaultMessage: 'Import Nostr Session' },
@@ -68,8 +69,8 @@ const i18n = defineMessages({
   searchPlaceholder: { id: 'sessions.searchPlaceholder', defaultMessage: 'Search history...' },
   errorLoading: { id: 'sessions.error.loading', defaultMessage: 'Error Loading Sessions' },
   tryAgain: { id: 'sessions.error.tryAgain', defaultMessage: 'Try Again' },
-  noSessions: { id: 'sessions.empty.title', defaultMessage: 'No chat sessions found' },
-  noSessionsDesc: { id: 'sessions.empty.description', defaultMessage: 'Your chat history will appear here' },
+  noSessions: { id: 'sessions.empty.title', defaultMessage: 'No sessions found' },
+  noSessionsDesc: { id: 'sessions.empty.description', defaultMessage: 'Your session history will appear here' },
   noMatching: { id: 'sessions.search.noResults', defaultMessage: 'No matching sessions found' },
   noMatchingDesc: { id: 'sessions.search.noResultsDesc', defaultMessage: 'Try adjusting your search terms' },
   loadingMore: { id: 'sessions.loadingMore', defaultMessage: 'Loading more sessions...' },
@@ -685,7 +686,7 @@ const SessionListView: React.FC<SessionListViewProps> = React.memo(
         [onOpenInNewWindow, session]
       );
 
-      const displayName = session.name;
+      const displayName = displaySessionListName(session.name);
 
       return (
         <Card

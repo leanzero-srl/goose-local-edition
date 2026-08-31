@@ -1960,6 +1960,7 @@ const validSettingKeys: Set<string> = new Set([
   'language',
   'responseStyle',
   'showPricing',
+  'showLmStudioFleet',
   'seenAnnouncementIds',
   'disableAutoDownload',
   'edition',

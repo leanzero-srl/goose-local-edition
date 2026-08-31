@@ -3,7 +3,10 @@ import { ChatType } from '../types/chat';
 import { Recipe } from '../recipe';
 
 // TODO(Douwe): We should not need this anymore
-export const DEFAULT_CHAT_TITLE = 'New Chat';
+// Pass E (owner): sessions are SESSIONS in user-visible text, never chats. The engine still
+// stores its own placeholder ("New Chat", acp/server/new_session.rs) — getSessionDisplayName
+// normalizes that legacy literal to this title so the two worlds never disagree on screen.
+export const DEFAULT_CHAT_TITLE = 'New Session';
 
 interface ChatContextType {
   chat: ChatType;

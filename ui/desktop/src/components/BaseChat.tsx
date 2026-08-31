@@ -41,6 +41,7 @@ import SwarmRunPanel from './swarm/SwarmRunPanel';
 import RunSamplingStrip from './swarm/RunSamplingStrip';
 import { useSwarmRun } from './swarm/useSwarmRun';
 import SwarmWorkspace from './swarm/SwarmWorkspace';
+import NodesStrip from './swarm/NodesStrip';
 import { shouldSplitSwarmWorkspace } from './swarm/swarmRunLiveness';
 
 const i18n = defineMessages({
@@ -145,7 +146,10 @@ export default function BaseChat({
   // it…" through a deliberate pause while every fleet node sat idle. Mihai read that as a hang and pressed
   // resume on a run that was fine. Same working_dir already handed to SwarmRunPanel, so this reads the SAME
   // engine truth the panel does (last run_paused with no later run_unpaused) — not a second, divergent guess.
-  const swarmRun = useSwarmRun(session?.working_dir);
+  // residentGate: a NEW session in a dir with leftover .swarm state must open CLEAN — a stale run
+  // (dead/absent heartbeat, started before this mount) renders nothing. A live run, or one this
+  // session starts, attaches exactly as before.
+  const swarmRun = useSwarmRun(session?.working_dir, 500, { residentGate: true });
 
   const recipe = session?.recipe as Recipe | null | undefined;
 
@@ -471,6 +475,10 @@ export default function BaseChat({
             <div className="block h-8" />
           </>
         ) : null}
+
+        {/* Blank session (pass E): show YOUR configured nodes and their occupancy — never a stale
+            board. Disappears the moment the conversation starts or a run takes the stage. */}
+        {isLocal && messages.length === 0 && !recipe && <NodesStrip className="mb-3" />}
 
         {/* With the split up, the run has its OWN pane — leaving these here too would render the whole
             panel twice. Inline in the conversation is the layout for every other moment. */}

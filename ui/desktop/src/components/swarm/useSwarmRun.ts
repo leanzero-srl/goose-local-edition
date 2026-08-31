@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import type { FormationEvidence, RunPhase } from './formationVisualState';
+import { shouldAdoptResidentRun } from './swarmRunLiveness';
 
 /**
  * Reads the LIVE swarm run for a working directory (via the `read-swarm-run` IPC) and folds its event
@@ -4848,7 +4849,17 @@ export function runAppName(prompt: string | undefined, runDir: string | null | u
   return base || 'build';
 }
 
-export function useSwarmRun(workingDir: string | undefined, pollMs = 500): SwarmRunState {
+export function useSwarmRun(
+  workingDir: string | undefined,
+  pollMs = 500,
+  opts?: {
+    /** Session surfaces set this: a leftover run in the dir is adopted only when it is LIVE
+     *  (fresh heartbeat) or started under this mount — a stale board renders NOTHING in a new
+     *  session. Inspection surfaces (BenchmarkView) leave it off and adopt unconditionally. */
+    residentGate?: boolean;
+  }
+): SwarmRunState {
+  const residentGate = opts?.residentGate === true;
   const [state, setState] = useState<SwarmRunState>(EMPTY);
   // Keep the last non-empty run visible between polls so a finished run does not flicker away.
   const lastRunId = useRef<string | null>(null);
@@ -4859,6 +4870,9 @@ export function useSwarmRun(workingDir: string | undefined, pollMs = 500): Swarm
       return;
     }
     let alive = true;
+    // The adoption epoch for the resident gate: a run whose run_started stamp is at/after this
+    // moment was started by THIS session and is adopted regardless of heartbeat freshness.
+    const mountedAt = Date.now();
     // A NEW target directory starts with no run to hold: without this reset, a null read on the new
     // dir would "keep visible" the PREVIOUS dir's run under the wrong workingDir.
     lastRunId.current = null;
@@ -4902,6 +4916,26 @@ export function useSwarmRun(workingDir: string | undefined, pollMs = 500): Swarm
           synthesisFallback,
           knownActiveBugs,
         } = buildActivity(data.events);
+        // RESIDENT GATE (pass E): a session surface must not put a dead leftover run on screen. Runs
+        // this mount has not adopted yet are admitted only by shouldAdoptResidentRun — started under
+        // this mount, or heartbeat provably alive. Refused runs render the EMPTY state and stay
+        // unadopted (lastRunId untouched), so a heartbeat that resumes ticking attaches on a later
+        // poll. Once adopted, the gate never re-applies to that runId: staleness after adoption is
+        // the liveness BANNER's job, never a reason to hide the board (no-timer-hides-a-run).
+        if (residentGate && lastRunId.current !== data.runId) {
+          const adoptable = shouldAdoptResidentRun(
+            {
+              heartbeat: data.heartbeat ?? null,
+              heartbeatExited: !!data.heartbeatExited,
+              startedAt,
+            },
+            mountedAt
+          );
+          if (!adoptable) {
+            setState({ ...EMPTY, loading: false });
+            return;
+          }
+        }
         // Gated BEFORE the fold, so a previous run's leftover digest cannot mint a lane, claim a node or
         // stamp a checklist row anywhere downstream. Every consumer below reads the gated pair.
         const rawMtimes = data.activityMtimes ?? {};
@@ -5058,7 +5092,7 @@ export function useSwarmRun(workingDir: string | undefined, pollMs = 500): Swarm
       // same dir just re-folds once and re-caches — correctness never depended on the cache.
       evictRunScope(workingDir);
     };
-  }, [workingDir, pollMs]);
+  }, [workingDir, pollMs, residentGate]);
 
   return state;
 }

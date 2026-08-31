@@ -19,6 +19,7 @@ import ThemeSelector from '../../GooseSidebar/ThemeSelector';
 import EditionSelector from '../../GooseSidebar/EditionSelector';
 import FanInCard from '../../swarm/FanInCard';
 import { useFleet } from '../../swarm/useFleet';
+import { LMSTUDIO_FLEET_SETTING_CHANGED } from '../../../hooks/useLmStudioFleetVisible';
 import BlockLogoBlack from './icons/block-lockup_black.png';
 import BlockLogoWhite from './icons/block-lockup_white.png';
 import TelemetrySettings from './TelemetrySettings';
@@ -64,6 +65,19 @@ const i18n = defineMessages({
   costTrackingDesc: {
     id: 'settings.costTracking.description',
     defaultMessage: 'Show model pricing and usage costs',
+  },
+  lmStudioFleet: {
+    id: 'settings.lmStudioFleet.title',
+    defaultMessage: 'Show LM Studio fleet (legacy)',
+  },
+  lmStudioFleetDesc: {
+    id: 'settings.lmStudioFleet.description',
+    defaultMessage:
+      'Bring back the LM Studio-discovered fleet rows and node status across the app. Off, nothing polls LM Studio and no discovered rows render.',
+  },
+  lmStudioFleetHidden: {
+    id: 'settings.lmStudioFleet.hidden',
+    defaultMessage: 'LM Studio fleet hidden (legacy) — enable it above to see live nodes here',
   },
   editionTitle: { id: 'settings.edition.title', defaultMessage: 'Goose Swarm' },
   editionDesc: {
@@ -201,6 +215,7 @@ export default function AppSettingsSection({ scrollToSection }: AppSettingsSecti
   const [isDockSwitchDisabled, setIsDockSwitchDisabled] = useState(false);
   const [showNotificationModal, setShowNotificationModal] = useState(false);
   const [showPricing, setShowPricing] = useState(true);
+  const [showLmStudioFleet, setShowLmStudioFleet] = useState(false);
   const [language, setLanguage] = useState<LanguageSetting>('system');
   const [isDarkMode, setIsDarkMode] = useState(false);
   const updateSectionRef = useRef<HTMLDivElement>(null);
@@ -228,6 +243,9 @@ export default function AppSettingsSection({ scrollToSection }: AppSettingsSecti
 
   useEffect(() => {
     window.electron.getSetting('showPricing').then(setShowPricing);
+    window.electron
+      .getSetting('showLmStudioFleet')
+      .then((v) => setShowLmStudioFleet(v === true));
     window.electron.getSetting('language').then((value) => setLanguage(value ?? 'system'));
   }, []);
 
@@ -324,6 +342,13 @@ export default function AppSettingsSection({ scrollToSection }: AppSettingsSecti
     window.dispatchEvent(new CustomEvent('showPricingChanged'));
   };
 
+  const handleShowLmStudioFleetToggle = async (checked: boolean) => {
+    setShowLmStudioFleet(checked);
+    await window.electron.setSetting('showLmStudioFleet', checked);
+    trackSettingToggled('lm_studio_fleet', checked);
+    window.dispatchEvent(new CustomEvent(LMSTUDIO_FLEET_SETTING_CHANGED));
+  };
+
   const handleLanguageChange = async (value: string) => {
     const nextLanguage = LANGUAGE_OPTIONS.find((option) => option.value === value)?.value;
     if (!nextLanguage || nextLanguage === language) {
@@ -341,7 +366,7 @@ export default function AppSettingsSection({ scrollToSection }: AppSettingsSecti
   };
 
   const intl = useIntl();
-  const fleet = useFleet();
+  const fleet = useFleet(5000, undefined, showLmStudioFleet);
   const selectedLanguage =
     LANGUAGE_OPTIONS.find((option) => option.value === language) ?? LANGUAGE_OPTIONS[0];
 
@@ -478,6 +503,24 @@ export default function AppSettingsSection({ scrollToSection }: AppSettingsSecti
               </div>
             </div>
           )}
+
+          {/* LM Studio fleet (legacy) — pass E: every LM Studio-sourced row/panel gates on this. */}
+          <div className="flex items-center justify-between">
+            <div>
+              <h3 className="text-text-primary text-xs">{intl.formatMessage(i18n.lmStudioFleet)}</h3>
+              <p className="text-xs text-text-secondary max-w-md mt-[2px]">
+                {intl.formatMessage(i18n.lmStudioFleetDesc)}
+              </p>
+            </div>
+            <div className="flex items-center">
+              <Switch
+                checked={showLmStudioFleet}
+                onCheckedChange={handleShowLmStudioFleetToggle}
+                variant="mono"
+                data-testid="show-lmstudio-fleet-toggle"
+              />
+            </div>
+          </div>
         </CardContent>
       </Card>
 
@@ -492,12 +535,14 @@ export default function AppSettingsSection({ scrollToSection }: AppSettingsSecti
             <div className="text-xs text-text-secondary mb-1 flex items-center justify-between">
               <span>{intl.formatMessage(i18n.editionPreview)}</span>
               <span style={{ color: fleet.online ? '#2ecc71' : '#878787' }}>
-                {fleet.online
-                  ? `LM Link · ${fleet.lanes.length} node${fleet.lanes.length === 1 ? '' : 's'} live`
-                  : 'fleet offline'}
+                {!showLmStudioFleet
+                  ? intl.formatMessage(i18n.lmStudioFleetHidden)
+                  : fleet.online
+                    ? `LM Link · ${fleet.lanes.length} node${fleet.lanes.length === 1 ? '' : 's'} live`
+                    : 'fleet offline'}
               </span>
             </div>
-            {fleet.online && fleet.lanes.length > 0 ? (
+            {showLmStudioFleet && fleet.online && fleet.lanes.length > 0 ? (
               <FanInCard dispatch="fleet · live" lanes={fleet.lanes} />
             ) : (
               <div>
