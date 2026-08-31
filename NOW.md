@@ -53,7 +53,30 @@ implied, the summary was wrong and the sources win.
 
 ---
 
-## THE CURRENT THREAD (2026-08-31 00:35)
+## THE CURRENT THREAD (2026-08-31 19:40)
+
+**r6c LIVE — BUILD ~5.7h, 6/10 tasks done, the best product tree any run has assembled** (21 files
+~133KB, all python parses; web console 37KB app.js GUARDS the missing viz; replan round-0 delivered
+passing boot-contract tests + an executed vizmath oracle). Vigil = tick-surgeon every 30m at :07/:37.
+THE ONE HOLE: web/viz.js absent at BUILD+5.5h — the lane converges in reasoning (recur 0.004, walking
+a numbered verify list) but has emitted zero bytes; PROVEN from run.jsonl: its 6 DRIFTING steers were
+ALL held (three arm-reset paths: read-only calls reset act, interleaved ok disarms, wrong-channel
+shield) — engine steering EXHAUSTED in the running binary. Falsification test armed per tick: frozen
+calls.jsonl + recycling verify items = converging falsified -> operator decision (kill-or-ride to
+REPAIR, which owns missing files). Sibling precedent FOR riding: ledgerd-core composed 165k chars then
+burst-landed 9 edits in one block.
+
+**r6d QUEUE (all committed at HEAD, builds at r6c's natural end):** research grounding b7516297b, fan
+fold ecc7f168d, filler door 331a1a09c, plan sidecars 389283e02, prose+patch-drops 6c4423e81, skeleton
+brief 044cafed6, wrong-channel ladder 7728ea236, ownership-filtered judge defects ad8212f20 +
+delivery_defects lane view dfdf7bded, judge-seam smalls 24fa10ba6, **aux live-load routing 8b03be2da
+(the Mihai-screenshot pile-up: judges+replanner all pinned to the frozen planner identity=workhorse
+while 2 nodes idled; now least_loaded_aux_model + one-door InflightGuard, tie->planner)**, **write-
+progress delivery arm e5f62a2d8 (sed/grep no longer resets, ok no longer disarms)**. fix-tracer
+independently verifying A+B against run.jsonl now. At r6c natural end: hermetic score -> RUN-LEDGER ->
+build r6d -> install -> Benchmark-view relaunch.
+
+## THE PRIOR THREAD (2026-08-31 00:35)
 
 **r6c LIVE (resumed after Mihai's exam) — launched from the Benchmark view on the installed
 full-stack app (sha 996a072f), fleet 3/3 loaded, run slot fresh.** Same binary as r6b, so the
