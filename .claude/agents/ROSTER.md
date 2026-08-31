@@ -568,3 +568,11 @@ research_request_block's armed-no-claimed-sections arm wording.
   sidecar proven against all three .swarm readers with the module doc forbidding a load-bearing
   reader; honest NET label; paid the wiring by moving the resume cluster (43,423→43,208). The vigil
   can now audit briefs directly from r6d onward. Charter gap: none.
+- 2026-08-31 14:45 tick-surgeon #12: EXEMPLARY. THE source-literal question CLOSED with the brief's
+  verbatim line ("workflow actions use source `approval`" — api-q2's poison did NOT propagate; the
+  fan's contradictions net resolved 4-correct 1-unpropagated). Checkpoint watch CLEARED with seq
+  numbers (patched 1383 < repaired 1385 < loaded; 8 tasks, sink files=[]). Found the two next
+  defects in the words: repair rewrote files[] but left brief PROSE stale (skeleton tripping on it
+  live) and review-camera's patch vanished at the merge with no event — both dispatched. Skeleton at
+  23m/8 attempts/0 files re-deriving under HELD restreams = the ladder-tracer's predicted shielded
+  shape; one-tick escalation window set. Charter gap: none.
