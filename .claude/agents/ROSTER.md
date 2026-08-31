@@ -488,3 +488,13 @@ research_request_block's armed-no-claimed-sections arm wording.
   system sentence directly targets the "not the lane's to pick" defect surgeon #3 measured; events
   landed (planned/context/phase/not-persisted, all derived); honest same-instant NET label; orientation
   cluster extracted to pay the wiring (43,684→43,444). tick.py taught the new events same-turn.
+- 2026-08-31 12:20 refuter (judge turn-cap): EXEMPLARY. Confirmed claim 1 with the full path (probe
+  max_turns=1 -> SessionConfig -> agent.rs:2067; deliberate Q&A contract, all work lanes structurally
+  uncapped) and REFUTED claim 2 as stated (no turns exist after the verdict at max_turns=1) while
+  finding the worse truth underneath: r6a's seq-58 DRIFTING was MANUFACTURED by parse_judge_reply's
+  fallback from the cap filler alone, and live next fields carry the filler as a trailing line. Also
+  found the schedjudge path already owns the detector the omni path lacks — the fix became a mirror,
+  not an invention. The corrected fix (filler = failed look; strip trailing MAX_TURNS_MESSAGE via the
+  shared-const pattern) is dispatched. NO-CAPS ruling parked for Mihai: whether a 1-turn supervision
+  Q&A reply counts as "model work" — the repo's own comment calls a turn count "a volume cap wearing
+  a different hat", but every measured harm was the filler leak, not the cap ending healthy looks.
