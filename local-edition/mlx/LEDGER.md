@@ -1,5 +1,26 @@
 # MLX engine campaign — LEDGER
 
+## 2026-08-31 evening — Goose Swarm restructure recon (facts that size passes B and C)
+
+- "Merge main for Benchmark" measured a NO-OP: 0 behind / 868 ahead; Benchmark was hidden by the
+  renderer's edition setting defaulting 'standard' (never provider-derived) — also why the
+  .local-edition CSS scope was absent. Pass A fixes derivation + rebrands Goose Swarm + severs
+  parent auto-update (own 2.0.0 line).
+- PROJECTS TREE (pass B) is mostly seams, not construction: SessionListItem already carries
+  workingDir on every row; SQLite filtering by working_dir EXISTS server-side and is wired to the
+  ACP request's cwd with filter-hash-bound cursors — the desktop's acpListSessions simply never
+  sends cwd (one-line addition). createSession(workingDir) is already parameterized (inheritance
+  is call-site choice). recent-dirs.json is an LRU, not a registry → projects get their own
+  user-curated projects.json (same file-backed pattern). A project_id column is plumbed
+  end-to-end but never written — left dormant; the PATH is the project key by design.
+- THREE-TAB VIEW (pass C): SwarmSettingsSection already renders device rows with weights,
+  supervisor-uniqueness, cloud add/rm through the swarm-cloud CLI IPC (invariant: the desktop
+  never upserts CLOUD devices directly — mutate via CLI then re-read); NODE_PROVIDERS in the
+  section is already the provider-dropdown option shape; the TS SwarmDeviceRow mirror lacks the
+  Rust engine field ("mlx-sidecar") — must be added; provider credentials have a complete ACP
+  surface (save/auth/delete + metadata-driven forms); cloud-vs-local is the name-fragment policy
+  (no metadata field). Provider reassignment on an existing node = remove+recreate under the hood.
+
 ## 2026-08-31 late afternoon — HF browser round two backend (c19c28a7f, first mlx-backend delegation)
 
 Owner's hardcoded-filters call-out proven correct beyond the complaint: the crawl found **80
