@@ -471,3 +471,10 @@ research_request_block's armed-no-claimed-sections arm wording.
   1210s with re-derivation the judge steered correctly). Honest self-grade with five named holes.
   Charter gap: none. Bloat: the 40-line cap held. Brief leak: none — it was handed only the run dir
   and the question. Fix dispatched same-tick (research grounding + intra-fan snowball).
+- 2026-08-31 11:55 tick-surgeon #2: EXEMPLARY. Real deltas from its state file; spot-checked two new
+  minis LINE-BY-LINE against the spec (notifierd-q0 grounded on every cited line; api-q1 body right,
+  both raised items FALSE with the spec lines that refute them); caught a contradiction FORMING in a
+  live lane's words (source:"send" vs L210-213/core-q0) before it landed; verified the mechanism in
+  research_request_block and the lane's 11 shell calls (grepping sibling think.logs for spec text).
+  Named four holes honestly (no research_planned event; no per-look node-time; three looks pending).
+  Two specifics fed to the in-flight grounding surgeon same-tick. Charter gap: none.
