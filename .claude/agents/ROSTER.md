@@ -487,3 +487,11 @@ research_request_block's armed-no-claimed-sections arm wording.
   two dirs it named). The work itself remains CLEAN; the testing discipline was not. Charter
   amended: law 7 — destructive live tests take a tempdir models root, always; targeting the real
   models_dir is a blocked action. Model re-downloaded same evening.
+- 2026-08-31 22:00 panel-surgeon (pass D: projects-only sessions + models sub-tabs + settings
+  removal, 373a5b1c1): CLEAN++. The affordance hunt found five creators beyond the button (Cmd+T,
+  Quick Launcher global shortcut, two toast buttons, recipe-modal label) and DISPOSED each with a
+  named verdict incl. keep-but-defused for window-openers; File menu live-enumerated via System
+  Events; browser state lifted so sub-tab switches don't lose a search; named the remaining
+  project-less creators (recipe/deeplink flows) as an owner decision instead of silently scoping
+  them. Charter gap: none. Note: screenshots landed in-repo untracked — steer future passes to
+  ~/goose-screenshots per the earlier convention.
