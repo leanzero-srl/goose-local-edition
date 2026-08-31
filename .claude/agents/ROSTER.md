@@ -691,3 +691,9 @@ research_request_block's armed-no-claimed-sections arm wording.
   re-arming (ok reset the streak, drifting re-armed) one look from the build's first delivery; and
   closed two watch items with file-level proof (outbox.py:86 wrapper, impl.py rewrite). Charter
   gap: none.
+- 2026-08-31 20:15 fix-tracer (A+B independent trace): EXEMPLARY at 145k/41 — the reference form of
+  gate 8's reader. Reconstructed in-flight-by-model from dispatches-minus-completions and caught the
+  surgeon's own trace UNDERCOUNTING the pile (4 not 3 — the web-viz worker itself omitted), refuted
+  the "mihai 0..1" hedge with the 15m53s ordering, walked both new paths look-by-look with the run's
+  confidences (0.85 vs the 0.8 floor), and named the first UNCOVERED sequence for every residual.
+  Charter gap: none.
