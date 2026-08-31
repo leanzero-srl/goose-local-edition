@@ -597,3 +597,10 @@ research_request_block's armed-no-claimed-sections arm wording.
   cluster out (swarm.rs 43,085→42,764) with boundary-asserted line-range deletion, no brace script.
   Named the one uncovered seam (replan renames after skeleton dispatch — usually moot, recorded).
   Charter gap: none.
+- 2026-08-31 15:55 tick-surgeon #14: EXEMPLARY. The fan read with weight verification (workhorse
+  carrying the two heaviest — 5fbc77af4 live-confirmed at last), WATCH-1 refuted from the words
+  (ledgerd-core defers to the disk layout: "The project file layout is authoritative" — the stale
+  prose did NOT bite), and the run's next finding named precisely: at fan-out+20m ALL FIVE builders
+  hold zero files — 46k of formatMoney JS composed in web-console's HEAD, an engine disk-measured
+  injection ignored — the compose-in-head class at fleet scale, with the skeleton's proven remedy
+  (the exact-file directive rung) proposed as the fix shape. Charter gap: none.
