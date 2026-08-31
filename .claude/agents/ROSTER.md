@@ -679,3 +679,9 @@ research_request_block's armed-no-claimed-sections arm wording.
   mechanism (read-only calls reset act), and pre-named the (iii) trigger in engine-mechanism terms
   (restream fires only on looping recur=0.0076; 7728ea236 not aboard; action-counting shields
   read-only lanes). This is gate 7+8 practiced in one report. Charter gap: none.
+- 2026-08-31 19:30 tick-surgeon #22: EXEMPLARY at 69k/14. Closed the decision read with a finding
+  nobody predicted (the interleaved-ok disarm — a THIRD arm-reset path, quoted against the
+  held-detail's own promise), kept the lane honestly alive (+27k NEW ground, recur 0.004, no
+  re-derivation) instead of pattern-matching to a kill, and produced the sibling burst precedent
+  (165k think → 9-edit burst) that makes "converging" testable next tick. Substance reads on both
+  replan deliverables with symbols and execution proof. Charter gap: none.
