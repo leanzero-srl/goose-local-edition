@@ -222,9 +222,13 @@ fn the_banned_integrate_template_only_shrinks() {
 /// tests) moved to commands/swarm/plan_store.rs, paying for the plan-sidecar wiring
 /// (`.swarm/plan.json` at the plan_synthesized seam, `.swarm/plan-loaded.json` at plan_loaded —
 /// r6c's 133k-char briefs were persisted nowhere the vigil could read during REVIEW).
+/// Tightened to 43,085: `review_dedupe_key` and its six tests moved to
+/// commands/swarm/review_merge.rs with the per-lane patch union (`union_lane_patches`, extracted
+/// from `review_plan_fanned`), paying for the r6c prose-rewrite wiring in
+/// `repair_module_package_collisions` and the `plan_patched.lanes` provenance in the same commit.
 #[test]
 fn swarm_rs_line_count_only_decreases() {
-    const SWARM_RS_LINE_BASELINE: usize = 43_208;
+    const SWARM_RS_LINE_BASELINE: usize = 43_085;
     let text = read("crates/goose-cli/src/commands/swarm.rs");
     let n = text.lines().count();
     assert!(

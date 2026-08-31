@@ -64,8 +64,12 @@ mod imports;
 use imports::{attribute_import_gap_with_owner, tree_import_gaps, verify_tree_imports};
 mod plan_store;
 use plan_store::{persist_plan_loaded_sidecar, persist_plan_sidecar, resume_state_from_dir};
+mod prose;
+use prose::rewrite_path_token;
 mod pytest_tail;
 use pytest_tail::parse_pytest_summary;
+mod review_merge;
+use review_merge::{review_dedupe_key, union_lane_patches};
 mod briefs;
 mod spec_sets;
 mod transcripts;
@@ -10008,67 +10012,6 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
     // The rule it tested is now structural: run_agent/run_agent_in carry NO time parameter, so a
     // configured number cannot reach a call — re-arming one means re-adding a parameter through
     // every signature, not flipping a value past a test.
-
-    /// THE THREE SENTENCES THAT DEFEATED THE OLD KEY, verbatim from the live run that measured this.
-    /// They must be ONE finding, and the `STILL: ` prefix that produced 9 findings with `repeated: 0`
-    /// on an untouched plan must not create a fourth.
-    #[test]
-    fn one_defect_worded_four_ways_is_one_finding() {
-        let a = "viz-interaction and viz-rendering-engine share the same file (web/viz.js)";
-        let b = "Two tasks write to the same file (web/viz.js)";
-        let c = "viz.js written by two tasks";
-        let d = "STILL: viz-interaction and viz-rendering-engine share the same file (web/viz.js)";
-        let k = review_dedupe_key(a);
-        assert_eq!(review_dedupe_key(b), k, "b rephrased a");
-        assert_eq!(
-            review_dedupe_key(c),
-            k,
-            "c named the file without its directory"
-        );
-        assert_eq!(
-            review_dedupe_key(d),
-            k,
-            "a STILL: prefix is not a new finding"
-        );
-    }
-
-    /// Merging two DIFFERENT findings about the same file drops one of them from the round's findings
-    /// and from the patch demand that names them. (When REVIEW looped this was the early-stop risk; the
-    /// round is single now, and what would be lost is the finding itself.)
-    #[test]
-    fn two_different_claims_about_one_file_stay_separate() {
-        let owned_twice =
-            "viz-interaction and viz-rendering-engine share the same file (web/viz.js)";
-        let never_wired = "web/viz.js is never imported by any task";
-        assert_ne!(
-            review_dedupe_key(owned_twice),
-            review_dedupe_key(never_wired)
-        );
-    }
-
-    #[test]
-    fn different_files_are_different_findings() {
-        let a = "Two tasks write to the same file (web/viz.js)";
-        let b = "Two tasks write to the same file (web/store.js)";
-        assert_ne!(review_dedupe_key(a), review_dedupe_key(b));
-    }
-
-    /// A finding naming nothing extractable keeps the OLD behaviour exactly, so prose findings cannot
-    /// regress into either direction.
-    #[test]
-    fn prose_with_no_identifier_falls_back_to_the_text_key() {
-        let f = "The plan does not explain how the user reaches the running application";
-        assert_eq!(f.to_lowercase(), review_dedupe_key(f));
-        let g = "The plan does not explain how the user reaches the running application at all";
-        assert_ne!(review_dedupe_key(f), review_dedupe_key(g));
-    }
-
-    #[test]
-    fn backticked_identifiers_are_read_even_without_an_extension() {
-        let a = "task `integrate-verify` owns files and will be cascaded on any build failure";
-        let b = "STILL: `integrate-verify` owns files, which cascades it on a build failure";
-        assert_eq!(review_dedupe_key(a), review_dedupe_key(b));
-    }
 
     /// THE 44%-OF-REMAINING-LOSS CHECK, and every way it must refuse to fire.
     ///
@@ -23266,101 +23209,6 @@ impl GooseAgentDispatcher {
     }
 }
 
-/// The STRUCTURAL CLAIM a review finding makes, used to tell a genuinely distinct finding from a
-/// rephrasing.
-///
-/// The old key was `trim().to_lowercase().take(120)` — a PREFIX comparison, which any rewording defeats
-/// by construction. Measured on a live run, back when REVIEW looped: rounds 1 and 2 reported one defect
-/// as "viz-interaction and viz-rendering-engine share the same file (web/viz.js)", "Two tasks write to
-/// the same file (web/viz.js)" and "viz.js written by two tasks", and all three counted as NEW; a later
-/// round simply prefixed each with `STILL: ` and got 9 findings with `repeated: 0` on a plan nobody had
-/// touched.
-///
-/// REVIEW is one round now (see `review_once`), and the key collapses the same defect raised by two
-/// LANES of it: every lane reads the whole plan, so a collision is reported by whichever lanes noticed.
-///
-/// The key is (kind, identifiers) because neither alone is safe:
-///   - identifiers alone would merge "viz.js is owned twice" with "viz.js is never imported" — two real,
-///     different findings about one file. Merging them drops one from the round's findings and from
-///     the patch demand that names them, so the kind keeps them apart.
-///   - kind alone would merge every ownership finding in the plan into one.
-///
-/// Identifiers are taken only from high-precision positions — backticked tokens and path-like tokens —
-/// and files reduce to their BASENAME, because the same file is named `web/viz.js` in one sentence and
-/// `viz.js` in the next. A finding that yields NO identifier falls back to the old text key, so prose
-/// findings behave exactly as they did before.
-fn review_dedupe_key(finding: &str) -> String {
-    let lower = finding.trim().to_lowercase();
-
-    let kind = if lower.contains("share")
-        || lower.contains("same file")
-        || lower.contains("both own")
-        || lower.contains("two tasks")
-        || lower.contains("duplicate")
-        || lower.contains("written by")
-        || lower.contains("owned by")
-    {
-        "ownership"
-    } else if lower.contains("unowned")
-        || lower.contains("no task")
-        || lower.contains("nobody")
-        || lower.contains("not owned")
-        || lower.contains("missing")
-    {
-        "unowned"
-    } else if lower.contains("depend")
-        || lower.contains("wire")
-        || lower.contains("wired")
-        || lower.contains("import")
-    {
-        "wiring"
-    } else if lower.contains("larger")
-        || lower.contains("too large")
-        || lower.contains("unbalanced")
-        || lower.contains("split")
-    {
-        "size"
-    } else {
-        "other"
-    };
-
-    let mut ids: Vec<String> = Vec::new();
-    let mut push = |tok: &str| {
-        let t = tok.trim_matches(|c: char| {
-            !c.is_alphanumeric() && c != '/' && c != '.' && c != '_' && c != '-'
-        });
-        if t.is_empty() {
-            return;
-        }
-        let base = t.rsplit('/').next().unwrap_or(t);
-        if base.len() >= 3 && !ids.iter().any(|x| x == base) {
-            ids.push(base.to_string());
-        }
-    };
-
-    for seg in lower.split('`').skip(1).step_by(2) {
-        push(seg);
-    }
-    for tok in lower.split_whitespace() {
-        let cleaned = tok.trim_matches(|c: char| "(),.;:\"'".contains(c));
-        let is_pathish = cleaned.contains('/')
-            || [
-                ".py", ".js", ".ts", ".tsx", ".html", ".css", ".json", ".rs", ".md", ".toml",
-            ]
-            .iter()
-            .any(|e| cleaned.ends_with(e));
-        if is_pathish {
-            push(cleaned);
-        }
-    }
-
-    if ids.is_empty() {
-        return lower.chars().take(120).collect();
-    }
-    ids.sort();
-    format!("{kind}|{}", ids.join(","))
-}
-
 /// THE SPLICE. Each owner's brief goes into its task's `description` VERBATIM.
 ///
 /// This is why the synthesis model never has to reproduce the researched detail, and therefore why a
@@ -23509,20 +23357,27 @@ impl GooseAgentDispatcher {
     /// cannot miss. Measured on the last run, three rounds took 07:08 to 07:40 and each read everything;
     /// the fan gives each lane a third to read properly, and the two idle nodes stop idling.
     ///
-    /// Patches union rather than compete: `replace` and `add` are de-duped by task id (first lane to claim
-    /// an id keeps it, so two lanes proposing the same fix cannot double-apply), `remove` is de-duped
-    /// outright. A lane that errors contributes nothing and the round proceeds — reviewing two thirds of a
-    /// request beats failing the round.
+    /// Patches union rather than compete: FIRST-LANE-WINS by task id, and since r6c every dropped
+    /// element is LOUD — `union_lane_patches` (commands/swarm/review_merge.rs) emits
+    /// `review_patch_dropped {lane, kind, target, reason}` and returns per-lane provenance that
+    /// rides `plan_patched.lanes`. A lane that errors contributes nothing and the round proceeds —
+    /// reviewing two thirds of a request beats failing the round.
     pub(crate) async fn review_plan_fanned(
         self: &Arc<Self>,
         worker_models: Vec<String>,
         user_prompt: &str,
         plan_json: &str,
-    ) -> Result<(goose_swarm::PlanPatch, Vec<String>)> {
+    ) -> Result<(goose_swarm::PlanPatch, Vec<String>, serde_json::Value)> {
         let lanes = one_lane_per_host(worker_models);
         if lanes.len() <= 1 {
             let m = lanes.first().cloned().unwrap_or_default();
-            return self.review_plan(&m, user_prompt, plan_json).await;
+            let (p, f) = self.review_plan(&m, user_prompt, plan_json).await?;
+            // The lone lane goes through the same union door, so provenance has one producer and
+            // no drop is possible.
+            return Ok(union_lane_patches(
+                vec![("review".to_string(), p, f)],
+                self.events.as_ref(),
+            ));
         }
         // NAMED SECTIONS, NEVER "part i of n". See cut_request_into_sections for why, and for the
         // 90-minute run that proved it. The lane's activity key carries the section names so the fleet
@@ -23559,36 +23414,17 @@ impl GooseAgentDispatcher {
                     )
                     .await
                     .ok()
+                    .map(|(p, f)| (key, p, f))
                 }
             },
         )
         .await;
-        let mut patch = goose_swarm::PlanPatch::default();
-        let mut findings: Vec<String> = Vec::new();
-        let mut seen_replace = std::collections::HashSet::new();
-        let mut seen_add = std::collections::HashSet::new();
-        let mut seen_remove = std::collections::HashSet::new();
         // Double flatten: a panicked lane (outer Err — already named by lane_panicked) and an
         // errored lane (inner None) both contribute nothing, and the round proceeds on the rest.
-        for (p, f) in out.into_iter().flatten().flatten() {
-            for e in p.replace {
-                if seen_replace.insert(e.id.to_lowercase()) {
-                    patch.replace.push(e);
-                }
-            }
-            for a in p.add {
-                if seen_add.insert(a.id.to_lowercase()) {
-                    patch.add.push(a);
-                }
-            }
-            for r in p.remove {
-                if seen_remove.insert(r.to_lowercase()) {
-                    patch.remove.push(r);
-                }
-            }
-            findings.extend(f);
-        }
-        Ok((patch, findings))
+        Ok(union_lane_patches(
+            out.into_iter().flatten().flatten().collect(),
+            self.events.as_ref(),
+        ))
     }
 
     async fn review_plan_part(
@@ -24130,9 +23966,26 @@ fn repair_module_package_collisions(plan: &mut serde_json::Value, actions: &mut 
                     files.push(serde_json::Value::String(init.clone()));
                 }
             }
+            // THE WORDS FOLLOW THE METADATA (r6c): the model reads the DESCRIPTION, not files[].
+            // Rewriting the path only in files[] shipped ledgerd-core a brief still opening
+            // "Own ... app/ledgerd.py (ledgerd entrypoint ...)" and the live skeleton lane
+            // tripped on the contradiction. Same rewrite, same task only, boundary-aware
+            // (see prose::rewrite_path_token). MILD: text repair, never a refusal.
+            let prose_rewrites = match subtasks[module_owner]
+                .get("description")
+                .and_then(|d| d.as_str())
+                .map(|d| rewrite_path_token(d, &module, &rewritten))
+            {
+                Some((desc, n)) if n > 0 => {
+                    subtasks[module_owner]["description"] = serde_json::Value::String(desc);
+                    n
+                }
+                _ => 0,
+            };
             actions.push(format!(
                 "module `{module}` shadowed by package `{prefix}`: rewritten to `{rewritten}` \
-                 (kept by `{module_owner_id}` — the task keeps its work at an unshadowed path)"
+                 (kept by `{module_owner_id}` — the task keeps its work at an unshadowed path; \
+                 prose_rewrites: {prose_rewrites})"
             ));
             continue;
         }
@@ -24535,23 +24388,26 @@ async fn review_once<F, Fut>(
 ) -> String
 where
     F: FnMut(String, String) -> Fut,
-    Fut: std::future::Future<Output = Result<(goose_swarm::PlanPatch, Vec<String>)>>,
+    Fut: std::future::Future<
+        Output = Result<(goose_swarm::PlanPatch, Vec<String>, serde_json::Value)>,
+    >,
 {
-    let (patch, findings) = match review(user_prompt.to_string(), plan_json.clone()).await {
-        Ok(v) => v,
-        Err(e) => {
-            // A-2: proceeding on the plan as-is is right (one round, no retry ladder), but the
-            // failure lands in the run log — stderr-only meant a run whose single REVIEW round
-            // died in transport was indistinguishable from one that reviewed and found nothing.
-            sink.write_value(serde_json::json!({
-                "event": "review_failed",
-                "round": 1,
-                "error": e.to_string().chars().take(400).collect::<String>(),
-            }));
-            eprintln!("  · review did not return ({e}); proceeding on the plan as-is");
-            return plan_json;
-        }
-    };
+    let (patch, findings, mut lane_prov) =
+        match review(user_prompt.to_string(), plan_json.clone()).await {
+            Ok(v) => v,
+            Err(e) => {
+                // A-2: proceeding on the plan as-is is right (one round, no retry ladder), but the
+                // failure lands in the run log — stderr-only meant a run whose single REVIEW round
+                // died in transport was indistinguishable from one that reviewed and found nothing.
+                sink.write_value(serde_json::json!({
+                    "event": "review_failed",
+                    "round": 1,
+                    "error": e.to_string().chars().take(400).collect::<String>(),
+                }));
+                eprintln!("  · review did not return ({e}); proceeding on the plan as-is");
+                return plan_json;
+            }
+        };
     // THE SAME DEFECT FROM TWO LANES IS ONE FINDING. Every lane reads the whole plan, so a collision is
     // reported by whichever lanes noticed it, each in its own words; `review_dedupe_key` is what tells
     // a rewording from a second defect.
@@ -24603,7 +24459,7 @@ where
                 .join("\n"),
         );
         match review(demand, plan_json.clone()).await {
-            Ok((p2, _)) => {
+            Ok((p2, _, prov2)) => {
                 sink.write_value(serde_json::json!({
                     "event": "review_patch_demanded",
                     "round": 1,
@@ -24616,6 +24472,7 @@ where
                     p2.touched()
                 );
                 patch = p2;
+                lane_prov = prov2;
             }
             Err(e) => eprintln!("  · review patch demand did not return ({e}); proceeding"),
         }
@@ -24644,6 +24501,10 @@ where
                 "replace": patch.replace.len(),
                 "add": patch.add.len(),
                 "remove": patch.remove.len(),
+                // WHICH LANE CONTRIBUTED WHICH IDS (r6c): the counts alone could not tell a
+                // conflict-resolved element from a silently-dropped one. Additive key — tick.py
+                // and useSwarmRun.ts read named keys only.
+                "lanes": lane_prov,
                 // THE STATE THE PATCH PRODUCED, not just its size. Without this the only evidence
                 // that a collision was actually resolved is the reviewer's own prose -- run 3's
                 // finding read "merged into viz-interaction" and nothing in the log could confirm
@@ -25397,7 +25258,9 @@ where
     S: FnOnce(Vec<SliceBrief>, Vec<String>) -> SFut,
     SFut: std::future::Future<Output = Result<String>>,
     R: FnMut(String, String) -> RFut,
-    RFut: std::future::Future<Output = Result<(goose_swarm::PlanPatch, Vec<String>)>>,
+    RFut: std::future::Future<
+        Output = Result<(goose_swarm::PlanPatch, Vec<String>, serde_json::Value)>,
+    >,
 {
     let briefs = briefs_from_slices(
         &opened,
@@ -42130,6 +41993,7 @@ mod audit_regressions {
                             "task `viz-engine` owns no files".to_string(),
                             "STILL: `viz-engine` owns no files".to_string(),
                         ],
+                        serde_json::json!({}),
                     ))
                 }
             },
@@ -42648,7 +42512,11 @@ mod audit_regressions {
                 .to_string())
             },
             |_prompt: String, _plan: String| async move {
-                Ok((goose_swarm::PlanPatch::default(), Vec::new()))
+                Ok((
+                    goose_swarm::PlanPatch::default(),
+                    Vec::new(),
+                    serde_json::json!({}),
+                ))
             },
             &sink_dyn,
         )
@@ -42722,7 +42590,11 @@ mod audit_regressions {
                 Err(anyhow!("the model returned prose"))
             },
             |_prompt: String, _plan: String| async move {
-                Ok((goose_swarm::PlanPatch::default(), Vec::new()))
+                Ok((
+                    goose_swarm::PlanPatch::default(),
+                    Vec::new(),
+                    serde_json::json!({}),
+                ))
             },
             &sink_dyn,
         )
@@ -42777,7 +42649,11 @@ mod audit_regressions {
                 .to_string())
             },
             |_prompt: String, _plan: String| async move {
-                Ok((goose_swarm::PlanPatch::default(), Vec::new()))
+                Ok((
+                    goose_swarm::PlanPatch::default(),
+                    Vec::new(),
+                    serde_json::json!({}),
+                ))
             },
             &sink_dyn,
         )
@@ -42833,6 +42709,7 @@ mod audit_regressions {
                     Ok::<_, anyhow::Error>((
                         goose_swarm::PlanPatch::default(),
                         vec!["`webhooks` are not owned by any task".to_string()],
+                        serde_json::json!({}),
                     ))
                 }
             },
