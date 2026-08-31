@@ -15954,12 +15954,23 @@ impl GooseAgentDispatcher {
                     .get(activity_key.unwrap_or(""))
                     .cloned()
                     .unwrap_or_default();
-                // Computed ONCE and used twice — in the judge's prompt below, and as a steer in its own
-                // right. See the `delivery_defect_steer` block after this prompt is built.
+                // Computed ONCE and used twice — in the judge's prompt below, and as a steer in its
+                // own right; see the `delivery_defect_steer` block after this prompt is built. The
+                // LANE view, not the raw verify: a dangling ref a SIBLING task owns must read as
+                // "do not write it; align when it lands", never as this lane's fix-first order —
+                // r6c seq 1954 pointed web-console at web-viz's web/viz.js exactly that way
+                // (`lane_defect_view` carries the receipt).
                 let owned_defects = if owned.is_empty() {
                     Vec::new()
                 } else {
-                    verify_owned_files(&self.working_dir, &owned)
+                    judge_context::lane_defect_view(
+                        &self.working_dir,
+                        activity_key.unwrap_or(""),
+                        &owned,
+                        &self.owned_files_by_task.lock().unwrap(),
+                        &imports::ledger_task_states(&self.working_dir),
+                        &self.dispatched_tasks.lock().unwrap(),
+                    )
                 };
                 // N-7: the ledger's fs facts at LOOK time — the same snapshot/delta rule as the
                 // attempt-end fs_delta (II-1, `fs_delta_between`), filtered against EVERY task's
@@ -22466,23 +22477,6 @@ fn slugify_slice_id(name: &str) -> String {
         }
     }
     out.trim_end_matches('-').chars().take(48).collect()
-}
-
-/// Per-task terminal state as the ledger minis recorded it ("done" / "retrying" / "failed").
-/// A task absent here has no terminal row yet — `attribute_import_gap` reads that as "running".
-/// Best-effort: no ledger, no states, and every gap simply attributes with state "running".
-fn ledger_task_states(root: &Path) -> HashMap<String, String> {
-    let mut out = HashMap::new();
-    if let Some(rollup) = read_ledger_rollup(root) {
-        if let Some(tasks) = rollup.get("tasks").and_then(|t| t.as_object()) {
-            for (id, row) in tasks {
-                if let Some(status) = row.get("status").and_then(|s| s.as_str()) {
-                    out.insert(id.clone(), status.to_string());
-                }
-            }
-        }
-    }
-    out
 }
 
 /// Every path any task DECLARED IT OWNS on this run, read back out of the tree's own event log.
@@ -31477,7 +31471,7 @@ impl GooseAgentDispatcher {
         if !gaps.is_empty() {
             let ownership = self.owned_files_by_task.lock().unwrap().clone();
             let dispatched = self.dispatched_tasks.lock().unwrap().clone();
-            let states = ledger_task_states(root);
+            let states = imports::ledger_task_states(root);
             for (rel, module) in gaps {
                 let (d, owner) = attribute_import_gap_with_owner(
                     &rel,

@@ -6,6 +6,7 @@
 //! verbatim from swarm.rs (N-7, ef23d728e lineage) — behavior unchanged; the WHY of every part
 //! stays in each function's own doc.
 
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
 use super::shape_excerpt;
@@ -280,21 +281,214 @@ pub(super) fn verify_owned_files(working_dir: &Path, owned: &[String]) -> Vec<St
         // An HTML file that points at a file nobody wrote renders blank, and nothing else notices until
         // someone opens it — which historically has been nobody until the score comes back.
         if rel.ends_with(".html") {
-            if let Ok(body) = std::fs::read_to_string(&path) {
-                for cap in body.split(['"', '\'']) {
-                    let c = cap.trim();
-                    if (c.ends_with(".js") || c.ends_with(".css"))
-                        && !c.starts_with("http")
-                        && !c.is_empty()
-                    {
-                        let target = path.parent().map(|p| p.join(c)).unwrap_or_default();
-                        if !target.exists() {
-                            out.push(format!("{rel} references `{c}`, which does not exist"));
-                        }
-                    }
-                }
+            for (_, raw) in html_dangling_refs(working_dir, rel) {
+                out.push(format!("{rel} references `{raw}`, which does not exist"));
             }
         }
     }
     out
+}
+
+/// Every dangling static reference in an HTML file, as (resolved tree path, raw ref) DATA — the
+/// ownership routing in `lane_defect_view` needs the target as a path to match against the plan's
+/// ownership map, never re-parsed out of a formatted line (the same rule that split
+/// `tree_import_gaps` from `verify_tree_imports`). `verify_owned_files` formats today's line from
+/// the raw ref, so the two views can never drift on WHICH refs are dangling.
+fn html_dangling_refs(working_dir: &Path, rel: &str) -> Vec<(String, String)> {
+    let path = working_dir.join(rel);
+    let Ok(body) = std::fs::read_to_string(&path) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for cap in body.split(['"', '\'']) {
+        let c = cap.trim();
+        if (c.ends_with(".js") || c.ends_with(".css")) && !c.starts_with("http") && !c.is_empty() {
+            let target = path.parent().map(|p| p.join(c)).unwrap_or_default();
+            if !target.exists() {
+                out.push((resolve_ref_rel(rel, c), c.to_string()));
+            }
+        }
+    }
+    out
+}
+
+/// `viz.js` referenced from `web/index.html` IS `web/viz.js` in the plan's ownership vocabulary.
+/// Lexical only (`.` dropped, `..` folded, a leading `/` resolves against the tree root the way a
+/// static site would); a ref that escapes the tree keeps its raw shape and simply matches no
+/// owner, which routes it to the honest "no task owns it" arm.
+fn resolve_ref_rel(html_rel: &str, referenced: &str) -> String {
+    let mut parts: Vec<&str> = Vec::new();
+    if !referenced.starts_with('/') {
+        // A root-level html has parent Some("") whose components are none, so an empty prefix
+        // here honestly MEANS "the file sits at the tree root" — never a swallowed failure.
+        if let Some(p) = Path::new(html_rel).parent() {
+            parts = p
+                .components()
+                .filter_map(|c| c.as_os_str().to_str())
+                .collect();
+        }
+    }
+    for comp in referenced.split('/') {
+        match comp {
+            "" | "." => {}
+            ".." => {
+                parts.pop();
+            }
+            c => parts.push(c),
+        }
+    }
+    parts.join("/")
+}
+
+/// THE LANE VIEW of `verify_owned_files`: what THIS task's judge and defect steer may act on.
+///
+/// MEASURED (r6c, run swarm-20260831-072930517 seq 1954): web-console's look-4 defect list opened
+/// with "web/index.html references `viz.js`, which does not exist" — but `web/viz.js` is
+/// web-viz's file (task_owns seq 1589), dispatched 12:01:05 and still in flight at the 13:15:14
+/// steer. The steer's closing order, "Fix the first one before anything else, at that exact
+/// path", therefore pointed the lane at a SIBLING's deliverable; an obedient lane writes it and
+/// the one-owner-per-file invariant breaks on the SUPERVISOR's own words (r5's promote-discard
+/// class, manufactured by the engine). The lane self-saved only because it chose to read viz.js
+/// when it lands and align.
+///
+/// So: a dangling ref whose target another task owns becomes an honest do-not-write line naming
+/// the owner and its measured state (`task_state_label`: ledger row, else dispatched=running,
+/// else pending — derived from the DAG's ownership map, never hardcoded). A dangling ref the lane
+/// itself owns keeps today's line — it is genuinely this lane's gap, and the fix-at-path order is
+/// correct for it. A ref NO task owns also keeps today's line: a real gap worth naming. MILD by
+/// construction — information reshaped, nothing suppressed, nothing refused.
+pub(super) fn lane_defect_view(
+    working_dir: &Path,
+    lane_task: &str,
+    owned: &[String],
+    ownership: &HashMap<String, Vec<String>>,
+    states: &HashMap<String, String>,
+    dispatched: &HashSet<String>,
+) -> Vec<String> {
+    let mut out = verify_owned_files(working_dir, owned);
+    for rel in owned.iter().filter(|r| r.ends_with(".html")) {
+        for (resolved, raw) in html_dangling_refs(working_dir, rel) {
+            let Some(owner) = ownership
+                .iter()
+                .find(|(t, files)| t.as_str() != lane_task && files.contains(&resolved))
+                .map(|(t, _)| t.clone())
+            else {
+                continue;
+            };
+            let today = format!("{rel} references `{raw}`, which does not exist");
+            out.retain(|l| *l != today);
+            let honest = format!(
+                "`{resolved}` is referenced by {rel} but owned by task {owner} (state: {}) — do \
+                 not write it; align with it when it lands",
+                super::imports::task_state_label(&owner, states, dispatched)
+            );
+            if !out.contains(&honest) {
+                out.push(honest);
+            }
+        }
+    }
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::PathBuf;
+
+    fn tmp(tag: &str) -> PathBuf {
+        let d = std::env::temp_dir().join(format!(
+            "goose-lane-view-{tag}-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        d
+    }
+
+    /// The r6c seq-1954 shape verbatim: web-console owns web/index.html + web/app.js (missing);
+    /// index.html references viz.js (web-viz's file, in flight) and app.js (its own). The
+    /// sibling-owned ref must become the do-not-write line naming the real owner, and the
+    /// fix-first order must land on a file the lane owns.
+    #[test]
+    fn a_sibling_owned_dangling_ref_reads_do_not_write_with_the_owner_named() {
+        let d = tmp("sibling");
+        std::fs::create_dir_all(d.join("web")).unwrap();
+        std::fs::write(
+            d.join("web/index.html"),
+            "<script src=\"viz.js\"></script><script src=\"app.js\"></script>",
+        )
+        .unwrap();
+        let owned = vec!["web/index.html".to_string(), "web/app.js".to_string()];
+        let mut ownership: HashMap<String, Vec<String>> = HashMap::new();
+        ownership.insert("web-console".into(), owned.clone());
+        ownership.insert("web-viz".into(), vec!["web/viz.js".into()]);
+        let states: HashMap<String, String> = HashMap::new();
+        let dispatched: HashSet<String> = ["web-console", "web-viz"]
+            .into_iter()
+            .map(String::from)
+            .collect();
+        let view = lane_defect_view(&d, "web-console", &owned, &ownership, &states, &dispatched);
+        let viz: Vec<&String> = view.iter().filter(|l| l.contains("viz.js")).collect();
+        assert_eq!(viz.len(), 1, "{view:?}");
+        assert!(viz[0].contains("owned by task web-viz"), "{view:?}");
+        assert!(viz[0].contains("(state: running)"), "{view:?}");
+        assert!(viz[0].contains("do not write it"), "{view:?}");
+        // The lane's OWN dangling ref keeps today's fix-at-path line...
+        assert!(
+            view.iter()
+                .any(|l| l == "web/index.html references `app.js`, which does not exist"),
+            "{view:?}"
+        );
+        // ...and the first defect the steer's "Fix the first one" order lands on is the lane's.
+        assert!(!view[0].contains("viz.js"), "{view:?}");
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    /// A dangling ref NO task owns keeps today's text — a genuine gap worth naming as-is.
+    #[test]
+    fn an_unowned_dangling_ref_keeps_todays_text() {
+        let d = tmp("unowned");
+        std::fs::create_dir_all(d.join("web")).unwrap();
+        std::fs::write(d.join("web/index.html"), "<script src=\"lib.js\"></script>").unwrap();
+        let owned = vec!["web/index.html".to_string()];
+        let mut ownership: HashMap<String, Vec<String>> = HashMap::new();
+        ownership.insert("web-console".into(), owned.clone());
+        let states: HashMap<String, String> = HashMap::new();
+        let dispatched: HashSet<String> = ["web-console"].into_iter().map(String::from).collect();
+        let view = lane_defect_view(&d, "web-console", &owned, &ownership, &states, &dispatched);
+        assert!(
+            view.iter()
+                .any(|l| l == "web/index.html references `lib.js`, which does not exist"),
+            "{view:?}"
+        );
+        assert!(!view.iter().any(|l| l.contains("do not write")), "{view:?}");
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    /// The sibling's state comes from the ledger when a terminal row exists — the honest line
+    /// must say what the DAG measured, never a hardcoded "in flight".
+    #[test]
+    fn the_owners_measured_state_rides_the_do_not_write_line() {
+        let d = tmp("state");
+        std::fs::create_dir_all(d.join("web")).unwrap();
+        std::fs::write(d.join("web/index.html"), "<link href=\"theme.css\">").unwrap();
+        let owned = vec!["web/index.html".to_string()];
+        let mut ownership: HashMap<String, Vec<String>> = HashMap::new();
+        ownership.insert("web-console".into(), owned.clone());
+        ownership.insert("web-theme".into(), vec!["web/theme.css".into()]);
+        let mut states: HashMap<String, String> = HashMap::new();
+        states.insert("web-theme".into(), "failed".into());
+        let dispatched: HashSet<String> = ["web-console", "web-theme"]
+            .into_iter()
+            .map(String::from)
+            .collect();
+        let view = lane_defect_view(&d, "web-console", &owned, &ownership, &states, &dispatched);
+        assert!(
+            view.iter()
+                .any(|l| l.contains("owned by task web-theme (state: failed)")),
+            "{view:?}"
+        );
+        let _ = std::fs::remove_dir_all(&d);
+    }
 }
