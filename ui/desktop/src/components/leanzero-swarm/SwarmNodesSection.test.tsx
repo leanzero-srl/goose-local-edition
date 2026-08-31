@@ -3,6 +3,7 @@ import { cleanup, render as rtlRender, screen, waitFor, within } from '@testing-
 import userEvent from '@testing-library/user-event';
 import { IntlTestWrapper } from '../../i18n/test-utils';
 import SwarmNodesSection from './SwarmNodesSection';
+import { ADD_NODE_PROVIDER_OPTIONS } from './AddNodeDialog';
 import type { SwarmConfig, SwarmDeviceRow } from '../settings/swarm/golden';
 
 // ---------------------------------------------------------------------------
@@ -26,13 +27,23 @@ const fleetState = {
   loading: false,
   endpoint: 'http://localhost:1234',
 };
+// The mock honors the `enabled` gate exactly like the real hook: disabled discovery reads offline.
 vi.mock('../swarm/useFleet', () => ({
-  useFleet: () => fleetState,
+  useFleet: (_pollMs?: number, _endpoint?: string, enabled = true) =>
+    enabled
+      ? fleetState
+      : { lanes: [], models: [], online: false, loading: false, endpoint: '' },
   deviceFromModelId: (id: string) => {
     const bare = id.split('/').pop() || id;
     const dash = bare.indexOf('-');
     return dash > 0 ? bare.slice(0, dash) : bare;
   },
+}));
+
+// Pass E follow-up: LM Studio-DISCOVERED rows ride the showLmStudioFleet setting (default OFF).
+let lmStudioVisible = false;
+vi.mock('../../hooks/useLmStudioFleetVisible', () => ({
+  useLmStudioFleetVisible: () => lmStudioVisible,
 }));
 
 const mockMlxModelsList = vi.fn();
@@ -88,6 +99,7 @@ const BASE_CFG: SwarmConfig = {
 beforeEach(() => {
   vi.clearAllMocks();
   localStorage.clear();
+  lmStudioVisible = false;
   fleetState.models = ['gabee-qwen3.8-27b'];
   mockRead.mockResolvedValue(BASE_CFG);
   mockUpsert.mockResolvedValue(undefined);
@@ -126,7 +138,7 @@ const lastUpsertPayload = (): SwarmConfig => {
 afterEach(() => cleanup());
 
 describe('the simplified Nodes tab', () => {
-  it('lists configured rows (mlx violet chip, cloud chip) AND the discovered LM Studio node', async () => {
+  it('lists ONLY configured rows by default — LM Studio-discovered rows stay hidden (setting off)', async () => {
     render();
     await waitFor(() => {
       expect(screen.getByTestId('swarm-node-workhorse-mlx')).toBeInTheDocument();
@@ -135,6 +147,16 @@ describe('the simplified Nodes tab', () => {
       within(screen.getByTestId('swarm-node-workhorse-mlx')).getByText('LEANZERO MLX')
     ).toBeInTheDocument();
     expect(within(screen.getByTestId('swarm-node-zai-glm')).getByText('Z.AI')).toBeInTheDocument();
+    expect(screen.queryByTestId('swarm-node-gabee-qwen3.8-27b')).toBeNull();
+    expect(screen.queryByText('LM STUDIO')).toBeNull();
+  });
+
+  it('discovered LM Studio rows RETURN when showLmStudioFleet is on (the visible twin)', async () => {
+    lmStudioVisible = true;
+    render();
+    await waitFor(() => {
+      expect(screen.getByTestId('swarm-node-gabee-qwen3.8-27b')).toBeInTheDocument();
+    });
     const discovered = screen.getByTestId('swarm-node-gabee-qwen3.8-27b');
     expect(within(discovered).getByText('LM STUDIO')).toBeInTheDocument();
     expect(within(discovered).getByText('auto')).toBeInTheDocument();
@@ -158,8 +180,8 @@ describe('the simplified Nodes tab', () => {
     ]) {
       expect(screen.queryByText(leverText)).not.toBeInTheDocument();
     }
-    // weight steppers exist for every row
-    expect(screen.getAllByRole('button', { name: /More work/ }).length).toBeGreaterThanOrEqual(3);
+    // weight steppers exist for every rendered (configured) row
+    expect(screen.getAllByRole('button', { name: /More work/ }).length).toBeGreaterThanOrEqual(2);
   });
 
   it('a REMOTE mlx row (host set) wears the solid amber awaiting-routing chip', async () => {
@@ -209,6 +231,7 @@ describe('the simplified Nodes tab', () => {
   });
 
   it('a weight edit on a DISCOVERED row materializes a device row for it', async () => {
+    lmStudioVisible = true;
     render();
     await waitFor(() => {
       expect(screen.getByTestId('swarm-node-gabee-qwen3.8-27b')).toBeInTheDocument();
@@ -282,8 +305,36 @@ describe('the simplified Nodes tab', () => {
   });
 });
 
+describe('Add node — provider list (pass E follow-up)', () => {
+  it('the shipped option list is [LeanZero MLX, ...cloud] with no lmstudio value', () => {
+    expect(ADD_NODE_PROVIDER_OPTIONS.map((o) => o.value)).toEqual([
+      'mlx',
+      'bedrock',
+      'zai',
+      'google',
+      'deepseek',
+    ]);
+  });
+
+  it('offers LeanZero MLX and the cloud providers — never LM Studio', async () => {
+    render();
+    await userEvent.click(await screen.findByTestId('swarm-add-node'));
+    await userEvent.click(screen.getAllByRole('combobox')[0]);
+    const opts = await screen.findAllByRole('option');
+    const names = opts.map((o) => o.textContent ?? '');
+    expect(names.some((n) => n.includes('LeanZero MLX'))).toBe(true);
+    expect(names.some((n) => n.includes('Amazon Bedrock'))).toBe(true);
+    expect(names.some((n) => n.includes('Z.ai'))).toBe(true);
+    expect(names.some((n) => n.includes('Google Gemini'))).toBe(true);
+    expect(names.some((n) => n.includes('DeepSeek'))).toBe(true);
+    expect(names.some((n) => /LM Studio/i.test(n))).toBe(false);
+  });
+});
+
 describe('Add node — MLX machine cap', () => {
   it('offers exactly the discovered machines minus those already added, tagged local/remote', async () => {
+    // gabee is HTTP-discovered via fleetModels, so this pin runs with discovery visible
+    lmStudioVisible = true;
     render();
     await userEvent.click(await screen.findByTestId('swarm-add-node'));
     await userEvent.click(screen.getAllByRole('combobox')[0]);

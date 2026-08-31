@@ -206,6 +206,12 @@ interface AppSettingsSectionProps {
   scrollToSection?: string;
 }
 
+// Pass E follow-up (owner): the legacy "Goose Swarm" card — the Standard/Swarm edition switcher and
+// the LM Studio fan-in preview — leaves Settings > App. This fork IS Goose Swarm, so the switcher is
+// noise; edition derivation and any stored 'edition' setting keep working in code. Hidden, not
+// deleted: flip to bring the card back.
+const SHOW_EDITION_CARD = false;
+
 export default function AppSettingsSection({ scrollToSection }: AppSettingsSectionProps) {
   const [menuBarIconEnabled, setMenuBarIconEnabled] = useState(true);
   const [dockIconEnabled, setDockIconEnabled] = useState(true);
@@ -366,7 +372,7 @@ export default function AppSettingsSection({ scrollToSection }: AppSettingsSecti
   };
 
   const intl = useIntl();
-  const fleet = useFleet(5000, undefined, showLmStudioFleet);
+  const fleet = useFleet(5000, undefined, SHOW_EDITION_CARD && showLmStudioFleet);
   const selectedLanguage =
     LANGUAGE_OPTIONS.find((option) => option.value === language) ?? LANGUAGE_OPTIONS[0];
 
@@ -524,6 +530,7 @@ export default function AppSettingsSection({ scrollToSection }: AppSettingsSecti
         </CardContent>
       </Card>
 
+      {SHOW_EDITION_CARD && (
       <Card className="rounded-lg">
         <CardHeader className="pb-0">
           <CardTitle className="mb-1">{intl.formatMessage(i18n.editionTitle)}</CardTitle>
@@ -562,6 +569,7 @@ export default function AppSettingsSection({ scrollToSection }: AppSettingsSecti
           </div>
         </CardContent>
       </Card>
+      )}
 
       <Card className="rounded-lg">
         <CardHeader className="pb-0">

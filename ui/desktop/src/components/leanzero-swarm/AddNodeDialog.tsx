@@ -123,11 +123,25 @@ export interface ReassignTarget {
   weight: number;
 }
 
-interface ProviderOption {
+export interface ProviderOption {
   value: string; // 'mlx' | 'lmstudio' | cloud cli name
   label: string;
   chip: string;
 }
+
+// Pass E follow-up (owner): LM Studio leaves the add-node provider list — discovery was automatic
+// anyway, so the entry only ever explained itself. Hidden, not deleted: the pane and this flag stay.
+const SHOW_LMSTUDIO_PROVIDER = false;
+
+/** The provider choices the dialog offers, in order — exported so the pin test asserts the SHIPPED
+ *  list rather than a copy of it: [LeanZero MLX, ...cloud providers], no LM Studio. */
+export const ADD_NODE_PROVIDER_OPTIONS: ProviderOption[] = [
+  { value: 'mlx', label: MLX_CHIP.seg, chip: MLX_CHIP.chip },
+  ...(SHOW_LMSTUDIO_PROVIDER
+    ? [{ value: 'lmstudio', label: LOCAL_CHIP.seg, chip: LOCAL_CHIP.chip }]
+    : []),
+  ...CLOUD_PROVIDERS.map((c) => ({ value: c.cli, label: c.label, chip: c.chip })),
+];
 
 interface MachineOption {
   value: string;
@@ -154,7 +168,8 @@ interface MlxModelOption {
  *    is created for THIS machine under a hand-typed label (the pre-discovery behavior).
  *  - Cloud providers: the existing CLI-driven pane (key if missing → live roster → add) — the
  *    desktop NEVER upserts a cloud device row itself. Cloud nodes are unlimited.
- *  - LM Studio: discovery is automatic; the pane says so instead of pretending to add.
+ *  - LM Studio: NOT OFFERED any more (SHOW_LMSTUDIO_PROVIDER) — discovery was automatic, so the
+ *    entry only ever explained itself; its pane stays in code behind the flag.
  *
  * Reassignment reuses this dialog: the old row is removed and the new one added when the new
  * provider's add commits — never before, so a cancelled reassign changes nothing.
@@ -244,14 +259,7 @@ export default function AddNodeDialog({
     }
   }, [open, provider, mlxModels, machines]);
 
-  const providerOptions: ProviderOption[] = useMemo(
-    () => [
-      { value: 'mlx', label: MLX_CHIP.seg, chip: MLX_CHIP.chip },
-      { value: 'lmstudio', label: LOCAL_CHIP.seg, chip: LOCAL_CHIP.chip },
-      ...CLOUD_PROVIDERS.map((c) => ({ value: c.cli, label: c.label, chip: c.chip })),
-    ],
-    []
-  );
+  const providerOptions = ADD_NODE_PROVIDER_OPTIONS;
   const selectedProvider = providerOptions.find((o) => o.value === provider) ?? null;
   const activeCloud: CloudProviderDef | undefined = CLOUD_PROVIDERS.find(
     (c) => c.cli === provider
