@@ -697,3 +697,9 @@ research_request_block's armed-no-claimed-sections arm wording.
   the "mihai 0..1" hedge with the 15m53s ordering, walked both new paths look-by-look with the run's
   confidences (0.85 vs the 0.8 floor), and named the first UNCOVERED sequence for every residual.
   Charter gap: none.
+- 2026-08-31 20:30 tick-surgeon #24: EXEMPLARY at 64k/12. Caught the run's first delivered steer AND
+  its defeat in the same read, with the smoking-gun quote (the lane citing the one-write system rule
+  to override the minimal-version ramp) — the single most actionable finding of the campaign's vigil;
+  the engine fix was dispatchable from its words alone. Also kept ledgerd-core honest (self-caught
+  pages=0 defect = advancing, not stalling) and correctly re-attributed this half-hour's workhorse
+  pile to dep-shape rather than the routing defect. Charter gap: none.
