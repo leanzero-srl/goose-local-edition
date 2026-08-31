@@ -510,3 +510,9 @@ research_request_block's armed-no-claimed-sections arm wording.
   rows and gated them under the same toggle unprompted-but-directed; left the MLX pane's one-shot
   machine discovery ungated with the reason stated (functional plumbing, fires only on open).
   Charter gap: none.
+- 2026-08-31 23:50 panel-surgeon (derived add-node providers, a9ed26ced): CLEAN++. Killed the
+  constant for a per-open derivation joined on the engine's registry ids (verified against
+  swarm.rs CLOUD_DEFS); one authoritative mirror carrying the join keys; unknown-status renders
+  selectable, never fake "no key" (loud-absence held); no-key rows are a STATE with a deep-link
+  pane, not dead rows; live proof used this machine's real credential truth (bedrock configured,
+  three no-key). Cosmetic Done/Cancel footer nit reported not absorbed. Charter gap: none.
