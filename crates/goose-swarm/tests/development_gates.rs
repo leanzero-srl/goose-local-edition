@@ -218,9 +218,13 @@ fn the_banned_integrate_template_only_shrinks() {
 /// commands/swarm/supervision.rs's `supervised_reply_text` (the one reply door, which also
 /// strips/refuses the agent loop's turn-cap filler — r6a seq 58's fabricated DRIFTING), paying
 /// for the omni-judge seam's filler classification wiring in the same commit.
+/// Tightened to 43,208: the resume cluster (ResumeState, resume_state_from_dir/_from_log, four
+/// tests) moved to commands/swarm/plan_store.rs, paying for the plan-sidecar wiring
+/// (`.swarm/plan.json` at the plan_synthesized seam, `.swarm/plan-loaded.json` at plan_loaded —
+/// r6c's 133k-char briefs were persisted nowhere the vigil could read during REVIEW).
 #[test]
 fn swarm_rs_line_count_only_decreases() {
-    const SWARM_RS_LINE_BASELINE: usize = 43_423;
+    const SWARM_RS_LINE_BASELINE: usize = 43_208;
     let text = read("crates/goose-cli/src/commands/swarm.rs");
     let n = text.lines().count();
     assert!(
