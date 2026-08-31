@@ -26,9 +26,13 @@ const mockSettingsUpdate = vi.fn();
 const mockModelsList = vi.fn();
 const mockModelDelete = vi.fn();
 const mockBrowse = vi.fn();
+const mockBrowseFilters = vi.fn();
+const mockModelCard = vi.fn();
 const mockDownload = vi.fn();
 const mockDownloadProgress = vi.fn();
 const mockDownloadCancel = vi.fn();
+const mockDownloadPause = vi.fn();
+const mockDownloadResume = vi.fn();
 
 vi.mock('../../acp/mlx-engine', () => ({
   mlxEngineStatus: (...args: unknown[]) => mockStatus(...args),
@@ -39,9 +43,13 @@ vi.mock('../../acp/mlx-engine', () => ({
   mlxEngineModelsList: (...args: unknown[]) => mockModelsList(...args),
   mlxEngineModelDelete: (...args: unknown[]) => mockModelDelete(...args),
   mlxEngineBrowse: (...args: unknown[]) => mockBrowse(...args),
+  mlxEngineBrowseFilters: (...args: unknown[]) => mockBrowseFilters(...args),
+  mlxEngineModelCard: (...args: unknown[]) => mockModelCard(...args),
   mlxEngineDownload: (...args: unknown[]) => mockDownload(...args),
   mlxEngineDownloadProgress: (...args: unknown[]) => mockDownloadProgress(...args),
   mlxEngineDownloadCancel: (...args: unknown[]) => mockDownloadCancel(...args),
+  mlxEngineDownloadPause: (...args: unknown[]) => mockDownloadPause(...args),
+  mlxEngineDownloadResume: (...args: unknown[]) => mockDownloadResume(...args),
 }));
 
 const render = (ui: React.ReactElement) => rtlRender(ui, { wrapper: IntlTestWrapper });
@@ -75,9 +83,22 @@ const SETTINGS: MlxEngineSettings = {
 };
 
 const MODELS: MlxLocalModel[] = [
-  { id: QWEN, sizeBytes: 17 * GB, complete: true },
-  { id: HALF, sizeBytes: 3 * GB, complete: false },
+  { id: QWEN, sizeBytes: 17 * GB, complete: true, missingFiles: 0 },
+  { id: HALF, sizeBytes: 3 * GB, complete: false, missingFiles: 2 },
 ];
+
+/** The modelsList wire shape: models plus the models volume's disk numbers. */
+function listOf(models: MlxLocalModel[]) {
+  return { models, diskAvailableBytes: 250 * GB, diskTotalBytes: 500 * GB };
+}
+
+const FILTERS = {
+  quants: ['4-bit', '8-bit', '6-bit', 'bf16', '3-bit'],
+  archs: ['qwen3_5', 'llama', 'qwen3', 'qwen3_moe', 'gemma3'],
+  authors: ['mlx-community', 'lmstudio-community', 'Qwen'],
+  sampledRepos: 708,
+  computedAt: 1756640000,
+};
 
 function statusOf(overrides: Partial<MlxEngineStatus>): MlxEngineStatus {
   return {
@@ -94,12 +115,24 @@ beforeEach(() => {
   mockStatus.mockResolvedValue(statusOf({}));
   mockSettingsRead.mockResolvedValue(SETTINGS);
   mockSettingsUpdate.mockImplementation(async (s: MlxEngineSettings) => s);
-  mockModelsList.mockResolvedValue(MODELS);
+  mockModelsList.mockResolvedValue(listOf(MODELS));
   mockMount.mockResolvedValue(undefined);
   mockUnmount.mockResolvedValue(undefined);
   mockBrowse.mockResolvedValue({ hits: [] });
+  mockBrowseFilters.mockResolvedValue(FILTERS);
+  mockModelCard.mockResolvedValue({
+    readmeTruncated: false,
+    files: [],
+    totalBytes: 0,
+    tags: [],
+    downloads: 0,
+    likes: 0,
+  });
   mockDownload.mockResolvedValue(undefined);
   mockDownloadProgress.mockResolvedValue(null);
+  mockDownloadCancel.mockResolvedValue(undefined);
+  mockDownloadPause.mockResolvedValue(undefined);
+  mockDownloadResume.mockResolvedValue(undefined);
 });
 
 afterEach(() => {
@@ -366,8 +399,8 @@ describe('MlxEngineView engine tab', () => {
 
 const OTHER_MODEL = 'mlx-community/Other-Model-4bit';
 const COMPLETE_MODELS: MlxLocalModel[] = [
-  { id: QWEN, sizeBytes: 17 * GB, complete: true },
-  { id: OTHER_MODEL, sizeBytes: 4 * GB, complete: true },
+  { id: QWEN, sizeBytes: 17 * GB, complete: true, missingFiles: 0 },
+  { id: OTHER_MODEL, sizeBytes: 4 * GB, complete: true, missingFiles: 0 },
 ];
 
 /** Flip visibility off/on so the 2s status poll refreshes immediately. */
@@ -406,7 +439,7 @@ describe('MlxEngineView mount card truth', () => {
 
   it('running with a DIFFERENT selection offers an enabled "Switch model" that mounts the selection', async () => {
     mockStatus.mockResolvedValue(statusOf({ state: 'running', modelId: QWEN }));
-    mockModelsList.mockResolvedValue(COMPLETE_MODELS);
+    mockModelsList.mockResolvedValue(listOf(COMPLETE_MODELS));
     const { unmount } = render(<MlxEngineView />);
     await waitFor(() => {
       expect(screen.getByRole('button', { name: /Mounted/ })).toBeInTheDocument();
@@ -444,7 +477,7 @@ describe('MlxEngineView mount card truth', () => {
 
   it('an explicit user selection is never overridden when the engine reports a mounted model', async () => {
     mockStatus.mockResolvedValue(statusOf({ state: 'stopped' }));
-    mockModelsList.mockResolvedValue(COMPLETE_MODELS);
+    mockModelsList.mockResolvedValue(listOf(COMPLETE_MODELS));
     const { unmount } = render(<MlxEngineView />);
     await waitFor(() => {
       expect(screen.getAllByRole('combobox').length).toBeGreaterThan(0);
@@ -617,22 +650,23 @@ describe('MlxEngineView sampling tab', () => {
   });
 
   it('the per-model Sampling affordance on the Models tab preselects that row model', async () => {
+    mockModelsList.mockResolvedValue(listOf(COMPLETE_MODELS));
     const { unmount } = render(<MlxEngineView />);
     await waitFor(() => {
       expect(screen.getByText('Models')).toBeInTheDocument();
     });
     await userEvent.click(screen.getByRole('button', { name: /Models/ }));
     await waitFor(() => {
-      expect(screen.getByLabelText(`Sampling for ${HALF}`)).toBeInTheDocument();
+      expect(screen.getByLabelText(`Sampling for ${OTHER_MODEL}`)).toBeInTheDocument();
     });
-    await userEvent.click(screen.getByLabelText(`Sampling for ${HALF}`));
+    await userEvent.click(screen.getByLabelText(`Sampling for ${OTHER_MODEL}`));
     await waitFor(() => {
       expect(
         screen.getByText(/per-request values sent by goose override them/)
       ).toBeInTheDocument();
     });
     // The picker holds the row's model, not the default.
-    expect(screen.getByText(HALF)).toBeInTheDocument();
+    expect(screen.getByText(OTHER_MODEL)).toBeInTheDocument();
     expect(screen.getByLabelText('Presence penalty')).toBeInTheDocument();
     unmount();
   });
@@ -652,6 +686,7 @@ const HIT_A: MlxBrowseHit = {
   tags: ['mlx', '4-bit'],
   quant: '4-bit',
   arch: 'qwen3',
+  sizeBytesEstimate: 3.2 * GB,
 };
 const HIT_B: MlxBrowseHit = {
   id: 'lmstudio-community/Second-Model-8bit',
@@ -682,18 +717,52 @@ async function openModelsTab() {
 }
 
 describe('MlxEngineView models tab', () => {
-  it('lists local models with sizes, flags partial downloads, counts what it shows', async () => {
+  it('lists local models with sizes, flags incomplete downloads, counts what it shows', async () => {
     const { unmount } = render(<MlxEngineView />);
     await openModelsTab();
     await waitFor(() => {
       expect(screen.getByText('/Users/x/mlx-models')).toBeInTheDocument();
     });
     expect(screen.getByText(HALF)).toBeInTheDocument();
-    expect(screen.getByText('partial download')).toBeInTheDocument();
+    expect(screen.getByText('incomplete — missing 2 file(s)')).toBeInTheDocument();
     expect(screen.getByText('17 GB')).toBeInTheDocument();
     // The tab chip and the section chip both say 2, and the body shows exactly 2 rows.
     expect(screen.getAllByText('2').length).toBeGreaterThanOrEqual(2);
     expect(screen.getAllByLabelText(/^Delete /).length).toBe(2);
+    unmount();
+  });
+
+  it('an incomplete model offers Resume (works for untracked residue) and its progress row', async () => {
+    const { unmount } = render(<MlxEngineView />);
+    await openModelsTab();
+    await waitFor(() => {
+      expect(screen.getByText('incomplete — missing 2 file(s)')).toBeInTheDocument();
+    });
+    // Incomplete rows trade the Sampling affordance for Resume; Delete stays.
+    expect(screen.queryByLabelText(`Sampling for ${HALF}`)).not.toBeInTheDocument();
+    mockDownloadProgress.mockResolvedValue({
+      state: 'downloading',
+      totalBytes: 6 * GB,
+      downloadedBytes: 3 * GB,
+      currentFile: 'model-00002-of-00002.safetensors',
+    });
+    await userEvent.click(screen.getByLabelText(`Resume ${HALF}`));
+    await waitFor(() => {
+      expect(mockDownloadResume).toHaveBeenCalledWith(HALF);
+      expect(screen.getByTestId(`mlx-download-${HALF}`)).toBeInTheDocument();
+    });
+    expect(screen.getByText('3.00 GB / 6.00 GB')).toBeInTheDocument();
+    unmount();
+  });
+
+  it('the disk bar shows the models volume free space from the modelsList response', async () => {
+    const { unmount } = render(<MlxEngineView />);
+    await openModelsTab();
+    await waitFor(() => {
+      expect(screen.getByTestId('mlx-disk-bar')).toBeInTheDocument();
+    });
+    expect(screen.getByText('250 GB free')).toBeInTheDocument();
+    expect(screen.getByText('of 500 GB')).toBeInTheDocument();
     unmount();
   });
 
@@ -711,6 +780,8 @@ describe('MlxEngineView models tab', () => {
     expect(screen.getByText('↓ 12.8K')).toBeInTheDocument();
     expect(screen.getByText('4-bit')).toBeInTheDocument();
     expect(screen.getByText('qwen3')).toBeInTheDocument();
+    // The size ESTIMATE renders with its ~ marker; a hit without one shows no size at all.
+    expect(screen.getByText('~3.2 GB')).toBeInTheDocument();
 
     await userEvent.click(screen.getByLabelText(`Download ${HIT_A.id}`));
     await waitFor(() => {
@@ -743,7 +814,7 @@ describe('MlxEngineView models tab', () => {
     expect(loadMoreCall).toBeTruthy();
 
     // Changing the quant filter refetches page 1 (no cursor) and REPLACES the list.
-    await userEvent.click(screen.getByRole('combobox', { name: 'Quant filter' }));
+    await userEvent.click(screen.getByLabelText('Quant filter'));
     await userEvent.click(await screen.findByRole('option', { name: '4-bit' }));
     await waitFor(() => {
       expect(screen.getByText(HIT_C.id)).toBeInTheDocument();
@@ -817,6 +888,341 @@ describe('MlxEngineView models tab', () => {
       expect(mockModelDelete).toHaveBeenCalledWith(HALF);
     });
     expect(confirmSpy).not.toHaveBeenCalled();
+    unmount();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Type-ahead filter comboboxes fed by the backend's LIVE vocabularies: typing
+// filters client-side with frequency order preserved, selection applies the
+// server-side browse filter, free text passes through as-is, and a stale/failed
+// vocabulary says so instead of pretending.
+// ---------------------------------------------------------------------------
+
+describe('MlxEngineView browse filter comboboxes', () => {
+  it('typing in the Arch combobox filters the vocabulary, frequency order preserved, and selecting applies server-side', async () => {
+    mockBrowse.mockResolvedValue({ hits: [HIT_A] });
+    const { unmount } = render(<MlxEngineView />);
+    await openModelsTab();
+    await waitFor(() => {
+      expect(screen.getByText(HIT_A.id)).toBeInTheDocument();
+    });
+    expect(mockBrowseFilters).toHaveBeenCalledTimes(1);
+
+    await userEvent.click(screen.getByLabelText('Arch filter'));
+    const input = await screen.findByLabelText('Search Arch');
+    // Escape closes without applying anything…
+    await userEvent.keyboard('{Escape}');
+    expect(screen.queryByLabelText('Search Arch')).not.toBeInTheDocument();
+
+    // …reopen and type: the vocabulary narrows to the qwen3 family, backend order kept.
+    await userEvent.click(screen.getByLabelText('Arch filter'));
+    await userEvent.type(await screen.findByLabelText('Search Arch'), 'qwen3');
+    const options = screen.getAllByRole('option');
+    expect(options.map((o) => o.textContent)).toEqual(['qwen3_5', 'qwen3', 'qwen3_moe']);
+
+    await userEvent.click(screen.getByRole('option', { name: 'qwen3' }));
+    await waitFor(() => {
+      expect(mockBrowse.mock.calls.some((c) => c[0].arch === 'qwen3')).toBe(true);
+    });
+    // The applied filter renders as a solid chip carrying its value.
+    expect(screen.getByLabelText('Arch filter')).toHaveTextContent('Arch: qwen3');
+    void input;
+    unmount();
+  });
+
+  it('free text applies as-is, a malformed value surfaces the backend error, and the chip ✕ clears', async () => {
+    mockBrowse.mockImplementation(async (params: { quant?: string }) => {
+      if (params.quant === 'q4_k_m')
+        throw new Error("quant 'q4_k_m' is not a HuggingFace MLX quant tag");
+      return { hits: [HIT_A] };
+    });
+    const { unmount } = render(<MlxEngineView />);
+    await openModelsTab();
+    await waitFor(() => {
+      expect(screen.getByText(HIT_A.id)).toBeInTheDocument();
+    });
+
+    await userEvent.click(screen.getByLabelText('Quant filter'));
+    await userEvent.type(await screen.findByLabelText('Search Quant'), 'q4_k_m');
+    // No vocabulary match — the free-text row is offered; Enter applies it as-is.
+    expect(screen.getByRole('option', { name: /q4_k_m/ })).toBeInTheDocument();
+    await userEvent.keyboard('{Enter}');
+    await waitFor(() => {
+      expect(
+        screen.getByText("quant 'q4_k_m' is not a HuggingFace MLX quant tag")
+      ).toBeInTheDocument();
+    });
+    expect(screen.getByLabelText('Quant filter')).toHaveTextContent('Quant: q4_k_m');
+
+    // ✕ clears the filter and the browse recovers.
+    await userEvent.click(screen.getByLabelText('Clear Quant filter'));
+    await waitFor(() => {
+      expect(screen.getByText(HIT_A.id)).toBeInTheDocument();
+    });
+    expect(
+      screen.queryByText("quant 'q4_k_m' is not a HuggingFace MLX quant tag")
+    ).not.toBeInTheDocument();
+    unmount();
+  });
+
+  it('a stale vocabulary (refreshError) and a failed vocabulary load both say so', async () => {
+    mockBrowseFilters.mockResolvedValue({ ...FILTERS, refreshError: 'HTTP 500 from HF' });
+    const first = render(<MlxEngineView />);
+    await openModelsTab();
+    await waitFor(() => {
+      expect(screen.getByText('vocabulary may be stale')).toBeInTheDocument();
+    });
+    first.unmount();
+    cleanup();
+
+    mockBrowseFilters.mockRejectedValue(new Error('crawl refused'));
+    const second = render(<MlxEngineView />);
+    await openModelsTab();
+    await waitFor(() => {
+      expect(
+        screen.getByText('filter vocabulary unavailable — free text still works')
+      ).toBeInTheDocument();
+    });
+    second.unmount();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The fullscreen model card modal: real repo facts, EXACT size from the file
+// tree, README through the chat markdown renderer, truncation twin, Esc/✕.
+// ---------------------------------------------------------------------------
+
+const CARD = {
+  readmeMarkdown: '# New Model readme heading\n\nBody text of the model card.',
+  readmeTruncated: true,
+  files: [
+    { path: 'config.json', sizeBytes: 1200 },
+    { path: 'model-00001-of-00002.safetensors', sizeBytes: 5 * GB },
+  ],
+  totalBytes: 5 * GB + 1200,
+  tags: ['mlx', '4-bit'],
+  downloads: 12800,
+  likes: 42,
+  license: 'apache-2.0',
+  createdAt: '2026-08-20T10:00:00Z',
+  lastModified: '2026-08-25T10:00:00Z',
+};
+
+describe('MlxEngineView model card modal', () => {
+  it('clicking a browse row opens the fullscreen card with facts, files, markdown, and the truncation notice', async () => {
+    mockBrowse.mockResolvedValue({ hits: [HIT_A] });
+    mockModelCard.mockResolvedValue(CARD);
+    const { unmount } = render(<MlxEngineView />);
+    await openModelsTab();
+    await waitFor(() => {
+      expect(screen.getByText(HIT_A.id)).toBeInTheDocument();
+    });
+    await userEvent.click(screen.getByLabelText(`Open model card for ${HIT_A.id}`));
+    await waitFor(() => {
+      expect(screen.getByTestId('mlx-model-card-modal')).toBeInTheDocument();
+    });
+    expect(mockModelCard).toHaveBeenCalledWith(HIT_A.id);
+    await waitFor(() => {
+      expect(screen.getByText('apache-2.0')).toBeInTheDocument();
+    });
+    // File listing in mono with sizes, plus the EXACT total (not the row's ~estimate).
+    expect(screen.getByText('model-00001-of-00002.safetensors')).toBeInTheDocument();
+    expect(screen.getByText('5.00 GB total')).toBeInTheDocument();
+    // README rendered through the app's markdown renderer, not dumped as text.
+    expect(
+      screen.getByRole('heading', { name: 'New Model readme heading' })
+    ).toBeInTheDocument();
+    // Truncation twin with the outbound link.
+    expect(screen.getByText(/read the full page on huggingface\.co/)).toBeInTheDocument();
+    // ✕ closes.
+    await userEvent.click(screen.getByLabelText('Close model card'));
+    expect(screen.queryByTestId('mlx-model-card-modal')).not.toBeInTheDocument();
+    unmount();
+  });
+
+  it('row action buttons do NOT open the card; Esc closes it; an absent README is honest', async () => {
+    mockBrowse.mockResolvedValue({ hits: [HIT_A] });
+    const { unmount } = render(<MlxEngineView />);
+    await openModelsTab();
+    await waitFor(() => {
+      expect(screen.getByText(HIT_A.id)).toBeInTheDocument();
+    });
+    // Download is a row ACTION — it must not open the modal.
+    await userEvent.click(screen.getByLabelText(`Download ${HIT_A.id}`));
+    await waitFor(() => {
+      expect(screen.getByTestId(`mlx-download-${HIT_A.id}`)).toBeInTheDocument();
+    });
+    expect(screen.queryByTestId('mlx-model-card-modal')).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByLabelText(`Open model card for ${HIT_A.id}`));
+    await waitFor(() => {
+      expect(screen.getByTestId('mlx-model-card-modal')).toBeInTheDocument();
+    });
+    // Default mock card has no readmeMarkdown — absence renders as absence.
+    await waitFor(() => {
+      expect(screen.getByText('This repo has no README.')).toBeInTheDocument();
+    });
+    await userEvent.keyboard('{Escape}');
+    await waitFor(() => {
+      expect(screen.queryByTestId('mlx-model-card-modal')).not.toBeInTheDocument();
+    });
+    unmount();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Download lifecycle: pause → paused chip + Resume; resume continues (and its
+// restarted-from-zero twin renders); cancel DELETES on disk so the row
+// disappears and the local list refreshes; tracking lives in the view shell so
+// tab switches keep the rows live and the poll running.
+// ---------------------------------------------------------------------------
+
+describe('MlxEngineView download lifecycle', () => {
+  it('pause flips to a paused chip with Resume; resume continues and reports restarted files', async () => {
+    mockBrowse.mockResolvedValue({ hits: [HIT_A] });
+    let state: 'queued' | 'paused' | 'downloading' = 'queued';
+    mockDownloadPause.mockImplementation(async () => {
+      state = 'paused';
+    });
+    mockDownloadResume.mockImplementation(async () => {
+      state = 'downloading';
+    });
+    mockDownloadProgress.mockImplementation(async () => ({
+      state,
+      totalBytes: 4 * GB,
+      downloadedBytes: 1 * GB,
+      ...(state === 'downloading'
+        ? { restartedFiles: ['model-00001-of-00002.safetensors'] }
+        : {}),
+    }));
+
+    const { unmount } = render(<MlxEngineView />);
+    await openModelsTab();
+    await waitFor(() => {
+      expect(screen.getByText(HIT_A.id)).toBeInTheDocument();
+    });
+    await userEvent.click(screen.getByLabelText(`Download ${HIT_A.id}`));
+    await waitFor(() => {
+      expect(screen.getByLabelText(`Pause ${HIT_A.id}`)).toBeInTheDocument();
+    });
+
+    await userEvent.click(screen.getByLabelText(`Pause ${HIT_A.id}`));
+    await waitFor(() => {
+      expect(mockDownloadPause).toHaveBeenCalledWith(HIT_A.id);
+      expect(screen.getByText('paused')).toBeInTheDocument();
+    });
+    expect(screen.queryByLabelText(`Pause ${HIT_A.id}`)).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByLabelText(`Resume ${HIT_A.id}`));
+    await waitFor(() => {
+      expect(mockDownloadResume).toHaveBeenCalledWith(HIT_A.id);
+      expect(screen.getByText('downloading')).toBeInTheDocument();
+    });
+    // The restarted-from-zero twin is visible, names in the tooltip.
+    const restarted = screen.getByText('restarted from zero: 1 file(s)');
+    expect(restarted).toHaveAttribute('title', 'model-00001-of-00002.safetensors');
+    unmount();
+  });
+
+  it('a cancelled download disappears and the local models list refreshes (the dir is gone)', async () => {
+    mockBrowse.mockResolvedValue({ hits: [HIT_A] });
+    let cancelled = false;
+    mockDownloadCancel.mockImplementation(async () => {
+      cancelled = true;
+    });
+    mockDownloadProgress.mockImplementation(async () =>
+      cancelled
+        ? { state: 'cancelled', totalBytes: 0, downloadedBytes: 0 }
+        : { state: 'queued', totalBytes: 0, downloadedBytes: 0 }
+    );
+
+    const { unmount } = render(<MlxEngineView />);
+    await openModelsTab();
+    await waitFor(() => {
+      expect(screen.getByText(HIT_A.id)).toBeInTheDocument();
+    });
+    await userEvent.click(screen.getByLabelText(`Download ${HIT_A.id}`));
+    await waitFor(() => {
+      expect(screen.getByLabelText(`Cancel ${HIT_A.id}`)).toBeInTheDocument();
+    });
+    const listCallsBefore = mockModelsList.mock.calls.length;
+
+    await userEvent.click(screen.getByLabelText(`Cancel ${HIT_A.id}`));
+    await waitFor(() => {
+      expect(mockDownloadCancel).toHaveBeenCalledWith(HIT_A.id);
+      expect(screen.queryByTestId(`mlx-download-${HIT_A.id}`)).not.toBeInTheDocument();
+    });
+    // The local list refreshed — the backend deleted the partial repo dir.
+    expect(mockModelsList.mock.calls.length).toBeGreaterThan(listCallsBefore);
+    // The plain Download action returns for the row.
+    expect(screen.getByLabelText(`Download ${HIT_A.id}`)).toBeInTheDocument();
+    unmount();
+  });
+
+  it('deleting a model clears its finished download row so Download comes back honest', async () => {
+    mockDownloadProgress.mockResolvedValue({
+      state: 'done',
+      totalBytes: 3 * GB,
+      downloadedBytes: 3 * GB,
+    });
+    const { unmount } = render(<MlxEngineView />);
+    await openModelsTab();
+    await waitFor(() => {
+      expect(screen.getByLabelText(`Resume ${HALF}`)).toBeInTheDocument();
+    });
+    await userEvent.click(screen.getByLabelText(`Resume ${HALF}`));
+    await waitFor(() => {
+      expect(screen.getByText('done')).toBeInTheDocument();
+    });
+
+    await userEvent.click(screen.getByLabelText(`Delete ${HALF}`));
+    await waitFor(() => {
+      expect(screen.getByText(/Delete mlx-community\/Half-Model-8bit/)).toBeInTheDocument();
+    });
+    await userEvent.click(screen.getByRole('button', { name: 'Delete' }));
+    await waitFor(() => {
+      expect(mockModelDelete).toHaveBeenCalledWith(HALF);
+      // Caught live: without this, the deleted model's row kept saying "done" and the
+      // Download action never returned.
+      expect(screen.queryByTestId(`mlx-download-${HALF}`)).not.toBeInTheDocument();
+    });
+    unmount();
+  });
+
+  it('switching tabs mid-download keeps the row live and the poll running', async () => {
+    mockBrowse.mockResolvedValue({ hits: [HIT_A] });
+    mockDownloadProgress.mockResolvedValue({
+      state: 'downloading',
+      totalBytes: 4 * GB,
+      downloadedBytes: 1 * GB,
+    });
+    const { unmount } = render(<MlxEngineView />);
+    await openModelsTab();
+    await waitFor(() => {
+      expect(screen.getByText(HIT_A.id)).toBeInTheDocument();
+    });
+    await userEvent.click(screen.getByLabelText(`Download ${HIT_A.id}`));
+    await waitFor(() => {
+      expect(screen.getByTestId(`mlx-download-${HIT_A.id}`)).toBeInTheDocument();
+    });
+
+    // Leave for the Engine tab: the rows unmount but the SHELL keeps polling.
+    await userEvent.click(screen.getByRole('button', { name: 'Engine' }));
+    await waitFor(() => {
+      expect(screen.queryByTestId(`mlx-download-${HIT_A.id}`)).not.toBeInTheDocument();
+    });
+    mockDownloadProgress.mockClear();
+    await waitFor(() => expect(mockDownloadProgress).toHaveBeenCalledWith(HIT_A.id), {
+      timeout: 3000,
+    });
+
+    // Back on the Models tab the row is still there with the last REAL bytes.
+    await userEvent.click(screen.getByRole('button', { name: /Models/ }));
+    await waitFor(() => {
+      expect(screen.getByTestId(`mlx-download-${HIT_A.id}`)).toBeInTheDocument();
+    });
+    expect(screen.getByText('1.00 GB / 4.00 GB')).toBeInTheDocument();
     unmount();
   });
 });
