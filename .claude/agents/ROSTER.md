@@ -555,3 +555,10 @@ research_request_block's armed-no-claimed-sections arm wording.
   grounds — cross-lane consistency, not copies. Skipped 3 stale judge logs under budget, said so.
   Named the next tension precisely: the judge's emit-the-DAG-NOW steer may land before the planner
   reaches the five contradictions. Charter gap: none.
+- 2026-08-31 14:00 tick-surgeon #11: EXEMPLARY. The reconciliation verdict, with quotes: plan shape
+  CLEAN (6 tasks/18 files/0 shared/sink files=[]); durable-counter WON, sync source correct, Health
+  correct side — and it refused to claim the approval-path source verdict because the briefs are
+  persisted NOWHERE (named the instrument gap with the fix shape; 13 calls, declared the overage on
+  the top-priority thread). Review lanes independently converging on the same D2 fix is the
+  fan-grounding paying at review. Armed a real checkpoint: plan_patched must go >0 before
+  plan_loaded with review-5's patch pending. Charter gap: none. plan.json persistence dispatched.
