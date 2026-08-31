@@ -463,3 +463,11 @@ research_request_block's armed-no-claimed-sections arm wording.
   GOTCHA (registry): a newly minted agent file is NOT callable by subagent_type until the session
   restarts — the roster loads at session start (works-prover hit this too). Bridge: general-purpose
   agent instructed to read + execute the charter file. The tick cron carries that fallback.
+- 2026-08-31 11:40 tick-surgeon FIRST RETURN: EXEMPLARY — the vigil as ordered. Read every active
+  lane's words with quotes and a class each; read 5 delivered minis' CONTENT and caught two answers
+  WRONG against the spec (Health shape; webhook counters) plus a same-slice contradiction — a defect
+  invisible to every counter — and pinned the mechanism to research.rs:342-372 (claimed sections
+  only, no prior minis). Answered the orchestrator's question with evidence (no 65-min shape; q0 was
+  1210s with re-derivation the judge steered correctly). Honest self-grade with five named holes.
+  Charter gap: none. Bloat: the 40-line cap held. Brief leak: none — it was handed only the run dir
+  and the question. Fix dispatched same-tick (research grounding + intra-fan snowball).
