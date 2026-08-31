@@ -317,6 +317,11 @@ pub fn derive_arch(id: &str, tags: &[String]) -> Option<String> {
 /// silently return the unfiltered listing.
 fn normalize_quant_filter(input: &str) -> Result<String> {
     let s = input.trim().to_ascii_lowercase();
+    // Non-bit-width precisions pass through as literal tags: the filter matches HF tags by
+    // design, so an untagged precision honestly narrows to nothing rather than erroring.
+    if matches!(s.as_str(), "bf16" | "fp16" | "fp32") {
+        return Ok(s);
+    }
     let digits_end = s
         .bytes()
         .position(|b| !b.is_ascii_digit())
@@ -324,7 +329,7 @@ fn normalize_quant_filter(input: &str) -> Result<String> {
     let (digits, rest) = s.split_at(digits_end);
     ensure!(
         !digits.is_empty() && matches!(rest, "" | "bit" | "-bit" | "_bit"),
-        "invalid quant filter '{input}': expected a bit width like '4-bit'"
+        "invalid quant filter '{input}': expected a bit width like '4-bit', or bf16/fp16/fp32"
     );
     Ok(format!("{digits}-bit"))
 }

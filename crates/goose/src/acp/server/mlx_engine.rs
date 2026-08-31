@@ -324,9 +324,11 @@ impl GooseAcpAgent {
             limit: req.limit.unwrap_or(20),
         };
         let token = huggingface_token().await;
+        // invalid_params carries the anyhow chain to the client (the mount idiom); a
+        // flattened "Internal error" hid a refused quant filter from the UI (shot 19).
         let page = hf::browse_mlx_models(&params, token.as_deref())
             .await
-            .internal_err()?;
+            .invalid_params_err()?;
         Ok(MlxEngineBrowseResponse {
             hits: page
                 .hits

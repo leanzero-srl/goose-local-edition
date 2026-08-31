@@ -1450,142 +1450,6 @@
         }
       }
     },
-    "/dictation/models": {
-      "get": {
-        "tags": [
-          "super::routes::dictation"
-        ],
-        "operationId": "list_models",
-        "responses": {
-          "200": {
-            "description": "List of available Whisper models",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "array",
-                  "items": {
-                    "$ref": "#/components/schemas/WhisperModelResponse"
-                  }
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/dictation/models/{model_id}": {
-      "delete": {
-        "tags": [
-          "super::routes::dictation"
-        ],
-        "operationId": "delete_model",
-        "parameters": [
-          {
-            "name": "model_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Model deleted"
-          },
-          "404": {
-            "description": "Model not found or not downloaded"
-          },
-          "500": {
-            "description": "Failed to delete model"
-          }
-        }
-      }
-    },
-    "/dictation/models/{model_id}/download": {
-      "get": {
-        "tags": [
-          "super::routes::dictation"
-        ],
-        "operationId": "get_download_progress",
-        "parameters": [
-          {
-            "name": "model_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Download progress",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/DownloadProgress"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "Download not found"
-          }
-        }
-      },
-      "post": {
-        "tags": [
-          "super::routes::dictation"
-        ],
-        "operationId": "download_model",
-        "parameters": [
-          {
-            "name": "model_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "202": {
-            "description": "Download started"
-          },
-          "400": {
-            "description": "Download already in progress"
-          },
-          "500": {
-            "description": "Internal server error"
-          }
-        }
-      },
-      "delete": {
-        "tags": [
-          "super::routes::dictation"
-        ],
-        "operationId": "cancel_download",
-        "parameters": [
-          {
-            "name": "model_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Download cancelled"
-          },
-          "404": {
-            "description": "Download not found"
-          }
-        }
-      }
-    },
     "/dictation/transcribe": {
       "post": {
         "tags": [
@@ -3758,8 +3622,7 @@
         "enum": [
           "openai",
           "elevenlabs",
-          "groq",
-          "local"
+          "groq"
         ]
       },
       "DictationProviderStatus": {
@@ -7570,54 +7433,6 @@
             "nullable": true
           }
         }
-      },
-      "WhisperModelResponse": {
-        "allOf": [
-          {
-            "type": "object",
-            "required": [
-              "id",
-              "size_mb",
-              "url",
-              "description"
-            ],
-            "properties": {
-              "description": {
-                "type": "string",
-                "description": "Description"
-              },
-              "id": {
-                "type": "string",
-                "description": "Model identifier (e.g., \"tiny\", \"base\", \"small\")"
-              },
-              "size_mb": {
-                "type": "integer",
-                "format": "int32",
-                "description": "Model file size in MB",
-                "minimum": 0
-              },
-              "url": {
-                "type": "string",
-                "description": "Download URL from HuggingFace"
-              }
-            }
-          },
-          {
-            "type": "object",
-            "required": [
-              "downloaded",
-              "recommended"
-            ],
-            "properties": {
-              "downloaded": {
-                "type": "boolean"
-              },
-              "recommended": {
-                "type": "boolean"
-              }
-            }
-          }
-        ]
       },
       "WindowProps": {
         "type": "object",
