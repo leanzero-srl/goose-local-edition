@@ -35,16 +35,18 @@ mod judge_context;
 use judge_context::{is_intentional_empty_marker, judge_delivery_block, verify_owned_files};
 mod ladder;
 use ladder::{
-    calls_since_nudge, nudge_arm, nudge_delivery, produced_since_look, restream_seed, NudgeDelivery,
+    calls_since_nudge, nudge_arm, nudge_delivery, produced_since_look, restream_seed,
+    wrong_channel_stall, NudgeDelivery,
 };
 mod decisions;
 use decisions::PlanDecision;
 mod supervision;
 use supervision::{
-    fold_forming_event, judge_lane_key, prereview_lane_key, render_forming_file, replan_lane_key,
-    schedjudge_lane_key, superseded_from_prior, supervised_reply_text, supervision_lane_kind,
-    tail_review_lane_key, verify_lane_key, write_forming_atomic, FormingGuard, FormingReport,
-    FormingSidecar, SupervisedReplyError, ASK_ANSWER_LANE, PILLARS_LANE, REFLECT_LANE,
+    fold_forming_event, is_agent_loop_filler, judge_lane_key, prereview_lane_key,
+    render_forming_file, replan_lane_key, schedjudge_lane_key, superseded_from_prior,
+    supervised_reply_text, supervision_lane_kind, tail_review_lane_key, verify_lane_key,
+    write_forming_atomic, FormingGuard, FormingReport, FormingSidecar, SupervisedReplyError,
+    ASK_ANSWER_LANE, PILLARS_LANE, REFLECT_LANE,
 };
 mod orientation;
 use orientation::{
@@ -12803,29 +12805,6 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
     }
 
     #[test]
-    fn is_agent_loop_filler_catches_max_turns_message_and_empty() {
-        // The exact goose core agent-loop max-turns filler (agent.rs MAX_TURNS_MESSAGE) — the string that
-        // leaked into detailer specs (logstat-2, ledgr-2) and repro/verify verdicts.
-        assert!(is_agent_loop_filler(
-            "I've reached the maximum number of actions I can do without user input. Would you like me to continue?"
-        ));
-        assert!(is_agent_loop_filler(
-            "  Final output tool has not been called yet. Continuing agent loop.  "
-        ));
-        // Empty / whitespace -> filler (subsumes the old empty-only guard).
-        assert!(is_agent_loop_filler(""));
-        assert!(is_agent_loop_filler("   \n\t"));
-        // A REAL detailed subtask spec -> NOT filler (must be kept, not replaced by the brief).
-        assert!(!is_agent_loop_filler(
-            "Implement parser.py: tokenize the input into (ts, level, fields) records; skip malformed lines; \
-             numeric field values parse as numbers. Files: logstat/parser.py."
-        ));
-        assert!(!is_agent_loop_filler(
-            "def compute_ratio(a, b): guard b==0 with a clean error"
-        ));
-    }
-
-    #[test]
     fn review_file_excerpt_keeps_small_whole_and_large_tail() {
         // A small file (< 6000 chars) is shown WHOLE.
         let small = "import argparse\n\ndef main():\n pass\n";
@@ -15345,6 +15324,9 @@ impl GooseAgentDispatcher {
         // has taken an action since obeyed its steer and gets another; a call that has not has proven a
         // steer changes nothing, and the next delivery is the re-stream (`nudge_delivery`).
         let mut tool_calls_at_last_nudge: Option<usize> = None;
+        // Answer-channel chars at the last DELIVERED nudge (None before the first; the restream seam
+        // resets it with the rest of the ladder) — the formed-growth half of `wrong_channel_stall`.
+        let mut answer_chars_at_last_nudge: Option<usize> = None;
         let mut repeat_hash: Option<u64> = None;
         let mut repeat_run: usize = 0usize;
         let mut repeat_run_started = tokio::time::Instant::now();
@@ -16648,12 +16630,24 @@ impl GooseAgentDispatcher {
                     // the judge's own RESTART verdict is never held.
                     let nudge_wanted = omni_looping_streak >= 2 || drifting_now || repeat_measured;
                     let advancing = produced_anything_since_last_look && !recur.recurring();
+                    // AND FOR A LANE THAT OWES FILES, "ADVANCING" MUST WEIGH FILES (r6c web-console:
+                    // 0 owned files on disk, formed +70,600 chars of its own CSS/HTML as chat text,
+                    // two exact-file steers ignored — the chars-based hold shielded the pour and the
+                    // restream never fired). Three progress facts, conjoined in `wrong_channel_stall`;
+                    // a reasoning lane (`owned` empty) is structurally exempt.
+                    let answer_chars_now: usize = texts.iter().map(|t| t.chars().count()).sum();
+                    let wrong_channel = wrong_channel_stall(
+                        !owned.is_empty(),
+                        owned.iter().any(|f| self.working_dir.join(f).exists()),
+                        answer_chars_at_last_nudge.map(|n| answer_chars_now.saturating_sub(n)),
+                    );
                     let (can_steer, delivery_reason, held_why) = match nudge_delivery(
                         pending.is_empty(),
                         tool_calls_at_last_nudge,
                         call_records.len(),
                         &omni_outcome.verdict,
                         advancing,
+                        wrong_channel,
                     ) {
                         NudgeDelivery::Steer(reason) => (true, reason, None),
                         NudgeDelivery::Restream(reason) => (false, reason, None),
@@ -16908,6 +16902,7 @@ impl GooseAgentDispatcher {
                         }
                         last_direction = direction.clone();
                         tool_calls_at_last_nudge = Some(call_records.len());
+                        answer_chars_at_last_nudge = Some(answer_chars_now);
 
                         if can_steer {
                             // Queued into the SAME running session. The in-flight turn is not burned and
@@ -17044,6 +17039,7 @@ impl GooseAgentDispatcher {
                             // the tool-repeat detector's state (its repeats are engine facts that
                             // legitimately span attempts).
                             tool_calls_at_last_nudge = None;
+                            answer_chars_at_last_nudge = None;
                             nudges_used = 0;
                             last_direction.clear();
                             omni_drift_streak = 0;
@@ -18555,19 +18551,6 @@ fn looks_like_python_traceback(output: &str, success: bool) -> bool {
             let t = l.trim_start();
             t.starts_with("File \"") && t.contains(", line ")
         })
-}
-
-/// The goose core agent loop returns a FIXED meta-message when a weak worker exhausts its turn budget
-/// without calling final_output ("I've reached the maximum number of actions I can do without user input.
-/// Would you like me to continue?", agent.rs MAX_TURNS_MESSAGE). That filler is NOT a usable result: the
-/// detailer must fall back to the skeleton brief rather than write it as a subtask spec, and a repro-author /
-/// reviewer must not treat it as an authored command / verdict. True when the text is empty or is that filler.
-fn is_agent_loop_filler(s: &str) -> bool {
-    let t = s.trim().to_lowercase();
-    t.is_empty()
-        || t.contains("reached the maximum number of actions")
-        || t.contains("would you like me to continue")
-        || t.contains("continuing agent loop")
 }
 
 /// GOOSE_SWARM_BOUNDARY_PROBE (default ON): whether to append the SILENT-ACCEPT clause to the integrate-verify

@@ -231,9 +231,14 @@ fn the_banned_integrate_template_only_shrinks() {
 /// paying for `refresh_skeleton_description`'s wiring in the repair chain (r6c: the skeleton's
 /// PLANNED MODULES block baked pre-repair paths and the live lane re-derived ownership from the
 /// engine-authored contradiction).
+/// Tightened to 42,747: `is_agent_loop_filler` and its test moved to commands/swarm/supervision.rs
+/// beside its one non-root caller (`supervised_reply_text`), paying for the wrong-channel wiring
+/// at the nudge-delivery seam (r6c: web-console poured 70,600 chars of its owned files' CSS/HTML
+/// into CHAT TEXT with 0 owned files on disk, and the chars-based `advancing` hold shielded it
+/// from the restream rung — `ladder::wrong_channel_stall`).
 #[test]
 fn swarm_rs_line_count_only_decreases() {
-    const SWARM_RS_LINE_BASELINE: usize = 42_764;
+    const SWARM_RS_LINE_BASELINE: usize = 42_747;
     let text = read("crates/goose-cli/src/commands/swarm.rs");
     let n = text.lines().count();
     assert!(
