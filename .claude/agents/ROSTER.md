@@ -673,3 +673,9 @@ research_request_block's armed-no-claimed-sections arm wording.
   honored under temptation. Shrank swarm.rs by 54 lines via a visibility-only move. Surfaced the
   real remaining exposure (transcripts.rs raw lines republished into dispatch prompts) instead of
   half-fixing it. Charter gap: none.
+- 2026-08-31 19:00 tick-surgeon #21: EXEMPLARY at 68.8k/9 — the best return yet. Overturned its own
+  tick-20 causation claim with the primary record (judge_drift_held: no steer was EVER delivered;
+  the thaw was self-recovery), reconstructed the full five-hold sequence with the arm-reset
+  mechanism (read-only calls reset act), and pre-named the (iii) trigger in engine-mechanism terms
+  (restream fires only on looping recur=0.0076; 7728ea236 not aboard; action-counting shields
+  read-only lanes). This is gate 7+8 practiced in one report. Charter gap: none.
