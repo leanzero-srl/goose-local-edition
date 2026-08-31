@@ -62,6 +62,8 @@ use research::{
 };
 mod imports;
 use imports::{attribute_import_gap_with_owner, tree_import_gaps, verify_tree_imports};
+mod plan_store;
+use plan_store::{persist_plan_loaded_sidecar, persist_plan_sidecar, resume_state_from_dir};
 mod pytest_tail;
 use pytest_tail::parse_pytest_summary;
 mod briefs;
@@ -5905,35 +5907,6 @@ mod tests {
     }
 
     #[test]
-    fn a_resumed_plan_parses_into_a_dag() {
-        // The bug this pins: resume rebuilt the plan under "tasks" while Dag::from_planner_json
-        // requires "subtasks", so EVERY resume exited with "missing field `subtasks`" after
-        // paying the whole scout phase.
-        let dir = tempfile::tempdir().unwrap();
-        let sw = dir.path().join(".swarm");
-        std::fs::create_dir_all(&sw).unwrap();
-        let plan_loaded = serde_json::json!({
-            "event": "plan_loaded",
-            "tasks": [
-                {"id": "core", "description": "build core", "files": ["app/core.py"],
-                 "depends_on": [], "difficulty": "easy"},
-                {"id": "api", "description": "build api", "files": ["app/api.py"],
-                 "depends_on": ["core"], "difficulty": "hard"}
-            ]
-        });
-        let log = format!(
-            "{}\n{}\n",
-            plan_loaded,
-            serde_json::json!({"event": "task_completed", "task_id": "core", "status": "done"})
-        );
-        std::fs::write(sw.join("run-swarm-00-resumed.jsonl"), log).unwrap();
-        let r = resume_state_from_dir(dir.path()).expect("resume state must be recovered");
-        assert!(r.completed.contains("core"));
-        Dag::from_planner_json(&r.plan_json)
-            .expect("a resumed plan MUST parse into a Dag — this is the whole point of resume");
-    }
-
-    #[test]
     fn a_seconds_prefixed_note_is_reported_skipped_not_silently_dropped() {
         // The exact operator error: a note named with SECONDS instead of milliseconds parses as
         // 1970, scopes out, and used to vanish without a word — no delivery, no warning, nothing
@@ -8961,61 +8934,6 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
         assert!(s2.contains("\"resolves\":\"storage backend\""));
     }
 
-    /// Resume, against the shapes real runs actually produce.
-    ///
-    /// The bar Mihai set is deliberately low — "it just needs to resume from SOME point, whatever point it
-    /// is" — so the only thing that MUST hold is the conservative rule: a task is skipped ONLY if it has a
-    /// task_completed event. Everything else re-runs and overwrites its own files. Getting that backwards
-    /// would silently skip unfinished work, which is exactly the false-green class this loop exists to hunt.
-    #[test]
-    fn resume_skips_only_what_provably_finished() {
-        let log = [
-            r#"{"event":"run_started","prompt":"build it"}"#,
-            r#"{"event":"plan_loaded","plan_confidence":52,"tasks":[{"id":"db","deps":[]},{"id":"api","deps":["db"]},{"id":"ui","deps":[]}]}"#,
-            r#"{"event":"task_completed","task_id":"db","elapsed_ms":1000}"#,
-            r#"not json at all"#,
-            r#"{"event":"task_completed","task_id":"ui","elapsed_ms":2000}"#,
-        ]
-        .join("\n");
-        let r = resume_state_from_log(&log).expect("a crashed run with a plan is resumable");
-        assert_eq!(r.completed.len(), 2);
-        assert!(r.completed.contains("db") && r.completed.contains("ui"));
-        // `api` was mid-flight when the power went. It has no task_completed, so it MUST re-run.
-        assert!(
-            !r.completed.contains("api"),
-            "a task without task_completed must never be skipped"
-        );
-        // The plan survives verbatim in the shape Dag::from_planner_json parses.
-        let v: serde_json::Value = serde_json::from_str(&r.plan_json).unwrap();
-        assert_eq!(v["tasks"].as_array().unwrap().len(), 3);
-
-        // A FINISHED run is not a resume candidate — its app already exists.
-        let finished = format!("{log}\n{}", r#"{"event":"run_finished","report":{}}"#);
-        assert!(
-            resume_state_from_log(&finished).is_none(),
-            "a finished run must not be resumed"
-        );
-
-        // A run that died BEFORE planning has nothing to resume from — research/plan must run again.
-        let early = r#"{"event":"run_started"}
-{"event":"research_completed","findings":3}"#;
-        assert!(resume_state_from_log(early).is_none());
-
-        // A re-planned run ends on the plan it actually BUILT: the last plan_loaded wins.
-        let replanned = [
-            r#"{"event":"plan_loaded","tasks":[{"id":"old","deps":[]}]}"#,
-            r#"{"event":"plan_loaded","tasks":[{"id":"new-a","deps":[]},{"id":"new-b","deps":[]}]}"#,
-        ]
-        .join("\n");
-        let r2 = resume_state_from_log(&replanned).unwrap();
-        let v2: serde_json::Value = serde_json::from_str(&r2.plan_json).unwrap();
-        assert_eq!(v2["tasks"].as_array().unwrap().len(), 2);
-        assert_eq!(v2["tasks"][0]["id"], "new-a");
-
-        assert!(resume_state_from_log("").is_none());
-    }
-
-    /// The same reader, against the REAL logs this machine has produced — a fixture can agree with a bug.
     #[test]
     /// `verified` decides whether the desktop ever promotes a finished build task out of UNVERIFIED, and
     /// under the old rule it could not: one inconclusive side-check vetoed the run, so it read false in
@@ -9314,50 +9232,6 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
         // A slice owner gives its specification as a REPLY — the judge must not send it at a file it
         // has no tool to create.
         assert!(call_objective(Some("slice-frontend-js")).contains("AS ITS REPLY"));
-    }
-
-    #[test]
-    /// THE BUG THAT MADE RESUME DEAD EVERYWHERE BUT THE BENCH.
-    ///
-    /// `resume_state_from_dir` took `logs.last()`, and by the time it runs the CURRENT run has already
-    /// created its own (empty) log in the same directory — so `last()` was always that empty file and
-    /// resume returned None from a desktop or CLI run every time. The bench escaped it only because
-    /// run_build.py redirects the live log elsewhere. This writes exactly that arrangement: a prior run
-    /// with a plan, and a newer empty log beside it.
-    fn resume_ignores_the_current_runs_own_empty_log() {
-        let dir = tempfile::tempdir().expect("tempdir");
-        let swarm = dir.path().join(".swarm");
-        std::fs::create_dir_all(&swarm).expect("mkdir");
-        std::fs::write(
-            swarm.join("run-swarm-20260101-000000000.jsonl"),
-            r#"{"event":"plan_loaded","tasks":[{"id":"core","depends_on":[]}]}
-{"event":"task_completed","task_id":"core"}
-"#,
-        )
-        .expect("prior log");
-        // Sorts AFTER the prior log, exactly as a freshly-created live log does.
-        std::fs::write(swarm.join("run-swarm-20260102-000000000.jsonl"), "").expect("empty log");
-        let state = resume_state_from_dir(dir.path()).expect("the prior run is still resumable");
-        assert!(
-            state.plan_json.contains("\"id\":\"core\""),
-            "the prior plan must come back, not an empty one"
-        );
-        assert!(state.completed.contains("core"));
-    }
-
-    #[test]
-    fn resume_reads_the_real_run_logs() {
-        let home = std::env::var("HOME").unwrap_or_default();
-        let finished = std::path::PathBuf::from(&home).join("goose-builds/loop-ab-baseline/.swarm");
-        if !finished.is_dir() {
-            return; // not this machine — the unit test above still pins the logic
-        }
-        // loop-ab-baseline COMPLETED (run_finished present) => must NOT be resumable.
-        let dir = std::path::PathBuf::from(&home).join("goose-builds/loop-ab-baseline");
-        assert!(
-            resume_state_from_dir(&dir).is_none(),
-            "a run with run_finished must never be offered as resumable"
-        );
     }
 
     /// The cross-module drift check, over the REAL shipped bug and the REAL working app.
@@ -25061,6 +24935,7 @@ async fn run_linear_plan(
     let (plan_json, dag) = plan_slices_to_dag(
         opened,
         &opts.prompt,
+        &dispatcher.working_dir,
         tree_at_start,
         lang,
         &research_rows,
@@ -25509,6 +25384,7 @@ impl GooseAgentDispatcher {
 async fn plan_slices_to_dag<S, SFut, R, RFut>(
     opened: OpenOutput,
     user_prompt: &str,
+    working_dir: &Path,
     tree_at_start: Vec<String>,
     lang: TargetLang,
     research: &[ResearchRow],
@@ -25633,6 +25509,10 @@ where
         }
         sink.write_value(ev);
     }
+    // The event above carries COUNTS; the full text — the briefs the workers will actually
+    // receive — goes to the `.swarm/plan.json` sidecar so the vigil can read it between now and
+    // plan_loaded (r6c: 133k chars of briefs, persisted nowhere for the whole REVIEW window).
+    persist_plan_sidecar(working_dir, "plan.json", &plan_json, sink.as_ref());
 
     // ---- REVIEW (ONE round — kept, P1-5) ------------------------------------------------------
     // r2 measured the one-round form EARNING its 7 minutes: 9 findings, 10 patch touches, and it
@@ -29024,112 +28904,6 @@ fn read_user_notes(root: &std::path::Path, since_ms: i64) -> DeliveredNotes {
 /// These are the highest-value thing to learn: not what this app needed, but what this STACK gets wrong.
 /// Only hints attached to a CORRECTIVE verdict are kept — an "ok/observed" verdict carries no lesson. Pure
 /// over the log text and best-effort: an unreadable log simply yields nothing.
-/// What a previous run of this directory got through, so a new one need not redo it.
-///
-/// WHY THIS EXISTS: Mihai powered off a machine mid-run twice in one day and lost ~2.5h each time. There is
-/// no way to say "stop, I need my hardware" without destroying the run. His scope, verbatim: "don't think of
-/// making it TRUE, it just needs to resume from SOME point, whatever point it is."
-///
-/// That makes it small, because BOTH halves are already durable in the run's own jsonl:
-///   plan_loaded.tasks     — the whole DAG, ids + deps + files. So a resume skips research AND planning,
-///                           which measured 119 of 152 minutes on the baseline: 78% of the run.
-///   task_completed.task_id — every task that finished.
-///
-/// THE RULE THAT MAKES IT SAFE: only a task with a task_completed event is skipped. Anything ambiguous —
-/// in flight when the power went, half-written, never dispatched — simply RE-RUNS and overwrites its own
-/// files. So the failure mode is "we redo a little work", never "we silently skipped something". That
-/// direction is the whole reason this needs no corruption detection.
-#[derive(Debug, Clone)]
-struct ResumeState {
-    /// The plan_loaded event's task array, verbatim — the same shape Dag::from_planner_json already parses.
-    plan_json: String,
-    /// Tasks the previous run finished. REPORTED, not skipped — see the wiring below for why that is
-    /// deliberate and why it is the safe half of this feature.
-    completed: std::collections::HashSet<String>,
-}
-
-/// Read the newest run log in `<dir>/.swarm` and recover what it finished.
-///
-/// Returns None when there is nothing to resume FROM (no log, no plan_loaded) or nothing to resume INTO
-/// (the run already emitted run_finished — a finished run is not a candidate, resuming it would rebuild an
-/// app that is already there).
-/// STATUS 2026-08-22: RESUME WORKS. It never did before — this rebuilt the plan under `tasks`
-/// while `Dag::from_planner_json` (its only consumer) requires `subtasks`, so every resume exited
-/// with "the resumed plan will not parse: missing field `subtasks`" after paying a full scout
-/// phase. Both keys are emitted now and `a_resumed_plan_parses_into_a_dag` pins it: if that test
-/// is green, a recovered plan parses. Do not "re-discover" the old breakage from the ledger.
-fn resume_state_from_dir(dir: &std::path::Path) -> Option<ResumeState> {
-    let mut logs: Vec<_> = std::fs::read_dir(dir.join(".swarm"))
-        .ok()?
-        .filter_map(|e| e.ok().map(|e| e.path()))
-        .filter(|p| {
-            p.file_name()
-                .and_then(|n| n.to_str())
-                .is_some_and(|n| n.starts_with("run-swarm-") && n.ends_with(".jsonl"))
-        })
-        .collect();
-    logs.sort();
-    // NEWEST FIRST, and skip the ones with nothing in them.
-    //
-    // This took `logs.last()` — and by the time it runs, the CURRENT run has already created its own
-    // log in this same directory, so `last()` is that empty file and resume returned None every single
-    // time. The bench path escaped it only because run_build.py redirects the live log out of `.swarm`
-    // entirely; from a desktop or a plain CLI run, resume has never once worked.
-    //
-    // A log with no `plan_loaded` in it yields None from the pure half, so walking backwards until one
-    // parses is both the fix and the general rule: resume from the most recent run that got far enough
-    // to have something to resume.
-    for path in logs.iter().rev() {
-        let Ok(text) = std::fs::read_to_string(path) else {
-            continue;
-        };
-        if let Some(state) = resume_state_from_log(&text) {
-            return Some(state);
-        }
-    }
-    None
-}
-
-/// The pure half: given a run log's text, what can be resumed? Separate so it is testable against the REAL
-/// logs on disk without a filesystem fixture.
-fn resume_state_from_log(text: &str) -> Option<ResumeState> {
-    let mut plan_json = None;
-    let mut completed = std::collections::HashSet::new();
-    for line in text.lines() {
-        let Ok(e) = serde_json::from_str::<serde_json::Value>(line) else {
-            continue;
-        };
-        match e.get("event").and_then(|x| x.as_str()) {
-            // A run that FINISHED has nothing to resume — its app exists.
-            Some("run_finished") => return None,
-            // LAST plan_loaded wins: a run that re-planned mid-flight ends on the plan it actually built.
-            Some("plan_loaded") => {
-                if let Some(t) = e.get("tasks") {
-                    // BOTH KEYS, because the two readers disagreed and resume could never work:
-                    // `Dag::from_planner_json` (the consumer) requires `subtasks` — the planner's
-                    // own field name — while this rebuilt the plan under `tasks`, the name the
-                    // plan_loaded EVENT uses. MEASURED: every resume died instantly with "the
-                    // resumed plan will not parse: missing field `subtasks`", after paying the
-                    // full scout phase, and the harness then scored the unbuilt tree. The banner
-                    // that counts tasks reads `tasks`, so both names are emitted rather than
-                    // renaming one and breaking the other.
-                    plan_json = Some(serde_json::json!({ "subtasks": t, "tasks": t }).to_string());
-                }
-            }
-            Some("task_completed") => {
-                if let Some(id) = e.get("task_id").and_then(|x| x.as_str()) {
-                    completed.insert(id.to_string());
-                }
-            }
-            _ => {}
-        }
-    }
-    Some(ResumeState {
-        plan_json: plan_json?,
-        completed,
-    })
-}
-
 fn judge_lessons_from_log(path: &std::path::Path) -> Vec<String> {
     let Ok(text) = std::fs::read_to_string(path) else {
         return Vec::new();
@@ -36712,6 +36486,11 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             .collect(),
     );
 
+    // The post-REVIEW/patched/repaired form the DAG actually loaded — the second sidecar stage,
+    // written only when it differs from `.swarm/plan.json` so the pair diffs to exactly what
+    // review and the repairs changed. Placed BEFORE plan_evt: the json! below moves plan_json.
+    persist_plan_loaded_sidecar(&working_dir, &plan_json, sink.as_ref());
+
     let plan_evt = serde_json::json!({
         "event": "plan_loaded",
         "task_count": dag.tasks.len(),
@@ -42843,9 +42622,11 @@ mod audit_regressions {
         // Every decision still open (the user answered nothing, the fan settled nothing): the
         // briefs keep the conventional-option fold, verbatim.
         let pd = decisions::partition_decisions(&two_slices().open_decisions, "", &[]);
+        let dir = tempfile::tempdir().unwrap();
         let (plan_json, dag) = plan_slices_to_dag(
             two_slices(),
             "build the app",
+            dir.path(),
             Vec::new(),
             TargetLang::Python,
             &[],
@@ -42928,9 +42709,11 @@ mod audit_regressions {
     async fn a_synthesis_error_still_yields_a_loadable_dag() {
         let sink = Arc::new(RecordingSink::default());
         let sink_dyn: Arc<dyn EventSink> = sink.clone();
+        let dir = tempfile::tempdir().unwrap();
         let (plan_json, dag) = plan_slices_to_dag(
             two_slices(),
             "build the app",
+            dir.path(),
             Vec::new(),
             TargetLang::Python,
             &[],
@@ -42976,9 +42759,11 @@ mod audit_regressions {
                     | Method | Path | Response |\n|---|---|---|\n\
                     | `GET` | `/api/health` | `{\"status\": \"ok\"}` |\n\
                     | `GET` | `/` | the frontend |\n";
+        let dir = tempfile::tempdir().unwrap();
         let (plan_json, dag) = plan_slices_to_dag(
             two_slices(),
             spec,
+            dir.path(),
             Vec::new(),
             TargetLang::Python,
             &[],
