@@ -226,9 +226,14 @@ fn the_banned_integrate_template_only_shrinks() {
 /// commands/swarm/review_merge.rs with the per-lane patch union (`union_lane_patches`, extracted
 /// from `review_plan_fanned`), paying for the r6c prose-rewrite wiring in
 /// `repair_module_package_collisions` and the `plan_patched.lanes` provenance in the same commit.
+/// Tightened to 42,764: the walking-skeleton cluster (SKELETON_ID, skeleton_invocation_files,
+/// skeleton_description, prepend_skeleton_task, three tests) moved to commands/swarm/skeleton.rs,
+/// paying for `refresh_skeleton_description`'s wiring in the repair chain (r6c: the skeleton's
+/// PLANNED MODULES block baked pre-repair paths and the live lane re-derived ownership from the
+/// engine-authored contradiction).
 #[test]
 fn swarm_rs_line_count_only_decreases() {
-    const SWARM_RS_LINE_BASELINE: usize = 43_085;
+    const SWARM_RS_LINE_BASELINE: usize = 42_764;
     let text = read("crates/goose-cli/src/commands/swarm.rs");
     let n = text.lines().count();
     assert!(
