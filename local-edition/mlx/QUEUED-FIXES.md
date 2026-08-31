@@ -13,3 +13,5 @@ SCHEDULED requires a named condition, not a vague "later".
 | 5 | Serving from an arbitrary `models_dir` (incl. `publisher/model` two-level layout) | IMPLEMENTED for rapid-mlx (2026-08-30) | Served `~/.goose/models/...` local path directly; oMLX `--model-dir` verified next |
 
 Ratio so far: 3 implemented/resolved : 2 dropped-with-reason : 1 scheduled-with-condition (#3).
+
+| 6 | Download-progress rows vanish from view when switching tabs mid-download (state lives in ModelsSection; backend keeps downloading) | SCHEDULED | Next UI round — lift tracker state to the view shell |

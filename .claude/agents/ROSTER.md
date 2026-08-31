@@ -425,3 +425,18 @@ research_request_block's armed-no-claimed-sections arm wording.
   measure-first discipline and negative controls). A third mlx-backend brief mints an `mlx-backend`
   charter per the repetition rule — carry the measure-with-curl-first law and the no-client-side-
   filtered-pagination law into it.
+- 2026-08-31 14:55 panel-surgeon (cloud+MLX selector + truthful mount card, 210dc0ce6): CLEAN++.
+  Absorbed a mid-flight scope reversal without churn; adjusted the prescribed commit message and
+  said why; wire-proved the served-alias chat completion in goosed's request log; four backend
+  findings reported-not-worked-around (env glue, inventory staleness, orphan invisibility, token
+  limit) — three became same-day backend fixes, one folded into the next UI pass; when the sibling
+  agent's uncommitted crates work broke release-binary it built from committed HEAD in a throwaway
+  worktree. Also self-recovered from the session task reaping by relaunching the app detached under
+  launchd. Charter gap: none.
+- 2026-08-31 15:30 panel-surgeon (Leanzero MLX restyle + per-model sampling + HF browser,
+  2d50e2244): CLEAN++. Read the benchmark reference set before styling; two live-only defects found
+  and fixed (scoped --color-node-* vars transparent outside .local-edition — literal fallbacks;
+  narrow-width chip squeeze); took the contained ChatInput contextWindow fix rather than skipping;
+  wire mismatch (bf16 refusal + flattened browse error) REPORTED with a probe screenshot instead of
+  worked around — both fixed crates-side same hour (3b849a3de). 1202 tests; real-HF live drive with
+  19 screenshots; app left running with the model mounted for the owner. Charter gap: none.
