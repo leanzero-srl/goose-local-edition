@@ -3383,6 +3383,11 @@ ipcMain.handle('benchmark-run', async (_event, nodes: number, sampling?: RunSamp
             repairRounds: counts.repairRounds,
           },
           workdir,
+          // The engine's run id, reconciled from <workdir>/.swarm/current-run.json (null when the
+          // file never appeared) — the SAME id the session row is stamped with, so the view joins
+          // this result to its session EXACTLY instead of guessing by era recency. Local-only:
+          // benchmark-publish builds its allowlisted payload key-by-key and never carries it.
+          runId: sessionRunId,
           // Engine-truth model identifier (contract v2.2) — the publish form's prefill; the user
           // may edit it there, and the edit is persisted back onto this field.
           modelId: deriveBenchModel(counts.poolModelIds),
