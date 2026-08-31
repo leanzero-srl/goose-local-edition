@@ -746,3 +746,9 @@ research_request_block's armed-no-claimed-sections arm wording.
   baked fallback used to live, and the honest boundary stated first in its own report: in-app
   verification is UNVERIFIED until a rebuild — exactly the verify-in-the-running-app doctrine,
   self-applied. Charter gap: none.
+- 2026-08-31 22:55 swarm-surgeon (meter lag, b8f915841): EXEMPLARY — refuted the brief's own
+  hypothesis (no buffer; sampling skew between trigger and verdict, proven with both verdicts
+  reading the same 156,267) and placed the fix at the site the mechanism demanded (verdict-site
+  stat, where a trigger-site stat would NOT have fired). Found a second instance in the same lane
+  unprompted. The best kind of surgeon return: the brief was wrong in the details and the fix is
+  right because it said so. Charter gap: none.
