@@ -227,6 +227,9 @@ pub struct EngineStatus {
     pub probe_error: Option<String>,
     pub gate_message: Option<String>,
     pub gate_verdict: Option<String>,
+    /// Set when the manager supervises nothing but SOMETHING already listens on the
+    /// configured port — an engine orphaned by a previous goosed. `unmount` reclaims it.
+    pub stray_listener_port: Option<u16>,
     pub available_memory_gb: f64,
     pub total_memory_gb: f64,
     pub restart_required: bool,
@@ -241,6 +244,57 @@ pub struct EngineStatus {
 /// standard locations the spawn fails loudly with exactly that message.
 fn sidecar_spawn_path() -> String {
     "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin".to_string()
+}
+
+fn port_has_listener(port: u16) -> bool {
+    use std::net::TcpStream;
+    use std::time::Duration as StdDuration;
+    let addr = std::net::SocketAddr::from(([127, 0, 0, 1], port));
+    TcpStream::connect_timeout(&addr, StdDuration::from_millis(200)).is_ok()
+}
+
+/// Terminate whatever listens on `port` — per-pid (never a group), SIGTERM then SIGKILL.
+/// Reaching for `lsof` is deliberate: the orphan is not our child, so there is no handle;
+/// the port is OUR configured port, which is the authority to reclaim it.
+async fn reclaim_port(port: u16) {
+    let output = tokio::process::Command::new("lsof")
+        .args(["-ti", &format!(":{port}")])
+        .output()
+        .await;
+    let pids: Vec<i32> = match output {
+        Ok(out) => String::from_utf8_lossy(&out.stdout)
+            .split_whitespace()
+            .filter_map(|s| s.parse().ok())
+            .collect(),
+        Err(e) => {
+            tracing::warn!(port, error = %e, "reclaim: lsof unavailable; port left occupied");
+            return;
+        }
+    };
+    if pids.is_empty() {
+        return;
+    }
+    tracing::warn!(
+        port,
+        ?pids,
+        "reclaiming port from unsupervised engine (SIGTERM)"
+    );
+    #[cfg(unix)]
+    {
+        for pid in &pids {
+            unsafe { libc::kill(*pid, libc::SIGTERM) };
+        }
+        for _ in 0..50 {
+            if !port_has_listener(port) {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+        tracing::warn!(port, ?pids, "reclaim: grace window expired (SIGKILL)");
+        for pid in &pids {
+            unsafe { libc::kill(*pid, libc::SIGKILL) };
+        }
+    }
 }
 
 pub struct MlxEngineManager {
@@ -370,13 +424,26 @@ impl MlxEngineManager {
     }
 
     /// Stop the engine if one is running; a mount still in flight sees the state change
-    /// and shuts its freshly started sidecar down on arrival.
+    /// and shuts its freshly started sidecar down on arrival. When the manager supervises
+    /// nothing but the configured port is still occupied (an engine orphaned by a previous
+    /// goosed — supervision state is in-memory only), unmount reclaims the port by
+    /// terminating the listeners per-pid: SIGTERM, a grace window, then SIGKILL.
     pub async fn unmount(&self) {
-        let mut state = self.state.lock().await;
-        if let ManagerState::Running { sidecar, .. } =
-            std::mem::replace(&mut *state, ManagerState::Stopped)
-        {
-            sidecar.shutdown().await;
+        let supervised = {
+            let mut state = self.state.lock().await;
+            match std::mem::replace(&mut *state, ManagerState::Stopped) {
+                ManagerState::Running { sidecar, .. } => {
+                    sidecar.shutdown().await;
+                    true
+                }
+                _ => false,
+            }
+        };
+        if !supervised {
+            let port = self.settings().port;
+            if port_has_listener(port) {
+                reclaim_port(port).await;
+            }
         }
     }
 
@@ -408,6 +475,7 @@ impl MlxEngineManager {
             probe_error: None,
             gate_message,
             gate_verdict,
+            stray_listener_port: None,
             available_memory_gb: available as f64 / GIB as f64,
             total_memory_gb: total as f64 / GIB as f64,
             restart_required: false,
@@ -443,6 +511,9 @@ impl MlxEngineManager {
             }
         };
 
+        if running.is_none() && port_has_listener(settings.port) {
+            status.stray_listener_port = Some(settings.port);
+        }
         if let Some((running_model, running_argv)) = running {
             let desired_model = settings.model_id.as_deref().unwrap_or(&running_model);
             status.restart_required = build_serve_command(&settings, desired_model) != running_argv;
@@ -818,6 +889,56 @@ mod tests {
         };
         assert!(!settings.migrate_legacy());
         assert!(settings.model_profiles.is_empty());
+    }
+
+    #[tokio::test]
+    async fn status_reports_a_stray_listener_on_the_configured_port() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let manager = MlxEngineManager::new();
+        manager.set_settings(EngineSettings {
+            port,
+            ..Default::default()
+        });
+        let status = manager.status().await;
+        assert_eq!(status.state, "stopped");
+        assert_eq!(status.stray_listener_port, Some(port));
+        drop(listener);
+        let status = manager.status().await;
+        assert_eq!(status.stray_listener_port, None);
+    }
+
+    #[tokio::test]
+    async fn unmount_reclaims_an_unsupervised_listener() {
+        let probe = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = probe.local_addr().unwrap().port();
+        drop(probe);
+        let mut orphan = std::process::Command::new("python3")
+            .args([
+                "-c",
+                &format!(
+                    "import http.server; http.server.HTTPServer(('127.0.0.1', {port}), \
+                     http.server.BaseHTTPRequestHandler).serve_forever()"
+                ),
+            ])
+            .spawn()
+            .unwrap();
+        for _ in 0..50 {
+            if port_has_listener(port) {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+        assert!(port_has_listener(port), "orphan never came up");
+
+        let manager = MlxEngineManager::new();
+        manager.set_settings(EngineSettings {
+            port,
+            ..Default::default()
+        });
+        manager.unmount().await;
+        assert!(!port_has_listener(port), "unmount did not reclaim the port");
+        let _ = orphan.wait();
     }
 
     #[tokio::test]

@@ -2327,6 +2327,10 @@ pub struct MlxEngineStatusDto {
     /// The last memory-gate verdict for `gate_message`: "allow" | "warn" | "block".
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub gate_verdict: Option<String>,
+    /// Something already listens on the configured port while the manager supervises
+    /// nothing — an engine orphaned by a previous goosed. Unmount reclaims it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stray_listener_port: Option<u16>,
     pub available_memory_gb: f64,
     pub total_memory_gb: f64,
     /// True when the persisted settings would spawn the running engine differently
