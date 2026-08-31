@@ -9,7 +9,7 @@
 
 use std::path::Path;
 
-use super::{activity_digest_key, one_lane_per_host, parse_json_lenient};
+use super::{activity_digest_key, head_to_sentence_end, one_lane_per_host, parse_json_lenient};
 use super::{spec_orientation, EventSink, SpecSection};
 use super::{JUDGE_ENDED_NEEDLE, LEDGER_DIR, USER_DECISIONS_HEADER};
 
@@ -42,8 +42,13 @@ pub(crate) struct ResearchRow {
     pub(crate) reason: Option<String>,
     #[serde(default)]
     pub(crate) detail: Option<String>,
-    /// Questions the researcher RAISED but could not settle — recorded here for the operator,
-    /// NEVER dispatched (research dispatches only the opener's own questions).
+    /// Questions the researcher RAISED but could not settle. NEVER dispatched — research answers
+    /// only the opener's own questions (measured r6b: 33 dispatched, 48 raised, 0 of the raised
+    /// chased; a fan that chased raises would have doubled a 176-minute phase). Each one is
+    /// named by a `research_raised_folded` event (`emit_research_outcome`) and folded VERBATIM
+    /// into the owning slice's brief (`raised_questions_brief_block`) for the BUILDER to settle
+    /// — before that fold only a count rode `research_answered.raised`, and r6b's 48 raised
+    /// questions reached no builder at all.
     #[serde(default)]
     pub(crate) raised: Vec<String>,
     pub(crate) model: String,
@@ -177,6 +182,105 @@ pub(super) fn fold_research_outcome(
     row
 }
 
+/// A panicked lane is a TERMINAL unanswered outcome like any other miss: the caller writes the
+/// mini (the absence is a fact the ledger holds, and on resume it stays settled like every
+/// unanswered row), emits through the one outcome funnel, and the brief keeps the raw question.
+/// `model` is honestly empty — the lane died before any call attribution — and `secs` is 0 for
+/// the same reason. The error head rides at 300, the ledger's last_failure_tail idiom.
+pub(super) fn fold_research_panic(q: &ResearchQuestion, error: &str) -> ResearchRow {
+    ResearchRow {
+        slice: q.slice.clone(),
+        q_index: q.q_index,
+        question: q.question.clone(),
+        status: RESEARCH_UNANSWERED.to_string(),
+        answer: String::new(),
+        reason: Some("lane_panicked".to_string()),
+        detail: Some(error.chars().take(300).collect()),
+        raised: Vec::new(),
+        model: String::new(),
+        secs: 0,
+    }
+}
+
+/// THE ONE emission site for a terminal row's events (the digestStreamFields law: the fan's
+/// lane closure and its panicked-lane arm each carried a verbatim `research_unanswered`
+/// writer). `research_answered` / `research_unanswered` exactly as before, then ONE
+/// `research_raised_folded` per question the lane raised — the WORDS, not a count: the
+/// `raised` count on `research_answered` was the only trace r6b's 48 raised questions left, so
+/// tick.py could count them and nobody could read them. `raised_by` is the parent row's durable
+/// mini — the primary material an operator opens to read the whole row — and the question rides
+/// as a hard 200-char head because this feeds an event, not a model (the head_to_sentence_end
+/// rule's own exemption, the same cut `research_dispatched` makes).
+pub(super) fn emit_research_outcome(events: &dyn EventSink, row: &ResearchRow) {
+    if row.status == RESEARCH_ANSWERED {
+        events.write_value(serde_json::json!({
+            "event": "research_answered",
+            "slice": row.slice,
+            "q_index": row.q_index,
+            "chars": row.answer.chars().count(),
+            "raised": row.raised.len(),
+            "secs": row.secs,
+            "model": row.model,
+        }));
+    } else {
+        events.write_value(serde_json::json!({
+            "event": "research_unanswered",
+            "slice": row.slice,
+            "q_index": row.q_index,
+            "reason": row.reason,
+            "detail": row.detail,
+            "secs": row.secs,
+            "model": row.model,
+        }));
+    }
+    for q in &row.raised {
+        events.write_value(serde_json::json!({
+            "event": "research_raised_folded",
+            "slice": row.slice,
+            "q_index": row.q_index,
+            "raised_by": research_mini_name(&row.slice, row.q_index),
+            "question": q.chars().take(200).collect::<String>(),
+        }));
+    }
+}
+
+/// The brief block for the questions this slice's OWN research lanes raised and nobody chased,
+/// so the builder — the only party left who can settle them — sees them (r6b: 48 raised, 0
+/// reached a brief). Assembled from facts only: the real count and each raised text verbatim,
+/// as a sentence-bounded head at 400 (the ledger block's own per-item budget; the full text is
+/// durable in the mini — a render budget, never a cap). Exact duplicates across a slice's rows
+/// fold to one line so the count stays honest. A slice whose lanes raised nothing renders
+/// NOTHING — no heading, no filler (the specificity gate). `slice_rows` is the caller's
+/// per-slice filter (`r.slice == sl.id`), so a decision row can never reach here; rows of
+/// EVERY status contribute — an empty_answer row may still have raised.
+pub(super) fn raised_questions_brief_block(slice_rows: &[&ResearchRow]) -> String {
+    let mut raised: Vec<&str> = Vec::new();
+    for r in slice_rows {
+        for q in &r.raised {
+            let q = q.trim();
+            if !q.is_empty() && !raised.contains(&q) {
+                raised.push(q);
+            }
+        }
+    }
+    if raised.is_empty() {
+        return String::new();
+    }
+    let lines: Vec<String> = raised
+        .iter()
+        .map(|q| format!("- {}", head_to_sentence_end(q, 400).replace('\n', " ")))
+        .collect();
+    format!(
+        "\n\nOPEN QUESTIONS the research fan raised while answering this slice's questions and \
+         did not chase ({}) — settle each while building: where the request speaks, the request \
+         decides; where a line below already names a convention, follow it; where nothing does, \
+         choose the most CONVENTIONAL option and note the choice in a code comment, exactly as \
+         for an open decision:\n{}",
+        raised.len(),
+        lines.join("\n")
+    )
+}
+
 /// The EXISTING-TREE block both prompt builders share (`research_user_text` here and
 /// `decision_user_text` in the decisions module) — one join, so the greenfield/manifest framing
 /// cannot drift between the slice lanes and the decision lanes.
@@ -300,7 +404,194 @@ pub(super) fn research_system_text() -> String {
      from the request or the sources, say exactly that in one line and still name the \
      conventional choice. Keep it under a page.\n\n\
      When you are done, call the final_output tool ONCE with {\"answer\": \"...\", \"raised\": \
-     [...]} — `raised` lists further questions you could NOT settle, for the record only: do not \
-     answer them, and nothing will dispatch them."
+     [...]} — `raised` lists further questions you could NOT settle: do not answer them, and \
+     nothing will dispatch them; they are handed VERBATIM to the builder of this slice as open \
+     points, so phrase each as a decision that builder can make in one line, naming the \
+     conventional choice when you have one."
         .to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::super::{briefs_from_slices, NullSink, OpenOutput, OpenSlice, SwarmEvent};
+    use super::*;
+    use std::sync::Mutex;
+
+    #[derive(Default)]
+    struct ValueSink(Mutex<Vec<serde_json::Value>>);
+    impl EventSink for ValueSink {
+        fn emit(&self, _event: &SwarmEvent) {}
+        fn write_value(&self, value: serde_json::Value) {
+            self.0.lock().unwrap().push(value);
+        }
+    }
+
+    fn row(slice: &str, q_index: usize, status: &str, raised: &[&str]) -> ResearchRow {
+        ResearchRow {
+            slice: slice.to_string(),
+            q_index,
+            question: format!("{slice} question {q_index}"),
+            status: status.to_string(),
+            answer: if status == RESEARCH_ANSWERED {
+                "Port 8850, from the boot table.".to_string()
+            } else {
+                String::new()
+            },
+            reason: (status == RESEARCH_UNANSWERED).then(|| "empty_answer".to_string()),
+            detail: None,
+            raised: raised.iter().map(|s| s.to_string()).collect(),
+            model: "m".to_string(),
+            secs: 9,
+        }
+    }
+
+    /// r6b's shape at the event layer: `research_answered.raised` carried only a COUNT (48 over
+    /// the run), so the raised words were invisible outside the minis. The one funnel now names
+    /// each raised question with the parent's durable mini as `raised_by`; the panicked-lane arm
+    /// rides the same funnel, so a reworded `research_unanswered` can no longer diverge between
+    /// the two writers.
+    #[test]
+    fn every_raised_question_is_named_by_its_own_event_through_the_one_funnel() {
+        let sink = ValueSink::default();
+        let answered = row(
+            "app-boot",
+            1,
+            RESEARCH_ANSWERED,
+            &[
+                "Should the wrapper run services in-process instead of as subprocesses?",
+                "Exact SIGTERM grace before SIGKILL — chose 5 s by convention.",
+            ],
+        );
+        emit_research_outcome(&sink, &answered);
+        let q = ResearchQuestion {
+            slice: "viz-field".into(),
+            q_index: 3,
+            question: "How is the Europe/Berlin day computed?".into(),
+        };
+        let panicked = fold_research_panic(&q, "task panicked: index out of bounds");
+        assert_eq!(panicked.status, RESEARCH_UNANSWERED);
+        assert_eq!(panicked.reason.as_deref(), Some("lane_panicked"));
+        assert!(panicked.model.is_empty() && panicked.secs == 0);
+        assert_eq!(
+            panicked.detail.as_deref(),
+            Some("task panicked: index out of bounds")
+        );
+        emit_research_outcome(&sink, &panicked);
+        let events = sink.0.lock().unwrap();
+        let names: Vec<&str> = events
+            .iter()
+            .map(|e| e["event"].as_str().unwrap())
+            .collect();
+        assert_eq!(
+            names,
+            vec![
+                "research_answered",
+                "research_raised_folded",
+                "research_raised_folded",
+                "research_unanswered",
+            ],
+            "one named event per raised question, none for a row that raised nothing"
+        );
+        assert_eq!(
+            events[0]["raised"], 2,
+            "the count still rides research_answered"
+        );
+        assert_eq!(events[1]["slice"], "app-boot");
+        assert_eq!(events[1]["q_index"], 1);
+        assert_eq!(
+            events[1]["raised_by"], "research-app-boot-q1.json",
+            "raised_by is the parent row's durable mini, derived from the row itself"
+        );
+        assert_eq!(
+            events[2]["question"],
+            "Exact SIGTERM grace before SIGKILL — chose 5 s by convention."
+        );
+        assert_eq!(events[3]["reason"], "lane_panicked");
+    }
+
+    /// The fold into the brief: the owning slice's brief carries the heading with the REAL
+    /// count (exact duplicates folded, an empty_answer row's raises included), placed after the
+    /// QUESTIONS partition; a slice whose lanes raised nothing renders no heading at all; a
+    /// decision row's raises never leak into any slice's brief (the caller's `r.slice == sl.id`
+    /// filter is the only door).
+    #[test]
+    fn raised_questions_fold_into_the_owning_brief_with_the_real_count_and_nowhere_else() {
+        let opened = OpenOutput {
+            slices: vec![
+                OpenSlice {
+                    id: "api".into(),
+                    title: "the api".into(),
+                    objective: "serve GET /health".into(),
+                    questions: vec!["which port".into(), "which storage".into()],
+                    weight: 3,
+                    sections: Vec::new(),
+                },
+                OpenSlice {
+                    id: "web".into(),
+                    title: "the console".into(),
+                    objective: "render the table".into(),
+                    questions: vec!["which filter params".into()],
+                    weight: 2,
+                    sections: Vec::new(),
+                },
+            ],
+            open_decisions: Vec::new(),
+        };
+        let rows = vec![
+            row(
+                "api",
+                0,
+                RESEARCH_ANSWERED,
+                &[
+                    "Whether each role may hold multiple bearer tokens — assumed one.",
+                    "Whether each role may hold multiple bearer tokens — assumed one.",
+                ],
+            ),
+            row(
+                "api",
+                1,
+                RESEARCH_UNANSWERED,
+                &["Journal mode (WAL vs rollback) is not specified — WAL as convention."],
+            ),
+            row("web", 0, RESEARCH_ANSWERED, &[]),
+            row(
+                "__open_decisions__",
+                0,
+                RESEARCH_ANSWERED,
+                &["D3: empty-with-progress or blocking loader before the first sync?"],
+            ),
+        ];
+        let briefs = briefs_from_slices(&opened, "build the app", &rows, &[], &NullSink);
+        let api = &briefs[0].brief;
+        let heading = "OPEN QUESTIONS the research fan raised while answering this slice's \
+                       questions and did not chase (2)";
+        assert!(
+            api.contains(heading),
+            "the real count, duplicates folded:\n{api}"
+        );
+        assert!(api.contains("- Whether each role may hold multiple bearer tokens — assumed one."));
+        assert!(
+            api.contains("- Journal mode (WAL vs rollback) is not specified — WAL as convention.")
+        );
+        assert_eq!(
+            api.matches("multiple bearer tokens").count(),
+            1,
+            "an exact duplicate raise renders once"
+        );
+        assert!(
+            api.find("QUESTIONS this slice must settle").unwrap() < api.find(heading).unwrap(),
+            "the raised block follows the slice's own open questions"
+        );
+        assert!(
+            !api.contains("D3:"),
+            "a decision row's raise is not this slice's"
+        );
+        let web = &briefs[1].brief;
+        assert!(
+            !web.contains("OPEN QUESTIONS the research fan raised"),
+            "a slice whose lanes raised nothing gets no heading and no filler:\n{web}"
+        );
+        assert!(!web.contains("D3:"));
+        assert!(raised_questions_brief_block(&[]).is_empty());
+    }
 }

@@ -48,10 +48,10 @@ use supervision::{
 };
 mod research;
 use research::{
-    budget_research_answer, fold_research_outcome, load_research_mini, research_fan_lanes,
-    research_mini_name, research_request_block, research_schema, research_system_text,
-    research_user_text, splice_claimed_sections, ResearchQuestion, ResearchRow, RESEARCH_ANSWERED,
-    RESEARCH_UNANSWERED,
+    budget_research_answer, emit_research_outcome, fold_research_outcome, fold_research_panic,
+    load_research_mini, raised_questions_brief_block, research_fan_lanes, research_mini_name,
+    research_request_block, research_schema, research_system_text, research_user_text,
+    splice_claimed_sections, ResearchQuestion, ResearchRow, RESEARCH_ANSWERED,
 };
 mod imports;
 use imports::{attribute_import_gap_with_owner, tree_import_gaps, verify_tree_imports};
@@ -25346,6 +25346,10 @@ fn briefs_from_slices(
                         .join("\n")
                 ));
             }
+            // The questions this slice's OWN lanes raised and nobody chased, verbatim, for the
+            // builder to settle — r6b's 48 such questions reached no builder at all. Empty
+            // when nothing was raised (no heading, no filler).
+            brief.push_str(&raised_questions_brief_block(&slice_rows));
             // OPEN-1, the detailing half: the opener saw an orientation index, so the FULL text
             // of each section this slice claimed is spliced here by CODE — the builder reads
             // the spec's own words, never a planner paraphrase. A slice that claimed nothing
@@ -25413,7 +25417,11 @@ fn briefs_from_slices(
 // call per question, one lane per host — and splices the answers back through the sanctioned
 // channels only: Q/A blocks in `briefs_from_slices`, the settled line in `slice_index`, a
 // droppable section in `render_ledger_block`. Research adds no tasks, writes no files, and never
-// dispatches a question a researcher RAISED (recorded on the row for the operator, nothing more).
+// dispatches a question a researcher RAISED — the fan is ONE generation deep by construction
+// (measured r6b: 33 opener questions dispatched over 176 minutes on 3 lanes, 48 raised, 0 chased;
+// chasing raises would have doubled the phase). A raise is recorded on the row, named per
+// question by `research_raised_folded`, and folded VERBATIM into the owning slice's brief
+// (`raised_questions_brief_block`) for the builder to settle — imperfections are REPAIR's job.
 // "Writes no files" is a TOOL-MENU quarantine, not a sandbox: the lane gets no write/edit tool,
 // but shell redirection could still write — the prompt forbids it, and `tree_at_start` (captured
 // before any call) would surface anything a lane left behind.
@@ -25605,29 +25613,11 @@ impl GooseAgentDispatcher {
                     };
                     let row = fold_research_outcome(&q, &model, secs, folded);
                     // The mini is written for BOTH outcomes — the absence is a fact the ledger
-                    // holds — and the events are the loud channel tick.py counts.
+                    // holds — and the events (one funnel, `emit_research_outcome`: the
+                    // answered/unanswered row plus one `research_raised_folded` per raised
+                    // question) are the loud channel tick.py counts.
                     write_research_ledger(&me.working_dir, &row);
-                    if row.status == RESEARCH_ANSWERED {
-                        me.events.write_value(serde_json::json!({
-                            "event": "research_answered",
-                            "slice": row.slice,
-                            "q_index": row.q_index,
-                            "chars": row.answer.chars().count(),
-                            "raised": row.raised.len(),
-                            "secs": row.secs,
-                            "model": row.model,
-                        }));
-                    } else {
-                        me.events.write_value(serde_json::json!({
-                            "event": "research_unanswered",
-                            "slice": row.slice,
-                            "q_index": row.q_index,
-                            "reason": row.reason,
-                            "detail": row.detail,
-                            "secs": row.secs,
-                            "model": row.model,
-                        }));
-                    }
+                    emit_research_outcome(me.events.as_ref(), &row);
                     row
                 }
             },
@@ -25637,34 +25627,12 @@ impl GooseAgentDispatcher {
             match folded {
                 Ok(row) => rows.push(row),
                 Err(error) => {
-                    // A panicked lane is a TERMINAL unanswered outcome like any other miss:
-                    // the mini is written (the absence is a fact the ledger holds, and on
-                    // resume it stays settled like every unanswered row), the event is the
-                    // loud channel tick.py counts, and the brief keeps the raw question.
-                    // `model` is honestly empty — the lane died before any call attribution.
-                    let q = &dispatched[i];
-                    let row = ResearchRow {
-                        slice: q.slice.clone(),
-                        q_index: q.q_index,
-                        question: q.question.clone(),
-                        status: RESEARCH_UNANSWERED.to_string(),
-                        answer: String::new(),
-                        reason: Some("lane_panicked".to_string()),
-                        detail: Some(error.chars().take(300).collect()),
-                        raised: Vec::new(),
-                        model: String::new(),
-                        secs: 0,
-                    };
+                    // A panicked lane is a TERMINAL unanswered outcome like any other miss
+                    // (`fold_research_panic`): the mini is written, the event rides the same
+                    // funnel as every other row, and the brief keeps the raw question.
+                    let row = fold_research_panic(&dispatched[i], &error);
                     write_research_ledger(&self.working_dir, &row);
-                    self.events.write_value(serde_json::json!({
-                        "event": "research_unanswered",
-                        "slice": row.slice,
-                        "q_index": row.q_index,
-                        "reason": row.reason,
-                        "detail": row.detail,
-                        "secs": row.secs,
-                        "model": row.model,
-                    }));
+                    emit_research_outcome(self.events.as_ref(), &row);
                     rows.push(row);
                 }
             }
@@ -42313,6 +42281,7 @@ struct ResearchFinding {
 // ================================================================================================
 #[cfg(test)]
 mod audit_regressions {
+    use super::research::RESEARCH_UNANSWERED;
     use super::*;
 
     /// P1-9: criticality is the ENGINE'S OWN WORDING, pinned against the REAL strings the gate
