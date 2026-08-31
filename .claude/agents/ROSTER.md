@@ -772,3 +772,8 @@ research_request_block's armed-no-claimed-sections arm wording.
   the judge's refutation-amnesia behind it, with both quotes; gave the grace tick its precise exit
   condition (calls=19,705); and reported its own instrument's contradiction (since_ms vs mtime)
   instead of picking a side. Charter gap: none.
+- 2026-08-31 23:58 tick-surgeon #31: EXEMPLARY at 57.4k/8. Closed the campaign's hardest lane with
+  the verdict written honestly against its own prior suspicion ("a kill would have been WRONG"),
+  discharged the stub watch via the lane's own re-verification, and armed the sharpest kind of
+  next-watch: a named fallback in the APP-UNDER-TEST's planned dispatch, to be read in the landed
+  text. Charter gap: none.
