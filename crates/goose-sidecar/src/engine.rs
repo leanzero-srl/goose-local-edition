@@ -141,6 +141,9 @@ pub struct EngineStatus {
     pub pid: Option<u32>,
     pub context_window: Option<u64>,
     pub tool_call_parser: Option<String>,
+    /// The id the live engine actually serves (from /v1/models) — differs from `model_id`
+    /// (the HF directory) whenever `served_model_name` aliases it. Chat must use THIS id.
+    pub served_model_id: Option<String>,
     pub probe_error: Option<String>,
     pub gate_message: Option<String>,
     pub gate_verdict: Option<String>,
@@ -317,6 +320,7 @@ impl MlxEngineManager {
             pid: None,
             context_window: None,
             tool_call_parser: None,
+            served_model_id: None,
             probe_error: None,
             gate_message,
             gate_verdict,
@@ -360,7 +364,8 @@ impl MlxEngineManager {
             status.restart_required = build_serve_command(&settings, desired_model) != running_argv;
             let base_url = status.base_url.as_deref().expect("set for running state");
             match self.probe_model_info(base_url).await {
-                Ok((context_window, tool_call_parser)) => {
+                Ok((served_model_id, context_window, tool_call_parser)) => {
+                    status.served_model_id = served_model_id;
                     status.context_window = context_window;
                     status.tool_call_parser = tool_call_parser;
                 }
@@ -370,7 +375,11 @@ impl MlxEngineManager {
         status
     }
 
-    async fn probe_model_info(&self, base_url: &str) -> Result<(Option<u64>, Option<String>)> {
+    #[allow(clippy::type_complexity)]
+    async fn probe_model_info(
+        &self,
+        base_url: &str,
+    ) -> Result<(Option<String>, Option<u64>, Option<String>)> {
         let url = format!("{base_url}/v1/models");
         let resp = self
             .probe_client
@@ -388,6 +397,7 @@ impl MlxEngineManager {
             .and_then(|d| d.get(0))
             .with_context(|| format!("/v1/models returned no data entries: {body}"))?;
         Ok((
+            model.get("id").and_then(|v| v.as_str()).map(str::to_string),
             model.get("context_window").and_then(|v| v.as_u64()),
             model
                 .get("tool_call_parser")
