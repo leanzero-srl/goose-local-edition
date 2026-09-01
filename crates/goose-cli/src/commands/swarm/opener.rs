@@ -223,6 +223,41 @@ impl OpenOutput {
 /// task ids, no requirement map. An open decision is an OBJECT — `question`, `options` (two or
 /// more), `cite` — never a bare sentence: r6d's opener emitted three strings with no options,
 /// one of them an instruction to itself, and the ask window was spent on them.
+/// D10-8: the QUESTIONS rule the opener reads right after the SOURCES block — the contract the
+/// schema enforces (`cite` required on every kind, non-empty), with the three shapes shown on
+/// sb-7's own lines, and the order of operations: RUN the grep first. `request_path` is the
+/// persisted request file (the SOURCES block names it too); when persisting failed the rule
+/// names the absence instead of a path that is not there (gate 1).
+pub(super) fn opener_questions_rule(request_path: Option<&std::path::Path>) -> String {
+    let path = request_path.map_or_else(
+        || {
+            "the request file (NOT persisted this run — see SOURCES; cite the heading you read)"
+                .to_string()
+        },
+        |p| p.display().to_string(),
+    );
+    format!(
+        "\n\nQUESTIONS. A question is an OBJECT {{question, kind, cite, fact}}. EVERY kind carries a \
+         cite; the schema rejects a question with an empty cite. Before you write any question, RUN \
+         (do not describe) a grep against the request file named under SOURCES: `grep -n -i '<term>' \
+         {path}` then `sed -n 'A,Bp'`. Never print the whole file. Then:\n\
+         — If a line ANSWERS it, it is not a question: kind spec_lookup, cite request.md:<N>, fact = \
+         the answer in the request's own words, literals verbatim; no lane runs. Example: \
+         {{\"question\":\"Which sort keys does sort accept?\",\"kind\":\"spec_lookup\",\"cite\":\"request.md:148-150\",\"fact\":\"sort is one of created_at, -created_at, amount_minor, -amount_minor; default created_at (ascending by INSTANT); an unknown sort value is a validation error, not an empty result.\"}}\n\
+         — If the request is SILENT and a builder must choose: kind design, cite = the closest lines \
+         you read AND the grep that found nothing. Example: \
+         {{\"question\":\"What in-process interface does events.py expose so sse.py broadcasts one message per committed change?\",\"kind\":\"design\",\"cite\":\"request.md:212-218 name the event types and GET /api/events; grep -n -i 'subscribe' → no match\"}}\n\
+         — If it needs the vendor's documentation: kind external, cite = the request line that defers \
+         to it. Example: \
+         {{\"question\":\"What cursor state must persist so a dropped walk resumes?\",\"kind\":\"external\",\"cite\":\"request.md:88-91 'resumes per the docs … restarts the cursor on 410 cursor_expired as documented'; docs at request.md:9\"}}\n\
+         A spec_lookup with an empty fact is allowed ONLY with the literal grep command you ran and \
+         its 'no match' in cite — a cite you did not run is a false citation. A question that IS one \
+         of your open_decisions, or names D1/D2/D3, goes under open_decisions only. MEASURED: the \
+         previous opener wrote 'Health response shape (in full text) — which fields?' while \
+         request.md:134-136 held the shape; 'in full text' means grep it now, not ask."
+    )
+}
+
 pub(super) fn open_schema() -> serde_json::Value {
     serde_json::json!({
         "type": "object",
@@ -241,11 +276,11 @@ pub(super) fn open_schema() -> serde_json::Value {
                             "type": "array",
                             "items": {
                                 "type": "object",
-                                "required": ["question", "kind"],
+                                "required": ["question", "kind", "cite"],
                                 "properties": {
                                     "question": {"type": "string"},
                                     "kind": {"type": "string", "enum": ["spec_lookup", "design", "external"]},
-                                    "cite": {"type": "string"},
+                                    "cite": {"type": "string", "minLength": 1},
                                     "fact": {"type": "string"}
                                 }
                             }
@@ -332,6 +367,18 @@ fn qualify_slice_questions(mut slices: Vec<OpenSlice>, events: &dyn EventSink) -
                     "event": "research_question_unkinded",
                     "slice": sl.id,
                     "q_index": sl.questions.len(),
+                    "question": q.text.chars().take(200).collect::<String>(),
+                }));
+            } else if q.cite.trim().is_empty() {
+                // D10-8: the schema requires a non-empty cite on EVERY kind; a kinded question
+                // that arrives without one came through the text fallthrough (prose, a fence)
+                // past the validator. Named, kept, dispatched — a grep the opener did not run is
+                // a grep a lane now runs.
+                events.write_value(serde_json::json!({
+                    "event": "research_question_uncited",
+                    "slice": sl.id,
+                    "q_index": sl.questions.len(),
+                    "kind": q.kind.as_str(),
                     "question": q.text.chars().take(200).collect::<String>(),
                 }));
             }
@@ -564,10 +611,42 @@ mod tests {
         let schema = open_schema();
         let q = &schema["properties"]["slices"]["items"]["properties"]["questions"]["items"];
         assert_eq!(q["type"], "object");
-        assert_eq!(q["required"], serde_json::json!(["question", "kind"]));
+        assert_eq!(
+            q["required"],
+            serde_json::json!(["question", "kind", "cite"]),
+            "D10-8: the VALIDATOR refuses a bare question — never a retry count"
+        );
+        assert_eq!(q["properties"]["cite"]["minLength"], 1);
         assert_eq!(
             q["properties"]["kind"]["enum"],
             serde_json::json!(["spec_lookup", "design", "external"])
+        );
+        // The rule's three example objects satisfy the schema's shape: every kind, a non-empty cite.
+        let rule = opener_questions_rule(Some(std::path::Path::new("/run/.swarm/request.md")));
+        assert!(rule.contains("grep -n -i '<term>' /run/.swarm/request.md"));
+        let mut examples = 0;
+        for line in rule.lines() {
+            let Some(start) = line.find("{\"question\"") else {
+                continue;
+            };
+            let obj: serde_json::Value =
+                serde_json::from_str(line.get(start..).unwrap_or("").trim_end())
+                    .expect("the example is valid JSON");
+            let kind = obj["kind"].as_str().unwrap();
+            assert!(
+                ["spec_lookup", "design", "external"].contains(&kind),
+                "{obj}"
+            );
+            assert!(!obj["cite"].as_str().unwrap().is_empty(), "{obj}");
+            if kind == "spec_lookup" {
+                assert!(!obj["fact"].as_str().unwrap().is_empty(), "{obj}");
+            }
+            examples += 1;
+        }
+        assert_eq!(examples, 3, "one example per kind");
+        assert!(
+            opener_questions_rule(None).contains("NOT persisted this run"),
+            "a missing request file is named, never pointed at"
         );
 
         // r6d ledger-api-q1 as a cited fact (request.md:148 lists the four sort keys), r6d
@@ -625,12 +704,22 @@ mod tests {
         assert_eq!(
             names,
             vec![
+                "research_question_uncited",
+                "research_question_uncited",
                 "research_question_unkinded",
                 "research_question_unkinded",
                 "research_question_empty"
             ],
-            "{events:?}"
+            "the two kinded-but-uncited entries (External, design) are named first: {events:?}"
         );
+        assert_eq!(events[0]["kind"], "external");
+        assert_eq!(events[0]["q_index"], 1);
+        assert_eq!(events[1]["kind"], "design");
+        let events: Vec<serde_json::Value> = events
+            .iter()
+            .filter(|e| e["event"] != "research_question_uncited")
+            .cloned()
+            .collect();
         assert_eq!(events[0]["slice"], "ledger-api");
         assert_eq!(
             events[0]["q_index"], 4,
