@@ -58,7 +58,7 @@ import { useLmStudioFleetVisible } from '../../hooks/useLmStudioFleetVisible';
 import { Tooltip, TooltipTrigger, TooltipContent } from '../ui/Tooltip';
 import InlineMarkdown from './InlineMarkdown';
 import StructuredContent, { CodeBlock } from './StructuredContent';
-import FormationRibbon from './FormationRibbon';
+import FormationRibbon, { type FormationActiveTone } from './FormationRibbon';
 import { isPlanningPhase, planningLanesFor, type PhaseLaneGroup } from './phaseList';
 import {
   CHIP_RADIUS,
@@ -5165,13 +5165,13 @@ export const SwarmRunPanel: React.FC<{
         ? (run.mtime - run.startedAt) / 60000
         : null;
   const durationLabel = durationMin != null ? fmtDuration(durationMin) : null;
-  const activePhaseColor = ended
+  const activePhaseTone: FormationActiveTone = ended
     ? outcome === 'done'
-      ? SWARM_STATUS.solidDone
+      ? 'ok'
       : outcome === 'failed'
-        ? SWARM_STATUS.solidError
-        : SWARM_STATUS.solidStopped
-    : SWARM_STATUS.action;
+        ? 'err'
+        : 'stopped'
+    : 'accent';
   // The ribbon's fleet is the SAME truth the Fleet zone renders — an open lane per deriveFleet, or LM
   // Studio's own generating/prompt-processing signal for a node whose work has no lane.
   const formationNodes = deviceOrder.map((device) => {
@@ -5306,6 +5306,9 @@ export const SwarmRunPanel: React.FC<{
               </Tip>
             ) : null}
           </span>
+          {run.inProgress && !stale && !ended && !clarifyPending ? (
+            <HeaderMetrics startedAt={run.startedAt} phaseTodo={run.phaseTodo} />
+          ) : null}
           {run.inProgress && !ended && !clarifyPending && workingDir ? (
             // PAUSE / RESUME — hold the build at the next task boundary (in-flight work finishes, nothing is
             // lost) and resume re-running nothing. An ACTION, so the accent outline (filled while the request
@@ -5370,12 +5373,7 @@ export const SwarmRunPanel: React.FC<{
           nodes={formationNodes}
           evidence={run.runPhasesObserved}
           held={run.held}
-          activeColor={activePhaseColor}
-          metrics={
-            run.inProgress && !stale && !ended && !clarifyPending ? (
-              <HeaderMetrics startedAt={run.startedAt} phaseTodo={run.phaseTodo} />
-            ) : null
-          }
+          activeTone={activePhaseTone}
         />
       )}
       </div>
