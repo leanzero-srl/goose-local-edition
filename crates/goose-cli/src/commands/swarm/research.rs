@@ -641,6 +641,18 @@ pub(super) struct ConsumedSections {
 ///     come from the request's routes, never from a list. Coarser than (a) by design — a slice
 ///     that talks about the resource is handed the resource's table — and reported under its
 ///     own rule name so the tick can tell the two apart.
+///     Two filters, both derived from the plan and never from a list (VA-044 F2; measured on
+///     r6c before them: §6 reached web-viz by "events" — §8's "wheel events" — and Endpoints
+///     reached notifierd by "health" and "notifications", its OWN routes spelled like ledgerd's):
+///     (i) UBIQUITY — a resource that EVERY slice's claimed bodies name distinguishes nobody and
+///     does not route; judged on the resource's word set (rule d fires on any spelling, so the
+///     same predicate is asked of every slice), over the slices that claimed bodies at all, and
+///     only when at least two did — one slice has nobody to be told apart from. (ii) OWN
+///     RESOURCES — the resources this slice's own claimed sections advertise are what it
+///     SERVES; the same word in another section's routes is not a call into that section. A
+///     word that survives both routes (MILD), and every word a filter removed rides
+///     `resource_token_filtered{slice, section, own, ubiquitous, carried}` so the tick can read
+///     why a section did or did not arrive.
 ///
 /// Each rule that fires emits `spec_sections_consumed{slice, rule, sections}` beside the
 /// existing `spec_sections_unclaimed`, so the tick can read where every section went.
@@ -700,6 +712,40 @@ pub(super) fn consumed_spec_sections(
     vocabulary.push('\n');
     let advertised: Vec<Vec<String>> = sections.iter().map(advertised_paths).collect();
     let mount = mount_prefixes(&advertised.iter().flatten().cloned().collect::<Vec<_>>());
+    // Rule (d)'s filter (i): the resources every claimed body names. The bodies are the plan's
+    // own claims — this slice's included — minus the cross-cutting sections, exactly the text
+    // rule (d) reads for this slice; a slice that claimed nothing has no bodies and is not
+    // counted, and one body has nobody to be told apart from.
+    let claimed_bodies: Vec<String> = every_claim
+        .iter()
+        .map(|claims| {
+            claims
+                .iter()
+                .filter_map(|h| index_of(h))
+                .filter(|i| !cross.contains(i))
+                .map(|i| sections[i].body.as_str())
+                .collect::<Vec<_>>()
+                .join("\n")
+        })
+        .filter(|body| !body.trim().is_empty())
+        .collect();
+    let names_resource =
+        |text: &str, words: &[String]| words.iter().any(|w| resource_word_named(w, text));
+    let mut ubiquitous: BTreeSet<String> = BTreeSet::new();
+    if claimed_bodies.len() >= 2 {
+        for path in advertised.iter().flatten() {
+            let words = resource_words(path, &mount);
+            if !words.is_empty() && claimed_bodies.iter().all(|b| names_resource(b, &words)) {
+                ubiquitous.extend(words);
+            }
+        }
+    }
+    // Filter (ii): the resources this slice's own claimed sections advertise.
+    let own_resources: BTreeSet<String> = own
+        .iter()
+        .flat_map(|i| advertised[*i].iter())
+        .flat_map(|p| resource_words(p, &mount))
+        .collect();
     let mut by_route: Vec<usize> = Vec::new();
     let mut by_resource: Vec<usize> = Vec::new();
     for (i, paths) in advertised.iter().enumerate() {
@@ -708,12 +754,37 @@ pub(super) fn consumed_spec_sections(
         }
         if paths.iter().any(|p| path_token_named(p, &vocabulary)) {
             by_route.push(i);
-        } else if paths
-            .iter()
-            .flat_map(|p| resource_words(p, &mount))
-            .any(|w| resource_word_named(&w, &vocabulary))
-        {
+            continue;
+        }
+        let mut carried: BTreeSet<String> = BTreeSet::new();
+        let mut own_hits: BTreeSet<String> = BTreeSet::new();
+        let mut ubiquitous_hits: BTreeSet<String> = BTreeSet::new();
+        for path in paths {
+            let words = resource_words(path, &mount);
+            let named = words
+                .iter()
+                .filter(|w| resource_word_named(w, &vocabulary))
+                .cloned();
+            if words.iter().any(|w| own_resources.contains(w)) {
+                own_hits.extend(named);
+            } else if words.iter().any(|w| ubiquitous.contains(w)) {
+                ubiquitous_hits.extend(named);
+            } else {
+                carried.extend(named);
+            }
+        }
+        if !carried.is_empty() {
             by_resource.push(i);
+        }
+        if !own_hits.is_empty() || !ubiquitous_hits.is_empty() {
+            events.write_value(serde_json::json!({
+                "event": "resource_token_filtered",
+                "slice": slice_id,
+                "section": sections[i].heading,
+                "own": own_hits,
+                "ubiquitous": ubiquitous_hits,
+                "carried": carried,
+            }));
         }
     }
     let mut by_parent: Vec<usize> = Vec::new();
@@ -3582,6 +3653,59 @@ mod tests {
         );
         assert_eq!(rule_for("notifierd", "cross_cutting").len(), 4);
         assert!(rule_for("ledgerd-core", "cross_cutting").is_empty());
+        // VA-044 F2, the filters on r6c's real claims. §6 reached web-viz by "events" alone —
+        // §8's "the canvas consumes its wheel events" — and every one of the five claimed bodies
+        // names event/events, so the resource distinguishes nobody (filter i) and §6 no longer
+        // arrives; Endpoints still does, by `stream` and `viz` (routes web-viz really calls).
+        assert_eq!(
+            rule_for("web-viz", "resource_token"),
+            vec!["Endpoints".to_string()]
+        );
+        let filtered = |slice: &str, section: &str| -> Option<&serde_json::Value> {
+            ev.iter().find(|e| {
+                e["event"] == "resource_token_filtered"
+                    && e["slice"] == slice
+                    && e["section"] == section
+            })
+        };
+        let words = |v: &serde_json::Value, key: &str| -> Vec<String> {
+            v[key]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|w| w.as_str().unwrap().to_string())
+                .collect()
+        };
+        let viz6 = filtered("web-viz", S6_HEADING).expect("§6's words were filtered for web-viz");
+        assert_eq!(words(viz6, "ubiquitous"), vec!["events"]);
+        assert!(words(viz6, "carried").is_empty(), "{viz6}");
+        // notifierd: "health", "notification(s)" and "event(s)" are its OWN resources (§6's
+        // routes), filtered under (ii); "payment" is in every body (i). Endpoints still arrives
+        // on "webhook" ("like ledgerd's webhook counters") and — since F1 put `/api/drafts` in
+        // the Endpoints table — on "draft" (`draft.submitted`, `draft.approved`,
+        // `draft.rejected`). Both survive: MILD, route.
+        let nd = filtered("notifierd", "Endpoints").expect("notifierd's own words filtered");
+        assert_eq!(
+            words(nd, "own"),
+            vec!["event", "events", "health", "notification", "notifications"]
+        );
+        assert_eq!(words(nd, "ubiquitous"), vec!["payment"]);
+        assert_eq!(words(nd, "carried"), vec!["draft", "webhook"]);
+        assert!(rule_for("notifierd", "resource_token").contains(&"Endpoints".to_string()));
+        // web-console: §6 still arrives on "notifications" — four of five bodies say it (web-viz
+        // does not), so it distinguishes; "event" (the feed's `data-event-seq`) is ubiquitous.
+        let c6 = filtered("web-console", S6_HEADING).expect("web-console/§6 filtered words");
+        assert_eq!(words(c6, "ubiquitous"), vec!["event"]);
+        assert_eq!(words(c6, "carried"), vec!["notifications"]);
+        assert!(rule_for("web-console", "resource_token").contains(&S6_HEADING.to_string()));
+        // ledgerd-api owns Endpoints, so §6's health/notifications/events are its own routes'
+        // words; §6 still arrives on "processed" (§4's "an event id already processed").
+        let a6 = filtered("ledgerd-api", S6_HEADING).expect("ledgerd-api/§6 filtered words");
+        assert_eq!(
+            words(a6, "own"),
+            vec!["event", "events", "health", "notification", "notifications"]
+        );
+        assert_eq!(words(a6, "carried"), vec!["processed"]);
         // Rule (a) stays token-bounded: notifierd's `/health` row is not found inside ledgerd's
         // `/api/health`. §6 reaches ledgerd-api by the WORDS its Endpoints body uses for
         // notifierd's resources (`/api/notifications` is "proxied to notifierd") — rule (d),
@@ -3628,6 +3752,19 @@ mod tests {
             let d = rule_for(&sl.id, "resource_token");
             let b = rule_for(&sl.id, "child_of_claimed");
             let c = rule_for(&sl.id, "cross_cutting");
+            for f in ev
+                .iter()
+                .filter(|e| e["event"] == "resource_token_filtered" && e["slice"] == sl.id)
+            {
+                eprintln!(
+                    "r6c-filtered {:13} {:50} own {} ubiquitous {} carried {}",
+                    sl.id,
+                    f["section"].as_str().unwrap(),
+                    f["own"],
+                    f["ubiquitous"],
+                    f["carried"]
+                );
+            }
             eprintln!(
                 "r6c {:13} own {:2}/{:6} | a {}/{:5} | d {}/{:5} {:?} | b {}/{:5} | c {}/{:5} | after {}/{}",
                 sl.id,
@@ -3767,6 +3904,73 @@ mod tests {
         let a = s(&["A"]);
         let cf = consumed_spec_sections("a", &a, &[], "", &[&a], &flat, &NullSink);
         assert!(cf.called_into.is_empty() && cf.cross_cutting.is_empty());
+    }
+
+    /// VA-044 F2's two filters on a small document, each edge named. Four slices, four bodies:
+    /// every body says `items`, so the `items` resource distinguishes nobody and carries nothing
+    /// (i); slice `a` owns A, whose routes are `items` and `stats`, so B's `/svc/items/<id>` and
+    /// `/svc/stats` rows are a's own resources and not a call into B (ii) — B is mounted under
+    /// its own prefix because two sections advertising the SAME base path already carry each
+    /// other under rule (a): a slice's own table names its own paths; `stats` and `health` in
+    /// C's body still carry A and B to `c` (a word that survives both filters routes); with ONE
+    /// claiming slice there is nobody to be told apart from and ubiquity is off. Every removed
+    /// word rides `resource_token_filtered`.
+    #[test]
+    fn resource_token_filters_are_derived_from_the_plan_itself() {
+        let doc = "# T\n\n## Build\n\n### A\n\n| Method | Path | Response |\n|---|---|---|\n\
+                   | `GET` | `/api/items` | `{\"items\": 1}` |\n| `GET` | `/api/stats` | `{\"n\": 1}` |\n\n\
+                   A serves items and stats.\n\n### B\n\n| Method | Path | Response |\n|---|---|---|\n\
+                   | `GET` | `/svc/items/<id>` | `{\"item\": 1}` |\n| `GET` | `/svc/stats` | `{\"n\": 1}` |\n\
+                   | `GET` | `/svc/health` | `{\"ok\": 1}` |\n\nB: every item has stats; health is here.\n\n\
+                   ### C\nC renders items. Its stats panel polls health.\n\n### D\nD logs items.\n";
+        let sections = spec_sections(doc);
+        let s = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        let (a, b, c, d) = (s(&["A"]), s(&["B"]), s(&["C"]), s(&["D"]));
+        let every: Vec<&[String]> = vec![&a, &b, &c, &d];
+        let route = |id: &str, claims: &[String], every: &[&[String]]| {
+            let sink = ValueSink::default();
+            let out = consumed_spec_sections(id, claims, &[], "", every, &sections, &sink);
+            let ev = sink.0.lock().unwrap().clone();
+            (out.called_into, ev)
+        };
+        let filtered_words = |ev: &[serde_json::Value], section: &str, key: &str| -> Vec<String> {
+            ev.iter()
+                .filter(|e| e["event"] == "resource_token_filtered" && e["section"] == section)
+                .flat_map(|e| e[key].as_array().unwrap().clone())
+                .map(|w| w.as_str().unwrap().to_string())
+                .collect()
+        };
+        // (ii): a owns items and stats; B advertises both — its own resources, not a call.
+        let (called_a, ev_a) = route("a", &a, &every);
+        assert!(called_a.is_empty(), "{called_a}");
+        assert_eq!(filtered_words(&ev_a, "B", "own"), vec!["items", "stats"]);
+        assert!(filtered_words(&ev_a, "B", "carried").is_empty());
+        // (i): `items` is in all four bodies; d says nothing else — nothing arrives.
+        let (called_d, ev_d) = route("d", &d, &every);
+        assert!(called_d.is_empty(), "{called_d}");
+        assert_eq!(filtered_words(&ev_d, "A", "ubiquitous"), vec!["items"]);
+        assert_eq!(filtered_words(&ev_d, "B", "ubiquitous"), vec!["items"]);
+        // A word that survives both filters routes: c's `stats` carries A, `stats`+`health` carry B.
+        let (called_c, ev_c) = route("c", &c, &every);
+        assert!(
+            called_c.contains("\n### A\n") && called_c.contains("\n### B\n"),
+            "{called_c}"
+        );
+        assert_eq!(filtered_words(&ev_c, "A", "ubiquitous"), vec!["items"]);
+        assert_eq!(filtered_words(&ev_c, "A", "carried"), vec!["stats"]);
+        assert_eq!(
+            filtered_words(&ev_c, "B", "carried"),
+            vec!["health", "stats"]
+        );
+        // Fewer than two claiming slices: ubiquity is off, `items` carries A to d.
+        let (called_d1, ev_d1) = route("d", &d, &[d.as_slice()]);
+        assert!(called_d1.contains("\n### A\n"), "{called_d1}");
+        assert!(
+            !ev_d1
+                .iter()
+                .any(|e| e["event"] == "resource_token_filtered"),
+            "{ev_d1:?}"
+        );
     }
 
     /// r6c's three plan-time decisions, verbatim: the questions from `low_confidence_ask` and
