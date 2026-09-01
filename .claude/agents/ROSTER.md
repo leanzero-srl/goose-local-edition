@@ -556,3 +556,10 @@ research_request_block's armed-no-claimed-sections arm wording.
   to only fire while disconnected so it never drops a live mesh; node_token derivation specified
   byte-for-byte for the iOS companion; discovery-fallback keeps health/verify working when Tailscale
   isn't installed while connect() fails loud. Charter gap: none.
+- 2026-09-01 panel-surgeon (LeanZero Link tab, 0e7c87c1c): CLEAN++. Kept the two wire dialects
+  separate (camelCase LinkState vs snake_case NodeState — the companion contract) instead of
+  homogenizing; rendered the not-yet-deployed worker as the HONEST unreachable banner and refused
+  to fake-advance; read RequestError.data for the real backend sentence past the SDK's generic
+  "Invalid params"; flagged the one deferred truth-invalidation (a connected-view blip retains last
+  state rather than flashing loggedOut) with its reasoning rather than hiding it. Capability-gated,
+  18 cases. Charter gap: none.
