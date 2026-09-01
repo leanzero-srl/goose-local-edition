@@ -26,7 +26,7 @@
 //! dispatched exactly as before (the contract miss costs nothing but a lane) and named by
 //! `research_question_unkinded` so the miss is visible.
 
-use super::orientation::request_file_label;
+use super::orientation::{request_file_label, spec_sections, top_level};
 use super::EventSink;
 
 /// One semantic slice of the request, as the opener sees it.
@@ -231,6 +231,265 @@ impl OpenOutput {
     }
 }
 
+/// VA-078 (VA-060's generality receipt): the three example shapes in the QUESTIONS rule are
+/// drawn from THIS request's own lines by code — the first table row, the first rule-stating
+/// line, the first top-level section — never from another project's words. Before, the rule
+/// carried sb-7's "sort is one of created_at…" and "410 cursor_expired" into every run's opener
+/// prompt. A request with no line of a kind says so beside a placeholder shape (no row is ever
+/// invented).
+struct RequestExemplars {
+    table_row: Option<TableRow>,
+    prose: Option<ProseLine>,
+    /// The first section at the document's top level (`orientation::top_level`), with its line
+    /// range — the range-cite form the index now carries.
+    section: Option<(String, usize, usize)>,
+}
+
+/// The first data row of the first markdown table: its line, the header cells above the
+/// separator, and its own cells.
+struct TableRow {
+    line: usize,
+    header: Vec<String>,
+    cells: Vec<String>,
+}
+
+/// The first prose line that states a rule (a normative word), else the first prose line at
+/// all; `normative` says which.
+struct ProseLine {
+    line: usize,
+    text: String,
+    normative: bool,
+}
+
+fn table_cells(line: &str) -> Vec<String> {
+    line.trim()
+        .trim_start_matches('|')
+        .trim_end_matches('|')
+        .split('|')
+        .map(|c| c.trim().to_string())
+        .collect()
+}
+
+fn is_table_line(t: &str) -> bool {
+    t.starts_with('|') && t.chars().skip(1).any(|c| c == '|')
+}
+
+fn is_table_separator(t: &str) -> bool {
+    is_table_line(t)
+        && table_cells(t)
+            .iter()
+            .all(|c| !c.is_empty() && c.chars().all(|ch| matches!(ch, '-' | ':')))
+}
+
+fn is_heading_line(t: &str) -> bool {
+    let hashes = t.chars().take_while(|c| *c == '#').count();
+    (1..=6).contains(&hashes) && t.chars().nth(hashes) == Some(' ')
+}
+
+/// A rule in prose: a line carrying a normative word — general English, no project vocabulary.
+fn states_a_rule(t: &str) -> bool {
+    t.split(|c: char| !c.is_alphanumeric()).any(|w| {
+        matches!(
+            w.to_ascii_lowercase().as_str(),
+            "must" | "never" | "always" | "required" | "shall" | "only" | "exactly" | "cannot"
+        )
+    })
+}
+
+fn request_exemplars(spec: &str) -> RequestExemplars {
+    let lines: Vec<&str> = spec.lines().collect();
+    let mut in_fence = false;
+    let mut pending_header: Option<Vec<String>> = None;
+    let mut table_row: Option<TableRow> = None;
+    let mut first_prose: Option<ProseLine> = None;
+    let mut rule: Option<ProseLine> = None;
+    for (idx, line) in lines.iter().enumerate() {
+        let t = line.trim();
+        if t.starts_with("```") || t.starts_with("~~~") {
+            in_fence = !in_fence;
+            continue;
+        }
+        if in_fence || t.is_empty() || is_heading_line(t) {
+            continue;
+        }
+        if is_table_line(t) {
+            if table_row.is_some() {
+                continue;
+            }
+            if is_table_separator(t) {
+                // GFM: a table is a header row, a separator, then rows — a separator with no
+                // header line above it is not a table.
+                if let Some(h) = idx
+                    .checked_sub(1)
+                    .map(|h| lines[h].trim())
+                    .filter(|h| is_table_line(h) && !is_table_separator(h))
+                {
+                    pending_header = Some(table_cells(h));
+                }
+            } else if let Some(header) = pending_header.take() {
+                table_row = Some(TableRow {
+                    line: idx + 1,
+                    header,
+                    cells: table_cells(t),
+                });
+            }
+            continue;
+        }
+        let normative = states_a_rule(t);
+        if first_prose.is_none() {
+            first_prose = Some(ProseLine {
+                line: idx + 1,
+                text: t.to_string(),
+                normative,
+            });
+        }
+        if rule.is_none() && normative {
+            rule = Some(ProseLine {
+                line: idx + 1,
+                text: t.to_string(),
+                normative,
+            });
+        }
+    }
+    let sections = spec_sections(spec);
+    let top = top_level(&sections);
+    let section = sections
+        .iter()
+        .filter(|s| !s.heading.is_empty())
+        .find(|s| top.is_none_or(|l| s.level == l))
+        .map(|s| (s.heading.clone(), s.line_start, s.line_end));
+    RequestExemplars {
+        table_row,
+        prose: rule.or(first_prose),
+        section,
+    }
+}
+
+/// A quoted line inside an example is an illustration of the cite form — cut at a character
+/// boundary to `max` chars INCLUDING the ellipsis (a cut fact must still pass `FACT_MAX_CHARS`);
+/// the full line is one `sed` away.
+fn quote_cut(s: &str, max: usize) -> String {
+    if s.chars().count() <= max {
+        s.to_string()
+    } else {
+        let mut cut: String = s.chars().take(max.saturating_sub(1)).collect();
+        cut.push('…');
+        cut
+    }
+}
+
+/// The request's text as the rule saw it: read back from the persisted file, or a NAMED absence
+/// the examples state instead of quoting (gate 1 — never a substituted row).
+enum RequestText {
+    Read(RequestExemplars),
+    Absent(String),
+}
+
+/// The three example lines of the QUESTIONS rule, one per kind, each ending in a JSON object
+/// that satisfies `open_schema` (the tests parse them): spec_lookup on the first table row
+/// (its cells ARE the fact), design on the first rule-stating line (the closest words + the grep
+/// that found nothing), external on the first top-level section (the range cite from the index).
+fn example_lines(text: &RequestText, label: &str) -> [String; 3] {
+    let (row, prose, section, absent) = match text {
+        RequestText::Read(ex) => (
+            ex.table_row.as_ref(),
+            ex.prose.as_ref(),
+            ex.section.as_ref(),
+            None,
+        ),
+        RequestText::Absent(why) => (None, None, None, Some(why.as_str())),
+    };
+    let none_shown = |missing: &str| match absent {
+        Some(why) => format!("Example ({why}, so no line of it is quoted; {missing}): "),
+        None => format!("Example (this request has no {missing}): "),
+    };
+    let lookup = match row {
+        Some(r) => {
+            // `split` always yields at least one cell, so the key exists; empty only when the
+            // row's first cell is literally empty — quoted as such.
+            let key = r.cells.first().map_or("", String::as_str);
+            let fact = r
+                .header
+                .iter()
+                .zip(&r.cells)
+                .map(|(h, c)| format!("{h}: {c}"))
+                .collect::<Vec<_>>()
+                .join("; ");
+            format!(
+                "Example, on this request's own first table row ({label}:{}): {}",
+                r.line,
+                serde_json::json!({
+                    "question": format!("What does the row at {label}:{} fix for `{key}`?", r.line),
+                    "kind": "spec_lookup",
+                    "cite": format!("{label}:{}", r.line),
+                    "fact": quote_cut(&fact, FACT_MAX_CHARS),
+                })
+            )
+        }
+        None => format!(
+            "{}{}",
+            none_shown("markdown table, so no row is shown; the shape holds for any line that holds a value"),
+            serde_json::json!({
+                "question": "<what the request settles, asked as a question>",
+                "kind": "spec_lookup",
+                "cite": format!("{label}:<N>"),
+                "fact": format!("<one sentence in your words, at most {FACT_MAX_CHARS} characters>"),
+            })
+        ),
+    };
+    let design = match prose {
+        Some(p) => format!(
+            "Example, on this request's first {} ({label}:{}): {}",
+            if p.normative {
+                "rule-stating line"
+            } else {
+                "prose line"
+            },
+            p.line,
+            serde_json::json!({
+                "question": "<the convention this line leaves to the builder — name it>",
+                "kind": "design",
+                "cite": format!(
+                    "{label}:{} '{}'; grep -n -i '<term>' → no match",
+                    p.line,
+                    quote_cut(&p.text, 140)
+                ),
+            })
+        ),
+        None => format!(
+            "{}{}",
+            none_shown("prose line to quote"),
+            serde_json::json!({
+                "question": "<the convention the request leaves to the builder — name it>",
+                "kind": "design",
+                "cite": format!("{label}:<N> '<the closest words you read>'; grep -n -i '<term>' → no match"),
+            })
+        ),
+    };
+    let external = match section {
+        Some((heading, a, b)) => format!(
+            "Example, on this request's first section ({label}:{a}-{b} `{heading}`): {}",
+            serde_json::json!({
+                "question": "<what the outside source must settle that the request only points at>",
+                "kind": "external",
+                "cite": format!(
+                    "{label}:{a}-{b} `{heading}` — quote its sentence that defers to the source, and the line that names the source"
+                ),
+            })
+        ),
+        None => format!(
+            "{}{}",
+            none_shown("heading to quote"),
+            serde_json::json!({
+                "question": "<what the outside source must settle that the request only points at>",
+                "kind": "external",
+                "cite": format!("{label}:<A-B> '<the words that defer to the source>'; the source is named at {label}:<N>"),
+            })
+        ),
+    };
+    [lookup, design, external]
+}
+
 /// The opener's contract, deliberately small: no files FIELD (owned files are declared inside the
 /// objective text — synthesis infers each task's paths from its slice's objective), no deps, no
 /// task ids, no requirement map. An open decision is an OBJECT — `question`, `options` (two or
@@ -238,9 +497,11 @@ impl OpenOutput {
 /// one of them an instruction to itself, and the ask window was spent on them.
 /// D10-8: the QUESTIONS rule the opener reads right after the SOURCES block — the contract the
 /// schema enforces (`cite` required on every kind, non-empty), with the three shapes shown on
-/// sb-7's own lines, and the order of operations: RUN the grep first. `request_path` is the
-/// persisted request file (the SOURCES block names it too); when persisting failed the rule
-/// names the absence instead of a path that is not there (gate 1).
+/// THIS request's own lines (VA-078, `request_exemplars`, read back from the persisted file —
+/// the same bytes the opener will grep, by that file's line numbers), and the order of
+/// operations: RUN the grep first. `request_path` is the persisted request file (the SOURCES
+/// block names it too); when persisting failed the rule names the absence instead of a path that
+/// is not there (gate 1), and the examples say so instead of quoting.
 pub(super) fn opener_questions_rule(request_path: Option<&std::path::Path>) -> String {
     let path = request_path.map_or_else(
         || {
@@ -250,6 +511,16 @@ pub(super) fn opener_questions_rule(request_path: Option<&std::path::Path>) -> S
         |p| p.display().to_string(),
     );
     let label = request_file_label();
+    let text = match request_path {
+        None => RequestText::Absent("the request file was NOT persisted this run".to_string()),
+        Some(p) => match std::fs::read_to_string(p) {
+            Ok(spec) => RequestText::Read(request_exemplars(&spec)),
+            Err(e) => RequestText::Absent(format!(
+                "the request file could not be read back for examples: {e}"
+            )),
+        },
+    };
+    let [lookup_example, design_example, external_example] = example_lines(&text, &label);
     format!(
         "\n\nQUESTIONS. A question is an OBJECT {{question, kind, cite, fact}}. EVERY kind carries a \
          cite; the schema rejects a question with an empty cite. Before you write any question, RUN \
@@ -266,19 +537,17 @@ pub(super) fn opener_questions_rule(request_path: Option<&std::path::Path>) -> S
          FULL text and every builder holds the request file at the cited line, so a pasted passage \
          is the plan written twice — MEASURED: one opener pasted ~1,100 characters of a section \
          into a single fact and its reply sat 16 minutes at zero bytes while the arguments \
-         streamed. Example: \
-         {{\"question\":\"Which sort keys does sort accept?\",\"kind\":\"spec_lookup\",\"cite\":\"request.md:148-150\",\"fact\":\"sort is one of created_at, -created_at, amount_minor, -amount_minor; default created_at (ascending by INSTANT); an unknown sort value is a validation error, not an empty result.\"}}\n\
+         streamed. {lookup_example}\n\
          — If the request is SILENT and a builder must choose: kind design, cite = the closest lines \
-         you read AND the grep that found nothing. Example: \
-         {{\"question\":\"What in-process interface does events.py expose so sse.py broadcasts one message per committed change?\",\"kind\":\"design\",\"cite\":\"request.md:212-218 name the event types and GET /api/events; grep -n -i 'subscribe' → no match\"}}\n\
+         you read AND the grep that found nothing. {design_example}\n\
          — If it needs the vendor's documentation: kind external, cite = the request line that defers \
-         to it. Example: \
-         {{\"question\":\"What cursor state must persist so a dropped walk resumes?\",\"kind\":\"external\",\"cite\":\"request.md:88-91 'resumes per the docs … restarts the cursor on 410 cursor_expired as documented'; docs at request.md:9\"}}\n\
+         to it. {external_example}\n\
          A spec_lookup with an empty fact is allowed ONLY with the literal grep command you ran and \
          its 'no match' in cite — a cite you did not run is a false citation. A question that IS one \
-         of your open_decisions, or names D1/D2/D3, goes under open_decisions only. MEASURED: the \
-         previous opener wrote 'Health response shape (in full text) — which fields?' while \
-         request.md:134-136 held the shape; 'in full text' means grep it now, not ask."
+         of your open_decisions, or names a decision the request itself assigns to the builder, goes \
+         under open_decisions only. MEASURED: a previous opener wrote a question asking for a \
+         response shape 'in full text' while the request held that shape three lines from the cite \
+         it gave; 'in full text' means grep it now, not ask."
     )
 }
 
@@ -778,5 +1047,139 @@ mod tests {
         let plain = OpenQuestion::from("which port");
         assert_eq!(plain.kind, QuestionKind::Design);
         assert!(!plain.is_cited_fact());
+    }
+
+    fn rule_examples(rule: &str) -> Vec<serde_json::Value> {
+        rule.lines()
+            .filter_map(|l| l.find("{\"question\"").and_then(|s| l.get(s..)))
+            .map(|j| serde_json::from_str(j.trim_end()).expect("the example is valid JSON"))
+            .collect()
+    }
+
+    /// VA-078: the rule's three examples quote THIS request — its first table row (the cells are
+    /// the fact, cut to the schema's length), its first rule-stating line (the closest words +
+    /// the grep that found nothing) and its first top-level section (the range cite the index
+    /// carries) — by that file's line numbers; a request without a table says so instead of
+    /// inventing a row; fenced code is not prose; an absent or unreadable file is named. No
+    /// sb-7 literal survives in the general prompt.
+    #[test]
+    fn the_rule_examples_quote_this_request_never_another_projects() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("request.md");
+        std::fs::write(
+            &path,
+            "# Title\nintro\n\n## Endpoints\n| Method | Path | Purpose |\n|---|---|---|\n\
+             | GET | /api/items | list items |\n\n## Rules\nThe server MUST answer within 2 seconds.\n",
+        )
+        .unwrap();
+        let rule = opener_questions_rule(Some(&path));
+        let ex = rule_examples(&rule);
+        assert_eq!(ex.len(), 3, "{rule}");
+        assert_eq!(ex[0]["kind"], "spec_lookup");
+        assert_eq!(ex[0]["cite"], "request.md:7");
+        assert_eq!(
+            ex[0]["fact"],
+            "Method: GET; Path: /api/items; Purpose: list items"
+        );
+        assert_eq!(
+            ex[0]["question"],
+            "What does the row at request.md:7 fix for `GET`?"
+        );
+        assert!(
+            rule.contains("on this request's own first table row (request.md:7)"),
+            "{rule}"
+        );
+        assert_eq!(ex[1]["kind"], "design");
+        assert!(
+            ex[1]["cite"].as_str().unwrap().starts_with(
+                "request.md:10 'The server MUST answer within 2 seconds.'; grep -n -i '<term>'"
+            ),
+            "{}",
+            ex[1]["cite"]
+        );
+        assert!(
+            rule.contains("first rule-stating line (request.md:10)"),
+            "{rule}"
+        );
+        assert_eq!(ex[2]["kind"], "external");
+        assert!(
+            ex[2]["cite"]
+                .as_str()
+                .unwrap()
+                .starts_with("request.md:4-8 `Endpoints`"),
+            "the first TOP-LEVEL section, not the title: {}",
+            ex[2]["cite"]
+        );
+        for foreign in [
+            "created_at",
+            "cursor_expired",
+            "D1/D2/D3",
+            "Health response shape",
+            "events.py",
+        ] {
+            assert!(
+                !rule.contains(foreign),
+                "sb-7's words left the prompt: {foreign}"
+            );
+        }
+
+        // No table: the example SAYS so; the design example falls back to the first prose line
+        // and says which; the external example still has a section.
+        let plain = dir.path().join("plain.md");
+        std::fs::write(
+            &plain,
+            "# Title\n\n## One\nUse the standard library.\n\n## Two\nmore\n",
+        )
+        .unwrap();
+        let rule = opener_questions_rule(Some(&plain));
+        let ex = rule_examples(&rule);
+        assert_eq!(ex.len(), 3);
+        assert!(
+            rule.contains("this request has no markdown table, so no row is shown"),
+            "{rule}"
+        );
+        assert_eq!(ex[0]["cite"], "request.md:<N>");
+        assert!(rule.contains("first prose line (request.md:4)"), "{rule}");
+        assert!(ex[2]["cite"]
+            .as_str()
+            .unwrap()
+            .starts_with("request.md:3-5 `One`"));
+
+        // Fenced code is neither a table nor prose; a fact cut to the schema's length still passes.
+        let fenced = dir.path().join("fenced.md");
+        std::fs::write(
+            &fenced,
+            "# T\n```\n| a | b |\n|---|---|\n| 1 | 2 |\nx must y\n```\nplain\n",
+        )
+        .unwrap();
+        let rule = opener_questions_rule(Some(&fenced));
+        assert!(rule.contains("no markdown table"), "{rule}");
+        assert!(rule.contains("first prose line (request.md:8)"), "{rule}");
+        let long_row = format!(
+            "# T\n\n## S\n| k | v |\n|---|---|\n| key | {} |\n",
+            "x".repeat(400)
+        );
+        let long = dir.path().join("long.md");
+        std::fs::write(&long, long_row).unwrap();
+        let ex = rule_examples(&opener_questions_rule(Some(&long)));
+        let fact = ex[0]["fact"].as_str().unwrap();
+        assert_eq!(fact.chars().count(), FACT_MAX_CHARS);
+        assert!(fact.ends_with('…'));
+
+        // Absent (not persisted) or unreadable: named in the examples, never quoted from.
+        let rule = opener_questions_rule(None);
+        assert!(
+            rule.contains(
+                "the request file was NOT persisted this run, so no line of it is quoted"
+            ),
+            "{rule}"
+        );
+        assert_eq!(rule_examples(&rule).len(), 3);
+        let rule = opener_questions_rule(Some(std::path::Path::new("/nonexistent/request.md")));
+        assert!(
+            rule.contains("could not be read back for examples"),
+            "{rule}"
+        );
+        assert_eq!(rule_examples(&rule).len(), 3);
     }
 }
