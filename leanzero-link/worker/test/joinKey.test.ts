@@ -104,6 +104,36 @@ describe("POST /v1/mesh/join-key", () => {
     });
   });
 
+  it("mints UNTAGGED with no tags field when TS_NODE_TAG is explicitly empty", async () => {
+    const h = makeHarness({
+      env: { ...FULL_ENV, TS_NODE_TAG: "" },
+      fetchHandler: (url) => {
+        if (url === KEYS_URL) return jsonRes(200, TAILSCALE_CREATE_KEY_FIXTURE);
+        throw new Error(`unexpected fetch: ${url}`);
+      },
+    });
+    const response = await handleJoinKey(joinRequest(await mintToken(h)), h.deps);
+    expect(response.status).toBe(200);
+    expect(await responseJson(response)).toEqual({
+      authKey: TAILSCALE_CREATE_KEY_FIXTURE.key,
+      expirySeconds: 600,
+    });
+
+    expect(h.calls).toHaveLength(1);
+    // The mint body must OMIT `tags` entirely — an untagged key, not tags:[] or tags:[""].
+    const create = (
+      jsonBody(h.calls[0]!.init) as {
+        capabilities: { devices: { create: Record<string, unknown> } };
+      }
+    ).capabilities.devices.create;
+    expect(create).not.toHaveProperty("tags");
+    expect(create).toEqual({
+      reusable: false,
+      ephemeral: true,
+      preauthorized: true,
+    });
+  });
+
   it("exchanges an OAuth client id:secret pair for an access token first", async () => {
     const h = makeHarness({
       env: { ...FULL_ENV, TS_API_TOKEN: "clientid123:supersecret456" },
