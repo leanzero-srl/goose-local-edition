@@ -395,7 +395,10 @@ fn swarm_rs_line_count_only_decreases() {
     // moved to commands/swarm/transcripts.rs (their only production callers, the calls-capture row
     // builder), paying for `mod merge_holes;`, the merger brief's GAP paragraph at dispatch and the
     // shard completion's `shard_pieces_absent` event.
-    const SWARM_RS_LINE_BASELINE: usize = 34_669;
+    // Tightened to 34,622 (VA-066): the three `judge_delivery_block` tests moved to
+    // commands/swarm/judge_context.rs beside the function, paying for `shard_by_task` (the
+    // dispatcher's task -> ShardOf map, published with ownership) and the look site's pieces view.
+    const SWARM_RS_LINE_BASELINE: usize = 34_622;
     let text = read("crates/goose-cli/src/commands/swarm.rs");
     let n = text.lines().count();
     assert!(

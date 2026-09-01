@@ -6418,84 +6418,6 @@ mod tests {
     // passing untouched) moved to supervision.rs's `reply_tests` with the function they exercise
     // (`supervised_reply_text`, which absorbed `supervision_reply`).
 
-    /// N-7: the judge's delivery view is a measurement, and each of its four parts must actually
-    /// reach the prompt text. The r2 shape is pinned end to end: an owned file with a syntax error
-    /// shows the census line AND the py_compile fact; an owned path with nothing on disk SAYS so;
-    /// and a same-named file written where nobody owns one is called out as a WRONG-PATH fact —
-    /// the camera-system defect the r2 judge okayed because it read only reasoning.
-    #[test]
-    fn judge_delivery_block_carries_census_parse_state_and_wrong_path() {
-        let dir = tempfile::tempdir().unwrap();
-        std::fs::create_dir_all(dir.path().join("app")).unwrap();
-        std::fs::write(dir.path().join("app/store.py"), "def broken(:\n    pass\n").unwrap();
-        let owned = vec!["app/store.py".to_string(), "app/api.py".to_string()];
-        let defects = verify_owned_files(dir.path(), &owned);
-        let block = judge_delivery_block(dir.path(), &owned, &defects, &[]);
-        assert!(
-            block.contains("app/store.py — EXISTS,"),
-            "census names what is on disk: {block}"
-        );
-        assert!(
-            block.contains("app/api.py — DOES NOT EXIST"),
-            "a task with nothing on disk says so: {block}"
-        );
-        assert!(
-            block.contains("app/store.py DOES NOT PARSE"),
-            "the py_compile fact reaches the judge's user text: {block}"
-        );
-        assert!(
-            block.contains("What `app/store.py` holds right now"),
-            "a budgeted content excerpt is included: {block}"
-        );
-
-        // The r2 camera-system shape: the owned path is missing while a file with the SAME NAME
-        // appeared at the tree root during this attempt's window.
-        let owned = vec!["web/viz_camera.js".to_string()];
-        let block = judge_delivery_block(
-            dir.path(),
-            &owned,
-            &[
-                "web/viz_camera.js does not exist — this task owns it and nothing has written it"
-                    .to_string(),
-            ],
-            &["viz_camera.js".to_string()],
-        );
-        assert!(
-            block.contains("NO PLANNED TASK OWNS") && block.contains("viz_camera.js"),
-            "the window's unowned writes are in the prompt: {block}"
-        );
-        assert!(
-            block.contains("WRONG PATH") && block.contains("move it to `web/viz_camera.js`"),
-            "a basename match is stated as a misplaced deliverable with the exact owned path: {block}"
-        );
-
-        // A task owning nothing gets no block at all — planning lanes are covered by the
-        // structured-reply block, and an empty census would misread them as undelivered builds.
-        assert_eq!(judge_delivery_block(dir.path(), &[], &[], &[]), "");
-    }
-
-    /// N-7: the excerpt honours its budget and says when it cut — a file larger than the per-file
-    /// cap must arrive marked as an excerpt, never looking complete (the same honesty rule the
-    /// scheduler judge's 1800-char cut learned the hard way).
-    #[test]
-    fn judge_delivery_excerpt_is_budgeted_and_admits_the_cut() {
-        let dir = tempfile::tempdir().unwrap();
-        let big = format!("SEED = 1\n{}", "x = 2\n".repeat(2_000));
-        std::fs::write(dir.path().join("big.py"), &big).unwrap();
-        let owned = vec!["big.py".to_string()];
-        let block = judge_delivery_block(dir.path(), &owned, &[], &[]);
-        assert!(
-            block.contains("… (cut — an excerpt"),
-            "a cut excerpt admits it: {block}"
-        );
-        let excerpt = block.split("holds right now").nth(1).unwrap();
-        assert!(
-            excerpt.chars().count() < 2_000,
-            "the excerpt respects the per-file budget, got {} chars",
-            excerpt.chars().count()
-        );
-    }
-
     #[test]
     fn clip_tail_keeps_the_informative_end() {
         assert_eq!(clip_tail("short output", 400), "short output");
@@ -11991,6 +11913,10 @@ pub struct GooseAgentDispatcher {
     /// characters of fresh reasoning after every restart. Empty for planner-side calls, which therefore
     /// keep today's behaviour exactly.
     owned_files_by_task: Mutex<HashMap<String, Vec<String>>>,
+    /// VA-066: task id -> its `ShardOf`, published beside ownership (plan load + dispatch) so the
+    /// look site can list a shard's PIECES. `tree.rs`'s stat skips `.swarm`, and the delivery
+    /// block read only the owned README — a shard that wrote six pieces read as "wrote nothing".
+    shard_by_task: Mutex<HashMap<String, goose_swarm::ShardOf>>,
     /// task ids that have actually been handed to `TaskDispatcher::run`. With the whole plan's
     /// ownership published up front, membership HERE is what separates "running" (dispatched, no
     /// terminal ledger row yet) from "pending (not yet dispatched)" in an import-gap attribution —
@@ -12174,6 +12100,7 @@ impl GooseAgentDispatcher {
             transcript_failures: Mutex::new(std::collections::HashSet::new()),
             stream_decode_retry,
             owned_files_by_task: Mutex::new(HashMap::new()),
+            shard_by_task: Mutex::new(HashMap::new()),
             dispatched_tasks: Mutex::new(std::collections::HashSet::new()),
             defects_told: Mutex::new(HashMap::new()),
             research_running: Mutex::new(HashMap::new()),
@@ -13851,11 +13778,27 @@ impl GooseAgentDispatcher {
                 // census, parse facts, shape excerpts, the window's unowned writes — is one pure
                 // function so it is testable without a stream; see `judge_delivery_block` for the
                 // WHY of each part and the r2 camera-system evidence.
+                // VA-066: a shard's pieces live under `.swarm/shards/…`, which the tree stat
+                // skips — list them (name, bytes, parse) or the judge reads six pieces as nothing.
+                // The guard is dropped at the end of the `let`, before the await.
+                let shard_of = self
+                    .shard_by_task
+                    .lock()
+                    .unwrap()
+                    .get(activity_key.unwrap_or(""))
+                    .cloned();
+                let shard_pieces = match shard_of {
+                    Some(sh) => {
+                        Some(judge_context::shard_pieces_view(&self.working_dir, &sh).await)
+                    }
+                    None => None,
+                };
                 let owned_block = judge_delivery_block(
                     &self.working_dir,
                     &owned,
                     &owned_defects,
                     &unowned_writes,
+                    shard_pieces.as_ref(),
                 );
                 // THE SAME BLINDNESS, FOR A CALL WHOSE DELIVERABLE IS A STRUCTURED REPLY RATHER THAN A
                 // FILE. `owned_block` above covers build tasks; a planning lane owns nothing, so it stays
@@ -27507,6 +27450,12 @@ impl TaskDispatcher for GooseAgentDispatcher {
             .lock()
             .unwrap()
             .insert(req.task_id.clone());
+        if let Some(sh) = &req.shard_of {
+            self.shard_by_task
+                .lock()
+                .unwrap()
+                .insert(req.task_id.clone(), sh.clone());
+        }
         // Publish what this task OWNS so the judge loop, which is handed only an activity_key, can tell
         // a build task from a planner call. See `owned_files_by_task`.
         if !req.owned_files.is_empty() {
@@ -29788,9 +29737,13 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
     // refresher for exactly that door.
     {
         let mut owned = dispatcher.owned_files_by_task.lock().unwrap();
+        let mut shards = dispatcher.shard_by_task.lock().unwrap();
         for n in dag.tasks.values() {
             if !n.spec.owned_files.is_empty() {
                 owned.insert(n.spec.id.clone(), n.spec.owned_files.clone());
+            }
+            if let Some(sh) = &n.spec.shard_of {
+                shards.insert(n.spec.id.clone(), sh.clone());
             }
         }
     }
