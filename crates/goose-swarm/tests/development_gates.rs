@@ -385,7 +385,10 @@ fn swarm_rs_line_count_only_decreases() {
     // repeated-NEXT corroboration and the task-attempt `NudgeHistory`; the cadence clock
     // (OMNI_JUDGE_FIRST_LOOK_SECS / OMNI_JUDGE_INTERVAL_SECS, `omni_next_look`, the 300s backoff)
     // and the growth-without-acting trigger are deleted outright.
-    const SWARM_RS_LINE_BASELINE: usize = 34_905;
+    // Tightened to 34,782 (VA-081): `render_previous_attempt_block` and its test moved to
+    // commands/swarm/transcripts.rs beside `read_calls_capture` (its input), paying for the worker
+    // loop's `SystemNotification`/`Usage`/`HistoryReplaced` arms (`lane_compaction`/`lane_notice`).
+    const SWARM_RS_LINE_BASELINE: usize = 34_782;
     let text = read("crates/goose-cli/src/commands/swarm.rs");
     let n = text.lines().count();
     assert!(
