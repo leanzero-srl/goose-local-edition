@@ -91,7 +91,7 @@ residue task and the cross-file join twin are gone.
 `review_patch_schema`, the request section cuts and the `review_merge` module (per-lane patch union) are
 gone, with their tests; no `phase: review`, `review_findings`, `plan_patched` or `review_failed` event is
 emitted. Measured over three runs the round produced zero effective patches (r5 52.6 wall-min / r6c
-28.1 / r6b+r6d one finding, zero patches; ~140–206 node-min per run) — every flag it was aimed at is
+28.1 / r6b+r6d one finding, zero patches; ≈84 node-min per run) — every flag it was aimed at is
 repaired deterministically by `repair_plan_flags` inside `finalize_plan_before_dag`, which is the whole
 of what remains between synthesis and the DAG. The measured flags still come from `decomposition_of`
 (now `commands/swarm/plan_shape.rs`) and ride `plan_synthesized` / `plan_repaired.before/after`.

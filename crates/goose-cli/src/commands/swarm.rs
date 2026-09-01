@@ -5197,7 +5197,7 @@ mod tests {
     }
 
     // ---- USER NOTES: run scoping + budget ----------------------------------------------------
-    /// THE CROSS-RUN LEAK. Nothing ever cleared `.swarm/inbox` (run_swarm clears only `.swarm/prereview`),
+    /// THE CROSS-RUN LEAK. Nothing ever cleared `.swarm/inbox`,
     /// so before the cutoff every note ever written to a project dir was injected into every worker of every
     /// FUTURE run there — under a header claiming it was "added while this build was running". Yesterday's
     /// "the DB is already seeded" silently steered today's fresh build.
@@ -10975,17 +10975,15 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
     }
 
     #[test]
-    fn green_blocking_failed_excludes_bonus_and_owns_nothing() {
+    fn green_blocking_failed_excludes_owns_nothing() {
         let failed = vec![
             "engine-tests".to_string(),
             "integrate-verify".to_string(), // owns-nothing model judge (C1)
-            "replan-extra".to_string(),     // bonus/replanner task
             "kanban-db".to_string(),
         ];
-        let bonus = vec!["replan-extra".to_string()];
         let owns_nothing = vec!["integrate-verify".to_string()];
-        let blocking = green_blocking_failed(&failed, &bonus, &owns_nothing);
-        // Only the FILE-OWNING core tasks block green; the judge sink and the bonus task are excluded.
+        let blocking = green_blocking_failed(&failed, &owns_nothing);
+        // Only the FILE-OWNING tasks block green; the judge sink is excluded.
         assert_eq!(
             blocking,
             vec!["engine-tests".to_string(), "kanban-db".to_string()]
@@ -10995,21 +10993,12 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
         // resolves): a run whose only failure is the model judge yields an empty deterministic-block set.
         let judge_only = green_blocking_failed(
             &["integrate-verify".to_string()],
-            &[],
             &["integrate-verify".to_string()],
         );
         assert!(judge_only.is_empty());
 
-        // With no exclusions, every failed task blocks (byte-identical to the pre-C1 bonus-only filter when
-        // owns_nothing is empty).
-        assert_eq!(
-            green_blocking_failed(&failed, &bonus, &[]),
-            vec![
-                "engine-tests".to_string(),
-                "integrate-verify".to_string(),
-                "kanban-db".to_string()
-            ]
-        );
+        // With no exclusions, every failed task blocks.
+        assert_eq!(green_blocking_failed(&failed, &[]), failed);
     }
 
     /// `swarm_gate_cfg_bundle` inserts config.yaml BETWEEN env and the assured/default fallback, so a lever
@@ -12439,7 +12428,7 @@ pub struct GooseAgentDispatcher {
     worker_max_turns: u32,
     /// MCP extensions added to each WORKER agent (not the planner). Built from env at run start.
     worker_extensions: Vec<ExtensionConfig>,
-    /// The planner model (also used by the dynamic Replanner impl).
+    /// The planner model.
     planner_model: String,
     /// Whether the swarm may `lms load` a model (gates the transient re-warm on dispatch errors).
     allow_model_load: bool,
@@ -21803,9 +21792,10 @@ fn repair_unassigned_endpoints(
 }
 
 /// Drive the STRAIGHT-LINE planner (P1-5): OPEN -> [ask handshake, only if the opener left open
-/// decisions] -> SYNTHESIS (the slices directly) -> REVIEW (one round) -> plan_repaired -> DAG,
-/// and return what the rest of the run expects. The coverage/RESEARCH fans, the resplit and the
-/// ASK proxy are deleted — r2 measured them costing the fleet more than they returned.
+/// decisions] -> RESEARCH FAN -> SYNTHESIS (the slices directly) -> plan_repaired -> DAG, and
+/// return what the rest of the run expects. The coverage/RESEARCH fans, the resplit and the ASK
+/// proxy are deleted — r2 measured them costing the fleet more than they returned; the LLM REVIEW
+/// round is deleted too (VA-014, zero effective patches in three runs).
 #[allow(clippy::too_many_arguments)]
 async fn run_linear_plan(
     dispatcher: &Arc<GooseAgentDispatcher>,
@@ -26261,18 +26251,14 @@ fn failed_task_finding(task: &str, written: &[String], under_test: &[String]) ->
 }
 
 /// The planned tasks whose failure BLOCKS the green claim (the deterministic-block set for the hard
-/// completion gate). A failed task is excluded when it is a bonus/replanner task (its failure must not fail
-/// the run) OR when it owns NO files (C1 — the injected `integrate-verify` model-judge sink; its failure is a
-/// model self-report, never a deterministic green-veto). Only a FILE-OWNING core task can block green. Pure
-/// (no I/O) so the exclusion is unit-testable.
-fn green_blocking_failed(
-    failed: &[String],
-    bonus: &[String],
-    owns_nothing: &[String],
-) -> Vec<String> {
+/// completion gate). A failed task is excluded when it owns NO files (C1 — the injected
+/// `integrate-verify` model-judge sink; its failure is a model self-report, never a deterministic
+/// green-veto). Only a FILE-OWNING task can block green. Pure (no I/O) so the exclusion is
+/// unit-testable. (The bonus/replanner exclusion left with the replanner, VA-015: nothing adds a
+/// task after the plan loads.)
+fn green_blocking_failed(failed: &[String], owns_nothing: &[String]) -> Vec<String> {
     failed
         .iter()
-        .filter(|t| !bonus.contains(t))
         .filter(|t| !owns_nothing.contains(t))
         .cloned()
         .collect()
@@ -28231,9 +28217,8 @@ impl GooseAgentDispatcher {
             "chars": pitfalls_block.len(),
         }));
         // QUEUED USER NOTES — read at DISPATCH, which is the one safe moment: run() is called once at the
-        // START of a worker's life, so a live worker is never mutated. The dispatcher already does exactly
-        // this class of read here (read_prereview_findings). Placed before the pillars so it reads as
-        // background, never as something that outranks a NON-NEGOTIABLE.
+        // START of a worker's life, so a live worker is never mutated. Placed before the pillars so it
+        // reads as background, never as something that outranks a NON-NEGOTIABLE.
         // QUEUED USER NOTES. Scoped to THIS run, and RECORDED: the delivery event is the only thing that can
         // prove a note the user typed ever reached a worker. Everything else (the file on disk, the lever
         // being on) only shows it was *possible*.
@@ -29431,8 +29416,8 @@ impl TaskDispatcher for GooseAgentDispatcher {
         // the code — it propagates as Err so the caller logs `tail_review_failed`, never the clean
         // `had_findings: false` row r2 wrote for gabee's 400s.
         // Keyed `tail-review-<dim>` (r6 supervision lanes) — the same name as its `tail_review`
-        // events and its `.swarm/prereview/tail-review-<dim>` findings file; it reviews the whole
-        // tree along one dimension, so the dimension IS the lane identity.
+        // events; it reviews the whole tree along one dimension, so the dimension IS the lane
+        // identity.
         let lane = tail_review_lane_key(dim_id);
         let text = self
             .run_agent(model_id, system, user, None, 2, &[], Some(&lane))
@@ -31830,8 +31815,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             dag,
             dispatcher as Arc<dyn TaskDispatcher>,
             opts.prompt.clone(),
-            // The amended spec (arg 3) reaches only the replanner/judge/pre-reviewer. THIS is the copy that
-            // reaches a worker.
+            // The amended spec (arg 3) reaches only the judge. THIS is the copy that reaches a worker.
             user_decisions.clone(),
         )
         .await?;
@@ -31998,7 +31982,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             .filter(|o| o.owns_nothing)
             .map(|o| o.task_id.clone())
             .collect();
-        let failed_planned = green_blocking_failed(&report.failed, &report.bonus, &owns_nothing);
+        let failed_planned = green_blocking_failed(&report.failed, &owns_nothing);
         let failed_task_findings: Vec<String> = if !failed_planned.is_empty()
             && (delivery_on
                 || swarm_gate_cfg(
@@ -33606,38 +33590,12 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             total_m
         );
         println!("done   ({}): {}", report.done.len(), report.done.join(", "));
-        let core_failed: Vec<&String> = report
-            .failed
-            .iter()
-            .filter(|id| !report.bonus.contains(*id))
-            .collect();
-        let bonus_failed: Vec<&String> = report
-            .failed
-            .iter()
-            .filter(|id| report.bonus.contains(*id))
-            .collect();
-        if !core_failed.is_empty() {
+        if !report.failed.is_empty() {
             println!(
                 "{} ({}): {}",
                 style("FAILED").red().bold(),
-                core_failed.len(),
-                core_failed
-                    .iter()
-                    .map(|s| s.as_str())
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            );
-        }
-        if !bonus_failed.is_empty() {
-            println!(
-                "{} ({}): {}  (opportunistic — did NOT fail the run)",
-                style("bonus skipped").yellow(),
-                bonus_failed.len(),
-                bonus_failed
-                    .iter()
-                    .map(|s| s.as_str())
-                    .collect::<Vec<_>>()
-                    .join(", ")
+                report.failed.len(),
+                report.failed.join(", ")
             );
         }
         println!("dispatched per device: {:?}", report.dispatched_per_device);
@@ -33696,13 +33654,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
         }
     }
 
-    // Run success is judged on the CORE plan only — a failed opportunistic/replanner (bonus) task
-    // must not fail an otherwise-complete run.
-    let core_failed = report
-        .failed
-        .iter()
-        .filter(|id| !report.bonus.contains(*id))
-        .count();
+    let core_failed = report.failed.len();
     // GOOSE_SWARM_COMPLETE: a still-red app (verify-by-running never went green within the fix budget) must
     // NOT report success, even if every planned subtask "completed" — this is the never-ship-broken gate.
     // When the flag is off, `complete_on && complete_failed` is false and the exit path is byte-identical.

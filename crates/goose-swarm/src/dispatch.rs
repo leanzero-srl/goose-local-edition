@@ -99,8 +99,8 @@ pub struct DispatchRequest {
     /// printed `✓ keeping this plan; clarifications injected into every worker via research findings and
     /// spec` — and BOTH named channels were false. `research_findings` is only ever passed to planner-side
     /// calls (it appears ZERO times in the dispatcher's run body), and the amended spec lives in
-    /// `Scheduler::goal`, whose only consumers are the replanner, the judge and the pre-reviewer. Worse, the
-    /// plan is drafted BEFORE the ask, and `ask_replan` defaults off, so `description` is a pre-answer
+    /// `Scheduler::goal`, whose only consumer is the judge (the replanner and the pre-reviewer that also
+    /// read it are deleted). Worse, the plan is drafted BEFORE the ask, so `description` is a pre-answer
     /// artifact too. The answers were structurally excluded from BOTH halves of the worker prompt, and only
     /// reached workers as a lossy planner-model paraphrase (pillars/contracts) — which is exactly the
     /// measured "asked for pipe-separated CSV, wrote comma-separated" failure.

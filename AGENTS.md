@@ -112,7 +112,7 @@ remaining space for dynamic text.
 The swarm builds software by fanning work across 3 local LM Studio nodes. It is the subject of most work
 in this repo and it has a specific set of invariants that produce no compiler error when broken.
 
-**Phases (r6, research fan v2 81cd50d38):** `OPEN → [ASK handshake, only when the opener leaves open decisions] → RESEARCH FAN (the opener's per-slice questions dispatched one-per-host to the fleet, uncapped, read-only-quarantined; answers snowball into the ledger and the briefs; a miss is a loud research_unanswered that flows to REPAIR — never a block) → SYNTHESIS (planning over ANSWERED material) → REVIEW (one round) → BUILD → INTEGRATE → REPAIR`. RESEARCH, coverage, the resplit, the ASK proxy and CONTRACTS are DELETED — workers read real dependency sources (dep_block) and the ledger block instead of briefs and frozen stubs.
+**Phases (r6, research fan v2 81cd50d38):** `OPEN → [ASK handshake, only when the opener leaves open decisions] → RESEARCH FAN (the opener's per-slice questions dispatched one-per-host to the fleet, uncapped, read-only-quarantined; answers snowball into the ledger and the briefs; a miss is a loud research_unanswered that flows to REPAIR — never a block) → SYNTHESIS (planning over ANSWERED material) → the deterministic plan repairs (`finalize_plan_before_dag`) → BUILD → INTEGRATE → REPAIR`. REVIEW's LLM round (VA-014), the dynamic replanner (VA-015) and LEARN/persona (VA-016) are DELETED as of 2026-09-01; RESEARCH, coverage, the resplit, the ASK proxy and CONTRACTS are DELETED — workers read real dependency sources (dep_block) and the ledger block instead of briefs and frozen stubs.
 
 **These six are repeated here ON PURPOSE.** The detail lives in `.claude/rules/swarm-engine.md`, but
 path-scoped rules arm only on the **Read** tool — `cat`, `sed`, `grep`, Grep and Glob do NOT trigger
@@ -135,8 +135,12 @@ broken live HERE, and the rules files carry the detail for whoever does hit them
    entry files); a NON-sink task that owns nothing is REPORTED there (`tasks_owning_nothing`,
    `plan_repaired.before/after`) and removed by the repair — never refused. Mihai, 2026-08-29: "avoid
    making it overly deterministic and gated, be very mild" — code measures and nudges, it does not abort.
-3. **A correction is a PATCH (`plan_patched`), never a re-emission.** Re-emitting whole plans is what
-   burned 3h40m without starting a build.
+3. **A correction is a PATCH, never a re-emission.** Re-emitting whole plans is what burned 3h40m
+   without starting a build. Since VA-014 (2026-09-01) the only correction path is deterministic —
+   `finalize_plan_before_dag`'s repairs patch the loaded plan in place and ride
+   `plan_repaired.before/after`; `plan_patched` has NO producer (the LLM review round that emitted it
+   is deleted). Any future correction path patches and emits a `plan_repaired`-class event; it never
+   re-plans.
 4. **The judge NUDGES; it does not kill.** A steer interrupts the stream at a chunk boundary and keeps the
    partial — but MEASURED on r1 a reasoning-only looping call ignored six of them; the RESTART verdict is
    what must reach such a call (re-stream), and that wiring is still open. Since VA-013 (2026-09-01) a

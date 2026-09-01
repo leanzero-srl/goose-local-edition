@@ -11,7 +11,6 @@ pub mod dag;
 pub mod dispatch;
 pub mod event;
 pub mod judge;
-pub mod memory_classify;
 pub mod patch;
 pub mod scheduler;
 
