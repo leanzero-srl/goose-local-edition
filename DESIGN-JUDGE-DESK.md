@@ -130,3 +130,8 @@ END-STATE BLAST RADIUS IS PINNED BY GATES: deleting the probe race and Site B re
   (gabee, inflight 1). The desk/aux picker needs "avoid the supervised lane's own model on ties" (E8).
 - **Late snowball**: a mini that lands 33 s after a same-topic sibling dispatches is invisible to it (q5 vs q2);
   the desk holds the sibling minis at look time and can deliver them as the steer's ESTABLISHED (E7).
+- **Desk axiom (r6d, refuter 2026-09-01): the judge holds NO tools.** The omni-judge probe ran with the full
+  developer toolset (write/edit/shell/tree — `read_only: false` for byte-parity) and 29 of 62 completed looks
+  ended in a shell call (`echo "no-op: verdict only"`, `true`, …); one look was filler-only and FAILED. A reader
+  that can act will act; a desk lane is text-in/verdict-out, and the `<turn-budget>` line moim.rs injects into
+  its own message (max_turns=1 → "1/1 used") must be labeled as its own or not injected on judge lanes.
