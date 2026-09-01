@@ -27,8 +27,10 @@ fn configure_parent_death_signal(command: &mut Command) {
 
 #[allow(unused_variables)]
 pub fn configure_subprocess(command: &mut Command) {
-    // Own process group so the sidecar does not receive the terminal's Ctrl+C SIGINT;
-    // termination is always explicit and per-pid (never killpg).
+    // Own process group: the sidecar does not receive the terminal's Ctrl+C SIGINT, AND the
+    // child becomes the provable LEADER of a group only its descendants inherit. That is
+    // what licenses the SIGKILL leg in lib.rs — `getpgid(pid) == pid` proven, then killpg on
+    // THAT group so the engine uvx launched dies with it. SIGTERM stays per-pid (forwarded).
     #[cfg(unix)]
     command.process_group(0);
     #[cfg(target_os = "linux")]

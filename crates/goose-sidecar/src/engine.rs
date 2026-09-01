@@ -15,7 +15,10 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
 
 use crate::hf::{self, LocalModel};
-use crate::{measure, MemoryGate, Sidecar, SidecarConfig, Verdict, GIB};
+use crate::{
+    listening_pids, measure, port_has_listener, wait_port_clear, MemoryGate, Sidecar,
+    SidecarConfig, Verdict, GIB,
+};
 
 pub const ENGINE_LAUNCHER: [&str; 4] = [
     "uvx",
@@ -246,26 +249,14 @@ fn sidecar_spawn_path() -> String {
     "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin".to_string()
 }
 
-fn port_has_listener(port: u16) -> bool {
-    use std::net::TcpStream;
-    use std::time::Duration as StdDuration;
-    let addr = std::net::SocketAddr::from(([127, 0, 0, 1], port));
-    TcpStream::connect_timeout(&addr, StdDuration::from_millis(200)).is_ok()
-}
-
-/// Terminate whatever listens on `port` — per-pid (never a group), SIGTERM then SIGKILL.
-/// Reaching for `lsof` is deliberate: the orphan is not our child, so there is no handle;
-/// the port is OUR configured port, which is the authority to reclaim it.
+/// Terminate whatever LISTENS on `port` — per-pid (never a group: the orphan's group is not
+/// provably ours), SIGTERM then SIGKILL. Reaching for `lsof` is deliberate: the orphan is not
+/// our child, so there is no handle; the port is OUR configured port, which is the authority
+/// to reclaim it. Only LISTEN sockets are targeted — a client connection to the port (goosed's
+/// own probe pool) is not an engine.
 async fn reclaim_port(port: u16) {
-    let output = tokio::process::Command::new("lsof")
-        .args(["-ti", &format!(":{port}")])
-        .output()
-        .await;
-    let pids: Vec<i32> = match output {
-        Ok(out) => String::from_utf8_lossy(&out.stdout)
-            .split_whitespace()
-            .filter_map(|s| s.parse().ok())
-            .collect(),
+    let pids = match listening_pids(port).await {
+        Ok(pids) => pids,
         Err(e) => {
             tracing::warn!(port, error = %e, "reclaim: lsof unavailable; port left occupied");
             return;
@@ -282,17 +273,14 @@ async fn reclaim_port(port: u16) {
     #[cfg(unix)]
     {
         for pid in &pids {
-            unsafe { libc::kill(*pid, libc::SIGTERM) };
+            unsafe { libc::kill(*pid as libc::pid_t, libc::SIGTERM) };
         }
-        for _ in 0..50 {
-            if !port_has_listener(port) {
-                return;
-            }
-            tokio::time::sleep(Duration::from_millis(100)).await;
+        if wait_port_clear(port).await {
+            return;
         }
         tracing::warn!(port, ?pids, "reclaim: grace window expired (SIGKILL)");
         for pid in &pids {
-            unsafe { libc::kill(*pid, libc::SIGKILL) };
+            unsafe { libc::kill(*pid as libc::pid_t, libc::SIGKILL) };
         }
     }
 }
