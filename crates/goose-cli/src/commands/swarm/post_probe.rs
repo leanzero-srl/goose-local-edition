@@ -46,8 +46,18 @@ pub(super) enum RepeatedPost {
     /// idempotency; it is an empty app.** Being inconclusive, this never blames the app for a vendor
     /// that legitimately has no rows.
     Vacuous(String),
-    /// Not JSON, or no field that speaks to idempotency. FAIL-OPEN: says nothing, blames nothing.
-    Unreadable,
+    /// Either body is not a JSON OBJECT — the one shape the spec documents for every endpoint.
+    /// FAIL-OPEN on idempotency: says nothing about duplication.
+    NotJson,
+    /// Both bodies ARE JSON objects and neither carries a field that speaks to idempotency
+    /// (`fetched`/`inserted`/`total`). Says nothing about duplication; what the pair DOES prove
+    /// is decided by the caller from the HTTP status and the documented keys. r6c: this and
+    /// `NotJson` were ONE arm (`Unreadable`), and the caller's text for it — "could not be read
+    /// as JSON on either probe" / "does not carry the documented field(s)" — described five
+    /// findings whose bodies were well-formed JSON 401 envelopes (`{"error": {"code":
+    /// "unauthorized", …}}`, replayed against the archived tree); four lanes reported FIXED on
+    /// them and the gate re-filed the same words every round.
+    NoIdempotencyField,
 }
 
 /// Split `curl -w "\n%{http_code}"` output into (body, code). Pure, so the parse can be pinned.
@@ -69,10 +79,10 @@ pub(super) fn repeated_post_verdict(first: &str, second: &str) -> RepeatedPost {
         serde_json::from_str::<serde_json::Value>(first),
         serde_json::from_str::<serde_json::Value>(second),
     ) else {
-        return RepeatedPost::Unreadable;
+        return RepeatedPost::NotJson;
     };
     let (Some(a), Some(b)) = (a.as_object(), b.as_object()) else {
-        return RepeatedPost::Unreadable;
+        return RepeatedPost::NotJson;
     };
     // DID THE FIRST CALL DO ANYTHING AT ALL? Every arm below compares the second call to the first,
     // so a first call that fetched nothing, inserted nothing and left an empty collection makes all
@@ -140,9 +150,95 @@ pub(super) fn repeated_post_verdict(first: &str, second: &str) -> RepeatedPost {
     {
         // Rows proven correct, cheapness UNPROVEN because the app advertises no `fetched`. Say so
         // rather than banking a pass the evidence does not support.
-        return RepeatedPost::Unreadable;
+        return RepeatedPost::NoIdempotencyField;
     }
-    RepeatedPost::Unreadable
+    RepeatedPost::NoIdempotencyField
+}
+
+/// The body as a JSON OBJECT, or None — the one parse the probe's arms share.
+pub(super) fn json_object(body: &str) -> Option<serde_json::Map<String, serde_json::Value>> {
+    serde_json::from_str::<serde_json::Value>(body.trim())
+        .ok()?
+        .as_object()
+        .cloned()
+}
+
+/// Is `key` present ANYWHERE in the value — top level or nested? The spec's documented keys
+/// are read from ONE table cell by a `"key":` regex (`spec_documented_keys`), which flattens
+/// a nested shape: sb-7's `/api/drafts` row documents `counterparty: {name, country}`, so
+/// `name` and `country` are documented keys that a CORRECT response carries one level down.
+/// A top-level-only check would file "does not carry `name`" against a handler that does.
+fn json_has_key(v: &serde_json::Value, key: &str) -> bool {
+    match v {
+        serde_json::Value::Object(o) => {
+            o.contains_key(key) || o.values().any(|x| json_has_key(x, key))
+        }
+        serde_json::Value::Array(a) => a.iter().any(|x| json_has_key(x, key)),
+        _ => false,
+    }
+}
+
+/// Which of the spec's documented keys the body does NOT carry (anywhere), in documented
+/// order. A body that is not a JSON object is missing every key — the caller has already
+/// separated that case (`NotJson`) and words it as such.
+pub(super) fn missing_documented_keys(body: &str, documented: &[String]) -> Vec<String> {
+    let parsed =
+        serde_json::from_str::<serde_json::Value>(body.trim()).unwrap_or(serde_json::Value::Null);
+    documented
+        .iter()
+        .filter(|k| !json_has_key(&parsed, k))
+        .cloned()
+        .collect()
+}
+
+/// The first `max` chars of a response body on ONE line, for a finding: whitespace runs
+/// collapse to one space so a pretty-printed envelope reads as a sentence; `«»` delimit it so
+/// the body's own quotes and backticks cannot end the quote early. An empty body says so.
+fn body_snippet(body: &str, max: usize) -> String {
+    let one_line = body.split_whitespace().collect::<Vec<_>>().join(" ");
+    if one_line.is_empty() {
+        return "empty body".to_string();
+    }
+    let n = one_line.chars().count();
+    if n > max {
+        let head: String = one_line.chars().take(max).collect();
+        format!("«{head}…» ({n} chars)")
+    } else {
+        format!("«{one_line}»")
+    }
+}
+
+/// THE EVIDENCE a POST-probe finding carries, so a repair shard reproduces the GATE'S request
+/// instead of guessing at it. r6c: the gate's `curl -s -w '\n%{http_code}' -X POST -m 20 <url>`
+/// sends NO body and NO headers, and the finding said only "could not be read as JSON on
+/// either probe"; four lanes booted the tree, tried "8 realistic variants" with tokens and
+/// bodies, saw JSON every time, reported FIXED, and the gate re-filed the identical words —
+/// they never learned the probe was a bare unauthenticated POST answered by a 401 envelope.
+/// Each probe's status and body head are stated; a status of 0 is curl's "no HTTP response
+/// within the budget" — boot latency or a hang, a different defect class from a non-JSON body,
+/// and a shard must be able to tell them apart. `budget_secs` is the probe's own curl `-m`
+/// (POST_PROBE_SECS, quoted as data — it bounds the app under test, never a model).
+pub(super) fn post_probe_evidence(path: &str, budget_secs: u64, probes: &[(u16, &str)]) -> String {
+    let mut out = format!(
+        "PROBE EVIDENCE — request as sent: `POST {path}` with NO body and NO headers (bare \
+         `curl -X POST`, {budget_secs}s budget)"
+    );
+    for (i, (code, body)) in probes.iter().enumerate() {
+        if *code == 0 {
+            out.push_str(&format!(
+                "; probe {}: no HTTP response within {budget_secs}s",
+                i + 1
+            ));
+        } else {
+            out.push_str(&format!(
+                "; probe {}: HTTP {code}, body {}",
+                i + 1,
+                body_snippet(body, 200)
+            ));
+        }
+    }
+    out.push('.');
+    out
 }
 
 #[cfg(test)]
@@ -227,25 +323,33 @@ mod tests {
             "NEGATIVE CONTROL: a populated collection is still judged, not called vacuous"
         );
         // FAIL-OPEN — none of these may produce a finding.
-        for (a, b, why) in [
-            ("not json", "{}", "a non-JSON body decides nothing"),
+        for (a, b, want, why) in [
+            (
+                "not json",
+                "{}",
+                RepeatedPost::NotJson,
+                "a non-JSON body decides nothing",
+            ),
             (
                 r#"{"ok":true}"#,
                 r#"{"ok":true}"#,
+                RepeatedPost::NoIdempotencyField,
                 "no idempotency-bearing field",
             ),
-            ("[1,2]", "[1,2]", "a JSON array is not an object"),
+            (
+                "[1,2]",
+                "[1,2]",
+                RepeatedPost::NotJson,
+                "a JSON array is not an object",
+            ),
             (
                 r#"{"inserted":0}"#,
                 "oops",
+                RepeatedPost::NotJson,
                 "one unreadable side is enough to abstain",
             ),
         ] {
-            assert_eq!(
-                repeated_post_verdict(a, b),
-                RepeatedPost::Unreadable,
-                "{why}"
-            );
+            assert_eq!(repeated_post_verdict(a, b), want, "{why}");
         }
         // THE STATUS SPLIT, both directions. A body containing newlines must survive intact —
         // taking the first line instead of everything-before-the-last truncates pretty-printed JSON
@@ -272,5 +376,76 @@ mod tests {
             spec_post_endpoints("| `GET` | `/api/health` | `{}` |").is_empty(),
             "a GET-only spec advertises nothing to probe, so the gate stays silent"
         );
+    }
+
+    /// GAP 3 (r6c): the Unreadable arm split in two, and the evidence a finding carries. The
+    /// five r6c "could not be read as JSON" / "does not carry the documented field(s)" findings
+    /// were bare unauthenticated POSTs answered by JSON 401 envelopes — replayed against the
+    /// archived tree: `POST /api/drafts` → 401 `{"error": {"code": "unauthorized", "message":
+    /// "missing or unknown bearer token"}}`, `/api/webhooks/meridian` → 401 `bad_signature`,
+    /// `/api/payments/<id>/note` → 400 `note is required`. None was non-JSON.
+    #[test]
+    fn probe_evidence_names_the_bare_request_each_status_and_a_body_head() {
+        let env =
+            r#"{"error": {"code": "unauthorized", "message": "missing or unknown bearer token"}}"#;
+        let ev = post_probe_evidence("/api/drafts", 20, &[(401, env), (401, env)]);
+        assert!(
+            ev.starts_with(
+                "PROBE EVIDENCE — request as sent: `POST /api/drafts` with NO body and NO headers"
+            ),
+            "{ev}"
+        );
+        assert!(ev.contains("20s budget"), "{ev}");
+        assert!(
+            ev.contains("probe 1: HTTP 401, body «{\"error\": {\"code\": \"unauthorized\""),
+            "{ev}"
+        );
+        assert!(ev.contains("probe 2: HTTP 401"), "{ev}");
+        // A silent second probe is a DIFFERENT class (boot latency / hang), worded as such.
+        let ev2 = post_probe_evidence("/api/sync", 20, &[(200, "{\"total\": 3}"), (0, "")]);
+        assert!(
+            ev2.contains("probe 2: no HTTP response within 20s"),
+            "{ev2}"
+        );
+        // A long pretty-printed body reads on one line, capped, with its true length.
+        let long = format!("{{\n  \"rows\": \"{}\"\n}}", "x".repeat(400));
+        let ev3 = post_probe_evidence("/api/x", 20, &[(200, &long)]);
+        assert!(!ev3.contains('\n'), "{ev3}");
+        assert!(
+            ev3.contains("…» (4"),
+            "the snippet states the full length: {ev3}"
+        );
+        assert!(!ev3.contains("empty body"));
+        assert!(post_probe_evidence("/api/x", 20, &[(204, "")]).contains("empty body"));
+    }
+
+    /// The documented keys are checked ANYWHERE in the body, because the spec's key regex
+    /// flattens nested shapes (`counterparty: {name, country}` documents `name` and `country`
+    /// one level down). The 401 envelope misses all six; a correct draft misses none.
+    #[test]
+    fn missing_documented_keys_reads_nested_shapes_honestly() {
+        let documented: Vec<String> = [
+            "amount_minor",
+            "currency",
+            "counterparty",
+            "name",
+            "country",
+            "note",
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+        let draft = r#"{"id": "draft_1", "amount_minor": 4500, "currency": "EUR",
+                       "counterparty": {"name": "Smoke Co", "country": "DE"}, "note": "repro"}"#;
+        assert!(missing_documented_keys(draft, &documented).is_empty());
+        let env = r#"{"error": {"code": "unauthorized"}}"#;
+        assert_eq!(missing_documented_keys(env, &documented), documented);
+        assert_eq!(
+            missing_documented_keys("not json", &documented),
+            documented,
+            "a non-object misses everything; the caller words that case as NotJson"
+        );
+        assert!(json_object("[1]").is_none());
+        assert!(json_object(" {\"a\": 1} ").is_some());
     }
 }

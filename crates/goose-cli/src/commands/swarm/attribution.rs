@@ -1,12 +1,48 @@
-//! Endpoint-literal attribution: which FILE an unassigned gate finding belongs to, by evidence.
-//! Sibling module under the incremental-split law
-//! (development_gates::swarm_rs_line_count_only_decreases). `endpoint_literal_of` (since renamed
-//! `endpoint_literal_forms_of` — it now derives the verbatim placeholder form beside the prefix
-//! cut) and `attribute_gate_finding` moved verbatim from swarm.rs, except the
-//! possessive-apostrophe cut in `clean` (r5: `/api/drafts's` kept its apostrophe, the tree grep
-//! hit zero files, and 6 of 8 round-0 findings misrouted to the entry file).
+//! Attribution: which FILE a gate finding belongs to, by evidence — the endpoint-literal grep
+//! for findings that name no path, the render gate's served-page derivation, and the repair
+//! ledger's HANDOFFS (a prior lane's own routing). Sibling module under the incremental-split
+//! law (development_gates::swarm_rs_line_count_only_decreases). `endpoint_literal_of` (since
+//! renamed `endpoint_literal_forms_of`) and `attribute_gate_finding` moved verbatim from
+//! swarm.rs, except the possessive-apostrophe cut in `clean` (r5: `/api/drafts's` kept its
+//! apostrophe, the tree grep hit zero files, and 6 of 8 round-0 findings misrouted to the entry
+//! file).
+//!
+//! r6c (gate A, "repair must OWN every finding"), replayed to the item against the archived
+//! tree: (1) `/api/drafts/<id>/submit` grepped ZERO files because the route table spells
+//! `{id}` and app/drafts.py routes by SEGMENTS (`parts[1:3] == ["api", "drafts"]`), so the
+//! drafts handler was never a shard and its round-1 fix died at promotion — placeholder forms
+//! are normalized across conventions and a path segment's namesake module becomes a claim;
+//! (2) `POST /api/drafts`'s RESPONSE-shape finding was won by web/app.js (three fetch()
+//! literals) over the route table — a server-response finding ranks server source above web
+//! assets; (3) the render gate's "ZERO rows after a successful sync" named no file at all and
+//! rode `critical_unassigned` every round — the emitter now derives the page and its
+//! row-building script from what the server actually served (`render_sources`); (4) the lane
+//! told to hand a fix off by name did so ("HANDOFF — Files touched: `app/drafts.py`") and the
+//! handoff was a dead letter — it is persisted (`parse_handoffs`) and consumed next round
+//! (`handoffs_from_rollup`), ahead of the grep.
 
 use super::findings::{FileGroup, FindingProvenance};
+use std::collections::HashMap;
+
+/// A route segment that stands for a value, in any of the conventions a tree may use:
+/// `<id>` / `<int:id>` (werkzeug/flask), `{id}` (openapi, fastapi, the sb-7 route table),
+/// `:id` (express, rails). Returns the bare NAME so the same route can be re-spelled in each.
+/// Derived from the segment's own delimiters — never a list of names.
+fn placeholder_name(seg: &str) -> Option<String> {
+    let ident = |s: &str| !s.is_empty() && s.chars().all(|c| c.is_ascii_alphanumeric() || c == '_');
+    if let Some(inner) = seg.strip_prefix('<').and_then(|s| s.strip_suffix('>')) {
+        let name = inner.rsplit(':').next().unwrap_or(inner);
+        return ident(name).then(|| name.to_string());
+    }
+    if let Some(inner) = seg.strip_prefix('{').and_then(|s| s.strip_suffix('}')) {
+        let name = inner.split(':').next().unwrap_or(inner);
+        return ident(name).then(|| name.to_string());
+    }
+    if let Some(name) = seg.strip_prefix(':') {
+        return ident(name).then(|| name.to_string());
+    }
+    None
+}
 
 /// P1-3, half one: the ENDPOINT LITERAL FORMS a gate finding names, most specific first. The
 /// deterministic gate's own emitters write `GET <path> returned <code>` / `POST <path> …`, so
@@ -15,15 +51,14 @@ use super::findings::{FileGroup, FindingProvenance};
 /// matches every file, which is attribution-shaped noise, and the entry-file fallback answers
 /// that case honestly instead.
 ///
-/// TWO forms per finding, deduped, verbatim first (r5, run swarm-20260830-083847650: the
-/// placeholder routes). The gate probes placeholder routes verbatim — `POST
-/// /api/payments/<id>/note's response …` — and the r5 tree holds that literal IN CODE
-/// (app/ledgerd/__init__.py's route table, `("POST", "/api/payments/<id>/note")`). Cutting at
-/// `<` reduced every such finding to its prefix (`/api/payments/`), which structurally favors
-/// whichever file mentions the prefix most — F5-F7's `/api/drafts/` even pooled THREE different
-/// routes' hits into one count. So: the VERBATIM form keeps `<>` and cuts only at the
-/// apostrophe class (any non-path, non-placeholder char); the PREFIX form is the old cut at
-/// `<`. The caller tries verbatim first and falls back when it greps zero files.
+/// FORMS, deduped, in this order: the VERBATIM literal (r5: the gate probes placeholder routes
+/// verbatim — `POST /api/payments/<id>/note's response …` — and a route table may hold that
+/// exact string in code); then, when the route carries a placeholder, the same route re-spelled
+/// in EACH convention (`<id>`, `{id}`, `:id` — r6c: the gate's `<id>` grepped zero files while
+/// app/ledgerd/__init__.py's table spelled `{id}`, so every drafts finding fell to the prefix
+/// form and pooled three routes' hits into the dispatcher); last the PREFIX up to the first
+/// placeholder (`/api/payments/`), the old cut, for a route no file spells in any convention.
+/// The caller tries them in order and falls through only when a form greps zero files.
 fn endpoint_literal_forms_of(finding: &str) -> Vec<String> {
     // r5: the gate's own templates write `POST {path}'s response …`, so the raw token is
     // `/api/drafts's`. `trim_matches` only trims at token ENDS — the trailing `s` is
@@ -31,16 +66,18 @@ fn endpoint_literal_forms_of(finding: &str) -> Vec<String> {
     // entry-file fallback misrouted 6 of 8 round-0 findings. CUT at the first disallowed
     // character instead (after trimming any disallowed lead): `/api/drafts's` → `/api/drafts`,
     // `/api/payments/<id>/note's` → `/api/payments/<id>/note` (verbatim) / `/api/payments/`
-    // (prefix).
+    // (prefix). The verbatim set admits every placeholder delimiter; a trailing `:` is prose
+    // punctuation, never part of a path.
     let form = |verbatim: bool| -> Option<String> {
         let ok = |c: char| {
-            c.is_ascii_alphanumeric() || "/_-.".contains(c) || (verbatim && "<>".contains(c))
+            c.is_ascii_alphanumeric() || "/_-.".contains(c) || (verbatim && "<>{}:".contains(c))
         };
         let clean = |t: &str| {
             t.trim_start_matches(|c: char| !ok(c))
                 .split(|c: char| !ok(c))
                 .next()
                 .unwrap_or("")
+                .trim_end_matches(':')
                 .to_string()
         };
         let mut toks = finding.split_whitespace().peekable();
@@ -62,11 +99,37 @@ fn endpoint_literal_forms_of(finding: &str) -> Vec<String> {
             .map(clean)
             .find(|t| t.starts_with('/') && t.len() > 1)
     };
-    let mut forms: Vec<String> = Vec::new();
-    for lit in [form(true), form(false)].into_iter().flatten() {
-        if !forms.contains(&lit) {
-            forms.push(lit);
+    fn push(forms: &mut Vec<String>, s: String) {
+        if s.len() > 1 && !forms.contains(&s) {
+            forms.push(s);
         }
+    }
+    let mut forms: Vec<String> = Vec::new();
+    if let Some(verbatim) = form(true) {
+        let segs: Vec<&str> = verbatim.split('/').collect();
+        let names: Vec<Option<String>> = segs.iter().map(|s| placeholder_name(s)).collect();
+        push(&mut forms, verbatim.clone());
+        if names.iter().any(Option::is_some) {
+            let conventions: [fn(&str) -> String; 3] = [
+                |n| format!("<{n}>"),
+                |n| format!("{{{n}}}"),
+                |n| format!(":{n}"),
+            ];
+            for wrap in conventions {
+                let respelled: Vec<String> = segs
+                    .iter()
+                    .zip(&names)
+                    .map(|(s, n)| match n {
+                        Some(n) => wrap(n),
+                        None => s.to_string(),
+                    })
+                    .collect();
+                push(&mut forms, respelled.join("/"));
+            }
+        }
+    }
+    if let Some(prefix) = form(false) {
+        push(&mut forms, prefix);
     }
     forms
 }
@@ -122,6 +185,51 @@ fn strip_comments_for_evidence(src: &str, file: &str) -> String {
     }
 }
 
+fn is_source_file(f: &str) -> bool {
+    super::findings::FINDING_SOURCE_EXTS
+        .iter()
+        .any(|e| f.ends_with(e))
+}
+
+/// The one web-asset predicate (briefs::is_asset_owner), asked about a single file.
+fn is_web_asset(f: &str) -> bool {
+    super::briefs::is_asset_owner(std::slice::from_ref(&f.to_string()))
+}
+
+/// The module name a file answers to: its basename without extension, or — for a Python
+/// package's `__init__.py` — the package directory's name.
+fn module_stem(f: &str) -> &str {
+    let base = f.rsplit('/').next().unwrap_or(f);
+    let stem = base.split('.').next().unwrap_or(base);
+    if stem == "__init__" {
+        f.rsplit('/').nth(1).unwrap_or(stem)
+    } else {
+        stem
+    }
+}
+
+/// SEGMENT-BASENAME claims for an endpoint finding: every source file whose module name equals
+/// a non-placeholder segment of the route (`/api/drafts/<id>/submit` → `api`, `drafts`,
+/// `submit` → app/api.py, app/drafts.py). REST convention makes the namesake module the
+/// handler's usual home, and the claim is derived from THIS tree's files, never a table. r6c:
+/// app/drafts.py routes by segments and never spells its own literal, so no grep could reach
+/// it; as a runner-up claim it joins the shard, and an edit there PROMOTES. Test paths are
+/// left out (a handler fix is not handed its tests); `exclude` is the winner. Order is
+/// `all_files` order; `resolve_shard_ownership` keeps a path already owned by an earlier shard
+/// with that shard (one door).
+fn segment_basename_claims(literal: &str, all_files: &[String], exclude: &[&str]) -> Vec<String> {
+    let segments: Vec<&str> = literal
+        .split('/')
+        .filter(|s| !s.is_empty() && placeholder_name(s).is_none())
+        .collect();
+    all_files
+        .iter()
+        .filter(|f| is_source_file(f) && !f.contains("test") && !exclude.contains(&f.as_str()))
+        .filter(|f| segments.contains(&module_stem(f)))
+        .cloned()
+        .collect()
+}
+
 /// P1-3, half two: attribute one UNASSIGNED gate finding to a file by EVIDENCE, never to a
 /// whole-tree residue worker. (1) grep the tree for the endpoint literal the finding names —
 /// the file that mentions `/api/payments` is the file that serves it or was supposed to; the
@@ -133,24 +241,39 @@ fn strip_comments_for_evidence(src: &str, file: &str) -> String {
 /// promoted; r2's sink burned ~130 min on the same whole-tree shape. `read_source` is injected
 /// so the fixture drives this against an archived tree READ-ONLY.
 ///
-/// Returns `(winner, runner_up)`. The RUNNER-UP is the second-best candidate by the same
-/// ordering, surfaced only when it is a SOURCE file with at least one comment-stripped boundary
-/// hit — a finding whose evidence reconciles across two files (route table vs handler body) must
-/// let the shard own both, so whichever side the worker fixes can land (the js/css↔html
-/// reconciliation precedent at `shard_owned_files`). Grouping stays by winner; only ownership
-/// may widen, and only through the caller's `resolve_shard_ownership` claim pass.
+/// `server_side` is the finding's CLASS (FindingSource::is_server_response_probe): for a
+/// finding about what a HANDLER answered, server-side source ranks above web assets whenever
+/// both carry the literal — a page that CALLS the endpoint is not where a response-shape
+/// defect lives (r6c F5: web/app.js's three fetch() literals out-counted the route table's two
+/// and a frontend shard carried the server finding). MILD: a preference inside the ranking; a
+/// web asset still wins when no server file greps at all.
+///
+/// Returns `(winner, runner_ups)`. The runner-ups are ownership CLAIMS, never the group: the
+/// second-best grep candidate when it is a SOURCE file with at least one comment-stripped
+/// boundary hit (a finding whose evidence reconciles across two files — route table vs handler
+/// body — must let the shard own both, so whichever side the worker fixes can land: the
+/// js/css↔html precedent at `shard_owned_files`), then the route's segment-basename modules.
+/// Grouping stays by winner; only ownership may widen, and only through the caller's
+/// `resolve_shard_ownership` claim pass.
 pub(super) fn attribute_gate_finding_ranked(
     finding: &str,
     all_files: &[String],
     read_source: &dyn Fn(&str) -> Option<String>,
-) -> Option<(String, Option<String>)> {
+    server_side: bool,
+) -> Option<(String, Vec<String>)> {
     let literals = endpoint_literal_forms_of(finding);
+    let claims = |winner: &str| -> Vec<String> {
+        match literals.first() {
+            Some(lit) => segment_basename_claims(lit, all_files, &[winner]),
+            None => Vec::new(),
+        }
+    };
     for lit in &literals {
-        // Forms are tried most-specific first: the VERBATIM placeholder route (`/api/payments/
-        // <id>/note` — real code in r5's route table) before its prefix cut, falling through
-        // ONLY when a form greps zero files' stripped source. Within each form the ordering and
-        // tiebreaks are unchanged. (`<` after the prefix form is a boundary char below — a
-        // route table's `/api/drafts/<id>/…` entries still boundary-count for `/api/drafts/`.)
+        // Forms are tried most-specific first: the VERBATIM placeholder route, its
+        // re-spellings, then the prefix cut, falling through ONLY when a form greps zero
+        // files' stripped source. Within each form the ordering and tiebreaks are unchanged.
+        // (`<`, `{` and `:` after the prefix form are boundary chars below — a route table's
+        // `/api/drafts/{id}/…` entries still boundary-count for `/api/drafts/`.)
         //
         // A DECLARED route outranks a CALL to it: `"/api/payments":` in the dispatcher is the
         // literal as a complete token, `"/api/payments?limit=100"` in the page is the literal
@@ -172,16 +295,17 @@ pub(super) fn attribute_gate_finding_ranked(
                 })
                 .count()
         };
-        type RankKey = (usize, usize, usize, usize); // (stripped b, stripped raw, raw b, raw raw)
-                                                     // A DATA OR DOC FILE NEVER OUTRANKS SOURCE — extract_file_from_finding's take()-side rule
-                                                     // (swarm.rs, same wording), which the grep side never got: the WINNER slot had no
-                                                     // source-ext filter, only the runner-up did, so a README.md spelling an endpoint often
-                                                     // enough would take the shard and aim a code fix at documentation. `best`/`second` now
-                                                     // rank SOURCE-ext candidates only (existing RankKey ordering unchanged within the class);
-                                                     // a non-source candidate wins only when NO source-ext candidate greps a nonzero stripped
-                                                     // count — FINDING_PATH_EXTS deliberately admits .md/.json so a finding ABOUT those files
-                                                     // stays attributable, and that case still lands on them.
-        let is_source = |f: &str| super::FINDING_SOURCE_EXTS.iter().any(|e| f.ends_with(e));
+        // (server class when preferred, stripped b, stripped raw, raw b, raw raw)
+        type RankKey = (bool, usize, usize, usize, usize);
+        // A DATA OR DOC FILE NEVER OUTRANKS SOURCE — extract_file_from_finding's take()-side
+        // rule (swarm.rs, same wording), which the grep side never got: the WINNER slot had no
+        // source-ext filter, only the runner-up did, so a README.md spelling an endpoint often
+        // enough would take the shard and aim a code fix at documentation. `best`/`second` rank
+        // SOURCE-ext candidates only; a non-source candidate wins only when NO source-ext
+        // candidate greps a nonzero stripped count — FINDING_PATH_EXTS deliberately admits
+        // .md/.json so a finding ABOUT those files stays attributable, and that case still
+        // lands on them.
+        let prefer_server = |f: &str| server_side && !is_web_asset(f);
         let mut best: Option<(RankKey, usize)> = None;
         let mut second: Option<(RankKey, usize)> = None;
         let mut best_other: Option<(RankKey, usize)> = None;
@@ -193,12 +317,13 @@ pub(super) fn attribute_gate_finding_ranked(
                 continue;
             }
             let key: RankKey = (
+                prefer_server(f),
                 boundary_hits(&src),
                 stripped_raw,
                 boundary_hits(&full),
                 full.matches(lit.as_str()).count(),
             );
-            if !is_source(f) {
+            if !is_source_file(f) {
                 if best_other.map(|(bk, _)| key > bk).unwrap_or(true) {
                     best_other = Some((key, i));
                 }
@@ -212,11 +337,19 @@ pub(super) fn attribute_gate_finding_ranked(
             }
         }
         if let Some((_, i)) = best.or(best_other) {
-            let runner_up = second
-                .filter(|((sb, _, _, _), _)| *sb >= 1)
+            let winner = all_files[i].clone();
+            let mut runner_ups: Vec<String> = second
+                .filter(|((_, sb, _, _, _), _)| *sb >= 1)
                 .map(|(_, j)| all_files[j].clone())
-                .filter(|f| super::FINDING_SOURCE_EXTS.iter().any(|e| f.ends_with(e)));
-            return Some((all_files[i].clone(), runner_up));
+                .filter(|f| is_source_file(f))
+                .into_iter()
+                .collect();
+            for c in claims(&winner) {
+                if c != winner && !runner_ups.contains(&c) {
+                    runner_ups.push(c);
+                }
+            }
+            return Some((winner, runner_ups));
         }
     }
     // The entry-file fallback answers ENDPOINT- and BOOT-shaped findings only: an advertised
@@ -242,7 +375,7 @@ pub(super) fn attribute_gate_finding_ranked(
         .iter()
         .filter(|f| *f == "__main__.py" || f.ends_with("/__main__.py"))
         .collect();
-    entries
+    let winner = entries
         .iter()
         .find(|f| {
             f.rsplit('/')
@@ -251,55 +384,115 @@ pub(super) fn attribute_gate_finding_ranked(
                 .unwrap_or(false)
         })
         .or_else(|| entries.first())
-        .map(|f| ((*f).clone(), None))
+        .map(|f| (*f).clone())?;
+    // A route nothing spells still names its segments: the namesake modules ride the entry
+    // shard as claims, so the handler that routes by segments can be fixed there and land.
+    let runner_ups = claims(&winner)
+        .into_iter()
+        .filter(|c| *c != winner)
+        .collect();
+    Some((winner, runner_ups))
 }
 
-/// The winner alone, for tests that assert grouping without ownership.
+/// The winner alone, for tests that assert grouping without ownership or class.
 #[cfg(test)]
 fn attribute_gate_finding(
     finding: &str,
     all_files: &[String],
     read_source: &dyn Fn(&str) -> Option<String>,
 ) -> Option<String> {
-    attribute_gate_finding_ranked(finding, all_files, read_source).map(|(w, _)| w)
+    attribute_gate_finding_ranked(finding, all_files, read_source, false).map(|(w, _)| w)
 }
 
-/// P1-3, the seam every repair path shares: `group_findings_by_file`, then evidence-based
-/// attribution for what it could not place. Attributed findings JOIN their file's shard (or open
-/// one); what remains is the KNOWN-BUGS list — the caller emits it as an event and dispatches
-/// no whole-tree residue worker for it. The third return is the winner→runner-up map (first
-/// attributed finding with a runner-up sets its group's entry): candidate co-ownership only —
-/// nothing is owned until `resolve_shard_ownership`'s claim pass, so grouping is unchanged.
+/// What `attribute_findings` decided for one round.
+pub(super) struct Attributed {
+    /// One group per winner file, first-seen order — the round's shard set.
+    pub(super) groups: Vec<FileGroup>,
+    /// Findings nothing could place — the caller emits them as `known_bugs`.
+    pub(super) known_bugs: Vec<String>,
+    /// winner file → ownership claims (candidate co-ownership only — nothing is owned until
+    /// `resolve_shard_ownership`'s claim pass).
+    pub(super) runner_ups: HashMap<String, Vec<String>>,
+    /// `(path, finding)` pairs where a PRIOR round's lane handed the finding to `path` — the
+    /// caller emits each as `handoff_consumed`, so the routing is visible in the event stream.
+    pub(super) handoffs_consumed: Vec<(String, String)>,
+}
+
+/// P1-3, the seam every repair path shares: `group_findings_by_file`, then a prior lane's
+/// HANDOFF, then evidence-based attribution for what neither could place. Attributed findings
+/// JOIN their file's shard (or open one); what remains is the KNOWN-BUGS list — the caller
+/// emits it as an event and dispatches no whole-tree residue worker for it.
+///
+/// THE HANDOFF (r6c): the repair brief tells a shard that a fix belonging to a file it does
+/// not own is HANDED OFF by name in its final message, and the app.js lane did exactly that
+/// ("HANDOFF — Files touched: `app/drafts.py` only") — to nobody, because nothing persisted or
+/// read it. `handoffs` is finding-text → paths from the ledger (`handoffs_from_rollup`). For a
+/// finding the text itself names a file for, the handed path CO-OWNS (the finding's own file
+/// stays the group); for a finding that names no file, the handed path IS the group — ahead
+/// of the literal grep, because it is the previous lane's evidence-backed routing.
+///
+/// ALL runner-ups per winner file, not the first — r6c: a winner with SEVERAL findings for the
+/// SAME endpoint (each its own literal form) can rank a DIFFERENT second-best file per finding,
+/// and a single-slot map silently kept only the first.
 pub(super) fn attribute_findings(
     findings: &[String],
     all_files: &[String],
+    prov: &FindingProvenance,
+    handoffs: &HashMap<String, Vec<String>>,
     read_source: &dyn Fn(&str) -> Option<String>,
-) -> (
-    Vec<FileGroup>,
-    Vec<String>,
-    std::collections::HashMap<String, Vec<String>>,
-) {
+) -> Attributed {
     let (mut groups, unassigned) = super::findings::group_findings_by_file(findings, all_files);
     let mut known_bugs: Vec<String> = Vec::new();
-    // ALL runner-ups per winner file, not the first — r6c: a winner with SEVERAL findings for
-    // the SAME endpoint (each its own literal form, e.g. `/api/drafts` and
-    // `/api/drafts/<id>/submit`) can rank a DIFFERENT second-best file per finding, and a
-    // single-slot map silently kept only the first. A client file (`web/app.js`, calling the
-    // endpoint) can legitimately win the grep over the server file that actually SERVES it
-    // (`app/drafts.py`) when the server composes the route from a blueprint prefix the file
-    // itself never spells verbatim — the runner-up pass is exactly the widening built for this
-    // (`an_endpoint_shard_owns_winner_and_unclaimed_runner_up`), and it must not drop candidates
-    // to a map slot that filled on an unrelated finding first.
-    let mut runner_ups: std::collections::HashMap<String, Vec<String>> =
-        std::collections::HashMap::new();
+    let mut runner_ups: HashMap<String, Vec<String>> = HashMap::new();
+    let mut handoffs_consumed: Vec<(String, String)> = Vec::new();
+    let handed = |f: &str| -> Vec<String> {
+        handoffs
+            .get(f)
+            .into_iter()
+            .flatten()
+            .filter(|p| all_files.contains(p))
+            .cloned()
+            .collect()
+    };
+    fn claim(runner_ups: &mut HashMap<String, Vec<String>>, winner: &str, path: String) {
+        if path == winner {
+            return;
+        }
+        let slot = runner_ups.entry(winner.to_string()).or_default();
+        if !slot.contains(&path) {
+            slot.push(path);
+        }
+    }
+    for g in &groups {
+        for f in &g.findings {
+            for p in handed(f) {
+                if p != g.file {
+                    handoffs_consumed.push((p.clone(), f.clone()));
+                }
+                claim(&mut runner_ups, &g.file, p);
+            }
+        }
+    }
     for f in unassigned {
-        match attribute_gate_finding_ranked(&f, all_files, read_source) {
-            Some((file, ru)) => {
-                if let Some(ru) = ru {
-                    let slot = runner_ups.entry(file.clone()).or_default();
-                    if !slot.contains(&ru) {
-                        slot.push(ru);
-                    }
+        let handed_paths = handed(&f);
+        let placed = match handed_paths.split_first() {
+            Some((first, rest)) => {
+                for p in &handed_paths {
+                    handoffs_consumed.push((p.clone(), f.clone()));
+                }
+                Some((first.clone(), rest.to_vec()))
+            }
+            None => {
+                let server_side = prov
+                    .source_of(&f)
+                    .is_some_and(|s| s.is_server_response_probe());
+                attribute_gate_finding_ranked(&f, all_files, read_source, server_side)
+            }
+        };
+        match placed {
+            Some((file, claims)) => {
+                for c in claims {
+                    claim(&mut runner_ups, &file, c);
                 }
                 match groups.iter_mut().find(|g| g.file == file) {
                     Some(g) => g.findings.push(f),
@@ -312,7 +505,65 @@ pub(super) fn attribute_findings(
             None => known_bugs.push(f),
         }
     }
-    (groups, known_bugs, runner_ups)
+    Attributed {
+        groups,
+        known_bugs,
+        runner_ups,
+        handoffs_consumed,
+    }
+}
+
+/// F883/E5: the files a per-file fix shard OWNS. A pytest failure attributes to its TEST file —
+/// the only path a `-q` summary names — but the defect is as often in the module under test,
+/// which a shard owning only the test cannot land: its worker either fixes the module in a
+/// shadow that promote discards, or takes the one route that CAN land — weakening the tests.
+/// Owning BOTH keeps the fix landable either way. The module is added only when it resolves to
+/// a planned non-test file AND no sibling group already owns it — the partition must stay
+/// disjoint, because two shards writing one real file is the race this machinery exists to
+/// prevent.
+fn shard_owned_files(
+    group_file: &str,
+    all_files: &[String],
+    taken: &std::collections::HashSet<String>,
+) -> Vec<String> {
+    let mut owned = vec![group_file.to_string()];
+    let base = group_file.rsplit('/').next().unwrap_or(group_file);
+    if let Some(stem) = base
+        .strip_prefix("test_")
+        .map(|r| r.trim_end_matches(".py"))
+        .filter(|s| !s.is_empty())
+    {
+        let want = format!("{stem}.py");
+        if let Some(module) = all_files.iter().find(|f| {
+            let fb = f.rsplit('/').next().unwrap_or(f);
+            fb == want && !fb.starts_with("test_")
+        }) {
+            if module.as_str() != group_file && !taken.contains(module.as_str()) {
+                owned.push(module.clone());
+            }
+        }
+    }
+    // A SCRIPT'S FINDINGS RECONCILE AGAINST ITS MARKUP. MEASURED (run 10, round 0): the dom-id
+    // scan attributed nine findings to app.js — each saying "either add the id to the HTML or fix
+    // the reference" — and the shard owning only app.js took the natural half of that
+    // instruction: seven tool calls, every missing id added to index.html, pytest collect green
+    // in its shadow. Promote copies only owned files, so the grade-what-lands preview correctly
+    // refused the byte-identical app.js — and the round DISCARDED a correct repair. The js/css
+    // shard now owns the page markup too (when planned and unclaimed), so whichever side of the
+    // reconciliation the worker picks can actually land.
+    if base.ends_with(".js") || base.ends_with(".css") {
+        let dir = group_file.strip_suffix(base).unwrap_or("");
+        if let Some(html) = all_files
+            .iter()
+            .filter(|f| f.ends_with(".html"))
+            .max_by_key(|f| f.starts_with(dir))
+        {
+            if html.as_str() != group_file && !taken.contains(html.as_str()) {
+                owned.push(html.clone());
+            }
+        }
+    }
+    owned
 }
 
 /// Fix-1 seam, the CLAIM pass: each shard's owned files, resolved SEQUENTIALLY in group order
@@ -325,14 +576,14 @@ pub(super) fn attribute_findings(
 pub(super) fn resolve_shard_ownership(
     groups: &[FileGroup],
     all_files: &[String],
-    runner_ups: &std::collections::HashMap<String, Vec<String>>,
+    runner_ups: &HashMap<String, Vec<String>>,
 ) -> Vec<Vec<String>> {
     let mut taken: std::collections::HashSet<String> =
         groups.iter().map(|g| g.file.clone()).collect();
     groups
         .iter()
         .map(|g| {
-            let mut owned = super::shard_owned_files(&g.file, all_files, &taken);
+            let mut owned = shard_owned_files(&g.file, all_files, &taken);
             // ALL of this winner's runner-ups claim, not the first — see attribute_findings.
             for ru in runner_ups.get(&g.file).into_iter().flatten() {
                 if !taken.contains(ru) && !owned.contains(ru) {
@@ -387,6 +638,405 @@ pub(super) fn console_error_source(v: &serde_json::Value) -> Option<(usize, &str
     })
 }
 
+/// One line of a shard's HANDOFF that names a tree path the shard did not own.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct Handoff {
+    pub(super) path: String,
+    pub(super) symbol: Option<String>,
+    pub(super) note: String,
+}
+
+/// PERSIST half of the handoff (r6c): the shard's final message, from its first handoff line
+/// ("HANDOFF", "hand off", "handed off" — the brief's own words) to the end, yields one entry
+/// per EXISTING tree path named there that the shard did not own, with the first backticked
+/// identifier on that line as the symbol (a following "Symbols changed: `x`" line completes an
+/// entry that had none) and the line itself as the note. Lenient by design — the reporter is
+/// a weak model, not a serializer — and bounded by the tree: a path not in `all_files` is
+/// never a handoff, so a hallucinated file cannot become a claim. The r6c round-1 app.js
+/// message parses to exactly {path: app/drafts.py, symbol: _draft_obj}.
+pub(super) fn parse_handoffs(output: &str, all_files: &[String], owned: &[String]) -> Vec<Handoff> {
+    let lines: Vec<&str> = output.lines().collect();
+    let Some(start) = lines.iter().position(|l| {
+        let low = l.to_lowercase();
+        ["handoff", "hand off", "hand-off", "handed off"]
+            .iter()
+            .any(|k| low.contains(k))
+    }) else {
+        return Vec::new();
+    };
+    let ident = |c: &str| {
+        let mut chars = c.chars();
+        matches!(chars.next(), Some(ch) if ch.is_alphabetic() || ch == '_')
+            && chars.all(|ch| ch.is_alphanumeric() || "_.:".contains(ch))
+    };
+    let mut out: Vec<Handoff> = Vec::new();
+    for line in &lines[start..] {
+        let paths: Vec<String> = line
+            .split(|c: char| c.is_whitespace() || "`'\"(),;:*".contains(c))
+            .map(|t| {
+                t.trim_matches(|c: char| !(c.is_alphanumeric() || "/_.-".contains(c)))
+                    .trim_end_matches('.')
+            })
+            .filter(|t| t.contains('/') || t.contains('.'))
+            .filter(|t| all_files.iter().any(|a| a == t) && !owned.iter().any(|o| o == t))
+            .map(str::to_string)
+            .collect();
+        // The symbol is named BEFORE its path ("`serve_stream` in `app/api.py`"); backticks
+        // after the path are the lane's asides ("(`web/app.js` untouched — sends nested
+        // `counterparty`)"), so a path line's symbol comes from the text ahead of its first
+        // handed path, and a following "Symbols changed: `x`" line completes an entry without one.
+        let cutoff = paths
+            .iter()
+            .filter_map(|p| line.find(p.as_str()))
+            .min()
+            .unwrap_or(line.len());
+        let symbol = line
+            .get(..cutoff)
+            .unwrap_or("")
+            .split('`')
+            .skip(1)
+            .step_by(2)
+            .map(str::trim)
+            .find(|c| !c.contains('/') && ident(c) && !all_files.iter().any(|a| a == c))
+            .map(str::to_string);
+        if paths.is_empty() {
+            if let (Some(sym), Some(last)) = (symbol, out.last_mut()) {
+                if last.symbol.is_none() {
+                    last.symbol = Some(sym);
+                }
+            }
+            continue;
+        }
+        for path in paths {
+            if out.iter().any(|h| h.path == path) {
+                continue;
+            }
+            out.push(Handoff {
+                path,
+                symbol: symbol.clone(),
+                note: line.trim().chars().take(300).collect(),
+            });
+        }
+    }
+    out
+}
+
+/// CONSUME half of the handoff: finding-text → handed paths, from the roll-up's repair rows
+/// (`/repair/rounds[]`, each a shard's mini with `findings_assigned` and `handoffs`). Newest
+/// round first, so the latest lane's routing leads; every finding the row was assigned inherits
+/// the row's handoffs (lenient — the lane rarely numbers them). Only paths in `all_files`
+/// survive. A finding that closed since simply never appears in the next round's texts, so a
+/// stale handoff is inert by construction.
+pub(super) fn handoffs_from_rollup(
+    rollup: Option<&serde_json::Value>,
+    all_files: &[String],
+) -> HashMap<String, Vec<String>> {
+    // No roll-up, or one with no repair rows yet (round 0), is honestly empty: nothing was
+    // handed off because no lane has run — no event, no substitution.
+    let mut rows: Vec<&serde_json::Value> = match rollup
+        .and_then(|r| r.pointer("/repair/rounds"))
+        .and_then(|a| a.as_array())
+    {
+        Some(a) => a.iter().collect(),
+        None => Vec::new(),
+    };
+    rows.sort_by_key(|r| std::cmp::Reverse(r.get("round").and_then(|x| x.as_u64()).unwrap_or(0)));
+    let mut out: HashMap<String, Vec<String>> = HashMap::new();
+    for row in rows {
+        let paths: Vec<String> = row
+            .get("handoffs")
+            .and_then(|h| h.as_array())
+            .into_iter()
+            .flatten()
+            .filter_map(|h| h.get("path").and_then(|p| p.as_str()))
+            .filter(|p| all_files.iter().any(|a| a == p))
+            .map(str::to_string)
+            .collect();
+        if paths.is_empty() {
+            continue;
+        }
+        for f in row
+            .get("findings_assigned")
+            .and_then(|a| a.as_array())
+            .into_iter()
+            .flatten()
+            .filter_map(|f| f.as_str())
+        {
+            let slot = out.entry(f.to_string()).or_default();
+            for p in &paths {
+                if !slot.contains(p) {
+                    slot.push(p.clone());
+                }
+            }
+        }
+    }
+    out
+}
+
+/// What the render gate measured, named as files: the page the server actually served at `/`
+/// and the scripts it loaded, resolved against the tree.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub(super) struct RenderSources {
+    /// The `src` values exactly as the served page wrote them, document order.
+    pub(super) loaded: Vec<String>,
+    /// Those that resolved to a tree file (exact, or a UNIQUE reverse-suffix match — the same
+    /// rule extract_file_from_finding applies to a URL basename), document order.
+    pub(super) scripts: Vec<String>,
+    /// The loaded script that builds table rows (most tbody/tr/td construction sites in its
+    /// comment-stripped source; ties to document order) — None when none does.
+    pub(super) renderer: Option<String>,
+    /// The tree's html that is the served page: the one html containing every loaded `src`,
+    /// else the tree's only html.
+    pub(super) page: Option<String>,
+}
+
+impl RenderSources {
+    /// The attribution-list suffix the render findings end with — ` (in \`renderer\`,
+    /// \`page\`, …)` — the exact trailing shape `extract_file_from_finding` parses, FIRST entry
+    /// first: for a zero-rows finding the row-building script is the first owner and the page
+    /// the runner-up (the js↔html pairing at `shard_owned_files` then owns both). Empty when
+    /// nothing resolved: the finding stays unowned and `critical_unassigned` says so — never a
+    /// substituted name.
+    pub(super) fn attribution_suffix(&self) -> String {
+        let mut list: Vec<&String> = Vec::new();
+        if let Some(r) = &self.renderer {
+            list.push(r);
+        }
+        if let Some(p) = &self.page {
+            if !list.contains(&p) {
+                list.push(p);
+            }
+        }
+        for s in &self.scripts {
+            if !list.contains(&s) {
+                list.push(s);
+            }
+        }
+        if list.is_empty() {
+            return String::new();
+        }
+        format!(
+            " (in {})",
+            list.iter()
+                .map(|f| format!("`{f}`"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        )
+    }
+
+    /// The measured facts in prose, ahead of the suffix — what the served page loaded and
+    /// which script builds rows — so the shard reads the derivation, not just its result.
+    pub(super) fn evidence_sentence(&self) -> String {
+        if self.loaded.is_empty() {
+            return "The served page loaded no scripts.".to_string();
+        }
+        let loaded = self
+            .loaded
+            .iter()
+            .map(|s| format!("`{s}`"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        match &self.renderer {
+            Some(r) => format!(
+                "The served page loaded {loaded}; `{r}` is the script that builds the table rows."
+            ),
+            None => format!(
+                "The served page loaded {loaded}; none of them builds table rows (no tbody/tr \
+                 construction found)."
+            ),
+        }
+    }
+}
+
+/// `<script … src="…">` values in document order, from the html the server actually served
+/// (a `src=` must follow whitespace, so `data-src=` is not one). Byte offsets come from the
+/// ASCII-lowercased copy, which preserves them.
+fn script_srcs(html: &str) -> Vec<String> {
+    let low = html.to_ascii_lowercase();
+    let mut out = Vec::new();
+    let mut from = 0usize;
+    while let Some(i) = low.get(from..).and_then(|rest| rest.find("<script")) {
+        let tag_start = from + i;
+        let Some(tag_low) = low
+            .get(tag_start..)
+            .and_then(|rest| rest.find('>').and_then(|e| rest.get(..e)))
+        else {
+            break;
+        };
+        let Some(tag) = html.get(tag_start..tag_start + tag_low.len()) else {
+            break;
+        };
+        let src_at = tag_low.match_indices("src=").find(|(j, _)| {
+            tag_low
+                .get(..*j)
+                .and_then(|before| before.chars().next_back())
+                .map(char::is_whitespace)
+                .unwrap_or(false)
+        });
+        if let Some((j, _)) = src_at {
+            if let Some(rest) = tag.get(j + 4..) {
+                let val = match rest.chars().next() {
+                    Some(q @ ('"' | '\'')) => {
+                        rest.get(1..).and_then(|r| r.split(q).next()).unwrap_or("")
+                    }
+                    _ => rest
+                        .split(|c: char| c.is_whitespace() || c == '>')
+                        .next()
+                        .unwrap_or(""),
+                };
+                if !val.is_empty() {
+                    out.push(val.to_string());
+                }
+            }
+        }
+        from = tag_start + tag_low.len();
+    }
+    out
+}
+
+/// GAP 1 (r6c): the render gate's source, DERIVED from what the server served — never a
+/// hardcoded page or script name. The probe reports only console-error sources (0eb7a09ea);
+/// a zero-rows finding with no console error has none, so the gate reads the served `/`
+/// itself: its script tags, resolved to tree files, scored for table-row construction. Pure
+/// over (html, files, reader) so a fixture drives it and the archived r6c tree replays it
+/// read-only.
+pub(super) fn render_sources(
+    served_html: &str,
+    all_files: &[String],
+    read_source: &dyn Fn(&str) -> Option<String>,
+) -> RenderSources {
+    let loaded = script_srcs(served_html);
+    let resolve = |src: &str| -> Option<String> {
+        let path = src.split(['?', '#']).next().unwrap_or(src);
+        let path = match path.find("://") {
+            Some(i) => path
+                .get(i + 3..)
+                .and_then(|host_and_path| {
+                    host_and_path.find('/').and_then(|j| host_and_path.get(j..))
+                })
+                .unwrap_or(""),
+            None => path,
+        };
+        let rel = path.trim_start_matches('/');
+        if rel.is_empty() {
+            return None;
+        }
+        if let Some(f) = all_files.iter().find(|f| f.as_str() == rel) {
+            return Some(f.clone());
+        }
+        let reverse: Vec<&String> = all_files
+            .iter()
+            .filter(|f| f.ends_with(&format!("/{rel}")))
+            .collect();
+        (reverse.len() == 1).then(|| reverse[0].clone())
+    };
+    let mut scripts: Vec<String> = Vec::new();
+    for f in loaded.iter().filter_map(|s| resolve(s)) {
+        if !scripts.contains(&f) {
+            scripts.push(f);
+        }
+    }
+    // Markup (`<tr`), DOM API (`insertRow`) and DOM-built tables that name the tag as a string
+    // literal (r6c's app.js: `el("tr", …)` through one createElement helper — no `<tr` anywhere
+    // in code, only in a comment the stripper removes).
+    let row_markers = [
+        "tbody",
+        "<tr",
+        "<td",
+        "insertrow",
+        "insertcell",
+        "\"tr\"",
+        "'tr'",
+        "\"td\"",
+        "'td'",
+    ];
+    let row_sites = |f: &str| -> usize {
+        match read_source(f) {
+            Some(src) => {
+                let low = strip_comments_for_evidence(&src, f).to_lowercase();
+                row_markers.iter().map(|m| low.matches(m).count()).sum()
+            }
+            None => 0,
+        }
+    };
+    let mut renderer: Option<(usize, String)> = None;
+    for f in &scripts {
+        let n = row_sites(f);
+        if n > 0 && renderer.as_ref().map(|(best, _)| n > *best).unwrap_or(true) {
+            renderer = Some((n, f.clone()));
+        }
+    }
+    let htmls: Vec<&String> = all_files
+        .iter()
+        .filter(|f| f.ends_with(".html") || f.ends_with(".htm"))
+        .collect();
+    let containing: Vec<&String> = htmls
+        .iter()
+        .copied()
+        .filter(|f| match read_source(f) {
+            Some(h) => loaded.iter().all(|s| h.contains(s.as_str())),
+            None => false,
+        })
+        .collect();
+    let page = if containing.len() == 1 {
+        Some(containing[0].clone())
+    } else if htmls.len() == 1 {
+        Some(htmls[0].clone())
+    } else {
+        None
+    };
+    RenderSources {
+        loaded,
+        scripts,
+        renderer: renderer.map(|(_, f)| f),
+        page,
+    }
+}
+
+/// Every file under `root` with a known finding extension, tree-relative with `/`, sorted —
+/// the file list the render gate resolves served script URLs against (it runs inside
+/// `run_spec_contract`, which has the tree root and no plan). Same skip list and depth as
+/// `collect_py_files`.
+pub(super) fn tree_files(root: &std::path::Path) -> Vec<String> {
+    const SKIP: &[&str] = &[
+        ".git",
+        "node_modules",
+        "target",
+        ".venv",
+        ".swarm",
+        "__pycache__",
+    ];
+    fn walk(dir: &std::path::Path, depth: u32, out: &mut Vec<std::path::PathBuf>) {
+        let Ok(rd) = std::fs::read_dir(dir) else {
+            return;
+        };
+        for entry in rd.flatten() {
+            let p = entry.path();
+            let name = entry.file_name().to_string_lossy().to_string();
+            if p.is_dir() {
+                if depth == 0 || name.starts_with('.') || SKIP.contains(&name.as_str()) {
+                    continue;
+                }
+                walk(&p, depth - 1, out);
+            } else if super::findings::FINDING_PATH_EXTS
+                .iter()
+                .any(|e| name.ends_with(e))
+            {
+                out.push(p);
+            }
+        }
+    }
+    let mut paths = Vec::new();
+    walk(root, 6, &mut paths);
+    let mut rel: Vec<String> = paths
+        .iter()
+        .filter_map(|p| p.strip_prefix(root).ok())
+        .map(|r| r.to_string_lossy().replace('\\', "/"))
+        .collect();
+    rel.sort();
+    rel
+}
+
 #[cfg(test)]
 mod tests {
     use super::super::findings::extract_file_from_finding;
@@ -434,14 +1084,17 @@ mod tests {
                 .as_deref(),
             Some("/api/webhooks/meridian")
         );
-        // A placeholder route yields TWO forms: the verbatim literal (the shape r5's route
-        // table holds in real code) first, its prefix cut second.
+        // A placeholder route yields the verbatim literal (the shape r5's route table holds in
+        // real code) first, the other conventions' spellings next (r6c: the table spelled
+        // `{id}`), its prefix cut last.
         assert_eq!(
             endpoint_literal_forms_of(
                 "POST /api/payments/<id>/note's response does not carry the documented field(s) `ok`"
             ),
             vec![
                 "/api/payments/<id>/note".to_string(),
+                "/api/payments/{id}/note".to_string(),
+                "/api/payments/:id/note".to_string(),
                 "/api/payments/".to_string()
             ]
         );
@@ -629,7 +1282,17 @@ mod tests {
             "GET /api/payments returned 404".to_string(),
             "cosmic ray".to_string(),
         ];
-        let (groups, known, _) = attribute_findings(&findings, &all, &read);
+        let Attributed {
+            groups,
+            known_bugs: known,
+            ..
+        } = attribute_findings(
+            &findings,
+            &all,
+            &FindingProvenance::default(),
+            &HashMap::new(),
+            &read,
+        );
         assert_eq!(groups.len(), 1);
         assert_eq!(groups[0].file, "vendorsync/api.py");
         assert_eq!(
@@ -690,10 +1353,10 @@ mod tests {
             }
         };
         assert_eq!(
-            attribute_gate_finding_ranked(f1, &all, &read),
+            attribute_gate_finding_ranked(f1, &all, &read, false),
             Some((
                 "app/sync.py".to_string(),
-                Some("app/httpapi.py".to_string())
+                vec!["app/httpapi.py".to_string()]
             )),
             "an exact stripped tie falls back to the unstripped counts before file order"
         );
@@ -744,14 +1407,25 @@ mod tests {
             }
         };
         assert_eq!(
-            attribute_gate_finding_ranked(f4, &all, &read),
+            attribute_gate_finding_ranked(f4, &all, &read, false),
             Some((
                 "app/ledgerd/__init__.py".to_string(),
-                Some("app/httpapi.py".to_string())
+                vec!["app/httpapi.py".to_string()]
             ))
         );
         // UNCLAIMED runner-up (F4 alone): the shard owns winner AND runner-up.
-        let (groups, known, runner_ups) = attribute_findings(&[f4.to_string()], &all, &read);
+        let Attributed {
+            groups,
+            known_bugs: known,
+            runner_ups,
+            ..
+        } = attribute_findings(
+            &[f4.to_string()],
+            &all,
+            &FindingProvenance::default(),
+            &HashMap::new(),
+            &read,
+        );
         assert!(known.is_empty());
         assert_eq!(groups.len(), 1);
         assert_eq!(groups[0].file, "app/ledgerd/__init__.py");
@@ -772,8 +1446,17 @@ mod tests {
         );
         // TAKEN runner-up (F4 + F3, the r5 round-1 shape): httpapi.py is F3's own group, so the
         // ledgerd shard stays single-file — first shard claims, later shards don't.
-        let (groups2, _, runner_ups2) =
-            attribute_findings(&[f4.to_string(), f3.to_string()], &all, &read);
+        let Attributed {
+            groups: groups2,
+            runner_ups: runner_ups2,
+            ..
+        } = attribute_findings(
+            &[f4.to_string(), f3.to_string()],
+            &all,
+            &FindingProvenance::default(),
+            &HashMap::new(),
+            &read,
+        );
         let files: Vec<&str> = groups2.iter().map(|g| g.file.as_str()).collect();
         assert_eq!(files, ["app/ledgerd/__init__.py", "app/httpapi.py"]);
         let owned2 = resolve_shard_ownership(&groups2, &all, &runner_ups2);
@@ -987,13 +1670,30 @@ mod tests {
             "`app/drafts.py` raises KeyError on an empty JSON body".to_string(),
             "console error (in `web/viz.js`)".to_string(),
         ];
-        let (g0, _, _) = attribute_findings(&round0, &all, &read);
+        let g0 = attribute_findings(
+            &round0,
+            &all,
+            &FindingProvenance::default(),
+            &HashMap::new(),
+            &read,
+        )
+        .groups;
         assert_eq!(g0.len(), 2, "round 0 shards both files");
 
         // Round 1's OWN fresh gate run: drafts.py's finding is GONE (round 0 fixed it — a
         // genuinely cleared file); viz.js's finding SURVIVED (round 0's fix did not close it).
         let round1 = vec!["console error (in `web/viz.js`)".to_string()];
-        let (g1, unassigned1, _) = attribute_findings(&round1, &all, &read);
+        let Attributed {
+            groups: g1,
+            known_bugs: unassigned1,
+            ..
+        } = attribute_findings(
+            &round1,
+            &all,
+            &FindingProvenance::default(),
+            &HashMap::new(),
+            &read,
+        );
         assert_eq!(
             g1.iter().map(|g| g.file.as_str()).collect::<Vec<_>>(),
             vec!["web/viz.js"],
@@ -1002,6 +1702,546 @@ mod tests {
         assert!(
             unassigned1.is_empty(),
             "drafts.py is simply absent from round 1's own findings, not excluded by a promotion memory"
+        );
+    }
+
+    /// GAP 2(a), r6c F6 verbatim: the gate probes `<id>`, the route table spells `{id}`, and
+    /// app/drafts.py routes by segments — under the old two forms the finding fell to the
+    /// prefix cut and pooled three routes' hits into the dispatcher.
+    #[test]
+    fn a_placeholder_route_is_respelled_in_every_convention_before_the_prefix_cut() {
+        let f6 = "POST /api/drafts/<id>/submit's response could not be read as a JSON object on \
+                  either probe — the spec documents a JSON response for every endpoint.";
+        assert_eq!(
+            endpoint_literal_forms_of(f6),
+            vec![
+                "/api/drafts/<id>/submit".to_string(),
+                "/api/drafts/{id}/submit".to_string(),
+                "/api/drafts/:id/submit".to_string(),
+                "/api/drafts/".to_string(),
+            ]
+        );
+        // Flask converters and express colons normalize to the same bare name.
+        let flask = endpoint_literal_forms_of("GET /users/<int:user_id>/posts returned 404");
+        assert_eq!(flask[0], "/users/<int:user_id>/posts", "verbatim first");
+        assert_eq!(
+            &flask[1..],
+            [
+                "/users/<user_id>/posts",
+                "/users/{user_id}/posts",
+                "/users/:user_id/posts",
+                "/users/"
+            ],
+            "the converter is stripped in every re-spelling"
+        );
+        let express = endpoint_literal_forms_of(
+            "the advertised `/v1/items/:itemId` endpoint answers 500 under load",
+        );
+        assert_eq!(express[0], "/v1/items/:itemId");
+        assert!(
+            express.contains(&"/v1/items/{itemId}".to_string()),
+            "{express:?}"
+        );
+        assert!(express.contains(&"/v1/items/".to_string()), "{express:?}");
+        // The r6c tree's shapes: only the `{id}` spelling exists in code → the route table wins
+        // the group, and the segment namesake (app/drafts.py, which spells no literal) rides
+        // as a claim.
+        let all = vec![
+            "app/ledgerd/__init__.py".to_string(),
+            "web/app.js".to_string(),
+            "app/drafts.py".to_string(),
+        ];
+        let read = |f: &str| -> Option<String> {
+            match f {
+                "app/ledgerd/__init__.py" => Some(
+                    "    (\"POST\", \"/api/drafts\"),\n\
+                     \x20   (\"POST\", \"/api/drafts/{id}/submit\"),\n\
+                     \x20   (\"POST\", \"/api/drafts/{id}/approve\"),\n"
+                        .into(),
+                ),
+                "web/app.js" => Some(
+                    "draftsFetch(\"/api/drafts/\" + encodeURIComponent(d.id) + \"/\" + action, \"POST\", {});\n"
+                        .into(),
+                ),
+                "app/drafts.py" => Some(
+                    "        if method == \"POST\" and len(parts) == 5 and parts[1:3] == [\"api\", \"drafts\"]:\n"
+                        .into(),
+                ),
+                _ => None,
+            }
+        };
+        let (winner, claims) = attribute_gate_finding_ranked(f6, &all, &read, true).unwrap();
+        assert_eq!(
+            winner, "app/ledgerd/__init__.py",
+            "the {{id}} form reaches the route table instead of pooling prefix hits"
+        );
+        assert!(
+            claims.contains(&"app/drafts.py".to_string()),
+            "the segment namesake rides as a claim: {claims:?}"
+        );
+    }
+
+    /// GAP 2(b): segment-basename claims are derived from THIS tree's files — a module (or
+    /// package) named like a route segment — never from a table, and never a test path. They
+    /// ride the entry-file fallback too, so a route nothing spells still reaches its handler.
+    #[test]
+    fn segment_namesake_modules_become_runner_up_claims_never_tests() {
+        let all: Vec<String> = [
+            "app/__main__.py",
+            "app/api.py",
+            "app/drafts.py",
+            "app/drafts/__init__.py",
+            "tests/test_drafts.py",
+            "app/webhooks.py",
+            "web/app.js",
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+        assert_eq!(
+            segment_basename_claims("/api/drafts/<id>/submit", &all, &["app/api.py"]),
+            vec![
+                "app/drafts.py".to_string(),
+                "app/drafts/__init__.py".to_string()
+            ]
+        );
+        assert!(segment_basename_claims("/api/webhooks/meridian", &all, &[])
+            .iter()
+            .any(|c| c == "app/webhooks.py"));
+        assert!(segment_basename_claims("/health", &all, &[]).is_empty());
+        let read = |_: &str| -> Option<String> { Some(String::new()) };
+        let (winner, claims) = attribute_gate_finding_ranked(
+            "POST /api/drafts/<id>/reject's response could not be read as a JSON object",
+            &all,
+            &read,
+            true,
+        )
+        .unwrap();
+        assert_eq!(winner, "app/__main__.py");
+        assert!(
+            claims.contains(&"app/api.py".to_string())
+                && claims.contains(&"app/drafts.py".to_string()),
+            "{claims:?}"
+        );
+    }
+
+    /// GAP 2 addendum, r6c F5 verbatim: `POST /api/drafts`'s RESPONSE-shape finding was won by
+    /// web/app.js (three fetch() literals) over the route table (two rows), so a FRONTEND shard
+    /// carried a server-side defect and its edits to app/drafts.py died at promotion. For a
+    /// server-response finding (provenance class), server source ranks above web assets; the
+    /// class is derived from the authoring check, and without it the counts decide as before.
+    #[test]
+    fn a_server_response_finding_ranks_server_source_above_the_calling_page() {
+        let f5 = "POST /api/drafts's response does not carry the documented field(s) \
+                  `amount_minor`, `currency` — the spec's endpoint table names them for exactly \
+                  this endpoint.";
+        let all = vec![
+            "app/ledgerd/__init__.py".to_string(),
+            "web/app.js".to_string(),
+            "app/drafts.py".to_string(),
+        ];
+        let read = |f: &str| -> Option<String> {
+            match f {
+                "app/ledgerd/__init__.py" => Some(
+                    "    (\"POST\", \"/api/drafts\"),\n\
+                     \x20   (\"POST\", \"/api/drafts/{id}/submit\"),\n\
+                     \x20   (\"GET\", \"/api/drafts\"),\n"
+                        .into(),
+                ),
+                "web/app.js" => Some(
+                    "draftsFetch(\"/api/drafts\", \"GET\");\n\
+                     draftsFetch(\"/api/drafts\", \"GET\");\n\
+                     draftsFetch(\"/api/drafts\", \"POST\", payload);\n"
+                        .into(),
+                ),
+                "app/drafts.py" => {
+                    Some("\"\"\"Drafts (POST /api/drafts). Roles: maker/checker.\"\"\"\n".into())
+                }
+                _ => None,
+            }
+        };
+        let (winner, claims) = attribute_gate_finding_ranked(f5, &all, &read, true).unwrap();
+        assert_eq!(winner, "app/ledgerd/__init__.py");
+        assert!(claims.contains(&"app/drafts.py".to_string()), "{claims:?}");
+        let (untyped, _) = attribute_gate_finding_ranked(f5, &all, &read, false).unwrap();
+        assert_eq!(
+            untyped, "web/app.js",
+            "no class: the counts decide as before"
+        );
+        let mut prov = FindingProvenance::default();
+        prov.tag(
+            super::super::findings::FindingSource::EndpointContractProbe,
+            &[f5.to_string()],
+        );
+        let a = attribute_findings(&[f5.to_string()], &all, &prov, &HashMap::new(), &read);
+        assert_eq!(a.groups[0].file, "app/ledgerd/__init__.py");
+        let owned = resolve_shard_ownership(&a.groups, &all, &a.runner_ups);
+        assert!(
+            owned[0].contains(&"app/drafts.py".to_string()),
+            "an edit to the handler PROMOTES: {owned:?}"
+        );
+    }
+
+    /// The HANDOFF, persist half — r6c's round-1 app.js final message, verbatim excerpt: the
+    /// lane did exactly what the brief asked and it reached nobody.
+    #[test]
+    fn a_lanes_handoff_parses_to_the_unowned_path_and_its_symbol() {
+        let all = vec![
+            "web/app.js".to_string(),
+            "web/index.html".to_string(),
+            "app/drafts.py".to_string(),
+            "app/api.py".to_string(),
+        ];
+        let owned = vec!["web/app.js".to_string(), "web/index.html".to_string()];
+        let msg = "**FINDING 1: FIXED** — booted `python3 -m app.ledgerd --port 8931 --tokens-file \
+                   /tmp/lgr_tokens.json` from the edited tree and ran the finding's own probe.\n\n\
+                   **Root cause & fix** (server-side, so the edit landed in `app/drafts.py`, not my \
+                   two web files):\n\
+                   1. `_draft_obj` returned `name`/`country` only nested inside `counterparty`.\n\n\
+                   **HANDOFF**\n\
+                   - Files touched: `app/drafts.py` only (`web/app.js`, `web/index.html` untouched \
+                   — frontend already sends nested `counterparty`, which still works).\n\
+                   - Symbols changed: `_draft_obj` (+ top-level `name`, `country` keys), \
+                   `_validate_create` (flat alias).\n\
+                   - Nothing remains open.\n";
+        let h = parse_handoffs(msg, &all, &owned);
+        assert_eq!(h.len(), 1, "{h:?}");
+        assert_eq!(h[0].path, "app/drafts.py");
+        assert_eq!(h[0].symbol.as_deref(), Some("_draft_obj"));
+        assert!(h[0].note.starts_with("- Files touched"), "{}", h[0].note);
+        // No handoff section, a path outside the tree, an owned path: nothing.
+        assert!(parse_handoffs("FINDING 1: FIXED — edited app/drafts.py", &all, &owned).is_empty());
+        assert!(parse_handoffs("HANDOFF: fix `app/ghost.py`", &all, &owned).is_empty());
+        assert!(parse_handoffs("HANDOFF: fix `web/app.js`", &all, &owned).is_empty());
+        // A bare path with sentence punctuation, and a symbol named before its path.
+        let h2 = parse_handoffs(
+            "I handed off the rest: `serve_stream` in app/api.py must send the SSE headers.",
+            &all,
+            &owned,
+        );
+        assert_eq!(h2.len(), 1);
+        assert_eq!(h2[0].path, "app/api.py");
+        assert_eq!(h2[0].symbol.as_deref(), Some("serve_stream"));
+    }
+
+    /// The HANDOFF, consume half: a prior round's handed path routes a still-open finding — as
+    /// the GROUP for a finding that names no file (ahead of the grep), as a CLAIM for one that
+    /// does. A path outside the tree and a finding that closed are inert.
+    #[test]
+    fn a_prior_rounds_handoff_routes_a_still_open_finding_ahead_of_the_grep() {
+        let f5 = "POST /api/drafts's response does not carry the documented field(s) \
+                  `amount_minor` — the spec's endpoint table names them."
+            .to_string();
+        let f0 =
+            "the served page renders NO data rows in a real browser (in `web/viz.js`)".to_string();
+        let all = vec![
+            "web/app.js".to_string(),
+            "web/viz.js".to_string(),
+            "app/drafts.py".to_string(),
+            "app/ledgerd/__init__.py".to_string(),
+        ];
+        let rollup = serde_json::json!({"repair": {"rounds": [
+            {"round": 0, "shard": "web/app.js", "findings_assigned": [f5],
+             "handoffs": [{"path": "app/drafts.py", "symbol": "_draft_obj",
+                           "note": "- Files touched: `app/drafts.py` only"}]},
+            {"round": 0, "shard": "web/viz.js", "findings_assigned": [f0],
+             "handoffs": [{"path": "web/app.js", "symbol": null, "note": "the row renderer is app.js"}]},
+            {"round": 0, "shard": "app/ledgerd/__init__.py", "findings_assigned": ["gone finding"],
+             "handoffs": [{"path": "app/ghost.py", "symbol": null, "note": "x"}]}
+        ]}});
+        let handoffs = handoffs_from_rollup(Some(&rollup), &all);
+        assert_eq!(
+            handoffs.get(&f5).map(|v| v.as_slice()),
+            Some(["app/drafts.py".to_string()].as_slice())
+        );
+        assert!(
+            !handoffs.contains_key("gone finding"),
+            "a path outside the tree is never a handoff"
+        );
+        // The grep would put f5 on web/app.js (the only file spelling the literal); the
+        // handoff wins the group.
+        let read = |f: &str| -> Option<String> {
+            (f == "web/app.js").then(|| "fetch(\"/api/drafts\")".to_string())
+        };
+        let a = attribute_findings(
+            &[f5.clone(), f0.clone()],
+            &all,
+            &FindingProvenance::default(),
+            &handoffs,
+            &read,
+        );
+        let files: Vec<&str> = a.groups.iter().map(|g| g.file.as_str()).collect();
+        assert_eq!(
+            files,
+            ["web/viz.js", "app/drafts.py"],
+            "f0 keeps its named file; f5 is grouped under the handed path"
+        );
+        assert_eq!(
+            a.runner_ups.get("web/viz.js").map(|v| v.as_slice()),
+            Some(["web/app.js".to_string()].as_slice()),
+            "a named finding's handoff co-owns"
+        );
+        assert!(a
+            .handoffs_consumed
+            .contains(&("app/drafts.py".to_string(), f5.clone())));
+        assert!(a
+            .handoffs_consumed
+            .contains(&("web/app.js".to_string(), f0.clone())));
+        let b = attribute_findings(
+            std::slice::from_ref(&f5),
+            &all,
+            &FindingProvenance::default(),
+            &HashMap::new(),
+            &read,
+        );
+        assert_eq!(
+            b.groups[0].file, "web/app.js",
+            "no rollup: the grep as before"
+        );
+        assert!(b.handoffs_consumed.is_empty());
+    }
+
+    /// GAP 1: the render gate's source is DERIVED from the served page — its script tags,
+    /// resolved to the tree, scored for row construction — never a hardcoded name. r6c's
+    /// index.html loads viz.js BEFORE app.js, so document order alone would name the wrong
+    /// file; content decides. Nothing resolvable → no suffix (a loud absence, never a name).
+    #[test]
+    fn the_render_gates_source_is_derived_from_the_served_page_and_attributes() {
+        let all = vec![
+            "app/ledgerd/__init__.py".to_string(),
+            "web/app.js".to_string(),
+            "web/index.html".to_string(),
+            "web/viz.js".to_string(),
+        ];
+        let html =
+            "<!doctype html>\n<html><head><link rel=\"stylesheet\" href=\"styles.css\"></head>\n\
+                    <body><table id=\"payments\"><tbody id=\"rows\"></tbody></table>\n\
+                    \x20 <script src=\"viz.js\"></script>\n  <script src=\"app.js\"></script>\n\
+                    </body></html>\n";
+        let read = |f: &str| -> Option<String> {
+            match f {
+                "web/index.html" => Some(html.to_string()),
+                "web/app.js" => Some(
+                    "// renders rows\nfunction render(rows) {\n  const tbody = document.querySelector('tbody');\n\
+                     \x20 tbody.innerHTML = rows.map(r => `<tr><td>${r.id}</td></tr>`).join('');\n}\n"
+                        .into(),
+                ),
+                "web/viz.js" => {
+                    Some("const ctx = canvas.getContext('2d');\nctx.fillRect(0, 0, 10, 10);\n".into())
+                }
+                _ => None,
+            }
+        };
+        let rs = render_sources(html, &all, &read);
+        assert_eq!(rs.loaded, vec!["viz.js", "app.js"]);
+        assert_eq!(rs.scripts, vec!["web/viz.js", "web/app.js"]);
+        assert_eq!(
+            rs.renderer.as_deref(),
+            Some("web/app.js"),
+            "content decides, not document order"
+        );
+        assert_eq!(rs.page.as_deref(), Some("web/index.html"));
+        assert_eq!(
+            rs.attribution_suffix(),
+            " (in `web/app.js`, `web/index.html`, `web/viz.js`)"
+        );
+        let finding = format!(
+            "after a SUCCESSFUL sync the page still renders ZERO rows — the backend acquired the \
+             data. {}{}",
+            rs.evidence_sentence(),
+            rs.attribution_suffix()
+        );
+        assert_eq!(
+            extract_file_from_finding(&finding, &all).as_deref(),
+            Some("web/app.js")
+        );
+        // No script builds rows: the page leads the list.
+        let no_rows = |f: &str| -> Option<String> {
+            if f == "web/index.html" {
+                Some(html.to_string())
+            } else {
+                Some("console.log(1)".to_string())
+            }
+        };
+        let rs2 = render_sources(html, &all, &no_rows);
+        assert_eq!(rs2.renderer, None);
+        assert_eq!(
+            rs2.attribution_suffix(),
+            " (in `web/index.html`, `web/viz.js`, `web/app.js`)"
+        );
+        // A CDN script no tree file answers to, no html in the plan: no suffix at all.
+        let rs3 = render_sources(
+            "<script src=\"http://cdn.example/x/lib.js\"></script><script data-src=\"y.js\"></script>",
+            &["app/main.py".to_string()],
+            &|_| None,
+        );
+        assert_eq!(rs3.loaded, vec!["http://cdn.example/x/lib.js"]);
+        assert!(rs3.scripts.is_empty() && rs3.page.is_none());
+        assert_eq!(rs3.attribution_suffix(), "");
+    }
+
+    /// GATE A's TRACE, run by the REAL code against the ARCHIVED r6c tree read-only (machine-
+    /// local; skips loudly when absent): round 0's nine findings verbatim, F1 carrying the
+    /// suffix the emitter now derives from the tree's own served page. Every finding must be
+    /// OWNED, F1 by the row-building script, and the shard carrying the drafts findings must
+    /// own app/drafts.py — the file the round-1 lane actually fixed and lost at promotion.
+    /// Prints the shard table (`--nocapture`) for the commit's trace.
+    #[test]
+    fn r6c_round0_findings_are_all_owned_against_the_archived_tree_read_only() {
+        let root = std::path::Path::new(
+            "/Users/mihaiperdum/goose-builds/local-sb7-swarm-r6c-FINISHED-0.1420-passed-with-2-unowned-criticals-build-608m",
+        );
+        if !root.join("app/drafts.py").exists() {
+            eprintln!(
+                "SKIP: archived r6c tree not on this machine ({})",
+                root.display()
+            );
+            return;
+        }
+        let all: Vec<String> = [
+            "DECISIONS.md",
+            "README.md",
+            "app/__main__.py",
+            "app/api.py",
+            "app/auth.py",
+            "app/db.py",
+            "app/drafts.py",
+            "app/ledger.py",
+            "app/ledgerd/__init__.py",
+            "app/ledgerd/__main__.py",
+            "app/ledgerd/impl.py",
+            "app/notifierd/__init__.py",
+            "app/notifierd/__main__.py",
+            "app/notifierd/impl.py",
+            "app/notify_store.py",
+            "app/outbox.py",
+            "app/sync.py",
+            "app/webhooks.py",
+            "web/app.js",
+            "web/index.html",
+            "web/styles.css",
+            "web/viz.js",
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+        let before: Vec<(String, std::time::SystemTime)> = all
+            .iter()
+            .filter_map(|f| {
+                std::fs::metadata(root.join(f))
+                    .and_then(|m| m.modified())
+                    .ok()
+                    .map(|t| (f.clone(), t))
+            })
+            .collect();
+        let read = |f: &str| std::fs::read_to_string(root.join(f)).ok();
+        let served = read("web/index.html").expect("the archive's page");
+        let rs = render_sources(&served, &all, &read);
+        assert_eq!(rs.loaded, vec!["viz.js", "app.js"], "{rs:?}");
+        assert_eq!(rs.renderer.as_deref(), Some("web/app.js"), "{rs:?}");
+        assert_eq!(rs.page.as_deref(), Some("web/index.html"));
+        use super::super::findings::FindingSource as S;
+        let f = |s: &str| s.to_string();
+        let findings = vec![
+            (S::RenderGateRows, f("the served page renders NO data rows in a real browser — the API works but the frontend shows a user nothing. First console error: TypeError: Illegal invocation. Open web/index.html end to end: the page must fetch the documented endpoints and render the rows, and every fetch failure must surface a visible state, not a blank page. (in `viz.js`)")),
+            (S::RenderGateRows, format!("after a SUCCESSFUL sync the page still renders ZERO rows — the backend acquired the data (the API returns it) but the frontend never displays it, so the user sees an empty table forever. After the sync completes, re-fetch the payments endpoint and RENDER the returned rows into the table, and update the last-synced/count readouts from that same response. {}{}", rs.evidence_sentence(), rs.attribution_suffix())),
+            (S::DomIdScan, f("web/viz.js:533 references DOM id `viz-labels` which NO html file in the app defines — getElementById returns null there and the page throws at runtime (the rendered-nothing class). Either add the id to the HTML or fix the reference to an id that exists.")),
+            (S::EndpointContractProbe, f("POST /api/payments/<id>/note's response does not carry the documented field(s) `id`, `note`, `version` — the spec's endpoint table names them for exactly this endpoint. Return them from this handler; without them the endpoint's contract cannot be verified by anyone, including this gate.")),
+            (S::EndpointContractProbe, f("POST /api/webhooks/meridian's response could not be read as JSON on either probe — the spec documents a JSON response for every endpoint, so return the documented body; without it this endpoint's behaviour cannot be verified by anyone, including this gate.")),
+            (S::EndpointContractProbe, f("POST /api/drafts's response does not carry the documented field(s) `amount_minor`, `currency`, `counterparty`, `name`, `country`, `note` — the spec's endpoint table names them for exactly this endpoint. Return them from this handler; without them the endpoint's contract cannot be verified by anyone, including this gate.")),
+            (S::EndpointContractProbe, f("POST /api/drafts/<id>/submit's response could not be read as JSON on either probe — the spec documents a JSON response for every endpoint, so return the documented body; without it this endpoint's behaviour cannot be verified by anyone, including this gate.")),
+            (S::EndpointContractProbe, f("POST /api/drafts/<id>/approve's response could not be read as JSON on either probe — the spec documents a JSON response for every endpoint, so return the documented body; without it this endpoint's behaviour cannot be verified by anyone, including this gate.")),
+            (S::EndpointContractProbe, f("POST /api/drafts/<id>/reject's response could not be read as JSON on either probe — the spec documents a JSON response for every endpoint, so return the documented body; without it this endpoint's behaviour cannot be verified by anyone, including this gate.")),
+        ];
+        let mut prov = FindingProvenance::default();
+        for (s, t) in &findings {
+            prov.tag(*s, std::slice::from_ref(t));
+        }
+        let texts: Vec<String> = findings.iter().map(|(_, t)| t.clone()).collect();
+        let a = attribute_findings(&texts, &all, &prov, &HashMap::new(), &read);
+        let mut groups = a.groups;
+        for g in &mut groups {
+            prov.sort_findings(&mut g.findings);
+        }
+        prov.sort_groups(&mut groups);
+        let owned = resolve_shard_ownership(&groups, &all, &a.runner_ups);
+        eprintln!(
+            "r6c round-0 TRACE — {} shard(s), {} known bug(s):",
+            groups.len(),
+            a.known_bugs.len()
+        );
+        for (g, o) in groups.iter().zip(&owned) {
+            let idx: Vec<usize> = g
+                .findings
+                .iter()
+                .map(|f| texts.iter().position(|t| t == f).unwrap())
+                .collect();
+            eprintln!("  shard {} owns {:?} findings F{:?}", g.file, o, idx);
+        }
+        assert!(a.known_bugs.is_empty(), "unowned: {:?}", a.known_bugs);
+        assert!(criticals_left_unassigned(&prov, &a.known_bugs).is_empty());
+        let shard_of = |i: usize| {
+            groups
+                .iter()
+                .zip(&owned)
+                .find(|(g, _)| g.findings.contains(&texts[i]))
+                .map(|(g, o)| (g.file.clone(), o.clone()))
+                .unwrap()
+        };
+        assert_eq!(shard_of(0).0, "web/viz.js");
+        assert_eq!(
+            shard_of(1).0,
+            "web/app.js",
+            "F1 is owned by the row-building script"
+        );
+        for i in 5..=8 {
+            let (file, o) = shard_of(i);
+            assert!(
+                o.contains(&"app/drafts.py".to_string()),
+                "F{i} on shard {file} must own app/drafts.py: {o:?}"
+            );
+        }
+        for (f, t0) in before {
+            let t1 = std::fs::metadata(root.join(&f))
+                .and_then(|m| m.modified())
+                .unwrap();
+            assert_eq!(t0, t1, "attribution modified the archived tree: {f}");
+        }
+    }
+
+    /// F885 (run 10, round 0, watched live): the app.js shard's worker added every missing DOM
+    /// id to index.html — a file it did not own — so grade-what-lands refused the byte-identical
+    /// app.js and a CORRECT repair was discarded. A js/css shard owns its page markup too.
+    #[test]
+    fn a_script_shard_owns_the_markup_it_must_reconcile_with() {
+        let files: Vec<String> = [
+            "vendorsync/web/app.js",
+            "vendorsync/web/index.html",
+            "vendorsync/web/styles.css",
+            "vendorsync/api.py",
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+        let taken: std::collections::HashSet<String> =
+            ["vendorsync/web/app.js".to_string()].into_iter().collect();
+        assert_eq!(
+            shard_owned_files("vendorsync/web/app.js", &files, &taken),
+            vec![
+                "vendorsync/web/app.js".to_string(),
+                "vendorsync/web/index.html".to_string()
+            ]
+        );
+        // If a sibling group already owns the html, the partition stays disjoint.
+        let taken2: std::collections::HashSet<String> = [
+            "vendorsync/web/app.js".to_string(),
+            "vendorsync/web/index.html".to_string(),
+        ]
+        .into_iter()
+        .collect();
+        assert_eq!(
+            shard_owned_files("vendorsync/web/app.js", &files, &taken2),
+            vec!["vendorsync/web/app.js".to_string()]
         );
     }
 }
