@@ -29,6 +29,6 @@ pub use judge::{
 };
 pub use patch::{apply_patch, parse_patch, pin_sink_id, PlanPatch, TaskAdd, TaskEdit, SINK_ID};
 pub use scheduler::{
-    qa_enabled, sink_review_enabled, tail_review_enabled, testgen_enabled, AttemptRecord,
-    DeviceAdmission, DeviceCfg, DeviceSummary, RunReport, Scheduler, TaskOutcome,
+    qa_enabled, testgen_enabled, AttemptRecord, DeviceAdmission, DeviceCfg, DeviceSummary,
+    RunReport, Scheduler, TaskOutcome,
 };

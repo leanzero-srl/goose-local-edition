@@ -444,18 +444,11 @@ pub trait Judge: Send + Sync {
 }
 
 /// The idle-node jobs a scheduler can hand its dispatcher when a node would otherwise sit idle:
-/// the operator Q&A, the sink-tail dimension review and testgen — each a default no-op, each gated
-/// in the scheduler. The M5 completion-time pre-review that named this trait is deleted (VA-014 D1:
+/// the operator Q&A and testgen — each a default no-op, each gated in the scheduler (the sink/tail
+/// dimension reviews are deleted, 2c S6). The M5 completion-time pre-review that named this trait is deleted (VA-014 D1:
 /// zero `pre_review` events in every measured run); the name stays so the attach seam is one line.
 #[async_trait]
 pub trait PreReviewer: Send + Sync {
-    /// SINK IDLE-FILL (GOOSE_SWARM_SINK_REVIEW): while the integrate-verify SINK runs SOLO, an
-    /// otherwise-idle node runs a READ-ONLY whole-tree correctness review along ONE dimension
-    /// (by rotating index) and ACCUMULATES any finding inside the dispatcher for run_swarm to drain +
-    /// re-verify against the FINAL tree after the sink. Read-only (no tools) so it never races the sink's
-    /// writes; a stale/torn read just yields a finding the post-sink re-verify refutes. Default no-op.
-    async fn idle_dimension_review(&self, _model_id: &str, _goal: &str, _dim_index: usize) {}
-
     /// S7 (GOOSE_SWARM_TESTGEN): generate 3-5 pytest functions from the FROZEN CONTRACTS + goal —
     /// never from the code — into a NEW auto-collected file. The dispatcher side owns extraction
     /// and the collect-only landing guard. Default no-op so mocks and thin implementors are

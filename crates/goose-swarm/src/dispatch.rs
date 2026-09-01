@@ -173,38 +173,4 @@ pub trait TaskDispatcher: Send + Sync {
     /// Drop a shadow workspace for `task_id` WITHOUT promoting it — a lost/errored speculative shard, so its
     /// edits never reach the real tree and the shadow does not leak. Default no-op.
     async fn discard_speculative(&self, _task_id: &str) {}
-
-    /// READ-ONLY correctness review of the produced `files` along ONE dimension, on a spare fleet model.
-    /// The model is given the files as text with NO tools (it physically cannot write), so N of these run
-    /// concurrently over one tree with no write-race. Returns advisory findings text, or None when clean /
-    /// nothing to review. `Err(error)` = the review call itself failed in transport (A-2): the caller logs
-    /// a failure, never a clean no-finding review. Default Ok(None) so mocks are unchanged.
-    async fn review_dimension(
-        &self,
-        _model_id: &str,
-        _dim_id: &str,
-        _dim_brief: &str,
-        _goal: &str,
-        _files: &[String],
-    ) -> Result<Option<String>, String> {
-        Ok(None)
-    }
-
-    /// ADVERSARIAL VERIFY (the three-vote core): hand ONE review finding to a skeptic model — a DIFFERENT
-    /// model than raised it — prompted to REFUTE it against the ACTUAL code (read-only, no tools). Returns
-    /// true only if the skeptic independently CONFIRMS the finding is a real defect with HIGH confidence, i.e.
-    /// it SURVIVES refutation. FAIL-CLOSED: default false, and any refute / low-confidence / parse-or-timeout
-    /// failure returns false — an unverified finding can never drive a fix. Read-only => no write-race.
-    /// `lane_idx` is the finding's index in its batch: the real impl runs these CONCURRENTLY and
-    /// keys each call's activity lane (`verify-<idx>`) with it.
-    async fn verify_finding(
-        &self,
-        _model_id: &str,
-        _finding: &str,
-        _goal: &str,
-        _files: &[String],
-        _lane_idx: usize,
-    ) -> bool {
-        false
-    }
 }
