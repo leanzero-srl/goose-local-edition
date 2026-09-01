@@ -1,3 +1,4 @@
+import { TNUM, WEIGHT, cx } from '../lz';
 import { BenchmarkRow } from './baselines';
 
 /**
@@ -5,14 +6,14 @@ import { BenchmarkRow } from './baselines';
  * measured bar per row needs none.
  *
  * The user's own row is filled in the accent and labelled, so it is findable at a glance without
- * reading every label; baselines stay in a quieter blue so the comparison, not the decoration, is
- * what carries.
+ * reading every label; baselines are a neutral slate so the comparison, not the decoration, is
+ * what carries. No node hue anywhere — the ramp is node identity only (ui/desktop/DESIGN.md).
  */
 export function ScoreBars({ rows }: { rows: BenchmarkRow[] }) {
   if (!rows.length) return null;
   const barHeight = 26;
-  /** "YOUR FLEET" at 10px/800 with 0.06em tracking measures ~66px. Below that the badge cannot sit in
-   *  the bar without overprinting the row label beside it. */
+  /** "YOUR FLEET" at 10px/800 with 0.06em tracking measured ~66px. The Studio sets it at 600, which
+   *  is narrower, so the same floor still keeps the badge clear of the row label beside it. */
   const YOUR_FLEET_LABEL_WIDTH = 66;
   const gap = 10;
   const labelWidth = 190;
@@ -33,14 +34,12 @@ export function ScoreBars({ rows }: { rows: BenchmarkRow[] }) {
         {rows.map((row, i) => {
           const y = i * (barHeight + gap);
           const filled = Math.max(2, trackWidth * Math.min(1, Math.max(0, row.score)));
-          const fill = row.mine ? 'var(--color-block-teal)' : 'var(--color-node-2)';
           return (
-            <g key={`${row.label}-${i}`}>
+            <g key={row.mine ? `mine:${row.label}` : row.label}>
               <text
                 x={0}
                 y={y + barHeight * 0.68}
-                className="fill-[var(--color-text-primary)]"
-                style={{ fontSize: 13, fontWeight: row.mine ? 700 : 500 }}
+                className={cx('fill-lz-ink text-lz-body', row.mine && WEIGHT.semibold)}
               >
                 {row.label}
                 {row.nodes ? ` · ${row.nodes}n` : ''}
@@ -51,7 +50,7 @@ export function ScoreBars({ rows }: { rows: BenchmarkRow[] }) {
                 width={trackWidth}
                 height={barHeight - 8}
                 rx={2}
-                fill="var(--color-background-secondary)"
+                className="fill-lz-surface-2"
               />
               <rect
                 x={labelWidth}
@@ -59,13 +58,12 @@ export function ScoreBars({ rows }: { rows: BenchmarkRow[] }) {
                 width={filled}
                 height={barHeight - 8}
                 rx={2}
-                fill={fill}
+                className={row.mine ? 'fill-lz-accent' : 'fill-lz-ink-3'}
               />
               <text
                 x={labelWidth + trackWidth + 10}
                 y={y + barHeight * 0.68}
-                className="fill-[var(--color-text-primary)]"
-                style={{ fontSize: 13, fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}
+                className={cx('fill-lz-ink text-lz-body', WEIGHT.semibold, TNUM)}
               >
                 {(row.score * 100).toFixed(1)}%
               </text>
@@ -83,7 +81,8 @@ export function ScoreBars({ rows }: { rows: BenchmarkRow[] }) {
                   x={labelWidth + filled - 8}
                   y={y + barHeight * 0.68}
                   textAnchor="end"
-                  style={{ fontSize: 10, fontWeight: 800, letterSpacing: '0.06em', fill: '#fff' }}
+                  className="fill-lz-accent-ink"
+                  style={{ fontSize: 10, fontWeight: 600, letterSpacing: '0.06em' }}
                 >
                   YOUR FLEET
                 </text>
