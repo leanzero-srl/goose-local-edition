@@ -92,10 +92,12 @@ impl QuestionKind {
     }
 }
 
-/// VA-075: the longest `fact` the schema admits — ONE sentence. This is the SHAPE of a fact, not
-/// a cap on model work: the opener reads and thinks for as long as it needs, and the validator
-/// (`final_output_tool::validate_json_output`, jsonschema `maxLength`) hands a pasted passage
-/// back to be rewritten as a sentence — no retry count, no clock. WHY: r6f's opener wrote ~1,100
+/// VA-075: the length past which a `fact` is NAMED (`fact_overlong`, a WARNING at parse) — it
+/// bounds NOTHING: the fact is kept verbatim, the plan is accepted, no lane or turn depends on
+/// it. It is not in the schema: the refuter measured r6e's verified emit at 20 of 21 facts over
+/// 200 chars (246…909; "Defaults: yaw = 30, pitch = 40, distance = 260. Clamps: pitch [5, 85]…"
+/// keeps the literals exact as the rule demands), so a `maxLength` would have REFUSED a good plan
+/// and forced the whole emit to re-stream — invariant 3's anti-pattern. WHY the rule: r6f's opener wrote ~1,100
 /// characters of request.md:547-565 into ONE spec_lookup fact ("<canvas id='viz3d'>, context
 /// webgl or webgl2 created {antialias:false, alpha:false}, on the MAIN thread — no
 /// OffscreenCanvas, no Worker…") and its 33,818-completion-token reply sat 16m43s at 0 bytes
@@ -531,8 +533,9 @@ pub(super) fn opener_questions_rule(request_path: Option<&std::path::Path>) -> S
          words — the index IS the heading-to-line map, so never rebuild one by hand and never \
          re-read a range you have already read. Then:\n\
          — If a line ANSWERS it, it is not a question: kind spec_lookup, cite {label}:<N>, fact = \
-         ONE sentence in your own words, at most {FACT_MAX_CHARS} characters (the schema refuses a \
-         longer one), saying what the line settles for a builder, literal values kept exact; no \
+         ONE sentence in your own words, at most {FACT_MAX_CHARS} characters (a longer one is kept \
+         but named on the event log), saying what the line settles for a builder, literal values \
+         kept exact; no \
          lane runs. The fact is NOT the passage: the owning brief carries each claimed section's \
          FULL text and every builder holds the request file at the cited line, so a pasted passage \
          is the plan written twice — MEASURED: one opener pasted ~1,100 characters of a section \
@@ -574,9 +577,7 @@ pub(super) fn open_schema() -> serde_json::Value {
                                     "question": {"type": "string"},
                                     "kind": {"type": "string", "enum": ["spec_lookup", "design", "external"]},
                                     "cite": {"type": "string", "minLength": 1},
-                                    // VA-075: the refuser for a pasted passage — schema shape
-                                    // (what a fact IS), never a bound on model work.
-                                    "fact": {"type": "string", "maxLength": FACT_MAX_CHARS}
+                                    "fact": {"type": "string"}
                                 }
                             }
                         },
@@ -675,6 +676,18 @@ fn qualify_slice_questions(mut slices: Vec<OpenSlice>, events: &dyn EventSink) -
                     "q_index": sl.questions.len(),
                     "kind": q.kind.as_str(),
                     "question": q.text.chars().take(200).collect::<String>(),
+                }));
+            }
+            // VA-075: an overlong fact is a WARNING with its size, never a refusal — the fact rides
+            // verbatim, the plan is accepted. r6e's good plan carried 20 such facts (246…909 chars).
+            let fact_chars = q.fact.chars().count();
+            if fact_chars > FACT_MAX_CHARS {
+                events.write_value(serde_json::json!({
+                    "event": "fact_overlong",
+                    "slice": sl.id,
+                    "q_index": sl.questions.len(),
+                    "question": q.text.chars().take(200).collect::<String>(),
+                    "chars": fact_chars,
                 }));
             }
             sl.questions.push(q);
@@ -912,9 +925,9 @@ mod tests {
             "D10-8: the VALIDATOR refuses a bare question — never a retry count"
         );
         assert_eq!(q["properties"]["cite"]["minLength"], 1);
-        // VA-075: the validator refuses a pasted passage as a fact; the rule says how long a
-        // fact is and why (the brief carries the section's full text).
-        assert_eq!(q["properties"]["fact"]["maxLength"], FACT_MAX_CHARS);
+        // VA-075 (refuted refuser): the schema bounds a fact's length NOWHERE — r6e's good plan
+        // had 20 of 21 facts over 200 chars; an overlong fact is named, never refused.
+        assert!(q["properties"]["fact"].get("maxLength").is_none());
         assert_eq!(
             q["properties"]["kind"]["enum"],
             serde_json::json!(["spec_lookup", "design", "external"])
@@ -937,13 +950,7 @@ mod tests {
             );
             assert!(!obj["cite"].as_str().unwrap().is_empty(), "{obj}");
             if kind == "spec_lookup" {
-                let fact = obj["fact"].as_str().unwrap();
-                assert!(!fact.is_empty(), "{obj}");
-                assert!(
-                    fact.chars().count() <= FACT_MAX_CHARS,
-                    "the rule's own example obeys the schema it teaches: {} chars",
-                    fact.chars().count()
-                );
+                assert!(!obj["fact"].as_str().unwrap().is_empty(), "{obj}");
             }
             examples += 1;
         }
@@ -1181,5 +1188,71 @@ mod tests {
             "{rule}"
         );
         assert_eq!(rule_examples(&rule).len(), 3);
+    }
+
+    /// VA-075 as the refuter corrected it: r6e's verified emit had 20 of 21 facts over 200
+    /// chars (246…909) and was a GOOD plan — a schema `maxLength` would have refused it and
+    /// re-streamed the whole emit. An overlong fact parses, rides verbatim, still counts as a
+    /// cited fact, and is NAMED once (`fact_overlong{slice, q_index, question, chars}`); a
+    /// one-sentence fact is silent.
+    #[test]
+    fn an_overlong_fact_is_kept_verbatim_and_named_never_refused() {
+        let defaults: String =
+            "Defaults: yaw = 30, pitch = 40, distance = 260. Clamps: pitch [5, 85]"
+                .chars()
+                .chain("; distance [120, 900]".repeat(9).chars())
+                .take(246)
+                .collect();
+        assert_eq!(
+            defaults.chars().count(),
+            246,
+            "r6e's shortest overlong fact"
+        );
+        let nine_hundred_nine = "x".repeat(909);
+        let nine_hundred = "y".repeat(900);
+        let short = "`sort` is one of `created_at`, `-created_at`; default `created_at`.";
+        let raw: OpenOutputRaw = serde_json::from_value(serde_json::json!({
+            "slices": [{
+                "id": "web-viz", "title": "t", "objective": "o", "weight": 3,
+                "questions": [
+                    {"question": "Camera defaults and clamps?", "kind": "spec_lookup",
+                     "cite": "request.md:616-617", "fact": defaults},
+                    {"question": "Longest r6e fact?", "kind": "spec_lookup",
+                     "cite": "request.md:547-565", "fact": nine_hundred_nine},
+                    {"question": "A 900-char paste?", "kind": "spec_lookup",
+                     "cite": "request.md:1", "fact": nine_hundred},
+                    {"question": "Sort keys?", "kind": "spec_lookup",
+                     "cite": "request.md:148", "fact": short}
+                ]
+            }]
+        }))
+        .unwrap();
+        let sink = ValueSink::default();
+        let out = raw.qualify(&sink);
+        let qs = &out.slices[0].questions;
+        assert_eq!(qs.len(), 4, "nothing is refused or dropped");
+        assert_eq!(qs[0].fact, defaults);
+        assert_eq!(qs[1].fact, nine_hundred_nine);
+        assert_eq!(qs[2].fact, nine_hundred);
+        assert!(
+            qs.iter().all(OpenQuestion::is_cited_fact),
+            "still facts, no lane runs"
+        );
+        let events = sink.0.lock().unwrap();
+        assert_eq!(events.len(), 3, "{events:?}");
+        for (e, (q_index, chars)) in events.iter().zip([(0, 246), (1, 909), (2, 900)]) {
+            assert_eq!(e["event"], "fact_overlong");
+            assert_eq!(e["slice"], "web-viz");
+            assert_eq!(e["q_index"], q_index);
+            assert_eq!(e["chars"], chars);
+        }
+        assert_eq!(events[0]["question"], "Camera defaults and clamps?");
+        assert!(
+            open_schema()["properties"]["slices"]["items"]["properties"]["questions"]["items"]
+                ["properties"]["fact"]
+                .get("maxLength")
+                .is_none(),
+            "the schema never bounds a fact"
+        );
     }
 }
