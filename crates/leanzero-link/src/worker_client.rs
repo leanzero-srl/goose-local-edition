@@ -56,6 +56,13 @@ pub struct JoinKeyResult {
     /// hosted path, where the mesh keeps its configured default login server.
     #[serde(rename = "loginServer", default)]
     pub login_server: Option<String>,
+    /// The per-account node secret (a stable 32-byte hex value the worker derives per
+    /// account). Every device of the account derives the SAME `/v1/swarm` bearer from it
+    /// via [`crate::token::node_token_from_secret`]; the secret itself never goes on the
+    /// wire between nodes. `None` when the worker predates this field — the manager then
+    /// refuses to connect loudly rather than derive a token from anything else.
+    #[serde(rename = "nodeSecret", default)]
+    pub node_secret: Option<String>,
     #[serde(rename = "expirySeconds")]
     pub expiry_seconds: u64,
 }

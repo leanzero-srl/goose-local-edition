@@ -20,9 +20,11 @@ chrono = { workspace = true, features = ["now"] }
 dirs = { workspace = true }
 futures = { workspace = true }
 gethostname = "1.1.0"
+hmac = "0.13"
 reqwest = { workspace = true, features = ["json"] }
 serde = { workspace = true }
 serde_json = { workspace = true }
+sha2.workspace = true
 subtle = { version = "2.5", default-features = false, features = ["std"] }
 thiserror = { workspace = true }
 tokio = { workspace = true, features = ["fs", "process", "time", "sync", "macros", "rt-multi-thread", "io-util", "net"] }
