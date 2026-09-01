@@ -871,3 +871,8 @@ research_request_block's armed-no-claimed-sections arm wording.
   (NO — with the exact mechanism: heads frozen at 04:16:56Z, build brief formed by the same splice
   with no index/pointer), replayed all 53 real claims under both keys for the regression hunt, and
   caught a README overclaim by reading what the event actually carries. Charter gap: none.
+- 2026-09-01 09:10 tick-surgeon (r6d tick 3, retry): EXEMPLARY at 79.8k/7. Judged the E7 proof
+  honestly ("defect real, wrong-mini did not materialize" — a hedge, quoted) instead of forcing the
+  predicted outcome; computed the fan's pace and the dispatch ORDER (viz last → the exposure test
+  will likely be pre-empted); and found the turn-budget misread spreading to a third judge and
+  heading toward a RESTART — E9's first harmful path, caught before it fired. Charter gap: none.
