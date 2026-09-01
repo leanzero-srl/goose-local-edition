@@ -1,5 +1,22 @@
 import { useMemo, useState } from 'react';
-import { ChevronDown, ChevronRight } from 'lucide-react';
+import { Check, ChevronDown, ChevronRight, X, XCircle } from 'lucide-react';
+import {
+  Chip,
+  FOCUS,
+  MOTION,
+  RADIUS,
+  ROW,
+  SPACE,
+  SURFACE,
+  SectionHeader,
+  TNUM,
+  TONE_FILL,
+  TONE_TEXT,
+  TYPE,
+  WEIGHT,
+  cx,
+  type Tone,
+} from '../lz';
 
 /**
  * The full scoring story behind the single number — the sb-5.2 composition formula with each
@@ -7,8 +24,8 @@ import { ChevronDown, ChevronRight } from 'lucide-react';
  * the findings that survived the repair waves, and the round-by-round repair progression.
  *
  * Everything here is scorer/engine truth persisted with the result (main.ts `verdict`); nothing
- * is re-derived from a model. Solid saturated fills, full borders, custom accordion — never a
- * left rail, a faded wash, or a native control.
+ * is re-derived from a model. Studio tokens only: the status triad says pass/partial/fail, the
+ * accent is what a build EARNED, tiers are told apart by their letter — never by a node hue.
  */
 
 export interface VerdictCheck {
@@ -34,42 +51,14 @@ export interface VerdictDetail {
 
 const TIER_ORDER = ['A', 'B', 'C', 'D', 'J', 'V', 'P'] as const;
 
-const TIER_INFO: Record<string, { name: string; desc: string; color: string }> = {
-  A: {
-    name: 'Structure',
-    desc: 'The files and structure the spec names',
-    color: 'var(--color-node-1)',
-  },
-  B: {
-    name: 'Behaviour',
-    desc: 'Does the app DO what the spec says — probed by running it',
-    color: 'var(--color-node-2)',
-  },
-  C: {
-    name: 'Vendor contract',
-    desc: 'The vendor API contract — sync, idempotency, conditional fetch',
-    color: 'var(--color-node-4)',
-  },
-  D: {
-    name: 'Finesse',
-    desc: 'Formats, edge cases, polish',
-    color: 'var(--color-node-5)',
-  },
-  J: {
-    name: 'Journey',
-    desc: 'The user journey in a real browser',
-    color: 'var(--color-node-3)',
-  },
-  V: {
-    name: 'Visual',
-    desc: 'Visual/design quality of the served page',
-    color: 'var(--color-node-6)',
-  },
-  P: {
-    name: 'Performance',
-    desc: 'Measured performance budgets',
-    color: 'var(--color-block-teal)',
-  },
+const TIER_INFO: Record<string, { name: string; desc: string }> = {
+  A: { name: 'Structure', desc: 'The files and structure the spec names' },
+  B: { name: 'Behaviour', desc: 'Does the app DO what the spec says — probed by running it' },
+  C: { name: 'Vendor contract', desc: 'The vendor API contract — sync, idempotency, conditional fetch' },
+  D: { name: 'Finesse', desc: 'Formats, edge cases, polish' },
+  J: { name: 'Journey', desc: 'The user journey in a real browser' },
+  V: { name: 'Visual', desc: 'Visual/design quality of the served page' },
+  P: { name: 'Performance', desc: 'Measured performance budgets' },
 };
 
 // The six checks scored OUTSIDE their home tier as the standalone 10% hard block — mirrors the
@@ -83,11 +72,8 @@ const HARD_CHECKS = new Set([
   'restart_persistence',
 ]);
 
-const GOOD = '#2ecc71';
-const PARTIAL = '#f5a623';
-const BAD = '#e5484d';
-
-const scoreColor = (s: number) => (s >= 1 ? GOOD : s <= 0 ? BAD : PARTIAL);
+/** Full marks read ok, nothing reads err, anything between is the warn step. */
+const scoreTone = (s: number): Tone => (s >= 1 ? 'ok' : s <= 0 ? 'err' : 'warn');
 
 const humanize = (s: string) => {
   const t = s.replace(/_/g, ' ').trim();
@@ -99,11 +85,15 @@ const pct = (v: number, digits = 0) => `${(v * 100).toFixed(digits)}%`;
 function ScoreChip({ score }: { score: number }) {
   return (
     <span
-      className="inline-flex w-12 shrink-0 items-center justify-center rounded px-1.5 py-0.5 text-xs font-extrabold tabular-nums"
-      style={{
-        backgroundColor: scoreColor(score),
-        color: score > 0 && score < 1 ? '#1a1a1a' : '#fff',
-      }}
+      data-testid="score-chip"
+      data-tone={scoreTone(score)}
+      className={cx(
+        'inline-flex h-5 w-12 shrink-0 items-center justify-center text-lz-meta',
+        WEIGHT.semibold,
+        TNUM,
+        RADIUS.control,
+        TONE_FILL[scoreTone(score)]
+      )}
     >
       {Math.round(score * 100)}
     </span>
@@ -119,13 +109,9 @@ function PartChips({ parts }: { parts: Record<string, unknown> }) {
       {entries.map(([key, value]) => {
         if (typeof value === 'boolean') {
           return (
-            <span
-              key={key}
-              className="rounded px-1.5 py-0.5 text-[10px] font-bold text-white"
-              style={{ backgroundColor: value ? GOOD : BAD }}
-            >
-              {value ? '✓' : '✗'} {key}
-            </span>
+            <Chip key={key} tone={value ? 'ok' : 'err'} icon={value ? <Check /> : <X />}>
+              {key}
+            </Chip>
           );
         }
         const shown =
@@ -135,12 +121,9 @@ function PartChips({ parts }: { parts: Record<string, unknown> }) {
               : value.toFixed(2)
             : String(value).slice(0, 40);
         return (
-          <span
-            key={key}
-            className="rounded border border-border-primary px-1.5 py-0.5 text-[10px] font-semibold tabular-nums text-text-primary"
-          >
+          <Chip key={key}>
             {key} {shown}
-          </span>
+          </Chip>
         );
       })}
     </div>
@@ -149,30 +132,24 @@ function PartChips({ parts }: { parts: Record<string, unknown> }) {
 
 function CheckRow({ check }: { check: VerdictCheck }) {
   return (
-    <div className="flex items-start gap-3 border-t border-border-primary px-3 py-2.5">
+    <div className={cx('flex items-start gap-3 border-t px-3 py-2.5', SURFACE.hairline)}>
       <ScoreChip score={check.score} />
       <div className="min-w-0 flex-1">
         <div className="flex flex-wrap items-center gap-2">
-          <span className="text-[13px] font-semibold text-text-primary">
-            {humanize(check.check)}
-          </span>
+          <span className={cx(TYPE.body, WEIGHT.semibold)}>{humanize(check.check)}</span>
           {HARD_CHECKS.has(check.check) && (
-            <span
-              className="rounded px-1.5 py-0.5 text-[9px] font-extrabold tracking-wider text-[#1a1a1a]"
-              style={{ backgroundColor: PARTIAL }}
-              title="Scored in the standalone 10% hard block, not this tier's mean"
-            >
-              HARD 10%
-            </span>
+            <Chip title="Scored in the standalone 10% hard block, not this tier's mean">
+              hard block · 10%
+            </Chip>
           )}
         </div>
         {check.detail && (
-          <div className="mt-0.5 break-words font-mono text-[11px] leading-relaxed text-text-secondary">
+          <div className="mt-0.5 break-words font-mono text-lz-mono text-lz-ink-2">
             {check.detail}
           </div>
         )}
         {check.score < 1 && check.consequence && (
-          <div className="mt-0.5 text-[11px] font-semibold" style={{ color: BAD }}>
+          <div className={cx('mt-0.5 text-lz-meta', WEIGHT.medium, TONE_TEXT.err)}>
             Costs: {check.consequence}
           </div>
         )}
@@ -198,40 +175,38 @@ function TierGroup({
   open: boolean;
   onToggle: () => void;
 }) {
-  const info = TIER_INFO[tier] ?? { name: tier, desc: '', color: 'var(--color-node-1)' };
+  const info = TIER_INFO[tier] ?? { name: tier, desc: '' };
   const lost = checks.filter((c) => c.score < 1).length;
   return (
-    <div className="overflow-hidden rounded border border-border-primary">
+    <div className={cx(SURFACE.card, 'overflow-hidden')}>
       <button
         type="button"
         onClick={onToggle}
         aria-expanded={open}
-        className="flex w-full items-center gap-3 bg-background-secondary px-3 py-2.5 text-left"
+        className={cx(
+          'flex w-full items-center gap-3 px-3 text-left',
+          ROW.default,
+          SURFACE.hover,
+          FOCUS,
+          MOTION
+        )}
       >
         {open ? (
-          <ChevronDown className="h-4 w-4 shrink-0 text-text-secondary" />
+          <ChevronDown className="size-4 shrink-0 text-lz-ink-3" />
         ) : (
-          <ChevronRight className="h-4 w-4 shrink-0 text-text-secondary" />
+          <ChevronRight className="size-4 shrink-0 text-lz-ink-3" />
         )}
-        <span
-          className="flex h-6 w-6 shrink-0 items-center justify-center rounded text-xs font-extrabold text-white"
-          style={{ backgroundColor: info.color }}
-        >
-          {tier}
-        </span>
+        <Chip className="w-7 justify-center">{tier}</Chip>
         <span className="min-w-0 flex-1">
-          <span className="text-sm font-bold text-text-primary">{info.name}</span>
-          <span className="ml-2 hidden text-xs text-text-secondary sm:inline">{info.desc}</span>
+          <span className={cx(TYPE.body, WEIGHT.semibold)}>{info.name}</span>
+          <span className={cx('ml-2 hidden sm:inline', TYPE.meta)}>{info.desc}</span>
         </span>
         {lost > 0 && (
-          <span
-            className="shrink-0 rounded px-1.5 py-0.5 text-[10px] font-extrabold text-white"
-            style={{ backgroundColor: BAD }}
-          >
+          <Chip tone="err">
             {lost} lost point{lost > 1 ? 's' : ''}
-          </span>
+          </Chip>
         )}
-        <span className="shrink-0 text-xs font-semibold tabular-nums text-text-secondary">
+        <span className={cx('shrink-0', TYPE.meta, TNUM)}>
           {checks.length} checks{weight != null ? ` · ${pct(weight)}` : ''}
         </span>
         {mean != null && <ScoreChip score={mean} />}
@@ -250,7 +225,7 @@ function TierGroup({
 /**
  * The sb-5.2 composition: score = 60% core (A 25 / B 30 / C 25 / D 20) + 15% journey + 10% visual
  * + 5% performance + 10% hard block. Rendered as a stacked contribution bar (each slot is a
- * component's maximum share of the 100; the solid fill is what this build actually earned) plus
+ * component's maximum share of the 100; the accent fill is what this build actually earned) plus
  * the arithmetic, so the final number is reproducible by eye.
  */
 function CompositionBar({ verdict, score }: { verdict: VerdictDetail; score: number }) {
@@ -266,25 +241,19 @@ function CompositionBar({ verdict, score }: { verdict: VerdictDetail; score: num
     label: string;
     value: number;
     weight: number;
-    color: string;
   }
   const components: CompComponent[] = [
-    { key: 'core', label: 'Core build', value: core, weight: 0.6, color: 'var(--color-block-teal)' },
-    { key: 'J', label: 'Journey', value: t.J?.mean, weight: 0.15, color: 'var(--color-node-3)' },
-    { key: 'V', label: 'Visual', value: t.V?.mean, weight: 0.1, color: 'var(--color-node-6)' },
-    { key: 'P', label: 'Performance', value: t.P?.mean, weight: 0.05, color: 'var(--color-node-2)' },
-    {
-      key: 'hard',
-      label: 'Hard block',
-      value: verdict.hard ?? t.HARD?.mean,
-      weight: 0.1,
-      color: PARTIAL,
-    },
+    { key: 'core', label: 'Core build', value: core, weight: 0.6 },
+    { key: 'J', label: 'Journey', value: t.J?.mean, weight: 0.15 },
+    { key: 'V', label: 'Visual', value: t.V?.mean, weight: 0.1 },
+    { key: 'P', label: 'Performance', value: t.P?.mean, weight: 0.05 },
+    { key: 'hard', label: 'Hard block', value: verdict.hard ?? t.HARD?.mean, weight: 0.1 },
   ].filter((c): c is CompComponent => typeof c.value === 'number');
 
   const width = 860;
   const barH = 26;
   let x = 0;
+  const cell = cx('border px-2 py-1', SURFACE.hairline);
   return (
     <div className="overflow-x-auto">
       <div className="min-w-[680px]">
@@ -294,21 +263,20 @@ function CompositionBar({ verdict, score }: { verdict: VerdictDetail; score: num
             const fill = Math.max(2, slot * Math.min(1, Math.max(0, c.value)));
             const g = (
               <g key={c.key}>
+                <rect x={x} y={0} width={slot} height={barH} className="fill-lz-surface-2" />
+                <rect x={x} y={0} width={fill} height={barH} className="fill-lz-accent" />
                 <rect
                   x={x}
                   y={0}
                   width={slot}
                   height={barH}
-                  fill="var(--color-background-secondary)"
-                  stroke="var(--color-border-primary)"
+                  className="fill-none stroke-lz-border"
                 />
-                <rect x={x} y={0} width={fill} height={barH} fill={c.color} />
                 <text
                   x={x + slot / 2}
                   y={barH + 14}
                   textAnchor="middle"
-                  className="fill-[var(--color-text-secondary)]"
-                  style={{ fontSize: 10, fontWeight: 700 }}
+                  className={cx('fill-lz-ink-3 text-lz-meta', TNUM)}
                 >
                   {pct(c.weight)}
                 </text>
@@ -319,47 +287,38 @@ function CompositionBar({ verdict, score }: { verdict: VerdictDetail; score: num
           })}
         </svg>
 
-        <table className="mt-2 w-full border-collapse text-[12px]">
+        <table className={cx('mt-3 w-full border-collapse text-lz-body text-lz-ink', TNUM)}>
           <thead>
-            <tr className="text-left text-[10px] font-extrabold uppercase tracking-wider text-text-secondary">
-              <th className="border border-border-primary px-2 py-1">Component</th>
-              <th className="border border-border-primary px-2 py-1">Earned</th>
-              <th className="border border-border-primary px-2 py-1">Weight</th>
-              <th className="border border-border-primary px-2 py-1">Points of 100</th>
+            <tr className="text-left text-lz-zone uppercase text-lz-ink-3">
+              <th className={cell}>Component</th>
+              <th className={cell}>Earned</th>
+              <th className={cell}>Weight</th>
+              <th className={cell}>Points of 100</th>
             </tr>
           </thead>
-          <tbody className="tabular-nums">
+          <tbody>
             {components.map((c) => (
               <tr key={c.key}>
-                <td className="border border-border-primary px-2 py-1 font-semibold text-text-primary">
-                  <span
-                    className="mr-2 inline-block h-3 w-3 rounded-[2px] align-middle"
-                    style={{ backgroundColor: c.color }}
-                  />
-                  {c.label}
-                </td>
-                <td className="border border-border-primary px-2 py-1">{pct(c.value, 1)}</td>
-                <td className="border border-border-primary px-2 py-1">× {pct(c.weight)}</td>
-                <td className="border border-border-primary px-2 py-1 font-bold text-text-primary">
+                <td className={cx(cell, WEIGHT.medium)}>{c.label}</td>
+                <td className={cell}>{pct(c.value, 1)}</td>
+                <td className={cell}>× {pct(c.weight)}</td>
+                <td className={cx(cell, WEIGHT.semibold)}>
                   {(c.value * c.weight * 100).toFixed(1)}
                 </td>
               </tr>
             ))}
             <tr>
-              <td
-                className="border border-border-primary px-2 py-1 font-extrabold text-text-primary"
-                colSpan={3}
-              >
+              <td className={cx(cell, WEIGHT.semibold)} colSpan={3}>
                 Final score
               </td>
-              <td className="border border-border-primary px-2 py-1 text-sm font-extrabold text-[var(--color-block-teal)]">
+              <td className={cx(cell, WEIGHT.semibold, TONE_TEXT.accent)}>
                 {(score * 100).toFixed(1)}
               </td>
             </tr>
           </tbody>
         </table>
 
-        <p className="mt-2 text-xs text-text-secondary">
+        <p className={cx('mt-2 max-w-[80ch]', TYPE.bodyMuted)}>
           Core build = A structure × 25% + B behaviour × 30% + C vendor contract × 25% + D finesse
           × 20%
           {(['A', 'B', 'C', 'D'] as const).every((k) => typeof t[k]?.mean === 'number') && (
@@ -368,7 +327,7 @@ function CompositionBar({ verdict, score }: { verdict: VerdictDetail; score: num
               = {(['A', 'B', 'C', 'D'] as const)
                 .map((k) => `${pct(t[k].mean, 0)}·${pct(t[k].weight)}`)
                 .join(' + ')}{' '}
-              = <span className="font-bold text-text-primary">{pct(core, 1)}</span>
+              = <span className={cx(WEIGHT.semibold, 'text-lz-ink')}>{pct(core, 1)}</span>
             </>
           )}
           . Six hard checks (idempotency replay, second-sync cost, restart persistence…) are pulled
@@ -387,17 +346,14 @@ function RepairStrip({ rounds }: { rounds: Array<{ round: number; findings: numb
       <div className="flex flex-wrap items-center gap-2">
         {rounds.map((r, i) => (
           <span key={r.round} className="flex items-center gap-2">
-            {i > 0 && <span className="text-sm font-bold text-text-secondary">→</span>}
-            <span
-              className="rounded px-2 py-1 text-xs font-extrabold text-white tabular-nums"
-              style={{ backgroundColor: r.findings === 0 ? GOOD : BAD }}
-            >
+            {i > 0 && <span className="text-lz-body text-lz-ink-3">→</span>}
+            <Chip tone={r.findings === 0 ? 'ok' : 'err'}>
               Round {r.round} · {r.findings} finding{r.findings === 1 ? '' : 's'}
-            </span>
+            </Chip>
           </span>
         ))}
       </div>
-      <p className="mt-2 max-w-[80ch] text-xs text-text-secondary">
+      <p className={cx('mt-2 max-w-[80ch]', TYPE.bodyMuted)}>
         At each round the completion gate runs the app, opens the page in a real browser, and files
         findings; the swarm's repair waves fix them and the gate re-verifies — until it reads clean,
         the count stops moving, or the round budget is spent.
@@ -438,48 +394,52 @@ export function ScoringDetail({ verdict, score }: { verdict: VerdictDetail; scor
       <CompositionBar verdict={verdict} score={score} />
 
       {findingsHeld.length > 0 && (
-        <div className="rounded border-2 px-4 py-3" style={{ borderColor: BAD }}>
-          <div className="text-xs font-extrabold uppercase tracking-widest" style={{ color: BAD }}>
-            Findings that held — the gate still saw these when verification ended
+        // The refusal register: a solid err header on a Panel-shaped card; the findings themselves
+        // stay in ink on the surface so a long verbatim line is still readable.
+        <section data-testid="findings-held" className={cx(SURFACE.card, 'overflow-hidden')}>
+          <div
+            className={cx(
+              'flex min-h-10 items-center gap-2 px-4 py-2 [&>svg]:size-4 [&>svg]:shrink-0',
+              TONE_FILL.err
+            )}
+          >
+            <XCircle />
+            <span className="text-lz-zone uppercase">
+              Findings that held — the gate still saw these when verification ended
+            </span>
           </div>
-          <div className="mt-2 flex flex-col gap-2">
+          <div className={cx('flex flex-col gap-2', SPACE.card)}>
             {findingsHeld.map((f, i) => (
               <p
-                key={i}
-                className="whitespace-pre-wrap break-words font-mono text-[11px] leading-relaxed text-text-primary"
+                key={`${i}:${f}`}
+                className="whitespace-pre-wrap break-words font-mono text-lz-mono text-lz-ink"
               >
                 {f}
               </p>
             ))}
           </div>
-        </div>
+        </section>
       )}
 
       {(verdict.repairRounds ?? []).length > 0 && (
         <div>
-          <h3 className="mb-2 text-xs font-bold uppercase tracking-widest text-text-secondary">
-            Repair progression
-          </h3>
+          <SectionHeader as="h3" title="Repair progression" className="mb-2" />
           <RepairStrip rounds={verdict.repairRounds ?? []} />
         </div>
       )}
 
       {rootCauses.length > 0 && (
-        <div className="rounded border border-border-primary px-4 py-3">
-          <h3 className="text-xs font-bold uppercase tracking-widest text-text-secondary">
-            Root-cause attribution
-          </h3>
+        <section className={cx(SURFACE.card, SPACE.card)}>
+          <SectionHeader as="h3" title="Root-cause attribution" />
           {rootCauses.map(([root, downstream]) => (
-            <p key={root} className="mt-2 text-xs text-text-primary">
-              <span className="font-bold" style={{ color: BAD }}>
-                {humanize(root)}
-              </span>{' '}
+            <p key={root} className={cx('mt-2', TYPE.body)}>
+              <span className={cx(WEIGHT.semibold, TONE_TEXT.err)}>{humanize(root)}</span>{' '}
               failed at the root and zeroed {downstream.length} downstream check
               {downstream.length === 1 ? '' : 's'}: {downstream.map(humanize).join(', ')} — one
               defect, not {downstream.length + 1}.
             </p>
           ))}
-        </div>
+        </section>
       )}
 
       <div className="flex flex-col gap-3">
