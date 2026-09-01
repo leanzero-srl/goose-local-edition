@@ -1,5 +1,35 @@
 # NOW — MLX in-house engine campaign (branch goose/mlx-inferencing)
 
+## MULTI-TENANT MESH — DONE & LIVE (2026-09-01, commit ff9c53b59)
+"Everyone connects to their OWN swarm." Moved OFF Tailscale hosted control (personal tailnet, no
+isolation) ONTO **self-hosted Headscale** — each account = one Headscale user = the isolation unit.
+PROVEN END TO END before commit (scripts in ~/.leanzero/hs-iso-test/):
+- Node join works against a ROOT url in ~2-3s. The earlier funnel /headscale HANG was the path-strip
+  breaking the noise /ts2021 protocol. FIX: Headscale mounted at the funnel **ROOT** `/` on :443
+  (`tailscale funnel --https=443 http://127.0.0.1:8790`) — root mount does NOT strip, so the control
+  protocol survives; the more-specific MCP sub-paths (/docproc,/websearch,/lmstudio,/leanzero-link)
+  still win their matches → MCPs UNDISTURBED. `/headscale` path removed (redundant).
+- Isolation is NOT free: Headscale default = allow-all. Static policy `{src:["*"],dst:["autogroup:
+  self:*"]}` (ONE policy for ALL accounts) gives automatic per-account isolation. VERIFIED: 2 accounts,
+  3 nodes — same-account nodes see each other, cross-account do NOT. Full-chain rerun (JWT→worker→key→
+  join→netmap) HOLDS.
+- Worker (leanzero-link/worker): new src/lib/headscale.ts mints per-account ephemeral preauth keys
+  against the Headscale REST API (every shape measured live: preauthkey `user`=NUMERIC id; policy
+  get/put self-heals isolation before any mint; username acct-<sha256(email)[:16]>, PII-free); join-key
+  response now carries `loginServer`. config.ts meshProvider headscale>tailscale>none. 10 new tests, 85 green.
+- Rust: JoinKeyResult.login_server (Option, serde default); manager.connect_inner overrides
+  mesh_config.login_server with the worker's value so key+control-server travel together. cargo test/clippy green.
+- PERSISTENCE: Headscale under launchd **com.leanzero.headscale** (KeepAlive; binary ~/.leanzero/bin/
+  headscale v0.29.3; config ~/.leanzero/headscale/config.yaml; DB sqlite; API key ~/.leanzero/headscale/
+  api-key.txt 0600). Worker launchd plist PATH fixed to /usr/local/bin (brew node 25.9.0 is BROKEN —
+  missing libllhttp — it was flapping the worker; /usr/local/bin/node v24.15.0 works). Both services up.
+- Env: ~/.leanzero/link-worker.env adds HEADSCALE_API_URL(127.0.0.1:8790)/HEADSCALE_API_KEY/
+  HEADSCALE_LOGIN_SERVER(https://worksmacstudio.tailfc4700.ts.net).
+REMAINING for OTHER real users (Mihai-side / packaging, NOT architecture): (a) verify a Resend domain so
+OTP reaches non-owner emails (test mode → only zerobarat1@gmail.com); (b) the desktop app must BUNDLE a
+tailscaled binary for machines without Homebrew (mesh.rs takes tailscaled_path from config; on this Mac
+it's /opt/homebrew/bin/tailscaled). Personal Tailscale + benchmark fleet verified UNTOUCHED throughout.
+
 ## NEW CHAPTER (2026-09-01): LEANZERO LINK
 ## MIHAI'S DECISIONS 2026-09-01 (post-core): build #2 and #3; #1 is his to deploy
 - #1 WORKER DEPLOY: Mihai's — the runbook is given (Cloudflare+Resend+Tailscale accounts → 5 secrets
