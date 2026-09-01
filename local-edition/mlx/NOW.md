@@ -1,6 +1,23 @@
 # NOW — MLX in-house engine campaign (branch goose/mlx-inferencing)
 
 ## NEW CHAPTER (2026-09-01): LEANZERO LINK
+## MIHAI'S DECISIONS 2026-09-01 (post-core): build #2 and #3; #1 is his to deploy
+- #1 WORKER DEPLOY: Mihai's — the runbook is given (Cloudflare+Resend+Tailscale accounts → 5 secrets
+  RESEND_API_KEY/RESEND_AUDIENCE_ID/LINK_JWT_SECRET/TS_API_TOKEN/TS_TAILNET + LEANZERO_MAIL_FROM;
+  he runs `wrangler login`, then I can run kv-create + secret-put + deploy if he pastes values;
+  he gives the deployed URL → I bake it as LEANZERO_LINK_WORKER_URL default + rebuild). Until then
+  everything connected-state is unit-only.
+- #2 SWARM-ENGINE GRAFT (#22): YES build — but DESIGN-FIRST (sacred engine). swarm-surgeon read-only
+  design in flight; I REVIEW before authorizing the build. Crux: unit-of-work mismatch (subtask vs
+  whole remote_execute session) + does the mesh move FILES back. Scoped-but-real beats ambitious-but-
+  invariant-breaking.
+- #3 SMALL SEMANTICS: YES. #13 weight = ROUTING SHARE (speed_weight), not concurrency — nodes-tab
+  stepper should write speed_weights (UI-side, panel-surgeon, independent of swarm.rs). #17 arbitrary
+  configured cloud providers as nodes — swarm.rs CLOUD_DEFS/validation + add-node UI (swarm.rs part
+  folds into the #22 build pass to avoid collision).
+IN FLIGHT: node-picker UI (panel-surgeon, ui) + #22 design (swarm-surgeon, read-only). NEXT: review
+#22 design → authorize build (+#17 swarm.rs); panel-surgeon for #13 + #17 UI after node-picker lands.
+
 ## LEANZERO LINK — BUILDING THE DEEPER HALF (Mihai said continue, 2026-09-01)
 Both decisions → BUILD. Sequential chain (all share the goose-server↔link seam, so no parallel):
   Agent 1 (IN FLIGHT, link-backend): full per-message mirroring — goose-server process-wide delta
