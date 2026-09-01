@@ -439,7 +439,10 @@ fn do_everything_never_reaches_a_model() {
 // To 97 on 2026-09-01 (2c S6): the idle-model judge (judge.rs, `apply_judge_outcome`, `apply_split`,
 // goose-cli's `impl Judge`), its Looping-salvage path and the idle-fill dimension reviews took 20
 // with them — deletions of 0-happy-path arms, not new proofs.
-const UNWRAP_OR_DEFAULT_BASELINE: usize = 97;
+// To 96 (VA-080 item 3): shards.rs's `measure_fatness` RECORDS a task no opener slice is named
+// for (`FatMeasure::unclaimed`) instead of defaulting its claim away; a plan whose every row is
+// unclaimed is said (`fatness_unmeasurable`) rather than measured as a flat nothing.
+const UNWRAP_OR_DEFAULT_BASELINE: usize = 96;
 
 #[test]
 fn run_path_silent_empty_fallbacks_only_shrink() {
