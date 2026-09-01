@@ -32,7 +32,8 @@ use crate::control::{ControlConfig, ControlError, ControlHandle, ControlService}
 use crate::identity::{Identity, IdentityError, IdentityStore};
 use crate::mesh::{MeshConfig, MeshEngine, MeshError, MeshPeer, MeshStatus};
 use crate::state::{
-    ExecuteAccepted, ExecuteError, ExecuteRequest, PeerRegistry, RemoteExecutor, SwarmStateSource,
+    ExecuteAccepted, ExecuteError, ExecuteRequest, MlxControl, MlxControlError, MlxOp,
+    PeerRegistry, RemoteExecutor, SwarmStateSource,
 };
 use crate::worker_client::{
     RequestCodeResult, VerifyResult, WorkerClient, WorkerError, DEFAULT_WORKER_BASE_URL,
@@ -149,6 +150,12 @@ pub enum LinkError {
     Execute(#[from] ExecuteError),
     #[error("remote execute request to a peer failed: {0}")]
     RemoteExecute(String),
+    #[error("mlx control is not wired on this node")]
+    MlxControlUnavailable,
+    #[error(transparent)]
+    MlxControl(#[from] MlxControlError),
+    #[error("mlx proxy request to a peer failed: {0}")]
+    MlxProxy(String),
     #[error("mesh joined but reported no IP — cannot compose a Connected state")]
     NoMeshIp,
     #[error("mesh reported an unparseable self IP '{ip}': {source}")]
@@ -249,6 +256,11 @@ pub struct LinkManager {
     /// (self short-circuit and the control route both answer as unavailable). goose-server
     /// supplies the real one via `set_executor` before the manager is built.
     executor: Option<Arc<dyn RemoteExecutor>>,
+    /// The local MLX-engine seam, injected beside `executor`. `None` → this node cannot
+    /// run remote model-management ops (its `/v1/swarm/mlx/*` routes answer `501` and the
+    /// self short-circuit in [`Self::mlx_proxy`] is unavailable). goose supplies the real
+    /// one (`GoosedMlxControl`) before the manager is built.
+    mlx_control: Option<Arc<dyn MlxControl>>,
     inner: Mutex<Inner>,
 }
 
@@ -283,6 +295,7 @@ impl LinkManager {
             mesh_factory,
             source,
             executor: None,
+            mlx_control: None,
             inner: Mutex::new(Inner {
                 auth,
                 last_error: None,
@@ -297,6 +310,15 @@ impl LinkManager {
     /// the existing construction paths (and their tests) stay unchanged.
     pub fn with_executor(mut self, executor: Arc<dyn RemoteExecutor>) -> Self {
         self.executor = Some(executor);
+        self
+    }
+
+    /// Attach the local [`MlxControl`] (goose's `GoosedMlxControl`). Used by the
+    /// `POST /v1/swarm/mlx/*` routes this node serves AND by the self short-circuit in
+    /// [`Self::mlx_proxy`]. A builder-style setter, like [`Self::with_executor`], so the
+    /// existing construction paths (and their tests) stay unchanged.
+    pub fn with_mlx_control(mut self, mlx_control: Arc<dyn MlxControl>) -> Self {
+        self.mlx_control = Some(mlx_control);
         self
     }
 
@@ -474,16 +496,20 @@ impl LinkManager {
 
         let mut control_config = self.config.control.clone();
         control_config.mesh_ip = Some(mesh_ip_addr);
-        let control =
-            match ControlService::start(control_config, self.source.clone(), self.executor.clone())
-                .await
-            {
-                Ok(control) => control,
-                Err(err) => {
-                    mesh.shutdown().await;
-                    return Err(err.into());
-                }
-            };
+        let control = match ControlService::start(
+            control_config,
+            self.source.clone(),
+            self.executor.clone(),
+            self.mlx_control.clone(),
+        )
+        .await
+        {
+            Ok(control) => control,
+            Err(err) => {
+                mesh.shutdown().await;
+                return Err(err.into());
+            }
+        };
 
         // Peers are reached at the SHARED, fixed control port on their mesh IP, not at
         // this node's (possibly ephemeral) local port.
@@ -592,6 +618,52 @@ impl LinkManager {
         };
 
         post_peer_execute(&base_url, &token, self.config.control.request_timeout, &req).await
+    }
+
+    /// Forward one mlxEngine model-management op to `target_node_id`. This is how node A
+    /// runs a download/delete/settings-change/status-read against node B's LOCAL MLX
+    /// engine. `target_node_id` equal to this node's own id short-circuits to the local
+    /// [`MlxControl`] (no network hop); any other id is resolved to a peer via the fabric
+    /// registry and reached with `POST <peer>/v1/swarm/mlx/<op>` (bearer node_token). `body`
+    /// is the op's request DTO as opaque JSON; the `Ok` value is the op's response DTO as
+    /// opaque JSON. A peer's own failure surfaces as [`LinkError::MlxControl`] (verbatim
+    /// text, class preserved); an unreachable/odd peer as [`LinkError::MlxProxy`].
+    pub async fn mlx_proxy(
+        &self,
+        target_node_id: &str,
+        op: MlxOp,
+        body: serde_json::Value,
+    ) -> Result<serde_json::Value, LinkError> {
+        let self_node_id = self.source.local_node().await.node_id;
+        if target_node_id == self_node_id {
+            let control = self
+                .mlx_control
+                .clone()
+                .ok_or(LinkError::MlxControlUnavailable)?;
+            return Ok(control.dispatch(op, body).await?);
+        }
+
+        let (base_url, token) = {
+            let inner = self.inner.lock().await;
+            let registry = inner
+                .active
+                .as_ref()
+                .map(|active| active.registry.clone())
+                .ok_or(LinkError::NotConnected)?;
+            let base_url = registry
+                .peer_base_url(target_node_id)
+                .ok_or_else(|| LinkError::UnknownPeer(target_node_id.to_string()))?;
+            (base_url, self.config.control.node_token.clone())
+        };
+
+        post_peer_mlx(
+            &base_url,
+            &token,
+            self.config.control.request_timeout,
+            op,
+            &body,
+        )
+        .await
     }
 
     /// Tear down the connection (per-pid), clear the stored identity, and drop to
@@ -782,6 +854,47 @@ async fn post_peer_execute(
         400 => LinkError::Execute(ExecuteError::BadRequest(body)),
         501 => LinkError::ExecutorUnavailable,
         code => LinkError::RemoteExecute(format!("peer returned {code}: {body}")),
+    })
+}
+
+/// `POST <base_url>/v1/swarm/mlx/<op>` with the bearer node_token, mapping the peer's
+/// status back to a typed result: `2xx` → the response DTO as opaque JSON; `400` →
+/// [`MlxControlError::BadRequest`] and `500` → [`MlxControlError::Failed`] (so the peer's
+/// own error class + text survive intact); anything else (a `501` "not wired", a `404`
+/// unknown op, an auth `401`) → [`LinkError::MlxProxy`] carrying the code and body. A
+/// transport failure reaching the peer is [`LinkError::MlxProxy`] too. Never a silent
+/// success.
+async fn post_peer_mlx(
+    base_url: &str,
+    token: &str,
+    timeout: Duration,
+    op: MlxOp,
+    body: &serde_json::Value,
+) -> Result<serde_json::Value, LinkError> {
+    let client = reqwest::Client::builder()
+        .timeout(timeout)
+        .build()
+        .map_err(|err| LinkError::MlxProxy(err.to_string()))?;
+    let response = client
+        .post(format!("{base_url}/v1/swarm/mlx/{}", op.path()))
+        .bearer_auth(token)
+        .json(body)
+        .send()
+        .await
+        .map_err(|err| LinkError::MlxProxy(err.to_string()))?;
+
+    let status = response.status();
+    if status.is_success() {
+        return response.json::<serde_json::Value>().await.map_err(|err| {
+            LinkError::MlxProxy(format!("peer responded but its body did not parse: {err}"))
+        });
+    }
+
+    let text = response.text().await.unwrap_or_default();
+    Err(match status.as_u16() {
+        400 => LinkError::MlxControl(MlxControlError::BadRequest(text)),
+        500 => LinkError::MlxControl(MlxControlError::Failed(text)),
+        code => LinkError::MlxProxy(format!("peer returned {code}: {text}")),
     })
 }
 

@@ -12,12 +12,13 @@ use chrono::{DateTime, TimeZone, Utc};
 use futures::stream::BoxStream;
 use futures::StreamExt;
 use leanzero_link::control::{
-    execute_error_status, ControlConfig, ControlHandle, ControlService, MeshBind,
-    CLOSE_CODE_CLIENT_TOO_FAR_BEHIND, CLOSE_REASON_CLIENT_TOO_FAR_BEHIND,
+    execute_error_status, mlx_control_error_status, ControlConfig, ControlHandle, ControlService,
+    MeshBind, CLOSE_CODE_CLIENT_TOO_FAR_BEHIND, CLOSE_REASON_CLIENT_TOO_FAR_BEHIND,
 };
 use leanzero_link::pubsub::REPLAY_BUFFER_CAPACITY;
 use leanzero_link::state::{
-    ExecuteAccepted, ExecuteError, ExecuteRequest, PeerTarget, RemoteExecutor, SwarmStateSource,
+    ExecuteAccepted, ExecuteError, ExecuteRequest, MlxControl, MlxControlError, MlxOp, PeerTarget,
+    RemoteExecutor, SwarmStateSource,
 };
 use leanzero_link::wire::{
     LinkEvent, NodeState, NodeStatus, SessionDeltaKind, SessionSummary, StreamFrame,
@@ -135,7 +136,7 @@ async fn spawn_node_full(
     config.heartbeat_interval = Duration::from_secs(5);
     config.reconnect_backoff = Duration::from_millis(100);
     config.allow_remote_execution = allow_remote_execution;
-    ControlService::start(config, source, executor)
+    ControlService::start(config, source, executor, None)
         .await
         .expect("control service starts")
 }
@@ -779,6 +780,270 @@ fn execute_error_status_mapping_is_exact() {
     );
     assert_eq!(
         execute_error_status(&ExecuteError::Internal("boom".into())).as_u16(),
+        500
+    );
+}
+
+// ── POST /v1/swarm/mlx/<op>: model-management proxy + control seam ───────
+
+/// A scripted [`MlxControl`]: records the (op, request) pairs it is handed and returns a
+/// fixed outcome. Stands in for goose's `GoosedMlxControl` — no engine, no sidecar.
+struct FakeMlxControl {
+    recorded: StdMutex<Vec<(MlxOp, serde_json::Value)>>,
+    outcome: Result<serde_json::Value, MlxControlError>,
+}
+
+impl FakeMlxControl {
+    fn returning(value: serde_json::Value) -> Arc<Self> {
+        Arc::new(Self {
+            recorded: StdMutex::new(Vec::new()),
+            outcome: Ok(value),
+        })
+    }
+
+    fn failing(error: MlxControlError) -> Arc<Self> {
+        Arc::new(Self {
+            recorded: StdMutex::new(Vec::new()),
+            outcome: Err(error),
+        })
+    }
+
+    fn call_count(&self) -> usize {
+        self.recorded.lock().unwrap().len()
+    }
+}
+
+#[async_trait::async_trait]
+impl MlxControl for FakeMlxControl {
+    async fn dispatch(
+        &self,
+        op: MlxOp,
+        request: serde_json::Value,
+    ) -> Result<serde_json::Value, MlxControlError> {
+        self.recorded.lock().unwrap().push((op, request));
+        self.outcome.clone()
+    }
+}
+
+async fn spawn_node_mlx(
+    source: Arc<FakeStateSource>,
+    mesh_ip: Option<IpAddr>,
+    mlx_control: Option<Arc<dyn MlxControl>>,
+) -> ControlHandle {
+    let mut config = ControlConfig::new(TOKEN.to_string(), mesh_ip);
+    config.port = 0;
+    config.poll_interval = Duration::from_millis(100);
+    config.heartbeat_interval = Duration::from_secs(5);
+    config.reconnect_backoff = Duration::from_millis(100);
+    ControlService::start(config, source, None, mlx_control)
+        .await
+        .expect("control service starts")
+}
+
+async fn post_mlx(
+    client: &reqwest::Client,
+    base: &str,
+    bearer: &str,
+    op: &str,
+    body: serde_json::Value,
+) -> reqwest::Response {
+    client
+        .post(format!("{base}/v1/swarm/mlx/{op}"))
+        .bearer_auth(bearer)
+        .json(&body)
+        .send()
+        .await
+        .expect("mlx request sends")
+}
+
+#[tokio::test]
+async fn mlx_proxy_dispatches_to_control_and_returns_its_payload_even_when_busy() {
+    // A busy node (a session is live) — model management has NO idle guard, unlike execute.
+    let source = FakeStateSource::new("node-a");
+    source.set_sessions(vec![summary("s1", "node-a", true, 100)]);
+    let payload = serde_json::json!({
+        "status": {
+            "state": "running",
+            "modelId": "org/model",
+            "availableMemoryGb": 12.0,
+            "totalMemoryGb": 64.0,
+            "restartRequired": false
+        }
+    });
+    let control = FakeMlxControl::returning(payload.clone());
+    let handle = spawn_node_mlx(source.clone(), mesh_v6(), Some(control.clone())).await;
+    let base = base_url(&handle);
+    let client = reqwest::Client::new();
+
+    let resp = post_mlx(
+        &client,
+        &base,
+        TOKEN,
+        "status",
+        serde_json::json!({"nodeId": "node-a"}),
+    )
+    .await;
+    assert_eq!(
+        resp.status(),
+        200,
+        "a busy node still serves model management"
+    );
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(
+        body, payload,
+        "the control's response DTO is returned verbatim"
+    );
+
+    let recorded = control.recorded.lock().unwrap();
+    assert_eq!(recorded.len(), 1, "the control ran exactly once");
+    assert_eq!(
+        recorded[0].0,
+        MlxOp::Status,
+        "the op was routed from the path"
+    );
+    assert_eq!(
+        recorded[0].1["nodeId"], "node-a",
+        "the request body passed through"
+    );
+
+    handle.shutdown();
+}
+
+#[tokio::test]
+async fn mlx_proxy_501_when_no_control_injected() {
+    let source = FakeStateSource::new("node-a");
+    let handle = spawn_node_mlx(source.clone(), mesh_v6(), None).await;
+    let base = base_url(&handle);
+    let client = reqwest::Client::new();
+
+    let resp = post_mlx(&client, &base, TOKEN, "status", serde_json::json!({})).await;
+    assert_eq!(
+        resp.status(),
+        501,
+        "no mlx control wired is loud-absent, never a fabricated result"
+    );
+
+    handle.shutdown();
+}
+
+#[tokio::test]
+async fn mlx_proxy_401_on_bad_bearer_and_never_calls_control() {
+    let source = FakeStateSource::new("node-a");
+    let control = FakeMlxControl::returning(serde_json::json!({}));
+    let handle = spawn_node_mlx(source.clone(), mesh_v6(), Some(control.clone())).await;
+    let base = base_url(&handle);
+    let client = reqwest::Client::new();
+
+    let resp = post_mlx(
+        &client,
+        &base,
+        "wrong-token",
+        "modelDelete",
+        serde_json::json!({"modelId": "x"}),
+    )
+    .await;
+    assert_eq!(resp.status(), 401);
+    assert_eq!(
+        control.call_count(),
+        0,
+        "auth is checked before the control seam"
+    );
+
+    handle.shutdown();
+}
+
+#[tokio::test]
+async fn mlx_proxy_surfaces_a_peer_failure_verbatim() {
+    let source = FakeStateSource::new("node-a");
+
+    // A node's own internal failure (disk read) → 500 with the text intact.
+    let failing = FakeMlxControl::failing(MlxControlError::Failed(
+        "reading local models failed: permission denied".to_string(),
+    ));
+    let handle = spawn_node_mlx(source.clone(), mesh_v6(), Some(failing)).await;
+    let base = base_url(&handle);
+    let client = reqwest::Client::new();
+    let resp = post_mlx(&client, &base, TOKEN, "modelsList", serde_json::json!({})).await;
+    assert_eq!(resp.status(), 500);
+    let text = resp.text().await.unwrap();
+    assert!(
+        text.contains("reading local models failed: permission denied"),
+        "the peer's failure text is surfaced verbatim, got: {text}"
+    );
+    handle.shutdown();
+
+    // A memory-gate BLOCK on mount is the local invalid_params class → 400, text intact.
+    let blocked = FakeMlxControl::failing(MlxControlError::BadRequest(
+        "memory gate BLOCK: model needs 40GB, 12GB free".to_string(),
+    ));
+    let handle = spawn_node_mlx(source, mesh_v6(), Some(blocked)).await;
+    let base = base_url(&handle);
+    let resp = post_mlx(
+        &client,
+        &base,
+        TOKEN,
+        "mount",
+        serde_json::json!({"modelId": "org/big"}),
+    )
+    .await;
+    assert_eq!(resp.status(), 400);
+    let text = resp.text().await.unwrap();
+    assert!(
+        text.contains("memory gate BLOCK: model needs 40GB, 12GB free"),
+        "the gate BLOCK is surfaced verbatim, got: {text}"
+    );
+    handle.shutdown();
+}
+
+#[tokio::test]
+async fn mlx_proxy_unknown_op_is_404() {
+    let source = FakeStateSource::new("node-a");
+    let control = FakeMlxControl::returning(serde_json::json!({}));
+    let handle = spawn_node_mlx(source.clone(), mesh_v6(), Some(control.clone())).await;
+    let base = base_url(&handle);
+    let client = reqwest::Client::new();
+
+    let resp = post_mlx(&client, &base, TOKEN, "bogusOp", serde_json::json!({})).await;
+    assert_eq!(
+        resp.status(),
+        404,
+        "an unknown op is loud, not a silent no-op"
+    );
+    assert_eq!(control.call_count(), 0);
+
+    handle.shutdown();
+}
+
+#[tokio::test]
+async fn mlx_proxy_400_on_unparseable_body() {
+    let source = FakeStateSource::new("node-a");
+    let control = FakeMlxControl::returning(serde_json::json!({}));
+    let handle = spawn_node_mlx(source.clone(), mesh_v6(), Some(control.clone())).await;
+    let base = base_url(&handle);
+    let client = reqwest::Client::new();
+
+    let resp = client
+        .post(format!("{base}/v1/swarm/mlx/download"))
+        .bearer_auth(TOKEN)
+        .header("content-type", "application/json")
+        .body("this is not json")
+        .send()
+        .await
+        .expect("request sends");
+    assert_eq!(resp.status(), 400);
+    assert_eq!(control.call_count(), 0);
+
+    handle.shutdown();
+}
+
+#[test]
+fn mlx_control_error_status_mapping_is_exact() {
+    assert_eq!(
+        mlx_control_error_status(&MlxControlError::BadRequest("bad".into())).as_u16(),
+        400
+    );
+    assert_eq!(
+        mlx_control_error_status(&MlxControlError::Failed("boom".into())).as_u16(),
         500
     );
 }

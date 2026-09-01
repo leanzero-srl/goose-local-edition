@@ -19,6 +19,18 @@
 //!   The receive-side idle guard is real: a node whose [`SwarmStateSource::local_node`]
 //!   reports non-`Idle` answers `409` and refuses the work now. No executor injected →
 //!   `501` (loud-absent, never a fake accept). The bearer check is never weakened here.
+//! - `POST /v1/swarm/mlx/<op>` → the remote MODEL-MANAGEMENT proxy: one same-account
+//!   device runs/pauses/cancels a model download, deletes a model, reads status/models, or
+//!   changes sampling/mount settings on THIS node's local MLX engine. Each `<op>` maps 1:1
+//!   to a `mlxEngine/<op>` ACP method ([`MlxOp`]); the request/response bodies are the
+//!   mlxEngine DTOs passed through as opaque JSON. The op is executed by the injected
+//!   [`MlxControl`] against the node's own `goose_sidecar` engine — so a remote node's disk
+//!   space, downloads, mounted model and browse results are all THAT node's truth. Gates:
+//!   the same tailnet-isolation + node_token bearer as `/execute` and nothing else (a
+//!   personal fleet). NO idle guard — model management runs while the node is busy. No
+//!   `MlxControl` injected → `501`. Destructive ops (`modelDelete`, `downloadCancel`) log
+//!   at `warn` on the executing node. A peer's own failure (memory-gate BLOCK, disk-full,
+//!   its 501) surfaces verbatim as `400`/`500`, never swallowed or faked.
 //!
 //! Listeners: 127.0.0.1 always (the local desktop), plus the mesh IP when one is
 //! up. Under `--tun=userspace-networking` (this crate's only tailscaled mode) the
@@ -34,7 +46,7 @@ use std::time::Duration;
 
 use axum::extract::rejection::JsonRejection;
 use axum::extract::ws::{CloseFrame, Message as WsMessage, WebSocket, WebSocketUpgrade};
-use axum::extract::{Query, Request, State};
+use axum::extract::{Path, Query, Request, State};
 use axum::http::{header, StatusCode};
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
@@ -52,8 +64,8 @@ use tokio::task::JoinHandle;
 
 use crate::pubsub::{EventOrigin, PubSub, StampedEvent, SubscribeError};
 use crate::state::{
-    ExecuteError, ExecuteRequest, PeerRegistry, PeerRegistryConfig, PeerTarget, RemoteExecutor,
-    SwarmStateSource,
+    ExecuteError, ExecuteRequest, MlxControl, MlxControlError, MlxOp, PeerRegistry,
+    PeerRegistryConfig, PeerTarget, RemoteExecutor, SwarmStateSource,
 };
 use crate::wire::{NodeStatus, SessionSummary, StreamFrame, SwarmNodesResponse};
 
@@ -146,6 +158,10 @@ struct Ctx {
     /// beside `source`, exactly as [`SwarmStateSource`] is — the executor is the seam
     /// goose-server implements; this crate never spawns an agent.
     executor: Option<Arc<dyn RemoteExecutor>>,
+    /// `None` → the `/v1/swarm/mlx/*` proxy routes answer `501` (mlx control not wired).
+    /// Injected beside `executor`; the seam goose implements over its local mlxEngine
+    /// code path. This crate never touches `goose_sidecar`.
+    mlx_control: Option<Arc<dyn MlxControl>>,
     allow_remote_execution: bool,
 }
 
@@ -161,6 +177,7 @@ impl ControlService {
         config: ControlConfig,
         source: Arc<dyn SwarmStateSource>,
         executor: Option<Arc<dyn RemoteExecutor>>,
+        mlx_control: Option<Arc<dyn MlxControl>>,
     ) -> Result<ControlHandle, ControlError> {
         if config.node_token.trim().is_empty() {
             return Err(ControlError::EmptyToken);
@@ -184,6 +201,7 @@ impl ControlService {
             mesh_ip: config.mesh_ip,
             heartbeat_interval: config.heartbeat_interval,
             executor,
+            mlx_control,
             allow_remote_execution: config.allow_remote_execution,
         };
         let router = swarm_router(ctx, Arc::new(config.node_token));
@@ -315,6 +333,9 @@ fn swarm_router(ctx: Ctx, token: Arc<String>) -> Router {
         .route("/v1/swarm/sessions", get(sessions))
         .route("/v1/swarm/stream", get(stream))
         .route("/v1/swarm/execute", post(execute))
+        // One authenticated proxy route per mlxEngine op. `{op}` is validated against
+        // `MlxOp` in the handler — an unknown op is a loud `404`, never a silent no-op.
+        .route("/v1/swarm/mlx/{op}", post(mlx_proxy))
         .layer(axum::middleware::from_fn_with_state(token, require_token))
         .with_state(ctx)
 }
@@ -471,6 +492,72 @@ async fn execute(
     match executor.execute(req).await {
         Ok(accepted) => (StatusCode::ACCEPTED, Json(accepted)).into_response(),
         Err(error) => execute_error_response(error),
+    }
+}
+
+/// The HTTP status each [`MlxControlError`] maps to on the `/v1/swarm/mlx/*` routes, so the
+/// forwarding side ([`crate::manager::LinkManager::mlx_proxy`]) can reconstruct the local
+/// ACP error class: `BadRequest` → `400` (the local `invalid_params` bucket), `Failed` →
+/// `500` (the local `internal_error` bucket).
+pub fn mlx_control_error_status(error: &MlxControlError) -> StatusCode {
+    match error {
+        MlxControlError::BadRequest(_) => StatusCode::BAD_REQUEST,
+        MlxControlError::Failed(_) => StatusCode::INTERNAL_SERVER_ERROR,
+    }
+}
+
+/// `POST /v1/swarm/mlx/<op>`: run one mlxEngine operation on THIS node for a same-account
+/// peer, against the local MLX engine via the injected [`MlxControl`].
+///
+/// Gate order (each loud, none a fallback): an unknown `<op>` → `404`; no `MlxControl`
+/// injected → `501`; an unparseable body → `400`; otherwise the op runs and its response
+/// DTO (opaque JSON) is returned `200`, or its [`MlxControlError`] maps to `400`/`500` so
+/// the peer's own failure (memory-gate BLOCK, disk-full) surfaces verbatim. Auth (bearer /
+/// `?token=`, constant-time) is enforced by the router middleware. There is NO idle guard:
+/// model management is allowed while the node runs a session. Destructive ops log at `warn`.
+async fn mlx_proxy(
+    Path(op): Path<String>,
+    State(ctx): State<Ctx>,
+    body: Result<Json<serde_json::Value>, JsonRejection>,
+) -> Response {
+    let Some(op) = MlxOp::from_path(&op) else {
+        return (StatusCode::NOT_FOUND, format!("unknown mlx op '{op}'")).into_response();
+    };
+
+    let Some(control) = ctx.mlx_control.as_ref() else {
+        return (
+            StatusCode::NOT_IMPLEMENTED,
+            "mlx control not wired on this node".to_string(),
+        )
+            .into_response();
+    };
+
+    let Json(request) = match body {
+        Ok(json) => json,
+        Err(rejection) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                format!("invalid mlx request body: {rejection}"),
+            )
+                .into_response();
+        }
+    };
+
+    if op.is_destructive() {
+        tracing::warn!(
+            op = op.path(),
+            "leanzeroLink: executing a DESTRUCTIVE remote mlx op over the mesh"
+        );
+    } else {
+        tracing::info!(
+            op = op.path(),
+            "leanzeroLink: executing a remote mlx op over the mesh"
+        );
+    }
+
+    match control.dispatch(op, request).await {
+        Ok(value) => (StatusCode::OK, Json(value)).into_response(),
+        Err(error) => (mlx_control_error_status(&error), error.to_string()).into_response(),
     }
 }
 
