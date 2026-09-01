@@ -1,5 +1,5 @@
+import * as TabsPrimitive from '@radix-ui/react-tabs';
 import { ScrollArea } from '../ui/scroll-area';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '../ui/tabs';
 import { View, ViewOptions } from '../../utils/navigationUtils';
 import ExternalBackendSection from './app/ExternalBackendSection';
 import AppSettingsSection from './app/AppSettingsSection';
@@ -25,6 +25,7 @@ import { CONFIGURATION_ENABLED } from '../../updates';
 import { trackSettingsTabViewed } from '../../utils/analytics';
 import { useEdition } from '../../contexts/EditionContext';
 import { defineMessages, useIntl } from '../../i18n';
+import { FOCUS, MOTION, PageHeader, RADIUS, SectionHeader, SPACE, SURFACE, cx } from '../lz';
 
 const i18n = defineMessages({
   title: {
@@ -62,6 +63,30 @@ export type SettingsViewOptions = {
   showEnvVars?: boolean;
   section?: string;
 };
+
+/**
+ * The tab strip is the lz Segmented's class recipe on Radix tab triggers: the triggers keep the
+ * tablist/tab/tabpanel semantics, the `settings-*-tab` test ids the e2e journey selects, and the
+ * `data-state` the tab test pins — the primitive's radio options carry none of those, so the
+ * strip is composed here from the same tokens.
+ */
+const STRIP = cx(
+  'inline-flex max-w-full items-center gap-0.5 self-start overflow-x-auto bg-lz-surface p-0.5',
+  SURFACE.outline,
+  RADIUS.control
+);
+const SEGMENT =
+  'inline-flex h-7 items-center gap-1.5 whitespace-nowrap rounded-[4px] px-2.5 text-[12px] font-lz-medium [&_svg]:size-3.5 [&_svg]:shrink-0';
+function segmentClass(active: boolean): string {
+  return cx(
+    SEGMENT,
+    active ? SURFACE.selected : cx('text-lz-ink-2 hover:text-lz-ink', SURFACE.hover),
+    FOCUS,
+    MOTION
+  );
+}
+
+const TAB_PANEL = 'outline-none pb-lz-page';
 
 export default function SettingsView({
   onClose,
@@ -140,133 +165,132 @@ export default function SettingsView({
     };
   }, [onClose]);
 
+  const tabChat = intl.formatMessage(i18n.tabChat);
+  const tabSession = intl.formatMessage(i18n.tabSession);
+  const tabPrompts = intl.formatMessage(i18n.tabPrompts);
+  const tabKeyboard = intl.formatMessage(i18n.tabKeyboard);
+  const tabAuth = intl.formatMessage(i18n.tabAuth);
+  const tabApp = intl.formatMessage(i18n.tabApp);
+
   return (
     <>
       <MainPanelLayout>
-        <div className="flex-1 flex flex-col min-h-0">
-          <div className="bg-background-primary px-8 pb-8 pt-16">
-            <div className="flex flex-col page-transition">
-              <div className="flex justify-between items-center mb-1">
-                <h1 className="text-4xl font-light">{intl.formatMessage(i18n.title)}</h1>
-              </div>
-            </div>
+        <div className={cx('flex min-h-0 flex-1 flex-col', SURFACE.page)}>
+          <div className={cx('pb-6 pt-lz-page', SPACE.pageX)}>
+            <PageHeader title={intl.formatMessage(i18n.title)} />
           </div>
 
-          <div className="flex-1 min-h-0 relative px-6">
-            <Tabs
+          <div className={cx('relative min-h-0 flex-1', SPACE.pageX)}>
+            <TabsPrimitive.Root
               value={activeTab}
               onValueChange={handleTabChange}
-              className="h-full flex flex-col"
+              className="flex h-full flex-col"
             >
-              <div className="px-1">
-                <TabsList className="w-full mb-2 justify-start overflow-x-auto flex-nowrap">
-                  {isLocalEdition && (
-                    <TabsTrigger
-                      value="import"
-                      className="flex gap-2"
-                      data-testid="settings-import-tab"
-                    >
-                      <DownloadCloud className="h-4 w-4" />
-                      Import
-                    </TabsTrigger>
-                  )}
-                  <TabsTrigger value="chat" className="flex gap-2" data-testid="settings-chat-tab">
-                    <MessageSquare className="h-4 w-4" />
-                    {intl.formatMessage(i18n.tabChat)}
-                  </TabsTrigger>
-                  <TabsTrigger
-                    value="sharing"
-                    className="flex gap-2"
-                    data-testid="settings-sharing-tab"
-                  >
-                    <Share2 className="h-4 w-4" />
-                    {intl.formatMessage(i18n.tabSession)}
-                  </TabsTrigger>
-                  <TabsTrigger
-                    value="prompts"
-                    className="flex gap-2"
-                    data-testid="settings-prompts-tab"
-                  >
-                    <FileText className="h-4 w-4" />
-                    {intl.formatMessage(i18n.tabPrompts)}
-                  </TabsTrigger>
-                  <TabsTrigger
-                    value="keyboard"
-                    className="flex gap-2"
-                    data-testid="settings-keyboard-tab"
-                  >
-                    <Keyboard className="h-4 w-4" />
-                    {intl.formatMessage(i18n.tabKeyboard)}
-                  </TabsTrigger>
-                  <TabsTrigger value="auth" className="flex gap-2" data-testid="settings-auth-tab">
-                    <KeyRound className="h-4 w-4" />
-                    {intl.formatMessage(i18n.tabAuth)}
-                  </TabsTrigger>
-                  <TabsTrigger value="app" className="flex gap-2" data-testid="settings-app-tab">
-                    <Monitor className="h-4 w-4" />
-                    {intl.formatMessage(i18n.tabApp)}
-                  </TabsTrigger>
-                </TabsList>
-              </div>
-
-              <ScrollArea className="flex-1 px-2">
+              <TabsPrimitive.List aria-label={intl.formatMessage(i18n.title)} className={STRIP}>
                 {isLocalEdition && (
-                  <TabsContent
+                  <TabsPrimitive.Trigger
                     value="import"
-                    className="mt-0 focus-visible:outline-none focus-visible:ring-0"
+                    className={segmentClass(activeTab === 'import')}
+                    data-testid="settings-import-tab"
                   >
+                    <DownloadCloud aria-hidden />
+                    Import
+                  </TabsPrimitive.Trigger>
+                )}
+                <TabsPrimitive.Trigger
+                  value="chat"
+                  className={segmentClass(activeTab === 'chat')}
+                  data-testid="settings-chat-tab"
+                >
+                  <MessageSquare aria-hidden />
+                  {tabChat}
+                </TabsPrimitive.Trigger>
+                <TabsPrimitive.Trigger
+                  value="sharing"
+                  className={segmentClass(activeTab === 'sharing')}
+                  data-testid="settings-sharing-tab"
+                >
+                  <Share2 aria-hidden />
+                  {tabSession}
+                </TabsPrimitive.Trigger>
+                <TabsPrimitive.Trigger
+                  value="prompts"
+                  className={segmentClass(activeTab === 'prompts')}
+                  data-testid="settings-prompts-tab"
+                >
+                  <FileText aria-hidden />
+                  {tabPrompts}
+                </TabsPrimitive.Trigger>
+                <TabsPrimitive.Trigger
+                  value="keyboard"
+                  className={segmentClass(activeTab === 'keyboard')}
+                  data-testid="settings-keyboard-tab"
+                >
+                  <Keyboard aria-hidden />
+                  {tabKeyboard}
+                </TabsPrimitive.Trigger>
+                <TabsPrimitive.Trigger
+                  value="auth"
+                  className={segmentClass(activeTab === 'auth')}
+                  data-testid="settings-auth-tab"
+                >
+                  <KeyRound aria-hidden />
+                  {tabAuth}
+                </TabsPrimitive.Trigger>
+                <TabsPrimitive.Trigger
+                  value="app"
+                  className={segmentClass(activeTab === 'app')}
+                  data-testid="settings-app-tab"
+                >
+                  <Monitor aria-hidden />
+                  {tabApp}
+                </TabsPrimitive.Trigger>
+              </TabsPrimitive.List>
+
+              <ScrollArea className="mt-4 flex-1">
+                {isLocalEdition && (
+                  <TabsPrimitive.Content value="import" className={TAB_PANEL}>
+                    <SectionHeader title="Import" className="mb-2" />
                     <ImportView />
-                  </TabsContent>
+                  </TabsPrimitive.Content>
                 )}
 
-                <TabsContent
-                  value="chat"
-                  className="mt-0 focus-visible:outline-none focus-visible:ring-0"
-                >
+                <TabsPrimitive.Content value="chat" className={TAB_PANEL}>
+                  <SectionHeader title={tabChat} className="mb-2" />
                   <ChatSettingsSection />
-                </TabsContent>
+                </TabsPrimitive.Content>
 
-                <TabsContent
-                  value="sharing"
-                  className="mt-0 focus-visible:outline-none focus-visible:ring-0"
-                >
+                <TabsPrimitive.Content value="sharing" className={TAB_PANEL}>
+                  <SectionHeader title={tabSession} className="mb-2" />
                   <div className="space-y-8 pb-8">
                     <ExternalBackendSection />
                   </div>
-                </TabsContent>
+                </TabsPrimitive.Content>
 
-                <TabsContent
-                  value="prompts"
-                  className="mt-0 focus-visible:outline-none focus-visible:ring-0"
-                >
+                <TabsPrimitive.Content value="prompts" className={TAB_PANEL}>
+                  <SectionHeader title={tabPrompts} className="mb-2" />
                   <PromptsSettingsSection />
-                </TabsContent>
+                </TabsPrimitive.Content>
 
-                <TabsContent
-                  value="keyboard"
-                  className="mt-0 focus-visible:outline-none focus-visible:ring-0"
-                >
+                <TabsPrimitive.Content value="keyboard" className={TAB_PANEL}>
+                  <SectionHeader title={tabKeyboard} className="mb-2" />
                   <KeyboardShortcutsSection />
-                </TabsContent>
+                </TabsPrimitive.Content>
 
-                <TabsContent
-                  value="auth"
-                  className="mt-0 focus-visible:outline-none focus-visible:ring-0"
-                >
+                <TabsPrimitive.Content value="auth" className={TAB_PANEL}>
+                  <SectionHeader title={tabAuth} className="mb-2" />
                   <AuthSettingsSection />
-                </TabsContent>
+                </TabsPrimitive.Content>
 
-                <TabsContent
-                  value="app"
-                  className="mt-0 focus-visible:outline-none focus-visible:ring-0"
-                >
+                <TabsPrimitive.Content value="app" className={TAB_PANEL}>
+                  <SectionHeader title={tabApp} className="mb-2" />
                   <div className="space-y-8">
                     {CONFIGURATION_ENABLED && <ConfigSettings />}
                     <AppSettingsSection scrollToSection={viewOptions.section} />
                   </div>
-                </TabsContent>
+                </TabsPrimitive.Content>
               </ScrollArea>
-            </Tabs>
+            </TabsPrimitive.Root>
           </div>
         </div>
       </MainPanelLayout>
