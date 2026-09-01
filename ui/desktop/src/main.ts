@@ -60,8 +60,13 @@ import installExtension, { REACT_DEVELOPER_TOOLS } from 'electron-devtools-insta
 import { BLOCKED_PROTOCOLS, WEB_PROTOCOLS } from './utils/urlSecurity';
 import { buildCSP } from './utils/csp';
 import { hideDevOnlyMenuItems } from './utils/menuPolicy';
-import { isBenchmarkViewUrl, shouldRefuseShortcut } from './utils/shortcutGuard';
-import type { GuardedShortcutAction } from './utils/shortcutGuard';
+import {
+  isBenchmarkViewUrl,
+  isSwarmRunStampAlive,
+  shortcutRefusalReason,
+  shouldRefuseShortcut,
+} from './utils/shortcutGuard';
+import type { GuardedShortcutAction, SwarmRunStamp } from './utils/shortcutGuard';
 
 function shouldSetupUpdater(): boolean {
   // Setup updater if either the flag is enabled OR dev updates are enabled
@@ -1466,7 +1471,7 @@ const createChat = async (
       if (input.key.toLowerCase() === 'r' && input.meta) {
         // preventDefault here also stops the menu's live reload role, so a dev build mid-run is as
         // safe from Cmd+R as the packaged one.
-        if (!refuseShortcutDuringBenchmark('reload', true)) mainWindow.reload();
+        if (!refuseShortcutDuringRun('reload', true)) mainWindow.reload();
         event.preventDefault();
       }
 
@@ -3247,6 +3252,30 @@ ipcMain.handle(
 // One watch set per renderer, armed by that renderer's own reads and dropped when it goes away.
 const swarmWatchers = new SwarmWatchRegistry();
 
+// MAIN'S ONLY KNOWLEDGE OF A SESSION-DRIVEN RUN. `goose swarm run` is goosed's child, not main's, so
+// unlike `activeBenchRun` there is no handle here to ask. What main does see is every read-swarm-run it
+// answers: the heartbeat it just read is stamped here per run directory, and the shortcut guard reads
+// it back through the same 45s window the liveness banner uses. THE CACHE IS ONLY AS FRESH AS THE
+// RENDERER'S POLL — nothing in main refreshes it — so a run nobody is watching decays to "dead" within
+// one window and the guard fails open. A stamp is consulted only while a live subscription (below) still
+// targets its directory; the sweep in liveSwarmRunDirs drops the rest.
+const swarmRunStamps = new Map<string, SwarmRunStamp>();
+
+/** Run directories a live subscription targets AND whose cached stamp says the engine is alive. */
+const liveSwarmRunDirs = (match: (subscriber: string) => boolean): string[] => {
+  const targeted = new Set(swarmWatchers.targetsWhere(() => true).map((t) => t.swarmDir));
+  for (const dir of [...swarmRunStamps.keys()]) if (!targeted.has(dir)) swarmRunStamps.delete(dir);
+  const now = Date.now();
+  return swarmWatchers
+    .targetsWhere(match)
+    .map((t) => t.swarmDir)
+    .filter((dir) => isSwarmRunStampAlive(swarmRunStamps.get(dir), now));
+};
+const anySessionRunLive = (): boolean => liveSwarmRunDirs(() => true).length > 0;
+/** Subscription keys are `${webContentsId}::${workingDir}` (see read-swarm-run). */
+const windowHoldsLiveRun = (win: BrowserWindow | null): boolean =>
+  win !== null && liveSwarmRunDirs((s) => s.startsWith(`${win.webContents.id}::`)).length > 0;
+
 let lastSwarmReadErrorLogMs = 0;
 ipcMain.handle('read-swarm-run', async (event, workingDir: string) => {
   try {
@@ -3265,10 +3294,18 @@ ipcMain.handle('read-swarm-run', async (event, workingDir: string) => {
       // breadcrumb + no .swarm run log + a run.jsonl next door IS that layout — treat the named
       // file exactly like a pinned run log. Gated on the breadcrumb so an unrelated run.jsonl in
       // some project dir can never masquerade as a live run.
-      if (!hadBreadcrumb) return null;
+      // A directory that no longer resolves a run has nothing left to protect: drop its stamp now
+      // rather than letting it age out, so a chord is never refused for a run that is gone.
+      if (!hadBreadcrumb) {
+        swarmRunStamps.delete(swarmDir);
+        return null;
+      }
       const benchLog = path.join(path.dirname(swarmDir), 'run.jsonl');
       const st = await fs.stat(benchLog).catch(() => null);
-      if (!st) return null;
+      if (!st) {
+        swarmRunStamps.delete(swarmDir);
+        return null;
+      }
       runFilePath = benchLog;
       runId = pinnedRunId ?? 'bench';
       mtime = st.mtimeMs;
@@ -3561,6 +3598,10 @@ ipcMain.handle('read-swarm-run', async (event, workingDir: string) => {
     } catch {
       /* no pause sentinel -> not paused */
     }
+
+    // The shortcut guard's feed for a session-driven run: the stamp this renderer is about to be shown,
+    // keyed by the run's directory. Written on every answered poll and nowhere else (see swarmRunStamps).
+    swarmRunStamps.set(swarmDir, { heartbeat, heartbeatExited });
 
     return {
       runId,
@@ -4078,19 +4119,28 @@ const focusedWindowWorkingDir = async (): Promise<string | undefined> => {
 };
 
 // Returns true when the caller must NOT act. The refusal is reported to the focused window as a
-// warning toast so a swallowed key chord is never silent.
-const refuseShortcutDuringBenchmark = (
+// warning toast (react-toastify in App.tsx — never a native dialog) so a swallowed key chord is never
+// silent; `reason` tells the renderer which live run it is protecting. Two feeds, one predicate: the
+// main-owned benchmark child, and the per-run heartbeat stamps a session window's own poll keeps fresh.
+const refuseShortcutDuringRun = (
   action: GuardedShortcutAction,
   triggeredByAccelerator: boolean
 ): boolean => {
   const focused = BrowserWindow.getFocusedWindow();
+  const benchmarkRunning = activeBenchRun !== null;
   const refused = shouldRefuseShortcut({
     action,
-    benchmarkRunning: activeBenchRun !== null,
+    benchmarkRunning,
     triggeredByAccelerator,
     onBenchmarkView: focused !== null && isBenchmarkViewUrl(focused.webContents.getURL()),
+    sessionRunLive: anySessionRunLive(),
+    windowHoldsLiveRun: windowHoldsLiveRun(focused),
   });
-  if (refused) focused?.webContents.send('shortcut-refused', { action });
+  if (refused) {
+    const reason = shortcutRefusalReason(benchmarkRunning);
+    if (focused) focused.webContents.send('shortcut-refused', { action, reason });
+    else log.info(`[shortcut-guard] refused ${action} (${reason}) with no focused window`);
+  }
   return refused;
 };
 
@@ -4113,7 +4163,7 @@ const guardCloseAndQuitAccelerators = (items: MenuItem[]): void => {
           label: item.label,
           accelerator: item.accelerator ?? (action === 'close' ? 'CmdOrCtrl+W' : 'CmdOrCtrl+Q'),
           click(_menuItem, _window, event) {
-            if (refuseShortcutDuringBenchmark(action, event.triggeredByAccelerator === true))
+            if (refuseShortcutDuringRun(action, event.triggeredByAccelerator === true))
               return;
             if (action === 'quit') {
               app.quit();
@@ -4128,6 +4178,8 @@ const guardCloseAndQuitAccelerators = (items: MenuItem[]): void => {
   }
 };
 
+// The global hotkey's no-window branch SPAWNS (a new window is a new goose serve lease), so it goes
+// through the same guard as File > New Window; showing existing windows touches no run and never needs it.
 const focusWindow = () => {
   const windows = BrowserWindow.getAllWindows();
   if (windows.length > 0) {
@@ -4136,6 +4188,7 @@ const focusWindow = () => {
     });
     windows[windows.length - 1].webContents.send('focus-input');
   } else {
+    if (refuseShortcutDuringRun('spawn', true)) return;
     createNewWindow(app);
   }
 };
@@ -4265,7 +4318,7 @@ async function appMain() {
           label: menuT('Settings'),
           accelerator: shortcuts.settings,
           click(_menuItem, _window, event) {
-            if (refuseShortcutDuringBenchmark('navigate', event.triggeredByAccelerator === true)) {
+            if (refuseShortcutDuringRun('navigate', event.triggeredByAccelerator === true)) {
               return;
             }
             const focusedWindow = BrowserWindow.getFocusedWindow();
@@ -4342,7 +4395,7 @@ async function appMain() {
           label: menuT('New Window'),
           accelerator: shortcuts.newChatWindow,
           async click(_menuItem, _window, event) {
-            if (refuseShortcutDuringBenchmark('spawn', event.triggeredByAccelerator === true))
+            if (refuseShortcutDuringRun('spawn', event.triggeredByAccelerator === true))
               return;
             await createNewWindow(app, await focusedWindowWorkingDir());
           },

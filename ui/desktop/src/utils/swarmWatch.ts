@@ -155,6 +155,20 @@ export class SwarmWatchRegistry {
   }
 
   /**
+   * The targets of every subscription whose key `match` accepts — how main asks "which run directories
+   * is THIS renderer live on" (its keys are `${webContentsId}::${workingDir}`, a format the registry does
+   * not know and does not need to). A subscription exists exactly while a useSwarmRun hook polls, so this
+   * is also the honest answer to "is anyone still watching that run".
+   */
+  targetsWhere(match: (subscriber: string) => boolean): SwarmWatchTarget[] {
+    const out: SwarmWatchTarget[] = [];
+    for (const [subscriber, entry] of this.entries) {
+      if (match(subscriber)) out.push(entry.target);
+    }
+    return out;
+  }
+
+  /**
    * THE EVENT LOG ONLY — deliberately NOT `activity/`.
    *
    * Watching the activity directory made the push counterproductive. The engine rewrites
