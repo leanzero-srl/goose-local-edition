@@ -148,6 +148,11 @@ pub enum LinkError {
     NoNodeSecret,
     #[error("busy: a connect is already in progress or the mesh is connected")]
     Busy,
+    #[error(
+        "connect aborted: the account was logged out while the mesh was coming up; the \
+         fresh connection was logged out of the tailnet and shut down per-pid"
+    )]
+    ConnectAborted,
     #[error("remote execution is not wired on this node")]
     ExecutorUnavailable,
     #[error("not connected to the mesh — cannot reach peers for remote execution")]
@@ -441,6 +446,23 @@ impl LinkManager {
         match self.connect_inner().await {
             Ok(active) => {
                 let mut inner = self.inner.lock().await;
+                let still_connecting = matches!(
+                    &inner.auth,
+                    AuthState::Connecting { email: current } if *current == email
+                );
+                if !still_connecting {
+                    // `logout()` raced us: the credential is already gone and auth has
+                    // moved on. The fresh connection is torn down exactly as a logout
+                    // would tear it down — `tailscale logout` (expire the node key on
+                    // the control plane), then per-pid shutdown — and logout's state
+                    // stands. Installing it would show `Connected` over no identity.
+                    drop(inner);
+                    tracing::warn!(
+                        "leanzero-link: logout raced the connect; tearing the fresh connection down"
+                    );
+                    teardown_active(active, true).await;
+                    return Err(LinkError::ConnectAborted);
+                }
                 inner.auth = AuthState::Connected {
                     email,
                     mesh_ip: active.mesh_ip.clone(),
@@ -450,12 +472,21 @@ impl LinkManager {
             }
             Err(ConnectFailure { error, logout }) => {
                 let mut inner = self.inner.lock().await;
-                inner.auth = if logout {
-                    AuthState::LoggedOut
+                if matches!(&inner.auth, AuthState::Connecting { .. }) {
+                    inner.auth = if logout {
+                        AuthState::LoggedOut
+                    } else {
+                        AuthState::LoggedIn { email }
+                    };
+                    inner.last_error = Some(error.to_string());
                 } else {
-                    AuthState::LoggedIn { email }
-                };
-                inner.last_error = Some(error.to_string());
+                    // `logout()` raced a FAILING connect: its `LoggedOut` stands; flipping
+                    // back to `LoggedIn` would claim a credential that is no longer on disk.
+                    tracing::warn!(
+                        error = %error,
+                        "leanzero-link: connect failed after a logout raced it; logged-out state kept"
+                    );
+                }
                 Err(error)
             }
         }
