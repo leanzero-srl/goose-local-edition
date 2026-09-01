@@ -1,5 +1,30 @@
 # MLX engine campaign — LEDGER
 
+## 2026-09-01 — LEANZERO LINK auth worker DONE (contract the identity client builds on; 410ecd910)
+
+leanzero-link/worker/ — self-hostable Cloudflare Worker, 58 tests, docs-verified (no live keys on
+this machine; every Resend/Tailscale request shape asserted against recorded doc fixtures). Deploy:
+wrangler login → kv namespace create LINK_KV → secret put LINK_JWT_SECRET/RESEND_API_KEY/
+RESEND_AUDIENCE_ID/TS_API_TOKEN/TS_TAILNET → set LEANZERO_MAIL_FROM → deploy → curl /v1/health.
+
+CONTRACT (the Rust identity client + the Link tab build EXACTLY on these):
+- POST /v1/auth/request-code {email} → 200 {ok, email(normalized), expiresInSeconds:600};
+  429 {error:"rate limited", scope:"email"|"ip", retryAfterSeconds} + Retry-After; 501 mail-not-configured.
+  Limits 3/h email, 10/h IP; only the SHA-256 hash stored, after Resend accepts.
+- POST /v1/auth/verify {email, code} → 200 {token(HS256 JWT sub=email exp=+180d ver=1), email,
+  audienceSync:"synced"|"skipped"|"failed"}; 401 invalid-or-expired (wrong/expired/used identical
+  by design); 429 after 5 attempts. Single-use, constant-time compare. Audience failure never blocks auth.
+- POST /v1/mesh/join-key  Bearer JWT → 200 {authKey:"tskey-auth-…", expirySeconds}; key ALWAYS
+  reusable:false ephemeral:true preauthorized:true tags:[TS_NODE_TAG default tag:leanzero-link] —
+  exactly what the embedded userspace tailscaled consumes; 501 mesh-not-configured (never a dummy key).
+- GET /v1/health → {ok, version, capabilities:{mail, audience, mesh}} from env presence.
+DEVIATIONS carried forward: Resend Audiences→Segments (worker uses POST /contacts + segments:[{id}];
+RESEND_AUDIENCE_ID now holds the SEGMENT id); Tailscale TS_API_TOKEN dual-mode (client_id:secret →
+OAuth exchange, else Basic-auth username). First live deploy must smoke /v1/health + one real OTP.
+
+Identity client (NEXT, sequenced after control service — same crate): ~/.leanzero/identity.json
+{email, token} source of truth; Rust HTTP client for the four endpoints; drives join-key → MeshEngine.join.
+
 ## 2026-09-01 — LEANZERO LINK recon: the seams the build binds to (survives compaction)
 
 Isolation (measured): personal tailscaled = /usr/local/bin/tailscaled on /var/run/tailscaled.socket
