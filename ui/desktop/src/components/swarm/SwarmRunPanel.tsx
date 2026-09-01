@@ -1297,8 +1297,26 @@ export function squeezeNote(before: string, after: string): string {
 /// landed — or any model with no thinking stream at all — showed its ANSWER in the pane titled Thinking,
 /// captioned "archived digest; full log unavailable" while Work showed the very same words from the
 /// durable log. The answer window belongs to `inspectorOutputText`; nothing from that channel is read here.
+///
+/// THE WINDOW IS GATED ON THE COUNTER (VA-026). `lastThinking` outlives the call that produced it: the
+/// join carries the previous poll's window when a new digest omits the key (`d?.last_thinking ??
+/// prev?.lastThinking`), and a lane key reused call after call (REVIEW's rounds, a judge re-stream)
+/// seeds its next digest with `thinking_chars: 0` and no think.log yet — so this pane filled with a
+/// DEAD call's reasoning under the new call's title. `laneThinkingRun` had this gate; this function
+/// was the second copy of the same rule without it. One predicate now, shared by both.
 export function inspectorThinkingText(lane: StreamLane): string {
-  return lane.fullThinking?.trim() || lane.lastThinking?.trim() || '';
+  return lane.fullThinking?.trim() || liveThinkingWindow(lane);
+}
+
+/**
+ * THE ROLLING THINKING WINDOW, ONLY WHILE A LIVE COUNTER STANDS BEHIND IT — the one rule for every
+ * surface that falls back to `lastThinking`. `thinkingChars` is the engine's own counter for THIS
+ * call's reasoning channel (reset by a re-stream, zero on a fresh seed digest); a window with a zero
+ * counter is a leftover from a previous call or attempt, never this one's reasoning. The durable
+ * `<task>.think.log` is not gated here — it is append-only truth and its own honest history.
+ */
+export function liveThinkingWindow(lane: StreamLane): string {
+  return (lane.thinkingChars ?? 0) > 0 ? (lane.lastThinking?.trim() ?? '') : '';
 }
 
 /**
@@ -1333,13 +1351,13 @@ export function tailOf(text: string, max: number): string {
  *
  * Prefers the durable `<task>.think.log`; the digest's `lastThinking` is a ROLLING WINDOW the engine
  * rewrites ~2.5x a second, which is why a cell fed from it clears and refills instead of advancing.
- * The window is still the fallback for a lane whose log has not appeared yet, and it keeps its
- * `thinkingChars` gate: without a live counter behind it the window may be a stale leftover.
+ * The window is still the fallback for a lane whose log has not appeared yet, gated on the live
+ * counter by `liveThinkingWindow` — the same predicate the inspector pane reads, so the two cannot
+ * disagree about whether a window is this call's.
  */
 export function laneThinkingRun(lane: StreamLane): string {
   const durable = lane.fullThinking?.trim() ?? '';
-  const windowed = (lane.thinkingChars ?? 0) > 0 ? (lane.lastThinking?.trim() ?? '') : '';
-  return collapseRepeats(tailOf(durable || windowed, INLINE_TAIL_CHARS));
+  return collapseRepeats(tailOf(durable || liveThinkingWindow(lane), INLINE_TAIL_CHARS));
 }
 
 /**
