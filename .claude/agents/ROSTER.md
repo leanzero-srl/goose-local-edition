@@ -794,3 +794,9 @@ research_request_block's armed-no-claimed-sections arm wording.
   BUILD-era consolidation with the empirical cover named, and flagged the phantom-vs-real
   contradiction WITH both sides quoted. The criticals-in-briefs watch is exactly the right next
   read. Charter gap: none.
+- 2026-09-01 03:30 tick-surgeon #35 (ON SONNET, reduced budget): EXCELLENT — the farce test done
+  properly on the cheaper model (calls-file edit-filter per shard + one conclusion quote each),
+  the critical-fell-through finding nobody had predicted, and an honest budget-overrun flag (15
+  calls vs 10) justified by the verification rule. The charter survives a model downgrade; note
+  for capacity planning: sonnet suffices for structured farce/routing reads when briefed with
+  known-facts + exact questions. Charter gap: none.
