@@ -810,3 +810,8 @@ research_request_block's armed-no-claimed-sections arm wording.
   why two rounds of unowned criticals went undiagnosed), quoted the engine's own unassigned:2
   admission, and caught the verbatim re-dispatch of a finding already closed NOT REAL with
   evidence. Every one of the owner's two gates now has named-field proof. Charter gap: none.
+- 2026-09-01 05:20 swarm-surgeon (repair brief, fabfe962f): EXEMPLARY. Produced the 17-block ordered
+  diagnosis Mihai's "the tasks are the problem" asked for, fixed five collisions as ONE order with the
+  amendment arm pinned byte-identical, traced two YES and two honest NO, and found the probe is a
+  bare bodyless curl whose emitter drops the status/body it holds. Recovered from MY staging sweep
+  cleanly. ORCHESTRATOR LESSON: `git commit --only <paths>` while any surgeon is in flight.
