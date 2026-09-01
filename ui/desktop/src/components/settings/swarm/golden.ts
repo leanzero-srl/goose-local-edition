@@ -44,6 +44,10 @@ export interface SwarmConfig {
   context_cap?: number | null;
   research_planning?: ResearchMode;
   parallel_planning?: boolean;
+  /** RETIRED (VA-015, 83e8089a5): the dynamic replanner is deleted from the engine — r6c's replan-r0 ran
+   *  208 unsupervised minutes for two bonus tasks nothing imported. Both keys stay on the type ONLY so a
+   *  config.yaml that still pins them round-trips untouched (the section writes the whole cfg back); the
+   *  engine echoes them under levers_resolved.retired_levers and reads them nowhere. No default, no row. */
   dynamic_replan?: boolean;
   max_research_questions?: number;
   max_replans?: number;
@@ -247,9 +251,8 @@ export interface SwarmConfig {
   /** Give the integrate-verify sink the built entry's REAL --help before it writes its golden checks, so it
    *  targets the interface the app actually has instead of the one the spec describes. Default OFF. */
   sink_prebuild?: boolean;
-  /** LEARN & REFLECT: after a build that provably worked, goose reflects and writes a reusable per-STACK
-   *  skill, then starts from it on the next build of that stack. Structural only, advisory only, and the
-   *  skill is a plain markdown file the user can edit or delete. Default OFF. */
+  /** RETIRED (VA-016, 97d5735a4): LEARN & REFLECT is deleted from the engine — the per-stack skill learned
+   *  zero lessons on both runs that wrote one. The key stays only so an old config.yaml round-trips. */
   persona?: boolean;
   /** Let the user add background notes WHILE a build runs; they are folded into the next dispatched worker,
    *  so a live worker is never disturbed. Advisory — the spec always wins. Default OFF. */
@@ -302,10 +305,9 @@ export const DEFAULTS: SwarmConfig = {
   research_planning: 'on', // ResearchPlanningMode::On
   // max_research_questions is deliberately absent: RETIRED by the fan cut (engine-dead since P1-5,
   // echoed under levers_resolved.retired_levers) — a reset must not write a bound that bounds nothing.
-  // UNBOUNDED. Replan is suppressed while the sink is in flight and refuses when too little of the DAG
-  // is left; both are structural. A count on top of them only decides that the LAST honest replan does
-  // not happen. The panel said 2.
-  max_replans: 4_294_967_295, // default_max_replans (u32::MAX)
+  // max_replans / dynamic_replan are deliberately absent for the same reason: the replanner is DELETED
+  // (VA-015, 83e8089a5; the Rust defaults are None). This DEFAULTS used to carry u32::MAX here, so every
+  // "reset to golden" wrote a cap for a mechanism that no longer exists into config.yaml.
   scout_max_lookups: 10, // default_scout_max_lookups
   scout_budget_secs: 900, // default_scout_budget_secs
   best_of_n_skeletons: 1, // default_best_of_n_skeletons
@@ -328,7 +330,6 @@ export const PRESET_KEYS: (keyof SwarmConfig)[] = [
   'progress_watchdog_secs',
   'planner_timeout_secs',
   'research_planning',
-  'max_replans',
   'scout_max_lookups',
   'scout_budget_secs',
   'best_of_n_skeletons',
