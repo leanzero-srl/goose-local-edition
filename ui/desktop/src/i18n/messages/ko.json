@@ -2681,8 +2681,29 @@
   "projectLanding.emptyHint": {
     "defaultMessage": "프로젝트 폴더를 추가한 뒤 사이드바에서 세션을 시작하세요."
   },
+  "projectLanding.giveDirLabel": {
+    "defaultMessage": "작업 디렉터리"
+  },
+  "projectLanding.giveDirValue": {
+    "defaultMessage": "프로젝트 폴더"
+  },
+  "projectLanding.giveSessionsLabel": {
+    "defaultMessage": "세션"
+  },
+  "projectLanding.giveSessionsValue": {
+    "defaultMessage": "해당 프로젝트 아래에 표시"
+  },
+  "projectLanding.giveUnfiledLabel": {
+    "defaultMessage": "프로젝트 외부"
+  },
+  "projectLanding.giveUnfiledValue": {
+    "defaultMessage": "“미분류”에 보관"
+  },
+  "projectLanding.givesTitle": {
+    "defaultMessage": "프로젝트가 제공하는 것"
+  },
   "projectLanding.headline": {
-    "defaultMessage": "세션은 프로젝트에서 시작됩니다"
+    "defaultMessage": "프로젝트에서 시작"
   },
   "projectLanding.pickHint": {
     "defaultMessage": "사이드바에서 프로젝트를 선택하고 “+ 여기서 새 세션”을 사용하세요."

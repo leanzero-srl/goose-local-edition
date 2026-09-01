@@ -2681,8 +2681,29 @@
   "projectLanding.emptyHint": {
     "defaultMessage": "新增一個專案資料夾，然後從側邊欄開始交談。"
   },
+  "projectLanding.giveDirLabel": {
+    "defaultMessage": "工作目錄"
+  },
+  "projectLanding.giveDirValue": {
+    "defaultMessage": "專案資料夾"
+  },
+  "projectLanding.giveSessionsLabel": {
+    "defaultMessage": "工作階段"
+  },
+  "projectLanding.giveSessionsValue": {
+    "defaultMessage": "列在所屬專案之下"
+  },
+  "projectLanding.giveUnfiledLabel": {
+    "defaultMessage": "專案之外"
+  },
+  "projectLanding.giveUnfiledValue": {
+    "defaultMessage": "保留在「未歸檔」中"
+  },
+  "projectLanding.givesTitle": {
+    "defaultMessage": "專案為你提供什麼"
+  },
   "projectLanding.headline": {
-    "defaultMessage": "交談從專案開始"
+    "defaultMessage": "從專案開始"
   },
   "projectLanding.pickHint": {
     "defaultMessage": "在側邊欄選擇一個專案，使用它的「+ 在此新增交談」。"

@@ -2681,8 +2681,29 @@
   "projectLanding.emptyHint": {
     "defaultMessage": "プロジェクトフォルダーを追加し、サイドバーからセッションを開始してください。"
   },
+  "projectLanding.giveDirLabel": {
+    "defaultMessage": "作業ディレクトリ"
+  },
+  "projectLanding.giveDirValue": {
+    "defaultMessage": "プロジェクトのフォルダー"
+  },
+  "projectLanding.giveSessionsLabel": {
+    "defaultMessage": "セッション"
+  },
+  "projectLanding.giveSessionsValue": {
+    "defaultMessage": "所属するプロジェクトの下に一覧表示"
+  },
+  "projectLanding.giveUnfiledLabel": {
+    "defaultMessage": "プロジェクト外"
+  },
+  "projectLanding.giveUnfiledValue": {
+    "defaultMessage": "「未分類」に保持"
+  },
+  "projectLanding.givesTitle": {
+    "defaultMessage": "プロジェクトでできること"
+  },
   "projectLanding.headline": {
-    "defaultMessage": "セッションはプロジェクトから始まります"
+    "defaultMessage": "プロジェクトから始める"
   },
   "projectLanding.pickHint": {
     "defaultMessage": "サイドバーでプロジェクトを選び、その「+ ここで新しいセッション」を使ってください。"

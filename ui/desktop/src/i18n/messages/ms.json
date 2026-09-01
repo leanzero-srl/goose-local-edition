@@ -2681,8 +2681,29 @@
   "projectLanding.emptyHint": {
     "defaultMessage": "Tambah folder projek, kemudian mulakan sesi dari bar sisi."
   },
+  "projectLanding.giveDirLabel": {
+    "defaultMessage": "Direktori kerja"
+  },
+  "projectLanding.giveDirValue": {
+    "defaultMessage": "Folder projek"
+  },
+  "projectLanding.giveSessionsLabel": {
+    "defaultMessage": "Sesi"
+  },
+  "projectLanding.giveSessionsValue": {
+    "defaultMessage": "Disenaraikan di bawah projeknya"
+  },
+  "projectLanding.giveUnfiledLabel": {
+    "defaultMessage": "Di luar projek"
+  },
+  "projectLanding.giveUnfiledValue": {
+    "defaultMessage": "Disimpan dalam “Tidak difailkan”"
+  },
+  "projectLanding.givesTitle": {
+    "defaultMessage": "Apa yang projek berikan kepada anda"
+  },
   "projectLanding.headline": {
-    "defaultMessage": "Sesi bermula daripada projek"
+    "defaultMessage": "Mula daripada projek"
   },
   "projectLanding.pickHint": {
     "defaultMessage": "Pilih projek di bar sisi dan gunakan “+ Sesi baharu di sini” miliknya."

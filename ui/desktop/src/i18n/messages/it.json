@@ -2681,8 +2681,29 @@
   "projectLanding.emptyHint": {
     "defaultMessage": "Aggiungi una cartella di progetto, poi avvia le sessioni dalla barra laterale."
   },
+  "projectLanding.giveDirLabel": {
+    "defaultMessage": "Directory di lavoro"
+  },
+  "projectLanding.giveDirValue": {
+    "defaultMessage": "La cartella del progetto"
+  },
+  "projectLanding.giveSessionsLabel": {
+    "defaultMessage": "Sessioni"
+  },
+  "projectLanding.giveSessionsValue": {
+    "defaultMessage": "Elencate sotto il loro progetto"
+  },
+  "projectLanding.giveUnfiledLabel": {
+    "defaultMessage": "Fuori da un progetto"
+  },
+  "projectLanding.giveUnfiledValue": {
+    "defaultMessage": "Conservate in «Non archiviate»"
+  },
+  "projectLanding.givesTitle": {
+    "defaultMessage": "Cosa ti dà un progetto"
+  },
   "projectLanding.headline": {
-    "defaultMessage": "Le sessioni iniziano da un progetto"
+    "defaultMessage": "Inizia da un progetto"
   },
   "projectLanding.pickHint": {
     "defaultMessage": "Scegli un progetto nella barra laterale e usa il suo «+ Nuova sessione qui»."

@@ -2681,8 +2681,29 @@
   "projectLanding.emptyHint": {
     "defaultMessage": "Добавьте папку проекта, затем запускайте сессии из боковой панели."
   },
+  "projectLanding.giveDirLabel": {
+    "defaultMessage": "Рабочий каталог"
+  },
+  "projectLanding.giveDirValue": {
+    "defaultMessage": "Папка проекта"
+  },
+  "projectLanding.giveSessionsLabel": {
+    "defaultMessage": "Сессии"
+  },
+  "projectLanding.giveSessionsValue": {
+    "defaultMessage": "Перечислены под своим проектом"
+  },
+  "projectLanding.giveUnfiledLabel": {
+    "defaultMessage": "Вне проекта"
+  },
+  "projectLanding.giveUnfiledValue": {
+    "defaultMessage": "Хранятся в «Без проекта»"
+  },
+  "projectLanding.givesTitle": {
+    "defaultMessage": "Что даёт проект"
+  },
   "projectLanding.headline": {
-    "defaultMessage": "Сессии начинаются с проекта"
+    "defaultMessage": "Начните с проекта"
   },
   "projectLanding.pickHint": {
     "defaultMessage": "Выберите проект в боковой панели и используйте его «+ Новая сессия здесь»."

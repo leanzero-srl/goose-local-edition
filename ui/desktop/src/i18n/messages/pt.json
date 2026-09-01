@@ -2681,8 +2681,29 @@
   "projectLanding.emptyHint": {
     "defaultMessage": "Adicione uma pasta de projeto e depois inicie sessões pela barra lateral."
   },
+  "projectLanding.giveDirLabel": {
+    "defaultMessage": "Diretório de trabalho"
+  },
+  "projectLanding.giveDirValue": {
+    "defaultMessage": "A pasta do projeto"
+  },
+  "projectLanding.giveSessionsLabel": {
+    "defaultMessage": "Sessões"
+  },
+  "projectLanding.giveSessionsValue": {
+    "defaultMessage": "Listadas sob o seu projeto"
+  },
+  "projectLanding.giveUnfiledLabel": {
+    "defaultMessage": "Fora de um projeto"
+  },
+  "projectLanding.giveUnfiledValue": {
+    "defaultMessage": "Mantidas em «Sem projeto»"
+  },
+  "projectLanding.givesTitle": {
+    "defaultMessage": "O que um projeto lhe dá"
+  },
   "projectLanding.headline": {
-    "defaultMessage": "As sessões começam a partir de um projeto"
+    "defaultMessage": "Comece a partir de um projeto"
   },
   "projectLanding.pickHint": {
     "defaultMessage": "Escolha um projeto na barra lateral e use o seu «+ Nova sessão aqui»."

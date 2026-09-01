@@ -2681,8 +2681,29 @@
   "projectLanding.emptyHint": {
     "defaultMessage": "Ajoutez un dossier de projet, puis démarrez des sessions depuis la barre latérale."
   },
+  "projectLanding.giveDirLabel": {
+    "defaultMessage": "Répertoire de travail"
+  },
+  "projectLanding.giveDirValue": {
+    "defaultMessage": "Le dossier du projet"
+  },
+  "projectLanding.giveSessionsLabel": {
+    "defaultMessage": "Sessions"
+  },
+  "projectLanding.giveSessionsValue": {
+    "defaultMessage": "Listées sous leur projet"
+  },
+  "projectLanding.giveUnfiledLabel": {
+    "defaultMessage": "Hors projet"
+  },
+  "projectLanding.giveUnfiledValue": {
+    "defaultMessage": "Conservées dans « Non classées »"
+  },
+  "projectLanding.givesTitle": {
+    "defaultMessage": "Ce qu’un projet vous apporte"
+  },
   "projectLanding.headline": {
-    "defaultMessage": "Les sessions démarrent depuis un projet"
+    "defaultMessage": "Commencer depuis un projet"
   },
   "projectLanding.pickHint": {
     "defaultMessage": "Choisissez un projet dans la barre latérale et utilisez son « + Nouvelle session ici »."

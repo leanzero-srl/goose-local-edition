@@ -2681,8 +2681,29 @@
   "projectLanding.emptyHint": {
     "defaultMessage": "एक प्रोजेक्ट फ़ोल्डर जोड़ें, फिर साइडबार से सत्र शुरू करें।"
   },
+  "projectLanding.giveDirLabel": {
+    "defaultMessage": "कार्य निर्देशिका"
+  },
+  "projectLanding.giveDirValue": {
+    "defaultMessage": "प्रोजेक्ट फ़ोल्डर"
+  },
+  "projectLanding.giveSessionsLabel": {
+    "defaultMessage": "सत्र"
+  },
+  "projectLanding.giveSessionsValue": {
+    "defaultMessage": "अपने प्रोजेक्ट के अंतर्गत सूचीबद्ध"
+  },
+  "projectLanding.giveUnfiledLabel": {
+    "defaultMessage": "प्रोजेक्ट से बाहर"
+  },
+  "projectLanding.giveUnfiledValue": {
+    "defaultMessage": "“अवर्गीकृत” में रखे जाते हैं"
+  },
+  "projectLanding.givesTitle": {
+    "defaultMessage": "एक प्रोजेक्ट आपको क्या देता है"
+  },
   "projectLanding.headline": {
-    "defaultMessage": "सत्र किसी प्रोजेक्ट से शुरू होते हैं"
+    "defaultMessage": "किसी प्रोजेक्ट से शुरू करें"
   },
   "projectLanding.pickHint": {
     "defaultMessage": "साइडबार में कोई प्रोजेक्ट चुनें और उसका “+ यहाँ नया सत्र” उपयोग करें।"

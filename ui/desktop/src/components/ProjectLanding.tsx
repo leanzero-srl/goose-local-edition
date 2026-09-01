@@ -1,15 +1,16 @@
 import { useEffect, useState } from 'react';
-import { FolderPlus, PanelLeft } from 'lucide-react';
+import { FolderPlus } from 'lucide-react';
 import { toast } from 'react-toastify';
 import { defineMessages, useIntl } from '../i18n';
 import { AppEvents } from '../constants/events';
 import { chooseAndAddProject, type ProjectsChangedDetail } from '../utils/addProjectFlow';
 import type { ProjectEntry } from '../utils/projectDirs';
+import { Button, EmptyState, KeyValue, Panel, SPACE, cx } from './lz';
 
 const i18n = defineMessages({
   headline: {
     id: 'projectLanding.headline',
-    defaultMessage: 'Sessions start from a project',
+    defaultMessage: 'Start from a project',
   },
   pickHint: {
     id: 'projectLanding.pickHint',
@@ -27,11 +28,57 @@ const i18n = defineMessages({
     id: 'projectLanding.addFailed',
     defaultMessage: 'Could not add the project folder',
   },
+  givesTitle: {
+    id: 'projectLanding.givesTitle',
+    defaultMessage: 'What a project gives you',
+  },
+  giveDirLabel: {
+    id: 'projectLanding.giveDirLabel',
+    defaultMessage: 'Working directory',
+  },
+  giveDirValue: {
+    id: 'projectLanding.giveDirValue',
+    defaultMessage: 'The project folder',
+  },
+  giveSessionsLabel: {
+    id: 'projectLanding.giveSessionsLabel',
+    defaultMessage: 'Sessions',
+  },
+  giveSessionsValue: {
+    id: 'projectLanding.giveSessionsValue',
+    defaultMessage: 'Listed under their project',
+  },
+  giveUnfiledLabel: {
+    id: 'projectLanding.giveUnfiledLabel',
+    defaultMessage: 'Outside a project',
+  },
+  giveUnfiledValue: {
+    id: 'projectLanding.giveUnfiledValue',
+    defaultMessage: 'Kept in Unfiled',
+  },
 });
 
-// Benchmark register: solid saturated fills, full borders — mirrors the Projects tree's
-// first hue so the landing and the sidebar "+" read as the same affordance.
-const AZURE = '#2e8bff';
+/**
+ * The LeanZero mark — three squares and one node, a swarm forming — drawn in currentColor so it
+ * takes the ink of whatever accent block holds it (the sidebar brand square, the landing's
+ * EmptyState block). Shared from here because the landing is the lighter module to import.
+ */
+export function LeanZeroGlyph({ className }: { className?: string }) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="currentColor"
+      aria-hidden
+      data-testid="leanzero-glyph"
+      className={className}
+    >
+      <rect x="3" y="3" width="8" height="8" rx="2" />
+      <rect x="13" y="3" width="8" height="8" rx="2" />
+      <rect x="3" y="13" width="8" height="8" rx="2" />
+      <rect x="13" y="13" width="8" height="8" rx="4" />
+    </svg>
+  );
+}
 
 /**
  * The home route ("/") — pass D (owner): no chat input lives here anymore. Sessions start from a
@@ -71,44 +118,59 @@ export default function ProjectLanding() {
 
   const hasProjects = projects != null && projects.length > 0;
 
+  const gives = [
+    {
+      key: 'dir',
+      label: intl.formatMessage(i18n.giveDirLabel),
+      value: intl.formatMessage(i18n.giveDirValue),
+    },
+    {
+      key: 'sessions',
+      label: intl.formatMessage(i18n.giveSessionsLabel),
+      value: intl.formatMessage(i18n.giveSessionsValue),
+    },
+    {
+      key: 'unfiled',
+      label: intl.formatMessage(i18n.giveUnfiledLabel),
+      value: intl.formatMessage(i18n.giveUnfiledValue),
+    },
+  ];
+
   return (
-    <div className="flex h-full min-h-0 flex-col items-center justify-center px-6">
+    <div className="flex h-full min-h-0 flex-col overflow-y-auto px-6">
       <div
         data-testid="project-landing"
-        className="w-full max-w-xl overflow-hidden rounded border border-border-primary"
+        className={cx('my-auto flex w-full max-w-[560px] flex-col self-center', SPACE.section)}
       >
-        <div className="flex items-center gap-2 border-b border-border-primary bg-background-secondary px-4 py-2">
-          <FolderPlus className="h-3.5 w-3.5 shrink-0 text-text-secondary" strokeWidth={2.5} />
-          <span className="text-[11px] font-semibold uppercase tracking-[0.08em] text-text-secondary">
-            Projects
-          </span>
-        </div>
-
-        <div className="flex flex-col gap-3 px-4 py-5">
-          <h1 className="text-2xl font-bold text-text-primary">
-            {intl.formatMessage(i18n.headline)}
-          </h1>
-
-          {projects == null ? null : hasProjects ? (
-            <p className="flex items-center gap-2 text-sm text-text-secondary">
-              <PanelLeft className="h-4 w-4 shrink-0 text-text-secondary" />
-              {intl.formatMessage(i18n.pickHint)}
-            </p>
-          ) : (
-            <>
-              <p className="text-sm text-text-secondary">{intl.formatMessage(i18n.emptyHint)}</p>
-              <button
-                type="button"
+        <EmptyState
+          icon={<LeanZeroGlyph />}
+          title={intl.formatMessage(i18n.headline)}
+          body={
+            projects == null
+              ? undefined
+              : intl.formatMessage(hasProjects ? i18n.pickHint : i18n.emptyHint)
+          }
+          action={
+            projects != null && !hasProjects ? (
+              <Button
+                variant="primary"
+                icon={<FolderPlus />}
                 onClick={() => void handleAddProject()}
-                className="inline-flex items-center gap-2 self-start rounded px-4 py-2 text-sm font-bold text-white transition-opacity hover:opacity-90"
-                style={{ backgroundColor: AZURE }}
               >
-                <FolderPlus className="h-4 w-4" strokeWidth={2.5} />
                 {intl.formatMessage(i18n.addProject)}
-              </button>
-            </>
-          )}
-        </div>
+              </Button>
+            ) : undefined
+          }
+        />
+
+        <Panel title={intl.formatMessage(i18n.givesTitle)} padded={false}>
+          <KeyValue
+            dense
+            className="px-4"
+            aria-label={intl.formatMessage(i18n.givesTitle)}
+            items={gives}
+          />
+        </Panel>
       </div>
     </div>
   );
