@@ -68,12 +68,11 @@ use orientation::{
 };
 mod research;
 use research::{
-    announce_research_phase, budget_research_answer, emit_research_outcome, emit_research_planned,
-    fold_research_outcome, fold_research_panic, load_research_mini, persist_request_text,
-    raised_questions_brief_block, relay_note, relay_targets, research_dispatch_text,
-    research_fan_lanes, research_prompt_head, research_request_block, research_schema,
-    research_sources_block, research_system_text, splice_claimed_sections, write_research_ledger,
-    ResearchQuestion, ResearchRow, RESEARCH_ANSWERED,
+    announce_research_phase, briefs_from_slices, emit_question_disposition, emit_research_outcome,
+    emit_research_planned, fold_research_outcome, fold_research_panic, load_research_mini,
+    persist_request_text, relay_note, relay_targets, research_dispatch_text, research_fan_lanes,
+    research_prompt_head, research_request_block, research_schema, research_sources_block,
+    research_system_text, write_research_ledger, ResearchQuestion, ResearchRow, RESEARCH_ANSWERED,
 };
 mod imports;
 use imports::{attribute_import_gap_with_owner, tree_import_gaps, verify_tree_imports};
@@ -21178,6 +21177,16 @@ impl GooseAgentDispatcher {
                 existing.join("\n")
             )
         };
+        // THE FAN CUT (C1): the request's FULL text is on disk BEFORE the opener runs, and the
+        // same SOURCES block every research lane gets names it. Above the arming floor the
+        // opener sees only the orientation index — r6d's opener asked "which sort keys does
+        // sort accept" because request.md:148 was an excerpt it never saw — and with the file
+        // and a shell it can settle such a lookup by one grep and CITE the line instead of
+        // costing a 15-minute lane. The fan re-persists the same bytes after ASK (idempotent
+        // tmp+rename; the user's decisions append at the END, so every cited line number holds).
+        let request_path =
+            persist_request_text(&self.working_dir, user_prompt, self.events.as_ref());
+        let sources_block = research_sources_block(request_path.as_deref(), user_prompt, &existing);
         let sections = spec_sections(user_prompt);
         let armed = orientation_armed(user_prompt, &sections);
         let sections_block = if armed {
@@ -21194,8 +21203,23 @@ impl GooseAgentDispatcher {
             "You are the OPENER. Read the request and split it into SEMANTIC SLICES — coherent areas of \
              work, divided by MEANING and by interface, never by document order or by equal-sized \
              buckets.\n\n\
-             Each slice gets: an id (kebab-case), a title, an objective, the QUESTIONS that must be \
-             answered before it can be built, and a weight from 1 to 5 estimating how much work it is.\n\n\
+             Each slice gets: an id (kebab-case), a title, an objective, its QUESTIONS (see below), \
+             and a weight from 1 to 5 estimating how much work it is.\n\n\
+             A QUESTION IS AN OBJECT WITH A KIND, AND MOST CANDIDATES ARE NOT QUESTIONS AT ALL. \
+             Before you list one, grep the request file named under SOURCES for its terms \
+             (`grep -n -i '<term>' <path>`, then `sed -n 'A,Bp'` around a hit — never print the \
+             whole file; the index is your map). `kind` is one of exactly three: `spec_lookup` — \
+             the request's own text answers it: write `fact` (the answer in the request's words, \
+             literals verbatim) and `cite` (`request.md:<line>` or the heading you read); no lane \
+             will research it, the builder receives the fact and the line. If you searched and \
+             truly could not find it, keep `kind: spec_lookup`, leave `fact` empty and put what you \
+             searched in `cite` — a lane will look. `design` — the request leaves it open and the \
+             builder must choose a convention. `external` — it needs the vendor's documentation or \
+             another source outside the request. MEASURED: of 27 questions one opener dispatched, \
+             13 were answerable by one grep of the request (\"which sort keys does sort accept\" — \
+             line 148 lists the four; \"the tokens-file shape\" — line 51 shows it) and each cost a \
+             15-minute research lane. A question that IS one of your open decisions, or names one \
+             of the request's own decision ids, belongs under `open_decisions` — never in a slice.\n\n\
              SLICES MUST BE COMPARABLE IN SIZE, AND THERE ARE THREE TO SIX OF THEM. A slice more than \
              roughly twice the work of another means one machine grinds while the others idle — split \
              that one, and if splitting would push you past six, the overweight slice is hiding layers \
@@ -21267,10 +21291,10 @@ impl GooseAgentDispatcher {
             }));
             format!(
                 "The request, as its ORIENTATION INDEX (the engine splices each section's full \
-                 text into the owning slice's brief after you answer):\n\n{orientation}"
+                 text into the owning slice's brief after you answer):\n\n{orientation}{sources_block}"
             )
         } else {
-            format!("The request:\n\n{user_prompt}")
+            format!("The request:\n\n{user_prompt}{sources_block}")
         };
         let out = self
             .run_agent_timed_at(
@@ -23173,134 +23197,6 @@ fn files_from_objective(objective: &str) -> Vec<String> {
     out
 }
 
-fn briefs_from_slices(
-    opened: &OpenOutput,
-    spec: &str,
-    research: &[ResearchRow],
-    plan_decisions: &[PlanDecision],
-    events: &dyn EventSink,
-) -> Vec<SliceBrief> {
-    let sections = spec_sections(spec);
-    let armed = orientation_armed(spec, &sections);
-    // ITEM 0, amendment (b): the settled/still-open DECISIONS PARTITION, spliced into EVERY
-    // brief — including the docs/decisions task's own, whose description then quotes the settled
-    // choices verbatim (splice_briefs carries each brief into its task's description). Settled
-    // answers are quoted with provenance; a decision that stayed open keeps the pre-fan
-    // conventional-choice framing, verbatim. With no decisions the block is empty and every
-    // brief is byte-identical to the pre-partition form.
-    let folded_decisions = decisions::decisions_brief_block(plan_decisions);
-    opened
-        .slices
-        .iter()
-        .map(|sl| {
-            let mut brief = sl.objective.clone();
-            // RESEARCH FAN v2: the slice's own questions, partitioned against what the fan
-            // settled. An answered question moves OUT of the QUESTIONS block and into a
-            // settled-facts block ABOVE it; an unanswered one stays exactly as before — the
-            // absence already rode `research_unanswered` and the brief carries the raw
-            // question, never a fabricated answer (the fallback gate). With no research rows
-            // the brief is byte-identical to the pre-fan form.
-            let slice_rows: Vec<&ResearchRow> =
-                research.iter().filter(|r| r.slice == sl.id).collect();
-            let answered: std::collections::HashMap<usize, &&ResearchRow> = slice_rows
-                .iter()
-                .filter(|r| r.status == RESEARCH_ANSWERED)
-                .map(|r| (r.q_index, r))
-                .collect();
-            let mut answers_block = String::new();
-            let mut open_questions: Vec<&String> = Vec::new();
-            for (i, q) in sl.questions.iter().enumerate() {
-                if let Some(row) = answered.get(&i) {
-                    answers_block.push_str(&format!(
-                        "\nQ: {q}\nA: {}\n",
-                        budget_research_answer(&row.answer, &row.slice, row.q_index)
-                    ));
-                } else {
-                    open_questions.push(q);
-                }
-            }
-            if !answers_block.is_empty() {
-                brief.push_str(&format!(
-                    "\n\nANSWERS SETTLED AT PLAN TIME — facts gathered from the request before \
-                     building; build to these unless the spec or a USER DECISIONS block \
-                     contradicts them:{answers_block}"
-                ));
-            }
-            if !open_questions.is_empty() {
-                brief.push_str(&format!(
-                    "\n\nQUESTIONS this slice must settle in its implementation (conventional \
-                     answers unless the request says otherwise):\n{}",
-                    open_questions
-                        .iter()
-                        .map(|q| format!("- {q}"))
-                        .collect::<Vec<_>>()
-                        .join("\n")
-                ));
-            }
-            // The questions this slice's OWN lanes raised and nobody chased, verbatim, for the
-            // builder to settle — r6b's 48 such questions reached no builder at all. Empty
-            // when nothing was raised (no heading, no filler).
-            brief.push_str(&raised_questions_brief_block(&slice_rows));
-            // OPEN-1, the detailing half: the opener saw an orientation index, so the FULL text
-            // of each section this slice claimed is spliced here by CODE — the builder reads
-            // the spec's own words, never a planner paraphrase. A slice that claimed nothing
-            // gets the orientation plus a stated absence (the fallback rule): the map exists
-            // even when the owner named no territory, and the caller emits the event.
-            if armed {
-                let spliced = splice_claimed_sections(&sl.id, &sl.sections, &sections, events);
-                if spliced.is_empty() {
-                    brief.push_str(&format!(
-                        "\n\nSPEC SECTIONS: this slice claimed none — the orientation index of \
-                         the whole request follows; the sections' full text lives in the \
-                         request itself:\n{}",
-                        spec_orientation(&sections)
-                    ));
-                } else {
-                    brief.push_str(&format!(
-                        "\n\nTHE SPEC'S OWN SECTIONS FOR THIS SLICE — verbatim, and the \
-                         authority over any paraphrase above:{spliced}"
-                    ));
-                }
-            }
-            brief.push_str(&folded_decisions);
-            // The one-line settled digest slice_index renders for SYNTHESIS — answered/total
-            // plus the first answer's head, cut exactly the way the index's own summary line
-            // is (non-empty lines joined, sentence-end cut within 400).
-            let settled = if slice_rows.is_empty() {
-                String::new()
-            } else {
-                let first_answer_head = sl.questions.iter().enumerate().find_map(|(i, _)| {
-                    answered.get(&i).map(|r| {
-                        head_to_sentence_end(
-                            &r.answer
-                                .lines()
-                                .filter(|l| !l.trim().is_empty())
-                                .take(3)
-                                .collect::<Vec<_>>()
-                                .join(" "),
-                            400,
-                        )
-                    })
-                });
-                match first_answer_head {
-                    Some(h) => {
-                        format!("{}/{} — {}", answered.len(), slice_rows.len(), h.trim_end())
-                    }
-                    None => format!("{}/{}", answered.len(), slice_rows.len()),
-                }
-            };
-            SliceBrief {
-                id: sl.id.clone(),
-                title: sl.title.clone(),
-                objective: sl.objective.clone(),
-                brief,
-                files: files_from_objective(&sl.objective),
-                settled,
-            }
-        })
-        .collect()
-}
-
 // ================================================================================================
 // RESEARCH FAN v2 — "questions are the research tasks" (the owner's architecture: one node reads
 // what is required, immediately shares research tasks, the answers snowball, then the orchestrator
@@ -23381,6 +23277,7 @@ impl GooseAgentDispatcher {
         let sources = research_sources_block(request_path.as_deref(), spec, tree_at_start);
         let mut total_questions = 0usize;
         let mut rows: Vec<ResearchRow> = Vec::new();
+        let mut fact_rows: Vec<ResearchRow> = Vec::new();
         let mut to_dispatch: Vec<(ResearchQuestion, String)> = Vec::new();
         for sl in &opened.slices {
             if sl.questions.is_empty() {
@@ -23404,16 +23301,29 @@ impl GooseAgentDispatcher {
             );
             for (i, q) in sl.questions.iter().enumerate() {
                 total_questions += 1;
+                let rq = ResearchQuestion::of(&sl.id, i, q);
                 match load_research_mini(&self.working_dir, &sl.id, i) {
-                    Some(row) => rows.push(row),
-                    None => to_dispatch.push((
-                        ResearchQuestion {
-                            slice: sl.id.clone(),
-                            q_index: i,
-                            question: q.clone(),
-                        },
-                        head.clone(),
-                    )),
+                    Some(row) => {
+                        emit_question_disposition(self.events.as_ref(), &rq, "resumed");
+                        rows.push(row);
+                    }
+                    // THE FAN CUT (C1): a lookup the opener settled by reading the request —
+                    // fact AND cite — is not a question. It lands as a terminal row (the brief's
+                    // SPEC FACTS block, the ledger block and the snowball all read it) and NO
+                    // lane runs. A lookup without a fact is a search that found nothing and
+                    // rides a lane exactly like a design question — named in
+                    // `research_question_kind` with `cite`, never dropped. r6d: 13 of the 27
+                    // dispatched questions were this class, 198 lane-minutes.
+                    None if q.is_cited_fact() => {
+                        emit_question_disposition(self.events.as_ref(), &rq, "fact");
+                        let row = ResearchRow::spec_fact(&rq);
+                        write_research_ledger(&self.working_dir, &row);
+                        fact_rows.push(row);
+                    }
+                    None => {
+                        emit_question_disposition(self.events.as_ref(), &rq, "dispatch");
+                        to_dispatch.push((rq, head.clone()));
+                    }
                 }
             }
         }
@@ -23427,11 +23337,7 @@ impl GooseAgentDispatcher {
             match load_research_mini(&self.working_dir, decisions::DECISION_SLICE, *i) {
                 Some(row) => rows.push(row),
                 None => to_dispatch.push((
-                    ResearchQuestion {
-                        slice: decisions::DECISION_SLICE.to_string(),
-                        q_index: *i,
-                        question: d.clone(),
-                    },
+                    ResearchQuestion::decision(*i, d),
                     decisions::decision_user_text(spec, user_decisions, tree_at_start, &sources),
                 )),
             }
@@ -23450,7 +23356,10 @@ impl GooseAgentDispatcher {
         // lane's Err — which arrives positionally — can be folded into a terminal row below.
         let dispatched: Vec<ResearchQuestion> =
             to_dispatch.iter().map(|(q, _)| q.clone()).collect();
-        emit_research_planned(self.events.as_ref(), &dispatched, &rows);
+        emit_research_planned(self.events.as_ref(), &dispatched, &rows, fact_rows.len());
+        // The facts join the rows AFTER the queue event: they are settled, not lane work, and
+        // the event's `questions` denominator is what tick.py subtracts dispatched from.
+        rows.extend(fact_rows);
         if to_dispatch.is_empty() {
             return rows;
         }
@@ -38984,104 +38893,6 @@ mod audit_regressions {
             .is_empty());
     }
 
-    /// OPEN-1's detailing half: a slice's claimed sections arrive in its brief VERBATIM (the
-    /// builder reads the spec's own words, not a planner paraphrase); a slice that claimed none
-    /// gets the orientation map plus a stated absence (the fallback rule), and
-    /// unclaimed_sections measures the coverage gap deterministically.
-    #[test]
-    fn a_slice_gets_its_claimed_sections_verbatim_and_absence_is_stated() {
-        let spec = include_str!("../../../../evals/swarm-bench/spec-build-sb7.md");
-        let sections = spec_sections(spec);
-        let table_heading = sections
-            .iter()
-            .find(|s| s.body.contains("/api/payments"))
-            .expect("the endpoint table has a section")
-            .heading
-            .clone();
-        let opened = OpenOutput {
-            slices: vec![
-                OpenSlice {
-                    id: "ledger".into(),
-                    title: "ledger".into(),
-                    objective: "the ledger service".into(),
-                    questions: Vec::new(),
-                    weight: 3,
-                    sections: vec![table_heading.clone()],
-                },
-                OpenSlice {
-                    id: "web".into(),
-                    title: "web".into(),
-                    objective: "the dashboard".into(),
-                    questions: Vec::new(),
-                    weight: 2,
-                    sections: Vec::new(),
-                },
-            ],
-            open_decisions: Vec::new(),
-        };
-        let briefs = briefs_from_slices(&opened, spec, &[], &[], &NullSink);
-        assert!(
-            briefs[0].brief.contains("THE SPEC'S OWN SECTIONS")
-                && briefs[0].brief.contains("/api/payments"),
-            "the claimed section's full text rides in the brief"
-        );
-        assert!(
-            briefs[1].brief.contains("this slice claimed none")
-                && briefs[1].brief.contains(&table_heading),
-            "the unclaiming slice gets the stated absence plus the orientation map"
-        );
-        let un = unclaimed_sections(&opened, &sections);
-        assert!(
-            !un.is_empty() && !un.contains(&table_heading),
-            "the coverage gap is measured: {} unclaimed, claimed one absent",
-            un.len()
-        );
-    }
-
-    /// The opener declares ownership in objective text (14831a321) and the engine reads it
-    /// back. Before `files_from_objective`, `briefs_from_slices` shipped `files: Vec::new()`
-    /// unconditionally, so `slice_files_unnamed` fired for EVERY slice on EVERY run (measured
-    /// 5 and 7 on the last two) and the index's named-files caption was a dead path.
-    #[test]
-    fn objective_ownership_declarations_populate_slice_files() {
-        let opened = OpenOutput {
-            slices: vec![
-                OpenSlice {
-                    id: "ledgerd".into(),
-                    title: "the ledger daemon".into(),
-                    objective: "Owns `app/ledgerd/impl.py` (state machine) and `web/app.js` \
-                                (the poller, again `web/app.js`). Serves GET `/api/ledger` \
-                                (a route, not a file) per `https://example.test/docs`."
-                        .into(),
-                    questions: Vec::new(),
-                    weight: 3,
-                    sections: Vec::new(),
-                },
-                OpenSlice {
-                    id: "web".into(),
-                    title: "the dashboard".into(),
-                    objective: "draw the dashboard".into(),
-                    questions: Vec::new(),
-                    weight: 2,
-                    sections: Vec::new(),
-                },
-            ],
-            open_decisions: Vec::new(),
-        };
-        let briefs = briefs_from_slices(&opened, "build the app", &[], &[], &NullSink);
-        assert_eq!(
-            briefs[0].files,
-            vec!["app/ledgerd/impl.py".to_string(), "web/app.js".to_string()],
-            "exactly the declared paths, deduped, in objective order — routes and URLs excluded"
-        );
-        // Empty is the ARMING CONDITION for `slice_files_unnamed`: synthesize_plan emits the
-        // event per brief with `files.is_empty()`, so a slice that declared nothing still fires.
-        assert!(
-            briefs[1].files.is_empty(),
-            "a declaration-free objective keeps the empty vec and the absence event"
-        );
-    }
-
     /// RESEARCH FAN v2, the terminal fold: every outcome — a real answer, an empty or
     /// unparseable reply, a transport failure, the judge_out_of_moves ending — lands as a
     /// TERMINAL row (answered | unanswered + named reason), which is what makes "all dispatched
@@ -39089,11 +38900,13 @@ mod audit_regressions {
     /// substituted answer (the fallback gate).
     #[test]
     fn research_terminal_fold_classifies_every_outcome() {
-        let q = ResearchQuestion {
-            slice: "payments".into(),
-            q_index: 0,
-            question: "What is the frozen payment record structure from section 2?".into(),
-        };
+        let q = ResearchQuestion::of(
+            "payments",
+            0,
+            &opener::OpenQuestion::from(
+                "What is the frozen payment record structure from section 2?",
+            ),
+        );
         let ok = fold_research_outcome(
             &q,
             "workhorse-q",
@@ -39158,6 +38971,9 @@ mod audit_regressions {
             raised: Vec::new(),
             model: "workhorse-q".into(),
             secs: 41,
+            kind: "design".into(),
+            cite: String::new(),
+            origin: String::new(),
         };
         write_research_ledger(root, &row).expect("the mini writes through the funnel");
         let back = load_research_mini(root, "payments", 0).expect("the watermark parses back");
@@ -39167,138 +38983,6 @@ mod audit_regressions {
         assert!(
             load_research_mini(root, "payments", 1).is_none(),
             "the sibling question is still dispatchable"
-        );
-    }
-
-    /// The brief partition: an answered question MOVES out of the QUESTIONS block into the
-    /// settled-facts block above it; an unanswered one stays verbatim; with no research rows
-    /// the brief is byte-identical to the pre-fan form; a long answer is spliced under the
-    /// measured-good budget with a stated truncation naming the durable mini.
-    #[test]
-    fn answered_questions_move_from_questions_block_to_settled_facts() {
-        let opened = OpenOutput {
-            slices: vec![OpenSlice {
-                id: "api".into(),
-                title: "the api".into(),
-                objective: "serve GET /health".into(),
-                questions: vec!["which port".into(), "which storage".into()],
-                weight: 3,
-                sections: Vec::new(),
-            }],
-            open_decisions: Vec::new(),
-        };
-        let rows = vec![
-            ResearchRow {
-                slice: "api".into(),
-                q_index: 0,
-                question: "which port".into(),
-                status: RESEARCH_ANSWERED.into(),
-                answer: "Port 8850, from the spec's own boot table.".into(),
-                reason: None,
-                detail: None,
-                raised: Vec::new(),
-                model: "m".into(),
-                secs: 12,
-            },
-            ResearchRow {
-                slice: "api".into(),
-                q_index: 1,
-                question: "which storage".into(),
-                status: RESEARCH_UNANSWERED.into(),
-                answer: String::new(),
-                reason: Some("provider_error".into()),
-                detail: Some("connection reset".into()),
-                raised: Vec::new(),
-                model: "m".into(),
-                secs: 3,
-            },
-        ];
-        let briefs = briefs_from_slices(&opened, "build the app", &rows, &[], &NullSink);
-        let b = &briefs[0].brief;
-        assert!(b.contains("ANSWERS SETTLED AT PLAN TIME"));
-        assert!(b.contains("Q: which port") && b.contains("A: Port 8850"));
-        let questions_at = b.find("QUESTIONS this slice must settle").unwrap();
-        assert!(
-            b.find("ANSWERS SETTLED AT PLAN TIME").unwrap() < questions_at,
-            "the settled facts sit ABOVE the open questions"
-        );
-        let from_questions = b.split_at(questions_at).1;
-        assert!(
-            from_questions.contains("- which storage") && !from_questions.contains("- which port"),
-            "the answered question left the QUESTIONS block; the unanswered one stayed:\n{b}"
-        );
-        assert_eq!(
-            briefs[0].settled, "1/2 — Port 8850, from the spec's own boot table.",
-            "the slice_index settled line carries answered/total and the first answer's head"
-        );
-        let plain = briefs_from_slices(&opened, "build the app", &[], &[], &NullSink);
-        assert!(
-            !plain[0].brief.contains("ANSWERS SETTLED")
-                && plain[0].brief.contains("- which port")
-                && plain[0].brief.contains("- which storage")
-                && plain[0].settled.is_empty(),
-            "no research rows => the pre-fan brief, byte for byte"
-        );
-        let long = "a fact line that keeps going and going.\n".repeat(60);
-        let cut = budget_research_answer(&long, "api", 0);
-        assert!(cut.chars().count() < long.chars().count());
-        assert!(
-            cut.contains("ANSWER TRUNCATED — full text in .swarm/ledger/research-api-q0.json"),
-            "a cut answer says so and names the durable mini"
-        );
-        assert!(
-            cut.lines()
-                .rev()
-                .nth(1)
-                .unwrap()
-                .ends_with("going and going."),
-            "the cut lands on a line boundary"
-        );
-    }
-
-    /// r5's silent 3,501-char loss, pinned. The boot slice claimed a typo'd heading; the splice
-    /// loop found no match and dropped the claim from BOTH the research prompts and the brief
-    /// with no per-slice signal — only the generic spec_sections_unclaimed fired, on the REAL
-    /// heading. The shared splice now names each unmatched claim (loud, MILD, never blocks:
-    /// the matching sections still splice), from both consumers.
-    #[test]
-    fn a_typoed_claimed_heading_is_named_not_silently_dropped() {
-        #[derive(Default)]
-        struct ValueSink(Mutex<Vec<serde_json::Value>>);
-        impl EventSink for ValueSink {
-            fn emit(&self, _event: &SwarmEvent) {}
-            fn write_value(&self, value: serde_json::Value) {
-                self.0.lock().unwrap().push(value);
-            }
-        }
-        let spec = "# Alpha\nalpha body text\n\n# Beta\nbeta body text\n";
-        let sections = spec_sections(spec);
-        let sink = ValueSink::default();
-        let spliced = splice_claimed_sections(
-            "boot",
-            &["Alpha".to_string(), "Bta".to_string()],
-            &sections,
-            &sink,
-        );
-        assert!(
-            spliced.contains("alpha body text"),
-            "the matching claim still splices"
-        );
-        assert!(!spliced.contains("beta body text"), "no fuzzy substitution");
-        let events = sink.0.lock().unwrap();
-        assert_eq!(events.len(), 1, "exactly the one miss is named");
-        assert_eq!(
-            events[0].get("event").and_then(|v| v.as_str()),
-            Some("slice_claimed_section_unmatched")
-        );
-        assert_eq!(
-            events[0].get("slice").and_then(|v| v.as_str()),
-            Some("boot")
-        );
-        assert_eq!(
-            events[0].get("claimed").and_then(|v| v.as_str()),
-            Some("Bta"),
-            "the typo VERBATIM, so the operator can see what to fix"
         );
     }
 
@@ -39339,6 +39023,9 @@ mod audit_regressions {
             raised: Vec::new(),
             model: "m".into(),
             secs: 5,
+            kind: "design".into(),
+            cite: String::new(),
+            origin: String::new(),
         };
         write_research_ledger(
             root,

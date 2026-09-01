@@ -342,6 +342,9 @@ mod tests {
             raised: Vec::new(),
             model: "m".to_string(),
             secs: 1,
+            kind: "design".to_string(),
+            cite: String::new(),
+            origin: String::new(),
         }
     }
 
