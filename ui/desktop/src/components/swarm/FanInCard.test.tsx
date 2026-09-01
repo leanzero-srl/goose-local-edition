@@ -1,7 +1,7 @@
 import { render } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
 import FanInCard, { type NodeLane } from './FanInCard';
-import { CHIP_RADIUS, FORMATION_RAMP } from './formationVisualState';
+import { FORMATION_RAMP } from './formationVisualState';
 
 const lanes: NodeLane[] = [
   { device: 'm4-max', action: 'edit auth.rs', status: 'done' },
@@ -38,9 +38,10 @@ describe('FanInCard', () => {
     expect(card.className).toContain('border ');
     expect(card.className).not.toMatch(/border-l\b/);
     expect(card.className).not.toMatch(/border-l-/);
-    // The ONE panel/chip radius, from formationVisualState — restrained, never a pill, and never a value
-    // this file invents for itself.
-    expect(card.style.borderRadius).toBe(`${CHIP_RADIUS}px`);
+    // The Studio control radius (6px), as the token utility — never a pill, never an inline value this
+    // file invents for itself.
+    expect(card.className).toContain('rounded-lz-control');
+    expect(card.getAttribute('style')).toBeNull();
     // one SVG status icon per lane, each with an explicit (dark-mode-safe) color — never a bare glyph
     const statuses = getAllByTestId('node-status');
     expect(statuses).toHaveLength(3);
