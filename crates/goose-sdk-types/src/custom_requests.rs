@@ -2689,3 +2689,198 @@ pub struct MlxEngineDownloadPauseRequest {
 pub struct MlxEngineDownloadResumeRequest {
     pub repo_id: String,
 }
+
+// ============================================================================
+// LeanZero Link — passwordless account identity + a goose-owned Tailscale mesh.
+//
+// Method namespace: `_goose/unstable/leanzeroLink/*`. These camelCase DTOs are the
+// desktop's contract for the Link tab. The cross-node wire types carried by
+// `leanzeroLink/nodes` (`NodeState`) are a SEPARATE, snake_case `/v1/swarm/*`
+// contract shared with peer nodes and the iOS companion app, and are passed
+// through verbatim as JSON (see `LeanzeroLinkNodesResponse`).
+// ============================================================================
+
+/// Which auth-worker capabilities the deployment has configured (from env presence).
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct LeanzeroLinkCapabilitiesDto {
+    pub mail: bool,
+    pub audience: bool,
+    pub mesh: bool,
+}
+
+/// `GET /v1/health` on the auth worker — what the deployment supports.
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, JsonRpcRequest)]
+#[request(
+    method = "_goose/unstable/leanzeroLink/health",
+    response = LeanzeroLinkHealthResponse
+)]
+#[serde(rename_all = "camelCase")]
+pub struct LeanzeroLinkHealthRequest {}
+
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, JsonRpcResponse)]
+#[serde(rename_all = "camelCase")]
+pub struct LeanzeroLinkHealthResponse {
+    pub ok: bool,
+    pub version: String,
+    pub capabilities: LeanzeroLinkCapabilitiesDto,
+}
+
+/// Request an email OTP → `codeSent`.
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, JsonRpcRequest)]
+#[request(
+    method = "_goose/unstable/leanzeroLink/requestCode",
+    response = LeanzeroLinkRequestCodeResponse
+)]
+#[serde(rename_all = "camelCase")]
+pub struct LeanzeroLinkRequestCodeRequest {
+    pub email: String,
+}
+
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, JsonRpcResponse)]
+#[serde(rename_all = "camelCase")]
+pub struct LeanzeroLinkRequestCodeResponse {
+    /// The worker-normalized email the code was sent to.
+    pub email: String,
+    pub expires_in_seconds: u64,
+}
+
+/// Verify the OTP → persist identity, `loggedIn`.
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, JsonRpcRequest)]
+#[request(
+    method = "_goose/unstable/leanzeroLink/verify",
+    response = LeanzeroLinkVerifyResponse
+)]
+#[serde(rename_all = "camelCase")]
+pub struct LeanzeroLinkVerifyRequest {
+    pub email: String,
+    pub code: String,
+}
+
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, JsonRpcResponse)]
+#[serde(rename_all = "camelCase")]
+pub struct LeanzeroLinkVerifyResponse {
+    /// The auth state after a successful verify (`"loggedIn"`).
+    pub state: String,
+    /// The worker-normalized account email.
+    pub email: String,
+    /// Worker contact-sync verdict: `"synced" | "skipped" | "failed"`.
+    pub audience_sync: String,
+}
+
+/// Bring up the mesh + control service (requires a verified identity).
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, JsonRpcRequest)]
+#[request(
+    method = "_goose/unstable/leanzeroLink/connect",
+    response = LeanzeroLinkStateResponse
+)]
+#[serde(rename_all = "camelCase")]
+pub struct LeanzeroLinkConnectRequest {}
+
+/// The composed auth + mesh state.
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, JsonRpcRequest)]
+#[request(
+    method = "_goose/unstable/leanzeroLink/status",
+    response = LeanzeroLinkStateResponse
+)]
+#[serde(rename_all = "camelCase")]
+pub struct LeanzeroLinkStatusRequest {}
+
+/// Tear down the connection, clear the stored identity, drop to `loggedOut`.
+/// `wipe` also removes the mesh state dir (slower re-login).
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, JsonRpcRequest)]
+#[request(
+    method = "_goose/unstable/leanzeroLink/logout",
+    response = LeanzeroLinkStateResponse
+)]
+#[serde(rename_all = "camelCase")]
+pub struct LeanzeroLinkLogoutRequest {
+    #[serde(default)]
+    pub wipe: bool,
+}
+
+/// The auth lifecycle state. Internally tagged on `state`:
+/// `loggedOut | codeSent | loggedIn | connecting | connected`.
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(tag = "state", rename_all = "camelCase")]
+pub enum LeanzeroLinkAuthStateDto {
+    #[default]
+    LoggedOut,
+    CodeSent {
+        email: String,
+        #[serde(rename = "expiresAt")]
+        expires_at: String,
+    },
+    LoggedIn {
+        email: String,
+    },
+    Connecting {
+        email: String,
+    },
+    Connected {
+        email: String,
+        #[serde(rename = "meshIp")]
+        mesh_ip: String,
+    },
+}
+
+/// One raw Tailscale peer seen by the local mesh daemon (status-panel diagnostics —
+/// distinct from a swarm `NodeState`).
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct LeanzeroLinkMeshPeerDto {
+    pub hostname: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ip: Option<String>,
+    pub online: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_seen: Option<String>,
+}
+
+/// Live mesh status from the goose-owned tailscaled.
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct LeanzeroLinkMeshStatusDto {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub self_ip: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub self_hostname: Option<String>,
+    pub backend_state: String,
+    pub online: bool,
+    #[serde(default)]
+    pub peers: Vec<LeanzeroLinkMeshPeerDto>,
+}
+
+/// What goosed surfaces for the Link tab: auth + live mesh + total node count
+/// (self + reachable peers) + the last error (never swallowed).
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, JsonRpcResponse)]
+#[serde(rename_all = "camelCase")]
+pub struct LeanzeroLinkStateResponse {
+    pub auth: LeanzeroLinkAuthStateDto,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mesh: Option<LeanzeroLinkMeshStatusDto>,
+    pub node_count: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_error: Option<String>,
+}
+
+/// The swarm node view (`self` + peers). Proxies the local control service's
+/// `GET /v1/swarm/nodes`. The `self` and `peers` objects are the snake_case wire
+/// `NodeState` shared with peer nodes + the iOS companion — passed through verbatim:
+/// `{ node_id, hostname, mesh_ip, status: { type, session_id? }, sessions_active,
+/// updated_at }`.
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, JsonRpcRequest)]
+#[request(
+    method = "_goose/unstable/leanzeroLink/nodes",
+    response = LeanzeroLinkNodesResponse
+)]
+#[serde(rename_all = "camelCase")]
+pub struct LeanzeroLinkNodesRequest {}
+
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, JsonRpcResponse)]
+pub struct LeanzeroLinkNodesResponse {
+    #[serde(rename = "self")]
+    pub self_node: serde_json::Value,
+    #[serde(default)]
+    pub peers: Vec<serde_json::Value>,
+}

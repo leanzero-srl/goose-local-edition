@@ -1051,4 +1051,60 @@ impl GooseAcpAgent {
     ) -> Result<EmptyResponse, agent_client_protocol::Error> {
         self.on_mlx_engine_download_cancel(req).await
     }
+
+    #[custom_method(LeanzeroLinkHealthRequest)]
+    async fn dispatch_leanzero_link_health(
+        &self,
+        req: LeanzeroLinkHealthRequest,
+    ) -> Result<LeanzeroLinkHealthResponse, agent_client_protocol::Error> {
+        self.on_leanzero_link_health(req).await
+    }
+
+    #[custom_method(LeanzeroLinkRequestCodeRequest)]
+    async fn dispatch_leanzero_link_request_code(
+        &self,
+        req: LeanzeroLinkRequestCodeRequest,
+    ) -> Result<LeanzeroLinkRequestCodeResponse, agent_client_protocol::Error> {
+        self.on_leanzero_link_request_code(req).await
+    }
+
+    #[custom_method(LeanzeroLinkVerifyRequest)]
+    async fn dispatch_leanzero_link_verify(
+        &self,
+        req: LeanzeroLinkVerifyRequest,
+    ) -> Result<LeanzeroLinkVerifyResponse, agent_client_protocol::Error> {
+        self.on_leanzero_link_verify(req).await
+    }
+
+    #[custom_method(LeanzeroLinkConnectRequest)]
+    async fn dispatch_leanzero_link_connect(
+        &self,
+        req: LeanzeroLinkConnectRequest,
+    ) -> Result<LeanzeroLinkStateResponse, agent_client_protocol::Error> {
+        self.on_leanzero_link_connect(req).await
+    }
+
+    #[custom_method(LeanzeroLinkStatusRequest)]
+    async fn dispatch_leanzero_link_status(
+        &self,
+        req: LeanzeroLinkStatusRequest,
+    ) -> Result<LeanzeroLinkStateResponse, agent_client_protocol::Error> {
+        self.on_leanzero_link_status(req).await
+    }
+
+    #[custom_method(LeanzeroLinkLogoutRequest)]
+    async fn dispatch_leanzero_link_logout(
+        &self,
+        req: LeanzeroLinkLogoutRequest,
+    ) -> Result<LeanzeroLinkStateResponse, agent_client_protocol::Error> {
+        self.on_leanzero_link_logout(req).await
+    }
+
+    #[custom_method(LeanzeroLinkNodesRequest)]
+    async fn dispatch_leanzero_link_nodes(
+        &self,
+        req: LeanzeroLinkNodesRequest,
+    ) -> Result<LeanzeroLinkNodesResponse, agent_client_protocol::Error> {
+        self.on_leanzero_link_nodes(req).await
+    }
 }
