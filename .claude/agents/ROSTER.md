@@ -857,3 +857,8 @@ research_request_block's armed-no-claimed-sections arm wording.
   judge_look_dispatched itself, found three new defects with quotes (backticked section matcher,
   empty-options decisions, an answer-dictating research judge) and set a WATCH that is a
   correctness test of a mini's content, not its presence. Charter gap: none.
+- 2026-09-01 08:00 tick-surgeon (r6d tick 2): EXEMPLARY at 75.5k/6 — six calls. Closed the
+  correctness watch by reading the mini AGAINST the spec lines (not against the judge), caught the
+  judge flipping three ways and being wrong at look 4, and found the dispatch-time snowball gap by
+  reading a NEW lane's opening words against a mini that landed 33 seconds later. Three engine
+  defects with quotes from six calls. Charter gap: none.
