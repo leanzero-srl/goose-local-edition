@@ -9,6 +9,7 @@ import type { Deps } from "../src/lib/deps";
 import { createFsKvStore } from "../src/lib/fs-kv";
 import { generateOtp } from "../src/lib/otp";
 import { createNodeServer } from "../src/node-server";
+import { FULL_ENV, resendHappyFetch } from "./helpers";
 
 // A real loopback http server driven by the same createNodeServer the entrypoint uses.
 // The KV is a mkdtemp dir (never a real LINK_KV_DIR) and the config is built from an
@@ -82,5 +83,73 @@ describe("node-server adapter", () => {
   it("answers a CORS preflight (OPTIONS) with 204", async () => {
     const res = await fetch(`${base}/v1/auth/request-code`, { method: "OPTIONS" });
     expect(res.status).toBe(204);
+  });
+
+  it("drops a client-supplied CF-Connecting-IP before the handler: no proxy header → client_ip_unresolved, no ip bucket", async () => {
+    const logs: Array<{ event: string; fields?: Record<string, unknown> }> = [];
+    const mailDir = await mkdtemp(join(tmpdir(), "link-node-mail-"));
+    const kv = createFsKvStore(mailDir);
+    const mailDeps: Deps = {
+      kv,
+      fetchFn: async (url, init) => resendHappyFetch(url, init),
+      now: () => Date.now(),
+      randomOtp: () => "424242",
+      log: (event, fields) => logs.push({ event, fields }),
+      config: parseConfig(FULL_ENV),
+    };
+    const mailServer = createNodeServer(mailDeps, 0);
+    await new Promise<void>((resolve) => mailServer.listen(0, "127.0.0.1", () => resolve()));
+    try {
+      const port = (mailServer.address() as AddressInfo).port;
+      const res = await fetch(`http://127.0.0.1:${port}/v1/auth/request-code`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "CF-Connecting-IP": "203.0.113.99" },
+        body: JSON.stringify({ email: "user@example.com" }),
+      });
+      expect(res.status).toBe(200);
+      expect(logs.some((l) => l.event === "client_ip_resolved")).toBe(false);
+      expect(logs.find((l) => l.event === "client_ip_unresolved")?.fields).toEqual({
+        path: "/v1/auth/request-code",
+        forwardedFor: null,
+      });
+      expect(await kv.get("rl:ip:203.0.113.99:" + Math.floor(Date.now() / 1000 / 3600))).toBeNull();
+    } finally {
+      await new Promise<void>((resolve, reject) => mailServer.close((err) => (err ? reject(err) : resolve())));
+      await rm(mailDir, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps X-Forwarded-For (the header Funnel SETS) and keys the ip bucket on it", async () => {
+    const logs: Array<{ event: string; fields?: Record<string, unknown> }> = [];
+    const mailDir = await mkdtemp(join(tmpdir(), "link-node-mail-"));
+    const kv = createFsKvStore(mailDir);
+    const mailDeps: Deps = {
+      kv,
+      fetchFn: async (url, init) => resendHappyFetch(url, init),
+      now: () => Date.now(),
+      randomOtp: () => "424242",
+      log: (event, fields) => logs.push({ event, fields }),
+      config: parseConfig(FULL_ENV),
+    };
+    const mailServer = createNodeServer(mailDeps, 0);
+    await new Promise<void>((resolve) => mailServer.listen(0, "127.0.0.1", () => resolve()));
+    try {
+      const port = (mailServer.address() as AddressInfo).port;
+      const res = await fetch(`http://127.0.0.1:${port}/v1/auth/request-code`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-Forwarded-For": "198.51.100.23" },
+        body: JSON.stringify({ email: "user@example.com" }),
+      });
+      expect(res.status).toBe(200);
+      expect(logs.find((l) => l.event === "client_ip_resolved")?.fields).toMatchObject({
+        ip: "198.51.100.23",
+        source: "x-forwarded-for",
+        forwardedFor: "198.51.100.23",
+      });
+      expect(await kv.get("rl:ip:198.51.100.23:" + Math.floor(Date.now() / 1000 / 3600))).toBe("1");
+    } finally {
+      await new Promise<void>((resolve, reject) => mailServer.close((err) => (err ? reject(err) : resolve())));
+      await rm(mailDir, { recursive: true, force: true });
+    }
   });
 });

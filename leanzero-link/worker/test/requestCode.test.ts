@@ -12,7 +12,8 @@ import {
   responseJson,
 } from "./helpers";
 
-const IP = { "CF-Connecting-IP": "203.0.113.7" };
+// The proxy-set header Tailscale Funnel/Serve puts on every forwarded request (Set, not Add).
+const IP = { "X-Forwarded-For": "203.0.113.7" };
 
 describe("POST /v1/auth/request-code", () => {
   it("issues a code, stores its hash, and sends the documented Resend body", async () => {
@@ -111,5 +112,86 @@ describe("POST /v1/auth/request-code", () => {
     expect(limited.status).toBe(429);
     expect(limited.headers.get("Retry-After")).toBe("800");
     expect(await responseJson(limited)).toEqual({ error: "rate limited", scope: "ip", retryAfterSeconds: 800 });
+  });
+
+  // W-H1, the refuter's measured case: 15 requests from 15 distinct clients. Before the fix
+  // every one of them keyed on rl:ip:unknown (10/h) — a GLOBAL sign-in lockout at the 11th.
+  it("keys the ip bucket on the proxy-set X-Forwarded-For: 15 distinct clients → 15×200", async () => {
+    const h = makeHarness({
+      fetchHandler: resendHappyFetch,
+      otp: Array.from({ length: 15 }, (_, i) => String(100000 + i)),
+    });
+    for (let i = 0; i < 15; i++) {
+      const response = await handleRequestCode(
+        postJson("/v1/auth/request-code", { email: `user${i}@example.com` }, { "X-Forwarded-For": `198.51.100.${i + 1}` }),
+        h.deps,
+      );
+      expect(response.status).toBe(200);
+    }
+    const ipKeys = [...h.kv.entries.keys()].filter((k) => k.startsWith("rl:ip:"));
+    expect(ipKeys).toHaveLength(15);
+    expect(ipKeys.some((k) => k.includes("unknown"))).toBe(false);
+  });
+
+  it("uses the RIGHTMOST X-Forwarded-For value, so a client-prepended address cannot rotate buckets", async () => {
+    const h = makeHarness({
+      fetchHandler: resendHappyFetch,
+      otp: Array.from({ length: 10 }, (_, i) => String(100000 + i)),
+    });
+    for (let i = 0; i < 10; i++) {
+      // Spoofed left-hand values; the trusted proxy's own value stays rightmost.
+      const forwarded = `10.0.0.${i}, 203.0.113.7`;
+      const ok = await handleRequestCode(
+        postJson("/v1/auth/request-code", { email: `user${i}@example.com` }, { "X-Forwarded-For": forwarded }),
+        h.deps,
+      );
+      expect(ok.status).toBe(200);
+    }
+    const limited = await handleRequestCode(
+      postJson("/v1/auth/request-code", { email: "user10@example.com" }, { "X-Forwarded-For": "10.0.0.99, 203.0.113.7" }),
+      h.deps,
+    );
+    expect(limited.status).toBe(429);
+    expect((await responseJson(limited)).scope).toBe("ip");
+    expect([...h.kv.entries.keys()].filter((k) => k.startsWith("rl:ip:"))).toEqual([
+      expect.stringMatching(/^rl:ip:203\.0\.113\.7:/),
+    ]);
+  });
+
+  it("with no resolvable client address it logs client_ip_unresolved and skips the ip scope — never an 'unknown' bucket", async () => {
+    const h = makeHarness({ fetchHandler: resendHappyFetch, otp: ["424242"] });
+    const response = await handleRequestCode(postJson("/v1/auth/request-code", { email: "user@example.com" }), h.deps);
+    expect(response.status).toBe(200);
+    const unresolved = h.logs.find((l) => l.event === "client_ip_unresolved");
+    expect(unresolved?.fields).toEqual({ path: "/v1/auth/request-code", forwardedFor: null });
+    expect([...h.kv.entries.keys()].some((k) => k.startsWith("rl:ip:"))).toBe(false);
+  });
+
+  it("falls back to CF-Connecting-IP only when there is no X-Forwarded-For at all", async () => {
+    const h = makeHarness({ fetchHandler: resendHappyFetch, otp: ["424242", "424243"] });
+    await handleRequestCode(
+      postJson("/v1/auth/request-code", { email: "a@example.com" }, { "CF-Connecting-IP": "203.0.113.50" }),
+      h.deps,
+    );
+    await handleRequestCode(
+      postJson("/v1/auth/request-code", { email: "b@example.com" }, { "CF-Connecting-IP": "203.0.113.50", "X-Forwarded-For": "203.0.113.51" }),
+      h.deps,
+    );
+    const ipKeys = [...h.kv.entries.keys()].filter((k) => k.startsWith("rl:ip:")).sort();
+    expect(ipKeys).toEqual([expect.stringMatching(/^rl:ip:203\.0\.113\.50:/), expect.stringMatching(/^rl:ip:203\.0\.113\.51:/)]);
+  });
+
+  it("checks the ip bucket BEFORE the email bucket, so an exhausted source cannot burn a victim's email budget", async () => {
+    const h = makeHarness({
+      fetchHandler: resendHappyFetch,
+      otp: Array.from({ length: 10 }, (_, i) => String(100000 + i)),
+    });
+    for (let i = 0; i < 10; i++) {
+      await handleRequestCode(postJson("/v1/auth/request-code", { email: `user${i}@example.com` }, IP), h.deps);
+    }
+    const refused = await handleRequestCode(postJson("/v1/auth/request-code", { email: "victim@example.com" }, IP), h.deps);
+    expect(refused.status).toBe(429);
+    expect((await responseJson(refused)).scope).toBe("ip");
+    expect([...h.kv.entries.keys()].some((k) => k.startsWith("rl:email:victim@example.com"))).toBe(false);
   });
 });
