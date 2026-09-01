@@ -14,6 +14,17 @@
 //! (`research_planned.per_slice.__open_decisions__: 3`). A decision is a QUESTION with at least
 //! two concrete options and the request's words that leave it open; anything else is measured,
 //! named (`decision_self_resolved`, MILD — never a stop) and kept out of ASK and the fan.
+//!
+//! THE QUESTION CONTRACT (the fan cut, r6d): a slice question is an OBJECT with a `kind` —
+//! `spec_lookup` | `design` | `external` — and, for a lookup the opener settled by reading the
+//! request, the `fact` and its `cite`. r6d dispatched 27 questions over 165 minutes on 3 nodes
+//! and 13 of them were answerable by one grep of request.md (ledger-api-q1 "which sort keys does
+//! sort accept" — request.md:148 lists the four; drafts-workflow-q0 "the tokens-file shape" —
+//! request.md:51 shows it), each costing a 15-minute lane. A cited fact is not a question: the
+//! engine renders it into the brief as a SPEC FACT and no lane runs. A question that arrives in
+//! the old bare-string shape, or with a kind the contract does not name, is UNKINDED — it is
+//! dispatched exactly as before (the contract miss costs nothing but a lane) and named by
+//! `research_question_unkinded` so the miss is visible.
 
 use super::EventSink;
 
@@ -25,8 +36,10 @@ pub(crate) struct OpenSlice {
     pub(super) title: String,
     #[serde(default)]
     pub(super) objective: String,
+    /// The slice's questions, in the opener's order — the position is `q_index`, the identity
+    /// the ledger mini, the activity key and the brief partition share.
     #[serde(default)]
-    pub(super) questions: Vec<String>,
+    pub(super) questions: Vec<OpenQuestion>,
     /// The opener's OWN estimate of how much work this slice is, 1-5. Not truth — a model estimate,
     /// used only to notice a lopsided split and ask for one more cut. Independent machines pick these
     /// up in parallel, so a slice twice the size of its siblings is a node idling while one grinds.
@@ -38,6 +51,133 @@ pub(crate) struct OpenSlice {
     /// exactly as before this field existed.
     #[serde(default)]
     pub(super) sections: Vec<String>,
+}
+
+/// What kind of question the opener says it is. `Unkinded` is not a kind the opener may choose:
+/// it is the parse-time reading of the old bare-string shape or of a `kind` the contract does not
+/// name, kept dispatchable (treated as `design`) and counted by `research_question_unkinded`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum QuestionKind {
+    /// The request's own text answers it. With a `cite` AND a `fact` it is a SPEC FACT — no lane
+    /// runs; without a fact the opener searched and did not find it, and a lane looks.
+    SpecLookup,
+    /// The request leaves it open; a builder must choose a convention.
+    Design,
+    /// Needs the vendor's documentation or another source outside the request.
+    External,
+    Unkinded,
+}
+
+impl QuestionKind {
+    /// Lenient on decoration (case, `-`/` ` for `_`), strict on vocabulary: only the three names
+    /// the schema enumerates resolve; anything else is `Unkinded`, never a guess at what the
+    /// model meant.
+    fn parse(raw: &str) -> Self {
+        match raw.trim().to_lowercase().replace(['-', ' '], "_").as_str() {
+            "spec_lookup" => Self::SpecLookup,
+            "design" => Self::Design,
+            "external" => Self::External,
+            _ => Self::Unkinded,
+        }
+    }
+
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            Self::SpecLookup => "spec_lookup",
+            Self::Design => "design",
+            Self::External => "external",
+            Self::Unkinded => "unkinded",
+        }
+    }
+}
+
+/// One slice question as the run consumes it. `text` is the question verbatim (whitespace
+/// squashed to one line — the identity the mini, the brief and the dedup all read); `cite` is the
+/// request line or heading the opener read (`request.md:148`, or a heading), empty when it named
+/// none; `fact` is the answer in the request's words, empty unless the opener found one.
+#[derive(Clone, Debug)]
+pub(crate) struct OpenQuestion {
+    pub(crate) text: String,
+    pub(crate) kind: QuestionKind,
+    pub(crate) cite: String,
+    pub(crate) fact: String,
+}
+
+impl OpenQuestion {
+    /// A SPEC FACT: a lookup the opener settled by reading the request — both the fact and where
+    /// it read it. Either half missing and this is a question again: a fact without a cite is an
+    /// uncheckable claim, a cite without a fact is a search that found nothing.
+    pub(crate) fn is_cited_fact(&self) -> bool {
+        self.kind == QuestionKind::SpecLookup && !self.cite.is_empty() && !self.fact.is_empty()
+    }
+}
+
+/// Test fixtures and the pre-contract call sites build a plain question; it is a `design`
+/// question (dispatched), never `Unkinded` — the unkinded reading belongs to the deserializer
+/// alone, so a `research_question_unkinded` event always means the MODEL missed the contract.
+impl From<&str> for OpenQuestion {
+    fn from(text: &str) -> Self {
+        Self {
+            text: squash(text),
+            kind: QuestionKind::Design,
+            cite: String::new(),
+            fact: String::new(),
+        }
+    }
+}
+
+fn squash(s: &str) -> String {
+    s.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+/// One question as the opener EMITTED it — the schema's object, a bare string from a model that
+/// ignored the schema (every pre-cut opener's shape), or anything else (kept parseable so one odd
+/// entry cannot fail the whole opener — the `OpenDecisionRaw` lesson).
+#[derive(serde::Deserialize)]
+#[serde(untagged)]
+enum OpenQuestionRaw {
+    Framed {
+        #[serde(default)]
+        question: String,
+        #[serde(default)]
+        kind: String,
+        #[serde(default)]
+        cite: String,
+        #[serde(default)]
+        fact: String,
+    },
+    Bare(String),
+    Other(serde_json::Value),
+}
+
+impl<'de> serde::Deserialize<'de> for OpenQuestion {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        Ok(match OpenQuestionRaw::deserialize(d)? {
+            OpenQuestionRaw::Framed {
+                question,
+                kind,
+                cite,
+                fact,
+            } => OpenQuestion {
+                text: squash(&question),
+                kind: QuestionKind::parse(&kind),
+                cite: squash(&cite),
+                fact: fact.trim().to_string(),
+            },
+            OpenQuestionRaw::Bare(q) => OpenQuestion {
+                text: squash(&q),
+                kind: QuestionKind::Unkinded,
+                cite: String::new(),
+                fact: String::new(),
+            },
+            OpenQuestionRaw::Other(v) => OpenQuestion {
+                text: squash(&v.to_string()),
+                kind: QuestionKind::Unkinded,
+                cite: String::new(),
+                fact: String::new(),
+            },
+        })
+    }
 }
 
 /// The opener's reply as the run consumes it: `open_decisions` holds only QUALIFIED decisions
@@ -89,7 +229,19 @@ pub(super) fn open_schema() -> serde_json::Value {
                         "id": {"type": "string"},
                         "title": {"type": "string"},
                         "objective": {"type": "string"},
-                        "questions": {"type": "array", "items": {"type": "string"}},
+                        "questions": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "required": ["question", "kind"],
+                                "properties": {
+                                    "question": {"type": "string"},
+                                    "kind": {"type": "string", "enum": ["spec_lookup", "design", "external"]},
+                                    "cite": {"type": "string"},
+                                    "fact": {"type": "string"}
+                                }
+                            }
+                        },
                         "weight": {"type": "integer"},
                         "sections": {"type": "array", "items": {"type": "string"}}
                     }
@@ -142,10 +294,43 @@ pub(crate) struct OpenOutputRaw {
 impl OpenOutputRaw {
     pub(super) fn qualify(self, events: &dyn EventSink) -> OpenOutput {
         OpenOutput {
-            slices: self.slices,
+            slices: qualify_slice_questions(self.slices, events),
             open_decisions: qualify_open_decisions(self.open_decisions, events),
         }
     }
+}
+
+/// The parse-time reading of every slice question. An entry with no text is nothing to research
+/// and nothing to brief — dropped, named (`research_question_empty`, with the opener's own
+/// position so the transcript can be checked), so the surviving positions ARE the q_indexes
+/// every downstream identity uses. An unkinded entry (bare string, unknown `kind`) survives
+/// unchanged and dispatches as a design question — the miss costs a lane, never an answer — and
+/// is named by `research_question_unkinded` with its words, so the contract miss is visible on
+/// the tick instead of silently paid.
+fn qualify_slice_questions(mut slices: Vec<OpenSlice>, events: &dyn EventSink) -> Vec<OpenSlice> {
+    for sl in &mut slices {
+        let raw = std::mem::take(&mut sl.questions);
+        for (position, q) in raw.into_iter().enumerate() {
+            if q.text.is_empty() {
+                events.write_value(serde_json::json!({
+                    "event": "research_question_empty",
+                    "slice": sl.id,
+                    "position": position,
+                }));
+                continue;
+            }
+            if q.kind == QuestionKind::Unkinded {
+                events.write_value(serde_json::json!({
+                    "event": "research_question_unkinded",
+                    "slice": sl.id,
+                    "q_index": sl.questions.len(),
+                    "question": q.text.chars().take(200).collect::<String>(),
+                }));
+            }
+            sl.questions.push(q);
+        }
+    }
+    slices
 }
 
 /// The parse-time gate: an entry with fewer than two concrete options is not a decision — the
@@ -360,5 +545,101 @@ mod tests {
         assert_eq!(item["type"], "object");
         assert_eq!(item["required"], serde_json::json!(["question", "options"]));
         assert_eq!(item["properties"]["options"]["type"], "array");
+    }
+
+    /// THE QUESTION CONTRACT on r6d's own questions. The schema demands `question` + `kind`
+    /// (three names); the parse reads the framed shape into kind/cite/fact, reads r6d's actual
+    /// shape (bare strings) as UNKINDED — dispatched as design, each named once with its words —
+    /// and drops an empty entry by name so the surviving positions are the q_indexes.
+    #[test]
+    fn a_question_arrives_kinded_and_the_old_bare_shape_is_named_unkinded() {
+        let schema = open_schema();
+        let q = &schema["properties"]["slices"]["items"]["properties"]["questions"]["items"];
+        assert_eq!(q["type"], "object");
+        assert_eq!(q["required"], serde_json::json!(["question", "kind"]));
+        assert_eq!(
+            q["properties"]["kind"]["enum"],
+            serde_json::json!(["spec_lookup", "design", "external"])
+        );
+
+        // r6d ledger-api-q1 as a cited fact (request.md:148 lists the four sort keys), r6d
+        // ledger-core-q1 as an external question, notifierd-q2 as a design one, one lookup the
+        // opener searched for and did not find, one bare string (r6d's real shape), one stray
+        // value, one empty object.
+        let raw: OpenOutputRaw = serde_json::from_value(serde_json::json!({
+            "slices": [{
+                "id": "ledger-api", "title": "t", "objective": "o", "weight": 3,
+                "questions": [
+                    {"question": "Which sort keys does sort=<k> accept and in what direction(s)?",
+                     "kind": "spec_lookup", "cite": "request.md:148",
+                     "fact": "`sort` is one of `created_at`, `-created_at`, `amount_minor`, `-amount_minor`; default `created_at` (ascending by INSTANT)."},
+                    {"question": "What cursor state from the vendor's paginated list is persisted across a dropped connection?",
+                     "kind": "External"},
+                    {"question": "What durability/locking strategy for notify.db (WAL? single writer?)",
+                     "kind": "design"},
+                    {"question": "Which header verifies signed webhooks?", "kind": "spec-lookup",
+                     "cite": "grep -n -i signature request.md"},
+                    "Static hosting: which content types (html/css/js/ico) and any cache headers?",
+                    7,
+                    {}
+                ]
+            }]
+        }))
+        .unwrap();
+        let sink = ValueSink::default();
+        let out = raw.qualify(&sink);
+        let qs = &out.slices[0].questions;
+        assert_eq!(qs.len(), 6, "the empty object is dropped: {qs:?}");
+        assert_eq!(qs[0].kind, QuestionKind::SpecLookup);
+        assert!(qs[0].is_cited_fact());
+        assert_eq!(qs[0].cite, "request.md:148");
+        assert!(qs[0].fact.starts_with("`sort` is one of"));
+        assert_eq!(qs[1].kind, QuestionKind::External, "case folds");
+        assert_eq!(qs[2].kind, QuestionKind::Design);
+        assert_eq!(
+            qs[3].kind,
+            QuestionKind::SpecLookup,
+            "dash folds to underscore"
+        );
+        assert!(
+            !qs[3].is_cited_fact(),
+            "a lookup that found nothing is a question again, not a fact"
+        );
+        assert_eq!(qs[4].kind, QuestionKind::Unkinded);
+        assert!(qs[4].text.starts_with("Static hosting"));
+        assert_eq!(qs[5].kind, QuestionKind::Unkinded);
+        assert_eq!(qs[5].text, "7");
+        let events = sink.0.lock().unwrap();
+        let names: Vec<&str> = events
+            .iter()
+            .map(|e| e["event"].as_str().unwrap())
+            .collect();
+        assert_eq!(
+            names,
+            vec![
+                "research_question_unkinded",
+                "research_question_unkinded",
+                "research_question_empty"
+            ],
+            "{events:?}"
+        );
+        assert_eq!(events[0]["slice"], "ledger-api");
+        assert_eq!(
+            events[0]["q_index"], 4,
+            "the q_index AFTER the drop, the ledger's identity"
+        );
+        assert!(events[0]["question"]
+            .as_str()
+            .unwrap()
+            .starts_with("Static hosting"));
+        assert_eq!(events[1]["q_index"], 5);
+        assert_eq!(
+            events[2]["position"], 6,
+            "the opener's own position of the empty entry"
+        );
+        // A fixture question is a design question: never counted as a model's contract miss.
+        let plain = OpenQuestion::from("which port");
+        assert_eq!(plain.kind, QuestionKind::Design);
+        assert!(!plain.is_cited_fact());
     }
 }

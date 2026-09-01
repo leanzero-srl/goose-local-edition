@@ -291,9 +291,13 @@ fn the_banned_integrate_template_only_shrinks() {
 /// contract's research-lane clause (NEXT names where to look or "emit what you have", never the
 /// answer — r6d's judge-research-ledger-core-q2 dictated the mini's content at look 1 and its
 /// opposite at look 4).
+/// Tightened to 39,696 (the fan cut, C1): `briefs_from_slices` and its four tests moved to
+/// commands/swarm/research.rs beside the rows it partitions (-312 net), paying for the opener's
+/// question contract at the OPEN call (request file + SOURCES before the opener runs, the
+/// kind/cite/fact paragraph) and the fan's cited-fact arm — r6d's 13 spec lookups, 201 lane-min.
 #[test]
 fn swarm_rs_line_count_only_decreases() {
-    const SWARM_RS_LINE_BASELINE: usize = 40_008;
+    const SWARM_RS_LINE_BASELINE: usize = 39_696;
     let text = read("crates/goose-cli/src/commands/swarm.rs");
     let n = text.lines().count();
     assert!(
