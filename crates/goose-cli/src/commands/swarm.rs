@@ -85,8 +85,10 @@ mod prose;
 use prose::rewrite_path_token;
 mod skeleton;
 use skeleton::{prepend_skeleton_task, refresh_skeleton_description};
+mod ledger_writers;
 mod plan_repairs;
 mod shards;
+use ledger_writers::{write_gate_ledger, write_repair_ledger, write_task_ledger, RepairLedgerRow};
 use plan_repairs::{
     repair_brief_file_mentions, repair_sink_deps, repair_sink_files, repair_unassigned_endpoints,
 };
@@ -3568,7 +3570,7 @@ mod tests {
             "app/api.py".to_string(),
             "app/ledgerd/server.py".to_string(),
         ];
-        write_task_ledger(root, "api-endpoints", "done", false, &owned, 1, None).unwrap();
+        write_task_ledger(root, "api-endpoints", "done", false, &owned, 1, None, None).unwrap();
         write_gate_ledger(
             root,
             0,
@@ -3651,7 +3653,7 @@ mod tests {
 
         // Idempotence: the same writes again produce the same roll-up bytes.
         let first = std::fs::read_to_string(root.join(".swarm/ledger.json")).unwrap();
-        write_task_ledger(root, "api-endpoints", "done", false, &owned, 1, None).unwrap();
+        write_task_ledger(root, "api-endpoints", "done", false, &owned, 1, None, None).unwrap();
         write_gate_ledger(
             root,
             0,
@@ -3796,6 +3798,7 @@ mod tests {
             ],
             0,
             None,
+            None,
         )
         .unwrap();
         write_task_ledger(
@@ -3809,9 +3812,20 @@ mod tests {
             ],
             0,
             None,
+            None,
         )
         .unwrap();
-        write_task_ledger(dir.path(), "integrate-verify", "done", false, &[], 0, None).unwrap();
+        write_task_ledger(
+            dir.path(),
+            "integrate-verify",
+            "done",
+            false,
+            &[],
+            0,
+            None,
+            None,
+        )
+        .unwrap();
         write_gate_ledger(
             dir.path(),
             0,
@@ -20966,10 +20980,14 @@ impl GooseAgentDispatcher {
              AND A SLICE WHOSE BRIEF DECLARES NO FILES GETS `files: []`. Do not invent a path for it. \
              If it names nothing to create, it is not work — it is a note, and the review will remove it.\n\
              - depends_on: task ids it needs\n\n\
-             DEPENDENCIES ARE EXPENSIVE — every one of them idles a machine. Add one ONLY when a task \
-             literally cannot compile or run without another's file already existing. Needing to know a \
-             signature is NOT a dependency: a worker reads its dependencies' real source when it runs. \
-             If you are not sure, leave it out.\n\n\
+             DEPENDENCIES are for IMPORT/RUNTIME NECESSITY ONLY: add one when a task literally cannot \
+             compile or run without another's file already existing. Needing to know a signature is NOT \
+             a dependency: a worker reads its dependencies' real source when it runs. If you are not \
+             sure, leave it out. Do NOT fold several mechanisms into one task to avoid a dependency: the \
+             engine measures spec sections per owned file after you and SPLITS a fat task into parallel \
+             SHARDS (each in a private folder writing pieces + a README) with a MERGER that assembles the \
+             final file — shards of one module are independent by construction, so a plan of many \
+             right-sized tasks is cheaper than one fat task on one machine.\n\n\
              Then add ONE final task with id exactly `integrate-verify`, difficulty \"hard\", which \
              depends_on EVERY other task and OWNS NO FILES AT ALL (`files: []`). It wires the produced \
              modules together, runs `{test_cmd}`, boots the app, and exercises the commands the request \
@@ -26581,115 +26599,6 @@ fn render_completed_output_from_ledger(
     Some(lines.join("\n"))
 }
 
-fn write_task_ledger(
-    root: &Path,
-    task_id: &str,
-    status: &str,
-    salvaged: bool,
-    owned_files: &[String],
-    attempt: u32,
-    calls_mirror_dir: Option<PathBuf>,
-) -> Option<std::path::PathBuf> {
-    let row = build_task_ledger_row(
-        root,
-        task_id,
-        status,
-        salvaged,
-        owned_files,
-        attempt,
-        calls_mirror_dir,
-    );
-    write_ledger_mini(
-        root,
-        &format!("{}.json", activity_digest_key(task_id)),
-        &row,
-    )
-}
-
-/// One gate round's verdict, persisted where the NEXT dispatch can read it. `verified` is the
-/// source's own affirmation shape — `established` (bool) for the in-run smoke gate, the
-/// affirmative check count for a spec-contract replay — kept as-is rather than flattened,
-/// because collapsing them is how "inconclusive" and "verified" became the same value once
-/// before. Carries no timestamp: `goose swarm gate` on the same tree twice must be a no-op.
-fn write_gate_ledger(
-    root: &Path,
-    round: u64,
-    source: &str,
-    findings: &[String],
-    inconclusive: &[String],
-    verified: serde_json::Value,
-) -> Option<std::path::PathBuf> {
-    let row = serde_json::json!({
-        "kind": "gate",
-        "round": round,
-        "source": source,
-        "findings": findings,
-        "inconclusive": inconclusive,
-        "verified": verified,
-    });
-    write_ledger_mini(root, &format!("gate-r{round}.json"), &row)
-}
-
-/// What one repair shard reported, verdict lines parsed and PAIRED with the findings they judge
-/// — a bare "FINDING 2: NOT FIXED" is only actionable next round alongside what finding 2 was.
-struct RepairLedgerRow<'a> {
-    round: usize,
-    shard: &'a str,
-    owned_files: &'a [String],
-    /// The run's file list — a HANDOFF is only ever a path that exists in it.
-    all_files: &'a [String],
-    description: &'a str,
-    output: &'a str,
-    promoted: bool,
-    baseline: usize,
-    agent_ok: bool,
-}
-
-fn write_repair_ledger(root: &Path, row: RepairLedgerRow<'_>) -> Option<std::path::PathBuf> {
-    let findings = parse_numbered_findings(row.description);
-    // r6c: the brief tells a shard to HAND OFF a fix it cannot land by name in its final
-    // message; the app.js lane did ("HANDOFF — Files touched: `app/drafts.py` only") and the
-    // verdict line's 300-char tail was all that survived — the handoff reached nobody. Persisted
-    // here; the next wave's attribution consumes it (attribution::handoffs_from_rollup).
-    let handoffs: Vec<serde_json::Value> =
-        parse_handoffs(row.output, row.all_files, row.owned_files)
-            .into_iter()
-            .map(|h| serde_json::json!({"path": h.path, "symbol": h.symbol, "note": h.note}))
-            .collect();
-    let verdicts: Vec<serde_json::Value> = parse_finding_verdicts(row.output)
-        .into_iter()
-        .map(|(n, verdict, detail)| {
-            serde_json::json!({
-                "n": n,
-                "finding": findings.get((n as usize).saturating_sub(1)),
-                "verdict": verdict,
-                "detail": detail,
-            })
-        })
-        .collect();
-    let mini = serde_json::json!({
-        "kind": "repair",
-        "round": row.round,
-        "shard": row.shard,
-        "owned_files": row.owned_files,
-        "findings_assigned": findings,
-        "verdicts": verdicts,
-        "handoffs": handoffs,
-        "promoted": row.promoted,
-        "baseline": row.baseline,
-        "agent_ok": row.agent_ok,
-    });
-    write_ledger_mini(
-        root,
-        &format!(
-            "repair-r{}-{}.json",
-            row.round,
-            activity_digest_key(row.shard)
-        ),
-        &mini,
-    )
-}
-
 /// Rebuild `.swarm/ledger.json` WHOLE from the minis. Rewriting the roll-up in full on every
 /// write is what makes the writers order-independent and idempotent — the prereview mechanics,
 /// not an append log that could double-count. `open_defects` is re-derived from the tree NOW
@@ -27357,7 +27266,16 @@ impl GooseAgentDispatcher {
     /// them as tree state would put a lie in every later prompt; the repair leg
     /// (write_repair_ledger) is the shadow world's recorder. Best-effort: a failed write emits
     /// nothing and changes nothing.
-    fn record_task_ledger(&self, req: &DispatchRequest, root: &Path, status: &str, salvaged: bool) {
+    fn record_task_ledger(
+        &self,
+        req: &DispatchRequest,
+        root: &Path,
+        status: &str,
+        salvaged: bool,
+        // THE SPLIT (S3): a shard's parsed README + handoffs, merged into its row (`shard_note`,
+        // `handoffs`) so the merger's dossier and the reader find them in the roll-up.
+        extra: Option<serde_json::Value>,
+    ) {
         if req.speculative {
             return;
         }
@@ -27369,6 +27287,7 @@ impl GooseAgentDispatcher {
             &req.owned_files,
             req.attempt,
             self.fix_shard_mirror_dir(&req.task_id, root),
+            extra,
         ) {
             self.events.write_value(serde_json::json!({
                 "event": "ledger_written",
@@ -27625,6 +27544,10 @@ impl GooseAgentDispatcher {
         // Same shape as `is_fix_round` further down (which this file has already been bitten by
         // twice: one defect, two sites, only one fixed).
         let repairing = req.task_id.starts_with("fix::") || req.task_id.starts_with("complete-fix");
+        // THE SPLIT (VA-021, S2): a SHARD's write surface is its folder, its deliverable the
+        // README; the arms below that reason about `owned_files` see one README path and stay
+        // byte-identical for every other task.
+        let shard = req.shard_of.as_ref();
         // GEN-4: whether the dependency-API section below carries REAL source, recorded so the
         // judge's deterministic hint can assert only what this prompt actually delivered.
         let mut dep_apis_delivered = false;
@@ -27720,12 +27643,23 @@ impl GooseAgentDispatcher {
                         let _ = std::fs::create_dir_all(parent);
                     }
                 }
-                let owned = req
-                    .owned_files
-                    .iter()
-                    .map(|f| format!("  {cwd}/{f}"))
-                    .collect::<Vec<_>>()
-                    .join("\n");
+                let owned = match shard {
+                    Some(sh) => shards::shard_owned_lines(&cwd, sh),
+                    None => req
+                        .owned_files
+                        .iter()
+                        .map(|f| format!("  {cwd}/{f}"))
+                        .collect::<Vec<_>>()
+                        .join("\n"),
+                };
+                let owned_header = match shard {
+                    Some(_) => shards::SHARD_OWNED_HEADER,
+                    None => {
+                        "YOU OWN — write EXACTLY these ABSOLUTE paths, and write NOTHING outside them. Their \
+                         parent directories ALREADY EXIST (pre-created for you) — NEVER run `mkdir` at all (it \
+                         just wastes turns):"
+                    }
+                };
                 // Multi-file tasks fail by writing the first owned file, forgetting the rest,
                 // then claiming done — call it out; softened for a REPAIR shard whose owned
                 // files all exist (its job is a targeted edit, and "MUST write EVERY one"
@@ -27791,7 +27725,11 @@ impl GooseAgentDispatcher {
                 // ONE classifier in briefs.rs, because the rules_delivered event must report the
                 // arm this dispatch actually took (it reported "generic" for every asset owner).
                 let is_asset_owner = briefs::is_asset_owner(&req.owned_files);
-                let owner_body = if repairing {
+                let owner_body = if let Some(sh) = shard {
+                    // A SHARD writes pieces + a README in its folder and never the module's final
+                    // file (shards.rs) — the WRITE FIRST script below is for a file's sole author.
+                    shards::shard_owner_body(sh)
+                } else if repairing {
                     // The repair worker used to receive the first-authoring script verbatim: "your
                     // VERY FIRST action must be to `write` your owned file(s) IN FULL", "NEVER `cat`
                     // the module", "tests are a SEPARATE subtask". Every clause is wrong for a task
@@ -27866,9 +27804,7 @@ impl GooseAgentDispatcher {
                     ""
                 };
                 format!(
-                    "YOU OWN — write EXACTLY these ABSOLUTE paths, and write NOTHING outside them. Their \
-                     parent directories ALREADY EXIST (pre-created for you) — NEVER run `mkdir` at all (it \
-                     just wastes turns):\n{owned}{multi_note}{skeleton_note}{cli_note}{multifile_note}{web_note}{port_rule}\n\
+                    "{owned_header}\n{owned}{multi_note}{skeleton_note}{cli_note}{multifile_note}{web_note}{port_rule}\n\
                      {owner_body}"
                 )
             };
@@ -28930,6 +28866,19 @@ impl GooseAgentDispatcher {
                             secs,
                             missing.join(", ")
                         );
+                        if let Some(sh) = shard {
+                            // S3: a shard that ends without its README is loud by name; the hint
+                            // asks for the README, not for "your owned file IN FULL" (a README is
+                            // not the module). The retry is the deliverable gate's own, unchanged.
+                            self.events.write_value(shards::merge_note_missing_event(
+                                sh,
+                                &req.task_id,
+                                "finished without its folder's README.md",
+                            ));
+                            return Err(DispatchError::ContentRetry(shards::readme_missing_hint(
+                                sh,
+                            )));
+                        }
                         return Err(DispatchError::ContentRetry(format!(
                             "You finished WITHOUT writing your owned file(s): {}. Your VERY FIRST action this \
                              attempt MUST be to `write` EACH of them IN FULL from your spec, then finish — do \
@@ -29001,6 +28950,10 @@ impl GooseAgentDispatcher {
                 // truth), so say that instead; when the capture holds nothing either, the honest
                 // output is EMPTY — dependents read nothing rather than a stub — and the absence
                 // is a named event tick.py can print. Never a template, never a quiet default.
+                // THE SPLIT (S3): a shard's README is its handoff to the merger — read the file
+                // first, the final message second, persist the fields in the task's ledger row
+                // beside its handoffs, and name the absence (`merge_note_missing`).
+                let shard_note = shard.map(|sh| self.record_shard_note(sh, &req, &root, &out.text));
                 let output = if out.text.trim().is_empty() {
                     match render_completed_output_from_ledger(
                         &root,
@@ -29038,7 +28991,7 @@ impl GooseAgentDispatcher {
                     }
                 }
                 self.emit_delivery_defects(&req.task_id, &req.owned_files, &root, false);
-                self.record_task_ledger(&req, &root, "done", false);
+                self.record_task_ledger(&req, &root, "done", false, shard_note);
                 Ok(TaskRunOutput {
                     output,
                     session_id: Some(out.session_id),
@@ -29104,7 +29057,7 @@ impl GooseAgentDispatcher {
                         // non-empty except the intentional markers, not a skeleton. No py_compile parse
                         // check, no HTML asset check, and no cross-task import check at all.
                         self.emit_delivery_defects(&req.task_id, &req.owned_files, &root, true);
-                        self.record_task_ledger(&req, &root, "done", true);
+                        self.record_task_ledger(&req, &root, "done", true, None);
                         return Ok(TaskRunOutput {
                             output: "(progress-watchdog: thinking-only spiral stopped; owned files already written)".to_string(),
                             session_id: None,
@@ -29122,6 +29075,7 @@ impl GooseAgentDispatcher {
                     &root,
                     if transient { "retrying" } else { "failed" },
                     false,
+                    None,
                 );
                 if transient {
                     // Best-effort re-warm before re-dispatch — only if model loading is allowed.
@@ -32657,6 +32611,8 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                                     doc_facts: facts.clone(),
                                     // Per-file fix shard: no DAG neighborhood → contract bundle unscoped.
                                     neighborhood: Vec::new(),
+                                    shard_of: None,
+                                    merger_of: None,
                                 };
                                 let progress =
                                     Arc::new(std::sync::Mutex::new(FixAttemptProgress::default()));
@@ -32945,6 +32901,8 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                         user_decisions: user_decisions.clone(),
                         doc_facts: doc_facts.clone(),
                         neighborhood: Vec::new(),
+                        shard_of: None,
+                        merger_of: None,
                     };
                     let _ = smoke_fix_dispatcher.run(boot_req).await;
                 } else {
@@ -33050,6 +33008,8 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                     doc_facts: doc_facts.clone(),
                     // Fix/sink dispatch: no DAG neighborhood → the contract bundle stays unscoped (full).
                     neighborhood: Vec::new(),
+                    shard_of: None,
+                    merger_of: None,
                 };
                 let _ = smoke_fix_dispatcher.run(fix_req).await;
                 let after =
@@ -33270,6 +33230,8 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                     doc_facts: doc_facts.clone(),
                     // Fix/sink dispatch: no DAG neighborhood → the contract bundle stays unscoped (full).
                     neighborhood: Vec::new(),
+                    shard_of: None,
+                    merger_of: None,
                 };
                 let _ = smoke_fix_dispatcher.run(fix_req).await;
                 // Re-derive the scope: the wire-fix worker may have written a NEW module.

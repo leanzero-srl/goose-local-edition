@@ -1410,7 +1410,7 @@ impl State {
         let deps = self.dag.tasks[&tid].spec.deps.clone();
         let neighborhood = self.neighborhood_of(&tid, &deps);
         let slice = self.ctx.slice_for(&deps);
-        let (files, description, attempt, subsplit) = {
+        let (files, description, attempt, subsplit, shard_of, merger_of) = {
             let n = self.dag.tasks.get_mut(&tid).unwrap();
             n.state = TaskState::Claimed;
             (
@@ -1418,6 +1418,8 @@ impl State {
                 n.spec.description.clone(),
                 n.attempts,
                 n.spec.subsplit.clone(),
+                n.spec.shard_of.clone(),
+                n.spec.merger_of.clone(),
             )
         };
         for f in &files {
@@ -1520,6 +1522,8 @@ impl State {
                 user_decisions: self.user_decisions.clone(),
                 doc_facts: self.doc_facts.clone(),
                 neighborhood,
+                shard_of,
+                merger_of,
             },
         });
     }
@@ -2323,6 +2327,9 @@ impl State {
             user_decisions: self.user_decisions.clone(),
             doc_facts: self.doc_facts.clone(),
             neighborhood,
+            // A twin races a chokepoint task's WHOLE file; shard/merger roles never speculate.
+            shard_of: None,
+            merger_of: None,
         };
         Some((req, dev))
     }

@@ -85,6 +85,21 @@ form is `shape_excerpt` (signatures + key-literal/route/return-dict lines). Unas
 attribute by endpoint-literal grep, else the entry file, else the `known_bugs` event — the `fix::rN::#join`
 residue task and the cross-file join twin are gone.
 
+## THE SPLIT — shards in temp folders, a merger owns the file (2c S1–S3, 2026-09-01)
+
+`commands/swarm/shards.rs`. After the first `finalize_plan_before_dag`, fatness is MEASURED — spec sections
+claimed per owned file, threshold mean + one stddev of the plan's own distribution (r6c web-viz 7.0/file vs
+4.3; r5 viz-field 11 vs 6.0) — and a fat task gets ONE split request to synthesis (`plan_flag{kind: fat_task}`
+→ `plan_patched{source: split}` or `split_declined`). The patch adds N SHARD tasks owning only
+`.swarm/shards/<module>/<shard>/README.md`, `depends_on: []`, briefs carrying the DECLARED INTERFACE (exports,
+signatures, shared state, layout — plan text, never a stub file) and the module brief whole; the module task
+becomes the MERGER (keeps the final file, depends on every shard). At dispatch a shard's YOU OWN is its FOLDER
+(`SHARD_OWNED_HEADER`, `shard_owner_body`: pieces + README, parse-check, never the final file); at completion
+`record_shard_note` reads the README's four fields — `PROVIDES / ASSUMES / UNFINISHED / CHECKED_WITH` — into
+`shard_note{…, source, pieces}` and the task's ledger row (`shard_note`, `handoffs` via `parse_handoffs`); a
+shard without one is a loud `merge_note_missing{module, shard, reason}` (the deliverable gate's own retry,
+no new count). `TaskSpec`/`DispatchRequest` carry `shard_of` / `merger_of`; the scheduler copies them at claim.
+
 ## The LLM REVIEW round is deleted (VA-014, 2026-09-01; was one round since `5173eab67`)
 
 `review_once`, `review_plan_fanned`/`review_plan_part`, `review_user_message`, `review_must_fix_block`,
