@@ -1,5 +1,22 @@
 # MLX engine campaign — LEDGER
 
+## 2026-09-01 — LEANZERO LINK control service DONE (companion-app contract; 923689793)
+
+crates/leanzero-link control.rs+wire.rs+pubsub.rs+state.rs. WIRE (UI + swarm-surgeon idle-guard +
+iOS build on this): NodeState{node_id, hostname, mesh_ip?, status: {"type":"Idle"|"Busy"+session_id|
+"Offline"}, sessions_active, updated_at}; SessionSummary{session_id, origin_node_id, working_dir,
+name, updated_at, message_count, live}; LinkEvent tagged {NodeStateChanged|SessionUpserted|
+SessionDelta{session_id, seq, kind: message|tool_call|tool_update|finish|error, payload(opaque)}};
+StreamFrame{seq, event}. Endpoints under /v1/swarm (default port 41226, override): GET /nodes
+{self, peers}; GET /sessions (?scope=local|all); GET /stream ws (?since replay, close 4408
+ClientTooFarBehind, ?scope). Auth Bearer-or-?token constant-time; empty token refuses start.
+SwarmStateSource trait { local_node, local_sessions, subscribe_local_deltas } is the goose-server
+seam. Honest bind model: userspace-networking mesh IP is NOT a kernel address → MeshBind::
+UserspaceForwarded (tailscaled forwards inbound tailnet TCP to the loopback port; documented, not
+live-tested while the benchmark runs). Dep note: tokio-tungstenite 0.29 became a REAL dep (peer ws
+CLIENT; reqwest has no ws), pinned to axum's minor so zero new lock crates. Open: MeshPeer carries
+hostname-only, no stable node_id, until the worker mints ids.
+
 ## 2026-09-01 — LEANZERO LINK auth worker DONE (contract the identity client builds on; 410ecd910)
 
 leanzero-link/worker/ — self-hostable Cloudflare Worker, 58 tests, docs-verified (no live keys on
