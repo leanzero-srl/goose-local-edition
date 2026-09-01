@@ -269,3 +269,25 @@ describe('a watcher that dies is re-armed', () => {
     expect(opened).toEqual([RUN, RUN]);
   });
 });
+
+describe('SwarmWatchRegistry.targetsWhere — which runs a renderer is live on', () => {
+  it('answers per subscriber key without knowing the key format, and forgets a released one', () => {
+    const { reg, send } = makeRegistry();
+    reg.ensure('7::/build', target(), send);
+    reg.ensure('7::/other', target({ workingDir: '/other', swarmDir: '/other/.swarm' }), send);
+    reg.ensure('9::/build', target(), send);
+    const dirsOf = (prefix: string) =>
+      reg
+        .targetsWhere((s) => s.startsWith(prefix))
+        .map((t) => t.swarmDir)
+        .sort();
+    expect(dirsOf('7::')).toEqual(['/build/.swarm', '/other/.swarm']);
+    expect(dirsOf('9::')).toEqual(['/build/.swarm']);
+    expect(dirsOf('')).toHaveLength(3);
+    // A released subscription is gone from the answer at once — the guard must never protect a run
+    // on the word of a renderer that already tore its hook down.
+    reg.release('7::/build');
+    expect(dirsOf('7::')).toEqual(['/other/.swarm']);
+    expect(reg.targetsWhere(() => false)).toEqual([]);
+  });
+});
