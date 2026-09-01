@@ -6,16 +6,22 @@ paths:
 
 # agent.rs — steer, cancel, and the reply loop. What was measured, not assumed.
 
-## A steer CANNOT interrupt a call in flight
+## A steer interrupts a generation only at a chunk boundary, and only before the first tool request of the turn
 
-`drain_pending_steers` (agent.rs:573) runs only at the top of the reply loop
-(`can_drain_pending_steers` checked at :2000), and that flag is set in exactly one place — AFTER
-the provider stream closes (:2685; initialized false at :1993). A steer lands at the NEXT turn boundary — so a pure-reasoning call (no tool calls
-yet) structurally cannot receive one mid-stream. Measured: r1's looping reasoning-only call ignored
-six steers; r5's opener and skeleton both ignored one each. The escalation that works is the swarm's
-judge RESTREAM (cut + re-seed with ESTABLISHED + the verbatim tail since 63ebe140b) — it lives in
-swarm.rs, not here. Do not "fix" steers to interrupt streams; the cancel token is the sanctioned
-interrupter.
+STALE until 2026-09-01: this section said a steer could not interrupt a call in flight. Since `eeda65809`/
+`40c231152` the inner stream loop is forced out at the next chunk when a steer is queued:
+`steer_may_interrupt = !saw_tool_request_in_turn && has_pending_steers(...)` and the
+`tokio::select! { biased; … _ = std::future::ready(()), if steer_may_interrupt => break, _ = self.steer_arrived.notified(), if !saw_tool_request_in_turn => break, next = stream.next() … }`
+(`agent.rs`, grep `steer_may_interrupt`); `steer()` ends with `steer_arrived.notify_waiters()`. Measured on
+r6d: a judge steer queued at `thinking_chars: 24280` landed mid-generation — the lane's think.log pivots at
+exactly that offset. Once a tool request has been seen in the turn, the steer waits for the turn boundary
+(`can_drain_pending_steers`, set after the stream closes) so a tool call is never cut in half.
+
+Since `65df1cd55` a steer-cut turn on a structured-output lane is NOT treated as a forgot-final-output turn:
+the arm `Some(None) if self.has_pending_steers(&session_config.id).await => {}` precedes the bare `Some(None)`
+arm that pushes `FINAL_OUTPUT_CONTINUATION_MESSAGE` — before it, r6d's q5 received "You MUST call the
+final_output tool NOW" paired with the relay/steer in one delivery (`tests/agent.rs`
+`test_steer_cut_turn_on_a_structured_lane_is_not_nudged_for_final_output`, proven failing on the old arm).
 
 ## Cancel keeps the partial
 
