@@ -161,10 +161,15 @@ impl MlxOp {
     }
 
     /// True for ops that destroy on-disk state or a running engine over the mesh: model
-    /// delete and download-cancel (which also deletes the partial repo). These are logged
-    /// at `warn` on the executing node so a remote destructive action is never silent.
+    /// delete, download-cancel (which also deletes the partial repo), settings-update
+    /// (persists into the node's own config and can change what it serves) and unmount
+    /// (stops the engine a local session may be using). These are logged at `warn` on the
+    /// executing node so a remote destructive action is never silent.
     pub fn is_destructive(self) -> bool {
-        matches!(self, Self::ModelDelete | Self::DownloadCancel)
+        matches!(
+            self,
+            Self::ModelDelete | Self::DownloadCancel | Self::SettingsUpdate | Self::Unmount
+        )
     }
 }
 

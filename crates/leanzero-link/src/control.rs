@@ -11,14 +11,16 @@
 //! - `POST /v1/swarm/execute` → `202 {session_id}` — cross-node remote execution: one
 //!   same-account device tells this node's goose to run a prompt; results stream back
 //!   over `/v1/swarm/stream` (the P4 mirror), not a separate channel. SECURITY: a remote
-//!   execute runs goose (shell/file tools) on THIS machine. It is gated only by (a)
-//!   tailnet membership — the mesh is account-isolated, joined via the worker's ephemeral
-//!   key — and (b) the [`ControlConfig::node_token`] bearer (HMAC of the account email,
-//!   same-account). This is intentional for a personal fleet. [`ControlConfig::allow_remote_execution`]
-//!   (default `true`) flips the node observe-only: when `false` the route answers `403`.
-//!   The receive-side idle guard is real: a node whose [`SwarmStateSource::local_node`]
-//!   reports non-`Idle` answers `409` and refuses the work now. No executor injected →
-//!   `501` (loud-absent, never a fake accept). The bearer check is never weakened here.
+//!   execute runs goose (shell/file tools) on THIS machine. It is gated by (a) tailnet
+//!   membership — the mesh is account-isolated, joined via the worker's ephemeral key —
+//!   (b) the [`ControlConfig::node_token`] bearer (derived on every device of the account
+//!   from the worker-issued account secret, see [`crate::token`]), and (c) the user's own
+//!   switch: [`ControlConfig::allow_remote_execution`] is `false` by DEFAULT (observe-only;
+//!   the host reads the user's setting and passes `true`), and while `false` the route
+//!   answers `403`. The receive-side idle guard is real: a node whose
+//!   [`SwarmStateSource::local_node`] reports non-`Idle` answers `409` and refuses the
+//!   work now. No executor injected → `501` (loud-absent, never a fake accept). The
+//!   bearer check is never weakened here.
 //! - `POST /v1/swarm/mlx/<op>` → the remote MODEL-MANAGEMENT proxy: one same-account
 //!   device runs/pauses/cancels a model download, deletes a model, reads status/models, or
 //!   changes sampling/mount settings on THIS node's local MLX engine. Each `<op>` maps 1:1
@@ -26,11 +28,15 @@
 //!   mlxEngine DTOs passed through as opaque JSON. The op is executed by the injected
 //!   [`MlxControl`] against the node's own `goose_sidecar` engine — so a remote node's disk
 //!   space, downloads, mounted model and browse results are all THAT node's truth. Gates:
-//!   the same tailnet-isolation + node_token bearer as `/execute` and nothing else (a
-//!   personal fleet). NO idle guard — model management runs while the node is busy. No
-//!   `MlxControl` injected → `501`. Destructive ops (`modelDelete`, `downloadCancel`) log
-//!   at `warn` on the executing node. A peer's own failure (memory-gate BLOCK, disk-full,
-//!   its 501) surfaces verbatim as `400`/`500`, never swallowed or faked.
+//!   the same tailnet-isolation + node_token bearer as `/execute`, AND the same
+//!   [`ControlConfig::allow_remote_execution`] switch — an observe-only node answers `403`
+//!   ("remote model management is disabled on this node") to every `/mlx/*` op, read or
+//!   write, because a peer that may not run prompts here may not reshape this node's
+//!   engine either. NO idle guard — model management runs while the node is busy. No
+//!   `MlxControl` injected → `501`. Destructive ops (`modelDelete`, `downloadCancel`,
+//!   `settingsUpdate`, `unmount`) log at `warn` on the executing node. A peer's own
+//!   failure (memory-gate BLOCK, disk-full, its 501) surfaces verbatim as `400`/`500`,
+//!   never swallowed or faked.
 //!
 //! Listeners: 127.0.0.1 always (the local desktop), plus the mesh IP when one is
 //! up. Under `--tun=userspace-networking` (this crate's only tailscaled mode) the
@@ -94,9 +100,12 @@ pub enum ControlError {
 
 #[derive(Debug, Clone)]
 pub struct ControlConfig {
-    /// Injected shared secret (account JWT or a derived per-tailnet secret).
-    /// This crate never mints or verifies it against any backend — the mesh is
-    /// already account-isolated; this is defense in depth.
+    /// The `/v1/swarm` bearer: [`crate::token::node_token_from_secret`] over the
+    /// worker-issued per-account secret, so every device of the account derives the
+    /// same value and no other party can. This crate never verifies it against any
+    /// backend — the mesh is already account-isolated; this is defense in depth. A
+    /// TEMPLATE config may leave it empty; `LinkManager::connect` fills it before
+    /// `start`, and `start` refuses an empty one ([`ControlError::EmptyToken`]).
     pub node_token: String,
     pub port: u16,
     /// `MeshStatus.self_ip`; `None` = mesh down.
@@ -105,11 +114,12 @@ pub struct ControlConfig {
     pub heartbeat_interval: Duration,
     pub request_timeout: Duration,
     pub reconnect_backoff: Duration,
-    /// Whether `POST /v1/swarm/execute` may run goose on this node. Default `true` — the
-    /// personal-fleet model, where every same-account device may drive every other.
-    /// Setting it `false` makes the node OBSERVE-ONLY: it still mirrors sessions and
-    /// serves `/nodes` `/sessions` `/stream`, but the execute route answers `403` and
-    /// no remote prompt ever runs here.
+    /// Whether a same-account peer may ACT on this node: `POST /v1/swarm/execute` (run
+    /// goose here) and every `POST /v1/swarm/mlx/<op>` (reshape this node's MLX engine).
+    /// Default `false` — OBSERVE-ONLY: the node still mirrors sessions and serves
+    /// `/nodes` `/sessions` `/stream`, but both acting surfaces answer `403` and no
+    /// remote prompt or model op ever runs here. The host reads the user's own setting
+    /// and passes `true` to opt a node in; nothing in this crate flips it.
     pub allow_remote_execution: bool,
 }
 
@@ -123,7 +133,7 @@ impl ControlConfig {
             heartbeat_interval: Duration::from_secs(20),
             request_timeout: Duration::from_secs(5),
             reconnect_backoff: Duration::from_secs(2),
-            allow_remote_execution: true,
+            allow_remote_execution: false,
         }
     }
 }
@@ -509,17 +519,27 @@ pub fn mlx_control_error_status(error: &MlxControlError) -> StatusCode {
 /// `POST /v1/swarm/mlx/<op>`: run one mlxEngine operation on THIS node for a same-account
 /// peer, against the local MLX engine via the injected [`MlxControl`].
 ///
-/// Gate order (each loud, none a fallback): an unknown `<op>` → `404`; no `MlxControl`
-/// injected → `501`; an unparseable body → `400`; otherwise the op runs and its response
-/// DTO (opaque JSON) is returned `200`, or its [`MlxControlError`] maps to `400`/`500` so
-/// the peer's own failure (memory-gate BLOCK, disk-full) surfaces verbatim. Auth (bearer /
-/// `?token=`, constant-time) is enforced by the router middleware. There is NO idle guard:
-/// model management is allowed while the node runs a session. Destructive ops log at `warn`.
+/// Gate order (each loud, none a fallback): `allow_remote_execution=false` → `403` (the
+/// observe-only switch covers model management exactly as it covers execution); an
+/// unknown `<op>` → `404`; no `MlxControl` injected → `501`; an unparseable body → `400`;
+/// otherwise the op runs and its response DTO (opaque JSON) is returned `200`, or its
+/// [`MlxControlError`] maps to `400`/`500` so the peer's own failure (memory-gate BLOCK,
+/// disk-full) surfaces verbatim. Auth (bearer / `?token=`, constant-time) is enforced by
+/// the router middleware. There is NO idle guard: model management is allowed while the
+/// node runs a session. Destructive ops log at `warn`.
 async fn mlx_proxy(
     Path(op): Path<String>,
     State(ctx): State<Ctx>,
     body: Result<Json<serde_json::Value>, JsonRejection>,
 ) -> Response {
+    if !ctx.allow_remote_execution {
+        return (
+            StatusCode::FORBIDDEN,
+            "remote model management is disabled on this node".to_string(),
+        )
+            .into_response();
+    }
+
     let Some(op) = MlxOp::from_path(&op) else {
         return (StatusCode::NOT_FOUND, format!("unknown mlx op '{op}'")).into_response();
     };

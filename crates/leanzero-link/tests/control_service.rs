@@ -830,14 +830,93 @@ async fn spawn_node_mlx(
     mesh_ip: Option<IpAddr>,
     mlx_control: Option<Arc<dyn MlxControl>>,
 ) -> ControlHandle {
+    spawn_node_mlx_allowing(source, mesh_ip, mlx_control, true).await
+}
+
+async fn spawn_node_mlx_allowing(
+    source: Arc<FakeStateSource>,
+    mesh_ip: Option<IpAddr>,
+    mlx_control: Option<Arc<dyn MlxControl>>,
+    allow_remote_execution: bool,
+) -> ControlHandle {
     let mut config = ControlConfig::new(TOKEN.to_string(), mesh_ip);
     config.port = 0;
     config.poll_interval = Duration::from_millis(100);
     config.heartbeat_interval = Duration::from_secs(5);
     config.reconnect_backoff = Duration::from_millis(100);
+    config.allow_remote_execution = allow_remote_execution;
     ControlService::start(config, source, None, mlx_control)
         .await
         .expect("control service starts")
+}
+
+/// The switch is OFF unless the host passes the user's own setting: a freshly built
+/// config is observe-only for both acting surfaces.
+#[test]
+fn control_config_defaults_to_observe_only() {
+    let config = ControlConfig::new(TOKEN.to_string(), None);
+    assert!(
+        !config.allow_remote_execution,
+        "allow_remote_execution must default to false (observe-only)"
+    );
+}
+
+#[test]
+fn destructive_mlx_ops_include_settings_update_and_unmount() {
+    for op in [
+        MlxOp::ModelDelete,
+        MlxOp::DownloadCancel,
+        MlxOp::SettingsUpdate,
+        MlxOp::Unmount,
+    ] {
+        assert!(op.is_destructive(), "{op:?} reshapes the node; must warn");
+    }
+    for op in [
+        MlxOp::Status,
+        MlxOp::SettingsRead,
+        MlxOp::ModelsList,
+        MlxOp::DownloadProgress,
+    ] {
+        assert!(!op.is_destructive(), "{op:?} is a read");
+    }
+}
+
+#[tokio::test]
+async fn mlx_proxy_403_when_remote_execution_disabled_and_never_calls_control() {
+    let source = FakeStateSource::new("node-a");
+    let control = FakeMlxControl::returning(serde_json::json!({"unused": true}));
+    // The DEFAULT config (allow_remote_execution = false), exactly what a node gets when
+    // the host has not opted it in.
+    let handle =
+        spawn_node_mlx_allowing(source.clone(), mesh_v6(), Some(control.clone()), false).await;
+    let base = base_url(&handle);
+    let client = reqwest::Client::new();
+
+    // A read AND a destructive write: both refused; the observe-only switch is not
+    // per-op.
+    for (op, body) in [
+        ("status", serde_json::json!({})),
+        ("modelDelete", serde_json::json!({"modelId": "org/model"})),
+    ] {
+        let resp = post_mlx(&client, &base, TOKEN, op, body).await;
+        assert_eq!(resp.status(), 403, "{op} on an observe-only node");
+        let text = resp.text().await.unwrap();
+        assert_eq!(text, "remote model management is disabled on this node");
+    }
+    assert_eq!(
+        control.call_count(),
+        0,
+        "the control seam is never reached on an observe-only node"
+    );
+
+    // Negative control: the same node with the switch on serves the read.
+    handle.shutdown();
+    let handle = spawn_node_mlx_allowing(source, mesh_v6(), Some(control.clone()), true).await;
+    let base = base_url(&handle);
+    let resp = post_mlx(&client, &base, TOKEN, "status", serde_json::json!({})).await;
+    assert_eq!(resp.status(), 200);
+    assert_eq!(control.call_count(), 1);
+    handle.shutdown();
 }
 
 async fn post_mlx(
