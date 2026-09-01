@@ -95,3 +95,11 @@ tick.py rows that will now never fire, desktop `golden.ts` DEFAULTS/PRESET_KEYS 
 step reads authoritative and is worse than a kept one (2a's D1–D3 left ~20 residues on 2026-09-01).
 
 When a commit touches `#[cfg(test)]` code, lint it: `cargo clippy -p <crate> --tests -- -D warnings` — the lib-only form does not see test modules (VA-045, 2026-09-01). Always `source bin/activate-hermit` first: the non-hermit cargo fails the crate on `llama-cpp-sys-2` and rebuilds every dep.
+
+## Proof chain once, commits per fix (added 2026-09-01 23:3x, after VA-080 ran 57 tool uses for three small fallbacks)
+
+Edit every item in the brief first, then run the proof chain ONCE on the finished tree (`cargo fmt`, the crate's tests
+`--no-fail-fast`, `development_gates`, clippy `--tests`), then make the per-item commits from that same green tree with
+`git commit --only`. Re-running the full chain per item on a 35k-line crate multiplies tool uses and wall-clock without
+adding proof; the per-item commit still gives the 429 protection the rule exists for. If the chain fails, fix and re-run
+once more — never per item.
