@@ -191,25 +191,13 @@ impl SwarmStateSource for GoosedSwarmStateSource {
         derive_node(&self.node_id, &snapshot, Utc::now())
     }
 
-    /// RESIDUE, not a fallback by choice: the crate's trait returns a bare `Vec`, so an
-    /// unreadable store cannot be carried through it. The `/v1/swarm/sessions` route
-    /// therefore still publishes `[]` on a store error (and every peer's
-    /// `fold_peer_snapshot` purges this node's mirrored sessions). The error is logged
-    /// LOUDLY here and [`Self::local_sessions_checked`] is the shape the route must
-    /// consume once the trait carries a `Result` — that change belongs to `leanzero-link`.
-    /// The poller and [`Self::local_node`] already refuse to fabricate.
-    async fn local_sessions(&self) -> Vec<SessionSummary> {
-        match self.local_sessions_checked().await {
-            Ok(sessions) => sessions,
-            Err(error) => {
-                error!(
-                    %error,
-                    "leanzeroLink: /v1/swarm/sessions will publish an EMPTY index for an unreadable store \
-                     — the SwarmStateSource trait cannot carry the error yet"
-                );
-                Vec::new()
-            }
-        }
+    /// The store's error rides through verbatim (`session index unreadable: <err>`): the
+    /// control service answers `503` on `/v1/swarm/sessions` and refuses `/execute`, and
+    /// every peer keeps its last mirror (R-M2 / FH#2). Never `[]` for a store that could
+    /// not be read — that was the window in which a Busy node's peers purged its sessions
+    /// and dispatched a second job.
+    async fn local_sessions(&self) -> Result<Vec<SessionSummary>, String> {
+        self.local_sessions_checked().await
     }
 
     fn subscribe_local_deltas(&self) -> BoxStream<'static, LinkEvent> {
@@ -219,9 +207,7 @@ impl SwarmStateSource for GoosedSwarmStateSource {
 
 impl GoosedSwarmStateSource {
     /// The local session index, or the store's error verbatim (`session index unreadable:
-    /// <err>`). The shape the control service's `/v1/swarm/sessions` and `/execute` routes
-    /// need to answer `503` instead of an empty `200` / a `202` — the trait method above
-    /// forwards to this once `leanzero-link` lets it return a `Result`.
+    /// <err>`) — what the trait's `local_sessions` forwards to.
     pub async fn local_sessions_checked(&self) -> Result<Vec<SessionSummary>, String> {
         snapshot_local(&self.agent_manager, &self.session_manager, &self.node_id)
             .await
@@ -398,6 +384,9 @@ fn derive_node(node_id: &str, snapshot: &LocalSnapshot, now: DateTime<Utc>) -> N
         status,
         sessions_active: snapshot.busy.len() as u32,
         updated_at: now,
+        // The POLLER's field: a peer records why its last poll of us failed. Our own
+        // report never carries one.
+        last_poll_error: None,
     }
 }
 
@@ -1742,7 +1731,10 @@ mod tests {
             .await
             .unwrap();
 
-        let sessions = source.local_sessions().await;
+        let sessions = source
+            .local_sessions()
+            .await
+            .expect("the seeded store is readable");
         assert_eq!(sessions.len(), 2);
         for summary in &sessions {
             assert_eq!(summary.origin_node_id, source.node_id);
@@ -1787,6 +1779,7 @@ mod tests {
         let live: Vec<String> = source
             .local_sessions()
             .await
+            .expect("the seeded store is readable")
             .into_iter()
             .filter(|s| s.live)
             .map(|s| s.session_id)
