@@ -82,6 +82,14 @@ and all three fixes are in flight; NO r6d LAUNCH until each is landed with an in
   edited. FIX (swarm-surgeon, in flight): one repair ORDER with evidence inline and one exit.
   FOLLOW-UP: the endpoint probe must RECORD status+body into the finding (see TICK-NOTES).
 
+r6d LAUNCH CHECKLIST (in order): [x] GATE B placement 623ae8eef (trace YES, test reproduces r6c)
+· [x] GATE A ownership 8b7fa6c5b (independent trace IN FLIGHT) · [ ] GATE C repair brief (surgeon in
+flight) · [ ] probe findings carry request/status/body (swarm.rs:20648, queued behind C) · [ ]
+levers_resolved stops advertising dead split_fat (queued behind C) · [ ] set dispatch weight 1 per
+node in the launch config (measured: stacking = -8% aggregate / -54% per lane; Mihai may veto) · [ ]
+r6c natural end → hermetic score → RUN-LEDGER · [ ] build+install, verify bundled sha · [ ] CDP-verify
+the redesigned Benchmark view · [ ] Benchmark-view launch.
+
 r6c itself: BUILD 9/9, INTEGRATE green (app boots, both ports, full battery), REPAIR r1 open at
 ~3h — it runs to its natural end as the evidence; then hermetic score -> RUN-LEDGER -> r6d build
 (now 20+ traced commits) -> install -> CDP-verify the redesigned Benchmark view -> Benchmark-view
