@@ -4,6 +4,18 @@ import { DEFAULTS, type SwarmConfig, type SwarmDeviceRow } from '../settings/swa
 import { chipFor, LOCAL_CHIP, MLX_CHIP } from '../leanzero-swarm/cloud';
 import { useMlxEngineStatusPoll } from '../leanzero-swarm/useMlxEngineStatus';
 import { defineMessages, useIntl } from '../../i18n';
+import {
+  Chip,
+  NODE_INDEXES,
+  Panel,
+  ROW,
+  StatusDot,
+  TYPE,
+  WEIGHT,
+  cx,
+  type NodeIndex,
+  type Tone,
+} from '../lz';
 
 const i18nMsg = defineMessages({
   title: { id: 'nodesStrip.title', defaultMessage: 'Nodes' },
@@ -13,23 +25,29 @@ const i18nMsg = defineMessages({
   failed: { id: 'nodesStrip.failed', defaultMessage: 'failed' },
 });
 
-// Benchmark/SwarmRunPanel status palette — solid saturated hues, never tints.
-const OCCUPANCY_COLORS = {
-  serving: '#2ecc71',
-  idle: '#64748b',
-  mounting: '#f5a623',
-  failed: '#e5484d',
-} as const;
+/** Occupancy is STATE, so it renders in the status triad — never a node hue, never a hand-written hex. */
+const OCCUPANCY_TONE = {
+  serving: 'ok',
+  idle: 'stopped',
+  mounting: 'warn',
+  failed: 'err',
+} as const satisfies Record<string, Tone>;
 
-type Occupancy = keyof typeof OCCUPANCY_COLORS;
+type Occupancy = keyof typeof OCCUPANCY_TONE;
 
-/** What serves a configured node, as a solid chip — same rule as the LeanZero Swarm nodes tab. */
-function providerChipOf(d: SwarmDeviceRow): { seg: string; chip: string } {
+/**
+ * What serves a configured node. The engine/provider is metadata (a quiet chip); the LeanZero MLX
+ * engine keeps its violet through the Studio's secondary tone, the one secondary emphasis here.
+ */
+function engineChipOf(d: SwarmDeviceRow): { label: string; tone?: Tone } {
   const cloud = chipFor(d.provider);
-  if (cloud) return { seg: cloud.seg, chip: cloud.chip };
-  if (d.engine === 'mlx-sidecar') return MLX_CHIP;
-  return LOCAL_CHIP;
+  if (cloud) return { label: cloud.seg };
+  if (d.engine === 'mlx-sidecar') return { label: MLX_CHIP.seg, tone: 'secondary' };
+  return { label: LOCAL_CHIP.seg };
 }
+
+/** Node identity follows the configured order — the same ramp the formation ribbon walks. */
+const nodeHue = (i: number): NodeIndex => NODE_INDEXES[i % NODE_INDEXES.length];
 
 /**
  * Pass E (owner): a compact "Nodes" strip for a session's BLANK state — YOUR configured swarm
@@ -96,56 +114,45 @@ export default function NodesStrip({ className = '' }: { className?: string }) {
   };
 
   return (
-    <div
-      data-testid="nodes-strip"
-      className={`overflow-hidden rounded border border-border-primary ${className}`}
-    >
-      <div className="flex items-center gap-2 border-b border-border-primary bg-background-secondary px-3 py-1.5">
-        <span className="text-xs font-semibold uppercase tracking-wider text-text-secondary">
-          {intl.formatMessage(i18nMsg.title)}
-        </span>
-        <span className="text-xs text-text-secondary">{devices.length}</span>
-      </div>
-      <div className="flex flex-col gap-1.5 px-3 py-2">
-        {devices.map((d) => {
-          const chip = providerChipOf(d);
-          const occ = occupancyFor(d);
-          return (
-            <div
-              key={d.id}
-              data-testid={`nodes-strip-row-${d.id}`}
-              className="flex items-center justify-between gap-3 rounded border border-border-primary px-2.5 py-1.5"
-            >
-              <span className="min-w-0 flex items-center gap-2">
-                <span
-                  className="shrink-0 rounded px-1.5 py-0.5 text-[10px] font-bold text-background-primary"
-                  style={{ backgroundColor: chip.chip }}
-                >
-                  {chip.seg.toUpperCase()}
+    <div data-testid="nodes-strip" className={className}>
+      <Panel title={intl.formatMessage(i18nMsg.title)} count={devices.length} padded={false}>
+        <div className="flex flex-col divide-y divide-lz-border">
+          {devices.map((d, i) => {
+            const engine = engineChipOf(d);
+            const occ = occupancyFor(d);
+            return (
+              <div
+                key={d.id}
+                data-testid={`nodes-strip-row-${d.id}`}
+                className={cx('flex items-center gap-2.5 px-4', ROW.dense)}
+              >
+                <StatusDot node={nodeHue(i)} live={occ?.kind === 'serving'} label={d.id} />
+                <span className={cx('min-w-0 truncate', TYPE.body, WEIGHT.medium)}>{d.id}</span>
+                <Chip tone={engine.tone} title={engine.label}>
+                  {engine.label}
+                </Chip>
+                <span className={cx('min-w-0 flex-1 truncate', TYPE.meta)} title={d.model_id}>
+                  {d.model_id}
                 </span>
-                <span className="truncate font-mono text-sm text-text-primary" title={d.model_id}>
-                  {d.id}
-                </span>
-              </span>
-              {occ && (
-                <span
-                  data-testid={`nodes-strip-occupancy-${d.id}`}
-                  className="flex shrink-0 items-center gap-1.5 rounded px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-white"
-                  style={{ backgroundColor: OCCUPANCY_COLORS[occ.kind] }}
-                  title={occ.detail}
-                >
-                  {occupancyLabel[occ.kind]}
-                  {occ.detail && (
-                    <span className="max-w-[16rem] truncate normal-case font-mono font-normal">
-                      {occ.detail}
-                    </span>
-                  )}
-                </span>
-              )}
-            </div>
-          );
-        })}
-      </div>
+                {occ && (
+                  <span
+                    data-testid={`nodes-strip-occupancy-${d.id}`}
+                    className="flex min-w-0 shrink-0 items-center gap-1.5"
+                    title={occ.detail}
+                  >
+                    <Chip tone={OCCUPANCY_TONE[occ.kind]}>{occupancyLabel[occ.kind]}</Chip>
+                    {occ.detail && (
+                      <span className="max-w-[16rem] truncate font-mono text-lz-mono text-lz-ink-3">
+                        {occ.detail}
+                      </span>
+                    )}
+                  </span>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      </Panel>
     </div>
   );
 }
