@@ -740,7 +740,7 @@ impl LinkManager {
             (base_url, active.node_token.clone())
         };
 
-        post_peer_execute(&base_url, &token, self.config.control.request_timeout, &req).await
+        post_peer_execute(&base_url, &token, self.config.control.connect_timeout, &req).await
     }
 
     /// Forward one mlxEngine model-management op to `target_node_id`. This is how node A
@@ -779,7 +779,7 @@ impl LinkManager {
         post_peer_mlx(
             &base_url,
             &token,
-            self.config.control.request_timeout,
+            self.config.control.connect_timeout,
             op,
             &body,
         )
@@ -935,14 +935,17 @@ fn fresh_suffix() -> String {
 /// corresponding [`ExecuteError`] (Disabled/Busy/BadRequest, so the receive-side gates
 /// surface intact); `501` → [`LinkError::ExecutorUnavailable`]; anything else →
 /// [`LinkError::RemoteExecute`] carrying the code and body. Never a silent success.
+///
+/// `connect_timeout` is the ONLY timeout: reaching the peer is bounded, the peer's
+/// answer is not — a total cap would report failure while the peer completes the work.
 async fn post_peer_execute(
     base_url: &str,
     token: &str,
-    timeout: Duration,
+    connect_timeout: Duration,
     req: &ExecuteRequest,
 ) -> Result<ExecuteAccepted, LinkError> {
     let client = reqwest::Client::builder()
-        .timeout(timeout)
+        .connect_timeout(connect_timeout)
         .build()
         .map_err(|err| LinkError::RemoteExecute(err.to_string()))?;
     let response = client
@@ -977,15 +980,18 @@ async fn post_peer_execute(
 /// unknown op, an auth `401`) → [`LinkError::MlxProxy`] carrying the code and body. A
 /// transport failure reaching the peer is [`LinkError::MlxProxy`] too. Never a silent
 /// success.
+///
+/// `connect_timeout` is the ONLY timeout (see [`post_peer_execute`]): a model delete
+/// of tens of GB or an HF fetch takes as long as it takes on the peer.
 async fn post_peer_mlx(
     base_url: &str,
     token: &str,
-    timeout: Duration,
+    connect_timeout: Duration,
     op: MlxOp,
     body: &serde_json::Value,
 ) -> Result<serde_json::Value, LinkError> {
     let client = reqwest::Client::builder()
-        .timeout(timeout)
+        .connect_timeout(connect_timeout)
         .build()
         .map_err(|err| LinkError::MlxProxy(err.to_string()))?;
     let response = client
