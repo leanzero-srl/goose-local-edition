@@ -86,7 +86,10 @@ r6d LAUNCH CHECKLIST (in order): [x] GATE B placement 623ae8eef (trace YES, test
 · [x] GATE A ownership 8b7fa6c5b (independent trace IN FLIGHT) · [ ] GATE C repair brief (surgeon in
 flight) · [ ] probe findings carry request/status/body (swarm.rs:20648, queued behind C) · [ ]
 levers_resolved stops advertising dead split_fat (queued behind C) · [ ] set dispatch weight 1 per
-node in the launch config (measured: stacking = -8% aggregate / -54% per lane; Mihai may veto) · [ ]
+node (measured: stacking = -8% aggregate / -54% per lane; Mihai may veto) — HOW: r6c got weight 2 from
+LM Studio PARALLEL=2 (fleet_order.rs:355 precedence: config device override by model_id > speed_weight >
+PARALLEL > 1); add swarm.devices entries for the three qwen3.8-27b model_ids with weight: 1 in
+~/.config/goose/config.yaml (config.yaml currently lists only disabled qwopus devices) — NOT an LMS change · [ ]
 r6c natural end → hermetic score → RUN-LEDGER · [ ] build+install, verify bundled sha · [ ] CDP-verify
 the redesigned Benchmark view · [ ] Benchmark-view launch.
 
