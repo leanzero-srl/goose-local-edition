@@ -11,6 +11,7 @@ import { NavigationProvider, useNavigationContext } from './NavigationContext';
 import { Navigation } from './NavigationPanel';
 import { NAV_DIMENSIONS, Z_INDEX } from './constants';
 import { cn } from '../../utils';
+import { RADIUS, SURFACE, cx } from '../lz/tokens';
 import { UserInput } from '../../types/message';
 
 const i18n = defineMessages({
@@ -87,8 +88,8 @@ const AppLayoutContent: React.FC<AppLayoutContentProps> = ({ activeSessions }) =
         </Button>
       </div>
 
-      {/* Main content with navigation. Shared white canvas; the sidebar is a
-          rounded outlined card floating on it with breathing room. */}
+      {/* Main content with navigation. Shared canvas; the sidebar is the Studio card frame —
+          the lz hairline at the card radius — floating on it with breathing room. */}
       <div className="flex flex-1 w-full h-full min-h-0 flex-row">
         <motion.div
           key="nav"
@@ -98,7 +99,10 @@ const AppLayoutContent: React.FC<AppLayoutContentProps> = ({ activeSessions }) =
           style={{ height: '100%' }}
           className="relative flex-shrink-0 overflow-hidden h-full p-2"
         >
-          <div className="w-full h-full overflow-hidden rounded-xl border border-border-primary">
+          <div
+            data-testid="nav-frame"
+            className={cx('h-full w-full overflow-hidden border', SURFACE.hairline, RADIUS.card)}
+          >
             <Navigation />
           </div>
         </motion.div>
