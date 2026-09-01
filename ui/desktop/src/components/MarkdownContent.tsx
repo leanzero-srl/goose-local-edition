@@ -30,6 +30,7 @@ import { Check, Copy } from './icons';
 import { wrapHTMLInCodeBlock } from '../utils/htmlSecurity';
 import { isProtocolSafe, getProtocol, BLOCKED_PROTOCOLS } from '../utils/urlSecurity';
 import { ConfirmationModal } from './ui/ConfirmationModal';
+import { FOCUS, MOTION, RADIUS, cx } from './lz';
 import { defineMessages, useIntl } from '../i18n';
 
 const i18n = defineMessages({
@@ -151,12 +152,16 @@ const CodeBlock = memo(function CodeBlock({
   }, [language, children]);
 
   return (
-    <div className="relative group w-full">
+    <div className="relative w-full">
       <button
+        type="button"
         onClick={handleCopy}
-        className="absolute right-2 bottom-2 p-1.5 rounded-lg bg-gray-700/50 text-gray-300 font-sans text-sm
-                 opacity-0 group-hover:opacity-100 transition-opacity duration-200
-                 hover:bg-gray-600/50 hover:text-gray-100 z-10"
+        className={cx(
+          'absolute right-2 bottom-2 z-10 inline-flex size-7 items-center justify-center border border-lz-border-strong bg-lz-surface-2 text-lz-ink-3 hover:bg-lz-surface hover:text-lz-ink',
+          RADIUS.control,
+          FOCUS,
+          MOTION
+        )}
         title={intl.formatMessage(i18n.copyCode)}
       >
         {copied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
@@ -242,7 +247,7 @@ const MarkdownContent = memo(function MarkdownContent({
         className={`w-full overflow-x-hidden prose prose-sm text-text-primary dark:prose-invert max-w-full break-words font-sans
         prose-pre:p-0 prose-pre:m-0 !p-0
         prose-code:break-all prose-code:whitespace-pre-wrap prose-code:font-mono
-        prose-a:break-all prose-a:overflow-wrap-anywhere
+        prose-a:break-all
         prose-table:table prose-table:w-full
         prose-blockquote:text-inherit
         prose-td:border prose-td:border-border-primary prose-td:p-2
@@ -301,7 +306,9 @@ const MarkdownContent = memo(function MarkdownContent({
       <ConfirmationModal
         isOpen={pendingLink !== null}
         title={intl.formatMessage(i18n.openExternalLink)}
-        message={intl.formatMessage(i18n.openProtocolLink, { protocol: pendingLink?.protocol ?? '' })}
+        message={intl.formatMessage(i18n.openProtocolLink, {
+          protocol: pendingLink?.protocol ?? '',
+        })}
         detail={intl.formatMessage(i18n.thisWillOpen, { href: pendingLink?.href ?? '' })}
         onConfirm={handleConfirmOpen}
         onCancel={handleCancelOpen}
