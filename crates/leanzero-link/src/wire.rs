@@ -18,6 +18,16 @@ pub struct NodeState {
     pub status: NodeStatus,
     pub sessions_active: u32,
     pub updated_at: DateTime<Utc>,
+    /// Set by the node POLLING this one. An HTTP-status or unparseable-body failure
+    /// (a `401` from a token mismatch, a `503` from an unreadable session index) means
+    /// the peer is ALIVE but not answering as a LeanZero Link node should: the text
+    /// lands here and `status` keeps its last known value — never a fabricated
+    /// `Offline`. A transport failure (refused, timeout) flips `status` to `Offline`
+    /// and carries its text here too. `None` after a clean poll, and always `None` in a
+    /// node's own `self` report. Omitted on the wire when `None` (additive: older peers
+    /// parse; every constructor in every crate must now name it).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_poll_error: Option<String>,
 }
 
 /// Wire: `{"type":"Idle"}`, `{"type":"Busy","session_id":"..."}`, `{"type":"Offline"}`.
@@ -175,6 +185,7 @@ mod tests {
             status: NodeStatus::Idle,
             sessions_active: 0,
             updated_at: ts(1_700_000_000),
+            last_poll_error: None,
         };
         let value = serde_json::to_value(LinkEvent::NodeStateChanged(node.clone())).unwrap();
         assert_eq!(value["type"], "NodeStateChanged");
@@ -183,6 +194,46 @@ mod tests {
 
         let back: LinkEvent = serde_json::from_value(value).unwrap();
         assert_eq!(back, LinkEvent::NodeStateChanged(node));
+    }
+
+    /// `last_poll_error` is additive: omitted when `None`, defaulted when absent (an
+    /// older peer's JSON), carried verbatim when set.
+    #[test]
+    fn last_poll_error_is_omitted_when_none_and_defaults_when_absent() {
+        let node = NodeState {
+            node_id: "node-a".to_string(),
+            hostname: "a-host".to_string(),
+            mesh_ip: None,
+            status: NodeStatus::Offline,
+            sessions_active: 0,
+            updated_at: ts(1),
+            last_poll_error: None,
+        };
+        let value = serde_json::to_value(&node).unwrap();
+        assert!(
+            value.get("last_poll_error").is_none(),
+            "None is omitted on the wire: {value}"
+        );
+
+        let older_peer_json = serde_json::json!({
+            "node_id": "node-b", "hostname": "b", "mesh_ip": null,
+            "status": {"type": "Idle"}, "sessions_active": 0,
+            "updated_at": "2023-11-14T22:13:20Z"
+        });
+        let parsed: NodeState = serde_json::from_value(older_peer_json).unwrap();
+        assert_eq!(parsed.last_poll_error, None);
+
+        let with_error = NodeState {
+            last_poll_error: Some("peer answered 401 Unauthorized: token mismatch".into()),
+            ..node
+        };
+        let value = serde_json::to_value(&with_error).unwrap();
+        assert_eq!(
+            value["last_poll_error"],
+            "peer answered 401 Unauthorized: token mismatch"
+        );
+        let back: NodeState = serde_json::from_value(value).unwrap();
+        assert_eq!(back, with_error);
     }
 
     #[test]
@@ -195,6 +246,7 @@ mod tests {
                 status: NodeStatus::Offline,
                 sessions_active: 0,
                 updated_at: ts(1),
+                last_poll_error: None,
             },
             peers: Vec::new(),
         };
