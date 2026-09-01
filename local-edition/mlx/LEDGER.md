@@ -445,3 +445,24 @@ BINARY-STALE FLAG (must survive compaction): the packaged/target goosed binaries
 #21 COMPLETE (backend c26940e94 + UI 926501c01): remote model management across LeanZero Link nodes — device picker at the top of the Leanzero MLX view sets nodeId on all 16 mlxEngine ops; local byte-identical; remote path unit-verified (needs a deployed worker for two live nodes).
 
 #22 DESIGN VERDICT (banked — reshapes the feature): the mesh mirrors EVENTS, NEVER FILES; the swarm's unit of completion is a FILE ON THE ORCHESTRATOR'S disk (verify_owned_files). So automatic build-work fan across nodes (framing A) is UNSAFE — a peer writes files to its own disk, verify finds nothing, forcing done silent-breaks the app (FALLBACK gate shape). Full build-fan needs a NEW file-return subsystem in leanzero-link (a multi-crate project, not a swarm.rs edit). The ONLY safe swarm.rs-surgical scope is B1: mesh peers as read-only SUPERVISION devices for the advisory calls (review_dimension/verify_finding) whose inputs embed in the prompt + whose output is one text line — additive, byte-identical default, fail-safe+loud on peer failure. BUT B1 hinges on a LOW-confidence unknown: goose swarm run (standalone CLI) has NO mesh handle today (LinkManager is a private OnceLock in goose's ACP layer needing connect()) — needs an S0 reachability spike first. KEY INSIGHT: the manual delegation UI (run_remote a prompt on an idle node) ALREADY runs a FULL agent w/ tools on the peer — arguably MORE than B1's advisory-only graft would add. Recommendation leans: the collaborative-node value is ALREADY delivered; the sacred-engine graft is high-risk/low-added-value now. DECISION to Mihai.
+
+## 2026-09-01 — LEANZERO LINK WORKER DEPLOYED LIVE (self-hosted on the Mac via Funnel)
+Mihai chose "use the mac" over Cloudflare/AWS. Worker ported to a Node self-host (31cf0d872: fs-kv
++ node-server adapter, zero deps, Workers path untouched). DEPLOY (all OUTSIDE the repo):
+- Secrets: ~/.leanzero/link-worker.env (0600) — RESEND_API_KEY, TS_API_TOKEN, LINK_JWT_SECRET
+  (generated), LEANZERO_MAIL_FROM=onboarding@resend.dev, TS_TAILNET=-, TS_NODE_TAG= (empty→untagged),
+  LINK_KV_DIR=~/.leanzero/link-kv, PORT=8791. Audience id NOT set (audienceSync skips — optional).
+- Service: launchd job com.leanzero.link-auth (~/Library/LaunchAgents, KeepAlive+RunAtLoad) → node
+  on 127.0.0.1:8791. Health: mail=true mesh=true audience=false.
+- Funnel: ADDED /leanzero-link path on :443 (ADDITIVE — Mihai's 3 MCP funnels /docproc /lmstudio
+  /websearch + :8443 + :10000 VERIFIED intact; backup at ~/.leanzero/funnel-config.backup.json).
+  Public URL https://worksmacstudio.tailfc4700.ts.net/leanzero-link ; Tailscale STRIPS the prefix
+  (backend gets /v1/...). Health confirmed via the public URL.
+- goosed: inherited LEANZERO_LINK_WORKER_URL via launchctl setenv (verified in goosed pid env);
+  the ac56613826 fix bakes it as the crate default so it survives reboot.
+LIVE-PROVEN: the full OTP pipeline works — request-code reached Resend, which returned the expected
+test-mode 403: "can only send to your own address (zerobarat1@gmail.com)". So LOGIN IS LIVE — test
+with zerobarat1@gmail.com (or verify a Resend domain to use any address). MESH KEY: tagged mint
+FAILS (tag not owned in ACL), untagged mint WORKS — the ac56613826 fix makes the tag optional
+(unset→default tag, empty→untagged); after it lands, restart the launchd service + rebuild goosed →
+connect() (mesh) also live.
