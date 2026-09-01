@@ -74,6 +74,8 @@ use research::{
     research_prompt_head, research_request_block, research_schema, research_sources_block,
     research_system_text, write_research_ledger, ResearchQuestion, ResearchRow, RESEARCH_ANSWERED,
 };
+mod research_plan;
+use research_plan::{covering_mini, route_questions_to_decisions};
 mod imports;
 use imports::{attribute_import_gap_with_owner, tree_import_gaps, verify_tree_imports};
 mod plan_store;
@@ -116,7 +118,7 @@ mod findings;
 use findings::{
     dedupe_findings_exact, elide_middle, engine_critical, parse_finding_verdicts,
     parse_numbered_findings, partition_by_engine_critical, FileGroup, FindingProvenance,
-    FindingSource, FINDING_PATH_EXTS,
+    FindingSource,
 };
 mod pitfalls;
 use pitfalls::{relevant_pitfalls, DOMAIN_PITFALLS};
@@ -22905,7 +22907,7 @@ async fn run_linear_plan(
     // single-slice fallback: the whole request as one slice. That always parses, always validates, and
     // costs parallelism rather than the run. RESEARCH then writes one large brief instead of nine, which
     // is a worse plan and still a plan.
-    let opened = match dispatcher
+    let mut opened = match dispatcher
         .open_slices(&cfg.planner_model, &opts.prompt)
         .await
     {
@@ -23038,6 +23040,14 @@ async fn run_linear_plan(
     // per-decision answer-absence is the ONLY trigger, so an attended run where the human
     // answers everything dispatches none of these.
     let still_open = decisions::still_open_after_user(&decision_lines, user_decisions);
+    // THE FAN CUT (C2a): a slice question that IS one of the opener's open decisions is routed
+    // to it — decided ONCE, on the decisions lane (or by the user), never again on a slice
+    // lane. r6d decided D1 three times (`__open_decisions__-q2`, web-page-q1, inside
+    // web-page-q3) and re-asked the token-entry decision as web-page-q0 (7.9 min). Runs
+    // AFTER ASK so the routed question's settlement — whichever channel settles it — reaches
+    // the brief through the decisions partition; the fan below skips routed questions and
+    // `briefs_from_slices` points each at its decision.
+    route_questions_to_decisions(&mut opened, sink.as_ref());
     let fan_rows: Vec<ResearchRow> = {
         let fan = tokio::spawn({
             let dispatcher = dispatcher.clone();
@@ -23158,43 +23168,6 @@ async fn run_linear_plan(
     // plan_needs_detail = false: each task's description IS its slice (briefs_from_slices), and the
     // detail fan that once expanded one-line briefs is long deleted.
     Ok((plan_json, dag, PlanConf::default()))
-}
-
-/// The owner's OWNERSHIP DECLARATIONS, read back out of its objective's backticks.
-///
-/// Since 14831a321 the opener is told to NAME EACH SLICE'S OWNED FILES IN ITS OBJECTIVE — but
-/// `briefs_from_slices` still shipped `files: Vec::new()`, so `slice_files_unnamed` fired for
-/// EVERY slice on EVERY run (measured 5 and 7 on the last two runs) and every `.files` reader
-/// — the index's named-files caption, the fallback plan's declared ownership — was a dead path.
-///
-/// Conservative on purpose: only backticked tokens shaped like relative file paths — a '/' or a
-/// known source extension (`FINDING_PATH_EXTS`, the one list), no whitespace, no scheme, not
-/// absolute (`/api/ledger` is a route, not a file), no trailing '/' (a directory is territory,
-/// not a plan file) — deduped in objective order. An objective that declares nothing keeps the
-/// empty vec, and the absence event keeps firing for exactly those slices.
-fn files_from_objective(objective: &str) -> Vec<String> {
-    let mut out: Vec<String> = Vec::new();
-    for (i, seg) in objective.split('`').enumerate() {
-        if i % 2 == 0 {
-            continue;
-        }
-        let tok = seg.trim();
-        let tok = tok.strip_prefix("./").unwrap_or(tok);
-        if tok.is_empty()
-            || tok.chars().any(char::is_whitespace)
-            || tok.contains("://")
-            || tok.starts_with('/')
-            || tok.ends_with('/')
-        {
-            continue;
-        }
-        let lower = tok.to_lowercase();
-        let pathish = tok.contains('/') || FINDING_PATH_EXTS.iter().any(|e| lower.ends_with(e));
-        if pathish && !out.iter().any(|f| f == tok) {
-            out.push(tok.to_string());
-        }
-    }
-    out
 }
 
 // ================================================================================================
@@ -23320,6 +23293,11 @@ impl GooseAgentDispatcher {
                         write_research_ledger(&self.working_dir, &row);
                         fact_rows.push(row);
                     }
+                    // C2(a): routed to an open decision — no row of its own; the decision's
+                    // settlement rides every brief and this slice's brief points at it.
+                    None if q.decision.is_some() => {
+                        emit_question_disposition(self.events.as_ref(), &rq, "decision");
+                    }
                     None => {
                         emit_question_disposition(self.events.as_ref(), &rq, "dispatch");
                         to_dispatch.push((rq, head.clone()));
@@ -23375,6 +23353,29 @@ impl GooseAgentDispatcher {
                 let me = me.clone();
                 async move {
                     let key = format!("research-{}-q{}", q.slice, q.q_index);
+                    // THE FAN CUT (C2b): read the minis on disk RIGHT NOW — resumed, or landed
+                    // by lanes of any slice that finished before this one got a node — and if
+                    // one already answers this question (same cite, same decision id, or a
+                    // stem past both floors; `research_plan::same_question`), its answer is
+                    // copied into this question's row with the original mini as provenance
+                    // and NO model is called. r6d: drafts-workflow-q4 asked what
+                    // ledger-api-q5 had settled from request.md:218 (8.1 min). MILD: the three
+                    // rules are strict; anything else dispatches.
+                    let landed = research::load_research_minis(&me.working_dir);
+                    if let Some((cover, rule)) = covering_mini(&q, &landed) {
+                        let row = ResearchRow::covered_by(&q, cover, rule);
+                        write_research_ledger(&me.working_dir, &row);
+                        me.events.write_value(serde_json::json!({
+                            "event": "research_question_covered",
+                            "slice": q.slice,
+                            "q_index": q.q_index,
+                            "question": q.question.chars().take(200).collect::<String>(),
+                            "by": "mini",
+                            "by_mini": row.origin.trim_start_matches(research::ORIGIN_COVERED_PREFIX),
+                            "rule": rule,
+                        }));
+                        return row;
+                    }
                     // E7: enrolled as a relay target for the life of the call (removed at its row).
                     me.research_running
                         .lock()

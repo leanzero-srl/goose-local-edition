@@ -101,6 +101,10 @@ pub(crate) struct OpenQuestion {
     pub(crate) kind: QuestionKind,
     pub(crate) cite: String,
     pub(crate) fact: String,
+    /// C2(a): the index of the opener's open decision this question IS, set by
+    /// `research_plan::route_questions_to_decisions` after ASK — never by the opener. Routed
+    /// questions ride no slice lane; the decision settles once and the brief points at it.
+    pub(crate) decision: Option<usize>,
 }
 
 impl OpenQuestion {
@@ -122,6 +126,7 @@ impl From<&str> for OpenQuestion {
             kind: QuestionKind::Design,
             cite: String::new(),
             fact: String::new(),
+            decision: None,
         }
     }
 }
@@ -163,18 +168,21 @@ impl<'de> serde::Deserialize<'de> for OpenQuestion {
                 kind: QuestionKind::parse(&kind),
                 cite: squash(&cite),
                 fact: fact.trim().to_string(),
+                decision: None,
             },
             OpenQuestionRaw::Bare(q) => OpenQuestion {
                 text: squash(&q),
                 kind: QuestionKind::Unkinded,
                 cite: String::new(),
                 fact: String::new(),
+                decision: None,
             },
             OpenQuestionRaw::Other(v) => OpenQuestion {
                 text: squash(&v.to_string()),
                 kind: QuestionKind::Unkinded,
                 cite: String::new(),
                 fact: String::new(),
+                decision: None,
             },
         })
     }
