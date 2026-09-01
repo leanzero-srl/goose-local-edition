@@ -1,15 +1,16 @@
 import React from 'react';
 import { Check, X, Loader2 } from 'lucide-react';
-import { CHIP_RADIUS, FORMATION_RAMP, SWARM_STATUS } from './formationVisualState';
+import { RADIUS, TNUM, cx } from '../lz';
+import { FORMATION_RAMP, SWARM_STATUS } from './formationVisualState';
 
 /**
  * Desktop twin of the CLI swarm fan-in unit — Goose Local Edition's signature.
  *
- * A sharp full-border card (NEVER a left rail): a dispatch header, one lane per node with a SOLID
- * formation-hue identity DOT (the letter lives in its aria-label), the device + action, and a goose
- * status glyph whose color comes from the status triad — deliberately DISJOINT from the node identity ramp
- * so a red status never reads as a node's identity — then a rolled-up fan-in footer. This is what a
- * single-model UI cannot show; the palette matches the CLI `theme::palette`.
+ * A Studio surface card (1px hairline, radius 6, NEVER a left rail): a dispatch header in the meta
+ * register, one lane per node with a SOLID formation-hue identity DOT (the letter lives in its
+ * aria-label), the device + action, and a status glyph whose colour comes from the status triad —
+ * deliberately DISJOINT from the node identity ramp so a red status never reads as a node's identity.
+ * This is what a single-model UI cannot show; the palette matches the CLI `theme::palette`.
  */
 
 export type NodeStatus = 'running' | 'done' | 'error';
@@ -62,10 +63,13 @@ const FanInCard: React.FC<FanInCardProps> = ({ dispatch, lanes, className = '' }
   return (
     <div
       data-testid="fan-in-card"
-      className={`border border-border-primary bg-background-secondary text-text-primary p-3 text-sm ${className}`}
-      style={{ borderRadius: CHIP_RADIUS }}
+      className={cx(
+        'border border-lz-border bg-lz-surface p-3 text-lz-body text-lz-ink',
+        RADIUS.control,
+        className
+      )}
     >
-      <div className="flex items-center justify-between text-text-secondary text-xs mb-2">
+      <div className={cx('mb-2 flex items-center justify-between text-lz-meta text-lz-ink-3', TNUM)}>
         <span>swarm · {dispatch}</span>
         <span>
           {/* LANES, not nodes: a 3-node fleet running 8 slice specs read "8 NODES". And the count was
@@ -78,13 +82,13 @@ const FanInCard: React.FC<FanInCardProps> = ({ dispatch, lanes, className = '' }
         {lanes.map((lane, i) => (
           <div key={i} className="flex items-center gap-2" data-testid="fan-in-lane">
             <span
-              className="inline-block h-2 w-2 shrink-0 rounded-full"
+              className={cx('inline-block size-2 shrink-0', RADIUS.pill)}
               data-testid="node-chip"
               role="img"
               style={{ backgroundColor: nodeHue(i) }}
               aria-label={`node ${nodeLetter(i)}`}
             />
-            <span className="w-24 shrink-0 truncate text-text-secondary">{lane.device}</span>
+            <span className="w-24 shrink-0 truncate text-lz-ink-2">{lane.device}</span>
             <span className="flex-1 truncate">{lane.action}</span>
             {(() => {
               const Icon = STATUS_ICON[lane.status];
@@ -101,7 +105,6 @@ const FanInCard: React.FC<FanInCardProps> = ({ dispatch, lanes, className = '' }
           </div>
         ))}
       </div>
-
     </div>
   );
 };
