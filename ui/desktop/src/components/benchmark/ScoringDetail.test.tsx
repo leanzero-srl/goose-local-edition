@@ -1,6 +1,11 @@
 import { render } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
 import { ScoringDetail, type VerdictDetail } from './ScoringDetail';
+import { allClasses, assertStudioClean } from '../lz/assertStudioClean';
+import { missingUtilities } from '../lz/compileStudioCss';
+
+/** lucide stamps `lucide lucide-<name>` identifiers on its svgs — names, not utilities. */
+const utilitiesOf = (classes: string[]) => classes.filter((c) => !c.startsWith('lucide'));
 
 // Distilled from a REAL verdict (evals/swarm-bench/runs/nodeloop/baseline-n3-r3/verdict.json,
 // score 0.8645) so the composition arithmetic is checked against scorer truth, not an invented
@@ -86,4 +91,21 @@ describe('ScoringDetail', () => {
     getByText(/failed at the root and zeroed 2 downstream check/);
     expect(getAllByText(/lost point/).length).toBeGreaterThan(0);
   });
+
+  it('scores read as the status triad (full ok, partial warn, nothing err) on Studio tokens only — no node hue, no hex', async () => {
+    const { container } = render(<ScoringDetail verdict={verdict} score={0.8645} />);
+    const tone = (chip: Element) => chip.getAttribute('data-tone');
+    const chips = [...container.querySelectorAll('[data-testid="score-chip"]')];
+    // The open B group (0.7316) is a warn chip; its 0.5 row warn; the collapsed A group's 1.0 is ok.
+    expect(chips.some((c) => tone(c) === 'ok' && c.classList.contains('bg-lz-ok-solid'))).toBe(true);
+    expect(chips.some((c) => tone(c) === 'warn' && c.classList.contains('bg-lz-warn-solid'))).toBe(
+      true
+    );
+    // The held findings sit under a solid err header, and the composition earned-fill is the accent.
+    expect(container.querySelector('[data-testid="findings-held"] .bg-lz-err-solid')).not.toBeNull();
+    expect(container.querySelectorAll('svg rect.fill-lz-accent').length).toBeGreaterThan(0);
+    expect(container.innerHTML).not.toMatch(/color-node-|color-block|#[0-9a-f]{6}/i);
+    assertStudioClean(container);
+    expect(await missingUtilities(utilitiesOf(allClasses(container)))).toEqual([]);
+  }, 30_000);
 });
