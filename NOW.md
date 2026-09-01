@@ -90,8 +90,10 @@ levers_resolved stops advertising dead split_fat (queued behind C) · [ ] set di
 node (measured: stacking = -8% aggregate / -54% per lane; Mihai may veto) — HOW: r6c got weight 2 from
 LM Studio PARALLEL=2 (fleet_order.rs:355 precedence: config device override by model_id > speed_weight >
 PARALLEL > 1); add swarm.devices entries for the three qwen3.8-27b model_ids with weight: 1 in
-~/.config/goose/config.yaml (config.yaml currently lists only disabled qwopus devices) — NOT an LMS change · [ ]
-r6c natural end → hermetic score → RUN-LEDGER · [ ] build+install, verify bundled sha · [ ] CDP-verify
+~/.config/goose/config.yaml (config.yaml currently lists only disabled qwopus devices) — NOT an LMS change · [x]
+r6c ended; HERMETIC 0.1420 (inner 0.7282 × crit 0.216 — zero rows in the browser: unauthenticated fetches +
+viz.js Illegal invocation = the two unowned criticals); ledger 796fc001e; archived; slot absent · [ ] launch-prep:
+remove the mis-derived ~/.config/goose/skills/stack-angular/SKILL.md (learn phase called a py+vanilla-js tree angular) · [ ] build+install, verify bundled sha · [ ] CDP-verify
 the redesigned Benchmark view · [ ] Benchmark-view launch.
 
 r6c itself: BUILD 9/9, INTEGRATE green (app boots, both ports, full battery), REPAIR r1 open at
