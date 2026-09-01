@@ -549,3 +549,10 @@ research_request_block's armed-no-claimed-sections arm wording.
   the two integration must-dos (TLS feature, shared-not-per-node control token) AND named its own
   low-confidence literal (the guessed worker URL) as override-me. Every typed error carries the
   worker {error} body — no flattening. Charter gap: none.
+- 2026-09-01 link-backend (goosed integration, b5c0ab725): CLEAN++. Delivered real node/session
+  state + the leanzeroLink ACP surface; drew the honest line on delta mirroring (the per-session
+  buses are in goose-server which depends on goose → can't pull from crates/goose; named the
+  dependency-inversion a full P4 needs rather than faking deltas); rebuild-on-identity-change proven
+  to only fire while disconnected so it never drops a live mesh; node_token derivation specified
+  byte-for-byte for the iOS companion; discovery-fallback keeps health/verify working when Tailscale
+  isn't installed while connect() fails loud. Charter gap: none.
