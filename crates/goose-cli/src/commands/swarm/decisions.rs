@@ -298,15 +298,37 @@ pub(super) fn decision_user_text(
     )
 }
 
+/// A decision document is documentation the app SHIPS: a `.md`/`.rst`/`.txt` inside the scored
+/// tree. Anything under the engine's own work area (`tree::SNAPSHOT_EXCLUDES` — `.swarm/`, where
+/// `shards::SHARDS_DIR` lives) never reaches the scored tree, so a file there is a build artifact
+/// whatever its extension, never a decision document.
+fn is_shipped_doc_file(f: &str) -> bool {
+    let l = f.trim().trim_start_matches("./").to_lowercase();
+    let in_engine_area = super::tree::SNAPSHOT_EXCLUDES
+        .iter()
+        .any(|ex| l == *ex || l.starts_with(&format!("{ex}/")));
+    !in_engine_area && (l.ends_with(".md") || l.ends_with(".rst") || l.ends_with(".txt"))
+}
+
 /// Amendment (e), gate-6 class (loud, MILD, rides `plan_repaired.actions`): when EVERY open
 /// decision folded as settled at plan time, an implementation task no longer needs a docs-only
 /// task upstream for decision consistency — the settled choices ride every brief and every
 /// worker prompt — so those edges are stripped and the width the r5 plan lost comes back
 /// (post-skeleton width 2 -> 4 on r5's shape, which saturates 3 nodes). One unanswered decision
 /// KEEPS every such dep: the doc task is then the consistency mechanism, and serializing behind
-/// it is the honest price of an unsettled choice. Docs-only = non-sink, owns at least one file,
-/// every owned file documentation (.md/.rst/.txt). The sink keeps its deps (it owns nothing and
-/// must wait for everything); doc-on-doc deps are untouched.
+/// it is the honest price of an unsettled choice. A decision-doc task = non-sink, not a shard or
+/// merger of THE SPLIT, owns at least one file, every owned file a SHIPPED document
+/// (`is_shipped_doc_file`). The sink keeps its deps (it owns nothing and must wait for
+/// everything); doc-on-doc deps are untouched.
+///
+/// The r6e receipt (VA-063, killed at BUILD+4m): the split gave `viz3d-engine` eight shard tasks
+/// each owning ONLY `.swarm/shards/viz3d-engine/<shard>/README.md` and made the module their
+/// merger (`depends_on` = its planner deps `[]` + the eight shards). The extension test alone read
+/// all eight shards as docs-only and this gate dropped them — `plan_repaired{source: split}`
+/// 16:28:46Z: "`viz3d-engine` was gated on docs-only `viz3d-engine-data-scene`, … — dep dropped";
+/// `task_dispatched viz3d-engine deps: []` in the same instant as `plan_loaded`;
+/// `merge_dossier{pieces: 0, readmes_missing: [all 8]}`. A shard's README is the merger's INPUT,
+/// a build artifact under the engine's work area, never a decision document.
 pub(super) fn repair_decision_doc_gates(
     plan: &mut serde_json::Value,
     every_decision_settled: bool,
@@ -317,10 +339,6 @@ pub(super) fn repair_decision_doc_gates(
     }
     let Some(subtasks) = plan.get_mut("subtasks").and_then(|s| s.as_array_mut()) else {
         return;
-    };
-    let is_doc = |f: &str| {
-        let l = f.to_lowercase();
-        l.ends_with(".md") || l.ends_with(".rst") || l.ends_with(".txt")
     };
     let files_of = |t: &serde_json::Value| -> Vec<String> {
         match t.get("files").and_then(|f| f.as_array()) {
@@ -334,14 +352,19 @@ pub(super) fn repair_decision_doc_gates(
                 .collect(),
         }
     };
+    // The split's own markers (`shards::apply_module_split` writes them; a model never does): a
+    // shard is a build task whatever it owns, and the merger is the build task the shards feed.
+    let is_decision_doc_task = |t: &serde_json::Value| -> bool {
+        let files = files_of(t);
+        t.get("id").and_then(|i| i.as_str()) != Some(goose_swarm::SINK_ID)
+            && t.get("shard_of").is_none()
+            && t.get("merger_of").is_none()
+            && !files.is_empty()
+            && files.iter().all(|f| is_shipped_doc_file(f))
+    };
     let doc_only_ids: std::collections::HashSet<String> = subtasks
         .iter()
-        .filter(|t| {
-            let files = files_of(t);
-            t.get("id").and_then(|i| i.as_str()) != Some(goose_swarm::SINK_ID)
-                && !files.is_empty()
-                && files.iter().all(|f| is_doc(f))
-        })
+        .filter(|t| is_decision_doc_task(t))
         .filter_map(|t| t.get("id").and_then(|i| i.as_str()).map(String::from))
         .collect();
     if doc_only_ids.is_empty() {
@@ -354,7 +377,7 @@ pub(super) fn repair_decision_doc_gates(
         let Some(id) = t.get("id").and_then(|i| i.as_str()).map(String::from) else {
             continue;
         };
-        if !files_of(t).iter().any(|f| !is_doc(f)) {
+        if files_of(t).is_empty() || is_decision_doc_task(t) {
             continue; // not an implementation task: the sink and doc tasks keep their deps
         }
         let Some(deps) = t.get_mut("depends_on").and_then(|d| d.as_array_mut()) else {
@@ -613,5 +636,82 @@ mod tests {
         repair_decision_doc_gates(&mut kept, false, &mut actions);
         assert_eq!(kept, plan);
         assert!(actions.is_empty());
+    }
+
+    /// VA-063, the r6e shape reduced: merger `m` (keeps `web/viz.js`, `merger_of`) depends on its
+    /// shards `m-a`/`m-b` (each owns ONLY `.swarm/shards/m/<x>/README.md`, `shard_of`) AND on a
+    /// real decision doc `decisions-doc` (`DECISIONS.md`). Every decision settled: the merger drops
+    /// ONLY the decision doc and keeps both shards — the run dropped all three classes at once and
+    /// dispatched the merger over zero pieces. Both halves of the predicate hold alone: with the
+    /// `shard_of` marker removed, the `.swarm/` work-area test still keeps the shard.
+    #[test]
+    fn decision_doc_gate_never_reads_a_shard_readme_as_a_decision_doc() {
+        let shard = |x: &str| {
+            serde_json::json!({
+                "id": format!("m-{x}"),
+                "files": [format!(".swarm/shards/m/{x}/README.md")],
+                "depends_on": [],
+                "shard_of": {"module": "m", "shard": x, "folder": format!(".swarm/shards/m/{x}")},
+            })
+        };
+        let plan = serde_json::json!({"subtasks": [
+            {"id": "decisions-doc", "files": ["DECISIONS.md"], "depends_on": []},
+            {"id": "m", "files": ["web/viz.js"], "depends_on": ["decisions-doc", "m-a", "m-b"],
+             "merger_of": {"module": "m", "shards": ["m-a", "m-b"],
+                           "folders": [".swarm/shards/m/a", ".swarm/shards/m/b"]}},
+            shard("a"),
+            shard("b"),
+            {"id": "integrate-verify", "files": [], "depends_on": ["decisions-doc", "m", "m-a", "m-b"]},
+        ]});
+        let deps = |v: &serde_json::Value, id: &str| -> Vec<String> {
+            v["subtasks"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|t| t["id"] == id)
+                .unwrap()["depends_on"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|d| d.as_str().unwrap().to_string())
+                .collect()
+        };
+        let mut settled = plan.clone();
+        let mut actions = Vec::new();
+        repair_decision_doc_gates(&mut settled, true, &mut actions);
+        assert_eq!(
+            deps(&settled, "m"),
+            vec!["m-a", "m-b"],
+            "the merger waits for its shards; only the decision doc is un-gated"
+        );
+        assert_eq!(actions.len(), 1, "{actions:?}");
+        assert!(
+            actions[0].contains("`m` was gated on docs-only `decisions-doc`")
+                && !actions[0].contains("m-a"),
+            "{}",
+            actions[0]
+        );
+        assert_eq!(
+            deps(&settled, "integrate-verify").len(),
+            4,
+            "the join owns nothing and keeps every dep"
+        );
+
+        // The work-area test alone: strip the split's marker off the shards and the `.swarm/`
+        // path still says build artifact, not decision document.
+        let mut unmarked = plan.clone();
+        for t in unmarked["subtasks"].as_array_mut().unwrap() {
+            t.as_object_mut().unwrap().remove("shard_of");
+        }
+        let mut actions = Vec::new();
+        repair_decision_doc_gates(&mut unmarked, true, &mut actions);
+        assert_eq!(deps(&unmarked, "m"), vec!["m-a", "m-b"]);
+        assert_eq!(actions.len(), 1);
+
+        assert!(is_shipped_doc_file("DECISIONS.md"));
+        assert!(is_shipped_doc_file("docs/notes.rst"));
+        assert!(!is_shipped_doc_file(".swarm/shards/m/a/README.md"));
+        assert!(!is_shipped_doc_file("./.swarm/shards/m/a/README.md"));
+        assert!(!is_shipped_doc_file("web/viz.js"));
     }
 }
