@@ -153,7 +153,9 @@ describe('SwarmRunPanel — the named-zone view actually renders', () => {
     expect(dots.map((d) => d.getAttribute('aria-label'))).toEqual(
       expect.arrayContaining(['node A', 'node B', 'node C'])
     );
-    for (const d of dots) expect(d.style.backgroundColor).toContain('--color-node-');
+    // The hue is the node-ramp token utility (identity only), never an inline colour.
+    for (const d of dots) expect(d.className).toMatch(/\bbg-lz-node-[1-6]\b/);
+    for (const d of dots) expect(d.getAttribute('style')).toBeNull();
     const runLabel = await findByText('Swarm run');
     expect(runLabel.getAttribute('style')).toBeNull();
     expect(runLabel.className).toContain('uppercase');

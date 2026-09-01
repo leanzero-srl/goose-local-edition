@@ -123,7 +123,8 @@ describe('SaidSection — the pane says whose text it shows', () => {
     // The chip carries the SOLID error fill (never a faded tint, never a left accent stripe).
     const chip = screen.getByText('from attempt 1 · error → retried');
     expect(chip).toHaveAttribute('data-said-kind', 'error');
-    expect(chip.getAttribute('style') ?? '').toContain('dc2626');
+    expect(chip.className).toContain('bg-lz-err-solid');
+    expect(chip.getAttribute('style')).toBeNull();
     // Expanding shows the superseded error bytes.
     fireEvent.click(screen.getByRole('button', { name: 'show' }));
     expect(screen.getByText(/Please resend your message to try again/)).toBeInTheDocument();
