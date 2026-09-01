@@ -27,12 +27,14 @@ describe('DetailModeChooser', () => {
     expect(choices[1]).toHaveAttribute('aria-checked', 'true');
   });
 
-  it('uses roving tabindex, moves focus, and exposes a contrasting selected focus ring', () => {
+  it('uses roving tabindex, moves focus, and marks the selected segment as the accent fill', () => {
     render(<StatefulChooser />);
     const choices = screen.getAllByRole('radio');
 
     expect(choices.map((choice) => choice.tabIndex)).toEqual([-1, 0, -1]);
-    expect(choices[1]).toHaveClass('focus-visible:ring-white');
+    // The lz Segmented: the active segment is the solid accent with its ink; the others are quiet.
+    expect(choices[1]).toHaveClass('bg-lz-accent');
+    expect(choices[0]).not.toHaveClass('bg-lz-accent');
 
     choices[1].focus();
     fireEvent.keyDown(choices[1], { key: 'ArrowRight' });

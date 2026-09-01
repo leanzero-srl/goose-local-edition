@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo, useRef, useId } from 'react';
 import { createPortal } from 'react-dom';
 import {
   Check, X, Loader2, CircleSlash, ChevronRight, ChevronDown, Wrench,
-  Search, ListChecks, Play, Pause, FlaskConical, RotateCcw, Gavel, Eye, FileText, Cpu, AlignLeft,
+  Search, ListChecks, Play, Pause, FlaskConical, RotateCcw, Gavel, Eye, FileText, Cpu,
   MessageCircleQuestion, Send, Gauge, AlertTriangle, FolderOpen, TrendingUp, Info, Braces,
   Circle, Minus, Terminal, FilePlus2, FilePenLine, Hammer,
   MessageSquare, Bot, Bug,
@@ -52,6 +52,24 @@ import {
   type SupersededSaid,
 } from './useSwarmRun';
 import { ZoneHeader } from './ZoneHeader';
+import {
+  Button,
+  Chip,
+  MOTION,
+  NODE_DOT,
+  RADIUS,
+  SURFACE,
+  Segmented,
+  StatusDot,
+  TNUM,
+  TONE_FILL,
+  TONE_TEXT,
+  TYPE,
+  WEIGHT,
+  cx,
+  type NodeIndex,
+  type Tone,
+} from '../lz';
 import { SWARM_LOG_MODES, useSwarmLogMode, type SwarmLogMode } from './useVerboseSwarm';
 import { useFleetStatus } from './useFleet';
 import { useLmStudioFleetVisible } from '../../hooks/useLmStudioFleetVisible';
@@ -64,7 +82,6 @@ import {
   CHIP_RADIUS,
   EYEBROW_CLASS,
   FORMATION_RAMP,
-  PANEL_RADIUS,
   SWARM_STATUS,
   nextRevealedText,
   usePrefersReducedMotion,
@@ -113,11 +130,14 @@ const STOPPED = SWARM_STATUS.stopped;
 // a tint or an opacity fade. Chrome (labels, counts, hints) deliberately stays on the secondary token.
 const GEN_TEXT = 'var(--color-text-primary)';
 
+/** A node's slot on the six-hue ramp — IDENTITY ONLY, the same slot the ribbon and the fleet use. */
+const nodeSlot = (index: number): NodeIndex => ((index % 6) + 1) as NodeIndex;
+
 /** Node identity: a small SOLID dot in the node's ramp hue beside its name — the same identity the
  *  lettered ⬢ glyph and the avatar squares carried, with less sticker. The letter survives in the
- *  aria-label so a reader still hears "node A". */
-const NodeDot: React.FC<{ hue: string; letter: string; size?: number; className?: string }> = ({
-  hue,
+ *  aria-label so a reader still hears "node A". The hue is the `bg-lz-node-N` token utility. */
+const NodeDot: React.FC<{ index: number; letter: string; size?: 8 | 10; className?: string }> = ({
+  index,
   letter,
   size = 8,
   className = '',
@@ -126,14 +146,15 @@ const NodeDot: React.FC<{ hue: string; letter: string; size?: number; className?
     role="img"
     aria-label={`node ${letter}`}
     data-testid="node-dot"
-    className={`inline-block shrink-0 rounded-full ${className}`}
-    style={{ width: size, height: size, backgroundColor: hue }}
+    className={cx(
+      'inline-block shrink-0',
+      size === 10 ? 'size-2.5' : 'size-2',
+      RADIUS.pill,
+      NODE_DOT[nodeSlot(index)],
+      className
+    )}
   />
 );
-
-/** The two type scales of this panel. Zone headers use EYEBROW_CLASS (the one uppercase register);
- *  everything else that is a pill is 11px, normal case. */
-const SOLID_PILL = 'text-[11px] font-semibold px-1.5 py-px text-white shrink-0';
 
 // Human duration from minutes: seconds under a minute, else "Nm Ss".
 function fmtDuration(min: number): string {
@@ -277,7 +298,7 @@ const CallRow: React.FC<{ call: SwarmCall; defaultOpen?: boolean; ordinal?: numb
               }
             : undefined
         }
-        className={`w-full flex items-start gap-2 text-left ${hasOutput ? 'cursor-pointer hover:opacity-80' : 'cursor-default'}`}
+        className={cx('flex w-full items-start gap-2 text-left', hasOutput ? cx('cursor-pointer', SURFACE.hover) : 'cursor-default', MOTION)}
       >
         <span className="mt-0.5">
           <CallTypeIcon icon={m.icon} color={color} />
@@ -285,14 +306,7 @@ const CallRow: React.FC<{ call: SwarmCall; defaultOpen?: boolean; ordinal?: numb
         <span className="flex-1 min-w-0">
           <span className="flex items-center gap-1.5 flex-wrap">
             <span className="text-xs font-medium text-text-primary">{m.action}</span>
-            {pill ? (
-              <span
-                className="shrink-0 text-[11px] font-medium px-1.5 py-px"
-                style={{ color, border: `1px solid ${color}`, borderRadius: CHIP_RADIUS }}
-              >
-                {pill}
-              </span>
-            ) : null}
+            {pill ? <Chip tone={m.kind === 'malformed' ? 'err' : 'warn'}>{pill}</Chip> : null}
             {m.kind !== 'ok' ? (
               <span className="text-[11px]" style={{ color: m.kind === 'malformed' ? color : 'var(--color-text-secondary)' }}>
                 {m.outcome}
@@ -352,7 +366,11 @@ const ReasoningBlock: React.FC<{
   /** Honest provenance beside the label — e.g. REASONING_CLIP_NOTE when the body is the digest's
    *  24k-clipped tail rather than a durable log. */
   note?: string;
-}> = ({ text, forceOpen, label, live, note }) => {
+  /** True (the default) when the body is the model's REASONING/GENERATION channel — the one surface that
+   *  carries the Studio's secondary accent on its label. A task spec rendered through the same block
+   *  passes false: the spec is not the reasoning channel. */
+  reasoning?: boolean;
+}> = ({ text, forceOpen, label, live, note, reasoning = true }) => {
   const [expandedState, setExpanded] = useState(false);
   const expanded = expandedState || !!forceOpen;
   const words = text.split(/\s+/).filter(Boolean).length;
@@ -374,21 +392,25 @@ const ReasoningBlock: React.FC<{
   const capped = !expanded && big;
   return (
     <div>
-      <div className="flex items-center gap-1.5 mb-1.5">
-        <span className="text-[11px] font-medium text-text-secondary">
+      <div className="mb-1.5 flex items-center gap-1.5">
+        <span
+          className={cx('text-lz-meta', WEIGHT.medium, reasoning ? TONE_TEXT.secondary : 'text-lz-ink-2')}
+        >
           {label || 'Reasoning'}
         </span>
         {live ? (
-          <span className="text-[11px] font-semibold" style={{ color: CALL_OK }}>
-            live
-          </span>
+          <span className={cx('text-lz-meta', WEIGHT.semibold, TONE_TEXT.ok)}>live</span>
         ) : null}
-        {note ? <span className="text-[11px] text-text-secondary">{note}</span> : null}
+        {note ? <span className="text-lz-meta text-lz-ink-3">{note}</span> : null}
       </div>
       <div
         ref={bodyRef}
-        className={`text-[13px] break-words bg-background-primary border border-border-primary px-2.5 py-2 ${capped ? (live ? 'max-h-[22rem] overflow-y-auto' : 'max-h-[22rem] overflow-hidden') : ''}`}
-        style={{ borderRadius: CHIP_RADIUS, lineHeight: 1.65, color: GEN_TEXT }}
+        className={cx(
+          'break-words border border-lz-border bg-lz-surface px-3 py-2 text-lz-body text-lz-ink',
+          RADIUS.control,
+          capped && (live ? 'max-h-[22rem] overflow-y-auto' : 'max-h-[22rem] overflow-hidden')
+        )}
+        style={{ lineHeight: 1.65 }}
       >
         {/* Prose gets the markdown path; a STRUCTURED payload gets a code path. The plan skeleton used to
             arrive here as raw JSON and markdown both reflowed it into an unreadable wall AND corrupted it —
@@ -398,7 +420,7 @@ const ReasoningBlock: React.FC<{
       {big && (
         <button
           onClick={() => setExpanded((e) => !e)}
-          className="mt-0.5 text-[11px] text-text-secondary hover:text-text-primary transition-colors"
+          className={cx('mt-0.5 text-lz-meta text-lz-ink-3 hover:text-lz-ink', MOTION)}
         >
           {expanded ? 'Show less' : `Show all (${words} words)`}
         </button>
@@ -420,7 +442,6 @@ const LaneRow: React.FC<{
   onToggle: () => void;
 }> = ({ lane, deviceOrder, stale, open, mode, dev, heterogeneous, onToggle }) => {
   const idx = deviceIndex(lane.device, deviceOrder);
-  const hue = FORMATION_RAMP[idx % FORMATION_RAMP.length];
   const letter = String.fromCharCode(65 + (idx % 26));
 
   const live = lane.status === 'running' && !stale;
@@ -485,7 +506,7 @@ const LaneRow: React.FC<{
       <button
         type="button"
         onClick={onToggle}
-        className="w-full flex items-center gap-2 px-3 py-2 text-left hover:bg-background-primary transition-colors"
+        className={cx('flex w-full items-center gap-2 px-3 py-2 text-left', SURFACE.hover, MOTION)}
       >
         {hasBody ? (
           open ? (
@@ -509,10 +530,10 @@ const LaneRow: React.FC<{
             </span>
           }
         >
-          <NodeDot hue={hue} letter={letter} />
+          <NodeDot index={idx} letter={letter} />
         </Tip>
         <Tip label={<span className="font-mono">{lane.device}</span>}>
-          <span className="w-16 shrink-0 truncate text-text-secondary text-xs">{lane.device}</span>
+          <span className="w-16 shrink-0 truncate font-mono text-lz-mono text-lz-ink-3">{lane.device}</span>
         </Tip>
         {/* Readable name: the architect's description ("Tokenize the template source") is the primary label;
             the terse id ("lexer") drops to a mono sub-tag so it's still identifiable but no longer cryptic. */}
@@ -533,7 +554,7 @@ const LaneRow: React.FC<{
               "slice-approval-workflow-outbox" is the same string twice, on every row of every group —
               Mihai: "a lot of this UI is self duplicating information". It stays in the hover tip, where
               it is available without costing a line. */}
-          <span className="flex-1 min-w-0 truncate text-xs text-text-primary">
+          <span className="min-w-0 flex-1 truncate text-lz-body text-lz-ink">
             {lane.description || lane.taskId}
           </span>
         </Tip>
@@ -549,7 +570,7 @@ const LaneRow: React.FC<{
             </span>
           </Tip>
         )}
-        <span className="text-xs text-text-secondary tabular-nums shrink-0 flex items-center gap-1.5">
+        <span className={cx('flex shrink-0 items-center gap-2 text-lz-meta text-lz-ink-3', TNUM)}>
           {/* THE JUDGE'S OWN ESTIMATE, shown only while the call is still running — the one number on this
               screen produced by something that READ the work rather than extrapolated from item counts.
               Solid amber, because it is a live claim that will be revised, not a settled fact. */}
@@ -559,11 +580,8 @@ const LaneRow: React.FC<{
                 lane.judgeEtaMins === 1 ? '' : 's'
               } of work`}
             >
-              <span
-                className="text-[11px] font-bold px-1.5 py-0.5 text-background-primary"
-                style={{ backgroundColor: '#d97706', borderRadius: 3 }}
-              >
-                ~{lane.judgeEtaMins}m
+              <span className="inline-flex shrink-0">
+                <Chip tone="warn">~{lane.judgeEtaMins}m</Chip>
               </span>
             </Tip>
           ) : null}
@@ -577,7 +595,7 @@ const LaneRow: React.FC<{
           ) : null}
           {lane.errors ? (
             <Tip label={`${lane.errors} tool call${lane.errors === 1 ? '' : 's'} errored`}>
-              <span style={{ color: STATUS_COLOR.error }}>{lane.errors}✕</span>
+              <span className={TONE_TEXT.err}>{lane.errors}✕</span>
             </Tip>
           ) : null}
           {secs != null ? (
@@ -618,10 +636,7 @@ const LaneRow: React.FC<{
               {saidChips ? (
                 <div className="flex items-center gap-2 flex-wrap" data-testid="lane-said-chips">
                   {said.live.attempt != null ? (
-                    <SaidChip
-                      kind={said.live.kind}
-                      bg={said.live.kind === 'error' ? SWARM_STATUS.solidError : SWARM_STATUS.solidDone}
-                    >
+                    <SaidChip kind={said.live.kind} tone={said.live.kind === 'error' ? 'err' : 'ok'}>
                       {`${attemptLabel(said.live.attempt)} · ${said.live.kind === 'error' ? 'error' : 'live'}`}
                     </SaidChip>
                   ) : null}
@@ -629,7 +644,7 @@ const LaneRow: React.FC<{
                     <SaidChip
                       key={`${seg.attempt ?? 'x'}-${i}`}
                       kind={seg.kind}
-                      bg={seg.kind === 'error' ? SWARM_STATUS.solidError : SWARM_STATUS.solidStopped}
+                      tone={seg.kind === 'error' ? 'err' : 'stopped'}
                       title={seg.retried ? `retried: ${seg.retried}` : undefined}
                     >
                       {`from ${attemptLabel(seg.attempt)} · ${seg.kind === 'error' ? 'error → retried' : 'superseded'}`}
@@ -649,15 +664,12 @@ const LaneRow: React.FC<{
               )}
               {calls.length > 0 || running.length > 0 || (lane.forming?.length ?? 0) > 0 ? (
                 <div>
-                  <div className="text-[11px] font-medium text-text-secondary mb-1.5">
+                  <div className={cx('mb-1.5 text-lz-meta text-lz-ink-2', WEIGHT.medium)}>
                     Tool calls · {lane.toolCalls ?? calls.length}
                     {running.length > 0 ? ` · ${running.length} running` : ''}
                     {formingNote(lane.forming)}
                   </div>
-                  <div
-                    className="bg-background-primary border border-border-primary px-2 py-1"
-                    style={{ borderRadius: CHIP_RADIUS }}
-                  >
+                  <div className={cx('border border-lz-border bg-lz-surface px-2 py-1', RADIUS.control)}>
                     <FormingRows forming={lane.forming} />
                     <InflightRows running={running} />
                     {calls.map((c, i) => (
@@ -701,33 +713,34 @@ const ACTIVITY_ICON: Record<ActivityItem['kind'], React.ComponentType<{ size?: n
   brief: FileText,
   config: Cpu,
 };
-// One hue per KIND of engine event, from the LeanZero ramp + status triad. Every value is a theme token so
-// the log is legible on both canvases — the old fixed dark-mode hexes washed out on the light one.
-const ACTIVITY_COLOR: Record<ActivityItem['kind'], string> = {
+// One CLASS per KIND of engine event — the status triad for outcomes, the accent for the rows that CHANGED
+// the run, ink for the rows that only watched it. No node hue: the log is chrome, not a node (the old
+// map painted plan/dispatch/review/judge in ramp hues, which is node identity on things that are not nodes).
+const ACTIVITY_CLASS: Record<ActivityItem['kind'], string> = {
   // The user's own words landing in the build — solid amber so it stands apart from engine chatter.
-  note: SWARM_STATUS.running,
-  phase: SWARM_STATUS.action,
-  plan: FORMATION_RAMP[2],
-  dispatch: FORMATION_RAMP[1],
-  done: SWARM_STATUS.done,
-  fail: SWARM_STATUS.error,
-  retry: SWARM_STATUS.running,
-  retarget: FORMATION_RAMP[2],
-  review: FORMATION_RAMP[4],
-  // An observation recedes; an ACTION is a solid saturated accent, because the whole question the log
-  // has to answer at a glance is which rows changed the run and which only watched it.
-  judge: FORMATION_RAMP[4],
-  'judge-act': SWARM_STATUS.action,
-  prereview: FORMATION_RAMP[1],
-  smoke: SWARM_STATUS.done,
-  brief: 'var(--color-text-secondary)',
-  config: 'var(--color-text-secondary)',
+  note: TONE_TEXT.warn,
+  phase: TONE_TEXT.accent,
+  plan: 'text-lz-ink-2',
+  dispatch: 'text-lz-ink-2',
+  done: TONE_TEXT.ok,
+  fail: TONE_TEXT.err,
+  retry: TONE_TEXT.warn,
+  retarget: TONE_TEXT.accent,
+  review: 'text-lz-ink-2',
+  // An observation recedes; an ACTION is the solid accent, because the whole question the log has to
+  // answer at a glance is which rows changed the run and which only watched it.
+  judge: 'text-lz-ink-2',
+  'judge-act': TONE_TEXT.accent,
+  prereview: 'text-lz-ink-2',
+  smoke: TONE_TEXT.ok,
+  brief: 'text-lz-ink-3',
+  config: 'text-lz-ink-3',
 };
-const TONE_COLOR: Record<NonNullable<ActivityItem['tone']>, string> = {
-  info: 'var(--color-text-secondary)',
-  good: SWARM_STATUS.done,
-  warn: SWARM_STATUS.running,
-  bad: SWARM_STATUS.error,
+const TONE_CLASS: Record<NonNullable<ActivityItem['tone']>, string> = {
+  info: 'text-lz-ink-3',
+  good: TONE_TEXT.ok,
+  warn: TONE_TEXT.warn,
+  bad: TONE_TEXT.err,
 };
 
 // Right-click menu for an activity line — "Reveal in Finder" (when the line references a file), Copy path,
@@ -747,8 +760,11 @@ const ActivityContextMenu: React.FC<{
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [onClose]);
-  const itemCls =
-    'w-full text-left px-3 py-1.5 text-xs text-text-primary hover:bg-background-secondary flex items-center gap-2';
+  const itemCls = cx(
+    'flex w-full items-center gap-2 px-3 py-1.5 text-left text-lz-body text-lz-ink',
+    SURFACE.hover,
+    MOTION
+  );
   return createPortal(
     <>
       <div
@@ -760,7 +776,7 @@ const ActivityContextMenu: React.FC<{
         }}
       />
       <div
-        className="fixed z-50 min-w-[168px] bg-background-primary border border-border-primary shadow-lg py-1"
+        className={cx('fixed z-50 min-w-[168px] py-1', SURFACE.overlay)}
         style={{ left: x, top: y }}
       >
         {path && (
@@ -797,13 +813,18 @@ const ActivityContextMenu: React.FC<{
   );
 };
 
-// One line in the activity timeline. Tone (when set) tints the icon so judge warnings / failures stand out.
-// Right-click reveals a menu — "Reveal in Finder" when the line references a file path, plus Copy.
-// `dim` renders the EVENT LOG register: denser and on the secondary color — the log is the subordinate
-// narrative record, never competing with the zones above it (dim = solid secondary text, NOT opacity washes).
-const ActivityLine: React.FC<{ it: ActivityItem; wrap?: boolean; workingDir?: string; dim?: boolean }> = ({ it, wrap, workingDir, dim }) => {
+// One line of the EVENT LOG ticker: the event's ordinal in a tabular gutter, the kind's icon in its tone,
+// the text in ink-2, the detail in ink-3 — the mono register, dense, on the surface-2 well. The log is the
+// subordinate narrative record, never competing with the zones above it (quiet = solid ink-3, NOT an
+// opacity wash). Right-click reveals a menu — "Reveal in Finder" when the line references a file path,
+// plus Copy. (ActivityItem carries no timestamp — `seq` is the only ordinal the hook exposes.)
+const ActivityLine: React.FC<{ it: ActivityItem; wrap?: boolean; workingDir?: string }> = ({
+  it,
+  wrap,
+  workingDir,
+}) => {
   const Icon = ACTIVITY_ICON[it.kind];
-  const color = it.tone ? TONE_COLOR[it.tone] : ACTIVITY_COLOR[it.kind];
+  const color = it.tone ? TONE_CLASS[it.tone] : ACTIVITY_CLASS[it.kind];
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
   const [open, setOpen] = useState(false);
   const lineText = `${it.text}${it.sub ? ` — ${it.sub}` : ''}`;
@@ -815,42 +836,53 @@ const ActivityLine: React.FC<{ it: ActivityItem; wrap?: boolean; workingDir?: st
   // so a click reveals the full text (wrapped, nothing invented — just what the event already carried).
   const expandable = !!it.sub;
   return (
-    <div className="flex flex-col">
+    <li className="flex flex-col" data-kind={it.kind}>
       <div
-        className={`flex items-start gap-2 ${dim ? 'text-[11px] leading-snug' : 'text-xs'} ${expandable ? 'cursor-pointer' : ''}`}
+        className={cx(
+          'flex min-h-6 items-start gap-2 px-3 py-0.5',
+          expandable && 'cursor-pointer',
+          SURFACE.hover,
+          MOTION
+        )}
         onClick={expandable ? () => setOpen((o) => !o) : undefined}
         onContextMenu={(e) => {
           e.preventDefault();
           setMenu({ x: e.clientX, y: e.clientY });
         }}
       >
-        <Icon size={dim ? 12 : 13} strokeWidth={2.5} className="mt-0.5 shrink-0" style={{ color }} />
+        <span className={cx('w-9 shrink-0 text-right text-lz-ink-4', TNUM)} aria-hidden>
+          {it.seq}
+        </span>
+        <Icon size={12} strokeWidth={2.5} className={cx('mt-[3px] shrink-0', color)} />
         <span
-          className={`shrink-0 ${dim ? 'text-text-secondary' : 'text-text-primary'}`}
-          style={it.kind === 'judge-act' ? { color, fontWeight: 600 } : undefined}
+          className={cx('shrink-0', it.kind === 'judge-act' ? cx(color, WEIGHT.semibold) : 'text-lz-ink-2')}
         >
           {it.text}
         </span>
         {it.sub && !open && (
           <span
-            className={`text-text-secondary ${wrap ? 'break-words' : 'truncate'} ${
+            className={cx(
+              'text-lz-ink-3',
+              wrap ? 'break-words' : 'truncate',
               it.kind === 'brief' ? 'line-clamp-3' : wrap ? 'line-clamp-2' : ''
-            }`}
+            )}
           >
             — {it.sub}
           </span>
         )}
         {expandable &&
           (open ? (
-            <ChevronDown size={12} className="ml-auto mt-0.5 shrink-0 text-text-secondary" />
+            <ChevronDown size={12} className="ml-auto mt-[3px] shrink-0 text-lz-ink-3" />
           ) : (
-            <ChevronRight size={12} className="ml-auto mt-0.5 shrink-0 text-text-secondary" />
+            <ChevronRight size={12} className="ml-auto mt-[3px] shrink-0 text-lz-ink-3" />
           ))}
       </div>
       {it.sub && open && (
         <div
-          className="ml-[21px] mt-1 mb-0.5 px-2 py-1.5 text-xs text-text-secondary whitespace-pre-wrap break-words bg-background-secondary border border-border-primary"
-          style={{ borderRadius: CHIP_RADIUS }}
+          className={cx(
+            'mb-1 ml-[68px] mr-3 mt-0.5 whitespace-pre-wrap break-words border border-lz-border bg-lz-surface px-2 py-1.5 text-lz-ink-2',
+            RADIUS.control
+          )}
         >
           {it.sub}
         </div>
@@ -864,7 +896,7 @@ const ActivityLine: React.FC<{ it: ActivityItem; wrap?: boolean; workingDir?: st
           onClose={() => setMenu(null)}
         />
       )}
-    </div>
+    </li>
   );
 };
 
@@ -1622,7 +1654,7 @@ const InspectorPane: React.FC<{
       </span>
       <span className="flex items-center gap-2">
         {action ?? null}
-        <span className="text-[11px] tabular-nums text-text-secondary">{count}</span>
+        <span className={cx('text-lz-meta text-lz-ink-3', TNUM)}>{count}</span>
       </span>
     </div>
     <div className="min-h-0 flex-1 overflow-hidden">
@@ -1675,15 +1707,11 @@ const InflightRow: React.FC<{ call: InflightCall; now: number }> = ({ call, now 
         </span>
         <span className="flex-1 min-w-0">
           <span className="flex items-center gap-1.5 flex-wrap">
-            <span className="text-xs font-medium text-text-primary">{verb}</span>
-            <span
-              className={`inline-flex items-center gap-1 ${SOLID_PILL}`}
-              style={{ background: color, borderRadius: CHIP_RADIUS }}
-            >
-              <Loader2 size={9} className="animate-spin" />
+            <span className={cx('text-lz-body text-lz-ink', WEIGHT.medium)}>{verb}</span>
+            <Chip tone="warn" icon={<Loader2 className="animate-spin" />}>
               running
-            </span>
-            <span className="font-mono text-[11px] tabular-nums" style={{ color }}>
+            </Chip>
+            <span className={cx('font-mono text-lz-mono tabular-nums', TONE_TEXT.warn)}>
               {elapsedSince(call.since, now)}
             </span>
           </span>
@@ -1721,26 +1749,20 @@ const FormingRow: React.FC<{ call: FormingCall; now: number }> = ({ call, now })
         </span>
         <span className="flex-1 min-w-0">
           <span className="flex items-center gap-1.5 flex-wrap">
-            <span className="text-xs font-medium text-text-primary">{verb}</span>
-            <span
-              className={`inline-flex items-center gap-1 ${SOLID_PILL}`}
-              style={{ background: color, borderRadius: CHIP_RADIUS }}
-            >
-              <Loader2 size={9} className="animate-spin" />
+            <span className={cx('text-lz-body text-lz-ink', WEIGHT.medium)}>{verb}</span>
+            <Chip tone="warn" icon={<Loader2 className="animate-spin" />}>
               forming…
-            </span>
-            <span className="font-mono text-[11px] tabular-nums" style={{ color }}>
-              {clock}
-            </span>
+            </Chip>
+            <span className={cx('font-mono text-lz-mono tabular-nums', TONE_TEXT.warn)}>{clock}</span>
             {bytes > 0 ? (
-              <span className="font-mono text-[11px] tabular-nums font-bold" style={{ color }}>
+              <span className={cx('font-mono text-lz-mono tabular-nums', WEIGHT.semibold, TONE_TEXT.warn)}>
                 {bytes.toLocaleString()} bytes of arguments
               </span>
             ) : null}
           </span>
           {preview ? (
             <span className="block" data-testid="forming-preview">
-              <span className="block text-[11px]" style={{ color }}>
+              <span className={cx('block text-lz-meta', TONE_TEXT.warn)}>
                 forming — last {preview.length} chars of the arguments so far
               </span>
               <span className="block font-mono text-[11px] text-text-secondary whitespace-pre-wrap break-words">
@@ -1805,15 +1827,22 @@ const InflightRows: React.FC<{ running: InflightCall[] }> = ({ running }) => {
  */
 /** The solid provenance chip of the SAID surface — same register as the header's "being reviewed" chip.
  *  Solid saturated fill, white text; never a tint, never a left accent stripe. */
-const SaidChip: React.FC<{ bg: string; kind: SaidKind; title?: string; children: React.ReactNode }> = ({
-  bg,
+const SaidChip: React.FC<{ tone: Tone; kind: SaidKind; title?: string; children: React.ReactNode }> = ({
+  tone,
   kind,
   title,
   children,
 }) => (
+  // The lz Chip's filled recipe, on an element that carries `data-said-kind` (the provenance tests and the
+  // per-tick instrument read it off the chip itself, which the Chip primitive does not forward).
   <span
-    className="px-2 py-0.5 text-[11px] font-semibold text-white"
-    style={{ borderRadius: CHIP_RADIUS, background: bg }}
+    className={cx(
+      'inline-flex h-5 shrink-0 items-center whitespace-nowrap px-1.5 text-lz-meta',
+      WEIGHT.semibold,
+      TNUM,
+      RADIUS.control,
+      TONE_FILL[tone]
+    )}
     title={title}
     data-said-kind={kind}
   >
@@ -1836,7 +1865,7 @@ const SupersededSaidBlock: React.FC<{ seg: SaidSegmentView }> = ({ seg }) => {
       <div className="flex items-center gap-2 flex-wrap">
         <SaidChip
           kind={seg.kind}
-          bg={isError ? SWARM_STATUS.solidError : SWARM_STATUS.solidStopped}
+          tone={isError ? 'err' : 'stopped'}
           title={
             isError
               ? 'This attempt ended in a transport/agent error — not something the model said — and was retried.'
@@ -1846,13 +1875,11 @@ const SupersededSaidBlock: React.FC<{ seg: SaidSegmentView }> = ({ seg }) => {
           {`from ${attemptLabel(seg.attempt)} · ${isError ? 'error → retried' : 'superseded'}`}
         </SaidChip>
         {seg.retried ? (
-          <span className="text-[11px] font-mono" style={{ color: SWARM_STATUS.error }}>
-            retried: {seg.retried}
-          </span>
+          <span className={cx('font-mono text-lz-mono', TONE_TEXT.err)}>retried: {seg.retried}</span>
         ) : null}
         <button
           type="button"
-          className="text-[11px] underline text-text-secondary hover:text-text-primary"
+          className={cx('text-lz-meta text-lz-ink-3 underline hover:text-lz-ink', MOTION)}
           onClick={() => setOpen((o) => !o)}
         >
           {open ? 'hide' : 'show'}
@@ -1860,8 +1887,10 @@ const SupersededSaidBlock: React.FC<{ seg: SaidSegmentView }> = ({ seg }) => {
       </div>
       {open ? (
         <div
-          className="mt-1 font-mono text-[11px] leading-relaxed whitespace-pre-wrap break-words"
-          style={isError ? { color: SWARM_STATUS.error } : undefined}
+          className={cx(
+            'mt-1 whitespace-pre-wrap break-words font-mono text-lz-mono',
+            isError ? TONE_TEXT.err : 'text-lz-ink-2'
+          )}
         >
           {squeezeBlankRuns(seg.text)}
         </div>
@@ -1892,7 +1921,7 @@ export const SaidSection: React.FC<{ said: SaidState; narration: string; process
         <div className="flex items-center gap-2 mb-1">
           <SaidChip
             kind={said.live.kind}
-            bg={liveIsError ? SWARM_STATUS.solidError : SWARM_STATUS.solidDone}
+            tone={liveIsError ? 'err' : 'ok'}
             title={
               liveIsError
                 ? 'The current attempt ended in a transport/agent error — this text is not the model’s answer.'
@@ -1905,13 +1934,15 @@ export const SaidSection: React.FC<{ said: SaidState; narration: string; process
       ) : null}
       {narration.length > 0 ? (
         <div
-          className={`font-mono text-[11px] leading-relaxed whitespace-pre-wrap break-words${liveIsError ? '' : ' text-text-secondary'}`}
-          style={liveIsError ? { color: SWARM_STATUS.error } : undefined}
+          className={cx(
+            'whitespace-pre-wrap break-words font-mono text-lz-mono',
+            liveIsError ? TONE_TEXT.err : 'text-lz-ink-2'
+          )}
         >
           {narration}
         </div>
       ) : processing && hasProvenance ? (
-        <div className="text-[11px] italic text-text-secondary">processing the prompt…</div>
+        <div className="text-lz-meta italic text-lz-ink-3">processing the prompt…</div>
       ) : null}
       {said.superseded.map((seg, i) => (
         <SupersededSaidBlock key={`${seg.attempt ?? 'x'}-${i}`} seg={seg} />
@@ -2169,7 +2200,8 @@ const NodeHistoryRow: React.FC<{ entry: NodeHistoryEntry; runDir: string }> = ({
 const NodeInspector: React.FC<{
   device: string;
   letter: string;
-  hue: string;
+  /** The node's ramp slot (deviceOrder index) — identity only. */
+  index: number;
   lane?: TurnLane;
   nodeState?: string;
   /** Every FINISHED call this node ran this run (deriveNodeHistory) — the cumulative folded log. */
@@ -2177,7 +2209,7 @@ const NodeInspector: React.FC<{
   /** The RESOLVED run dir (readSwarmRun's `dir`) — where the on-demand full-log reads aim. */
   runDir: string;
   onClose: () => void;
-}> = ({ device, letter, hue, lane, nodeState, history, runDir, onClose }) => {
+}> = ({ device, letter, index, lane, nodeState, history, runDir, onClose }) => {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') onClose();
@@ -2318,7 +2350,7 @@ const NodeInspector: React.FC<{
         style={{ borderRadius: CHIP_RADIUS }}
       >
         <div className="flex items-center gap-2 px-4 py-3 border-b border-border-primary shrink-0">
-          <NodeDot hue={hue} letter={letter} size={10} />
+          <NodeDot index={index} letter={letter} size={10} />
           <span className="font-mono text-sm text-text-primary">{device}</span>
           {nodeState && (
             <span
@@ -2542,7 +2574,7 @@ const NodeInspector: React.FC<{
               <span className={`${EYEBROW_CLASS} text-text-primary`} data-testid="pane-title">
                 {lane ? 'Earlier calls on this node' : 'Calls this node ran'}
               </span>
-              <span className="text-[11px] tabular-nums text-text-secondary">
+              <span className={cx('text-lz-meta text-lz-ink-3', TNUM)}>
                 {shownHistory.length} finished
               </span>
             </div>
@@ -2558,6 +2590,49 @@ const NodeInspector: React.FC<{
     document.body
   );
 };
+
+/** The FLEET table's column header — the lz DataTable's zone register, mirrored here because every row
+ *  carries the per-tick instrument's anchors (`data-testid="fleet-node"`, data-device/-task/-expandable/
+ *  -gen-len) on the ROW element itself, which the DataTable owns for its own row testid. Same classes,
+ *  same look, same rhythm. */
+const FLEET_TH = 'whitespace-nowrap px-3 text-left align-middle text-lz-zone uppercase text-lz-ink-3';
+
+/** Thinking volume for the numeric column: characters, k-scaled past a thousand. */
+function fmtChars(n: number | undefined): string {
+  if (typeof n !== 'number' || n <= 0) return '';
+  if (n < 1000) return String(n);
+  return n < 10_000 ? `${(n / 1000).toFixed(1)}k` : `${Math.round(n / 1000)}k`;
+}
+
+/** The node's STATE for the fleet table — ONE dot tone and one word, from the same facts the old glyph
+ *  read: a supervising lane is the accent (the judge acts on the run), a worker lane the warn amber of
+ *  running work, a node LM Studio reports busy with no lane on disk is the ok green of a live generation,
+ *  and a dead/ended run freezes every node on the stopped slate — never a spinner on a non-live run. */
+function fleetNodeState(
+  lane: TurnLane | undefined,
+  live: boolean,
+  lmsState: string | undefined
+): { tone: Tone; label: string; live: boolean } {
+  if (!live) return { tone: 'stopped', label: lane ? 'stopped' : 'idle', live: false };
+  if (lane) {
+    if (lane.phase === 'supervision' || lane.supervision === true)
+      return { tone: 'accent', label: 'supervising', live: true };
+    if (lane.phase === 'processing') return { tone: 'warn', label: 'processing prompt', live: true };
+    return { tone: 'warn', label: 'working', live: true };
+  }
+  if (lmsState === 'generating' || lmsState === 'processingPrompt')
+    return { tone: 'ok', label: 'generating', live: true };
+  return { tone: 'stopped', label: 'idle', live: false };
+}
+
+/** LM Studio's OWN word for a node (lms ps --json), independent of goose's digest. */
+function lmsStateLabel(st: string): { tone: Tone; label: string } {
+  return st === 'generating'
+    ? { tone: 'ok', label: 'generating' }
+    : st === 'processingPrompt'
+      ? { tone: 'warn', label: 'processing prompt' }
+      : { tone: 'stopped', label: 'idle' };
+}
 
 const FleetStrip: React.FC<{
   /** Every node the run's RESOLVED POOL carries (idle ones included) + any lane device — see deriveFleet. */
@@ -2596,305 +2671,370 @@ const FleetStrip: React.FC<{
   if (deviceOrder.length === 0) return null;
   const shortName = (device: string): string => device.match(/^([^-]+)/)?.[1] ?? device;
   return (
-    <div className="px-3 py-2 bg-background-primary space-y-1.5">
-      {deviceOrder.map((device, i) => {
-        const hue = FORMATION_RAMP[i % FORMATION_RAMP.length];
-        const letter = String.fromCharCode(65 + (i % 26));
-        const lane = runningByDevice.get(device);
-        // WHAT THIS NODE IS GENERATING RIGHT NOW. The chain lives in `laneLiveLine`, which reads the
-        // DURABLE logs first: this row was built from `reasoning`/`lastThinking`/`lastText`, every one of
-        // them a digest window the engine rewrites in place, so the cell CLEARED AND REFILLED instead of
-        // advancing — Mihai's "the output rolls", fixed in the expanded lane view and left standing in
-        // the surface he looks at first. The markers below stay here: they are lane STATE, not stream text.
-        const liveGen =
-          (lane ? laneLiveLine(lane) : '') ||
-          (lane?.phase === 'processing' ? 'processing the prompt…' : '') ||
-          (lane?.status === 'running' ? 'generating…' : '');
-        const fullGen = fleetExpandText(lane);
-        // A node with FINISHED calls is expandable even between tasks: the inspector is the cumulative
-        // log now, so "idle — no task" no longer means "nothing to open".
-        const nodeHistory = historyByDevice.get(device) ?? [];
-        const canExpand = (!!lane && fullGen.length > 0) || nodeHistory.length > 0;
-        return (
-          // THE INSTRUMENT'S ANCHOR. The per-tick frontend check reads the RENDERED lane text and the
-          // RENDERED clickability off these attributes; without them it fell back to re-deriving both
-          // from the IPC payload and reported a healthy render path while the renderer was dropping
-          // every field. `data-task` is what joins a cell to its digest on the SAME object, so the
-          // instrument compares a lane against its own data and never against a neighbour's.
-          <div
-            key={device}
-            data-testid="fleet-node"
-            data-device={device}
-            data-task={lane?.taskId ?? ''}
-            data-expandable={canExpand ? 'true' : 'false'}
-            data-gen-len={fullGen.length}
-            className="border border-border-primary px-2 py-1.5"
-            style={{ borderRadius: CHIP_RADIUS }}
-          >
-            <div
-              className="flex items-start gap-2 text-xs"
-              style={{ cursor: canExpand ? 'pointer' : 'default' }}
-              role={canExpand ? 'button' : undefined}
-              tabIndex={canExpand ? 0 : undefined}
-              aria-label={
-                canExpand
-                  ? lane
-                    ? `Open the full stream from ${shortName(device)}`
-                    : `Open the calls ${shortName(device)} ran this run`
-                  : undefined
-              }
-              onClick={canExpand ? () => setInspect({ device, taskId: lane?.taskId ?? '' }) : undefined}
-              onKeyDown={
-                canExpand
-                  ? (e: React.KeyboardEvent) => {
-                      if (e.key === 'Enter' || e.key === ' ') {
-                        e.preventDefault();
-                        setInspect({ device, taskId: lane?.taskId ?? '' });
-                      }
-                    }
-                  : undefined
-              }
-            >
-              <NodeDot hue={hue} letter={letter} className="mt-[5px]" />
-              <span className="font-mono text-text-primary shrink-0" style={{ minWidth: 96 }}>
-                {shortName(device)}
-              </span>
-              {/* LM Studio's OWN live state for this node (lms ps --json), independent of goose's digest — the
-                  ground-truth "is it generating right now" Mihai asked for. Solid dot: green generating, amber
-                  prompt-processing, dim grey idle; nothing when LM Studio is unreachable. */}
-              {(() => {
-                const st = nodeStatus[shortName(device)];
-                if (!st) return null;
-                const color =
-                  st === 'generating' ? SWARM_STATUS.done : st === 'processingPrompt' ? SWARM_STATUS.running : SWARM_STATUS.stopped;
-                const label =
-                  st === 'generating'
-                    ? 'generating'
-                    : st === 'processingPrompt'
-                      ? 'processing prompt'
-                      : 'idle';
-                return (
-                  <Tip label={`LM Studio: ${label}`}>
-                    <span
-                      className="shrink-0 mt-[5px]"
-                      style={{ width: 7, height: 7, borderRadius: '50%', background: color }}
-                    />
-                  </Tip>
-                );
-              })()}
-              {lane ? (
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-center gap-1.5">
-                    {/* Only a LIVE run spins. A dead/historical session's lanes are frozen at 'running' (a run
-                        that died mid-task never emits task_completed), so on a non-live run show a static
-                        interrupted marker instead of a fake spinner — this is why opening an old session used to
-                        look like it was still streaming. */}
-                    {(() => {
-                      // SUPERVISION work is visually its own class: a solid violet gavel, never the
-                      // amber build spinner — a supervising node says what it is really doing instead
-                      // of reading "idle — no task". Two shapes land here: the span-derived pseudo-lane
-                      // (phase 'supervision', pre-r6 streams) and the r6 engine's REAL supervision
-                      // lanes, whose digests stamp `supervision: true` and ride the one join.
-                      const supervising = lane.phase === 'supervision' || lane.supervision === true;
-                      if (!live)
-                        return <CircleSlash size={12} className="shrink-0" style={{ color: STOPPED }} />;
-                      if (supervising)
-                        return <Gavel size={12} className="shrink-0" style={{ color: FORMATION_RAMP[2] }} />;
-                      return (
-                        <Loader2
-                          size={12}
-                          className="animate-spin shrink-0"
-                          style={{ color: STATUS_COLOR.running }}
-                        />
-                      );
-                    })()}
-                    <span
-                      className={`truncate ${live && !(lane.phase === 'supervision' || lane.supervision === true) ? 'text-text-primary' : ''}`}
-                      style={
-                        !live
-                          ? { color: STOPPED }
-                          : lane.phase === 'supervision' || lane.supervision === true
-                            ? { color: FORMATION_RAMP[2], fontWeight: 600 }
-                            : undefined
-                      }
-                    >
-                      {lane.description || lane.taskId}
-                      {lane.phase === 'supervision' && typeof lane.elapsedMs === 'number'
-                        ? ` · ${Math.round(lane.elapsedMs / 1000)}s`
-                        : ''}
-                      {(() => {
-                        // The judge lane is ROLLING — one lane per supervised task, each look reseeding
-                        // the digest — and the caption owes the reader that fact (look N, 1-based;
-                        // earlier looks folded into superseded). Null everywhere else, pre-r6 included.
-                        const rolling = supervisionRollingCaption(lane);
-                        return rolling ? ` · ${rolling}` : '';
-                      })()}
+    <div className="bg-lz-surface">
+      <div className="w-full overflow-x-auto">
+        <table className="w-full border-collapse" aria-label="Fleet">
+          <thead>
+            <tr className="h-8">
+              <th scope="col" className={FLEET_TH} style={{ width: 148 }}>
+                Node
+              </th>
+              <th scope="col" className={FLEET_TH} style={{ width: 160 }}>
+                State
+              </th>
+              <th scope="col" className={FLEET_TH}>
+                Working on
+              </th>
+              <th scope="col" className={cx(FLEET_TH, 'text-right')} style={{ width: 72 }}>
+                Calls
+              </th>
+              <th scope="col" className={cx(FLEET_TH, 'text-right')} style={{ width: 88 }}>
+                Thinking
+              </th>
+            </tr>
+          </thead>
+          <tbody>
+            {deviceOrder.map((device, i) => {
+              const letter = String.fromCharCode(65 + (i % 26));
+              const short = shortName(device);
+              const lane = runningByDevice.get(device);
+              // WHAT THIS NODE IS GENERATING RIGHT NOW. The chain lives in `laneLiveLine`, which reads the
+              // DURABLE logs first: this row was built from `reasoning`/`lastThinking`/`lastText`, every one of
+              // them a digest window the engine rewrites in place, so the cell CLEARED AND REFILLED instead of
+              // advancing — Mihai's "the output rolls", fixed in the expanded lane view and left standing in
+              // the surface he looks at first. The markers below stay here: they are lane STATE, not stream text.
+              const liveGen =
+                (lane ? laneLiveLine(lane) : '') ||
+                (lane?.phase === 'processing' ? 'processing the prompt…' : '') ||
+                (lane?.status === 'running' ? 'generating…' : '');
+              const fullGen = fleetExpandText(lane);
+              // A node with FINISHED calls is expandable even between tasks: the inspector is the cumulative
+              // log now, so an idle node no longer means "nothing to open".
+              const nodeHistory = historyByDevice.get(device) ?? [];
+              const canExpand = (!!lane && fullGen.length > 0) || nodeHistory.length > 0;
+              const lmsState = nodeStatus[short];
+              const state = fleetNodeState(lane, live, lmsState);
+              const supervising = !!lane && (lane.phase === 'supervision' || lane.supervision === true);
+              const openPrimary = () => setInspect({ device, taskId: lane?.taskId ?? '' });
+              const siblings = lane ? (alsoRunningByDevice.get(device) ?? []) : [];
+              return (
+                // THE INSTRUMENT'S ANCHOR. The per-tick frontend check reads the RENDERED lane text and the
+                // RENDERED clickability off these attributes; without them it fell back to re-deriving both
+                // from the IPC payload and reported a healthy render path while the renderer was dropping
+                // every field. `data-task` is what joins a cell to its digest on the SAME object, so the
+                // instrument compares a lane against its own data and never against a neighbour's.
+                // The ROW is the click target (hover is the solid surface-2 step); the control inside the
+                // task cell carries the accessible name and the keyboard, so `data-expandable` IS the
+                // rendered clickability.
+                <tr
+                  key={device}
+                  data-testid="fleet-node"
+                  data-device={device}
+                  data-task={lane?.taskId ?? ''}
+                  data-expandable={canExpand ? 'true' : 'false'}
+                  data-gen-len={fullGen.length}
+                  className={cx(
+                    'border-t align-top',
+                    SURFACE.hairline,
+                    canExpand && cx('cursor-pointer', SURFACE.hover),
+                    MOTION
+                  )}
+                  onClick={canExpand ? openPrimary : undefined}
+                >
+                  <td className="px-3 py-2 align-top">
+                    <span className="flex h-5 items-center gap-2">
+                      <NodeDot index={i} letter={letter} />
+                      <span className={cx('truncate font-mono text-lz-mono text-lz-ink', WEIGHT.medium)}>
+                        {short}
+                      </span>
                     </span>
-                    {canExpand ? (
-                      <ChevronRight
-                        size={12}
-                        className="shrink-0 text-text-secondary transition-transform"
-                        style={{ transform: 'none' }}
-                      />
-                    ) : null}
-                  </div>
-                  {dev && lane.calls && lane.calls.length > 0
-                    ? (() => {
-                        // What this node is DOING right now — its latest tool/MCP call (running… when in-flight).
-                        const last = lane.calls![lane.calls!.length - 1];
-                        const cm = classifyCall(last);
-                        return (
-                          <div className="flex items-center gap-1.5 mt-0.5">
-                            <CallTypeIcon icon={cm.icon} color={CALL_KIND_COLOR[cm.kind]} />
-                            <span className="text-text-secondary truncate">
-                              {cm.action}
-                              {last.summary ? (
-                                <span className="font-mono text-text-secondary"> · {last.summary}</span>
-                              ) : null}
+                  </td>
+                  <td className="px-3 py-2 align-top">
+                    <span className="flex h-5 items-center gap-2 text-lz-body text-lz-ink-2">
+                      <StatusDot tone={state.tone} live={state.live} label={state.label} />
+                      <span className="truncate">{state.label}</span>
+                      {/* LM Studio's OWN live state for this node (lms ps --json), independent of goose's
+                          digest — the ground-truth "is it generating right now" Mihai asked for. A second
+                          dot: green generating, amber prompt-processing, slate idle; nothing when LM Studio
+                          is unreachable or the fleet display is off. */}
+                      {lmsState
+                        ? (() => {
+                            const lms = lmsStateLabel(lmsState);
+                            return (
+                              <Tip label={`LM Studio: ${lms.label}`}>
+                                <span className="inline-flex">
+                                  <StatusDot tone={lms.tone} label={`LM Studio: ${lms.label}`} />
+                                </span>
+                              </Tip>
+                            );
+                          })()
+                        : null}
+                    </span>
+                  </td>
+                  <td className="min-w-0 px-3 py-2 align-top text-lz-body">
+                    {lane ? (
+                      <div className="min-w-0">
+                        <div
+                          className="min-w-0"
+                          role={canExpand ? 'button' : undefined}
+                          tabIndex={canExpand ? 0 : undefined}
+                          aria-label={canExpand ? `Open the full stream from ${short}` : undefined}
+                          onKeyDown={
+                            canExpand
+                              ? (e: React.KeyboardEvent) => {
+                                  if (e.key === 'Enter' || e.key === ' ') {
+                                    e.preventDefault();
+                                    openPrimary();
+                                  }
+                                }
+                              : undefined
+                          }
+                        >
+                          <div className="flex min-h-5 items-center gap-1.5">
+                            {/* SUPERVISION work is visually its own class: the accent gavel, never the
+                                amber build spinner — a supervising node says what it is really doing
+                                instead of reading "idle — no task". Two shapes land here: the span-derived
+                                pseudo-lane (phase 'supervision', pre-r6 streams) and the r6 engine's REAL
+                                supervision lanes, whose digests stamp `supervision: true`. */}
+                            {supervising ? (
+                              <Gavel size={12} className={cx('shrink-0', TONE_TEXT.accent)} />
+                            ) : null}
+                            <span
+                              className={cx(
+                                'truncate',
+                                !live
+                                  ? TONE_TEXT.stopped
+                                  : supervising
+                                    ? cx(TONE_TEXT.accent, WEIGHT.semibold)
+                                    : 'text-lz-ink'
+                              )}
+                            >
+                              {lane.description || lane.taskId}
+                              {lane.phase === 'supervision' && typeof lane.elapsedMs === 'number'
+                                ? ` · ${Math.round(lane.elapsedMs / 1000)}s`
+                                : ''}
+                              {(() => {
+                                // The judge lane is ROLLING — one lane per supervised task, each look reseeding
+                                // the digest — and the caption owes the reader that fact (look N, 1-based;
+                                // earlier looks folded into superseded). Null everywhere else, pre-r6 included.
+                                const rolling = supervisionRollingCaption(lane);
+                                return rolling ? ` · ${rolling}` : '';
+                              })()}
                             </span>
-                            {lane.toolCalls ? (
-                              <span className="ml-auto font-mono text-text-secondary shrink-0">
-                                ⚙{lane.toolCalls}
-                              </span>
+                            {canExpand ? (
+                              <ChevronRight size={12} className="shrink-0 text-lz-ink-3" />
                             ) : null}
                           </div>
-                        );
-                      })()
-                    : null}
-                  {liveGen ? (
-                    live ? (
-                      // LIVE: typewriter-smoothed so the stream flows instead of jumping every poll. dev = 5
-                      // lines to fill the space, compact/verbose = 2. Click the node to expand the full stream.
-                      <NodeLiveText text={liveGen} lines={dev ? 5 : 2} />
-                    ) : (
-                      // HISTORICAL/DEAD run: the last frozen snapshot, static + dimmed — NEVER animated, so an
-                      // old session no longer looks like it is still streaming.
-                      <div
-                        data-testid="fleet-node-gen"
-                        className="text-text-secondary whitespace-pre-wrap break-words mt-0.5"
-                        style={{
-                          display: '-webkit-box',
-                          WebkitLineClamp: dev ? 5 : 2,
-                          WebkitBoxOrient: 'vertical',
-                          overflow: 'hidden',
-                        }}
-                      >
-                        {liveGen}
-                      </div>
-                    )
-                  ) : null}
-                </div>
-              ) : (() => {
-                  // No lane, no span — but LM Studio's own status may still say the node is generating.
-                  // The old text here GUESSED the work class ("review/test-gen call in flight") — a
-                  // hardcoded label that misattributed a 43m52s replan call on r5. Since efa2014ab
-                  // every supervision call mints a real lane at dispatch (judge-<task>, replan-rN,
-                  // prereview-<task>, tail-review-<dim>), so a busy node normally renders that lane
-                  // above, labeled from its key, and this branch is only the seed-write gap or an
-                  // older engine's keyless call. Say what is KNOWN, no more.
-                  const st = nodeStatus[shortName(device)];
-                  const busy = live && (st === 'generating' || st === 'processingPrompt');
-                  return busy ? (
-                    <Tip label="LM Studio reports this node generating, but no lane digest is on disk for the call. Current engines write a lane for every call — supervision included — at dispatch; older engines ran supervision calls keyless, leaving only the event log.">
-                      <span style={{ color: SWARM_STATUS.done, fontWeight: 600 }} className="flex items-center gap-1.5">
-                        <Eye size={12} className="shrink-0" />
-                        generating — no lane on disk for this call yet
-                      </span>
-                    </Tip>
-                  ) : (
-                    <span style={{ color: STOPPED }}>{live ? 'idle — no task' : 'idle'}</span>
-                  );
-                })()}
-            </div>
-            {/* THE NODE'S OTHER LIVE LANES. Every node runs PARALLEL: 2, so this is routinely non-empty
-                and the strip used to drop it: measured live, gabee ran open-coverage-1 at 68,393 reasoning
-                characters alongside slice-index-html and only the second had a cell. The two LARGEST lanes
-                in the run were invisible — "I cannot see what the nodes are doing" with a mechanism behind
-                it. Compact sibling lines rather than full cells: the point is that nothing a node is doing
-                is missing, not that every lane gets equal estate.
+                          {dev && lane.calls && lane.calls.length > 0
+                            ? (() => {
+                                // What this node is DOING right now — its latest tool/MCP call (running… when in-flight).
+                                const last = lane.calls![lane.calls!.length - 1];
+                                const cm = classifyCall(last);
+                                return (
+                                  <div className="mt-0.5 flex items-center gap-1.5 text-lz-meta text-lz-ink-3">
+                                    <CallTypeIcon icon={cm.icon} color={CALL_KIND_COLOR[cm.kind]} />
+                                    <span className="truncate">
+                                      {cm.action}
+                                      {last.summary ? (
+                                        <span className="font-mono text-lz-mono text-lz-ink-3"> · {last.summary}</span>
+                                      ) : null}
+                                    </span>
+                                  </div>
+                                );
+                              })()
+                            : null}
+                          {liveGen ? (
+                            live ? (
+                              // LIVE: typewriter-smoothed so the stream flows instead of jumping every poll. dev = 5
+                              // lines to fill the space, compact/verbose = 2. Click the row to expand the full stream.
+                              <NodeLiveText text={liveGen} lines={dev ? 5 : 2} />
+                            ) : (
+                              // HISTORICAL/DEAD run: the last frozen snapshot, static and on ink-3 — NEVER animated,
+                              // so an old session no longer looks like it is still streaming.
+                              <div
+                                data-testid="fleet-node-gen"
+                                className="mt-0.5 whitespace-pre-wrap break-words text-lz-ink-3"
+                                style={{
+                                  display: '-webkit-box',
+                                  WebkitLineClamp: dev ? 5 : 2,
+                                  WebkitBoxOrient: 'vertical',
+                                  overflow: 'hidden',
+                                }}
+                              >
+                                {liveGen}
+                              </div>
+                            )
+                          ) : null}
+                        </div>
+                        {/* THE NODE'S OTHER LIVE LANES. Every node runs PARALLEL: 2, so this is routinely non-empty
+                            and the strip used to drop it: measured live, gabee ran open-coverage-1 at 68,393 reasoning
+                            characters alongside slice-index-html and only the second had a cell. The two LARGEST lanes
+                            in the run were invisible — "I cannot see what the nodes are doing" with a mechanism behind
+                            it. Compact sibling lines rather than full cells: the point is that nothing a node is doing
+                            is missing, not that every lane gets equal estate.
 
-                SIBLINGS OF THE PRIMARY BUTTON, NOT CHILDREN. They used to sit inside it, where a click
-                bubbled up and opened the PRIMARY lane's inspector, and where a nested role="button" is
-                presentational to assistive tech. Each row is now its own control that opens the inspector
-                on ITS task, with the same anchors (`data-task`, `data-expandable`, `data-gen-len`) the
-                per-tick instrument reads off the primary cell, computed the same way. */}
-            {lane
-              ? (alsoRunningByDevice.get(device) ?? []).map((extra) => {
-                  const extraFull = fleetExpandText(extra);
-                  const extraCanExpand = extraFull.length > 0;
-                  const title = laneSiblingTitle(extra);
-                  const openExtra = () => setInspect({ device, taskId: extra.taskId });
-                  return (
-                    <div
-                      key={extra.taskId}
-                      data-testid="fleet-node-also"
-                      data-task={extra.taskId}
-                      data-expandable={extraCanExpand ? 'true' : 'false'}
-                      data-gen-len={extraFull.length}
-                      className="mt-1 flex items-baseline gap-2 text-[11px] text-text-secondary"
-                      style={{ cursor: extraCanExpand ? 'pointer' : 'default' }}
-                      role={extraCanExpand ? 'button' : undefined}
-                      tabIndex={extraCanExpand ? 0 : undefined}
-                      aria-label={
-                        extraCanExpand
-                          ? `Open the full stream of ${title} on ${shortName(device)}`
-                          : undefined
-                      }
-                      onClick={extraCanExpand ? openExtra : undefined}
-                      onKeyDown={
-                        extraCanExpand
-                          ? (e: React.KeyboardEvent) => {
+                            SIBLINGS OF THE PRIMARY CONTROL, NOT CHILDREN. They used to sit inside it, where a click
+                            bubbled up and opened the PRIMARY lane's inspector, and where a nested role="button" is
+                            presentational to assistive tech. Each row is its own control that opens the inspector
+                            on ITS task (and stops the row's click from re-aiming it at the primary), with the same
+                            anchors (`data-task`, `data-expandable`, `data-gen-len`) the per-tick instrument reads
+                            off the primary cell, computed the same way. */}
+                        {siblings.map((extra) => {
+                          const extraFull = fleetExpandText(extra);
+                          const extraCanExpand = extraFull.length > 0;
+                          const title = laneSiblingTitle(extra);
+                          const openExtra = () => setInspect({ device, taskId: extra.taskId });
+                          return (
+                            <div
+                              key={extra.taskId}
+                              data-testid="fleet-node-also"
+                              data-task={extra.taskId}
+                              data-expandable={extraCanExpand ? 'true' : 'false'}
+                              data-gen-len={extraFull.length}
+                              className={cx(
+                                'mt-1 flex min-h-5 items-center gap-2 text-lz-meta text-lz-ink-3',
+                                extraCanExpand ? 'cursor-pointer' : 'cursor-default'
+                              )}
+                              role={extraCanExpand ? 'button' : undefined}
+                              tabIndex={extraCanExpand ? 0 : undefined}
+                              aria-label={
+                                extraCanExpand
+                                  ? `Open the full stream of ${title} on ${short}`
+                                  : undefined
+                              }
+                              onClick={
+                                extraCanExpand
+                                  ? (e: React.MouseEvent) => {
+                                      e.stopPropagation();
+                                      openExtra();
+                                    }
+                                  : (e: React.MouseEvent) => e.stopPropagation()
+                              }
+                              onKeyDown={
+                                extraCanExpand
+                                  ? (e: React.KeyboardEvent) => {
+                                      if (e.key === 'Enter' || e.key === ' ') {
+                                        e.preventDefault();
+                                        openExtra();
+                                      }
+                                    }
+                                  : undefined
+                              }
+                            >
+                              <span className={cx('w-4 shrink-0 text-center', WEIGHT.semibold, 'text-lz-ink-3')}>
+                                +
+                              </span>
+                              {/* An r6 supervision lane riding beside the worker lane keeps the class's accent
+                                  here too, so a node's second row says WHAT KIND of work it is. */}
+                              {extra.supervision === true ? (
+                                <Gavel size={11} className={cx('shrink-0', TONE_TEXT.accent)} />
+                              ) : null}
+                              <span
+                                className={cx(
+                                  'max-w-[40%] shrink-0 truncate',
+                                  extra.supervision === true
+                                    ? cx(TONE_TEXT.accent, WEIGHT.semibold)
+                                    : 'text-lz-ink'
+                                )}
+                              >
+                                {title}
+                              </span>
+                              <span className="min-w-0 truncate">{laneLiveLine(extra)}</span>
+                              {extraCanExpand ? (
+                                <ChevronRight size={12} className="shrink-0 text-lz-ink-3" />
+                              ) : null}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    ) : (() => {
+                        // No lane, no span — but LM Studio's own status may still say the node is generating.
+                        // The old text here GUESSED the work class ("review/test-gen call in flight") — a
+                        // hardcoded label that misattributed a 43m52s replan call on r5. Since efa2014ab
+                        // every supervision call mints a real lane at dispatch (judge-<task>, replan-rN,
+                        // prereview-<task>, tail-review-<dim>), so a busy node normally renders that lane
+                        // above, labeled from its key, and this branch is only the seed-write gap or an
+                        // older engine's keyless call. Say what is KNOWN, no more.
+                        const busy = live && (lmsState === 'generating' || lmsState === 'processingPrompt');
+                        const body = busy ? (
+                          <Tip label="LM Studio reports this node generating, but no lane digest is on disk for the call. Current engines write a lane for every call — supervision included — at dispatch; older engines ran supervision calls keyless, leaving only the event log.">
+                            <span className={cx('flex min-h-5 items-center gap-1.5', TONE_TEXT.ok, WEIGHT.semibold)}>
+                              <Eye size={12} className="shrink-0" />
+                              generating — no lane on disk for this call yet
+                            </span>
+                          </Tip>
+                        ) : (
+                          <span className="flex min-h-5 items-center gap-1.5 text-lz-ink-3">
+                            {live ? 'no task' : '—'}
+                            {canExpand ? <ChevronRight size={12} className="shrink-0" /> : null}
+                          </span>
+                        );
+                        // Between tasks the node's FINISHED calls are still openable — the inspector is
+                        // the cumulative log — so the cell is a control named for what it opens.
+                        return canExpand ? (
+                          <div
+                            role="button"
+                            tabIndex={0}
+                            aria-label={`Open the calls ${short} ran this run`}
+                            onKeyDown={(e: React.KeyboardEvent) => {
                               if (e.key === 'Enter' || e.key === ' ') {
                                 e.preventDefault();
-                                openExtra();
+                                openPrimary();
                               }
-                            }
-                          : undefined
-                      }
-                    >
-                      <span
-                        className="shrink-0 font-mono font-bold text-center"
-                        style={{ width: 16, color: hue }}
-                      >
-                        +
-                      </span>
-                      {/* An r6 supervision lane riding beside the worker lane keeps the class's solid
-                          violet accent here too, so a node's second row says WHAT KIND of work it is. */}
-                      {extra.supervision === true ? (
-                        <Gavel size={11} className="shrink-0 self-center" style={{ color: FORMATION_RAMP[2] }} />
-                      ) : null}
-                      <span
-                        className={`shrink-0 truncate max-w-[40%] ${extra.supervision === true ? '' : 'text-text-primary'}`}
-                        style={extra.supervision === true ? { color: FORMATION_RAMP[2], fontWeight: 600 } : undefined}
-                      >
-                        {title}
-                      </span>
-                      <span className="min-w-0 truncate">{laneLiveLine(extra)}</span>
-                      {extraCanExpand ? (
-                        <ChevronRight size={12} className="shrink-0 self-center text-text-secondary" />
-                      ) : null}
-                    </div>
-                  );
-                })
-              : null}
-          </div>
-        );
-      })}
+                            }}
+                          >
+                            {body}
+                          </div>
+                        ) : (
+                          body
+                        );
+                      })()}
+                  </td>
+                  <td
+                    className={cx(
+                      'px-3 py-2 text-right align-top text-lz-body',
+                      TNUM,
+                      lane?.toolCalls ? 'text-lz-ink' : 'text-lz-ink-4'
+                    )}
+                  >
+                    <span className="flex h-5 items-center justify-end">
+                      {lane?.toolCalls ? lane.toolCalls : '—'}
+                    </span>
+                  </td>
+                  <td
+                    className={cx(
+                      'px-3 py-2 text-right align-top text-lz-body',
+                      TNUM,
+                      fmtChars(lane?.thinkingChars) ? 'text-lz-ink' : 'text-lz-ink-4'
+                    )}
+                  >
+                    <span className="flex h-5 items-center justify-end">
+                      {fmtChars(lane?.thinkingChars) || '—'}
+                    </span>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
       {live && unattributed.length > 0 ? (
         // Judge spans with no busy node to pin them to — real work, shown unattributed rather than dropped.
         // ONE line for all of them: the caption is a fact about the class, not about each span, and a row
         // per span painted the same 54 characters four times in a column (measured live, 2026-08-29).
-        <div data-testid="fleet-unattributed" className="flex items-start gap-2 text-xs">
-          <span className="shrink-0" style={{ width: 16 }} />
-          <Gavel size={12} className="shrink-0 mt-[2px]" style={{ color: FORMATION_RAMP[2] }} />
-          <span className="min-w-0">
+        <div
+          data-testid="fleet-unattributed"
+          className={cx('flex items-start gap-2 border-t px-3 py-2 text-lz-body', SURFACE.hairline)}
+        >
+          <Gavel size={12} className={cx('mt-[3px] shrink-0', TONE_TEXT.accent)} />
+          <span className="min-w-0 text-lz-ink-3">
             {unattributed.map((s, i) => (
               <React.Fragment key={`sup-${s.kind}-${s.taskId}`}>
-                {i > 0 ? <span className="text-text-secondary"> · </span> : null}
-                <span style={{ color: FORMATION_RAMP[2], fontWeight: 600 }}>{s.label}</span>
+                {i > 0 ? <span> · </span> : null}
+                <span className={cx(TONE_TEXT.accent, WEIGHT.semibold)}>{s.label}</span>
               </React.Fragment>
             ))}
-            <span className="text-text-secondary">
+            <span>
               {unattributed.length === 1
                 ? ' — on an idle node (the verdict names it when it lands)'
                 : ' — on idle nodes (each verdict names its node when it lands)'}
@@ -2921,7 +3061,7 @@ const FleetStrip: React.FC<{
               <NodeInspector
                 device={inspect.device}
                 letter={String.fromCharCode(65 + (i % 26))}
-                hue={FORMATION_RAMP[i % FORMATION_RAMP.length]}
+                index={i}
                 lane={lane}
                 nodeState={nodeStatus[shortName(inspect.device)]}
                 history={deviceHistory}
@@ -2935,24 +3075,30 @@ const FleetStrip: React.FC<{
   );
 };
 
-// The chronological engine narrative — the body of the EVENT LOG zone. Latest at the bottom; a spinner
-// tail while the run is live. In verbose mode it shows the FULL stream and wraps. Deliberately dense and
-// on the secondary color: the zones above are the primary read; this is the record.
+// The chronological engine narrative — the body of the EVENT LOG zone: a monospace TICKER on the surface-2
+// well, hairline-divided rows, a tabular ordinal gutter. Latest at the bottom; a pulsing dot tail while the
+// run is live. In verbose mode it shows the FULL stream and wraps; compact keeps the last few rows.
+const EVENT_LOG_COMPACT_ROWS = 8;
+
 const ActivityFeed: React.FC<{ items: ActivityItem[]; live: boolean; verbose: boolean; workingDir?: string }> = ({ items, live, verbose, workingDir }) => {
-  const shown = verbose ? items : items.slice(-8);
+  const shown = verbose ? items : items.slice(-EVENT_LOG_COMPACT_ROWS);
   if (items.length === 0) return null;
   return (
-    <div className="px-3 py-2 space-y-0.5 bg-background-primary">
+    <ol
+      className="divide-y divide-lz-border bg-lz-surface-2 py-1 font-mono text-lz-mono text-lz-ink"
+      aria-label="Event log"
+    >
       {shown.map((it) => (
-        <ActivityLine key={it.seq} it={it} wrap={verbose} workingDir={workingDir} dim />
+        <ActivityLine key={it.seq} it={it} wrap={verbose} workingDir={workingDir} />
       ))}
       {live && (
-        <div className="flex items-center gap-2 text-[11px] text-text-secondary">
-          <Loader2 size={12} className="animate-spin shrink-0" />
+        <li className="flex min-h-6 items-center gap-2 px-3 py-0.5 text-lz-ink-3">
+          <span className="w-9 shrink-0" aria-hidden />
+          <StatusDot tone="accent" live label="the engine is working" />
           <span>working…</span>
-        </div>
+        </li>
       )}
-    </div>
+    </ol>
   );
 };
 
@@ -2960,7 +3106,8 @@ const ActivityFeed: React.FC<{ items: ActivityItem[]; live: boolean; verbose: bo
  * EVENT LOG zone — the feed, explicitly named for what it is and visually subordinate. Collapsed by
  * default outside developer/verbose mode: judge verdicts and failures already surface on WORK-board rows,
  * so the log is the narrative/debugging record, not the primary read. Collapsed, it still shows the count
- * and the latest line so nothing feels hidden.
+ * and the latest line so nothing feels hidden. The count pill counts the rows the body SHOWS (compact
+ * shows the last few); the total rides beside it as meta.
  */
 const EventLogZone: React.FC<{
   items: ActivityItem[];
@@ -2972,20 +3119,24 @@ const EventLogZone: React.FC<{
   if (items.length === 0) return null;
   const open = override ?? verbose;
   const last = items[items.length - 1];
+  const shownCount = verbose ? items.length : Math.min(items.length, EVENT_LOG_COMPACT_ROWS);
   return (
-    <div className="border-t border-border-primary">
+    <div className="border-t border-lz-border">
       <ZoneHeader
         label="Event log"
         explain="everything the engine reported, in order"
+        count={open ? shownCount : undefined}
         collapsed={!open}
         onToggle={() => setOverride((o) => !(o ?? verbose))}
         right={
           <>
             {!open && last ? (
-              <span className="text-[11px] text-text-secondary truncate max-w-[18rem]">{last.text}</span>
+              <span className="max-w-[18rem] truncate text-lz-meta text-lz-ink-3">{last.text}</span>
             ) : null}
-            <span className="text-[11px] tabular-nums text-text-secondary shrink-0">
-              {items.length} events
+            <span className={cx('shrink-0 text-lz-meta text-lz-ink-3', TNUM)}>
+              {open && shownCount < items.length
+                ? `last ${shownCount} of ${items.length} events`
+                : `${items.length} events`}
             </span>
           </>
         }
@@ -3305,7 +3456,7 @@ const ConfidenceBreakdownBody: React.FC<{
               />
             ))}
           </div>
-          <span className="text-[11px] tabular-nums text-text-secondary">
+          <span className={cx('text-lz-meta text-lz-ink-3', TNUM)}>
             {trail.map((v, i) => (
               <React.Fragment key={i}>
                 {i > 0 ? ' → ' : ''}
@@ -3426,6 +3577,21 @@ const TODO_COLOR: Record<TodoState, string> = {
   advisory: SWARM_STATUS.action,
 };
 
+/** The WORK board's dot tone per engine state — the same honesty as TODO_COLOR: a verified 'done' is the
+ *  ok green; 'unverified' (built, never run) is the stopped slate and must never look green; failures are
+ *  err; a judge intervention is the warn amber; advisory is the accent (information, never a check). */
+const TODO_TONE: Record<TodoState, Tone> = {
+  pending: 'stopped',
+  running: 'warn',
+  done: 'ok',
+  unverified: 'stopped',
+  failed: 'err',
+  judge_failed: 'warn',
+  blocked: 'stopped',
+  skipped: 'stopped',
+  advisory: 'accent',
+};
+
 const TodoGlyph: React.FC<{ state: TodoState }> = ({ state }) => {
   const c = TODO_COLOR[state];
   const cls = 'h-3.5 w-3.5 shrink-0';
@@ -3439,26 +3605,21 @@ const TodoGlyph: React.FC<{ state: TodoState }> = ({ state }) => {
   return <Circle className={cls} style={s} />; // pending
 };
 
-const TodoPill: React.FC<{ text: string; color: string }> = ({ text, color }) => (
-  <span
-    className="text-[11px] px-1.5 py-px shrink-0"
-    style={{ color, border: `1px solid ${color}`, borderRadius: CHIP_RADIUS }}
-  >
-    {text}
-  </span>
-);
+/** A state WORD beside a row — the quiet Chip. The row's dot/glyph carries the tone; the word carries the
+ *  meaning. Colouring the word too was a second register for one fact. */
+const TodoPill: React.FC<{ text: string }> = ({ text }) => <Chip>{text}</Chip>;
 
 // The judge's REASONING for a task — the diagnosis (verdict) + the exact corrective note it gave the worker.
 // This is what Mihai wanted surfaced: not just "judge decision" but WHY.
 const JudgeReason: React.FC<{ judge: NonNullable<PhaseTodoItem['judge']> }> = ({ judge }) => (
   <div className="text-[11px]">
     <div className="flex items-center gap-1.5 flex-wrap">
-      <Gavel className="h-3 w-3 shrink-0" style={{ color: AMBER }} />
-      <span className="font-semibold text-text-primary">Judge</span>
+      <Gavel className={cx('size-3 shrink-0', TONE_TEXT.warn)} />
+      <span className={cx(WEIGHT.semibold, 'text-lz-ink')}>Judge</span>
       {judge.verdict ? (
-        <span style={{ color: AMBER }}>{judge.verdict.replace(/_/g, ' ')}</span>
+        <span className={TONE_TEXT.warn}>{judge.verdict.replace(/_/g, ' ')}</span>
       ) : null}
-      <span className="text-text-secondary">→ {judge.action.replace(/_/g, ' ')}</span>
+      <span className="text-lz-ink-3">→ {judge.action.replace(/_/g, ' ')}</span>
     </div>
     {judge.hint ? (
       <p className="text-text-secondary mt-0.5 leading-snug break-words">
@@ -3515,7 +3676,7 @@ const TaskGenDetail: React.FC<{ digest: Record<string, unknown> }> = ({ digest }
           </span>
         ) : null}
         {errors > 0 ? (
-          <span style={{ color: SWARM_STATUS.running }} className="font-medium">
+          <span className={cx(WEIGHT.medium, TONE_TEXT.warn)}>
             {errors} app-error{malformed > 0 ? ` · ${malformed} malformed` : ''}
           </span>
         ) : null}
@@ -3588,44 +3749,40 @@ const PhaseTodoRow: React.FC<{
               },
             }
           : {})}
-        className={`w-full flex items-center gap-1.5 text-[11px] py-0.5 min-w-0 text-left ${hasDetail ? 'cursor-pointer hover:opacity-80' : ''}`}
+        className={cx(
+          'flex min-h-7 w-full min-w-0 items-center gap-2 py-0.5 text-left text-lz-meta',
+          hasDetail && 'cursor-pointer',
+          hasDetail && SURFACE.hover,
+          MOTION
+        )}
       >
         {interrupted ? (
-          <CircleSlash className="h-3.5 w-3.5 shrink-0" style={{ color: c }} />
+          <CircleSlash className="size-3.5 shrink-0" style={{ color: c }} />
         ) : (
           <TodoGlyph state={item.state} />
         )}
-        {idx >= 0 ? (
-          <NodeDot
-            hue={FORMATION_RAMP[idx % FORMATION_RAMP.length]}
-            letter={String.fromCharCode(65 + (idx % 26))}
-            size={7}
-          />
-        ) : null}
+        {idx >= 0 ? <NodeDot index={idx} letter={String.fromCharCode(65 + (idx % 26))} /> : null}
         <span
-          className="shrink-0 font-medium"
-          style={{ color: item.state === 'pending' ? 'var(--color-text-secondary)' : 'var(--color-text-primary)' }}
+          className={cx('shrink-0', WEIGHT.medium, item.state === 'pending' ? 'text-lz-ink-3' : 'text-lz-ink')}
         >
           {item.label}
         </span>
-        {item.summary ? (
-          <span className="text-text-secondary truncate">· {item.summary}</span>
-        ) : null}
-        {interrupted ? <TodoPill text="interrupted" color={c} /> : null}
-        {!interrupted && item.state === 'unverified' ? <TodoPill text="unverified" color={c} /> : null}
-        {!interrupted && item.state === 'judge_failed' ? <TodoPill text="judge" color={c} /> : null}
-        {!interrupted && item.state === 'blocked' ? <TodoPill text="blocked" color={c} /> : null}
-        {item.detail ? <span className="text-[11px] text-text-secondary truncate">· {item.detail}</span> : null}
+        {item.summary ? <span className="truncate text-lz-ink-3">· {item.summary}</span> : null}
+        {interrupted ? <TodoPill text="interrupted" /> : null}
+        {!interrupted && item.state === 'unverified' ? <TodoPill text="unverified" /> : null}
+        {!interrupted && item.state === 'judge_failed' ? <TodoPill text="judge" /> : null}
+        {!interrupted && item.state === 'blocked' ? <TodoPill text="blocked" /> : null}
+        {item.detail ? <span className="truncate text-lz-ink-3">· {item.detail}</span> : null}
         {hasDetail ? (
-          <span className="ml-auto shrink-0 text-text-secondary">
+          <span className="ml-auto shrink-0 text-lz-ink-3">
             {open ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
           </span>
         ) : null}
       </div>
       {open && hasDetail ? (
-        <div className="ml-5 mt-1 mb-1.5 space-y-1.5 border-l-0">
+        <div className="mb-1.5 ml-5 mt-1 space-y-1.5">
           {planTask && (planTask.difficulty || planTask.deps.length) ? (
-            <div className="text-[11px] text-text-secondary flex flex-wrap gap-x-3">
+            <div className="flex flex-wrap gap-x-3 text-lz-meta text-lz-ink-3">
               {planTask.difficulty ? (
                 <span>
                   difficulty <span className="text-text-primary">{planTask.difficulty}</span>
@@ -3656,7 +3813,7 @@ const PhaseTodoRow: React.FC<{
               ))}
             </div>
           ) : null}
-          {item.description ? <ReasoningBlock text={item.description} label="Full task spec" /> : null}
+          {item.description ? <ReasoningBlock text={item.description} label="Full task spec" reasoning={false} /> : null}
           {digest ? <TaskGenDetail digest={digest} /> : null}
           {item.judge ? <JudgeReason judge={item.judge} /> : null}
         </div>
@@ -3667,16 +3824,17 @@ const PhaseTodoRow: React.FC<{
 
 // A WORK-board group header: solid state dot + the mono group name + count. The three groups
 // (RUNNING / QUEUED / DONE) are the "what is ongoing, what is planned, what is done" Mihai asked for.
-const BoardGroupHeader: React.FC<{ label: string; color: string; count: number; extra?: React.ReactNode }> = ({
-  label,
-  color,
-  count,
-  extra,
-}) => (
-  <div className="flex items-center gap-1.5 px-3 pt-2 pb-1">
-    <span aria-hidden className="shrink-0" style={{ width: 7, height: 7, borderRadius: '50%', background: color }} />
-    <span className="text-[11px] font-semibold text-text-primary">{label}</span>
-    <span className="text-[11px] tabular-nums text-text-secondary">· {count}</span>
+const BoardGroupHeader: React.FC<{
+  label: string;
+  tone: Tone;
+  live?: boolean;
+  count: number;
+  extra?: React.ReactNode;
+}> = ({ label, tone, live = false, count, extra }) => (
+  <div className="flex h-8 items-center gap-2 px-3">
+    <StatusDot tone={tone} live={live} label={`${label} tasks`} />
+    <span className={cx('text-lz-meta text-lz-ink-2', WEIGHT.semibold)}>{label}</span>
+    <span className={cx('text-lz-meta text-lz-ink-3', TNUM)}>{count}</span>
     {extra}
   </div>
 );
@@ -3693,7 +3851,6 @@ const BoardTaskRow: React.FC<{
   digest?: Record<string, unknown>;
 }> = ({ row, deviceOrder, stale, dev, workingDir, digest }) => {
   const interrupted = stale && row.state === 'running';
-  const c = interrupted ? CALL_PENDING : TODO_COLOR[row.state];
   const idx = row.device ? deviceIndex(row.device, deviceOrder) : -1;
   const lane = row.lane;
   const { completed: calls, running } = workRows(lane?.calls, lane?.inflight);
@@ -3747,43 +3904,40 @@ const BoardTaskRow: React.FC<{
               },
             }
           : {})}
-        className={`w-full flex items-center gap-1.5 text-[11px] py-0.5 min-w-0 text-left ${hasDetail ? 'cursor-pointer hover:opacity-80' : ''}`}
-      >
-        {interrupted ? (
-          <CircleSlash className="h-3.5 w-3.5 shrink-0" style={{ color: c }} />
-        ) : (
-          <TodoGlyph state={row.state} />
+        className={cx(
+          'flex min-h-8 w-full min-w-0 items-center gap-2 px-3 text-left text-lz-body',
+          hasDetail && 'cursor-pointer',
+          hasDetail && SURFACE.hover,
+          MOTION
         )}
-        {idx >= 0 ? (
-          <NodeDot
-            hue={FORMATION_RAMP[idx % FORMATION_RAMP.length]}
-            letter={String.fromCharCode(65 + (idx % 26))}
-            size={7}
-          />
-        ) : null}
+      >
+        {/* ONE dot per state: the colour is the mark, the label is the meaning; a running row pulses. */}
+        <StatusDot
+          tone={interrupted ? 'stopped' : TODO_TONE[row.state]}
+          live={row.state === 'running' && !interrupted}
+          label={interrupted ? 'interrupted' : row.state.replace(/_/g, ' ')}
+        />
+        {idx >= 0 ? <NodeDot index={idx} letter={String.fromCharCode(65 + (idx % 26))} /> : null}
         <span
-          className="shrink-0 font-medium"
-          style={{
-            color:
-              row.state === 'failed'
-                ? STATUS_COLOR.error
-                : row.state === 'pending'
-                  ? 'var(--color-text-secondary)'
-                  : 'var(--color-text-primary)',
-          }}
+          className={cx(
+            'shrink-0',
+            WEIGHT.medium,
+            row.state === 'failed' ? TONE_TEXT.err : row.state === 'pending' ? 'text-lz-ink-3' : 'text-lz-ink'
+          )}
         >
           {row.title}
         </span>
-        {row.kind === 'repair' ? <TodoPill text="repair" color="var(--color-text-secondary)" /> : null}
-        {row.summary ? <span className="text-text-secondary truncate">· {row.summary}</span> : null}
-        {interrupted ? <TodoPill text="interrupted" color={c} /> : null}
-        {!interrupted && row.state === 'unverified' ? <TodoPill text="unverified" color={c} /> : null}
-        {!interrupted && row.state === 'judge_failed' ? <TodoPill text="judge" color={c} /> : null}
-        {!interrupted && row.state === 'blocked' ? <TodoPill text="blocked" color={c} /> : null}
+        {row.kind === 'repair' ? <TodoPill text="repair" /> : null}
+        {!interrupted && row.state === 'skipped' ? <TodoPill text="skipped" /> : null}
+        {row.summary ? <span className="truncate text-lz-ink-3">· {row.summary}</span> : null}
+        {interrupted ? <TodoPill text="interrupted" /> : null}
+        {!interrupted && row.state === 'unverified' ? <TodoPill text="unverified" /> : null}
+        {!interrupted && row.state === 'judge_failed' ? <TodoPill text="judge" /> : null}
+        {!interrupted && row.state === 'blocked' ? <TodoPill text="blocked" /> : null}
         {judgeFlag ? (
           <Tip label={`The judge intervened: ${judgeFlag}${row.judge?.hint ? ` — ${row.judge.hint.slice(0, 140)}` : ''}`}>
-            <span className="flex items-center gap-0.5 shrink-0" style={{ color: AMBER }}>
-              <Gavel className="h-3 w-3" /> {judgeFlag}
+            <span className={cx('flex shrink-0 items-center gap-0.5', TONE_TEXT.warn)}>
+              <Gavel className="size-3" /> {judgeFlag}
             </span>
           </Tip>
         ) : null}
@@ -3794,17 +3948,13 @@ const BoardTaskRow: React.FC<{
           <Tip
             label={`The judge wiped and re-streamed this call ${lane.restreams} time${lane.restreams === 1 ? '' : 's'} — the live reasoning and its counter restart; the durable thinking log keeps everything.`}
           >
-            <span
-              className="text-[11px] font-bold px-1.5 py-0.5 text-white shrink-0"
-              style={{ backgroundColor: SWARM_STATUS.stopped, borderRadius: 3 }}
-              data-testid="lane-restreamed"
-            >
-              re-streamed ×{lane.restreams}
+            <span className="inline-flex shrink-0" data-testid="lane-restreamed">
+              <Chip tone="stopped">re-streamed ×{lane.restreams}</Chip>
             </span>
           </Tip>
         ) : null}
-        {row.detail ? <span className="text-[11px] text-text-secondary truncate">· {row.detail}</span> : null}
-        <span className="ml-auto shrink-0 flex items-center gap-1.5 text-[11px] tabular-nums text-text-secondary">
+        {row.detail ? <span className="truncate text-lz-ink-3">· {row.detail}</span> : null}
+        <span className={cx('ml-auto flex shrink-0 items-center gap-2 text-lz-meta text-lz-ink-3', TNUM)}>
           {row.state === 'running' && lane?.toolCalls ? (
             <span className="flex items-center gap-0.5">
               <Wrench className="h-3 w-3" />
@@ -3812,7 +3962,7 @@ const BoardTaskRow: React.FC<{
             </span>
           ) : null}
           {row.state === 'running' && lane?.errors ? (
-            <span style={{ color: STATUS_COLOR.error }}>{lane.errors}✕</span>
+            <span className={TONE_TEXT.err}>{lane.errors}✕</span>
           ) : null}
           {row.state !== 'running' && secs != null ? <span>{secs}s</span> : null}
           {typeof row.attempts === 'number' && row.attempts > 1 ? <span>×{row.attempts}</span> : null}
@@ -3821,24 +3971,24 @@ const BoardTaskRow: React.FC<{
           ) : null}
           {row.state === 'pending' && row.difficulty ? <span>{row.difficulty}</span> : null}
           {hasDetail ? (
-            expanded ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />
+            expanded ? <ChevronDown className="size-3" /> : <ChevronRight className="size-3" />
           ) : null}
         </span>
       </div>
       {row.state === 'running' && !interrupted && !expanded ? (
-        <div className="flex items-center gap-1.5 pl-5 pb-0.5 text-[11px] min-w-0">
+        <div className="flex min-w-0 items-center gap-1.5 pb-1.5 pl-9 pr-3 text-lz-meta">
           {/* A call FORMING leads even over a running one: its bytes are this instant's generation. */}
           {formingLiveLine(lane?.forming) ? (
             <>
-              <Loader2 size={10} className="animate-spin shrink-0" style={{ color: SWARM_STATUS.running }} />
-              <span className="truncate font-mono" style={{ color: SWARM_STATUS.running }}>
+              <Loader2 size={10} className={cx('shrink-0 animate-spin', TONE_TEXT.warn)} />
+              <span className={cx('truncate font-mono text-lz-mono', TONE_TEXT.warn)}>
                 {formingLiveLine(lane?.forming)}
               </span>
             </>
           ) : running.length > 0 ? (
             <>
-              <Loader2 size={10} className="animate-spin shrink-0" style={{ color: SWARM_STATUS.running }} />
-              <span className="truncate font-mono" style={{ color: SWARM_STATUS.running }}>
+              <Loader2 size={10} className={cx('shrink-0 animate-spin', TONE_TEXT.warn)} />
+              <span className={cx('truncate font-mono text-lz-mono', TONE_TEXT.warn)}>
                 {inflightLiveLine(running)}
               </span>
             </>
@@ -3848,27 +3998,29 @@ const BoardTaskRow: React.FC<{
               return (
                 <>
                   <CallTypeIcon icon={cm.icon} color={CALL_KIND_COLOR[cm.kind]} />
-                  <span className="text-text-secondary truncate">
+                  <span className="truncate text-lz-ink-3">
                     {cm.action}
-                    {lastCall.summary ? <span className="font-mono text-text-secondary"> · {lastCall.summary}</span> : null}
+                    {lastCall.summary ? <span className="font-mono text-lz-mono"> · {lastCall.summary}</span> : null}
                   </span>
                 </>
               );
             })()
           ) : liveGen ? (
-            <span className="text-text-secondary truncate">{liveGen}</span>
+            <span className="truncate text-lz-ink-3">{liveGen}</span>
           ) : (
-            <span className="text-text-secondary">generating…</span>
+            <span className="text-lz-ink-3">generating…</span>
           )}
         </div>
       ) : null}
       {expanded && hasDetail ? (
         <div
-          className="ml-5 mt-1 mb-2 px-2.5 py-2 space-y-2 border border-border-primary bg-background-secondary"
-          style={{ borderRadius: CHIP_RADIUS }}
+          className={cx(
+            'mb-2 ml-9 mr-3 space-y-2 border border-lz-border bg-lz-surface-2 px-3 py-2',
+            RADIUS.control
+          )}
         >
           {row.difficulty || row.deps.length || lane?.model ? (
-            <div className="text-[11px] text-text-secondary flex flex-wrap gap-x-3">
+            <div className="flex flex-wrap gap-x-3 text-lz-meta text-lz-ink-3">
               {row.difficulty ? (
                 <span>
                   difficulty <span className="text-text-primary">{row.difficulty}</span>
@@ -3915,7 +4067,7 @@ const BoardTaskRow: React.FC<{
               <MonoOutput text={laneError} failed />
             </div>
           ) : null}
-          {row.description ? <ReasoningBlock text={row.description} label="Task spec" /> : null}
+          {row.description ? <ReasoningBlock text={row.description} label="Task spec" reasoning={false} /> : null}
           {reasoning ? (
             <ReasoningBlock
               text={reasoning}
@@ -3927,12 +4079,12 @@ const BoardTaskRow: React.FC<{
           ) : null}
           {calls.length > 0 || running.length > 0 || (lane?.forming?.length ?? 0) > 0 ? (
             <div>
-              <div className="text-[11px] font-medium text-text-secondary mb-1.5">
+              <div className={cx('mb-1.5 text-lz-meta text-lz-ink-2', WEIGHT.medium)}>
                 Tool calls · {lane?.toolCalls ?? calls.length}
                 {running.length > 0 ? ` · ${running.length} running` : ''}
                 {formingNote(lane?.forming)}
               </div>
-              <div className="bg-background-primary border border-border-primary px-2 py-1" style={{ borderRadius: CHIP_RADIUS }}>
+              <div className={cx('border border-lz-border bg-lz-surface px-2 py-1', RADIUS.control)}>
                 <FormingRows forming={lane?.forming} />
                 <InflightRows running={running} />
                 {calls.map((cl, i) => (
@@ -3978,7 +4130,7 @@ const WorkZone: React.FC<{
       ? (digests[id] as Record<string, unknown>)
       : undefined;
   const rows = (list: BoardRow[]) => (
-    <div className="px-3 pb-1 pl-4 space-y-0">
+    <div className="divide-y divide-lz-border">
       {list.map((r) => (
         <BoardTaskRow
           key={r.id}
@@ -3993,13 +4145,14 @@ const WorkZone: React.FC<{
     </div>
   );
   return (
-    <div className="border-t border-border-primary">
+    <div className="border-t border-lz-border">
       <ZoneHeader
         label="Work"
         explain="the plan as a live board — running, queued, done"
+        count={total > 0 ? total : undefined}
         right={
           total > 0 ? (
-            <span className="text-[11px] tabular-nums text-text-secondary">
+            <span className={cx('text-lz-meta text-lz-ink-3', TNUM)}>
               {board.running.length} running · {board.queued.length} queued · {board.done.length} done
               {board.addedByReplan > 0 ? ` · +${board.addedByReplan} re-planned` : ''}
             </span>
@@ -4007,13 +4160,15 @@ const WorkZone: React.FC<{
         }
       />
       {board.stuck ? (
-        <div className="mx-3 mb-2 px-2 py-1.5 text-[11px] text-white flex items-center gap-1.5" style={{ backgroundColor: STATUS_COLOR.error, borderRadius: CHIP_RADIUS }}>
-          <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+        <div
+          className={cx('mx-3 mb-2 flex items-center gap-1.5 px-2 py-1.5 text-lz-meta', TONE_FILL.err, RADIUS.control)}
+        >
+          <AlertTriangle className="size-3.5 shrink-0" />
           {board.stuck}
         </div>
       ) : null}
       {total === 0 ? (
-        <div className="px-3 pb-2 text-[11px] text-text-secondary">
+        <div className="px-3 pb-2 text-lz-meta text-lz-ink-3">
           {live
             ? 'The plan lands here once it is agreed — tasks appear the moment the first one is dispatched.'
             : 'No tasks were dispatched in this run.'}
@@ -4022,7 +4177,7 @@ const WorkZone: React.FC<{
         <>
           {board.running.length > 0 ? (
             <>
-              <BoardGroupHeader label="Running" color={STATUS_COLOR.running} count={board.running.length} />
+              <BoardGroupHeader label="Running" tone="warn" live={live} count={board.running.length} />
               {rows(board.running)}
             </>
           ) : null}
@@ -4030,9 +4185,9 @@ const WorkZone: React.FC<{
             <>
               <BoardGroupHeader
                 label="Queued"
-                color={CALL_PENDING}
+                tone="stopped"
                 count={board.queued.length}
-                extra={<span className="text-[11px] text-text-secondary">— waiting on dependencies</span>}
+                extra={<span className="text-lz-meta text-lz-ink-3">— waiting on dependencies</span>}
               />
               {rows(board.queued)}
             </>
@@ -4041,11 +4196,11 @@ const WorkZone: React.FC<{
             <>
               <BoardGroupHeader
                 label="Done"
-                color={STATUS_COLOR.done}
+                tone="ok"
                 count={board.done.length}
                 extra={
                   failedCount > 0 ? (
-                    <span className="text-[11px] font-semibold" style={{ color: STATUS_COLOR.error }}>
+                    <span className={cx('text-lz-meta', WEIGHT.semibold, TONE_TEXT.err)}>
                       · {failedCount} failed
                     </span>
                   ) : undefined
@@ -4531,7 +4686,7 @@ const PlanningZone: React.FC<{
       ? 'goose is asking you before it builds'
       : 'agreeing on the plan before building';
   return (
-    <div className="border-t border-border-primary">
+    <div className="border-t border-lz-border">
       <ZoneHeader
         label="Planning"
         explain={explain}
@@ -4553,7 +4708,7 @@ const PlanningZone: React.FC<{
               </Tip>
             ) : null}
             {!open && plan.length > 0 ? (
-              <span className="text-[11px] tabular-nums text-text-secondary">
+              <span className={cx('text-lz-meta text-lz-ink-3', TNUM)}>
                 {plan.length} task{plan.length === 1 ? '' : 's'} planned
               </span>
             ) : null}
@@ -4609,7 +4764,7 @@ const PlanningZone: React.FC<{
                       {p.label}
                     </span>
                     {p.counts.total > 0 ? (
-                      <span className="text-[11px] tabular-nums text-text-secondary">
+                      <span className={cx('text-lz-meta text-lz-ink-3', TNUM)}>
                         {p.counts.done}/{p.counts.total}
                       </span>
                     ) : null}
@@ -4653,7 +4808,7 @@ const KnownActiveBugs: React.FC<{ bugs: string[] }> = ({ bugs }) => {
   const [open, setOpen] = useState(true);
   if (bugs.length === 0) return null;
   return (
-    <div className="border-t border-border-primary">
+    <div className="border-t border-lz-border">
       <ZoneHeader
         label="Known active bugs"
         explain="the run passed — these are what it passed WITH"
@@ -4695,7 +4850,7 @@ const SwarmQA: React.FC<{ qa: SwarmRunState['qa'] }> = ({ qa }) => {
   const [open, setOpen] = useState(true);
   if (qa.length === 0) return null;
   return (
-    <div className="border-t border-border-primary" data-testid="swarm-qa">
+    <div className="border-t border-lz-border" data-testid="swarm-qa">
       <ZoneHeader
         label="Questions answered"
         explain="questions dropped to the running swarm, and its answers"
@@ -4972,60 +5127,27 @@ export function nextDetailMode(mode: SwarmLogMode, key: string): SwarmLogMode | 
   return null;
 }
 
-/** How much of the run the panel shows. A real radiogroup with all three choices visible — the old control
- *  was one button that cycled, so the two modes you were not in were invisible and unreachable by keyboard. */
+const DETAIL_MODE_OPTIONS = SWARM_LOG_MODES.map((option) => ({
+  value: option,
+  label: DETAIL_MODE_LABEL[option],
+}));
+
+/** How much of the run the panel shows. The lz Segmented — a real radiogroup with all three choices
+ *  visible and roving focus (arrows move AND select, Home/End jump; `nextDetailMode` above is the same
+ *  key map, kept as the documented contract). The old control was one button that cycled, so the two
+ *  modes you were not in were invisible and unreachable by keyboard. */
 export const DetailModeChooser: React.FC<{
   mode: SwarmLogMode;
   onChange: (mode: SwarmLogMode) => void;
-}> = ({ mode, onChange }) => {
-  const optionRefs = useRef<Partial<Record<SwarmLogMode, HTMLButtonElement | null>>>({});
-
-  const onKeyDown = (event: React.KeyboardEvent<HTMLButtonElement>) => {
-    const next = nextDetailMode(mode, event.key);
-    if (!next) return;
-    event.preventDefault();
-    onChange(next);
-    optionRefs.current[next]?.focus();
-  };
-
-  return (
-    <div
-      role="radiogroup"
-      aria-label="Run detail"
-      className="flex items-center overflow-hidden border border-border-primary bg-background-primary"
-      style={{ borderRadius: CHIP_RADIUS }}
-    >
-      <span className="flex h-7 w-7 items-center justify-center border-r border-border-primary text-text-secondary">
-        <AlignLeft className="h-3.5 w-3.5" aria-hidden />
-      </span>
-      {SWARM_LOG_MODES.map((option, index) => {
-        const selected = option === mode;
-        return (
-          <button
-            ref={(element) => {
-              optionRefs.current[option] = element;
-            }}
-            key={option}
-            type="button"
-            role="radio"
-            aria-checked={selected}
-            tabIndex={selected ? 0 : -1}
-            onClick={() => onChange(option)}
-            onKeyDown={onKeyDown}
-            className={`h-7 px-2 text-xs font-semibold outline-none focus-visible:ring-2 focus-visible:ring-inset ${
-              selected ? 'focus-visible:ring-white' : 'focus-visible:ring-[var(--color-action-solid,#1d4ed8)]'
-            } ${index < SWARM_LOG_MODES.length - 1 ? 'border-r border-border-primary' : ''} ${
-              selected ? 'text-white' : 'text-text-secondary hover:bg-background-secondary hover:text-text-primary'
-            }`}
-            style={{ backgroundColor: selected ? SWARM_STATUS.action : 'transparent' }}
-          >
-            {DETAIL_MODE_LABEL[option]}
-          </button>
-        );
-      })}
-    </div>
-  );
-};
+}> = ({ mode, onChange }) => (
+  <Segmented<SwarmLogMode>
+    aria-label="Run detail"
+    size="sm"
+    options={DETAIL_MODE_OPTIONS}
+    value={mode}
+    onChange={onChange}
+  />
+);
 
 export const SwarmRunPanel: React.FC<{
   workingDir: string | undefined;
@@ -5193,16 +5315,16 @@ export const SwarmRunPanel: React.FC<{
   return (
     <div
       data-testid="swarm-run-panel"
-      className={`border border-border-primary bg-background-secondary text-text-primary text-sm ${className}`}
-      style={{ borderRadius: PANEL_RADIUS }}
+      className={cx(SURFACE.card, 'overflow-hidden text-lz-body', className)}
     >
       {/* ── RUN HEADER zone — identity + state in ONE band: what is being built, the phase, counts,
           elapsed/ETA, pause + display mode. Replaces the floating fragments (brand pill, metrics strip,
-          breadcrumb) Mihai read as "lacking any visual definition". */}
-      <div className="border-b border-border-primary">
-      <div className="flex items-center justify-between px-3 py-2 gap-2">
-        <span className="flex items-center gap-2 min-w-0">
-          <span className={`${EYEBROW_CLASS} shrink-0 text-text-primary`}>Swarm run</span>
+          breadcrumb) Mihai read as "lacking any visual definition". Mission control: the eyebrow is the
+          zone register, the run name is the h2 step, the phase is ONE Chip tone, the numbers are tabular. */}
+      <div className="border-b border-lz-border">
+      <div className="flex items-center justify-between gap-3 px-3 py-2">
+        <span className="flex min-w-0 items-center gap-2">
+          <span className={cx(EYEBROW_CLASS, 'shrink-0 text-lz-ink-3')}>Swarm run</span>
           <Tip
             label={
               run.meta?.prompt ? (
@@ -5212,7 +5334,7 @@ export const SwarmRunPanel: React.FC<{
               )
             }
           >
-            <span className="text-xs font-semibold truncate text-text-primary">{appName}</span>
+            <span className={cx(TYPE.h2, 'truncate')}>{appName}</span>
           </Tip>
           {run.meta?.resumed ? (
             // FINDING 7: a resumed run skips planning and re-runs finished tasks — without this badge
@@ -5220,12 +5342,10 @@ export const SwarmRunPanel: React.FC<{
             <Tip
               label={`Resumed — reused the previous plan (${run.meta.resumed.tasks} task${run.meta.resumed.tasks === 1 ? '' : 's'}); planning skipped; ${run.meta.resumed.previouslyCompleted} finished task${run.meta.resumed.previouslyCompleted === 1 ? '' : 's'} re-run.`}
             >
-              <span
-                className="text-[11px] px-1.5 py-0.5 flex items-center gap-1 shrink-0 text-white font-semibold"
-                style={{ backgroundColor: SWARM_STATUS.action, borderRadius: CHIP_RADIUS }}
-                data-testid="run-resumed-chip"
-              >
-                <RotateCcw size={10} /> Resumed
+              <span className="inline-flex shrink-0" data-testid="run-resumed-chip">
+                <Chip tone="accent" icon={<RotateCcw />}>
+                  Resumed
+                </Chip>
               </span>
             </Tip>
           ) : null}
@@ -5237,11 +5357,10 @@ export const SwarmRunPanel: React.FC<{
             // nothing was waiting, and nothing would ever read the answers. When the engine is dead
             // the liveness banner is the honest surface, not an invitation to answer.
             <Tip label="The build is paused, waiting for your answers in the prompt below.">
-              <span
-                className="text-[11px] px-1.5 py-0.5 flex items-center gap-1 shrink-0 text-white font-semibold"
-                style={{ backgroundColor: AMBER, borderRadius: CHIP_RADIUS }}
-              >
-                <MessageCircleQuestion size={10} /> Waiting for you
+              <span className="inline-flex shrink-0">
+                <Chip tone="warn" icon={<MessageCircleQuestion />}>
+                  Waiting for you
+                </Chip>
               </span>
             </Tip>
           ) : run.held ? (
@@ -5259,41 +5378,49 @@ export const SwarmRunPanel: React.FC<{
                   : 'Held at a task boundary. In-flight work finished and nothing was lost — press ▶ to resume.'
               }
             >
-              <span
-                className="text-[11px] px-1.5 py-0.5 flex items-center gap-1 shrink-0 text-white font-semibold"
-                style={{ backgroundColor: stale ? SWARM_STATUS.solidStopped : AMBER, borderRadius: CHIP_RADIUS }}
-              >
-                <Pause size={10} /> {stale ? 'Paused — engine gone' : 'Paused'}
+              <span className="inline-flex shrink-0">
+                <Chip tone={stale ? 'stopped' : 'warn'} icon={<Pause />}>
+                  {stale ? 'Paused — engine gone' : 'Paused'}
+                </Chip>
               </span>
             </Tip>
           ) : run.inProgress && !stale && !ended && run.phase ? (
             <Tip label={`Current phase: ${run.phase}`}>
-              <span
-                className="text-[11px] px-1.5 py-0.5 flex items-center gap-1 shrink-0 text-white font-semibold"
-                style={{ backgroundColor: SWARM_STATUS.action, borderRadius: CHIP_RADIUS }}
-              >
-                <Loader2 size={10} className="animate-spin" /> {run.phase}
+              <span className="inline-flex shrink-0">
+                <Chip tone="accent" icon={<Loader2 className="animate-spin" />}>
+                  {run.phase}
+                </Chip>
               </span>
             </Tip>
+          ) : ended && outcome ? (
+            // The run's END as the same chip: ok when the build verified, err when a task failed, the
+            // stopped slate for an engine that exited without a completion signal. The terminal banner
+            // below carries the tally; this is the one-word state beside the name.
+            <span className="inline-flex shrink-0" data-testid="run-outcome-chip">
+              <Chip
+                tone={outcome === 'done' ? 'ok' : outcome === 'failed' ? 'err' : 'stopped'}
+                icon={outcome === 'done' ? <Check /> : outcome === 'failed' ? <AlertTriangle /> : <CircleSlash />}
+              >
+                {outcome === 'done' ? 'Done' : outcome === 'failed' ? 'Failed' : 'Stopped'}
+              </Chip>
+            </span>
           ) : null}
         </span>
-        <span className="flex items-center gap-2 shrink-0">
-          <span className="text-xs text-text-secondary tabular-nums">
+        <span className="flex shrink-0 items-center gap-2">
+          <span className={cx('text-lz-meta text-lz-ink-3', TNUM)}>
             {tasks > 0 && (
               <>
                 {running > 0 && (
-                  <span style={{ color: stale ? CALL_PENDING : STATUS_COLOR.running }} className="font-semibold">
+                  <span className={cx(WEIGHT.semibold, stale ? TONE_TEXT.stopped : TONE_TEXT.warn)}>
                     {running} {stale ? 'interrupted' : 'running'}
                   </span>
                 )}
                 {running > 0 && ' · '}
-                <span style={{ color: STATUS_COLOR.done }}>{done} done</span>
+                <span className={TONE_TEXT.ok}>{done} done</span>
                 {failed > 0 && (
                   <>
                     {' · '}
-                    <span style={{ color: STATUS_COLOR.error }} className="font-semibold">
-                      {failed} failed
-                    </span>
+                    <span className={cx(WEIGHT.semibold, TONE_TEXT.err)}>{failed} failed</span>
                   </>
                 )}
                 {' · '}
@@ -5311,18 +5438,25 @@ export const SwarmRunPanel: React.FC<{
           ) : null}
           {run.inProgress && !ended && !clarifyPending && workingDir ? (
             // PAUSE / RESUME — hold the build at the next task boundary (in-flight work finishes, nothing is
-            // lost) and resume re-running nothing. An ACTION, so the accent outline (filled while the request
-            // stands) + a ‖/▶ glyph — never the warn colour, never red, so it never reads as a state or as
-            // the terminal ■ stop. "Held" is engine-truth (run_paused event); "Pausing…" is the pending request.
-            <button
+            // lost) and resume re-running nothing. An ACTION, so the secondary Button (never the warn colour,
+            // never red, so it never reads as a state or as the terminal ■ stop). "Held" is engine-truth
+            // (run_paused event); "Pausing…" is the pending request, and the label carries it.
+            <Button
+              variant="secondary"
+              size="sm"
+              aria-pressed={run.pauseRequested}
               onClick={() => runDir && window.electron.swarmSetPaused(runDir, !run.pauseRequested)}
-              className="flex items-center gap-1 text-[11px] font-medium px-1.5 py-0.5 border transition-colors"
-              style={{
-                borderRadius: CHIP_RADIUS,
-                borderColor: BLUE,
-                color: run.pauseRequested ? '#fff' : BLUE,
-                backgroundColor: run.pauseRequested ? BLUE : 'transparent',
-              }}
+              icon={
+                !run.pauseRequested ? (
+                  <Pause />
+                ) : run.held ? (
+                  <Play />
+                ) : stale ? (
+                  <Pause />
+                ) : (
+                  <Loader2 className="animate-spin" />
+                )
+              }
               title={
                 !run.pauseRequested
                   ? 'Hold at the next task boundary — in-flight work finishes, nothing is lost'
@@ -5337,28 +5471,18 @@ export const SwarmRunPanel: React.FC<{
                       : 'Pausing — finishing the current task, then holding. Click to resume.'
               }
             >
-              {!run.pauseRequested ? (
-                <>
-                  <Pause size={11} /> Pause
-                </>
-              ) : run.held ? (
-                <>
-                  <Play size={11} /> Resume
-                </>
-              ) : stale ? (
-                // FINDING 14: an animate-spin 'Pausing…' asserts live progress. On a dead engine the
-                // request stands but nothing is finishing anything — a static icon and a title that
-                // says which death this is (the button itself stays: the sentinel toggle is still
-                // meaningful for a later relaunch).
-                <>
-                  <Pause size={11} /> Pause requested
-                </>
-              ) : (
-                <>
-                  <Loader2 size={11} className="animate-spin" /> Pausing…
-                </>
-              )}
-            </button>
+              {/* FINDING 14: an animate-spin 'Pausing…' asserts live progress. On a dead engine the
+                  request stands but nothing is finishing anything — a static icon and a label that
+                  says which death this is (the button itself stays: the sentinel toggle is still
+                  meaningful for a later relaunch). */}
+              {!run.pauseRequested
+                ? 'Pause'
+                : run.held
+                  ? 'Resume'
+                  : stale
+                    ? 'Pause requested'
+                    : 'Pausing…'}
+            </Button>
           ) : null}
           <DetailModeChooser mode={mode} onChange={setMode} />
         </span>
@@ -5383,10 +5507,10 @@ export const SwarmRunPanel: React.FC<{
           Neither ends the run here — the panel keeps showing everything it had. */}
       {!ended && (liveness.state === 'exited' || liveness.state === 'silent') ? (
         <div
-          className="flex items-start gap-2 px-3 py-2 text-xs text-white"
-          style={{ backgroundColor: SWARM_STATUS.solidRunning }}
+          className={cx('flex items-start gap-2 px-3 py-2 text-lz-body', TONE_FILL.warn)}
+          data-testid="liveness-banner"
         >
-          <AlertTriangle className="h-4 w-4 shrink-0 mt-px" />
+          <AlertTriangle className="mt-px size-4 shrink-0" />
           <span>
             {liveness.state === 'exited'
               ? 'The engine exited on its own — it stopped writing its heartbeat and stamped an exit. Everything below is what it had reached.'
@@ -5454,12 +5578,12 @@ export const SwarmRunPanel: React.FC<{
 
       {/* ── FLEET zone — the fixed realtime per-node rows, now under the same header register. */}
       {deviceOrder.length > 0 ? (
-        <div className="border-t border-border-primary">
+        <div className="border-t border-lz-border">
           <ZoneHeader
             label="Fleet"
             explain="what each node is doing right now"
             right={
-              <span className="text-[11px] tabular-nums text-text-secondary">
+              <span className={cx('text-lz-meta text-lz-ink-3', TNUM)}>
                 {deviceOrder.length} node{deviceOrder.length === 1 ? '' : 's'}
                 {run.inProgress && !stale && !ended ? ` · ${fleet.workingByDevice.size} working` : ''}
               </span>
