@@ -36,6 +36,7 @@ use crate::state::{
     PeerRegistry, RemoteExecutor, SwarmStateSource,
 };
 use crate::token::node_token_from_secret;
+use crate::wire::NodeStatus;
 use crate::worker_client::{
     RequestCodeResult, VerifyResult, WorkerClient, WorkerError, DEFAULT_WORKER_BASE_URL,
 };
@@ -122,13 +123,21 @@ pub enum AuthState {
 }
 
 /// What goosed surfaces to the desktop: the auth state, live mesh status while
-/// connected, the total node count (self + reachable peers), and the last error — the
-/// error is never swallowed, it rides here for the UI to show honestly.
+/// connected, the node count, the mesh-poll health, and the last error — the error is
+/// never swallowed, it rides here for the UI to show honestly.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct LinkState {
     pub auth: AuthState,
     pub mesh: Option<MeshStatus>,
+    /// `1 + peers whose status is not Offline` while connected (a peer answering
+    /// 4xx keeps its last status and still counts; an unreachable one does not); `0`
+    /// when not connected. Never "1 + every row the mesh ever listed".
     pub node_count: u32,
+    /// Consecutive failures of the connection's mesh-status poll (`tailscale status`
+    /// reads that errored), reset to 0 by the next success and by a new connection.
+    /// A rising number is the UI's early warning before the daemon is declared dead.
+    #[serde(default)]
+    pub mesh_poll_failures: u32,
     pub last_error: Option<String>,
 }
 
@@ -222,6 +231,7 @@ struct Inner {
     last_error: Option<String>,
     active: Option<Active>,
     next_generation: u64,
+    mesh_poll_failures: u32,
 }
 
 /// Distinguishes a connect failure that should drop to `LoggedOut` (the token is dead)
@@ -330,6 +340,7 @@ impl LinkManager {
                 last_error: None,
                 active: None,
                 next_generation: 0,
+                mesh_poll_failures: 0,
             })),
         })
     }
@@ -468,6 +479,7 @@ impl LinkManager {
                     mesh_ip: active.mesh_ip.clone(),
                 };
                 inner.active = Some(active);
+                inner.mesh_poll_failures = 0;
                 Ok(())
             }
             Err(ConnectFailure { error, logout }) => {
@@ -635,7 +647,7 @@ impl LinkManager {
     /// here (see [`drop_active_after_daemon_exit`]) and reports the demoted state, so
     /// the UI never shows `Connected` over a dead daemon.
     pub async fn status(&self) -> LinkState {
-        let (auth, persisted_error, live) = {
+        let (auth, persisted_error, poll_failures, live) = {
             let inner = self.inner.lock().await;
             let live = inner.active.as_ref().map(|active| {
                 (
@@ -644,7 +656,12 @@ impl LinkManager {
                     active.generation,
                 )
             });
-            (inner.auth.clone(), inner.last_error.clone(), live)
+            (
+                inner.auth.clone(),
+                inner.last_error.clone(),
+                inner.mesh_poll_failures,
+                live,
+            )
         };
 
         let Some((mesh, registry, generation)) = live else {
@@ -652,6 +669,7 @@ impl LinkManager {
                 auth,
                 mesh: None,
                 node_count: 0,
+                mesh_poll_failures: poll_failures,
                 last_error: persisted_error,
             };
         };
@@ -660,7 +678,8 @@ impl LinkManager {
             Ok(status) => LinkState {
                 auth,
                 mesh: Some(status),
-                node_count: 1 + registry.peer_nodes().len() as u32,
+                node_count: node_count(&registry),
+                mesh_poll_failures: poll_failures,
                 last_error: persisted_error,
             },
             Err(err @ MeshError::DaemonExited { .. }) => {
@@ -670,13 +689,15 @@ impl LinkManager {
                     auth: inner.auth.clone(),
                     mesh: None,
                     node_count: 0,
+                    mesh_poll_failures: inner.mesh_poll_failures,
                     last_error: inner.last_error.clone(),
                 }
             }
             Err(err) => LinkState {
                 auth,
                 mesh: None,
-                node_count: 1 + registry.peer_nodes().len() as u32,
+                node_count: node_count(&registry),
+                mesh_poll_failures: poll_failures,
                 last_error: Some(format!("mesh status read failed: {err}")),
             },
         }
@@ -788,16 +809,38 @@ impl LinkManager {
 
     /// Tear down the connection (per-pid), clear the stored identity, and drop to
     /// `LoggedOut`. The mesh state dir is left for a fast re-login unless `wipe`.
+    ///
+    /// A failed `tailscale logout` (the daemon is stopped per-pid instead) still logs
+    /// the account out, but its text lands in `last_error` — never erased. A failed
+    /// identity clear leaves the credential on disk, so auth returns to `LoggedIn`
+    /// (the truthful state: mesh down, credential present) with the error recorded.
     pub async fn logout(&self, wipe: bool) -> Result<(), LinkError> {
-        let active = {
+        let (active, email) = {
             let mut inner = self.inner.lock().await;
-            inner.active.take()
+            let email = match &inner.auth {
+                AuthState::LoggedIn { email }
+                | AuthState::Connecting { email }
+                | AuthState::Connected { email, .. } => Some(email.clone()),
+                AuthState::LoggedOut | AuthState::CodeSent { .. } => None,
+            };
+            (inner.active.take(), email)
         };
-        if let Some(active) = active {
-            teardown_active(active, true).await;
-        }
+        let mesh_logout_error = match active {
+            Some(active) => teardown_active(active, true).await,
+            None => None,
+        };
 
-        self.identity.clear()?;
+        if let Err(err) = self.identity.clear() {
+            let mut inner = self.inner.lock().await;
+            inner.auth = match email {
+                Some(email) => AuthState::LoggedIn { email },
+                None => AuthState::LoggedOut,
+            };
+            inner.last_error = Some(format!(
+                "logout incomplete: the mesh is down but the credential could not be removed: {err}"
+            ));
+            return Err(err.into());
+        }
         if wipe {
             let dir = &self.config.mesh.state_dir;
             if dir.exists() {
@@ -811,7 +854,12 @@ impl LinkManager {
 
         let mut inner = self.inner.lock().await;
         inner.auth = AuthState::LoggedOut;
-        inner.last_error = None;
+        inner.last_error = mesh_logout_error.map(|err| {
+            format!(
+                "logged out, but `tailscale logout` failed and the daemon was stopped per-pid \
+                 instead (the node key may linger on the control plane until it expires): {err}"
+            )
+        });
         Ok(())
     }
 
@@ -1017,6 +1065,16 @@ async fn post_peer_mlx(
     })
 }
 
+/// `1 + peers that are not Offline`: a peer that answers (even wrongly) is present; an
+/// unreachable one is not.
+fn node_count(registry: &PeerRegistry) -> u32 {
+    1 + registry
+        .peer_nodes()
+        .iter()
+        .filter(|node| node.status != NodeStatus::Offline)
+        .count() as u32
+}
+
 /// Per-pid teardown of a live connection, in dependency order: the poll loop first (so
 /// nothing re-registers peers into a fabric being torn down), the control service (its
 /// serve tasks + the peer fabric), then the mesh — `tailscale logout` when asked
@@ -1108,9 +1166,15 @@ async fn peer_sync_loop(
                     registry.set_mesh_peers(&status.peers, control_port);
                     last = Some(status.peers.clone());
                 }
+                let Some(inner) = inner.upgrade() else { return };
+                let mut guard = inner.lock().await;
+                if guard.mesh_poll_failures != 0 {
+                    guard.mesh_poll_failures = 0;
+                }
             }
             Err(err @ MeshError::DaemonExited { .. }) => {
                 let Some(inner) = inner.upgrade() else { return };
+                inner.lock().await.mesh_poll_failures += 1;
                 if drop_active_after_daemon_exit(&inner, generation, &err, true).await {
                     return;
                 }
@@ -1120,7 +1184,13 @@ async fn peer_sync_loop(
                 tracing::warn!(error = %err, "tailscaled exited before the connection was installed; retrying");
             }
             Err(err) => {
-                tracing::warn!(error = %err, "mesh status poll failed; will retry");
+                let Some(inner) = inner.upgrade() else { return };
+                let failures = {
+                    let mut guard = inner.lock().await;
+                    guard.mesh_poll_failures += 1;
+                    guard.mesh_poll_failures
+                };
+                tracing::warn!(error = %err, consecutive = failures, "mesh status poll failed; will retry");
             }
         }
         tokio::time::sleep(interval).await;

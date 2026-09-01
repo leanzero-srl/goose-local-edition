@@ -79,10 +79,14 @@ pub enum MeshError {
     #[error("tailscaled exited ({status}). stderr tail:\n{stderr_tail}")]
     DaemonExited { status: String, stderr_tail: String },
     #[error(
-        "tailscaled socket did not become ready within {waited:?}. stderr tail:\n{stderr_tail}"
+        "tailscaled socket did not become ready within {waited:?} (last probe: {last_probe}). \
+         stderr tail:\n{stderr_tail}"
     )]
     StartupTimeout {
         waited: Duration,
+        /// What the LAST readiness check saw — the socket still absent, the CLI's
+        /// failure text, or an unreadable listener pid — so the timeout names its cause.
+        last_probe: String,
         stderr_tail: String,
     },
     #[error("auth key is empty — LeanZero Link joins only with an injected, minted key")]
@@ -482,54 +486,65 @@ impl MeshEngine {
                     stderr_tail: stderr_tail_string(&handle.stderr_tail),
                 });
             }
-            if engine.config.socket_path.exists()
-                && probe_socket(&engine.config, READY_PROBE_TIMEOUT)
-                    .await
-                    .is_ok()
-            {
-                if let Some(status) = child_exit(&mut handle, &engine.config)? {
-                    return Err(MeshError::DaemonExited {
-                        status: status.to_string(),
-                        stderr_tail: stderr_tail_string(&handle.stderr_tail),
-                    });
+            // What this iteration's readiness check saw — the verdict a timeout names.
+            let last_probe: String = if !engine.config.socket_path.exists() {
+                format!(
+                    "socket '{}' not present yet",
+                    engine.config.socket_path.display()
+                )
+            } else {
+                match probe_socket(&engine.config, READY_PROBE_TIMEOUT).await {
+                    Err(text) => format!("`tailscale status` on the socket failed: {text}"),
+                    Ok(()) => {
+                        if let Some(status) = child_exit(&mut handle, &engine.config)? {
+                            return Err(MeshError::DaemonExited {
+                                status: status.to_string(),
+                                stderr_tail: stderr_tail_string(&handle.stderr_tail),
+                            });
+                        }
+                        match listener_pid(&engine.config.socket_path) {
+                            Ok(pid) if Some(pid) == handle.child.id() => {
+                                tracing::info!(
+                                    socket = %engine.config.socket_path.display(),
+                                    pid,
+                                    "leanzero-link tailscaled ready"
+                                );
+                                *engine.state.lock().await = Some(handle);
+                                return Ok(engine);
+                            }
+                            Ok(pid) => {
+                                tracing::error!(
+                                    socket = %engine.config.socket_path.display(),
+                                    listener_pid = pid,
+                                    our_pid = ?handle.child.id(),
+                                    "a daemon we did not spawn answers on our socket; \
+                                     terminating our own spawn per-pid"
+                                );
+                                terminate_per_pid(&mut handle.child).await;
+                                return Err(MeshError::AlreadyRunning {
+                                    socket: engine.config.socket_path.clone(),
+                                    listener_pid: Some(pid),
+                                });
+                            }
+                            Err(err) => {
+                                tracing::warn!(
+                                    error = %err,
+                                    "socket answered but its listener pid is not readable yet; retrying"
+                                );
+                                format!(
+                                    "socket answered but its listener pid is not readable yet: {err}"
+                                )
+                            }
+                        }
+                    }
                 }
-                match listener_pid(&engine.config.socket_path) {
-                    Ok(pid) if Some(pid) == handle.child.id() => {
-                        tracing::info!(
-                            socket = %engine.config.socket_path.display(),
-                            pid,
-                            "leanzero-link tailscaled ready"
-                        );
-                        *engine.state.lock().await = Some(handle);
-                        return Ok(engine);
-                    }
-                    Ok(pid) => {
-                        tracing::error!(
-                            socket = %engine.config.socket_path.display(),
-                            listener_pid = pid,
-                            our_pid = ?handle.child.id(),
-                            "a daemon we did not spawn answers on our socket; \
-                             terminating our own spawn per-pid"
-                        );
-                        terminate_per_pid(&mut handle.child).await;
-                        return Err(MeshError::AlreadyRunning {
-                            socket: engine.config.socket_path.clone(),
-                            listener_pid: Some(pid),
-                        });
-                    }
-                    Err(err) => {
-                        tracing::warn!(
-                            error = %err,
-                            "socket answered but its listener pid is not readable yet; retrying"
-                        );
-                    }
-                }
-            }
+            };
             if started.elapsed() >= engine.config.startup_timeout {
                 let stderr_tail = stderr_tail_string(&handle.stderr_tail);
                 terminate_per_pid(&mut handle.child).await;
                 return Err(MeshError::StartupTimeout {
                     waited: engine.config.startup_timeout,
+                    last_probe,
                     stderr_tail,
                 });
             }
