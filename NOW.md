@@ -53,7 +53,18 @@ implied, the summary was wrong and the sources win.
 
 ---
 
-## THE CURRENT THREAD (2026-09-01 08:25) — r6d RUNNING BUT SCHEDULED FOR KILL+RELAUNCH ON THE r6e BUILD
+## THE CURRENT THREAD (2026-09-01 09:40) — r6e BUILDING (HEAD e640f6c03); r6d runs until the relaunch is ready
+
+E1–E15 all landed (15 commits; swarm.rs 40,008). Build agent: stamped `just make-ui` first, gates in parallel, atomic
+install. Refuter on E7/E10/E14/E15 in parallel (E7's crux: does a steer reach a zero-tool-call lane before it
+finishes?). Then: kill_run_perpid.sh r6d-KILLED-viz-brief-lacks-vs7dbg-section-cceab86eb → pkill -9 app → open new
+app w/ CDP → bench_verify_view OK → bench_dispatch → first_tick + the r6e FIRST-TICK EXPECTATIONS below.
+NEXT AFTER r6e LAUNCH (r6f batch, Mihai 09:30 "4 hours?! … isn't that a bit extreme?"): THE FAN CUT — spec-answerable
+questions answered by citation at planning time (most minis were spec lookups), dedup against landed minis, per-
+slice batching on small fleets, build-as-briefs-land; plus planner_rank's device-id pattern gap. Not a cap: waste
+removal. Measure against r6e's fan (38 questions, ~4h).
+
+## THE PRIOR THREAD (2026-09-01 08:25) — r6d RUNNING BUT SCHEDULED FOR KILL+RELAUNCH ON THE r6e BUILD
 
 Refuter-proven at the running sha: the viz-field BUILD brief will lack the REQUIRED graded `vs7dbg` section
 (unmatched claim → dropped; fixed in 766810d61). Decision: ship the r6e batch (E1–E6 landed, E7–E11 landing),
