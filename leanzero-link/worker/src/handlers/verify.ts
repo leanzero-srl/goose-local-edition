@@ -2,6 +2,7 @@ import { JWT_TTL_SECONDS, OTP_MAX_ATTEMPTS, RATE_WINDOW_SECONDS, VERIFY_RATE_LIM
 import type { Deps, KVStore } from "../lib/deps";
 import { jsonResponse, readJsonBody } from "../lib/http";
 import { signJwt } from "../lib/jwt";
+import { ensureNodeSecret } from "../lib/nodeSecret";
 import { constantTimeEqual, hashOtp } from "../lib/otp";
 import { bumpFixedWindow } from "../lib/ratelimit";
 import { upsertAudienceContact } from "../lib/resend";
@@ -122,7 +123,8 @@ export async function handleVerify(request: Request, deps: Deps): Promise<Respon
   await deps.kv.delete(key);
   const iat = Math.floor(deps.now() / 1000);
   const token = await signJwt(secret, { sub: email, iat, exp: iat + JWT_TTL_SECONDS, ver: 1 });
+  const nodeSecret = await ensureNodeSecret(deps.kv, email, deps.log);
   const audienceSync = await upsertAudienceContact(deps, email);
   deps.log("auth_verified", { email, audienceSync });
-  return jsonResponse(200, { token, email, audienceSync });
+  return jsonResponse(200, { token, email, audienceSync, nodeSecret });
 }

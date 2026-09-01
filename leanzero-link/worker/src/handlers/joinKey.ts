@@ -2,6 +2,7 @@ import type { Deps } from "../lib/deps";
 import { mintHeadscaleJoinKey } from "../lib/headscale";
 import { jsonResponse } from "../lib/http";
 import { verifyJwt } from "../lib/jwt";
+import { ensureNodeSecret } from "../lib/nodeSecret";
 import { mintJoinKey } from "../lib/tailscale";
 
 export async function handleJoinKey(request: Request, deps: Deps): Promise<Response> {
@@ -32,21 +33,25 @@ export async function handleJoinKey(request: Request, deps: Deps): Promise<Respo
     return jsonResponse(500, { error: "TS_KEY_EXPIRY_SECONDS is not a positive integer" });
   }
 
+  const email = verified.claims.sub;
   if (deps.config.meshProvider === "headscale") {
-    const minted = await mintHeadscaleJoinKey(deps, verified.claims.sub);
+    const minted = await mintHeadscaleJoinKey(deps, email);
     if (!minted.ok) {
       return jsonResponse(502, { error: "headscale key mint failed", status: minted.status });
     }
+    const nodeSecret = await ensureNodeSecret(deps.kv, email, deps.log);
     return jsonResponse(200, {
       authKey: minted.authKey,
       loginServer: minted.loginServer,
       expirySeconds: minted.expirySeconds,
+      nodeSecret,
     });
   }
 
-  const minted = await mintJoinKey(deps, verified.claims.sub);
+  const minted = await mintJoinKey(deps, email);
   if (!minted.ok) {
     return jsonResponse(502, { error: "tailscale key mint failed", status: minted.status });
   }
-  return jsonResponse(200, { authKey: minted.authKey, expirySeconds: minted.expirySeconds });
+  const nodeSecret = await ensureNodeSecret(deps.kv, email, deps.log);
+  return jsonResponse(200, { authKey: minted.authKey, expirySeconds: minted.expirySeconds, nodeSecret });
 }

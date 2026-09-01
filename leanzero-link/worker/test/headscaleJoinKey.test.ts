@@ -115,6 +115,7 @@ describe("POST /v1/mesh/join-key — Headscale (multi-tenant)", () => {
       authKey: "hskey-auth-ABC",
       loginServer: "https://control.leanzero.test",
       expirySeconds: 600,
+      nodeSecret: expect.stringMatching(/^[0-9a-f]{64}$/),
     });
 
     // The preauth mint uses the numeric user id, ephemeral + single-use, with an RFC3339
