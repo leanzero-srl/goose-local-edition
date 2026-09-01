@@ -363,7 +363,10 @@ fn swarm_rs_line_count_only_decreases() {
     // Tightened to 36,793 (2c S1): the retired test-only `split_fat_modules` and its three tests
     // deleted (the measured split is commands/swarm/shards.rs), paying for the split seam's wiring
     // in `plan_slices_to_dag` / `run_linear_plan`.
-    const SWARM_RS_LINE_BASELINE: usize = 36_793;
+    // Tightened to 36,755 (2c S2/S3): the ledger mini writers (`write_task_ledger`,
+    // `write_gate_ledger`, `RepairLedgerRow`/`write_repair_ledger`) moved to
+    // commands/swarm/ledger_writers.rs, paying for the shard's dispatch/completion wiring.
+    const SWARM_RS_LINE_BASELINE: usize = 36_755;
     let text = read("crates/goose-cli/src/commands/swarm.rs");
     let n = text.lines().count();
     assert!(

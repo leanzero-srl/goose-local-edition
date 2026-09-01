@@ -120,6 +120,12 @@ pub struct DispatchRequest {
     /// full unscoped bundle, so a fix/sink/mock dispatch with no neighborhood is byte-identical to before
     /// this field existed.
     pub neighborhood: Vec<String>,
+    /// THE SPLIT (VA-021): this task is a SHARD of a split module — the dispatcher renders its
+    /// folder as the write surface, its README as the deliverable. `None` for every other task.
+    pub shard_of: Option<crate::dag::ShardOf>,
+    /// THE SPLIT (VA-021): this task is the MERGER of a split module — dispatched with the
+    /// code-built dossier over its shards' pieces and READMEs. `None` for every other task.
+    pub merger_of: Option<crate::dag::MergerOf>,
 }
 
 /// Outcome of a failed dispatch. `Transient` is re-dispatched (and steered to a different device);

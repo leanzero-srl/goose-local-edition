@@ -2624,3 +2624,74 @@ async fn a_judge_transport_error_is_a_failed_look_never_a_verdict() {
         events.named("judge_verdict")
     );
 }
+
+/// THE SPLIT (2c S2): a shard's and a merger's plan metadata ride the DispatchRequest — the
+/// dispatcher renders a shard's folder and builds a merger's dossier from exactly these fields,
+/// so a claim that dropped them would dispatch a shard as an ordinary file author.
+type SeenRole = (String, Option<String>, Option<Vec<String>>);
+
+struct RoleCapture {
+    seen: Arc<Mutex<Vec<SeenRole>>>,
+}
+
+#[async_trait]
+impl TaskDispatcher for RoleCapture {
+    async fn run(&self, req: DispatchRequest) -> Result<TaskRunOutput, DispatchError> {
+        self.seen.lock().unwrap().push((
+            req.task_id.clone(),
+            req.shard_of.as_ref().map(|s| s.folder.clone()),
+            req.merger_of.as_ref().map(|m| m.shards.clone()),
+        ));
+        Ok(format!("output-of-{}", req.task_id).into())
+    }
+}
+
+#[tokio::test]
+async fn a_shards_and_a_mergers_roles_reach_the_dispatch_request() {
+    let mut shard = spec(
+        "web-viz-render",
+        &[],
+        &[".swarm/shards/web-viz/render/README.md"],
+    );
+    shard.shard_of = Some(goose_swarm::ShardOf {
+        module: "web-viz".into(),
+        shard: "render".into(),
+        folder: ".swarm/shards/web-viz/render".into(),
+        responsibility: "programs".into(),
+        interface: goose_swarm::ModuleInterface::default(),
+    });
+    let mut merger = spec("web-viz", &["web-viz-render"], &["web/viz.js"]);
+    merger.merger_of = Some(goose_swarm::MergerOf {
+        module: "web-viz".into(),
+        shards: vec!["web-viz-render".into()],
+        folders: vec![".swarm/shards/web-viz/render".into()],
+        interface: goose_swarm::ModuleInterface::default(),
+    });
+    let dag = Dag::from_specs(vec![shard, merger]).unwrap();
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    let sched = Scheduler::new(vec![dev("d0", "m0", 1)], 3);
+    let report = sched
+        .run(
+            dag,
+            Arc::new(RoleCapture { seen: seen.clone() }),
+            String::new(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(report.done.len(), 2);
+    let seen = seen.lock().unwrap();
+    let shard_req = seen.iter().find(|s| s.0 == "web-viz-render").unwrap();
+    assert_eq!(
+        shard_req.1.as_deref(),
+        Some(".swarm/shards/web-viz/render"),
+        "the shard's folder reaches the dispatcher"
+    );
+    assert!(shard_req.2.is_none());
+    let merger_req = seen.iter().find(|s| s.0 == "web-viz").unwrap();
+    assert_eq!(
+        merger_req.2.as_deref(),
+        Some(&["web-viz-render".to_string()][..]),
+        "the merger's shard list reaches the dispatcher"
+    );
+    assert!(merger_req.1.is_none());
+}

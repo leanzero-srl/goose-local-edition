@@ -1384,3 +1384,312 @@ mod tests {
         assert!(!events.iter().any(|e| e["event"] == "plan_patched"));
     }
 }
+
+// ---- S2/S3: the shard at DISPATCH and at COMPLETION -------------------------------------------
+
+/// The YOU OWN header a shard sees instead of the file-author's "EXACTLY these ABSOLUTE paths".
+pub(super) const SHARD_OWNED_HEADER: &str = "YOU OWN THIS FOLDER — write your pieces and your \
+     README.md inside it and NOTHING outside it (it already exists; never `mkdir` elsewhere):";
+
+/// The folder line(s) under the header — absolute, like every YOU OWN path.
+pub(super) fn shard_owned_lines(cwd: &str, shard: &ShardOf) -> String {
+    format!(
+        "  {cwd}/{folder}/   (every piece file you write, in the module's language)\n  {cwd}/{folder}/README.md   (your structured handoff — required)",
+        folder = shard.folder
+    )
+}
+
+/// The shard's owner body — replaces the file author's WRITE FIRST script, whose every clause
+/// ("write your owned file IN FULL", "run pytest") is wrong for a piece that cannot run alone.
+pub(super) fn shard_owner_body(shard: &ShardOf) -> String {
+    format!(
+        "YOU ARE SHARD `{shard}` OF MODULE `{module}` ({responsibility}). WRITE PIECES, NOT THE \
+         MODULE: put each function/class/section your split names in its own file inside your \
+         folder, in the module's language, implementing EXACTLY the declared names and signatures \
+         that fall in your split. NEVER write the module's final file — the merger assembles it \
+         from every shard's pieces; a shard that writes it overwrites its siblings. Do not run the \
+         app or the test suite (your pieces cannot run alone); CHECK each piece with a parse/lint \
+         (`node --check`, `python3 -m py_compile`, the language's equivalent) and record the \
+         command and its result. FINISH by writing `README.md` in your folder with the four \
+         fields — {p}: / {a}: / {u}: / {c}: — one item per line, and end your final message with \
+         the same four fields (they are your handoff to the merger). A turn that ends without the \
+         README FAILS and is retried.\n\n",
+        shard = shard.shard,
+        module = shard.module,
+        responsibility = shard.responsibility.trim(),
+        p = README_FIELDS[0],
+        a = README_FIELDS[1],
+        u = README_FIELDS[2],
+        c = README_FIELDS[3],
+    )
+}
+
+/// The deliverable gate's hint for a shard that finished without its README.
+pub(super) fn readme_missing_hint(shard: &ShardOf) -> String {
+    format!(
+        "You finished WITHOUT `{folder}/README.md`. Write it NOW with the four fields — {p}: \
+         (every symbol you defined, with its signature), {a}: (what you assume about siblings' \
+         symbols and the shared state), {u}: (what you did not finish, or `none`), {c}: (the \
+         parse/lint command you ran and its result) — then finish. Do not rewrite your pieces.",
+        folder = shard.folder,
+        p = README_FIELDS[0],
+        a = README_FIELDS[1],
+        u = README_FIELDS[2],
+        c = README_FIELDS[3],
+    )
+}
+
+pub(super) fn merge_note_missing_event(
+    shard: &ShardOf,
+    task_id: &str,
+    reason: &str,
+) -> serde_json::Value {
+    serde_json::json!({
+        "event": "merge_note_missing",
+        "module": shard.module,
+        "shard": shard.shard,
+        "task_id": task_id,
+        "folder": shard.folder,
+        "reason": reason,
+    })
+}
+
+/// A shard's structured handoff, parsed from its README (or its final message when the README
+/// carries no field): what it provides, what it assumes about siblings, what is unfinished, how
+/// it checked. Field lines are `FIELD: item`; items may continue as bullets or indented lines
+/// under the field; `none` is the empty list said aloud.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(super) struct ShardNote {
+    pub(super) provides: Vec<String>,
+    pub(super) assumes: Vec<String>,
+    pub(super) unfinished: Vec<String>,
+    pub(super) checked_with: Vec<String>,
+}
+
+impl ShardNote {
+    pub(super) fn to_json(&self) -> serde_json::Value {
+        serde_json::json!({
+            "provides": self.provides,
+            "assumes": self.assumes,
+            "unfinished": self.unfinished,
+            "checked_with": self.checked_with,
+        })
+    }
+}
+
+fn field_of(line: &str) -> Option<(usize, &str)> {
+    let t = line
+        .trim()
+        .trim_start_matches(['#', '*', '-', '>', '•'])
+        .trim()
+        .trim_matches('`')
+        .trim_matches('*');
+    for (i, f) in README_FIELDS.iter().enumerate() {
+        if t.len() >= f.len() && t[..f.len()].eq_ignore_ascii_case(f) {
+            let rest = t[f.len()..].trim_start_matches(['*', '`']).trim_start();
+            if let Some(r) = rest.strip_prefix(':') {
+                return Some((i, r.trim()));
+            }
+            if rest.is_empty() {
+                return Some((i, ""));
+            }
+        }
+    }
+    None
+}
+
+/// Parse the four fields out of a README or a final message. None when no field line exists —
+/// the caller names that absence (`merge_note_missing`), never a default note.
+pub(super) fn parse_shard_note(text: &str) -> Option<ShardNote> {
+    let mut note = ShardNote::default();
+    let mut current: Option<usize> = None;
+    let mut seen = false;
+    let push = |note: &mut ShardNote, i: usize, item: &str| {
+        let item = item
+            .trim()
+            .trim_start_matches(['-', '*', '•'])
+            .trim()
+            .trim_matches('`')
+            .trim();
+        if item.is_empty() || item.eq_ignore_ascii_case("none") || item == "-" {
+            return;
+        }
+        let list = match i {
+            0 => &mut note.provides,
+            1 => &mut note.assumes,
+            2 => &mut note.unfinished,
+            _ => &mut note.checked_with,
+        };
+        if !list.iter().any(|x| x == item) {
+            list.push(item.to_string());
+        }
+    };
+    for line in text.lines() {
+        if let Some((i, rest)) = field_of(line) {
+            seen = true;
+            current = Some(i);
+            push(&mut note, i, rest);
+            continue;
+        }
+        let Some(i) = current else {
+            continue;
+        };
+        let t = line.trim();
+        if t.is_empty() {
+            continue;
+        }
+        let is_item = line.starts_with(' ')
+            || line.starts_with('\t')
+            || t.starts_with('-')
+            || t.starts_with('*')
+            || t.starts_with('•');
+        if is_item {
+            push(&mut note, i, t);
+        } else {
+            current = None;
+        }
+    }
+    seen.then_some(note)
+}
+
+impl GooseAgentDispatcher {
+    /// S3, at a shard's completion: read `<folder>/README.md` (the file is the handoff; the final
+    /// message is the fallback when the file carries no field), emit `shard_note{…}` or
+    /// `merge_note_missing{…}`, and return the extra keys for the shard's ledger row —
+    /// `shard_note` and its `handoffs` through the existing channel (`parse_handoffs`).
+    pub(super) fn record_shard_note(
+        &self,
+        shard: &ShardOf,
+        req: &goose_swarm::DispatchRequest,
+        root: &std::path::Path,
+        final_text: &str,
+    ) -> serde_json::Value {
+        let readme_path = root.join(&shard.folder).join("README.md");
+        let readme = std::fs::read_to_string(&readme_path).ok();
+        let (note, source) = match readme.as_deref().and_then(parse_shard_note) {
+            Some(n) => (Some(n), "README.md"),
+            None => match parse_shard_note(final_text) {
+                Some(n) => (Some(n), "final_message"),
+                None => (None, "absent"),
+            },
+        };
+        let pieces: Vec<String> = std::fs::read_dir(root.join(&shard.folder))
+            .into_iter()
+            .flatten()
+            .flatten()
+            .filter(|e| e.path().is_file())
+            .filter_map(|e| e.file_name().to_str().map(String::from))
+            .filter(|n| n != "README.md")
+            .collect();
+        match &note {
+            Some(n) => {
+                let mut ev = n.to_json();
+                if let Some(o) = ev.as_object_mut() {
+                    o.insert("event".into(), "shard_note".into());
+                    o.insert("module".into(), shard.module.clone().into());
+                    o.insert("shard".into(), shard.shard.clone().into());
+                    o.insert("task_id".into(), req.task_id.clone().into());
+                    o.insert("source".into(), source.into());
+                    o.insert("pieces".into(), serde_json::json!(pieces));
+                    o.insert(
+                        "readme_present".into(),
+                        readme.as_ref().is_some_and(|r| !r.trim().is_empty()).into(),
+                    );
+                }
+                self.events.write_value(ev);
+            }
+            None => {
+                let reason = if readme.is_none() {
+                    "no README.md in the shard folder and no field in the final message"
+                } else {
+                    "README.md carries none of PROVIDES/ASSUMES/UNFINISHED/CHECKED_WITH"
+                };
+                self.events
+                    .write_value(merge_note_missing_event(shard, &req.task_id, reason));
+            }
+        }
+        let handoffs: Vec<serde_json::Value> =
+            super::attribution::parse_handoffs(final_text, &req.all_files, &req.owned_files)
+                .into_iter()
+                .map(|h| serde_json::json!({"path": h.path, "symbol": h.symbol, "note": h.note}))
+                .collect();
+        serde_json::json!({
+            "shard_of": {"module": shard.module, "shard": shard.shard, "folder": shard.folder},
+            "shard_note": note.as_ref().map(|n| n.to_json()),
+            "shard_note_source": source,
+            "pieces": pieces,
+            "handoffs": handoffs,
+        })
+    }
+}
+
+#[cfg(test)]
+mod dispatch_tests {
+    use super::*;
+
+    fn shard() -> ShardOf {
+        ShardOf {
+            module: "web-viz".into(),
+            shard: "render".into(),
+            folder: ".swarm/shards/web-viz/render".into(),
+            responsibility: "programs and geometry".into(),
+            interface: ModuleInterface::default(),
+        }
+    }
+
+    /// The README a shard leaves, in the brief's own shape — fields become lists, `none` is empty,
+    /// bullets and continuation lines belong to the field above them.
+    #[test]
+    fn a_structured_readme_parses_into_the_four_fields() {
+        let readme = "# render shard\n\nPROVIDES: initGL() -> void\n- render() -> void\n- `buildScene(data) -> void`\nASSUMES: S.brush is a Set<id>\n  S.dirty is a bool the render loop clears\nUNFINISHED: none\nCHECKED_WITH: node --check render.js (ok)\n\nSome trailing prose that is not a field.\n";
+        let n = parse_shard_note(readme).expect("fields present");
+        assert_eq!(
+            n.provides,
+            vec![
+                "initGL() -> void",
+                "render() -> void",
+                "buildScene(data) -> void"
+            ]
+        );
+        assert_eq!(
+            n.assumes,
+            vec![
+                "S.brush is a Set<id>",
+                "S.dirty is a bool the render loop clears"
+            ]
+        );
+        assert!(
+            n.unfinished.is_empty(),
+            "`none` is the empty list said aloud"
+        );
+        assert_eq!(n.checked_with, vec!["node --check render.js (ok)"]);
+        // A final message in markdown dress parses the same way.
+        let msg = "Done.\n\n**PROVIDES:** `drawBrush(ids)`\n## ASSUMES\n- scene.points is a Float32Array\n**UNFINISHED:** label culling for ties\n**CHECKED_WITH:** `node --check`\n";
+        let n = parse_shard_note(msg).unwrap();
+        assert_eq!(n.provides, vec!["drawBrush(ids)"]);
+        assert_eq!(n.assumes, vec!["scene.points is a Float32Array"]);
+        assert_eq!(n.unfinished, vec!["label culling for ties"]);
+        assert!(parse_shard_note("I wrote some files and finished.").is_none());
+    }
+
+    #[test]
+    fn the_shard_prompt_names_the_folder_and_forbids_the_final_file() {
+        let sh = shard();
+        let lines = shard_owned_lines("/tmp/run", &sh);
+        assert!(lines.contains("/tmp/run/.swarm/shards/web-viz/render/"));
+        assert!(lines.contains("README.md"));
+        let body = shard_owner_body(&sh);
+        assert!(body.contains("NEVER write the module's final file"));
+        assert!(body.contains("PROVIDES: / ASSUMES: / UNFINISHED: / CHECKED_WITH:"));
+        assert!(
+            !body.contains("pytest ONCE"),
+            "the file author's script is not the shard's"
+        );
+        let hint = readme_missing_hint(&sh);
+        assert!(hint.contains(".swarm/shards/web-viz/render/README.md"));
+        let ev = merge_note_missing_event(&sh, "web-viz-render", "why");
+        assert_eq!(ev["event"], "merge_note_missing");
+        assert_eq!(ev["module"], "web-viz");
+        assert_eq!(ev["shard"], "render");
+    }
+}
