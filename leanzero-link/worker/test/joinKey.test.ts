@@ -100,7 +100,7 @@ describe("POST /v1/mesh/join-key", () => {
         },
       },
       expirySeconds: 600,
-      description: "leanzero-link join key for user@example.com",
+      description: "leanzero-link join key for user_example_com",
     });
   });
 

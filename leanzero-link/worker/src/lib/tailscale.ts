@@ -88,7 +88,8 @@ export async function mintJoinKey(deps: Deps, email: string): Promise<JoinKeyMin
       },
     },
     expirySeconds: tsKeyExpirySeconds,
-    description: `leanzero-link join key for ${email}`,
+    // Tailscale key descriptions reject '@' and '.' (measured); sanitize the email to [A-Za-z0-9_-].
+    description: `leanzero-link join key for ${email.replace(/[^A-Za-z0-9_-]/g, "_")}`,
   };
   try {
     const response = await deps.fetchFn(
