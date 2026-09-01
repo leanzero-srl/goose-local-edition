@@ -293,7 +293,7 @@ fn the_banned_integrate_template_only_shrinks() {
 /// opposite at look 4).
 #[test]
 fn swarm_rs_line_count_only_decreases() {
-    const SWARM_RS_LINE_BASELINE: usize = 40_691;
+    const SWARM_RS_LINE_BASELINE: usize = 40_685;
     let text = read("crates/goose-cli/src/commands/swarm.rs");
     let n = text.lines().count();
     assert!(
