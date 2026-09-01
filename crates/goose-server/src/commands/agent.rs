@@ -53,6 +53,16 @@ pub async fn run() -> Result<()> {
     boot_marker("appstate init start");
     let app_state = state::AppState::new(settings.tls).await?;
 
+    // Inject the process-wide per-message delta tap into the LeanZero Link layer (in
+    // `goose`, which cannot see goose-server's session buses). Once set, the node's
+    // `subscribe_local_deltas` emits real per-message SessionDeltas alongside its
+    // node/session events, which the control service mirrors to peers over
+    // `/v1/swarm/stream`. Called once here; if this path never runs (goose without the
+    // server boot), the link layer stays node/session-only — loud-absent, not broken.
+    goose::acp::server::set_delta_source(crate::session_delta_tap::SessionDeltaTapSource::new(
+        app_state.session_delta_tap(),
+    ));
+
     let cors = CorsLayer::new()
         .allow_origin(Any)
         .allow_methods(Any)

@@ -11,15 +11,23 @@
 //!   changes so the account-derived control `node_token` stays current.
 //! - The `leanzeroLink/*` ACP handlers (`impl GooseAcpAgent`).
 //!
-//! ## Delta coverage (SCOPE — read honestly)
-//! [`GoosedSwarmStateSource::subscribe_local_deltas`] emits `NodeStateChanged` on
+//! ## Delta coverage
+//! [`GoosedSwarmStateSource::subscribe_local_deltas`] always emits `NodeStateChanged` on
 //! busy/idle (and active-count) transitions and `SessionUpserted` on session
-//! create/rename/update/busy-flip, derived by polling the managers. It does NOT emit
-//! `SessionDelta` (per-message mirroring): the per-session `MessageEvent` buses live in
-//! goose-server (`session_event_bus`), a crate that depends on `goose` — unreachable
-//! from here. A full-P4 per-message tap needs a process-wide fan-out of every session's
-//! events that no seam exposes today. A delta we cannot source is simply not emitted —
-//! never faked.
+//! create/rename/update/busy-flip, derived by polling the managers. It ALSO emits
+//! per-message `SessionDelta` when — and only when — a process-wide delta tap has been
+//! injected via [`set_delta_source`].
+//!
+//! The per-session `MessageEvent` buses live in goose-server (`session_event_bus`), a
+//! crate that DEPENDS ON `goose`, so they are unreachable from here by name. The fix is
+//! dependency inversion: goose-server owns a process-wide tap of every session's reply
+//! events, classifies each into a [`SessionDeltaKind`] + opaque payload (the goose-server
+//! side is the only place that can see `MessageEvent`), and injects it as a
+//! [`DeltaSource`] at boot. If no source is injected (goose built without the server
+//! boot path), the stream keeps its node/session-only behavior — loud-absent, not broken.
+//! A tapped item that cannot be classified is dropped on the goose-server side (never
+//! faked into a wrong kind); this layer maps whatever the source yields 1:1 to a
+//! `SessionDelta`.
 
 use super::*;
 
@@ -28,6 +36,7 @@ use std::time::Duration;
 
 use chrono::{DateTime, Utc};
 use futures::stream::BoxStream;
+use futures::StreamExt;
 use tokio_stream::wrappers::ReceiverStream;
 
 use leanzero_link::control::{ControlConfig, DEFAULT_CONTROL_PORT};
@@ -38,6 +47,10 @@ use leanzero_link::state::SwarmStateSource;
 use leanzero_link::wire::{LinkEvent, NodeState, NodeStatus, SessionSummary};
 use leanzero_link::worker_client::DEFAULT_WORKER_BASE_URL;
 use leanzero_link::{discovery, worker_client};
+
+/// The delta class carried on the wire, re-exported so the goose-server boot path can
+/// classify its `MessageEvent`s into it without naming `leanzero-link` directly.
+pub use leanzero_link::wire::SessionDeltaKind;
 
 /// How often the delta poller re-snapshots node/session state. Matches the fabric's own
 /// peer poll cadence (`ControlConfig::poll_interval` default) so a busy/idle transition
@@ -57,6 +70,49 @@ const LINK_NODE_TOKEN_APP_SECRET: &str = "leanzero-link/v1/node-token";
 /// warning is already logged), rather than the whole manager refusing to construct.
 const TAILSCALED_FALLBACK: &str = "/opt/homebrew/bin/tailscaled";
 const TAILSCALE_CLI_FALLBACK: &str = "/opt/homebrew/bin/tailscale";
+
+// ---------------------------------------------------------------------------
+// Delta-tap injection seam — dependency inversion for per-message mirroring.
+// ---------------------------------------------------------------------------
+
+/// One already-classified per-message delta, handed across the crate boundary by a
+/// [`DeltaSource`]. The producer (goose-server) has already mapped its `MessageEvent`
+/// into a [`SessionDeltaKind`] + opaque `payload` and stamped the origin-scoped `seq`;
+/// this layer only wraps it into a [`LinkEvent::SessionDelta`]. Carrying `seq` here (not
+/// in the brief's minimal tuple) lets the ORIGIN node's per-session delta sequence — the
+/// value the wire contract requires `SessionDelta.seq` to hold — cross the seam intact
+/// instead of being re-minted where the session identity is already lost.
+pub struct DeltaInput {
+    pub session_id: String,
+    pub seq: u64,
+    pub kind: SessionDeltaKind,
+    pub payload: serde_json::Value,
+}
+
+/// A process-wide fan-out of every local session's per-message deltas. goose-server
+/// implements this over its `session_event_bus` tap at boot; `goose` on its own never
+/// has one. `subscribe` yields a fresh stream per call (one per control-service delta
+/// pump); dropping the stream must end its side of the tap.
+pub trait DeltaSource: Send + Sync + 'static {
+    fn subscribe(&self) -> BoxStream<'static, DeltaInput>;
+}
+
+static DELTA_SOURCE: OnceLock<Arc<dyn DeltaSource>> = OnceLock::new();
+
+/// Inject the process-wide delta tap. Called once by the goose-server boot path after
+/// its `AppState` (which owns the tap) exists. A second call is ignored with a warning —
+/// the tap is a singleton for the process, and silently swapping it would strand the
+/// control service on a dead receiver.
+pub fn set_delta_source(source: impl DeltaSource) {
+    let source: Arc<dyn DeltaSource> = Arc::new(source);
+    if DELTA_SOURCE.set(source).is_err() {
+        warn!("leanzeroLink: delta source already injected; ignoring the duplicate");
+    }
+}
+
+fn current_delta_source() -> Option<Arc<dyn DeltaSource>> {
+    DELTA_SOURCE.get().cloned()
+}
 
 // ---------------------------------------------------------------------------
 // SwarmStateSource — goosed's live session state as the swarm view.
@@ -92,13 +148,21 @@ impl SwarmStateSource for GoosedSwarmStateSource {
     }
 
     fn subscribe_local_deltas(&self) -> BoxStream<'static, LinkEvent> {
+        self.local_deltas_with(current_delta_source())
+    }
+}
+
+impl GoosedSwarmStateSource {
+    /// The `NodeStateChanged` / `SessionUpserted` poller stream — the always-on half of
+    /// the local delta feed, derived by re-snapshotting the managers. One poller per
+    /// subscription; it exits when the receiver is dropped (the control service's local
+    /// delta pump ends), so nothing leaks past a disconnect.
+    fn node_session_poller(&self) -> BoxStream<'static, LinkEvent> {
         let (tx, rx) = tokio::sync::mpsc::channel::<LinkEvent>(256);
         let agent_manager = self.agent_manager.clone();
         let session_manager = self.session_manager.clone();
         let node_id = self.node_id.clone();
 
-        // One poller per subscription; it exits when the receiver is dropped (the
-        // control service's local delta pump ends), so nothing leaks past a disconnect.
         tokio::spawn(async move {
             let mut last_node_key: Option<(NodeStatus, u32)> = None;
             let mut last_sessions: HashMap<String, SessionSummary> = HashMap::new();
@@ -135,6 +199,29 @@ impl SwarmStateSource for GoosedSwarmStateSource {
         });
 
         Box::pin(ReceiverStream::new(rx))
+    }
+
+    /// Merge the always-on node/session poller with the per-message `SessionDelta` feed
+    /// from an injected [`DeltaSource`]. With no source, this is exactly the poller —
+    /// today's behavior. The delta half maps each classified [`DeltaInput`] 1:1 to a
+    /// [`LinkEvent::SessionDelta`], preserving the origin `seq` (never re-minted here).
+    fn local_deltas_with(
+        &self,
+        delta_source: Option<Arc<dyn DeltaSource>>,
+    ) -> BoxStream<'static, LinkEvent> {
+        let poller = self.node_session_poller();
+        match delta_source {
+            None => poller,
+            Some(source) => {
+                let deltas = source.subscribe().map(|input| LinkEvent::SessionDelta {
+                    session_id: input.session_id,
+                    seq: input.seq,
+                    kind: input.kind,
+                    payload: input.payload,
+                });
+                Box::pin(futures::stream::select(poller, deltas))
+            }
+        }
     }
 }
 
@@ -788,5 +875,97 @@ mod tests {
         assert_eq!(node.sessions_active, 0);
         assert_eq!(node.node_id, source.node_id);
         assert!(!node.hostname.is_empty());
+    }
+
+    /// A scripted [`DeltaSource`] that yields exactly the `DeltaInput`s it was handed,
+    /// then ends — the goose-server tap's stand-in for classifying `MessageEvent`s.
+    struct ScriptedDeltaSource(std::sync::Mutex<Option<Vec<DeltaInput>>>);
+
+    impl ScriptedDeltaSource {
+        fn new(inputs: Vec<DeltaInput>) -> Self {
+            Self(std::sync::Mutex::new(Some(inputs)))
+        }
+    }
+
+    impl DeltaSource for ScriptedDeltaSource {
+        fn subscribe(&self) -> BoxStream<'static, DeltaInput> {
+            let inputs = self.0.lock().unwrap().take().unwrap_or_default();
+            Box::pin(futures::stream::iter(inputs))
+        }
+    }
+
+    fn delta_input(id: &str, seq: u64, kind: SessionDeltaKind) -> DeltaInput {
+        DeltaInput {
+            session_id: id.to_string(),
+            seq,
+            kind,
+            payload: serde_json::json!({ "session_id": id, "seq": seq }),
+        }
+    }
+
+    #[tokio::test]
+    async fn injected_delta_source_yields_session_deltas_of_each_kind() {
+        let (_temp, source) = seeded_source().await;
+
+        let scripted = ScriptedDeltaSource::new(vec![
+            delta_input("s1", 1, SessionDeltaKind::Message),
+            delta_input("s1", 2, SessionDeltaKind::ToolUpdate),
+            delta_input("s1", 3, SessionDeltaKind::Finish),
+            delta_input("s2", 1, SessionDeltaKind::Error),
+        ]);
+
+        let mut stream = source.local_deltas_with(Some(Arc::new(scripted)));
+
+        // Collect the SessionDeltas out of the merged stream (the poller half may also
+        // interleave NodeStateChanged/SessionUpserted; we assert the delta half is exact).
+        let mut deltas = Vec::new();
+        while deltas.len() < 4 {
+            match stream.next().await.expect("stream ended before all deltas") {
+                LinkEvent::SessionDelta {
+                    session_id,
+                    seq,
+                    kind,
+                    payload,
+                } => deltas.push((session_id, seq, kind, payload)),
+                LinkEvent::NodeStateChanged(_) | LinkEvent::SessionUpserted(_) => {}
+            }
+        }
+
+        assert_eq!(deltas[0].0, "s1");
+        assert_eq!(deltas[0].1, 1);
+        assert_eq!(deltas[0].2, SessionDeltaKind::Message);
+        assert_eq!(deltas[0].3["seq"], 1);
+        assert_eq!(deltas[1].2, SessionDeltaKind::ToolUpdate);
+        assert_eq!(deltas[2].2, SessionDeltaKind::Finish);
+        assert_eq!(deltas[3].0, "s2");
+        assert_eq!(deltas[3].2, SessionDeltaKind::Error);
+    }
+
+    #[tokio::test]
+    async fn without_injection_only_node_and_session_events_flow() {
+        let (_temp, source) = seeded_source().await;
+        source
+            .session_manager
+            .create_session(
+                PathBuf::from("/tmp/project"),
+                "First".to_string(),
+                SessionType::User,
+                GooseMode::default(),
+            )
+            .await
+            .unwrap();
+
+        let mut stream = source.local_deltas_with(None);
+
+        // The very first tick emits NodeStateChanged then a SessionUpserted; no
+        // SessionDelta can appear without an injected source.
+        for _ in 0..2 {
+            match stream.next().await.expect("poller produced an event") {
+                LinkEvent::NodeStateChanged(_) | LinkEvent::SessionUpserted(_) => {}
+                LinkEvent::SessionDelta { .. } => {
+                    panic!("no SessionDelta may flow without an injected DeltaSource")
+                }
+            }
+        }
     }
 }

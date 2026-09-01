@@ -9,6 +9,7 @@ pub mod configuration;
 pub mod error;
 pub mod openapi;
 pub mod routes;
+pub mod session_delta_tap;
 pub mod session_event_bus;
 pub mod state;
 #[cfg(any(feature = "rustls-tls", feature = "native-tls"))]

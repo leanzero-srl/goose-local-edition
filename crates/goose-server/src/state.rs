@@ -9,11 +9,18 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
 
+use crate::session_delta_tap::SessionDeltaMsg;
 use crate::session_event_bus::SessionEventBus;
 use goose::agents::ExtensionLoadResult;
 
 type ExtensionLoadingTasks =
     Arc<Mutex<HashMap<String, Arc<Mutex<Option<JoinHandle<Vec<ExtensionLoadResult>>>>>>>>;
+
+/// Buffer for the process-wide per-message delta tap. A lagged reader (the LeanZero Link
+/// control service's local delta pump, the only consumer) drops the oldest deltas rather
+/// than blocking the reply loop — the mesh mirror is best-effort and peers reconcile
+/// session summaries via polling.
+const SESSION_DELTA_TAP_CAPACITY: usize = 1024;
 
 #[derive(Clone)]
 pub struct AppState {
@@ -22,6 +29,11 @@ pub struct AppState {
     recipe_session_tracker: Arc<Mutex<HashSet<String>>>,
     pub extension_loading_tasks: ExtensionLoadingTasks,
     session_buses: Arc<Mutex<HashMap<String, Arc<SessionEventBus>>>>,
+    /// Fan-out of every session's reply-loop `MessageEvent`s, tapped ADDITIVELY beside
+    /// the per-session bus for cross-device mirroring. Absent-receiver sends are ignored
+    /// (`broadcast::Sender::send` returns `Err` with no subscribers), so the reply loop
+    /// never blocks or errors on it.
+    session_delta_tap: tokio::sync::broadcast::Sender<SessionDeltaMsg>,
 }
 
 impl AppState {
@@ -29,13 +41,22 @@ impl AppState {
         register_builtin_extensions(goose_mcp::BUILTIN_EXTENSIONS.clone());
 
         let agent_manager = AgentManager::instance().await?;
+        let (session_delta_tap, _) = tokio::sync::broadcast::channel(SESSION_DELTA_TAP_CAPACITY);
         Ok(Arc::new(Self {
             agent_manager,
             recipe_file_hash_map: Arc::new(Mutex::new(HashMap::new())),
             recipe_session_tracker: Arc::new(Mutex::new(HashSet::new())),
             extension_loading_tasks: Arc::new(Mutex::new(HashMap::new())),
             session_buses: Arc::new(Mutex::new(HashMap::new())),
+            session_delta_tap,
         }))
+    }
+
+    /// A sender handle for the process-wide per-message delta tap. The reply loop sends
+    /// each published `MessageEvent` here (in addition to the per-session bus); the
+    /// LeanZero Link boot path wraps a receiver as a `DeltaSource`.
+    pub fn session_delta_tap(&self) -> tokio::sync::broadcast::Sender<SessionDeltaMsg> {
+        self.session_delta_tap.clone()
     }
 
     pub async fn set_extension_loading_task(
