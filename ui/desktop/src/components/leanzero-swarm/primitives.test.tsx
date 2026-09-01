@@ -1,30 +1,14 @@
 import { render } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
-import { DownloadProgressRow, SolidBanner } from './primitives';
+import { DownloadProgressRow } from './primitives';
 import { allClasses, assertStudioClean } from '../lz/assertStudioClean';
 import { missingUtilities } from '../lz/compileStudioCss';
 
-// The adapter over the Studio primitives: the banner MlxEngineView/ModelCardModal still consume
-// and the download row. These pin that every state is a TONE — the module exports no colour
-// string, so nothing it renders can reach the DOM as an inline style.
-describe('leanzero primitives — banner and download row', () => {
-  it('a banner carries its tone as a dot + toned label; err is an alert, the rest a status', () => {
-    const { getByRole, getByText } = render(
-      <>
-        <SolidBanner tone="err" label="Mount blocked" text="not enough memory" />
-        <SolidBanner tone="warn" label="Restart required" text="remount to apply" />
-        <SolidBanner tone="accent" label="Remote" text="managing on studio" />
-      </>
-    );
-    const alert = getByRole('alert');
-    expect(alert.getAttribute('data-tone')).toBe('err');
-    expect(alert).toHaveTextContent('not enough memory');
-    expect(alert.style.backgroundColor).toBe('');
-    expect(getByText('Restart required').className).toContain('text-lz-warn');
-    expect(getByText('Remote').className).toContain('text-lz-accent');
-    expect(getByText('Remote').closest('[role]')?.getAttribute('role')).toBe('status');
-  });
-
+// The adapter over the Studio primitives: the download row MlxEngineView/ModelCardModal share
+// (banners are studio.tsx's ToneBanner, pinned in studio.test.tsx). These pin that every state
+// is a TONE — the module exports no colour string, so nothing it renders can reach the DOM as an
+// inline style.
+describe('leanzero primitives — download row', () => {
   it('the download row states are status tones and the bar is the accent while downloading', () => {
     const noop = () => {};
     const { getByText, getByRole, getByLabelText } = render(
@@ -54,10 +38,6 @@ describe('leanzero primitives — banner and download row', () => {
     const noop = () => {};
     const { container } = render(
       <div>
-        {(['ok', 'warn', 'err', 'stopped', 'accent', 'secondary'] as const).map((tone) => (
-          <SolidBanner key={tone} tone={tone} label="l" text="t" />
-        ))}
-        <SolidBanner tone="warn" label="l" text="t" action={<button type="button">x</button>} />
         {(['queued', 'downloading', 'paused', 'done', 'failed'] as const).map((state) => (
           <DownloadProgressRow
             key={state}

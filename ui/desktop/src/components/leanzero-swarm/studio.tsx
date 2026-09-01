@@ -72,6 +72,7 @@ export function ToneBanner({ tone, label, text, action, live, testId, className 
     <div
       role={tone === 'err' ? 'alert' : 'status'}
       data-testid={testId}
+      data-tone={tone}
       className={cx('flex items-center gap-3 px-4 py-3', SURFACE.card, className)}
     >
       <StatusDot tone={tone} label={label} size={10} live={live} />

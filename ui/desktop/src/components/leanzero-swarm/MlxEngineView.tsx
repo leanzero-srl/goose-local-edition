@@ -76,9 +76,9 @@ import {
   type MlxLocalModel,
   type MlxModelProfile,
 } from '../../acp/mlx-engine';
-import { DownloadProgressRow, SolidBanner, formatCount, formatDate, formatGb } from './primitives';
+import { DownloadProgressRow, formatCount, formatDate, formatGb } from './primitives';
 import { FilterCombobox } from './FilterCombobox';
-import { INPUT, StudioSelect, type StudioSelectOption } from './studio';
+import { INPUT, StudioSelect, ToneBanner, type StudioSelectOption } from './studio';
 import { ModelCardModal } from './ModelCardModal';
 import { useFeatures } from '../../contexts/FeaturesContext';
 import {
@@ -257,7 +257,7 @@ function RestartRequiredBanner({
 }) {
   if (!status?.restartRequired) return null;
   return (
-    <SolidBanner
+    <ToneBanner
       tone="warn"
       label="Restart required"
       text="Settings changed — remount to apply."
@@ -673,23 +673,23 @@ function EngineSection(props: EngineSectionProps) {
 
   return (
     <div className="flex flex-col gap-4 pb-8">
-      {statusError && <SolidBanner tone="err" label="Engine unreachable" text={statusError} />}
+      {statusError && <ToneBanner tone="err" label="Engine unreachable" text={statusError} />}
       {status?.gateMessage && status.gateVerdict === 'block' && (
-        <SolidBanner tone="err" label="Mount blocked" text={status.gateMessage} />
+        <ToneBanner tone="err" label="Mount blocked" text={status.gateMessage} />
       )}
       {status?.gateMessage && status.gateVerdict === 'warn' && (
-        <SolidBanner tone="warn" label="Memory pressure" text={status.gateMessage} />
+        <ToneBanner tone="warn" label="Memory pressure" text={status.gateMessage} />
       )}
       {strayPort != null && (
-        <SolidBanner
+        <ToneBanner
           tone="warn"
           label="Unsupervised engine"
           text={`unsupervised engine on port ${strayPort} — Unmount reclaims it`}
         />
       )}
-      {mountError && <SolidBanner tone="err" label="Mount failed" text={mountError} />}
+      {mountError && <ToneBanner tone="err" label="Mount failed" text={mountError} />}
       {status?.state === 'failed' && status.lastError && status.lastError !== mountError && (
-        <SolidBanner tone="err" label="Engine failed" text={status.lastError} />
+        <ToneBanner tone="err" label="Engine failed" text={status.lastError} />
       )}
       <RestartRequiredBanner
         status={status}
@@ -877,7 +877,7 @@ function SamplingSection(props: SamplingSectionProps) {
               onChange={onSelectModel}
             />
           </div>
-          {saveError && <SolidBanner tone="err" label="Save failed" text={saveError} />}
+          {saveError && <ToneBanner tone="err" label="Save failed" text={saveError} />}
           {!settings ? (
             <p className={TYPE.meta}>Loading settings…</p>
           ) : !selectedModelId || !drafts ? (
@@ -952,7 +952,7 @@ function ModelsDirDialog({
           autoComplete="off"
           spellCheck={false}
         />
-        {error && <SolidBanner tone="err" label="Save failed" text={error} />}
+        {error && <ToneBanner tone="err" label="Save failed" text={error} />}
         <DialogFooter>
           <Button variant="secondary" onClick={onClose} disabled={saving}>
             Cancel
@@ -1397,7 +1397,7 @@ function HfBrowser({
       </form>
       {error && (
         <div className={cx('border-b px-4 py-3', SURFACE.hairline)}>
-          <SolidBanner tone="err" label="Browse failed" text={error} />
+          <ToneBanner tone="err" label="Browse failed" text={error} />
         </div>
       )}
       {hits != null && (
@@ -1733,7 +1733,7 @@ function ModelsSection({
           >
             {deleteError && (
               <div className={cx('border-b px-4 py-3', SURFACE.hairline)}>
-                <SolidBanner tone="err" label="Delete failed" text={deleteError} />
+                <ToneBanner tone="err" label="Delete failed" text={deleteError} />
               </div>
             )}
             <DataTable
@@ -2558,7 +2558,7 @@ const MlxEngineView: React.FC = () => {
         </div>
       )}
       {selectedPeer && (
-        <SolidBanner
+        <ToneBanner
           tone="accent"
           label="Remote"
           text={`Managing models on ${selectedPeer.hostname} (remote)`}
