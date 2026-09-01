@@ -1,0 +1,42 @@
+{
+  "Version": "1.98.5-t295179bf2",
+  "TUN": false,
+  "BackendState": "NeedsLogin",
+  "HaveNodeKey": false,
+  "AuthURL": "",
+  "TailscaleIPs": null,
+  "Self": {
+    "ID": "",
+    "PublicKey": "nodekey:0000000000000000000000000000000000000000000000000000000000000000",
+    "HostName": "lz-node-self",
+    "DNSName": "",
+    "OS": "macOS",
+    "UserID": 0,
+    "TailscaleIPs": null,
+    "Addrs": [],
+    "CurAddr": "",
+    "Relay": "",
+    "RxBytes": 0,
+    "TxBytes": 0,
+    "Created": "0001-01-01T00:00:00Z",
+    "LastWrite": "0001-01-01T00:00:00Z",
+    "LastSeen": "0001-01-01T00:00:00Z",
+    "LastHandshake": "0001-01-01T00:00:00Z",
+    "Online": false,
+    "ExitNode": false,
+    "ExitNodeOption": false,
+    "Active": false,
+    "InNetworkMap": false,
+    "InMagicSock": false,
+    "InEngine": false
+  },
+  "Health": [
+    "not logged in, last login error=register request: no auth key provided"
+  ],
+  "MagicDNSSuffix": "",
+  "CurrentTailnet": null,
+  "CertDomains": null,
+  "Peer": null,
+  "User": null,
+  "ClientVersion": null
+}
