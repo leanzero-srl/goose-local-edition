@@ -44,9 +44,12 @@ mod ladder;
 mod levers;
 use ladder::{
     calls_since_nudge, delivery_promise_due, drift_streak_step, durable_clamped_produced,
-    escalation_moved, nudge_arm, nudge_delivery, produced_since_look, restream_seed, steer_note,
-    stream_woke, tail_shingle_set, tails_recur, write_progress, wrong_channel_stall, NudgeDelivery,
+    escalation_moved, forming_stalled, judge_summon_trigger, nudge_arm, nudge_delivery,
+    produced_since_look, restream_seed, steer_note, stream_woke, tail_shingle_set, tails_recur,
+    write_progress, wrong_channel_stall, NudgeDelivery, SummonFacts,
 };
+mod ask_floor;
+use ask_floor::{ask_floor_weak_bump, model_active_params_b};
 mod decisions;
 use decisions::PlanDecision;
 mod supervision;
@@ -10182,24 +10185,6 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
     }
 
     #[test]
-    fn model_active_params_and_weak_bump() {
-        // MoE active marker wins over the dense total (a3b = 3B active, weaker than the 35B total).
-        assert_eq!(model_active_params_b("qwen/qwen3.6-35b-a3b"), Some(3));
-        // dense size when there is no active marker.
-        assert_eq!(model_active_params_b("qwen/qwen3.6-27b"), Some(27));
-        assert_eq!(model_active_params_b("llama-3.1-8b-instruct"), Some(8));
-        // Mixtral-style NxMb -> the per-expert size M as the active proxy.
-        assert_eq!(model_active_params_b("mixtral-8x7b-instruct"), Some(7));
-        assert_eq!(model_active_params_b("some-unsized-model"), None);
-        // Weaker (fewer active params) -> bigger bump (ask sooner); strong -> no bump.
-        assert_eq!(ask_floor_weak_bump(Some(27)), 5);
-        assert_eq!(ask_floor_weak_bump(Some(3)), 15); // a3b MoE
-        assert_eq!(ask_floor_weak_bump(Some(70)), 0); // strong
-        assert_eq!(ask_floor_weak_bump(None), 5);
-        assert!(ask_floor_weak_bump(Some(3)) > ask_floor_weak_bump(Some(27)));
-    }
-
-    #[test]
     fn detect_language_defaults_python_and_honors_cues() {
         // No cue -> Python (the validated baseline default).
         assert_eq!(
@@ -12624,6 +12609,11 @@ pub struct GooseAgentDispatcher {
     /// or a cancelled probe future decrements too. Read by `aux_model_for_call`: a routing
     /// PREFERENCE, never a cap — nothing here refuses or bounds model work.
     inflight_by_model: Mutex<HashMap<String, u32>>,
+    /// VA-019: device id per model id for the pool this run resolved, so a judge look names the
+    /// NODE it ran on and not only the model. Set once from run_swarm (`set_fleet_nodes`); a model
+    /// outside the map (a cloud model, an unmapped id) reads `null`, never the model id
+    /// impersonating a node.
+    node_by_model: std::sync::OnceLock<HashMap<String, String>>,
     /// The run's event stream. The dispatcher is the ONLY place that knows what a worker prompt actually
     /// contained, and the scheduler's `task_dispatched` fires before the prompt is built — so without this
     /// there is no way to record that a user's note was delivered. Measured: a note was written, the engine
@@ -12776,7 +12766,24 @@ impl GooseAgentDispatcher {
             repeat_break,
             aux_models,
             inflight_by_model: Mutex::new(HashMap::new()),
+            node_by_model: std::sync::OnceLock::new(),
         })
+    }
+
+    /// VA-019: the resolved pool's device ids by model id, for `judge_look.node`. First call wins.
+    pub(crate) fn set_fleet_nodes(&self, devices: &[DeviceCfg]) {
+        let _ = self.node_by_model.set(
+            devices
+                .iter()
+                .map(|d| (d.model_id.clone(), d.id.clone()))
+                .collect(),
+        );
+    }
+
+    fn node_for_model(&self, model_id: &str) -> Option<String> {
+        self.node_by_model
+            .get()
+            .and_then(|m| m.get(model_id).cloned())
     }
 
     /// Build the isolated SHADOW workspace for a speculative twin: a cp -r of the real tree (heavy dirs
@@ -13620,6 +13627,10 @@ impl GooseAgentDispatcher {
         let mut texts_at_stream_start: usize = 0;
         let mut degenerate_reported = false;
         let mut omni_calls_at_last_look: usize = 0;
+        // VA-013 (b): the forming-channel stall sampler — re-read on every OMNI_JUDGE_GROWTH_CHARS of
+        // new reasoning (never a clock); see `ladder::forming_stalled` for the rule.
+        let mut forming_sample_bytes: Option<u64> = None;
+        let mut forming_sample_at_thinking: usize = 0;
         // Consecutive LOOPING verdicts on the SAME content. One is not enough, and two on DIFFERENT
         // content is a slow-starting call misread twice, not a loop — see the abort site.
         let mut omni_looping_streak: u32 = 0;
@@ -13969,15 +13980,36 @@ impl GooseAgentDispatcher {
             // dropped it. Harmless to correctness — the abandon path is exactly what should happen once —
             // but it is 213 model calls of pure waste on one lane, and it scales with the deferred
             // backlog rather than with anything real.
-            if omni_judge_on
-                && !stream_ended_during_probe
-                && (repeat_evidence.is_some()
-                    || degenerate_answer
-                    || ((thinking_total >= OMNI_JUDGE_MIN_CHARS || acted_enough_to_judge)
-                        && (recur.recurring()
-                            || grew_without_acting
-                            || tokio::time::Instant::now() >= omni_next_look)))
-            {
+            // VA-013: a BUILD or REPAIR lane (no structured reply) is looked at on EVIDENCE only —
+            // repeat, degenerate answer, the recurrence meter, or a forming-channel stall; the
+            // cadence and growth-without-acting triggers stay for output-tool lanes. r6c measured
+            // 132 build-lane looks (99 cadence, 33 growth, ~925 look-min) for two compliances and
+            // zero kills, and zero recurrence looks anywhere in the run; the four build nudges it
+            // produced all came from growth looks, and the lane the loudest one hit (web-viz,
+            // "write the file right now") took no call for 46 minutes and ran 210 more. The rule
+            // is `ladder::judge_summon_trigger`; the name it returns rides the dispatched event.
+            let forming_stall = omni_judge_on
+                && thinking_chars >= forming_sample_at_thinking + OMNI_JUDGE_GROWTH_CHARS
+                && {
+                    let now = activity_file
+                        .as_ref()
+                        .and_then(|p| forming_args_bytes(&p.with_extension("forming.json")));
+                    let stalled = forming_stalled(forming_sample_bytes, now);
+                    forming_sample_bytes = now;
+                    forming_sample_at_thinking = thinking_chars;
+                    stalled
+                };
+            let summon_trigger = judge_summon_trigger(SummonFacts {
+                structured_reply: wants_structured_reply,
+                repeat: repeat_evidence.is_some(),
+                degenerate: degenerate_answer,
+                ready: thinking_total >= OMNI_JUDGE_MIN_CHARS || acted_enough_to_judge,
+                recurring: recur.recurring(),
+                forming_stall,
+                grew_without_acting,
+                cadence_due: tokio::time::Instant::now() >= omni_next_look,
+            });
+            if omni_judge_on && !stream_ended_during_probe && summon_trigger.is_some() {
                 let produced_since_last_look =
                     thinking_chars.saturating_sub(omni_thinking_at_last_look);
                 // ACTIONS ARE PRODUCTION TOO, and counting only thinking made the judge blind to that.
@@ -14451,6 +14483,13 @@ impl GooseAgentDispatcher {
                 self.events.write_value(serde_json::json!({
                     "event": "judge_look_dispatched",
                     "task_id": activity_key,
+                    // VA-013/VA-019: WHICH measured fact summoned this look, whether the lane owes a
+                    // structured reply (the trigger set differs), and the NODE the look runs on —
+                    // the resolved device id of `model`, null when the model is not in this run's
+                    // pool map (never the model id impersonating a node).
+                    "trigger": summon_trigger,
+                    "structured_reply": wants_structured_reply,
+                    "node": self.node_for_model(&pm),
                     // The lane this look STREAMS ON, so events join lanes (the task_id above is
                     // the lane it looks AT).
                     "activity_key": judge_lane,
@@ -14824,6 +14863,16 @@ impl GooseAgentDispatcher {
                         // WHO SERVED THE LOOK — same attribution as judge_look_dispatched.
                         "model": pm.as_str(),
                         "provider": self.provider_name(&pm),
+                        // VA-019: the node (resolved device id; null when unmapped), how long the
+                        // look held it from dispatch to this verdict, and the forming channel —
+                        // argument bytes of any open tool-call frame at the look and right now
+                        // (null = no frame open) — so "write said, calls flat" is readable per look.
+                        "node": self.node_for_model(&pm),
+                        "secs": omni_last_look_at.elapsed().as_secs(),
+                        "forming_bytes": forming_bytes_at_look,
+                        "forming_bytes_now": activity_file
+                            .as_ref()
+                            .and_then(|p| forming_args_bytes(&p.with_extension("forming.json"))),
                         // The judge's own lane (it looks AT task_id, streams ON this).
                         "activity_key": judge_lane,
                         // POST-RE-STREAM SILENCE, named so it is greppable. True when the call has
@@ -29982,62 +30031,6 @@ impl TaskDispatcher for GooseAgentDispatcher {
     }
 }
 
-/// Parse the ACTIVE parameter count (in billions) from a model id, for GOOSE_SWARM_ASK floor scaling. A MoE
-/// id like `qwen3.6-35b-a3b` exposes ~3B ACTIVE (weaker than a 27B dense despite 35 total), so the `a<N>b`
-/// active marker WINS over the leading dense `<N>b` size. Returns None if unparseable. HEURISTIC — fuzzy.
-fn model_active_params_b(model_id: &str) -> Option<u32> {
-    let id = model_id.to_lowercase();
-    let tokens: Vec<&str> = id.split(|c: char| !c.is_ascii_alphanumeric()).collect();
-    // 1) MoE active marker "a<N>b" takes precedence (the real compute size).
-    for t in &tokens {
-        if let Some(rest) = t.strip_prefix('a') {
-            if let Some(num) = rest.strip_suffix('b') {
-                if let Ok(n) = num.parse::<u32>() {
-                    if (1..=2000).contains(&n) {
-                        return Some(n);
-                    }
-                }
-            }
-        }
-    }
-    // 2) Mixtral-style "NxMb" dense-expert MoE: the per-expert size M is a rough ACTIVE proxy (only a couple
-    // of experts fire per token), so read M, not the N×M total.
-    for t in &tokens {
-        if let Some((_, rest)) = t.split_once('x') {
-            if let Some(num) = rest.strip_suffix('b') {
-                if let Ok(n) = num.parse::<u32>() {
-                    if (1..=2000).contains(&n) {
-                        return Some(n);
-                    }
-                }
-            }
-        }
-    }
-    // 3) else the dense size "<N>b".
-    for t in &tokens {
-        if let Some(num) = t.strip_suffix('b') {
-            if let Ok(n) = num.parse::<u32>() {
-                if (1..=2000).contains(&n) {
-                    return Some(n);
-                }
-            }
-        }
-    }
-    None
-}
-
-/// How much to RAISE the ask floor for a planner of `active_b` billion active params — weaker -> ask sooner.
-/// HEURISTIC; small + bounded. None (unknown) gets a mild bump.
-fn ask_floor_weak_bump(active_b: Option<u32>) -> u8 {
-    match active_b {
-        Some(n) if n >= 30 => 0, // strong dense (e.g. 30B+)
-        Some(n) if n >= 13 => 5, // mid (e.g. 13-27B)
-        Some(n) if n >= 7 => 10, // small dense (7-12B)
-        Some(_) => 15,           // <7B active (e.g. an a3b MoE) -> ask much sooner
-        None => 5,               // unknown id -> mild bump
-    }
-}
-
 fn pillars_schema() -> serde_json::Value {
     serde_json::json!({
         "type": "object",
@@ -31209,6 +31202,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
         repeat_break: repeat_break_enabled(cfg.repeat_break),
     };
     let dispatcher = build_swarm_dispatcher(dispatcher_recipe.clone(), sink.clone()).await?;
+    dispatcher.set_fleet_nodes(&devices);
 
     // #136 — FREEZE THE OPERATOR'S SPEC, right here, before a single model call can touch it. Research
     // findings are appended to opts.prompt at :19660 and clarify Q&A at :19799, and a retarget round then

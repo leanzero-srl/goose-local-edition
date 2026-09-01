@@ -332,9 +332,13 @@ fn the_banned_integrate_template_only_shrinks() {
 /// (`persona_loaded`), the structural snapshot and the post-verdict write half (`reflect_on_success`,
 /// `persona_learned`), the `reflect` lane and the levers echo; commands/swarm/persona.rs (1,224 lines)
 /// deleted with it. `lessons: 0` on both runs that wrote a skill; `persona` survives as a retired field.
+/// Tightened to 37,649 (VA-013/VA-019 D4): the ASK-floor heuristics (`model_active_params_b`,
+/// `ask_floor_weak_bump`, their test) moved to commands/swarm/ask_floor.rs, paying for the judge's
+/// evidence-only summon on build lanes (`ladder::judge_summon_trigger`, the forming-stall sampler) and
+/// the `node` / `secs` / `forming_bytes` / `trigger` fields on the look events.
 #[test]
 fn swarm_rs_line_count_only_decreases() {
-    const SWARM_RS_LINE_BASELINE: usize = 37_655;
+    const SWARM_RS_LINE_BASELINE: usize = 37_649;
     let text = read("crates/goose-cli/src/commands/swarm.rs");
     let n = text.lines().count();
     assert!(

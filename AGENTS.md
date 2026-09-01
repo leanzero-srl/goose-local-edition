@@ -139,7 +139,10 @@ broken live HERE, and the rules files carry the detail for whoever does hit them
    burned 3h40m without starting a build.
 4. **The judge NUDGES; it does not kill.** A steer interrupts the stream at a chunk boundary and keeps the
    partial — but MEASURED on r1 a reasoning-only looping call ignored six of them; the RESTART verdict is
-   what must reach such a call (re-stream), and that wiring is still open.
+   what must reach such a call (re-stream), and that wiring is still open. Since VA-013 (2026-09-01) a
+   BUILD/REPAIR lane is looked at on EVIDENCE only (`ladder::judge_summon_trigger`: repeat, degenerate
+   answer, the recurrence meter, a forming-channel stall) — r6c spent 925 look-minutes of cadence and
+   growth looks on build lanes for two compliances and zero kills; output-tool lanes keep every trigger.
 5. **Every app-under-test spawn goes through `spawn_grouped` / `kill_app_tree` (process groups).** A bare
    `tokio::process::Command` with piped stdio and `kill()` reaches ONE pid; the wrapper's `Popen`
    grandchildren keep the pipe write-ends and a reader awaiting EOF parks forever — r0 hung 20 minutes
