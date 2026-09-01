@@ -304,9 +304,13 @@ fn the_banned_integrate_template_only_shrinks() {
 /// Tightened to 39,583: the dead `max_research_questions` lever retired (its default fn, the
 /// CLI printer/menu/editor arms and the live levers echo deleted; the field survives as
 /// `Option` for the config round-trip and is echoed under `retired_levers`).
+/// Tightened to 39,482 (VA-023 D0): `decomposition_of` and its two standalone tests moved to
+/// commands/swarm/plan_shape.rs, paying for the skeleton verdict rows flattened onto the sink in
+/// `finalize_plan_before_dag` (first-class `skeleton_dep_kept`/`skeleton_dep_relaxed` events) and
+/// the audit test's assertion flip (`web` owns `web/app.js` only and no longer waits on the skeleton).
 #[test]
 fn swarm_rs_line_count_only_decreases() {
-    const SWARM_RS_LINE_BASELINE: usize = 39_583;
+    const SWARM_RS_LINE_BASELINE: usize = 39_482;
     let text = read("crates/goose-cli/src/commands/swarm.rs");
     let n = text.lines().count();
     assert!(
