@@ -1,4 +1,5 @@
 import type { Deps } from "../lib/deps";
+import { mintHeadscaleJoinKey } from "../lib/headscale";
 import { jsonResponse } from "../lib/http";
 import { verifyJwt } from "../lib/jwt";
 import { mintJoinKey } from "../lib/tailscale";
@@ -19,13 +20,26 @@ export async function handleJoinKey(request: Request, deps: Deps): Promise<Respo
   if (!verified.ok) {
     return jsonResponse(401, { error: "invalid token", reason: verified.reason });
   }
-  if (!deps.config.tsApiToken || !deps.config.tsTailnet) {
+  if (deps.config.meshProvider === "none") {
     return jsonResponse(501, { error: "mesh keys not configured on this deployment" });
   }
   if (deps.config.tsKeyExpiryInvalid) {
     deps.log("config_error", { error: "TS_KEY_EXPIRY_SECONDS is not a positive integer" });
     return jsonResponse(500, { error: "TS_KEY_EXPIRY_SECONDS is not a positive integer" });
   }
+
+  if (deps.config.meshProvider === "headscale") {
+    const minted = await mintHeadscaleJoinKey(deps, verified.claims.sub);
+    if (!minted.ok) {
+      return jsonResponse(502, { error: "headscale key mint failed", status: minted.status });
+    }
+    return jsonResponse(200, {
+      authKey: minted.authKey,
+      loginServer: minted.loginServer,
+      expirySeconds: minted.expirySeconds,
+    });
+  }
+
   const minted = await mintJoinKey(deps, verified.claims.sub);
   if (!minted.ok) {
     return jsonResponse(502, { error: "tailscale key mint failed", status: minted.status });

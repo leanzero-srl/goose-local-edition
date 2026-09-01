@@ -456,6 +456,16 @@ impl LinkManager {
 
         let mut mesh_config = self.config.mesh.clone();
         mesh_config.hostname = node_hostname.clone();
+        // A Headscale key carries the control server it belongs to; join against that,
+        // not the configured default. Absent/blank → keep the template's login server.
+        if let Some(login_server) = key
+            .login_server
+            .clone()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+        {
+            mesh_config.login_server = login_server;
+        }
         let mesh = self.mesh_factory.start(mesh_config).await?;
 
         if let Err(err) = mesh.join(&key.auth_key, &node_hostname).await {

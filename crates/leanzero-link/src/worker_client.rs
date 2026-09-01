@@ -50,6 +50,12 @@ pub struct VerifyResult {
 pub struct JoinKeyResult {
     #[serde(rename = "authKey")]
     pub auth_key: String,
+    /// The control-plane URL this key must be joined against. Present for the Headscale
+    /// (self-hosted, per-account-isolated) path — a Headscale preauth key only works
+    /// against its own server, so the two travel together. Absent for the Tailscale
+    /// hosted path, where the mesh keeps its configured default login server.
+    #[serde(rename = "loginServer", default)]
+    pub login_server: Option<String>,
     #[serde(rename = "expirySeconds")]
     pub expiry_seconds: u64,
 }
