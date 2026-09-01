@@ -847,3 +847,8 @@ research_request_block's armed-no-claimed-sections arm wording.
   one-line traces with honest NET labels, a compiler-proven lever audit table, and the stack-key
   root cause quoted from the spec's own physics prose. Paid every line with extractions (persona.rs,
   web_vocab_note move). Charter gap: none.
+- 2026-09-01 07:00 general-purpose (r6d build+install): EXCELLENT with one lesson. Identity proven
+  three ways, explicit stamping that pre-empted a `-dirty` sha the untracked .codex/ dir would have
+  caused, atomic install without touching the running app, and two build-chain facts recorded in
+  the skills. LESSON: it sat ~35 min in step 0 with no compile running until pinged — brief build
+  agents to START the long pole first and do the small edits while it compiles.
