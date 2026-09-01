@@ -46,3 +46,10 @@ Other surgeons edit `crates/` in the SAME working tree while you edit `ui/deskto
 2026-09-01 briefly swept another surgeon's uncommitted files (it popped clean; it might not have). To
 compare against HEAD use `git show HEAD:<path> | prettier --stdin-filepath <path>`; to commit use
 `git commit --only <your paths>`; verify `git diff --cached --stat` names only your files.
+
+## The gate that hides doc-test failures (added 2026-09-01)
+
+`cargo test -p <crate>` STOPS before the doc-tests when any unit-test binary fails, so "N passed / 1 failed
+(not mine)" can hide a doc-test regression you introduced (batch 2b shipped a nested-fence doc comment this
+way). Final gate: `cargo test -p <crate> --no-fail-fast 2>&1 | grep -E "test result|Doc-tests"` and read
+EVERY result line, doc-tests included; a filter goes after `--` (`cargo test -p goose-cli -- research`).

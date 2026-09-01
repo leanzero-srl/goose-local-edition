@@ -35,3 +35,10 @@ Authoritative sources for this charter are named in .claude/agents/ROSTER.md's l
 this charter is re-checked. The orchestrator grades every delegation (ROSTER.md's four questions)
 and amends this file in the same turn a gap shows. Changelog:
 - 2026-08-30: minted (AGENT-SPLIT-1, dab1744f7).
+
+## The gate that hides doc-test failures (added 2026-09-01)
+
+`cargo test -p <crate>` STOPS before the doc-tests when any unit-test binary fails, so "N passed / 1 failed
+(not mine)" can hide a doc-test regression you introduced (batch 2b shipped a nested-fence doc comment this
+way). Final gate: `cargo test -p <crate> --no-fail-fast 2>&1 | grep -E "test result|Doc-tests"` and read
+EVERY result line, doc-tests included; a filter goes after `--` (`cargo test -p goose-cli -- research`).
