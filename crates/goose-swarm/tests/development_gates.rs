@@ -190,9 +190,11 @@ fn the_banned_integrate_template_only_shrinks() {
 /// for the planner-keep guard and the loud file-level config-load failure in load_config.
 /// Tightened to 44,997 (S-H1): the planner servability fallback extracted to
 /// swarm_engine::planner_fallback, keyed on the engine of the pool device carrying the planner.
+/// Tightened to 44,953 (S-H2): `live_fleet_slots` moved to swarm_engine.rs and made per-engine
+/// (a partition whose probe cannot answer keeps its snapshot slots).
 #[test]
 fn swarm_rs_line_count_only_decreases() {
-    const SWARM_RS_LINE_BASELINE: usize = 44_997;
+    const SWARM_RS_LINE_BASELINE: usize = 44_953;
     let text = read("crates/goose-cli/src/commands/swarm.rs");
     let n = text.lines().count();
     assert!(
