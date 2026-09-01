@@ -92,10 +92,13 @@ use transcripts::{
 mod desk;
 use desk::{spawn_shadow_desk, RecurrenceMeter, RECURRENCE_MIN_SPAN};
 mod attribution;
-use attribution::{attribute_findings, console_error_source, resolve_shard_ownership};
+use attribution::{
+    attribute_findings, console_error_source, criticals_left_unassigned, resolve_shard_ownership,
+};
 mod findings;
 use findings::{
-    dedupe_findings_exact, elide_middle, engine_critical, FileGroup, FindingProvenance,
+    dedupe_findings_exact, elide_middle, engine_critical, parse_finding_verdicts,
+    parse_numbered_findings, partition_by_engine_critical, FileGroup, FindingProvenance,
     FindingSource,
 };
 mod pitfalls;
@@ -3872,6 +3875,27 @@ mod tests {
         let desc = smoke_fix_description(&findings, TargetLang::Python, "", "");
         assert_eq!(parse_numbered_findings(&desc), findings);
         assert!(parse_numbered_findings("no numbers here").is_empty());
+    }
+
+    /// r6c REGRESSION: a `smoke_pytest` finding's own text is multi-line — its first physical
+    /// line never matches the NEXT finding's "N. " prefix, so the old parser broke there and
+    /// silently dropped everything after it (a CRITICAL sorted second behind a multi-line
+    /// finding never reached `findings_assigned[]`, though the live prompt still carried it).
+    #[test]
+    fn parse_numbered_findings_survives_a_multiline_finding_ahead_of_a_later_one() {
+        let findings = vec![
+            "`pytest -q` failed — the generated tests exercise runtime paths that \
+             `--help`/`--collect-only` never invoke:\ntests/test_meridian.py:89: in test_x\n\
+             E   AssertionError\n1 failed, 3 passed in 2.10s"
+                .to_string(),
+            "the served page renders NO data rows in a real browser (in `web/viz.js`)".to_string(),
+        ];
+        let desc = smoke_fix_description(&findings, TargetLang::Python, "", "");
+        assert_eq!(
+            parse_numbered_findings(&desc),
+            findings,
+            "a multi-line finding must not truncate the findings numbered after it"
+        );
     }
 
     /// II-2: command classes are the four questions a later dispatch asks. Import beats test for
@@ -12600,7 +12624,7 @@ const USER_DECISIONS_HEADER: &str = "\n\n## USER DECISIONS — BINDING\n\
      would otherwise pick:\n";
 
 /// The last `max` characters of `s` (char-wise, never a byte slice — these are model tokens).
-fn tail_chars(s: &str, max: usize) -> String {
+pub(super) fn tail_chars(s: &str, max: usize) -> String {
     let n = s.chars().count();
     if n > max {
         s.chars().skip(n - max).collect()
@@ -29359,73 +29383,6 @@ fn pytest_runs_whole_suite(cmd: &str) -> bool {
             .any(|t| t.trim_matches('"').ends_with(".py"))
 }
 
-/// The numbered findings block out of a `smoke_fix_description` — the contiguous `1. …` `2. …`
-/// run the shard prompt itself demands verdict lines against. Recovered from the description
-/// because the dispatcher's epilogue (where the repair ledger is written) has the description in
-/// hand but not the findings vec it was built from; round-tripping our own format is exact.
-fn parse_numbered_findings(desc: &str) -> Vec<String> {
-    let mut out: Vec<String> = Vec::new();
-    for line in desc.lines() {
-        let t = line.trim();
-        let want = format!("{}. ", out.len() + 1);
-        if let Some(rest) = t.strip_prefix(&want) {
-            out.push(rest.to_string());
-        } else if !out.is_empty() && !t.is_empty() {
-            break;
-        }
-    }
-    out
-}
-
-/// The `FINDING n: FIXED / NOT FIXED / NOT REAL — detail` lines the shard prompt has demanded
-/// since the numbered-verdict protocol shipped — and which NOTHING parsed until now, so a round
-/// N+1 shard re-tried what round N had already reported. Order matters: `NOT FIXED` and `NOT
-/// REAL` are tested before `FIXED` because both contain it. Tolerant of markdown litter
-/// (leading `-`/`*`/`#`, `**bold**`) because the reporter is a weak model, not a serializer.
-fn parse_finding_verdicts(output: &str) -> Vec<(u32, &'static str, String)> {
-    let mut out = Vec::new();
-    for line in output.lines() {
-        let t = line
-            .trim()
-            .trim_start_matches(['-', '*', '#', '>', ' '])
-            .trim_start_matches("**");
-        let Some(rest) = t
-            .strip_prefix("FINDING ")
-            .or_else(|| t.strip_prefix("Finding "))
-        else {
-            continue;
-        };
-        let digits: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
-        let Ok(n) = digits.parse::<u32>() else {
-            continue;
-        };
-        let after = rest
-            .get(digits.len()..)
-            .unwrap_or("")
-            .trim_start_matches("**")
-            .trim_start_matches([':', ' '])
-            .trim_start_matches("**")
-            .trim();
-        let upper = after.to_uppercase();
-        let verdict = if upper.starts_with("NOT FIXED") {
-            "NOT FIXED"
-        } else if upper.starts_with("NOT REAL") {
-            "NOT REAL"
-        } else if upper.starts_with("FIXED") {
-            "FIXED"
-        } else {
-            continue;
-        };
-        let detail = after
-            .get(verdict.len()..)
-            .unwrap_or("")
-            .trim_start_matches(['*', ' ', '—', '-', ':'])
-            .trim();
-        out.push((n, verdict, tail_chars(detail, 300)));
-    }
-    out
-}
-
 /// Write one ledger mini and rebuild the roll-up from ALL minis. Every writer funnels through
 /// here so the roll-up can never drift from its parts. Returns the mini's path, None on any
 /// failure — the caller emits `ledger_written` only for a write that actually happened.
@@ -36334,18 +36291,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             // run/build/answer is a measurement and blocks the green claim; everything else ships
             // as a KNOWN ACTIVE BUG — reported, never hidden, and still fed to the repair wave
             // below, because a fixable bug should not wait on a verdict about whether it may be.
-            let criticals: Vec<String> = verdict
-                .findings
-                .iter()
-                .filter(|f| engine_critical(f))
-                .cloned()
-                .collect();
-            let minors: Vec<String> = verdict
-                .findings
-                .iter()
-                .filter(|f| !engine_critical(f))
-                .cloned()
-                .collect();
+            let (criticals, minors) = partition_by_engine_critical(&verdict.findings);
             if !verdict.findings.is_empty() {
                 // The severity sort above already fanned the severest first (a dead app never
                 // waits behind a cosmetic defect: every engine_critical author ranks CRITICAL
@@ -36500,6 +36446,15 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                             .collect::<Vec<_>>(),
                         "findings": unassigned,
                     }));
+                    // r6c: `known_bugs` alone let a CRITICAL survive two full rounds unowned.
+                    // LOUD per finding (fallback gate); never gates the wave, which is unchanged.
+                    for f in criticals_left_unassigned(&prov, &unassigned) {
+                        sink.write_value(serde_json::json!({
+                            "event": "critical_unassigned",
+                            "round": round,
+                            "finding": elide_middle(&f, 150, 650),
+                        }));
+                    }
                 }
                 if !groups.is_empty() {
                     let baseline = verdict.findings.len();
@@ -36683,6 +36638,16 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                                     "agent_ok": ran.is_ok(),
                                     "verified_findings": verified,
                                     "baseline_findings": baseline,
+                                    // r6c: `promoted` alone left "verified_findings: null,
+                                    // promoted: false" unexplained when `changed_samples` showed
+                                    // real edits — `promoted` is `shard_changed &&
+                                    // shard_beats_baseline(verified, baseline)`, and this is the
+                                    // half of that conjunction the event never carried. A reader
+                                    // can now tell "the shadow never actually diverged from HEAD"
+                                    // (false here despite live samples) apart from "it changed
+                                    // but graded no better than baseline" (true here, false
+                                    // promoted) without guessing.
+                                    "shard_changed": shard_changed,
                                     "promoted": promoted,
                                 }));
                                 promoted

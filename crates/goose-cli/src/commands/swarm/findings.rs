@@ -166,8 +166,27 @@ pub(super) fn extract_file_from_finding(finding: &str, all_files: &[String]) -> 
         {
             return Some(owned);
         }
-        // Named a real file, but not one this run owns (stdlib, site-packages, a sibling checkout).
-        // Fall through to the module resolver rather than aiming a fix shard outside the app.
+        // THE REVERSE DIRECTION: the candidate can also be the SHORTER string. r6c: a render
+        // probe's console-error attribution is the URL PATH the browser actually fetched the
+        // script from — `parsed.pathname`, verbatim (product_probe_v3.mjs `urlToRelPath`) — and
+        // a static route commonly serves a subdirectory at the URL root (`static_url_path=''`
+        // maps disk `web/viz.js` to `/viz.js`), so the candidate here is `viz.js` while the
+        // owned path is `web/viz.js`. The forward rule above never matches that pair (the owned
+        // path, not the candidate, is longer), so the finding fell through to `unassigned` and a
+        // CRITICAL render finding shipped known-but-unowned for the run's whole life. Resolve
+        // only when the match is UNIQUE — two files sharing a basename (`app/__init__.py`,
+        // `web/__init__.py`) must stay unresolved rather than guess (the fallback gate).
+        let reverse: Vec<String> = all_files
+            .iter()
+            .map(|a| normalize_rel_path(a))
+            .filter(|a| a.ends_with(&format!("/{f}")))
+            .collect();
+        if reverse.len() == 1 {
+            return Some(reverse.into_iter().next().expect("len == 1"));
+        }
+        // Named a real file, but not one this run owns (stdlib, site-packages, a sibling checkout),
+        // or an ambiguous basename. Fall through to the module resolver rather than aiming a fix
+        // shard outside the app or guessing between two files.
     }
     // A DOTTED MODULE resolved against the files this run actually planned. The AST review names a
     // module, never a path — "function 'log_message' in module 'vendorsync.api' is a STUB" — and it
@@ -266,6 +285,12 @@ pub(super) fn engine_critical(f: &str) -> bool {
         || l.contains("is missing or empty")
         || l.contains("never returns")
         || l.contains("nothing at all once it")
+}
+
+/// The round's own GREEN partition (`engine_critical`), split once instead of filtered twice at
+/// the call site — the two Vecs are always consumed together (final_passed / known_active_bugs).
+pub(super) fn partition_by_engine_critical(findings: &[String]) -> (Vec<String>, Vec<String>) {
+    findings.iter().cloned().partition(|f| engine_critical(f))
 }
 
 pub(super) fn dedupe_findings_exact(
@@ -601,6 +626,86 @@ pub(super) fn elide_middle(s: &str, head: usize, tail: usize) -> String {
     let h: String = chars[..head].iter().collect();
     let t: String = chars[chars.len() - tail..].iter().collect();
     format!("{h}\n\n... [middle elided — head + tail shown] ...\n\n{t}")
+}
+
+/// The numbered findings block out of a `smoke_fix_description` — the contiguous `1. …` `2. …`
+/// run the shard prompt itself demands verdict lines against. Recovered from the description
+/// because the dispatcher's epilogue (where the repair ledger is written) has the description in
+/// hand but not the findings vec it was built from; round-tripping our own format is exact.
+///
+/// r6c: a finding's OWN text is routinely multi-line (a pytest tail-lines finding carries a
+/// whole traceback), and the old parser BROKE on the first such continuation line — silently
+/// truncating `findings_assigned[]`, the ledger's only durable record of what a shard owned,
+/// even though the live PROMPT (built straight from the findings vec) still carried all of
+/// them. The template's blank line after `{numbered}` is the real terminator; a non-"N. " line
+/// before it is a continuation of the finding just pushed, never the end of the block.
+pub(super) fn parse_numbered_findings(desc: &str) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for line in desc.lines() {
+        let t = line.trim();
+        let want = format!("{}. ", out.len() + 1);
+        if let Some(rest) = t.strip_prefix(&want) {
+            out.push(rest.to_string());
+        } else if !out.is_empty() {
+            if t.is_empty() {
+                break;
+            }
+            if let Some(last) = out.last_mut() {
+                last.push('\n');
+                last.push_str(line);
+            }
+        }
+    }
+    out
+}
+
+/// The `FINDING n: FIXED / NOT FIXED / NOT REAL — detail` lines the shard prompt has demanded
+/// since the numbered-verdict protocol shipped — and which NOTHING parsed until now, so a round
+/// N+1 shard re-tried what round N had already reported. Order matters: `NOT FIXED` and `NOT
+/// REAL` are tested before `FIXED` because both contain it. Tolerant of markdown litter
+/// (leading `-`/`*`/`#`, `**bold**`) because the reporter is a weak model, not a serializer.
+pub(super) fn parse_finding_verdicts(output: &str) -> Vec<(u32, &'static str, String)> {
+    let mut out = Vec::new();
+    for line in output.lines() {
+        let t = line
+            .trim()
+            .trim_start_matches(['-', '*', '#', '>', ' '])
+            .trim_start_matches("**");
+        let Some(rest) = t
+            .strip_prefix("FINDING ")
+            .or_else(|| t.strip_prefix("Finding "))
+        else {
+            continue;
+        };
+        let digits: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
+        let Ok(n) = digits.parse::<u32>() else {
+            continue;
+        };
+        let after = rest
+            .get(digits.len()..)
+            .unwrap_or("")
+            .trim_start_matches("**")
+            .trim_start_matches([':', ' '])
+            .trim_start_matches("**")
+            .trim();
+        let upper = after.to_uppercase();
+        let verdict = if upper.starts_with("NOT FIXED") {
+            "NOT FIXED"
+        } else if upper.starts_with("NOT REAL") {
+            "NOT REAL"
+        } else if upper.starts_with("FIXED") {
+            "FIXED"
+        } else {
+            continue;
+        };
+        let detail = after
+            .get(verdict.len()..)
+            .unwrap_or("")
+            .trim_start_matches(['*', ' ', '—', '-', ':'])
+            .trim();
+        out.push((n, verdict, super::tail_chars(detail, 300)));
+    }
+    out
 }
 
 #[cfg(test)]
@@ -1242,5 +1347,42 @@ mod tests {
         let w = elide_middle(&wide, 10, 10);
         assert!(w.starts_with(&"\u{1f9ea}".repeat(10)));
         assert!(w.ends_with(&"\u{1f9ea}".repeat(10)));
+    }
+
+    /// r6c REGRESSION: the render probe's console-error attribution names the URL PATH the
+    /// browser served the script at (product_probe_v3.mjs `urlToRelPath` = `parsed.pathname`,
+    /// verbatim), which a static route can serve SHORTER than its repo path — `web/viz.js` on
+    /// disk answering at `/viz.js` when the app's static mount strips its directory. The forward
+    /// suffix rule only matches when the CANDIDATE is longer than the owned path, so this
+    /// finding attributed to NOTHING for two full rounds while a HIGH from a different check
+    /// correctly named `web/viz.js`. The reverse match must resolve the unique case and must
+    /// stay silent on an ambiguous one.
+    #[test]
+    fn a_url_derived_basename_shorter_than_its_owned_path_still_resolves_uniquely() {
+        let files: Vec<String> = ["web/viz.js", "app/ledgerd.py", "web/index.html"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        let finding = "the served page renders NO data rows in a real browser — the API works \
+             but the frontend shows a user nothing. First console error: TypeError: Illegal \
+             invocation at onBrushChange (viz.js:1124:5). Open web/index.html end to end: the \
+             page must fetch the documented endpoints and render the rows, and every fetch \
+             failure must surface a visible state, not a blank page. (in `viz.js`)";
+        assert_eq!(
+            extract_file_from_finding(finding, &files).as_deref(),
+            Some("web/viz.js"),
+            "a bare URL-served basename must resolve to its unique owned path"
+        );
+
+        // Two files share the basename: must NOT guess.
+        let ambiguous: Vec<String> = ["web/viz.js", "legacy/viz.js"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        assert_eq!(
+            extract_file_from_finding("console error (in `viz.js`)", &ambiguous),
+            None,
+            "an ambiguous basename must stay unresolved rather than guess between two owners"
+        );
     }
 }
