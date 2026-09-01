@@ -17,7 +17,7 @@ import { TierBreakdown } from './TierBreakdown';
 import { ScoringDetail, type VerdictDetail } from './ScoringDetail';
 import { SwarmRunPanel } from '../swarm/SwarmRunPanel';
 import { useSwarmRun } from '../swarm/useSwarmRun';
-import { ZoneHeader, ZONE_HUES } from '../swarm/ZoneHeader';
+import { ZoneHeader } from '../swarm/ZoneHeader';
 import SamplingKnobs from '../swarm/SamplingKnobs';
 import { useSaveSamplingDefaults } from '../swarm/useSamplingDefaults';
 import {
@@ -114,7 +114,6 @@ function PhaseStrip({
   return (
     <div className="rounded border border-border-primary">
       <ZoneHeader
-        hue={ZONE_HUES.bench}
         label="Benchmark pipeline"
         explain="the harness around the swarm — boot, build, scoring"
         className="border-b border-border-primary py-2"
@@ -769,7 +768,6 @@ export default function BenchmarkView() {
             // (the run-in-progress color), full border, no washes — never ambiguous against the live run.
             <div className="mt-8 rounded border-2" style={{ borderColor: PHASE_ACTIVE }}>
               <ZoneHeader
-                hue={PHASE_ACTIVE}
                 label="Previous result"
                 explain="your last completed run — replaced when this run finishes"
                 className="pt-2"

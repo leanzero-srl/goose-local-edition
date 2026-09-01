@@ -143,8 +143,9 @@ export const SWARM_STATUS = {
   solidStopped: 'var(--color-status-stopped-solid, #475569)',
 } as const;
 
-/** The eyebrow register every ribbon/zone label uses — LeanZero's: mono, 10px, 700, .18em, uppercase. */
-export const EYEBROW_CLASS = 'font-mono text-[10px] font-bold uppercase tracking-[0.18em]';
+/** The zone-header register every ribbon/zone label uses — 11px, semibold, uppercase, 0.08em. The ONE
+ *  place uppercase + tracking is allowed; inline meta is 11px normal case on the secondary token. */
+export const EYEBROW_CLASS = 'text-[11px] font-semibold uppercase tracking-[0.08em]';
 
 /** Chip and panel radii — the two values the swarm view is allowed to use. */
 export const CHIP_RADIUS = 6;
