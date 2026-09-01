@@ -369,7 +369,11 @@ fn swarm_rs_line_count_only_decreases() {
     // Tightened to 36,736 (2c S4): `syntax_error` / `py_syntax_error` / `rust_compile_error`
     // moved to commands/swarm/parse_checks.rs (shared with the merger's dossier), paying for the
     // merger's dispatch (dossier brief) and completion (gap follow-ups, after-checks) seams.
-    const SWARM_RS_LINE_BASELINE: usize = 36_736;
+    // Tightened to 36,433 (2c S5a-c): the per-file fix fan's closure body, the whole-file
+    // promoter (`grade_promotion_preview`, `promote_speculative`, `copy_owned_files`) and their
+    // barrier moved out — commands/swarm/repair_waves.rs runs one shard per FINDING, lands by
+    // three-way merge, and dispatches without a round barrier.
+    const SWARM_RS_LINE_BASELINE: usize = 36_433;
     let text = read("crates/goose-cli/src/commands/swarm.rs");
     let n = text.lines().count();
     assert!(

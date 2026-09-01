@@ -87,12 +87,11 @@ mod skeleton;
 use skeleton::{prepend_skeleton_task, refresh_skeleton_description};
 mod ledger_writers;
 mod parse_checks;
+mod repair_waves;
 use parse_checks::{rust_compile_error, syntax_error};
 mod plan_repairs;
 mod shards;
-use ledger_writers::{
-    write_gate_ledger, write_repair_ledger, write_task_ledger, RepairLedgerRow, TaskLedgerWrite,
-};
+use ledger_writers::{write_gate_ledger, write_task_ledger, TaskLedgerWrite};
 use plan_repairs::{
     repair_brief_file_mentions, repair_sink_deps, repair_sink_files, repair_unassigned_endpoints,
 };
@@ -135,8 +134,7 @@ use post_probe::{
 mod findings;
 use findings::{
     dedupe_findings_exact, elide_middle, engine_critical, parse_finding_verdicts,
-    parse_numbered_findings, partition_by_engine_critical, FileGroup, FindingProvenance,
-    FindingSource,
+    parse_numbered_findings, partition_by_engine_critical, FindingProvenance, FindingSource,
 };
 mod pitfalls;
 use pitfalls::{relevant_pitfalls, DOMAIN_PITFALLS};
@@ -3332,6 +3330,7 @@ fn spec_doc_urls(spec: &str) -> Vec<String> {
 
 #[cfg(test)]
 mod tests {
+    use super::ledger_writers::{write_repair_ledger, RepairLedgerRow};
     use super::supervision::{
         forming_preview, forming_tmp, FORMING_PREVIEW_MAX, FORMING_TAIL_KEEP,
     };
@@ -10448,31 +10447,10 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
         // the twin edits a.py + adds c.py inside the shadow only.
         fs::write(shadow.join("a.py"), "twin-a").unwrap();
         fs::write(shadow.join("c.py"), "twin-c").unwrap();
-        // BEFORE promote: the real tree is untouched by the twin's shadow writes.
+        // The real tree is untouched by the twin's shadow writes; landing is the three-way
+        // merge promoter's job (repair_waves.rs), whose path guards have their own test.
         assert_eq!(fs::read_to_string(real.join("a.py")).unwrap(), "real-a");
         assert!(!real.join("c.py").exists());
-        // promote ONLY the owned files.
-        let n = copy_owned_files(&shadow, &real, &["a.py".to_string(), "c.py".to_string()]);
-        assert_eq!(n, 2);
-        assert_eq!(fs::read_to_string(real.join("a.py")).unwrap(), "twin-a");
-        assert_eq!(fs::read_to_string(real.join("c.py")).unwrap(), "twin-c");
-        assert_eq!(
-            fs::read_to_string(real.join("sub/b.py")).unwrap(),
-            "real-b",
-            "a NON-owned file is never touched by promote"
-        );
-        // path-traversal / absolute paths are rejected -> nothing written outside the real tree.
-        fs::write(shadow.join("evil"), "evil").unwrap();
-        let n2 = copy_owned_files(
-            &shadow,
-            &real,
-            &["../SENTINEL".to_string(), "/tmp/abs-escape".to_string()],
-        );
-        assert_eq!(n2, 0, "traversal + absolute owned paths are rejected");
-        assert!(
-            !base.path().join("SENTINEL").exists(),
-            "promote never escapes the real tree"
-        );
     }
 
     #[test]
@@ -12392,6 +12370,10 @@ pub struct GooseAgentDispatcher {
     /// task_id. A twin's agent is rooted here (NOT the real tree); on a twin win the scheduler calls
     /// `promote_speculative` which copies only these owned files back. Empty unless the flag is on.
     spec_shadows: Mutex<HashMap<String, (tempfile::TempDir, Vec<String>)>>,
+    /// 2c S5 (b): per fix shard, its owned files' bytes AS THEY WERE at dispatch — the BASE of the
+    /// three-way merge `repair_waves::promote_merged` lands with (ours = the shadow, theirs = the
+    /// tree now). Snapshotted in `make_shadow`, dropped with the shadow.
+    shard_bases: Mutex<HashMap<String, HashMap<String, Vec<u8>>>>,
     /// F790-3: questions currently being answered, so two ticks never answer the same one.
     qa_inflight: Mutex<std::collections::HashSet<String>>,
     /// Per-task fingerprint of what the SEMANTIC REVIEW last saw. The judge re-ran a full 27B
@@ -12647,6 +12629,7 @@ impl GooseAgentDispatcher {
             pillars: std::sync::OnceLock::new(),
             sink_tree_files: std::sync::OnceLock::new(),
             spec_shadows: Mutex::new(HashMap::new()),
+            shard_bases: Mutex::new(HashMap::new()),
             qa_inflight: Mutex::new(std::collections::HashSet::new()),
             judge_seen: Mutex::new(std::collections::HashMap::new()),
             sink_review_findings: Mutex::new(Vec::new()),
@@ -12699,76 +12682,25 @@ impl GooseAgentDispatcher {
         let tmp = tempfile::TempDir::new()?;
         copy_tree_excluding(real_root, tmp.path())?;
         let path = tmp.path().to_path_buf();
+        // S5 (b): the merge base — what each owned file held when this shard started, so a
+        // sibling's fix that lands meanwhile is merged with, never overwritten by, this one.
+        let bases: HashMap<String, Vec<u8>> = owned_files
+            .iter()
+            .filter_map(|f| {
+                std::fs::read(real_root.join(f))
+                    .ok()
+                    .map(|b| (f.clone(), b))
+            })
+            .collect();
+        self.shard_bases
+            .lock()
+            .unwrap()
+            .insert(task_id.to_string(), bases);
         self.spec_shadows
             .lock()
             .unwrap()
             .insert(task_id.to_string(), (tmp, owned_files.to_vec()));
         Ok(path)
-    }
-
-    /// F883: grade EXACTLY what a promote would land — never the raw shadow.
-    ///
-    /// The shadow grade judged the WHOLE shadow tree while `promote_speculative` copies ONLY the
-    /// owned files (plus creations for multi-file owners). Two failure shapes fall out of that
-    /// mismatch, both confirmed by review: a worker whose improvement lives in a NON-owned file
-    /// grades strictly better, "promotes", and lands nothing — the promotion counter arms
-    /// join-skips on a fiction; and a torn two-file edit grades on its coherent whole and lands
-    /// only its broken half. The composition below mirrors the promote copy rules exactly:
-    /// real tree + owned files from the shadow + (owned.len() > 1) created source files.
-    ///
-    /// Returns (verified, changed, established). `established` is the ruler's own strict bit
-    /// (gate ran AND the composite spec-contract raised no inconclusive) — the race arm's claim
-    /// rule kills siblings on it, so it must never be weakened to `verified.is_some()`.
-    /// `changed == false` means the shadow left every owned byte
-    /// identical and created nothing a promote would copy — there is nothing to land, so the
-    /// caller must record no promotion and skip the grade (a byte-identical tree re-graded is a
-    /// coin-flip on gate flakiness, and "promoted nothing, counted as promoted" is the exact
-    /// no-op-promotion class this exists to kill).
-    #[allow(clippy::too_many_arguments)]
-    async fn grade_promotion_preview(
-        &self,
-        task_id: &str,
-        real_root: &Path,
-        prompt: &str,
-        lang: TargetLang,
-        all_files: &[String],
-        composite: bool,
-        missing_gate: bool,
-    ) -> (Option<usize>, bool, bool) {
-        let Some((shadow_root, owned)) = ({
-            let g = self.spec_shadows.lock().unwrap();
-            g.get(task_id)
-                .map(|(shadow, owned)| (shadow.path().to_path_buf(), owned.clone()))
-        }) else {
-            return (None, false, false);
-        };
-        let preview = match tempfile::TempDir::new() {
-            Ok(t) => t,
-            Err(_) => return (None, true, false),
-        };
-        if copy_tree_excluding(real_root, preview.path()).is_err() {
-            return (None, true, false);
-        }
-        let mut changed = owned.iter().any(|f| {
-            std::fs::read(shadow_root.join(f)).ok() != std::fs::read(real_root.join(f)).ok()
-        });
-        copy_owned_files(&shadow_root, preview.path(), &owned);
-        if owned.len() > 1 {
-            changed |= copy_created_source_files(&shadow_root, preview.path()) > 0;
-        }
-        if !changed {
-            return (None, false, false);
-        }
-        let (verified, established) = one_ruler_grade(
-            preview.path(),
-            prompt,
-            lang,
-            all_files,
-            composite,
-            missing_gate,
-        )
-        .await;
-        (verified, true, established)
     }
 
     /// The shadow's own root, so a twin can be VERIFIED before anyone decides whether it won. Peeks
@@ -25306,7 +25238,7 @@ fn read_files_bytes(root: &Path, rels: &[String]) -> Vec<(String, Vec<u8>)> {
         .collect()
 }
 
-/// Write a FROZEN byte buffer (rel -> bytes) into `root` with copy_owned_files' path guards (reject
+/// Write a FROZEN byte buffer (rel -> bytes) into `root` with the promoter's path guards (reject
 /// absolute/`..`; the canonicalized parent must resolve inside `root`). All-or-error: any guard failure or IO
 /// error returns Err so the caller never trusts a partial write.
 fn write_frozen_bytes(root: &Path, files: &[(String, Vec<u8>)]) -> std::io::Result<()> {
@@ -25398,41 +25330,6 @@ fn copy_created_source_files(from: &Path, to: &Path) -> usize {
     let mut copied = 0;
     walk(from, from, to, &mut copied);
     copied
-}
-
-fn copy_owned_files(from: &Path, to: &Path, files: &[String]) -> usize {
-    let mut promoted = 0;
-    for f in files {
-        let rel = Path::new(f);
-        if rel.is_absolute()
-            || rel
-                .components()
-                .any(|c| matches!(c, std::path::Component::ParentDir))
-        {
-            continue; // never escape `to`
-        }
-        let src = from.join(rel);
-        let dst = to.join(rel);
-        if !src.is_file() {
-            continue;
-        }
-        if let Some(parent) = dst.parent() {
-            if std::fs::create_dir_all(parent).is_err() {
-                continue;
-            }
-            // Defense-in-depth: the RESOLVED destination parent must stay inside `to` — defeats a symlinked
-            // path component that the absolute/`..` textual checks miss (a pre-existing symlink at an owned
-            // prefix could otherwise let std::fs::copy write THROUGH it outside the real tree).
-            match (parent.canonicalize(), to.canonicalize()) {
-                (Ok(cp), Ok(ct)) if cp.starts_with(&ct) => {}
-                _ => continue, // cannot confirm containment -> skip
-            }
-        }
-        if std::fs::copy(&src, &dst).is_ok() {
-            promoted += 1;
-        }
-    }
-    promoted
 }
 
 /// True if `s` mentions a `.<ext>` file at a word boundary (the char after the ext is not alphanumeric), so
@@ -29115,39 +29012,6 @@ impl TaskDispatcher for GooseAgentDispatcher {
         self.run_task_inner(req).await
     }
 
-    /// The twin WON: copy ONLY its owned files from its shadow into the real tree, then drop the shadow
-    /// (TempDir cleanup). `copy_owned_files` is guarded so it can never write outside the real tree. A no-op
-    /// if there is no shadow for `task_id` (e.g. the flag is off, or the twin already lost + was discarded).
-    async fn promote_speculative(&self, task_id: &str) {
-        let entry = self.spec_shadows.lock().unwrap().remove(task_id);
-        if let Some((shadow, owned)) = entry {
-            let real_root = std::env::current_dir().unwrap_or_else(|_| self.working_dir.clone());
-            let n = copy_owned_files(shadow.path(), &real_root, &owned);
-            // Whole-tree twins (owning 2+ files) also promote their CREATIONS — see
-            // copy_created_source_files for the measured gap this closes. Single-file shards
-            // keep their strict fence.
-            let created = if owned.len() > 1 {
-                copy_created_source_files(shadow.path(), &real_root)
-            } else {
-                0
-            };
-            self.events.write_value(serde_json::json!({
-                "event": "spec_promote",
-                "task_id": task_id, "owned_copied": n, "created_copied": created,
-            }));
-            eprintln!(
-                "speculative: promoted {n} owned + {created} created file(s) from the winning twin of {task_id}"
-            );
-            // `shadow` (TempDir) drops here -> the shadow workspace is removed from disk.
-        }
-    }
-
-    async fn discard_speculative(&self, task_id: &str) {
-        // Drop the shadow WITHOUT promoting (a lost/errored fix shard): its edits never reach the real tree
-        // and the TempDir is removed from disk when the entry is dropped here.
-        let _ = self.spec_shadows.lock().unwrap().remove(task_id);
-    }
-
     async fn review_dimension(
         &self,
         model_id: &str,
@@ -32493,225 +32357,58 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                     let baseline = verdict.findings.len();
                     // Fix-1 seam (r5 F4): ownership resolves SEQUENTIALLY here, before the
                     // concurrent fan — pairings and the attribution runner-up claim in group
-                    // order, so the partition the promotes copy stays disjoint by construction.
+                    // order, so every shard of one file carries the same resolved ownership.
                     let owned_by_shard =
                         resolve_shard_ownership(&groups, &smoke_all_files, &runner_ups);
-                    // The shard's fix-first instruction, precomputed because the fan closure
-                    // cannot borrow `prov`: THIS group's real severities, authoring checks and
-                    // positions, most-severe-first (specificity: this run's facts, no filler).
                     let order_notes: Vec<String> = groups
                         .iter()
                         .map(|g| prov.fix_order_note(&g.findings))
                         .collect();
-                    let groups: Vec<((FileGroup, Vec<String>), String)> = groups
-                        .into_iter()
-                        .zip(owned_by_shard)
-                        .zip(order_notes)
-                        .collect();
-                    let me = smoke_fix_dispatcher.clone();
-                    let all_files = smoke_all_files.clone();
-                    let fan_cwd = cwd.clone();
-                    let fan_prompt = opts.prompt.clone();
-                    let fan_all_files = smoke_all_files.clone();
-                    let fan_composite = delivery_on || spec_contract_enabled();
-                    let fan_missing_gate = missing_deliverable_gate;
-                    let dev = dev_id.clone();
-                    // Cloned OUTSIDE the Fn closure: fanout calls it once per group, so it may only borrow.
-                    let decisions = user_decisions.clone();
-                    let fan_decisions = brief_decisions.clone();
-                    let facts = doc_facts.clone();
-                    let sink_r = sink.clone();
-                    let summaries = fanout_over_fleet(
-                        "complete-fix",
-                        sink.as_ref(),
-                        fleet_slots.clone(),
-                        groups,
-                        move |((g, shard_owned), order_note), model| {
-                            let me = me.clone();
-                            let all_files = all_files.clone();
-                            let fan_cwd = fan_cwd.clone();
-                            let fan_prompt = fan_prompt.clone();
-                            let fan_all_files = fan_all_files.clone();
-                            let dev = dev.clone();
-                            let decisions = decisions.clone();
-                            let fan_decisions = fan_decisions.clone();
-                            let facts = facts.clone();
-                            let sink_r = sink_r.clone();
-                            async move {
-                                let task_id = format!("complete-fix::{}", g.file);
-                                sink_r.write_value(serde_json::json!({
-                                    "event": "complete_fix_dispatched",
-                                    "round": round, "shard": g.file, "model": model,
-                                    "task_id": task_id, "baseline_findings": baseline,
-                                }));
-                                let started = std::time::Instant::now();
-                                // The owning task's decisions block, as its brief rendered it (VA-030
-                                // D11) — `chars: 0` names a shard whose owners carry none.
-                                let shard_decisions = fan_decisions.for_files(&shard_owned);
-                                sink_r.write_value(serde_json::json!({
-                                    "event": "shard_decisions",
-                                    "round": round, "shard": g.file, "task_id": task_id,
-                                    "owners": shard_decisions.owners,
-                                    "chars": shard_decisions.block.chars().count(),
-                                }));
-                                let shard_desc = format!(
-                                    "{order_note}{}{}",
-                                    smoke_fix_description(
-                                        &g.findings,
-                                        complete_lang,
-                                        &fan_prompt,
-                                        &render_repair_history(
-                                            read_ledger_rollup(&fan_cwd).as_ref(),
-                                            &shard_owned,
-                                            &g.findings,
-                                            round as usize,
-                                        ),
-                                    ),
-                                    shard_decisions.block
-                                );
-                                let req = DispatchRequest {
-                                    task_id: task_id.clone(),
-                                    description: shard_desc.clone(),
-                                    device_id: dev,
-                                    model_id: model.clone(),
-                                    context_slice: String::new(),
-                                    attempt: round,
-                                    owned_files: shard_owned.clone(),
-                                    all_files,
-                                    prior_hint: None,
-                                    subsplit: Vec::new(),
-                                    // Shadow-isolate: this shard runs rooted at its OWN cp -r shadow tree, so N
-                                    // concurrent fix agents can never write the real tree at once. On success the
-                                    // promote copies back `owned_files` (winner + any pairing/runner-up since
-                                    // 6585f0845); disjointness comes from `resolve_shard_ownership`'s sequential
-                                    // claim pass above, not from the file-groups themselves.
-                                    speculative: true,
-                                    // A FIX worker must honour the user's choices too — a fix that re-introduces
-                                    // `Decimal` after the user chose integer cents is still wrong.
-                                    user_decisions: decisions.clone(),
-                                    doc_facts: facts.clone(),
-                                    // Per-file fix shard: no DAG neighborhood → contract bundle unscoped.
-                                    neighborhood: Vec::new(),
-                                    shard_of: None,
-                                    merger_of: None,
-                                };
-                                let progress =
-                                    Arc::new(std::sync::Mutex::new(FixAttemptProgress::default()));
-                                let sampler = spawn_fix_progress_sampler(
-                                    me.clone(),
-                                    task_id.clone(),
-                                    progress.clone(),
-                                );
-                                let ran = me.run(req).await;
-                                sampler.abort();
-                                {
-                                    let st = progress.lock().unwrap().clone();
-                                    sink_r.write_value(serde_json::json!({
-                                        "event": "fix_attempt_progress",
-                                        "round": round, "shard": g.file,
-                                        "samples": st.samples,
-                                        "changed_samples": st.changed,
-                                        "first_change_secs": st.first_change_secs,
-                                        "longest_still_secs": st.longest_still_secs,
-                                    }));
-                                }
-                                // GRADE THE TREE, NOT THE AGENT'S EXIT — the twin race's rule, for the
-                                // same measured reasons: a shard killed at the cap may still hold the
-                                // fix in its shadow, and an agent's "done" may not survive the gate.
-                                // Promoting on `Ok(Ok(_))` alone (what this branch did before) lands
-                                // whatever the agent claims, unverified, on the real tree. The shard's
-                                // owned files are its whole write surface (one file pins the worker via
-                                // single_owned_file; a pairing/runner-up widens it to both sides), so
-                                // the shadow's gate verdict is what a promote would produce for real.
-                                // F883 + F862: the shard's grade was run_smoke_gate — a SUBSET
-                                // of the ruler that produced `baseline` (the round's composite
-                                // complete_verify count) — so a shard that edited NOTHING graded
-                                // its byte-identical shadow below baseline on the categories the
-                                // subset could not see, and promoted a no-op every wave. One
-                                // ruler, on the composed preview a promote would actually land.
-                                let (verified, shard_changed, _est) = me
-                                    .grade_promotion_preview(
-                                        &task_id,
-                                        &fan_cwd,
-                                        &fan_prompt,
-                                        complete_lang,
-                                        &fan_all_files,
-                                        fan_composite,
-                                        fan_missing_gate,
-                                    )
-                                    .await;
-                                let promoted =
-                                    shard_changed && shard_beats_baseline(verified, baseline);
-                                if promoted {
-                                    me.promote_speculative(&task_id).await;
-                                } else {
-                                    me.discard_speculative(&task_id).await;
-                                }
-                                // §II.2 WRITERS, repair leg (II-4): the shard's FINDING n
-                                // FIXED/NOT FIXED lines land in the on-disk repair ledger the
-                                // NEXT wave's shard reads (render_repair_history) — the wave's
-                                // in-memory state dies with it; the file is what survives. This
-                                // write moved here from the deleted fix_sched path so the one
-                                // kept mechanism keeps the one history writer.
-                                if let Some(path) = write_repair_ledger(
-                                    &fan_cwd,
-                                    RepairLedgerRow {
-                                        round: round as usize,
-                                        shard: &g.file,
-                                        owned_files: &shard_owned,
-                                        all_files: &fan_all_files,
-                                        description: &shard_desc,
-                                        output: ran
-                                            .as_ref()
-                                            .map(|o| o.output.as_str())
-                                            .unwrap_or(""),
-                                        promoted,
-                                        baseline,
-                                        agent_ok: ran.is_ok(),
-                                    },
-                                ) {
-                                    sink_r.write_value(serde_json::json!({
-                                        "event": "ledger_written",
-                                        "kind": "repair",
-                                        "round": round,
-                                        "shard": g.file,
-                                        "path": path.display().to_string(),
-                                    }));
-                                }
-                                sink_r.write_value(serde_json::json!({
-                                    "event": "complete_fix_completed",
-                                    "round": round, "shard": g.file, "model": model,
-                                    "task_id": task_id,
-                                    "secs": started.elapsed().as_secs(),
-                                    "agent_ok": ran.is_ok(),
-                                    "verified_findings": verified,
-                                    "baseline_findings": baseline,
-                                    // r6c: `promoted` alone left "verified_findings: null,
-                                    // promoted: false" unexplained when `changed_samples` showed
-                                    // real edits — `promoted` is `shard_changed &&
-                                    // shard_beats_baseline(verified, baseline)`, and this is the
-                                    // half of that conjunction the event never carried. A reader
-                                    // can now tell "the shadow never actually diverged from HEAD"
-                                    // (false here despite live samples) apart from "it changed
-                                    // but graded no better than baseline" (true here, false
-                                    // promoted) without guessing.
-                                    "shard_changed": shard_changed,
-                                    "promoted": promoted,
-                                }));
-                                promoted
-                            }
+                    // 2c S5 (a): ONE SHARD PER FINDING — r5 worked six findings serially on one
+                    // shard; now six findings on one file are six shards that may run at once and
+                    // land by three-way merge (repair_waves.rs).
+                    let findings =
+                        repair_waves::explode_groups(&groups, &owned_by_shard, &order_notes);
+                    sink.write_value(serde_json::json!({
+                        "event": "finding_shards",
+                        "round": round,
+                        "files": groups.len(),
+                        "shards": findings.len(),
+                    }));
+                    // 2c S5 (c): NO ROUND BARRIER — shards dispatch as slots free, each lands as it
+                    // returns, the tree is re-graded after every promotion, a handoff or a conflict
+                    // re-shards its finding at once; the wave ends when nothing is dispatchable
+                    // and nothing runs.
+                    let outcome = repair_waves::run_wave(
+                        smoke_fix_dispatcher.clone(),
+                        sink.clone(),
+                        repair_waves::WaveInputs {
+                            round,
+                            baseline,
+                            findings,
+                            fleet_slots: fleet_slots.clone(),
+                            all_files: smoke_all_files.clone(),
+                            cwd: cwd.clone(),
+                            prompt: opts.prompt.clone(),
+                            lang: complete_lang,
+                            composite: delivery_on || spec_contract_enabled(),
+                            missing_gate: missing_deliverable_gate,
+                            device_id: dev_id.clone(),
+                            user_decisions: user_decisions.clone(),
+                            brief_decisions: brief_decisions.clone(),
+                            doc_facts: doc_facts.clone(),
                         },
                     )
                     .await;
-                    // A panicked shard lane (Err — named by lane_panicked) promoted nothing;
-                    // its shard's findings stay open and the loop head re-gates next round.
-                    let promoted_now = summaries.iter().filter(|p| matches!(p, Ok(true))).count();
-                    wave_promoted = promoted_now > 0;
+                    wave_promoted = outcome.promoted > 0;
                     sink.write_value(serde_json::json!({
                         "event": "complete_fix_wave",
                         "round": round,
-                        "shards": summaries.len(),
-                        "promoted": promoted_now,
+                        "shards": outcome.shards,
+                        "promoted": outcome.promoted,
+                        "conflicts": outcome.conflicts,
+                        "reshards": outcome.reshards,
+                        "findings_left": outcome.findings_left,
                         "unassigned": unassigned.len(),
                     }));
                 }
