@@ -2,6 +2,8 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { cleanup, render as rtlRender, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { IntlTestWrapper } from '../../i18n/test-utils';
+import { allClasses, assertStudioClean } from '../lz/assertStudioClean';
+import { missingUtilities } from '../lz/compileStudioCss';
 import MlxEngineView, {
   draftsFromProfile,
   profileFromDrafts,
@@ -161,7 +163,10 @@ function peerNode(overrides: Partial<NodeState> = {}): NodeState {
   };
 }
 
-const CONNECTED = { auth: { state: 'connected', email: 'm@x.co', meshIp: '100.64.0.1' }, nodeCount: 2 };
+const CONNECTED = {
+  auth: { state: 'connected', email: 'm@x.co', meshIp: '100.64.0.1' },
+  nodeCount: 2,
+};
 
 /** Turn on the capability + a connected roster with the given peers, so the picker renders. */
 function withMesh(peers: NodeState[]) {
@@ -286,8 +291,8 @@ describe('LeanZero MLX panel naming', () => {
   it('the panel shows the engine sub-tabs, the state badge and the powered-by line', async () => {
     const { unmount } = render(<MlxEngineView />);
     expect(screen.getByText('Powered by Rapid-MLX')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /^Engine$/ })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /Sampling/ })).toBeInTheDocument();
+    expect(screen.getByRole('radio', { name: /^Engine$/ })).toBeInTheDocument();
+    expect(screen.getByRole('radio', { name: /Sampling/ })).toBeInTheDocument();
     await waitFor(() => {
       expect(screen.getAllByTestId('mlx-state-badge').length).toBeGreaterThan(0);
     });
@@ -414,7 +419,9 @@ describe('MlxEngineView engine tab', () => {
   it('a rejected mount renders the backend error text', async () => {
     mockStatus.mockResolvedValue(statusOf({ state: 'stopped' }));
     mockSettingsRead.mockResolvedValue({ ...SETTINGS });
-    mockMount.mockRejectedValue(new Error('model directory is incomplete: missing weights.safetensors'));
+    mockMount.mockRejectedValue(
+      new Error('model directory is incomplete: missing weights.safetensors')
+    );
     const { unmount } = render(<MlxEngineView />);
     await waitFor(() => {
       expect(screen.getByRole('button', { name: /^Mount$/ })).toBeEnabled();
@@ -589,9 +596,9 @@ const ALL_SAMPLING_LABELS = [
 
 async function openSamplingTab() {
   await waitFor(() => {
-    expect(screen.getByRole('button', { name: 'Sampling' })).toBeInTheDocument();
+    expect(screen.getByRole('radio', { name: 'Sampling' })).toBeInTheDocument();
   });
-  await userEvent.click(screen.getByRole('button', { name: 'Sampling' }));
+  await userEvent.click(screen.getByRole('radio', { name: 'Sampling' }));
 }
 
 describe('MlxEngineView sampling tab', () => {
@@ -607,9 +614,7 @@ describe('MlxEngineView sampling tab', () => {
     }
     expect(screen.getByRole('button', { name: 'Save' })).toBeInTheDocument();
     // The honest caption: per-model profiles, per-request values win.
-    expect(
-      screen.getByText(/per-request values sent by goose override them/)
-    ).toBeInTheDocument();
+    expect(screen.getByText(/per-request values sent by goose override them/)).toBeInTheDocument();
     expect(screen.getByText(/Profiles apply at\s+mount, per model/)).toBeInTheDocument();
     expect(screen.getByText('Currently mounted:')).toBeInTheDocument();
     // The saved profile for the mounted model prefills: temperature 0 is the text "0".
@@ -658,11 +663,11 @@ describe('MlxEngineView sampling tab', () => {
     expect(screen.getByLabelText('Presence penalty')).toHaveValue(0.5);
     expect(screen.getByText('unsaved')).toBeInTheDocument();
 
-    await userEvent.click(screen.getByRole('button', { name: /Models/ }));
+    await userEvent.click(screen.getByRole('radio', { name: /Models/ }));
     await waitFor(() => {
       expect(screen.getByLabelText('Search Hugging Face')).toBeInTheDocument();
     });
-    await userEvent.click(screen.getByRole('button', { name: 'Sampling' }));
+    await userEvent.click(screen.getByRole('radio', { name: 'Sampling' }));
     await waitFor(() => {
       expect(screen.getByLabelText('Presence penalty')).toHaveValue(0.5);
     });
@@ -726,8 +731,8 @@ describe('MlxEngineView sampling tab', () => {
     await waitFor(() => {
       expect(screen.getByText('Models')).toBeInTheDocument();
     });
-    await userEvent.click(screen.getByRole('button', { name: /Models/ }));
-    await userEvent.click(screen.getByRole('button', { name: /^Downloaded/ }));
+    await userEvent.click(screen.getByRole('radio', { name: /Models/ }));
+    await userEvent.click(screen.getByRole('radio', { name: /^Downloaded/ }));
     await waitFor(() => {
       expect(screen.getByLabelText(`Sampling for ${OTHER_MODEL}`)).toBeInTheDocument();
     });
@@ -783,15 +788,15 @@ const HIT_C: MlxBrowseHit = {
 
 async function openModelsTab() {
   await waitFor(() => {
-    expect(screen.getByRole('button', { name: /Models/ })).toBeInTheDocument();
+    expect(screen.getByRole('radio', { name: /Models/ })).toBeInTheDocument();
   });
-  await userEvent.click(screen.getByRole('button', { name: /Models/ }));
+  await userEvent.click(screen.getByRole('radio', { name: /Models/ }));
 }
 
 /** The owner's split: local content lives on the second-level Downloaded tab. */
 async function openDownloadedTab() {
   await openModelsTab();
-  await userEvent.click(screen.getByRole('button', { name: /^Downloaded/ }));
+  await userEvent.click(screen.getByRole('radio', { name: /^Downloaded/ }));
 }
 
 describe('MlxEngineView models tab', () => {
@@ -805,7 +810,7 @@ describe('MlxEngineView models tab', () => {
     expect(screen.queryByText('/Users/x/mlx-models')).not.toBeInTheDocument();
     expect(screen.queryByText(HALF)).not.toBeInTheDocument();
 
-    await userEvent.click(screen.getByRole('button', { name: /^Downloaded/ }));
+    await userEvent.click(screen.getByRole('radio', { name: /^Downloaded/ }));
     await waitFor(() => {
       expect(screen.getByText('/Users/x/mlx-models')).toBeInTheDocument();
     });
@@ -910,7 +915,8 @@ describe('MlxEngineView models tab', () => {
       expect(screen.getByText(HIT_B.id)).toBeInTheDocument();
     });
     expect(screen.getByText(HIT_A.id)).toBeInTheDocument();
-    expect(screen.getByText('2 loaded')).toBeInTheDocument();
+    // The panel header counts what the table shows: two rows loaded.
+    expect(screen.getByTestId('lz-section-count')).toHaveTextContent('2');
     const loadMoreCall = mockBrowse.mock.calls.find((c) => c[0].cursor === 'CUR1');
     expect(loadMoreCall).toBeTruthy();
 
@@ -938,14 +944,11 @@ describe('MlxEngineView models tab', () => {
     await waitFor(() => {
       expect(screen.getByText(HIT_A.id)).toBeInTheDocument();
     });
-    await userEvent.click(screen.getByRole('button', { name: 'Latest' }));
+    await userEvent.click(screen.getByRole('radio', { name: 'Latest' }));
     await waitFor(() => {
       expect(screen.getByText(HIT_B.id)).toBeInTheDocument();
     });
-    expect(mockBrowse).toHaveBeenCalledWith(
-      expect.objectContaining({ sort: 'newest' }),
-      undefined
-    );
+    expect(mockBrowse).toHaveBeenCalledWith(expect.objectContaining({ sort: 'newest' }), undefined);
     // createdAt 2026-08-28 renders as a date in the row.
     expect(screen.getByText(/Aug 28, 2026/)).toBeInTheDocument();
     unmount();
@@ -956,9 +959,7 @@ describe('MlxEngineView models tab', () => {
     const { unmount } = render(<MlxEngineView />);
     await openModelsTab();
     await waitFor(() => {
-      expect(
-        screen.getByText('HuggingFace model browse returned HTTP 429')
-      ).toBeInTheDocument();
+      expect(screen.getByText('HuggingFace model browse returned HTTP 429')).toBeInTheDocument();
     });
     expect(screen.getByText('Browse failed')).toBeInTheDocument();
 
@@ -968,9 +969,7 @@ describe('MlxEngineView models tab', () => {
     await waitFor(() => {
       expect(screen.getByText('No MLX models match these filters.')).toBeInTheDocument();
     });
-    expect(
-      mockBrowse.mock.calls.some((c) => c[0].query === 'nothing-matches')
-    ).toBe(true);
+    expect(mockBrowse.mock.calls.some((c) => c[0].query === 'nothing-matches')).toBe(true);
     unmount();
   });
 
@@ -1015,14 +1014,14 @@ describe('MlxEngineView models tab', () => {
 
     // The Downloaded pane shows the SAME download — HIT_A is not local, so the
     // Active downloads card carries it. One row per repo per pane, never two.
-    await userEvent.click(screen.getByRole('button', { name: /^Downloaded/ }));
+    await userEvent.click(screen.getByRole('radio', { name: /^Downloaded/ }));
     await waitFor(() => {
       expect(screen.getByText('Active downloads')).toBeInTheDocument();
     });
     expect(screen.getAllByTestId(`mlx-download-${HIT_A.id}`)).toHaveLength(1);
 
     // And back on Hugging Face it is inline again, still exactly once.
-    await userEvent.click(screen.getByRole('button', { name: 'Hugging Face' }));
+    await userEvent.click(screen.getByRole('radio', { name: 'Hugging Face' }));
     await waitFor(() => {
       expect(screen.getAllByTestId(`mlx-download-${HIT_A.id}`)).toHaveLength(1);
     });
@@ -1043,11 +1042,11 @@ describe('MlxEngineView models tab', () => {
     });
     const browseCalls = mockBrowse.mock.calls.length;
 
-    await userEvent.click(screen.getByRole('button', { name: /^Downloaded/ }));
+    await userEvent.click(screen.getByRole('radio', { name: /^Downloaded/ }));
     await waitFor(() => {
       expect(screen.getByText('/Users/x/mlx-models')).toBeInTheDocument();
     });
-    await userEvent.click(screen.getByRole('button', { name: 'Hugging Face' }));
+    await userEvent.click(screen.getByRole('radio', { name: 'Hugging Face' }));
 
     // The applied query, its results and the input text are all still there — no new fetch.
     expect(await screen.findByText(HIT_C.id)).toBeInTheDocument();
@@ -1195,9 +1194,7 @@ describe('MlxEngineView model card modal', () => {
     expect(screen.getByText('model-00001-of-00002.safetensors')).toBeInTheDocument();
     expect(screen.getByText('5.00 GB total')).toBeInTheDocument();
     // README rendered through the app's markdown renderer, not dumped as text.
-    expect(
-      screen.getByRole('heading', { name: 'New Model readme heading' })
-    ).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'New Model readme heading' })).toBeInTheDocument();
     // Truncation twin with the outbound link.
     expect(screen.getByText(/read the full page on huggingface\.co/)).toBeInTheDocument();
     // ✕ closes.
@@ -1257,9 +1254,7 @@ describe('MlxEngineView download lifecycle', () => {
       state,
       totalBytes: 4 * GB,
       downloadedBytes: 1 * GB,
-      ...(state === 'downloading'
-        ? { restartedFiles: ['model-00001-of-00002.safetensors'] }
-        : {}),
+      ...(state === 'downloading' ? { restartedFiles: ['model-00001-of-00002.safetensors'] } : {}),
     }));
 
     const { unmount } = render(<MlxEngineView />);
@@ -1373,7 +1368,7 @@ describe('MlxEngineView download lifecycle', () => {
     });
 
     // Leave for the Engine tab: the rows unmount but the SHELL keeps polling.
-    await userEvent.click(screen.getByRole('button', { name: 'Engine' }));
+    await userEvent.click(screen.getByRole('radio', { name: 'Engine' }));
     await waitFor(() => {
       expect(screen.queryByTestId(`mlx-download-${HIT_A.id}`)).not.toBeInTheDocument();
     });
@@ -1383,7 +1378,7 @@ describe('MlxEngineView download lifecycle', () => {
     });
 
     // Back on the Models tab the row is still there with the last REAL bytes.
-    await userEvent.click(screen.getByRole('button', { name: /Models/ }));
+    await userEvent.click(screen.getByRole('radio', { name: /Models/ }));
     await waitFor(() => {
       expect(screen.getByTestId(`mlx-download-${HIT_A.id}`)).toBeInTheDocument();
     });
@@ -1418,7 +1413,10 @@ describe('MlxEngineView device picker (remote model management)', () => {
 
   it('capability present but NOT connected → no picker, behaves exactly as today', async () => {
     mockFeatures.leanzeroLink = true;
-    mockLinkStatus.mockResolvedValue({ auth: { state: 'loggedIn', email: 'm@x.co' }, nodeCount: 0 });
+    mockLinkStatus.mockResolvedValue({
+      auth: { state: 'loggedIn', email: 'm@x.co' },
+      nodeCount: 0,
+    });
     const { unmount } = render(<MlxEngineView />);
     await waitFor(() => expect(mockLinkStatus).toHaveBeenCalled());
     await waitFor(() => expect(mockStatus).toHaveBeenCalledWith(undefined));
@@ -1438,7 +1436,11 @@ describe('MlxEngineView device picker (remote model management)', () => {
   it('lists This device + each connected peer with an idle/busy chip', async () => {
     withMesh([
       peerNode({ hostname: 'workhorse', node_id: 'peer-workhorse' }),
-      peerNode({ hostname: 'studio', node_id: 'peer-studio', status: { type: 'Busy', session_id: 's1' } }),
+      peerNode({
+        hostname: 'studio',
+        node_id: 'peer-studio',
+        status: { type: 'Busy', session_id: 's1' },
+      }),
     ]);
     const { unmount } = render(<MlxEngineView />);
     await waitFor(() => expect(screen.getByTestId('mlx-device-target')).toBeInTheDocument());
@@ -1547,8 +1549,6 @@ describe('MlxEngineView device picker (remote model management)', () => {
 // ---------------------------------------------------------------------------
 
 describe('MlxEngineView browser — one accent, neutral columns', () => {
-  const ACCENT = 'var(--color-action-solid, #1d4ed8)'.replace(/\s/g, '');
-
   it('renders hits as aligned columns under a header row; the publisher is neutral text, not a hue', async () => {
     mockBrowse.mockResolvedValue({ hits: [HIT_A] });
     const { unmount } = render(<MlxEngineView />);
@@ -1556,22 +1556,30 @@ describe('MlxEngineView browser — one accent, neutral columns', () => {
     await waitFor(() => {
       expect(screen.getByText(HIT_A.id)).toBeInTheDocument();
     });
-    const header = screen.getByTestId('mlx-browse-header');
-    for (const col of ['Model', 'Publisher', 'Quant', 'Arch', 'Size', 'Downloads', 'Likes', 'Created']) {
+    const table = screen.getByRole('table', { name: 'Hugging Face MLX models' });
+    const header = table.querySelector('thead')!;
+    for (const col of [
+      'Model',
+      'Publisher',
+      'Quant',
+      'Arch',
+      'Size',
+      'Downloads',
+      'Likes',
+      'Created',
+    ]) {
       expect(header).toHaveTextContent(col);
     }
     const publisher = screen.getByText('mlx-community');
     expect(publisher.style.backgroundColor).toBe('');
     expect(publisher.style.color).toBe('');
-    expect(publisher.className).toContain('text-text-secondary');
-    expect(publisher.className).toContain('tabular-nums');
+    expect(publisher.className).toContain('text-lz-ink-3');
+    expect(publisher.className).toContain('tnum');
     // Likes is a number — no heart, no arrow, no glyph.
     expect(screen.queryByText(/[♥↓]/)).not.toBeInTheDocument();
-    // The node ramp never reaches this view: no inline style on the page names a node token.
-    const nodeStyled = Array.from(document.querySelectorAll('[style]')).filter((el) =>
-      (el.getAttribute('style') ?? '').includes('--color-node-')
-    );
-    expect(nodeStyled).toHaveLength(0);
+    // The node ramp never reaches this view: no class on the page names a node token.
+    expect(document.querySelectorAll('[class*="lz-node-"]')).toHaveLength(0);
+    expect(document.querySelectorAll('[style*="--color-node-"]')).toHaveLength(0);
     unmount();
   });
 
@@ -1582,20 +1590,126 @@ describe('MlxEngineView browser — one accent, neutral columns', () => {
     await waitFor(() => {
       expect(screen.getByText(HIT_A.id)).toBeInTheDocument();
     });
-    const active = screen.getByRole('button', { name: 'Top downloads' });
-    expect(active).toHaveAttribute('aria-pressed', 'true');
-    expect(active.style.backgroundColor.replace(/\s/g, '')).toBe(ACCENT);
-    const inactive = screen.getByRole('button', { name: 'Latest' });
+    const active = screen.getByRole('radio', { name: 'Top downloads' });
+    expect(active).toHaveAttribute('aria-checked', 'true');
+    expect(active.className).toContain('bg-lz-accent');
+    const inactive = screen.getByRole('radio', { name: 'Latest' });
+    expect(inactive.className).not.toContain('bg-lz-accent');
     expect(inactive.style.backgroundColor).toBe('');
     const download = screen.getByLabelText(`Download ${HIT_A.id}`);
-    expect(download.style.backgroundColor.replace(/\s/g, '')).toBe(ACCENT);
+    expect(download.className).toContain('bg-lz-accent');
     // Exactly one filled element per row: the action.
-    const row = screen.getByLabelText(`Open model card for ${HIT_A.id}`);
-    const filled = Array.from(row.querySelectorAll<HTMLElement>('[style]')).filter(
-      (el) => el.style.backgroundColor !== ''
+    const row = screen.getByLabelText(`Open model card for ${HIT_A.id}`).closest('tr')!;
+    const filled = Array.from(row.querySelectorAll<HTMLElement>('[class*="bg-lz-"]')).filter((el) =>
+      /(^|\s)bg-lz-(accent|ok|warn|err|stopped|node)/.test(el.className)
     );
     expect(filled).toHaveLength(1);
     expect(filled[0]).toBe(download);
+    // Nothing on the page is hand-coloured.
+    expect(
+      Array.from(document.querySelectorAll<HTMLElement>('[style]')).filter(
+        (el) => el.style.backgroundColor !== '' || el.style.color !== ''
+      )
+    ).toHaveLength(0);
+    unmount();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// LeanZero Studio: every tab rendered, every emitted class compiled through the
+// real Tailwind pipeline, and the design bans (no rail, no faded tint, no native
+// select) refused on the rendered tree — in the states a person actually sees.
+// ---------------------------------------------------------------------------
+
+describe('MlxEngineView — Studio clean on every tab', () => {
+  /** lucide stamps its icon name on each <svg>; react-select emits emotion hashes. Neither is a utility. */
+  const utilities = () =>
+    allClasses(document.body).filter((c) => !c.startsWith('lucide') && !c.startsWith('css-'));
+  /**
+   * The bans over everything the remake renders. The one host node excluded is react-select's
+   * own search <input> (the app's ui/Select, kept for the two model pickers): it carries
+   * `opacity: 1` inline — not a fade, and not remake markup.
+   */
+  const studioClean = () => {
+    const clone = document.body.cloneNode(true) as HTMLElement;
+    clone.querySelectorAll('input[id^="react-select"]').forEach((el) => el.remove());
+    assertStudioClean(clone);
+  };
+
+  it('engine tab: banners, the status KeyValue, the mount controls', async () => {
+    mockStatus.mockResolvedValue(
+      statusOf({
+        state: 'running',
+        modelId: QWEN,
+        contextWindow: 131072,
+        toolCallParser: 'qwen3',
+        pid: 4242,
+        baseUrl: 'http://127.0.0.1:9600/v1',
+        gateVerdict: 'warn',
+        gateMessage: 'memory headroom is thin',
+        restartRequired: true,
+        probeError: 'probe timed out after 3s',
+      })
+    );
+    const { unmount } = render(<MlxEngineView />);
+    await waitFor(() => {
+      expect(screen.getByText('Memory pressure')).toBeInTheDocument();
+    });
+    await waitFor(() => {
+      expect(screen.getByText('131,072')).toBeInTheDocument();
+    });
+    studioClean();
+    expect(await missingUtilities(utilities())).toEqual([]);
+    unmount();
+  });
+
+  it('models tab: the browser table with a live download, a filter menu open, then the library', async () => {
+    mockBrowse.mockResolvedValue({ hits: [HIT_A, HIT_B], nextCursor: 'c2' });
+    mockDownloadProgress.mockResolvedValue({
+      state: 'downloading',
+      totalBytes: 4 * GB,
+      downloadedBytes: GB,
+      currentFile: 'model.safetensors',
+    });
+    const { unmount } = render(<MlxEngineView />);
+    await openModelsTab();
+    await waitFor(() => {
+      expect(screen.getByText(HIT_A.id)).toBeInTheDocument();
+    });
+    await userEvent.click(screen.getByLabelText(`Download ${HIT_A.id}`));
+    await waitFor(() => {
+      expect(screen.getByTestId(`mlx-download-${HIT_A.id}`)).toBeInTheDocument();
+    });
+    await userEvent.click(screen.getByLabelText('Arch filter'));
+    await screen.findByLabelText('Search Arch');
+    expect(screen.getByRole('button', { name: 'Load more' })).toBeInTheDocument();
+    studioClean();
+    expect(await missingUtilities(utilities())).toEqual([]);
+
+    await userEvent.keyboard('{Escape}');
+    await openDownloadedTab();
+    await waitFor(() => {
+      expect(screen.getByTestId('mlx-disk-bar')).toBeInTheDocument();
+    });
+    expect(screen.getByText('incomplete — missing 2 file(s)')).toBeInTheDocument();
+    studioClean();
+    expect(await missingUtilities(utilities())).toEqual([]);
+    unmount();
+  });
+
+  it('sampling tab: the two-column form with a set and an unset field', async () => {
+    const { unmount } = render(<MlxEngineView />);
+    await openSamplingTab();
+    await waitFor(() => {
+      expect(screen.getByLabelText('Temperature')).toBeInTheDocument();
+    });
+    await userEvent.type(screen.getByLabelText('Presence penalty'), '0.5');
+    expect(screen.getByText('unsaved')).toBeInTheDocument();
+    // An unset field says so in quiet text beside the control; a set one offers Clear.
+    expect(screen.getAllByText('engine default').length).toBeGreaterThan(0);
+    expect(screen.getAllByRole('button', { name: /Clear/ }).length).toBeGreaterThan(0);
+    studioClean();
+    expect(await missingUtilities(utilities())).toEqual([]);
     unmount();
   });
 });
