@@ -343,9 +343,12 @@ fn the_banned_integrate_template_only_shrinks() {
 /// Tightened to 37,549 (VA-008 adjunct D6): `snapshot_tree_files` moved to commands/swarm/tree.rs,
 /// paying for the worker prompt's REQUEST_FILE line (the full request on disk, named once, absolute;
 /// `request_file_absent_at_dispatch` when it is not there).
+/// Tightened to 37,514 (VA-027 D7): the two inline rsync argument lists (best-tree snapshot and
+/// restore) collapsed into `tree::rsync_app_tree` over ONE exclusion list, paying for the write-once
+/// `.swarm/prefix-tree` snapshot at the INTEGRATE -> REPAIR handover (`prefix_tree_snapshot{ok, files}`).
 #[test]
 fn swarm_rs_line_count_only_decreases() {
-    const SWARM_RS_LINE_BASELINE: usize = 37_549;
+    const SWARM_RS_LINE_BASELINE: usize = 37_514;
     let text = read("crates/goose-cli/src/commands/swarm.rs");
     let n = text.lines().count();
     assert!(
