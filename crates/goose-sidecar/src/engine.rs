@@ -3,7 +3,8 @@
 //! Mounting is asynchronous by design — `mount` validates the model and the memory gate,
 //! flips to `Mounting`, and returns; a spawned task drives `Sidecar::start` to `Running`
 //! or `Failed`. Callers poll `status()`, which also probes the live engine's `/v1/models`
-//! for its context window and tool-call parser and never fabricates either.
+//! for its context window and tool-call parser, and its `/v1/status` for the in-flight
+//! request count — and never fabricates any of them.
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -255,6 +256,16 @@ pub struct EngineStatus {
     /// (the HF directory) whenever `served_model_name` aliases it. Chat must use THIS id.
     pub served_model_id: Option<String>,
     pub probe_error: Option<String>,
+    /// Requests the live engine has accepted and not finished: `/v1/status`'s
+    /// `num_running + num_waiting`. Measured 2026-09-02 on Rapid-MLX 0.13.1: an admitted
+    /// request sits in `waiting` (running still 0) for an instant before its first batch
+    /// slot, so running alone would call a loaded node idle. `None` means the engine did
+    /// not report it — never a defaulted 0; `active_requests_error` says why.
+    pub active_requests: Option<u32>,
+    /// Why `active_requests` is `None` on a running engine: the `/v1/status` probe failed
+    /// or its body lacked the counts. Kept apart from `probe_error` (the `/v1/models`
+    /// probe) so a served id and a missing busy fact are two visible facts, not one.
+    pub active_requests_error: Option<String>,
     pub gate_message: Option<String>,
     pub gate_verdict: Option<String>,
     /// Set when the manager supervises nothing but SOMETHING already listens on the
@@ -520,6 +531,8 @@ impl MlxEngineManager {
             tool_call_parser: None,
             served_model_id: None,
             probe_error: None,
+            active_requests: None,
+            active_requests_error: None,
             gate_message,
             gate_verdict,
             stray_listener_port: None,
@@ -565,7 +578,11 @@ impl MlxEngineManager {
             let desired_model = settings.model_id.as_deref().unwrap_or(&running_model);
             status.restart_required = build_serve_command(&settings, desired_model) != running_argv;
             let base_url = status.base_url.as_deref().expect("set for running state");
-            match self.probe_model_info(base_url).await {
+            let (model_info, active_requests) = tokio::join!(
+                self.probe_model_info(base_url),
+                self.probe_active_requests(base_url)
+            );
+            match model_info {
                 Ok((served_model_id, context_window, tool_call_parser)) => {
                     status.served_model_id = served_model_id;
                     status.context_window = context_window;
@@ -573,8 +590,29 @@ impl MlxEngineManager {
                 }
                 Err(e) => status.probe_error = Some(format!("{e:#}")),
             }
+            match active_requests {
+                Ok(count) => status.active_requests = Some(count),
+                Err(e) => status.active_requests_error = Some(format!("{e:#}")),
+            }
         }
         status
+    }
+
+    /// GET `/v1/status` — Rapid-MLX 0.13.1 `routes/health.py:304`, on the router that is
+    /// auth-gated only when the engine was given an API key (the serve argv passes none).
+    /// The same probe client and cadence as `/v1/models`; no clock of its own.
+    async fn probe_active_requests(&self, base_url: &str) -> Result<u32> {
+        let url = format!("{base_url}/v1/status");
+        let resp = self
+            .probe_client
+            .get(&url)
+            .send()
+            .await
+            .with_context(|| format!("GET {url}"))?;
+        let status = resp.status();
+        let body = resp.text().await.context("reading /v1/status body")?;
+        ensure!(status.is_success(), "GET {url} returned HTTP {status}");
+        parse_active_requests(&body)
     }
 
     #[allow(clippy::type_complexity)]
@@ -613,6 +651,32 @@ impl Default for MlxEngineManager {
     fn default() -> Self {
         Self::new()
     }
+}
+
+/// The in-flight count from a `/v1/status` body: `num_running` (the scheduler's running
+/// batch, `scheduler.py:8251 len(self.running)`) plus `num_waiting` (its admitted queue).
+/// Both keys must be present as non-negative integers: a body without them is an engine
+/// that does not report the fact, and the error names the missing key instead of reading 0.
+pub fn parse_active_requests(body: &str) -> Result<u32> {
+    let parsed: serde_json::Value =
+        serde_json::from_str(body).context("parsing /v1/status body")?;
+    let count = |key: &str| -> Result<u32> {
+        let value = parsed.get(key).with_context(|| {
+            format!(
+                "/v1/status body has no `{key}`: {}",
+                body.chars().take(200).collect::<String>()
+            )
+        })?;
+        let n = value.as_u64().with_context(|| {
+            format!("/v1/status `{key}` is not a non-negative integer: {value}")
+        })?;
+        u32::try_from(n).with_context(|| format!("/v1/status `{key}` overflows u32: {n}"))
+    };
+    let running = count("num_running")?;
+    let waiting = count("num_waiting")?;
+    running
+        .checked_add(waiting)
+        .context("/v1/status num_running + num_waiting overflows u32")
 }
 
 pub fn global_manager() -> &'static MlxEngineManager {
@@ -1019,6 +1083,130 @@ http.server.HTTPServer(("127.0.0.1", port), H).serve_forever()
         }
     }
 
+    /// `ARGV_FAKE_ENGINE` with Rapid-MLX 0.13.1's `/v1/status` shape (routes/health.py:323)
+    /// mid-generation: one request in the running batch, two admitted and waiting.
+    const ARGV_FAKE_ENGINE_BUSY: &str = r#"
+import http.server, json, sys
+argv = sys.argv
+port = int(argv[argv.index("--port") + 1])
+name = argv[argv.index("--served-model-name") + 1]
+class H(http.server.BaseHTTPRequestHandler):
+    def do_GET(self):
+        if self.path == "/v1/status":
+            body = json.dumps({"status": "generating", "model": name, "num_running": 1, "num_waiting": 2}).encode()
+        else:
+            body = json.dumps({"object": "list", "data": [{"id": name}]}).encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+    def log_message(self, *a):
+        pass
+http.server.HTTPServer(("127.0.0.1", port), H).serve_forever()
+"#;
+
+    /// The measured bodies (2026-09-02, real engine): idle is an EXPLICIT 0, generating
+    /// under a 10-request burst read `8 running / 0 waiting` and, an instant after
+    /// admission, `0 running / 2 waiting`. A body without the counts is an absence, never 0.
+    #[test]
+    fn parse_active_requests_sums_running_and_waiting_and_refuses_absence() {
+        assert_eq!(
+            parse_active_requests(r#"{"status":"idle","num_running":0,"num_waiting":0}"#).unwrap(),
+            0
+        );
+        assert_eq!(
+            parse_active_requests(r#"{"status":"generating","num_running":8,"num_waiting":0}"#)
+                .unwrap(),
+            8
+        );
+        assert_eq!(
+            parse_active_requests(r#"{"status":"idle","num_running":0,"num_waiting":2}"#).unwrap(),
+            2,
+            "admitted-and-waiting requests are in flight even while the batch is empty"
+        );
+
+        let no_running = parse_active_requests(r#"{"object":"list","data":[{"id":"x"}]}"#)
+            .unwrap_err()
+            .to_string();
+        assert!(no_running.contains("no `num_running`"), "{no_running}");
+        let no_waiting = parse_active_requests(r#"{"num_running":1}"#)
+            .unwrap_err()
+            .to_string();
+        assert!(no_waiting.contains("no `num_waiting`"), "{no_waiting}");
+        let negative = parse_active_requests(r#"{"num_running":-1,"num_waiting":0}"#)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            negative.contains("not a non-negative integer"),
+            "{negative}"
+        );
+        let not_json = format!("{:#}", parse_active_requests("<html>").unwrap_err());
+        assert!(not_json.contains("parsing /v1/status body"), "{not_json}");
+    }
+
+    /// Q1: the status carries the engine's own in-flight count when it reports one, and an
+    /// engine that answers `/v1/status` WITHOUT the counts leaves `active_requests` None
+    /// with the absence named — the busy fact is read, never invented.
+    #[tokio::test]
+    async fn status_carries_the_engines_in_flight_count_and_never_fabricates_it() {
+        let tmp = tempfile::tempdir().unwrap();
+        complete_small_model(tmp.path(), "pub/small");
+        let manager = MlxEngineManager::new();
+        let port = {
+            let probe = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            probe.local_addr().unwrap().port()
+        };
+        manager.set_settings(EngineSettings {
+            models_dir: tmp.path().to_string_lossy().into_owned(),
+            port,
+            served_model_name: Some("busy-alias".to_string()),
+            spawn_command: vec![
+                "python3".to_string(),
+                "-c".to_string(),
+                ARGV_FAKE_ENGINE_BUSY.to_string(),
+            ],
+            ..Default::default()
+        });
+        manager.mount("pub/small").await.unwrap();
+        let status = settle(&manager).await;
+        assert_eq!(status.state, "running", "{:?}", status.last_error);
+        assert_eq!(status.served_model_id.as_deref(), Some("busy-alias"));
+        assert_eq!(status.active_requests, Some(3), "1 running + 2 waiting");
+        assert_eq!(status.active_requests_error, None);
+        manager.unmount().await;
+
+        let port = {
+            let probe = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            probe.local_addr().unwrap().port()
+        };
+        manager.set_settings(EngineSettings {
+            models_dir: tmp.path().to_string_lossy().into_owned(),
+            port,
+            served_model_name: Some("mute-alias".to_string()),
+            spawn_command: vec![
+                "python3".to_string(),
+                "-c".to_string(),
+                ARGV_FAKE_ENGINE.to_string(),
+            ],
+            ..Default::default()
+        });
+        manager.mount("pub/small").await.unwrap();
+        let status = settle(&manager).await;
+        assert_eq!(status.state, "running", "{:?}", status.last_error);
+        assert_eq!(
+            status.served_model_id.as_deref(),
+            Some("mute-alias"),
+            "the /v1/models probe is untouched by a mute /v1/status"
+        );
+        assert_eq!(status.probe_error, None);
+        assert_eq!(status.active_requests, None, "absence is None, never 0");
+        let absence = status.active_requests_error.expect("the absence is named");
+        assert!(absence.contains("no `num_running`"), "{absence}");
+        manager.unmount().await;
+        assert_eq!(manager.status().await.active_requests, None);
+    }
+
     /// S-L8: the circuit breaker now sits on the production re-mount path. A mount of the
     /// IDENTICAL configuration keeps the supervisor (a healthy engine is verified, not
     /// restarted); after the engine is killed, the same mount restarts it through
@@ -1128,11 +1316,19 @@ http.server.HTTPServer(("127.0.0.1", port), H).serve_forever()
             .unwrap();
         let members = String::from_utf8_lossy(&members.stdout);
         eprintln!(
-            "live: running after {:.1}s, leader {leader}, group members [{}], context_window {:?}, parser {:?}",
+            "live: running after {:.1}s, leader {leader}, group members [{}], context_window {:?}, parser {:?}, active_requests {:?} (error {:?})",
             started.elapsed().as_secs_f64(),
             members.split_whitespace().collect::<Vec<_>>().join(" "),
             status.context_window,
-            status.tool_call_parser
+            status.tool_call_parser,
+            status.active_requests,
+            status.active_requests_error
+        );
+        assert_eq!(
+            status.active_requests,
+            Some(0),
+            "an idle real engine reports an EXPLICIT zero; error: {:?}",
+            status.active_requests_error
         );
         assert!(
             members.split_whitespace().count() >= 2,
