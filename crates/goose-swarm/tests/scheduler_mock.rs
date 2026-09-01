@@ -2659,6 +2659,7 @@ async fn a_shards_and_a_mergers_roles_reach_the_dispatch_request() {
         folder: ".swarm/shards/web-viz/render".into(),
         responsibility: "programs".into(),
         interface: goose_swarm::ModuleInterface::default(),
+        module_files: vec!["web/viz.js".into()],
     });
     let mut merger = spec("web-viz", &["web-viz-render"], &["web/viz.js"]);
     merger.merger_of = Some(goose_swarm::MergerOf {
