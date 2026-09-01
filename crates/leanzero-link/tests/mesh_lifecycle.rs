@@ -480,6 +480,54 @@ async fn start_fails_loudly_when_the_daemon_dies_during_the_readiness_probe() {
     );
 }
 
+/// FH#11: a daemon that never binds its socket times out with the LAST probe's verdict
+/// in the error ("socket … not present yet"), its stderr tail, and no orphan.
+#[tokio::test]
+async fn startup_timeout_names_the_last_probe_and_leaves_no_orphan() {
+    let root = tempfile::tempdir().unwrap();
+    let mut config = fake_config(root.path());
+    // The marking daemon records its pid and idles without ever binding the socket.
+    config.tailscaled_path = write_exec(
+        root.path(),
+        "fake-tailscaled-marking",
+        FAKE_TAILSCALED_MARKING,
+    );
+    warm_exec(&config.tailscaled_path).await;
+    config.startup_timeout = Duration::from_secs(1);
+
+    let err = match MeshEngine::start(config.clone()).await {
+        Ok(_) => panic!("start reported ready with no socket"),
+        Err(e) => e,
+    };
+    match &err {
+        MeshError::StartupTimeout {
+            waited, last_probe, ..
+        } => {
+            assert_eq!(*waited, Duration::from_secs(1));
+            assert!(
+                last_probe.contains("not present yet")
+                    && last_probe.contains(&config.socket_path.display().to_string()),
+                "the timeout names what the last probe saw: {last_probe}"
+            );
+        }
+        other => panic!("expected StartupTimeout, got {other}"),
+    }
+    assert!(
+        err.to_string().contains("last probe: socket"),
+        "the Display carries it too: {err}"
+    );
+    let our_pid: u32 = std::fs::read_to_string(config.state_dir.join("spawned"))
+        .expect("the daemon was spawned")
+        .trim()
+        .parse()
+        .unwrap();
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert!(
+        !process_alive(our_pid),
+        "the never-ready daemon (pid {our_pid}) was terminated per-pid on timeout"
+    );
+}
+
 #[tokio::test]
 async fn refuses_system_tailscale_paths_before_spawning_anything() {
     let root = tempfile::tempdir().unwrap();

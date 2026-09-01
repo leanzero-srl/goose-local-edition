@@ -23,7 +23,7 @@ use leanzero_link::identity::{Identity, IdentityStore};
 use leanzero_link::manager::{
     AuthState, LinkError, LinkManager, LinkManagerConfig, Mesh, MeshFactory,
 };
-use leanzero_link::mesh::{BackendState, MeshConfig, MeshError, MeshStatus};
+use leanzero_link::mesh::{BackendState, MeshConfig, MeshError, MeshPeer, MeshStatus};
 use leanzero_link::state::{
     ExecuteAccepted, ExecuteError, ExecuteRequest, MlxControl, MlxControlError, MlxOp, PeerTarget,
     RemoteExecutor, SwarmStateSource,
@@ -53,6 +53,12 @@ struct MeshCalls {
 struct MeshScript {
     /// `status()` answers `DaemonExited` — the supervised tailscaled is dead.
     daemon_dead: AtomicBool,
+    /// `status()` answers `StatusFailed` — the daemon lives but the read errored.
+    status_fails: AtomicBool,
+    /// `logout()` answers `LogoutFailed`.
+    logout_fails: AtomicBool,
+    /// The peers `status()` reports (default none).
+    peers: StdMutex<Vec<MeshPeer>>,
     /// `join()` parks (yielding) until this is cleared — lets a test act mid-connect.
     hold_join: AtomicBool,
     /// Set by `join()` on entry so a test knows the connect is inside the mesh step.
@@ -93,10 +99,22 @@ impl Mesh for FakeMesh {
                 stderr_tail: "fake tailscaled crashed".to_string(),
             });
         }
-        Ok(self.status.clone())
+        if self.script.status_fails.load(Ordering::SeqCst) {
+            return Err(MeshError::StatusFailed {
+                stderr: "fake: status read errored".to_string(),
+            });
+        }
+        let mut status = self.status.clone();
+        status.peers = self.script.peers.lock().unwrap().clone();
+        Ok(status)
     }
     async fn logout(&self) -> Result<(), MeshError> {
         self.calls.lock().unwrap().logout_count += 1;
+        if self.script.logout_fails.load(Ordering::SeqCst) {
+            return Err(MeshError::LogoutFailed {
+                stderr: "fake: control plane unreachable".to_string(),
+            });
+        }
         Ok(())
     }
     async fn shutdown(&self) {
@@ -501,6 +519,115 @@ async fn join_key_401_expired_logs_out_and_clears_identity() {
         h.start_count.load(Ordering::SeqCst),
         0,
         "mesh never started"
+    );
+}
+
+/// FH#9: `node_count` counts self + peers that are NOT Offline. A mesh-listed peer with
+/// no IP is a permanently Offline row and must not inflate the count; a status read
+/// that errors (daemon alive) is counted in `mesh_poll_failures`, not hidden.
+#[tokio::test]
+async fn node_count_excludes_offline_peers_and_poll_failures_are_counted() {
+    let server = MockServer::start().await;
+    mount(
+        &server,
+        "POST",
+        "/v1/mesh/join-key",
+        200,
+        json!({"authKey": "tskey-auth-ok", "nodeSecret": SECRET, "expirySeconds": 600}),
+    )
+    .await;
+    let h = Harness::new(tempfile::tempdir().unwrap());
+    h.seed_identity("a@example.com", "good-token");
+    *h.script.peers.lock().unwrap() = vec![MeshPeer {
+        hostname: "ghost".to_string(),
+        ip: None,
+        online: false,
+        last_seen: None,
+    }];
+    let manager = h.manager(&server, false);
+    manager.connect().await.expect("connects");
+
+    wait_until("the ghost peer to be registered", || {
+        let manager = &manager;
+        async move {
+            manager
+                .active_registry()
+                .await
+                .is_some_and(|r| r.peer_nodes().iter().any(|n| n.hostname == "ghost"))
+        }
+    })
+    .await;
+    let state = manager.status().await;
+    assert_eq!(
+        state.node_count, 1,
+        "an Offline (no-IP) peer is not a reachable node"
+    );
+    assert_eq!(state.mesh_poll_failures, 0);
+
+    // The daemon lives but `tailscale status` errors: counted, auth untouched.
+    h.script.status_fails.store(true, Ordering::SeqCst);
+    wait_until("consecutive poll failures to be counted", || {
+        let manager = &manager;
+        async move { manager.status().await.mesh_poll_failures >= 2 }
+    })
+    .await;
+    let state = manager.status().await;
+    assert!(
+        matches!(state.auth, AuthState::Connected { .. }),
+        "a failed read is not a dead daemon: {:?}",
+        state.auth
+    );
+    assert!(state
+        .last_error
+        .as_deref()
+        .is_some_and(|e| e.contains("mesh status read failed")));
+
+    h.script.status_fails.store(false, Ordering::SeqCst);
+    wait_until("the counter to reset on the next success", || {
+        let manager = &manager;
+        async move { manager.status().await.mesh_poll_failures == 0 }
+    })
+    .await;
+    manager.logout(false).await.unwrap();
+}
+
+/// FH#10: a failed `tailscale logout` still logs the account out (the daemon is
+/// stopped per-pid), and the failure text lands in `last_error` instead of being
+/// erased by the logout.
+#[tokio::test]
+async fn logout_keeps_a_failed_mesh_logout_in_last_error() {
+    let server = MockServer::start().await;
+    mount(
+        &server,
+        "POST",
+        "/v1/mesh/join-key",
+        200,
+        json!({"authKey": "tskey-auth-ok", "nodeSecret": SECRET, "expirySeconds": 600}),
+    )
+    .await;
+    let h = Harness::new(tempfile::tempdir().unwrap());
+    h.seed_identity("a@example.com", "good-token");
+    let manager = h.manager(&server, false);
+    manager.connect().await.expect("connects");
+    h.script.logout_fails.store(true, Ordering::SeqCst);
+
+    manager
+        .logout(false)
+        .await
+        .expect("the account logout succeeds even when the tailnet logout fails");
+    let state = manager.status().await;
+    assert!(matches!(state.auth, AuthState::LoggedOut));
+    assert!(!h.identity_present());
+    let err = state.last_error.expect("the mesh logout failure is kept");
+    assert!(
+        err.contains("tailscale logout") && err.contains("control plane unreachable"),
+        "last_error carries the failure: {err}"
+    );
+    let calls = h.calls.lock().unwrap();
+    assert_eq!(calls.logout_count, 1);
+    assert_eq!(
+        calls.shutdown_count, 1,
+        "the daemon was stopped per-pid after the failed logout"
     );
 }
 
