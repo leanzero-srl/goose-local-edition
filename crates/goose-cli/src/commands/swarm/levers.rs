@@ -110,6 +110,26 @@ pub(super) fn retired_levers(cfg: &SwarmConfig, env: &dyn Fn(&str) -> Option<Str
                 None => Value::Null,
             },
         ),
+        // 2c S6: the two idle-fill dimension reviews are deleted. sink_review kept a config field
+        // (env > config); tail_review was env-only with a default-ON reading, echoed as the engine
+        // read it (`0/off/false/no` = false) so main.ts's stale `GOOSE_SWARM_TAIL_REVIEW: '0'` pin
+        // is visible as a pin on a dead lever.
+        "sink_review": row(
+            "the sink idle-fill (review_dimension, pick_sink_review) is deleted in 2c S6; its producer \
+             defaulted OFF while its drain said ON, so it never ran once in any measured run",
+            opt_gate("GOOSE_SWARM_SINK_REVIEW", cfg.sink_review),
+        ),
+        "tail_review": row(
+            "the tail idle-fill (pick_tail_review, GOOSE_SWARM_TAIL_REVIEW) is deleted in 2c S6; r2 \
+             measured 474 of 481 tail_review events in one hour, 477 with had_findings=false",
+            match env("GOOSE_SWARM_TAIL_REVIEW") {
+                Some(v) => json!(!matches!(
+                    v.trim().to_lowercase().as_str(),
+                    "0" | "off" | "false" | "no"
+                )),
+                None => Value::Null,
+            },
+        ),
     })
 }
 
@@ -139,6 +159,8 @@ mod tests {
             "dynamic_replan",
             "max_replans",
             "persona",
+            "sink_review",
+            "tail_review",
         ] {
             assert!(
                 clean[k]["reason"].as_str().is_some_and(|r| !r.is_empty()),
@@ -159,6 +181,8 @@ mod tests {
         assert_eq!(clean["dynamic_replan"]["configured"], Value::Null);
         assert_eq!(clean["max_replans"]["configured"], Value::Null);
         assert_eq!(clean["persona"]["configured"], json!(false));
+        assert_eq!(clean["sink_review"]["configured"], Value::Null);
+        assert_eq!(clean["tail_review"]["configured"], Value::Null);
 
         cfg.split_fat = true;
         cfg.fan_verify = true;
@@ -182,9 +206,14 @@ mod tests {
             "GOOSE_SWARM_SPLIT_FAT" => Some("0".to_string()),
             "GOOSE_SWARM_SPLIT_INHERIT_SPEC" => Some("yes".to_string()),
             "GOOSE_SWARM_STRAGGLER_GRACE_SECS" => Some("soon".to_string()),
+            // main.ts's Benchmark spawn still pins this (dead) lever off.
+            "GOOSE_SWARM_TAIL_REVIEW" => Some("0".to_string()),
+            "GOOSE_SWARM_SINK_REVIEW" => Some("1".to_string()),
             _ => None,
         };
         let pinned = retired_levers(&cfg, &env);
+        assert_eq!(pinned["tail_review"]["configured"], json!(false));
+        assert_eq!(pinned["sink_review"]["configured"], json!(true));
         assert_eq!(
             pinned["split_fat"]["configured"],
             json!(false),

@@ -26,12 +26,6 @@ pub(super) fn judge_lane_key(task_id: &str) -> String {
     format!("judge-{task_id}")
 }
 
-/// The sink-tail dimension review's lane — keyed by review dimension (it reviews the whole tree,
-/// not one task), matching the `tail_review` events.
-pub(super) fn tail_review_lane_key(dim_id: &str) -> String {
-    format!("tail-review-{dim_id}")
-}
-
 /// The SCHEDULER-side judge's semantic review (`Judge::judge`), one lane per reviewed task.
 /// DELIBERATELY not `judge-<task>` (surgeon #10's warning): the omni judge already owns that key
 /// for the same task, and two writers on one digest would interleave two different reviews into
@@ -39,14 +33,6 @@ pub(super) fn tail_review_lane_key(dim_id: &str) -> String {
 /// the task.
 pub(super) fn schedjudge_lane_key(task_id: &str) -> String {
     format!("schedjudge-{task_id}")
-}
-
-/// One sink-review verification (`verify_finding`), keyed by the finding's index in its drained
-/// batch — the fan runs these CONCURRENTLY over the fleet, so a shared key would have parallel
-/// lanes fighting over one digest file. Digit-suffixed exactly so a model-chosen task id such as
-/// `verify-endpoints` stays a worker lane.
-pub(super) fn verify_lane_key(idx: usize) -> String {
-    format!("verify-{idx}")
 }
 
 /// The mid-run operator-question answerer's lane (`answer_user_question`). One lane for the run:
@@ -65,25 +51,17 @@ pub(super) const PILLARS_LANE: &str = "pillars";
 /// keys replaced were never judged either (behavior parity).
 ///
 /// Derivation is by the exact shapes the mint fns above produce. A MODEL-chosen task id starting
-/// with `judge-`/`tail-review-` would be misclassified — the same accepted hazard
+/// with `judge-`/`schedjudge-` would be misclassified — the same accepted hazard
 /// `engine_owned_activity_keys_cannot_collide_with_a_model_chosen_task_id` documents for
-/// `call_objective` (live plans name tasks after modules); the verify shape is digit-exact, so a
-/// model-chosen id such as `verify-endpoints` stays a worker lane.
+/// `call_objective` (live plans name tasks after modules). The sink-review `verify-<n>` lanes and
+/// the `tail-review-<dim>` lanes are deleted (2c S6), so a model-chosen `verify-endpoints` is a
+/// worker lane by construction.
 pub(super) fn supervision_lane_kind(key: &str) -> Option<&'static str> {
     if key.starts_with("judge-") {
         return Some("judge");
     }
-    if key.starts_with("tail-review-") {
-        return Some("tailreview");
-    }
     if key.starts_with("schedjudge-") {
         return Some("schedjudge");
-    }
-    // Digit-exact: `verify-endpoints` is a name a plan could give a build task.
-    if let Some(rest) = key.strip_prefix("verify-") {
-        if !rest.is_empty() && rest.bytes().all(|b| b.is_ascii_digit()) {
-            return Some("verify");
-        }
     }
     if key == ASK_ANSWER_LANE {
         return Some("ask");
@@ -108,14 +86,9 @@ mod tests {
             Some("judge")
         );
         assert_eq!(
-            supervision_lane_kind(&tail_review_lane_key("wiring")),
-            Some("tailreview")
-        );
-        assert_eq!(
             supervision_lane_kind(&schedjudge_lane_key("web-viz")),
             Some("schedjudge")
         );
-        assert_eq!(supervision_lane_kind(&verify_lane_key(3)), Some("verify"));
         assert_eq!(supervision_lane_kind(ASK_ANSWER_LANE), Some("ask"));
         assert_eq!(supervision_lane_kind(PILLARS_LANE), Some("pillars"));
         for worker in [
@@ -129,10 +102,11 @@ mod tests {
             "research-payments-q0",
             "apptest-primary-journey",
             "integrate-verify",
-            // The digit-exact rule keeps a model-chosen verify task a WORKER lane: a
-            // misclassification here would silently strip its omni-judge supervision.
+            // A model-chosen verify task is a WORKER lane (the engine mints no `verify-` lane
+            // since 2c S6): a misclassification would silently strip its omni-judge supervision.
             "verify-endpoints",
             "verify-2b",
+            "tail-review-wiring",
         ] {
             assert_eq!(
                 supervision_lane_kind(worker),

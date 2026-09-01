@@ -58,9 +58,8 @@ use supervision::{
     is_agent_loop_filler, judge_contract, judge_lane_key, me_events_skip, omni_judge_says_looping,
     parse_judge_eta_mins, parse_judge_reply, render_forming_file, said_kind_of,
     schedjudge_lane_key, structured_reply_block, superseded_from_prior, supervised_reply_text,
-    supervision_lane_kind, tail_chars, tail_review_lane_key, verify_lane_key, write_forming_atomic,
-    FormingGuard, FormingReport, FormingSidecar, SupervisedReplyError, ASK_ANSWER_LANE,
-    JUDGE_PROBE_TURNS, PILLARS_LANE,
+    supervision_lane_kind, tail_chars, write_forming_atomic, FormingGuard, FormingReport,
+    FormingSidecar, SupervisedReplyError, ASK_ANSWER_LANE, JUDGE_PROBE_TURNS, PILLARS_LANE,
 };
 mod orientation;
 use orientation::{
@@ -141,7 +140,7 @@ use findings::{
     parse_numbered_findings, partition_by_engine_critical, FindingProvenance, FindingSource,
 };
 mod pitfalls;
-use pitfalls::{relevant_pitfalls, DOMAIN_PITFALLS};
+use pitfalls::relevant_pitfalls;
 mod fleet_order;
 #[cfg(test)]
 use fleet_order::fleet_slot_models;
@@ -433,27 +432,12 @@ pub struct SwarmConfig {
     /// cannot ship a truncated deliverable. env overrides; 0 disables.
     #[serde(default = "default_progress_watchdog_secs")]
     pub progress_watchdog_secs: u64,
-    /// SINK IDLE-FILL (`GOOSE_SWARM_SINK_REVIEW`): while `integrate-verify` runs — a task that owns
-    /// nothing, blocks nothing, and holds the fleet — give the FREE nodes read-only whole-tree review
-    /// work, and hand its findings to the join.
-    ///
-    /// It targets the one measurement in this campaign that has never wobbled across any generation or
-    /// binary: EXECUTE OCCUPANCY is 1.0000 on both 1-node cells and 0.5535 / 0.6678 / 0.8256 on the
-    /// three 3-node cells — no overlap, five cells deep. A 3-node fleet spends roughly a third of its
-    /// execute window idle, and the idle is dominated by the join running ALONE (measured at 100% of
-    /// the solo time in the worst cell). Every other candidate explanation for the node curve has since
-    /// failed to reproduce; this deficit has not.
-    ///
-    /// None => OFF, which is the historical behaviour: `sink_review_enabled()` reads the ENVIRONMENT
-    /// ONLY and no bridge carried a config value to it, so `levers.sink_review` is absent from every
-    /// cell on record — THE LEVER HAS NEVER RUN. This field exists to make it REACHABLE (a desktop
-    /// launch cannot set env vars at all), not to turn it on: it is an unproven behaviour change and
-    /// earns its A/B before it earns a default.
-    ///
-    /// ⚠️ The bridge in `run_swarm` is deliberately the only way this reaches the engine.
-    /// `sink_review_enabled()` must stay the ONE resolution, because the producer (goose-swarm) and the
-    /// drain (goose-cli) both consult it and a divergence would make a run report a lever it is not
-    /// running.
+    /// RETIRED (2c S6, 2026-09-01): the sink idle-fill — read-only whole-tree dimension reviews on idle
+    /// nodes while `integrate-verify` ran solo — is DELETED with the tail idle-fill (`review_dimension`,
+    /// `pick_sink_review`/`pick_tail_review`, the `GOOSE_SWARM_SINK_REVIEW`/`GOOSE_SWARM_TAIL_REVIEW`
+    /// resolvers). It never ran once in any measured run (its producer defaulted OFF while its drain and
+    /// echo said ON), and the tail twin's 474 of 481 r2 events carried `had_findings: false`. The field
+    /// survives only so an old config.yaml round-trips; `levers::retired_levers` echoes it as `configured`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sink_review: Option<bool>,
     /// ⚠️ BAKED ON — the golden formula sets this in `Default for SwarmConfig` (F455). Any
@@ -786,8 +770,8 @@ pub struct SwarmConfig {
     #[serde(default)]
     pub supervision_pool: bool,
     /// F781/#16 (GOOSE_SWARM_FIX_SCHED env overrides): run each multi-file fix round as a REAL
-    /// scheduled DAG (fix::r{N}::{file} tasks through a second scheduler run with judge +
-    /// tail-review supervision) instead of the hand-rolled fan. Default OFF until the campaign
+    /// scheduled DAG (fix::r{N}::{file} tasks through a second scheduler run with the
+    /// scheduler's idle-job supervision) instead of the hand-rolled fan. Default OFF until the campaign
     /// measures quality parity.
     #[serde(default)]
     pub fix_sched: bool,
@@ -6555,7 +6539,7 @@ mod tests {
             d["attempt"], 3,
             "the judge lane's attempt field carries the look number"
         );
-        let seed = seed_worker_digest("m", &said, Some("tail-review-wiring"));
+        let seed = seed_worker_digest("m", &said, Some(ASK_ANSWER_LANE));
         assert_eq!(seed["supervision"], serde_json::json!(true));
         let w = build_worker_digest(
             &[],
@@ -9214,20 +9198,6 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
         assert_eq!(fan(4, &items(1)), 0, "a single command must not be fanned");
     }
 
-    /// SINK IDLE-FILL is now REACHABLE but still OFF. Those are different properties and they must not
-    /// drift together: making a lever settable from config is a defect fix (a desktop run cannot set env
-    /// vars, so it could never reach this one at all), while turning it on is a behaviour change that
-    /// owes an A/B first. `sink_review` targets the occupancy deficit — the only measure that has not
-    /// wobbled across any generation — but targeting it is not evidence of fixing it.
-    #[test]
-    fn sink_idle_fill_is_reachable_but_not_yet_on() {
-        assert_eq!(
-            SwarmConfig::default().sink_review,
-            None,
-            "sink_review must stay OFF until an arm measures it — reachable is not the same as proven"
-        );
-    }
-
     /// The oracle is BAKED ON. Leaving it off shipped the exact defect it was written to fix: four
     /// shards that each derived their own list produced 1/1/28/1 tool calls in baseline-n3-r0 — 90% of
     /// the work in one shard — while the same app on two shards ran 2 and 9.
@@ -11132,23 +11102,6 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
     }
 
     #[test]
-    fn review_file_excerpt_keeps_small_whole_and_large_tail() {
-        // A small file (< 6000 chars) is shown WHOLE.
-        let small = "import argparse\n\ndef main():\n pass\n";
-        assert_eq!(review_file_excerpt(small), small);
-        // A large file keeps its TAIL (the argparse dispatch the old head-truncation hid).
-        let big = format!(
-            "# top of file\n{}\ndef main():\n args = p.parse_args()\n DISPATCH_TAIL_MARKER(args)\n",
-            "x = 1  # filler line\n".repeat(500)
-        );
-        let ex = review_file_excerpt(&big);
-        assert!(ex.contains("# top of file"));
-        assert!(ex.contains("DISPATCH_TAIL_MARKER"));
-        assert!(ex.contains("middle elided"));
-        assert!(ex.chars().count() < big.chars().count());
-    }
-
-    #[test]
     fn normalize_plan_files_to_package_truth_table() {
         use std::collections::HashSet;
         let pkg = "gradebook";
@@ -12091,52 +12044,6 @@ fn args_fetch_external_url(name: &str, args: &serde_json::Value) -> bool {
     has_url && has_fetcher
 }
 
-/// A fixed CORRECTNESS-review angle, fanned one-per-model across the idle fleet in the post-execute
-/// REVIEW phase (GOOSE_SWARM_REVIEW_FANOUT). Read-only + ADVISORY: it surfaces defects, drives no fix.
-struct ReviewDimension {
-    id: &'static str,
-    brief: &'static str,
-}
-
-/// The review angles fanned across the fleet — small + orthogonal so each of 3-4 nodes gets one.
-const REVIEW_DIMENSIONS: &[ReviewDimension] = &[
-    ReviewDimension {
-        id: "correctness",
-        brief: "the DEFAULT/primary path produces WRONG output — a wrong constant, parameter, unit, sign, \
-                or formula — even though the tests pass. This is the deepest defect a green suite hides.",
-    },
-    ReviewDimension {
-        id: "wiring",
-        brief: "a spec deliverable is BUILT but never imported/wired into the program's entry point, so \
-                the advertised behaviour is unreachable at runtime.",
-    },
-    ReviewDimension {
-        id: "interface",
-        brief: "an advertised command, subcommand, argument name, or argument ORDER drifts from the GOAL \
-                or the pillars (e.g. a renamed subcommand, or an option that must be global vs per-subcommand).",
-    },
-    ReviewDimension {
-        id: "edge-cases",
-        brief: "an input the passing tests never exercise makes the program CRASH with an UNHANDLED exception. \
-                Trace each command's real code path and flag where an input reaches an UNGUARDED operation of \
-                these specific crash classes: a division / mean / average whose denominator or count can be \
-                ZERO (ZeroDivisionError); first / max / min / [0] / index of a list or file that can be EMPTY \
-                (IndexError / 'max() arg is an empty sequence' ValueError); a dict or row lookup of a key that \
-                may be MISSING (KeyError); int() / float() of text that may be NON-NUMERIC (ValueError); a \
-                value that may be None used where a number or string is required. For EACH real one, name the \
-                EXACT command and the concrete input that triggers it (e.g. `ratio 5 0`, or a command run on an \
-                empty file / empty list) so it can be reproduced. A clean argparse usage error (exit 2, no \
-                traceback) or an already-caught exception is NOT a crash — only an uncaught traceback counts.",
-    },
-    ReviewDimension {
-        id: "domain-conventions",
-        brief: "the code contradicts a KNOWN-CORRECT domain convention (calendar/cron/timezone, 0- vs \
-                1-indexing, inclusive- vs exclusive ranges, money precision, off-by-one, units) — a \
-                SELF-CONSISTENT domain error the code AND its tests both encode the same wrong way, so a \
-                green suite + a same-fleet review hide it. Checked against injected external ground truth.",
-    },
-];
-
 /// Plan confidence is null BY DESIGN on the live path: the cross-draft agreement metric went with the
 /// multi-draft planner (P1-5), and REVIEW's own one-round summary replaced the metric. Every live
 /// construction is `PlanConf::default()` — `final_conf` stays `None` and `plan_loaded` writes
@@ -12355,10 +12262,6 @@ pub struct GooseAgentDispatcher {
     /// the same verdict is pure node-time. Keyed by task id, holding the last reviewed
     /// fingerprint.
     judge_seen: Mutex<std::collections::HashMap<String, u64>>,
-    /// SINK IDLE-FILL (GOOSE_SWARM_SINK_REVIEW): read-only whole-tree review findings accumulated by idle
-    /// nodes while the integrate-verify sink runs solo; drained + re-verified by run_swarm after the sink.
-    /// Empty unless the flag is on.
-    sink_review_findings: Mutex<Vec<String>>,
     /// #136 SAFETY: the OPERATOR's spec as it stood before any model wrote into it. `opts.prompt` is APPENDED
     /// TO by model output twice — research findings (swarm.rs:19660) and clarify Q&A (:19799) — and a retarget
     /// round RE-PLANS with that enlarged prompt. Parsing delegation from the live prompt would therefore let
@@ -12478,12 +12381,6 @@ pub struct GooseAgentDispatcher {
 }
 
 impl GooseAgentDispatcher {
-    /// Drain the sink idle-fill review findings accumulated during the sink (see `idle_dimension_review`).
-    /// Consumed by run_swarm's post-sink REVIEW block (drain + re-verify against the final tree).
-    fn drain_sink_review(&self) -> Vec<String> {
-        std::mem::take(&mut *self.sink_review_findings.lock().unwrap())
-    }
-
     /// Provider NAME serving this model id ("lmstudio" unless the pool declared it cloud).
     fn provider_name(&self, model_id: &str) -> &str {
         self.cloud_models
@@ -12603,7 +12500,6 @@ impl GooseAgentDispatcher {
             shard_bases: Mutex::new(HashMap::new()),
             qa_inflight: Mutex::new(std::collections::HashSet::new()),
             judge_seen: Mutex::new(std::collections::HashMap::new()),
-            sink_review_findings: Mutex::new(Vec::new()),
             spec_frozen: Mutex::new(String::new()),
             owner_snapshots: Mutex::new(HashMap::new()),
             prompt_delivered: Mutex::new(HashMap::new()),
@@ -17001,16 +16897,6 @@ fn overview_run_command(lang: TargetLang, root: &Path, rel: &[String]) -> Option
         // of silently inheriting this one.
         TargetLang::Other => None,
     }
-}
-
-/// File excerpt for the review / verify prompt. A small file is shown WHOLE; a large file shows its HEAD and
-/// its TAIL (where a CLI's argparse dispatch + command wiring lives) with the middle elided.
-fn review_file_excerpt(content: &str) -> String {
-    const WHOLE: usize = 6000;
-    if content.chars().count() <= WHOLE {
-        return content.to_string();
-    }
-    elide_middle(content, 3500, 2500)
 }
 
 /// The Python package dir (one containing `__main__.py`) at `root`, for a `-m <pkg>` invocation. None if absent.
@@ -23359,56 +23245,6 @@ impl PreReviewer for GooseAgentDispatcher {
             .remove(&q_path.to_string_lossy().to_string());
     }
 
-    async fn idle_dimension_review(&self, model_id: &str, goal: &str, dim_index: usize) {
-        // Read-only whole-tree review along ONE rotating dimension, on an idle node while the sink runs.
-        // Reuses review_dimension (empty extensions => physically cannot write, so it never races the sink).
-        // Any finding is accumulated for run_swarm to drain + re-verify against the FINAL tree after the sink
-        // (fail-closed => a stale/torn-read finding is refuted and dropped).
-        let cwd = std::env::current_dir().unwrap_or_else(|_| self.working_dir.clone());
-        let dim = &REVIEW_DIMENSIONS[dim_index % REVIEW_DIMENSIONS.len()];
-        let files: Vec<String> = collect_py_files(&cwd)
-            .iter()
-            .filter_map(|p| p.to_str().map(|s| s.to_string()))
-            .collect();
-        if files.is_empty() {
-            return;
-        }
-        let started = std::time::Instant::now();
-        let found = match self
-            .review_dimension(model_id, dim.id, dim.brief, goal, &files)
-            .await
-        {
-            Ok(f) => f,
-            Err(error) => {
-                // A-2: the review call died in transport. Named as a FAILURE — the old path fell
-                // through to `had_findings: false`, a claim about the code nobody made.
-                self.events.write_value(serde_json::json!({
-                    "event": "tail_review_failed",
-                    "dimension": dim.id,
-                    "secs": started.elapsed().as_secs(),
-                    "error": error,
-                }));
-                return;
-            }
-        };
-        // The finding rides `sink_review_findings`, drained and re-verified by run_swarm after the
-        // sink; the `.swarm/prereview/` file channel it also wrote into died with the M5 pre-review
-        // (VA-014 D1: 0 pre_review events in r5/r6c/r6d — the layer was off in every measured run,
-        // REFUSED.md II-15 had already parked it for deletion). It gets an EVENT because it was
-        // invisible in the log and in levers_resolved, which is why every earlier waste audit missed it.
-        let secs = started.elapsed().as_secs();
-        if let Some(finding) = found {
-            self.events.write_value(serde_json::json!({
-                "event": "tail_review", "dimension": dim.id, "secs": secs, "had_findings": true,
-            }));
-            self.sink_review_findings.lock().unwrap().push(finding);
-        } else {
-            self.events.write_value(serde_json::json!({
-                "event": "tail_review", "dimension": dim.id, "secs": secs, "had_findings": false,
-            }));
-        }
-    }
-
     async fn generate_tests(&self, model_id: &str, _goal: &str, seq: u32) {
         // Testgen was contract-derived ONLY — the prompt saw the goal and the FROZEN interface
         // bundle, never the produced code (a test written from the code can only cement the
@@ -25387,7 +25223,7 @@ impl TargetLang {
 /// F781/#16 (design commit 2): everything needed to construct a GooseAgentDispatcher, BY VALUE,
 /// so a second dispatcher with identical semantics can be built later (the fix-round scheduler
 /// run builds a FRESH one — reusing run 1's would re-arm its OnceLock no-op, stale
-/// owner_snapshots restore and sink_review_findings carryover). Clone the recipe per build.
+/// owner_snapshots restore). Clone the recipe per build.
 #[derive(Clone)]
 struct DispatcherRecipe {
     working_dir: PathBuf,
@@ -28673,185 +28509,6 @@ impl TaskDispatcher for GooseAgentDispatcher {
         // dispatches speculative complete-fix:: tasks through the ordinary body below.
         self.run_task_inner(req).await
     }
-
-    async fn review_dimension(
-        &self,
-        model_id: &str,
-        dim_id: &str,
-        dim_brief: &str,
-        goal: &str,
-        files: &[String],
-    ) -> Result<Option<String>, String> {
-        // Mirrors pre_review's read-only shape: read the produced files as text, hand them to ONE model with
-        // NO tools (&[] extensions => it physically cannot write), get back one advisory line. Because it is
-        // read-only, N of these run concurrently over the same tree with no shadow + no write-race.
-        let cwd = std::env::current_dir().unwrap_or_else(|_| self.working_dir.clone());
-        let mut files_block = String::new();
-        for f in files {
-            if let Ok(c) = std::fs::read_to_string(cwd.join(f)) {
-                if c.trim().is_empty() {
-                    continue;
-                }
-                let body = review_file_excerpt(&c);
-                files_block.push_str(&format!("### {f}\n```\n{body}\n```\n\n"));
-            }
-        }
-        if files_block.is_empty() {
-            return Ok(None); // nothing on disk to review
-        }
-        let pillars_block = if goals_enabled() {
-            self.pillars
-                .get()
-                .map(|p| format!("\n{p}"))
-                .unwrap_or_default()
-        } else {
-            String::new()
-        };
-        // For the domain-conventions dimension, inject the EXTERNAL GROUND TRUTH: the reviewer checks the
-        // code against a fact the code+tests never generated, which is what breaks self-consistency and lets
-        // it catch a shared domain-convention bug a green suite hides.
-        let conventions_block = if dim_id == "domain-conventions" {
-            format!(
-                "\n\nKNOWN-CORRECT DOMAIN CONVENTIONS (AUTHORITATIVE external truth — check the code \
-                 SPECIFICALLY against EACH; a contradiction is a REAL defect EVEN IF the code looks \
-                 internally consistent and the tests pass, because the tests may encode the same mistake):\n\
-                 {DOMAIN_PITFALLS}"
-            )
-        } else {
-            String::new()
-        };
-        let system = format!(
-            "You correctness-review a COMPLETED multi-module build along ONE dimension ONLY: {dim_brief} A \
-             passing test suite does NOT prove this defect is absent.{conventions_block} Read the files \
-             against the GOAL and report ANY concrete defect of THIS dimension only. Reply with EXACTLY one \
-             line `STATUS|findings`: STATUS is OK or ISSUES; findings = specific, actionable corrections \
-             (what is wrong + which file + the correct rule), empty when OK. Be conservative — only ISSUES \
-             when you can point to a real defect of this dimension."
-        );
-        let user = format!(
-            "GOAL: {goal}{pillars_block}\n\nREVIEW DIMENSION ({dim_id}): {dim_brief}\n\nFiles produced:\n{files_block}\nYour one-line review:"
-        );
-        // No ceiling (II-7): the 240s idle-fill cut and the 900s planner budget it borrowed are
-        // both gone — cost is not a reason to cut a model mid-thought; the fix for "dispatched
-        // too eagerly" is to dispatch it less eagerly.
-        //
-        // A-2: a transport Err, or the agent loop's error-closer text, is a review that never read
-        // the code — it propagates as Err so the caller logs `tail_review_failed`, never the clean
-        // `had_findings: false` row r2 wrote for gabee's 400s.
-        // Keyed `tail-review-<dim>` (r6 supervision lanes) — the same name as its `tail_review`
-        // events; it reviews the whole tree along one dimension, so the dimension IS the lane
-        // identity.
-        let lane = tail_review_lane_key(dim_id);
-        let text = self
-            .run_agent(model_id, system, user, None, 2, &[], Some(&lane))
-            .await
-            .map_err(|e| clip_tail(&e.to_string(), 400))?
-            .text;
-        // A weak reviewer that burns its 2 turns returns the agent-loop max-turns filler — a
-        // review that never delivered, now a named `tail_review_failed` rather than the silent
-        // Ok(None) it used to be; and a REAL `ISSUES|…` line with the filler trailing (r6c seq
-        // 312's class) keeps its findings, stripped, instead of being binned whole.
-        let text = supervised_reply_text(&text).map_err(|e| e.to_string())?;
-        let (status, findings) = text.trim().split_once('|').unwrap_or(("OK", ""));
-        let findings = findings.trim();
-        Ok(
-            if status.to_uppercase().contains("ISSUE") && !findings.is_empty() {
-                Some(format!("[{dim_id}] {findings}"))
-            } else {
-                None
-            },
-        )
-    }
-
-    async fn verify_finding(
-        &self,
-        model_id: &str,
-        finding: &str,
-        goal: &str,
-        files: &[String],
-        // The finding's index in its drained sink-review batch — the fan runs verifications
-        // CONCURRENTLY, so each needs its own lane (`verify-<idx>`); a shared key would have
-        // parallel lanes fighting over one digest file.
-        lane_idx: usize,
-    ) -> bool {
-        // Read-only SKEPTIC (a DIFFERENT model than raised the finding): hand it the finding + the real
-        // files and ask it to REFUTE. Only a CONFIRM|HIGH survives; fail-closed on anything else (REFUTE /
-        // LOW / timeout / parse fail) so an unverified finding can never drive a fix. NOTE: for a
-        // domain-conventions finding the refuter is DELIBERATELY given the same DOMAIN_PITFALLS ground truth
-        // below — so it is model-independent but NOT fact-independent, on purpose: without the fact a
-        // same-fleet refuter carrying the same wrong prior would refute the true convention violation.
-        let cwd = std::env::current_dir().unwrap_or_else(|_| self.working_dir.clone());
-        let mut files_block = String::new();
-        for f in files {
-            if let Ok(c) = std::fs::read_to_string(cwd.join(f)) {
-                if c.trim().is_empty() {
-                    continue;
-                }
-                let body = review_file_excerpt(&c);
-                files_block.push_str(&format!("### {f}\n```\n{body}\n```\n\n"));
-            }
-        }
-        if files_block.is_empty() {
-            return false; // no code to verify against -> cannot confirm
-        }
-        // LOAD-BEARING: if the finding is a DOMAIN-CONVENTIONS one, give the refuter the SAME external ground
-        // truth. Without it the refuter is a same-fleet 27B carrying the very wrong prior this feature exists
-        // to defeat (dt.weekday() "looks right"), so it would REFUTE|HIGH the true finding and fail-closed
-        // would discard it — killing the recall. With the fact, the refuter CONFIRMS the real violation.
-        let conventions_block = if finding.contains("[domain-conventions]") {
-            format!(
-                " The finding cites a DOMAIN CONVENTION. The following conventions are KNOWN-CORRECT external \
-                 truth — if the code contradicts one, the finding is CORRECT and you must CONFIRM it, EVEN IF \
-                 the code looks internally consistent and its tests pass (the tests may encode the same \
-                 mistake); do NOT refute a real convention violation just because the code is self-consistent:\
-                 \n{DOMAIN_PITFALLS}"
-            )
-        } else {
-            String::new()
-        };
-        let system = format!(
-            "You verify ONE code-review finding by CHECKING IT AGAINST THE ACTUAL CODE — do NOT rubber-stamp \
-             it, and do NOT reflexively reject it. The finding names a file and a defect: go read THAT file \
-             and see whether the defect is really present as described. CONFIRM if you can LOCATE the defect \
-             in the files shown — point to the exact construct (e.g. the argument really uses store_true, the \
-             module really is never imported, the command name really differs from the spec). REFUTE only if \
-             the finding is factually WRONG, already handled in the code, or not actually a defect.\
-             {conventions_block} Reply EXACTLY one line `VERDICT|confidence`: VERDICT is CONFIRM or REFUTE; \
-             confidence is HIGH or LOW. Use CONFIRM|HIGH when you LOCATED the defect in the code; REFUTE|HIGH \
-             when you checked and it is genuinely not a defect; use LOW only when the files shown are \
-             insufficient to tell. A real, locatable defect must be CONFIRMED — being unsure is not a reason \
-             to refute."
-        );
-        let user = format!(
-            "GOAL: {goal}\n\nFINDING TO VERIFY: {finding}\n\nFiles produced:\n{files_block}\nYour one-line verdict:"
-        );
-        // A-2: dropping the finding on a transport failure stays — fail-closed is this verifier's
-        // documented design (an unverified finding must never drive a fix) — but the drop is NAMED,
-        // because a refutation and a dead judge model are different facts and the log showed one.
-        //
-        // Keyed `verify-<idx>` (r6 supervision lanes, batch 2), one lane per batch item.
-        let verify_lane = verify_lane_key(lane_idx);
-        let text = match self
-            .run_agent(model_id, system, user, None, 2, &[], Some(&verify_lane))
-            .await
-            .map_err(|e| clip_tail(&e.to_string(), 400))
-            // The shared door: error-closer text, and the turn-cap filler that used to read as a
-            // silent REFUTE|LOW (no '|'), both land in `finding_verify_failed` by name.
-            .and_then(|o| supervised_reply_text(&o.text).map_err(|e| e.to_string()))
-        {
-            Ok(t) => t,
-            Err(error) => {
-                self.events.write_value(serde_json::json!({
-                    "event": "finding_verify_failed",
-                    "finding": finding.chars().take(200).collect::<String>(),
-                    "error": error,
-                }));
-                return false;
-            }
-        };
-        let (verdict, confidence) = text.trim().split_once('|').unwrap_or(("REFUTE", "LOW"));
-        verdict.to_uppercase().contains("CONFIRM") && confidence.to_uppercase().contains("HIGH")
-    }
 }
 
 fn pillars_schema() -> serde_json::Value {
@@ -29634,17 +29291,6 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
     eprintln!(
         "  swarm: no wall or volume caps — only the judge and the dead-socket failsafe can stop a call"
     );
-    // Same bridge for SINK IDLE-FILL, and it is the FIRST one this lever has ever had.
-    // `sink_review_enabled()` reads the environment only, so a desktop run — which cannot set env vars
-    // at all — could never switch it on, and `levers.sink_review` is absent from every cell on record:
-    // the lever has never run anywhere. This makes it REACHABLE from config without disturbing the
-    // single resolution: `sink_review_enabled()` remains the ONE answer both halves consult (the
-    // producer in goose-swarm and the drain here), because this writes the env it already reads rather
-    // than adding a second, independently-resolved read. Only a config value of TRUE writes anything,
-    // so an unset or false config leaves the variable absent and the OFF path byte-identical.
-    if std::env::var("GOOSE_SWARM_SINK_REVIEW").is_err() && cfg.sink_review.unwrap_or(false) {
-        std::env::set_var("GOOSE_SWARM_SINK_REVIEW", "1");
-    }
     // Same bridge for the progress watchdog (the read site in run_agent_in reads this env). Env wins; else the
     // config value — which the bake made **900, not 0**, so this default is ON too. Carried the identical stale
     // "default 0 = OFF … byte-identical" claim as the sink bridge above, and for the identical reason: both
@@ -29865,7 +29511,6 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             "complete": swarm_gate_cfg("GOOSE_SWARM_COMPLETE", load_config().complete),
             "goals": goals_enabled(),
             "review": swarm_gate_cfg("GOOSE_SWARM_REVIEW", load_config().review),
-            "sink_review": goose_swarm::sink_review_enabled(),
             "smoke": swarm_gate_cfg("GOOSE_SWARM_SMOKE", load_config().smoke),
             // DELIVERY hard-completion gate — read by the desktop to reconcile the "app verified" label so a
             // deterministic-block failure can never sit beside a green claim (default OFF).
@@ -31054,9 +30699,9 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
         scheduler =
             scheduler.with_judge(dispatcher.clone() as Arc<dyn Judge>, JudgeConfig::default());
     }
-    // The idle-node jobs the scheduler can hand this dispatcher: the operator Q&A (GOOSE_SWARM_QA),
-    // the sink-tail dimension review (GOOSE_SWARM_SINK_REVIEW, default off) and testgen
-    // (GOOSE_SWARM_TESTGEN, default off) — each carries its own gate inside the scheduler. The M5
+    // The idle-node jobs the scheduler can hand this dispatcher: the operator Q&A (GOOSE_SWARM_QA)
+    // and testgen (GOOSE_SWARM_TESTGEN, default off) — each carries its own gate inside the
+    // scheduler. The sink/tail idle-fill dimension reviews are deleted (2c S6). The M5
     // completion-time pre-review that used to ride here behind GOOSE_SWARM_PREREVIEW is deleted
     // (VA-014 D1): r5/r6c/r6d ran with it off and emitted zero `pre_review` events, so its findings
     // channel into the sink had zero happy paths in every measured run.
@@ -32389,66 +32034,6 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
         }
     }
 
-    // SINK IDLE-FILL consume (GOOSE_SWARM_SINK_REVIEW): drain the read-only findings the idle nodes produced
-    // DURING the sink, then re-verify each against the FINAL post-sink tree (fail-closed) — a finding the sink
-    // obsoleted or a torn read is refuted + dropped. Overlapping the review with the sink (vs running it cold
-    // after) is the throughput win; the re-gate keeps delivered quality unchanged. Advisory (drives no fix).
-    // Same resolver the scheduler's producer uses — the two used to disagree, and the run
-    // advertised a lever whose queue nothing ever filled.
-    let sink_review_on = goose_swarm::sink_review_enabled();
-    if sink_review_on && !fleet_models.is_empty() {
-        let prewarmed = smoke_fix_dispatcher.drain_sink_review();
-        if !prewarmed.is_empty() {
-            let me = smoke_fix_dispatcher.clone();
-            let goal = opts.prompt.clone();
-            let files = smoke_all_files.clone();
-            let verdicts = fanout_over_fleet(
-                "sink-review",
-                sink.as_ref(),
-                fleet_slots.clone(),
-                // Enumerated so each concurrent verification gets its own `verify-<idx>` lane;
-                // order is preserved, so the alignment-safe zip below is untouched.
-                prewarmed.iter().cloned().enumerate().collect::<Vec<_>>(),
-                move |(idx, finding), model| {
-                    let me = me.clone();
-                    let goal = goal.clone();
-                    let files = files.clone();
-                    async move {
-                        me.verify_finding(&model, &finding, &goal, &files, idx)
-                            .await
-                    }
-                },
-            )
-            .await;
-            // The zip is alignment-safe because the fan returns one slot per item even for a
-            // panicked lane (Err — fail-closed here: an unverified finding is dropped, which
-            // is this consumer's existing rule for anything the re-gate could not confirm).
-            let survivors: Vec<String> = prewarmed
-                .iter()
-                .zip(verdicts.iter())
-                .filter_map(|(f, v)| {
-                    if matches!(v, Ok(true)) {
-                        Some(f.clone())
-                    } else {
-                        None
-                    }
-                })
-                .collect();
-            sink.write_value(serde_json::json!({
-                "event": "sink_review",
-                "prewarmed": prewarmed.len(),
-                "survivors": survivors.len(),
-                "refuted": prewarmed.len().saturating_sub(survivors.len()),
-                "detail": survivors,
-            }));
-            eprintln!(
-                "{} {} idle-fill finding(s) reviewed DURING the sink, {} survived re-verification",
-                style("sink review:").cyan().bold(),
-                prewarmed.len(),
-                survivors.len(),
-            );
-        }
-    }
     // The AST wiring review's gate read `swarm_gate("GOOSE_SWARM_REVIEW", true)` — and that `true` is
     // `in_assured_bundle`, NOT a default (resolve_gate: `in_assured_bundle && assured`). So outside
     // --assured the detector was silently OFF, and every ordinary run shipped with no wiring review at
