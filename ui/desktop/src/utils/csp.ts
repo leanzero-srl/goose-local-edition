@@ -17,6 +17,29 @@ const DEFAULT_CONNECT_SOURCES = [
 
 const LOOPBACK_HOSTS: ReadonlySet<string> = new Set(['127.0.0.1', 'localhost', '[::1]', '::1']);
 
+/**
+ * Rewrite a `localhost` URL to `127.0.0.1` so a renderer fetch is not blocked by the app's CSP.
+ *
+ * MEASURED (d28443d90, 2026-07-09; refuted-and-restored 2026-09-02): index.html ships a STATIC meta
+ * `Content-Security-Policy … connect-src 'self' http://127.0.0.1:* https: ws: wss:`. Vite copies that
+ * meta verbatim into the packaged renderer, which main loads over file:// (`getAppUrl()` →
+ * pathToFileURL), and CSP policies INTERSECT — a request must satisfy the meta AND the header this
+ * module builds, so nothing the header adds can widen the meta. `http://localhost:1234` is a different
+ * origin from `http://127.0.0.1:1234` and the meta blocks it; the same LM Studio server answers on both.
+ * Only the hostname is rewritten (a path or query that happens to contain "localhost" is untouched);
+ * anything unparseable is returned as-is so the caller's own URL validation is what fails loudly.
+ */
+export function cspSafe(url: string): string {
+  try {
+    const parsed = new URL(url);
+    if (parsed.hostname !== 'localhost') return url;
+    parsed.hostname = '127.0.0.1';
+    return parsed.toString();
+  } catch {
+    return url;
+  }
+}
+
 /** The configured swarm host base as an origin, or null when absent/unparseable (nothing is added —
  *  the defaults already cover loopback, which is what an absent endpoint means engine-side). */
 function swarmOrigin(swarmEndpoint?: string | null): URL | null {

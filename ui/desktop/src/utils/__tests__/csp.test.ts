@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { buildConnectSrc, shouldUpgradeInsecureRequests, buildCSP } from '../csp';
+import { buildConnectSrc, shouldUpgradeInsecureRequests, buildCSP, cspSafe } from '../csp';
 import type { ExternalGoosedConfig } from '../settings';
 
 describe('buildConnectSrc', () => {
@@ -180,5 +180,38 @@ describe('the swarm endpoint origin', () => {
     expect(csp).not.toContain('upgrade-insecure-requests');
     const loop = buildCSP(undefined, 'http://localhost:1234');
     expect(loop).toContain('upgrade-insecure-requests');
+  });
+});
+
+/**
+ * Loopback regression (gate 8 refutation of 949d3fa6e, 2026-09-02): index.html's STATIC meta allows
+ * `http://127.0.0.1:*` and blocks the `localhost` origin, and CSP policies intersect — so a renderer fetch
+ * to the live default `http://localhost:1234` reads "offline" whatever the header says. d28443d90 had
+ * measured this and rewritten the host; 949d3fa6e deleted the rewrite. Restored here, by URL parsing.
+ */
+describe('cspSafe — the loopback rewrite the static meta CSP requires', () => {
+  it('rewrites a localhost HOST to 127.0.0.1, keeping scheme, port, path and query', () => {
+    expect(cspSafe('http://localhost:1234/api/v0/models')).toBe('http://127.0.0.1:1234/api/v0/models');
+    expect(cspSafe('http://localhost:1234/v1/chat/completions?x=1')).toBe(
+      'http://127.0.0.1:1234/v1/chat/completions?x=1'
+    );
+    expect(cspSafe('https://localhost:8443/')).toBe('https://127.0.0.1:8443/');
+  });
+
+  it('leaves 127.0.0.1 and a LAN host verbatim — the meta blocks a LAN origin regardless', () => {
+    expect(cspSafe('http://127.0.0.1:1234/api/v0/models')).toBe('http://127.0.0.1:1234/api/v0/models');
+    expect(cspSafe('http://192.168.8.220:1234/api/v0/models')).toBe(
+      'http://192.168.8.220:1234/api/v0/models'
+    );
+  });
+
+  it('touches only the hostname — "localhost" in a path or a subdomain is not the loopback origin', () => {
+    expect(cspSafe('http://192.168.8.220:1234/localhost/x')).toBe('http://192.168.8.220:1234/localhost/x');
+    expect(cspSafe('http://localhost.example.com:1234/')).toBe('http://localhost.example.com:1234/');
+  });
+
+  it('returns an unparseable value unchanged so the caller\'s own validation is what fails', () => {
+    expect(cspSafe('localhost:1234')).toBe('localhost:1234');
+    expect(cspSafe('')).toBe('');
   });
 });
