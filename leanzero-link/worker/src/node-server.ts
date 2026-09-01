@@ -1,7 +1,7 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { capabilities, parseConfig } from "./lib/config";
+import { capabilities, parseConfig, type Config } from "./lib/config";
 import type { Deps } from "./lib/deps";
 import { createFsKvStore } from "./lib/fs-kv";
 import { generateOtp } from "./lib/otp";
@@ -124,15 +124,25 @@ export function createNodeServer(deps: Deps, port: number): Server {
   });
 }
 
+/// Every parseConfig warning becomes a `config_error` line at boot — the operator reads
+/// the log once, not a 500 body later.
+export function logConfigWarnings(config: Config, log: (event: string, fields?: Record<string, unknown>) => void): void {
+  for (const warning of config.warnings) {
+    log("config_error", { ...warning });
+  }
+}
+
 function main(): void {
   const port = Number(process.env.PORT ?? DEFAULT_PORT);
   const deps = buildDeps();
+  logConfigWarnings(deps.config, jsonLog);
   const server = createNodeServer(deps, port);
   server.listen(port, "127.0.0.1", () => {
     jsonLog("node_server_listening", {
       addr: `127.0.0.1:${port}`,
       kvDir: defaultKvDir(),
       capabilities: capabilities(deps.config),
+      meshProvider: deps.config.meshProvider,
       ok: Boolean(deps.config.jwtSecret),
     });
   });

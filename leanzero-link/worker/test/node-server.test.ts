@@ -8,7 +8,7 @@ import { parseConfig } from "../src/lib/config";
 import type { Deps } from "../src/lib/deps";
 import { createFsKvStore } from "../src/lib/fs-kv";
 import { generateOtp } from "../src/lib/otp";
-import { createNodeServer } from "../src/node-server";
+import { createNodeServer, logConfigWarnings } from "../src/node-server";
 import { FULL_ENV, resendHappyFetch } from "./helpers";
 
 // A real loopback http server driven by the same createNodeServer the entrypoint uses.
@@ -83,6 +83,23 @@ describe("node-server adapter", () => {
   it("answers a CORS preflight (OPTIONS) with 204", async () => {
     const res = await fetch(`${base}/v1/auth/request-code`, { method: "OPTIONS" });
     expect(res.status).toBe(204);
+  });
+
+  it("logs every config warning as config_error at boot (partial HEADSCALE_*, bad expiry)", () => {
+    const logs: Array<{ event: string; fields?: Record<string, unknown> }> = [];
+    const config = parseConfig({ HEADSCALE_API_KEY: "k", TS_KEY_EXPIRY_SECONDS: "soon" });
+    logConfigWarnings(config, (event, fields) => logs.push({ event, fields }));
+    expect(logs).toEqual([
+      { event: "config_error", fields: { error: "ts_key_expiry_invalid" } },
+      {
+        event: "config_error",
+        fields: { error: "mesh_provider_partial_config", missing: ["HEADSCALE_API_URL", "HEADSCALE_LOGIN_SERVER"] },
+      },
+    ]);
+    expect(config.meshProvider).toBe("none");
+    logs.length = 0;
+    logConfigWarnings(parseConfig({}), (event, fields) => logs.push({ event, fields }));
+    expect(logs).toEqual([]);
   });
 
   it("drops a client-supplied CF-Connecting-IP before the handler: no proxy header → client_ip_unresolved, no ip bucket", async () => {

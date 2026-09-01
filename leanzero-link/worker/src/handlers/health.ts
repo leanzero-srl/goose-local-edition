@@ -8,5 +8,6 @@ export function handleHealth(deps: Deps): Response {
     ok: Boolean(deps.config.jwtSecret),
     version: VERSION,
     capabilities: capabilities(deps.config),
+    meshProvider: deps.config.meshProvider,
   });
 }
