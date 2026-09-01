@@ -642,20 +642,38 @@ fn repair_replan_specs(
 }
 
 /// A2: the ranking key for a HARD task's device choice — min() wins. IDLE beats busier (first
-/// element), weight decides among equally-loaded devices (second), a first-dispatch timing accident
-/// never outranks the operator's weights (speed is third, among equal weights only). The measured
-/// defect this pins against: weight-absolute ordering stacked hard tasks two-deep on the fastest
-/// host while a whole node idled, and concurrent generations on one Apple host degrade each other
+/// element); among equally-loaded devices the one carrying FEWER HARD tasks wins (second); weight
+/// decides among devices equal on both (third); a first-dispatch timing accident never outranks the
+/// operator's weights (speed is fourth, among equal weights only). The measured defect the first
+/// element pins against: weight-absolute ordering stacked hard tasks two-deep on the fastest host
+/// while a whole node idled, and concurrent generations on one Apple host degrade each other
 /// (queue-time monotonic in concurrency, 7.06 SE).
+///
+/// WHY `hard_in_flight` OUTRANKS WEIGHT (r6c, 2026-09-01). Load-primary already fills breadth-first,
+/// and r6c's five-leaf push at 12:01:05 did land one-each-then-fill — workhorse, mihai, gabee,
+/// workhorse, mihai. The harm was WHICH task took the fourth slot: `web-viz` (518.6 min, 7.6x the
+/// 68.5-min median) was placed as a second worker on the node already running `ledgerd-core`
+/// (431.2 min, 6.3x), because at that instant all three nodes held exactly one call and weight broke
+/// the tie toward the fastest host. Those two tasks were 67% of all BUILD work and nothing ever moved
+/// them: 175 minutes with ONE node busy and two at 0%, 65% of BUILD at one busy node, 52.9% of fleet
+/// capacity idle over BUILD+INTEGRATE. And the stack was a LOSS, not a gain — measured on that node,
+/// one worker ran 1,383 chars/min and two ran 638 EACH (2x638 vs 1x1383 = -8% aggregate, -54% per
+/// lane, stalled fraction 17% -> 65%). So at equal load, a device with no hard task in flight is a
+/// strictly better home for a hard task than the fastest device that already has one.
+///
+/// It is a PREFERENCE inside a ranking key, never a refusal: nothing waits, nothing is capped, and
+/// when every free device carries the same number of hard tasks the operator's weight still decides.
 fn hard_device_key(
     in_flight: u32,
+    hard_in_flight: u32,
     weight_rank: u32,
     speed: u64,
     weighted_load: u64,
     idx: usize,
-) -> (u64, u64, u64, u64, usize) {
+) -> (u64, u64, u64, u64, u64, usize) {
     (
         in_flight as u64,
+        hard_in_flight as u64,
         weight_rank as u64,
         speed,
         weighted_load,
@@ -1213,6 +1231,28 @@ impl State {
         self.devices.iter().map(|d| d.in_flight).sum()
     }
 
+    /// How many HARD tasks this device is running right now — the spread term in `pick_device`.
+    ///
+    /// DERIVED, never bookkept. `in_flight` is bumped and decremented at a dozen sites (workers,
+    /// judge looks, pre-review, testgen, twins), and a parallel hard-counter would have to be
+    /// decremented at exactly the worker subset of them or drift silently into a wrong placement.
+    /// Reading the DAG cannot drift: `claimed_device` holds the current claim and `TaskState::Claimed`
+    /// is the running state, so a stale entry (a task re-dispatched, completed, or failed) is filtered
+    /// by the state test rather than by remembering to remove it. The map is at most a few dozen
+    /// entries, and this runs once per free device per placement.
+    fn hard_in_flight(&self, dev: usize) -> u32 {
+        self.claimed_device
+            .iter()
+            .filter(|(tid, d)| {
+                **d == dev
+                    && self.dag.tasks.get(*tid).is_some_and(|n| {
+                        n.state == TaskState::Claimed
+                            && matches!(n.spec.difficulty, Difficulty::Hard)
+                    })
+            })
+            .count() as u32
+    }
+
     /// In-flight on BUILD devices only. The STUCK-BAIL keys on this: a supervision device grinding a
     /// review while the DAG is blocked would otherwise mask the stall, and a masked stall never bails.
     ///
@@ -1502,11 +1542,25 @@ impl State {
             // fastest host wins every tie, and load-primary still guarantees it is never stacked
             // while a sibling idles.
             let weight_rank = u32::MAX - d.cfg.speed_weight.max(1);
+            // SPREAD BEFORE STACK, one tier below load (r6c). Load already fills breadth-first, so
+            // this only ever speaks when two free devices are EQUALLY loaded — and then the one
+            // carrying fewer HARD tasks wins, for BOTH branches. Applying it to easy placements too
+            // keeps the light work off the node hosting the run's long pole, which is the same
+            // measurement read from the other side.
+            let hard_here = self.hard_in_flight(i) as u64;
             if hard {
-                hard_device_key(d.in_flight, weight_rank, speed, weighted_load, i)
+                hard_device_key(
+                    d.in_flight,
+                    hard_here as u32,
+                    weight_rank,
+                    speed,
+                    weighted_load,
+                    i,
+                )
             } else {
                 (
                     d.in_flight as u64,
+                    hard_here,
                     weight_rank as u64,
                     prefers_rank as u64,
                     weighted_load,
@@ -1523,6 +1577,28 @@ impl State {
         while let Some(r) = self.ready.pop() {
             ranked.push(r.id);
         }
+        // HEAVIEST FIRST WITHIN A FAN-OUT TIER, so simultaneously-ready fat tasks reach DISTINCT
+        // nodes instead of racing for the same second slot.
+        //
+        // The heap pops fan-out-descending, id-ascending — a critical-path order that says nothing
+        // about SIZE. r6c's five leaves were all ready in the same instant and popped
+        // ledgerd-core(fan-out 2), notifierd, web-console, web-viz, decisions-doc: alphabetical
+        // inside the fan-out-1 tier put `web-viz` FOURTH, i.e. into the first doubled-up slot, and
+        // the two tasks that were 67% of all BUILD work (518.6 min and 431.2 min, 7.6x and 6.3x the
+        // median) landed on the same host at the same microsecond and stayed there for 431 minutes.
+        //
+        // `difficulty` is the plan's OWN size signal and the only one the DAG carries at claim time
+        // (a wall-clock estimate would be invented data, and description length measures the brief,
+        // not the job). Fan-out stays primary: it is the critical-path term, and demoting it would
+        // trade a measured stacking harm for an unmeasured serialization one. `sort_by_key` is
+        // stable, so the heap's id order survives inside each tier and placement stays deterministic.
+        ranked.sort_by_key(|tid| {
+            let n = &self.dag.tasks[tid];
+            (
+                std::cmp::Reverse(n.fan_out),
+                std::cmp::Reverse(matches!(n.spec.difficulty, Difficulty::Hard)),
+            )
+        });
         let mut leftover: Vec<TaskId> = Vec::new();
         for tid in ranked {
             if self.dag.tasks[&tid].state != TaskState::Ready {
@@ -4683,8 +4759,8 @@ mod salvage_tests {
     #[test]
     fn a_hard_task_prefers_an_idle_node_over_a_busier_faster_one() {
         // Both directions of A2. weight_rank inverts speed_weight (lower rank = faster host).
-        let fast_busy = hard_device_key(1, u32::MAX - 3, 0, 0, 0);
-        let slow_idle = hard_device_key(0, u32::MAX - 1, 0, 0, 1);
+        let fast_busy = hard_device_key(1, 1, u32::MAX - 3, 0, 0, 0);
+        let slow_idle = hard_device_key(0, 0, u32::MAX - 1, 0, 0, 1);
         assert!(
             slow_idle < fast_busy,
             "an idle device must win over a busier higher-weighted one — stacking two hard \
@@ -4692,12 +4768,37 @@ mod salvage_tests {
         );
         // Among equally-loaded devices the operator's weight stays decisive — the intent the old
         // absolute ordering was defending, preserved one tier down.
-        let fast_idle = hard_device_key(0, u32::MAX - 3, 0, 0, 0);
-        let slow_idle = hard_device_key(0, u32::MAX - 1, 0, 0, 1);
+        let fast_idle = hard_device_key(0, 0, u32::MAX - 3, 0, 0, 0);
+        let slow_idle = hard_device_key(0, 0, u32::MAX - 1, 0, 0, 1);
         assert!(fast_idle < slow_idle, "equal load: higher weight wins");
         // And a timing sample still cannot outrank a configured weight at equal load.
-        let fast_idle_slow_sample = hard_device_key(0, u32::MAX - 3, 9_999, 0, 0);
+        let fast_idle_slow_sample = hard_device_key(0, 0, u32::MAX - 3, 9_999, 0, 0);
         assert!(fast_idle_slow_sample < slow_idle);
+    }
+
+    /// r6c 12:01:05.541221 in one comparison: `web-viz` choosing between the fastest host (one call
+    /// in flight, and that call is `ledgerd-core`, HARD) and a slower host equally loaded with an
+    /// EASY task. The old key had only `(in_flight, weight_rank, …)`, so the fastest host won and
+    /// the run's two longest tasks — 67% of all BUILD work — shared one node for 431 minutes.
+    #[test]
+    fn a_hard_task_avoids_a_node_already_running_one_at_equal_load() {
+        let fast_with_a_hard_task = hard_device_key(1, 1, u32::MAX - 3, 0, 0, 0);
+        let slow_with_an_easy_task = hard_device_key(1, 0, u32::MAX - 1, 0, 0, 2);
+        assert!(
+            slow_with_an_easy_task < fast_with_a_hard_task,
+            "at equal load a device carrying no hard task must outrank the fastest device that \
+             already carries one — co-locating the second hard generation measured -54% per lane \
+             and -8% aggregate (r6c)"
+        );
+        // It never outranks LOAD: a genuinely idle node still wins even if it already held a hard
+        // task a moment ago, and breadth stays the first question asked.
+        let idle_but_hard_heavy = hard_device_key(0, 2, u32::MAX - 1, 0, 0, 2);
+        assert!(idle_but_hard_heavy < fast_with_a_hard_task);
+        // And when every free device carries the same hard load, the operator's weight decides —
+        // unchanged from A2.
+        let fast_one_hard = hard_device_key(1, 1, u32::MAX - 3, 0, 0, 0);
+        let slow_one_hard = hard_device_key(1, 1, u32::MAX - 1, 0, 0, 2);
+        assert!(fast_one_hard < slow_one_hard);
     }
 
     #[test]
