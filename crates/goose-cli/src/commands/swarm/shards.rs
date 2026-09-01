@@ -618,12 +618,14 @@ pub(super) fn shard_brief(
 /// Build and apply the split as a PATCH: N shard tasks added (folder README as the owned file,
 /// no deps, the shard brief), the module's deps widened to the shards; then the engine's own
 /// annotations `shard_of` / `merger_of` (plan metadata the scheduler carries to dispatch — a
-/// model never writes these). Returns the patched plan and the `plan_patched` event.
+/// model never writes these). Returns the patched plan and its events: the `plan_patched`, and
+/// before it a `shard_difficulty_defaulted` when the module task carries no difficulty for its
+/// shards to inherit (VA-080: a literal `hard` stood in for the absence and nothing said so).
 pub(super) fn apply_module_split(
     plan_json: &str,
     module_id: &str,
     split: &ModuleSplit,
-) -> Result<(String, serde_json::Value), String> {
+) -> Result<(String, Vec<serde_json::Value>), String> {
     let plan: serde_json::Value =
         serde_json::from_str(plan_json).map_err(|e| format!("plan is not valid JSON: {e}"))?;
     let subtasks = plan
@@ -640,11 +642,17 @@ pub(super) fn apply_module_split(
         .and_then(|d| d.as_str())
         .unwrap_or("");
     let module_deps = string_list(&module["depends_on"]);
-    let difficulty = module
+    // A shard is a piece of its module and as hard as the module: its difficulty is the module
+    // task's own, verbatim ("medium" stays "medium"). A module with none leaves its shards with
+    // none — `specs_from_plan_json` reads the absence the same way for the merger and its shards,
+    // so they still sort together at claim time — and the absence is SAID once below, never a
+    // literal in its place.
+    let difficulty: Option<String> = module
         .get("difficulty")
         .and_then(|d| d.as_str())
-        .unwrap_or("hard")
-        .to_string();
+        .map(str::trim)
+        .filter(|d| !d.is_empty())
+        .map(String::from);
     let existing: std::collections::HashSet<String> = subtasks
         .iter()
         .filter_map(|t| t.get("id").and_then(|i| i.as_str()).map(String::from))
@@ -677,7 +685,7 @@ pub(super) fn apply_module_split(
                 &folder,
                 &split.interface,
             ),
-            difficulty: Some(difficulty.clone()),
+            difficulty: difficulty.clone(),
             model: None,
             files: vec![format!("{folder}/README.md")],
             depends_on: Vec::new(),
@@ -729,18 +737,28 @@ pub(super) fn apply_module_split(
         }
     }
     let out = v.to_string();
-    let event = serde_json::json!({
+    let mut events = Vec::new();
+    if difficulty.is_none() {
+        events.push(serde_json::json!({
+            "event": "shard_difficulty_defaulted",
+            "module": module_id,
+            "shards": shard_ids,
+            "reason": "the module task carries no difficulty; its shards carry none either and the DAG reads both as its default",
+        }));
+    }
+    events.push(serde_json::json!({
         "event": "plan_patched",
         "source": "split",
         "module": module_id,
         "shards": shard_ids,
+        "difficulty": difficulty,
         "exports_declared": split.interface.exports.len(),
         "replace": patch.replace.len(),
         "add": patch.add.len(),
         "remove": patch.remove.len(),
         "after": decomposition_of(&out),
-    });
-    Ok((out, event))
+    }));
+    Ok((out, events))
 }
 
 impl GooseAgentDispatcher {
@@ -854,14 +872,16 @@ where
             }
         };
         match apply_module_split(&current, &row.id, &parsed) {
-            Ok((next, event)) => {
+            Ok((next, events)) => {
                 eprintln!(
                     "  · `{}` split into {} shards + a merger; {} exports declared",
                     row.id,
                     parsed.shards.len(),
                     parsed.interface.exports.len()
                 );
-                sink.write_value(event);
+                for event in events {
+                    sink.write_value(event);
+                }
                 current = next;
                 applied += 1;
             }
@@ -1180,7 +1200,11 @@ mod tests {
             ),
             ("web-viz", &["web/viz.js"]),
         ]);
-        let (out, event) = apply_module_split(&p.to_string(), "web-viz", &viz_split()).unwrap();
+        let (out, events) = apply_module_split(&p.to_string(), "web-viz", &viz_split()).unwrap();
+        let event = events
+            .iter()
+            .find(|e| e["event"] == "plan_patched")
+            .expect("the patch event");
         assert_eq!(event["event"], "plan_patched");
         assert_eq!(event["source"], "split");
         assert_eq!(event["add"], 3);
@@ -1294,6 +1318,69 @@ mod tests {
         assert_eq!(again, finalized, "idempotent");
     }
 
+    /// VA-080 item 1: a shard's difficulty is its module's, verbatim — never a literal standing in.
+    /// A module planned "medium" gives "medium" shards and nothing is said; a module with no
+    /// difficulty gives shards with none and ONE `shard_difficulty_defaulted` naming them.
+    #[test]
+    fn shards_carry_the_modules_difficulty_verbatim_and_a_module_without_one_is_said() {
+        let mut p = plan(&[
+            ("web-console", &["web/app.js"]),
+            ("web-viz", &["web/viz.js"]),
+        ]);
+        p["subtasks"][1]["difficulty"] = "medium".into();
+        let (out, events) = apply_module_split(&p.to_string(), "web-viz", &viz_split()).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+        let shards: Vec<&serde_json::Value> = v["subtasks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|t| t.get("shard_of").is_some())
+            .collect();
+        assert_eq!(shards.len(), 3);
+        for s in &shards {
+            assert_eq!(s["difficulty"], "medium", "{}", s["id"]);
+        }
+        assert!(
+            !events
+                .iter()
+                .any(|e| e["event"] == "shard_difficulty_defaulted"),
+            "{events:?}"
+        );
+        let patched = events
+            .iter()
+            .find(|e| e["event"] == "plan_patched")
+            .unwrap();
+        assert_eq!(patched["difficulty"], "medium");
+
+        let p = plan(&[
+            ("web-console", &["web/app.js"]),
+            ("web-viz", &["web/viz.js"]),
+        ]);
+        let (out, events) = apply_module_split(&p.to_string(), "web-viz", &viz_split()).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+        for t in v["subtasks"].as_array().unwrap() {
+            if t.get("shard_of").is_some() {
+                assert!(
+                    t.get("difficulty").is_none(),
+                    "no literal stands in for the module's absence: {t}"
+                );
+            }
+        }
+        let said: Vec<&serde_json::Value> = events
+            .iter()
+            .filter(|e| e["event"] == "shard_difficulty_defaulted")
+            .collect();
+        assert_eq!(said.len(), 1, "{events:?}");
+        assert_eq!(said[0]["module"], "web-viz");
+        assert_eq!(said[0]["shards"].as_array().unwrap().len(), 3);
+        assert_eq!(
+            events.last().unwrap()["event"],
+            "plan_patched",
+            "the absence is said before the patch it describes"
+        );
+        assert!(events.last().unwrap()["difficulty"].is_null());
+    }
+
     /// VA-063, the r6e seam verbatim (killed at BUILD+4m): `viz3d-engine` (`web/viz.js`, no planner
     /// deps) split into these EIGHT shards, then walked the door with `every_decision_settled ==
     /// true` (D1–D3 settled by the `__open_decisions__` lane). The run's decision-doc gate read all
@@ -1339,7 +1426,11 @@ mod tests {
             ),
             ("viz3d-engine", &["web/viz.js"]),
         ]);
-        let (patched, event) = apply_module_split(&p.to_string(), "viz3d-engine", &split).unwrap();
+        let (patched, events) = apply_module_split(&p.to_string(), "viz3d-engine", &split).unwrap();
+        let event = events
+            .iter()
+            .find(|e| e["event"] == "plan_patched")
+            .expect("the patch event");
         let expected: Vec<String> = archived_shards
             .iter()
             .map(|x| format!("viz3d-engine-{x}"))
