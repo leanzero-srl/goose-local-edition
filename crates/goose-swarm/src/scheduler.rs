@@ -829,6 +829,11 @@ struct State {
     spec_abort: HashMap<TaskId, tokio::task::AbortHandle>,
     speculating: HashSet<TaskId>,
     spec_count: u32,
+    /// THE MERGE-GAP DOOR's record of every shard it spliced (VA-072): a gap the merger already
+    /// sent out once counts as LANDED whatever its state, so a gap shard that FAILED is not
+    /// re-sent under a fresh id forever — S12-F's progress terminator, kept when VA-064 made
+    /// `landed` mean Done for the plan's own shards.
+    gap_shards: HashSet<TaskId>,
     /// S7 (GOOSE_SWARM_TESTGEN): generated-test jobs fired this run, capped at TESTGEN_CAP.
     testgen_count: u32,
     /// F883/E8: set for the repair-round scheduler run — disables testgen idle-fill (its landed
@@ -2026,26 +2031,28 @@ impl State {
         dev_id: &Option<String>,
         model_id: &Option<String>,
     ) -> bool {
-        // S12-F, the re-arm cycle's PROGRESS terminator: a gap whose text already LANDED — a shard
-        // that is Done with the same responsibility — is not a new gap — it is the merger asking for
-        // the same work twice. It is refused by name (`merge_gap_repeated`, never a count); a batch
-        // of only repeats re-arms nothing and the merger completes. A Failed or Pending shard has
-        // NOT landed (VA-064): the merger reaches this door past a failed shard precisely because
-        // `fail_descendants` relaxed it, and re-doing that shard's piece is the real gap the door
-        // exists for. (The responsibility text is compared across every shard in the dag, not only
-        // this module's.)
-        let landed: Vec<(String, String)> = self
+        // S12-F, the re-arm cycle's PROGRESS terminator: a gap whose text already LANDED is not a
+        // new gap — it is the merger asking for the same work twice. It is refused by name
+        // (`merge_gap_repeated`, never a count); a batch of only repeats re-arms nothing and the
+        // merger completes. LANDED means (VA-064/VA-072): a shard that is Done, OR a gap this door
+        // already spliced once, whatever its state. A FAILED plan shard has not landed — the merger
+        // reaches this door past it because `fail_descendants` relaxed it, and re-doing its piece is
+        // the real gap the door exists for. A FAILED gap shard HAS been sent out once: gap ids are
+        // fresh per lap, so its identical re-request would otherwise be accepted under a new id,
+        // fail again, and cycle forever. The refusal names the landed shard AND its state. (The
+        // responsibility text is compared across every shard in the dag, not only this module's.)
+        let landed: Vec<(String, String, TaskState)> = self
             .dag
             .tasks
             .values()
-            .filter(|n| n.state == TaskState::Done)
+            .filter(|n| n.state == TaskState::Done || self.gap_shards.contains(&n.spec.id))
             .filter_map(|n| {
                 n.spec
                     .shard_of
                     .as_ref()
-                    .map(|s| (s.responsibility.clone(), n.spec.id.clone()))
+                    .map(|s| (s.responsibility.clone(), n.spec.id.clone(), n.state))
             })
-            .filter(|(r, _)| !r.is_empty())
+            .filter(|(r, _, _)| !r.is_empty())
             .collect();
         gaps.retain(|g| {
             let Some(sh) = g.shard_of.as_ref() else {
@@ -2053,15 +2060,16 @@ impl State {
             };
             match landed
                 .iter()
-                .find(|(r, _)| gap_already_landed(r, &sh.responsibility))
+                .find(|(r, _, _)| gap_already_landed(r, &sh.responsibility))
             {
-                Some((_, id)) => {
+                Some((_, id, state)) => {
                     self.sink.write_value(serde_json::json!({
                         "event": "merge_gap_repeated",
                         "task_id": tid,
                         "gap": g.id,
                         "missing": sh.responsibility,
                         "landed_as": id,
+                        "state": format!("{state:?}").to_lowercase(),
                     }));
                     false
                 }
@@ -2153,6 +2161,7 @@ impl State {
                 return false;
             }
         };
+        self.gap_shards.extend(ids.iter().cloned());
         for id in newly_ready {
             let fan_out = self.dag.tasks[&id].fan_out;
             self.ready.push(Ranked { fan_out, id });
@@ -2688,6 +2697,7 @@ impl Scheduler {
             spec_abort: HashMap::new(),
             speculating: HashSet::new(),
             spec_count: 0,
+            gap_shards: HashSet::new(),
             testgen_count: 0,
             fix_round: self.fix_round,
             warden_seen: HashSet::new(),
