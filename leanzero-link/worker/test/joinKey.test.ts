@@ -18,7 +18,7 @@ const OAUTH_URL = "https://api.tailscale.com/api/v2/oauth/token";
 
 async function mintToken(h: TestHarness, overrides: { secret?: string } = {}): Promise<string> {
   const iat = Math.floor(h.clock.now() / 1000);
-  return signJwt(overrides.secret ?? "unit-test-jwt-secret", {
+  return signJwt(overrides.secret ?? "unit-test-jwt-secret-with-at-least-32-bytes", {
     sub: EMAIL,
     iat,
     exp: iat + JWT_TTL_SECONDS,

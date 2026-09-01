@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { JWT_TTL_SECONDS } from "../src/lib/config";
 import { signJwt, verifyJwt, type JwtClaims } from "../src/lib/jwt";
 
-const SECRET = "unit-test-jwt-secret";
+const SECRET = "unit-test-jwt-secret-with-at-least-32-bytes";
 const NOW = 1_756_000_000;
 
 function claims(overrides: Partial<JwtClaims> = {}): JwtClaims {

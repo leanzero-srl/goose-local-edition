@@ -89,7 +89,7 @@ export function jsonBody(init: RequestInit | undefined): unknown {
 }
 
 export const FULL_ENV: WorkerEnvVars = {
-  LINK_JWT_SECRET: "unit-test-jwt-secret",
+  LINK_JWT_SECRET: "unit-test-jwt-secret-with-at-least-32-bytes",
   RESEND_API_KEY: "re_test_key",
   RESEND_AUDIENCE_ID: "seg_test_audience",
   LEANZERO_MAIL_FROM: "LeanZero Link <link@leanzero.test>",

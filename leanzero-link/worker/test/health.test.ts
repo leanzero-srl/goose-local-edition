@@ -44,6 +44,16 @@ describe("GET /v1/health", () => {
     expect(body.capabilities).toEqual({ mail: true, audience: true, mesh: false });
   });
 
+  it("reports ok:false when LINK_JWT_SECRET is present but under 32 bytes", async () => {
+    const h = makeHarness({ env: { ...FULL_ENV, LINK_JWT_SECRET: "short" } });
+    expect((await responseJson(handleHealth(h.deps))).ok).toBe(false);
+    const exact = makeHarness({ env: { ...FULL_ENV, LINK_JWT_SECRET: "x".repeat(32) } });
+    expect((await responseJson(handleHealth(exact.deps))).ok).toBe(true);
+    // Byte length, not char length: 16 two-byte chars are 32 bytes.
+    const utf8 = makeHarness({ env: { ...FULL_ENV, LINK_JWT_SECRET: "é".repeat(16) } });
+    expect((await responseJson(handleHealth(utf8.deps))).ok).toBe(true);
+  });
+
   it("reports the mesh provider by name", async () => {
     const hs = makeHarness({
       env: { LINK_JWT_SECRET: "s", HEADSCALE_API_URL: "http://hs.test", HEADSCALE_API_KEY: "k", HEADSCALE_LOGIN_SERVER: "https://c.test" },

@@ -40,7 +40,7 @@ async function signIn(h: TestHarness, email: string, code: string): Promise<stri
 
 async function joinKeyFor(h: TestHarness, email: string): Promise<Record<string, unknown>> {
   const iat = Math.floor(h.clock.now() / 1000);
-  const token = await signJwt("unit-test-jwt-secret", { sub: email, iat, exp: iat + JWT_TTL_SECONDS, ver: 1 });
+  const token = await signJwt("unit-test-jwt-secret-with-at-least-32-bytes", { sub: email, iat, exp: iat + JWT_TTL_SECONDS, ver: 1 });
   const response = await handleJoinKey(
     new Request("https://link.example/v1/mesh/join-key", { method: "POST", headers: { Authorization: `Bearer ${token}` } }),
     h.deps,
@@ -108,7 +108,7 @@ describe("nodeSecret — per-account, stable, minted once (R-H2)", () => {
   it("is not returned when the mint fails — no secret rides a 502", async () => {
     const h = makeHarness({ fetchHandler: (url) => (url === KEYS_URL ? jsonRes(500, { message: "internal" }) : fullFetch(url)) });
     const iat = Math.floor(h.clock.now() / 1000);
-    const token = await signJwt("unit-test-jwt-secret", { sub: "alice@example.com", iat, exp: iat + JWT_TTL_SECONDS, ver: 1 });
+    const token = await signJwt("unit-test-jwt-secret-with-at-least-32-bytes", { sub: "alice@example.com", iat, exp: iat + JWT_TTL_SECONDS, ver: 1 });
     const response = await handleJoinKey(
       new Request("https://link.example/v1/mesh/join-key", { method: "POST", headers: { Authorization: `Bearer ${token}` } }),
       h.deps,

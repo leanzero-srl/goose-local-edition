@@ -1,6 +1,7 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 import { capabilities, parseConfig, type Config } from "./lib/config";
 import type { Deps } from "./lib/deps";
 import { createFsKvStore } from "./lib/fs-kv";
@@ -35,6 +36,20 @@ export function buildDeps(): Deps {
   };
 }
 
+export class BodyTooLargeError extends Error {
+  constructor(public readonly limitBytes: number) {
+    super(`request body exceeds ${limitBytes} bytes`);
+    this.name = "BodyTooLargeError";
+  }
+}
+
+// Past the limit the body is no longer buffered: the promise rejects at once (the 413 goes
+// out immediately) and the rest of the request is DRAINED, not reset — `req.destroy()`
+// here tore the socket down before the response was written, so a client saw ECONNRESET
+// and never a 413 (measured by the adapter test). A sender that keeps going past the
+// drain allowance is cut off.
+const DRAIN_ALLOWANCE_BYTES = MAX_BODY_BYTES * 4;
+
 function collectBody(req: IncomingMessage): Promise<Buffer | null> {
   const method = (req.method ?? "GET").toUpperCase();
   if (method === "GET" || method === "HEAD") {
@@ -43,11 +58,19 @@ function collectBody(req: IncomingMessage): Promise<Buffer | null> {
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = [];
     let total = 0;
+    let overflowed = false;
     req.on("data", (chunk: Buffer) => {
       total += chunk.length;
+      if (overflowed) {
+        if (total > DRAIN_ALLOWANCE_BYTES) {
+          req.destroy();
+        }
+        return;
+      }
       if (total > MAX_BODY_BYTES) {
-        reject(new Error("request body too large"));
-        req.destroy();
+        overflowed = true;
+        chunks.length = 0;
+        reject(new BodyTooLargeError(MAX_BODY_BYTES));
         return;
       }
       chunks.push(chunk);
@@ -55,6 +78,14 @@ function collectBody(req: IncomingMessage): Promise<Buffer | null> {
     req.on("end", () => resolve(chunks.length > 0 ? Buffer.concat(chunks) : Buffer.alloc(0)));
     req.on("error", reject);
   });
+}
+
+/// 413 is reserved for the one error that means "too large"; an aborted or malformed
+/// request prelude is a 400 — it used to be reported as 413 too.
+export function preludeErrorStatus(error: unknown): { status: 413 | 400; error: string } {
+  return error instanceof BodyTooLargeError
+    ? { status: 413, error: "request body too large" }
+    : { status: 400, error: "malformed request" };
 }
 
 // Headers a client may send to impersonate a trusted proxy. Nothing in front of this
@@ -106,8 +137,9 @@ export function createNodeServer(deps: Deps, port: number): Server {
         request = toWebRequest(req, body, port);
       } catch (error) {
         deps.log("node_request_error", { error: error instanceof Error ? error.message : String(error) });
-        res.writeHead(413, { "Content-Type": "application/json; charset=utf-8" });
-        res.end(JSON.stringify({ error: "request body too large" }));
+        const failure = preludeErrorStatus(error);
+        res.writeHead(failure.status, { "Content-Type": "application/json; charset=utf-8", Connection: "close" });
+        res.end(JSON.stringify({ error: failure.error }));
         return;
       }
       try {
@@ -150,6 +182,13 @@ function main(): void {
 
 // Only auto-start when run as the entrypoint (tsx src/node-server.ts), not when
 // imported by the smoke test, which drives createNodeServer on an ephemeral port.
-if (import.meta.url === `file://${process.argv[1]}`) {
+// pathToFileURL percent-encodes and resolves argv[1] the way the loader did for
+// import.meta.url — the string form `file://${argv[1]}` was false for any checkout
+// path containing a space, and main() silently never ran.
+export function isEntrypoint(importMetaUrl: string, argv1: string | undefined): boolean {
+  return argv1 !== undefined && importMetaUrl === pathToFileURL(argv1).href;
+}
+
+if (isEntrypoint(import.meta.url, process.argv[1])) {
   main();
 }

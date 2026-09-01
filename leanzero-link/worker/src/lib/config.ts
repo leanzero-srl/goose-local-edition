@@ -25,6 +25,9 @@ export const IP_RATE_LIMIT = 10;
 export const VERIFY_RATE_LIMIT = 20;
 export const RATE_WINDOW_SECONDS = 3600;
 export const JWT_TTL_SECONDS = 180 * 86400;
+// HS256 keys shorter than the hash output (32 bytes) weaken the MAC (RFC 7518 §3.2:
+// "A key of the same size as the hash output ... or larger MUST be used").
+export const JWT_SECRET_MIN_BYTES = 32;
 export const DEFAULT_TS_KEY_EXPIRY_SECONDS = 600;
 export const DEFAULT_TS_NODE_TAG = "tag:leanzero-link";
 
@@ -42,6 +45,9 @@ export interface ConfigWarning {
 
 export interface Config {
   jwtSecret: string | undefined;
+  /// Why jwtSecret is undefined — missing, or present but too short. Handlers answer
+  /// 500 with this text and log config_error; health reports ok:false.
+  jwtSecretError: string | undefined;
   resendApiKey: string | undefined;
   resendAudienceId: string | undefined;
   mailFrom: string | undefined;
@@ -70,6 +76,20 @@ function nonEmpty(value: string | undefined): string | undefined {
 
 export function parseConfig(env: WorkerEnvVars): Config {
   const warnings: ConfigWarning[] = [];
+  const rawSecret = nonEmpty(env.LINK_JWT_SECRET);
+  let jwtSecret: string | undefined;
+  let jwtSecretError: string | undefined;
+  if (rawSecret === undefined) {
+    jwtSecretError = "LINK_JWT_SECRET not configured on this deployment";
+  } else {
+    const bytes = new TextEncoder().encode(rawSecret).length;
+    if (bytes < JWT_SECRET_MIN_BYTES) {
+      jwtSecretError = `LINK_JWT_SECRET is ${bytes} bytes; at least ${JWT_SECRET_MIN_BYTES} required`;
+      warnings.push({ error: "jwt_secret_too_short" });
+    } else {
+      jwtSecret = rawSecret;
+    }
+  }
   const rawExpiry = nonEmpty(env.TS_KEY_EXPIRY_SECONDS);
   let tsKeyExpirySeconds = DEFAULT_TS_KEY_EXPIRY_SECONDS;
   let tsKeyExpiryInvalid = false;
@@ -108,7 +128,8 @@ export function parseConfig(env: WorkerEnvVars): Config {
     meshProvider = tsApiToken && tsTailnet ? "tailscale" : "none";
   }
   return {
-    jwtSecret: nonEmpty(env.LINK_JWT_SECRET),
+    jwtSecret,
+    jwtSecretError,
     resendApiKey: nonEmpty(env.RESEND_API_KEY),
     resendAudienceId: nonEmpty(env.RESEND_AUDIENCE_ID),
     mailFrom: nonEmpty(env.LEANZERO_MAIL_FROM),
