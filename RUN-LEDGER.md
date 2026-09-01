@@ -195,14 +195,14 @@ DAG is actually parallel). reasoning_chars against answer_chars is the waste.
 - **chain**: 5
 - **startable**: 1
 - **brief_median**: 6054
-- **reasoning_chars**: 1476415
-- **answer_chars**: 98048
-- **code_files**: 28
-- **code_bytes**: 260399
-- **elapsed_min**: 701
-- **phase_split**: open 68m · ask 0m · synthesis 16m · review 52m · build 325m · integrate 92m · repair 1m · fix 144m
+- **reasoning_chars**: 1480079
+- **answer_chars**: 100674
+- **code_files**: 29
+- **code_bytes**: 262846
+- **elapsed_min**: 712
+- **phase_split**: open 68m · ask 0m · synthesis 16m · review 52m · build 325m · integrate 92m · repair 1m · fix 155m
 - **before_build_min**: 137 (internal diagnosis only — never a cross-run number)
-- **vs_target**: ONLY THE SCORE COMPARES. Target 20.06% (qwen3.8-27b, one cloud agent, same model). Wall clock is NOT comparable — that run is on far faster hardware, so minutes measure the machine. Bytes are NOT a verdict — more code is not better code, and it had no planning phases to spend budget on. Cross-hardware-honest work numbers for THIS run: 260,399B delivered, 1,476,415 chars reasoned, 11 tasks completed, 0 retried.
+- **vs_target**: ONLY THE SCORE COMPARES. Target 20.06% (qwen3.8-27b, one cloud agent, same model). Wall clock is NOT comparable — that run is on far faster hardware, so minutes measure the machine. Bytes are NOT a verdict — more code is not better code, and it had no planning phases to spend budget on. Cross-hardware-honest work numbers for THIS run: 262,846B delivered, 1,480,079 chars reasoned, 11 tasks completed, 0 retried.
 - **python_parses**: 20 ok / 0 SYNTAX ERROR / 0 empty
 - **web_files**: app.js, brush.js, index.html, styles.css, viz.js
 - **tasks_done**: 11/9 completed, 11 dispatched, 0 retried
@@ -212,13 +212,13 @@ DAG is actually parallel). reasoning_chars against answer_chars is the waste.
 - **plan_repaired**: 3 actions, owning-nothing 0->0, unassigned endpoints 0->0
 - **plan_loaded**: 1
 - **review_rounds**: r1:new=3
-- **judge_looks**: 153
+- **judge_looks**: 155
 - **judge_nudges**: 5
 - **judge_ended**: 0
 - **drift_held**: 9
 - **tree_defects**: 0
-- **repair**: delivery_defect_steer=11 brief_defects=0 testgen=0 fix_target_selected=1 complete_verify=2 complete_result=0
-- **ledger**: 16 task ledger(s) in .swarm/ledger/, ledger.json roll-up present, written=16 delivered=1
+- **repair**: delivery_defect_steer=11 brief_defects=0 testgen=0 fix_target_selected=1 complete_verify=2 complete_result=1
+- **ledger**: 17 task ledger(s) in .swarm/ledger/, ledger.json roll-up present, written=17 delivered=1
 - **score**: **0.3609** hermetic — seed ddcbba021ea1eba1 (the run's own), vendor port 8850, playwright node (inner 0.7988, pre-severity 0.7260 × crit_mult 0.4971). TWO criticals: `b_money_rendered` 0.0, factor 0.6 (wrong money — wrong exponent/digits or a cross-currency sum) and `j_workflow_journey` 0.5714, factor 0.8286 (dead primary flow — approval cannot complete through the UI). vs target 0.2006: 180% — FIRST RUN ABOVE the cloud one-agent target (its inner was 0.7662 with crit_mult 0.288; ours wins on criticals, not just inner). vs local 0.0568: 6.4×. vs published local 0.0273: 13.2×. The harness's own in-run grade concurred: 0.3497 (inner 0.7731, same seed, same two criticals). Known context: 3D field DOA (`viz.js` ReferenceError onBrushChangeTracked), 7 contract findings shipped as known bugs. Comparable verdict: `verdict-hermetic-seedddcbba02-port8850-0.3609.json` in the run dir.
 
 ## local-sb7-swarm-r6a-KILLED-open-ladder-5-restream-cycles-ignored-verdict-carries-across-attempts-49m
@@ -339,6 +339,7 @@ DAG is actually parallel). reasoning_chars against answer_chars is the waste.
 - **harness_grade**: 0.1392 — run_build.py's own in-run grade (same seed d32de873c1f2be83, port 8850, playwright; inner 0.7136, pre-severity 0.6445 × crit_mult 0.216; 3 criticals: b_money_rendered 0.0000, j_loads_data 0.0000, j_workflow_journey 0.0000). Recorded, NOT the row's score
 - **score**: **0.1420** hermetic — seed d32de873c1f2be83 (the run's own, from <run>/trace.jsonl), vendor port 8850, playwright node (nvm v22), disposable rsync clone, serial, after run_build.py exited and released the port (inner 0.7282, pre-severity 0.6573 × crit_mult 0.216). 3 criticals UNSUPPRESSED: `b_money_rendered` 0.0000, factor 0.6 (wrong money — wrong exponent/digits or a cross-currency sum); `j_loads_data` 0.0000, factor 0.6 (dead primary flow — no data visible); `j_workflow_journey` 0.0000, factor 0.6 (dead primary flow — approval cannot complete through the UI). Tiers: A 1.00 B 0.90 C 0.92 D 0.75 J 0.57 V 0.20 P 0.67 T 0.24 X 1.00 R 0.95 E 0.14 (gate False, frac 0.5). probe_unavailable=[]. vs r5 hermetic 0.3609 (inner 0.7988, crit_mult 0.4971, two criticals): 0.39× — BELOW the best-ever; the inner is lower AND one more critical is unsuppressed, so the multiplier does most of the damage. vs cloud target 0.2006: 71%. vs published local 0.0273: 5.2×. RENDER GATE, the scorer's own words: j_loads_data 0.0000 "0 rows rendered, DOM claims 0 (want 12290)"; j_console_clean 0.0000 "6 console error(s) across load+sync: TypeError: Illegal invocation"; b_money_rendered 0.0000 "no amount cells rendered"; j_workflow_journey 0.0000 "roleTokenAccepted"; j_empty_state 1.0000 (pre-sync state rendered, progressText 'no data yet'); j_error_state 1.0000 "visible + actionable: Vendor unreachable — retrying automatically". What a person sees (probe shots, run's own + harness's + hermetic): header and chrome render; 'PAYMENTS BY CURRENCY: no data yet'; the 3D field is a black rectangle; the payments table shows its five column headers and ZERO rows; on load a red banner 'The ledger service is unreachable. Check that `ledgerd` is running, then retry — local data reappears automatically.' and after Sync an amber banner 'Invalid or missing token — check the bearer token.' — the frontend never authenticates its own API calls, so nothing it fetches ever lands. Comparable verdict: `verdict-hermetic-seedd32de873-port8850-0.1420.json` in the archive; the harness's `verdict.json` beside it.
 - **notes**: learn phase wrote a persona skill under stack_key `angular` (~/.config/goose/skills/stack-angular/SKILL.md) for a Python-stdlib + vanilla-JS tree — the model's own text opens "Despite the name, this stack ships as a Python backend + vanilla-JS static web console"; the stack key is mis-derived. Harness c_paged_walk 0.0: "385/192 pages served, 192 duplicate pages" — the sync walked the collection twice. Fix-wave unassigned=2 both rounds = the two critical-labelled findings have no owning file group in the fan
+- **scorer_noise_floor**: `.swarm/best-tree` (round-1 snapshot, byte-identical to the final tree — verified by hash) re-scored hermetically 2026-09-01 11:0x on the same seed/port/node: inner 0.7244 / crit_mult 0.216 / **0.1413** vs the final 0.1420 — 4 of 91 checks moved on identical bytes (j_sync_journey 1.0→0.75, c_conditional_resync 0.78→0.82). One datum: a `fix_waves_delta` under ~0.001 score / 0.004 inner, or a single J-check step, is noise. The pre-fix (round-0) tree is GONE — round 1 overwrote it — so r6c's 458 fix node-min cannot be scored (VA-027).
 - **verdict**: FINISHED at 18h26m; passed=true by the engine's boots-and-answers definition, but the product a person opens shows zero payments, a black 3D field and an auth error — hermetic 0.1420 vs r5 0.3609 (0.39×): WORSE than the best-ever; nothing to publish
 
 ## fakerun
