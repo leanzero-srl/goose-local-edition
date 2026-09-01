@@ -1,7 +1,8 @@
 import { fireEvent, render } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import { Button } from './Button';
-import { assertStudioClean } from './assertStudioClean';
+import { allClasses, assertStudioClean } from './assertStudioClean';
+import { missingUtilities } from './compileStudioCss';
 
 describe('lz/Button', () => {
   it('primary is the accent fill, secondary a neutral outline, ghost transparent — all type=button', () => {
@@ -62,4 +63,22 @@ describe('lz/Button', () => {
     fireEvent.click(b);
     expect(onClick).toHaveBeenCalledTimes(1);
   });
+
+  it('iconOnly is a square control (28 / 32) with its own class set and no text padding', async () => {
+    const { container, getByLabelText } = render(
+      <>
+        <Button variant="ghost" size="sm" iconOnly aria-label="Close" icon={<svg />} />
+        <Button iconOnly aria-label="Refresh" icon={<svg />} />
+      </>
+    );
+    const sm = getByLabelText('Close');
+    expect(sm.getAttribute('data-icon-only')).toBe('true');
+    expect(sm.className).toContain('size-7');
+    expect(sm.className).not.toMatch(/\bpx-|\bh-7\b/);
+    const md = getByLabelText('Refresh');
+    expect(md.className).toContain('size-8');
+    expect(md.className).not.toMatch(/\bpx-|\bh-8\b/);
+    assertStudioClean(container);
+    expect(await missingUtilities(allClasses(container))).toEqual([]);
+  }, 30_000);
 });
