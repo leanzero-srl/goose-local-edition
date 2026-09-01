@@ -28,7 +28,21 @@ import {
 import { sessionActivityAt } from '../../utils/dateUtils';
 import type { ProjectEntry } from '../../utils/projectDirs';
 import type { Session } from '../../types/session';
-import { cn } from '../../utils';
+import {
+  Button,
+  SectionHeader,
+  StatusDot,
+  FOCUS,
+  MOTION,
+  RADIUS,
+  ROW,
+  SURFACE,
+  TNUM,
+  TONE_FILL,
+  TYPE,
+  WEIGHT,
+  cx,
+} from '../lz';
 import { defineMessages, useIntl } from '../../i18n';
 
 const i18n = defineMessages({
@@ -108,22 +122,11 @@ const i18n = defineMessages({
     id: 'projectsSection.untitledSession',
     defaultMessage: 'Untitled session',
   },
+  currentSession: {
+    id: 'projectsSection.currentSession',
+    defaultMessage: 'Current session',
+  },
 });
-
-// Solid saturated hues (never tints) — each project gets its own, keyed by registry position, so a
-// multi-project sidebar reads as a rainbow of distinct folders, matching the benchmark tile language.
-const PROJECT_HUES = [
-  '#2e8bff',
-  '#6a5cff',
-  '#17c4c4',
-  '#f5a623',
-  '#e84393',
-  '#2ecc71',
-  '#ff6b2c',
-  '#b04adf',
-] as const;
-const ERROR_RED = '#ff3b30';
-const UNFILED_GRAY = '#8a8a8a';
 
 /** Trailing-slash-insensitive normalization so membership tests mirror the server's exact-match cwd filter. */
 export function normalizeDirPath(dir: string): string {
@@ -176,9 +179,43 @@ export interface ProjectSessionsState {
   error: boolean;
 }
 
-// Custom portaled context menu — solid, sharp-cornered, full-bordered; never a native menu.
-// Remove has an in-menu confirm step so a single click can't drop a project, and the confirm label
-// says out loud that removal touches the registry only.
+// The tree registers, composed from the Studio tokens (ui/desktop/DESIGN.md). One dense 32px row
+// for parents and leaves alike; hover is a solid step to surface-2; the current session is a 2px
+// inset accent ring (a fill would hide its dot and meta).
+const treeRowClass = cx(
+  'flex w-full items-center gap-2 px-2 text-left',
+  ROW.dense,
+  RADIUS.control,
+  MOTION,
+  FOCUS
+);
+const treeParentClass = cx(treeRowClass, 'min-w-0 flex-1', SURFACE.hover);
+const treeStateRowClass = cx('flex items-center px-2', ROW.dense, TYPE.meta);
+
+/**
+ * Children of an expanded row sit beside a 1px hairline guide (bg-lz-border, structural — it is
+ * a separate element under the parent's chevron, never a border-left on the rows).
+ */
+const TreeChildren: React.FC<{ children: React.ReactNode }> = ({ children }) => (
+  <div className="flex">
+    <span
+      aria-hidden
+      data-testid="tree-guide"
+      className={cx('ml-4 w-px shrink-0 self-stretch', 'bg-lz-border')}
+    />
+    <div className="flex min-w-0 flex-1 flex-col gap-px pl-2">{children}</div>
+  </div>
+);
+
+// Row actions stay out of the way until the row is hovered or holds focus. Visibility, not
+// opacity (opacity utilities are banned as faded colour); group-focus-within keeps them reachable
+// by keyboard — focusing the row's own button reveals them for the next Tab.
+const rowActionClass = (shown: boolean) =>
+  shown ? 'visible' : 'invisible group-hover:visible group-focus-within:visible';
+
+// Custom portaled context menu on the one overlay elevation; never a native menu. Remove has an
+// in-menu confirm step so a single click can't drop a project, and the confirm label says out
+// loud that removal touches the registry only.
 const ProjectContextMenu: React.FC<{
   x: number;
   y: number;
@@ -201,8 +238,13 @@ const ProjectContextMenu: React.FC<{
   const MENU_W = 240;
   const left = Math.min(x, window.innerWidth - MENU_W - 8);
   const top = Math.min(y, window.innerHeight - 180);
-  const itemCls =
-    'w-full text-left px-3 py-1.5 text-xs text-text-primary hover:bg-background-secondary flex items-center gap-2';
+  const itemBase = cx(
+    'flex w-full items-center gap-2 px-3 text-left text-lz-body',
+    ROW.dense,
+    MOTION,
+    FOCUS
+  );
+  const itemCls = cx(itemBase, 'text-lz-ink', SURFACE.hover);
 
   return createPortal(
     <>
@@ -215,35 +257,33 @@ const ProjectContextMenu: React.FC<{
         }}
       />
       <div
-        className="fixed z-[200] bg-background-primary border border-border-primary shadow-lg py-1"
-        style={{ left, top, minWidth: MENU_W, borderRadius: 3 }}
+        data-testid="project-context-menu"
+        className={cx('fixed z-[200] py-1', SURFACE.overlay)}
+        style={{ left, top, minWidth: MENU_W }}
         onClick={(e) => e.stopPropagation()}
       >
         <button className={itemCls} onClick={onNewSession}>
-          <MessageSquarePlus size={13} /> {intl.formatMessage(i18n.newSessionHere)}
+          <MessageSquarePlus className="size-3.5 text-lz-ink-3" />{' '}
+          {intl.formatMessage(i18n.newSessionHere)}
         </button>
         <button className={itemCls} onClick={onReveal}>
-          <FolderOpen size={13} /> {intl.formatMessage(i18n.revealInFinder)}
+          <FolderOpen className="size-3.5 text-lz-ink-3" />{' '}
+          {intl.formatMessage(i18n.revealInFinder)}
         </button>
         <button className={itemCls} onClick={onCopyPath}>
-          <Copy size={13} /> {intl.formatMessage(i18n.copyPath)}
+          <Copy className="size-3.5 text-lz-ink-3" /> {intl.formatMessage(i18n.copyPath)}
         </button>
-        <div className="my-1 border-t border-border-secondary" />
+        <div className={cx('my-1 border-t', SURFACE.hairline)} />
         {confirming ? (
-          <button
-            className="w-full text-left px-3 py-1.5 text-xs flex items-center gap-2 text-white"
-            style={{ backgroundColor: ERROR_RED }}
-            onClick={onRemove}
-          >
-            <Check size={13} strokeWidth={3} /> {intl.formatMessage(i18n.confirmRemove)}
+          <button className={cx(itemBase, TONE_FILL.err, 'hover:bg-lz-err')} onClick={onRemove}>
+            <Check className="size-3.5" strokeWidth={3} /> {intl.formatMessage(i18n.confirmRemove)}
           </button>
         ) : (
           <button
-            className={`${itemCls} hover:!bg-transparent`}
-            style={{ color: ERROR_RED }}
+            className={cx(itemBase, 'text-lz-err', SURFACE.hover)}
             onClick={() => setConfirming(true)}
           >
-            <X size={13} /> {intl.formatMessage(i18n.removeFromProjects)}
+            <X className="size-3.5" /> {intl.formatMessage(i18n.removeFromProjects)}
           </button>
         )}
       </div>
@@ -257,6 +297,7 @@ const SessionLeafRow: React.FC<{
   active: boolean;
   onClick: () => void;
 }> = ({ session, active, onClick }) => {
+  const intl = useIntl();
   const when = timeAgo(sessionActivityAt(session));
   const name = displaySessionListName(session.name);
   return (
@@ -264,23 +305,17 @@ const SessionLeafRow: React.FC<{
       onClick={onClick}
       title={name}
       aria-current={active ? 'true' : undefined}
-      className={cn(
-        'w-full flex items-center gap-2 px-2 py-1.5 text-xs text-left transition-colors',
-        active ? 'bg-background-tertiary text-text-primary' : 'hover:bg-background-tertiary/50'
-      )}
-      style={{ borderRadius: 4 }}
+      className={cx(treeRowClass, active ? SURFACE.selectedRing : SURFACE.hover)}
     >
-      <span className="flex-1 truncate text-text-primary">{name}</span>
-      {when ? (
-        <span className="shrink-0 tabular-nums text-[11px] text-text-secondary">{when}</span>
-      ) : null}
+      <span className="flex-1 truncate text-lz-body text-lz-ink">{name}</span>
+      {active && <StatusDot tone="accent" label={intl.formatMessage(i18n.currentSession)} />}
+      {when ? <span className={cx('shrink-0', TYPE.meta, TNUM)}>{when}</span> : null}
     </button>
   );
 };
 
 interface ProjectRowProps {
   project: ProjectEntry;
-  hue: string;
   expanded: boolean;
   state: ProjectSessionsState | undefined;
   activeSessionId?: string;
@@ -294,7 +329,6 @@ interface ProjectRowProps {
 
 const ProjectRow: React.FC<ProjectRowProps> = ({
   project,
-  hue,
   expanded,
   state,
   activeSessionId,
@@ -333,7 +367,7 @@ const ProjectRow: React.FC<ProjectRowProps> = ({
   return (
     <div>
       <div
-        className="group relative flex items-center gap-1 pr-1.5"
+        className="group relative flex items-center gap-px pr-1"
         onContextMenu={(e) => {
           e.preventDefault();
           setMenu({ x: e.clientX, y: e.clientY });
@@ -343,38 +377,37 @@ const ProjectRow: React.FC<ProjectRowProps> = ({
           onClick={onToggle}
           aria-expanded={expanded}
           title={project.path}
-          className="flex-1 min-w-0 flex items-center gap-2 px-2 py-1.5 text-sm hover:bg-background-tertiary/50 transition-colors"
-          style={{ borderRadius: 4 }}
+          className={treeParentClass}
         >
           {expanded ? (
-            <ChevronDown className="h-3.5 w-3.5 shrink-0 text-text-secondary" />
+            <ChevronDown className="size-3.5 shrink-0 text-lz-ink-3" />
           ) : (
-            <ChevronRight className="h-3.5 w-3.5 shrink-0 text-text-secondary" />
+            <ChevronRight className="size-3.5 shrink-0 text-lz-ink-3" />
           )}
-          <span
-            className="inline-flex items-center justify-center shrink-0"
-            style={{ width: 18, height: 18, borderRadius: 3, backgroundColor: hue }}
-          >
-            <Folder className="h-3 w-3" strokeWidth={2.5} style={{ color: '#0b0b0b' }} />
-          </span>
-          <span className="truncate font-medium text-text-primary">{name}</span>
+          {expanded ? (
+            <FolderOpen className="size-4 shrink-0 text-lz-ink-2" />
+          ) : (
+            <Folder className="size-4 shrink-0 text-lz-ink-2" />
+          )}
+          <span className={cx('truncate text-lz-body text-lz-ink', WEIGHT.medium)}>{name}</span>
         </button>
 
-        <button
+        <Button
+          variant="ghost"
+          size="sm"
+          icon={<Plus />}
           onClick={(e) => {
             e.stopPropagation();
             onNewSession();
           }}
           aria-label={`${intl.formatMessage(i18n.newSessionHere)} — ${name}`}
           title={intl.formatMessage(i18n.newSessionHere)}
-          className={cn(
-            'shrink-0 text-text-secondary hover:text-text-primary transition-opacity',
-            'opacity-0 group-hover:opacity-100 focus-visible:opacity-100'
-          )}
-        >
-          <Plus className="h-4 w-4" />
-        </button>
-        <button
+          className={rowActionClass(false)}
+        />
+        <Button
+          variant="ghost"
+          size="sm"
+          icon={<MoreVertical />}
           onClick={(e) => {
             e.stopPropagation();
             const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
@@ -382,13 +415,8 @@ const ProjectRow: React.FC<ProjectRowProps> = ({
           }}
           aria-label={intl.formatMessage(i18n.moreActions)}
           title={intl.formatMessage(i18n.moreActions)}
-          className={cn(
-            'shrink-0 text-text-secondary hover:text-text-primary transition-opacity',
-            menu ? 'opacity-100' : 'opacity-0 group-hover:opacity-100 focus-visible:opacity-100'
-          )}
-        >
-          <MoreVertical className="h-4 w-4" />
-        </button>
+          className={rowActionClass(menu != null)}
+        />
 
         {menu && (
           <ProjectContextMenu
@@ -404,22 +432,20 @@ const ProjectRow: React.FC<ProjectRowProps> = ({
       </div>
 
       {expanded && (
-        <div className="ml-6 mr-1 flex flex-col gap-0.5">
+        <TreeChildren>
           {state?.error ? (
-            <div className="px-2 py-1.5 text-xs flex items-center gap-2">
-              <span style={{ color: ERROR_RED }}>{intl.formatMessage(i18n.sessionsFailed)}</span>
-              <button onClick={onRetry} className="font-semibold text-text-primary hover:underline">
+            <div className={cx('flex items-center gap-2 px-2', ROW.dense)}>
+              <span className="text-lz-meta text-lz-err">
+                {intl.formatMessage(i18n.sessionsFailed)}
+              </span>
+              <Button variant="ghost" size="sm" onClick={onRetry}>
                 {intl.formatMessage(i18n.retry)}
-              </button>
+              </Button>
             </div>
           ) : !state || (state.loading && !state.loaded) ? (
-            <div className="px-2 py-1.5 text-xs text-text-secondary">
-              {intl.formatMessage(i18n.loadingSessions)}
-            </div>
+            <div className={treeStateRowClass}>{intl.formatMessage(i18n.loadingSessions)}</div>
           ) : state.sessions.length === 0 ? (
-            <div className="px-2 py-1.5 text-xs text-text-secondary">
-              {intl.formatMessage(i18n.noSessionsYet)}
-            </div>
+            <div className={treeStateRowClass}>{intl.formatMessage(i18n.noSessionsYet)}</div>
           ) : (
             <>
               {state.sessions.map((session) => (
@@ -431,22 +457,21 @@ const ProjectRow: React.FC<ProjectRowProps> = ({
                 />
               ))}
               {state.nextCursor && !state.loading ? (
-                <button
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="self-start"
                   onClick={() => onLoadMore(state.nextCursor as string)}
-                  className="px-2 py-1 text-xs text-left font-semibold hover:underline"
-                  style={{ color: hue }}
                 >
                   {intl.formatMessage(i18n.moreSessions)}
-                </button>
+                </Button>
               ) : null}
               {state.loading ? (
-                <div className="px-2 py-1 text-xs text-text-secondary">
-                  {intl.formatMessage(i18n.loadingSessions)}
-                </div>
+                <div className={treeStateRowClass}>{intl.formatMessage(i18n.loadingSessions)}</div>
               ) : null}
             </>
           )}
-        </div>
+        </TreeChildren>
       )}
     </div>
   );
@@ -693,33 +718,33 @@ export const ProjectsSection: React.FC<{ className?: string }> = ({ className })
   );
 
   return (
-    <div className={cn('flex flex-col min-h-0', className)}>
-      <div className="flex items-center justify-between pl-4 pr-3 py-1">
-        <span className="text-xs font-semibold uppercase tracking-wider text-text-secondary">
-          {intl.formatMessage(i18n.projects)}
-        </span>
-        <button
-          onClick={() => void handleAddProject()}
-          aria-label={intl.formatMessage(i18n.addProject)}
-          title={intl.formatMessage(i18n.addProject)}
-          className="inline-flex items-center justify-center hover:opacity-80 transition-opacity"
-          style={{ width: 18, height: 18, borderRadius: 3, backgroundColor: PROJECT_HUES[0] }}
-        >
-          <Plus className="h-3 w-3" strokeWidth={3} style={{ color: '#0b0b0b' }} />
-        </button>
-      </div>
+    <div className={cx('flex min-h-0 flex-col', className)}>
+      <SectionHeader
+        title={intl.formatMessage(i18n.projects)}
+        count={projects.length}
+        className="px-4"
+        right={
+          <Button
+            variant="ghost"
+            size="sm"
+            icon={<Plus className="text-lz-accent" strokeWidth={2.5} />}
+            onClick={() => void handleAddProject()}
+            aria-label={intl.formatMessage(i18n.addProject)}
+            title={intl.formatMessage(i18n.addProject)}
+          />
+        }
+      />
 
-      <div className="flex-1 min-h-0 overflow-y-auto px-2 pb-2 flex flex-col gap-0.5">
+      <div className="flex min-h-0 flex-1 flex-col gap-px overflow-y-auto px-2 pb-2">
         {projects.length === 0 ? (
-          <div className="px-2 py-2 text-xs text-text-secondary">
+          <div className={cx('px-2 py-2', TYPE.bodyMuted)}>
             {intl.formatMessage(i18n.emptyState)}
           </div>
         ) : (
-          projects.map((project, index) => (
+          projects.map((project) => (
             <ProjectRow
               key={project.path}
               project={project}
-              hue={PROJECT_HUES[index % PROJECT_HUES.length]}
               expanded={expandedPaths.has(project.path)}
               state={sessionsByProject[project.path]}
               activeSessionId={activeSessionId}
@@ -738,29 +763,21 @@ export const ProjectsSection: React.FC<{ className?: string }> = ({ className })
             <button
               onClick={() => setUnfiledOpen((v) => !v)}
               aria-expanded={unfiledOpen}
-              className="w-full flex items-center gap-2 px-2 py-1.5 text-sm hover:bg-background-tertiary/50 transition-colors"
-              style={{ borderRadius: 4 }}
+              className={cx(treeRowClass, SURFACE.hover)}
             >
               {unfiledOpen ? (
-                <ChevronDown className="h-3.5 w-3.5 shrink-0 text-text-secondary" />
+                <ChevronDown className="size-3.5 shrink-0 text-lz-ink-3" />
               ) : (
-                <ChevronRight className="h-3.5 w-3.5 shrink-0 text-text-secondary" />
+                <ChevronRight className="size-3.5 shrink-0 text-lz-ink-3" />
               )}
-              <span
-                className="inline-flex items-center justify-center shrink-0"
-                style={{ width: 18, height: 18, borderRadius: 3, backgroundColor: UNFILED_GRAY }}
-              >
-                <Inbox className="h-3 w-3" strokeWidth={2.5} style={{ color: '#0b0b0b' }} />
-              </span>
-              <span className="truncate font-medium text-text-primary">
+              <Inbox className="size-4 shrink-0 text-lz-ink-2" />
+              <span className={cx('truncate text-lz-body text-lz-ink', WEIGHT.medium)}>
                 {intl.formatMessage(i18n.unfiled)}
               </span>
-              <span className="ml-auto text-[11px] tabular-nums text-text-secondary">
-                {unfiledSessions.length}
-              </span>
+              <span className={cx('ml-auto', TYPE.meta, TNUM)}>{unfiledSessions.length}</span>
             </button>
             {unfiledOpen && (
-              <div className="ml-6 mr-1 flex flex-col gap-0.5">
+              <TreeChildren>
                 {unfiledSessions.map((session) => (
                   <SessionLeafRow
                     key={session.id}
@@ -769,7 +786,7 @@ export const ProjectsSection: React.FC<{ className?: string }> = ({ className })
                     onClick={() => handleSessionClick(session.id)}
                   />
                 ))}
-              </div>
+              </TreeChildren>
             )}
           </div>
         )}

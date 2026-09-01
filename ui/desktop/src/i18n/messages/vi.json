@@ -2717,6 +2717,9 @@
   "projectsSection.copyPath": {
     "defaultMessage": "Sao chép đường dẫn"
   },
+  "projectsSection.currentSession": {
+    "defaultMessage": "Phiên hiện tại"
+  },
   "projectsSection.emptyState": {
     "defaultMessage": "Thêm một thư mục dự án để gom các phiên của bạn"
   },

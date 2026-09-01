@@ -2717,6 +2717,9 @@
   "projectsSection.copyPath": {
     "defaultMessage": "複製路徑"
   },
+  "projectsSection.currentSession": {
+    "defaultMessage": "目前的工作階段"
+  },
   "projectsSection.emptyState": {
     "defaultMessage": "新增專案資料夾來歸類您的工作階段"
   },

@@ -2717,6 +2717,9 @@
   "projectsSection.copyPath": {
     "defaultMessage": "पथ कॉपी करें"
   },
+  "projectsSection.currentSession": {
+    "defaultMessage": "वर्तमान सत्र"
+  },
   "projectsSection.emptyState": {
     "defaultMessage": "अपने सत्रों को व्यवस्थित करने के लिए एक प्रोजेक्ट फ़ोल्डर जोड़ें"
   },

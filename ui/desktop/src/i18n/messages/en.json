@@ -2712,10 +2712,13 @@
     "defaultMessage": "Add a project folder"
   },
   "projectsSection.confirmRemove": {
-    "defaultMessage": "Confirm remove (keeps files & chats)"
+    "defaultMessage": "Confirm remove (keeps files & sessions)"
   },
   "projectsSection.copyPath": {
     "defaultMessage": "Copy path"
+  },
+  "projectsSection.currentSession": {
+    "defaultMessage": "Current session"
   },
   "projectsSection.emptyState": {
     "defaultMessage": "Add a project folder to scope your sessions"

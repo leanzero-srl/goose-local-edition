@@ -2717,6 +2717,9 @@
   "projectsSection.copyPath": {
     "defaultMessage": "Yolu kopyala"
   },
+  "projectsSection.currentSession": {
+    "defaultMessage": "Geçerli oturum"
+  },
   "projectsSection.emptyState": {
     "defaultMessage": "Oturumlarınızı gruplamak için bir proje klasörü ekleyin"
   },
