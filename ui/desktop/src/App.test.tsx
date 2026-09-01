@@ -4,7 +4,7 @@
  * @vitest-environment jsdom
  */
 import React from 'react';
-import { screen, render, waitFor } from '@testing-library/react';
+import { act, fireEvent, screen, render, waitFor } from '@testing-library/react';
 import { vi, describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { AppInner, resolveSessionInitialMessage } from './App';
 import { IntlTestWrapper } from './i18n/test-utils';
@@ -401,5 +401,71 @@ describe('App Component - Brand New State', () => {
       msg: 'Write a release note for the latest change',
       images: [],
     });
+  });
+});
+
+/**
+ * Q2 (branch review, 2026-09-01): main keeps a window whose renderer holds a live swarm run on a
+ * mouse close and asks on 'confirm-close-run'; the answer goes back through confirmCloseRunReply.
+ */
+describe('App — the close-run question', () => {
+  const confirmCloseRunReply = vi.fn();
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    (mockElectron as Record<string, unknown>).confirmCloseRunReply = confirmCloseRunReply;
+    mockElectron.getConfig.mockReturnValue({
+      GOOSE_DEFAULT_PROVIDER: 'openai',
+      GOOSE_DEFAULT_MODEL: 'gpt-4',
+      GOOSE_ALLOWLIST_WARNING: false,
+    });
+    window.location.hash = '';
+  });
+
+  afterEach(() => {
+    delete (mockElectron as Record<string, unknown>).confirmCloseRunReply;
+  });
+
+  it('mounts the Studio dialog on confirm-close-run and replies keep=false / stop=true', async () => {
+    render(<AppInner />, { wrapper: AppInnerTestWrapper });
+    await waitFor(() => {
+      expect(mockElectron.reactReady).toHaveBeenCalled();
+    });
+
+    const ask = mockElectron.on.mock.calls.find(([channel]) => channel === 'confirm-close-run')?.[1];
+    expect(ask).toBeDefined();
+    const title = 'A swarm run is live in this window';
+    expect(screen.queryByRole('dialog', { name: title })).toBeNull();
+
+    // A malformed payload asks nothing.
+    act(() => ask?.({} as any, { nope: true }));
+    expect(screen.queryByRole('dialog', { name: title })).toBeNull();
+
+    act(() => ask?.({} as any, { runs: [{ runId: 'r-1', runDir: '/proj', workingDir: '/proj' }] }));
+    expect(screen.getByRole('dialog', { name: title })).toBeInTheDocument();
+    expect(screen.getByText('Run r-1 in /proj')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Keep running' }));
+    expect(confirmCloseRunReply).toHaveBeenCalledWith(false);
+    expect(screen.queryByRole('dialog', { name: title })).toBeNull();
+
+    act(() => ask?.({} as any, { runs: [{ runId: 'r-1', runDir: '/proj', workingDir: '/proj' }] }));
+    fireEvent.click(screen.getByRole('button', { name: 'Stop run and close' }));
+    expect(confirmCloseRunReply).toHaveBeenCalledWith(true);
+    // The window is closing under it: the dialog stays, with its actions disabled.
+    expect(screen.getByRole('button', { name: 'Stopping the run…' })).toBeDisabled();
+    expect(confirmCloseRunReply).toHaveBeenCalledTimes(2);
+  });
+
+  it('Escape on the question keeps the run', async () => {
+    render(<AppInner />, { wrapper: AppInnerTestWrapper });
+    await waitFor(() => {
+      expect(mockElectron.reactReady).toHaveBeenCalled();
+    });
+    const ask = mockElectron.on.mock.calls.find(([channel]) => channel === 'confirm-close-run')?.[1];
+    act(() => ask?.({} as any, { runs: [{ runId: 'r-2', runDir: '/x', workingDir: '/x' }] }));
+    fireEvent.keyDown(window, { key: 'Escape' });
+    expect(confirmCloseRunReply).toHaveBeenCalledWith(false);
+    expect(screen.queryByRole('dialog', { name: 'A swarm run is live in this window' })).toBeNull();
   });
 });
