@@ -20,6 +20,10 @@ export async function handleJoinKey(request: Request, deps: Deps): Promise<Respo
   if (!verified.ok) {
     return jsonResponse(401, { error: "invalid token", reason: verified.reason });
   }
+  if (deps.config.meshConfigError !== undefined) {
+    deps.log("config_error", { error: "mesh_provider_partial_config", detail: deps.config.meshConfigError });
+    return jsonResponse(500, { error: deps.config.meshConfigError });
+  }
   if (deps.config.meshProvider === "none") {
     return jsonResponse(501, { error: "mesh keys not configured on this deployment" });
   }

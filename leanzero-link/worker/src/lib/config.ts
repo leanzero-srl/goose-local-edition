@@ -33,6 +33,13 @@ export const DEFAULT_TS_NODE_TAG = "tag:leanzero-link";
 /// the hosted-control fallback; `none` means no mesh backend is configured.
 export type MeshProvider = "headscale" | "tailscale" | "none";
 
+/// A configuration the operator must see: logged as `config_error` at boot by the Node
+/// server and by the handler that trips over it. Never a silent fallback.
+export interface ConfigWarning {
+  error: string;
+  missing?: string[];
+}
+
 export interface Config {
   jwtSecret: string | undefined;
   resendApiKey: string | undefined;
@@ -47,8 +54,14 @@ export interface Config {
   hsApiKey: string | undefined;
   hsLoginServer: string | undefined;
   meshProvider: MeshProvider;
+  /// Set when the mesh env is present but unusable (partial HEADSCALE_*): the join-key
+  /// endpoint answers 500 with this text instead of 501 "not configured".
+  meshConfigError: string | undefined;
   allowedOrigins: string[];
+  warnings: ConfigWarning[];
 }
+
+const HEADSCALE_KEYS = ["HEADSCALE_API_URL", "HEADSCALE_API_KEY", "HEADSCALE_LOGIN_SERVER"] as const;
 
 function nonEmpty(value: string | undefined): string | undefined {
   const trimmed = value?.trim();
@@ -56,6 +69,7 @@ function nonEmpty(value: string | undefined): string | undefined {
 }
 
 export function parseConfig(env: WorkerEnvVars): Config {
+  const warnings: ConfigWarning[] = [];
   const rawExpiry = nonEmpty(env.TS_KEY_EXPIRY_SECONDS);
   let tsKeyExpirySeconds = DEFAULT_TS_KEY_EXPIRY_SECONDS;
   let tsKeyExpiryInvalid = false;
@@ -64,6 +78,7 @@ export function parseConfig(env: WorkerEnvVars): Config {
       tsKeyExpirySeconds = Number(rawExpiry);
     } else {
       tsKeyExpiryInvalid = true;
+      warnings.push({ error: "ts_key_expiry_invalid" });
     }
   }
   const origins = (nonEmpty(env.ALLOWED_ORIGINS) ?? "*")
@@ -76,9 +91,22 @@ export function parseConfig(env: WorkerEnvVars): Config {
   const tsApiToken = nonEmpty(env.TS_API_TOKEN);
   const tsTailnet = nonEmpty(env.TS_TAILNET);
   // Headscale wins when fully configured (self-hosted, per-account isolation); the
-  // Tailscale hosted-control path is the fallback.
-  const meshProvider: MeshProvider =
-    hsApiUrl && hsApiKey && hsLoginServer ? "headscale" : tsApiToken && tsTailnet ? "tailscale" : "none";
+  // Tailscale hosted-control path is used only when NO Headscale key is set. A partial
+  // Headscale config is an operator error, not a request to use Tailscale: it makes the
+  // provider "none" loudly (config_error at boot and on every join-key call) rather than
+  // silently minting keys against the hosted control plane.
+  const hsMissing = HEADSCALE_KEYS.filter((name) => nonEmpty(env[name]) === undefined);
+  let meshProvider: MeshProvider;
+  let meshConfigError: string | undefined;
+  if (hsMissing.length === 0) {
+    meshProvider = "headscale";
+  } else if (hsMissing.length < HEADSCALE_KEYS.length) {
+    meshProvider = "none";
+    meshConfigError = `HEADSCALE_* partially configured; missing ${hsMissing.join(", ")}`;
+    warnings.push({ error: "mesh_provider_partial_config", missing: hsMissing });
+  } else {
+    meshProvider = tsApiToken && tsTailnet ? "tailscale" : "none";
+  }
   return {
     jwtSecret: nonEmpty(env.LINK_JWT_SECRET),
     resendApiKey: nonEmpty(env.RESEND_API_KEY),
@@ -97,7 +125,9 @@ export function parseConfig(env: WorkerEnvVars): Config {
     hsApiKey,
     hsLoginServer,
     meshProvider,
+    meshConfigError,
     allowedOrigins: origins.length > 0 ? origins : ["*"],
+    warnings,
   };
 }
 

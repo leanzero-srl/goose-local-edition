@@ -42,6 +42,21 @@ describe("POST /v1/mesh/join-key", () => {
     expect(h.calls).toHaveLength(0);
   });
 
+  // W-M5: a partial HEADSCALE_* set used to fall through to the Tailscale mint silently.
+  it("answers 500 config_error on a PARTIAL Headscale config — never falls back to Tailscale", async () => {
+    const h = makeHarness({
+      env: { ...FULL_ENV, HEADSCALE_API_URL: "http://hs.test", HEADSCALE_API_KEY: "hskey-api-x" },
+      fetchHandler: () => jsonRes(200, TAILSCALE_CREATE_KEY_FIXTURE),
+    });
+    expect(h.deps.config.meshProvider).toBe("none");
+    expect(h.deps.config.warnings).toEqual([{ error: "mesh_provider_partial_config", missing: ["HEADSCALE_LOGIN_SERVER"] }]);
+    const response = await handleJoinKey(joinRequest(await mintToken(h)), h.deps);
+    expect(response.status).toBe(500);
+    expect(await responseJson(response)).toEqual({ error: "HEADSCALE_* partially configured; missing HEADSCALE_LOGIN_SERVER" });
+    expect(h.calls).toHaveLength(0);
+    expect(h.logs.find((l) => l.event === "config_error")?.fields).toMatchObject({ error: "mesh_provider_partial_config" });
+  });
+
   it("rejects a missing bearer token with 401", async () => {
     const h = makeHarness();
     const response = await handleJoinKey(joinRequest(), h.deps);

@@ -11,6 +11,7 @@ describe("GET /v1/health", () => {
       ok: true,
       version: "0.1.0",
       capabilities: { mail: true, audience: true, mesh: true },
+      meshProvider: "tailscale",
     });
   });
 
@@ -21,6 +22,7 @@ describe("GET /v1/health", () => {
       ok: false,
       version: "0.1.0",
       capabilities: { mail: false, audience: false, mesh: false },
+      meshProvider: "none",
     });
   });
 
@@ -40,6 +42,17 @@ describe("GET /v1/health", () => {
     const h = makeHarness({ env: { ...FULL_ENV, TS_TAILNET: undefined } });
     const body = await responseJson(handleHealth(h.deps));
     expect(body.capabilities).toEqual({ mail: true, audience: true, mesh: false });
+  });
+
+  it("reports the mesh provider by name", async () => {
+    const hs = makeHarness({
+      env: { LINK_JWT_SECRET: "s", HEADSCALE_API_URL: "http://hs.test", HEADSCALE_API_KEY: "k", HEADSCALE_LOGIN_SERVER: "https://c.test" },
+    });
+    expect((await responseJson(handleHealth(hs.deps))).meshProvider).toBe("headscale");
+    const partial = makeHarness({ env: { ...FULL_ENV, HEADSCALE_API_URL: "http://hs.test" } });
+    const body = await responseJson(handleHealth(partial.deps));
+    expect(body.meshProvider).toBe("none");
+    expect((body.capabilities as { mesh: boolean }).mesh).toBe(false);
   });
 
   it("is served on GET /v1/health through the router", async () => {
