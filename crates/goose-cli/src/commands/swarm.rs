@@ -93,15 +93,19 @@ mod desk;
 use desk::{spawn_shadow_desk, RecurrenceMeter, RECURRENCE_MIN_SPAN};
 mod attribution;
 use attribution::{
-    attribute_findings, console_error_source, criticals_left_unassigned, resolve_shard_ownership,
+    attribute_findings, console_error_source, criticals_left_unassigned, handoffs_from_rollup,
+    parse_handoffs, render_sources, resolve_shard_ownership, tree_files, Attributed, RenderSources,
 };
 mod post_probe;
-use post_probe::{repeated_post_verdict, split_curl_status, RepeatedPost};
+use post_probe::{
+    json_object, missing_documented_keys, post_probe_evidence, repeated_post_verdict,
+    split_curl_status, RepeatedPost,
+};
 mod findings;
 use findings::{
     dedupe_findings_exact, elide_middle, engine_critical, parse_finding_verdicts,
     parse_numbered_findings, partition_by_engine_critical, FileGroup, FindingProvenance,
-    FindingSource,
+    FindingSource, FINDING_PATH_EXTS,
 };
 mod pitfalls;
 use pitfalls::{relevant_pitfalls, DOMAIN_PITFALLS};
@@ -1748,10 +1752,18 @@ async fn handle_repair(tree: PathBuf, spec: Option<PathBuf>) -> Result<()> {
     let tree_read = tree.clone();
     // The runner-up map is dispatch-side ownership only (resolve_shard_ownership); the replay
     // reports grouping, which is unchanged by it.
-    let (mut groups, known_bugs, _) =
-        attribute_findings(&r.findings, &existing, &move |rel: &str| {
-            std::fs::read_to_string(tree_read.join(rel)).ok()
-        });
+    let handoffs = handoffs_from_rollup(read_ledger_rollup(&tree).as_ref(), &existing);
+    let Attributed {
+        mut groups,
+        known_bugs,
+        ..
+    } = attribute_findings(
+        &r.findings,
+        &existing,
+        &r.provenance,
+        &handoffs,
+        &move |rel: &str| std::fs::read_to_string(tree_read.join(rel)).ok(),
+    );
     // The live wave's order, reproduced offline: severest file-group first, each group's own
     // findings most-severe-first (provenance-derived, findings.rs).
     for g in &mut groups {
@@ -3693,37 +3705,6 @@ mod tests {
         );
     }
 
-    /// II-2: the shard prompt's own demanded line format, parsed at last. `NOT FIXED`/`NOT REAL`
-    /// must win over the `FIXED` they contain, markdown litter must not hide a verdict, and a
-    /// line that is not a verdict must not become one.
-    #[test]
-    fn parse_finding_verdicts_reads_the_demanded_line_format() {
-        let out = "I repaired what I could.\n\
-                   FINDING 1: FIXED — ran `python3 -m pytest tests/test_ledger_core.py`, 26 passed\n\
-                   - **FINDING 2: NOT FIXED** — tried rewriting the UPDATE to use version guards; \
-                   test_concurrent_updates still fails with version 3 != 2\n\
-                   FINDING 3: NOT REAL — GET /api/health returned 200 with {\"status\":\"ok\"}\n\
-                   finding 4 was hard so I skipped it\n\
-                   Finding 5: FIXED — curl output attached";
-        let v = parse_finding_verdicts(out);
-        assert_eq!(
-            v.iter().map(|(n, s, _)| (*n, *s)).collect::<Vec<_>>(),
-            vec![
-                (1, "FIXED"),
-                (2, "NOT FIXED"),
-                (3, "NOT REAL"),
-                (5, "FIXED")
-            ],
-            "the prose line about finding 4 is not a verdict"
-        );
-        assert!(
-            v[1].2.contains("version guards"),
-            "detail survives: {:?}",
-            v[1].2
-        );
-        assert!(parse_finding_verdicts("all good, nothing to report").is_empty());
-    }
-
     /// II-2: the repair ledger recovers the findings from the description it was built from —
     /// a round trip through our own format, so numbered verdicts can be paired with their text.
     #[test]
@@ -3850,13 +3831,16 @@ mod tests {
                 round: 0,
                 shard: "fix::r0::app/api.py",
                 owned_files: &owned[..1],
+                all_files: &owned,
                 description: &smoke_fix_description(
                     &["GET /api/stream returned 404".to_string()],
                     TargetLang::Python,
                     "",
                     "",
                 ),
-                output: "FINDING 1: NOT FIXED — added route but SSE headers still wrong",
+                output: "FINDING 1: NOT FIXED — added route but SSE headers still wrong\n\n\
+                         HANDOFF\n- `serve_stream` in `app/ledgerd/server.py` must send the \
+                         text/event-stream headers; I do not own that file.",
                 promoted: false,
                 baseline: 1,
                 agent_ok: true,
@@ -3901,6 +3885,11 @@ mod tests {
         );
         let rep = &rollup["repair"]["rounds"][0];
         assert_eq!(rep["verdicts"][0]["verdict"], "NOT FIXED");
+        assert_eq!(
+            rep["handoffs"][0]["path"], "app/ledgerd/server.py",
+            "the shard's handoff is persisted on its row, not lost with the wave"
+        );
+        assert_eq!(rep["handoffs"][0]["symbol"], "serve_stream");
         assert_eq!(
             rep["verdicts"][0]["finding"],
             "GET /api/stream returned 404"
@@ -4085,6 +4074,7 @@ mod tests {
                 round: 0,
                 shard: "fix::r0::app/stream.py",
                 owned_files: &["app/stream.py".to_string()],
+                all_files: &["app/stream.py".to_string()],
                 description: &smoke_fix_description(
                     &["GET /api/stream returned 404 (advertised SSE endpoint)".to_string()],
                     TargetLang::Python,
@@ -11809,42 +11799,6 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
         // Still answering once populated -> no wedge, whatever else the body may be missing.
         assert!(!wedged_after_populating(200, 200));
         assert!(!wedged_after_populating(200, 500));
-    }
-
-    /// F885 (run 10, round 0, watched live): the app.js shard's worker added every missing DOM
-    /// id to index.html — a file it did not own — so grade-what-lands refused the byte-identical
-    /// app.js and a CORRECT repair was discarded. A js/css shard owns its page markup too.
-    #[test]
-    fn a_script_shard_owns_the_markup_it_must_reconcile_with() {
-        let files: Vec<String> = [
-            "vendorsync/web/app.js",
-            "vendorsync/web/index.html",
-            "vendorsync/web/styles.css",
-            "vendorsync/api.py",
-        ]
-        .iter()
-        .map(|s| s.to_string())
-        .collect();
-        let taken: std::collections::HashSet<String> =
-            ["vendorsync/web/app.js".to_string()].into_iter().collect();
-        assert_eq!(
-            shard_owned_files("vendorsync/web/app.js", &files, &taken),
-            vec![
-                "vendorsync/web/app.js".to_string(),
-                "vendorsync/web/index.html".to_string()
-            ]
-        );
-        // If a sibling group already owns the html, the partition stays disjoint.
-        let taken2: std::collections::HashSet<String> = [
-            "vendorsync/web/app.js".to_string(),
-            "vendorsync/web/index.html".to_string(),
-        ]
-        .into_iter()
-        .collect();
-        assert_eq!(
-            shard_owned_files("vendorsync/web/app.js", &files, &taken2),
-            vec!["vendorsync/web/app.js".to_string()]
-        );
     }
 
     /// F892 (fleet sb-6 run, round 0, watched live): the Unreadable-POST finding hardcoded the
@@ -20400,26 +20354,80 @@ async fn run_spec_contract(root: &Path, spec: &str, lang: TargetLang) -> SpecCon
                 // correct return statements. The keys now come from the same per-row parser every
                 // GET assertion uses; a row that documents no keys degrades to a shape-neutral
                 // message instead of borrowing a sibling's.
-                RepeatedPost::Unreadable => {
+                //
+                // r6c (GAP 3): the one `Unreadable` arm covered BOTH "not JSON" and "JSON without a
+                // counter", worded the second as the first, and never checked the documented keys it
+                // accused the handler of omitting. Replayed against the archived tree, all five such
+                // findings were JSON 401/400 envelopes answered to the probe's BARE POST (no body, no
+                // headers) — `{"error": {"code": "unauthorized", …}}` — and four lanes reported FIXED
+                // on words the gate re-filed byte-identically every round. Now: the verdict says
+                // which; the documented keys are checked against the body actually returned (nested
+                // included); a 2xx that misses them is the finding, a 404/405/501 is the
+                // not-implemented finding, and a 4xx envelope to a bare POST is INCONCLUSIVE, stated
+                // with its evidence — no handler defect is provable from a request the spec's own
+                // auth/validation rules reject. Every branch carries the probe's request line, each
+                // status and a body head (post_probe_evidence).
+                RepeatedPost::NotJson => {
+                    let evidence = post_probe_evidence(
+                        &path,
+                        POST_PROBE_SECS,
+                        &[(a_code, a_body), (b_code, b_body)],
+                    );
+                    let which = match (json_object(a_body).is_none(), json_object(b_body).is_none()) {
+                        (true, true) => "either probe",
+                        (true, false) => "probe 1",
+                        _ => "probe 2",
+                    };
+                    prov.push(&mut findings, FindingSource::EndpointContractProbe, format!(
+                        "POST {path}'s response could not be read as a JSON object on {which} — \
+                         the spec documents a JSON response for every endpoint, so return the \
+                         documented body; without it this endpoint's behaviour cannot be \
+                         verified by anyone, including this gate. {evidence}"
+                    ));
+                }
+                RepeatedPost::NoIdempotencyField => {
+                    let evidence = post_probe_evidence(
+                        &path,
+                        POST_PROBE_SECS,
+                        &[(a_code, a_body), (b_code, b_body)],
+                    );
                     let documented = spec_documented_keys(spec, path.as_str());
-                    if documented.is_empty() {
+                    let missing = missing_documented_keys(a_body, &documented);
+                    if matches!(a_code, 404 | 405 | 501) {
                         prov.push(&mut findings, FindingSource::EndpointContractProbe, format!(
-                            "POST {path}'s response could not be read as JSON on either probe — \
-                             the spec documents a JSON response for every endpoint, so return the \
-                             documented body; without it this endpoint's behaviour cannot be \
-                             verified by anyone, including this gate."
+                            "POST {path} answered HTTP {a_code} — the spec advertises this endpoint \
+                             and the app does not route it. Implement or route the handler. \
+                             {evidence}"
                         ));
-                    } else {
+                    } else if (200..300).contains(&a_code) && !missing.is_empty() {
                         prov.push(&mut findings, FindingSource::EndpointContractProbe, format!(
                             "POST {path}'s response does not carry the documented field(s) {} — \
                              the spec's endpoint table names them for exactly this endpoint. \
                              Return them from this handler; without them the endpoint's contract \
-                             cannot be verified by anyone, including this gate.",
-                            documented
+                             cannot be verified by anyone, including this gate. {evidence}",
+                            missing
                                 .iter()
                                 .map(|k| format!("`{k}`"))
                                 .collect::<Vec<_>>()
                                 .join(", ")
+                        ));
+                    } else if (200..300).contains(&a_code) {
+                        inconclusive.push(format!(
+                            "spec-contract: POST {path} answered HTTP {a_code} with JSON that {} \
+                             but carries no fetched/inserted/total counter — idempotency \
+                             undecidable from these bodies, NOT a finding. {evidence}",
+                            if documented.is_empty() {
+                                "the spec documents no keys for".to_string()
+                            } else {
+                                format!("carries every documented key ({})", documented.join(", "))
+                            }
+                        ));
+                    } else {
+                        inconclusive.push(format!(
+                            "spec-contract: POST {path} answered HTTP {a_code} with a JSON error \
+                             envelope to the probe's BARE POST — the spec's own auth/validation \
+                             rules reject a request with no body and no headers, so no handler \
+                             defect is provable here, NOT a finding. {evidence}"
                         ));
                     }
                 }
@@ -20782,6 +20790,28 @@ async fn run_spec_contract(root: &Path, spec: &str, lang: TargetLang) -> SpecCon
                                 Some((_, _, src)) => format!(" (in `{src}`)"),
                                 None => String::new(),
                             };
+                            // GAP 1 (r6c): the render findings name what the gate MEASURED — the
+                            // page the server served at `/` and its row-building script — derived
+                            // from the served bytes and the tree (attribution::render_sources), so
+                            // a zero-rows finding with no console error is still OWNED. The probe
+                            // reports only console-error sources (0eb7a09ea). An unreadable page
+                            // or unresolvable scripts yield NO suffix: the finding stays unowned
+                            // and critical_unassigned says so — never a substituted name. Same
+                            // curl budget as every GET probe here (transport to the app under
+                            // test, never a model).
+                            let page_sources = {
+                                let mut page = tokio::process::Command::new("curl");
+                                page.args(["-s", "-m", "5", &format!("http://127.0.0.1:{port}/")]);
+                                match smoke_output(page, 8).await {
+                                    Some(out) => render_sources(
+                                        &String::from_utf8_lossy(&out.stdout),
+                                        &tree_files(root),
+                                        &|rel| std::fs::read_to_string(root.join(rel)).ok(),
+                                    ),
+                                    None => RenderSources::default(),
+                                }
+                            };
+                            let page_suffix = page_sources.attribution_suffix();
                             if rows == 0 {
                                 let exemplar = match attributable {
                                     Some((i, text, _)) if i != 0 => {
@@ -20794,6 +20824,14 @@ async fn run_spec_contract(root: &Path, spec: &str, lang: TargetLang) -> SpecCon
                                             .unwrap_or("no console error captured")
                                     ),
                                 };
+                                // The console error's own file when the browser named one;
+                                // else the page's row-building script — the measured subject
+                                // of a zero-rows finding.
+                                let rows_suffix = if src_suffix.is_empty() {
+                                    page_suffix.as_str()
+                                } else {
+                                    src_suffix.as_str()
+                                };
                                 prov.push(
                                     &mut findings,
                                     FindingSource::RenderGateRows,
@@ -20803,7 +20841,7 @@ async fn run_spec_contract(root: &Path, spec: &str, lang: TargetLang) -> SpecCon
                                      {exemplar}. Open web/index.html end to end: \
                                      the page must fetch the documented endpoints and render the \
                                      rows, and every fetch failure must surface a visible state, \
-                                     not a blank page.{src_suffix}"
+                                     not a blank page.{rows_suffix}"
                                     ),
                                 );
                             } else if console > 0 {
@@ -20891,9 +20929,14 @@ async fn run_spec_contract(root: &Path, spec: &str, lang: TargetLang) -> SpecCon
                                                         .to_string(),
                                                 );
                                             } else if completed && after == 0 {
+                                                // r6c F1: this finding named NO file and rode
+                                                // critical_unassigned every round; it now ends
+                                                // in the served page's derivation (row-building
+                                                // script first, page second).
                                                 prov.push(
                                                     &mut findings,
                                                     FindingSource::RenderGateRows,
+                                                    format!(
                                                     "after a SUCCESSFUL sync the page still renders \
                                                      ZERO rows — the backend acquired the data (the \
                                                      API returns it) but the frontend never displays \
@@ -20901,8 +20944,9 @@ async fn run_spec_contract(root: &Path, spec: &str, lang: TargetLang) -> SpecCon
                                                      After the sync completes, re-fetch the payments \
                                                      endpoint and RENDER the returned rows into the \
                                                      table, and update the last-synced/count readouts \
-                                                     from that same response."
-                                                        .to_string(),
+                                                     from that same response. {}{page_suffix}",
+                                                    page_sources.evidence_sentence()
+                                                    ),
                                                 );
                                             } else if after > 0 {
                                                 verified += 1;
@@ -21428,35 +21472,6 @@ pub(crate) struct SliceBrief {
     /// got settled without being handed prose to restate.
     settled: String,
 }
-
-/// EVERY EXTENSION A DEFECT MAY NAME. One list, because there were two and they disagreed.
-///
-/// `paths_in` (the RATE reply parser) and `extract_file_from_finding`'s `is_code` (the TEST/verdict text
-/// parser) answer the SAME question — "is this token a file this app is made of?" — and answered it
-/// differently. `is_code` knew six extensions, so a defect naming `cmd/app/main.go`, `App.tsx`,
-/// `Foo.java` or `Note.swift` in backticks — the exact shape the angle prompt DEMANDS — extracted
-/// nothing, fell to `unassigned`, and the round degraded to the whole-tree race. A Go or Swift app could
-/// not shard a single defect.
-///
-/// Short extensions (.c, .h) are admitted deliberately: every caller resolves its result against the
-/// run's own file list, so a stray `self.c` token can never become a fix target.
-const FINDING_PATH_EXTS: &[&str] = &[
-    ".py", ".pyi", ".rs", ".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".go", ".java", ".kt",
-    ".kts", ".rb", ".swift", ".c", ".cc", ".cpp", ".cxx", ".h", ".hpp", ".cs", ".php", ".scala",
-    ".ex", ".exs", ".dart", ".lua", ".sh", ".html", ".htm", ".css", ".scss", ".vue", ".svelte",
-    ".sql", ".json", ".toml", ".yaml", ".yml", ".md",
-];
-
-/// The SOURCE subset. A defect may name `config.yaml` or `README.md` and that is a real path worth
-/// reading, but it must never outrank the source file in the same finding: broadening the list above
-/// without this made "`app/main.go` mis-parses the flag, see `config.yaml`" aim its fix shard at the
-/// config file, because the last path taken wins.
-const FINDING_SOURCE_EXTS: &[&str] = &[
-    ".py", ".pyi", ".rs", ".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".go", ".java", ".kt",
-    ".kts", ".rb", ".swift", ".c", ".cc", ".cpp", ".cxx", ".h", ".hpp", ".cs", ".php", ".scala",
-    ".ex", ".exs", ".dart", ".lua", ".sh", ".html", ".htm", ".css", ".scss", ".vue", ".svelte",
-    ".sql",
-];
 
 /// The opener's contract, deliberately small: no files FIELD (owned files are declared inside the
 /// objective text — synthesis infers each task's paths from its slice's objective), no deps, no
@@ -28261,59 +28276,6 @@ async fn build_swarm_dispatcher(
     ))
 }
 
-/// F883/E5: the files a per-file fix shard OWNS. A pytest failure attributes to its TEST file —
-/// the only path a `-q` summary names — but the defect is as often in the module under test,
-/// which a shard owning only the test cannot land: its worker either fixes the module in a
-/// shadow that promote discards, or takes the one route that CAN land — weakening the tests.
-/// Owning BOTH keeps the fix landable either way. The module is added only when it resolves to
-/// a planned non-test file AND no sibling group already owns it — the partition must stay
-/// disjoint, because two shards writing one real file is the race this machinery exists to
-/// prevent.
-fn shard_owned_files(
-    group_file: &str,
-    all_files: &[String],
-    taken: &std::collections::HashSet<String>,
-) -> Vec<String> {
-    let mut owned = vec![group_file.to_string()];
-    let base = group_file.rsplit('/').next().unwrap_or(group_file);
-    if let Some(stem) = base
-        .strip_prefix("test_")
-        .map(|r| r.trim_end_matches(".py"))
-        .filter(|s| !s.is_empty())
-    {
-        let want = format!("{stem}.py");
-        if let Some(module) = all_files.iter().find(|f| {
-            let fb = f.rsplit('/').next().unwrap_or(f);
-            fb == want && !fb.starts_with("test_")
-        }) {
-            if module.as_str() != group_file && !taken.contains(module.as_str()) {
-                owned.push(module.clone());
-            }
-        }
-    }
-    // A SCRIPT'S FINDINGS RECONCILE AGAINST ITS MARKUP. MEASURED (run 10, round 0): the dom-id
-    // scan attributed nine findings to app.js — each saying "either add the id to the HTML or fix
-    // the reference" — and the shard owning only app.js took the natural half of that
-    // instruction: seven tool calls, every missing id added to index.html, pytest collect green
-    // in its shadow. Promote copies only owned files, so the grade-what-lands preview correctly
-    // refused the byte-identical app.js — and the round DISCARDED a correct repair. The js/css
-    // shard now owns the page markup too (when planned and unclaimed), so whichever side of the
-    // reconciliation the worker picks can actually land.
-    if base.ends_with(".js") || base.ends_with(".css") {
-        let dir = group_file.strip_suffix(base).unwrap_or("");
-        if let Some(html) = all_files
-            .iter()
-            .filter(|f| f.ends_with(".html"))
-            .max_by_key(|f| f.starts_with(dir))
-        {
-            if html.as_str() != group_file && !taken.contains(html.as_str()) {
-                owned.push(html.clone());
-            }
-        }
-    }
-    owned
-}
-
 /// II-4, the repair shard's splice (budget one dep-file, 3,500 chars): this round's gate row,
 /// the PRIOR rounds' verdicts touching this shard's findings or files, and the owning tasks'
 /// ledger rows — pure over the roll-up so a round-1 shard is testable against a round-0 fixture.
@@ -29289,6 +29251,8 @@ struct RepairLedgerRow<'a> {
     round: usize,
     shard: &'a str,
     owned_files: &'a [String],
+    /// The run's file list — a HANDOFF is only ever a path that exists in it.
+    all_files: &'a [String],
     description: &'a str,
     output: &'a str,
     promoted: bool,
@@ -29298,6 +29262,15 @@ struct RepairLedgerRow<'a> {
 
 fn write_repair_ledger(root: &Path, row: RepairLedgerRow<'_>) -> Option<std::path::PathBuf> {
     let findings = parse_numbered_findings(row.description);
+    // r6c: the brief tells a shard to HAND OFF a fix it cannot land by name in its final
+    // message; the app.js lane did ("HANDOFF — Files touched: `app/drafts.py` only") and the
+    // verdict line's 300-char tail was all that survived — the handoff reached nobody. Persisted
+    // here; the next wave's attribution consumes it (attribution::handoffs_from_rollup).
+    let handoffs: Vec<serde_json::Value> =
+        parse_handoffs(row.output, row.all_files, row.owned_files)
+            .into_iter()
+            .map(|h| serde_json::json!({"path": h.path, "symbol": h.symbol, "note": h.note}))
+            .collect();
     let verdicts: Vec<serde_json::Value> = parse_finding_verdicts(row.output)
         .into_iter()
         .map(|(n, verdict, detail)| {
@@ -29316,6 +29289,7 @@ fn write_repair_ledger(root: &Path, row: RepairLedgerRow<'_>) -> Option<std::pat
         "owned_files": row.owned_files,
         "findings_assigned": findings,
         "verdicts": verdicts,
+        "handoffs": handoffs,
         "promoted": row.promoted,
         "baseline": row.baseline,
         "agent_ok": row.agent_ok,
@@ -36135,10 +36109,32 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                 // runs BEFORE the wave, so a finding the gate could not name a file for rides its
                 // real file's shard instead of waiting for a whole-tree residue worker.
                 let fan_read_cwd = cwd.clone();
-                let (mut groups, unassigned, runner_ups) =
-                    attribute_findings(&verdict.findings, &smoke_all_files, &move |rel: &str| {
-                        std::fs::read_to_string(fan_read_cwd.join(rel)).ok()
-                    });
+                // r6c: a prior lane's HANDOFF (persisted on its repair row) routes a still-open
+                // finding ahead of the grep — the on-disk ledger is the only channel that
+                // survives between waves. Each consumption is an event, so the routing is
+                // visible.
+                let handoffs =
+                    handoffs_from_rollup(read_ledger_rollup(&cwd).as_ref(), &smoke_all_files);
+                let Attributed {
+                    mut groups,
+                    known_bugs: unassigned,
+                    runner_ups,
+                    handoffs_consumed,
+                } = attribute_findings(
+                    &verdict.findings,
+                    &smoke_all_files,
+                    &prov,
+                    &handoffs,
+                    &move |rel: &str| std::fs::read_to_string(fan_read_cwd.join(rel)).ok(),
+                );
+                for (path, finding) in &handoffs_consumed {
+                    sink.write_value(serde_json::json!({
+                        "event": "handoff_consumed",
+                        "round": round,
+                        "path": path,
+                        "finding": elide_middle(finding, 150, 650),
+                    }));
+                }
                 // THE WAVE ORDERS BY SEVERITY (provenance-derived): fanout_over_fleet hands
                 // devices to the FIRST items, so when file-groups exceed free nodes the
                 // severest file must head the list — max severity, then finding count, stable.
@@ -36334,6 +36330,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                                         round: round as usize,
                                         shard: &g.file,
                                         owned_files: &shard_owned,
+                                        all_files: &fan_all_files,
                                         description: &shard_desc,
                                         output: ran
                                             .as_ref()

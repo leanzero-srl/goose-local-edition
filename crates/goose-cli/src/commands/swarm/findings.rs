@@ -20,8 +20,6 @@
 //! (e.g. the sync_rows finding stays repairable-never-blocking per its pinned test even though
 //! its authoring check ranks CRITICAL for ordering).
 
-use super::{FINDING_PATH_EXTS, FINDING_SOURCE_EXTS};
-
 /// GOOSE_SWARM_COMPLETE_PARALLEL: a group of verify findings that all name the SAME file, so exactly one
 /// fix agent ever writes that file (same-file failures serialize by construction).
 pub(super) struct FileGroup {
@@ -37,6 +35,35 @@ pub(super) struct FileGroup {
 /// backslashes) collapse to ONE canonical relative string. LOAD-BEARING for GOOSE_SWARM_COMPLETE_PARALLEL:
 /// two spellings must NOT become two file-groups -> two shards -> two promotes to the same real dst -> a
 /// torn write. Pure + unit-tested.
+/// EVERY EXTENSION A DEFECT MAY NAME. One list, because there were two and they disagreed.
+///
+/// `paths_in` (the RATE reply parser) and `extract_file_from_finding`'s `is_code` (the TEST/verdict text
+/// parser) answer the SAME question — "is this token a file this app is made of?" — and answered it
+/// differently. `is_code` knew six extensions, so a defect naming `cmd/app/main.go`, `App.tsx`,
+/// `Foo.java` or `Note.swift` in backticks — the exact shape the angle prompt DEMANDS — extracted
+/// nothing, fell to `unassigned`, and the round degraded to the whole-tree race. A Go or Swift app could
+/// not shard a single defect.
+///
+/// Short extensions (.c, .h) are admitted deliberately: every caller resolves its result against the
+/// run's own file list, so a stray `self.c` token can never become a fix target.
+pub(super) const FINDING_PATH_EXTS: &[&str] = &[
+    ".py", ".pyi", ".rs", ".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".go", ".java", ".kt",
+    ".kts", ".rb", ".swift", ".c", ".cc", ".cpp", ".cxx", ".h", ".hpp", ".cs", ".php", ".scala",
+    ".ex", ".exs", ".dart", ".lua", ".sh", ".html", ".htm", ".css", ".scss", ".vue", ".svelte",
+    ".sql", ".json", ".toml", ".yaml", ".yml", ".md",
+];
+
+/// The SOURCE subset. A defect may name `config.yaml` or `README.md` and that is a real path worth
+/// reading, but it must never outrank the source file in the same finding: broadening the list above
+/// without this made "`app/main.go` mis-parses the flag, see `config.yaml`" aim its fix shard at the
+/// config file, because the last path taken wins.
+pub(super) const FINDING_SOURCE_EXTS: &[&str] = &[
+    ".py", ".pyi", ".rs", ".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".go", ".java", ".kt",
+    ".kts", ".rb", ".swift", ".c", ".cc", ".cpp", ".cxx", ".h", ".hpp", ".cs", ".php", ".scala",
+    ".ex", ".exs", ".dart", ".lua", ".sh", ".html", ".htm", ".css", ".scss", ".vue", ".svelte",
+    ".sql",
+];
+
 fn normalize_rel_path(p: &str) -> String {
     p.replace('\\', "/")
         .split('/')
@@ -430,6 +457,26 @@ pub(super) enum FindingSource {
 }
 
 impl FindingSource {
+    /// The checks that measured the SERVER'S ANSWER over HTTP — a response shape, a status, a
+    /// hang, a row count read back through the app's own endpoints. A finding of this class
+    /// describes what a HANDLER returned, so attribution ranks server-side source above web
+    /// assets for it (r6c F5: `POST /api/drafts`'s response-shape finding was won by web/app.js
+    /// — three fetch() literals — over the route table, so a FRONTEND shard carried a
+    /// server-side defect and its two correct edits to app/drafts.py died at promotion). The
+    /// browser-side checks (render, console, dom-id, css) are deliberately absent: their
+    /// defects live in the assets.
+    pub(super) fn is_server_response_probe(self) -> bool {
+        matches!(
+            self,
+            FindingSource::BootProbe
+                | FindingSource::EndpointDeadProbe
+                | FindingSource::SyncAcquisition
+                | FindingSource::RestartDurability
+                | FindingSource::EndpointContractProbe
+                | FindingSource::AggregateTruth
+        )
+    }
+
     /// THE DERIVATION TABLE. Class rules: app-unusable product checks are CRITICAL;
     /// feature-severing evidence is HIGH; contract/shape is MEDIUM; cosmetic is LOW.
     pub(super) fn severity(self) -> FindingSeverity {
@@ -532,6 +579,13 @@ impl FindingProvenance {
             Some(s) => s.label(),
             None => UNSOURCED_SOURCE,
         }
+    }
+
+    /// The authoring check itself, for callers that branch on the CLASS of a finding
+    /// (attribution's server-side preference); None for an untagged finding — the caller
+    /// treats that as "no preference", never as a class.
+    pub(super) fn source_of(&self, text: &str) -> Option<FindingSource> {
+        self.by_text.get(text).copied()
     }
 
     fn rank(&self, text: &str) -> u8 {
@@ -1174,7 +1228,9 @@ mod tests {
         let high = "the page renders but the browser console carries 4 error(s) (in `web/viz.js`)"
             .to_string();
         let med1 = "POST /api/drafts's response does not carry the documented field(s)".to_string();
-        let med2 = "POST /api/webhooks's response could not be read as JSON".to_string();
+        let med2 =
+            "POST /api/webhooks's response could not be read as a JSON object on either probe"
+                .to_string();
         let med3 = "POST /api/sync is not CHEAP on a repeat run".to_string();
         prov.tag(FindingSource::SyncAcquisition, std::slice::from_ref(&crit));
         prov.tag(
@@ -1240,9 +1296,13 @@ mod tests {
         let shape1 = "POST /api/payments/<id>/note's response does not carry the documented \
                       field(s) `id`, `note`, `version`"
             .to_string();
-        let shape2 =
-            "POST /api/webhooks/meridian's response could not be read as JSON on either probe"
-                .to_string();
+        // The live emitter's shape since the r6c split: the verdict names which probe, and the
+        // finding ends in the probe's own evidence (request line, each status, a body head).
+        let shape2 = format!(
+            "POST /api/webhooks/meridian's response could not be read as a JSON object on \
+             either probe — the spec documents a JSON response for every endpoint. {}",
+            "PROBE EVIDENCE — request as sent: `POST /api/webhooks/meridian` with NO body and NO headers (bare `curl -X POST`, 20s budget); probe 1: HTTP 401, body «{\"error\": {\"code\": \"bad_signature\"}}»; probe 2: HTTP 401, body «{\"error\": {\"code\": \"bad_signature\"}}»."
+        );
         prov.tag(
             FindingSource::RenderGateConsole,
             std::slice::from_ref(&console),
@@ -1384,5 +1444,36 @@ mod tests {
             None,
             "an ambiguous basename must stay unresolved rather than guess between two owners"
         );
+    }
+
+    /// II-2: the shard prompt's own demanded line format, parsed at last. `NOT FIXED`/`NOT REAL`
+    /// must win over the `FIXED` they contain, markdown litter must not hide a verdict, and a
+    /// line that is not a verdict must not become one.
+    #[test]
+    fn parse_finding_verdicts_reads_the_demanded_line_format() {
+        let out = "I repaired what I could.\n\
+                   FINDING 1: FIXED — ran `python3 -m pytest tests/test_ledger_core.py`, 26 passed\n\
+                   - **FINDING 2: NOT FIXED** — tried rewriting the UPDATE to use version guards; \
+                   test_concurrent_updates still fails with version 3 != 2\n\
+                   FINDING 3: NOT REAL — GET /api/health returned 200 with {\"status\":\"ok\"}\n\
+                   finding 4 was hard so I skipped it\n\
+                   Finding 5: FIXED — curl output attached";
+        let v = parse_finding_verdicts(out);
+        assert_eq!(
+            v.iter().map(|(n, s, _)| (*n, *s)).collect::<Vec<_>>(),
+            vec![
+                (1, "FIXED"),
+                (2, "NOT FIXED"),
+                (3, "NOT REAL"),
+                (5, "FIXED")
+            ],
+            "the prose line about finding 4 is not a verdict"
+        );
+        assert!(
+            v[1].2.contains("version guards"),
+            "detail survives: {:?}",
+            v[1].2
+        );
+        assert!(parse_finding_verdicts("all good, nothing to report").is_empty());
     }
 }
