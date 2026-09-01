@@ -3649,7 +3649,14 @@ export function deriveFleet(args: {
   // busy-only guard switched the demotion off in exactly the case that most needs it — a
   // claimed-working lane on a fleet lms swears is idle (the 2026-08-28 lie). An empty report
   // (unreachable, or `lms ps --json` returning [] — measured, it can while reachable) still fails
-  // SAFE: no evidence, no demotion. A device lms never reports is a cloud node and is never demoted.
+  // SAFE: no evidence, no demotion. A device NO feed reports is a cloud node and is never demoted.
+  //
+  // WHICH feeds (useFleetCorroboration — the TRUTH feed, never gated by the showLmStudioFleet display
+  // toggle; U-H2): `lms ps` for LM Studio nodes, and the MLX sidecar's engine status for a local
+  // `mlx-sidecar` device, whose `running` answer puts it in reportedNodes. That status carries no
+  // generating/idle fact, so a sidecar device is never in busyNodes: for its lanes the busy check above
+  // always passes and the demotion rests on the digest window alone — the same exposure an LM Studio
+  // lane has mid-tool-call, when lms reports idle too.
   // Membership uses the same shortName normalization the fleet cells apply to nodeStatus keys —
   // deriveFleet's devices are canonical node names, nodeStatus keys are deviceFromModelId short
   // names, and a raw compare misclassifies exactly where they differ.
