@@ -92,8 +92,8 @@ mod plan_repairs;
 mod shards;
 use ledger_writers::{write_gate_ledger, write_task_ledger, TaskLedgerWrite};
 use plan_repairs::{
-    plan_flags, repair_brief_file_mentions, repair_sink_deps, repair_sink_files,
-    repair_unassigned_endpoints, unassigned_endpoints,
+    plan_flags, repair_brief_file_mentions, repair_owning_nothing, repair_sink_deps,
+    repair_sink_files, repair_unassigned_endpoints, unassigned_endpoints,
 };
 mod tree;
 use tree::{content_hash, rsync_app_tree, snapshot_tree_files, write_once_prefix_tree};
@@ -20870,81 +20870,6 @@ fn repair_module_package_collisions(plan: &mut serde_json::Value, actions: &mut 
     }
 }
 
-fn repair_owning_nothing(plan: &mut serde_json::Value, actions: &mut Vec<String>) {
-    let removed_ids = string_list(&decomposition_of(&plan.to_string())["tasks_owning_nothing"]);
-    if removed_ids.is_empty() {
-        return;
-    }
-    let Some(subtasks) = plan.get_mut("subtasks").and_then(|s| s.as_array_mut()) else {
-        return;
-    };
-    let id_of = |st: &serde_json::Value| {
-        st.get("id")
-            .and_then(|v| v.as_str())
-            .unwrap_or_default()
-            .to_string()
-    };
-    let removed_deps: std::collections::HashMap<String, Vec<String>> = subtasks
-        .iter()
-        .filter(|st| removed_ids.contains(&id_of(st)))
-        .map(|st| (id_of(st), string_list(&st["depends_on"])))
-        .collect();
-    subtasks.retain(|st| !removed_deps.contains_key(&id_of(st)));
-    for id in &removed_ids {
-        actions.push(format!(
-            "removed `{id}`: it owned no files (only `{}` may)",
-            goose_swarm::SINK_ID
-        ));
-    }
-    for st in subtasks.iter_mut() {
-        let id = id_of(st);
-        let Some(deps) = st.get_mut("depends_on").and_then(|d| d.as_array_mut()) else {
-            continue;
-        };
-        let old: Vec<String> = deps
-            .iter()
-            .filter_map(|d| d.as_str().map(str::to_string))
-            .collect();
-        if !old.iter().any(|d| removed_deps.contains_key(d)) {
-            continue;
-        }
-        let mut seen = std::collections::HashSet::new();
-        let mut next = Vec::new();
-        for d in &old {
-            repoint_dependency(d, &removed_deps, &mut seen, &mut next);
-        }
-        next.retain(|d| *d != id);
-        actions.push(format!(
-            "`{id}` depended on removed {:?}: now depends on {next:?}",
-            old.iter()
-                .filter(|d| removed_deps.contains_key(*d))
-                .collect::<Vec<_>>()
-        ));
-        *deps = next.into_iter().map(serde_json::Value::from).collect();
-    }
-}
-
-/// A dependency on a removed task becomes dependencies on what THAT task depended on, all the way up
-/// the removed chain; `seen` stops a cycle among removed tasks and drops duplicates.
-fn repoint_dependency(
-    dep: &str,
-    removed: &std::collections::HashMap<String, Vec<String>>,
-    seen: &mut std::collections::HashSet<String>,
-    out: &mut Vec<String>,
-) {
-    if !seen.insert(dep.to_string()) {
-        return;
-    }
-    match removed.get(dep) {
-        Some(upstream) => {
-            for u in upstream {
-                repoint_dependency(u, removed, seen, out);
-            }
-        }
-        None => out.push(dep.to_string()),
-    }
-}
-
 fn string_list(v: &serde_json::Value) -> Vec<String> {
     v.as_array()
         .into_iter()
@@ -26817,10 +26742,18 @@ impl GooseAgentDispatcher {
         let merger_brief: Option<String> = match &req.merger_of {
             Some(m) => {
                 let brief = self.merger_dispatch_brief(&req, m, &root, lang).await;
-                // VA-079: the holes CODE finds in the shard folders (a README-only shard, a
-                // missing handoff) ride the brief LAST, as GAPS to fill or send out — never as
-                // delivered parts. Nothing appended when the split is clean.
+                // VA-079/VA-065: the holes CODE finds in the shard folders (a README-only shard,
+                // a missing handoff) are SAID — `merge_dossier_incomplete`, the loud form of the
+                // dossier's `readmes_missing` that r6e's dispatch emitted and nothing consumed —
+                // and ride the brief LAST as GAPS to fill or send out, never as delivered parts.
+                // MILD: the dispatch proceeds; nothing appended or emitted when the split is clean.
                 let states = merge_holes::shard_folder_states(&root, m);
+                let gaps = merge_holes::dispatch_gaps(&states);
+                if let Some(ev) =
+                    merge_holes::dispatch_incomplete_event(&m.module, &req.task_id, &gaps)
+                {
+                    self.events.write_value(ev);
+                }
                 Some(match merge_holes::gap_paragraph(&m.module, &states) {
                     Some(p) => format!("{brief}{p}"),
                     None => brief,
@@ -27294,8 +27227,17 @@ impl GooseAgentDispatcher {
                 // merge-gap door; with none, CODE checks the merge and reports.
                 let follow_ups = match &req.merger_of {
                     Some(m) => {
-                        self.record_merge_result(&req, m, &root, lang, &out.text)
-                            .await
+                        let follow_ups = self
+                            .record_merge_result(&req, m, &root, lang, &out.text)
+                            .await;
+                        // VA-065: `check_merge` reconciles README items; a shard that built NOTHING
+                        // has none, so its hole was never named. Said here, never a gate.
+                        if let Some(ev) =
+                            merge_holes::merge_hole_event(&root, m, &req.task_id, &out.text)
+                        {
+                            self.events.write_value(ev);
+                        }
+                        follow_ups
                     }
                     None => Vec::new(),
                 };
