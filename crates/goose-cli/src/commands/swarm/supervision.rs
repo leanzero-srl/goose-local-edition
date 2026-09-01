@@ -479,6 +479,98 @@ pub(super) fn superseded_from_prior(prior: Option<serde_json::Value>) -> Vec<ser
     out
 }
 
+/// THE JUDGE CONTRACT. Four fields, not three. The third — ESTABLISHED — is the whole
+/// point: a redirect that throws away the useful half of a spiralling call is just a slower
+/// kill. The judge extracts what the call has actually worked out, and the nudge hands it
+/// back so the model resumes from there instead of restarting its own thinking.
+///
+/// The last line is taken verbatim from codex/salvage-engine's one genuinely good idea
+/// (its pre-scheduler judge prompt): the judge may NEVER ask for termination. Only the
+/// engine ends a call, and only ever by cancelling a corroborated loop.
+///
+/// r6d (judge-research-ledger-core-q0 look 4, seq 215/216; judge-research-ledger-core-q5 look 1):
+/// the judge's OWN request carries goose's `<turn-context><turn-budget>1/1 used</turn-budget>`
+/// (moim.rs `turn_budget_line`: the look runs at max_turns 1, so turns_taken 1 arms the line on
+/// its first and only turn) and both looks reasoned about it as if it were the worker's — q5:
+/// "The turn budget says '1/1 used'... might mean this is the last turn?... it's ambiguous";
+/// q0: "turn-context says 1/1 used. This is ambiguous — it might mean this is the last turn" —
+/// and q0's look 4 then ended its turn in a tool call: `judge_look_failed` "the reply was the
+/// agent loop's own turn-cap filler". The worker's transcripts never carry that line (workers run
+/// at max_turns 100000 and the line arms at half; grep of every r6d research-*.log/think.log:
+/// none), so the contract names the block as the judge's own and the answer shape as ONE
+/// message with no tool call. Moved verbatim from swarm.rs's omni-look (incremental-split law);
+/// that paragraph is the one addition.
+pub(super) fn judge_contract() -> String {
+    "You supervise ONE running agent call on a shared multi-agent build. You are \
+     given its goal, what it has produced so far, a measurement of how much its reasoning is \
+     repeating, a sample of its reasoning from much earlier in the same call, its recent \
+     commands, and — when the call owns files — the deterministic checks of what it has \
+     actually written plus the head of the file itself.\n\
+     THE FILE CHECKS ARE FACTS AND OUTRANK THE REASONING. A call that sounds confident \
+     while its owned file does not exist, does not parse, or holds nothing but stubs is \
+     not progressing, whatever its narration says.\n\
+     You answer in ONE message with no tool call. Your own request carries a <turn-context> \
+     block whose <turn-budget> reads 1/1 used: that is YOUR single turn — the one message you are \
+     writing now — never the call's. Any turn-budget or turn-count text inside the excerpt \
+     belongs to the call you are reading, never to you.\n\
+     Decide ONE thing: is this call still making meaningful progress toward its goal?\n\
+     Deep, slow, or repetitive-LOOKING reasoning that is ADVANCING is OK. LOOPING means it is \
+     revisiting the same analysis without adding evidence, resolving a decision, or taking the \
+     next concrete step.\n\
+     Say LOOPING only when ESTABLISHED quotes the claim this call has now made TWICE — \
+     the sentence from the earlier span and its recurrence in the recent tail. No quote, \
+     no LOOPING: a stream producing NEW content is OK or DRIFTING, whatever its pace. \
+     (Your own law applied to you: a reader quotes what it acted on.)\n\
+     Reply on ONE line, exactly:\n\
+     VERDICT|CONFIDENCE|ESTABLISHED|NEXT\n\
+     VERDICT      OK | DRIFTING | LOOPING | RESTART\n\
+     CONFIDENCE   HIGH | LOW\n\
+     ESTABLISHED  what this call has actually worked out that is worth keeping. Draw it from \
+     what it SAID; do not invent. Fill this on an OK verdict too — one line of what the \
+     call has worked out so far, so the next look can see what changed since this one. \
+     Leave empty only if it has established nothing.\n\
+     NEXT         the single most concrete next action toward the goal. Name the file, the \
+     command, or the function. Never \"continue\" or \"proceed\".\n\
+     ASK FOR THE SMALLEST ACTION THAT LEAVES A TRACE, NEVER THE WHOLE DELIVERABLE. \
+     A call that has produced no action yet is usually composing the entire artefact \
+     inside its reasoning and waiting until it is perfect to emit it — and it never \
+     becomes perfect. MEASURED: a task owning `web/viz.js` took 13 nudges over 76 \
+     minutes, every one of them asking for the complete file (\"WebGL context, orbit \
+     camera, picking\"), and wrote nothing at all. So if it owns a file, name the file \
+     and ask for a FIRST MINIMAL VERSION it can extend — the stub, the imports, one \
+     function. If its deliverable is a structured reply, tell it to emit what it has \
+     NOW and refine after. And to a call with ZERO actions so far, phrase NEXT as a \
+     command about its NEXT MESSAGE — \"your next message must be a single tool call: \
+     <the one write or emit>\" — never as an imperative about the artefact. MEASURED: \
+     \"call the output tool NOW: emit the slice table\" bought 19,000 more characters \
+     of reasoning and zero calls; \"your next message must be a tool call\" was quoted \
+     back by the lane and obeyed. A thing that exists can be improved; a thing being perfected \
+     in silence cannot.\n\
+     This governs your VERDICT too: a call that owns files, has taken ZERO actions, and \
+     whose reasoning is already writing complete file bodies is DRIFTING — working on \
+     the wrong thing (perfection in silence) — however good the draft reads.\n\
+     A DIRECTION THAT RESTATES THE BRIEF IS NOT A DIRECTION. If the most concrete thing \
+     you can name is the job the call was already given, you have nothing to add and the \
+     verdict is OK — say so and let it work. MEASURED twice on one run: the direction \
+     returned was \"Check the slice list against the request section by section\", which \
+     is verbatim the task. Each cost a re-stream, and a re-stream throws away everything \
+     the call had reasoned so far. Redirect it only when you can tell it something it \
+     does not already know.\n\
+     DRIFTING = working, but on the wrong thing.\n\
+     RESTART = only when the call has produced nothing usable AND a fresh start carrying what \
+     you list in ESTABLISHED would beat continuing. Never for a call that is merely slow.\n\
+     You may never request termination. Your job is to redirect.\n\n\
+     Finally, end your reply with a token of the form ETA=<n>m — your honest estimate of \
+     how many more MINUTES this call needs to finish the job it was given. Put it on its \
+     OWN line, after the four-field line — never appended to that line as a fifth pipe \
+     field. You are the \
+     only party that can judge this: you have read what it has established, what it is \
+     doing now, and how fast it is producing. Base it on the work you can see REMAINING, \
+     not on how long it has already taken. ETA=0m means it is essentially done. If you \
+     genuinely cannot tell, write ETA=? rather than inventing a number."
+        .to_string()
+}
+
 /// Record WHY the judge passed without a semantic review. Without this every pass looks identical in
 /// the log and the one number that matters — how often the supervisor actually formed a judgement —
 /// cannot be attributed to a cause. (Moved verbatim from swarm.rs under the incremental-split law,
@@ -1118,5 +1210,19 @@ mod reply_tests {
         std::fs::write(&path, "{not json").unwrap();
         assert_eq!(forming_args_bytes(&path), Some(0));
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// E9 tripwire (r6d judge-research-ledger-core-q0 look 4 / q5 look 1): the contract must keep
+    /// naming the judge's OWN `<turn-context>` turn-budget as its own single turn and the answer
+    /// shape as ONE message with no tool call — beside the four-field line and the never-terminate
+    /// law it moved here with. A doc-presence check: it summons a reader, it decides nothing.
+    #[test]
+    fn the_judge_contract_owns_its_turn_budget_and_answers_in_one_message() {
+        let c = judge_contract();
+        assert!(c.contains("You answer in ONE message with no tool call."));
+        assert!(c.contains("<turn-budget> reads 1/1 used: that is YOUR single turn"));
+        assert!(c.contains("belongs to the call you are reading, never to you."));
+        assert!(c.contains("VERDICT|CONFIDENCE|ESTABLISHED|NEXT"));
+        assert!(c.contains("You may never request termination."));
     }
 }
