@@ -4,6 +4,8 @@ import { describe, it, expect, vi, beforeAll } from 'vitest';
 import ChatInput from './ChatInput';
 import { ChatState } from '../types/chatState';
 import { IntlTestWrapper } from '../i18n/test-utils';
+import { allClasses, assertStudioClean } from './lz/assertStudioClean';
+import { missingUtilities } from './lz/compileStudioCss';
 
 /**
  * Pass E — the session input bar's contents:
@@ -11,6 +13,10 @@ import { IntlTestWrapper } from '../i18n/test-utils';
  *    enabled extensions keep working);
  *  - the cost readout never renders for the LeanZero MLX provider (omlx) — local inference has no
  *    price — while cloud providers keep it exactly as before.
+ *
+ * Studio remake (surface C): the bar's chrome — the model / directory / cost / context readouts sit
+ * in quiet Chips (tabular figures), the icon controls are ghost Buttons, send is the one primary
+ * (accent) Button. Behaviour untouched: same handlers, same disabled rules, same keyboard hint.
  */
 
 vi.mock('./settings/models/bottom_bar/ModelsBottomBar', () => ({
@@ -108,4 +114,59 @@ describe('ChatInput bottom bar (pass E)', () => {
     await waitFor(() => expect(screen.getByTestId('models-bottom-bar')).toBeInTheDocument());
     expect(screen.queryByTestId('cost-tracker')).toBeNull();
   });
+});
+
+const chipAround = (testId: string) =>
+  screen.getByTestId(testId).closest<HTMLElement>('[data-testid="lz-chip"]');
+
+describe('ChatInput bottom bar (Studio chrome)', () => {
+  it('the model, directory, cost and context readouts each sit in a quiet chip with tabular figures', async () => {
+    mount('anthropic');
+    await waitFor(() => expect(screen.getByTestId('cost-tracker')).toBeInTheDocument());
+    for (const id of ['models-bottom-bar', 'dir-switcher', 'cost-tracker', 'context-indicator']) {
+      const chip = chipAround(id);
+      expect(chip, id).not.toBeNull();
+      expect(chip?.getAttribute('data-tone'), id).toBeNull();
+      expect(chip?.className, id).toContain('border-lz-border-strong');
+      expect(chip?.className, id).toContain('tnum');
+    }
+  });
+
+  it('send is the one primary Button (disabled while empty); attach and diagnostics are ghost Buttons', async () => {
+    mount('anthropic');
+    await waitFor(() => expect(screen.getByTestId('models-bottom-bar')).toBeInTheDocument());
+    const send = screen.getByRole('button', { name: 'Send' });
+    expect(send.getAttribute('data-variant')).toBe('primary');
+    expect(send).toBeDisabled();
+    expect(send.className).toContain('bg-lz-accent');
+    expect(send.className).not.toMatch(/opacity-|rounded-full/);
+    expect(screen.getByRole('button', { name: 'Attach file' }).getAttribute('data-variant')).toBe(
+      'ghost'
+    );
+    expect(
+      screen.getByRole('button', { name: 'Generate diagnostics bundle' }).getAttribute('data-variant')
+    ).toBe('ghost');
+    expect(screen.getAllByRole('button').filter((b) => b.getAttribute('data-variant') === 'primary')).toHaveLength(1);
+  });
+
+  it('the composer keeps its keyboard hint and its body type; the tree carries no ban', async () => {
+    const { container } = mount('anthropic');
+    await waitFor(() => expect(screen.getByTestId('models-bottom-bar')).toBeInTheDocument());
+    const textarea = screen.getByTestId('chat-input');
+    expect(textarea.getAttribute('placeholder')).toMatch(/navigate messages/);
+    expect(textarea.className).toContain('text-lz-body');
+    expect(textarea.className).toContain('placeholder:text-lz-ink-4');
+    expect(container.querySelector('[style*="#"], [style*="rgb"]')).toBeNull();
+    assertStudioClean(container);
+  });
+
+  it('every class the bar emits compiles to a real rule against main.css', async () => {
+    const { container } = mount('anthropic');
+    await waitFor(() => expect(screen.getByTestId('cost-tracker')).toBeInTheDocument());
+    const classes = allClasses(container).filter(
+      (c) => !c.startsWith('lucide') && c !== 'page-transition'
+    );
+    expect(classes.length).toBeGreaterThan(30);
+    expect(await missingUtilities(classes)).toEqual([]);
+  }, 30_000);
 });
