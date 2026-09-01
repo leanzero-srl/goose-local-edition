@@ -132,6 +132,18 @@ The run died at INTEGRATE minute 139; the archive is named
 - Tree kills belong to `kill_app_tree` (which owns its own groups) — never to an operator killpg.
 - launch.sh's per-pid reaper was always the correct model; tick.py carries the comment.
 
+THE ONE SANCTIONED EXCEPTION besides `kill_app_tree` (added 2026-09-02, measured by the wave-1 tracer as
+the `kill_app_tree` shape): goose-sidecar's SIGKILL leg, `crates/goose-sidecar/src/lib.rs`
+`sigkill_tree_or_pid` → `sigkill_owned_group(pid)`. It is PROOF-GATED, and the proof is the whole
+licence: `owns_process_group(pid)` must hold FIRST — `getpgid(pid) == pid` (the child is the LIVE
+leader of its own group; a zombie or reaped leader answers ESRCH, an orphan carries its dead leader's
+pgid, both fail) AND `pid != getpgrp()` (the group is not the caller's — the exact r2 shape, refused by
+construction). Only then `killpg(pid, SIGKILL)`; when the proof fails the pid alone is signalled and
+the fallback is logged. The group it kills is one the sidecar itself created — `subprocess.rs`
+`configure_subprocess` spawns the child with `process_group(0)`, so only the child's descendants
+(the `uvx`-launched engine) inherit it. A group kill without that proof on the same pid — an operator
+command, a reaper script, a new engine site — is still wrong on sight.
+
 Recorded in NOW.md, memory `kill-pids-never-killpg`, campaign skill §7. Any `killpg` / `kill -- -PGID`
 in an operator command is wrong on sight.
 

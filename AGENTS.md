@@ -205,7 +205,9 @@ skill still carries it; `first_tick_r1.sh` proves a run is real (run_build `--sb
 
 **4. THE REAPING GATE — kill PIDs, never killpg.** r2 died at INTEGRATE minute 139 because a killpg
 aimed at two orphaned app servers took the engine with them — bare-spawn orphans share the engine's
-process group. Reap surgically per-pid; tree kills belong to `kill_app_tree` only. HOW IT REFUSES:
+process group. Reap surgically per-pid; tree kills belong to `kill_app_tree` only — plus goose-sidecar's
+PROOF-GATED `sigkill_owned_group` (`getpgid(pid) == pid` and `pid != getpgrp()` proven, then killpg on
+a group the sidecar itself created; detail in development-gates.md §4). HOW IT REFUSES:
 tick.py and launch.sh reap per-pid by construction; any `killpg`/`kill -- -PGID` in an operator command
 is wrong on sight.
 
