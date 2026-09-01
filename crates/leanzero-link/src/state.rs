@@ -7,8 +7,11 @@
 //! - The fabric is full-mesh: each node folds only what a peer ORIGINATES
 //!   (`?scope=local` subscriptions, origin-filtered session folds), never what a
 //!   peer merely relays — no echo loops, no duplicate fan-out.
-//! - A peer that cannot be reached is `NodeStatus::Offline` — a state in the
-//!   view, never a dropped request and never a fabricated `Idle`.
+//! - A peer that cannot be REACHED (transport failure) is `NodeStatus::Offline` — a
+//!   state in the view, never a dropped request and never a fabricated `Idle`. A peer
+//!   that ANSWERS but not as a LeanZero Link node should (a 401, a 503, an unparseable
+//!   body) is alive: its `status` keeps the last known value and the failure text
+//!   rides in `NodeState::last_poll_error` — never a fabricated `Offline` either.
 //! - Peer tasks are aborted individually per peer (the per-pid discipline);
 //!   they hold only a `Weak` handle to the registry so a dropped registry ends
 //!   its tasks instead of leaking them.
@@ -348,6 +351,7 @@ impl PeerRegistry {
                 status: NodeStatus::Offline,
                 sessions_active: 0,
                 updated_at: Utc::now(),
+                last_poll_error: None,
             };
             let mut tasks = Vec::new();
             match (target.base_url(), target.ws_base()) {
@@ -447,6 +451,16 @@ impl PeerRegistry {
     }
 }
 
+/// Why one poll of a peer produced no snapshot. The two classes are folded
+/// differently: a peer we cannot REACH is `Offline`; a peer that ANSWERS wrongly is
+/// alive with an error on record.
+enum PollFailure {
+    /// No HTTP exchange completed (refused, reset, timeout, DNS).
+    Transport(String),
+    /// The peer answered — with a non-2xx status or a body this crate cannot parse.
+    Answered(String),
+}
+
 async fn poll_peer_loop(weak: Weak<RegistryInner>, target: PeerTarget, base_url: String) {
     loop {
         let Some(inner) = weak.upgrade() else { return };
@@ -457,8 +471,13 @@ async fn poll_peer_loop(weak: Weak<RegistryInner>, target: PeerTarget, base_url:
                     inner.pubsub.publish(EventOrigin::Peer, event).await;
                 }
             }
-            Err(error) => {
+            Err(PollFailure::Transport(error)) => {
                 if let Some(event) = mark_peer_offline(&inner, &target.hostname, &error) {
+                    inner.pubsub.publish(EventOrigin::Peer, event).await;
+                }
+            }
+            Err(PollFailure::Answered(error)) => {
+                if let Some(event) = mark_peer_poll_error(&inner, &target.hostname, &error) {
                     inner.pubsub.publish(EventOrigin::Peer, event).await;
                 }
             }
@@ -468,35 +487,46 @@ async fn poll_peer_loop(weak: Weak<RegistryInner>, target: PeerTarget, base_url:
     }
 }
 
+/// One authenticated GET of a peer route, classified: a transport error is
+/// [`PollFailure::Transport`]; a non-2xx status (with a body snippet) or an
+/// undecodable body is [`PollFailure::Answered`].
+async fn fetch_json<T: serde::de::DeserializeOwned>(
+    inner: &Arc<RegistryInner>,
+    url: String,
+) -> Result<T, PollFailure> {
+    let response = inner
+        .http
+        .get(&url)
+        .bearer_auth(&inner.config.node_token)
+        .send()
+        .await
+        .map_err(|e| PollFailure::Transport(e.to_string()))?;
+    let status = response.status();
+    if !status.is_success() {
+        let body = response
+            .text()
+            .await
+            .unwrap_or_else(|e| format!("<body unreadable: {e}>"));
+        let snippet: String = body.chars().take(200).collect();
+        return Err(PollFailure::Answered(format!(
+            "{url} answered {status}: {snippet}"
+        )));
+    }
+    response.json::<T>().await.map_err(|e| {
+        PollFailure::Answered(format!(
+            "{url} answered 2xx but its body did not parse: {e}"
+        ))
+    })
+}
+
 async fn poll_peer_once(
     inner: &Arc<RegistryInner>,
     target: &PeerTarget,
     base_url: &str,
-) -> Result<Vec<LinkEvent>, String> {
-    let nodes: SwarmNodesResponse = inner
-        .http
-        .get(format!("{base_url}/v1/swarm/nodes"))
-        .bearer_auth(&inner.config.node_token)
-        .send()
-        .await
-        .map_err(|e| e.to_string())?
-        .error_for_status()
-        .map_err(|e| e.to_string())?
-        .json()
-        .await
-        .map_err(|e| e.to_string())?;
-    let sessions: Vec<SessionSummary> = inner
-        .http
-        .get(format!("{base_url}/v1/swarm/sessions?scope=local"))
-        .bearer_auth(&inner.config.node_token)
-        .send()
-        .await
-        .map_err(|e| e.to_string())?
-        .error_for_status()
-        .map_err(|e| e.to_string())?
-        .json()
-        .await
-        .map_err(|e| e.to_string())?;
+) -> Result<Vec<LinkEvent>, PollFailure> {
+    let nodes: SwarmNodesResponse = fetch_json(inner, format!("{base_url}/v1/swarm/nodes")).await?;
+    let sessions: Vec<SessionSummary> =
+        fetch_json(inner, format!("{base_url}/v1/swarm/sessions?scope=local")).await?;
     Ok(fold_peer_snapshot(
         inner,
         &target.hostname,
@@ -506,13 +536,15 @@ async fn poll_peer_once(
 }
 
 /// Fold a successful poll into the view. Returns the change events to publish
-/// (computed under the locks, published outside them).
+/// (computed under the locks, published outside them). `last_poll_error` is the
+/// POLLER's field: a clean poll clears it whatever the peer put in its own report.
 fn fold_peer_snapshot(
     inner: &Arc<RegistryInner>,
     hostname: &str,
-    remote_self: NodeState,
+    mut remote_self: NodeState,
     remote_sessions: Vec<SessionSummary>,
 ) -> Vec<LinkEvent> {
+    remote_self.last_poll_error = None;
     let mut events = Vec::new();
     let mut peers = inner.peers.lock().unwrap();
     let Some(entry) = peers.get_mut(hostname) else {
@@ -544,14 +576,41 @@ fn fold_peer_snapshot(
     events
 }
 
+/// A transport failure: the peer is unreachable → `Offline`, the error text on record.
 fn mark_peer_offline(inner: &Arc<RegistryInner>, hostname: &str, error: &str) -> Option<LinkEvent> {
     let mut peers = inner.peers.lock().unwrap();
     let entry = peers.get_mut(hostname)?;
-    if entry.state.status == NodeStatus::Offline {
+    if entry.state.status == NodeStatus::Offline
+        && entry.state.last_poll_error.as_deref() == Some(error)
+    {
         return None;
     }
     tracing::warn!(hostname, error, "mesh peer unreachable; marked Offline");
     entry.state.status = NodeStatus::Offline;
+    entry.state.last_poll_error = Some(error.to_string());
+    entry.state.updated_at = Utc::now();
+    Some(LinkEvent::NodeStateChanged(entry.state.clone()))
+}
+
+/// An answered-but-wrong poll (4xx/5xx, undecodable body): the peer is ALIVE, so its
+/// `status` keeps its last known value; only the error text (and `updated_at`) change.
+fn mark_peer_poll_error(
+    inner: &Arc<RegistryInner>,
+    hostname: &str,
+    error: &str,
+) -> Option<LinkEvent> {
+    let mut peers = inner.peers.lock().unwrap();
+    let entry = peers.get_mut(hostname)?;
+    if entry.state.last_poll_error.as_deref() == Some(error) {
+        return None;
+    }
+    tracing::warn!(
+        hostname,
+        error,
+        status = ?entry.state.status,
+        "mesh peer answered but not as a LeanZero Link node should; status kept, error recorded"
+    );
+    entry.state.last_poll_error = Some(error.to_string());
     entry.state.updated_at = Utc::now();
     Some(LinkEvent::NodeStateChanged(entry.state.clone()))
 }

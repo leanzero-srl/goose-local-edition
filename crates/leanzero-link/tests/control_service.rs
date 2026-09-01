@@ -5,6 +5,7 @@
 
 use std::future::Future;
 use std::net::{IpAddr, Ipv6Addr};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex as StdMutex};
 use std::time::Duration;
 
@@ -22,6 +23,7 @@ use leanzero_link::state::{
 };
 use leanzero_link::wire::{
     LinkEvent, NodeState, NodeStatus, SessionDeltaKind, SessionSummary, StreamFrame,
+    SwarmNodesResponse,
 };
 use tokio::net::TcpStream;
 use tokio::sync::broadcast;
@@ -99,6 +101,7 @@ impl SwarmStateSource for FakeStateSource {
             status: NodeStatus::from_sessions(&sessions),
             sessions_active: sessions.iter().filter(|s| s.live).count() as u32,
             updated_at: *self.updated_at.lock().unwrap(),
+            last_poll_error: None,
         }
     }
 
@@ -572,6 +575,152 @@ async fn peering_folds_remote_state_and_deltas_then_flips_offline() {
     .await;
 
     a.shutdown();
+}
+
+// ── FH#12: a peer that ANSWERS 4xx is alive — status kept, error recorded ──
+
+/// A minimal stand-in for a peer whose control service answers, but — once
+/// `unauthorized` flips — with `401` (a token-derivation skew between nodes). Not this
+/// crate's service on purpose: the point is what the POLLER does with an answer it
+/// cannot use.
+#[derive(Clone)]
+struct StubPeer {
+    node: NodeState,
+    unauthorized: Arc<AtomicBool>,
+}
+
+async fn stub_nodes(
+    axum::extract::State(stub): axum::extract::State<StubPeer>,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    if stub.unauthorized.load(Ordering::SeqCst) {
+        return (axum::http::StatusCode::UNAUTHORIZED, "token mismatch").into_response();
+    }
+    axum::Json(SwarmNodesResponse {
+        self_node: stub.node.clone(),
+        peers: Vec::new(),
+    })
+    .into_response()
+}
+
+async fn stub_sessions(
+    axum::extract::State(stub): axum::extract::State<StubPeer>,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    if stub.unauthorized.load(Ordering::SeqCst) {
+        return (axum::http::StatusCode::UNAUTHORIZED, "token mismatch").into_response();
+    }
+    axum::Json(Vec::<SessionSummary>::new()).into_response()
+}
+
+/// Serve the stub on an ephemeral loopback port; aborting the returned task closes it.
+async fn spawn_stub_peer(
+    node_id: &str,
+    unauthorized: Arc<AtomicBool>,
+) -> (u16, tokio::task::JoinHandle<()>) {
+    let stub = StubPeer {
+        node: NodeState {
+            node_id: node_id.to_string(),
+            hostname: format!("{node_id}-host"),
+            mesh_ip: Some("127.0.0.1".to_string()),
+            status: NodeStatus::Idle,
+            sessions_active: 0,
+            updated_at: ts(1_700_000_000),
+            last_poll_error: None,
+        },
+        unauthorized,
+    };
+    let router = axum::Router::new()
+        .route("/v1/swarm/nodes", axum::routing::get(stub_nodes))
+        .route("/v1/swarm/sessions", axum::routing::get(stub_sessions))
+        .with_state(stub);
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let task = tokio::spawn(async move {
+        axum::serve(listener, router).await.unwrap();
+    });
+    (port, task)
+}
+
+fn peer_row(nodes: &serde_json::Value, node_id: &str) -> Option<serde_json::Value> {
+    nodes["peers"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|p| p["node_id"] == node_id)
+        .cloned()
+}
+
+#[tokio::test]
+async fn a_peer_answering_4xx_keeps_its_last_status_and_carries_the_error() {
+    let source = FakeStateSource::new("node-a");
+    let handle = spawn_node(source.clone(), mesh_v6()).await;
+    let base = base_url(&handle);
+    let client = reqwest::Client::new();
+
+    let unauthorized = Arc::new(AtomicBool::new(false));
+    let (stub_port, stub_task) = spawn_stub_peer("node-stub", unauthorized.clone()).await;
+    handle.set_peers(vec![PeerTarget {
+        hostname: "node-stub-host".to_string(),
+        mesh_ip: Some("127.0.0.1".to_string()),
+        port: stub_port,
+    }]);
+
+    // Healthy first: the poller learns the stub's identity and Idle status.
+    wait_until("A to see the stub Idle", || {
+        let client = &client;
+        let base = &base;
+        async move {
+            let nodes = get_json(client, &format!("{base}/v1/swarm/nodes")).await;
+            peer_row(&nodes, "node-stub").is_some_and(|p| {
+                p["status"] == serde_json::json!({"type": "Idle"})
+                    && p.get("last_poll_error").is_none()
+            })
+        }
+    })
+    .await;
+
+    // The stub starts answering 401: it is ALIVE — status stays Idle, the error rides.
+    unauthorized.store(true, Ordering::SeqCst);
+    wait_until("the 401 to be recorded without flipping Offline", || {
+        let client = &client;
+        let base = &base;
+        async move {
+            let nodes = get_json(client, &format!("{base}/v1/swarm/nodes")).await;
+            peer_row(&nodes, "node-stub").is_some_and(|p| {
+                p["last_poll_error"]
+                    .as_str()
+                    .is_some_and(|e| e.contains("401") && e.contains("token mismatch"))
+            })
+        }
+    })
+    .await;
+    let nodes = get_json(&client, &format!("{base}/v1/swarm/nodes")).await;
+    let row = peer_row(&nodes, "node-stub").unwrap();
+    assert_eq!(
+        row["status"],
+        serde_json::json!({"type": "Idle"}),
+        "an answering peer is never fabricated Offline: {row}"
+    );
+
+    // Negative control: a TRANSPORT failure (the stub is gone) is Offline, text kept.
+    stub_task.abort();
+    wait_until("the vanished stub to flip Offline", || {
+        let client = &client;
+        let base = &base;
+        async move {
+            let nodes = get_json(client, &format!("{base}/v1/swarm/nodes")).await;
+            peer_row(&nodes, "node-stub").is_some_and(|p| {
+                p["status"] == serde_json::json!({"type": "Offline"})
+                    && p["last_poll_error"]
+                        .as_str()
+                        .is_some_and(|e| !e.contains("401"))
+            })
+        }
+    })
+    .await;
+
+    handle.shutdown();
 }
 
 // ── Unreachable-from-birth peer: Offline row, endpoint healthy ──────────

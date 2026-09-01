@@ -155,6 +155,7 @@ impl SwarmStateSource for FakeStateSource {
             status: NodeStatus::Idle,
             sessions_active: 0,
             updated_at: Utc::now(),
+            last_poll_error: None,
         }
     }
     async fn local_sessions(&self) -> Vec<SessionSummary> {
@@ -190,6 +191,7 @@ impl SwarmStateSource for NamedIdleSource {
             status: NodeStatus::Idle,
             sessions_active: 0,
             updated_at: Utc::now(),
+            last_poll_error: None,
         }
     }
     async fn local_sessions(&self) -> Vec<SessionSummary> {
