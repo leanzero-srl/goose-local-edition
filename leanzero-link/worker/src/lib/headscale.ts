@@ -48,16 +48,27 @@ interface HsResult {
   text: string;
 }
 
+// A Headscale that cannot be reached (refused, DNS, TLS, timeout) is an upstream failure
+// like any non-2xx: `ok:false, status:0` (0 = network error, the same convention as
+// tailscale.ts and the README) plus a `headscale_unreachable` event — never a thrown
+// fetch that surfaces as the router's 500 "internal error".
 async function hsFetch(deps: Deps, path: string, init?: RequestInit): Promise<HsResult> {
   const { hsApiUrl, hsApiKey } = deps.config;
-  const response = await deps.fetchFn(`${hsApiUrl}${path}`, {
-    ...init,
-    headers: {
-      Authorization: `Bearer ${hsApiKey}`,
-      "Content-Type": "application/json",
-      ...(init?.headers ?? {}),
-    },
-  });
+  let response: Response;
+  try {
+    response = await deps.fetchFn(`${hsApiUrl}${path}`, {
+      ...init,
+      headers: {
+        Authorization: `Bearer ${hsApiKey}`,
+        "Content-Type": "application/json",
+        ...(init?.headers ?? {}),
+      },
+    });
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    deps.log("headscale_unreachable", { path, error: detail });
+    return { status: 0, ok: false, json: null, text: detail };
+  }
   const text = await safeText(response);
   let json: unknown = null;
   try {
