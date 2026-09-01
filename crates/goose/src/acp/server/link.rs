@@ -7,8 +7,11 @@
 //!   [`NodeState`], the local [`SessionSummary`] index, and a live delta stream from
 //!   goosed's [`AgentManager`] + [`SessionManager`]. No mesh, no network.
 //! - The lazily-constructed global [`LinkManager`] (an `OnceLock` holder, mirroring
-//!   `goose_sidecar::engine::global_manager`), rebuilt when the on-disk identity email
-//!   changes so the account-derived control `node_token` stays current.
+//!   `goose_sidecar::engine::global_manager`), rebuilt when its build key — the on-disk
+//!   identity email, the remote-execution setting — changes while no mesh is live. The
+//!   control `node_token` is NOT derived here: the manager sets it at connect from the
+//!   worker-issued account secret (`leanzero_link::token`), and this layer reads it back
+//!   via [`LinkManager::node_token`] for the loopback proxy.
 //! - The `leanzeroLink/*` ACP handlers (`impl GooseAcpAgent`).
 //!
 //! ## Delta coverage
@@ -76,13 +79,6 @@ const LINK_DELTA_POLL_INTERVAL: Duration = Duration::from_secs(3);
 /// env name coincide. Absent = OFF: a node is observe-only until its owner opts in, and
 /// the control service then answers `403` to `/execute` and every `/mlx/*` op.
 pub const ALLOW_REMOTE_EXECUTION_KEY: &str = "LEANZERO_LINK_ALLOW_REMOTE_EXECUTION";
-
-/// Compile-time app constant folded into the control `node_token`. The token is
-/// `HMAC-SHA256(key = account_email_lowercased, message = this constant)`, hex-encoded.
-/// It is shared per-account (every node of one account derives the same value) and is
-/// defense-in-depth behind the already account-isolated tailnet — never the primary
-/// auth boundary. The iOS companion must derive it identically.
-const LINK_NODE_TOKEN_APP_SECRET: &str = "leanzero-link/v1/node-token";
 
 // ---------------------------------------------------------------------------
 // Delta-tap injection seam — dependency inversion for per-message mirroring.
@@ -499,28 +495,6 @@ fn read_persisted_node_suffix() -> Option<String> {
     }
 }
 
-/// `HMAC-SHA256(key = account_email_lowercased, message = app constant)`, hex-encoded.
-/// A `None` email (logged out) folds an empty key — a non-empty placeholder never used,
-/// since `connect()` requires a verified identity and the manager is rebuilt with the
-/// real email before then.
-fn node_token_from_email(email: Option<&str>) -> String {
-    use hmac::{Hmac, KeyInit, Mac};
-    use sha2::Sha256;
-    let key = email.map(str::to_lowercase).unwrap_or_default();
-    let mut mac =
-        <Hmac<Sha256>>::new_from_slice(key.as_bytes()).expect("HMAC accepts any key length");
-    mac.update(LINK_NODE_TOKEN_APP_SECRET.as_bytes());
-    to_hex(&mac.finalize().into_bytes())
-}
-
-fn to_hex(bytes: &[u8]) -> String {
-    let mut out = String::with_capacity(bytes.len() * 2);
-    for byte in bytes {
-        out.push_str(&format!("{byte:02x}"));
-    }
-    out
-}
-
 /// The on-disk account email (lowercased), or `None` when logged out or the identity
 /// file is unreadable/malformed — the manager surfaces a malformed file loudly on build.
 fn current_identity_email() -> Option<String> {
@@ -705,7 +679,6 @@ fn build_link_config(
     key: &LinkBuildKey,
     binaries: &MeshBinaries,
 ) -> Result<LinkManagerConfig, agent_client_protocol::Error> {
-    let email = key.email.as_deref();
     let worker_base_url = resolve_worker_base_url();
     let identity_path = identity::default_identity_path()
         .internal_err_ctx("resolving the LeanZero Link identity path")?;
@@ -722,7 +695,11 @@ fn build_link_config(
     let mesh = MeshConfig::new(tailscaled, tailscale_cli, stable_node_id())
         .internal_err_ctx("building the LeanZero Link mesh config")?;
 
-    let mut control = ControlConfig::new(node_token_from_email(email), None);
+    // A TEMPLATE: the manager sets the real `node_token` at connect, derived from the
+    // worker-issued account secret (`leanzero_link::token::node_token_from_secret`), and
+    // `ControlService::start` refuses an empty one — so this empty string can never reach
+    // a listening service. Nothing derivable from the email is minted here any more.
+    let mut control = ControlConfig::new(String::new(), None);
     // The crate's default is observe-only; only the user's own setting opts a node in.
     control.allow_remote_execution = key.allow_remote_execution;
 
@@ -1112,12 +1089,10 @@ impl GooseAcpAgent {
         _req: LeanzeroLinkNodesRequest,
     ) -> Result<LeanzeroLinkNodesResponse, agent_client_protocol::Error> {
         let manager = self.link_manager().await?;
-        if let AuthState::Connected { .. } = manager.status().await.auth {
-            let email = current_identity_email().ok_or_else(|| {
-                agent_client_protocol::Error::internal_error()
-                    .data("connected but no identity on disk to derive the control node token")
-            })?;
-            let token = node_token_from_email(Some(&email));
+        // The bearer is the manager's own — set at connect from the worker-issued account
+        // secret. `None` means no control service is up (not connected), whatever the
+        // auth state says mid-transition: the self-only answer below is then the truth.
+        if let Some(token) = manager.node_token().await {
             // A failed proxy is an ERROR to the caller, never `{ self, peers: [] }`: the
             // desktop keeps its last roster on a thrown call and would replace it with an
             // empty one on a fabricated Ok.
@@ -1217,23 +1192,25 @@ impl GooseAcpAgent {
 mod tests {
     use super::*;
 
+    /// R-H2: this layer mints NO token from the email any more — the control template is
+    /// empty and the manager fills it from the worker-issued secret at connect.
     #[test]
-    fn node_token_is_deterministic_case_insensitive_and_hex() {
-        let a = node_token_from_email(Some("Mihai@Wolfaenpak.com"));
-        let b = node_token_from_email(Some("mihai@wolfaenpak.com"));
-        assert_eq!(a, b, "email casing must not change the token");
-        assert_eq!(a.len(), 64, "SHA-256 HMAC is 32 bytes = 64 hex chars");
-        assert!(a.chars().all(|c| c.is_ascii_hexdigit()));
-
-        let other = node_token_from_email(Some("someone@else.com"));
-        assert_ne!(a, other, "different accounts derive different tokens");
-
-        let logged_out = node_token_from_email(None);
-        assert_eq!(logged_out.len(), 64);
-        assert_ne!(
-            logged_out, a,
-            "the empty-key placeholder is not an account token"
+    fn the_control_template_carries_no_email_derived_token() {
+        let key = LinkBuildKey {
+            email: Some("mihai@wolfaenpak.com".to_string()),
+            allow_remote_execution: true,
+        };
+        let binaries = MeshBinaries {
+            tailscaled: Ok(PathBuf::from("/app/bin/tailscaled")),
+            tailscale: Ok(PathBuf::from("/app/bin/tailscale")),
+        };
+        let config = build_link_config(&key, &binaries).unwrap();
+        assert!(
+            config.control.node_token.is_empty(),
+            "the template token must be empty, got {:?}",
+            config.control.node_token
         );
+        assert!(config.control.allow_remote_execution);
     }
 
     #[test]
