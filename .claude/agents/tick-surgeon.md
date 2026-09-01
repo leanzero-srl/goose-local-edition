@@ -48,7 +48,12 @@ than your last state) — real implementation vs stubs/placeholders/`pass` bodie
 exists is not a file that works. INTEGRATE: the sink's own verification words vs what it CLAIMS.
 REPAIR: the PURPOSE rows (edits landed vs prose) per shard, `task_owns` ownership (winner +
 runner-up present?), severities in `complete_verify`, whether a shard's edits target files it owns,
-`promoted` outcomes. A claim in a final message is a CLAIM until the calls file / fs_delta backs it.
+`promoted` outcomes. **OWNERSHIP FIRST (r6c, 2026-09-01):** read `complete_fix_wave.unassigned` and each
+`.swarm/ledger/repair-r<N>-<shard>.json` `findings_assigned[]` — the dispatch event does NOT carry
+assignments; any `critical_unassigned` event is the loudest finding of the run. **PROBE ARTIFACTS:** a
+repair finding of the endpoint-probe class now carries the gate's request line + status + body head — read
+it before grading a lane's NOT-REAL as failure (six of r6c's nine were bare-POST 401/400 envelopes);
+if the evidence is absent, that absence is itself the finding. A claim in a final message is a CLAIM until the calls file / fs_delta backs it.
 
 **3. KILL CHECKPOINTS — with proof.** The table is `~/.agents/skills/goose-swarm-campaign/SKILL.md`
 §7 and SWARM-AGENDA.md; each checkpoint reads a NAMED FIELD (a full re-emission = `plan_patched`
