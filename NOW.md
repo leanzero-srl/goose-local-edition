@@ -86,8 +86,8 @@ r6d LAUNCH CHECKLIST (in order): [x] GATE B placement 623ae8eef (INDEPENDENTLY C
 · [x] GATE A ownership: afae2eb1b INDEPENDENTLY CONFIRMED (every finding owned both rounds; SIX of nine r6c findings
 were bare-POST 401/400 envelopes — now inconclusive-with-evidence; 18,291 node-s of repair had been spent on them) · [~] GATE C repair brief fabfe962f LANDED, traced PARTIAL (fires on labels/forced edits, not the
 reproduction loops; HANDOFF was a dead letter → persistence+consumption folded into the gate-A surgeon;
-probe evidence = gap 3 there) · [x] probe findings carry request/status/body (afae2eb1b, post_probe.rs) · [ ]
-levers_resolved stops advertising dead split_fat (queued behind C) · [ ] set dispatch weight 1 per
+probe evidence = gap 3 there) · [x] probe findings carry request/status/body (afae2eb1b, post_probe.rs) · [x]
+levers_resolved names retired_levers (ee4c73d15); 12 smalls landed (ee4c73d15/52e525954/a822f53c0) · [ ] set dispatch weight 1 per
 node (measured: stacking = -8% aggregate / -54% per lane; Mihai may veto) — HOW: r6c got weight 2 from
 LM Studio PARALLEL=2 (fleet_order.rs:355 precedence: config device override by model_id > speed_weight >
 PARALLEL > 1); add swarm.devices entries for the three qwen3.8-27b model_ids with weight: 1 in
