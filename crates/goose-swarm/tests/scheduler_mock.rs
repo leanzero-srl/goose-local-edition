@@ -1641,6 +1641,11 @@ impl goose_swarm::EventSink for EventLog {
             self.0.lock().unwrap().push(v);
         }
     }
+    // The merge-gap door's events (`merge_gap`, `merge_gap_repeated`, `merge_rearmed`) are raw
+    // values, not `SwarmEvent` arms; the trait's default drops them.
+    fn write_value(&self, value: serde_json::Value) {
+        self.0.lock().unwrap().push(value);
+    }
 }
 
 impl EventLog {
@@ -2175,4 +2180,239 @@ async fn a_shards_and_a_mergers_roles_reach_the_dispatch_request() {
         "the merger's shard list reaches the dispatcher"
     );
     assert!(merger_req.1.is_none());
+}
+
+/// VA-064 fixtures: a split module `viz3d-engine` (r6e's plan shape) — shards owning only their
+/// `.swarm/shards/<module>/<shard>/README.md`, the merger owning `web/viz.js` and depending on
+/// every shard, the file-less sink depending on everything.
+fn viz_shard(shard: &str, responsibility: &str) -> TaskSpec {
+    let id = format!("viz3d-engine-{shard}");
+    let folder = format!(".swarm/shards/viz3d-engine/{shard}");
+    let mut t = spec(&id, &[], &[&format!("{folder}/README.md")]);
+    t.shard_of = Some(goose_swarm::ShardOf {
+        module: "viz3d-engine".into(),
+        shard: shard.into(),
+        folder,
+        responsibility: responsibility.into(),
+        interface: goose_swarm::ModuleInterface::default(),
+        module_files: vec!["web/viz.js".into()],
+    });
+    t
+}
+
+fn viz_merger(shards: &[&str]) -> TaskSpec {
+    let ids: Vec<String> = shards.iter().map(|s| format!("viz3d-engine-{s}")).collect();
+    let deps: Vec<&str> = ids.iter().map(|s| s.as_str()).collect();
+    let mut t = spec("viz3d-engine", &deps, &["web/viz.js"]);
+    t.merger_of = Some(goose_swarm::MergerOf {
+        module: "viz3d-engine".into(),
+        shards: ids.clone(),
+        folders: shards
+            .iter()
+            .map(|s| format!(".swarm/shards/viz3d-engine/{s}"))
+            .collect(),
+        interface: goose_swarm::ModuleInterface::default(),
+    });
+    t
+}
+
+/// One dispatch as the scheduler handed it over: task, attempt, the prior hint, and a start/end
+/// sequence so "the sink waited for the merger to COMPLETE" is an ordering fact, not a guess.
+#[derive(Clone, Debug)]
+struct SplitRun {
+    task: String,
+    attempt: u32,
+    hint: Option<String>,
+    start_seq: usize,
+    end_seq: usize,
+}
+
+struct SplitRoleDispatcher {
+    seen: Arc<Mutex<Vec<SplitRun>>>,
+    seq: AtomicUsize,
+    terminal: HashSet<String>,
+    /// Follow-ups the MERGER's attempt-0 completion carries (its `MERGE_GAP:` lines as specs).
+    merger_gaps: Mutex<Vec<TaskSpec>>,
+}
+
+#[async_trait]
+impl TaskDispatcher for SplitRoleDispatcher {
+    async fn run(&self, req: DispatchRequest) -> Result<TaskRunOutput, DispatchError> {
+        let start_seq = self.seq.fetch_add(1, Ordering::SeqCst);
+        tokio::time::sleep(Duration::from_millis(5)).await;
+        let result = if self.terminal.contains(&req.task_id) {
+            Err(DispatchError::Terminal("shard lane died".into()))
+        } else {
+            let mut out: TaskRunOutput = format!("output-of-{}", req.task_id).into();
+            if req.merger_of.is_some() && req.attempt == 0 {
+                out.follow_ups = std::mem::take(&mut *self.merger_gaps.lock().unwrap());
+            }
+            Ok(out)
+        };
+        let end_seq = self.seq.fetch_add(1, Ordering::SeqCst);
+        self.seen.lock().unwrap().push(SplitRun {
+            task: req.task_id.clone(),
+            attempt: req.attempt,
+            hint: req.prior_hint.clone(),
+            start_seq,
+            end_seq,
+        });
+        result
+    }
+}
+
+/// VA-064 rule 1 (`fail_descendants`): ONE failed shard relaxes its MERGER — the merger owns the
+/// module's final file, so the owns-nothing relax never applied to it and the failure cascaded it,
+/// after which the file-less sink relaxed and integrated WITHOUT the module. Now the merger
+/// dispatches against the shards that landed, with a hint naming the failed shard, and the sink
+/// still waits for the merger to complete. Rule (b): a NON-merger dependent that owns a file still
+/// cascades exactly as before.
+#[tokio::test]
+async fn a_failed_shard_relaxes_its_merger_but_cascades_a_file_owning_dependent() {
+    let mut specs = vec![
+        viz_shard("pick-buffer", "pick buffer"),
+        viz_shard("camera-inertia", "camera inertia"),
+        viz_merger(&["pick-buffer", "camera-inertia"]),
+        spec(
+            "viz3d-debug-overlay",
+            &["viz3d-engine-pick-buffer"],
+            &["web/debug.js"],
+        ),
+    ];
+    let everything: Vec<String> = specs.iter().map(|t| t.id.clone()).collect();
+    let everything: Vec<&str> = everything.iter().map(|s| s.as_str()).collect();
+    specs.push(spec("integrate-verify", &everything, &[]));
+    let dag = Dag::from_specs(specs).unwrap();
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    let disp = Arc::new(SplitRoleDispatcher {
+        seen: seen.clone(),
+        seq: AtomicUsize::new(0),
+        terminal: HashSet::from(["viz3d-engine-pick-buffer".to_string()]),
+        merger_gaps: Mutex::new(Vec::new()),
+    });
+    let sched = Scheduler::new(vec![dev("d0", "m0", 3)], 3);
+    let report = sched.run(dag, disp, String::new()).await.unwrap();
+    let done: HashSet<_> = report.done.iter().cloned().collect();
+    assert_eq!(
+        done,
+        HashSet::from([
+            "viz3d-engine-camera-inertia".to_string(),
+            "viz3d-engine".to_string(),
+            "integrate-verify".to_string(),
+        ]),
+        "the merger dispatches past its failed shard and the sink integrates WITH the module"
+    );
+    let failed: HashSet<_> = report.failed.iter().cloned().collect();
+    assert_eq!(
+        failed,
+        HashSet::from([
+            "viz3d-engine-pick-buffer".to_string(),
+            "viz3d-debug-overlay".to_string(),
+        ]),
+        "the failed shard and the file-owning NON-merger dependent fail as before"
+    );
+    let seen = seen.lock().unwrap();
+    let merger = seen.iter().find(|r| r.task == "viz3d-engine").unwrap();
+    let hint = merger.hint.as_deref().unwrap_or("");
+    assert!(
+        hint.contains("shard 'viz3d-engine-pick-buffer' FAILED") && hint.contains("MERGE_GAP:"),
+        "the merger is told WHICH shard failed and how to re-do its piece: {hint:?}"
+    );
+    let sink = seen.iter().find(|r| r.task == "integrate-verify").unwrap();
+    assert!(
+        sink.start_seq > merger.end_seq,
+        "the sink still waits on the merger's COMPLETION (sink start {} vs merger end {})",
+        sink.start_seq,
+        merger.end_seq
+    );
+    assert!(
+        !seen.iter().any(|r| r.task == "viz3d-debug-overlay"),
+        "a cascaded task is never dispatched"
+    );
+}
+
+/// VA-064 rule 2 (`splice_merge_gaps`): `landed` counted EVERY shard carrying `shard_of`, whatever
+/// its state, so the piece of a FAILED shard — the one gap the door exists for — was refused as
+/// `merge_gap_repeated`. Landed means Done: the failed shard's gap is accepted and spliced; a gap
+/// repeating a Done shard's words is still refused by name.
+#[tokio::test]
+async fn a_failed_shards_gap_is_accepted_not_refused_as_repeated() {
+    let specs = vec![
+        viz_shard("pick-buffer", "pick buffer"),
+        viz_shard("camera-inertia", "camera inertia"),
+        viz_merger(&["pick-buffer", "camera-inertia"]),
+        spec(
+            "integrate-verify",
+            &[
+                "viz3d-engine-pick-buffer",
+                "viz3d-engine-camera-inertia",
+                "viz3d-engine",
+            ],
+            &[],
+        ),
+    ];
+    let dag = Dag::from_specs(specs).unwrap();
+    let gap = |shard: &str, words: &str| {
+        let mut g = viz_shard(
+            shard,
+            &format!("MERGE GAP sent out by the merger of `viz3d-engine`: {words}"),
+        );
+        g.deps.clear();
+        g
+    };
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    let events = Arc::new(EventLog::default());
+    let disp = Arc::new(SplitRoleDispatcher {
+        seen: seen.clone(),
+        seq: AtomicUsize::new(0),
+        terminal: HashSet::from(["viz3d-engine-pick-buffer".to_string()]),
+        merger_gaps: Mutex::new(vec![
+            gap("gap-pick-buffer", "pick buffer"),
+            gap("gap-camera-inertia", "camera inertia"),
+        ]),
+    });
+    let sched = Scheduler::new(vec![dev("d0", "m0", 3)], 3).with_sink(events.clone());
+    let report = sched.run(dag, disp, String::new()).await.unwrap();
+    let accepted: Vec<String> = events
+        .named("merge_gap")
+        .iter()
+        .map(|e| e["shard"].as_str().unwrap().to_string())
+        .collect();
+    assert_eq!(
+        accepted,
+        vec!["viz3d-engine-gap-pick-buffer".to_string()],
+        "the FAILED shard's piece is a real gap and enters through the door"
+    );
+    let repeated = events.named("merge_gap_repeated");
+    assert_eq!(repeated.len(), 1, "{repeated:?}");
+    assert_eq!(repeated[0]["gap"], "viz3d-engine-gap-camera-inertia");
+    assert_eq!(
+        repeated[0]["landed_as"], "viz3d-engine-camera-inertia",
+        "a gap repeating a DONE shard's words is still refused by name"
+    );
+    assert!(
+        events.named("merge_gap_refused").is_empty(),
+        "{:?}",
+        events.named("merge_gap_refused")
+    );
+    assert_eq!(events.named("merge_rearmed").len(), 1);
+    let done: HashSet<_> = report.done.iter().cloned().collect();
+    assert!(
+        done.contains("viz3d-engine-gap-pick-buffer")
+            && done.contains("viz3d-engine")
+            && done.contains("integrate-verify"),
+        "gap shard, re-armed merger and sink all complete: {done:?}"
+    );
+    assert_eq!(report.failed, vec!["viz3d-engine-pick-buffer".to_string()]);
+    let seen = seen.lock().unwrap();
+    let merger_attempts: Vec<u32> = seen
+        .iter()
+        .filter(|r| r.task == "viz3d-engine")
+        .map(|r| r.attempt)
+        .collect();
+    assert_eq!(
+        merger_attempts,
+        vec![0, 1],
+        "the merger ran once, sent the gap out, and ran again after it landed"
+    );
 }
