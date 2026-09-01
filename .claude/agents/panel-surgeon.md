@@ -53,3 +53,10 @@ compare against HEAD use `git show HEAD:<path> | prettier --stdin-filepath <path
 (not mine)" can hide a doc-test regression you introduced (batch 2b shipped a nested-fence doc comment this
 way). Final gate: `cargo test -p <crate> --no-fail-fast 2>&1 | grep -E "test result|Doc-tests"` and read
 EVERY result line, doc-tests included; a filter goes after `--` (`cargo test -p goose-cli -- research`).
+
+## Dispatch budget (added 2026-09-01 20:2x, after VA-048 + the split surface ran 60 tool uses / 234k tokens in one brief)
+
+One surface per dispatch. A brief that bundles "delete these pins" with "render this new event family" doubles the
+reading and the proof runs; the orchestrator briefs them separately and you may push back on a two-surface brief by
+doing the first and reporting the second as not started. Proof stays `pnpm run typecheck && pnpm test` once at the
+end — never per file — and a vitest timeout in an unrelated TLS test under cargo load is reported, not re-run five times.
