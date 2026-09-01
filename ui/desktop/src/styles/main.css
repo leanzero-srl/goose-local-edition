@@ -351,6 +351,12 @@
   --font-lz-sans: 'Inter', ui-sans-serif, system-ui, -apple-system, sans-serif;
   --font-lz-mono: ui-monospace, 'SF Mono', Menlo, monospace;
 
+  /* Weights. MEASURED: the MCP registration sets --font-weight-{normal,medium,semibold,bold} to
+     `initial`, so Tailwind's font-medium / font-semibold / font-bold generate NO rule anywhere
+     in this app. The Studio carries its own two — the scale steps already embed theirs. */
+  --font-weight-lz-medium: 500;
+  --font-weight-lz-semibold: 600;
+
   /* Type scale: size / weight / tracking travel together in ONE utility (text-lz-display …). */
   --text-lz-display: 28px;
   --text-lz-display--line-height: 1.2;
