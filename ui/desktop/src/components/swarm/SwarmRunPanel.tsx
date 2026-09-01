@@ -58,6 +58,7 @@ import {
   FOCUS,
   MOTION,
   NODE_DOT,
+  Panel,
   RADIUS,
   SURFACE,
   Segmented,
@@ -72,7 +73,7 @@ import {
   type Tone,
 } from '../lz';
 import { SWARM_LOG_MODES, useSwarmLogMode, type SwarmLogMode } from './useVerboseSwarm';
-import { useFleetStatus } from './useFleet';
+import { useFleetCorroboration } from './useFleetCorroboration';
 import { useLmStudioFleetVisible } from '../../hooks/useLmStudioFleetVisible';
 import { Tooltip, TooltipTrigger, TooltipContent } from '../ui/Tooltip';
 import InlineMarkdown from './InlineMarkdown';
@@ -5131,11 +5132,14 @@ export const SwarmRunPanel: React.FC<{
   // $HOME, so everything run-relative — the pause sentinel, the notes inbox, activity file paths —
   // must target this. Passing the session dir instead writes where the engine never looks.
   const runDir = run.runDir ?? workingDir;
-  // LM Studio's OWN live per-node status (lms ps --json) — the ground-truth generating/idle dot per
-  // node. LEGACY surface: polled only when the 'showLmStudioFleet' setting is on (default off); off,
-  // the panel renders its digest-only view exactly as when lms is unavailable.
+  // TRUTH and DISPLAY are separate feeds (U-H2). `useFleetCorroboration` polls LM Studio (and the local
+  // MLX sidecar when one is configured) ALWAYS, because deriveFleet's dead-lane demotion is a truth and
+  // a display toggle must never switch off a truth. The 'showLmStudioFleet' setting (default off) gates
+  // only the LM Studio DOT the fleet rows display; off, `nodeStatus` is `{}` and the rows read exactly
+  // as when lms is unavailable.
   const lmStudioVisible = useLmStudioFleetVisible();
-  const nodeStatus = useFleetStatus(1500, lmStudioVisible);
+  const corroboration = useFleetCorroboration(1500);
+  const nodeStatus: Record<string, string> = lmStudioVisible ? corroboration.nodeStatus : {};
   const [mode, setMode] = useSwarmLogMode();
   const verbose = mode !== 'compact';
   const dev = mode === 'developer';
@@ -5172,12 +5176,13 @@ export const SwarmRunPanel: React.FC<{
     // SUPERVISION: open judge spans (foldSupervision) joined to the nodes LM Studio itself reports busy —
     // the workload class that used to render a hard-working node as "idle — no task".
     supervision: run.supervision,
-    busyNodes: Object.entries(nodeStatus)
-      .filter(([, st]) => st === 'generating' || st === 'processingPrompt')
-      .map(([n]) => n),
-    // EVERY node lms replied about, idle ones included — what arms the dead-lane demotion when the
-    // whole fleet is idle (busyNodes [] alone cannot tell "all idle" from "lms unreachable").
-    reportedNodes: Object.keys(nodeStatus),
+    busyNodes: corroboration.busyNodes,
+    // EVERY node a feed replied about, idle ones included — what arms the dead-lane demotion when the
+    // whole fleet is idle (busyNodes [] alone cannot tell "all idle" from "lms unreachable"). From the
+    // corroboration feed, never from the display-gated `nodeStatus`: on a default install that was `{}`
+    // and a lane the engine opened and never closed rendered a dead node as "working" for as long as
+    // the panel stayed open.
+    reportedNodes: corroboration.reportedNodes,
     // Channel-memory scope for the laneless digest rows — same discriminant as the hook's fold scope.
     scope: workingDir,
   });
@@ -5401,7 +5406,9 @@ export const SwarmRunPanel: React.FC<{
               </Tip>
             ) : null}
           </span>
-          {run.inProgress && !stale && !ended && !clarifyPending ? (
+          {run.inProgress && !stale && !ended && !clarifyPending && !run.sourceMissing ? (
+            // An UNOBSERVABLE run has no elapsed to tick: its files no longer resolve, so nothing below
+            // can advance and a counting clock would claim a run that cannot be seen.
             <HeaderMetrics startedAt={run.startedAt} phaseTodo={run.phaseTodo} />
           ) : null}
           {run.inProgress && !ended && !clarifyPending && workingDir ? (
@@ -5484,6 +5491,22 @@ export const SwarmRunPanel: React.FC<{
               ? 'The engine exited on its own — it stopped writing its heartbeat and stamped an exit. Everything below is what it had reached.'
               : `No heartbeat for ${Math.round(liveness.since / 1000)}s. The engine ticks every 5s, so it was most likely hard-killed; nothing below has been discarded.`}
           </span>
+        </div>
+      ) : null}
+
+      {/* THE RUN'S FILES ARE GONE (U-M5): readSwarmRun answered null after a run was on screen — archived
+          or deleted. The hook nulls the heartbeat so liveness reads UNKNOWN (never "hard-killed"); this
+          band is the distinct state that says so, over the last state read. Presence-based, never a timer. */}
+      {run.sourceMissing ? (
+        <div className="px-3 pt-3" data-testid="run-source-missing">
+          <Panel>
+            <div className="flex items-center gap-2 text-lz-body text-lz-ink">
+              <StatusDot tone="stopped" label="Run files no longer resolve" />
+              <span>
+                This run&apos;s files no longer resolve (archived or deleted) — showing the last state read.
+              </span>
+            </div>
+          </Panel>
         </div>
       ) : null}
 
