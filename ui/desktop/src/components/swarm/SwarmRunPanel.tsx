@@ -3580,21 +3580,23 @@ const HeaderMetrics: React.FC<{
 // Per-phase TODO. Every item's state is driven by an ENGINE event (see buildPhaseTodo) — the honesty is in
 // the colors: 'done' (green) is a VERIFIED completion; 'unverified' is a SLATE check (built but the app was
 // never run — must never look green); 'advisory' is info, never a check.
-const TODO_COLOR: Record<TodoState, string> = {
-  pending: 'var(--color-text-secondary)',
-  running: AMBER,
-  done: STATUS_COLOR.done,
+/** The checklist glyph's ink per engine state, as Studio classes. Pending and blocked are the quiet
+ *  ink-3 (a circle that is not yet a verdict); every other state carries its status text tone. */
+const TODO_GLYPH_CLASS: Record<TodoState, string> = {
+  pending: 'text-lz-ink-3',
+  running: TONE_TEXT.warn,
+  done: TONE_TEXT.ok,
   // The stopped slate — solid, deliberately NOT green: the work finished, the app was never run. Distinct
-  // from pending (secondary text) by its check glyph and its darker ink; never a node hue.
-  unverified: SWARM_STATUS.stopped,
-  failed: STATUS_COLOR.error,
-  judge_failed: AMBER,
-  blocked: 'var(--color-text-secondary)',
-  skipped: SWARM_STATUS.stopped,
-  advisory: SWARM_STATUS.action,
+  // from pending (ink-3) by its check glyph and its darker ink; never a node hue.
+  unverified: TONE_TEXT.stopped,
+  failed: TONE_TEXT.err,
+  judge_failed: TONE_TEXT.warn,
+  blocked: 'text-lz-ink-3',
+  skipped: TONE_TEXT.stopped,
+  advisory: TONE_TEXT.accent,
 };
 
-/** The WORK board's dot tone per engine state — the same honesty as TODO_COLOR: a verified 'done' is the
+/** The WORK board's dot tone per engine state — the same honesty as TODO_GLYPH_CLASS: a verified 'done' is the
  *  ok green; 'unverified' (built, never run) is the stopped slate and must never look green; failures are
  *  err; a judge intervention is the warn amber; advisory is the accent (information, never a check). */
 const TODO_TONE: Record<TodoState, Tone> = {
@@ -3610,16 +3612,14 @@ const TODO_TONE: Record<TodoState, Tone> = {
 };
 
 const TodoGlyph: React.FC<{ state: TodoState }> = ({ state }) => {
-  const c = TODO_COLOR[state];
-  const cls = 'h-3.5 w-3.5 shrink-0';
-  const s = { color: c };
-  if (state === 'running') return <Loader2 className={`${cls} animate-spin`} style={s} />;
-  if (state === 'done' || state === 'unverified') return <Check className={cls} strokeWidth={3} style={s} />;
-  if (state === 'failed' || state === 'judge_failed') return <X className={cls} strokeWidth={3} style={s} />;
-  if (state === 'blocked') return <CircleSlash className={cls} style={s} />;
-  if (state === 'skipped') return <Minus className={cls} style={s} />;
-  if (state === 'advisory') return <Info className={cls} style={s} />;
-  return <Circle className={cls} style={s} />; // pending
+  const cls = cx('h-3.5 w-3.5 shrink-0', TODO_GLYPH_CLASS[state]);
+  if (state === 'running') return <Loader2 className={cx(cls, 'animate-spin')} />;
+  if (state === 'done' || state === 'unverified') return <Check className={cls} strokeWidth={3} />;
+  if (state === 'failed' || state === 'judge_failed') return <X className={cls} strokeWidth={3} />;
+  if (state === 'blocked') return <CircleSlash className={cls} />;
+  if (state === 'skipped') return <Minus className={cls} />;
+  if (state === 'advisory') return <Info className={cls} />;
+  return <Circle className={cls} />; // pending
 };
 
 /** A state WORD beside a row — the quiet Chip. The row's dot/glyph carries the tone; the word carries the
@@ -3629,7 +3629,7 @@ const TodoPill: React.FC<{ text: string }> = ({ text }) => <Chip>{text}</Chip>;
 // The judge's REASONING for a task — the diagnosis (verdict) + the exact corrective note it gave the worker.
 // This is what Mihai wanted surfaced: not just "judge decision" but WHY.
 const JudgeReason: React.FC<{ judge: NonNullable<PhaseTodoItem['judge']> }> = ({ judge }) => (
-  <div className="text-[11px]">
+  <div className="text-lz-meta">
     <div className="flex items-center gap-1.5 flex-wrap">
       <Gavel className={cx('size-3 shrink-0', TONE_TEXT.warn)} />
       <span className={cx(WEIGHT.semibold, 'text-lz-ink')}>Judge</span>
@@ -3639,7 +3639,7 @@ const JudgeReason: React.FC<{ judge: NonNullable<PhaseTodoItem['judge']> }> = ({
       <span className="text-lz-ink-3">→ {judge.action.replace(/_/g, ' ')}</span>
     </div>
     {judge.hint ? (
-      <p className="text-text-secondary mt-0.5 leading-snug break-words">
+      <p className="mt-0.5 leading-snug break-words text-lz-ink-2">
         <InlineMarkdown content={judge.hint} />
       </p>
     ) : null}
@@ -3673,23 +3673,23 @@ const TaskGenDetail: React.FC<{ digest: Record<string, unknown> }> = ({ digest }
   const hasAny = toolCalls > 0 || thinking > 0 || model || reasoning.trim();
   if (!hasAny) return null;
   return (
-    <div className="text-[11px] text-text-secondary space-y-1">
-      <span className="font-lz-medium text-text-secondary">Live generation</span>
+    <div className="space-y-1 text-lz-meta text-lz-ink-3">
+      <span className="font-lz-medium text-lz-ink-3">Live generation</span>
       <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5">
         {model ? (
           <span>
-            model <span className="font-mono text-text-primary">{model}</span>
+            model <span className="font-mono text-lz-ink">{model}</span>
           </span>
         ) : null}
         {toolCalls > 0 ? (
           <span>
-            tool calls <span className="font-mono text-text-primary">{toolCalls}</span>
+            tool calls <span className="font-mono text-lz-ink">{toolCalls}</span>
             {breakdown ? ` (${breakdown})` : ''}
           </span>
         ) : null}
         {thinking > 0 ? (
           <span>
-            thinking <span className="font-mono text-text-primary">{thinking.toLocaleString()} ch</span>
+            thinking <span className="font-mono text-lz-ink">{thinking.toLocaleString()} ch</span>
           </span>
         ) : null}
         {errors > 0 ? (
@@ -3740,7 +3740,6 @@ const PhaseTodoRow: React.FC<{
     void window.electron.revealInFinder(rel.startsWith('/') ? rel : `${base}/${rel}`);
   };
   const interrupted = stale && item.state === 'running';
-  const c = interrupted ? CALL_PENDING : TODO_COLOR[item.state];
   const idx = item.device ? deviceIndex(item.device, deviceOrder) : -1;
   const hasDetail = !!(
     item.description ||
@@ -3774,7 +3773,7 @@ const PhaseTodoRow: React.FC<{
         )}
       >
         {interrupted ? (
-          <CircleSlash className="size-3.5 shrink-0" style={{ color: c }} />
+          <CircleSlash className={cx('size-3.5 shrink-0', TONE_TEXT.stopped)} />
         ) : (
           <TodoGlyph state={item.state} />
         )}
@@ -3802,19 +3801,19 @@ const PhaseTodoRow: React.FC<{
             <div className="flex flex-wrap gap-x-3 text-lz-meta text-lz-ink-3">
               {planTask.difficulty ? (
                 <span>
-                  difficulty <span className="text-text-primary">{planTask.difficulty}</span>
+                  difficulty <span className="text-lz-ink">{planTask.difficulty}</span>
                 </span>
               ) : null}
               {planTask.deps.length ? (
                 <span>
-                  after <span className="font-mono text-text-primary">{planTask.deps.join(', ')}</span>
+                  after <span className="font-mono text-lz-ink">{planTask.deps.join(', ')}</span>
                 </span>
               ) : null}
             </div>
           ) : null}
           {item.files && item.files.length ? (
-            <div className="text-[11px] text-text-secondary break-words">
-              <span className="font-lz-medium text-text-secondary">Files</span>{' '}
+            <div className="break-words text-lz-meta text-lz-ink-3">
+              <span className="font-lz-medium text-lz-ink-3">Files</span>{' '}
               {item.files.map((f, i) => (
                 <span key={f}>
                   {i > 0 ? ', ' : ''}
@@ -3822,7 +3821,7 @@ const PhaseTodoRow: React.FC<{
                     onClick={() => revealFile(f)}
                     disabled={!workingDir}
                     title={workingDir ? 'Reveal in Finder' : undefined}
-                    className={`font-mono text-text-primary ${workingDir ? 'hover:underline cursor-pointer' : ''}`}
+                    className={cx('font-mono text-lz-ink', workingDir && 'hover:underline cursor-pointer')}
                   >
                     {f}
                   </button>
@@ -4040,24 +4039,24 @@ const BoardTaskRow: React.FC<{
             <div className="flex flex-wrap gap-x-3 text-lz-meta text-lz-ink-3">
               {row.difficulty ? (
                 <span>
-                  difficulty <span className="text-text-primary">{row.difficulty}</span>
+                  difficulty <span className="text-lz-ink">{row.difficulty}</span>
                 </span>
               ) : null}
               {row.deps.length ? (
                 <span>
-                  after <span className="font-mono text-text-primary">{row.deps.join(', ')}</span>
+                  after <span className="font-mono text-lz-ink">{row.deps.join(', ')}</span>
                 </span>
               ) : null}
               {lane?.model ? (
                 <span>
-                  model <span className="font-mono text-text-primary">{lane.model}</span>
+                  model <span className="font-mono text-lz-ink">{lane.model}</span>
                 </span>
               ) : null}
             </div>
           ) : null}
           {row.files && row.files.length ? (
-            <div className="text-[11px] text-text-secondary break-words">
-              <span className="font-lz-medium text-text-secondary">Files</span>{' '}
+            <div className="break-words text-lz-meta text-lz-ink-3">
+              <span className="font-lz-medium text-lz-ink-3">Files</span>{' '}
               {row.files.map((f, i) => (
                 <span key={f}>
                   {i > 0 ? ', ' : ''}
@@ -4068,7 +4067,7 @@ const BoardTaskRow: React.FC<{
                     }}
                     disabled={!workingDir}
                     title={workingDir ? 'Reveal in Finder' : undefined}
-                    className={`font-mono text-text-primary ${workingDir ? 'hover:underline cursor-pointer' : ''}`}
+                    className={cx('font-mono text-lz-ink', workingDir && 'hover:underline cursor-pointer')}
                   >
                     {f}
                   </button>
@@ -4720,10 +4719,7 @@ const PlanningZone: React.FC<{
             ) : null}
             {climb > 0 ? (
               <Tip label={`Confidence climbed ${trail[0]} → ${trail[trail.length - 1]} as goose retargeted it.`}>
-                <span
-                  className="text-[11px] tabular-nums flex items-center gap-0.5 shrink-0"
-                  style={{ color: STATUS_COLOR.done }}
-                >
+                <span className={cx('flex shrink-0 items-center gap-0.5 text-lz-meta', TNUM, TONE_TEXT.ok)}>
                   <TrendingUp className="h-2.5 w-2.5" /> +{climb}
                 </span>
               </Tip>
