@@ -97,6 +97,23 @@ viz.js Illegal invocation = the two unowned criticals); ledger 796fc001e; archiv
 derivation; regeneration embeds instead of replacing) · [ ] build+install, verify bundled sha · [ ] CDP-verify
 the redesigned Benchmark view · [ ] Benchmark-view launch.
 
+r6d FIRST-TICK EXPECTATIONS (the falsifiers for tonight's 22 engine commits — read at tick 1, quote fields):
+- pool_resolved: weight 1 ×3 (the config override), speed_weight 3/2/1 unchanged, 3 devices.
+- BUILD dispatch: the heaviest ready tasks on DISTINCT nodes (623ae8eef) — task_dispatched hard tasks never share a
+  model id while a node is empty; aux_routed / judge_look_dispatched.inflight show judges+replanner off the pile
+  (8b03be2da); tick.py AUX REROUTES row non-zero once any node is busy.
+- Supervision: judge_look carries durable_think_bytes/grew (b8f915841); judge_drift_held.detail no longer promises
+  a delivery it cannot make; restream_aborted_stream_woke may appear (de6f0d9bf) — each one is a saved delivery;
+  a zero-action files-owing lane held twice DELIVERS by seeded restream (f1d76cd17).
+- Repair briefs: no "report DONE immediately", no "ZERO file modifications FAILS", no "edit ANY file" in any
+  complete-fix prompt (fabfe962f) — rules_delivered.rules_sections shows "repair"; findings carry request/status/
+  body (afae2eb1b); complete_fix_wave.unassigned == 0 and NO critical_unassigned event; findings_assigned[] in the
+  shard ledgers lists every finding; server-response findings owned by server files.
+- levers_resolved carries retired_levers (ee4c73d15); persona_loaded stack_key is python-stdlib-vanilla-web, not
+  angular (S4).
+- Desktop: the redesigned Benchmark view shows the session as Running under the CURRENT sb-7 section; on finish the
+  outcome is Finished + score (or the honest did-not-finish).
+
 r6c itself: BUILD 9/9, INTEGRATE green (app boots, both ports, full battery), REPAIR r1 open at
 ~3h — it runs to its natural end as the evidence; then hermetic score -> RUN-LEDGER -> r6d build
 (now 20+ traced commits) -> install -> CDP-verify the redesigned Benchmark view -> Benchmark-view
