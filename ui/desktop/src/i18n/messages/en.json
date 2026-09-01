@@ -2681,8 +2681,29 @@
   "projectLanding.emptyHint": {
     "defaultMessage": "Add a project folder, then start sessions from it in the sidebar."
   },
+  "projectLanding.giveDirLabel": {
+    "defaultMessage": "Working directory"
+  },
+  "projectLanding.giveDirValue": {
+    "defaultMessage": "The project folder"
+  },
+  "projectLanding.giveSessionsLabel": {
+    "defaultMessage": "Sessions"
+  },
+  "projectLanding.giveSessionsValue": {
+    "defaultMessage": "Listed under their project"
+  },
+  "projectLanding.giveUnfiledLabel": {
+    "defaultMessage": "Outside a project"
+  },
+  "projectLanding.giveUnfiledValue": {
+    "defaultMessage": "Kept in Unfiled"
+  },
+  "projectLanding.givesTitle": {
+    "defaultMessage": "What a project gives you"
+  },
   "projectLanding.headline": {
-    "defaultMessage": "Sessions start from a project"
+    "defaultMessage": "Start from a project"
   },
   "projectLanding.pickHint": {
     "defaultMessage": "Pick a project in the sidebar and use its “+ New session here”."

@@ -2681,8 +2681,29 @@
   "projectLanding.emptyHint": {
     "defaultMessage": "Füge einen Projektordner hinzu und starte Sitzungen dann aus der Seitenleiste."
   },
+  "projectLanding.giveDirLabel": {
+    "defaultMessage": "Arbeitsverzeichnis"
+  },
+  "projectLanding.giveDirValue": {
+    "defaultMessage": "Der Projektordner"
+  },
+  "projectLanding.giveSessionsLabel": {
+    "defaultMessage": "Sitzungen"
+  },
+  "projectLanding.giveSessionsValue": {
+    "defaultMessage": "Unter ihrem Projekt aufgeführt"
+  },
+  "projectLanding.giveUnfiledLabel": {
+    "defaultMessage": "Außerhalb eines Projekts"
+  },
+  "projectLanding.giveUnfiledValue": {
+    "defaultMessage": "Unter „Nicht zugeordnet“ abgelegt"
+  },
+  "projectLanding.givesTitle": {
+    "defaultMessage": "Was ein Projekt dir gibt"
+  },
   "projectLanding.headline": {
-    "defaultMessage": "Sitzungen beginnen in einem Projekt"
+    "defaultMessage": "Mit einem Projekt beginnen"
   },
   "projectLanding.pickHint": {
     "defaultMessage": "Wähle ein Projekt in der Seitenleiste und nutze dessen „+ Neue Sitzung hier“."

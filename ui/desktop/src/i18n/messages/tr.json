@@ -2681,8 +2681,29 @@
   "projectLanding.emptyHint": {
     "defaultMessage": "Bir proje klasörü ekleyin, ardından oturumları kenar çubuğundan başlatın."
   },
+  "projectLanding.giveDirLabel": {
+    "defaultMessage": "Çalışma dizini"
+  },
+  "projectLanding.giveDirValue": {
+    "defaultMessage": "Proje klasörü"
+  },
+  "projectLanding.giveSessionsLabel": {
+    "defaultMessage": "Oturumlar"
+  },
+  "projectLanding.giveSessionsValue": {
+    "defaultMessage": "Projelerinin altında listelenir"
+  },
+  "projectLanding.giveUnfiledLabel": {
+    "defaultMessage": "Proje dışında"
+  },
+  "projectLanding.giveUnfiledValue": {
+    "defaultMessage": "“Sınıflandırılmamış” altında tutulur"
+  },
+  "projectLanding.givesTitle": {
+    "defaultMessage": "Bir projenin size sağladıkları"
+  },
   "projectLanding.headline": {
-    "defaultMessage": "Oturumlar bir projeden başlar"
+    "defaultMessage": "Bir projeden başlayın"
   },
   "projectLanding.pickHint": {
     "defaultMessage": "Kenar çubuğundan bir proje seçin ve onun “+ Burada yeni oturum” seçeneğini kullanın."

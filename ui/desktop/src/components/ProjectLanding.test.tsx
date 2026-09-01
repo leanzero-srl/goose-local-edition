@@ -1,8 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { IntlProvider } from 'react-intl';
 import ProjectLanding from './ProjectLanding';
 import { AppEvents } from '../constants/events';
+import { TYPE } from './lz';
+import { allClasses, assertStudioClean } from './lz/assertStudioClean';
+import { missingUtilities } from './lz/compileStudioCss';
 
 /**
  * Pass D (owner): sessions start from projects only. The home route carries NO chat input —
@@ -43,7 +46,7 @@ describe('ProjectLanding', () => {
   it('states the rule and carries NO chat input', async () => {
     electronMocks();
     renderLanding();
-    expect(await screen.findByText('Sessions start from a project')).toBeInTheDocument();
+    expect(await screen.findByText('Start from a project')).toBeInTheDocument();
     expect(document.querySelector('textarea')).toBeNull();
     expect(document.querySelector('input')).toBeNull();
   });
@@ -81,6 +84,43 @@ describe('ProjectLanding', () => {
     } finally {
       window.removeEventListener(AppEvents.PROJECTS_CHANGED, changed);
     }
+  });
+
+  it('is a composed EmptyState — the LeanZero mark, a display title, ONE body line — over a 3-row KeyValue, centered at 560, with no icon-in-a-square badge', async () => {
+    const mocks = electronMocks();
+    mocks.listProjects.mockResolvedValue([{ path: '/proj/goose', addedAt: 1 }]);
+    const { container } = renderLanding();
+    await screen.findByText('Start from a project');
+
+    expect(screen.getByTestId('project-landing').className).toContain('max-w-[560px]');
+    const empty = screen.getByTestId('lz-empty-state');
+    expect(within(empty).getByTestId('leanzero-glyph')).toBeInTheDocument();
+    expect(screen.getByTestId('lz-empty-state-icon').className).toContain('bg-lz-accent');
+    const title = screen.getByRole('heading', { name: 'Start from a project' });
+    for (const c of TYPE.display.split(' ')) expect(title.className).toContain(c);
+    expect(empty.querySelectorAll('p')).toHaveLength(1);
+    expect(screen.queryByText('Projects')).toBeNull();
+
+    expect(screen.getByText('What a project gives you')).toBeInTheDocument();
+    expect(screen.getAllByTestId('lz-key-value-row')).toHaveLength(3);
+    expect(screen.getByText('Working directory')).toBeInTheDocument();
+    expect(screen.getByText('Kept in Unfiled')).toBeInTheDocument();
+    expect(container.querySelector('[data-variant="primary"]')).toBeNull();
+    expect(container.querySelector('[style]')).toBeNull();
+
+    assertStudioClean(container);
+    const classes = allClasses(container).filter((c) => !c.startsWith('lucide'));
+    expect(classes.length).toBeGreaterThan(20);
+    expect(await missingUtilities(classes)).toEqual([]);
+  }, 30_000);
+
+  it('with NO projects the add-project action is the ONE primary Button of the view', async () => {
+    electronMocks();
+    renderLanding();
+    const button = (await screen.findByText('Add a project')).closest('button') as HTMLElement;
+    expect(button.dataset.variant).toBe('primary');
+    expect(document.querySelectorAll('[data-variant="primary"]')).toHaveLength(1);
+    expect(button.getAttribute('style')).toBeNull();
   });
 
   it('a cancelled picker changes nothing', async () => {
