@@ -214,9 +214,10 @@ fn module_stem(f: &str) -> &str {
 /// handler's usual home, and the claim is derived from THIS tree's files, never a table. r6c:
 /// app/drafts.py routes by segments and never spells its own literal, so no grep could reach
 /// it; as a runner-up claim it joins the shard, and an edit there PROMOTES. Test paths are
-/// left out (a handler fix is not handed its tests); `exclude` is the winner. Order is
-/// `all_files` order; `resolve_shard_ownership` keeps a path already owned by an earlier shard
-/// with that shard (one door).
+/// left out (a handler fix is not handed its tests) — by component and name, see
+/// `is_test_path_by_name`; `exclude` is the winner. Order is `all_files` order;
+/// `resolve_shard_ownership` keeps a path already owned by an earlier shard with that shard
+/// (one door).
 fn segment_basename_claims(literal: &str, all_files: &[String], exclude: &[&str]) -> Vec<String> {
     let segments: Vec<&str> = literal
         .split('/')
@@ -224,10 +225,24 @@ fn segment_basename_claims(literal: &str, all_files: &[String], exclude: &[&str]
         .collect();
     all_files
         .iter()
-        .filter(|f| is_source_file(f) && !f.contains("test") && !exclude.contains(&f.as_str()))
+        .filter(|f| is_source_file(f) && !is_test_path_by_name(f) && !exclude.contains(&f.as_str()))
         .filter(|f| segments.contains(&module_stem(f)))
         .cloned()
         .collect()
+}
+
+/// A test path by COMPONENT and NAME, never by substring: a `tests/` or `test/` directory, a
+/// basename starting `test_`, a stem ending `_test`, or the JS `.test.` / `.spec.` infixes.
+/// The substring rule it replaces (`!f.contains("test")`) would have dropped `attestation.py`
+/// and `contest.py` from the claims — a handler named for its route, silently unclaimable.
+fn is_test_path_by_name(f: &str) -> bool {
+    let base = f.rsplit('/').next().unwrap_or(f);
+    let stem = base.split('.').next().unwrap_or(base);
+    f.split('/').any(|seg| seg == "tests" || seg == "test")
+        || base.starts_with("test_")
+        || stem.ends_with("_test")
+        || base.contains(".test.")
+        || base.contains(".spec.")
 }
 
 /// P1-3, half two: attribute one UNASSIGNED gate finding to a file by EVIDENCE, never to a
@@ -654,23 +669,71 @@ pub(super) struct Handoff {
 /// a weak model, not a serializer — and bounded by the tree: a path not in `all_files` is
 /// never a handoff, so a hallucinated file cannot become a claim. The r6c round-1 app.js
 /// message parses to exactly {path: app/drafts.py, symbol: _draft_obj}.
+///
+/// Three rules from the independent trace of afae2eb1b against r6c's ROUND-0 app.js message,
+/// which had parsed to two handoffs that were not: (a) a line that DISCLAIMS a code change in
+/// its own words — "Files touched: none (no change required; `app/drafts.py` already returns
+/// the documented shape)", "the defect is environmental, not in code: … (or ensure
+/// `tokens.json` sits where `app/auth.py` looks)" — hands nothing off, whatever paths it
+/// mentions; (b) a symbol is an identifier, never a filename — that aside's `drafts.py` was
+/// extracted as the symbol; (c) a line that hands off EXPLICITLY (a handoff verb, "Files
+/// touched", "belongs in", "needs", "must") is preferred: when any such line yields an entry,
+/// the closing paragraph's incidental backticked paths do not.
 pub(super) fn parse_handoffs(output: &str, all_files: &[String], owned: &[String]) -> Vec<Handoff> {
     let lines: Vec<&str> = output.lines().collect();
-    let Some(start) = lines.iter().position(|l| {
+    let names_a_handoff = |l: &str| {
         let low = l.to_lowercase();
         ["handoff", "hand off", "hand-off", "handed off"]
             .iter()
             .any(|k| low.contains(k))
-    }) else {
+    };
+    let Some(start) = lines.iter().position(|l| names_a_handoff(l)) else {
         return Vec::new();
+    };
+    let disclaims_change = |l: &str| {
+        let low = l.to_lowercase();
+        [
+            "touched: none",
+            "changed: none",
+            "no change required",
+            "no changes required",
+            "nothing to change",
+            "no code change",
+            "no fix needed",
+            "not in code",
+            "environmental",
+            "already returns",
+            "already correct",
+            "already satisfies",
+        ]
+        .iter()
+        .any(|k| low.contains(k))
+    };
+    let hands_off_explicitly = |l: &str| {
+        let low = l.to_lowercase();
+        names_a_handoff(l)
+            || [
+                "files touched",
+                "belongs in",
+                "belongs to",
+                "needs",
+                "must",
+                "should",
+                "has to",
+            ]
+            .iter()
+            .any(|k| low.contains(k))
     };
     let ident = |c: &str| {
         let mut chars = c.chars();
         matches!(chars.next(), Some(ch) if ch.is_alphabetic() || ch == '_')
-            && chars.all(|ch| ch.is_alphanumeric() || "_.:".contains(ch))
+            && chars.all(|ch| ch.is_alphanumeric() || "_:".contains(ch))
     };
-    let mut out: Vec<Handoff> = Vec::new();
+    let mut out: Vec<(Handoff, bool)> = Vec::new();
     for line in &lines[start..] {
+        if disclaims_change(line) {
+            continue;
+        }
         let paths: Vec<String> = line
             .split(|c: char| c.is_whitespace() || "`'\"(),;:*".contains(c))
             .map(|t| {
@@ -700,25 +763,33 @@ pub(super) fn parse_handoffs(output: &str, all_files: &[String], owned: &[String
             .find(|c| !c.contains('/') && ident(c) && !all_files.iter().any(|a| a == c))
             .map(str::to_string);
         if paths.is_empty() {
-            if let (Some(sym), Some(last)) = (symbol, out.last_mut()) {
+            if let (Some(sym), Some((last, _))) = (symbol, out.last_mut()) {
                 if last.symbol.is_none() {
                     last.symbol = Some(sym);
                 }
             }
             continue;
         }
+        let explicit = hands_off_explicitly(line);
         for path in paths {
-            if out.iter().any(|h| h.path == path) {
+            if out.iter().any(|(h, _)| h.path == path) {
                 continue;
             }
-            out.push(Handoff {
-                path,
-                symbol: symbol.clone(),
-                note: line.trim().chars().take(300).collect(),
-            });
+            out.push((
+                Handoff {
+                    path,
+                    symbol: symbol.clone(),
+                    note: line.trim().chars().take(300).collect(),
+                },
+                explicit,
+            ));
         }
     }
-    out
+    let any_explicit = out.iter().any(|(_, e)| *e);
+    out.into_iter()
+        .filter(|(_, e)| *e || !any_explicit)
+        .map(|(h, _)| h)
+        .collect()
 }
 
 /// CONSUME half of the handoff: finding-text → handed paths, from the roll-up's repair rows
@@ -1922,6 +1993,76 @@ mod tests {
         assert_eq!(h2.len(), 1);
         assert_eq!(h2[0].path, "app/api.py");
         assert_eq!(h2[0].symbol.as_deref(), Some("serve_stream"));
+    }
+
+    /// The independent trace of afae2eb1b on r6c's ROUND-0 app.js final message (verbatim from
+    /// the lane's log): it parsed to TWO handoffs that were not — `app/drafts.py` from a "Files
+    /// touched: none" line and `app/auth.py` (symbol `drafts.py`!) from an environmental aside.
+    #[test]
+    fn a_disclaimer_and_an_environmental_aside_hand_nothing_off() {
+        let all = vec![
+            "web/app.js".to_string(),
+            "web/index.html".to_string(),
+            "app/drafts.py".to_string(),
+            "app/auth.py".to_string(),
+            "app/api.py".to_string(),
+        ];
+        let owned = vec!["web/app.js".to_string(), "web/index.html".to_string()];
+        let r0 = "**HANDOFF**\n\
+                  - Files touched: none (no change required; `app/drafts.py` already returns the \
+                  documented shape).\n\
+                  - Symbols added/changed: none.\n\
+                  - If the re-gate still reports this finding, the defect is environmental, not in \
+                  code: ensure the app process is **restarted from this tree** before probing (the \
+                  previous measurement hit a stale/failed boot — e.g., old `drafts.py` in memory or \
+                  tokens file absent at its boot location). Concrete next step: kill any listener on \
+                  :8080, run `python3 -m app.ledgerd --db-dir <harness db-dir> --tokens-file <harness \
+                  tokens>` (or ensure `tokens.json` sits where `app/auth.py` looks), then re-run the \
+                  end-to-end probe.\n";
+        let h = parse_handoffs(r0, &all, &owned);
+        assert!(h.is_empty(), "a disclaimer handed something off: {h:?}");
+        // (b) a filename is never a symbol, even on a real handoff line.
+        let h = parse_handoffs(
+            "HANDOFF: `drafts.py`'s `_draft_obj` in app/drafts.py needs top-level keys.",
+            &all,
+            &owned,
+        );
+        assert_eq!(h.len(), 1);
+        assert_eq!(h[0].path, "app/drafts.py");
+        assert_eq!(h[0].symbol.as_deref(), Some("_draft_obj"));
+        // (c) an explicit handoff line wins over the closing paragraph's incidental paths.
+        let h = parse_handoffs(
+            "HANDOFF: `serve_stream` in app/api.py must send the SSE headers.\n\n\
+             For context, `app/drafts.py` is fine and `web/app.js` already renders rows.\n",
+            &all,
+            &owned,
+        );
+        assert_eq!(h.len(), 1, "{h:?}");
+        assert_eq!(h[0].path, "app/api.py");
+    }
+
+    /// `!f.contains("test")` excluded by substring: `attestation.py` and `contest.py` — route
+    /// namesakes — could never become claims. Exclusion is by component and name.
+    #[test]
+    fn segment_claims_exclude_tests_by_component_and_name_not_substring() {
+        let all: Vec<String> = [
+            "app/attestation.py",
+            "app/contest.py",
+            "tests/attestation.py",
+            "app/test_contest.py",
+            "app/contest_test.py",
+            "web/contest.test.js",
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+        assert_eq!(
+            segment_basename_claims("/api/attestation/<id>/contest", &all, &[]),
+            vec![
+                "app/attestation.py".to_string(),
+                "app/contest.py".to_string()
+            ]
+        );
     }
 
     /// The HANDOFF, consume half: a prior round's handed path routes a still-open finding — as
