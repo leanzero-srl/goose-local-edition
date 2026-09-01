@@ -4,6 +4,7 @@ import { getAcpInitializeResponse } from './acpConnection';
 export interface AcpFeatureCapabilities {
   localInference: boolean;
   mlxEngine: boolean;
+  leanzeroLink: boolean;
 }
 
 export async function getAcpFeatureCapabilities(): Promise<AcpFeatureCapabilities> {
@@ -12,6 +13,7 @@ export async function getAcpFeatureCapabilities(): Promise<AcpFeatureCapabilitie
   return {
     localInference: hasLocalInferenceCapability(initializeResponse),
     mlxEngine: hasGooseCapability(initializeResponse, 'mlxEngine'),
+    leanzeroLink: hasGooseCapability(initializeResponse, 'leanzeroLink'),
   };
 }
 

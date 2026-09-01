@@ -5,8 +5,10 @@ import { ScrollArea } from '../ui/scroll-area';
 import MlxEngineView from './MlxEngineView';
 import CloudProvidersSection from './CloudProvidersSection';
 import SwarmNodesSection from './SwarmNodesSection';
+import LeanZeroLinkSection from './LeanZeroLinkSection';
 import { AZURE } from './primitives';
 import { defineMessages, useIntl } from '../../i18n';
+import { useFeatures } from '../../contexts/FeaturesContext';
 
 const i18n = defineMessages({
   subtitle: {
@@ -16,9 +18,10 @@ const i18n = defineMessages({
   },
   tabCloud: { id: 'leanzeroSwarm.tabCloud', defaultMessage: 'Cloud Providers' },
   tabSwarm: { id: 'leanzeroSwarm.tabSwarm', defaultMessage: 'Swarm Settings' },
+  tabLink: { id: 'leanzeroSwarm.tabLink', defaultMessage: 'LeanZero Link' },
 });
 
-type SwarmTab = 'mlx' | 'cloud' | 'swarm';
+type SwarmTab = 'mlx' | 'cloud' | 'swarm' | 'link';
 
 // Solid active fill with a fallback — this window also runs in builds without `.local-edition`,
 // where a bare var() resolves to NOTHING and the active label silently vanishes (caught live).
@@ -37,6 +40,7 @@ const TOP_TAB_ACTIVE = AZURE;
  */
 const LeanZeroSwarmView: React.FC = () => {
   const intl = useIntl();
+  const { leanzeroLink } = useFeatures();
   const [tab, setTab] = useState<SwarmTab>('mlx');
 
   const tabBtn = (t: SwarmTab, label: React.ReactNode) => {
@@ -78,6 +82,7 @@ const LeanZeroSwarmView: React.FC = () => {
               {tabBtn('mlx', 'LeanZero MLX')}
               {tabBtn('cloud', intl.formatMessage(i18n.tabCloud))}
               {tabBtn('swarm', intl.formatMessage(i18n.tabSwarm))}
+              {leanzeroLink && tabBtn('link', intl.formatMessage(i18n.tabLink))}
             </div>
           </header>
         </div>
@@ -87,6 +92,7 @@ const LeanZeroSwarmView: React.FC = () => {
             {tab === 'mlx' && <MlxEngineView />}
             {tab === 'cloud' && <CloudProvidersSection />}
             {tab === 'swarm' && <SwarmNodesSection onOpenCloudProviders={() => setTab('cloud')} />}
+            {tab === 'link' && leanzeroLink && <LeanZeroLinkSection />}
           </ScrollArea>
         </div>
       </div>
