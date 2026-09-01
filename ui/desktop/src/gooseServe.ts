@@ -305,7 +305,7 @@ const withStartupDiagnosticsPath = (
   return `${message} Startup diagnostics: ${startupDiagnosticsPath}`;
 };
 
-const buildGooseServeEnv = (
+export const buildGooseServeEnv = (
   serverSecret: string,
   binaryPath: string,
   additionalEnv: Record<string, string | undefined>
@@ -324,6 +324,23 @@ const buildGooseServeEnv = (
     env.USERPROFILE = homeDir;
     env.APPDATA = process.env.APPDATA || path.join(homeDir, 'AppData', 'Roaming');
     env.LOCALAPPDATA = process.env.LOCALAPPDATA || path.join(homeDir, 'AppData', 'Local');
+  }
+
+  // Point LeanZero Link at the tailscaled/tailscale binaries bundled next to goosed (same
+  // bin dir, in dev and packaged alike), so the mesh works on a machine with no system
+  // Tailscale install. Only set when the bundled file actually exists — the override is a
+  // hard error in discovery if it points at nothing, so absence must fall through to the
+  // PATH/known-location search. An explicit override already in the environment wins.
+  const binDir = path.dirname(binaryPath);
+  const tailscaledName = process.platform === 'win32' ? 'tailscaled.exe' : 'tailscaled';
+  const tailscaleName = process.platform === 'win32' ? 'tailscale.exe' : 'tailscale';
+  const bundledTailscaled = path.join(binDir, tailscaledName);
+  const bundledTailscale = path.join(binDir, tailscaleName);
+  if (!env.LEANZERO_TAILSCALED && existingFile(bundledTailscaled)) {
+    env.LEANZERO_TAILSCALED = bundledTailscaled;
+  }
+  if (!env.LEANZERO_TAILSCALE_CLI && existingFile(bundledTailscale)) {
+    env.LEANZERO_TAILSCALE_CLI = bundledTailscale;
   }
 
   for (const [key, value] of Object.entries(additionalEnv)) {

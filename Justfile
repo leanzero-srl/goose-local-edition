@@ -113,6 +113,23 @@ copy-binary BUILD_MODE="release":
         echo "goose CLI binary not found in target/{{BUILD_MODE}}"; \
         exit 1; \
     fi
+    @just fetch-tailscale
+
+# Populate ui/desktop/src/bin with the tailscaled + tailscale binaries LeanZero Link's
+# embedded mesh bundles (so the app carries its own userspace tailscaled — no system
+# Tailscale needed). Signs them on Darwin like the goose binary (unsigned = silent SIGKILL).
+fetch-tailscale:
+    @bash ./ui/desktop/scripts/fetch-tailscale.sh
+    @if [ "$(uname)" = "Darwin" ]; then \
+        for b in tailscaled tailscale; do \
+            if security find-identity -p codesigning | grep -q "{{local_sign_identity}}"; then \
+                codesign --force -s "{{local_sign_identity}}" ./ui/desktop/src/bin/$b; \
+            else \
+                codesign --force -s - ./ui/desktop/src/bin/$b; \
+            fi; \
+            ./ui/desktop/src/bin/$b --version >/dev/null || { echo "$b does not EXECUTE after signing (silent SIGKILL on Apple Silicon)"; exit 1; }; \
+        done; \
+    fi
 
 # Copy binary command for Intel build
 copy-binary-intel:
