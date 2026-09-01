@@ -563,3 +563,11 @@ research_request_block's armed-no-claimed-sections arm wording.
   "Invalid params"; flagged the one deferred truth-invalidation (a connected-view blip retains last
   state rather than flashing loggedOut) with its reasoning rather than hiding it. Capability-gated,
   18 cases. Charter gap: none.
+- 2026-09-01 link-backend (P4 delta mirroring, 155480899): CLEAN++. Dependency-inverted the tap
+  (goose-server owns it, injects into goose via set_delta_source) so control.rs/wire.rs stayed
+  untouched; the ONE live-reply-path edit is provably additive+non-fallible (broadcast send after
+  the unchanged bus.publish, no-receiver Err ignored, test-proven); RESERVED SessionDeltaKind::
+  ToolCall rather than string-sniff a fake tool_call from an opaque payload (loud-absence over
+  misclassification) and flagged it as the one brief-listed kind not produced, with the reason;
+  carried origin seq across the seam instead of re-minting where session identity is lost. Charter
+  gap: none.
