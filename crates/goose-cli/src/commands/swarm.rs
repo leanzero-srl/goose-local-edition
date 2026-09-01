@@ -85,6 +85,8 @@ mod prose;
 use prose::rewrite_path_token;
 mod skeleton;
 use skeleton::{prepend_skeleton_task, refresh_skeleton_description};
+mod plan_repairs;
+use plan_repairs::{repair_brief_file_mentions, repair_sink_files};
 mod pytest_tail;
 use pytest_tail::parse_pytest_summary;
 mod plan_shape;
@@ -21290,6 +21292,10 @@ struct PlanRepairs {
     before: serde_json::Value,
     after: serde_json::Value,
     actions: Vec<String>,
+    /// Rule (e)'s per-mention rows (`brief_names_unowned_file {task, path, owner, rewritten}`),
+    /// self-describing so the finalize seam fans them out as first-class events beside
+    /// `plan_repaired` — the same shape as the skeleton's verdict rows.
+    mentions: Vec<serde_json::Value>,
 }
 
 impl PlanRepairs {
@@ -21337,10 +21343,13 @@ fn plan_flags(plan: &serde_json::Value, spec: &str) -> serde_json::Value {
 ///     what it depended on, transitively, so no dependency dangles — the join is exempt and keeps
 ///     owning nothing by design;
 /// (d) an advertised endpoint that no brief of a task owning service code mentions is appended to the
-///     brief of the task owning that service's entry file.
+///     brief of the task owning that service's entry file;
+/// (e) a brief that names a file ANOTHER task owns gets that file marked not-yours-to-write (and the
+///     r6c ownership claim "(owned by this slice)" rewritten) — VA-009, `plan_repairs.rs`.
 ///
 /// (a) runs AFTER (b) and (c) because both of them can empty a task, and it is the emptied task that
-/// must go. (d) runs last so it never addresses a task (a) is about to remove.
+/// must go. (d) runs after (a) so it never addresses a task (a) is about to remove; (e) runs last so
+/// it reads the FINAL ownership and the brief text (d) may have appended.
 ///
 /// MEASURED, r1 2026-08-29: REVIEW spent 51 minutes and 209k reasoning characters, and the one
 /// structural defect it fixed — `viz-engine` owned nothing — was named by `plan_synthesized` before
@@ -21354,6 +21363,7 @@ fn plan_flags(plan: &serde_json::Value, spec: &str) -> serde_json::Value {
 fn repair_plan_flags(plan: &mut serde_json::Value, spec: &str) -> PlanRepairs {
     let before = plan_flags(plan, spec);
     let mut actions = Vec::new();
+    let mut mentions = Vec::new();
     if plan.get("subtasks").and_then(|s| s.as_array()).is_some() {
         repair_shared_files(plan, &mut actions);
         repair_module_package_collisions(plan, &mut actions);
@@ -21363,80 +21373,14 @@ fn repair_plan_flags(plan: &mut serde_json::Value, spec: &str) -> PlanRepairs {
         // its text from the repaired ownership BEFORE rule (d) appends to this very brief (r6c).
         refresh_skeleton_description(plan, spec, &mut actions);
         repair_unassigned_endpoints(plan, spec, &mut actions);
+        mentions = repair_brief_file_mentions(plan, &mut actions);
     }
     let after = plan_flags(plan, spec);
     PlanRepairs {
         before,
         after,
         actions,
-    }
-}
-
-/// THE JOIN OWNS NOTHING — structurally, at repair time, whatever synthesis said. r4 (2026-08-30)
-/// shipped `integrate-verify` owning `README.md`: scheduler.rs relaxes a dependent through an
-/// upstream failure ONLY if it owns no files, so a file-owning join is cascaded-Failed by any
-/// build failure and the app never binds a port (the r0 class). The files move to the first
-/// file-owning non-sink task (the skeleton, when present) so a spec-mandated file keeps an owner.
-fn repair_sink_files(plan: &mut serde_json::Value, actions: &mut Vec<String>) {
-    let Some(subtasks) = plan.get_mut("subtasks").and_then(|s| s.as_array_mut()) else {
-        return;
-    };
-    let sink_idx = subtasks
-        .iter()
-        .position(|t| t.get("id").and_then(|i| i.as_str()) == Some(goose_swarm::SINK_ID));
-    let Some(sink_idx) = sink_idx else { return };
-    // An absent/non-array `files` field IS the desired state (the join owns nothing) — nothing to
-    // strip, so the early return is the honest reading, not a default standing in for one.
-    let Some(moved) = subtasks[sink_idx]
-        .get("files")
-        .and_then(|f| f.as_array())
-        .map(|a| {
-            a.iter()
-                .filter_map(|f| f.as_str().map(String::from))
-                .collect::<Vec<String>>()
-        })
-        .filter(|m| !m.is_empty())
-    else {
-        return;
-    };
-    if let Some(files) = subtasks[sink_idx]
-        .get_mut("files")
-        .and_then(|f| f.as_array_mut())
-    {
-        files.clear();
-    }
-    // The home must have a real id (it goes in the action sentence) — an id-less task cannot load
-    // as a DAG anyway, so requiring one here loses nothing.
-    let home = subtasks.iter().enumerate().find_map(|(i, t)| {
-        let id = t.get("id").and_then(|v| v.as_str())?;
-        if id != goose_swarm::SINK_ID
-            && t.get("files")
-                .and_then(|f| f.as_array())
-                .is_some_and(|a| !a.is_empty())
-        {
-            Some((i, id.to_string()))
-        } else {
-            None
-        }
-    });
-    match home {
-        Some((hi, home_id)) => {
-            if let Some(files) = subtasks[hi].get_mut("files").and_then(|f| f.as_array_mut()) {
-                for m in &moved {
-                    if !files.iter().any(|f| f.as_str() == Some(m.as_str())) {
-                        files.push(serde_json::Value::String(m.clone()));
-                    }
-                }
-            }
-            actions.push(format!(
-                "`{}` owned {moved:?}: the join owns nothing — moved to `{home_id}`",
-                goose_swarm::SINK_ID
-            ));
-        }
-        None => actions.push(format!(
-            "`{}` owned {moved:?}: the join owns nothing — dropped (no file-owning task to take them)",
-            goose_swarm::SINK_ID
-        )),
+        mentions,
     }
 }
 
@@ -22808,6 +22752,9 @@ fn finalize_plan_before_dag(
         }
     }
     sink.write_value(repairs.event(source));
+    for row in &repairs.mentions {
+        sink.write_value(row.clone());
+    }
     let added = require_advertised_entry_files(&mut v, spec);
     if !added.is_empty() {
         sink.write_value(serde_json::json!({
@@ -34574,41 +34521,6 @@ mod live_fleet_tests {
             r.actions
         );
         assert!(strings(&r.after["tasks_owning_nothing"]).is_empty());
-        goose_swarm::Dag::from_planner_json(&v.to_string()).expect("loads");
-    }
-
-    /// THE JOIN OWNS NOTHING, structurally (r4 kill, 2026-08-30): synthesis gave
-    /// `integrate-verify` a README.md and nothing stripped it — scheduler relax works only for a
-    /// file-less join, so any build failure would have cascaded the sink to Failed and the app
-    /// would never bind a port (the r0 class). The file keeps an owner: the first file-owning
-    /// task in plan order (the skeleton, on a real run).
-    #[test]
-    fn plan_repair_strips_the_sinks_files_to_a_real_owner() {
-        let plan = r#"{"subtasks":[
-            {"id":"skeleton","files":["app/__main__.py"],"depends_on":[],"description":"wire"},
-            {"id":"svc","files":["app/svc.py"],"depends_on":["skeleton"],"description":"svc"},
-            {"id":"integrate-verify","files":["README.md"],"depends_on":["skeleton","svc"],"description":"v"}
-        ]}"#;
-        let mut v: serde_json::Value = serde_json::from_str(plan).unwrap();
-        let r = repair_plan_flags(&mut v, "");
-        assert!(
-            task(&v, "integrate-verify")["files"]
-                .as_array()
-                .unwrap()
-                .is_empty(),
-            "the join owns nothing after repair"
-        );
-        assert!(
-            strings(&task(&v, "skeleton")["files"]).contains(&"README.md".to_string()),
-            "the stripped file keeps a real owner"
-        );
-        assert!(
-            r.actions
-                .iter()
-                .any(|a| a.contains("the join owns nothing")),
-            "{:?}",
-            r.actions
-        );
         goose_swarm::Dag::from_planner_json(&v.to_string()).expect("loads");
     }
 
