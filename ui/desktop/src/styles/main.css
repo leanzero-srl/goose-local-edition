@@ -6,6 +6,12 @@
 @import 'tw-animate-css';
 @plugin '@tailwindcss/typography';
 
+/* LeanZero Studio typeface — Inter, bundled (offline) via @fontsource; the four weights the type scale uses. */
+@import '@fontsource/inter/400.css';
+@import '@fontsource/inter/500.css';
+@import '@fontsource/inter/600.css';
+@import '@fontsource/inter/700.css';
+
 @source '../../index.html';
 @source '../**/*.{js,ts,jsx,tsx}';
 
@@ -319,6 +325,93 @@
   --color-status-warn-solid: #b45309;
   --color-status-err-solid: #dc2626;
   --color-status-stopped-solid: #475569;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   LEANZERO STUDIO — design system v1 (ui/desktop/DESIGN.md is the contract)
+   ADDITIVE. Typography is app-wide (the app had no family set at all — measured: the MCP
+   registration above leaves --font-sans at `initial`, so `font-sans`/`font-mono` generated
+   no rule and the preflight fell through to the system stack). Surfaces are scoped to
+   .local-edition / .dark.local-edition like the palette above. Consumers use the Tailwind
+   utilities (text-lz-*, bg-lz-*, rounded-lz-*, …) through src/components/lz/tokens.ts —
+   nobody hand-writes a colour.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* Typography — INLINE so the family is a literal in every utility and in the preflight's
+   --default-font-family; the runtime theme-tokens.ts inline --font-sans (Cash Sans, CDN-only)
+   never reaches the desktop cascade. cv11 (single-storey a) + ss01 (open digits) are Inter's
+   own alternates; other families ignore unknown features. */
+@theme inline {
+  --font-sans: 'Inter', ui-sans-serif, system-ui, -apple-system, sans-serif;
+  --font-sans--font-feature-settings: 'cv11', 'ss01';
+  --font-mono: ui-monospace, 'SF Mono', Menlo, monospace;
+}
+
+@theme {
+  --font-lz-sans: 'Inter', ui-sans-serif, system-ui, -apple-system, sans-serif;
+  --font-lz-mono: ui-monospace, 'SF Mono', Menlo, monospace;
+
+  /* Type scale: size / weight / tracking travel together in ONE utility (text-lz-display …). */
+  --text-lz-display: 28px;
+  --text-lz-display--line-height: 1.2;
+  --text-lz-display--letter-spacing: -0.02em;
+  --text-lz-display--font-weight: 600;
+  --text-lz-h1: 22px;
+  --text-lz-h1--line-height: 1.25;
+  --text-lz-h1--letter-spacing: -0.01em;
+  --text-lz-h1--font-weight: 600;
+  --text-lz-h2: 16px;
+  --text-lz-h2--line-height: 1.35;
+  --text-lz-h2--font-weight: 600;
+  --text-lz-body: 13px;
+  --text-lz-body--line-height: 1.5;
+  --text-lz-body--font-weight: 400;
+  --text-lz-meta: 11px;
+  --text-lz-meta--line-height: 1.4;
+  --text-lz-meta--font-weight: 500;
+  /* zone-header: pair with `uppercase` — the ONLY register that is uppercase + tracked. */
+  --text-lz-zone: 11px;
+  --text-lz-zone--line-height: 1.2;
+  --text-lz-zone--letter-spacing: 0.08em;
+  --text-lz-zone--font-weight: 600;
+  --text-lz-mono: 12px;
+  --text-lz-mono--line-height: 1.5;
+
+  /* Radius: controls / cards / pills. 1px borders everywhere; no decorative shadows. */
+  --radius-lz-control: 6px;
+  --radius-lz-card: 10px;
+  --radius-lz-pill: 999px;
+
+  /* The one elevation, for OVERLAYS only (popovers, dialogs, menus). Tailwind inlines shadow
+     values into the utility, so the dark twin is a second token, not a cascade override. */
+  --shadow-lz-overlay: 0 8px 24px rgba(15, 23, 42, 0.12);
+  --shadow-lz-overlay-dark: 0 8px 24px rgba(0, 0, 0, 0.55);
+
+  /* Motion: 120ms ease-out (pair `duration-120` with `ease-lz`). */
+  --ease-lz: cubic-bezier(0, 0, 0.2, 1);
+  /* The live pulse SCALES a solid dot; it never fades it. */
+  --animate-lz-live: lz-live 1200ms ease-in-out infinite;
+  @keyframes lz-live {
+    0%,
+    100% {
+      transform: scale(1);
+    }
+    50% {
+      transform: scale(1.4);
+    }
+  }
+
+  /* Rhythm: 4px base, 8px rhythm. */
+  --spacing-lz-page: 32px;
+  --spacing-lz-section: 24px;
+  --spacing-lz-card: 16px;
+  --spacing-lz-row: 36px;
+  --spacing-lz-row-dense: 32px;
+}
+
+/* Tabular figures for any number a person compares down a column. */
+@utility tnum {
+  font-variant-numeric: tabular-nums;
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
