@@ -340,9 +340,12 @@ fn the_banned_integrate_template_only_shrinks() {
 /// commands/swarm/plan_repairs.rs beside the new rule (e) `repair_brief_file_mentions`, paying for the
 /// rule's wiring in `repair_plan_flags` / `PlanRepairs.mentions` / the finalize seam's
 /// `brief_names_unowned_file` fan-out.
+/// Tightened to 37,549 (VA-008 adjunct D6): `snapshot_tree_files` moved to commands/swarm/tree.rs,
+/// paying for the worker prompt's REQUEST_FILE line (the full request on disk, named once, absolute;
+/// `request_file_absent_at_dispatch` when it is not there).
 #[test]
 fn swarm_rs_line_count_only_decreases() {
-    const SWARM_RS_LINE_BASELINE: usize = 37_561;
+    const SWARM_RS_LINE_BASELINE: usize = 37_549;
     let text = read("crates/goose-cli/src/commands/swarm.rs");
     let n = text.lines().count();
     assert!(
