@@ -11,7 +11,7 @@ default OFF, receiver's mode, validated cwd, both busy doors, no email token, st
 mlxControlWired, meshBinaries); desktop logic (03b291c84..6512c99e7); design system "LeanZero Studio" (d64068fb6..77dd6f690,
 ui/desktop/DESIGN.md); stage-1 polish (575a141a3..cdcc6588c, screenshots-passE); remake: shell/nav/projects/landing
 (8ccdbd9b9..a98366653), session chrome (9ace453ee 1b0ede59d 2f13f54ba), hub+Link+nodes (e610a589d..249052a76), benchmark+settings
-(efafa4700..785defe08). IN FLIGHT: leanzero-link crate fixes (+ local_sessions→Result trait change), C2 goose-serve injection
+(efafa4700..785defe08). ALSO LANDED since: MLX engine/models remake (3713e606c..3314a86d5, StudioSelect choosers, cloud.tsx), swarm run panel mission control (d0acc8581..95ee1b8fb incl. the two behavior edits 4117853ca: useFleetCorroboration swap + sourceMissing band), confirm-on-close dialog (a80209a40..805d6a00d: mouse close/quit on a live run now asks; IPC confirm-close-run/-reply), bench-scorer charter fix 5a791375c (tick.py lives ONLY on the MacBook — MacBook-side item: print the 5 new events). IN FLIGHT: leanzero-link crate fixes (+ local_sessions→Result trait change), C2 goose-serve injection
 (link_serve.rs), Q1 MLX busy signal, wave-2 swarm pass (token probe, planner unregistered arm, canonical name w/ engine kind,
 dev-gates §4), tick.py new events, remake: MLX engine/models (+StudioSelect reuse, cloud.tsx), swarm run panel (+2 deferred
 behavior edits), chrome leftovers (+ui/button|tabs|input solid disabled, lz Button iconOnly, AppLayout frame), confirm-on-close
