@@ -61,11 +61,13 @@ export function FormationRibbon({
       data-testid="formation-ribbon"
       data-active-phase={phase ?? 'none'}
     >
+      {/* The label + metrics row lives OUTSIDE the min-width scroll area below: inside it, the ETA at the
+          row's right end was clipped at the pane edge on every 900px-wide panel (measured live). */}
+      <div className="mb-2 flex min-h-5 items-center justify-between gap-3">
+        <span className={`${EYEBROW_CLASS} text-text-secondary`}>Formation</span>
+        {metrics}
+      </div>
       <div className="min-w-[900px]">
-        <div className="mb-2 flex min-h-5 items-center justify-between gap-3">
-          <span className={`${EYEBROW_CLASS} text-text-secondary`}>Formation</span>
-          {metrics}
-        </div>
         <ol
           className="grid gap-1"
           style={{ gridTemplateColumns: phaseColumns }}
@@ -137,27 +139,26 @@ export function FormationRibbon({
                 ? nodes.map((node, nodeIndex) => {
                     const letter = String.fromCharCode(65 + (nodeIndex % 26));
                     const state = node.working ? 'working' : 'idle';
-                    // Identity is a solid hue DOT beside the node's name (the letter stays in the
-                    // aria-label). A working node reads in primary weight, an idle one in secondary —
-                    // the dot keeps full strength either way, so the fleet never reads as absent.
+                    // Identity is a solid hue DOT (the letter and name stay in the aria-label and title):
+                    // a phase column is ~100px, so three names truncated to "g. / m / w…" live. The names
+                    // sit beside the same dots in the FLEET zone directly below. State is the MARK, never
+                    // a fade: a working node is a filled dot, an idle one a hollow ring in its full hue.
+                    const hue = FORMATION_RAMP[nodeIndex % FORMATION_RAMP.length];
                     return (
                       <span
                         key={node.device}
+                        role="img"
                         aria-label={`Node ${letter}, ${shortDeviceName(node.device)}, ${state}`}
                         title={`${shortDeviceName(node.device)} · ${state}`}
-                        className={`inline-flex min-w-0 items-center gap-1 text-[11px] ${
-                          node.working ? 'font-semibold text-text-primary' : 'text-text-secondary'
-                        }`}
+                        className="inline-block h-2.5 w-2.5 shrink-0 rounded-full"
+                        style={
+                          node.working
+                            ? { backgroundColor: hue }
+                            : { backgroundColor: 'transparent', boxShadow: `inset 0 0 0 2px ${hue}` }
+                        }
                         data-testid="formation-node"
                         data-node-state={state}
-                      >
-                        <span
-                          aria-hidden
-                          className="inline-block h-2 w-2 shrink-0 rounded-full"
-                          style={{ backgroundColor: FORMATION_RAMP[nodeIndex % FORMATION_RAMP.length] }}
-                        />
-                        <span className="truncate">{shortDeviceName(node.device)}</span>
-                      </span>
+                      />
                     );
                   })
                 : null}
