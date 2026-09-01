@@ -10,12 +10,18 @@
 //! machine. [`mesh::MeshConfig::validate`] enforces this by refusing system paths, and
 //! every daemon it spawns is terminated per-pid — never by process group.
 //!
-//! Auth keys are injected strings minted elsewhere (the LeanZero Link worker); this
-//! crate never talks to any auth backend.
+//! Auth keys and node tokens are injected strings minted elsewhere (the LeanZero Link
+//! worker); this crate never talks to any auth backend.
 //!
-//! A `control` module (the `/v1/swarm` service) lands in a later pass and will build on
-//! [`mesh::MeshStatus`] / [`mesh::MeshPeer`] as its wire shape.
+//! The [`control`] module is the `/v1/swarm` node-to-node service: `GET /nodes`,
+//! `GET /sessions`, and the `GET /stream` WebSocket, fed by a [`state::SwarmStateSource`]
+//! (implemented later by goose-server) and by the [`state::PeerRegistry`] peer fabric
+//! built on [`mesh::MeshStatus`] / [`mesh::MeshPeer`].
 
+pub mod control;
 pub mod discovery;
 pub mod mesh;
+pub mod pubsub;
+pub mod state;
 mod subprocess;
+pub mod wire;

@@ -6494,14 +6494,23 @@ dependencies = [
 name = "leanzero-link"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
+ "axum",
+ "bytes",
+ "chrono",
  "dirs",
+ "futures",
  "libc",
+ "reqwest 0.13.4",
  "serde",
  "serde_json",
+ "subtle",
  "tempfile",
  "thiserror 2.0.18",
  "tokio",
+ "tokio-tungstenite 0.29.0",
  "tracing",
+ "url",
 ]
 
 [[package]]
