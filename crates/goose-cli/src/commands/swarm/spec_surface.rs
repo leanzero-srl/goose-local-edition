@@ -219,14 +219,14 @@ pub(super) fn path_token_named(path: &str, text: &str) -> bool {
 /// PROSE SHAPE. sb-7 writes three rows as `| GET | /api/health | shape below |` and puts the
 /// shape after the table, under a bold label, in a fenced block:
 ///
-/// ```text
+/// ````text
 /// **Health.**
 ///
 /// ```json
 /// {"status": "ok", "payments": <int>, "last_sync": <str or null>,
 ///  "webhook": {"registered": <bool>, ...}}
 /// ```
-/// ```
+/// ````
 ///
 /// `spec_documented_keys` (swarm.rs) reads the row's own cell and found nothing for /api/health,
 /// /api/summary and /api/buckets on r6c/r6d — three of ledgerd's four JSON reads went unchecked.
@@ -237,11 +237,7 @@ pub(super) fn path_token_named(path: &str, text: &str) -> bool {
 /// GET prober asserts documented keys at the top level (`v.get(k)`) and a flattened `registered`
 /// or `currency` would be filed as missing against a correct response. Empty when the section
 /// has no such label+fence — the caller then asserts nothing, exactly as for a prose cell. MILD.
-// Consumer pending in swarm.rs (`spec_documented_keys`, a batch-2a file at the time of this
-// commit): its trailing `Vec::new()` becomes `spec_surface::spec_prose_documented_keys(spec,
-// method, path)` — the prose shape is consulted only when the row's own cell documents none.
-// Remove this allowance in the commit that lands that hunk.
-#[allow(dead_code)]
+/// Consumed by `spec_documented_keys` (swarm.rs) when the row's own cell documents no shape.
 pub(super) fn spec_prose_documented_keys(spec: &str, method: &str, path: &str) -> Vec<String> {
     let base = path.split('?').next().unwrap_or(path);
     if !base.starts_with('/') {
@@ -359,7 +355,6 @@ pub(super) fn spec_prose_documented_keys(spec: &str, method: &str, path: &str) -
 /// `[...]`) is not JSON a parser accepts, so this walks braces and brackets outside string
 /// literals and takes a string followed by `:` only inside the outermost object. Deduped, in
 /// document order.
-#[allow(dead_code)]
 fn top_level_keys(shape: &str) -> Vec<String> {
     let mut keys: Vec<String> = Vec::new();
     let mut depth = 0i32;

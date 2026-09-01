@@ -324,9 +324,13 @@ fn the_banned_integrate_template_only_shrinks() {
 /// `dynamic_replan`/`max_replans` defaults, CLI flag, printer, menu and editor arms and the levers echo
 /// (the fields survive as `Option` under `retired_levers`); goose-swarm lost replan.rs, the scheduler's
 /// summon/splice/repair path, `Replanned` and their tests.
+/// Tightened to 37,819 (VA-030 / D10): the worker-channel copy of the research-settled decisions
+/// (`research_settled_worker_block` + `settled_decisions`) deleted — the brief carries them once, per
+/// slice and whole; `spec_documented_keys` gained its prose-shape consumer and the research prompt the
+/// plan-wide `consumed_spec_sections` inputs.
 #[test]
 fn swarm_rs_line_count_only_decreases() {
-    const SWARM_RS_LINE_BASELINE: usize = 37_822;
+    const SWARM_RS_LINE_BASELINE: usize = 37_819;
     let text = read("crates/goose-cli/src/commands/swarm.rs");
     let n = text.lines().count();
     assert!(

@@ -15,9 +15,10 @@
 //!   (b) every brief (including the docs task's own) carries the settled/still-open PARTITION,
 //!       with settled choices QUOTED verbatim — never re-derived from the per-slice row fold,
 //!       which matches on `r.slice == sl.id` and can never see a decision row;
-//!   (c) workers receive research-settled answers under `PLAN_SETTLED_DECISIONS_HEADER` appended
-//!       to `DispatchRequest.user_decisions` — NEVER under `USER_DECISIONS_HEADER`, whose text
-//!       ("The user was ASKED and chose") would be a GEN-4 overclaim for research answers;
+//!   (c) DELETED (VA-030): workers used to receive every research-settled answer a second time,
+//!       cut at 1,500 chars, under a provenance header appended to `DispatchRequest.user_decisions`;
+//!       the brief (the task description, i.e. the worker prompt's body) carries them once, per
+//!       slice and whole, so `user_decisions` is the USER's channel only;
 //!   (e) when EVERY open decision folded as settled, the plan repair strips
 //!       implementation-task -> docs-only-task dependency edges (loud, MILD, rides
 //!       `plan_repaired.actions`); one unanswered decision KEEPS every such dep — the doc task is
@@ -30,19 +31,6 @@ use super::USER_DECISIONS_HEADER;
 /// slice id collides with it (slice ids are kebab-case words from a model; the partition in
 /// `run_linear_plan` siphons rows by exact equality on this constant).
 pub(super) const DECISION_SLICE: &str = "__open_decisions__";
-
-/// The provenance header for research-settled decisions on the worker channel. Deliberately NOT
-/// `USER_DECISIONS_HEADER`: these answers were researched from the request AFTER the user declined
-/// to answer, and a header claiming the user chose them would be the exact overclaim gate GEN-4
-/// exists to refuse. sb-7 fails "a document that contradicts observed behavior" — so the framing
-/// is binding-for-consistency, subordinate to the request and to real user decisions.
-pub(super) const PLAN_SETTLED_DECISIONS_HEADER: &str =
-    "\n\n## DECISIONS SETTLED AT PLAN TIME — BINDING CONVENTIONS\n\
-     Settled at plan time by research from the request; the user was asked and did not answer \
-     these. Each answer is drawn strictly from the request, or is the named CONVENTIONAL choice \
-     where the request is silent. They are conventions, BINDING FOR CONSISTENCY — implement each \
-     as written so every module makes the same choice. They never override the request itself or \
-     a USER DECISIONS block:\n";
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum DecisionState {
@@ -194,25 +182,6 @@ pub(super) fn decisions_brief_block(decisions: &[PlanDecision]) -> String {
                 .collect::<Vec<_>>()
                 .join("\n")
         ));
-    }
-    out
-}
-
-/// The worker-channel block (amendment c): research-settled Q/A pairs only, appended under
-/// `PLAN_SETTLED_DECISIONS_HEADER` to `DispatchRequest.user_decisions` — the channel already
-/// verified verbatim-to-every-worker at the four dispatch sites. User-settled decisions are NOT
-/// repeated here: they already ride under `USER_DECISIONS_HEADER` in the spec and the same
-/// user_decisions channel, in the user's own words.
-pub(super) fn research_settled_worker_block(decisions: &[PlanDecision]) -> String {
-    let mut out = String::new();
-    for d in decisions {
-        if let DecisionState::SettledByResearch { answer } = &d.state {
-            out.push_str(&format!(
-                "Q: {}\nA: {}\n",
-                d.question.trim(),
-                budget_research_answer(answer, DECISION_SLICE, d.q_index)
-            ));
-        }
     }
     out
 }
@@ -422,15 +391,6 @@ mod tests {
         assert!(b.contains("binding for consistency"));
         assert!(b.contains("- which palette") && b.contains("CONVENTIONAL"));
         assert!(decisions_brief_block(&[]).is_empty());
-        // Worker channel: research-settled only, and NEVER under the user header's overclaim.
-        let w = research_settled_worker_block(&p);
-        assert!(w.contains("Q: which port") && w.contains("A: 8000"));
-        assert!(
-            !w.contains("sqlite"),
-            "user answers already ride the user header"
-        );
-        assert!(!PLAN_SETTLED_DECISIONS_HEADER.contains("chose"));
-        assert!(PLAN_SETTLED_DECISIONS_HEADER.contains("did not answer"));
     }
 
     /// The r5 receipt verbatim: ledgerd/brush-contract/frontend/viz gated on the w1 docs task.

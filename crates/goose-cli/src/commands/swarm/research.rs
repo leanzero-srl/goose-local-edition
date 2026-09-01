@@ -739,30 +739,27 @@ pub(super) fn consumed_spec_sections(
 /// spec when orientation is armed — it carries the orientation index plus the slice's claimed
 /// sections' FULL text, the exact splice path `briefs_from_slices` uses. Below the arming floor
 /// the whole spec is the better input, exactly as OPEN's own message formation decides it.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn research_request_block(
     spec: &str,
     sections: &[SpecSection],
     armed: bool,
     slice_id: &str,
     claimed: &[String],
+    files: &[String],
+    every_claim: &[&[String]],
     events: &dyn EventSink,
 ) -> String {
     if !armed {
         return format!("THE REQUEST:\n{spec}");
     }
     let spliced = splice_claimed_sections(slice_id, claimed, sections, events);
-    // The research prompt knows only ITS slice's claims (no objective, no other slices), so
-    // rule (a) reads claimed bodies alone and rule (c)'s claim count sees one claimant — every
-    // childless top-level section reads as cross-cutting here. The brief builder, which has
-    // the whole opener output, applies the same helper with the plan-wide view.
-    let consumed = consumed_spec_sections(
-        slice_id,
-        claimed,
-        &[],
-        std::slice::from_ref(&claimed),
-        sections,
-        events,
-    );
+    // The same helper, the same plan-wide inputs the brief builder hands it (VA-030): every
+    // slice's claims so rule (c) counts claimants across the plan, and this slice's declared
+    // files so rule (a) reads the routes its files name. Before, the research prompt passed
+    // only its own claims — every childless top-level section read as cross-cutting and rule
+    // (a) had no files to read.
+    let consumed = consumed_spec_sections(slice_id, claimed, files, every_claim, sections, events);
     let orientation = spec_orientation(sections);
     let mut block = if spliced.is_empty() {
         format!(
@@ -1310,7 +1307,7 @@ pub(super) fn emit_question_disposition(
 /// not a plan file) — deduped in objective order. An objective that declares nothing keeps the
 /// empty vec, and the absence event keeps firing for exactly those slices. (Moved verbatim from
 /// swarm.rs beside its one caller, paying for the fan cut's C2 wiring.)
-fn files_from_objective(objective: &str) -> Vec<String> {
+pub(super) fn files_from_objective(objective: &str) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
     for (i, seg) in objective.split('`').enumerate() {
         if i % 2 == 0 {
@@ -1604,7 +1601,7 @@ pub(super) fn briefs_from_slices(
                         facts_block.push_str(&format!(
                             "\nQ: {}\nFACT: {}\nCITE: {}\n",
                             q.text,
-                            budget_research_answer(&row.answer, &row.slice, row.q_index),
+                            row.answer.trim_end(),
                             row.cite
                         ));
                     }
@@ -1619,10 +1616,16 @@ pub(super) fn briefs_from_slices(
                             ),
                             None => String::new(),
                         };
+                        // WHOLE (VA-030): the answer to this slice's OWN question is addressed
+                        // to this slice in every paragraph. The 1,500-char head cut left r6c's
+                        // five briefs with 4-5 "ANSWER TRUNCATED — full text in .swarm/ledger/…"
+                        // each, pointing at a file no worker is told to read (the five slices'
+                        // 23 answers: 34,500 chars budgeted against 75,247 whole). Mihai: trust
+                        // the model with the information.
                         answers_block.push_str(&format!(
                             "\nQ: {}\nA: {}{via}\n",
                             q.text,
-                            budget_research_answer(&row.answer, &row.slice, row.q_index)
+                            row.answer.trim_end()
                         ));
                     }
                     // C2(a): the question IS an open decision — settled once, in the DECISIONS
@@ -2025,6 +2028,8 @@ mod tests {
             true,
             "s1",
             &["Alpha".to_string()],
+            &[],
+            &[],
             &NullSink,
         );
         let tree = vec!["app/__main__.py".to_string()];
@@ -2084,8 +2089,16 @@ mod tests {
         );
         // Below the floor: the spec as-is is the better input, exactly like OPEN's own message.
         let small = "build a tiny thing";
-        let small_block =
-            research_request_block(small, &spec_sections(small), false, "s1", &[], &NullSink);
+        let small_block = research_request_block(
+            small,
+            &spec_sections(small),
+            false,
+            "s1",
+            &[],
+            &[],
+            &[],
+            &NullSink,
+        );
         assert_eq!(small_block, format!("THE REQUEST:\n{small}"));
     }
 
@@ -3400,7 +3413,16 @@ mod tests {
         // over the floor), the same labels.
         let padded = format!("{doc}\n{}", "padding line\n".repeat(1_000));
         let padded_sections = spec_sections(&padded);
-        let block = research_request_block(&padded, &padded_sections, true, "x", &x, &NullSink);
+        let block = research_request_block(
+            &padded,
+            &padded_sections,
+            true,
+            "x",
+            &x,
+            &[],
+            &[x.as_slice()],
+            &NullSink,
+        );
         assert!(block.contains("SECTIONS THIS SLICE CALLS INTO") && block.contains("\n### X1\n"));
         assert!(block.contains("CROSS-CUTTING SPEC RULES") && block.contains("\n### Rules\n"));
 
