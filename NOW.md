@@ -53,7 +53,17 @@ implied, the summary was wrong and the sources win.
 
 ---
 
-## THE CURRENT THREAD (2026-09-01 05:10) — TWO OWNER GATES BEFORE ANY NEW RUN
+## THE CURRENT THREAD (2026-09-01 06:55) — r6d LIVE (launched 06:53 local / 03:53Z from the Benchmark view)
+
+run_id swarm-20260901-035310576 · engine cceab86eb (installed /Applications/Goose.app, sha 9497224d… identical to
+the release build) · first_tick_r1.sh ALL OK (sha, benchmark=True, prompt 53,634, heartbeat, orphans 0, engine pid
+53260 is the bundled binary) · **pool_resolved weight 1 ×3** (config override) with speed_weight 3/2/1 · levers_resolved
+carries retired_levers (8) and no split_fat · phase open. The redesigned Benchmark view verified LIVE over CDP before
+dispatch (no chooser, CURRENT/FROZEN badges, catalog rows, Run button). Vigil = tick-surgeon every 30m with the
+FIRST-TICK EXPECTATIONS below as its falsifier list; persona_loaded.stack_key (must NOT be angular) is the first
+one still unread. Run dir slot: benchmark/runs/build/swarm-3node-r0 (r6c archived to ~/goose-builds/…-0.1420-…).
+
+## THE PRIOR THREAD (2026-09-01 05:10) — TWO OWNER GATES BEFORE ANY NEW RUN (ALL THREE CLOSED, see checklist)
 
 Mihai, 04:30-04:50 EEST, after reading the live thinking tags: (1) *"repair actually owns the
 repair bugs because last run in r5 it was the same, bugs were found and none of the nodes were owning
@@ -87,15 +97,15 @@ r6d LAUNCH CHECKLIST (in order): [x] GATE B placement 623ae8eef (INDEPENDENTLY C
 were bare-POST 401/400 envelopes — now inconclusive-with-evidence; 18,291 node-s of repair had been spent on them) · [~] GATE C repair brief fabfe962f LANDED, traced PARTIAL (fires on labels/forced edits, not the
 reproduction loops; HANDOFF was a dead letter → persistence+consumption folded into the gate-A surgeon;
 probe evidence = gap 3 there) · [x] probe findings carry request/status/body (afae2eb1b, post_probe.rs) · [x]
-levers_resolved names retired_levers (ee4c73d15); 12 smalls landed (ee4c73d15/52e525954/a822f53c0) · [ ] set dispatch weight 1 per
+levers_resolved names retired_levers (ee4c73d15); 12 smalls landed (ee4c73d15/52e525954/a822f53c0) · [x] set dispatch weight 1 per
 node (measured: stacking = -8% aggregate / -54% per lane; Mihai may veto) — HOW: r6c got weight 2 from
 LM Studio PARALLEL=2 (fleet_order.rs:355 precedence: config device override by model_id > speed_weight >
 PARALLEL > 1); add swarm.devices entries for the three qwen3.8-27b model_ids with weight: 1 in
 ~/.config/goose/config.yaml (config.yaml currently lists only disabled qwopus devices) — NOT an LMS change · [x]
 r6c ended; HERMETIC 0.1420 (inner 0.7282 × crit 0.216 — zero rows in the browser: unauthenticated fetches +
 viz.js Illegal invocation = the two unowned criticals); ledger 796fc001e; archived; slot absent · [x] stack-angular skill inspected: content correct, kept; two learn-phase defects queued (stack_key
-derivation; regeneration embeds instead of replacing) · [ ] build+install, verify bundled sha · [ ] CDP-verify
-the redesigned Benchmark view · [ ] Benchmark-view launch.
+derivation; regeneration embeds instead of replacing) · [x] build+install, verify bundled sha (9497224d… ×3, cceab86eb) · [x] CDP-verify
+the redesigned Benchmark view (VIEW OK 06:52) · [x] Benchmark-view launch (06:53, first_tick ALL OK).
 
 r6d FIRST-TICK EXPECTATIONS (the falsifiers for tonight's 22 engine commits — read at tick 1, quote fields):
 - pool_resolved: weight 1 ×3 (the config override), speed_weight 3/2/1 unchanged, 3 devices.
