@@ -3,6 +3,7 @@ import { describe, it, expect, vi } from 'vitest';
 import SessionActionsHeader from './SessionActionsHeader';
 import { IntlTestWrapper } from '../i18n/test-utils';
 import type { Session } from '../types/session';
+import { assertStudioClean } from './lz/assertStudioClean';
 
 /**
  * Pass E — the session header:
@@ -52,6 +53,16 @@ describe('SessionActionsHeader (pass E)', () => {
   it('shows the backend-generated name once the session is auto-named', () => {
     mount(makeSession({ name: 'MLX confirmation' }));
     expect(screen.getByTestId('session-title-trigger')).toHaveTextContent('MLX confirmation');
+  });
+
+  it('sets the title in the Studio h2 step and carries no ban', () => {
+    const { container } = mount(makeSession({ name: 'MLX confirmation' }));
+    const title = screen.getByText('MLX confirmation');
+    expect(title.className).toContain('truncate');
+    expect(title.className).toContain('text-lz-h2');
+    expect(title.className).toContain('text-lz-ink');
+    expect(title.className).not.toMatch(/font-medium|text-sm/);
+    assertStudioClean(container);
   });
 
   it('offers rename but never "Make recipe from this conversation"', async () => {
