@@ -379,7 +379,13 @@ fn swarm_rs_line_count_only_decreases() {
     // Tightened to 36,254 (2c S12): the thin-brief floor (`THIN_BRIEF_MIN_CHARS`,
     // `thin_brief_missing`) and its test moved to commands/swarm/briefs.rs, paying for the
     // merger's frame arms (owner body, reading rule, the ACT-NOW skip).
-    const SWARM_RS_LINE_BASELINE: usize = 34_930;
+    // Tightened to 34,905 (VA-056/VA-058): the judge's look constants (JUDGE_WAKE,
+    // OMNI_JUDGE_MIN_CHARS, DIGEST_IO_CADENCE, LOOK_TAIL_CHARS, OMNI_JUDGE_GROWTH_CHARS) moved to
+    // commands/swarm/ladder.rs, paying for the worker loop's undelivered-NEXT clause, the
+    // repeated-NEXT corroboration and the task-attempt `NudgeHistory`; the cadence clock
+    // (OMNI_JUDGE_FIRST_LOOK_SECS / OMNI_JUDGE_INTERVAL_SECS, `omni_next_look`, the 300s backoff)
+    // and the growth-without-acting trigger are deleted outright.
+    const SWARM_RS_LINE_BASELINE: usize = 34_905;
     let text = read("crates/goose-cli/src/commands/swarm.rs");
     let n = text.lines().count();
     assert!(

@@ -45,7 +45,8 @@ use ladder::{
     calls_since_nudge, delivery_promise_due, drift_streak_step, durable_clamped_produced,
     escalation_moved, forming_stalled, judge_summon_trigger, nudge_arm, nudge_delivery,
     produced_since_look, restream_seed, steer_note, stream_woke, tail_shingle_set, tails_recur,
-    write_progress, wrong_channel_stall, NudgeDelivery, SummonFacts,
+    write_progress, wrong_channel_stall, NudgeDelivery, NudgeHistory, SummonFacts,
+    DIGEST_IO_CADENCE, JUDGE_WAKE, LOOK_TAIL_CHARS, OMNI_JUDGE_GROWTH_CHARS, OMNI_JUDGE_MIN_CHARS,
 };
 mod ask_floor;
 use ask_floor::{ask_floor_weak_bump, model_active_params_b};
@@ -55,10 +56,10 @@ mod supervision;
 use supervision::{
     call_objective, clip_tail, earlier_span_block, fold_forming_event, forming_args_bytes,
     judge_contract, judge_lane_key, me_events_skip, omni_judge_says_looping, parse_judge_eta_mins,
-    parse_judge_reply, render_forming_file, said_kind_of, structured_reply_block,
-    superseded_from_prior, supervised_reply_text, supervision_lane_kind, tail_chars,
-    write_forming_atomic, FormingGuard, FormingReport, FormingSidecar, SupervisedReplyError,
-    ASK_ANSWER_LANE, JUDGE_PROBE_TURNS, PILLARS_LANE,
+    parse_judge_reply, question_tags_in, render_forming_file, said_kind_of, schema_required_blocks,
+    structured_reply_block, superseded_from_prior, supervised_reply_text, supervision_lane_kind,
+    tail_chars, write_forming_atomic, FormingGuard, FormingReport, FormingSidecar,
+    SupervisedReplyError, ASK_ANSWER_LANE, JUDGE_PROBE_TURNS, PILLARS_LANE,
 };
 mod orientation;
 use orientation::{
@@ -3026,79 +3027,15 @@ fn omni_judge_enabled(cfg: Option<bool>) -> bool {
     straggler_stop_resolved(std::env::var("GOOSE_SWARM_OMNI_JUDGE").ok(), cfg)
 }
 
-/// #135 omni-judge cadence. Mihai: "you don't need to wait for anything like 10-20k, you will see it
-/// immediately" — correct, and the earlier version was wrong to gate on a huge char count. A loop is visible
-/// after two or three repetitions (the measured pathologies were obvious within seconds), so waiting for
-/// 26,000 characters threw away minutes of a node per incident. The judge now looks EARLY and REPEATEDLY.
-///
-/// First look this many seconds into a call — long enough that there is something to read, short enough that
-/// a loop is caught in its first minute rather than its tenth.
-const OMNI_JUDGE_FIRST_LOOK_SECS: u64 = 45;
-/// Then re-look this often. A loop that starts late is still caught; a healthy call just keeps passing.
-const OMNI_JUDGE_INTERVAL_SECS: u64 = 60;
-/// Minimum reasoning before a look is meaningful — below this there is nothing to assess yet.
-///
-/// Set to 2_000, having been 1_200 then briefly 4_000. Raising it was the WRONG fix and the data says so:
-/// the judge fired at 1,200, 1,201, 3,759 and 4,003 chars — i.e. immediately past whatever floor was set —
-/// so the threshold only moved WHEN the misread happened, never whether. The real fix is corroboration
-/// (two consecutive LOOPING verdicts, see the abort site), which makes an early first look safe again and
-/// restores the #135 intent of catching a loop in its first minute rather than its tenth.
-///
-/// Kept modestly above the original 1,200 so the first look still has a paragraph or two to read.
-///
-/// ORIGINAL NOTE, retained: RAISED 1_200 -> 4_000 on measured evidence. The judge is asked whether "the SAME content clearly
-/// recurs", and recurrence needs the same thing to appear TWICE. At 1,200 characters — roughly one
-/// paragraph — there is not enough text for that to be observable, so a yes is the weak model
-/// pattern-matching on "this looks repetitive" rather than seeing an actual repeat. It is not a gating
-/// bug: the verdict already requires HIGH confidence, and the model gave HIGH confidence anyway.
-///
-/// MEASURED, three omni fires observed to date:
-///   1,200 chars  -> FALSE positive. Killed `verify-e2e::0` seconds after it started, costing 166s and a
-///                   retry on a task that was doing nothing wrong.
-///   8,988 chars  -> true positive, task retried and completed.
-///   15,097 chars -> true positive, task retried and completed.
-/// 4_000 sits well above the false positive and well below both true ones, and is about the point where
-/// the 2,000-char tail the judge is shown can actually contain a repeat.
-///
-/// Deliberately a raise, not a disable — the intent of #135 stands ("you will see it immediately"; waiting
-/// for 26,000 threw away minutes of a node per incident). This only stops it firing before there is
-/// anything to read.
-/// How often the streaming loop wakes when the provider is sending nothing.
-///
-/// NOT A CAP, and the distinction is the whole point: expiry runs the judge-look trigger and then goes
-/// back to awaiting the same stream. Nothing is cancelled, failed, or given up on. It exists because
-/// every judge look lives inside the stream loop, so a call that has gone silent is a call the judge
-/// cannot see — which is precisely the call it most needs to see.
-const JUDGE_WAKE: std::time::Duration = std::time::Duration::from_secs(30);
-
-const OMNI_JUDGE_MIN_CHARS: usize = 2_000;
-
-/// The IO coalesce cadence every digest/sidecar write site rides — the two worker-digest write
-/// sites (main loop + judge-probe branch) and the forming observer's ArgsDelta coalescing. One
-/// constant so the three sites cannot drift apart: their comments already promised "the digest's
-/// own 400ms cadence" and only convention held them equal. An IO cadence, never a bound on model
-/// work (gate 5): expiry writes a file; nothing about the call changes.
-const DIGEST_IO_CADENCE: std::time::Duration = std::time::Duration::from_millis(400);
-
-/// The look-tail SCALE: how many chars of live reasoning ride in the digest's `last_thinking`,
-/// in the judge's own look tail, and in the re-stream seed's carried tail. One constant because
-/// the three are the SAME window by design — the judge reads what the digest carries, and the
-/// re-stream seed hands back exactly what was read. A message-formation scale on carried text,
-/// never a cap on model work (the transcripts are append-only and complete).
-const LOOK_TAIL_CHARS: usize = 2_000;
-
+// The judge's look constants — JUDGE_WAKE, OMNI_JUDGE_MIN_CHARS, DIGEST_IO_CADENCE, LOOK_TAIL_CHARS,
+// OMNI_JUDGE_GROWTH_CHARS — with their WHY and the REMOVED notes for the cadence clock (VA-056) and
+// OMNI_JUDGE_MAX_LOOKS moved verbatim to commands/swarm/ladder.rs under the incremental-split law,
+// paying for VA-056/VA-058's wiring in the worker loop below (the undelivered-NEXT clause, the
+// repeated-NEXT corroboration, the task-attempt `NudgeHistory`). Reached via `use ladder::...` above.
 // The nudge-ladder cluster — `produced_since_look`, `nudge_arm`, `calls_since_nudge`,
 // `nudge_delivery`, `restream_seed` and their tests — moved to commands/swarm/ladder.rs under the
 // incremental-split law, paying for the r6a fix's wiring below (the advancing hold and the
 // restream-seam ladder reset).
-
-/// Cap the looks per call so a very long healthy call cannot spend unbounded judge time.
-// REMOVED: OMNI_JUDGE_MAX_LOOKS (was 6). A cap on how many times the judge may look is a cap on how
-// long a call is supervised, and the judge is now the only thing watching.
-//
-// How much further reasoning, with NO intervening tool call, summons the judge again. This is not a
-// budget the call can exceed — nothing happens when it is crossed except that someone READS the call.
-const OMNI_JUDGE_GROWTH_CHARS: usize = 4_000;
 
 // #F924's RecurrenceMeter (and its REACH/MIN_SPAN/TRIGGER thresholds) moved to
 // commands/swarm/desk.rs under the incremental-split law: the shadow judge desk REPLAYS the
@@ -13002,6 +12939,16 @@ impl GooseAgentDispatcher {
         // Captured before the move: the judge loop below needs to know whether this call OWES a
         // structured reply, which is what makes "zero tool calls" a failure rather than a style.
         let wants_structured_reply = response.is_some();
+        // VA-056/VA-061: the reply's REQUIRED blocks, read from the schema THIS lane was given, and the
+        // [qN] tags its text owes — the judge's structured-reply block names them so "emit the COMPLETE
+        // reply" is this lane's fact, never a template. An absent schema is an honest empty: the block
+        // then says only that the schema decides.
+        let required_blocks: Vec<String> =
+            match response.as_ref().and_then(|r| r.json_schema.as_ref()) {
+                Some(schema) => schema_required_blocks(schema),
+                None => Vec::new(),
+            };
+        let question_tags = question_tags_in(&user_text);
         agent.apply_recipe_components(response, true).await;
         agent.override_system_prompt(system_prompt).await;
 
@@ -13226,8 +13173,6 @@ impl GooseAgentDispatcher {
         let omni_judge_on = omni_judge_enabled(load_config().omni_judge)
             && activity_key.is_some()
             && !supervision_lane;
-        let mut omni_next_look = tokio::time::Instant::now()
-            + std::time::Duration::from_secs(OMNI_JUDGE_FIRST_LOOK_SECS);
         let mut omni_looks: u32 = 0;
         // The event-driven look trigger's state: reasoning volume and tool-call count as of the last
         // look. Growth in the first with no change in the second is "talking without acting", which is
@@ -13290,12 +13235,12 @@ impl GooseAgentDispatcher {
         // period exceeds one look interval never shows the same window twice in a ROW, so the
         // old single-slot memory reset the streak forever — measured live at 191,000 chars.
         let mut omni_prior_looping_tails: Vec<std::collections::HashSet<u64>> = Vec::new();
-        // In-session redirects issued for this call. UNBOUNDED — the old JUDGE_NUDGE_MAX of 2 is gone.
-        // What escalates a nudge is not a counter but the judge seeing its own previous direction and
-        // whether the call obeyed it (see the escalation clause on the system prompt below).
-        let mut nudges_used: u32 = 0;
-        // The judge's last NEXT, fed back to it verbatim so it can tell "it ignored me" from "it tried".
-        let mut last_direction = String::new();
+        // The TASK ATTEMPT's supervision history — nudges delivered (UNBOUNDED; the old JUDGE_NUDGE_MAX
+        // is gone: what escalates a nudge is the judge seeing its own previous direction and whether the
+        // call obeyed it), the last delivered direction, every look's ESTABLISHED, and the previous
+        // look's undelivered NEXT. NEVER reset by the restream seam (VA-058 — the WHY and the r6e
+        // receipt are on `ladder::NudgeHistory`); the per-attempt ladder below is what the seam resets.
+        let mut history = NudgeHistory::default();
         // Tool-call count at the moment of the last nudge. Two jobs: it tells the judge whether the call
         // acted on the previous direction, and it decides HOW the next nudge is delivered — a call that
         // has taken an action since obeyed its steer and gets another; a call that has not has proven a
@@ -13565,16 +13510,14 @@ impl GooseAgentDispatcher {
             // #F924: a measured recurrence SUMMONS the judge immediately, ahead of the interval.
             // It never kills by itself — under UNCAPPED the judge decides, and this only ensures
             // the judge is looking, and knows what the detector saw, while the loop is running.
-            // THE JUDGE LOOKS WHEN THE CALL'S OWN BEHAVIOUR SAYS THERE IS SOMETHING TO LOOK AT.
-            // The old trigger was a clock and a counter: first look at 45s, then every 60s, at most 6.
-            // Both are gone. It looks when the deterministic recurrence detector trips, or when reasoning
-            // has grown by another chunk with NO tool call in between — growth without action is the shape
-            // worth reading. OMNI_JUDGE_MIN_CHARS stays as a READINESS floor, not a cap: a call cannot be
-            // assessed from an empty tail. The interval that remains only backs the judge off when it
-            // keeps answering OK; it bounds how often the JUDGE runs, never how long the worker may.
-            let grew_without_acting = thinking_chars
-                >= omni_thinking_at_last_look + OMNI_JUDGE_GROWTH_CHARS
-                && call_records.len() == omni_calls_at_last_look;
+            // THE JUDGE LOOKS WHEN THE CALL'S OWN BEHAVIOUR SAYS THERE IS SOMETHING TO LOOK AT — and
+            // since VA-056 that means EVIDENCE on every lane kind: the repeat detector, a degenerate
+            // answer, the recurrence meter, a forming-channel stall. The clock (first look at 45s,
+            // then every 60s, backing off to 300s) and the growth-without-acting chunk trigger are
+            // DELETED, not gated — the rule and the r6e receipt (58 planner-side looks, none of them
+            // evidence, ~185 node-min) are on `ladder::judge_summon_trigger`. OMNI_JUDGE_MIN_CHARS
+            // stays as a READINESS floor for the meter, not a cap: a call cannot be assessed from an
+            // empty tail.
             // Repeat evidence summons the judge IMMEDIATELY and bypasses the readiness floor: a call
             // stuck re-running one command may have emitted almost no reasoning at all, which is exactly
             // the case the char floor would hide.
@@ -13619,14 +13562,11 @@ impl GooseAgentDispatcher {
             // dropped it. Harmless to correctness — the abandon path is exactly what should happen once —
             // but it is 213 model calls of pure waste on one lane, and it scales with the deferred
             // backlog rather than with anything real.
-            // VA-013: a BUILD or REPAIR lane (no structured reply) is looked at on EVIDENCE only —
-            // repeat, degenerate answer, the recurrence meter, or a forming-channel stall; the
-            // cadence and growth-without-acting triggers stay for output-tool lanes. r6c measured
-            // 132 build-lane looks (99 cadence, 33 growth, ~925 look-min) for two compliances and
-            // zero kills, and zero recurrence looks anywhere in the run; the four build nudges it
-            // produced all came from growth looks, and the lane the loudest one hit (web-viz,
-            // "write the file right now") took no call for 46 minutes and ran 210 more. The rule
-            // is `ladder::judge_summon_trigger`; the name it returns rides the dispatched event.
+            // VA-013 / VA-056: EVERY lane is looked at on EVIDENCE only — repeat, degenerate answer,
+            // the recurrence meter, or a forming-channel stall. r6c measured 132 build-lane cadence/
+            // growth looks (~925 look-min) for two compliances and zero kills; r6e measured 58
+            // planner-side cadence/growth looks for three nudges none acted on. The rule is
+            // `ladder::judge_summon_trigger`; the name it returns rides the dispatched event.
             let forming_stall = omni_judge_on
                 && thinking_chars >= forming_sample_at_thinking + OMNI_JUDGE_GROWTH_CHARS
                 && {
@@ -13639,14 +13579,11 @@ impl GooseAgentDispatcher {
                     stalled
                 };
             let summon_trigger = judge_summon_trigger(SummonFacts {
-                structured_reply: wants_structured_reply,
                 repeat: repeat_evidence.is_some(),
                 degenerate: degenerate_answer,
                 ready: thinking_total >= OMNI_JUDGE_MIN_CHARS || acted_enough_to_judge,
                 recurring: recur.recurring(),
                 forming_stall,
-                grew_without_acting,
-                cadence_due: tokio::time::Instant::now() >= omni_next_look,
             });
             if omni_judge_on && !stream_ended_during_probe && summon_trigger.is_some() {
                 let produced_since_last_look =
@@ -13693,21 +13630,9 @@ impl GooseAgentDispatcher {
                     .as_ref()
                     .and_then(|p| forming_args_bytes(&p.with_extension("forming.json")));
                 omni_looks += 1;
-                // UNCAPPED keeps the judge watching for the call's whole life — with every wall and
-                // volume cap gone it is the ONLY stopper left, and a cap on its looks would turn
-                // "the judge decides" into "nothing decides after minute ~7". Past the normal look
-                // budget it backs off to 5-minute checks so a very long call costs bounded judge time.
-                // COST BACKOFF, not a budget. The recurrence trip and the growth-without-action trip
-                // above are the real triggers; this interval only stops the judge re-reading a call that
-                // keeps coming back OK. It bounds judge spend, never the worker's life — nothing happens
-                // to the call when it elapses except that someone looks at it again.
-                let look_interval = if omni_looks >= 6 {
-                    300
-                } else {
-                    OMNI_JUDGE_INTERVAL_SECS
-                };
-                omni_next_look =
-                    tokio::time::Instant::now() + std::time::Duration::from_secs(look_interval);
+                // UNCAPPED keeps the judge watching for the call's whole life — no look cap
+                // (OMNI_JUDGE_MAX_LOOKS is gone) and, since VA-056, no clock: the next look comes
+                // when the next piece of evidence does, never when an interval elapses.
                 let tail: String = {
                     let c: Vec<char> = last_thinking.chars().collect();
                     c[c.len().saturating_sub(LOOK_TAIL_CHARS)..]
@@ -13827,7 +13752,9 @@ impl GooseAgentDispatcher {
                     .get(activity_key.unwrap_or(""))
                     .cloned()
                     .unwrap_or_default();
-                if nudges_used > 0 {
+                if history.nudges_used > 0 {
+                    let (nudges_used, last_direction) =
+                        (history.nudges_used, history.last_direction.as_str());
                     let acted_since =
                         tool_calls_at_last_nudge.is_some_and(|n| call_records.len() > n);
                     // OBEDIENCE IS WRITE PROGRESS, NOT THE RAW COUNT (r6c web-viz, BUILD+294m):
@@ -13887,6 +13814,23 @@ impl GooseAgentDispatcher {
                              changed failure modes.",
                         );
                     }
+                }
+                // VA-056: A NEXT THE CALL NEVER HEARD. An OK verdict delivers nothing, so a direction
+                // the judge named on an OK look reached no one — r6e judge-research-__open_decisions__
+                // wrote "Emit the structured final_output now" on looks 1/2/3 (15:13, 15:16, 15:18Z)
+                // and the lane heard none of them. The judge is shown its own undelivered NEXT and
+                // whether the call acted since; if the concrete next action is STILL that one, the
+                // DRIFTING it answers is corroborated by the prior look (`repeated_next` at the verdict
+                // site) and delivered on this look, not a third.
+                if let Some(prior_next) = history.undelivered_next.as_deref() {
+                    sys.push_str(&format!(
+                        "\n\nYour previous look named NEXT: \"{prior_next}\" — and delivered nothing: \
+                         that look's verdict was not acted on, so the call never saw those words. Since \
+                         then it has taken {actions_since_last_look} action(s). If the single most \
+                         concrete next action is STILL that one, the call has not heard it: say DRIFTING \
+                         and name it again, and it will be delivered as a note this look. If the call has \
+                         moved past it, name the new one."
+                    ));
                 }
                 // #F924: the judge used to get one 2,000-char window and nothing else, which is why a
                 // ~4,000-char-period loop read as OK on every look. It now also gets the deterministic
@@ -14075,10 +14019,14 @@ impl GooseAgentDispatcher {
                 // two of three nodes sat idle waiting on it. Every verdict was DRIFTING, never LOOPING,
                 // because it genuinely produced ~4,000 FRESH characters between looks. It was not looping.
                 // It was enumerating forever into a channel that is not the deliverable.
+                // VA-056: keyed on the judge's OWN prior ESTABLISHED (every [qN] the lane owes
+                // covered), never on the tool-call count; VA-061: the ask is the COMPLETE reply, named
+                // from this lane's schema blocks — the WHY and the r6e receipts are on the fn.
                 let structured_block = structured_reply_block(
                     wants_structured_reply,
-                    call_records.is_empty(),
-                    thinking_chars,
+                    &history.established,
+                    &question_tags,
+                    &required_blocks,
                 );
                 let earlier_block = earlier_span_block(recur.earlier());
                 let user = format!(
@@ -14483,6 +14431,7 @@ impl GooseAgentDispatcher {
                     // no way to answer from the artifacts. Its verdict and the measured recurrence
                     // now land in run.jsonl where every other decision lives.
                     let omni_outcome = parse_judge_reply(&o.text);
+                    history.record_established(&omni_outcome.established);
                     let judge_eta_mins = parse_judge_eta_mins(&o.text);
                     let omni_hint = {
                         let h = omni_outcome.next_action.trim();
@@ -14725,8 +14674,15 @@ impl GooseAgentDispatcher {
                     // same standing the tool-repeat evidence already has. r4b's one correct direction
                     // ("call the output tool NOW") was held at streak 1 and the OK looks that followed
                     // reset the streak; the loop ran 24 minutes.
-                    let drift_corroborated =
-                        drift_verdict && (omni_drift_streak >= 2 || recur.recurring());
+                    // VA-056: on an output-tool lane the prior look's UNDELIVERED NEXT is the first
+                    // witness — the judge named an action, nothing delivered it, and the call took no
+                    // action since; a DRIFTING now is the second. Delivered on this look, not a third.
+                    let repeated_next = wants_structured_reply
+                        && drift_verdict
+                        && actions_since_last_look == 0
+                        && history.undelivered_next.is_some();
+                    let drift_corroborated = drift_verdict
+                        && (omni_drift_streak >= 2 || recur.recurring() || repeated_next);
                     let drifting_now =
                         drift_verdict && (!produced_anything_since_last_look || drift_corroborated);
                     if drift_verdict && produced_anything_since_last_look && !drift_corroborated {
@@ -14887,7 +14843,8 @@ impl GooseAgentDispatcher {
                         // ESCALATION comes from evidence, not a counter: the judge is shown its own last
                         // direction and whether the call acted on it (see the system prompt above), so the
                         // second note is sharper than the first because the second look sees more.
-                        nudges_used += 1;
+                        history.nudges_used += 1;
+                        let nudges_used = history.nudges_used;
                         let direction = omni_hint.clone().unwrap_or_else(|| {
                             "stop restating your plan; take the next concrete action on your \
                              owned files now"
@@ -14965,11 +14922,19 @@ impl GooseAgentDispatcher {
                         // by measured recurrence or by tail similarity) — and the payload named none of
                         // them, so "which trigger produces useful nudges" was unanswerable from any log
                         // the engine writes. The 1-in-34 action rate could be counted and never attributed.
-                        let arm = nudge_arm(repeat_measured, drifting_now, recur.recurring());
+                        let arm = nudge_arm(
+                            repeat_measured,
+                            repeated_next,
+                            drifting_now,
+                            recur.recurring(),
+                        );
                         self.events.write_value(serde_json::json!({
                             "event": "judge_nudge",
                             "task_id": activity_key,
                             "nudge": nudges_used,
+                            // VA-056: the prior look's undelivered NEXT this delivery corroborates on
+                            // (null when the arm is not `repeated_next`).
+                            "prior_next": history.undelivered_next,
                             "looks": omni_looks,
                             "thinking_chars": thinking_chars,
                             "hint": direction,
@@ -15002,7 +14967,7 @@ impl GooseAgentDispatcher {
                         // Emitted, not acted on: what the engine should DO depends on whether the lane is
                         // load-bearing, and choosing that from inside the judge loop would be guessing.
                         // This makes the state greppable so the decision rests on counts.
-                        if direction == last_direction && !direction.is_empty() {
+                        if direction == history.last_direction && !direction.is_empty() {
                             self.events.write_value(serde_json::json!({
                                 "event": "judge_out_of_moves",
                                 "task_id": activity_key,
@@ -15096,7 +15061,7 @@ impl GooseAgentDispatcher {
                                 }
                             }
                         }
-                        last_direction = direction.clone();
+                        history.direction_delivered(&direction);
                         tool_calls_at_last_nudge = Some(call_records.len());
                         answer_chars_at_last_nudge = Some(answer_chars_now);
                         owned_bytes_at_last_nudge = Some(owned_bytes_now);
@@ -15153,9 +15118,14 @@ impl GooseAgentDispatcher {
                             let abandoned_tool_calls =
                                 call_records.len().saturating_sub(calls_at_stream_start);
                             let carried_tail = tail_chars(&last_thinking, LOOK_TAIL_CHARS);
+                            // VA-058: EVERY look's ESTABLISHED rides the seed, not the last look's
+                            // alone — r6e viz3d's seed carried 238 chars of a 22,621-char stream and
+                            // dropped look 4's tie-case record, which the fresh attempt re-derived
+                            // (the receipt is on `ladder::NudgeHistory`).
+                            let seed_established = history.seed_established();
                             let restream_text = restream_seed(
                                 &user_text,
-                                &established,
+                                &seed_established,
                                 &direction,
                                 wants_structured_reply,
                                 &carried_tail,
@@ -15181,7 +15151,8 @@ impl GooseAgentDispatcher {
                                 "reason": delivery_reason,
                                 "abandoned_thinking_chars": abandoned_thinking_chars,
                                 "abandoned_tool_calls": abandoned_tool_calls,
-                                "established_chars": established.len(),
+                                "established_chars": seed_established.chars().count(),
+                                "established_looks": history.established.len(),
                                 "carried_tail_chars": carried_tail.chars().count(),
                             }));
                             stream = agent
@@ -15235,26 +15206,30 @@ impl GooseAgentDispatcher {
                             // nudge" and wiped it — the 22:11:09 restream took a 45-second-old
                             // attempt at 1,005 chars; the 22:20:21 one took 1,709 — while the
                             // carried drift streak (3+) meant no hold ever applied. A fresh
-                            // attempt has ignored nothing: it starts at nudge 0, look 1, and
-                            // earns its own ladder. KEPT deliberately: `omni_longest_gap_secs`
-                            // (the call's learned burst rhythm protects the fresh attempt),
-                            // `thinking_total` (the readiness floor reads the call's total so a
-                            // re-streamed lane stays observable — see post_restream_silence), and
-                            // the tool-repeat detector's state (its repeats are engine facts that
-                            // legitimately span attempts).
+                            // attempt has ignored nothing: it starts at look 1 and earns its own
+                            // ladder. KEPT deliberately: `omni_longest_gap_secs` (the call's
+                            // learned burst rhythm protects the fresh attempt), `thinking_total`
+                            // (the readiness floor reads the call's total so a re-streamed lane
+                            // stays observable — see post_restream_silence), the tool-repeat
+                            // detector's state (its repeats are engine facts that legitimately
+                            // span attempts), and `history` — the nudge count, the last delivered
+                            // direction and every look's ESTABLISHED belong to the TASK ATTEMPT,
+                            // not the stream (VA-058: r6e recorded the post-restream steer as
+                            // "nudge 1, first nudge", so the escalation clause told the judge it
+                            // had never redirected the call and the seed dropped four looks of
+                            // record). The seam names none of it.
                             tool_calls_at_last_nudge = None;
                             answer_chars_at_last_nudge = None;
                             owned_bytes_at_last_nudge = None;
-                            nudges_used = 0;
-                            last_direction.clear();
                             omni_drift_streak = 0;
                             omni_quiet_secs = 0;
                             omni_last_look_at = tokio::time::Instant::now();
                         }
-                        omni_next_look = tokio::time::Instant::now()
-                            + std::time::Duration::from_secs(OMNI_JUDGE_FIRST_LOOK_SECS);
                         continue;
                     }
+                    // No direction was delivered on this look: its NEXT is what the call never heard
+                    // (VA-056 — read back at the next look's prompt and verdict).
+                    history.note_undelivered(&omni_outcome.next_action);
                 } else if !stream_ended_during_probe {
                     // A FAILED PROBE MUST NOT RE-ARM THE BYPASS FOR THE REST OF THE CALL.
                     //

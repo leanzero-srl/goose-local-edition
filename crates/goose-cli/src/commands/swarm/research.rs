@@ -1955,7 +1955,10 @@ pub(super) fn research_system_text() -> String {
      name the conventional choice. Keep each answer under a page.\n\n\
      When ALL of them are done, call the final_output tool ONCE with {\"answers\": \
      [{\"question_index\": N, \"answer\": \"...\", \"raised\": [...]}, ...]} — one entry per \
-     [qN] tag with question_index = N, in any order. A tag you omit is recorded as UNANSWERED, \
+     [qN] tag with question_index = N, in any order. COMPOSE EACH ANSWER INSIDE THAT CALL'S \
+     ARGUMENTS: an answer drafted in your reasoning first is written twice and read by no one \
+     until the call lands — once a fact is settled, the next thing you write is the tool call \
+     that carries it. A tag you omit is recorded as UNANSWERED, \
      so include every one, even as \"cannot be settled: <why>; convention: <choice>\". `raised` \
      lists further questions you could NOT settle: do not answer them, and nothing will dispatch \
      them; they are handed VERBATIM to the builder of this slice as open points, so phrase each \
