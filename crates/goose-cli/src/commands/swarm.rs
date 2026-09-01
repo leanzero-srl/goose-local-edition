@@ -67,10 +67,10 @@ use orientation::{
 mod research;
 use research::{
     announce_research_phase, briefs_from_slices, emit_question_disposition, emit_research_outcome,
-    emit_research_planned, fold_research_panic, load_research_mini, persist_request_text,
-    relay_note, relay_targets, research_dispatch_text, research_fan_lanes, research_prompt_head,
-    research_request_block, research_schema, research_sources_block, research_system_text,
-    write_research_ledger, ResearchQuestion, ResearchRow, RESEARCH_ANSWERED,
+    emit_research_planned, files_from_objective, fold_research_panic, load_research_mini,
+    persist_request_text, relay_note, relay_targets, research_dispatch_text, research_fan_lanes,
+    research_prompt_head, research_request_block, research_schema, research_sources_block,
+    research_system_text, write_research_ledger, ResearchQuestion, ResearchRow, RESEARCH_ANSWERED,
 };
 mod research_plan;
 use research_plan::{covering_mini, route_questions_to_decisions};
@@ -12529,15 +12529,6 @@ pub struct GooseAgentDispatcher {
     /// nodes while the integrate-verify sink runs solo; drained + re-verified by run_swarm after the sink.
     /// Empty unless the flag is on.
     sink_review_findings: Mutex<Vec<String>>,
-    /// Surgeon #9's find (r6 addendum): the mid-run replanner reads `Scheduler::goal` (the spec
-    /// copy), which carries USER answers but never the research-settled conventions — so a replan
-    /// round could re-open a convention the plan-time fan had settled (the r4 shadow class, by a
-    /// different door). The complete settled block (PLAN_SETTLED_DECISIONS_HEADER + Q/A pairs),
-    /// stored at the plan-time fold and appended to the replanner's prompt beside the goal.
-    /// Written per planning round (a retarget recomputes it; latest wins); empty means research
-    /// settled nothing this session — a resume without a planning round stays empty, same absence
-    /// the replanner always had.
-    settled_decisions: Mutex<String>,
     /// #136 SAFETY: the OPERATOR's spec as it stood before any model wrote into it. `opts.prompt` is APPENDED
     /// TO by model output twice — research findings (swarm.rs:19660) and clarify Q&A (:19799) — and a retarget
     /// round RE-PLANS with that enlarged prompt. Parsing delegation from the live prompt would therefore let
@@ -12777,7 +12768,6 @@ impl GooseAgentDispatcher {
             qa_inflight: Mutex::new(std::collections::HashSet::new()),
             judge_seen: Mutex::new(std::collections::HashMap::new()),
             sink_review_findings: Mutex::new(Vec::new()),
-            settled_decisions: Mutex::new(String::new()),
             spec_frozen: Mutex::new(String::new()),
             owner_snapshots: Mutex::new(HashMap::new()),
             prompt_delivered: Mutex::new(HashMap::new()),
@@ -18501,7 +18491,10 @@ fn spec_documented_keys(spec: &str, method: &str, path: &str) -> Vec<String> {
             return keys;
         }
     }
-    Vec::new()
+    // VA-005: the row's own cell documented no shape (sb-7 writes `shape below` for /api/health,
+    // /api/summary and /api/buckets) — read the fenced shape under the row's label in the
+    // advertising section. Empty when there is none; the caller then asserts nothing.
+    spec_surface::spec_prose_documented_keys(spec, method, path)
 }
 
 /// Q2(b2): does the advertising row document RFC3339 UTC for this endpoint's timestamps? The
@@ -22110,21 +22103,14 @@ async fn run_linear_plan(
             "still_open_detail": open_detail,
         }));
     }
-    // Amendment (c): research-settled answers ride the same verbatim worker channel as user
-    // answers (DispatchRequest.user_decisions, four dispatch sites) — under their OWN provenance
-    // header, never USER_DECISIONS_HEADER (a GEN-4 overclaim for a researched convention).
-    let research_settled = decisions::research_settled_worker_block(&plan_decisions);
-    if !research_settled.is_empty() {
-        user_decisions.push_str(decisions::PLAN_SETTLED_DECISIONS_HEADER);
-        user_decisions.push_str(&research_settled);
-        // The same block, for the mid-run replanner (surgeon #9's find): `ReplanContext.goal` is
-        // the spec copy, which carries user answers but not these — without them a replan round
-        // can re-open a convention the fan settled. Same provenance header, stored whole.
-        *dispatcher.settled_decisions.lock().unwrap() = format!(
-            "{}{research_settled}",
-            decisions::PLAN_SETTLED_DECISIONS_HEADER
-        );
-    }
+    // Research-settled decisions reach a builder ONCE, per slice and whole, inside its brief
+    // (`slice_decisions_block`, VA-012) — the brief is the task description, which is the worker
+    // prompt's body. The former worker-channel copy (every decision, cut at 1,500 chars, under a
+    // second header appended to `user_decisions`) was a second rendering of the same facts on
+    // every dispatch (r6c: 4,500 chars beside the brief's own 5,582-char block, in all eight
+    // build prompts) and is deleted (VA-030); `user_decisions` carries the USER's own answers
+    // only. A repair shard, which has no slice brief, still reads the decisions lane's minis in
+    // its ledger block.
 
     // ---- SYNTHESIS, the straight line ----------------------------------------------------------
     // Everything from the slices to a loadable DAG lives in `plan_slices_to_dag`, injected with the
@@ -22240,6 +22226,15 @@ impl GooseAgentDispatcher {
         let mut rows: Vec<ResearchRow> = Vec::new();
         let mut fact_rows: Vec<ResearchRow> = Vec::new();
         let mut to_dispatch: Vec<(ResearchQuestion, String)> = Vec::new();
+        // The plan-wide view `consumed_spec_sections` needs (VA-030): every slice's claims, so
+        // rule (c) counts claimants across the plan instead of seeing one, and this slice's
+        // declared files, so rule (a) can match an advertised route against `web/app.js`'s
+        // callers — the same two inputs `briefs_from_slices` hands the same helper.
+        let every_claim: Vec<&[String]> = opened
+            .slices
+            .iter()
+            .map(|sl| sl.sections.as_slice())
+            .collect();
         for sl in &opened.slices {
             if sl.questions.is_empty() {
                 continue;
@@ -22251,6 +22246,8 @@ impl GooseAgentDispatcher {
                     armed,
                     &sl.id,
                     &sl.sections,
+                    &files_from_objective(&sl.objective),
+                    &every_claim,
                     self.events.as_ref(),
                 ),
                 &sl.id,
