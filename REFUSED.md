@@ -79,4 +79,5 @@ proposing something new: a refused item that matches gets revived-or-re-refused 
 - **refused:** 2026-08-30 02:30 EEST, transcribed out of P1-5 per the refuter (a refusal may not hide inside a build row)
 - **why:** r2 measured the one-round REVIEW working: 7 min, 9 findings → 10 patch touches, sharing 0 / owning-nothing 0, no round 2. Deleting a mechanism the run just proved earns its keep contradicts the evidence rule; RESEARCH/coverage die, REVIEW stays.
 - **revive if:** a later run shows REVIEW's round adding wall time without changing the plan flags (findings that patch nothing).
+- **REVIVED AND DONE 2026-09-01 (VA-014):** the revive-if condition was met three times over — r5 52.6 wall-min (the one patch, `brush-contract`, 658-char brief, the brush ReferenceError shipped anyway), r6c 28.1 wall-min (`decisions-doc`, 387-char brief, nothing depended on it), r6b/r6d one finding and zero patches. The round is deleted; the deterministic repairs in `finalize_plan_before_dag` stay.
 

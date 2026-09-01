@@ -146,11 +146,19 @@ broken live HERE, and the rules files carry the detail for whoever does hit them
    after its verdict, and 41 leaked servers were found holding ports. Proof without a run:
    `goose swarm gate <archived tree> --spec evals/swarm-bench/spec-build-sb7.md` must return and leave
    `tick.py` at `orphans: 0`.
-6. **REVIEW is ONE round (`review_once`); no planning phase loops on an LLM's own novelty.** r1's REVIEW
-   surfaced 8 → 4 → 9 new findings across three rounds, 51 minutes and 209k reasoning chars, because a
-   27B reviewer always finds another "not explicitly owned" concern. The measured plan flags
-   (`tasks_owning_nothing`, `module_package_collisions`, `shared_files`) are injected as MUST-FIX instead.
-   A terminator that waits for an LLM to find nothing is not a terminator.
+6. **The LLM REVIEW round is DELETED (VA-014, 2026-09-01); no planning phase loops on an LLM's own
+   novelty, and none is re-added without the measurement gate 9 demands.** History: r1's REVIEW surfaced
+   8 → 4 → 9 new findings across three rounds, 51 minutes and 209k reasoning chars, because a 27B
+   reviewer always finds another "not explicitly owned" concern, so it was cut to ONE round
+   (`review_once`). Then three runs measured the one round at ZERO effective patches: r5 (52.6 wall-min,
+   4 lanes) added `brush-contract` with a 658-char brief and the brush ReferenceError shipped anyway;
+   r6c (28.1 wall-min) added `decisions-doc` with a 387-char brief that nothing depended on while its
+   findings claimed "both now depend on it"; r6b/r6d one finding, zero patches — ~140–206 node-minutes
+   per run to rediscover flags the engine had already computed. The plan's structural defects are
+   repaired DETERMINISTICALLY in `finalize_plan_before_dag` (`repair_plan_flags`: owning-nothing,
+   shared files, module/package shadows, the join's files, unowned advertised entries) — that is what
+   stays, and `plan_slices_to_dag`'s seam test pins open → synthesis → plan_repaired with no review
+   event between. A terminator that waits for an LLM to find nothing is not a terminator.
 
 **Every worker call has FIVE lane-building paths in the UI and one shared join, `digestStreamFields()`.**
 Never hand-copy a digest field onto a lane; the join diverged twice that way and the failure is invisible

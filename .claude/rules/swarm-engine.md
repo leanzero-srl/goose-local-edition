@@ -80,17 +80,21 @@ checks imports/owned files — so it can prove neither a hang nor a phantom endp
 
 CONTRACTS is deleted (the 2,527-char contract NARROWED r2's build — meridian/viz/static silently dropped),
 and so are RESEARCH, coverage, the resplit and the ASK proxy. `plan_slices_to_dag` is the injectable seam;
-its test pins the sequence open → synthesis → review(1) → plan_repaired. `dep_signatures` ships OFF; the ON
+its test pins the sequence open → synthesis → plan_repaired (the review round is deleted, below). `dep_signatures` ships OFF; the ON
 form is `shape_excerpt` (signatures + key-literal/route/return-dict lines). Unassigned gate findings
 attribute by endpoint-literal grep, else the entry file, else the `known_bugs` event — the `fix::rN::#join`
 residue task and the cross-file join twin are gone.
 
-## REVIEW is one round (`5173eab67`)
+## The LLM REVIEW round is deleted (VA-014, 2026-09-01; was one round since `5173eab67`)
 
-`review_once`; the loop, `review_oscillating`, `review_patch_stuck`, `RejectMemo` are deleted. The
-measured flags from `decomposition_of` are rendered by `review_must_fix_block` into the prompt. r1's
-three rounds (8 → 4 → 9 new, 51 min, 209k chars) are the reason; `review_dedupe_key` now de-dupes lane
-rephrasings WITHIN the round so `review_findings.new` counts distinct findings.
+`review_once`, `review_plan_fanned`/`review_plan_part`, `review_user_message`, `review_must_fix_block`,
+`review_patch_schema`, the request section cuts and the `review_merge` module (per-lane patch union) are
+gone, with their tests; no `phase: review`, `review_findings`, `plan_patched` or `review_failed` event is
+emitted. Measured over three runs the round produced zero effective patches (r5 52.6 wall-min / r6c
+28.1 / r6b+r6d one finding, zero patches; ~140–206 node-min per run) — every flag it was aimed at is
+repaired deterministically by `repair_plan_flags` inside `finalize_plan_before_dag`, which is the whole
+of what remains between synthesis and the DAG. The measured flags still come from `decomposition_of`
+(now `commands/swarm/plan_shape.rs`) and ride `plan_synthesized` / `plan_repaired.before/after`.
 
 ## The deterministic gate probes ledgerd's OWN table (`0d5ac740d`)
 
