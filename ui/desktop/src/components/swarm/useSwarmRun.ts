@@ -4894,7 +4894,20 @@ export function useSwarmRun(
           // with sourceMissing rather than flashing the empty placeholder — presence-based only,
           // never a timer (the no-timer-hides-a-run rule in swarmRunLiveness).
           if (lastRunId.current != null) {
-            setState((s) => ({ ...s, sourceMissing: true, loading: false }));
+            // U-M5: the run's files no longer resolve, so the heartbeat that was READ FROM THEM is no
+            // longer a fact about anything — held as-is it kept aging, and 45s later the panel raised
+            // "No heartbeat… most likely hard-killed; nothing discarded" over a run whose files were
+            // GONE (archived or deleted), relabelling its rows "interrupted". Truth layer: the fact that
+            // invalidates the heartbeat claim must UPDATE it, not only set a flag beside it. Null reads
+            // as liveness 'unknown' — never 'silent' — and `sourceMissing` is the distinct state the
+            // panel renders instead (an "its files are gone" band, not the hard-killed one).
+            setState((s) => ({
+              ...s,
+              sourceMissing: true,
+              heartbeat: null,
+              heartbeatExited: false,
+              loading: false,
+            }));
           } else {
             setState({ ...EMPTY, loading: false });
           }
