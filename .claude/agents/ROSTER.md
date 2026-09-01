@@ -578,3 +578,9 @@ research_request_block's armed-no-claimed-sections arm wording.
   documented observe-only false; stated the security model (RCE among same-account devices) loudly;
   left the ACP method + dispatcher graft to the correct owners rather than half-wiring. Deviations
   each reasoned (executor as start-param not Debug-config-field). Charter gap: none.
+- 2026-09-01 link-backend (leanzeroLink/remoteExecute ACP, 179c60288): CLEAN+. Thin well-typed
+  wrapper in the exact idiom; every LinkError variant mapped (busy/disabled/unwired/unknown-peer →
+  invalid_params with verbatim status text so the UI shows it as-is; transport/internal → internal);
+  factored not_connected_to_mesh_err() so the connect-first test asserts the real literal not a
+  tautology; chose isolation-safe pure tests over driving the process-wide LINK OnceLock + real
+  identity file, and said why. Did not duplicate leanzeroLink/nodes. Charter gap: none.
