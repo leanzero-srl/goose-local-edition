@@ -92,6 +92,20 @@ impl AgentManager {
             .cloned()
     }
 
+    /// The process-wide manager only if [`Self::instance`] has already built it — a read
+    /// that never constructs one. A process that only ever built its own manager (the ACP
+    /// server under `goose serve`) must not conjure a second one by asking.
+    pub fn instance_if_built() -> Option<Arc<Self>> {
+        AGENT_MANAGER.get().cloned()
+    }
+
+    /// Every session id holding an in-flight cancel token right now — the busy set, read
+    /// from the token map alone. Independent of the session store and of the agent cache,
+    /// so a reply that is running stays visible while either of those is unreadable.
+    pub async fn busy_session_ids(&self) -> Vec<String> {
+        self.cancel_tokens.read().await.keys().cloned().collect()
+    }
+
     pub fn scheduler(&self) -> Arc<dyn SchedulerTrait> {
         Arc::clone(
             self.agent_config

@@ -15,6 +15,7 @@ use futures::{stream::StreamExt, Stream};
 use goose::agents::{AgentEvent, SessionConfig};
 use goose::conversation::message::Message;
 use goose::conversation::Conversation;
+use goose::execution::manager::AgentManager;
 use serde::{Deserialize, Serialize};
 use std::{
     convert::Infallible,
@@ -369,6 +370,25 @@ pub enum ReplyDispatchError {
     AlreadyActive,
 }
 
+/// Releases the session's [`AgentManager`] cancel token when the reply task ends by ANY
+/// path — finish, error return, cancel, panic — the way [`RequestGuard`] releases the
+/// bus request. The token map is the busy set the LeanZero Link idle guard reads; a
+/// token left behind would report this node Busy forever and refuse every peer.
+struct AgentBusyGuard {
+    manager: Arc<AgentManager>,
+    session_id: String,
+}
+
+impl Drop for AgentBusyGuard {
+    fn drop(&mut self) {
+        let manager = self.manager.clone();
+        let session_id = self.session_id.clone();
+        tokio::spawn(async move {
+            manager.unregister_cancel_token(&session_id).await;
+        });
+    }
+}
+
 /// The shared reply-dispatch core: register `request_id` on the session's event bus and
 /// spawn the agent reply task that streams every `MessageEvent` to the per-session bus AND
 /// the process-wide delta tap (the LeanZero Link mesh mirror). Both
@@ -391,6 +411,22 @@ pub async fn spawn_reply_task(
         .await
         .map_err(|_| ReplyDispatchError::AlreadyActive)?;
 
+    // Both doors into a reply — this one and the ACP `on_prompt` path — register the run
+    // in the AgentManager's token map, the busy set the LeanZero Link idle guard and
+    // `cancel_session` read. The bus registration above is per-request; this one is
+    // per-session, and a token already present means another door (an ACP prompt run,
+    // a subagent) holds the session: refuse as AlreadyActive and release the bus
+    // request just taken, never run two replies on one session.
+    if let Err(error) = state
+        .agent_manager
+        .try_register_cancel_token(&session_id, cancel_token.clone())
+        .await
+    {
+        tracing::warn!(%session_id, %error, "reply refused: the session is busy in another run");
+        bus.cleanup_request(&request_id).await;
+        return Err(ReplyDispatchError::AlreadyActive);
+    }
+
     let task_state = state.clone();
     let task_session_id = session_id.clone();
     let task_request_id = request_id.clone();
@@ -399,6 +435,10 @@ pub async fn spawn_reply_task(
 
     drop(tokio::spawn(async move {
         let mut _guard = RequestGuard::new(task_bus.clone(), task_request_id.clone());
+        let _busy_guard = AgentBusyGuard {
+            manager: task_state.agent_manager.clone(),
+            session_id: task_session_id.clone(),
+        };
 
         let publish = |rid: Option<String>, event: MessageEvent| {
             let bus = task_bus.clone();
@@ -640,6 +680,13 @@ pub async fn spawn_reply_task(
         )
         .await;
 
+        // Release the busy registration inline on the normal path so the next reply on
+        // this session is not refused by a token the guard's spawned drop has not yet
+        // removed; the guard stays as the net for every other exit.
+        task_state
+            .agent_manager
+            .unregister_cancel_token(&task_session_id)
+            .await;
         _guard.disarm();
         task_bus.cleanup_request(&task_request_id).await;
     }));
@@ -684,4 +731,88 @@ pub fn routes(state: Arc<AppState>) -> Router {
         )
         .route("/sessions/{id}/cancel", post(session_cancel))
         .with_state(state)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use goose::config::GooseMode;
+    use goose::session::session_manager::SessionType;
+    use tokio_util::sync::CancellationToken;
+
+    /// The goose-server reply door: a session whose AgentManager token is held by the
+    /// OTHER door (an ACP prompt run, a subagent) is refused as `AlreadyActive`, and the
+    /// bus request taken for it is released — never two replies on one session.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn spawn_reply_task_refuses_a_session_busy_in_another_run() {
+        let state = AppState::new(true).await.unwrap();
+        let session = state
+            .session_manager()
+            .create_session(
+                std::env::temp_dir(),
+                "busy elsewhere".to_string(),
+                SessionType::User,
+                GooseMode::default(),
+            )
+            .await
+            .unwrap();
+        state
+            .agent_manager
+            .try_register_cancel_token(&session.id, CancellationToken::new())
+            .await
+            .unwrap();
+
+        let request_id = uuid::Uuid::new_v4().to_string();
+        let outcome = spawn_reply_task(
+            state.clone(),
+            session.id.clone(),
+            request_id.clone(),
+            Message::user().with_text("hi"),
+            None,
+        )
+        .await;
+        assert!(matches!(outcome, Err(ReplyDispatchError::AlreadyActive)));
+
+        let bus = state
+            .get_event_bus(&session.id)
+            .await
+            .expect("the bus was allocated before the refusal");
+        assert!(
+            !bus.active_request_ids().await.contains(&request_id),
+            "the refused request must not stay registered on the bus"
+        );
+        // The other door's token is untouched by the refusal.
+        assert!(state.agent_manager.is_session_busy(&session.id).await);
+        state
+            .agent_manager
+            .unregister_cancel_token(&session.id)
+            .await;
+    }
+
+    /// The guard that rides the spawned reply task releases the busy registration on drop,
+    /// whichever way the task ends.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn agent_busy_guard_releases_the_token_on_drop() {
+        let state = AppState::new(true).await.unwrap();
+        let session_id = format!("guard-{}", uuid::Uuid::new_v4());
+        state
+            .agent_manager
+            .try_register_cancel_token(&session_id, CancellationToken::new())
+            .await
+            .unwrap();
+        assert!(state.agent_manager.is_session_busy(&session_id).await);
+
+        drop(AgentBusyGuard {
+            manager: state.agent_manager.clone(),
+            session_id: session_id.clone(),
+        });
+        // The drop spawns the release; give the runtime a turn to run it.
+        for _ in 0..50 {
+            if !state.agent_manager.is_session_busy(&session_id).await {
+                return;
+            }
+            tokio::task::yield_now().await;
+        }
+        panic!("the busy token was not released after the guard dropped");
+    }
 }
