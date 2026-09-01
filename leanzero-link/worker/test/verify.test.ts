@@ -39,6 +39,8 @@ describe("POST /v1/auth/verify", () => {
     const body = await responseJson(response);
     expect(body.email).toBe(EMAIL);
     expect(body.audienceSync).toBe("synced");
+    expect(body.nodeSecret).toMatch(/^[0-9a-f]{64}$/);
+    expect(Object.keys(body).sort()).toEqual(["audienceSync", "email", "nodeSecret", "token"]);
 
     const verified = await verifyJwt("unit-test-jwt-secret", String(body.token), Math.floor(h.clock.now() / 1000) + 1);
     expect(verified.ok).toBe(true);

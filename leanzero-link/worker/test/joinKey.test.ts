@@ -93,6 +93,7 @@ describe("POST /v1/mesh/join-key", () => {
     expect(await responseJson(response)).toEqual({
       authKey: TAILSCALE_CREATE_KEY_FIXTURE.key,
       expirySeconds: 600,
+      nodeSecret: expect.stringMatching(/^[0-9a-f]{64}$/),
     });
 
     expect(h.calls).toHaveLength(1);
@@ -132,6 +133,7 @@ describe("POST /v1/mesh/join-key", () => {
     expect(await responseJson(response)).toEqual({
       authKey: TAILSCALE_CREATE_KEY_FIXTURE.key,
       expirySeconds: 600,
+      nodeSecret: expect.stringMatching(/^[0-9a-f]{64}$/),
     });
 
     expect(h.calls).toHaveLength(1);
