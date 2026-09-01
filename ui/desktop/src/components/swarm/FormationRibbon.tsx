@@ -48,7 +48,7 @@ export function FormationRibbon({
    *  this, which returned every chip to 'upcoming': pausing erased the run's whole history. */
   held?: boolean;
 }) {
-  // The steps are THIS run's: the live pipeline plus any retired phase (research/contracts — deleted
+  // The steps are THIS run's: the live pipeline plus any retired phase (review/contracts — deleted
   // from the engine) that the run's own events prove it ran. An archived run keeps its historical
   // chips; a new run is never offered a stage the engine cannot reach. One column per step —
   // Tailwind's `grid-cols-N` is a static class, so the template is derived from the list.
