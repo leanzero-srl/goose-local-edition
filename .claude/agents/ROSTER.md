@@ -800,3 +800,8 @@ research_request_block's armed-no-claimed-sections arm wording.
   calls vs 10) justified by the verification rule. The charter survives a model downgrade; note
   for capacity planning: sonnet suffices for structured farce/routing reads when briefed with
   known-facts + exact questions. Charter gap: none.
+- 2026-09-01 04:20 tick-surgeon #36 (sonnet): EXCELLENT. Turned "the critical fell through" into the
+  exact retiring mechanism (promoted shard retires its FILE while the finding survives), proved the
+  absence with a both-rounds grep, caught the drafts.py lost-fix as the same class, and held the
+  leak call one tick rather than guessing owners. Sonnet is holding the charter under budget.
+  Charter gap: none.
