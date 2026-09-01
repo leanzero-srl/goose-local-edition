@@ -279,7 +279,7 @@ fn the_banned_integrate_template_only_shrinks() {
 /// and "you may edit ANY file" against its own order).
 #[test]
 fn swarm_rs_line_count_only_decreases() {
-    const SWARM_RS_LINE_BASELINE: usize = 41_054;
+    const SWARM_RS_LINE_BASELINE: usize = 40_993;
     let text = read("crates/goose-cli/src/commands/swarm.rs");
     let n = text.lines().count();
     assert!(

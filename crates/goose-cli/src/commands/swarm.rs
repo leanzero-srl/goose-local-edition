@@ -7250,19 +7250,6 @@ mod tests {
     }
 
     #[test]
-    fn web_vocab_note_fires_for_frontend_owners_only() {
-        // css/html owners always get the vocabulary obligation.
-        assert!(web_vocab_note(&["web/styles.css".into()], true).contains("ONE vocabulary"));
-        assert!(web_vocab_note(&["web/index.html".into()], true).contains("hidden by default"));
-        // js only under a frontend-shaped path — a Node backend shares no styling vocabulary.
-        assert!(web_vocab_note(&["server/api.js".into()], true).is_empty());
-        assert!(web_vocab_note(&["web/app.js".into()], true).contains("ONE vocabulary"));
-        // python-only tasks and the OFF gate stay byte-identical.
-        assert!(web_vocab_note(&["pkg/store.py".into()], true).is_empty());
-        assert!(web_vocab_note(&["web/styles.css".into()], false).is_empty());
-    }
-
-    #[test]
     fn ask_replan_defaults_off_and_opts_in() {
         // Default (unset) now REUSES the plan (skip the re-plan, per the UNIQ12/UNIQ12b A/B); opt INTO the
         // re-plan only with an explicit on-value.
@@ -28351,57 +28338,6 @@ fn render_pillars_block(p: &Pillars) -> String {
     )
 }
 
-/// WEB-TRIPLET VOCABULARY (F870, the authoring-time half). swarm-3node-r0's css worker
-/// designed 36 class rules, its html worker wrote id-only markup, and its js worker invented
-/// a third vocabulary for generated rows — three honest workers, zero shared names, an
-/// unstyled page. The module contracts freeze Python signatures but nobody froze the ONE
-/// thing a web triplet actually shares: its class/id names. This note makes the vocabulary a
-/// stated obligation and licenses the ONE read that satisfies it (the sibling web files),
-/// overriding the no-exploration rule exactly as SKELETON-FIRST does. Fires for owners of
-/// .css/.html always, and for .js/.mjs only under a frontend-shaped path — a Node backend's
-/// js has no styling vocabulary to share. Gated on GOOSE_SWARM_WEB_VOCAB (default ON).
-fn web_vocab_note(owned_files: &[String], enabled: bool) -> String {
-    let frontend_js = |f: &str| {
-        (f.ends_with(".js") || f.ends_with(".mjs") || f.ends_with(".ts") || f.ends_with(".tsx"))
-            && f.split('/')
-                .any(|seg| matches!(seg, "web" | "static" | "public" | "frontend" | "assets"))
-    };
-    let owns_web = owned_files.iter().any(|f| {
-        f.ends_with(".css") || f.ends_with(".html") || f.ends_with(".htm") || frontend_js(f)
-    });
-    if !enabled || !owns_web {
-        return String::new();
-    }
-    // A CONCRETE, FROZEN ID LIST — not an instruction to agree. Telling three workers to "share
-    // one vocabulary" is a hope, and the measured outcome is a lottery: one run drifted on 2 ids,
-    // the next on SEVEN (`summary`, `filter-btn`, `filter-menu`, `table-body`, `pagination`,
-    // `loader`, `error-banner` — every one referenced by app.js and defined by no html), which
-    // made 7 of that run's 10 findings and left the page inoperable. The contracts phase freezes
-    // Python signatures between modules for exactly this reason; the DOM is a cross-file
-    // interface too, and it was the only one left unfrozen. These ids are fixed, spelled here,
-    // and identical in every web worker's prompt, so agreement is structural rather than
-    // negotiated.
-    "\nWEB VOCABULARY — A FROZEN CONTRACT, NOT A SUGGESTION (you own a frontend file; this also \
-     ADDS one permitted read to the rules below). The page's html, css and js MUST share ONE \
-     vocabulary. Use EXACTLY these element ids, spelled exactly like this, for the parts the \
-     spec describes — the html DEFINES them, the js looks them up, the css may style them:\n\
-     - `app-root` the page container; `app-title` the heading\n\
-     - `sync-button` the control that starts a sync; `last-sync` its status/timestamp readout\n\
-     - `payments-table` the table; `payments-body` its <tbody> that rows are appended to\n\
-     - `summary-total` the count/total readout; `status-filter` the status filter control\n\
-     - `pagination` the pager container; `prev-page` and `next-page` its buttons; `page-info` its \
-     \"showing X-Y of N\" readout\n\
-     - `loading-state`, `empty-state`, `error-state` the three state containers\n\
-     An id the js queries that the html never defines is a GUARANTEED null at runtime and a \
-     BLOCKING finding — it is the single most common way this page ships broken. Do not invent \
-     parallel names, do not rename these, and do not assume a sibling used something else: this \
-     list IS the agreement. You may read the sibling web files to match their classes (class \
-     names are yours to choose, but css selectors must match the markup that exists, or the page \
-     ships unstyled and FAILS verification). State containers must be hidden by default and \
-     toggled by the js — never all visible at once."
-        .to_string()
-}
-
 /// F790-2: the worker's FAILED tool calls, from the activity digest's `calls` records — the
 /// evidence a supervisor verdict should cite. Pure over the parsed digest, capped to the last 3
 /// failures with result tails, so a noisy worker cannot flood the judge prompt.
@@ -30202,9 +30138,10 @@ impl GooseAgentDispatcher {
                 );
                 let multifile_note =
                     briefs::multifile_stub_note(&req.owned_files, skeleton_first, repairing);
-                let web_note = web_vocab_note(
+                let web_note = briefs::web_vocab_note(
                     &req.owned_files,
                     swarm_gate_cfg("GOOSE_SWARM_WEB_VOCAB", true),
+                    repairing,
                 );
                 // A TEST AUTHOR OWNS A FILE, SO IT LANDS HERE — AND EVERY THIRD SENTENCE IS FALSE FOR IT.
                 //
@@ -30578,7 +30515,9 @@ impl GooseAgentDispatcher {
         // over_reading+looping and 42% of file-writing workers burn reads before their first write; 58% of
         // workers already write first, so the ordering is achievable on the same models. This SHAPES the
         // prompt only — it never blocks a read. Empty when off => the worker prompt is byte-identical.
-        let write_first_block = if write_first_on() {
+        // Never for a REPAIR shard: its file exists, and "your VERY FIRST tool call MUST be a `write`"
+        // contradicts the repair order's read-the-named-part-then-edit (same disarm as the stub notes).
+        let write_first_block = if write_first_on() && !repairing {
             "\nWRITE FIRST — before you read ANYTHING. Your VERY FIRST tool call MUST be a `write` that creates \
              one of your OWNED files as a working skeleton (its imports and the functions/classes the manifest \
              names, with minimal bodies), then fill it in. Do NOT `cat`/`ls`/`tree`/`find`/`grep`/'explore' \
