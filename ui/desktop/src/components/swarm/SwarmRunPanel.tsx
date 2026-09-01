@@ -45,7 +45,6 @@ import {
   type ClarifyProxy,
   type RunOverview as RunOverviewData,
   type RunVerdict,
-  answerWindowOf,
   cleanTaskTitle,
   isPlanningDigestKey,
   saidKindOf,
@@ -1526,31 +1525,21 @@ export function thinkingCaption(
   return `${n} chars`;
 }
 
-/** The raw digest a task row holds, as the stream shape the shared rules read. This card receives the
- *  digest, not a joined lane (the join's `liveChannelFor` keeps per-lane memory, so it cannot run from a
- *  render helper); the answer-window key goes through `answerWindowOf`, the join's own read, so the card
- *  can never disagree with the lanes about which wire key the window is under. */
-function streamLaneOfDigest(digest: Record<string, unknown>): StreamLane {
-  const str = (k: string) => (typeof digest[k] === 'string' ? (digest[k] as string) : undefined);
-  return {
-    fullThinking: str('full_thinking'),
-    answerWindow: answerWindowOf(digest),
-    reasoning: str('reasoning'),
-    lastThinking: str('last_thinking'),
-    fullTranscript: str('full_transcript'),
-    lastText: str('last_text'),
-  };
-}
-
 /**
  * The text the per-task LIVE GENERATION card shows.
  *
  * It reached for `full_reasoning` — the engine's 24,000-char answer WINDOW — first, and never looked at
  * the durable logs sitting unread in the same digest object, so this surface still showed a clipped
  * transcript after every other reader had been moved onto the append-only logs.
+ *
+ * THE INPUT IS A JOINED LANE, never a raw digest. This card used to receive the digest and map its keys
+ * by hand (`streamLaneOfDigest`) — a second copy of `digestStreamFields` by construction, the exact
+ * shape that diverged twice on the lane paths; it read the answer window through the join's own key
+ * read and still owned its own list of which keys exist. The lane it now gets was joined once, in the
+ * hook (deriveFleet / deriveNodeHistory for a digest no event lane claims), so the card cannot learn a
+ * different rule than the lanes about ANY field.
  */
-export function taskGenReasoning(digest: Record<string, unknown>): string {
-  const lane = streamLaneOfDigest(digest);
+export function taskGenReasoning(lane: StreamLane): string {
   // BOTH DURABLE LOGS OUTRANK EVERY DIGEST VIEW; then the answer channel's window (the larger record,
   // via laneNarrative's chain), then the thinking window — the two inspector panes' orders, composed.
   const durable = lane.fullThinking?.trim() || liveTranscript(lane) || '';
@@ -1580,8 +1569,7 @@ export function narrativeWindowNote(lane: StreamLane): string | null {
 }
 
 /** taskGenReasoning's chain: BOTH durable logs outrank the window. */
-export function taskGenWindowNote(digest: Record<string, unknown>): string | null {
-  const lane = streamLaneOfDigest(digest);
+export function taskGenWindowNote(lane: StreamLane): string | null {
   return lane.fullThinking?.trim() ? null : narrativeWindowNote(lane);
 }
 
@@ -3480,25 +3468,26 @@ const JudgeReason: React.FC<{ judge: NonNullable<PhaseTodoItem['judge']> }> = ({
 
 // Per-task LIVE GENERATION detail — what the model on THIS task actually produced: the tool-call breakdown (so
 // over-reading is visible at a glance: many reads/shell, no write), how much it's thinking, the reasoning text,
-// and which node/model. All of it is already collected per worker in .swarm/activity/<task>.json (the panel
-// reads it as run.activity) — this is the surface that makes "what are the models actually doing / why so long"
-// answerable instead of a blank two-line un-truncation.
-const TaskGenDetail: React.FC<{ digest: Record<string, unknown> }> = ({ digest }) => {
-  const num = (k: string) => (typeof digest[k] === 'number' ? (digest[k] as number) : 0);
-  const str = (k: string) => (typeof digest[k] === 'string' ? (digest[k] as string) : '');
-  const calls = Array.isArray(digest.calls) ? (digest.calls as Array<Record<string, unknown>>) : [];
+// and which node/model. All of it is collected per worker in .swarm/activity/<task>.json and reaches this
+// card as a LANE joined once through `digestStreamFields` — the WORK board's fallback for a task whose
+// digest no event lane claims (a judge-split parent: its lane is dropped on purpose, its call still
+// happened). It used to take the raw digest and read `tool_calls` / `thinking_chars` / `malformed` /
+// `calls` by hand — a second copy of the join, and the copy had already drifted: the join did not carry
+// `malformed` at all, so this card was the only reader of a field no lane had.
+const TaskGenDetail: React.FC<{ lane: TurnLane }> = ({ lane }) => {
+  const calls = lane.calls ?? [];
   const byName: Record<string, number> = {};
   for (const c of calls) {
-    const n = c && typeof c.name === 'string' ? c.name : 'other';
+    const n = typeof c.name === 'string' && c.name ? c.name : 'other';
     byName[n] = (byName[n] ?? 0) + 1;
   }
-  const rawModel = str('model');
+  const rawModel = lane.model ?? '';
   const model = rawModel.split('-').slice(0, 2).join('-') || rawModel;
-  const toolCalls = num('tool_calls');
-  const thinking = num('thinking_chars');
-  const errors = num('errors');
-  const malformed = num('malformed');
-  const reasoning = taskGenReasoning(digest);
+  const toolCalls = lane.toolCalls ?? 0;
+  const thinking = lane.thinkingChars ?? 0;
+  const errors = lane.errors ?? 0;
+  const malformed = lane.malformed ?? 0;
+  const reasoning = taskGenReasoning(lane);
   const breakdown = Object.entries(byName)
     .map(([n, c]) => `${c} ${n}`)
     .join(' · ');
@@ -3534,11 +3523,15 @@ const TaskGenDetail: React.FC<{ digest: Record<string, unknown> }> = ({ digest }
         ? (() => {
             // ITEM V's residue: when both durable logs are absent this card's body IS the digest's
             // answer window — a pre-transcript archive's leftover — and calling that "(live)" was the lie.
-            const clip = taskGenWindowNote(digest);
+            // "(live)" is also a claim about the CALL: the lane's status says whether it is still running
+            // (a split parent's call is over; a raw digest could not say so and this card said live).
+            const clip = taskGenWindowNote(lane);
             return (
               <ReasoningBlock
                 text={reasoning}
-                label={clip ? 'Model reasoning' : 'Model reasoning (live)'}
+                label={
+                  !clip && lane.status === 'running' ? 'Model reasoning (live)' : 'Model reasoning'
+                }
                 note={clip ?? undefined}
               />
             );
@@ -3554,17 +3547,14 @@ const PhaseTodoRow: React.FC<{
   item: PhaseTodoItem;
   deviceOrder: string[];
   stale: boolean;
-  activity?: Record<string, unknown>;
   plan?: PlanTask[];
   workingDir?: string;
-}> = ({ item, deviceOrder, stale, activity, plan, workingDir }) => {
-  // build rows are `b-<taskid>`, the verify sink is `b-integrate-verify`; strip the prefix to key run.activity
-  // (gen/app/miner/…) and run.plan. Non-task rows (r-start, p-conf, v-e2e…) simply won't match → no gen block.
+}> = ({ item, deviceOrder, stale, plan, workingDir }) => {
+  // build rows are `b-<taskid>`, the verify sink is `b-integrate-verify`; strip the prefix to key run.plan.
+  // Non-task rows (r-start, p-conf, v-e2e…) simply won't match. This row no longer looks a raw digest up
+  // by that id: the planning checklist's ids (o-start, r2-done, a-none…) never name a digest, so the
+  // "live generation" card here was an un-joined dead path; the WORK board owns that card, lane-fed.
   const taskId = item.id.replace(/^[bv]-/, '');
-  const digest =
-    activity && typeof activity[taskId] === 'object' && activity[taskId] !== null
-      ? (activity[taskId] as Record<string, unknown>)
-      : undefined;
   const planTask = plan?.find((t) => t.id === taskId);
   const revealFile = (rel: string) => {
     if (!workingDir) return;
@@ -3578,7 +3568,6 @@ const PhaseTodoRow: React.FC<{
     item.description ||
     (item.files && item.files.length) ||
     item.judge ||
-    digest ||
     planTask
   );
   const [open, setOpen] = useState(false);
@@ -3668,7 +3657,6 @@ const PhaseTodoRow: React.FC<{
             </div>
           ) : null}
           {item.description ? <ReasoningBlock text={item.description} label="Full task spec" /> : null}
-          {digest ? <TaskGenDetail digest={digest} /> : null}
           {item.judge ? <JudgeReason judge={item.judge} /> : null}
         </div>
       ) : null}
@@ -3703,8 +3691,10 @@ const BoardTaskRow: React.FC<{
   stale: boolean;
   dev: boolean;
   workingDir?: string;
-  digest?: Record<string, unknown>;
-}> = ({ row, deviceOrder, stale, dev, workingDir, digest }) => {
+  /** The JOINED lane for a task whose digest no event lane claims (a judge-split parent) — built
+   *  once per poll by deriveFleet / deriveNodeHistory through the one join, never a raw digest. */
+  lanelessLane?: TurnLane;
+}> = ({ row, deviceOrder, stale, dev, workingDir, lanelessLane }) => {
   const interrupted = stale && row.state === 'running';
   const c = interrupted ? CALL_PENDING : TODO_COLOR[row.state];
   const idx = row.device ? deviceIndex(row.device, deviceOrder) : -1;
@@ -3723,7 +3713,7 @@ const BoardTaskRow: React.FC<{
     calls.length > 0 ||
     reasoning ||
     laneError ||
-    digest ||
+    lanelessLane ||
     row.deps.length ||
     row.difficulty
   );
@@ -3960,7 +3950,7 @@ const BoardTaskRow: React.FC<{
               </div>
             </div>
           ) : null}
-          {!lane && digest ? <TaskGenDetail digest={digest} /> : null}
+          {!lane && lanelessLane ? <TaskGenDetail lane={lanelessLane} /> : null}
           {row.judge && (row.judge.verdict || row.judge.hint) ? <JudgeReason judge={row.judge} /> : null}
         </div>
       ) : null}
@@ -3981,16 +3971,16 @@ const WorkZone: React.FC<{
   dev: boolean;
   live: boolean;
   workingDir?: string;
-  digests: Record<string, unknown>;
-}> = ({ board, deviceOrder, stale, dev, live, workingDir, digests }) => {
+  /** Lanes the hook joined for digests NO event lane claims (deriveFleet's laneless rows and
+   *  deriveNodeHistory's digest-only entries). A board row without a fold lane — a judge-split
+   *  parent — takes its card from here, so the card is fed by the one join and never a raw digest. */
+  lanelessLanes: TurnLane[];
+}> = ({ board, deviceOrder, stale, dev, live, workingDir, lanelessLanes }) => {
   const total = board.running.length + board.queued.length + board.done.length;
   const failedCount = board.done.filter(
     (r) => r.state === 'failed' || r.state === 'judge_failed'
   ).length;
-  const digestFor = (id: string) =>
-    typeof digests[id] === 'object' && digests[id] !== null
-      ? (digests[id] as Record<string, unknown>)
-      : undefined;
+  const lanelessById = new Map(lanelessLanes.map((l) => [l.taskId, l]));
   const rows = (list: BoardRow[]) => (
     <div className="px-3 pb-1 pl-4 space-y-0">
       {list.map((r) => (
@@ -4001,7 +3991,7 @@ const WorkZone: React.FC<{
           stale={stale}
           dev={dev}
           workingDir={workingDir}
-          digest={digestFor(r.id)}
+          lanelessLane={r.lane ? undefined : lanelessById.get(r.id)}
         />
       ))}
     </div>
@@ -4451,7 +4441,6 @@ const PlanningZone: React.FC<{
   dev: boolean;
   buildStarted: boolean;
   workingDir?: string;
-  activity?: Record<string, unknown>;
 }> = ({
   conf,
   planConfidence,
@@ -4472,7 +4461,6 @@ const PlanningZone: React.FC<{
   dev,
   buildStarted,
   workingDir,
-  activity,
 }) => {
   const [openOverride, setOpenOverride] = useState<boolean | null>(null);
   const [laneOpen, setLaneOpen] = useState<Record<string, boolean>>({});
@@ -4637,7 +4625,6 @@ const PlanningZone: React.FC<{
                         item={item}
                         deviceOrder={deviceOrder}
                         stale={stale}
-                        activity={activity}
                         plan={plan}
                         workingDir={workingDir}
                       />
@@ -5234,6 +5221,15 @@ export const SwarmRunPanel: React.FC<{
     now: Date.now(),
     scope: workingDir,
   });
+  // EVERY JOINED LANE FOR A DIGEST NO EVENT LANE CLAIMS — live ones from the fleet's laneless rows,
+  // finished/interrupted ones from the node history. The WORK board's card for a task without a fold
+  // lane (a judge-split parent) reads one of these, so it is fed by the ONE join (the two derivations
+  // above both spread `digestStreamFields`), never by a raw digest mapped by hand at render.
+  const lanelessLanes: TurnLane[] = [
+    ...fleet.workingByDevice.values(),
+    ...[...fleet.alsoRunningByDevice.values()].flat(),
+    ...[...nodeHistory.values()].flat().map((h) => h.lane),
+  ];
   const deviceOrder: string[] = fleet.devices;
   // The WORK board — the single source of truth for plan / ongoing / done (see deriveTaskBoard).
   const board = deriveTaskBoard({
@@ -5603,7 +5599,6 @@ export const SwarmRunPanel: React.FC<{
         dev={dev}
         buildStarted={buildStarted}
         workingDir={runDir}
-        activity={run.activityDigests}
       />
 
       {/* ── FLEET zone — the fixed realtime per-node rows, now under the same header register. */}
@@ -5642,7 +5637,7 @@ export const SwarmRunPanel: React.FC<{
         dev={dev}
         live={run.inProgress && !stale && !ended}
         workingDir={runDir}
-        digests={run.activityDigests}
+        lanelessLanes={lanelessLanes}
       />
 
       {/* ── EVENT LOG zone — the chronological engine narrative, subordinate and collapsed by default in

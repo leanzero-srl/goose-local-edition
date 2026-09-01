@@ -157,13 +157,13 @@ describe('the node inspector admits when a pane is only a tail', () => {
         narrativeWindowNote({ answerWindow: 'the window', fullTranscript: 'durable answer log' })
       ).toBeNull();
       expect(narrativeWindowNote({})).toBeNull();
-      expect(taskGenWindowNote({ full_reasoning: 'the window' })).toBe(ANSWER_WINDOW_NOTE);
-      expect(taskGenWindowNote({ answer_window: 'the window' })).toBe(ANSWER_WINDOW_NOTE);
+      // Lane-shaped (VA-025): the card reads the joined lane; the wire-key read lives in the join alone.
+      expect(taskGenWindowNote({ answerWindow: 'the window' })).toBe(ANSWER_WINDOW_NOTE);
       expect(
-        taskGenWindowNote({ full_reasoning: 'the window', full_thinking: 'durable think.log' })
+        taskGenWindowNote({ answerWindow: 'the window', fullThinking: 'durable think.log' })
       ).toBeNull();
       expect(
-        taskGenWindowNote({ full_reasoning: 'the window', full_transcript: 'durable task.log' })
+        taskGenWindowNote({ answerWindow: 'the window', fullTranscript: 'durable task.log' })
       ).toBeNull();
       expect(taskGenWindowNote({})).toBeNull();
     });

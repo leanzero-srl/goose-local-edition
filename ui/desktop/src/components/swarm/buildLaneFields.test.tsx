@@ -42,6 +42,10 @@ const DIGEST = {
     },
   ],
   errors: 1,
+  // Engine-written beside `errors`: stream-named calls that never reached a tool. The WORK board's
+  // task card read it off the raw digest by hand while the join carried nothing — a field one
+  // renderer had and no lane did. It rides the join now, and this fixture is what refuses a repeat.
+  malformed: 1,
   model: 'mihai-qwen',
   // SAID provenance — stamped together by the engine's shared builder; a path dropping any of the
   // five re-creates the r0 case (a dead attempt's error shown as current, unlabeled).
@@ -105,6 +109,7 @@ const EXPECTED: Record<string, unknown> = {
   // Derived by the join, not copied: first sight of a lane with an answer reads the answer channel.
   liveChannel: 'transcript',
   errors: 1,
+  malformed: 1,
   attempt: 1,
   dispatchedAt: '2026-08-29T23:31:02+00:00',
   saidAt: '2026-08-29T23:55:10+00:00',

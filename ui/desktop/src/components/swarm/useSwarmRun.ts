@@ -388,6 +388,9 @@ export interface TurnLane {
    *  thinking, so a fixed transcript-first order shows the OLD answer for the whole of the new call. */
   liveChannel?: LiveChannel;
   errors?: number;
+  /** Malformed tool calls (named by the stream, never reached a tool) — the digest's `malformed`.
+   *  The task card read this off the raw digest by hand; it rides the one join like every field. */
+  malformed?: number;
   elapsedMs?: number;
   /** How many attempts the task took (from task_completed) — surfaced in the status tooltip. */
   attempts?: number;
@@ -2606,6 +2609,9 @@ export function buildActivity(events: Array<Record<string, unknown>>): {
 type Digest = {
   tool_calls?: number;
   errors?: number;
+  /** Tool calls the provider stream named that never reached a tool (INVALID_REQUEST /
+   *  INVALID_PARAMS — swarm.rs counts them at the stream site). Engine-written beside `errors`. */
+  malformed?: number;
   recent?: string[];
   last_text?: string;
   reasoning?: string;
@@ -2798,9 +2804,10 @@ export function resetLiveChannelMemory(): void {
   channelMemory.clear();
 }
 
-/** THE ONE READ of the answer-window wire key, shared by the join below and the task card's raw-digest
- *  mapper (`streamLaneOfDigest` in SwarmRunPanel): today's key is `full_reasoning`, the honest key the
- *  engine moves to is `answer_window`. Two readers with one rule, so they cannot disagree about the key. */
+/** THE ONE READ of the answer-window wire key, for the join below: today's key is `full_reasoning`,
+ *  the honest key the engine moves to is `answer_window`. It once had a second caller — the task
+ *  card's raw-digest mapper (`streamLaneOfDigest`), a hand-copy of this join by construction; that
+ *  card now receives a joined lane, so nothing outside the join reads a digest's stream keys. */
 export function answerWindowOf(
   d: { answer_window?: unknown; full_reasoning?: unknown } | undefined
 ): string | undefined {
@@ -2850,6 +2857,7 @@ export function digestStreamFields(
   | 'phase'
   | 'liveChannel'
   | 'errors'
+  | 'malformed'
   | 'attempt'
   | 'dispatchedAt'
   | 'saidAt'
@@ -2886,6 +2894,7 @@ export function digestStreamFields(
     // point is remembering the previous poll of THIS lane.
     liveChannel: liveChannelFor(key, d, d?.phase === 'done' || prev?.status === 'done'),
     errors: d?.errors ?? prev?.errors,
+    malformed: d?.malformed ?? prev?.malformed,
     attempt: d?.attempt ?? prev?.attempt,
     dispatchedAt: d?.dispatched_at ?? prev?.dispatchedAt,
     saidAt: d?.said_at ?? prev?.saidAt,
