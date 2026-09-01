@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
-import { SlidersHorizontal, Check } from 'lucide-react';
+import { Check } from 'lucide-react';
 import { Tooltip, TooltipTrigger, TooltipContent } from '../ui/Tooltip';
-import { CHIP_RADIUS, SWARM_STATUS } from './formationVisualState';
+import { Button, FOCUS, RADIUS, TNUM, WEIGHT, cx } from '../lz';
 import {
   SAMPLING_KNOBS,
   clampKnob,
@@ -15,23 +15,22 @@ import {
  * the launched values while a run is live. An unset knob reads "model default" — the run sends
  * nothing for it, so the Settings default (config) and finally the model's own default apply.
  *
- * Honors the hard UI rules: full border (never a left rail), one solid saturated hue per knob value
- * (never a tint), custom inline inputs (no native controls beyond a plain text field).
+ * ONE QUIET META LINE. It used to be a bordered box with a tracked uppercase mono "SAMPLING" eyebrow
+ * and five uppercase micro-labels each in its own hue — five colours on facts that carry no state.
+ * Now: the meta register (11px, normal case, ink-3), a set value in ink with tabular figures, an
+ * unset one as the words "model default". Custom inline inputs (no native controls beyond a plain
+ * text field); never a left rail, never a tint.
  */
-
-const STRIP_HUE = SWARM_STATUS.action;
 
 function KnobField({
   id,
   value,
-  hue,
   readOnly,
   placeholder,
   onCommit,
 }: {
   id: SamplingKnobId;
   value: number | undefined;
-  hue: string;
   readOnly: boolean;
   /** What an UNSET knob means here (default "model default"; no knob is pinned anywhere any more). */
   placeholder?: string;
@@ -43,11 +42,9 @@ function KnobField({
 
   if (readOnly) {
     return value === undefined ? (
-      <span className="font-mono text-xs text-text-secondary">{unsetLabel}</span>
+      <span className="text-lz-ink-3">{unsetLabel}</span>
     ) : (
-      <span className="font-mono text-xs font-bold tabular-nums" style={{ color: hue }}>
-        {value}
-      </span>
+      <span className={cx('text-lz-ink', WEIGHT.medium, TNUM)}>{value}</span>
     );
   }
 
@@ -61,8 +58,13 @@ function KnobField({
     <input
       type="text"
       inputMode="decimal"
-      className="w-[5.5rem] border border-border-primary bg-background-primary px-1.5 py-0.5 text-right font-mono text-xs font-bold tabular-nums placeholder:font-normal placeholder:text-text-secondary focus:border-border-secondary focus-visible:outline-none"
-      style={{ borderRadius: CHIP_RADIUS, color: hue }}
+      className={cx(
+        'h-6 w-[5.5rem] border border-lz-border-strong bg-lz-surface px-1.5 text-right text-lz-meta text-lz-ink placeholder:text-lz-ink-3',
+        WEIGHT.medium,
+        TNUM,
+        RADIUS.control,
+        FOCUS
+      )}
       value={text}
       placeholder={unsetLabel}
       aria-label={`${id} sampling value`}
@@ -112,66 +114,49 @@ export default function SamplingKnobs({
 
   return (
     <div
-      className={`border border-border-primary px-3 py-2 ${className}`}
-      style={{ borderRadius: CHIP_RADIUS }}
+      className={cx(
+        'flex flex-wrap items-center gap-x-3 gap-y-1 px-1 text-lz-meta text-lz-ink-3',
+        className
+      )}
       data-testid="sampling-knobs"
     >
-      <div className="flex items-center gap-2">
-        <SlidersHorizontal className="h-3 w-3 shrink-0" style={{ color: STRIP_HUE }} />
-        <span
-          className="shrink-0 font-mono text-[10px] font-bold uppercase tracking-[0.14em]"
-          style={{ color: STRIP_HUE }}
+      <span className={cx('shrink-0 text-lz-ink-2', WEIGHT.medium)}>Sampling</span>
+      <span className="truncate">
+        {explain ?? (active ? 'this run launched with these values' : 'the next run uses these values')}
+      </span>
+      {SAMPLING_KNOBS.map((k) => (
+        <Tooltip key={k.id}>
+          <TooltipTrigger asChild>
+            <label className="flex items-center gap-1">
+              <span>{k.label}</span>
+              <KnobField
+                id={k.id}
+                value={value[k.id]}
+                readOnly={active}
+                placeholder={placeholders?.[k.id]}
+                onCommit={(v) => setKnob(k.id, v)}
+              />
+            </label>
+          </TooltipTrigger>
+          <TooltipContent className="max-w-xs">{k.hint}</TooltipContent>
+        </Tooltip>
+      ))}
+      {!active && onSaveDefaults && (
+        <Button
+          variant="ghost"
+          size="sm"
+          className="ml-auto"
+          icon={saved ? <Check className="text-lz-ok" /> : undefined}
+          onClick={() => {
+            onSaveDefaults();
+            setSaved(true);
+            if (savedTimer.current) clearTimeout(savedTimer.current);
+            savedTimer.current = setTimeout(() => setSaved(false), 2000);
+          }}
         >
-          sampling
-        </span>
-        <span className="truncate text-[10px] text-text-secondary">
-          — {explain ?? (active ? 'this run launched with these values' : 'the next run uses these values')}
-        </span>
-        {!active && onSaveDefaults && (
-          <button
-            type="button"
-            onClick={() => {
-              onSaveDefaults();
-              setSaved(true);
-              if (savedTimer.current) clearTimeout(savedTimer.current);
-              savedTimer.current = setTimeout(() => setSaved(false), 2000);
-            }}
-            className="ml-auto flex shrink-0 items-center gap-1 border border-border-primary px-2 py-0.5 text-[10px] font-semibold text-text-secondary transition-colors hover:border-text-secondary hover:text-text-primary"
-            style={{ borderRadius: CHIP_RADIUS }}
-          >
-            {saved ? (
-              <>
-                <Check className="h-3 w-3" style={{ color: SWARM_STATUS.done }} />
-                saved
-              </>
-            ) : (
-              'save as defaults'
-            )}
-          </button>
-        )}
-      </div>
-      <div className="mt-1.5 flex flex-wrap items-center gap-x-4 gap-y-1.5">
-        {SAMPLING_KNOBS.map((k) => (
-          <Tooltip key={k.id}>
-            <TooltipTrigger asChild>
-              <label className="flex items-center gap-1.5">
-                <span className="font-mono text-[10px] font-bold uppercase tracking-wider text-text-secondary">
-                  {k.label}
-                </span>
-                <KnobField
-                  id={k.id}
-                  value={value[k.id]}
-                  hue={k.hue}
-                  readOnly={active}
-                  placeholder={placeholders?.[k.id]}
-                  onCommit={(v) => setKnob(k.id, v)}
-                />
-              </label>
-            </TooltipTrigger>
-            <TooltipContent className="max-w-xs">{k.hint}</TooltipContent>
-          </Tooltip>
-        ))}
-      </div>
+          {saved ? 'saved' : 'save as defaults'}
+        </Button>
+      )}
     </div>
   );
 }
