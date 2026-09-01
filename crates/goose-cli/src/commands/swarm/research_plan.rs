@@ -27,6 +27,13 @@ use super::EventSink;
 /// best false pair 0.20/3 (module doc).
 const STEM_JACCARD_FLOOR: f64 = 0.5;
 const STEM_SHARED_FLOOR: usize = 6;
+/// The corroboration a shared CITE needs before it dedups (VA-030 D10-6): half the stem floor
+/// in shared content words. Cite equality alone read two different failed lookups that "put
+/// what you searched in cite" as one question, two design questions citing one heading as one,
+/// and a design question citing request.md:148 beside the api-q1 fact row as answered by it —
+/// `covering_mini` then COPIED the other's answer. A cite-only pair is named
+/// (`research_question_cite_only`) and dispatched.
+const CITE_SHARED_FLOOR: usize = STEM_SHARED_FLOOR / 2;
 
 /// The request's own decision ids as they appear in questions — `D1`, `D2:`, `D1/D2/D3` — the
 /// spec's "## D1 / ## D2 / ## D3" vocabulary (request.md §9). Uppercase D followed by digits,
@@ -89,24 +96,25 @@ fn normalize_cite(cite: &str) -> String {
 }
 
 /// Are two questions the SAME question? `Some(rule)` names the one rule that matched — `cite`
-/// (both cite the same request line/heading), `decision_id` (both name the same D-id), `stem`
+/// (both cite the same request line/heading AND share at least `CITE_SHARED_FLOOR` content
+/// words — the words corroborate the line), `decision_id` (both name the same D-id), `stem`
 /// (content-word overlap past both floors) — or `None`: dispatch it. Order is by strength;
-/// the rule name rides the `research_question_covered` event so the tick can read WHY.
+/// the rule name rides the `research_question_covered` event so the tick can read WHY. A pair
+/// that shares only its cite is `cite_only` — named, never deduped.
 pub(super) fn same_question(
     a_text: &str,
     a_cite: &str,
     b_text: &str,
     b_cite: &str,
 ) -> Option<&'static str> {
-    let (ac, bc) = (normalize_cite(a_cite), normalize_cite(b_cite));
-    if !ac.is_empty() && ac == bc {
+    let (wa, wb) = (content_words(a_text), content_words(b_text));
+    let shared = wa.intersection(&wb).count();
+    if same_cite(a_cite, b_cite) && shared >= CITE_SHARED_FLOOR {
         return Some("cite");
     }
     if !decision_ids(a_text).is_disjoint(&decision_ids(b_text)) {
         return Some("decision_id");
     }
-    let (wa, wb) = (content_words(a_text), content_words(b_text));
-    let shared = wa.intersection(&wb).count();
     let union = wa.union(&wb).count();
     if union > 0
         && shared >= STEM_SHARED_FLOOR
@@ -115,6 +123,17 @@ pub(super) fn same_question(
         return Some("stem");
     }
     None
+}
+
+fn same_cite(a_cite: &str, b_cite: &str) -> bool {
+    let (ac, bc) = (normalize_cite(a_cite), normalize_cite(b_cite));
+    !ac.is_empty() && ac == bc
+}
+
+/// The pair `same_question` refuses on the words alone: the same non-empty cite, no rule
+/// fired. Named so the tick can see how often the cite matched and the words did not.
+pub(super) fn cite_only(a_text: &str, a_cite: &str, b_text: &str, b_cite: &str) -> bool {
+    same_cite(a_cite, b_cite) && same_question(a_text, a_cite, b_text, b_cite).is_none()
 }
 
 /// The question half of a rendered decision line (`opener::render_open_decision` joins
@@ -185,23 +204,39 @@ pub(super) fn route_questions_to_decisions(
 pub(super) fn covering_mini<'a>(
     q: &ResearchQuestion,
     landed: &'a [ResearchRow],
+    events: &dyn EventSink,
 ) -> Option<(&'a ResearchRow, &'static str)> {
-    landed.iter().find_map(|r| {
-        if r.status != RESEARCH_ANSWERED
-            || r.answer.trim().is_empty()
-            || (r.slice == q.slice && r.q_index == q.q_index)
-        {
-            return None;
-        }
+    let eligible = |r: &&ResearchRow| {
+        r.status == RESEARCH_ANSWERED
+            && !r.answer.trim().is_empty()
+            && !(r.slice == q.slice && r.q_index == q.q_index)
+    };
+    let covered = landed.iter().filter(eligible).find_map(|r| {
         same_question(&q.question, &q.cite, &r.question, &r.cite).map(|rule| (r, rule))
-    })
+    });
+    if covered.is_none() {
+        // D10-6: the cite matched and the words did not — dispatched, and said out loud.
+        for r in landed.iter().filter(eligible) {
+            if cite_only(&q.question, &q.cite, &r.question, &r.cite) {
+                events.write_value(serde_json::json!({
+                    "event": "research_question_cite_only",
+                    "a": {"slice": q.slice, "q_index": q.q_index,
+                          "question": q.question.chars().take(200).collect::<String>()},
+                    "b": {"slice": r.slice, "q_index": r.q_index,
+                          "question": r.question.chars().take(200).collect::<String>()},
+                    "cite": q.cite,
+                }));
+            }
+        }
+    }
+    covered
 }
 
 #[cfg(test)]
 mod tests {
     use super::super::opener::{OpenDecision, OpenQuestion, OpenSlice};
     use super::super::research::{research_mini_name, ORIGIN_COVERED_PREFIX};
-    use super::super::SwarmEvent;
+    use super::super::{NullSink, SwarmEvent};
     use super::*;
     use std::sync::Mutex;
 
@@ -240,8 +275,31 @@ mod tests {
             "D1 and D3 are different decisions"
         );
         assert_eq!(same_question(DRAFTS_Q4, "", API_Q5, ""), None);
+        // D10-6: the same line cited by two questions that share 2 content words (/api/events,
+        // event) is CITE-ONLY — dispatched and named, never deduped on the line alone.
         assert_eq!(
             same_question(DRAFTS_Q4, "request.md:218", API_Q5, "request.md:218"),
+            None
+        );
+        assert!(cite_only(
+            DRAFTS_Q4,
+            "request.md:218",
+            API_Q5,
+            "request.md:218"
+        ));
+        assert!(
+            !cite_only(DRAFTS_Q4, "", API_Q5, ""),
+            "no cite, nothing to corroborate"
+        );
+        // The same line PLUS the words: a rephrasing of api-q1 sharing sort / keys /
+        // status/currency / accept (4 >= the floor of 3) dedups by cite.
+        assert_eq!(
+            same_question(
+                API_Q1,
+                "request.md:148",
+                "Which sort keys and status/currency filter values does the table's query accept?",
+                "request.md:148"
+            ),
             Some("cite")
         );
         assert_eq!(
@@ -350,13 +408,62 @@ mod tests {
         assert!(sink.0.lock().unwrap().is_empty());
     }
 
-    /// C2(b) on r6d's drafts-q4 / api-q5: with api-q5 landed as a cited fact on request.md:218,
-    /// a drafts-q4 that cites the same line is covered by it — by cite, never by its words
-    /// (0.10) — and the covered row copies the answer, names the ORIGINAL mini in its origin,
-    /// spends no seconds. Without a cite it dispatches; an unanswered or empty row covers
-    /// nothing; a row never covers itself; a covered copy resolves to the original.
+    /// C2(b) on r6d's api-q1 fact (request.md:148) and a web question citing the same line with
+    /// corroborating words: covered by cite — the covered row copies the answer, names the
+    /// ORIGINAL mini in its origin, carries the FACT's cite (D10-7) and spends no seconds. r6d's
+    /// drafts-q4 / api-q5 pair on request.md:218 (2 shared words) is CITE-ONLY under D10-6: not
+    /// covered, dispatched, and named by `research_question_cite_only`. Without a cite it
+    /// dispatches silently; an unanswered or empty row covers nothing; a row never covers
+    /// itself; a covered copy resolves to the original.
     #[test]
     fn a_question_an_earlier_landed_mini_answers_is_covered_by_that_mini() {
+        let api_q1 = ResearchQuestion::of(
+            "ledger-api",
+            1,
+            &serde_json::from_value(serde_json::json!({
+                "question": API_Q1, "kind": "spec_lookup", "cite": "request.md:148",
+                "fact": "`sort` is one of `created_at`, `-created_at`, `amount_minor`, `-amount_minor`."
+            }))
+            .unwrap(),
+        );
+        let landed_fact = ResearchRow::spec_fact(&api_q1);
+        let mut cited_web: OpenQuestion = OpenQuestion::from(
+            "Which sort keys and status/currency filter values does the table's query accept?",
+        );
+        cited_web.cite = "request.md:148".into();
+        let qw = ResearchQuestion::of("web-page", 5, &cited_web);
+        let sink = ValueSink::default();
+        let (cover, rule) = covering_mini(&qw, std::slice::from_ref(&landed_fact), &sink)
+            .expect("the shared cite, corroborated by the words, covers it");
+        assert_eq!(rule, "cite");
+        assert_eq!(cover.q_index, 1);
+        assert!(
+            sink.0.lock().unwrap().is_empty(),
+            "a covered pair is not cite-only"
+        );
+        let row = ResearchRow::covered_by(&qw, cover, rule);
+        assert_eq!(row.status, RESEARCH_ANSWERED);
+        assert!(row.answer.starts_with("`sort` is one of"));
+        assert_eq!(
+            row.origin,
+            format!(
+                "{ORIGIN_COVERED_PREFIX}{}",
+                research_mini_name("ledger-api", 1)
+            )
+        );
+        assert_eq!(row.slice, "web-page");
+        assert_eq!(row.q_index, 5);
+        assert_eq!(
+            row.cite, "request.md:148",
+            "the fact's cite travels with its answer"
+        );
+        assert_eq!(row.secs, 0, "nothing was called");
+        assert!(row.model.is_empty(), "no lane answered a fact");
+        // A copy of a copy names the original.
+        let again = ResearchRow::covered_by(&qw, &row, "cite");
+        assert_eq!(again.origin, row.origin);
+
+        // r6d's drafts-q4 / api-q5 on request.md:218: cite-only — dispatched and named.
         let api_q5 = ResearchQuestion::of(
             "ledger-api",
             5,
@@ -366,47 +473,34 @@ mod tests {
             }))
             .unwrap(),
         );
-        let landed_fact = ResearchRow::spec_fact(&api_q5);
+        let q5_fact = ResearchRow::spec_fact(&api_q5);
         let mut cited_q4: OpenQuestion = OpenQuestion::from(DRAFTS_Q4);
         cited_q4.cite = "request.md:218".into();
         let q4 = ResearchQuestion::of("drafts-workflow", 4, &cited_q4);
-        let (cover, rule) = covering_mini(&q4, std::slice::from_ref(&landed_fact))
-            .expect("the shared cite covers it");
-        assert_eq!(rule, "cite");
-        assert_eq!(cover.q_index, 5);
-        let row = ResearchRow::covered_by(&q4, cover, rule);
-        assert_eq!(row.status, RESEARCH_ANSWERED);
-        assert_eq!(
-            row.answer,
-            "It requires a bearer token (any of the three roles)."
-        );
-        assert_eq!(
-            row.origin,
-            format!(
-                "{ORIGIN_COVERED_PREFIX}{}",
-                research_mini_name("ledger-api", 5)
-            )
-        );
-        assert_eq!(row.slice, "drafts-workflow");
-        assert_eq!(row.q_index, 4);
-        assert_eq!(row.cite, "request.md:218");
-        assert_eq!(row.secs, 0, "nothing was called");
-        // A copy of a copy names the original.
-        let again = ResearchRow::covered_by(&q4, &row, "cite");
-        assert_eq!(again.origin, row.origin);
-        // Without the cite the words alone do not match: dispatch.
+        let sink = ValueSink::default();
+        assert!(covering_mini(&q4, std::slice::from_ref(&q5_fact), &sink).is_none());
+        let events = sink.0.lock().unwrap();
+        assert_eq!(events.len(), 1, "{events:?}");
+        assert_eq!(events[0]["event"], "research_question_cite_only");
+        assert_eq!(events[0]["a"]["slice"], "drafts-workflow");
+        assert_eq!(events[0]["b"]["q_index"], 5);
+        assert_eq!(events[0]["cite"], "request.md:218");
+        drop(events);
+        // Without the cite the words alone do not match: dispatch, and nothing to name.
         let bare_q4 = ResearchQuestion::of("drafts-workflow", 4, &OpenQuestion::from(DRAFTS_Q4));
-        assert!(covering_mini(&bare_q4, std::slice::from_ref(&landed_fact)).is_none());
+        let quiet = ValueSink::default();
+        assert!(covering_mini(&bare_q4, std::slice::from_ref(&q5_fact), &quiet).is_none());
+        assert!(quiet.0.lock().unwrap().is_empty());
         // Its own row, an unanswered row and a blank answer never cover.
         let mut own = landed_fact.clone();
-        own.slice = "drafts-workflow".into();
-        own.q_index = 4;
-        assert!(covering_mini(&q4, std::slice::from_ref(&own)).is_none());
+        own.slice = "web-page".into();
+        own.q_index = 5;
+        assert!(covering_mini(&qw, std::slice::from_ref(&own), &NullSink).is_none());
         let mut missed = landed_fact.clone();
         missed.status = "unanswered".into();
-        assert!(covering_mini(&q4, std::slice::from_ref(&missed)).is_none());
+        assert!(covering_mini(&qw, std::slice::from_ref(&missed), &NullSink).is_none());
         let mut blank = landed_fact.clone();
         blank.answer = "  ".into();
-        assert!(covering_mini(&q4, std::slice::from_ref(&blank)).is_none());
+        assert!(covering_mini(&qw, std::slice::from_ref(&blank), &NullSink).is_none());
     }
 }

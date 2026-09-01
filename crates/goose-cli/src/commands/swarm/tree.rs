@@ -8,6 +8,17 @@
 
 use std::path::Path;
 
+/// A cheap stable content hash (FNV-1a) — provenance, not cryptography (the `desc_sha` a brief is
+/// stamped with).
+pub(super) fn content_hash(bytes: &[u8]) -> String {
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+    for &b in bytes {
+        h ^= b as u64;
+        h = h.wrapping_mul(0x0000_0100_0000_01B3);
+    }
+    format!("{h:016x}")
+}
+
 /// The engine's snapshot exclusions (F886): what is NOT the app tree — the engine's own state,
 /// the run log, the screenshots, the heartbeat and the scorer's db all live beside the app in the
 /// same directory. ONE list for the best-tree mirror, its restore and the pre-fix snapshot; the
@@ -129,6 +140,18 @@ pub(super) fn snapshot_tree_files(root: &Path) -> std::collections::BTreeMap<Str
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn content_hash_is_stable_and_separates_bytes() {
+        let v1 = content_hash(b"def f(): return 41");
+        let v2 = content_hash(b"def f(): return 42");
+        assert_ne!(v1, v2, "different bytes must hash apart");
+        assert_eq!(
+            v1,
+            content_hash(b"def f(): return 41"),
+            "same bytes, same hash"
+        );
+    }
 
     fn rsync_available() -> bool {
         std::process::Command::new("rsync")

@@ -152,6 +152,15 @@ impl ResearchRow {
             Some(m) => m.to_string(),
             None => research_mini_name(&cover.slice, cover.q_index),
         };
+        // A FACT cover (no lane ran — `model` is empty on a spec-fact row and on every copy of
+        // one) hands over ITS cite: the request line the opener read is the provenance of the
+        // answer, and the brief's VIA line quotes it (VA-030 D10-7). A lane cover keeps the
+        // covered question's own cite — the lane's answer is the provenance there.
+        let cite = if cover.model.is_empty() {
+            cover.cite.clone()
+        } else {
+            q.cite.clone()
+        };
         Self {
             slice: q.slice.clone(),
             q_index: q.q_index,
@@ -164,7 +173,7 @@ impl ResearchRow {
             model: cover.model.clone(),
             secs: 0,
             kind: q.kind.as_str().to_string(),
-            cite: q.cite.clone(),
+            cite,
             origin: format!("{ORIGIN_COVERED_PREFIX}{original}"),
             batch: 0,
         }
@@ -1204,8 +1213,8 @@ pub(super) fn relay_note(landed: &ResearchRow) -> RelayNote {
 /// fact the ledger holds (the fallback gate) — and the mini's presence is the resume watermark
 /// `load_research_mini` reads. `ts` is provenance (data, never an input to anything). (Moved
 /// verbatim from swarm.rs under the incremental-split law, paying for E7's relay wiring.)
-pub(super) fn write_research_ledger(root: &Path, row: &ResearchRow) -> Option<PathBuf> {
-    let mut v = serde_json::to_value(row).ok()?;
+pub(super) fn write_research_ledger(root: &Path, row: &ResearchRow) -> Result<PathBuf, String> {
+    let mut v = serde_json::to_value(row).map_err(|e| format!("serialize: {e}"))?;
     if let Some(o) = v.as_object_mut() {
         o.insert("kind".to_string(), serde_json::json!("research"));
         o.insert(
@@ -1213,7 +1222,30 @@ pub(super) fn write_research_ledger(root: &Path, row: &ResearchRow) -> Option<Pa
             serde_json::json!(chrono::Utc::now().to_rfc3339()),
         );
     }
-    super::write_ledger_mini(root, &research_mini_name(&row.slice, row.q_index), &v)
+    super::write_ledger_mini_checked(root, &research_mini_name(&row.slice, row.q_index), &v)
+}
+
+/// The fan's ONE way to land a row (VA-030 D10-5, gate 1): the mini is written, and a write that
+/// fails is a named event — `research_mini_write_failed {slice, q_index, path, error}` — never a
+/// discarded Option. Before this the fact rows, the covered rows, the lane rows and the panic rows
+/// all dropped the result: a fact mini that never reached disk was counted in
+/// `research_planned.facts` and rendered into the brief from memory while resume, cover and the
+/// snowball (which read the disk) never saw it, and nothing said so. The row still flows to its
+/// in-memory consumers — the absence on disk is stated, not substituted for.
+pub(super) fn persist_research_row(root: &Path, events: &dyn EventSink, row: &ResearchRow) {
+    if let Err(error) = write_research_ledger(root, row) {
+        events.write_value(serde_json::json!({
+            "event": "research_mini_write_failed",
+            "slice": row.slice,
+            "q_index": row.q_index,
+            "path": root
+                .join(super::LEDGER_DIR)
+                .join(research_mini_name(&row.slice, row.q_index))
+                .display()
+                .to_string(),
+            "error": error,
+        }));
+    }
 }
 
 /// C3: the fan's lanes — ONE per slice with anything left to ask, in the queue's own order (the
@@ -1609,7 +1641,14 @@ pub(super) fn briefs_from_slices(
                         // C2(b): a covered row says WHOSE answer this is — the original mini —
                         // so the builder can open it; a lane's own row carries no VIA line (an
                         // honest absence of provenance-to-elsewhere, not a default).
+                        // D10-7: a cover that was a FACT row had no lane — it was answered from
+                        // the request by the opener — and the VIA line says so, with the cite.
                         let via = match row.origin.strip_prefix(ORIGIN_COVERED_PREFIX) {
+                            Some(m) if row.model.is_empty() => format!(
+                                "\nVIA: .swarm/ledger/{m} — answered from the request by the \
+                                 opener (FACT, CITE {}); this is that fact",
+                                row.cite
+                            ),
                             Some(m) => format!(
                                 "\nVIA: .swarm/ledger/{m} — another slice asked the same \
                                  question and its lane answered it; this is that answer"
@@ -2867,7 +2906,7 @@ mod tests {
             "How does the browser obtain the three bearer tokens for drafts endpoints?",
         );
         routed.decision = Some(1);
-        let opened = OpenOutput {
+        let mut opened = OpenOutput {
             slices: vec![OpenSlice {
                 id: "web-page".into(),
                 title: "the page".into(),
@@ -2904,7 +2943,38 @@ mod tests {
             2,
             "Both: SSE-driven refresh, polling as fallback.",
         );
-        let briefs = briefs_from_slices(&opened, "build the app", &[covered, own], &[], &NullSink);
+        // D10-7: a third question covered by a FACT row (the opener read request.md:148).
+        opened.slices[0].questions.push(OpenQuestion::from(
+            "Which sort keys does the table's sort control send?",
+        ));
+        let api_q1 = ResearchQuestion::of(
+            "ledger-api",
+            1,
+            &serde_json::from_value(serde_json::json!({
+                "question": "Which sort keys does sort=<k> accept?",
+                "kind": "spec_lookup", "cite": "request.md:148",
+                "fact": "`sort` is one of `created_at`, `-created_at`, `amount_minor`, `-amount_minor`."
+            }))
+            .unwrap(),
+        );
+        let fact = ResearchRow::spec_fact(&api_q1);
+        let q3 = rq(
+            "web-page",
+            3,
+            "Which sort keys does the table's sort control send?",
+        );
+        let fact_covered = ResearchRow::covered_by(&q3, &fact, "cite");
+        assert_eq!(
+            fact_covered.cite, "request.md:148",
+            "a fact cover hands over its cite"
+        );
+        let briefs = briefs_from_slices(
+            &opened,
+            "build the app",
+            &[covered, own, fact_covered],
+            &[],
+            &NullSink,
+        );
         let b = &briefs[0].brief;
         let decided_at = b
             .find("QUESTIONS THAT ARE OPEN DECISIONS")
@@ -2922,13 +2992,20 @@ mod tests {
         assert!(b.contains(
             "VIA: .swarm/ledger/research-ledger-api-q5.json — another slice asked the same question"
         ));
+        assert!(
+            b.contains(
+                "VIA: .swarm/ledger/research-ledger-api-q1.json — answered from the request by the \
+                 opener (FACT, CITE request.md:148); this is that fact"
+            ),
+            "a fact cover names the opener and the line, never a lane:\n{b}"
+        );
         assert_eq!(
             b.matches("VIA:").count(),
-            1,
+            2,
             "the lane's own row carries no VIA line"
         );
         assert!(
-            briefs[0].settled.starts_with("2/2 — "),
+            briefs[0].settled.starts_with("3/3 — "),
             "covered counts as settled; the routed question is the decision's: {}",
             briefs[0].settled
         );
