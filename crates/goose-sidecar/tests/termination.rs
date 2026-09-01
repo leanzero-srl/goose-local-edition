@@ -182,6 +182,7 @@ async fn shutdown_takes_the_engine_launched_by_a_term_ignoring_wrapper() {
             port.to_string(),
         ],
         format!("http://127.0.0.1:{port}"),
+        "fake",
     );
     config.startup_timeout = Duration::from_secs(20);
     let sidecar = Sidecar::start(config).await.unwrap();
@@ -227,6 +228,7 @@ async fn shutdown_releases_the_port_from_residue_of_its_own_group() {
             port.to_string(),
         ],
         format!("http://127.0.0.1:{port}"),
+        "fake",
     );
     config.startup_timeout = Duration::from_secs(20);
     let sidecar = Sidecar::start(config).await.unwrap();

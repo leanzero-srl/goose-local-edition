@@ -38,11 +38,35 @@ fn fake_engine_config(port: u16) -> SidecarConfig {
             port.to_string(),
         ],
         format!("http://127.0.0.1:{port}"),
+        "fake",
     );
     config.startup_timeout = Duration::from_secs(20);
     config.backoff_initial = Duration::from_millis(100);
     config.backoff_cap = Duration::from_millis(200);
     config
+}
+
+/// The id net (S-H3): a 200 whose catalog serves some OTHER id is not readiness. The fake
+/// serves "fake"; expecting "other" must fail the start and say what was served.
+#[tokio::test]
+async fn a_catalog_serving_another_id_is_not_ready() {
+    let port = free_port();
+    let mut config = fake_engine_config(port);
+    config.expected_model_id = "other".to_string();
+    config.startup_timeout = Duration::from_secs(3);
+    let err = match Sidecar::start(config).await {
+        Ok(_) => panic!("start accepted a catalog serving a different id"),
+        Err(e) => e.to_string(),
+    };
+    assert!(
+        err.contains("serves 'fake', expected 'other'"),
+        "err was: {err}"
+    );
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert!(
+        std::net::TcpStream::connect(("127.0.0.1", port)).is_err(),
+        "the failed start must not leave its child listening"
+    );
 }
 
 #[cfg(unix)]

@@ -157,6 +157,15 @@ pub fn expand_tilde(path: &str) -> PathBuf {
     PathBuf::from(path)
 }
 
+/// The id the engine will advertise in `/v1/models` — `served_model_name` when set, else the
+/// HF directory id. Both the serve argv and the readiness check derive from this one place.
+pub fn served_model_id(settings: &EngineSettings, model_id: &str) -> String {
+    settings
+        .served_model_name
+        .clone()
+        .unwrap_or_else(|| model_id.to_string())
+}
+
 pub fn build_serve_command(settings: &EngineSettings, model_id: &str) -> Vec<String> {
     let model_path = expand_tilde(&settings.models_dir).join(model_id);
     let mut argv = settings.spawn_command.clone();
@@ -166,10 +175,7 @@ pub fn build_serve_command(settings: &EngineSettings, model_id: &str) -> Vec<Str
         "--port".to_string(),
         settings.port.to_string(),
         "--served-model-name".to_string(),
-        settings
-            .served_model_name
-            .clone()
-            .unwrap_or_else(|| model_id.to_string()),
+        served_model_id(settings, model_id),
         "--enable-prefix-cache".to_string(),
         "--max-concurrent-requests".to_string(),
         "8".to_string(),
@@ -199,6 +205,27 @@ pub fn build_serve_command(settings: &EngineSettings, model_id: &str) -> Vec<Str
     }
     argv
 }
+
+/// `mount` refuses to start an engine on a port that something this manager does not
+/// supervise already listens on — the mirror of `status().stray_listener_port`. Starting
+/// anyway would probe THAT listener as our readiness and report `Running` for a child that
+/// then dies on the bind. `unmount` reclaims the port; a mount after that proceeds.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UnsupervisedListenerError {
+    pub port: u16,
+}
+
+impl std::fmt::Display for UnsupervisedListenerError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "port {} has an unsupervised listener — unmount/reclaim it first",
+            self.port
+        )
+    }
+}
+
+impl std::error::Error for UnsupervisedListenerError {}
 
 enum ManagerState {
     Stopped,
@@ -325,7 +352,9 @@ impl MlxEngineManager {
 
     /// Validate the model and the memory gate, flip to `Mounting`, and return; the engine
     /// start continues in a spawned task. A gate `Block` refuses the mount outright.
-    /// Any already-running engine is shut down first — one model per engine.
+    /// Any already-running engine is shut down first — one model per engine — and once
+    /// this manager supervises nothing, a listener still on the port is somebody else's:
+    /// the mount is refused with [`UnsupervisedListenerError`] rather than started over it.
     pub async fn mount(&self, model_id: &str) -> Result<()> {
         hf::validate_model_id(model_id)?;
         let settings = self.settings();
@@ -364,14 +393,23 @@ impl MlxEngineManager {
         if let ManagerState::Running { sidecar, .. } = previous {
             sidecar.shutdown().await;
         }
+        if port_has_listener(settings.port) {
+            *state = ManagerState::Stopped;
+            return Err(UnsupervisedListenerError {
+                port: settings.port,
+            }
+            .into());
+        }
         drop(state);
 
         let argv = build_serve_command(&settings, model_id);
         let base_url = format!("http://127.0.0.1:{}", settings.port);
+        let expected_model_id = served_model_id(&settings, model_id);
         let state_arc = Arc::clone(&self.state);
         let model_id = model_id.to_string();
         tokio::spawn(async move {
-            let mut config = SidecarConfig::new("mlx-engine", argv.clone(), base_url);
+            let mut config =
+                SidecarConfig::new("mlx-engine", argv.clone(), base_url, expected_model_id);
             // A cold uv resolve of the pinned fork legitimately takes minutes on first mount.
             config.startup_timeout = Duration::from_secs(600);
             config.env = vec![("PATH".to_string(), sidecar_spawn_path())];
@@ -927,6 +965,48 @@ mod tests {
         manager.unmount().await;
         assert!(!port_has_listener(port), "unmount did not reclaim the port");
         let _ = orphan.wait();
+    }
+
+    fn complete_small_model(models_dir: &std::path::Path, id: &str) {
+        let model_dir = models_dir.join(id);
+        std::fs::create_dir_all(&model_dir).unwrap();
+        std::fs::write(model_dir.join("config.json"), "{}").unwrap();
+        std::fs::write(model_dir.join("model.safetensors"), "weights").unwrap();
+    }
+
+    /// S-H3: a listener this manager never started (a goosed-restart orphan, another
+    /// process's engine) must REFUSE the mount, not be probed as our readiness.
+    #[tokio::test]
+    async fn mount_refuses_when_an_unsupervised_listener_holds_the_port() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let tmp = tempfile::tempdir().unwrap();
+        complete_small_model(tmp.path(), "pub/small");
+
+        let manager = MlxEngineManager::new();
+        manager.set_settings(EngineSettings {
+            models_dir: tmp.path().to_string_lossy().into_owned(),
+            port,
+            ..Default::default()
+        });
+
+        let err = manager.mount("pub/small").await.unwrap_err();
+        assert_eq!(
+            err.downcast_ref::<UnsupervisedListenerError>(),
+            Some(&UnsupervisedListenerError { port }),
+            "unexpected error: {err:#}"
+        );
+        assert_eq!(
+            err.to_string(),
+            format!("port {port} has an unsupervised listener — unmount/reclaim it first")
+        );
+        let status = manager.status().await;
+        assert_eq!(
+            status.state, "stopped",
+            "a refused mount leaves nothing mounting"
+        );
+        assert_eq!(status.stray_listener_port, Some(port));
+        drop(listener);
     }
 
     #[tokio::test]
