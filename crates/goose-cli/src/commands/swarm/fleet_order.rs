@@ -457,7 +457,7 @@ pub(super) fn planner_rank(
     (quant_ok, speed)
 }
 
-/// The models a MID-RUN aux call (an omni-judge look, the dynamic replanner) may run on: every
+/// The models a MID-RUN aux call (an omni-judge look) may run on: every
 /// LOCAL pool device passing the planner's quality bar, best rank first — that order breaks
 /// in-flight ties after the planner in `least_loaded_aux_model`. Quant is a FILTER here (not
 /// only a rank tier) because an aux verdict from a low-quant build is exactly the misread the

@@ -319,9 +319,14 @@ fn the_banned_integrate_template_only_shrinks() {
 /// unconditionally behind their own gates); scheduler.rs lost `pick_prereview_request`, the M5 loop
 /// arm and `pre_reviewed`; event.rs lost `PreReview`/`PreReviewFailed`. Zero `pre_review` events in
 /// r5/r6c/r6d — off in every measured run.
+/// Tightened to 37,822 (VA-015, gate 9): the dynamic replanner deleted — `impl Replanner for
+/// GooseAgentDispatcher` (the replan prompt, orientation and lane), `replan_schema`, the
+/// `dynamic_replan`/`max_replans` defaults, CLI flag, printer, menu and editor arms and the levers echo
+/// (the fields survive as `Option` under `retired_levers`); goose-swarm lost replan.rs, the scheduler's
+/// summon/splice/repair path, `Replanned` and their tests.
 #[test]
 fn swarm_rs_line_count_only_decreases() {
-    const SWARM_RS_LINE_BASELINE: usize = 38_043;
+    const SWARM_RS_LINE_BASELINE: usize = 37_822;
     let text = read("crates/goose-cli/src/commands/swarm.rs");
     let n = text.lines().count();
     assert!(
@@ -461,46 +466,49 @@ fn campaign_skill_still_forbids_headless_launches() {
 /// GATE 6 — THE ONE-DOOR GATE (Mihai 2026-08-30, minutes after the r4 kill: "add it to our gates
 /// to avoid in the future - make it a practice"). r4's replanner spliced five tasks into the live
 /// DAG past every plan repair; one re-created the module/package shadow the repair had just fixed,
-/// and the pinned sink shipped owning README.md. Every DAG entry walks through the same repairs:
-/// the scheduler's splice site must sanitize through `repair_replan_specs` before `splice_specs`,
-/// the sink-file strip must stay in the plan-repair chain, and both agentic docs must carry the
-/// gate so a compaction cannot lose it.
+/// and the pinned sink shipped owning README.md. Every DAG entry walks through the same repairs.
+/// VA-015 (2026-09-01, gate 9) DELETED the dynamic replanner — the door r4 came through no longer
+/// exists — so this test now refuses its RETURN (no `Replanner` attach, no `.replan(` call, no
+/// `repair_replan_specs` in scheduler.rs) and enumerates the one splice site left (apply_split's
+/// partition door, whose validation IS its ownership repair). The sink-file strip must stay in the
+/// plan-repair chain, and both agentic docs must carry the gate so a compaction cannot lose it.
 #[test]
 fn every_dag_entry_walks_through_the_same_repairs() {
     let sched = read("crates/goose-swarm/src/scheduler.rs");
+    for gone in [
+        "with_replanner",
+        ".replan(",
+        "repair_replan_specs",
+        "Replanner",
+    ] {
+        assert!(
+            !sched.contains(gone),
+            "scheduler.rs contains `{gone}` — the dynamic replanner was deleted (VA-015: r6c's \
+             replan-r0 ran 208 unsupervised minutes for two bonus tasks nothing imported; r5's held \
+             two READY tasks 19 minutes). A mid-run task-adding path returns only with the \
+             measurement gate 9 demands, and then it walks the same ownership repairs as every \
+             other door and joins the enumerated list below."
+        );
+    }
     // GATE-AUDITOR STRENGTHENING (2026-08-30): the old form windowed ONE known door and was a
-    // lock, not a tripwire — a third `.splice_specs(` call inserted after the guarded window
-    // would have passed unguarded (the r4 lesson applied to the gate's own test). Now every
-    // splice call site is ENUMERATED (a call-site ratchet, same species as the
-    // unwrap_or_default ratchet) and each must show its own repair discipline inside its own
-    // function body. A new door fails the build until it names its repair and joins the list.
+    // lock, not a tripwire — a splice call inserted after the guarded window would have passed
+    // unguarded (the r4 lesson applied to the gate's own test). Every splice call site is
+    // ENUMERATED (a call-site ratchet, same species as the unwrap_or_default ratchet) and each
+    // must show its own repair discipline inside its own function body. A new door fails the
+    // build until it names its repair and joins the list.
     let sites: Vec<usize> = sched
         .match_indices(".splice_specs(")
         .map(|(i, _)| i)
         .collect();
     assert_eq!(
         sites.len(),
-        2,
-        "scheduler.rs has {} `.splice_specs(` call sites; the known-door list has 2 (apply_split's \
-         partition door and the replan door). A NEW door must carry its ownership repair and be \
-         added here with its guard assert — never spliced past the repairs (gate 6, the r4 class).",
+        1,
+        "scheduler.rs has {} `.splice_specs(` call sites; the known-door list has 1 (apply_split's \
+         partition door). A NEW door must carry its ownership repair and be added here with its \
+         guard assert — never spliced past the repairs (gate 6, the r4 class).",
         sites.len()
     );
-    // Door 1 — the replan path: repair_replan_specs stands between the replanner's answer and
-    // the splice. Windowed to dodge the fn-definition trap.
-    let answer_at = sched
-        .find(".replan(ctx).await")
-        .expect("the replanner call site exists");
-    let splice_at = sched[answer_at..]
-        .find(".splice_specs(")
-        .map(|i| answer_at + i)
-        .expect("the replan splice site exists after the replanner call");
-    assert!(
-        sched[answer_at..splice_at].contains("repair_replan_specs("),
-        "repair_replan_specs must stand between the replanner's answer and splice_specs — \
-         a batch that reaches the DAG unrepaired is the r4 shadow-reintroduction class"
-    );
-    // Door 2 — apply_split's partition validation IS its ownership repair (an exact partition
+    // The one door — apply_split's partition validation IS its ownership repair (an exact partition
     // of the parent's already-repaired claim cannot create a second claimant or a new path):
     // its two load-bearing refusals must stand between the fn definition and its splice.
     let split_fn = sched.find("fn apply_split(").expect("apply_split exists");
@@ -513,7 +521,7 @@ fn every_dag_entry_walks_through_the_same_repairs() {
         split_body.contains("!orig_files.contains(f)")
             && split_body.contains("union != orig_files"),
         "apply_split's partition refusals (foreign-file and non-exact-cover) must guard its \
-         splice — they are this door's equivalent of repair_replan_specs"
+         splice — they are this door's ownership repair"
     );
     let engine = read("crates/goose-cli/src/commands/swarm.rs");
     assert!(

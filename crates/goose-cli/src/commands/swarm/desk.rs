@@ -993,7 +993,7 @@ impl Desk {
                 continue;
             }
             // SUPERVISION LANES ARE NOT WATCHED (r6e E15). The judge/tail-review/
-            // schedjudge/replan/verify lanes write the same artifacts as workers, so the desk
+            // schedjudge/verify lanes write the same artifacts as workers, so the desk
             // discovered them and ran its detectors on the supervisors: r6d run.jsonl carried 62
             // desk_summon on `judge-research-*` keys ("[growth_without_acting] 4297 reasoning
             // chars since the last tool call") against 22 on workers, plus 236 desk_look / 160
@@ -1441,7 +1441,7 @@ mod tests {
         for key in [
             "judge-research-ledger-core-q5",
             "tail-review-wiring",
-            "replan-r0",
+            "schedjudge-web-viz",
         ] {
             std::fs::write(activity.join(format!("{key}.think.log")), &big).unwrap();
             std::fs::write(activity.join(format!("{key}.json")), "{}").unwrap();
