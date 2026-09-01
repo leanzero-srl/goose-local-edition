@@ -157,6 +157,39 @@ export async function leanzeroLinkNodes(): Promise<NodesResponse> {
   return await call<NodesResponse>('_goose/unstable/leanzeroLink/nodes', {});
 }
 
+/** Args for `remoteExecute` — camelCase, matching the Rust `LeanzeroLinkRemoteExecuteRequest`. */
+export interface RemoteExecuteArgs {
+  /** A node id from `nodes()` (self or an Idle peer). */
+  targetNodeId: string;
+  prompt: string;
+  /** Absolute working dir on the TARGET; omitted → the device's home. */
+  workingDir?: string;
+}
+
+/** `{ sessionId }` — the session created on the TARGET node, mirrored over the swarm stream. */
+export interface RemoteExecuteResult {
+  sessionId: string;
+}
+
+/**
+ * Start a NEW session on an idle linked node (self or a peer) with a fresh prompt.
+ * The backend requires the manager be `connected` and the target be idle; a busy /
+ * disabled / unwired / unknown / not-connected target surfaces its status text VERBATIM
+ * as an `invalid_params` error — render it via `linkBannerText`. `workingDir` is omitted
+ * from the wire when blank (the backend defaults to the device's home).
+ */
+export async function leanzeroLinkRemoteExecute(
+  args: RemoteExecuteArgs
+): Promise<RemoteExecuteResult> {
+  const params: Record<string, unknown> = {
+    targetNodeId: args.targetNodeId,
+    prompt: args.prompt,
+  };
+  const dir = args.workingDir?.trim();
+  if (dir) params.workingDir = dir;
+  return await call<RemoteExecuteResult>('_goose/unstable/leanzeroLink/remoteExecute', params);
+}
+
 // ---------------------------------------------------------------------------
 // Error surfacing.
 // ---------------------------------------------------------------------------
