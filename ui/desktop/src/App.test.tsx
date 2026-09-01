@@ -368,11 +368,23 @@ describe('App Component - Brand New State', () => {
     render(content);
     expect(screen.getByText('Shortcut ignored while a benchmark is running')).toBeInTheDocument();
     expect(screen.getByText(/Cmd\+N would open a second window/)).toBeInTheDocument();
+    // The notice is Studio content: a warn StatusDot beside the title, no toastify icon.
+    expect(options).toMatchObject({ icon: false });
+    expect(screen.getByRole('img', { name: 'Warning' })).toBeInTheDocument();
+
+    // A refusal that protects a SESSION run says so — it no longer calls every refusal a benchmark.
+    refusedHandler?.({} as any, { action: 'close', reason: 'session-run' });
+    expect(mockToastWarn).toHaveBeenCalledTimes(2);
+    const [sessionContent] = mockToastWarn.mock.calls[1];
+    render(sessionContent);
+    expect(screen.getByText('Shortcut ignored while a session run is live')).toBeInTheDocument();
+    expect(screen.getByText(/drop the live session run/)).toBeInTheDocument();
+    expect(screen.queryByText(/live benchmark view/)).toBeNull();
 
     refusedHandler?.({} as any, { action: 'not-a-refusal' });
     refusedHandler?.({} as any, { action: 'constructor' });
     refusedHandler?.({} as any);
-    expect(mockToastWarn).toHaveBeenCalledTimes(1);
+    expect(mockToastWarn).toHaveBeenCalledTimes(2);
   });
 
   it('should seed recipe sessions with the recipe prompt when no initial message is provided', () => {
