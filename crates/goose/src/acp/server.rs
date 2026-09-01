@@ -92,6 +92,7 @@ mod elicitation;
 mod extensions;
 mod fork_session;
 mod link;
+pub use link::{set_delta_source, DeltaInput, DeltaSource, SessionDeltaKind};
 mod list_sessions;
 mod load_session;
 mod local_inference;

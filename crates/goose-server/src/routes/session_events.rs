@@ -1,5 +1,6 @@
 use crate::routes::errors::ErrorResponse;
 use crate::routes::reply::{get_token_state, track_tool_telemetry, MessageEvent};
+use crate::session_delta_tap::SessionDeltaMsg;
 use crate::session_event_bus::RequestGuard;
 use crate::state::AppState;
 use axum::{
@@ -365,8 +366,20 @@ pub async fn session_reply(
 
         let publish = |rid: Option<String>, event: MessageEvent| {
             let bus = task_bus.clone();
+            let delta_tap = task_state.session_delta_tap();
+            let session_id = task_session_id.clone();
             async move {
-                bus.publish(rid, event).await;
+                // Per-session bus publish is unchanged — this returns the origin-scoped
+                // seq the mesh mirror stamps onto SessionDelta.seq.
+                let seq = bus.publish(rid, event.clone()).await;
+                // ADDITIVE mesh tap: fan the same event out for cross-device mirroring.
+                // Non-fallible — no subscriber (mesh not connected) or a lagged one yields
+                // Err/drop, never blocking or failing the reply path.
+                let _ = delta_tap.send(SessionDeltaMsg {
+                    session_id,
+                    seq,
+                    event,
+                });
             }
         };
 
