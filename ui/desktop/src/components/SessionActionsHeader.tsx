@@ -19,6 +19,7 @@ import type { Recipe } from '../recipe';
 import type { Session } from '../types/session';
 import { errorMessage } from '../utils/conversionUtils';
 import { cn } from '../utils';
+import { TYPE, cx } from './lz/tokens';
 import { Button } from './ui/button';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from './ui/dialog';
 import {
@@ -299,7 +300,7 @@ function JsonTreeNode({
       </button>
 
       {isOpen && entries.length > 0 && (
-        <div className="ml-3 border-l border-border-primary/70 pl-3">
+        <div className="ml-3 border-l border-lz-border pl-3">
           {entries.map(([key, childValue]) => (
             <JsonTreeNode
               key={`${path}.${key}`}
@@ -497,7 +498,7 @@ export default function SessionActionsHeader({
               className="flex h-9 max-w-full cursor-pointer items-center gap-1.5 rounded-md px-4 py-2 text-text-primary transition-colors hover:bg-background-secondary focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-border-active"
               aria-label={intl.formatMessage(i18n.actionsLabel)}
             >
-              <span className="truncate text-sm font-medium">{title}</span>
+              <span className={cx('truncate', TYPE.h2)}>{title}</span>
               <ChevronDown className="size-4 text-text-secondary" />
             </button>
           </DropdownMenuTrigger>
