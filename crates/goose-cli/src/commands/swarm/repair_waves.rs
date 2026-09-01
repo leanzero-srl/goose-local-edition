@@ -38,6 +38,7 @@ use std::collections::{HashMap, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use async_trait::async_trait;
 use goose_swarm::{DispatchRequest, EventSink, TaskDispatcher};
 
 use super::attribution::parse_handoffs;
@@ -239,9 +240,42 @@ impl GooseAgentDispatcher {
         let mut out = Composed::default();
         for f in &owned {
             let Some(rel) = safe_rel(f) else { continue };
-            let ours = std::fs::read(shadow_root.join(rel)).unwrap_or_default();
-            let theirs = std::fs::read(real_root.join(rel)).unwrap_or_default();
-            let base = bases.get(f).cloned().unwrap_or_default();
+            // OURS must exist: a shard that deleted or corrupted its own owned file made no
+            // landable change to it — said by name, never landed as an EMPTY file (gate 1; the
+            // old copy_owned_files skipped a missing src the same way, silently).
+            let ours = match std::fs::read(shadow_root.join(rel)) {
+                Ok(b) => b,
+                Err(e) => {
+                    self.events.write_value(serde_json::json!({
+                        "event": "shard_file_unreadable",
+                        "task_id": task_id,
+                        "file": f,
+                        "error": e.to_string(),
+                    }));
+                    continue;
+                }
+            };
+            // THEIRS / BASE absent means the file did not exist (in the tree now / at dispatch):
+            // an honest empty — the shard CREATED the file. Any OTHER read error on the tree's
+            // copy is said, and the file is skipped rather than merged against a guess.
+            let theirs = match std::fs::read(real_root.join(rel)) {
+                Ok(b) => b,
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => Vec::new(),
+                Err(e) => {
+                    self.events.write_value(serde_json::json!({
+                        "event": "shard_file_unreadable",
+                        "task_id": task_id,
+                        "file": f,
+                        "side": "tree",
+                        "error": e.to_string(),
+                    }));
+                    continue;
+                }
+            };
+            let base = match bases.get(f) {
+                Some(b) => b.clone(),
+                None => Vec::new(),
+            };
             if ours == base || ours == theirs {
                 continue; // the shard did not change this file (or matches the tree already)
             }
@@ -409,15 +443,33 @@ pub(super) struct WaveOutcome {
 }
 
 /// What one finding-shard returned to the driver.
-struct ShardResult {
-    idx: usize,
-    slot: String,
-    promoted: bool,
-    conflict_note: Option<String>,
-    handoff_files: Vec<String>,
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub(super) struct ShardOutcome {
+    /// Bytes LANDED on the real tree (S13-c: `promote_merged` wrote at least one file).
+    pub(super) promoted: bool,
+    /// Overlapping hunks — re-dispatch at once on the merged base with this note.
+    pub(super) conflict_note: Option<String>,
+    /// The merge tool could not run — no progress on this tree (parked, never re-armed).
+    pub(super) unavailable: bool,
+    pub(super) handoff_files: Vec<String>,
 }
 
-fn conflict_note(conflicts: &[(String, Vec<String>)], unavailable: &[(String, String)]) -> String {
+/// The wave's seam: what runs ONE finding-shard and what re-grades the tree. The production
+/// runner is the dispatcher (`DispatcherShardRunner`); a test runner drives `drive_wave` with
+/// scripted completions and arrival orders (S13's refutation ran through exactly that seam).
+#[async_trait]
+pub(super) trait ShardRunner: Send + Sync + 'static {
+    async fn run_shard(
+        &self,
+        f: &OpenFinding,
+        slot: &str,
+        baseline: Arc<std::sync::atomic::AtomicUsize>,
+    ) -> ShardOutcome;
+    /// The tree's finding count NOW (None = the gate could not run).
+    async fn regrade(&self) -> Option<usize>;
+}
+
+fn conflict_note(conflicts: &[(String, Vec<String>)]) -> String {
     let mut s = String::from(
         "YOUR PREVIOUS EDIT OVERLAPPED A SIBLING'S FIX THAT LANDED WHILE YOU WORKED. The file you \
          now see is the MERGED tree (the sibling's fix is in it); redo YOUR change on it, keeping \
@@ -429,17 +481,212 @@ fn conflict_note(conflicts: &[(String, Vec<String>)], unavailable: &[(String, St
             s.push_str(&format!("--- {f}\n{h}"));
         }
     }
-    for (f, why) in unavailable {
-        s.push_str(&format!(
-            "--- {f}: could not be merged ({why}); apply your change to the current file\n"
-        ));
-    }
     s
 }
 
-/// (c) THE WAVE, without a barrier: dispatch open findings as slots free, land each shard by
-/// three-way merge as it returns, re-grade the tree after every promotion, re-shard on a handoff
-/// or a conflict at once, and stop when nothing is dispatchable and nothing runs.
+/// (c) THE WAVE, without a barrier — every finding keyed by its TEXT, never by its position
+/// (S13: a promotion once removed a row while sibling indices were in flight, so the next fill
+/// re-dispatched a running finding under the same task id and its shadow was replaced under the
+/// running agent). Dispatch open findings as slots free, land each shard as it returns, re-grade
+/// the tree after every promotion and hand the NEW count to every shard still running (the
+/// baseline is shared, S13-b), re-shard on a handoff or a conflict at once, park a finding on the
+/// current tree when it made no progress, and stop when nothing is dispatchable and nothing runs.
+pub(super) async fn drive_wave<R: ShardRunner>(
+    runner: Arc<R>,
+    sink: Arc<dyn EventSink>,
+    round: u32,
+    baseline: usize,
+    findings: Vec<OpenFinding>,
+    fleet_slots: Vec<String>,
+) -> WaveOutcome {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let mut open = findings;
+    let baseline = Arc::new(AtomicUsize::new(baseline));
+    let mut tree_version: u64 = 0;
+    let mut outcome = WaveOutcome::default();
+    let slots = if fleet_slots.is_empty() {
+        vec![String::new()]
+    } else {
+        order_fleet_by_speed(fleet_slots, &resolved_fleet_speed_weights(&load_config()))
+    };
+    let mut free: VecDeque<String> = slots.into_iter().collect();
+    let mut in_flight: std::collections::HashSet<String> = Default::default();
+    let mut done: std::collections::HashSet<String> = Default::default();
+    let mut task_keys: HashMap<tokio::task::Id, (String, String)> = HashMap::new();
+    let mut tasks: tokio::task::JoinSet<(String, String, ShardOutcome)> =
+        tokio::task::JoinSet::new();
+    loop {
+        // FILL: every free slot takes the next dispatchable finding — not running, not done,
+        // not already tried against this very tree.
+        while let Some(slot) = free.pop_front() {
+            let next = open
+                .iter()
+                .find(|f| {
+                    !in_flight.contains(&f.text)
+                        && !done.contains(&f.text)
+                        && f.attempted_at != Some(tree_version)
+                })
+                .cloned();
+            let Some(f) = next else {
+                free.push_front(slot);
+                break;
+            };
+            in_flight.insert(f.text.clone());
+            outcome.shards += 1;
+            let key = f.text.clone();
+            let key_for_map = key.clone();
+            let runner = runner.clone();
+            let baseline = baseline.clone();
+            let slot_for_task = slot.clone();
+            let handle = tasks.spawn(async move {
+                let out = runner.run_shard(&f, &slot_for_task, baseline).await;
+                (key, slot_for_task, out)
+            });
+            task_keys.insert(handle.id(), (key_for_map, slot));
+        }
+        if in_flight.is_empty() {
+            break;
+        }
+        let Some(joined) = tasks.join_next().await else {
+            break;
+        };
+        let (key, slot, res) = match joined {
+            Ok(v) => v,
+            Err(e) => {
+                // A panicked lane: release ONLY its finding (parked on this tree) and its slot;
+                // every other running finding keeps running.
+                let (key, slot) = task_keys
+                    .remove(&e.id())
+                    .unwrap_or_else(|| (String::new(), String::new()));
+                sink.write_value(serde_json::json!({
+                    "event": "lane_panicked",
+                    "context": "complete-fix",
+                    "round": round,
+                    "finding": super::findings::elide_middle(&key, 150, 400),
+                    "error": e.to_string(),
+                }));
+                in_flight.remove(&key);
+                if let Some(f) = open.iter_mut().find(|o| o.text == key) {
+                    f.attempted_at = Some(tree_version);
+                }
+                if !slot.is_empty() {
+                    free.push_back(slot);
+                }
+                continue;
+            }
+        };
+        task_keys.retain(|_, (k, _)| *k != key);
+        in_flight.remove(&key);
+        free.push_back(slot);
+        let Some(f) = open.iter_mut().find(|o| o.text == key) else {
+            continue;
+        };
+        if res.promoted {
+            outcome.promoted += 1;
+            tree_version += 1;
+            done.insert(key.clone());
+            // RE-VERIFY after each promotion: the next shard — and every shard still running —
+            // is judged against the tree it lands on, never the round's opening count (S13-b).
+            let verified = runner.regrade().await;
+            if let Some(v) = verified {
+                baseline.store(v, Ordering::SeqCst);
+            }
+            sink.write_value(serde_json::json!({
+                "event": "repair_tree_regraded",
+                "round": round,
+                "after_finding": super::findings::elide_middle(&key, 150, 400),
+                "findings": verified,
+                "tree_version": tree_version,
+            }));
+            // Siblings parked on the old tree may try again on the new one.
+            for o in open.iter_mut() {
+                if o.attempted_at.is_some_and(|v| v < tree_version) {
+                    o.attempted_at = None;
+                }
+            }
+            continue;
+        }
+        if let Some(note) = res.conflict_note {
+            outcome.conflicts += 1;
+            f.conflict_note = Some(note);
+            f.attempted_at = None;
+            continue;
+        }
+        if res.unavailable {
+            // No merge tool → no progress possible on this tree; parked like a no-op shard,
+            // never re-armed (unbounded re-dispatch when git is absent was the S13 finding).
+            f.attempted_at = Some(tree_version);
+            continue;
+        }
+        if !res.handoff_files.is_empty() {
+            let mut added = false;
+            for h in &res.handoff_files {
+                if !f.owned.contains(h) {
+                    f.owned.push(h.clone());
+                    added = true;
+                    sink.write_value(serde_json::json!({
+                        "event": "handoff_reshard",
+                        "round": round,
+                        "finding": super::findings::elide_middle(&f.text, 150, 400),
+                        "file": h,
+                        "owned_now": f.owned,
+                    }));
+                }
+            }
+            if added {
+                outcome.reshards += 1;
+                f.attempted_at = None;
+                continue;
+            }
+        }
+        f.attempted_at = Some(tree_version);
+    }
+    outcome.findings_left = open.iter().filter(|o| !done.contains(&o.text)).count();
+    outcome
+}
+
+/// The production runner: one finding-shard through the dispatcher, the regrade through the one
+/// ruler.
+pub(super) struct DispatcherShardRunner {
+    pub(super) me: Arc<GooseAgentDispatcher>,
+    pub(super) sink: Arc<dyn EventSink>,
+    pub(super) round: u32,
+    pub(super) all_files: Vec<String>,
+    pub(super) cwd: PathBuf,
+    pub(super) prompt: String,
+    pub(super) lang: TargetLang,
+    pub(super) composite: bool,
+    pub(super) missing_gate: bool,
+    pub(super) device_id: String,
+    pub(super) user_decisions: String,
+    pub(super) brief_decisions: BriefDecisions,
+    pub(super) doc_facts: String,
+}
+
+#[async_trait]
+impl ShardRunner for DispatcherShardRunner {
+    async fn run_shard(
+        &self,
+        f: &OpenFinding,
+        slot: &str,
+        baseline: Arc<std::sync::atomic::AtomicUsize>,
+    ) -> ShardOutcome {
+        run_finding_shard(self, f, slot, baseline).await
+    }
+    async fn regrade(&self) -> Option<usize> {
+        one_ruler_grade(
+            &self.cwd,
+            &self.prompt,
+            self.lang,
+            &self.all_files,
+            self.composite,
+            self.missing_gate,
+        )
+        .await
+        .0
+    }
+}
+
 pub(super) async fn run_wave(
     me: Arc<GooseAgentDispatcher>,
     sink: Arc<dyn EventSink>,
@@ -461,175 +708,31 @@ pub(super) async fn run_wave(
         brief_decisions,
         doc_facts,
     } = inputs;
-    let mut open = findings;
-    let mut baseline = baseline;
-    let mut tree_version: u64 = 0;
-    let mut outcome = WaveOutcome::default();
-    let slots = if fleet_slots.is_empty() {
-        vec![String::new()]
-    } else {
-        order_fleet_by_speed(fleet_slots, &resolved_fleet_speed_weights(&load_config()))
-    };
-    let mut free: VecDeque<String> = slots.into_iter().collect();
-    let mut in_flight: std::collections::HashSet<usize> = Default::default();
-    let mut tasks: tokio::task::JoinSet<ShardResult> = tokio::task::JoinSet::new();
-    let all_files = Arc::new(all_files);
-    let prompt = Arc::new(prompt);
-    let brief_decisions = Arc::new(brief_decisions);
-    loop {
-        // FILL: every free slot takes the next dispatchable finding (never one tried against
-        // this very tree, never one already running).
-        while let Some(slot) = free.pop_front() {
-            let next = open
-                .iter()
-                .enumerate()
-                .find(|(i, f)| !in_flight.contains(i) && f.attempted_at != Some(tree_version))
-                .map(|(i, _)| i);
-            let Some(idx) = next else {
-                free.push_front(slot);
-                break;
-            };
-            in_flight.insert(idx);
-            outcome.shards += 1;
-            let f = open[idx].clone();
-            let me = me.clone();
-            let sink = sink.clone();
-            let all_files = all_files.clone();
-            let prompt = prompt.clone();
-            let brief_decisions = brief_decisions.clone();
-            let cwd = cwd.clone();
-            let device_id = device_id.clone();
-            let user_decisions = user_decisions.clone();
-            let doc_facts = doc_facts.clone();
-            tasks.spawn(async move {
-                let (promoted, conflict_note, handoff_files) = run_finding_shard(
-                    me,
-                    sink,
-                    round,
-                    baseline,
-                    &f,
-                    &slot,
-                    &all_files,
-                    &cwd,
-                    &prompt,
-                    lang,
-                    composite,
-                    missing_gate,
-                    &device_id,
-                    &user_decisions,
-                    &brief_decisions,
-                    &doc_facts,
-                )
-                .await;
-                ShardResult {
-                    idx,
-                    slot,
-                    promoted,
-                    conflict_note,
-                    handoff_files,
-                }
-            });
-        }
-        if in_flight.is_empty() {
-            break;
-        }
-        let Some(joined) = tasks.join_next().await else {
-            break;
-        };
-        let res = match joined {
-            Ok(r) => r,
-            Err(e) => {
-                // A panicked lane: name it, free nothing it held (its slot is lost with it —
-                // the pool shrinks by one rather than a phantom slot dispatching forever).
-                sink.write_value(serde_json::json!({
-                    "event": "lane_panicked",
-                    "context": "complete-fix",
-                    "round": round,
-                    "error": e.to_string(),
-                }));
-                // Whichever finding it was can no longer be identified; every in-flight index
-                // that has no live task is released to be tried again.
-                in_flight.clear();
-                if tasks.is_empty() && free.is_empty() {
-                    break;
-                }
-                continue;
-            }
-        };
-        in_flight.remove(&res.idx);
-        free.push_back(res.slot);
-        let Some(f) = open.get_mut(res.idx) else {
-            continue;
-        };
-        if res.promoted {
-            outcome.promoted += 1;
-            tree_version += 1;
-            // RE-VERIFY after each promotion: the next shard is judged against the tree it lands
-            // on, never the round's opening count.
-            let (verified, established) =
-                one_ruler_grade(&cwd, &prompt, lang, &all_files, composite, missing_gate).await;
-            if let Some(v) = verified {
-                baseline = v;
-            }
-            sink.write_value(serde_json::json!({
-                "event": "repair_tree_regraded",
-                "round": round,
-                "after_shard": format!("complete-fix::{}#{}", f.file, f.k),
-                "findings": verified,
-                "established": established,
-                "tree_version": tree_version,
-            }));
-            let text = f.text.clone();
-            open.retain(|o| o.text != text);
-            // Siblings tried against the old tree may try again on the new one.
-            for o in open.iter_mut() {
-                if o.attempted_at.is_some_and(|v| v < tree_version) {
-                    o.attempted_at = None;
-                }
-            }
-            // indices shifted: nothing in flight refers to a removed row only if we remap —
-            // simplest honest choice: rebuild in_flight by text match is impossible; so keep
-            // indices stable by NOT removing here when anything is in flight.
-            continue;
-        }
-        if let Some(note) = res.conflict_note {
-            outcome.conflicts += 1;
-            f.conflict_note = Some(note);
-            f.attempted_at = None;
-            continue;
-        }
-        if !res.handoff_files.is_empty() {
-            let mut added = false;
-            for h in &res.handoff_files {
-                if all_files.contains(h) && !f.owned.contains(h) {
-                    f.owned.push(h.clone());
-                    added = true;
-                    sink.write_value(serde_json::json!({
-                        "event": "handoff_reshard",
-                        "round": round,
-                        "finding": super::findings::elide_middle(&f.text, 150, 400),
-                        "file": h,
-                        "owned_now": f.owned,
-                    }));
-                }
-            }
-            if added {
-                outcome.reshards += 1;
-                f.attempted_at = None;
-                continue;
-            }
-        }
-        f.attempted_at = Some(tree_version);
-    }
-    outcome.findings_left = open.len();
-    outcome
+    let runner = Arc::new(DispatcherShardRunner {
+        me,
+        sink: sink.clone(),
+        round,
+        all_files,
+        cwd,
+        prompt,
+        lang,
+        composite,
+        missing_gate,
+        device_id,
+        user_decisions,
+        brief_decisions,
+        doc_facts,
+    });
+    drive_wave(runner, sink, round, baseline, findings, fleet_slots).await
 }
 
-/// Does a NOT REAL verdict QUOTE the replay the gate's finding calls for? A probe finding names
-/// a request (`POST /api/drafts …`): the detail must carry that path and an HTTP status
-/// (`HTTP 200`, `200 OK`, `→ 201`, a curl line). A render finding names no path: the detail
-/// must carry the probe's own numbers (`renderedRowCount`/`rows=` or a console-error count).
-/// Words alone ("re-probed with realistic variants, saw JSON every time") are not a replay.
+/// Does a NOT REAL verdict QUOTE the replay the gate's finding calls for? (A QUOTE check — the
+/// engine reads the words, it does not re-run the request.) A probe finding names a request
+/// (`POST /api/drafts/<id>/submit …`): the detail must carry a path whose segments match it —
+/// a `<id>`/`{id}`/`:id` segment matches any one real segment — and an HTTP status (`HTTP 200`,
+/// `200 OK`, `→ 201`, a curl line). A render finding names no path: the detail must carry the
+/// probe's own numbers (`renderedRowCount`/`rows=` or a console-error count). Words alone
+/// ("re-probed with realistic variants, saw JSON every time") are not a quote.
 pub(super) fn quotes_replay(detail: &str, finding: &str) -> bool {
     let has_status = detail.contains("curl")
         || detail
@@ -638,10 +741,10 @@ pub(super) fn quotes_replay(detail: &str, finding: &str) -> bool {
             .any(|t| t.starts_with(['2', '3', '4', '5']));
     let path = finding
         .split(|c: char| c.is_whitespace() || "`'\"(),;".contains(c))
-        .find(|t| t.starts_with("/") && t.len() > 1)
+        .find(|t| t.starts_with('/') && t.len() > 1)
         .map(|t| t.split('?').next().unwrap_or(t).trim_end_matches("'s"));
     match path {
-        Some(p) => has_status && detail.contains(p),
+        Some(pattern) => has_status && detail_names_path(detail, pattern),
         None => {
             let low = detail.to_lowercase();
             has_status
@@ -652,37 +755,55 @@ pub(super) fn quotes_replay(detail: &str, finding: &str) -> bool {
     }
 }
 
+/// Does `detail` carry a path matching `pattern` segment-wise, where a parameter segment
+/// (`<id>`, `{id}`, `:id`) matches any one non-empty real segment?
+fn detail_names_path(detail: &str, pattern: &str) -> bool {
+    let want: Vec<&str> = pattern.split('/').filter(|s| !s.is_empty()).collect();
+    let is_param = |seg: &str| seg.starts_with('<') || seg.starts_with('{') || seg.starts_with(':');
+    detail
+        .split(|c: char| c.is_whitespace() || "`'\"(),;".contains(c))
+        .filter_map(|t| {
+            // A URL's path starts after its host: `http://127.0.0.1:8741/api/x` → `/api/x`.
+            match t.find("://") {
+                Some(i) => {
+                    let rest = t.split_at(i + 3).1;
+                    rest.find('/').map(|j| rest.split_at(j).1)
+                }
+                None => t.find('/').map(|i| t.split_at(i).1),
+            }
+        })
+        .map(|t| t.split('?').next().unwrap_or(t))
+        .any(|cand| {
+            let have: Vec<&str> = cand.split('/').filter(|s| !s.is_empty()).collect();
+            have.len() == want.len()
+                && want
+                    .iter()
+                    .zip(have.iter())
+                    .all(|(w, h)| (is_param(w) && !h.is_empty()) || w == h)
+        })
+}
+
 /// One finding's shard, start to finish: dispatch (speculative shadow), grade the merged
-/// preview, land or discard, persist the repair row, say what happened.
-#[allow(clippy::too_many_arguments)]
+/// preview against the baseline AS IT IS when the shard returns, land or discard, persist the
+/// repair row, say what happened.
 async fn run_finding_shard(
-    me: Arc<GooseAgentDispatcher>,
-    sink: Arc<dyn EventSink>,
-    round: u32,
-    baseline: usize,
+    r: &DispatcherShardRunner,
     f: &OpenFinding,
     model: &str,
-    all_files: &[String],
-    cwd: &Path,
-    prompt: &str,
-    lang: TargetLang,
-    composite: bool,
-    missing_gate: bool,
-    device_id: &str,
-    user_decisions: &str,
-    brief_decisions: &BriefDecisions,
-    doc_facts: &str,
-) -> (bool, Option<String>, Vec<String>) {
+    baseline: Arc<std::sync::atomic::AtomicUsize>,
+) -> ShardOutcome {
+    let (sink, me, round, all_files, cwd) = (&r.sink, &r.me, r.round, &r.all_files, &r.cwd);
     let task_id = format!("complete-fix::{}#{}", f.file, f.k);
+    let baseline_at_dispatch = baseline.load(std::sync::atomic::Ordering::SeqCst);
     sink.write_value(serde_json::json!({
         "event": "complete_fix_dispatched",
         "round": round, "shard": f.file, "finding_index": f.k, "model": model,
-        "task_id": task_id, "baseline_findings": baseline,
+        "task_id": task_id, "baseline_findings": baseline_at_dispatch,
         "owned": f.owned,
         "conflict_retry": f.conflict_note.is_some(),
     }));
     let started = std::time::Instant::now();
-    let shard_decisions = brief_decisions.for_files(&f.owned);
+    let shard_decisions = r.brief_decisions.for_files(&f.owned);
     sink.write_value(serde_json::json!({
         "event": "shard_decisions",
         "round": round, "shard": f.file, "task_id": task_id,
@@ -700,8 +821,8 @@ async fn run_finding_shard(
         f.order_note,
         smoke_fix_description(
             &findings,
-            lang,
-            prompt,
+            r.lang,
+            &r.prompt,
             &render_repair_history(
                 read_ledger_rollup(cwd).as_ref(),
                 &f.owned,
@@ -715,17 +836,17 @@ async fn run_finding_shard(
     let req = DispatchRequest {
         task_id: task_id.clone(),
         description: shard_desc.clone(),
-        device_id: device_id.to_string(),
+        device_id: r.device_id.clone(),
         model_id: model.to_string(),
         context_slice: String::new(),
         attempt: round,
         owned_files: f.owned.clone(),
-        all_files: all_files.to_vec(),
+        all_files: all_files.clone(),
         prior_hint: None,
         subsplit: Vec::new(),
         speculative: true,
-        user_decisions: user_decisions.to_string(),
-        doc_facts: doc_facts.to_string(),
+        user_decisions: r.user_decisions.clone(),
+        doc_facts: r.doc_facts.clone(),
         neighborhood: Vec::new(),
         shard_of: None,
         merger_of: None,
@@ -749,27 +870,50 @@ async fn run_finding_shard(
         .grade_merged_preview(
             &task_id,
             cwd,
-            prompt,
-            lang,
+            &r.prompt,
+            r.lang,
             all_files,
-            composite,
-            missing_gate,
+            r.composite,
+            r.missing_gate,
         )
         .await;
-    let conflicted = !composed.conflicts.is_empty() || !composed.unavailable.is_empty();
-    let promoted = shard_changed && !conflicted && shard_beats_baseline(verified, baseline);
+    let conflicted = !composed.conflicts.is_empty();
+    let unavailable = !composed.unavailable.is_empty();
+    // S13-b: compare against the baseline AS IT IS NOW — a sibling that landed while this shard
+    // ran lowered it, and a preview that already contains the sibling's fix must beat the
+    // post-sibling count, never the opening one (or a regression lands as an improvement).
+    let baseline_now = baseline.load(std::sync::atomic::Ordering::SeqCst);
+    let would_promote = shard_changed
+        && !conflicted
+        && !unavailable
+        && shard_beats_baseline(verified, baseline_now);
     let mut written = Vec::new();
-    if promoted {
+    if would_promote {
         written = me.promote_merged(&task_id, cwd);
+        if written.is_empty() {
+            // S13-c: the tree moved between grade and landing and the re-composition was not
+            // landable — nothing was written, so nothing was fixed; said by name.
+            sink.write_value(serde_json::json!({
+                "event": "shard_promotion_lost",
+                "round": round, "shard": f.file, "task_id": task_id,
+            }));
+        }
     } else {
         me.discard_shard(&task_id);
     }
+    let promoted = !written.is_empty();
     if conflicted {
         sink.write_value(serde_json::json!({
             "event": "merge_conflict",
             "round": round, "shard": f.file, "task_id": task_id,
             "files": composed.conflicts.iter().map(|(f, h)| serde_json::json!({"file": f, "hunks": h.len()})).collect::<Vec<_>>(),
-            "unavailable": composed.unavailable.iter().map(|(f, w)| serde_json::json!({"file": f, "why": w})).collect::<Vec<_>>(),
+        }));
+    }
+    if unavailable {
+        sink.write_value(serde_json::json!({
+            "event": "merge_unavailable",
+            "round": round, "shard": f.file, "task_id": task_id,
+            "said": composed.unavailable.iter().map(|(f, w)| serde_json::json!({"file": f, "why": w})).collect::<Vec<_>>(),
         }));
     }
     let output = ran.as_ref().map(|o| o.output.as_str()).unwrap_or("");
@@ -789,9 +933,7 @@ async fn run_finding_shard(
             }
         }
     }
-    // S5d (ii): NOT REAL on a probe/render finding must quote the replayed request AND response
-    // — r6c's four lanes "re-probed with 8 realistic variants" (their own requests, not the
-    // gate's bare POST) and dismissed findings the gate re-filed byte-identically every round.
+    // S5d (ii): NOT REAL on a probe/render finding must QUOTE the replayed request AND response.
     let unreplayed: Vec<u32> = verdicts
         .iter()
         .filter(|(_, v, said)| {
@@ -823,7 +965,7 @@ async fn run_finding_shard(
             description: &shard_desc,
             output,
             promoted,
-            baseline,
+            baseline: baseline_now,
             agent_ok: ran.is_ok(),
             edited: shard_changed,
             unreplayed: &unreplayed,
@@ -848,18 +990,23 @@ async fn run_finding_shard(
         "secs": started.elapsed().as_secs(),
         "agent_ok": ran.is_ok(),
         "verified_findings": verified,
-        "baseline_findings": baseline,
+        "baseline_findings": baseline_now,
         "shard_changed": shard_changed,
         "three_way_merged": composed.three_way,
         "conflicted": conflicted,
+        "merge_unavailable": unavailable,
         "handoffs": handoff_files,
         "files_written": written,
         "claimed_fixed_without_edit": !shard_changed && verdicts.iter().any(|(_, v, _)| *v == "FIXED"),
         "dismissed_without_replay": unreplayed,
         "promoted": promoted,
     }));
-    let note = conflicted.then(|| conflict_note(&composed.conflicts, &composed.unavailable));
-    (promoted, note, handoff_files)
+    ShardOutcome {
+        promoted,
+        conflict_note: conflicted.then(|| conflict_note(&composed.conflicts)),
+        unavailable,
+        handoff_files,
+    }
 }
 
 #[cfg(test)]
@@ -986,14 +1133,162 @@ mod tests {
             }
             other => panic!("expected a conflict: {other:?}"),
         }
-        let note = conflict_note(
-            &[(
-                "web/app.js".into(),
-                vec!["<<<<<<< this shard\nx\n=======\ny\n>>>>>>> tree now\n".into()],
-            )],
-            &[],
-        );
+        let note = conflict_note(&[(
+            "web/app.js".into(),
+            vec!["<<<<<<< this shard\nx\n=======\ny\n>>>>>>> tree now\n".into()],
+        )]);
         assert!(note.contains("--- web/app.js\n<<<<<<< this shard"));
         assert!(note.contains("redo YOUR change on it, keeping theirs"));
+    }
+
+    /// S13: a parameter segment matches any real id — a genuine replay with a real id is a
+    /// QUOTE; a missing or different segment is not this path.
+    #[test]
+    fn a_quoted_replay_matches_parameter_segments_against_real_ids() {
+        let submit =
+            "POST /api/drafts/<id>/submit's response could not be read as JSON on either probe";
+        assert!(quotes_replay("curl -X POST http://127.0.0.1:8741/api/drafts/d_7f3a/submit → HTTP 200 {\"state\":\"submitted\"}", submit));
+        assert!(
+            !quotes_replay(
+                "curl -X POST http://127.0.0.1:8741/api/drafts/submit → HTTP 200",
+                submit
+            ),
+            "a missing segment is not this path"
+        );
+        assert!(!quotes_replay(
+            "HTTP 200 on /api/drafts/d_7f3a/approve",
+            submit
+        ));
+    }
+
+    /// S13: the driver keys every finding by its TEXT. Two findings on ONE file, three slots,
+    /// both promoted, in BOTH arrival orders: each finding is dispatched exactly once (no
+    /// duplicate task id, no shadow replaced under a running agent), both promotions are
+    /// counted, the tree version bumps per promotion and the regrade runs after each, a later
+    /// shard reads the refreshed baseline, and a third finding parked on the old tree is
+    /// re-armed by the promotions — never dispatched twice on one tree version.
+    #[tokio::test]
+    async fn two_shards_on_one_file_both_land_in_either_arrival_order() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::sync::Mutex;
+        #[derive(Default)]
+        struct Rec(Mutex<Vec<serde_json::Value>>);
+        impl EventSink for Rec {
+            fn emit(&self, _e: &goose_swarm::SwarmEvent) {}
+            fn write_value(&self, v: serde_json::Value) {
+                self.0.lock().unwrap().push(v);
+            }
+        }
+        struct Scripted {
+            script: HashMap<String, (u64, bool)>,
+            dispatched: Mutex<Vec<String>>,
+            regrades: AtomicUsize,
+            baselines_seen: Mutex<Vec<usize>>,
+        }
+        #[async_trait]
+        impl ShardRunner for Scripted {
+            async fn run_shard(
+                &self,
+                f: &OpenFinding,
+                _slot: &str,
+                baseline: Arc<AtomicUsize>,
+            ) -> ShardOutcome {
+                self.dispatched.lock().unwrap().push(f.text.clone());
+                let (delay, promoted) = self.script.get(&f.text).copied().unwrap_or((0, false));
+                tokio::time::sleep(std::time::Duration::from_millis(delay)).await;
+                self.baselines_seen
+                    .lock()
+                    .unwrap()
+                    .push(baseline.load(Ordering::SeqCst));
+                ShardOutcome {
+                    promoted,
+                    conflict_note: None,
+                    unavailable: false,
+                    handoff_files: Vec::new(),
+                }
+            }
+            async fn regrade(&self) -> Option<usize> {
+                let n = self.regrades.fetch_add(1, Ordering::SeqCst) + 1;
+                Some(9 - n)
+            }
+        }
+        let finding = |text: &str, file: &str, k: usize| OpenFinding {
+            text: text.into(),
+            file: file.into(),
+            owned: vec![file.into()],
+            order_note: String::new(),
+            k,
+            attempted_at: None,
+            conflict_note: None,
+            replay_required: false,
+        };
+        for (d1, d2) in [(10u64, 80u64), (80u64, 10u64)] {
+            let findings = vec![
+                finding("S1", "web/app.js", 0),
+                finding("S2", "web/app.js", 1),
+                finding("S3", "app/api.py", 0),
+            ];
+            let runner = Arc::new(Scripted {
+                script: [
+                    ("S1".to_string(), (d1, true)),
+                    ("S2".to_string(), (d2, true)),
+                    ("S3".to_string(), (5, false)),
+                ]
+                .into_iter()
+                .collect(),
+                dispatched: Mutex::new(Vec::new()),
+                regrades: AtomicUsize::new(0),
+                baselines_seen: Mutex::new(Vec::new()),
+            });
+            let sink = Arc::new(Rec::default());
+            let sink_dyn: Arc<dyn EventSink> = sink.clone();
+            let out = drive_wave(
+                runner.clone(),
+                sink_dyn,
+                0,
+                9,
+                findings,
+                vec!["m1".into(), "m2".into(), "m3".into()],
+            )
+            .await;
+            assert_eq!(
+                out.promoted, 2,
+                "both fixes to one file land ({d1},{d2}): {out:?}"
+            );
+            let dispatched = runner.dispatched.lock().unwrap().clone();
+            assert_eq!(
+                dispatched.iter().filter(|t| *t == "S1").count(),
+                1,
+                "{dispatched:?}"
+            );
+            assert_eq!(
+                dispatched.iter().filter(|t| *t == "S2").count(),
+                1,
+                "{dispatched:?}"
+            );
+            let s3 = dispatched.iter().filter(|t| *t == "S3").count();
+            assert!(
+                (1..=3).contains(&s3),
+                "S3 runs at most once per tree version: {dispatched:?}"
+            );
+            assert_eq!(
+                runner.regrades.load(Ordering::SeqCst),
+                2,
+                "one regrade per promotion"
+            );
+            let events = sink.0.lock().unwrap().clone();
+            let versions: Vec<u64> = events
+                .iter()
+                .filter(|e| e["event"] == "repair_tree_regraded")
+                .map(|e| e["tree_version"].as_u64().unwrap())
+                .collect();
+            assert_eq!(versions, vec![1, 2], "{events:?}");
+            let seen = runner.baselines_seen.lock().unwrap().clone();
+            assert!(
+                seen.contains(&8),
+                "a later shard reads the refreshed baseline: {seen:?}"
+            );
+            assert_eq!(out.findings_left, 1, "S3 stays open; S1/S2 are done");
+        }
     }
 }
