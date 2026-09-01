@@ -184,7 +184,7 @@ async fn shutdown_takes_the_engine_launched_by_a_term_ignoring_wrapper() {
         format!("http://127.0.0.1:{port}"),
         "fake",
     );
-    config.startup_timeout = Duration::from_secs(20);
+    config.startup_stall_window = Duration::from_secs(20);
     let sidecar = Sidecar::start(config).await.unwrap();
     let leader = sidecar.pid().await.unwrap();
     assert!(owns_process_group(leader));
@@ -230,7 +230,7 @@ async fn shutdown_releases_the_port_from_residue_of_its_own_group() {
         format!("http://127.0.0.1:{port}"),
         "fake",
     );
-    config.startup_timeout = Duration::from_secs(20);
+    config.startup_stall_window = Duration::from_secs(20);
     let sidecar = Sidecar::start(config).await.unwrap();
     let leader = sidecar.pid().await.unwrap();
 
