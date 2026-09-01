@@ -60,8 +60,10 @@ the release build) · first_tick_r1.sh ALL OK (sha, benchmark=True, prompt 53,63
 53260 is the bundled binary) · **pool_resolved weight 1 ×3** (config override) with speed_weight 3/2/1 · levers_resolved
 carries retired_levers (8) and no split_fat · phase open. The redesigned Benchmark view verified LIVE over CDP before
 dispatch (no chooser, CURRENT/FROZEN badges, catalog rows, Run button). Vigil = tick-surgeon every 30m with the
-FIRST-TICK EXPECTATIONS below as its falsifier list; persona_loaded.stack_key (must NOT be angular) is the first
-one still unread. Run dir slot: benchmark/runs/build/swarm-3node-r0 (r6c archived to ~/goose-builds/…-0.1420-…).
+FIRST-TICK EXPECTATIONS below as its falsifier list; TICK 1 (07:24): every launch-phase falsifier PASSED (weight 1×3, retired levers, durable fields, promise
+kept → steer delivered, 0 wipes, judge looks off the busy planner node); OPEN 23.7m vs r6c 39m with per-file
+slice ownership. New r6e items E4–E6 (section matcher backticks / open_decisions schema / research judge
+must not answer) with the surgeon. WATCH: q2 mini correctness (If-Match write-through), viz-field vs7dbg text. Run dir slot: benchmark/runs/build/swarm-3node-r0 (r6c archived to ~/goose-builds/…-0.1420-…).
 
 ## THE PRIOR THREAD (2026-09-01 05:10) — TWO OWNER GATES BEFORE ANY NEW RUN (ALL THREE CLOSED, see checklist)
 

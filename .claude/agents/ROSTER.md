@@ -852,3 +852,8 @@ research_request_block's armed-no-claimed-sections arm wording.
   caused, atomic install without touching the running app, and two build-chain facts recorded in
   the skills. LESSON: it sat ~35 min in step 0 with no compile running until pinged — brief build
   agents to START the long pole first and do the small edits while it compiles.
+- 2026-09-01 07:30 tick-surgeon (r6d tick 1): EXEMPLARY at 86k/13. Walked every falsifier to its
+  field, caught the instrument's blind spot (AUX row vs judge placement) by reading
+  judge_look_dispatched itself, found three new defects with quotes (backticked section matcher,
+  empty-options decisions, an answer-dictating research judge) and set a WATCH that is a
+  correctness test of a mini's content, not its presence. Charter gap: none.
