@@ -55,6 +55,11 @@ use super::plan_shape::decomposition_of;
 use super::skeleton::SKELETON_ID;
 use super::{finalize_plan_before_dag, string_list, GooseAgentDispatcher};
 
+/// ASSEMBLE, then glue (DESIGN-SPLIT-V2 §1): before the merger model runs, CODE writes every
+/// piece's definitions into `ASSEMBLED.<ext>` in the declared interface's order; the merger's job
+/// becomes the glue. A child of this module so swarm.rs gains no wiring line.
+mod assembly;
+
 /// Where a module's shards work. Under `.swarm/` on purpose: every tree lister, snapshot and
 /// manifest already excludes it (`tree::SNAPSHOT_EXCLUDES`), so pieces never reach the scored tree
 /// and never read as stray files — the merger reads them by path from its dossier.
@@ -2243,6 +2248,24 @@ const JS_KEYWORDS: [&str; 16] = [
     "typeof", "await", "yield", "throw", "case",
 ];
 
+/// The language a PIECE or a FINAL FILE is read as — ITS extension decides, never the run's target
+/// language. r6e's split module was `web/viz.js` in a Python-target run: a `.js` piece read by the
+/// Python extractor (`def`/`class` heads only) yields no definition at all — every export
+/// "missing", every PROVIDES "unbacked", nothing to assemble. The run's language stands only for an
+/// extension that names none.
+pub(super) fn lang_for_path(path: &str, run_lang: super::TargetLang) -> super::TargetLang {
+    match std::path::Path::new(path)
+        .extension()
+        .and_then(|e| e.to_str())
+    {
+        Some("py") => super::TargetLang::Python,
+        Some("js" | "mjs" | "cjs" | "ts" | "tsx" | "jsx") => super::TargetLang::TypeScript,
+        Some("rs") => super::TargetLang::Rust,
+        Some("go") => super::TargetLang::Go,
+        _ => run_lang,
+    }
+}
+
 /// Definitions in a source text, line-based and deterministic — the merger's dossier and the
 /// after-check read the SAME extractor, so "present in the final file" means what "defined in a
 /// piece" meant. JavaScript: `function name(`, `const/let/var name = function|(…) =>|async`,
@@ -2620,7 +2643,10 @@ pub(super) async fn build_merge_dossier(
             // An unreadable piece (non-UTF-8, a permission error) is SAID — never rendered as
             // "parses — no definitions found" (fallback gate, S12-D).
             let (verdict, symbols) = match std::fs::read_to_string(&path) {
-                Ok(src) => (parse_piece(&path).await, extract_symbols(&src, lang)),
+                Ok(src) => (
+                    parse_piece(&path).await,
+                    extract_symbols(&src, lang_for_path(&n, lang)),
+                ),
                 Err(e) => (Some(format!("unreadable: {e}")), Vec::new()),
             };
             pieces.push((format!("{folder}/{n}"), verdict, symbols));
@@ -2725,7 +2751,7 @@ pub(super) async fn build_merge_dossier(
     let mut final_file_symbols = Vec::new();
     for f in module_files {
         if let Ok(src) = std::fs::read_to_string(root.join(f)) {
-            final_file_symbols.extend(extract_symbols(&src, lang));
+            final_file_symbols.extend(extract_symbols(&src, lang_for_path(f, lang)));
         }
     }
     // S10(3): a final file on disk BEFORE any merge was written by someone else — a shard that
@@ -2781,8 +2807,11 @@ impl MergeDossier {
 
     /// The MERGER BRIEF: a NUMBERED, SPECIFIC task list from the dossier — never "merge the
     /// module". Mihai 11:4x: "the merge node should actually be judicious in its work not just go
-    /// in and copy… the task of doing the merge needs to be specific".
-    pub(super) fn merger_brief(&self, cwd: &str) -> String {
+    /// in and copy… the task of doing the merge needs to be specific". With an `assembly` (code
+    /// placed the definitions, DESIGN-SPLIT-V2 §1) the job is the GLUE and retyping a definition
+    /// is named a defect; without one (no parser for the module's extension, no piece of its
+    /// language) the v1 shell-assembly item stands.
+    pub(super) fn merger_brief(&self, cwd: &str, assembly: Option<&assembly::Assembly>) -> String {
         let final_files = self
             .files
             .iter()
@@ -2805,15 +2834,41 @@ impl MergeDossier {
                 .collect::<Vec<_>>()
                 .join("; ")
         };
-        let mut s = format!(
-            "YOU ARE THE MERGER OF MODULE `{module}`. {n} shards built its pieces in parallel, each in \
-             its own folder under `{cwd}/{dir}/{module}/`; {on_disk} — you write {final_files}, \
-             from their pieces, judiciously: read every piece and every README below, reconcile, dedupe, \
-             fill the small gaps yourself, send the big ones out, then ASSEMBLE.\n\n",
-            module = self.module,
-            n = self.shards.len(),
-            dir = SHARDS_DIR,
-        );
+        let mut s = match assembly {
+            Some(a) => format!(
+                "YOU ARE THE MERGER OF MODULE `{module}`. {n} shards built its pieces in parallel, each in \
+                 its own folder under `{cwd}/{dir}/{module}/`; {on_disk}. CODE HAS ALREADY ASSEMBLED their \
+                 definitions into `{cwd}/{asm}`: {defs} definition block(s) from {pieces} piece(s) — {by_if} \
+                 placed in the declared interface's order, {unk} appended after it because no export names \
+                 them — with {imports} import line(s) first and {stmts} top-level statement(s) (state, \
+                 wiring, boot) collected at the end, each under its `shard:` line. YOUR JOB IS THE GLUE, NOT \
+                 THE DEFINITIONS: start FROM the assembled file (copy `{cwd}/{asm}` to {final_files} and \
+                 edit there), write what only the merger can — the imports/exports, the shared state's ONE \
+                 initialisation, the wiring and event plumbing, every UNFINISHED item and every GAP numbered \
+                 below — and produce {final_files}. THE PIECES ARE ALREADY IN PLACE: copying or retyping a \
+                 definition is FORBIDDEN and is a defect (a retyped definition is where pieces get dropped \
+                 and signatures drift); change a definition's body only where a numbered task says so.\n\n",
+                module = self.module,
+                n = self.shards.len(),
+                dir = SHARDS_DIR,
+                asm = a.path,
+                defs = a.definitions,
+                pieces = a.pieces,
+                by_if = a.ordered_by_interface,
+                unk = a.appended_unknown.len(),
+                imports = a.imports,
+                stmts = a.statements.iter().map(|(_, n)| n).sum::<usize>(),
+            ),
+            None => format!(
+                "YOU ARE THE MERGER OF MODULE `{module}`. {n} shards built its pieces in parallel, each in \
+                 its own folder under `{cwd}/{dir}/{module}/`; {on_disk} — you write {final_files}, \
+                 from their pieces, judiciously: read every piece and every README below, reconcile, dedupe, \
+                 fill the small gaps yourself, send the big ones out, then ASSEMBLE.\n\n",
+                module = self.module,
+                n = self.shards.len(),
+                dir = SHARDS_DIR,
+            ),
+        };
         if let Some(prior) = &self.prior_merge {
             s.push_str(&format!(
                 "SECOND PASS: you already merged once; the gaps you sent out have landed as new shards \
@@ -2902,10 +2957,25 @@ impl MergeDossier {
             ));
         }
         for (name, owners) in &self.duplicates {
-            item(&mut s, format!(
-                "`{name}` is defined in shards {} — keep ONE definition (or rename if they are different things), name which and why under KEPT/DROPPED.",
-                owners.iter().map(|o| format!("`{o}`")).collect::<Vec<_>>().join(" and ")
-            ));
+            item(
+                &mut s,
+                format!(
+                    "`{name}` is defined in shards {} — {}name which and why under KEPT/DROPPED.",
+                    owners
+                        .iter()
+                        .map(|o| format!("`{o}`"))
+                        .collect::<Vec<_>>()
+                        .join(" and "),
+                    if assembly.is_some() {
+                        format!(
+                        "BOTH definitions are in the assembled file under `{}` markers; keep ONE (delete the other, or rename if they are different things) and ",
+                        assembly::DUPLICATE_MARKER
+                    )
+                    } else {
+                        "keep ONE definition (or rename if they are different things), ".to_string()
+                    }
+                ),
+            );
         }
         for (name, declared, found, shard) in &self.signature_disagreements {
             item(&mut s, format!(
@@ -2947,13 +3017,30 @@ impl MergeDossier {
         } else {
             self.interface.layout.join(" → ")
         };
-        item(&mut s, format!(
-            "ASSEMBLE {final_files} in the declared order — {order}. ASSEMBLE, DON'T RETYPE: build the file by \
-             concatenating the piece files in that order with the shell (e.g. `cat <piece> <piece> … > <file>`), \
-             then EDIT the result for the glue — one shared state object, one definition per name, the exports \
-             wired exactly as declared, no leftover duplicate. Retyping 40 KB from memory is the slowest and least \
-             faithful path and is how pieces get silently dropped."
-        ));
+        match assembly {
+            Some(a) => item(&mut s, format!(
+                "WRITE THE GLUE into {final_files}, starting from `{cwd}/{asm}` — never from memory. The declared \
+                 layout is {order}: move each collected top-level statement to where the layout puts it (state \
+                 before its first use, boot last), initialise the shared state ONCE, wire the exports exactly as \
+                 declared, add the imports/exports the final file needs, and remove every `{marker}` marker by \
+                 keeping ONE definition per name. Glue the engine measured as needed: {glue}. Do not retype a \
+                 definition block; do not `cat` the piece folders again — they are already in the assembled file.",
+                asm = a.path,
+                marker = assembly::DUPLICATE_MARKER,
+                glue = if a.glue_needed.is_empty() {
+                    "none measured beyond the layout".to_string()
+                } else {
+                    a.glue_needed.join(", ")
+                },
+            )),
+            None => item(&mut s, format!(
+                "ASSEMBLE {final_files} in the declared order — {order}. ASSEMBLE, DON'T RETYPE: build the file by \
+                 concatenating the piece files in that order with the shell (e.g. `cat <piece> <piece> … > <file>`), \
+                 then EDIT the result for the glue — one shared state object, one definition per name, the exports \
+                 wired exactly as declared, no leftover duplicate. Retyping 40 KB from memory is the slowest and least \
+                 faithful path and is how pieces get silently dropped."
+            )),
+        }
         item(&mut s, format!(
             "Check the assembled file parses (`node --check` / `python3 -m py_compile` / the language's equivalent) \
              and that EVERY declared export exists in it with the declared signature; then write \
@@ -2980,10 +3067,13 @@ impl MergeDossier {
 pub(super) fn merger_missing_hint(merger: &MergerOf, missing: &[String]) -> String {
     format!(
         "You finished WITHOUT writing module `{module}`'s final file(s): {files}. You are the MERGER: \
-         ASSEMBLE them from the shard pieces your numbered brief names — `cat` the piece files in the \
-         declared order into the final file, then edit the glue — and write `{dir}/{module}/{readme}` \
+         ASSEMBLE them from the shard pieces your numbered brief names — start from the engine's \
+         `{dir}/{module}/{asm}.<ext>` when the brief names one (the definitions are already in place; \
+         copy it over the final file and write the glue), else `cat` the piece files in the declared \
+         order into the final file, then edit the glue — and write `{dir}/{module}/{readme}` \
          ({fields}). Do not retype the module from memory and do not explore beyond the piece folders; \
          the pieces are the source.",
+        asm = assembly::ASSEMBLED_STEM,
         module = merger.module,
         files = missing.join(", "),
         dir = SHARDS_DIR,
@@ -2998,9 +3088,12 @@ pub(super) fn merger_missing_hint(merger: &MergerOf, missing: &[String]) -> Stri
 pub(super) fn merger_owner_body() -> String {
     "YOU ARE THE MERGER. Your task statement below is a NUMBERED list built by the engine from the \
      shards' pieces and READMEs — work it in order. READ every piece folder and README it names \
-     (that reading IS the job, not over-reading); ASSEMBLE the final file(s) by concatenating the \
-     piece files in the declared order with the shell, then EDIT the result for the glue; never \
-     retype the module from memory — the pieces are the source. Check the assembled file parses, \
+     (that reading IS the job, not over-reading). When the list names an ASSEMBLED file the engine \
+     built, START FROM IT: the definitions are already in place, you write the GLUE (imports/exports, \
+     the shared state's one initialisation, wiring, the unfinished items and gaps) and never retype a \
+     definition — a retyped definition is a defect. Otherwise ASSEMBLE the final file(s) by \
+     concatenating the piece files in the declared order with the shell, then EDIT the result for the \
+     glue. Never retype the module from memory — the pieces are the source. Check the assembled file parses, \
      every declared export is DEFINED with its declared signature, write MERGE.md (KEPT / DROPPED \
      / FILLED / SENT_OUT), and put one `MERGE_GAP:` line per gap you send out in your final \
      message.\n\n"
@@ -3177,7 +3270,7 @@ pub(super) async fn check_merge(
             None => {}
         }
         if let Ok(src) = std::fs::read_to_string(&path) {
-            final_symbols.extend(extract_symbols(&src, lang));
+            final_symbols.extend(extract_symbols(&src, lang_for_path(f, lang)));
             final_text.push_str(&src);
             final_text.push('\n');
         }
@@ -3383,9 +3476,33 @@ impl GooseAgentDispatcher {
             o.insert("task_id".into(), req.task_id.clone().into());
         }
         self.events.write_value(ev);
+        // ASSEMBLE, THEN GLUE (DESIGN-SPLIT-V2 §1): code places every piece's definitions in the
+        // declared order before the model runs, and the brief names the glue as the merger's job.
+        // Unavailable — no parser for the module's extension, no piece of its language — is SAID
+        // and the v1 brief stands; nothing is faked.
+        let outcome = assembly::assemble(root, &dossier);
+        let assembled = match &outcome {
+            assembly::AssemblyOutcome::Assembled(a) => {
+                for dup in assembly::duplicate_events(&merger.module, &req.task_id, a) {
+                    self.events.write_value(dup);
+                }
+                self.events
+                    .write_value(assembly::assembled_event(&merger.module, &req.task_id, a));
+                Some(a)
+            }
+            assembly::AssemblyOutcome::Unavailable { ext, reason } => {
+                self.events.write_value(assembly::unavailable_event(
+                    &merger.module,
+                    &req.task_id,
+                    ext,
+                    reason,
+                ));
+                None
+            }
+        };
         format!(
             "{}{}",
-            dossier.merger_brief(&root.display().to_string()),
+            dossier.merger_brief(&root.display().to_string(), assembled),
             req.description
         )
     }
@@ -3643,7 +3760,7 @@ mod merger_tests {
             )]
         );
         assert!(d.prior_merge.is_none());
-        let brief = d.merger_brief("/run");
+        let brief = d.merger_brief("/run", None);
         assert!(brief.contains("1. `buildScene` is defined in shards `web-viz-render` and `web-viz-pick-camera` — keep ONE"), "{brief}");
         assert!(brief.contains("2. `window.vs7dbg.pick` is declared `pick(sx, sy) -> {id, index} | null` but shard `web-viz-pick-camera` defines it with `(x, y)`"), "{brief}");
         assert!(brief.contains("3. shard `web-viz-labels-brush-api` ASSUMES \"scene.points is an array\" and no shard provides it"), "{brief}");
@@ -3728,7 +3845,7 @@ mod merger_tests {
         let d2 =
             build_merge_dossier(root, &merger, &files, super::super::TargetLang::TypeScript).await;
         assert!(d2.prior_merge.is_some());
-        assert!(d2.merger_brief("/run").contains("SECOND PASS"));
+        assert!(d2.merger_brief("/run", None).contains("SECOND PASS"));
         assert!(d2
             .final_file_symbols
             .iter()
@@ -4094,7 +4211,7 @@ mod merger_tests {
                 Some("web-viz-render".to_string())
             )]
         );
-        let brief = d.merger_brief("/cwd");
+        let brief = d.merger_brief("/cwd", None);
         assert!(
             brief.contains("shard `web-viz-render` wrote `web/viz.js` DIRECTLY (21 bytes)"),
             "{brief}"
@@ -4116,7 +4233,7 @@ mod merger_tests {
             build_merge_dossier(root, &merger, &files, super::super::TargetLang::TypeScript).await;
         assert_eq!(d.final_on_disk, vec![("web/viz.js".to_string(), 21, None)]);
         assert!(d
-            .merger_brief("/cwd")
+            .merger_brief("/cwd", None)
             .contains("no shard's ledger row claims it"));
 
         std::fs::write(
@@ -4127,7 +4244,108 @@ mod merger_tests {
         let d =
             build_merge_dossier(root, &merger, &files, super::super::TargetLang::TypeScript).await;
         assert!(d.final_on_disk.is_empty(), "{:?}", d.final_on_disk);
-        assert!(d.merger_brief("/cwd").contains("SECOND PASS"));
-        assert!(d.merger_brief("/cwd").contains("NOBODY has written"));
+        assert!(d.merger_brief("/cwd", None).contains("SECOND PASS"));
+        assert!(d.merger_brief("/cwd", None).contains("NOBODY has written"));
+    }
+
+    /// DESIGN-SPLIT-V2 §1: with pieces on disk, CODE assembles them first and the brief's job is
+    /// the GLUE — it names the assembled file, forbids retyping a definition, lists the measured glue
+    /// classes and never orders a `cat` of the piece folders; the duplicate item points at the
+    /// `MERGE_DUPLICATE` markers. Without an assembly (`None`) the v1 shell-assembly item stands. The
+    /// dossier is built under a Python-target run (r6e's seam: `web/viz.js` in a Python run) and the
+    /// `.js` pieces still yield their definitions — the piece's extension decides its language.
+    #[tokio::test]
+    async fn an_assembled_module_briefs_the_merger_for_glue_not_retyping() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let mk = |folder: &str, files: &[(&str, &str)]| {
+            let d = root.join(folder);
+            std::fs::create_dir_all(&d).unwrap();
+            for (n, c) in files {
+                std::fs::write(d.join(n), c).unwrap();
+            }
+        };
+        mk(".swarm/shards/web-viz/render", &[
+            ("render.js", "const S = { yaw: 0 };\nfunction buildScene(data) {}\n"),
+            ("README.md", "PROVIDES: buildScene(data)\nASSUMES: none\nUNFINISHED: none\nCHECKED_WITH: node --check render.js\n"),
+        ]);
+        mk(".swarm/shards/web-viz/pick", &[
+            ("pick.js", "function buildScene(data) { /* stub */ }\nwindow.vs7dbg.pick = function (sx, sy) { return null; };\n"),
+            ("README.md", "PROVIDES: window.vs7dbg.pick(sx, sy)\nASSUMES: none\nUNFINISHED: inertia coast stop\nCHECKED_WITH: node --check pick.js\n"),
+        ]);
+        let merger = MergerOf {
+            module: "web-viz".into(),
+            shards: vec!["web-viz-render".into(), "web-viz-pick".into()],
+            folders: vec![
+                ".swarm/shards/web-viz/render".into(),
+                ".swarm/shards/web-viz/pick".into(),
+            ],
+            interface: viz_interface(),
+        };
+        let files = vec!["web/viz.js".to_string()];
+        let d = build_merge_dossier(root, &merger, &files, super::super::TargetLang::Python).await;
+        assert!(
+            d.shards[0].defines().any(|s| s.name == "buildScene"),
+            "a .js piece under a Python-target run still yields its definitions: {:?}",
+            d.shards[0].pieces
+        );
+        assert_eq!(
+            d.duplicates,
+            vec![(
+                "buildScene".to_string(),
+                vec!["web-viz-render".to_string(), "web-viz-pick".to_string()]
+            )]
+        );
+        let assembly::AssemblyOutcome::Assembled(a) = assembly::assemble(root, &d) else {
+            panic!("two js pieces assemble");
+        };
+        assert_eq!(a.declared_missing, vec!["drawBrush".to_string()]);
+        assert_eq!(
+            a.glue_needed,
+            vec![
+                "shared_state_init",
+                "wiring",
+                "duplicates",
+                "gaps",
+                "unfinished"
+            ]
+        );
+        let brief = d.merger_brief("/run", Some(&a));
+        assert!(
+            brief.contains("CODE HAS ALREADY ASSEMBLED their definitions into `/run/.swarm/shards/web-viz/ASSEMBLED.js`: 3 definition block(s) from 2 piece(s) — 3 placed in the declared interface's order, 0 appended after it"),
+            "{brief}"
+        );
+        assert!(
+            brief.contains("YOUR JOB IS THE GLUE, NOT THE DEFINITIONS"),
+            "{brief}"
+        );
+        assert!(
+            brief.contains("copying or retyping a definition is FORBIDDEN and is a defect"),
+            "{brief}"
+        );
+        assert!(
+            brief.contains("1. `buildScene` is defined in shards `web-viz-render` and `web-viz-pick` — BOTH definitions are in the assembled file under `MERGE_DUPLICATE` markers; keep ONE"),
+            "{brief}"
+        );
+        assert!(
+            brief.contains("WRITE THE GLUE into `web/viz.js`, starting from `/run/.swarm/shards/web-viz/ASSEMBLED.js` — never from memory."),
+            "{brief}"
+        );
+        assert!(
+            brief.contains("Glue the engine measured as needed: shared_state_init, wiring, duplicates, gaps, unfinished."),
+            "{brief}"
+        );
+        assert!(
+            !brief.contains("ASSEMBLE, DON'T RETYPE") && !brief.contains("`cat <piece>"),
+            "the v1 cat-the-pieces item is gone once code assembled: {brief}"
+        );
+        let v1 = d.merger_brief("/run", None);
+        assert!(v1.contains("ASSEMBLE, DON'T RETYPE"), "{v1}");
+        assert!(!v1.contains("CODE HAS ALREADY ASSEMBLED"), "{v1}");
+        let ev = assembly::assembled_event("web-viz", "web-viz", &a);
+        assert_eq!(ev["path"], ".swarm/shards/web-viz/ASSEMBLED.js");
+        assert_eq!(ev["duplicates"][0]["name"], "buildScene");
+        assert!(merger_missing_hint(&merger, &files).contains("ASSEMBLED.<ext>"));
+        assert!(merger_owner_body().contains("START FROM IT"));
     }
 }
