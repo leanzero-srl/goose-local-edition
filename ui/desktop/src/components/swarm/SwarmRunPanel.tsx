@@ -811,18 +811,38 @@ const ActivityContextMenu: React.FC<{
   );
 };
 
-// One line of the EVENT LOG ticker: the event's ordinal in a tabular gutter, the kind's icon in its tone,
-// the text in ink-2, the detail in ink-3 — the mono register, dense, on the surface-2 well. The log is the
+/** The EVENT LOG gutter's clock: the engine's RFC3339 `ts` (ActivityItem.at) as a local HH:MM:SS.
+ *  Null when there is no `at` or it does not parse — the row shows its ordinal then; a time is never
+ *  invented. */
+export function eventClock(at: string | undefined): string | null {
+  if (!at) return null;
+  const ms = Date.parse(at);
+  if (Number.isNaN(ms)) return null;
+  const d = new Date(ms);
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+}
+
+/** Gutter widths: the ordinal fits three digits; a clock needs eight mono characters. ONE width per
+ *  list (ActivityFeed decides), so mixed rows stay aligned. */
+const EVENT_LOG_GUTTER_ORDINAL = 'w-9';
+const EVENT_LOG_GUTTER_CLOCK = 'w-16';
+
+// One line of the EVENT LOG ticker: the event's clock (the engine's own `ts`, local HH:MM:SS) — or its
+// ordinal when the row carried no time — in a tabular gutter, the kind's icon in its tone, the text in
+// ink-2, the detail in ink-3 — the mono register, dense, on the surface-2 well. The log is the
 // subordinate narrative record, never competing with the zones above it (quiet = solid ink-3, NOT an
 // opacity wash). Right-click reveals a menu — "Reveal in Finder" when the line references a file path,
-// plus Copy. (ActivityItem carries no timestamp — `seq` is the only ordinal the hook exposes.)
-const ActivityLine: React.FC<{ it: ActivityItem; wrap?: boolean; workingDir?: string }> = ({
+// plus Copy.
+const ActivityLine: React.FC<{ it: ActivityItem; wrap?: boolean; workingDir?: string; gutter: string }> = ({
   it,
   wrap,
   workingDir,
+  gutter,
 }) => {
   const Icon = ACTIVITY_ICON[it.kind];
   const color = it.tone ? TONE_CLASS[it.tone] : ACTIVITY_CLASS[it.kind];
+  const clock = eventClock(it.at);
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
   const [open, setOpen] = useState(false);
   const lineText = `${it.text}${it.sub ? ` — ${it.sub}` : ''}`;
@@ -848,9 +868,15 @@ const ActivityLine: React.FC<{ it: ActivityItem; wrap?: boolean; workingDir?: st
           setMenu({ x: e.clientX, y: e.clientY });
         }}
       >
-        <span className={cx('w-9 shrink-0 text-right text-lz-ink-4', TNUM)} aria-hidden>
-          {it.seq}
-        </span>
+        {clock ? (
+          <time dateTime={it.at} className={cx(gutter, 'shrink-0 text-right text-lz-ink-3', TNUM)}>
+            {clock}
+          </time>
+        ) : (
+          <span className={cx(gutter, 'shrink-0 text-right text-lz-ink-4', TNUM)} aria-hidden>
+            {it.seq}
+          </span>
+        )}
         <Icon size={12} strokeWidth={2.5} className={cx('mt-[3px] shrink-0', color)} />
         <span
           className={cx('shrink-0', it.kind === 'judge-act' ? cx(color, WEIGHT.semibold) : 'text-lz-ink-2')}
@@ -3074,17 +3100,20 @@ const EVENT_LOG_COMPACT_ROWS = 8;
 const ActivityFeed: React.FC<{ items: ActivityItem[]; live: boolean; verbose: boolean; workingDir?: string }> = ({ items, live, verbose, workingDir }) => {
   const shown = verbose ? items : items.slice(-EVENT_LOG_COMPACT_ROWS);
   if (items.length === 0) return null;
+  const gutter = shown.some((it) => eventClock(it.at) !== null)
+    ? EVENT_LOG_GUTTER_CLOCK
+    : EVENT_LOG_GUTTER_ORDINAL;
   return (
     <ol
       className="divide-y divide-lz-border bg-lz-surface-2 py-1 font-mono text-lz-mono text-lz-ink"
       aria-label="Event log"
     >
       {shown.map((it) => (
-        <ActivityLine key={it.seq} it={it} wrap={verbose} workingDir={workingDir} />
+        <ActivityLine key={it.seq} it={it} wrap={verbose} workingDir={workingDir} gutter={gutter} />
       ))}
       {live && (
         <li className="flex min-h-6 items-center gap-2 px-3 py-0.5 text-lz-ink-3">
-          <span className="w-9 shrink-0" aria-hidden />
+          <span className={cx(gutter, 'shrink-0')} aria-hidden />
           <StatusDot tone="accent" live label="the engine is working" />
           <span>working…</span>
         </li>
