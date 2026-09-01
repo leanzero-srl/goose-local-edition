@@ -21,8 +21,7 @@ use goose::session::SessionManager;
 use goose_swarm::{
     deterministic_verdict, is_split_candidate, ChildSpec, Dag, DeviceCfg, DispatchError,
     DispatchRequest, EventSink, Judge, JudgeConfig, JudgeInput, JudgeOutcome, JudgeRequest,
-    NullSink, PreReviewer, ReplanAnswer, ReplanContext, Replanner, Scheduler, SwarmEvent,
-    TaskDispatcher, TaskRunOutput, ToolCallRecord,
+    NullSink, PreReviewer, Scheduler, SwarmEvent, TaskDispatcher, TaskRunOutput, ToolCallRecord,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -54,7 +53,7 @@ mod supervision;
 use supervision::{
     call_objective, clip_tail, earlier_span_block, fold_forming_event, forming_args_bytes,
     is_agent_loop_filler, judge_contract, judge_lane_key, me_events_skip, omni_judge_says_looping,
-    parse_judge_eta_mins, parse_judge_reply, render_forming_file, replan_lane_key, said_kind_of,
+    parse_judge_eta_mins, parse_judge_reply, render_forming_file, said_kind_of,
     schedjudge_lane_key, structured_reply_block, superseded_from_prior, supervised_reply_text,
     supervision_lane_kind, tail_chars, tail_review_lane_key, verify_lane_key, write_forming_atomic,
     FormingGuard, FormingReport, FormingSidecar, SupervisedReplyError, ASK_ANSWER_LANE,
@@ -172,15 +171,6 @@ fn default_planner_also_works() -> bool {
 }
 fn default_planner_weight() -> u32 {
     1
-}
-fn default_dynamic_replan() -> bool {
-    true
-}
-fn default_max_replans() -> u32 {
-    // Unbounded — section 8. Replan is suppressed while the sink is in flight and refuses when too
-    // little of the DAG is left, and both of those are structural; a count on top of them only decides
-    // that the LAST honest replan does not happen.
-    u32::MAX
 }
 fn default_research_scouts() -> bool {
     true
@@ -348,13 +338,14 @@ pub struct SwarmConfig {
     /// echoed under `retired_levers` with its `configured` value (levers.rs).
     #[serde(default)]
     pub max_research_questions: Option<u32>,
-    /// ⚠️ BAKED ON — the golden formula sets this in `Default for SwarmConfig` (F393).
-    /// When workers idle mid-run, let the planner inject more parallel work to fill the tail.
-    #[serde(default = "default_dynamic_replan")]
-    pub dynamic_replan: bool,
-    /// Max dynamic-replan rounds per run (bounds latency + make-work).
-    #[serde(default = "default_max_replans")]
-    pub max_replans: u32,
+    /// RETIRED (VA-015, 2026-09-01): the dynamic replanner is deleted — r6c's `replan-r0` ran 208
+    /// unsupervised minutes for two bonus tasks nothing imported, r5's held two READY tasks 19
+    /// minutes. Both fields survive as `Option` for the config round-trip only and are echoed under
+    /// `retired_levers` with their `configured` values (levers.rs); nothing reads them.
+    #[serde(default)]
+    pub dynamic_replan: Option<bool>,
+    #[serde(default)]
+    pub max_replans: Option<u32>,
     /// ⚠️ BAKED ON — the golden formula sets this in `Default for SwarmConfig` (F393).
     /// Use parallel fixed-lens SCOUTS for research (no serial scoping call) instead of the planner
     /// scoping questions first. On by default — maximizes parallelism during the research phase.
@@ -1259,8 +1250,8 @@ impl Default for SwarmConfig {
             research_planning: ResearchPlanningMode::On,
             max_research_questions: None,
             scout_max_lookups: default_scout_max_lookups(),
-            dynamic_replan: true,
-            max_replans: default_max_replans(),
+            dynamic_replan: None,
+            max_replans: None,
             research_scouts: true,
             parallel_planning: true,
             worker_timeout_secs: default_worker_timeout_secs(),
@@ -1481,9 +1472,6 @@ pub enum SwarmCommand {
         /// Force the research-planning phase on/off for this run (overrides the configured mode).
         #[arg(long = "research")]
         research: Option<bool>,
-        /// Force dynamic replanning on/off for this run (overrides the configured setting).
-        #[arg(long = "dynamic-replan")]
-        dynamic_replan: Option<bool>,
         /// Draft N plan skeletons in parallel and pick the best (overrides config; 1 = off).
         #[arg(long = "best-of-n")]
         best_of_n: Option<usize>,
@@ -1568,7 +1556,6 @@ pub struct RunOpts {
     pub max_turns: Option<u32>,
     pub mcp: Vec<String>,
     pub research: Option<bool>,
-    pub dynamic_replan: Option<bool>,
     pub best_of_n: Option<usize>,
 }
 
@@ -2050,7 +2037,6 @@ pub async fn handle_swarm(cmd: SwarmCommand) -> Result<()> {
             max_turns,
             mcp,
             research,
-            dynamic_replan,
             best_of_n,
         } => {
             run_swarm(RunOpts {
@@ -2061,7 +2047,6 @@ pub async fn handle_swarm(cmd: SwarmCommand) -> Result<()> {
                 max_turns,
                 mcp,
                 research,
-                dynamic_replan,
                 best_of_n,
             })
             .await
@@ -2204,15 +2189,6 @@ fn show_pool(cfg: &SwarmConfig) {
         println!("  sampling   {s}");
     }
     println!(
-        "  replan     {}   max-rounds {}",
-        if cfg.dynamic_replan {
-            style("on").green().bold()
-        } else {
-            style("off").red().bold()
-        },
-        style(cfg.max_replans).cyan()
-    );
-    println!(
         "  mcp        {}",
         if cfg.worker_extensions.is_empty() {
             style("none".to_string()).dim()
@@ -2294,12 +2270,6 @@ fn pool_menu() -> Result<()> {
                 "Allow model loading",
                 "let the swarm lms-load / pre-warm (off = resident only)",
             )
-            .item(
-                "replan",
-                "Dynamic replan on/off",
-                "fill idle workers mid-run",
-            )
-            .item("max-replans", "Max replan rounds", "")
             .item(
                 "mcp",
                 "Toggle worker MCP extensions",
@@ -2461,18 +2431,6 @@ fn pool_menu() -> Result<()> {
                 )
                 .initial_value(cfg.allow_model_load)
                 .interact()?;
-            }
-            "replan" => {
-                cfg.dynamic_replan =
-                    cliclack::confirm("Dynamic replanning (fill idle workers mid-run)?")
-                        .initial_value(cfg.dynamic_replan)
-                        .interact()?;
-            }
-            "max-replans" => {
-                let v: String = cliclack::input("Max replan rounds")
-                    .default_input(&cfg.max_replans.to_string())
-                    .interact()?;
-                cfg.max_replans = v.trim().parse().unwrap_or(2).clamp(0, 6);
             }
             "mcp" => {
                 let choice: &str = cliclack::select("Toggle which worker MCP extension?")
@@ -6682,7 +6640,7 @@ mod tests {
             d["attempt"], 3,
             "the judge lane's attempt field carries the look number"
         );
-        let seed = seed_worker_digest("m", &said, Some("replan-r0"));
+        let seed = seed_worker_digest("m", &said, Some("tail-review-wiring"));
         assert_eq!(seed["supervision"], serde_json::json!(true));
         let w = build_worker_digest(
             &[],
@@ -30035,142 +29993,6 @@ impl TaskDispatcher for GooseAgentDispatcher {
     }
 }
 
-#[async_trait]
-impl Replanner for GooseAgentDispatcher {
-    async fn replan(&self, ctx: ReplanContext) -> Result<ReplanAnswer> {
-        let done = ctx
-            .completed
-            .iter()
-            .map(|(id, out)| format!("- {id}: {}", out.chars().take(160).collect::<String>()))
-            .collect::<Vec<_>>()
-            .join("\n");
-        let cap = ctx.idle_capacity.max(1);
-        let system = format!(
-            "You are the PLANNER continuing an in-progress local AI swarm. {cap} worker(s) just went IDLE while \
-             other tasks finish and the goal is not fully done. Propose UP TO {cap} NEW INDEPENDENT subtasks that \
-             add REAL value NOW — more tests, edge-case coverage, input validation, error handling, or hardening \
-             on the COMPLETED work — they run in parallel on the idle workers. FUNCTIONALITY, TESTS, and \
-             VALIDATION ONLY: do NOT propose README/docs, CI/workflow, packaging, LICENSE, or any \
-             project-scaffolding subtask — they waste the run's tail for zero functional value. If nothing useful \
-             remains, return an EMPTY subtasks list (do NOT invent make-work). Rules: every id MUST be new (never \
-             reuse an existing id); depends_on may reference DONE ids but NEVER a failed id; files must not overlap \
-             work still in progress; never a bare `X.py` beside an existing package dir `X/` (it \
-             shadows the package at import time — put the file INSIDE the package). Each description \
-             is a HANDOFF the worker builds from alone: name the exact file(s) it writes, the exact \
-             symbols/endpoints it implements, and the one concrete check that proves it works — a \
-             one-line description is a defect. Give id/description/difficulty/model/depends_on/files, \
-             and in `rationale` state in one or two sentences WHY this batch adds value NOW, grounded \
-             in the specific completed/failed work you read below (or why nothing useful remains), \
-             then call the final_output tool."
-        );
-        // The research-settled conventions ride beside the goal (surgeon #9's find): ctx.goal is
-        // the spec copy with USER answers appended, but the fan-settled block lives only on the
-        // worker channel — a replanner that never sees it can task a worker into re-opening a
-        // settled convention. Empty when research settled nothing (or on a resume with no
-        // planning round): the prompt is then byte-identical to before.
-        let settled = self.settled_decisions.lock().unwrap().clone();
-        // THE GOAL BLOCK GETS THE SAME ORIENTATION TREATMENT AS OPEN AND THE RESEARCH FAN
-        // (OPEN-1/A5): on a spec with real document structure, the index — every heading with its
-        // measured size and opening sentences — replaces the whole document. MEASURED (r5, replan
-        // round 0, 12:36:09): ctx.goal carried the full 53,634-char spec, the call's prompt
-        // weighed 16,969 tokens and the round generated for 43m52s — and the replanner's own job
-        // is hardening COMPLETED work, which it reads from the Done list below, not from spec
-        // prose. There is no per-task section map at this seam (section text is spliced into each
-        // task's BRIEF at synthesis and not retained), so the index rides alone with that absence
-        // stated to the model rather than papered over. NOT a cap: message formation only, same
-        // arming floor as the opener; a small spec keeps the byte-identical whole-goal prompt.
-        let goal_sections = spec_sections(&ctx.goal);
-        let goal_block = if orientation_armed(&ctx.goal, &goal_sections) {
-            let orientation = spec_orientation(&goal_sections);
-            self.events.write_value(serde_json::json!({
-                "event": "replan_orientation",
-                "round": ctx.round,
-                "goal_chars": ctx.goal.chars().count(),
-                "orientation_chars": orientation.chars().count(),
-            }));
-            format!(
-                "(as its ORIENTATION INDEX — every spec section's heading, size and opening \
-                 sentences; the full section text is NOT in this prompt, it lives with each \
-                 existing task's brief. Ground new work in the Done outputs below and the index, \
-                 and name exact files/symbols from them.)\n\n{orientation}"
-            )
-        } else {
-            ctx.goal.clone()
-        };
-        let user = format!(
-            "Goal: {goal_block}{settled}\n\nAlready created (do NOT reuse these ids): {}\n\nDone so far:\n{}\n\nFailed (do not depend on): {}\n\nStill running: {}",
-            ctx.existing_ids.join(", "),
-            done,
-            ctx.failed.join(", "),
-            ctx.incomplete.join(", "),
-        );
-        let response = Some(Response {
-            json_schema: Some(replan_schema()),
-        });
-        // GEN-6a #9 (fallback rule): these arms used to launder every failure into Ok(vec![]),
-        // which the scheduler reads as "the planner DECLINED" — a transport fault or an
-        // unparseable answer became a decision and armed the declined-state suppression. A
-        // failure is an Err now; the scheduler's failed arm names it in the Replanned event.
-        // Only a missing final_output stays a decline: the model genuinely produced no plan.
-        //
-        // Keyed `replan-r<round>` (r6 supervision lanes): r5's replan round generated for 43m52s
-        // with no lane, no digest and no think.log — the desktop could only say "supervising".
-        // One lane per round; everything else is parity with the old `run_agent_timed` route
-        // (temp None, read_only false, may_terminate false, attempt 0).
-        let lane = replan_lane_key(ctx.round);
-        // Routed like every mid-run aux call — least-loaded quality-bar candidate, planner wins
-        // ties (`aux_model_for_call`). r6c 18:38: replan-r0 queued on the planner's node behind a
-        // worker and two judge lanes while two hosts sat READY. The event is the reroute's
-        // artifact: model + the in-flight count the pick saw, so tick can print reroutes.
-        let (aux_model, aux_inflight) = self.aux_model_for_call(None);
-        self.events.write_value(serde_json::json!({
-            "event": "aux_routed",
-            "lane": lane,
-            "model": aux_model,
-            "inflight": aux_inflight,
-        }));
-        let out = self
-            .run_agent_timed_at(
-                &aux_model,
-                system,
-                user,
-                response,
-                10,
-                &[],
-                None,
-                Some(&lane),
-                false,
-                false,
-            )
-            .await?;
-        let Some(fo) = out.final_output else {
-            // The model genuinely produced no plan — there is no answer text to read a
-            // rationale from, so None (the scheduler names the absence; nothing is invented).
-            return Ok(ReplanAnswer {
-                specs: Vec::new(),
-                rationale: None,
-            });
-        };
-        let mut specs = goose_swarm::specs_from_plan_json(&fo)
-            .map_err(|e| anyhow!("replan output unparseable: {e}"))?;
-        let existing: std::collections::HashSet<&str> =
-            ctx.existing_ids.iter().map(|s| s.as_str()).collect();
-        specs.retain(|s| !existing.contains(s.id.as_str()));
-        // The rationale is the answer's OWN text, verbatim — r5's live splice emitted
-        // `replanned.reason: ''` because it was never requested. Whitespace-only counts as
-        // not given; the scheduler turns None into the named absence, never ''.
-        let rationale = serde_json::from_str::<serde_json::Value>(&fo)
-            .ok()
-            .and_then(|v| {
-                v.get("rationale")
-                    .and_then(|r| r.as_str())
-                    .map(|r| r.trim().to_string())
-            })
-            .filter(|r| !r.is_empty());
-        Ok(ReplanAnswer { specs, rationale })
-    }
-}
-
 /// Parse the ACTIVE parameter count (in billions) from a model id, for GOOSE_SWARM_ASK floor scaling. A MoE
 /// id like `qwen3.6-35b-a3b` exposes ~3B ACTIVE (weaker than a 27B dense despite 35 total), so the `a<N>b`
 /// active marker WINS over the leading dense `<N>b` size. Returns None if unparseable. HEURISTIC — fuzzy.
@@ -30225,39 +30047,6 @@ fn ask_floor_weak_bump(active_b: Option<u32>) -> u8 {
         Some(_) => 15,           // <7B active (e.g. an a3b MoE) -> ask much sooner
         None => 5,               // unknown id -> mild bump
     }
-}
-
-/// The replanner's forced answer shape (its only caller — synthesis has its own path). Was
-/// `plan_schema` with a required `integration` string nothing ever parsed; the replanner never
-/// plans integration (the sink is pinned), so that slot is gone and `rationale` is REQUIRED in
-/// its place — r5's live splice emitted `replanned.reason: ''` because the model's why was never
-/// requested, and a rationale the schema demands cannot be silently omitted (an empty string
-/// still parses to a named absence, never '').
-fn replan_schema() -> serde_json::Value {
-    serde_json::json!({
-        "type": "object",
-        "additionalProperties": false,
-        "required": ["subtasks", "rationale"],
-        "properties": {
-            "subtasks": {
-                "type": "array",
-                "items": {
-                    "type": "object",
-                    "additionalProperties": false,
-                    "required": ["id", "description", "difficulty", "model", "depends_on", "files"],
-                    "properties": {
-                        "id": {"type": "string"},
-                        "description": {"type": "string"},
-                        "difficulty": {"type": "string", "enum": ["easy", "hard"]},
-                        "model": {"type": "string"},
-                        "depends_on": {"type": "array", "items": {"type": "string"}},
-                        "files": {"type": "array", "items": {"type": "string"}}
-                    }
-                }
-            },
-            "rationale": {"type": "string"}
-        }
-    })
 }
 
 fn pillars_schema() -> serde_json::Value {
@@ -31987,7 +31776,6 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             "ask_away": load_config().ask_away,
             "research_scouts": load_config().research_scouts,
             "parallel_planning": load_config().parallel_planning,
-            "dynamic_replan_cfg": load_config().dynamic_replan,
             "planner_also_works": load_config().planner_also_works,
             "homogeneous_models": load_config().homogeneous_models,
             "allow_model_load": load_config().allow_model_load,
@@ -31997,7 +31785,8 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             // mechanisms they named. A knob absent from the engine must be absent from the map —
             // a printed lever reads as a live lever, and measure.py trusts this map.
             "max_attempts": load_config().max_attempts,
-            "max_replans": load_config().max_replans,
+            // dynamic_replan / max_replans left this map for `retired_levers` (VA-015): the
+            // replanner is deleted — a printed lever reads as a live lever.
             // max_research_questions left this map for `retired_levers` (the fan cut): it
             // bounded v1's scout lenses and nothing has read it since P1-5 — a printed lever
             // reads as a live lever, and this one claimed to bound research that is unbounded.
@@ -32375,10 +32164,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
     sink.write_value(plan_evt);
 
     sink.write_value(serde_json::json!({"event": "phase", "phase": "build"}));
-    phase_banner(
-        "EXECUTE",
-        "subtasks run IN PARALLEL across the fleet; dynamic replan fills idle workers",
-    );
+    phase_banner("EXECUTE", "subtasks run IN PARALLEL across the fleet");
     // Captured before `devices`/`dag`/`dispatcher` move into the scheduler — used by the corrective
     // re-dispatch paths (the guided smoke fix, and the COMPLETE-phase repair rounds).
     //
@@ -32505,12 +32291,6 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
     // — when the file is deleted. Wired unconditionally: with no sentinel the hold never fires, so this is
     // byte-identical for any run that never pauses. Same base dir as the #109 note inbox.
     scheduler = scheduler.with_pause_file(working_dir.join(".swarm").join("pause"));
-    let replan_on = opts.dynamic_replan.unwrap_or(cfg.dynamic_replan);
-    if replan_on && cfg.max_replans > 0 {
-        eprintln!("dynamic replan: on (up to {} round(s))", cfg.max_replans);
-        scheduler =
-            scheduler.with_replanner(dispatcher.clone() as Arc<dyn Replanner>, cfg.max_replans);
-    }
     // Idle-model judge: a node that would sit idle while tasks run inspects a busy worker and may kill +
     // re-dispatch a stuck one. On by default; GOOSE_SWARM_JUDGE=0 disables it.
     let judge_on = std::env::var("GOOSE_SWARM_JUDGE")

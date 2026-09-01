@@ -230,11 +230,12 @@ tasks straight into the live DAG past `finalize_plan_before_dag` — one re-crea
 module/package import shadow (`app/notifierd.py` vs the skeleton's `app/notifierd/`) the plan repair
 had fixed four minutes earlier, with a 500-char brief; and the pinned sink shipped owning `README.md`
 (the cascaded-Failed, app-never-binds-a-port class). A repair that guards only ONE door holds until
-the first other door opens. HOW IT REFUSES: `repair_replan_specs` (scheduler.rs) applies the same
-ownership rules to every replan batch BEFORE `splice_specs` and its actions ride the `Replanned`
-event; `repair_sink_files` strips the join's files to a real owner; the replanner is summoned only
-once something has COMPLETED (its own value theory is "harden the completed work"); and
-`development_gates.rs` refuses a splice site that reaches the DAG around the repair. Mihai,
+the first other door opens. HOW IT REFUSES: `repair_sink_files` strips the join's files to a real
+owner inside `finalize_plan_before_dag`; the DYNAMIC REPLANNER — the door r4 came through — is
+DELETED (VA-015, 2026-09-01, gate 9: r6c's `replan-r0` ran 208 unsupervised minutes for two bonus
+tasks nothing imported, r5's held two READY tasks 19 minutes at B+80; `repair_replan_specs` and the
+`Replanned` event went with it), and `development_gates.rs` refuses its return and enumerates the one
+splice site left (apply_split's partition door, whose exact-cover validation is its repair). Mihai,
 2026-08-30: "note this down in our agentic mechanism, or even better add it to our gates - make it a
 practice."
 

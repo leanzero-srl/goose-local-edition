@@ -168,8 +168,8 @@ What happened (r4, killed at BUILD+7m, archive
   is cascaded-Failed by any build failure — the app-never-binds-a-port class.
 
 The rule: **a repair that guards one door is a guarantee that holds until the first other door
-opens.** Every path that ADDS tasks to the DAG — synthesis, the flat fallback, review patches, the
-skeleton prepend, the replanner splice, any future path — goes through the same ownership rules, and
+opens.** Every path that ADDS tasks to the DAG — synthesis, the flat fallback, the skeleton prepend,
+any future path — goes through the same ownership rules, and
 the join's file-lessness is enforced structurally (a repair rule), never assumed from the planner's
 good behavior.
 
@@ -180,16 +180,22 @@ The mechanisms:
   instead of dropping it — the drop gutted a service task to owning nothing, rule (c) removed it,
   its brief died, and the replanner re-added the shadow; test
   `plan_repair_module_merge_never_creates_a_second_owner`.
-- `repair_replan_specs` (scheduler.rs): the same rules against the LIVE dag's ownership, applied to
-  every replan batch before `splice_specs`; its actions ride the `Replanned` event (loud, MILD —
-  repaired, never refused silently); test `a_replan_batch_is_repaired_against_live_ownership` pins
-  the r4 shape verbatim.
-- The replanner is summoned only after at least one task has COMPLETED — its own prompt says the
-  value is "hardening on the COMPLETED work"; with nothing completed it invents tasks from the goal.
-  Progress-based: bounds when the ENGINE asks, never any model call.
+- THE REPLANNER IS DELETED (VA-015, 2026-09-01, gate 9). It was first guarded (`repair_replan_specs`
+  applied the same rules against the LIVE dag's ownership before `splice_specs`, its actions rode
+  `Replanned`, and it was summoned only after a completion), then measured on the two runs that kept
+  it: r6c's `replan-r0` ran 208 minutes UNSUPERVISED (295.8→504.0m, zero judge looks) and added
+  `vizmath-oracle` (`tools/vizmath_reference.py`, imported by 0 files) and `boot-contract-tests`
+  (40 lane-min, "passed" on a boot the gate could not perform); r5's inline `.await` parked dispatch
+  from 12:16:50 to 12:36:09 with `brush-contract` and `ledgerd-service` READY beside two free devices
+  (the B+80→B+100 hold), then added `frozen-rules-tests` + `viz-math-oracle` (68 node-min, unscored).
+  Nothing scored consumed either round. `repair_replan_specs`, `splice`'s replan door, the
+  `Replanned` event, `ReplanContext`/`ReplanAnswer`/`Replanner`, the `dynamic_replan`/`max_replans`
+  levers and the `replan-r<N>` lanes are gone; the fields survive as `Option` for the config
+  round-trip and are echoed under `retired_levers`.
 
-Refusing test: `development_gates.rs` asserts the scheduler's splice site reaches `splice_specs` only
-through `repair_replan_specs`, and that `repair_sink_files` stays in the repair chain.
+Refusing test: `development_gates.rs` asserts scheduler.rs carries no replanner attach/call/repair,
+enumerates the ONE remaining `.splice_specs(` site (apply_split's partition door, whose exact-cover
+validation is its repair), and that `repair_sink_files` stays in the repair chain.
 
 ## 7. THE READ-THE-WORDS GATE — the words decide; shapes only corroborate
 

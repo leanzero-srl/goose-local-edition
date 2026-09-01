@@ -13,7 +13,6 @@ pub mod event;
 pub mod judge;
 pub mod memory_classify;
 pub mod patch;
-pub mod replan;
 pub mod scheduler;
 
 pub use coherence::{extract_signatures, SigLang};
@@ -29,7 +28,6 @@ pub use judge::{
     JudgeOutcome, JudgeRequest, PreReviewer, Verdict,
 };
 pub use patch::{apply_patch, parse_patch, pin_sink_id, PlanPatch, TaskAdd, TaskEdit, SINK_ID};
-pub use replan::{ReplanAnswer, ReplanContext, Replanner};
 pub use scheduler::{
     qa_enabled, sink_review_enabled, tail_review_enabled, testgen_enabled, AttemptRecord,
     DeviceAdmission, DeviceCfg, DeviceSummary, RunReport, Scheduler, TaskOutcome,

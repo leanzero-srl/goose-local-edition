@@ -17,7 +17,6 @@ use crate::event::{EventSink, NullSink, SwarmEvent};
 use crate::judge::{
     skeleton_only, Judge, JudgeConfig, JudgeOutcome, JudgeRequest, PreReviewer, Verdict,
 };
-use crate::replan::{ReplanAnswer, ReplanContext, Replanner};
 use anyhow::{bail, Result};
 use serde::Serialize;
 use std::cmp::Ordering;
@@ -537,109 +536,6 @@ fn observed_hint_worth_keeping(still_live: bool, verdict: Verdict, hint: &str) -
 /// retries are common and cheap, and this targets only the case that was actually measured to hurt.
 /// The DAG must still have real work left before the replanner is allowed to invent more.
 ///
-/// Dynamic-replan exists to fill idle capacity in the MIDDLE of a run. Near the end its arithmetic
-/// inverts: a task injected when almost everything is done has nothing left to overlap with, so it
-/// does not fill a gap — it BECOMES the tail, and the run waits on work nobody asked for.
-///
-/// MEASURED across every 3-node cell in the corpus that replanned, 3 for 3, the LAST task to
-/// complete — the one that sets the run's length — is a replanner-added bonus task:
-///
-///   n3-r2  injected at 50.2m with  3 of 21 mandatory left (14%)  ->  18.3 min of bonus tail
-///   n3-r3  injected at 50.7m with  2 of 18 mandatory left (11%)  ->  26.8 min of bonus tail
-///
-/// n3-r3 settles it: its last MANDATORY task finished at 48.8m and the replanner injected three
-/// tasks at 50.7m which ran until 75.7m. The run was already done. The engine made it 55% longer
-/// with work the planner never asked for.
-///
-/// AND IT IS NODE-COUNT-SPECIFIC, which is why it matters here. The gate requires
-/// `idle_capacity() >= 2`; a 1-node run never has it, so it never injects bonus work and never grows
-/// a bonus tail. Spare nodes are the precondition — so adding nodes does not merely fail to help, it
-/// arms the mechanism that makes the run longer.
-///
-/// This is the same principle the gate ALREADY applies via `sink_in_flight`: when only the join
-/// remains, do not replan. That rule was one case short — "only the join remains" and "almost
-/// nothing remains" are the same situation, and only the first was covered.
-///
-/// THE BAR IS A FRACTION, NOT A COUNT, and the first version of this got that wrong. An absolute
-/// "more than 3 tasks left" reproduced both measured cases correctly and DISABLED DYNAMIC-REPLAN
-/// ENTIRELY FOR SMALL DAGS — `idle_triggers_replan_and_fills_nodes` builds a 2-task DAG where one
-/// task runs long, and 1-of-2 remaining is the mid-run case the feature exists for, not a tail. The
-/// harm is "nothing left to overlap with", which is inherently relative to the plan's size. Two
-/// pre-existing tests failed and are the reason this reads as it does.
-///
-/// A quarter of the plan still outstanding clears both measured harms (14% and 11%) while leaving
-/// mid-run injection untouched. Deliberately conservative: it can only ever refuse a replan, so it
-/// cannot make a run longer.
-fn replan_has_enough_dag_left(mandatory_incomplete: usize, mandatory_total: usize) -> bool {
-    mandatory_total == 0 || mandatory_incomplete * 4 >= mandatory_total
-}
-
-/// Ownership hygiene for a replan batch BEFORE it touches the DAG (r4 kill, 2026-08-30): the
-/// replanner proposed `app/notifierd.py` while the skeleton owned `app/notifierd/__init__.py` —
-/// re-creating, four minutes into BUILD, the exact module/package import shadow the plan repair
-/// had fixed pre-DAG. The same three rules the plan-side repair applies, against the LIVE dag's
-/// ownership: an exact path someone owns is dropped (first claimant wins), a module that shadows
-/// an existing package is rewritten to `<pkg>/impl.py` when that path is free (dropped when not),
-/// and a spec repaired down to zero files is not spliced at all. Every action is returned as a
-/// sentence and rides the Replanned event — repaired loudly, never refused silently (MILD).
-fn repair_replan_specs(
-    existing_files: &std::collections::HashSet<String>,
-    specs: Vec<crate::dag::TaskSpec>,
-) -> (Vec<crate::dag::TaskSpec>, Vec<String>) {
-    let mut repairs = Vec::new();
-    let existing_pkgs: std::collections::HashSet<String> = existing_files
-        .iter()
-        .filter_map(|f| f.rsplit_once('/').map(|(dir, _)| dir.to_string()))
-        .collect();
-    let mut batch_claimed: std::collections::HashSet<String> = std::collections::HashSet::new();
-    let mut kept_specs = Vec::new();
-    for mut sp in specs {
-        let claimed_any = !sp.owned_files.is_empty();
-        let mut kept = Vec::new();
-        for f in std::mem::take(&mut sp.owned_files) {
-            if existing_files.contains(&f) || batch_claimed.contains(&f) {
-                repairs.push(format!(
-                    "replan `{}`: dropped `{f}` — already owned (first claimant keeps it)",
-                    sp.id
-                ));
-                continue;
-            }
-            let as_pkg = f.strip_suffix(".py").unwrap_or(&f);
-            if f.ends_with(".py") && existing_pkgs.contains(as_pkg) {
-                let rewritten = format!("{as_pkg}/impl.py");
-                if existing_files.contains(&rewritten) || batch_claimed.contains(&rewritten) {
-                    repairs.push(format!(
-                        "replan `{}`: dropped `{f}` — it shadows package `{as_pkg}/` and                          `{rewritten}` is taken",
-                        sp.id
-                    ));
-                } else {
-                    repairs.push(format!(
-                        "replan `{}`: `{f}` shadows package `{as_pkg}/` — rewritten to `{rewritten}`",
-                        sp.id
-                    ));
-                    batch_claimed.insert(rewritten.clone());
-                    kept.push(rewritten);
-                }
-                continue;
-            }
-            batch_claimed.insert(f.clone());
-            kept.push(f);
-        }
-        // Only a spec repaired DOWN to nothing is refused — one that never claimed files is a
-        // legitimate file-less bonus task (tests/validation) and splices as proposed.
-        if claimed_any && kept.is_empty() {
-            repairs.push(format!(
-                "replan `{}`: not spliced — every proposed file already has an owner",
-                sp.id
-            ));
-            continue;
-        }
-        sp.owned_files = kept;
-        kept_specs.push(sp);
-    }
-    (kept_specs, repairs)
-}
-
 /// A2: the ranking key for a HARD task's device choice — min() wins. IDLE beats busier (first
 /// element); among equally-loaded devices the one carrying FEWER HARD tasks wins (second); weight
 /// decides among devices equal on both (third); a first-dispatch timing accident never outranks the
@@ -1015,36 +911,18 @@ struct State {
     task_tool_calls: HashMap<TaskId, Vec<ToolCallRecord>>,
     /// (device_id, model_id) of each task's most recent attempt.
     task_final_device: HashMap<TaskId, (String, String)>,
-    /// The user goal (passed to the replanner) + how many replan rounds have run.
+    /// The user goal, handed to the judge and the idle-node jobs.
     goal: String,
     /// The user's VERBATIM answers to the clarifying questions, for the worker prompt. Empty when the run
-    /// never asked. Unlike `goal` — which reaches only the replanner/judge/pre-reviewer — this is handed to
+    /// never asked. Unlike `goal` — which reaches only the judge and the idle-node jobs — this is handed to
     /// every DispatchRequest, because there was previously no path from an answer to a worker at all.
     user_decisions: String,
     /// GROUNDED research facts (Phase 1, Move 2), VERBATIM, handed to every DispatchRequest alongside
     /// `user_decisions`. Empty when DOC_PREFETCH is off => the worker prompt is byte-identical.
     doc_facts: String,
-    replans_done: u32,
-    /// A summoned replan whose planner call has not resolved yet. Single-flight guard for the
-    /// SPAWNED replan (r5, 2026-08-30): the call used to be awaited INLINE in the scheduler loop,
-    /// and a 27B planner grinding for 40+ minutes parked ALL dispatch — decisions completed at
-    /// 12:16:50 with two ready successors and two free devices, and nothing moved. While true, the
-    /// summon gate stays closed (replans_done alone cannot hold it: both decline arms refund the
-    /// round) and the stuck-bail is suppressed — the planner's answer may still add work.
-    replan_in_flight: bool,
-    /// How many tasks were still incomplete the last time the replanner answered with NOTHING.
-    ///
-    /// An empty answer used to burn the entire budget (`replans_done = max_replans`), which turned
-    /// "no more work is needed right now" into "never ask again". MEASURED on a live 3-node run: the
-    /// replan was asked at +50min with 9 of 18 tasks done, correctly declined because half the DAG was
-    /// still queued, and was thereby disabled for good — so at +68min, with ONE task in flight, two
-    /// nodes idle and idle_capacity()==5, the one mechanism built to fill them was off.
-    ///
-    /// The replanner's answer is a function of the DAG state when it was asked, so it is cached
-    /// against that state rather than forever: it may be asked again once STRICTLY FEWER tasks remain,
-    /// which is the only situation in which it could honestly give a different answer.
-    replan_declined_at_incomplete: Option<usize>,
-    /// Ids of replanner-added (bonus) tasks — failures here are non-fatal to the run.
+    /// Ids of opportunistic (bonus) tasks — failures here are non-fatal to the run. Nothing adds
+    /// to it since the dynamic replanner was deleted (VA-015); the set is kept as the report's
+    /// `bonus` field so the green rule stays one function.
     bonus_ids: HashSet<TaskId>,
     /// Observed per-device speed: device index -> (total completed ms, count). Used to route the
     /// hardest tasks (incl. integrate-verify) to the proven-fastest node on an identical-model fleet.
@@ -1155,16 +1033,6 @@ impl State {
             .all(|n| matches!(n.state, TaskState::Done | TaskState::Failed))
     }
 
-    /// Tasks not yet terminal. The replan re-arm keys off this: a decline is only stale once the DAG
-    /// has actually shrunk.
-    fn incomplete_count(&self) -> usize {
-        self.dag
-            .tasks
-            .values()
-            .filter(|n| !matches!(n.state, TaskState::Done | TaskState::Failed))
-            .count()
-    }
-
     /// The worker session this task ran in, if one was recorded.
     ///
     /// Every FAILURE emit site hard-coded `session_id: None`, so a failed task's full trace — every
@@ -1224,10 +1092,6 @@ impl State {
     fn add_prior_hint(&mut self, tid: &str, hint: &str) {
         let merged = appended_hint(self.prior_hints.get(tid).map(|s| s.as_str()), hint);
         self.prior_hints.insert(tid.to_string(), merged);
-    }
-
-    fn total_in_flight(&self) -> u32 {
-        self.devices.iter().map(|d| d.in_flight).sum()
     }
 
     /// How many HARD tasks this device is running right now — the spread term in `pick_device`.
@@ -1343,36 +1207,9 @@ impl State {
         true
     }
 
-    /// K1: is the integrate-verify SINK the (only) in-flight task? Dynamic-replan is suppressed in this
-    /// window — the sink verifies-by-running the whole tree and owns NO files, so a bonus task completing
-    /// here could land UNVERIFIED code AFTER the sink's PASS. Before the sink starts (its deps are every
-    /// other task, so it runs alone at the end) other tasks are still in flight and replan is fine; this
-    /// only guards the exact sink-race window.
-    /// Mandatory (planned) work still outstanding — bonus tasks excluded.
-    ///
-    /// `incomplete_count` counts the whole DAG, and the DAG grows every time the replanner adds a
-    /// task. So once bonus work is in flight, the very tasks that make the tail long also make the
-    /// DAG look busy, and any gate reading `incomplete_count` sees a healthy run right up to the end.
-    fn mandatory_incomplete(&self) -> usize {
-        self.dag
-            .tasks
-            .iter()
-            .filter(|(id, n)| {
-                !self.bonus_ids.contains(*id)
-                    && !matches!(n.state, TaskState::Done | TaskState::Failed)
-            })
-            .count()
-    }
-
-    /// Every planned (non-bonus) task, terminal or not — the denominator for the replan gate.
-    fn mandatory_total(&self) -> usize {
-        self.dag
-            .tasks
-            .keys()
-            .filter(|id| !self.bonus_ids.contains(*id))
-            .count()
-    }
-
+    /// K1: is the integrate-verify SINK the (only) in-flight task? The sink verifies-by-running the
+    /// whole tree and owns NO files, so work landing in this window would ship UNVERIFIED after the
+    /// sink's PASS — idle-fill claims read this to stay out of the exact sink-race window.
     fn sink_in_flight(&self) -> bool {
         self.dag
             .tasks
@@ -1389,36 +1226,6 @@ impl State {
                 .get(id)
                 .is_some_and(|n| !matches!(n.state, TaskState::Done | TaskState::Failed))
         })
-    }
-
-    fn make_replan_context(&self) -> ReplanContext {
-        let mut completed = Vec::new();
-        let mut failed = Vec::new();
-        let mut incomplete = Vec::new();
-        for (id, n) in &self.dag.tasks {
-            match n.state {
-                TaskState::Done => completed.push((
-                    id.clone(),
-                    n.result
-                        .clone()
-                        .unwrap_or_default()
-                        .chars()
-                        .take(400)
-                        .collect(),
-                )),
-                TaskState::Failed => failed.push(id.clone()),
-                _ => incomplete.push(id.clone()),
-            }
-        }
-        ReplanContext {
-            goal: self.goal.clone(),
-            existing_ids: self.dag.tasks.keys().cloned().collect(),
-            completed,
-            failed,
-            incomplete,
-            idle_capacity: self.idle_capacity(),
-            round: self.replans_done.saturating_sub(1),
-        }
     }
 
     fn files_conflict(&self, tid: &str) -> bool {
@@ -3479,8 +3286,6 @@ impl State {
 pub struct Scheduler {
     devices: Vec<DeviceCfg>,
     sink: Arc<dyn EventSink>,
-    replanner: Option<Arc<dyn Replanner>>,
-    max_replans: u32,
     judge: Option<Arc<dyn Judge>>,
     judge_cfg: JudgeConfig,
     pre_reviewer: Option<Arc<dyn PreReviewer>>,
@@ -3513,8 +3318,6 @@ impl Scheduler {
         Self {
             devices,
             sink: Arc::new(NullSink),
-            replanner: None,
-            max_replans: 0,
             judge: None,
             judge_cfg: JudgeConfig::default(),
             pre_reviewer: None,
@@ -3618,16 +3421,8 @@ impl Scheduler {
         self
     }
 
-    /// Attach a dynamic replanner: when workers go idle mid-run (>=2 free slots while a task is still
-    /// in flight) it is asked for more parallel work, up to `max_replans` rounds. Off by default.
-    pub fn with_replanner(mut self, replanner: Arc<dyn Replanner>, max_replans: u32) -> Self {
-        self.replanner = Some(replanner);
-        self.max_replans = max_replans;
-        self
-    }
-
     /// Run the whole DAG to completion. Returns when every task is Done or Failed. `goal` is the user
-    /// prompt, used only by the dynamic replanner (ignored when none is attached).
+    /// prompt, handed to the judge and the idle-node jobs.
     pub async fn run(
         &self,
         dag: Dag,
@@ -3698,9 +3493,6 @@ impl Scheduler {
             goal,
             user_decisions,
             doc_facts: self.doc_facts.clone(),
-            replans_done: 0,
-            replan_in_flight: false,
-            replan_declined_at_incomplete: None,
             bonus_ids: HashSet::new(),
             device_speed: HashMap::new(),
             abort_handles: HashMap::new(),
@@ -3735,9 +3527,6 @@ impl Scheduler {
         let mut was_paused = false;
         // Claim count at the last demand signal — the rate limiter for the caller's fleet re-probe.
         let mut last_demand_claims: u64 = 0;
-        // The in-flight SPAWNED replan, aborted when the run ends (all_terminal) so a planner call
-        // whose answer has nowhere to land cannot outlive the run and emit into a closed sink.
-        let mut replan_abort: Option<tokio::task::AbortHandle> = None;
 
         loop {
             // MID-RUN DEVICE ADMISSION. Drained here, at the TOP of the pass, so an admitted device is
@@ -3814,23 +3603,14 @@ impl Scheduler {
             {
                 let s = state.lock().await;
                 if s.all_terminal() {
-                    // A replan still thinking has nothing left to splice into — its answer was
-                    // going to be discarded on all_terminal even when the call was inline.
-                    if let Some(h) = replan_abort.take() {
-                        h.abort();
-                    }
                     return Ok(s.build_report());
                 }
-                if !paused && !dispatched_now && s.build_in_flight() == 0 && !s.replan_in_flight {
+                if !paused && !dispatched_now && s.build_in_flight() == 0 {
                     // Nothing assignable and nothing running, but not all terminal: the remaining
                     // tasks are permanently blocked (deps failed, or a file deadlock).
                     // The `!paused` guard is LOAD-BEARING: while held we intentionally claim nothing and can
                     // drain to zero in-flight — without this guard that state trips the stuck-bail and turns
                     // Pause into an accidental terminate. Held + drained must idle until the sentinel clears.
-                    // `!replan_in_flight` likewise: the fleet can drain to zero while the planner is
-                    // still composing an answer that may add work; bailing there would turn a slow
-                    // planner into a terminated run. Its resolution notifies, so the bail is only
-                    // deferred, never lost.
                     let remaining = s
                         .dag
                         .tasks
@@ -3860,204 +3640,6 @@ impl Scheduler {
                         dependency: dep,
                         detail,
                     });
-                }
-            }
-            // Dynamic replan: workers idle while a task is still in flight (e.g. a slow tail) — ask the
-            // planner for more parallel work to fill them. The call is SPAWNED, never awaited in the
-            // loop. r5 (2026-08-30) is the receipt for why: the old inline `.await` parked the entire
-            // scheduler loop on one 27B planner call from 11:52:17 onward — completions still landed
-            // (worker futures take the state lock directly) but no pass ran, so when `decisions`
-            // completed at 12:16:50 its two ready successors sat undispatched for 40+ minutes beside
-            // two free devices, and the completed skeleton was never pre-reviewed. Releasing the
-            // state lock across the call was never the point; the LOOP is the dispatch engine.
-            // Completions fire while the planner thinks and splice_specs re-validates against the
-            // now-current DAG when the answer lands; `replan_in_flight` keeps the summon single-shot.
-            if !paused && self.replanner.is_some() {
-                let ctx = {
-                    let mut s = state.lock().await;
-                    if !dispatched_now
-                        && !s.replan_in_flight
-                        && s.total_in_flight() > 0
-                        && s.ready.is_empty()
-                        && s.idle_capacity() >= 2
-                        // r4 (2026-08-30): summoned at BUILD+4m with ZERO completions, the
-                        // replanner invented five tasks from the goal alone — one re-created the
-                        // module/package shadow the plan repair had just fixed. Its own prompt
-                        // says the value is "hardening on the COMPLETED work"; until something
-                        // has completed there is nothing to harden and the fan is still arriving.
-                        && s.dag.tasks.values().any(|n| n.state == TaskState::Done)
-                        && s.replans_done < self.max_replans
-                        && !s.sink_in_flight()
-                        // Near the end, an injected task has nothing to overlap with and simply
-                        // becomes the tail — see `replan_has_enough_dag_left`.
-                        && replan_has_enough_dag_left(s.mandatory_incomplete(), s.mandatory_total())
-                        // A previous EMPTY answer is cached against the DAG size that produced it.
-                        // Re-ask only when strictly fewer tasks remain — the one change that can make
-                        // the replanner answer differently — so the tail gets its ask without the
-                        // planner being pestered at an unchanged state.
-                        && s
-                            .replan_declined_at_incomplete
-                            .is_none_or(|prev| s.incomplete_count() < prev)
-                    {
-                        s.replans_done += 1;
-                        s.replan_in_flight = true;
-                        Some(s.make_replan_context())
-                    } else {
-                        None
-                    }
-                };
-                if let Some(ctx) = ctx {
-                    let round = ctx.round;
-                    let replanner = self.replanner.as_ref().unwrap().clone();
-                    let st = state.clone();
-                    let nt = notify.clone();
-                    let max_replans = self.max_replans;
-                    let jh = tokio::spawn(async move {
-                        // GEN-6a #4 (fallback rule): the old `.unwrap_or_default()` here read a
-                        // planner-call FAILURE as a planner DECISION — a network fault became
-                        // "planner declined" and armed the declined-state suppression. The arms are
-                        // distinguished now; nothing is laundered into an empty plan.
-                        let replan_result = replanner.replan(ctx).await;
-                        let mut s = st.lock().await;
-                        // Cleared FIRST, before any arm can panic: a wedged-true flag would suppress
-                        // the stuck-bail and disable the replanner for the rest of the run.
-                        s.replan_in_flight = false;
-                        if s.all_terminal() {
-                            // Same as the inline era: an answer arriving after the DAG finished is
-                            // discarded (the loop's own all_terminal pass ends the run).
-                            return;
-                        }
-                        let answer = match replan_result {
-                            Ok(answer) => answer,
-                            Err(e) => {
-                                s.sink.emit(&SwarmEvent::Replanned {
-                                    round,
-                                    added: Vec::new(),
-                                    stopped: true,
-                                    reason: format!("planner call failed: {e}"),
-                                });
-                                // Refund the round (a failed call says nothing about the DAG), but do
-                                // NOT record a declined-state marker: the planner never answered, so
-                                // suppressing future asks on its behalf would turn one transport
-                                // fault into a silently disabled replanner.
-                                s.replans_done = s.replans_done.saturating_sub(1);
-                                drop(s);
-                                nt.notify_one();
-                                return;
-                            }
-                        };
-                        let ReplanAnswer { specs, rationale } = answer;
-                        if specs.is_empty() {
-                            s.sink.emit(&SwarmEvent::Replanned {
-                                round,
-                                added: Vec::new(),
-                                stopped: true,
-                                // A decline WITH a stated why carries it verbatim — "nothing
-                                // useful remains" is a different fact from a bare empty list.
-                                reason: match &rationale {
-                                    Some(r) => format!("planner declined (empty plan): {r}"),
-                                    None => "planner declined (empty plan)".to_string(),
-                                },
-                            });
-                            // REFUND the round and remember the state instead of burning the budget. An
-                            // empty answer costs one planner call and says nothing about a DAG that has
-                            // since shrunk; consuming the whole budget for it is what left two nodes idle
-                            // through an 18-minute single-task tail with the replanner switched off.
-                            s.replans_done = s.replans_done.saturating_sub(1);
-                            s.replan_declined_at_incomplete = Some(s.incomplete_count());
-                        } else {
-                            // Replanner-added tasks are OPPORTUNISTIC (idle-fill) — record them as bonus so a
-                            // bonus failure cannot fail an otherwise-complete run (run success = core plan).
-                            let existing_files: std::collections::HashSet<String> = s
-                                .dag
-                                .tasks
-                                .values()
-                                .flat_map(|n| n.spec.owned_files.iter().cloned())
-                                .collect();
-                            let (specs, splice_repairs) =
-                                repair_replan_specs(&existing_files, specs);
-                            if specs.is_empty() {
-                                s.sink.emit(&SwarmEvent::Replanned {
-                                    round,
-                                    added: Vec::new(),
-                                    stopped: true,
-                                    reason: format!(
-                                        "every proposed task was repaired away: {}",
-                                        splice_repairs.join("; ")
-                                    ),
-                                });
-                                s.replans_done = s.replans_done.saturating_sub(1);
-                                s.replan_declined_at_incomplete = Some(s.incomplete_count());
-                                drop(s);
-                                nt.notify_one();
-                                return;
-                            }
-                            let spliced_ids: Vec<TaskId> =
-                                specs.iter().map(|sp| sp.id.clone()).collect();
-                            match s.dag.splice_specs(specs) {
-                                Ok(new_ready) => {
-                                    // `added` must be what was ADDED, not what happened to become READY.
-                                    // A spliced task whose deps are not yet satisfied is in the DAG and
-                                    // will run, but it is not in `new_ready` — so reporting new_ready
-                                    // under-counts, and can report ZERO for a successful replan.
-                                    //
-                                    // MEASURED: a live run emitted `Replanned { added: [], stopped: false }`
-                                    // while `test-api-edge-cases` and `test-store-integrity` were both
-                                    // spliced and later dispatched. `stopped: false` with an empty `added`
-                                    // is a contradiction — the empty case takes the other branch — and it
-                                    // made a plan-vs-execution review report two legitimately-added tasks
-                                    // as UNPLANNED DRIFT. An event that cannot be reconciled with the
-                                    // dispatch log turns a correct mechanism into a false alarm.
-                                    let added = spliced_ids.clone();
-                                    s.bonus_ids.extend(spliced_ids);
-                                    for id in new_ready {
-                                        let fan_out = s.dag.tasks[&id].fan_out;
-                                        s.ready.push(Ranked { fan_out, id });
-                                    }
-                                    // The replanner's OWN stated why leads the reason — r5's live
-                                    // splice (12:36:09, frozen-rules-tests + viz-math-oracle)
-                                    // shipped reason:'' because only the hygiene actions rode
-                                    // here and that round needed none. A model that gave no
-                                    // rationale is a named absence, never ''; the hygiene pass's
-                                    // actions still ride the same event so a rewritten path is
-                                    // READ, never silent (fallback rule).
-                                    let mut reason = rationale.unwrap_or_else(|| {
-                                        "replanner gave no rationale".to_string()
-                                    });
-                                    if !splice_repairs.is_empty() {
-                                        reason = format!(
-                                            "{reason}; splice repairs: {}",
-                                            splice_repairs.join("; ")
-                                        );
-                                    }
-                                    s.sink.emit(&SwarmEvent::Replanned {
-                                        round,
-                                        added,
-                                        stopped: false,
-                                        reason,
-                                    });
-                                }
-                                Err(e) => {
-                                    s.sink.emit(&SwarmEvent::Replanned {
-                                        round,
-                                        added: Vec::new(),
-                                        stopped: true,
-                                        // GEN-6a #4: a rejected splice is the third distinct arm —
-                                        // the planner ANSWERED and the DAG refused the answer.
-                                        reason: format!("splice rejected: {e}"),
-                                    });
-                                    s.replans_done = max_replans;
-                                }
-                            }
-                        }
-                        drop(s);
-                        // Wake the loop for the spliced work (or, on a decline, for the stuck-bail
-                        // this flag was deferring). One notify per RESOLVED planner call — it cannot
-                        // spin the way F893's per-release notify did, because re-arming it costs a
-                        // whole summon + model call, not a microsecond re-pick.
-                        nt.notify_one();
-                    });
-                    replan_abort = Some(jh.abort_handle());
                 }
             }
             // Idle-model judge: when a node would otherwise sit idle while tasks are still in flight,
@@ -4324,12 +3906,6 @@ impl Scheduler {
             } else if self.judge.is_some()
                 || self.pre_reviewer.is_some()
                 || self.speculation_enabled
-                // The REPLANNER is an idle-node mechanism too, and it was missing from this list. Its
-                // trigger is "nodes idle while a task is still in flight", which by construction produces
-                // NO completion to wake on — so without a tick the one window it exists for is never
-                // re-examined, and the run waits out the tail with the check unevaluated. It only worked
-                // at all because a judge happened to be attached and was lending it a heartbeat.
-                || self.replanner.is_some()
             {
                 std::time::Duration::from_secs(15)
             } else {
@@ -4362,61 +3938,6 @@ impl Scheduler {
 #[cfg(test)]
 mod salvage_tests {
     use super::*;
-
-    /// The split used to hand a child a ~40-char label as its ENTIRE task statement, discarding the
-    /// implementation spec PLAN had just spent 40% of the run's wall-clock writing (loop-04: a 2038-char
-    /// spec -> "(split of data-model-persistence) note-store", 43 chars). These pin both arms.
-    /// THE r4 SHAPE, verbatim (2026-08-30): the skeleton owns app/notifierd/__init__.py and
-    /// __main__.py; the replanner proposes notifierd-service owning app/notifierd.py (the module
-    /// that would shadow the package at import time) plus app/notifierd_main.py (free). The
-    /// hygiene pass rewrites the shadow into the package, keeps the free file, drops an exact
-    /// duplicate, and refuses to splice a spec repaired down to nothing — each with a sentence.
-    #[test]
-    fn a_replan_batch_is_repaired_against_live_ownership() {
-        let existing: std::collections::HashSet<String> = [
-            "app/__main__.py",
-            "app/notifierd/__init__.py",
-            "app/notifierd/__main__.py",
-        ]
-        .into_iter()
-        .map(String::from)
-        .collect();
-        let spec = |id: &str, files: &[&str]| crate::dag::TaskSpec {
-            id: id.to_string(),
-            description: format!("{id} desc"),
-            difficulty: crate::dag::Difficulty::Hard,
-            preferred_model: None,
-            owned_files: files.iter().map(|f| f.to_string()).collect(),
-            deps: Vec::new(),
-            subsplit: Vec::new(),
-        };
-        let (kept, repairs) = repair_replan_specs(
-            &existing,
-            vec![
-                spec(
-                    "notifierd-service",
-                    &["app/notifierd.py", "app/notifierd_main.py"],
-                ),
-                spec("dup-main", &["app/__main__.py"]),
-            ],
-        );
-        assert_eq!(kept.len(), 1, "{repairs:?}");
-        assert_eq!(kept[0].id, "notifierd-service");
-        assert_eq!(
-            kept[0].owned_files,
-            vec![
-                "app/notifierd/impl.py".to_string(),
-                "app/notifierd_main.py".to_string()
-            ],
-            "the shadow is rewritten INTO the package; the free file survives"
-        );
-        assert!(repairs
-            .iter()
-            .any(|r| r.contains("shadows package `app/notifierd/`")));
-        assert!(repairs
-            .iter()
-            .any(|r| r.contains("dup-main") && r.contains("not spliced")));
-    }
 
     #[test]
     fn tail_review_gate_defaults_on_and_respects_the_env() {
@@ -4812,44 +4333,6 @@ mod salvage_tests {
             "manifest",
             &[empty_mod]
         ));
-    }
-
-    #[test]
-    fn replan_does_not_invent_work_for_a_dag_that_is_already_finishing() {
-        // The two measured harmful injections must now be refused: n3-r2 at 3-of-21 (18.3 min of
-        // bonus tail) and n3-r3 at 2-of-18 (26.8 min, on a run whose mandatory work was ALREADY done).
-        assert!(
-            !replan_has_enough_dag_left(3, 21),
-            "n3-r2's injection must be refused"
-        );
-        assert!(
-            !replan_has_enough_dag_left(2, 18),
-            "n3-r3's injection must be refused"
-        );
-
-        // MID-RUN INJECTION IS THE FEATURE AND MUST SURVIVE. The first version of this gate used an
-        // absolute count and silently disabled dynamic-replan for every small DAG — 1-of-2 remaining
-        // is mid-run, not a tail, and two pre-existing tests caught it.
-        assert!(
-            replan_has_enough_dag_left(1, 2),
-            "a 2-task DAG with one left is MID-RUN"
-        );
-        assert!(replan_has_enough_dag_left(2, 4));
-        assert!(replan_has_enough_dag_left(9, 20));
-
-        // Degenerate input must not divide the world by zero or refuse forever.
-        assert!(replan_has_enough_dag_left(0, 0));
-
-        // Monotone in the work remaining: more left can never be a weaker reason to replan.
-        for n in 0..25usize {
-            if replan_has_enough_dag_left(n, 24) {
-                assert!(
-                    replan_has_enough_dag_left(n + 1, 24),
-                    "{n} armed the replan but {} did not — the gate is not monotone",
-                    n + 1
-                );
-            }
-        }
     }
 }
 

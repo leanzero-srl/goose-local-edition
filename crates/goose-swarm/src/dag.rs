@@ -177,10 +177,9 @@ impl Dag {
     /// shares — so eligible hard modules become skeleton/fills/join uniformly (no-op with the
     /// gate off). Plan-time contract ANCHORING is impossible in the run's order (the DAG exists
     /// before the stub pass); the skeleton step's Terminal guard and the splice's
-    /// SlotMissingInSkeleton refusals are the anchor, each honest and observable. The dynamic
-    /// REPLANNER path deliberately does NOT expand (splice_specs takes specs directly):
-    /// mid-run fills against a live tree are unproven, and a replanned module simply builds
-    /// serially as before.
+    /// SlotMissingInSkeleton refusals are the anchor, each honest and observable. The splice
+    /// path deliberately does NOT expand (splice_specs takes specs directly): mid-run fills
+    /// against a live tree are unproven.
     /// F804: expansion is NO LONGER done here. The skeleton step builds from a module's frozen
     /// contract stub, and stubs do not exist at plan-load — expanding here manufactured
     /// skeleton:: tasks that could only refuse at execution (measured 3-for-3 across two runs).
@@ -219,7 +218,8 @@ impl Dag {
         Dag::from_specs(expand_subsplits(specs))
     }
 
-    /// Splice additional specs into a LIVE dag at an idle point (the dynamic replanner). Validated
+    /// Splice additional specs into a LIVE dag (apply_split's partition door; the dynamic replanner
+    /// that also came through here is deleted, VA-015). Validated
     /// exactly like `from_specs` so the safety net is identical: rejects ids that collide with
     /// existing tasks, deps on unknown OR failed tasks, intra-batch dup ids, and any cycle. On ANY
     /// error the dag is left UNCHANGED (validation runs before mutation). Returns the ids that became
@@ -229,20 +229,20 @@ impl Dag {
         let mut batch_ids: std::collections::HashSet<&str> = std::collections::HashSet::new();
         for s in &specs {
             if !batch_ids.insert(s.id.as_str()) {
-                bail!("duplicate id `{}` within replan batch", s.id);
+                bail!("duplicate id `{}` within spliced batch", s.id);
             }
             if self.tasks.contains_key(&s.id) {
-                bail!("replan id `{}` collides with an existing task", s.id);
+                bail!("spliced id `{}` collides with an existing task", s.id);
             }
         }
         for s in &specs {
             for d in &s.deps {
                 if !self.tasks.contains_key(d) && !batch_ids.contains(d.as_str()) {
-                    bail!("replan task `{}` depends on unknown task `{}`", s.id, d);
+                    bail!("spliced task `{}` depends on unknown task `{}`", s.id, d);
                 }
                 if let Some(n) = self.tasks.get(d) {
                     if n.state == TaskState::Failed {
-                        bail!("replan task `{}` depends on failed task `{}`", s.id, d);
+                        bail!("spliced task `{}` depends on failed task `{}`", s.id, d);
                     }
                 }
             }
@@ -288,7 +288,7 @@ impl Dag {
                 }
             }
             if removed != indeg.len() {
-                bail!("replan would create a dependency cycle");
+                bail!("splice would create a dependency cycle");
             }
         }
 
@@ -357,7 +357,7 @@ pub fn tasks_owning_nothing(specs: &[TaskSpec]) -> Vec<String> {
         .collect()
 }
 
-/// Parse the planner's `{ "subtasks": [...] }` JSON into specs (shared by the initial plan + replans).
+/// Parse the planner's `{ "subtasks": [...] }` JSON into specs.
 pub fn specs_from_plan_json(json: &str) -> Result<Vec<TaskSpec>> {
     #[derive(Deserialize)]
     struct PlanJson {

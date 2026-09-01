@@ -48,7 +48,7 @@ on — which is the only configuration we ever measure.
 ## `"integrate-verify"` is an exact-equality string test in five live places
 
 `patch.rs:254`, eight sites here, 34 in `scheduler.rs`, 16 in `useSwarmRun.ts`, plus the bench detectors.
-Renaming it, or letting a model name the join, breaks replan suppression with no compiler error.
+Renaming it, or letting a model name the join, breaks the sink gate (`sink_in_flight`) with no compiler error.
 **The sink must own NO files** — `scheduler.rs:2603` relaxes a dependent through an upstream failure only
 `if n.spec.owned_files.is_empty()`, so a file-owning join is cascaded-Failed by any build failure and the
 wire-and-boot step never runs. That is the "app never binds a port" class.

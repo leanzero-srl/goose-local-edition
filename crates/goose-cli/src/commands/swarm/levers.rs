@@ -65,6 +65,13 @@ pub(super) fn retired_levers(cfg: &SwarmConfig, env: &dyn Fn(&str) -> Option<Str
              dispatches every opener question, uncapped",
             json!(cfg.max_research_questions),
         ),
+        // Config-only while they lived (the CLI flag `--dynamic-replan` died with the mechanism).
+        "dynamic_replan": row(
+            "the dynamic replanner is deleted (VA-015): r6c's replan-r0 ran 208 unsupervised minutes \
+             for two bonus tasks nothing imported; r5's held two READY tasks 19 minutes",
+            json!(cfg.dynamic_replan),
+        ),
+        "max_replans": row("same mechanism", json!(cfg.max_replans)),
         "fan_verify": row(
             "fan_verify_split is #[cfg(test)] since P1-4",
             gate("GOOSE_SWARM_FAN_VERIFY", cfg.fan_verify),
@@ -123,6 +130,8 @@ mod tests {
             "split",
             "split_inherit_spec",
             "max_research_questions",
+            "dynamic_replan",
+            "max_replans",
         ] {
             assert!(
                 clean[k]["reason"].as_str().is_some_and(|r| !r.is_empty()),
@@ -140,6 +149,8 @@ mod tests {
         assert_eq!(clean["straggler_grace_secs"]["configured"], Value::Null);
         assert_eq!(clean["split"]["configured"], Value::Null);
         assert_eq!(clean["split_inherit_spec"]["configured"], Value::Null);
+        assert_eq!(clean["dynamic_replan"]["configured"], Value::Null);
+        assert_eq!(clean["max_replans"]["configured"], Value::Null);
 
         cfg.split_fat = true;
         cfg.fan_verify = true;
