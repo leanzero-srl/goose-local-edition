@@ -50,12 +50,13 @@ mod decisions;
 use decisions::PlanDecision;
 mod supervision;
 use supervision::{
-    fold_forming_event, forming_args_bytes, is_agent_loop_filler, judge_contract, judge_lane_key,
-    me_events_skip, omni_judge_says_looping, parse_judge_eta_mins, parse_judge_reply,
-    prereview_lane_key, render_forming_file, replan_lane_key, schedjudge_lane_key,
-    superseded_from_prior, supervised_reply_text, supervision_lane_kind, tail_review_lane_key,
-    verify_lane_key, write_forming_atomic, FormingGuard, FormingReport, FormingSidecar,
-    SupervisedReplyError, ASK_ANSWER_LANE, PILLARS_LANE, REFLECT_LANE,
+    call_objective, fold_forming_event, forming_args_bytes, is_agent_loop_filler, judge_contract,
+    judge_lane_key, me_events_skip, omni_judge_says_looping, parse_judge_eta_mins,
+    parse_judge_reply, prereview_lane_key, render_forming_file, replan_lane_key,
+    schedjudge_lane_key, superseded_from_prior, supervised_reply_text, supervision_lane_kind,
+    tail_review_lane_key, verify_lane_key, write_forming_atomic, FormingGuard, FormingReport,
+    FormingSidecar, SupervisedReplyError, ASK_ANSWER_LANE, JUDGE_PROBE_TURNS, PILLARS_LANE,
+    REFLECT_LANE,
 };
 mod orientation;
 use orientation::{
@@ -3151,74 +3152,6 @@ const OMNI_JUDGE_GROWTH_CHARS: usize = 4_000;
 // the r7 fidelity comparison meaningful. The worker loop reaches it via `use desk::...` above.
 // The shingle half of the meter — `tail_shingle_set`/`tails_recur`, the LOOPING streak's
 // shift-invariant look comparison — moved to commands/swarm/ladder.rs under the same law.
-
-/// WHAT THIS CALL IS FOR, in one line, for the judge.
-///
-/// The judge was given the reasoning tail and nothing else, so it inferred the call's purpose from what
-/// the call happened to be talking about. MEASURED on a live run: it watched the plan-REVIEW call, saw it
-/// discussing modules named in the plan, concluded it was a build worker falling behind, and nudged it
-/// three times to "Write wordfreq/core.py implementing count_words(text)". The review must not write code
-/// at all. A supervisor that does not know what it is supervising does not help — it derails.
-fn call_objective(activity_key: Option<&str>) -> &'static str {
-    match activity_key {
-        Some(k) if k.starts_with("open-coverage") => {
-            "build a COVERAGE TABLE for its part of the request: every component that part names, which \
-             slice owns each, and a QUOTE from that slice's objective proving it. It must NOT write code \
-             and must NOT rewrite the slices that exist.\n\n\
-             THIS CALL IS SUPPOSED TO LOOK REPETITIVE, and that is the thing to understand before you \
-             judge it. Its deliverable IS a table: dozens of near-identical rows, each naming a component \
-             and an owner in the same shape. Structural repetition here is the call doing exactly what it \
-             was asked to do. MEASURED: judging that shape as a loop re-streamed these lanes three times \
-             in one run, and every re-stream threw away the whole partial table and started the \
-             enumeration again from the top — which is why a phase that should take minutes took thirty. \
-             It is stuck only if the rows stop ADVANCING: the same component named twice, or an owner it \
-             has already given. Rows that merely look alike are progress."
-        }
-        Some("open") | Some("open-resplit") => {
-            "split the request into balanced semantic slices, naming each slice's owned files in its \
-             objective as OWNERSHIP DECLARATIONS. It must NOT write code, plan tasks, or dependencies."
-        }
-        Some("synthesis") => {
-            "wire already-researched slices into a task DAG — ids, files and dependencies only. It \
-             must NOT write code and must NOT restate the specifications."
-        }
-        Some(k) if k == "review" || k.starts_with("review-") => {
-            "read the original request against the plan and return a small structural PATCH. It must \
-             NOT write code, and must NOT rewrite any task's specification. A fanned lane (review-N) \
-             holds ONE portion of the request and the whole plan, so a task that looks unrelated to its \
-             portion is almost certainly owned by another portion — that is not a finding."
-        }
-        Some("proxy-answer") => "answer the open decisions from the request. It must NOT write code.",
-        Some("rate") => "rate each defect CRITICAL or MINOR. It must NOT write code.",
-        Some(k) if k.starts_with("slice-") => {
-            "answer its slice's questions and then give that module's SPECIFICATION — interfaces, edge \
-             cases, files — AS ITS REPLY. The specification is what it says back, not a file it puts on \
-             disk, and it has no file tools: never direct it to create or edit one. It must NOT write \
-             the implementation."
-        }
-        Some(k) if k.starts_with("research-") => {
-            "answer ONE named question about the request as a HANDOFF — exact files, exact \
-             key/field literals, conventions stated as conventions. It must NOT write code and \
-             has no file-writing tools; its structured reply IS its deliverable. Different \
-             research questions legitimately cover similar ground — it is stuck only if its OWN \
-             answer stops advancing."
-        }
-        Some(k) if k.starts_with("apptest-") => {
-            "exercise the BUILT app from one angle and report the defects it observes, with the files \
-             each touches. It must NOT fix anything and must not edit a single file — a call reporting \
-             bugs without writing code is doing this job exactly right."
-        }
-        Some(k) if k.starts_with("contract-") => {
-            "emit a signature-only stub for one module. It must NOT implement anything."
-        }
-        Some("integrate-verify") => {
-            "assemble the produced modules, run the tests, boot the app and exercise the commands the \
-             request advertises."
-        }
-        // A dispatched build worker: the only kind that SHOULD be writing files.
-        _ => "implement its assigned module — write the files it owns, then verify them.",
-    }
-}
 
 /// UNATTENDED MODE. Set by the benchmark harness and by the loop — any run nobody is sitting in front of.
 ///
@@ -12889,8 +12822,10 @@ pub struct GooseAgentDispatcher {
     /// (+3 QUEUED in LM Studio) while two hosts sat READY, and look8 — the first delivery-armed
     /// look of the build — waited at 0 chars behind the pile. The pool models passing the
     /// planner's own quality bar (`fleet_order::aux_candidate_models`), best rank first; the
-    /// planner itself always competes and wins ties, so an idle fleet resolves byte-identically
-    /// to the frozen pick. Empty on a cloud-only pool (planner keeps every aux call).
+    /// planner itself always competes and wins ties EXCEPT when it is the supervised lane's own
+    /// node (E8: that model is walked last), so an idle fleet resolves byte-identically to the
+    /// frozen pick for every call that supervises nothing. Empty on a cloud-only pool (planner
+    /// keeps every aux call).
     aux_models: Vec<String>,
     /// Live in-flight calls per model id, counted at the ONE door every dispatcher call passes
     /// (`run_agent_in_inner`) — workers, judges and aux calls uniformly, which is why this is NOT
@@ -12945,8 +12880,11 @@ impl GooseAgentDispatcher {
     }
 
     /// The model to serve a MID-RUN aux call (an omni-judge look, the dynamic replanner): the
-    /// least-loaded quality-bar candidate by the live door counter, ties to the frozen planner —
-    /// so an idle fleet resolves byte-identically to `self.planner_model`. MEASURED (r6c 18:38):
+    /// least-loaded quality-bar candidate by the live door counter, ties to the frozen planner
+    /// unless the planner's node runs the lane being supervised (E8: `avoid` is walked last) —
+    /// so an idle fleet resolves byte-identically to `self.planner_model` for every call that
+    /// supervises nothing, and a look never co-locates while another node is as idle.
+    /// MEASURED (r6c 18:38):
     /// ledgerd-core's worker + judge-ledgerd-core + judge-web-viz + replan-r0 all streaming or
     /// queued on the planner's node while two hosts sat READY, and the first delivery-armed look
     /// of the build waited at 0 chars behind the pile. Returns (model, its in-flight count at
@@ -13549,35 +13487,49 @@ impl GooseAgentDispatcher {
             .await
             .map_err(|e| anyhow!("update_provider: {e}"))?;
 
-        agent
-            .add_extension(
-                ExtensionConfig::Builtin {
-                    name: "developer".to_string(),
-                    display_name: None,
-                    description: String::new(),
-                    timeout: None,
-                    bundled: Some(true),
-                    // Whitelist the developer tools the worker actually uses; DROP `read_image` — it is only
-                    // for images and every worker call to it was 100% wasted (a source/text/dir path it then
-                    // recovers from via `cat`). The whitelist hides it from the menu AND rejects it if the
-                    // model hallucinates it.
-                    // A call whose job is to READ and DECIDE does not get the tools to write.
-                    // Declared by the caller — see `run_agent_timed_at`.
-                    available_tools: if read_only {
-                        vec!["shell".to_string(), "tree".to_string()]
-                    } else {
-                        vec![
-                            "write".to_string(),
-                            "edit".to_string(),
-                            "shell".to_string(),
-                            "tree".to_string(),
-                        ]
+        // THE JUDGE PROBE GETS NO TOOLS AT ALL (r6e E14 — the structural cause behind E9's net).
+        // The probe used to ride this door with `read_only: false` ("byte-parity with the old
+        // run_agent route"), so the judge lane held write/edit/shell/tree, and r6d's
+        // judge-*.calls.jsonl shows 30 of 63 completed looks ENDING in a shell call — `echo "no-op:
+        // verdict only"`, `echo done`, `true` — 29 verdict+filler (stripped, kept) and one
+        // filler-only look (research-ledger-core-q0 look 4, the failed look). A supervisor with no
+        // tool cannot end its single turn in a tool call. Identified structurally, never by name
+        // alone: the omni-judge is the ONLY caller that dispatches a `judge-` lane at
+        // JUDGE_PROBE_TURNS (a build task a plan happened to name `judge-x` runs at
+        // worker_max_turns and keeps its tools). Every other call is byte-identical.
+        let judge_probe = max_turns == JUDGE_PROBE_TURNS
+            && activity_key.is_some_and(|k| supervision_lane_kind(k) == Some("judge"));
+        if !judge_probe {
+            agent
+                .add_extension(
+                    ExtensionConfig::Builtin {
+                        name: "developer".to_string(),
+                        display_name: None,
+                        description: String::new(),
+                        timeout: None,
+                        bundled: Some(true),
+                        // Whitelist the developer tools the worker actually uses; DROP `read_image` — it is only
+                        // for images and every worker call to it was 100% wasted (a source/text/dir path it then
+                        // recovers from via `cat`). The whitelist hides it from the menu AND rejects it if the
+                        // model hallucinates it.
+                        // A call whose job is to READ and DECIDE does not get the tools to write.
+                        // Declared by the caller — see `run_agent_timed_at`.
+                        available_tools: if read_only {
+                            vec!["shell".to_string(), "tree".to_string()]
+                        } else {
+                            vec![
+                                "write".to_string(),
+                                "edit".to_string(),
+                                "shell".to_string(),
+                                "tree".to_string(),
+                            ]
+                        },
                     },
-                },
-                &session_id,
-            )
-            .await
-            .map_err(|e| anyhow!("add developer extension: {e}"))?;
+                    &session_id,
+                )
+                .await
+                .map_err(|e| anyhow!("add developer extension: {e}"))?;
+        }
 
         // Worker MCP extensions (none for the planner). A failed connection is non-fatal so a down
         // server doesn't kill the task.
@@ -14632,9 +14584,10 @@ impl GooseAgentDispatcher {
                 // LIVE-LOAD ROUTED, not the frozen planner identity (r6c 18:38): every look used
                 // to clone `self.planner_model`, so a worker, two judge lanes and a replan round
                 // all queued on one node while two hosts sat READY. Re-picked per look — the
-                // planner still wins every tie, so an idle fleet behaves byte-identically.
-                // The worker's own model is passed so the look never co-locates with the lane
-                // it reads while another node is as idle (r6d q0: 7/7 looks on its own node).
+                // planner wins every tie unless ITS node runs this worker: the worker's own model
+                // is passed and walked last, so the look never co-locates with the lane it reads
+                // while another node is as idle (r6d q0: 7/7 looks on its own node; the refuter's
+                // forward replay under the new walk moves all 7).
                 let (pm, pm_inflight) = self.aux_model_for_call(Some(model_id));
                 // THE JUDGE'S OWN GENERATION GETS A LANE (r6 blocker; Mihai's third ask). One
                 // ROLLING lane per supervised task — `judge-<task_id>` — never per look: each look
@@ -14804,7 +14757,7 @@ impl GooseAgentDispatcher {
                         sys,
                         user,
                         None,
-                        1,
+                        JUDGE_PROBE_TURNS,
                         &[],
                         Some(judge_lane.as_str()),
                         omni_looks,

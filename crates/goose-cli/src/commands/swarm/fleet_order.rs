@@ -484,8 +484,10 @@ pub(super) fn aux_candidate_models(
 }
 
 /// The live pick for a mid-run aux call: the candidate with the fewest in-flight dispatcher
-/// calls; the PLANNER wins ties (a candidate needs strictly fewer to displace it), so an idle
-/// fleet resolves byte-identically to the frozen planner identity. Returns the chosen model AND
+/// calls; the PLANNER wins ties (a candidate needs strictly fewer to displace it) EXCEPT when
+/// the planner's node runs the lane this call supervises (`avoid`, walked last), so an idle
+/// fleet resolves byte-identically to the frozen planner identity for every call that
+/// supervises nothing. Returns the chosen model AND
 /// its live count, for the routing event. A model with no map entry has zero calls in flight —
 /// that empty means empty. A preference, never a refusal: whatever the counts say, SOME model is
 /// returned and the call proceeds.
