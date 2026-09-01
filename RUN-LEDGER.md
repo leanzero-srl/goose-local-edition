@@ -558,30 +558,31 @@ DAG is actually parallel). reasoning_chars against answer_chars is the waste.
 ## swarm-3node-r0
 
 - **run_id**: swarm-20260901-210334275
-- **phases**: open
+- **phases**: open → research → synthesis → build
 - **started**: 21:03:34
-- **tasks**: 0
-- **files_planned**: 0
+- **tasks**: 12
+- **files_planned**: 23
 - **collisions**: none
-- **sink_owns**: NO SINK
-- **chain**: 0
-- **startable**: 0
-- **brief_median**: 0
-- **reasoning_chars**: 16061
-- **answer_chars**: 156
+- **sink_owns**: []
+- **chain**: 5
+- **startable**: 6
+- **brief_median**: 38020
+- **reasoning_chars**: 287064
+- **answer_chars**: 84761
 - **code_files**: 0
 - **code_bytes**: 0
-- **elapsed_min**: 6
-- **phase_split**: open 6m
-- **before_build_min**: 0 (internal diagnosis only — never a cross-run number)
-- **vs_target**: ONLY THE SCORE COMPARES. Target 20.06% (qwen3.8-27b, one cloud agent, same model). Wall clock is NOT comparable — that run is on far faster hardware, so minutes measure the machine. Bytes are NOT a verdict — more code is not better code, and it had no planning phases to spend budget on. Cross-hardware-honest work numbers for THIS run: 0B delivered, 16,061 chars reasoned, 0 tasks completed, 0 retried.
+- **elapsed_min**: 108
+- **phase_split**: open 60m · research 14m · synthesis 32m · build 0m
+- **before_build_min**: 108 (internal diagnosis only — never a cross-run number)
+- **vs_target**: ONLY THE SCORE COMPARES. Target 20.06% (qwen3.8-27b, one cloud agent, same model). Wall clock is NOT comparable — that run is on far faster hardware, so minutes measure the machine. Bytes are NOT a verdict — more code is not better code, and it had no planning phases to spend budget on. Cross-hardware-honest work numbers for THIS run: 0B delivered, 287,064 chars reasoned, 0 tasks completed, 0 retried.
 - **python_parses**: 0 ok / 0 SYNTAX ERROR / 0 empty
 - **web_files**: NONE — 0.56 of the scoring weight is unreachable without a served page
-- **tasks_done**: 0/? completed, 0 dispatched, 0 retried
+- **tasks_done**: 0/12 completed, 3 dispatched, 0 retried
 - **arm**: F (fleet of 3)
 - **fixture_seed**: 206dd14909d0ec26
-- **plan_patched**: 0
-- **plan_loaded**: 0
+- **plan_patched**: 1
+- **plan_repaired**: 5 actions, owning-nothing 0->0, unassigned endpoints 0->0
+- **plan_loaded**: 1
 - **review_rounds**: none
 - **judge_looks**: 0
 - **judge_nudges**: 0
@@ -589,6 +590,7 @@ DAG is actually parallel). reasoning_chars against answer_chars is the waste.
 - **drift_held**: 0
 - **tree_defects**: 0
 - **repair**: delivery_defect_steer=0 brief_defects=0 testgen=0 fix_target_selected=0 complete_verify=0 complete_result=0
+- **ledger**: 87 task ledger(s) in .swarm/ledger/, ledger.json roll-up present, written=0 delivered=0
 
 ## local-sb7-swarm-r6f-KILLED-opener-final_output-collected-at-71m-but-open_slices-never-returned-second-buffered-emit-open-77m-d48f5cdbe
 
