@@ -5,9 +5,8 @@
 use async_trait::async_trait;
 use goose_swarm::{
     Dag, DeviceCfg, Difficulty, DispatchError, DispatchRequest, EventSink, Judge, JudgeConfig,
-    JudgeOutcome, JudgeRequest, PreReviewOutput, PreReviewRequest, PreReviewer, ReplanAnswer,
-    ReplanContext, Replanner, Scheduler, SwarmEvent, TaskDispatcher, TaskRunOutput, TaskSpec,
-    Verdict,
+    JudgeOutcome, JudgeRequest, PreReviewer, ReplanAnswer, ReplanContext, Replanner, Scheduler,
+    SwarmEvent, TaskDispatcher, TaskRunOutput, TaskSpec, Verdict,
 };
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -1437,148 +1436,35 @@ async fn judge_fires_when_fleet_is_saturated() {
     );
 }
 
-/// Records which completed tasks an idle node pre-reviewed (M5).
-struct RecordingPreReviewer {
-    reviewed: Arc<Mutex<Vec<String>>>,
-}
-
-#[async_trait]
-impl PreReviewer for RecordingPreReviewer {
-    async fn pre_review(&self, req: PreReviewRequest) -> Result<PreReviewOutput, String> {
-        self.reviewed.lock().unwrap().push(req.task_id.clone());
-        Ok(PreReviewOutput {
-            had_findings: false,
-            summary: String::new(),
-        })
-    }
-}
-
-/// M5 no-idle: with no in-flight worker to judge, an idle node correctness-pre-reviews a COMPLETED task.
-/// `verify` is the slow target so that, while it runs, the other node is free to review the done `core`.
-#[tokio::test]
-async fn idle_node_pre_reviews_completed_task() {
-    let reviewed = Arc::new(Mutex::new(Vec::new()));
-    let disp = Arc::new(JudgeTestDispatcher {
-        runs: Arc::new(Mutex::new(HashMap::new())),
-        hints: Arc::new(Mutex::new(Vec::new())),
-        target: "verify".to_string(), // verify runs long -> idle window to review the done `core`
-        delay: Duration::from_millis(20),
-        slow_all: false,
-    });
-    let dag = Dag::from_specs(vec![
-        spec("core", &[], &["a.py"]),
-        spec("verify", &["core"], &["v.py"]),
-    ])
-    .unwrap();
-    let pr = Arc::new(RecordingPreReviewer {
-        reviewed: reviewed.clone(),
-    });
-    let sched =
-        Scheduler::new(vec![dev("a", "m-a", 1), dev("b", "m-b", 1)], 3).with_pre_reviewer(pr);
-    let report = sched.run(dag, disp, String::new()).await.unwrap();
-
-    assert!(
-        report.failed.is_empty(),
-        "no task fails: {:?}",
-        report.failed
-    );
-    assert!(
-        report.done.contains(&"core".to_string()) && report.done.contains(&"verify".to_string()),
-        "both tasks complete: {:?}",
-        report.done
-    );
-    assert!(
-        reviewed.lock().unwrap().contains(&"core".to_string()),
-        "the idle node pre-reviewed the completed task `core`; reviewed = {:?}",
-        reviewed.lock().unwrap()
-    );
-}
-
-/// A judge that only OBSERVES (never intervenes). Used to prove the pre-reviewer runs CONCURRENTLY with a
-/// firing judge instead of being starved by the single idle-slot they used to share.
-struct ObservingJudge;
-
-#[async_trait]
-impl Judge for ObservingJudge {
-    async fn judge(&self, _req: JudgeRequest) -> Result<JudgeOutcome, String> {
-        Ok(JudgeOutcome::ok())
-    }
-}
-
-/// Idle-jobs concurrency (the lone-idle-node fix): with BOTH a judge and a pre-reviewer attached and >=2
-/// free slots, they must run CONCURRENTLY — the judge inspects the in-flight `slow` worker while a SECOND
-/// idle node pre-reviews the completed `done` task. Under the OLD single `judge_running` slot the judge
-/// starved the pre-review (gate was `if s.judge_running`), so `done` was never reviewed; the fix bounds idle
-/// jobs by `idle_capacity()` instead, so both run. 3 devices: `slow` occupies one, leaving capacity 2.
-#[tokio::test]
-async fn pre_review_runs_concurrently_with_judge() {
-    let reviewed = Arc::new(Mutex::new(Vec::new()));
-    let disp = Arc::new(JudgeTestDispatcher {
-        runs: Arc::new(Mutex::new(HashMap::new())),
-        hints: Arc::new(Mutex::new(Vec::new())),
-        target: "slow".to_string(), // slow stays in-flight -> the judge has a worker to inspect
-        delay: Duration::from_millis(60),
-        slow_all: false,
-    });
-    let dag = Dag::from_specs(vec![
-        spec("done", &[], &["d.py"]), // completes fast -> a completed-unreviewed task to pre-review
-        spec("slow", &[], &["s.py"]), // runs long -> the judge's in-flight target
-    ])
-    .unwrap();
-    let pr = Arc::new(RecordingPreReviewer {
-        reviewed: reviewed.clone(),
-    });
-    let cfg = JudgeConfig {
-        min_age_secs: 0,
-        ..JudgeConfig::default()
-    };
-    let sched = Scheduler::new(
-        vec![dev("a", "m-a", 1), dev("b", "m-b", 1), dev("c", "m-c", 1)],
-        3,
-    )
-    .with_judge(Arc::new(ObservingJudge), cfg)
-    .with_pre_reviewer(pr);
-    let report = sched.run(dag, disp, String::new()).await.unwrap();
-
-    assert!(
-        report.failed.is_empty(),
-        "no task fails: {:?}",
-        report.failed
-    );
-    assert!(
-        reviewed.lock().unwrap().contains(&"done".to_string()),
-        "pre-review ran on `done` CONCURRENTLY with the judge inspecting `slow` (lone-idle fix); \
-         reviewed = {:?}",
-        reviewed.lock().unwrap()
-    );
-}
-
-/// Records PEAK concurrent pre-reviews so the idle_jobs invariant can be asserted.
-struct PeakPreReviewer {
+/// An operator-question answerer that always has a question waiting and records PEAK concurrent
+/// answers, so the idle_jobs invariant can be asserted on the Q&A idle job (the vehicle since the
+/// M5 pre-review was deleted — the accounting under test is the IdleSlotGuard's, shared by every
+/// idle job).
+struct PeakAnswerer {
     cur: Arc<AtomicUsize>,
     peak: Arc<AtomicUsize>,
 }
 
 #[async_trait]
-impl PreReviewer for PeakPreReviewer {
-    async fn pre_review(&self, _req: PreReviewRequest) -> Result<PreReviewOutput, String> {
+impl PreReviewer for PeakAnswerer {
+    fn has_pending_question(&self) -> bool {
+        true
+    }
+    async fn answer_user_question(&self, _model_id: &str, _goal: &str, _run_state: &str) {
         let n = self.cur.fetch_add(1, Ordering::SeqCst) + 1;
         self.peak.fetch_max(n, Ordering::SeqCst);
         tokio::time::sleep(Duration::from_millis(40)).await;
         self.cur.fetch_sub(1, Ordering::SeqCst);
-        Ok(PreReviewOutput {
-            had_findings: false,
-            summary: String::new(),
-        })
     }
 }
 
-/// idle_jobs accounting invariant: concurrent pre-reviews must NEVER exceed idle_capacity(). `slow` holds
-/// one of 3 weight-1 nodes (idle_capacity 2 while it runs); four completed tasks are pre-review targets. The
-/// double-decrement-on-normal-exit bug undercounts idle_jobs after each review and lets a 3rd concurrent
-/// review spawn on the 2-slot fleet; with the IdleSlotGuard as the SOLE releaser the gate caps peak at 2.
+/// idle_jobs accounting invariant: concurrent idle jobs must NEVER exceed idle_capacity(). `slow` holds
+/// one of 3 weight-1 nodes (idle_capacity 2 while it runs) and a question is always pending, so the
+/// Q&A job is re-claimed on every tick. The double-decrement-on-normal-exit bug undercounts idle_jobs
+/// after each job and lets a 3rd concurrent one spawn on the 2-slot fleet; with the IdleSlotGuard as
+/// the SOLE releaser the gate caps peak at 2.
 #[tokio::test]
-async fn pre_review_never_oversubscribes_free_nodes() {
+async fn idle_jobs_never_oversubscribe_free_nodes() {
     let rec = Arc::new(Mutex::new(Recorder::default()));
     let dag = Dag::from_specs(vec![
         spec("slow", &[], &["sl.py"]),
@@ -1589,7 +1475,7 @@ async fn pre_review_never_oversubscribes_free_nodes() {
     ])
     .unwrap();
     let peak = Arc::new(AtomicUsize::new(0));
-    let pr = Arc::new(PeakPreReviewer {
+    let pr = Arc::new(PeakAnswerer {
         cur: Arc::new(AtomicUsize::new(0)),
         peak: peak.clone(),
     });
@@ -1609,41 +1495,41 @@ async fn pre_review_never_oversubscribes_free_nodes() {
     );
     assert!(
         peak.load(Ordering::SeqCst) <= 2,
-        "concurrent pre-reviews ({}) must not exceed idle_capacity 2 while `slow` holds one of 3 nodes \
+        "concurrent idle jobs ({}) must not exceed idle_capacity 2 while `slow` holds one of 3 nodes \
          (an idle_jobs double-decrement would let a 3rd spawn and oversubscribe the fleet)",
         peak.load(Ordering::SeqCst)
     );
+    assert!(
+        peak.load(Ordering::SeqCst) >= 1,
+        "the Q&A idle job must have run at least once for the invariant to have been exercised"
+    );
 }
 
-/// Pushes into the same ordered log the LogSink writes, so a review's start can be ordered
-/// against claim-time dispatch events.
-struct LoggingPreReviewer {
+/// An answerer with a question always pending that pushes into the same ordered log the LogSink
+/// writes, so an idle job's start can be ordered against claim-time dispatch events.
+struct LoggingAnswerer {
     log: Arc<Mutex<Vec<String>>>,
 }
 
 #[async_trait]
-impl PreReviewer for LoggingPreReviewer {
-    async fn pre_review(&self, req: PreReviewRequest) -> Result<PreReviewOutput, String> {
-        self.log
-            .lock()
-            .unwrap()
-            .push(format!("review_start:{}", req.task_id));
-        Ok(PreReviewOutput {
-            had_findings: false,
-            summary: String::new(),
-        })
+impl PreReviewer for LoggingAnswerer {
+    fn has_pending_question(&self) -> bool {
+        true
+    }
+    async fn answer_user_question(&self, _model_id: &str, _goal: &str, _run_state: &str) {
+        self.log.lock().unwrap().push("idle_job_start".to_string());
     }
 }
 
 /// A-3 (r3) ready-work yield: an idle-fill claim must never outrank a real task's dispatch.
 /// `waiter` is READY the whole run but unplaceable (its file is held by the slow `blocker`),
-/// while `done1` completes early and becomes a pre-review candidate with 2 free devices. The
-/// old rule only yielded the LAST free slot (`idle_capacity() <= 1`), so the review claimed a
-/// node here while real work waited — the shape that held nodes through r2's 11-minute retry
-/// starvation (one pre_review call alone held a node 7,535s). Now no idle-fill claim happens
-/// while ANY task sits in `ready`: every review in the log must start after `waiter` was
-/// dispatched. (Claim order is read from the sink, which emits under the state lock; the
-/// review's own start is spawned after its claim, so the ordering is lock-guaranteed.)
+/// while a question is pending from the first tick with 2 free devices. The old rule only
+/// yielded the LAST free slot (`idle_capacity() <= 1`), so an idle job claimed a node here while
+/// real work waited — the shape that held nodes through r2's 11-minute retry starvation (one
+/// pre_review call alone held a node 7,535s). Now no idle-fill claim happens while ANY task sits
+/// in `ready`: every idle job in the log must start after `waiter` was dispatched. (Claim order
+/// is read from the sink, which emits under the state lock; the job's own start is spawned after
+/// its claim, so the ordering is lock-guaranteed.)
 #[tokio::test]
 async fn ready_real_work_outranks_idle_fill_claims() {
     let log = Arc::new(Mutex::new(Vec::new()));
@@ -1657,7 +1543,7 @@ async fn ready_real_work_outranks_idle_fill_claims() {
         spec("child", &["blocker"], &["c.py"]),
     ])
     .unwrap();
-    let pr = Arc::new(LoggingPreReviewer { log: log.clone() });
+    let pr = Arc::new(LoggingAnswerer { log: log.clone() });
     let sched = Scheduler::new(
         vec![dev("a", "m-a", 1), dev("b", "m-b", 1), dev("c", "m-c", 1)],
         3,
@@ -1679,10 +1565,10 @@ async fn ready_real_work_outranks_idle_fill_claims() {
         .position(|e| e.starts_with("dispatch:waiter:"))
         .expect("waiter was dispatched");
     for (i, e) in log.iter().enumerate() {
-        if e.starts_with("review_start:") {
+        if e == "idle_job_start" {
             assert!(
                 i > waiter_at,
-                "an idle-fill review claimed a node while `waiter` sat READY — idle-fill \
+                "an idle-fill job claimed a node while `waiter` sat READY — idle-fill \
                  outranked a real task's dispatch; log = {log:?}"
             );
         }
