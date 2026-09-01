@@ -130,6 +130,11 @@ describe('swarm golden preset', () => {
     // `split_fat: true` for a mechanism no run can reach was the truth-layer lie from the other side.
     // What the panel must guarantee is that it never turns them back into controls: no default, no
     // reset key, and a config.yaml that still carries one is written back untouched.
+    //
+    // max_replans / dynamic_replan (VA-015, 83e8089a5 — the replanner is deleted) and persona (VA-016,
+    // 97d5735a4 — LEARN & REFLECT is deleted) joined the list with batch 2a: DEFAULTS kept
+    // max_replans: u32::MAX after 83e8089a5 set the Rust default to None, so the generated comparison
+    // above was RED from that commit until this one — the panel half of a deletion is a deletion too.
     const RETIRED = [
       'split_fat',
       'fan_verify',
@@ -139,16 +144,30 @@ describe('swarm golden preset', () => {
       'straggler_grace_secs',
       'split',
       'split_inherit_spec',
+      'max_replans',
+      'dynamic_replan',
+      'persona',
     ] as const;
     for (const k of RETIRED) {
       expect(DEFAULTS[k], `${k} is engine-retired but DEFAULTS defines it`).toBeUndefined();
       expect(PRESET_KEYS, `${k} is engine-retired but "reset to golden" would write it`).not.toContain(k);
     }
-    const carried: SwarmConfig = { ...DEFAULTS, split_fat: true, fan_verify: true, straggler_stop: true };
+    const carried: SwarmConfig = {
+      ...DEFAULTS,
+      split_fat: true,
+      fan_verify: true,
+      straggler_stop: true,
+      max_replans: 2,
+      dynamic_replan: true,
+      persona: true,
+    };
     const next = { ...carried, ...presetPatch(GOLDEN) };
     expect(next.split_fat).toBe(true);
     expect(next.fan_verify).toBe(true);
     expect(next.straggler_stop).toBe(true);
+    expect(next.max_replans).toBe(2);
+    expect(next.dynamic_replan).toBe(true);
+    expect(next.persona).toBe(true);
   });
 
   it('every key the panel can reset is one the engine baseline actually defines', () => {
