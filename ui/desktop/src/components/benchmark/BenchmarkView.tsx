@@ -1,5 +1,15 @@
-import { useCallback, useEffect, useId, useMemo, useState } from 'react';
-import { Gauge, Play, Upload, Loader2, XCircle, BadgeCheck } from 'lucide-react';
+import { useCallback, useEffect, useId, useMemo, useState, type ReactNode } from 'react';
+import {
+  AlertTriangle,
+  BadgeCheck,
+  Check,
+  CheckCircle2,
+  CircleSlash,
+  Loader2,
+  Play,
+  Upload,
+  XCircle,
+} from 'lucide-react';
 import { MainPanelLayout } from '../Layout/MainPanelLayout';
 import {
   BASELINES_BY_TIER,
@@ -17,7 +27,6 @@ import { TierBreakdown } from './TierBreakdown';
 import { ScoringDetail, type VerdictDetail } from './ScoringDetail';
 import { SwarmRunPanel } from '../swarm/SwarmRunPanel';
 import { useSwarmRun } from '../swarm/useSwarmRun';
-import { ZoneHeader } from '../swarm/ZoneHeader';
 import SamplingKnobs from '../swarm/SamplingKnobs';
 import { useSaveSamplingDefaults } from '../swarm/useSamplingDefaults';
 import {
@@ -25,8 +34,31 @@ import {
   sanitizeSampling,
   type SamplingSettings,
 } from '../swarm/sampling';
-import { Input } from '../ui/input';
 import { ConfirmationModal } from '../ui/ConfirmationModal';
+import {
+  Button,
+  Chip,
+  DataTable,
+  EmptyState,
+  KeyValue,
+  PageHeader,
+  Panel,
+  StatusDot,
+  DISABLED,
+  FOCUS,
+  MOTION,
+  RADIUS,
+  SPACE,
+  SURFACE,
+  TNUM,
+  TONE_FILL,
+  TONE_TEXT,
+  TYPE,
+  WEIGHT,
+  cx,
+  type DataTableColumn,
+  type Tone,
+} from '../lz';
 
 const NODE_CHOICES = [1, 2, 3] as const;
 type NodeChoice = (typeof NODE_CHOICES)[number];
@@ -70,9 +102,19 @@ const PHASES: Array<{ key: BenchPhase; label: string }> = [
   { key: 'done', label: 'Done' },
 ];
 
-// Same status palette as SwarmRunPanel so a phase reads the same across the app.
-const PHASE_ACTIVE = '#f5a623';
-const PHASE_DONE = '#2ecc71';
+/** What each tier segment says and what its tooltip explains — the same words the buttons carried. */
+const TIER_SEGMENT_LABEL: Record<BenchTier, string> = {
+  'sb-7': 'sb-7 · rc',
+  'sb-6': 'sb-6 · HARD',
+  'sb-5.3': 'sb-5.3',
+};
+const TIER_BLURB: Record<BenchTier, string> = {
+  'sb-7':
+    'Meridian Payments Console — the current tier: full web console, 3D scene, concurrency and resilience under seeded SIGKILL (scorer sb-7.0-rc, UNCALIBRATED)',
+  'sb-6':
+    'VendorSync Pro — the hard tier: raw-WebGL 3D, webhooks, optimistic concurrency (scorer sb-6.0)',
+  'sb-5.3': 'VendorSync — the standard tier (scorer sb-5.3)',
+};
 
 function fmtElapsed(ms: number): string {
   const s = Math.max(0, Math.floor(ms / 1000));
@@ -81,10 +123,11 @@ function fmtElapsed(ms: number): string {
   return h > 0 ? `${h}h ${m}m` : `${m}m ${s % 60}s`;
 }
 
-/** Short completion stamp for a stored result ("Aug 17, 18:27") — how a result stays identifiable. */
-function fmtWhen(iso: string | undefined): string | null {
-  if (!iso) return null;
-  const t = Date.parse(iso);
+/** Short stamp for a moment ("Aug 17, 18:27") — how a stored result or a live run stays
+ *  identifiable. Takes the ISO string a result carries or the epoch ms a live run keeps. */
+function fmtWhen(when: string | number | undefined | null): string | null {
+  if (when == null || when === '') return null;
+  const t = typeof when === 'number' ? when : Date.parse(when);
   if (Number.isNaN(t)) return null;
   return new Date(t).toLocaleString(undefined, {
     month: 'short',
@@ -95,69 +138,158 @@ function fmtWhen(iso: string | undefined): string | null {
 }
 
 /**
- * BENCHMARK PIPELINE zone — the harness AROUND the swarm: which phase is live, what already finished,
- * and the harness's latest output line — never a bare spinner. Labeled in the same zone register as the
- * swarm panel's own zones (its "SWARM RUN" band sits right below), so benchmark chrome and swarm run are
- * never ambiguous. The swarm-build phase gets its full live panel below; this strip covers the phases
- * that are NOT the swarm (vendor sim boot, scoring).
+ * The segmented strip the tier and node pickers share — the lz Segmented's exact class recipe on
+ * plain buttons. Each toggle must stay a `button` carrying its own `title` and `aria-describedby`
+ * (the locked-while-live reason the publish-form test pins); the primitive's radio options carry
+ * neither, so the recipe is composed here from the same tokens.
+ */
+const STRIP = cx(
+  'inline-flex items-center gap-0.5 bg-lz-surface p-0.5',
+  SURFACE.outline,
+  RADIUS.control
+);
+const SEGMENT =
+  'inline-flex h-7 items-center gap-1.5 whitespace-nowrap rounded-[4px] px-2.5 text-[12px] font-lz-medium';
+function segmentClass(active: boolean): string {
+  return cx(
+    SEGMENT,
+    // A locked strip keeps its selection readable: the active segment stays the accent fill and
+    // the others take the solid disabled neutral — never an opacity.
+    active
+      ? cx(SURFACE.selected, 'disabled:pointer-events-none')
+      : cx('text-lz-ink-2 hover:text-lz-ink', SURFACE.hover, DISABLED),
+    FOCUS,
+    MOTION
+  );
+}
+
+/** A Studio text input: outline, radius 6, ink-4 placeholder, the err border when aria-invalid. */
+const INPUT = cx(
+  'h-8 w-full bg-lz-surface px-3 text-lz-body text-lz-ink placeholder:text-lz-ink-4 aria-[invalid=true]:border-lz-err',
+  SURFACE.outline,
+  RADIUS.control,
+  FOCUS,
+  MOTION,
+  DISABLED
+);
+
+const BAND_ICON: Record<Tone, ReactNode> = {
+  ok: <CheckCircle2 />,
+  warn: <AlertTriangle />,
+  err: <XCircle />,
+  stopped: <CircleSlash />,
+  accent: <Loader2 className="animate-spin" />,
+  secondary: null,
+};
+
+/** A one-line message in a solid tone fill — the status / refusal banner register. */
+function ToneBand({ tone, children }: { tone: Tone; children: ReactNode }) {
+  return (
+    <div
+      role="status"
+      data-testid="tone-band"
+      data-tone={tone}
+      className={cx(
+        'flex items-center gap-2 px-4 py-2.5 text-lz-body [&>svg]:size-4 [&>svg]:shrink-0',
+        WEIGHT.medium,
+        RADIUS.card,
+        TONE_FILL[tone]
+      )}
+    >
+      {BAND_ICON[tone]}
+      <span>{children}</span>
+    </div>
+  );
+}
+
+/** The tone a status line carries, read from its own words — the words are the fact, the fill
+ *  only agrees with them. */
+function statusTone(status: string): Tone {
+  if (/failed/i.test(status)) return 'err';
+  if (/cancelled/i.test(status)) return 'stopped';
+  if (/complete|published/i.test(status)) return 'ok';
+  return 'accent';
+}
+
+/**
+ * BENCHMARK PIPELINE panel — the harness AROUND the swarm: which phase is live, what already
+ * finished, the run's own facts and the harness's latest output line — never a bare spinner. The
+ * swarm-build phase gets its full live panel below; this panel covers the phases that are NOT the
+ * swarm (vendor sim boot, scoring). Started and the run directory come from main's status — the
+ * tier and node count of a re-attached run are NOT known here and are deliberately not claimed.
  */
 function PhaseStrip({
   phase,
   lastLine,
   elapsedMs,
+  startedAt,
+  workdir,
 }: {
   phase: BenchPhase;
   lastLine: string | null;
   elapsedMs: number;
+  startedAt: number | null;
+  workdir: string | null;
 }) {
   const activeIdx = PHASES.findIndex((p) => p.key === phase);
   return (
-    <div className="rounded border border-border-primary">
-      <ZoneHeader
-        label="Benchmark pipeline"
-        explain="the harness around the swarm — boot, build, scoring"
-        className="border-b border-border-primary py-2"
-        right={
-          <span className="text-xs font-semibold tabular-nums text-text-primary">
-            {fmtElapsed(elapsedMs)}
-          </span>
-        }
-      />
-      <div className="flex flex-wrap gap-2 px-3 py-3">
+    <Panel
+      title="Benchmark pipeline"
+      headerRight={
+        <>
+          <StatusDot tone="accent" live label="run in progress" />
+          <span className={cx(TYPE.meta, TNUM)}>{fmtElapsed(elapsedMs)}</span>
+        </>
+      }
+    >
+      <p className={TYPE.bodyMuted}>
+        The harness around the swarm — boot, build, scoring. The swarm build has its full live panel
+        below.
+      </p>
+      <div className="mt-3 flex flex-wrap items-center gap-2">
         {PHASES.map((p, i) => {
           const state = i < activeIdx ? 'done' : i === activeIdx ? 'active' : 'pending';
           return (
-            <span
+            <Chip
               key={p.key}
-              className="flex items-center gap-1.5 rounded border px-2.5 py-1 text-xs font-bold"
-              style={
-                state === 'active'
-                  ? { backgroundColor: PHASE_ACTIVE, borderColor: PHASE_ACTIVE, color: '#1a1a1a' }
-                  : state === 'done'
-                    ? { backgroundColor: PHASE_DONE, borderColor: PHASE_DONE, color: '#fff' }
-                    : {
-                        borderColor: 'var(--color-border-primary)',
-                        color: 'var(--color-text-secondary)',
-                      }
+              tone={state === 'done' ? 'ok' : state === 'active' ? 'accent' : undefined}
+              icon={
+                state === 'done' ? (
+                  <Check />
+                ) : state === 'active' ? (
+                  <Loader2 className="animate-spin" />
+                ) : undefined
               }
             >
-              {state === 'active' && <Loader2 className="h-3 w-3 animate-spin" />}
               {p.label}
-            </span>
+            </Chip>
           );
         })}
       </div>
+      <KeyValue
+        dense
+        className="mt-4"
+        aria-label="Run facts"
+        items={[
+          { key: 'started', label: 'Started', value: fmtWhen(startedAt) ?? '—' },
+          { key: 'workdir', label: 'Run directory', value: workdir ?? '—', mono: true },
+        ]}
+      />
       {lastLine && (
-        <div className="border-t border-border-primary bg-background-secondary px-3 py-2 font-mono text-[11px] text-text-secondary">
+        <div
+          title={lastLine}
+          className={cx(
+            'mt-3 truncate px-3 py-2 font-mono text-lz-mono text-lz-ink-2',
+            SURFACE.inset,
+            RADIUS.control
+          )}
+        >
           {lastLine.length > 200 ? lastLine.slice(0, 197) + '…' : lastLine}
         </div>
       )}
-    </div>
+    </Panel>
   );
 }
-
-const shotColor = (name: string) =>
-  name === 'loaded-before' ? 'var(--color-node-5)' : 'var(--color-block-teal)';
 
 /**
  * Full-size viewer for one screenshot. The strip crops to 160px of the top of a full page render,
@@ -191,54 +323,51 @@ function ShotLightbox({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex flex-col"
-      style={{ backgroundColor: 'rgba(6,8,14,0.97)' }}
+      className={cx('fixed inset-0 z-50 flex flex-col', SURFACE.page)}
       onClick={onClose}
       role="presentation"
     >
       <div
-        className="flex items-center justify-between gap-3 px-4 py-2.5"
-        style={{ backgroundColor: shotColor(shot.name) }}
+        className={cx(
+          'flex items-center justify-between gap-3 border-b bg-lz-surface px-4 py-2',
+          SURFACE.hairline
+        )}
         onClick={(e) => e.stopPropagation()}
         role="presentation"
       >
-        <span className="text-[13px] font-bold text-white">{shot.caption}</span>
+        <span className={cx(TYPE.h2, 'truncate')}>{shot.caption}</span>
         <div className="flex items-center gap-2">
-          <span className="text-[12px] font-bold text-white opacity-90">
+          <span className={cx(TYPE.meta, TNUM)}>
             {index + 1} / {shots.length}
           </span>
           {shots.length > 1 && (
             <>
-              <button
-                type="button"
-                className="rounded bg-black px-2.5 py-1 text-[12px] font-bold text-white"
+              <Button
+                size="sm"
+                variant="ghost"
                 onClick={() => onIndex((index - 1 + shots.length) % shots.length)}
               >
                 ‹ Prev
-              </button>
-              <button
-                type="button"
-                className="rounded bg-black px-2.5 py-1 text-[12px] font-bold text-white"
+              </Button>
+              <Button
+                size="sm"
+                variant="ghost"
                 onClick={() => onIndex((index + 1) % shots.length)}
               >
                 Next ›
-              </button>
+              </Button>
             </>
           )}
-          <button
-            type="button"
-            className="rounded bg-black px-2.5 py-1 text-[12px] font-bold text-white"
+          <Button
+            size="sm"
+            variant="ghost"
             onClick={() => void window.electron.toggleFullscreen?.()}
           >
             Fullscreen
-          </button>
-          <button
-            type="button"
-            className="rounded bg-white px-2.5 py-1 text-[12px] font-bold text-black"
-            onClick={onClose}
-          >
+          </Button>
+          <Button size="sm" variant="secondary" onClick={onClose}>
             Close
-          </button>
+          </Button>
         </div>
       </div>
       <div className="flex-1 overflow-auto p-4" onClick={onClose} role="presentation">
@@ -248,7 +377,7 @@ function ShotLightbox({
         <img
           src={`data:image/png;base64,${shot.b64}`}
           alt={shot.caption}
-          className="mx-auto block max-w-full bg-white"
+          className="mx-auto block max-w-full bg-lz-surface"
         />
       </div>
     </div>
@@ -265,7 +394,7 @@ function ShotsStrip({ shots }: { shots: BenchShot[] }) {
         {shots.map((s, i) => (
           <figure
             key={s.name}
-            className="w-[260px] cursor-zoom-in overflow-hidden rounded border border-border-primary"
+            className={cx('w-[260px] cursor-zoom-in overflow-hidden', SURFACE.card)}
             onClick={() => setOpen(i)}
             role="presentation"
             title="Click to view full size"
@@ -273,12 +402,9 @@ function ShotsStrip({ shots }: { shots: BenchShot[] }) {
             <img
               src={`data:image/png;base64,${s.b64}`}
               alt={s.caption}
-              className="block h-[160px] w-full bg-background-secondary object-cover object-top"
+              className={cx('block h-[160px] w-full object-cover object-top', SURFACE.inset)}
             />
-            <figcaption
-              className="px-2 py-1.5 text-[11px] font-bold text-white"
-              style={{ backgroundColor: shotColor(s.name) }}
-            >
+            <figcaption className={cx('border-t px-2.5 py-1.5', SURFACE.hairline, TYPE.meta)}>
               {s.caption}
             </figcaption>
           </figure>
@@ -296,18 +422,67 @@ function ShotsStrip({ shots }: { shots: BenchShot[] }) {
   );
 }
 
-/** Solid stat tile — full border, saturated number, no washes. */
-function StatTile({ label, value, color }: { label: string; value: string; color: string }) {
+/** One number of the last run: h1-scale tabular figure over a meta label, in an inset well. */
+function StatCell({ label, value, tone }: { label: string; value: string; tone?: Tone }) {
   return (
-    <div className="rounded border border-border-primary px-4 py-3">
-      <div className="text-2xl font-extrabold tabular-nums" style={{ color }}>
-        {value}
-      </div>
-      <div className="mt-0.5 text-xs font-semibold uppercase tracking-wider text-text-secondary">
-        {label}
-      </div>
+    <div className={cx('px-3 py-2.5', RADIUS.control, SURFACE.inset)}>
+      <div className={cx('text-lz-h1', TNUM, tone ? TONE_TEXT[tone] : 'text-lz-ink')}>{value}</div>
+      <div className={cx('mt-0.5', TYPE.meta)}>{label}</div>
     </div>
   );
+}
+
+const ABSENT = <span className="text-lz-ink-4">—</span>;
+
+/** The board as a table: who | run | tier | nodes | started | score | duration. Baselines carry no
+ *  start time; the user's row reads it from the stored result. */
+function boardColumns(mine: MineRow | null): DataTableColumn<BenchmarkRow>[] {
+  return [
+    {
+      key: 'who',
+      header: <span className="sr-only">Entrant</span>,
+      width: 28,
+      cell: (r) => (
+        <StatusDot
+          tone={r.mine ? 'accent' : 'stopped'}
+          label={r.mine ? 'your fleet' : 'baseline'}
+        />
+      ),
+    },
+    {
+      key: 'run',
+      header: 'Run',
+      cell: (r) => <span className={cx(r.mine && WEIGHT.semibold)}>{r.label}</span>,
+    },
+    {
+      key: 'tier',
+      header: 'Tier',
+      cell: (r) => <span className="text-lz-ink-2">{r.scorerVersion}</span>,
+    },
+    { key: 'nodes', header: 'Nodes', numeric: true, cell: (r) => r.nodes ?? ABSENT },
+    {
+      key: 'started',
+      header: 'Started',
+      numeric: true,
+      cell: (r) => (r.mine ? (fmtWhen(mine?.runMeta?.startedAt) ?? ABSENT) : ABSENT),
+    },
+    {
+      key: 'score',
+      header: 'Score',
+      numeric: true,
+      cell: (r) => (
+        <span className={cx(WEIGHT.semibold, r.mine && TONE_TEXT.accent)}>
+          {(r.score * 100).toFixed(1)}%
+        </span>
+      ),
+    },
+    {
+      key: 'duration',
+      header: 'Duration',
+      numeric: true,
+      cell: (r) => (typeof r.wallSecs === 'number' ? fmtElapsed(r.wallSecs * 1000) : ABSENT),
+    },
+  ];
 }
 
 /**
@@ -565,146 +740,113 @@ export default function BenchmarkView() {
 
   return (
     <MainPanelLayout>
-      <div className="flex-1 overflow-y-auto">
-        <div className="mx-auto w-full max-w-5xl px-6 py-8">
-          <header className="flex flex-wrap items-end gap-4 border-b border-border-primary pb-5">
-            <div>
-              <h1 className="flex items-center gap-2 text-2xl font-bold text-text-primary">
-                <Gauge className="h-6 w-6" />
-                Benchmark
-              </h1>
-              <p className="mt-1 max-w-[60ch] text-sm text-text-secondary">
-                Your fleet against frontier models on the same frozen build task, graded by running
-                what it produces — not by asking a model what it thinks.
-              </p>
-            </div>
-            {handle && (
-              <span
-                className="ml-auto flex items-center gap-1.5 rounded px-2.5 py-1 text-xs font-bold text-white"
-                style={{ backgroundColor: 'var(--color-node-4)' }}
-                title="Your public pseudonym on leanzero.net — stable for this install"
-              >
-                <BadgeCheck className="h-3.5 w-3.5" />
-                publishing as {handle}
-              </span>
-            )}
-          </header>
-
-          {/* Run settings — the sampling knobs the next run will use, editable until launch; while
-              a run is live they freeze on the values that run launched with. EVERY unset knob —
-              temperature included — falls through to the config/model default: the 0.2 benchmark
-              pin was deleted in main.ts ("NO HARDCODED TEMPERATURE" — it overrode the per-model
-              value Mihai sets in LM Studio), and a card still saying "0.2 (pinned)" claimed a pin
-              the run no longer sends (caught live on r4-relaunch, 2026-08-30). */}
-          <SamplingKnobs
-            className="mt-6"
-            value={launchedSampling ?? sampling}
-            onChange={setSampling}
-            active={running}
-            onSaveDefaults={() => saveDefaults(sampling)}
+      <div className={cx('flex-1 overflow-y-auto', SURFACE.page)}>
+        <div className={cx('mx-auto flex w-full max-w-5xl flex-col', SPACE.page, SPACE.section)}>
+          <PageHeader
+            title="Benchmark"
+            subtitle="Your fleet against frontier models on the same frozen build task, graded by running what it produces — not by asking a model what it thinks."
+            actions={
+              <>
+                <div role="group" aria-label="Benchmark tier" className={STRIP}>
+                  {TIERS.map((t) => (
+                    <button
+                      key={t}
+                      type="button"
+                      onClick={() => setTier(t)}
+                      disabled={running}
+                      aria-pressed={tier === t}
+                      aria-describedby={running ? lockedId : undefined}
+                      title={`${TIER_BLURB[t]}${running ? `. ${lockedWhy}` : ''}`}
+                      className={segmentClass(tier === t)}
+                    >
+                      {TIER_SEGMENT_LABEL[t]}
+                    </button>
+                  ))}
+                </div>
+                {running ? (
+                  <Button
+                    onClick={() => setConfirmCancel(true)}
+                    disabled={cancelling}
+                    title={
+                      cancelling
+                        ? 'Cancelling — the engine, the vendor sim and the scorer are being stopped'
+                        : 'Stop this run'
+                    }
+                    icon={
+                      cancelling ? (
+                        <Loader2 className="animate-spin" />
+                      ) : (
+                        <XCircle className={TONE_TEXT.err} />
+                      )
+                    }
+                  >
+                    {cancelling ? 'Cancelling…' : 'Cancel run'}
+                  </Button>
+                ) : (
+                  <Button variant="primary" onClick={run} icon={<Play />}>
+                    Run benchmark
+                  </Button>
+                )}
+              </>
+            }
           />
 
-          <section className="mt-3 flex flex-wrap items-center gap-3">
-            <span className="text-sm text-text-secondary">Benchmark</span>
-            <div className="flex overflow-hidden rounded border border-border-primary">
-              {TIERS.map((t) => (
-                <button
-                  key={t}
-                  type="button"
-                  onClick={() => setTier(t)}
-                  disabled={running}
-                  aria-pressed={tier === t}
-                  aria-describedby={running ? lockedId : undefined}
-                  title={`${
-                    t === 'sb-7'
-                      ? 'Meridian Payments Console — the current tier: full web console, 3D scene, concurrency and resilience under seeded SIGKILL (scorer sb-7.0-rc, UNCALIBRATED)'
-                      : t === 'sb-6'
-                        ? 'VendorSync Pro — the hard tier: raw-WebGL 3D, webhooks, optimistic concurrency (scorer sb-6.0)'
-                        : 'VendorSync — the standard tier (scorer sb-5.3)'
-                  }${running ? `. ${lockedWhy}` : ''}`}
-                  className={`px-4 py-2 text-sm font-bold transition-colors ${
-                    tier === t
-                      ? 'bg-[var(--color-node-5)] text-white'
-                      : 'bg-background-secondary text-text-secondary hover:text-text-primary'
-                  }`}
-                >
-                  {t === 'sb-7' ? 'sb-7 · rc' : t === 'sb-6' ? 'sb-6 · HARD' : 'sb-5.3'}
-                </button>
-              ))}
+          {/* Run setup — the fleet size and the sampling knobs the next run will use, editable until
+              launch; while a run is live they freeze on the values that run launched with. EVERY
+              unset knob — temperature included — falls through to the config/model default: the 0.2
+              benchmark pin was deleted in main.ts ("NO HARDCODED TEMPERATURE" — it overrode the
+              per-model value Mihai sets in LM Studio), and a card still saying "0.2 (pinned)" claimed
+              a pin the run no longer sends (caught live on r4-relaunch, 2026-08-30). */}
+          <section aria-label="Run setup" className="flex flex-col gap-3">
+            <div className="flex flex-wrap items-center gap-3">
+              <span className={TYPE.meta}>Nodes</span>
+              <div role="group" aria-label="Nodes" className={STRIP}>
+                {NODE_CHOICES.map((n) => (
+                  <button
+                    key={n}
+                    type="button"
+                    onClick={() => setNodes(n)}
+                    disabled={running}
+                    aria-pressed={nodes === n}
+                    aria-describedby={running ? lockedId : undefined}
+                    title={running ? lockedWhy : `Run on ${n} node${n === 1 ? '' : 's'}`}
+                    className={cx(segmentClass(nodes === n), TNUM)}
+                  >
+                    {n}
+                  </button>
+                ))}
+              </div>
+              {running && (
+                <span id={lockedId} className={TYPE.meta}>
+                  locked while the run is live
+                </span>
+              )}
             </div>
-            <span className="text-sm text-text-secondary">Nodes</span>
-            <div className="flex overflow-hidden rounded border border-border-primary">
-              {NODE_CHOICES.map((n) => (
-                <button
-                  key={n}
-                  type="button"
-                  onClick={() => setNodes(n)}
-                  disabled={running}
-                  aria-pressed={nodes === n}
-                  aria-describedby={running ? lockedId : undefined}
-                  title={running ? lockedWhy : `Run on ${n} node${n === 1 ? '' : 's'}`}
-                  className={`px-4 py-2 text-sm font-semibold tabular-nums transition-colors ${
-                    nodes === n
-                      ? 'bg-[var(--color-block-teal)] text-white'
-                      : 'bg-background-secondary text-text-secondary hover:text-text-primary'
-                  }`}
-                >
-                  {n}
-                </button>
-              ))}
-            </div>
-            {running && (
-              <span id={lockedId} className="text-xs font-semibold text-text-secondary">
-                locked while the run is live
-              </span>
-            )}
-
-            {running ? (
-              <button
-                type="button"
-                onClick={() => setConfirmCancel(true)}
-                disabled={cancelling}
-                title={cancelling ? 'Cancelling — the engine, the vendor sim and the scorer are being stopped' : 'Stop this run'}
-                className="ml-auto flex items-center gap-2 rounded bg-background-danger px-4 py-2 text-sm font-semibold text-white disabled:opacity-50"
-              >
-                {cancelling ? (
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                ) : (
-                  <XCircle className="h-4 w-4" />
-                )}
-                {cancelling ? 'Cancelling…' : 'Cancel run'}
-              </button>
-            ) : (
-              <button
-                type="button"
-                onClick={run}
-                className="ml-auto flex items-center gap-2 rounded bg-[var(--color-block-teal)] px-4 py-2 text-sm font-semibold text-white"
-              >
-                <Play className="h-4 w-4" />
-                Run benchmark
-              </button>
-            )}
+            <SamplingKnobs
+              value={launchedSampling ?? sampling}
+              onChange={setSampling}
+              active={running}
+              onSaveDefaults={() => saveDefaults(sampling)}
+            />
           </section>
 
           {running && (
-            <section className="mt-6 flex flex-col gap-4">
+            <section className="flex flex-col gap-4">
               <PhaseStrip
                 phase={phase}
                 lastLine={lastLine}
                 elapsedMs={runStartedAt ? now - runStartedAt : 0}
+                startedAt={runStartedAt}
+                workdir={activeWorkdir}
               />
               <SwarmRunPanel workingDir={activeWorkdir ?? undefined} run={swarm} />
             </section>
           )}
 
-          {status && (
-            <p className="mt-4 rounded border border-border-primary bg-background-secondary px-4 py-3 text-sm text-text-primary">
-              {status}
-            </p>
-          )}
+          {status && <ToneBand tone={statusTone(status)}>{status}</ToneBand>}
 
           {mine && !comparable && (
-            <p className="mt-4 rounded border-2 border-[var(--color-node-5)] px-4 py-3 text-sm font-semibold text-text-primary">
+            <ToneBand tone="warn">
               {/* NAME THE SAME CONSTANT THE PREDICATE USES. `comparable` compares against
                   TIER_SCORER[tier], but this printed COMPARABLE_SCORER — so the banner read "scored by
                   sb-5.3, but the board runs on sb-5.3", telling the operator two identical versions were
@@ -712,107 +854,105 @@ export default function BenchmarkView() {
               Your last result was scored by {mine.scorerVersion}, but this board runs on{' '}
               {TIER_SCORER[tier]} — the numbers are not comparable, so your row sits out. Run the
               benchmark again to enter the board.
-            </p>
+            </ToneBand>
           )}
 
           {mine && !running && (
-            <section className="mt-8">
-              <h2 className="text-xs font-bold uppercase tracking-widest text-text-secondary">
-                Your last run{mineFinished ? ` · completed ${mineFinished}` : ''}
-              </h2>
-              <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-4">
-                <StatTile
-                  label="Score"
-                  value={`${(mine.score * 100).toFixed(1)}%`}
-                  color="var(--color-block-teal)"
-                />
+            <Panel
+              title="Your last run"
+              headerRight={
+                mineFinished ? (
+                  <span className={cx(TYPE.meta, TNUM)}>completed {mineFinished}</span>
+                ) : undefined
+              }
+            >
+              <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+                <StatCell label="Score" value={`${(mine.score * 100).toFixed(1)}%`} tone="accent" />
                 {typeof mine.wallSecs === 'number' && (
-                  <StatTile
-                    label="Wall time"
-                    value={fmtElapsed(mine.wallSecs * 1000)}
-                    color="var(--color-node-2)"
-                  />
+                  <StatCell label="Wall time" value={fmtElapsed(mine.wallSecs * 1000)} />
                 )}
                 {mine.runMeta && (
-                  <StatTile
-                    label="Repair rounds"
-                    value={String(mine.runMeta.repairRounds)}
-                    color="var(--color-node-4)"
-                  />
+                  <StatCell label="Repair rounds" value={String(mine.runMeta.repairRounds)} />
                 )}
                 {mine.runMeta && (
-                  <StatTile
+                  <StatCell
                     label="Engine events"
                     value={mine.runMeta.engineEvents.toLocaleString()}
-                    color="var(--color-node-1)"
                   />
                 )}
               </div>
-            </section>
+            </Panel>
           )}
 
           {shots.length > 0 && !running && (
-            <section className="mt-8">
-              <h2 className="text-xs font-bold uppercase tracking-widest text-text-secondary">
-                What it built — before and after repairs
-              </h2>
-              <div className="mt-3">
-                <ShotsStrip shots={shots} />
-              </div>
-            </section>
+            <Panel
+              title="What it built"
+              count={shots.length}
+              headerRight={<span className={TYPE.meta}>before and after repairs</span>}
+            >
+              <ShotsStrip shots={shots} />
+            </Panel>
           )}
 
           {running && mine && comparable && (
-            // PREVIOUS RESULT zone — a NEW run is in progress, so the "Your fleet" row below is the
-            // PREVIOUS run's stored result. Same zone-header register as the swarm panel, solid amber
-            // (the run-in-progress color), full border, no washes — never ambiguous against the live run.
-            <div className="mt-8 rounded border-2" style={{ borderColor: PHASE_ACTIVE }}>
-              <ZoneHeader
-                label="Previous result"
-                explain="your last completed run — replaced when this run finishes"
-                className="pt-2"
-                right={
-                  <span className="text-xs font-bold tabular-nums" style={{ color: PHASE_ACTIVE }}>
-                    {(mine.score * 100).toFixed(1)}%{mineFinished ? ` · ${mineFinished}` : ''}
-                  </span>
-                }
-              />
-              <p className="px-3 pb-3 pt-1 text-sm text-text-primary">
+            // PREVIOUS RESULT — a NEW run is in progress, so the "Your fleet" row below is the
+            // PREVIOUS run's stored result. The warn chip is the run-in-progress mark — never
+            // ambiguous against the live run.
+            <Panel
+              title="Previous result"
+              headerRight={
+                <Chip tone="warn">
+                  {(mine.score * 100).toFixed(1)}%{mineFinished ? ` · ${mineFinished}` : ''}
+                </Chip>
+              }
+            >
+              <p className={TYPE.body}>
                 The &ldquo;Your fleet&rdquo; rows below are your last completed run — the run in
                 progress replaces them when it finishes.
               </p>
-            </div>
+            </Panel>
           )}
 
-          <section className="mt-8">
-            <h2 className="text-xs font-bold uppercase tracking-widest text-text-secondary">
-              Overall
-            </h2>
-            <ScoreBars rows={rows} />
-          </section>
+          <Panel
+            title="Board"
+            count={rows.length}
+            headerRight={<span className={cx(TYPE.meta, TNUM)}>scorer {TIER_SCORER[tier]}</span>}
+            padded={false}
+          >
+            <DataTable
+              aria-label="Benchmark board"
+              columns={boardColumns(mine)}
+              rows={rows}
+              rowKey={(r) => (r.mine ? 'mine' : r.label)}
+              empty={
+                <EmptyState
+                  title="No entrants"
+                  body="No baseline is published for this tier yet."
+                />
+              }
+            />
+          </Panel>
 
-          <section className="mt-10">
-            <h2 className="text-xs font-bold uppercase tracking-widest text-text-secondary">
-              Where the points went
-            </h2>
-            <p className="mb-3 mt-1 max-w-[70ch] text-sm text-text-secondary">
+          <Panel title="Overall">
+            <ScoreBars rows={rows} />
+          </Panel>
+
+          <Panel title="Where the points went">
+            <p className={cx('mb-3 max-w-[70ch]', TYPE.bodyMuted)}>
               {TIER_LABELS.A} · {TIER_LABELS.B} · {TIER_LABELS.C} · {TIER_LABELS.D}. A build can be
               perfectly structured and still score nothing on behaviour — the split is the diagnosis.
             </p>
             <TierBreakdown rows={rows} />
-          </section>
+          </Panel>
 
           {mine && !running && (
-            <section className="mt-10">
-              <h2 className="text-xs font-bold uppercase tracking-widest text-text-secondary">
-                How this score was built
-              </h2>
+            <Panel title="How this score was built">
               {mine.verdict ? (
                 <>
-                  <p className="mb-4 mt-1 max-w-[80ch] text-sm text-text-secondary">
+                  <p className={cx('mb-4 max-w-[80ch]', TYPE.bodyMuted)}>
                     Every number below is scorer evidence from YOUR run — the exact checks it ran,
                     what each one saw, and what the misses cost. The formula:{' '}
-                    <span className="font-bold text-text-primary">
+                    <span className={cx(WEIGHT.semibold, 'text-lz-ink')}>
                       60% core build + 15% journey + 10% visual + 5% performance + 10% hard block
                     </span>
                     .
@@ -820,35 +960,44 @@ export default function BenchmarkView() {
                   <ScoringDetail verdict={mine.verdict} score={mine.score} />
                 </>
               ) : (
-                <p className="mt-3 rounded border border-border-primary bg-background-secondary px-4 py-3 text-sm text-text-primary">
+                <p className={TYPE.bodyMuted}>
                   This stored result predates the detailed verdict — the full check-by-check
                   breakdown appears from your next run.
                 </p>
               )}
-            </section>
+            </Panel>
           )}
 
           {mine && (
-            <section className="mt-10 rounded border border-border-primary p-4">
-              <h2 className="text-xs font-bold uppercase tracking-widest text-text-secondary">
-                Publish to leanzero.net
-              </h2>
-              <p className="mt-1 max-w-[70ch] text-sm text-text-secondary">
+            <Panel
+              title="Publish to leanzero.net"
+              headerRight={
+                handle ? (
+                  <Chip
+                    icon={<BadgeCheck />}
+                    title="Your public pseudonym on leanzero.net — stable for this install"
+                  >
+                    publishing as {handle}
+                  </Chip>
+                ) : undefined
+              }
+            >
+              <p className={cx('max-w-[70ch]', TYPE.bodyMuted)}>
                 Posts your score, the full check-by-check breakdown and the before/after
                 screenshots as{' '}
-                <span className="font-bold text-text-primary">{handle ?? 'your handle'}</span>.
-                The result appears on the leanzero.net board immediately.
+                <span className={cx(WEIGHT.semibold, 'text-lz-ink')}>
+                  {handle ?? 'your handle'}
+                </span>
+                . The result appears on the leanzero.net board immediately.
               </p>
-              <div className="mt-3 flex flex-col gap-3">
+              <div className="mt-4 flex flex-col gap-4">
                 <div className="max-w-[560px]">
-                  <label
-                    htmlFor={modelId}
-                    className="mb-1 block text-xs font-bold uppercase tracking-wider text-text-secondary"
-                  >
-                    Model <span style={{ color: '#e5484d' }}>*</span>
+                  <label htmlFor={modelId} className={cx('mb-1.5 block', TYPE.meta)}>
+                    Model <span className={TONE_TEXT.err}>*</span>
                   </label>
-                  <Input
+                  <input
                     id={modelId}
+                    type="text"
                     value={model}
                     onChange={(e) => setModel(e.target.value.slice(0, MODEL_MAX_CHARS))}
                     maxLength={MODEL_MAX_CHARS}
@@ -857,11 +1006,12 @@ export default function BenchmarkView() {
                     title={publishing ? 'Locked while publishing' : undefined}
                     aria-invalid={!modelValid}
                     aria-describedby={modelHintId}
+                    className={INPUT}
                   />
-                  <p id={modelHintId} className="mt-1 text-[11px] text-text-secondary">
-                    Prefilled from the run's own pool — edit it if that is not the exact model.
+                  <p id={modelHintId} className={cx('mt-1.5', TYPE.meta)}>
+                    Prefilled from the run&apos;s own pool — edit it if that is not the exact model.
                     {modelProblem && (
-                      <span className="ml-1 font-bold" style={{ color: '#e5484d' }}>
+                      <span className={cx('ml-1', WEIGHT.medium, TONE_TEXT.err)}>
                         {modelProblem}
                       </span>
                     )}
@@ -869,25 +1019,23 @@ export default function BenchmarkView() {
                 </div>
                 <div className="flex flex-wrap items-end gap-3">
                   <div className="w-full max-w-[360px]">
-                    <label
-                      htmlFor={titleId}
-                      className="mb-1 block text-xs font-bold uppercase tracking-wider text-text-secondary"
-                    >
-                      Title{' '}
-                      <span className="font-medium normal-case tracking-normal">(optional)</span>
+                    <label htmlFor={titleId} className={cx('mb-1.5 block', TYPE.meta)}>
+                      Title <span className="text-lz-ink-4">(optional)</span>
                     </label>
-                    <Input
+                    <input
                       id={titleId}
+                      type="text"
                       value={title}
                       onChange={(e) => setTitle(e.target.value.slice(0, 80))}
                       maxLength={80}
                       placeholder="e.g. My M4 fleet first run"
                       disabled={publishing}
                       title={publishing ? 'Locked while publishing' : undefined}
+                      className={INPUT}
                     />
                   </div>
-                  <button
-                    type="button"
+                  <Button
+                    variant="primary"
                     onClick={publish}
                     disabled={!publishable || running || publishing || !modelValid}
                     title={
@@ -899,26 +1047,21 @@ export default function BenchmarkView() {
                             ? `Model: ${modelProblem}`
                             : 'Publish this result to leanzero.net'
                     }
-                    className="flex items-center gap-2 rounded bg-[var(--color-block-teal)] px-4 py-2 text-sm font-semibold text-white disabled:opacity-40"
+                    icon={publishing ? <Loader2 className="animate-spin" /> : <Upload />}
                   >
-                    {publishing ? (
-                      <Loader2 className="h-4 w-4 animate-spin" />
-                    ) : (
-                      <Upload className="h-4 w-4" />
-                    )}
                     Publish
-                  </button>
+                  </Button>
                 </div>
               </div>
               {!publishable && (
-                <p className="mt-2 text-xs text-text-secondary">
+                <p className={cx('mt-3', TYPE.meta)}>
                   This result predates the v2 publisher — run the benchmark again to publish.
                 </p>
               )}
-            </section>
+            </Panel>
           )}
 
-          <footer className="mt-10 border-t border-border-primary pt-4 text-xs text-text-secondary">
+          <footer className={cx('border-t pt-4 text-lz-body text-lz-ink-2', SURFACE.hairline)}>
             Baselines were captured on our own fleet against this exact frozen spec ({COMPARABLE_SCORER})
             and ship with the app, so your run costs you nothing and every board is comparable.
             Scores below 100 are expected: the finesse tier is graded against a theoretical optimum,
