@@ -2304,6 +2304,10 @@ ipcMain.handle('select-import-session-file', async () => {
 // (utils/csp.ts) permits only loopback and github, so a renderer-side fetch to the site is blocked.
 
 const BENCH_DIR = path.join(os.homedir(), '.config', 'goose', 'benchmark');
+// Where a scored run is published. Overridable at run time like the updater's GITHUB_OWNER /
+// GITHUB_REPO (autoUpdater.ts), so a staging site or a fork can receive runs without a rebuild.
+const BENCH_PUBLISH_URL =
+  process.env.LEANZERO_BENCH_PUBLISH_URL || 'https://leanzero.net/api/benchmark-runs';
 const BENCH_RESULT = path.join(BENCH_DIR, 'result.json');
 const BENCH_IDENTITY = path.join(BENCH_DIR, 'identity.json');
 
@@ -3273,7 +3277,7 @@ ipcMain.handle(
       if (findingsHeld.length > 0) payload.findingsHeld = findingsHeld;
     }
     try {
-      const res = await fetch('https://leanzero.net/api/benchmark-runs', {
+      const res = await fetch(BENCH_PUBLISH_URL, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
