@@ -35,3 +35,10 @@ Authoritative sources for this charter are named in .claude/agents/ROSTER.md's l
 this charter is re-checked. The orchestrator grades every delegation (ROSTER.md's four questions)
 and amends this file in the same turn a gap shows. Changelog:
 - 2026-08-30: minted (AGENT-SPLIT-1, dab1744f7).
+
+## Routing fact (2026-09-02, measured)
+`tick.py`, `snapshot_run.py`, `score_run.sh` and every `loop-state` instrument exist ONLY on the MacBook at
+`~/goose-builds/loop-state/` (its own git); they were never committed to the goose repo and the workhorse has no
+path back to the MacBook (sync is one-way MacBook → workhorse). A brief that names a repo path such as
+`evals/swarm-bench/bench/tick.py` is WRONG — refuse and hand back a fixture + the verbatim event payloads, as done
+on 2026-09-02, rather than minting a second tick.py that no operator runs (the duplicate-shadows shape).
