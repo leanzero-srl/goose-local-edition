@@ -876,3 +876,8 @@ research_request_block's armed-no-claimed-sections arm wording.
   predicted outcome; computed the fan's pace and the dispatch ORDER (viz last → the exposure test
   will likely be pre-empted); and found the turn-budget misread spreading to a third judge and
   heading toward a RESTART — E9's first harmful path, caught before it fired. Charter gap: none.
+- 2026-09-01 09:20 refuter (E8/E9): EXEMPLARY. Forward-replayed all 81 judge dispatches (0 mismatches
+  against the old policy) to correct the commit's own trace upward (7/7 not 3/7), traced "1/1 used" to
+  moim.rs's turn-budget injection into the judge's OWN message, and then read the judge lanes'
+  calls files to find what nobody had: 29 of 62 looks ended in a shell call because the judge holds
+  the developer toolset — the structural cause behind a prompt net. Charter gap: none.
