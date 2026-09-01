@@ -82,7 +82,6 @@ import StructuredContent, { CodeBlock } from './StructuredContent';
 import FormationRibbon, { type FormationActiveTone } from './FormationRibbon';
 import { isPlanningPhase, planningLanesFor, type PhaseLaneGroup } from './phaseList';
 import {
-  CHIP_RADIUS,
   EYEBROW_CLASS,
   SWARM_STATUS,
   nextRevealedText,
@@ -126,7 +125,6 @@ const CALL_OK = SWARM_STATUS.done;
 const CALL_ERR = SWARM_STATUS.error;
 const CALL_PENDING = SWARM_STATUS.stopped;
 const AMBER = SWARM_STATUS.running;
-const BLUE = SWARM_STATUS.action;
 // Body colour for MODEL-GENERATED text (live generations, reasoning). The primary text token — solid, never
 // a tint or an opacity fade. Chrome (labels, counts, hints) deliberately stays on the secondary token.
 const GEN_TEXT = 'var(--color-text-primary)';
@@ -4397,19 +4395,13 @@ const ClarifyPrompt: React.FC<{
     // component holds, so that is what it states; engine pickup shows up as the pending flag flipping
     // on the next poll (which unmounts this prompt) and the run moving in the feed.
     return stale ? (
-      <div
-        className="flex items-center gap-2 px-3 py-2 text-xs text-white"
-        style={{ backgroundColor: SWARM_STATUS.solidStopped }}
-      >
+      <div className={cx('flex items-center gap-2 px-3 py-2 text-xs', TONE_FILL.stopped)}>
         <AlertTriangle className="h-4 w-4 shrink-0" />
         Answers written — but the engine is not running, so they will not be read until the run is
         relaunched.
       </div>
     ) : (
-      <div
-        className="flex items-center gap-2 px-3 py-2 text-xs text-white"
-        style={{ backgroundColor: STATUS_COLOR.done }}
-      >
+      <div className={cx('flex items-center gap-2 px-3 py-2 text-xs', TONE_FILL.ok)}>
         <Check className="h-4 w-4 shrink-0" />
         Answers written — waiting for goose to pick them up.
       </div>
@@ -4424,24 +4416,24 @@ const ClarifyPrompt: React.FC<{
       : 'Type an answer to at least one question, or some guidance, to send';
   return (
     <div className="border-b border-lz-border">
-      <div className="flex items-center gap-2 px-3 py-2 text-white" style={{ backgroundColor: AMBER }}>
+      <div className={cx('flex items-center gap-2 px-3 py-2', TONE_FILL.warn)}>
         <MessageCircleQuestion className="h-4 w-4 shrink-0" />
         <span className="text-xs font-lz-semibold">Review the plan &amp; steer the build</span>
         {typeof clarify.planConfidence === 'number' ? (
-          <span className="text-[11px] tabular-nums">
+          <span className={cx('text-lz-meta', TNUM)}>
             planner confidence {clarify.planConfidence}/100
           </span>
         ) : null}
       </div>
-      <div className="px-3 py-3 space-y-3 bg-background-secondary">
+      <div className="space-y-3 bg-lz-surface-2 px-3 py-3">
         <ProxyNotice proxy={proxy} />
-        <p className="text-xs text-text-secondary">
+        <p className="text-xs text-lz-ink-2">
           Goose drafted this plan but wants your call on a few things before it builds. Pick an option, type
           your own, or just tell it what to change — it folds your input into the build.
         </p>
 
         {clarify.confidence ? (
-          <div className="border border-border-primary px-2 py-2" style={{ borderRadius: CHIP_RADIUS }}>
+          <div className={cx('border border-lz-border px-2 py-2', RADIUS.control)}>
             <ConfidenceBreakdownBody
               conf={clarify.confidence}
               hasPendingQuestions
@@ -4451,11 +4443,11 @@ const ClarifyPrompt: React.FC<{
         ) : null}
 
         {plan.length > 0 ? (
-          <div className="border border-border-primary" style={{ borderRadius: CHIP_RADIUS }}>
+          <div className={cx('border border-lz-border', RADIUS.control)}>
             <button
               type="button"
               onClick={() => setShowPlan((s) => !s)}
-              className="w-full flex items-center gap-1.5 px-2 py-1.5 text-[11px] text-text-secondary hover:text-text-primary"
+              className={cx('flex w-full items-center gap-1.5 px-2 py-1.5 text-lz-meta text-lz-ink-3 hover:text-lz-ink', MOTION)}
             >
               {showPlan ? (
                 <ChevronDown className="h-3 w-3" />
@@ -4467,7 +4459,7 @@ const ClarifyPrompt: React.FC<{
             {showPlan ? (
               <ul className="px-2 pb-2 space-y-0.5">
                 {plan.map((t) => (
-                  <li key={t.id} className="text-[12px] leading-relaxed text-text-primary flex gap-1.5">
+                  <li key={t.id} className="text-[12px] leading-relaxed text-lz-ink flex gap-1.5">
                     <span className="text-lz-ink-3 shrink-0">·</span>
                     <InlineMarkdown content={t.description || t.id} />
                   </li>
@@ -4481,14 +4473,14 @@ const ClarifyPrompt: React.FC<{
           <div key={i} className="space-y-1.5">
             {/* The question IS the answer box's name: a placeholder vanishes on the first keystroke, and
                 three boxes named "your answer…" are three boxes named nothing. */}
-            <div id={`${uid}-q${i}`} className="text-xs text-text-primary font-lz-medium">
+            <div id={`${uid}-q${i}`} className="text-xs text-lz-ink font-lz-medium">
               {i + 1}. <InlineMarkdown content={q.question} />
             </div>
             {q.resolves ? (
-              <div className="text-[11px] text-text-secondary flex items-start gap-1.5">
-                <Info className="h-3 w-3 mt-0.5 shrink-0" style={{ color: BLUE }} />
+              <div className="flex items-start gap-1.5 text-lz-meta text-lz-ink-3">
+                <Info className={cx('h-3 w-3 mt-0.5 shrink-0', TONE_TEXT.accent)} />
                 <span>
-                  resolves: <span className="text-text-primary">{q.resolves}</span>
+                  resolves: <span className="text-lz-ink">{q.resolves}</span>
                 </span>
               </div>
             ) : null}
@@ -4501,16 +4493,14 @@ const ClarifyPrompt: React.FC<{
                       key={opt}
                       type="button"
                       onClick={() => setAnswer(i, selected ? '' : opt)}
-                      className={`text-[11px] px-2 py-1 border transition-colors ${
+                      className={cx(
+                        'border px-2 py-1 text-lz-meta',
+                        RADIUS.control,
+                        MOTION,
                         selected
-                          ? 'text-white font-lz-medium'
-                          : 'border-border-primary text-text-primary hover:border-text-secondary'
-                      }`}
-                      style={
-                        selected
-                          ? { backgroundColor: BLUE, borderColor: BLUE, borderRadius: CHIP_RADIUS }
-                          : { borderRadius: CHIP_RADIUS }
-                      }
+                          ? cx(TONE_FILL.accent, 'border-lz-accent', WEIGHT.medium)
+                          : cx('border-lz-border-strong text-lz-ink', SURFACE.hover)
+                      )}
                     >
                       {selected ? '✓ ' : ''}
                       {opt}
@@ -4525,14 +4515,17 @@ const ClarifyPrompt: React.FC<{
               value={q.options.includes(answers[i]) ? '' : answers[i]}
               onChange={(e) => setAnswer(i, e.target.value)}
               placeholder={q.options.length > 0 ? 'or type your own…' : 'your answer…'}
-              className="w-full text-xs px-2 py-1.5 bg-background-primary text-text-primary border border-border-primary focus:outline-none focus:border-text-secondary"
-              style={{ borderRadius: CHIP_RADIUS }}
+              className={cx(
+                'w-full border border-lz-border-strong bg-lz-surface px-2 py-1.5 text-lz-body text-lz-ink placeholder:text-lz-ink-3',
+                RADIUS.control,
+                FOCUS
+              )}
             />
           </div>
         ))}
 
         <div className="space-y-1">
-          <label htmlFor={`${uid}-guidance`} className="block text-xs text-text-primary font-lz-medium">
+          <label htmlFor={`${uid}-guidance`} className="block text-xs text-lz-ink font-lz-medium">
             Anything else? (optional)
           </label>
           <textarea
