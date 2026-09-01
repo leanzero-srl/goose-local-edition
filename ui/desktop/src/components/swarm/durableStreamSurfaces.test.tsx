@@ -4,6 +4,7 @@ import {
   INLINE_TAIL_CHARS,
   MAX_REVEAL_BACKLOG_CHARS,
   fleetExpandText,
+  inspectorOutputText,
   isClippedTail,
   laneLiveLine,
   laneNarrative,
@@ -25,7 +26,7 @@ const rolling = {
   lastText: 'the rolling answer view',
   lastThinking: 'the tail of the reasoning',
   thinkingChars: 900,
-  fullReasoning: 'the 24,000-char clip of the answer channel',
+  answerWindow: 'the 24,000-char window over the answer channel',
 };
 
 describe('the fleet strip reads the durable log, not the rolling window', () => {
@@ -77,8 +78,25 @@ describe('the fleet strip reads the durable log, not the rolling window', () => 
 describe('a row body prefers the durable transcript', () => {
   it('reads the log before the 24k clip, the digest and the rolling answer', () => {
     expect(laneNarrative({ ...rolling, fullTranscript: 'the log' })).toBe('the log');
-    expect(laneNarrative(rolling)).toBe(rolling.fullReasoning);
+    expect(laneNarrative(rolling)).toBe(rolling.answerWindow);
     expect(laneNarrative({ lastText: 'only the rolling answer' })).toBe('only the rolling answer');
+  });
+});
+
+describe('the inspector OUTPUT pane owns the answer window (agenda item V, UI half)', () => {
+  it('reads the durable log, then the window, then the 400-char rolling answer', () => {
+    expect(
+      inspectorOutputText({
+        fullTranscript: 'the log',
+        answerWindow: 'the window',
+        lastText: 'rolling',
+      })
+    ).toBe('the log');
+    expect(inspectorOutputText({ answerWindow: 'the window', lastText: 'rolling' })).toBe(
+      'the window'
+    );
+    expect(inspectorOutputText({ lastText: 'rolling' })).toBe('rolling');
+    expect(inspectorOutputText({})).toBe('');
   });
 });
 

@@ -45,6 +45,7 @@ import {
   type ClarifyProxy,
   type RunOverview as RunOverviewData,
   type RunVerdict,
+  answerWindowOf,
   cleanTaskTitle,
   isPlanningDigestKey,
   saidKindOf,
@@ -326,8 +327,8 @@ const ReasoningBlock: React.FC<{
   forceOpen?: boolean;
   label?: string;
   live?: boolean;
-  /** Honest provenance beside the label — e.g. REASONING_CLIP_NOTE when the body is the digest's
-   *  24k-clipped tail rather than a durable log. */
+  /** Honest provenance beside the label — e.g. ANSWER_WINDOW_NOTE when the body is the digest's
+   *  rolling answer window rather than a durable log. */
   note?: string;
 }> = ({ text, forceOpen, label, live, note }) => {
   const [expandedState, setExpanded] = useState(false);
@@ -623,7 +624,7 @@ const LaneRow: React.FC<{
                   forceOpen={dev || live}
                   // Developer: name the model so it's unmistakable WHOSE generation this is.
                   label={dev ? `${live ? 'Generating' : 'Reasoning'} · ${lane.model ?? lane.device}` : undefined}
-                  note={narrativeClipNote(lane) ?? undefined}
+                  note={narrativeWindowNote(lane) ?? undefined}
                 />
               )}
               {calls.length > 0 || running.length > 0 || (lane.forming?.length ?? 0) > 0 ? (
@@ -1111,6 +1112,11 @@ const NodeExpandBox: React.FC<{ text: string; fill?: boolean; jumpToStart?: bool
 /// The inspector now renders `calls` themselves (WorkPane), where `summary` is the command and `result`
 /// is its output; this function is only what the model SAID. `StreamLane.recent` stays in the type —
 /// `laneLiveLine` still reads it as a last-resort live line.
+///
+/// THE ANSWER WINDOW LIVES HERE, BY CHANNEL (agenda item V, UI half). `answerWindow` is the digest's
+/// rolling ~24k tail of this same ANSWER stream — it used to sit in `inspectorThinkingText`'s chain,
+/// where a lane with no think.log rendered its answer under the title "Thinking" while Work showed the
+/// same words from the log. The log outranks it; the 400-char `lastText` is the last resort below it.
 /**
  * The stream fields of a lane, as every renderer needs them.
  *
@@ -1121,7 +1127,7 @@ const NodeExpandBox: React.FC<{ text: string; fill?: boolean; jumpToStart?: bool
 export type StreamLane = {
   fullTranscript?: string;
   fullThinking?: string;
-  fullReasoning?: string;
+  answerWindow?: string;
   reasoning?: string;
   lastText?: string;
   lastThinking?: string;
@@ -1168,7 +1174,7 @@ function liveTranscript(lane: { fullTranscript?: string }): string {
 }
 
 export function inspectorOutputText(lane: StreamLane): string {
-  return liveTranscript(lane) || lane.lastText?.trim() || '';
+  return liveTranscript(lane) || lane.answerWindow?.trim() || lane.lastText?.trim() || '';
 }
 
 /** One attempt's SAID text as the pane renders it. */
@@ -1286,10 +1292,14 @@ export function squeezeNote(before: string, after: string): string {
 ///
 /// `fullThinking` is the durable `<task>.think.log`. `lastThinking` is the digest's 2,400-char ROLLING
 /// WINDOW over that same stream — a suffix of the log by construction. They must never be joined.
+///
+/// ONE CHANNEL, and this was wrong a third way: the chain read `fullReasoning` (the ANSWER window) and
+/// `reasoning` (the answer summary) AHEAD of the thinking window, so any lane whose think.log had not
+/// landed — or any model with no thinking stream at all — showed its ANSWER in the pane titled Thinking,
+/// captioned "archived digest; full log unavailable" while Work showed the very same words from the
+/// durable log. The answer window belongs to `inspectorOutputText`; nothing from that channel is read here.
 export function inspectorThinkingText(lane: StreamLane): string {
-  const durable =
-    lane.fullThinking?.trim() || lane.fullReasoning?.trim() || lane.reasoning?.trim() || '';
-  return durable || (lane.lastThinking?.trim() ?? '');
+  return lane.fullThinking?.trim() || lane.lastThinking?.trim() || '';
 }
 
 /**
@@ -1311,7 +1321,8 @@ export const INLINE_TAIL_CHARS = 2400;
 export const REPEAT_SCAN_CHARS = 24_000;
 
 /** The preview cards show a lot more than a strip cell, but still not a whole log — this is the same
- *  volume the old 24,000-char `full_reasoning` clip put on screen, now taken from the durable log. */
+ *  volume the engine's 24,000-char answer window (`ANSWER_WINDOW_CHARS`, once misnamed `full_reasoning`)
+ *  put on screen, now taken from the durable log. */
 export const CARD_TAIL_CHARS = 24_000;
 
 export function tailOf(text: string, max: number): string {
@@ -1442,15 +1453,16 @@ export function fleetThinkingLine(lane: StreamLane | undefined): string {
 ///
 /// A THINKING-ONLY model must never produce an unclickable row: that is the node you most need to open.
 export function fleetExpandText(lane: StreamLane | undefined): string {
-  const said = (lane ? liveTranscript(lane) : '') || lane?.fullReasoning?.trim() || '';
+  const said = (lane ? liveTranscript(lane) : '') || lane?.answerWindow?.trim() || '';
   return [said, fleetThinkingLine(lane)].filter(Boolean).join('\n\n');
 }
 
-/** The narration a ROW renders in its expanded body: the durable answer channel, then the clipped digests. */
+/** The narration a ROW renders in its expanded body: the durable answer channel, then the digest's answer
+ *  window (captioned by `narrativeWindowNote` when it is the body), then the smaller rolling views. */
 export function laneNarrative(lane: StreamLane): string {
   return (
     liveTranscript(lane) ||
-    lane.fullReasoning?.trim() ||
+    lane.answerWindow?.trim() ||
     lane.reasoning?.trim() ||
     lane.lastText?.trim() ||
     ''
@@ -1514,63 +1526,69 @@ export function thinkingCaption(
   return `${n} chars`;
 }
 
-/**
- * The text the per-task LIVE GENERATION card shows.
- *
- * It reached for `full_reasoning` — the engine's 24,000-char TAIL CLIP — first, and never looked at the
- * durable logs sitting unread in the same digest object, so this surface still showed a clipped
- * transcript after every other reader had been moved onto the append-only logs.
- */
-export function taskGenReasoning(digest: Record<string, unknown>): string {
+/** The raw digest a task row holds, as the stream shape the shared rules read. This card receives the
+ *  digest, not a joined lane (the join's `liveChannelFor` keeps per-lane memory, so it cannot run from a
+ *  render helper); the answer-window key goes through `answerWindowOf`, the join's own read, so the card
+ *  can never disagree with the lanes about which wire key the window is under. */
+function streamLaneOfDigest(digest: Record<string, unknown>): StreamLane {
   const str = (k: string) => (typeof digest[k] === 'string' ? (digest[k] as string) : undefined);
-  const lane: StreamLane = {
+  return {
     fullThinking: str('full_thinking'),
-    fullReasoning: str('full_reasoning'),
+    answerWindow: answerWindowOf(digest),
     reasoning: str('reasoning'),
     lastThinking: str('last_thinking'),
     fullTranscript: str('full_transcript'),
     lastText: str('last_text'),
   };
-  // BOTH DURABLE LOGS OUTRANK EVERY CLIPPED VIEW. Taking the inspector's chain whole would put
-  // `full_reasoning` — the clip this card is here to stop showing — ahead of `full_transcript`.
+}
+
+/**
+ * The text the per-task LIVE GENERATION card shows.
+ *
+ * It reached for `full_reasoning` — the engine's 24,000-char answer WINDOW — first, and never looked at
+ * the durable logs sitting unread in the same digest object, so this surface still showed a clipped
+ * transcript after every other reader had been moved onto the append-only logs.
+ */
+export function taskGenReasoning(digest: Record<string, unknown>): string {
+  const lane = streamLaneOfDigest(digest);
+  // BOTH DURABLE LOGS OUTRANK EVERY DIGEST VIEW; then the answer channel's window (the larger record,
+  // via laneNarrative's chain), then the thinking window — the two inspector panes' orders, composed.
   const durable = lane.fullThinking?.trim() || liveTranscript(lane) || '';
-  const text = durable || inspectorThinkingText(lane) || laneNarrative(lane);
+  const text = durable || laneNarrative(lane) || inspectorThinkingText(lane);
   return tailOf(text, CARD_TAIL_CHARS);
 }
 
-/** The honest words for a body that is `full_reasoning` — the digest's 24,000-char clipped tail. */
-export const REASONING_CLIP_NOTE = 'last 24k chars — archived digest; full log unavailable';
+/** The honest words for a body that is the digest's answer window: a rolling tail (the engine's
+ *  `ANSWER_WINDOW_CHARS`, 24k), shown only when the call has no durable `<task>.log`. The digest carries
+ *  no answer-channel total, so how much lies beyond the window is not knowable from it — the caption
+ *  names what the body IS rather than guessing at what it lacks. */
+export const ANSWER_WINDOW_NOTE =
+  "answer window — the digest's rolling tail; no durable log for this call";
 
 /**
- * THE FALLBACK STAYS; THE CAPTION CLOSES THE ITEM (agenda item V's residue). Archived runs whose
- * durable logs are gone still carry `full_reasoning` in the digest — a 24k TAIL CLIP — and every
- * surface that falls back to it used to present the clip as the whole record. These predicates say,
- * per chain, whether the body a surface is about to show IS that clip, so the caption can say so.
- *
- * `narrativeClipNote` matches laneNarrative's chain (transcript first, then the clip);
- * `taskGenClipNote` matches taskGenReasoning's (both durable logs outrank it).
+ * WHEN THE BODY IS THE WINDOW, SAY SO (agenda item V, UI half). The window read is not deleted
+ * outright because the durable log cannot serve one measured case: 39 archived runs under
+ * ~/goose-builds predate the transcripts and carry the window as their ONLY narration (measured
+ * 2026-09-01: every digest with `full_reasoning` in a pre-08-29 archive lacks a sibling `.log`; every
+ * one of r6b's 39 has it, and the engine appends the log at all three digest-write sites, so a LIVE
+ * lane's window is always a subset of its log). So the log ranks first on every surface, the window is
+ * the fallback for exactly that absence, and this predicate — the same chain `laneNarrative` and
+ * `inspectorOutputText` use (transcript first, then the window) — captions it wherever it is the body.
  */
-export function narrativeClipNote(lane: StreamLane): string | null {
-  return !liveTranscript(lane) && (lane.fullReasoning?.trim() ?? '') ? REASONING_CLIP_NOTE : null;
+export function narrativeWindowNote(lane: StreamLane): string | null {
+  return !liveTranscript(lane) && (lane.answerWindow?.trim() ?? '') ? ANSWER_WINDOW_NOTE : null;
 }
 
-export function taskGenClipNote(digest: Record<string, unknown>): string | null {
-  const str = (k: string) => (typeof digest[k] === 'string' ? (digest[k] as string) : undefined);
-  const lane: StreamLane = {
-    fullThinking: str('full_thinking'),
-    fullReasoning: str('full_reasoning'),
-    fullTranscript: str('full_transcript'),
-  };
-  if (lane.fullThinking?.trim() || liveTranscript(lane)) return null;
-  return lane.fullReasoning?.trim() ? REASONING_CLIP_NOTE : null;
+/** taskGenReasoning's chain: BOTH durable logs outrank the window. */
+export function taskGenWindowNote(digest: Record<string, unknown>): string | null {
+  const lane = streamLaneOfDigest(digest);
+  return lane.fullThinking?.trim() ? null : narrativeWindowNote(lane);
 }
 
-/** The inspector THINKING pane's variant: its chain (inspectorThinkingText) reaches the clip only
- *  when the durable think.log is absent. Returned pre-joined for the pane's `count` caption. */
-export function thinkingClipNote(lane: StreamLane): string {
-  return !lane.fullThinking?.trim() && (lane.fullReasoning?.trim() ?? '')
-    ? ` · ${REASONING_CLIP_NOTE}`
-    : '';
+/** The inspector WORK pane's caption suffix, pre-joined like its neighbours in that template. */
+export function outputWindowNote(lane: StreamLane): string {
+  const note = narrativeWindowNote(lane);
+  return note ? ` · ${note}` : '';
 }
 
 /**
@@ -2176,9 +2194,9 @@ const NodeInspector: React.FC<{
   );
   const [fullThinkFailed, setFullThinkFailed] = useState(false);
 
-  // PREFER THE DURABLE THINKING LOG. `fullReasoning` is built from the ANSWER channel and the digest's
-  // thinking is a 2,400-char rolling window, so without this the pane clears and refills as the model
-  // streams instead of accumulating a readable document.
+  // PREFER THE DURABLE THINKING LOG. The digest's thinking is a 2,400-char rolling window, so without
+  // this the pane clears and refills as the model streams instead of accumulating a readable document.
+  // (The ANSWER window is not read here at all any more — see inspectorThinkingText.)
   // NEVER CONCATENATE THE LOG WITH THE ROLLING WINDOW — THEY ARE THE SAME STREAM.
   //
   // `fullThinking` is the durable `<task>.think.log`; `lastThinking` is the digest's 2,400-char ROLLING
@@ -2414,7 +2432,7 @@ const NodeInspector: React.FC<{
                     lane?.fullThinking,
                     lane?.thinkingBytes,
                     lane?.thinkingChars
-                  )}${thinkingClipNote(lane ?? {})}${squeezeNote(rawThink, thinkText)}`
+                  )}${squeezeNote(rawThink, thinkText)}`
             }
             action={
               showingFullThink ? (
@@ -2435,7 +2453,15 @@ const NodeInspector: React.FC<{
                 </PaneActionButton>
               ) : null
             }
-            empty="Nothing on the reasoning channel yet — the node has been dispatched but has not produced a token."
+            // TWO HONEST EMPTIES. This pane no longer borrows the answer channel to fill itself, so a model
+            // with no thinking stream leaves it empty — and "has not produced a token" would then be false
+            // over a lane whose answer and calls are right beside it. `thinkingChars` is the engine's own
+            // counter for the channel: zero with work present means the call has no reasoning channel.
+            empty={
+              hasWork && (lane?.thinkingChars ?? 0) === 0
+                ? 'No reasoning channel on this call — the model is working without one; its answer and tool calls are under Work.'
+                : 'Nothing on the reasoning channel yet — the node has been dispatched but has not produced a token.'
+            }
             isEmpty={showingFullThink ? !fullThinkSqueezed : !thinkText}
           >
             <NodeExpandBox
@@ -2464,7 +2490,7 @@ const NodeInspector: React.FC<{
             count={
               showingFullWork
                 ? `all ${fullWork.bytes.toLocaleString()} bytes${squeezeNote(fullWork.text, fullWorkSqueezed)}`
-                : `${workCaption(calls.length + running.length, lane?.toolCalls, tallies)}${formingNote(lane?.forming)}${streamTailNote(lane?.fullTranscript, lane?.transcriptBytes, lane?.transcriptClipped)}${squeezeNote(rawNarration, narration)}`
+                : `${workCaption(calls.length + running.length, lane?.toolCalls, tallies)}${formingNote(lane?.forming)}${streamTailNote(lane?.fullTranscript, lane?.transcriptBytes, lane?.transcriptClipped)}${outputWindowNote(lane ?? {})}${squeezeNote(rawNarration, narration)}`
             }
             action={
               showingFullWork ? (
@@ -3506,9 +3532,9 @@ const TaskGenDetail: React.FC<{ digest: Record<string, unknown> }> = ({ digest }
       </div>
       {reasoning.trim()
         ? (() => {
-            // ITEM 2's residue: when both durable logs are absent this card's body IS the digest's
-            // 24k clip — an archived run's leftover — and calling that "(live)" was the lie.
-            const clip = taskGenClipNote(digest);
+            // ITEM V's residue: when both durable logs are absent this card's body IS the digest's
+            // answer window — a pre-transcript archive's leftover — and calling that "(live)" was the lie.
+            const clip = taskGenWindowNote(digest);
             return (
               <ReasoningBlock
                 text={reasoning}
@@ -3910,7 +3936,7 @@ const BoardTaskRow: React.FC<{
               live={row.state === 'running' && !interrupted}
               forceOpen={dev}
               label={row.state === 'running' ? 'Generating' : 'Reasoning'}
-              note={(lane && narrativeClipNote(lane)) ?? undefined}
+              note={(lane && narrativeWindowNote(lane)) ?? undefined}
             />
           ) : null}
           {calls.length > 0 || running.length > 0 || (lane?.forming?.length ?? 0) > 0 ? (

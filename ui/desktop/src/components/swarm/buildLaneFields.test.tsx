@@ -82,7 +82,7 @@ const EXPECTED: Record<string, unknown> = {
   lastText: 'the rolling view of the answer',
   recent: ['ran a command'],
   reasoning: 'short digest reasoning',
-  fullReasoning: 'the 24k clip',
+  answerWindow: 'the 24k clip',
   calls: [{ name: 'shell', summary: 'pytest -q', ok: true }],
   toolCalls: 2,
   thinkingChars: 4096,

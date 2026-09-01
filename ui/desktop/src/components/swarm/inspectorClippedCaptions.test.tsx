@@ -1,10 +1,10 @@
 import { fireEvent, render, renderHook, waitFor, screen } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import {
-  REASONING_CLIP_NOTE,
+  ANSWER_WINDOW_NOTE,
   SwarmRunPanel,
-  narrativeClipNote,
-  taskGenClipNote,
+  narrativeWindowNote,
+  taskGenWindowNote,
 } from './SwarmRunPanel';
 import { useSwarmRun } from './useSwarmRun';
 import { IntlTestWrapper } from '../../i18n/test-utils';
@@ -144,26 +144,31 @@ describe('the node inspector admits when a pane is only a tail', () => {
   });
 
   /**
-   * ITEM 2's residue (agenda item V): an ARCHIVED digest whose durable logs are gone still carries
-   * `full_reasoning` — the engine's 24,000-char TAIL CLIP — and every surface that falls back to it
-   * used to present the clip as the whole record. The fallback stays (archived-run compat); the
-   * honest caption is what closes the item.
+   * AGENDA ITEM V, UI HALF: a pre-transcript ARCHIVE's digest carries `full_reasoning` — the engine's
+   * 24,000-char answer WINDOW — and no durable log. The window read survives for exactly that case
+   * (39 such archives measured under ~/goose-builds), captioned as the window it is, and it lives in
+   * the ANSWER pane by channel: the Thinking pane used to borrow it, so an archived (or non-thinking)
+   * lane rendered its answer under "Thinking" with "archived digest; full log unavailable" beside it.
    */
-  describe('the full_reasoning fallback is captioned as the 24k clip it is', () => {
+  describe('the answer-window fallback is captioned, and sits in the answer pane', () => {
     it('predicates: the note fires only when the durable log the chain prefers is absent', () => {
-      expect(narrativeClipNote({ fullReasoning: 'the 24k clip' })).toBe(REASONING_CLIP_NOTE);
+      expect(narrativeWindowNote({ answerWindow: 'the window' })).toBe(ANSWER_WINDOW_NOTE);
       expect(
-        narrativeClipNote({ fullReasoning: 'the 24k clip', fullTranscript: 'durable answer log' })
+        narrativeWindowNote({ answerWindow: 'the window', fullTranscript: 'durable answer log' })
       ).toBeNull();
-      expect(narrativeClipNote({})).toBeNull();
-      expect(taskGenClipNote({ full_reasoning: 'the 24k clip' })).toBe(REASONING_CLIP_NOTE);
+      expect(narrativeWindowNote({})).toBeNull();
+      expect(taskGenWindowNote({ full_reasoning: 'the window' })).toBe(ANSWER_WINDOW_NOTE);
+      expect(taskGenWindowNote({ answer_window: 'the window' })).toBe(ANSWER_WINDOW_NOTE);
       expect(
-        taskGenClipNote({ full_reasoning: 'the 24k clip', full_thinking: 'durable think.log' })
+        taskGenWindowNote({ full_reasoning: 'the window', full_thinking: 'durable think.log' })
       ).toBeNull();
-      expect(taskGenClipNote({})).toBeNull();
+      expect(
+        taskGenWindowNote({ full_reasoning: 'the window', full_transcript: 'durable task.log' })
+      ).toBeNull();
+      expect(taskGenWindowNote({})).toBeNull();
     });
 
-    it('the inspector THINKING caption says so when its body fell back to the clip', async () => {
+    it('the inspector shows an archived window ONCE, under Work, captioned — and Thinking says why it is empty', async () => {
       (electron().readSwarmRun as ReturnType<typeof vi.fn>).mockImplementation(async () => ({
         runId: 'swarm-archived-clip',
         dir: '/tmp/build',
@@ -194,7 +199,16 @@ describe('the node inspector admits when a pane is only a tail', () => {
       const cell = await screen.findByTestId('fleet-node');
       fireEvent.click(cell.querySelector('[role="button"]') ?? cell);
       const dialog = await screen.findByRole('dialog');
-      expect(dialog.textContent).toContain(REASONING_CLIP_NOTE);
+      const text = dialog.textContent ?? '';
+      const WINDOW = 'the last 24k characters of a much longer narration';
+      // The body appears exactly once — in Work. Before, it rendered under Thinking as well.
+      expect(text.split(WINDOW).length - 1).toBe(1);
+      expect(text).toContain(ANSWER_WINDOW_NOTE);
+      expect(text).not.toContain('archived digest');
+      // The Thinking pane is empty and says the true reason: this call has no reasoning channel — not
+      // "has not produced a token", which the window beside it disproves.
+      expect(text).toContain('No reasoning channel on this call');
+      expect(text).not.toContain('has not produced a token');
     });
   });
 });

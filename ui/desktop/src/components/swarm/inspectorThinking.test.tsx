@@ -17,10 +17,26 @@ describe('the node inspector shows the whole reasoning, exactly once', () => {
     expect(inspectorThinkingText({})).toBe('');
   });
 
+  it('never shows the ANSWER channel under the Thinking title (agenda item V, UI half)', () => {
+    // The chain read `fullReasoning` (the answer window) and `reasoning` (the answer summary) AHEAD of
+    // the thinking window, so a lane with no think.log — or a model with no thinking stream — rendered
+    // its ANSWER as its thinking, while Work showed the same words from the durable log.
+    expect(
+      inspectorThinkingText({
+        answerWindow: 'the answer window',
+        reasoning: 'answer chunks',
+        lastThinking: 'the thinking window',
+      })
+    ).toBe('the thinking window');
+    expect(
+      inspectorThinkingText({ answerWindow: 'the answer window', reasoning: 'answer chunks' })
+    ).toBe('');
+  });
+
   it('prefers the durable log over every shorter view of the same stream', () => {
     const out = inspectorThinkingText({
       fullThinking: 'the whole 55,000 character transcript',
-      fullReasoning: 'a shorter answer-channel view',
+      answerWindow: 'a shorter answer-channel view',
       reasoning: 'shorter still',
       lastThinking: 'the 2,400-char tail',
     });

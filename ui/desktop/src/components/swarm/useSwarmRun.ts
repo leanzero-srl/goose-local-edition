@@ -330,8 +330,13 @@ export interface TurnLane {
   lastText?: string;
   recent?: string[];
   reasoning?: string;
-  /** The worker's full narration (all substantive text chunks) — the "reasoning in plain" the panel shows. */
-  fullReasoning?: string;
+  /** The digest's rolling WINDOW over the ANSWER channel — the newest ~24k substantive chars, a tail by
+   *  construction (engine `build_answer_window` / `ANSWER_WINDOW_CHARS`). This was `fullReasoning`, and
+   *  the name was the lie agenda item V is about: a silently clipped tail claiming "full". The COMPLETE
+   *  record is the append-only `<task>.log` (`fullTranscript`); every surface a person reads ranks that
+   *  first, and this window is shown only where no durable log exists for the call (the pre-transcript
+   *  archives), captioned as the window it is. It is never thinking: the Thinking pane must not read it. */
+  answerWindow?: string;
   calls?: SwarmCall[];
   /** The tool requests still running — see InflightCall. A `calls` record appears only once its result
    *  lands, so without this a long write or shell command is invisible for its whole duration. */
@@ -2604,6 +2609,10 @@ type Digest = {
   recent?: string[];
   last_text?: string;
   reasoning?: string;
+  /** The answer-channel window (`TurnLane.answerWindow`). The engine still writes the pre-rename key
+   *  `full_reasoning`; `answer_window` is the honest key its half of the rename moves to. `answerWindowOf`
+   *  is the ONE read of both, so the engine-side rename cannot blank the lane through this join. */
+  answer_window?: string;
   full_reasoning?: string;
   calls?: SwarmCall[];
   inflight?: InflightCall[];
@@ -2789,6 +2798,16 @@ export function resetLiveChannelMemory(): void {
   channelMemory.clear();
 }
 
+/** THE ONE READ of the answer-window wire key, shared by the join below and the task card's raw-digest
+ *  mapper (`streamLaneOfDigest` in SwarmRunPanel): today's key is `full_reasoning`, the honest key the
+ *  engine moves to is `answer_window`. Two readers with one rule, so they cannot disagree about the key. */
+export function answerWindowOf(
+  d: { answer_window?: unknown; full_reasoning?: unknown } | undefined
+): string | undefined {
+  const w = d?.answer_window ?? d?.full_reasoning;
+  return typeof w === 'string' ? w : undefined;
+}
+
 /**
  * EVERY FIELD A DIGEST CONTRIBUTES TO A LANE, IN ONE PLACE.
  *
@@ -2816,7 +2835,7 @@ export function digestStreamFields(
   | 'lastText'
   | 'recent'
   | 'reasoning'
-  | 'fullReasoning'
+  | 'answerWindow'
   | 'calls'
   | 'inflight'
   | 'toolCalls'
@@ -2850,7 +2869,7 @@ export function digestStreamFields(
     lastText: d?.last_text || (carryIsStale ? undefined : prev?.lastText),
     recent: d?.recent ?? prev?.recent,
     reasoning: d?.reasoning ?? prev?.reasoning,
-    fullReasoning: d?.full_reasoning ?? prev?.fullReasoning,
+    answerWindow: answerWindowOf(d) ?? prev?.answerWindow,
     calls: d?.calls ?? prev?.calls,
     inflight: d?.inflight ?? prev?.inflight,
     toolCalls: d?.tool_calls ?? prev?.toolCalls,
@@ -3160,7 +3179,7 @@ function finishFold(c: FoldCarry, activity: Record<string, unknown>, scope = '')
   // every rolling field still empty) was invisible to the old text-only checks, a latent lane-hider —
   // reasoning-channel thinking, or tool calls made before any narration.
   const hasActivity = (l: TurnLane) =>
-    (l.fullReasoning || l.reasoning || l.lastText || l.fullTranscript || '').trim().length > 0 ||
+    (l.answerWindow || l.reasoning || l.lastText || l.fullTranscript || '').trim().length > 0 ||
     (l.calls?.length ?? 0) > 0 ||
     (l.thinkingChars ?? 0) > 0 ||
     l.phase === 'processing';
