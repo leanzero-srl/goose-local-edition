@@ -167,3 +167,13 @@ which. The MERGER lane (the module id, `merger_of`) must dispatch only after eve
 duplicates, undefined, signature_mismatches}` and quote what the merger's brief tells it to do with each; then read
 its words for JUDICIOUS merging (Mihai: "not just go in and copy") vs retyping. `merge_gap` must dispatch to a FREE node
 within the tick; `merge_gap_repeated` is a refusal to read.
+
+## Planner-side lanes have no judge cadence any more (e444953af, 2026-09-01) — YOU are their reader
+
+`judge_summon_trigger` fires only on evidence (repeat, degenerate answer, recurrence, a forming-frame stall with bytes);
+an opener / research / synthesis / split lane that reasons novelly for an hour, or holds a `final_output` frame at
+0 bytes, gets NO look (VA-073). Every tick, for the longest-running planner-side lane: quote its tail words, its
+minutes since dispatch, and r6e's counterpart (open 46 · research lane ≤ 32 · synthesis 8 · split 22). Past 2× the
+counterpart with no frame and no new ground in the last 20k chars → a finding with the quotes, RECOMMEND kill of the
+LANE class (the fix is an evidence arm — reasoning bytes since the last action beyond the lane kind's measured emit
+history — never seconds). A lane still breaking new ground is not a finding, whatever the clock says.
