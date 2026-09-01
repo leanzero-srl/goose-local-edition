@@ -53,7 +53,15 @@ implied, the summary was wrong and the sources win.
 
 ---
 
-## THE CURRENT THREAD (2026-09-01 06:55) — r6d LIVE (launched 06:53 local / 03:53Z from the Benchmark view)
+## THE CURRENT THREAD (2026-09-01 08:25) — r6d RUNNING BUT SCHEDULED FOR KILL+RELAUNCH ON THE r6e BUILD
+
+Refuter-proven at the running sha: the viz-field BUILD brief will lack the REQUIRED graded `vs7dbg` section
+(unmatched claim → dropped; fixed in 766810d61). Decision: ship the r6e batch (E1–E6 landed, E7–E11 landing),
+build, install, then kill r6d per-pid, archive as KILLED-viz-brief-lacks-vs7dbg, relaunch. r6d runs until the
+relaunch is ready (free falsifier measurement). Launch chain = the r6d one (bench_verify_view → weight-1 already
+in config → bench_dispatch → first_tick). Below: the r6d launch record, still the template.
+
+## r6d LAUNCH RECORD (06:53 local / 03:53Z from the Benchmark view)
 
 run_id swarm-20260901-035310576 · engine cceab86eb (installed /Applications/Goose.app, sha 9497224d… identical to
 the release build) · first_tick_r1.sh ALL OK (sha, benchmark=True, prompt 53,634, heartbeat, orphans 0, engine pid

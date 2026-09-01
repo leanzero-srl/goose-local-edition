@@ -867,3 +867,7 @@ research_request_block's armed-no-claimed-sections arm wording.
   unmatched claim contributes nothing" is the fact that matters for the live run), honest NO/NET
   labels on E2/E3, and an explicit refusal to write a string-presence test for a prompt clause
   ("a tripwire pretending to gate"). Charter gap: none.
+- 2026-09-01 08:25 refuter (E3/E4): EXEMPLARY. Answered the one question that decides the live run
+  (NO — with the exact mechanism: heads frozen at 04:16:56Z, build brief formed by the same splice
+  with no index/pointer), replayed all 53 real claims under both keys for the regression hunt, and
+  caught a README overclaim by reading what the event actually carries. Charter gap: none.
