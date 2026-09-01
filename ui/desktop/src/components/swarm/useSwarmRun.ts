@@ -524,6 +524,11 @@ export interface ActivityItem {
   sub?: string;
   tone?: ActivityTone;
   seq: number;
+  /** The engine's own clock on the row this line was folded from: the RFC3339 `ts` that
+   *  `EventLog::write_line` (swarm.rs) stamps on every run.jsonl row. Present only when that row
+   *  carried a string `ts`; a row without one leaves it undefined and the log shows the ordinal —
+   *  never a time invented from a neighbour or from the poll. */
+  at?: string;
 }
 
 export interface PlanTask {
@@ -1278,8 +1283,13 @@ export function buildActivity(events: Array<Record<string, unknown>>): {
   let summary: RunSummary | null = null;
   let startedAt: number | null = null;
   let overview: RunOverview | null = null;
-  const compact = (it: Omit<ActivityItem, 'seq'>) => feed.push({ ...it, seq: cseq++ });
-  const verbose = (it: Omit<ActivityItem, 'seq'>) => vfeed.push({ ...it, seq: vseq++ });
+  // The `ts` of the event being folded, re-read at the top of every iteration so a row without one
+  // can never inherit its predecessor's clock (the key is only added when the row carried a time).
+  let evAt: string | undefined;
+  const stamp = <T extends Omit<ActivityItem, 'at'>>(it: T): T & { at?: string } =>
+    evAt === undefined ? it : { ...it, at: evAt };
+  const compact = (it: Omit<ActivityItem, 'seq' | 'at'>) => feed.push(stamp({ ...it, seq: cseq++ }));
+  const verbose = (it: Omit<ActivityItem, 'seq' | 'at'>) => vfeed.push(stamp({ ...it, seq: vseq++ }));
   // NODE NAMES, never truncated device-id fragments — the same canonical map foldEvents uses, so the feed's
   // "Fleet: … — gabee, mihai, workhorse" and "on workhorse" match the fleet rows letter for letter.
   const nodeOf = nodeLabeler(events);
@@ -1292,6 +1302,7 @@ export function buildActivity(events: Array<Record<string, unknown>>): {
 
   for (const e of events) {
     const type = String(e['event'] ?? '');
+    evAt = typeof e['ts'] === 'string' ? (e['ts'] as string) : undefined;
     // First event with a parseable timestamp anchors the run's start, so the terminal summary can show wall
     // time even for a run that died without a run_finished (no phases.total_min to read).
     if (startedAt == null && typeof e['ts'] === 'string') {
