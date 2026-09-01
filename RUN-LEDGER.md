@@ -533,11 +533,11 @@ DAG is actually parallel). reasoning_chars against answer_chars is the waste.
 - **startable**: 0
 - **brief_median**: 0
 - **reasoning_chars**: 170190
-- **answer_chars**: 626
+- **answer_chars**: 637
 - **code_files**: 0
 - **code_bytes**: 0
-- **elapsed_min**: 66
-- **phase_split**: open 66m
+- **elapsed_min**: 72
+- **phase_split**: open 72m
 - **before_build_min**: 0 (internal diagnosis only — never a cross-run number)
 - **vs_target**: ONLY THE SCORE COMPARES. Target 20.06% (qwen3.8-27b, one cloud agent, same model). Wall clock is NOT comparable — that run is on far faster hardware, so minutes measure the machine. Bytes are NOT a verdict — more code is not better code, and it had no planning phases to spend budget on. Cross-hardware-honest work numbers for THIS run: 0B delivered, 170,190 chars reasoned, 0 tasks completed, 0 retried.
 - **python_parses**: 0 ok / 0 SYNTAX ERROR / 0 empty
