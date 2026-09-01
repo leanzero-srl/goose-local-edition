@@ -1613,7 +1613,16 @@ impl State {
                     session_id,
                     tool_calls,
                     salvaged,
+                    follow_ups,
                 } = run;
+                // THE MERGE-GAP DOOR (2c S4): a merger that sent gaps out is NOT done — its gap
+                // shards enter the DAG through `splice_merge_gaps` (this door's ownership repair)
+                // and the merger is re-armed on them; a refused batch falls through to Done, loud.
+                if !follow_ups.is_empty()
+                    && self.splice_merge_gaps(tid, follow_ups, elapsed_ms, &dev_id, &model_id)
+                {
+                    return;
+                }
                 // Remembered per task, because the completion event is emitted from six sites and only
                 // one of them is on the path that produced this value.
                 self.task_salvaged.insert(tid.to_string(), salvaged);
@@ -2780,6 +2789,156 @@ impl State {
     /// owned files. Returns true if a VALID split was applied (worker aborted, children injected, the
     /// original's dependents re-pointed onto ALL children); false if the proposal is malformed — the caller
     /// then takes no action and the worker keeps running, so a bad proposal can never corrupt the DAG.
+    /// THE MERGE-GAP DOOR (2c S4; gate 6, the r4 class). A MERGER's completion may carry gap shard
+    /// specs the CLI built from its `MERGE_GAP:` lines. This is a task-adding door, so it carries
+    /// its OWN ownership repair before it reaches `splice_specs`: every follow-up must be a shard
+    /// of THIS merger's module (`shard_of.module == module`), own at least one file and only files
+    /// under `.swarm/shards/<module>/` that no task already owns (a gap can never re-create a
+    /// module shadow or claim a sibling's file — its whole write surface is a fresh folder), and
+    /// depend on nothing (shards of one module are independent by construction). A batch that
+    /// breaks any rule is refused WHOLE and loud (`merge_gap_refused`), and the merger completes
+    /// as usual. Accepted: the gaps are spliced (all Ready — no deps), `merge_gap` is emitted per
+    /// shard, and the merger is RE-ARMED — back to Pending, depending on the new shards, its
+    /// `merger_of` widened to them, so its next dispatch folds their pieces in (a second dossier).
+    /// Returns true when the merger was re-armed (the caller must not mark it Done).
+    fn splice_merge_gaps(
+        &mut self,
+        tid: &str,
+        gaps: Vec<crate::dag::TaskSpec>,
+        elapsed_ms: u64,
+        dev_id: &Option<String>,
+        model_id: &Option<String>,
+    ) -> bool {
+        let refuse = |this: &Self, reason: String| {
+            this.sink.write_value(serde_json::json!({
+                "event": "merge_gap_refused",
+                "task_id": tid,
+                "gaps": gaps_ids(&gaps),
+                "reason": reason,
+            }));
+            false
+        };
+        fn gaps_ids(gaps: &[crate::dag::TaskSpec]) -> Vec<String> {
+            gaps.iter().map(|g| g.id.clone()).collect()
+        }
+        let Some(module) = self
+            .dag
+            .tasks
+            .get(tid)
+            .and_then(|n| n.spec.merger_of.as_ref())
+            .map(|m| m.module.clone())
+        else {
+            return refuse(self, "the completing task is not a merger".to_string());
+        };
+        let prefix = format!(".swarm/shards/{module}/");
+        let owned_elsewhere: std::collections::HashSet<&str> = self
+            .dag
+            .tasks
+            .values()
+            .flat_map(|n| n.spec.owned_files.iter().map(|f| f.as_str()))
+            .collect();
+        for g in &gaps {
+            let Some(sh) = g.shard_of.as_ref() else {
+                return refuse(self, format!("`{}` carries no shard_of", g.id));
+            };
+            if sh.module != module {
+                return refuse(
+                    self,
+                    format!("`{}` is a shard of `{}`, not `{module}`", g.id, sh.module),
+                );
+            }
+            if g.owned_files.is_empty() {
+                return refuse(self, format!("`{}` owns nothing", g.id));
+            }
+            if let Some(f) = g.owned_files.iter().find(|f| !f.starts_with(&prefix)) {
+                return refuse(self, format!("`{}` owns `{f}` outside `{prefix}`", g.id));
+            }
+            if let Some(f) = g
+                .owned_files
+                .iter()
+                .find(|f| owned_elsewhere.contains(f.as_str()))
+            {
+                return refuse(self, format!("`{}` owns `{f}`, already owned", g.id));
+            }
+            if !g.deps.is_empty() {
+                return refuse(
+                    self,
+                    format!(
+                        "`{}` depends on {:?} — a gap shard depends on nothing",
+                        g.id, g.deps
+                    ),
+                );
+            }
+        }
+        let ids = gaps_ids(&gaps);
+        let folders: Vec<String> = gaps
+            .iter()
+            .filter_map(|g| g.shard_of.as_ref().map(|s| s.folder.clone()))
+            .collect();
+        let missing: Vec<String> = gaps
+            .iter()
+            .filter_map(|g| g.shard_of.as_ref().map(|s| s.responsibility.clone()))
+            .collect();
+        let newly_ready = match self.dag.splice_specs(gaps) {
+            Ok(r) => r,
+            Err(e) => {
+                self.sink.write_value(serde_json::json!({
+                    "event": "merge_gap_refused",
+                    "task_id": tid,
+                    "gaps": ids,
+                    "reason": format!("splice refused: {e}"),
+                }));
+                return false;
+            }
+        };
+        for id in newly_ready {
+            let fan_out = self.dag.tasks[&id].fan_out;
+            self.ready.push(Ranked { fan_out, id });
+        }
+        for (i, id) in ids.iter().enumerate() {
+            self.sink.write_value(serde_json::json!({
+                "event": "merge_gap",
+                "module": module,
+                "shard": id,
+                "task_id": tid,
+                "missing": missing.get(i),
+                "folder": folders.get(i),
+            }));
+            self.dag
+                .dependents
+                .entry(id.clone())
+                .or_default()
+                .push(tid.to_string());
+        }
+        self.attempt_log
+            .entry(tid.to_string())
+            .or_default()
+            .push(AttemptRecord {
+                device: dev_id.clone(),
+                model: model_id.clone(),
+                outcome: "merge_gaps".to_string(),
+                error: None,
+                elapsed_ms,
+            });
+        if let Some(n) = self.dag.tasks.get_mut(tid) {
+            n.state = TaskState::Pending;
+            n.indegree_remaining = ids.len();
+            n.attempts += 1;
+            n.spec.deps.extend(ids.iter().cloned());
+            if let Some(m) = n.spec.merger_of.as_mut() {
+                m.shards.extend(ids.iter().cloned());
+                m.folders.extend(folders.iter().cloned());
+            }
+        }
+        self.sink.write_value(serde_json::json!({
+            "event": "merge_rearmed",
+            "task_id": tid,
+            "module": module,
+            "waits_on": ids,
+        }));
+        true
+    }
+
     fn apply_split(&mut self, tid: &str, children: &[crate::judge::ChildSpec]) -> bool {
         // ---- validate the partition against the original (no mutation yet) ----
         let (orig_files, orig_deps, orig_diff, orig_model, orig_desc) =

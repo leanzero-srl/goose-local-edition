@@ -366,7 +366,10 @@ fn swarm_rs_line_count_only_decreases() {
     // Tightened to 36,755 (2c S2/S3): the ledger mini writers (`write_task_ledger`,
     // `write_gate_ledger`, `RepairLedgerRow`/`write_repair_ledger`) moved to
     // commands/swarm/ledger_writers.rs, paying for the shard's dispatch/completion wiring.
-    const SWARM_RS_LINE_BASELINE: usize = 36_755;
+    // Tightened to 36,736 (2c S4): `syntax_error` / `py_syntax_error` / `rust_compile_error`
+    // moved to commands/swarm/parse_checks.rs (shared with the merger's dossier), paying for the
+    // merger's dispatch (dossier brief) and completion (gap follow-ups, after-checks) seams.
+    const SWARM_RS_LINE_BASELINE: usize = 36_736;
     let text = read("crates/goose-cli/src/commands/swarm.rs");
     let n = text.lines().count();
     assert!(
@@ -542,12 +545,36 @@ fn every_dag_entry_walks_through_the_same_repairs() {
         .collect();
     assert_eq!(
         sites.len(),
-        1,
-        "scheduler.rs has {} `.splice_specs(` call sites; the known-door list has 1 (apply_split's \
-         partition door). A NEW door must carry its ownership repair and be added here with its \
-         guard assert — never spliced past the repairs (gate 6, the r4 class).",
+        2,
+        "scheduler.rs has {} `.splice_specs(` call sites; the known-door list has 2 (apply_split's \
+         partition door; splice_merge_gaps, the merger's gap door — 2c S4). A NEW door must carry \
+         its ownership repair and be added here with its guard assert — never spliced past the \
+         repairs (gate 6, the r4 class).",
         sites.len()
     );
+    // The merge-gap door (2c S4): a merger's MERGE_GAP follow-ups are shards of the SAME module,
+    // own only fresh files under `.swarm/shards/<module>/` no task already owns, and depend on
+    // nothing — those refusals ARE its ownership repair, and they stand between the fn and its
+    // splice.
+    let gap_fn = sched
+        .find("fn splice_merge_gaps(")
+        .expect("splice_merge_gaps exists");
+    let gap_splice = sched[gap_fn..]
+        .find(".splice_specs(")
+        .map(|i| gap_fn + i)
+        .expect("splice_merge_gaps' splice site exists inside the fn");
+    let gap_body = &sched[gap_fn..gap_splice];
+    for guard in [
+        "sh.module != module",
+        "!f.starts_with(&prefix)",
+        "owned_elsewhere.contains(f.as_str())",
+        "!g.deps.is_empty()",
+    ] {
+        assert!(
+            gap_body.contains(guard),
+            "splice_merge_gaps lost its refusal `{guard}` — the gap door's ownership repair"
+        );
+    }
     // The one door — apply_split's partition validation IS its ownership repair (an exact partition
     // of the parent's already-repaired claim cannot create a second claimant or a new path):
     // its two load-bearing refusals must stand between the fn definition and its splice.

@@ -86,9 +86,13 @@ use prose::rewrite_path_token;
 mod skeleton;
 use skeleton::{prepend_skeleton_task, refresh_skeleton_description};
 mod ledger_writers;
+mod parse_checks;
+use parse_checks::{rust_compile_error, syntax_error};
 mod plan_repairs;
 mod shards;
-use ledger_writers::{write_gate_ledger, write_repair_ledger, write_task_ledger, RepairLedgerRow};
+use ledger_writers::{
+    write_gate_ledger, write_repair_ledger, write_task_ledger, RepairLedgerRow, TaskLedgerWrite,
+};
 use plan_repairs::{
     repair_brief_file_mentions, repair_sink_deps, repair_sink_files, repair_unassigned_endpoints,
 };
@@ -3570,7 +3574,19 @@ mod tests {
             "app/api.py".to_string(),
             "app/ledgerd/server.py".to_string(),
         ];
-        write_task_ledger(root, "api-endpoints", "done", false, &owned, 1, None, None).unwrap();
+        write_task_ledger(
+            root,
+            TaskLedgerWrite {
+                task_id: "api-endpoints",
+                status: "done",
+                salvaged: false,
+                owned_files: &owned,
+                attempt: 1,
+                calls_mirror_dir: None,
+                extra: None,
+            },
+        )
+        .unwrap();
         write_gate_ledger(
             root,
             0,
@@ -3653,7 +3669,19 @@ mod tests {
 
         // Idempotence: the same writes again produce the same roll-up bytes.
         let first = std::fs::read_to_string(root.join(".swarm/ledger.json")).unwrap();
-        write_task_ledger(root, "api-endpoints", "done", false, &owned, 1, None, None).unwrap();
+        write_task_ledger(
+            root,
+            TaskLedgerWrite {
+                task_id: "api-endpoints",
+                status: "done",
+                salvaged: false,
+                owned_files: &owned,
+                attempt: 1,
+                calls_mirror_dir: None,
+                extra: None,
+            },
+        )
+        .unwrap();
         write_gate_ledger(
             root,
             0,
@@ -3789,41 +3817,47 @@ mod tests {
         .unwrap();
         write_task_ledger(
             dir.path(),
-            "ledger-core-tests",
-            "done",
-            false,
-            &[
-                "tests/test_ledger_core.py".to_string(),
-                "tests/test_ledger_concurrency.py".to_string(),
-            ],
-            0,
-            None,
-            None,
+            TaskLedgerWrite {
+                task_id: "ledger-core-tests",
+                status: "done",
+                salvaged: false,
+                owned_files: &[
+                    "tests/test_ledger_core.py".to_string(),
+                    "tests/test_ledger_concurrency.py".to_string(),
+                ],
+                attempt: 0,
+                calls_mirror_dir: None,
+                extra: None,
+            },
         )
         .unwrap();
         write_task_ledger(
             dir.path(),
-            "vendor-sync-edge-tests",
-            "done",
-            false,
-            &[
-                "tests/test_vendor_sync_edge.py".to_string(),
-                "tests/test_sync_resilience.py".to_string(),
-            ],
-            0,
-            None,
-            None,
+            TaskLedgerWrite {
+                task_id: "vendor-sync-edge-tests",
+                status: "done",
+                salvaged: false,
+                owned_files: &[
+                    "tests/test_vendor_sync_edge.py".to_string(),
+                    "tests/test_sync_resilience.py".to_string(),
+                ],
+                attempt: 0,
+                calls_mirror_dir: None,
+                extra: None,
+            },
         )
         .unwrap();
         write_task_ledger(
             dir.path(),
-            "integrate-verify",
-            "done",
-            false,
-            &[],
-            0,
-            None,
-            None,
+            TaskLedgerWrite {
+                task_id: "integrate-verify",
+                status: "done",
+                salvaged: false,
+                owned_files: &[],
+                attempt: 0,
+                calls_mirror_dir: None,
+                extra: None,
+            },
         )
         .unwrap();
         write_gate_ledger(
@@ -15852,81 +15886,6 @@ impl GooseAgentDispatcher {
     }
 }
 
-/// Language-aware per-file syntax check, dispatched on extension. `.py` -> the Python ast.parse check
-/// verbatim (byte-identical); other languages have no cheap parse-only per-file check (tsc/rustc/etc. are
-/// project-level), so they skip cleanly (None) and rely on the language's own build/test step.
-async fn syntax_error(path: &Path) -> Option<String> {
-    match path.extension().and_then(|e| e.to_str()) {
-        Some("py") => py_syntax_error(path).await,
-        _ => None,
-    }
-}
-
-/// Syntax-check a Python file without polluting `__pycache__` (ast.parse, not py_compile). Returns the
-/// last error line on a SyntaxError, `None` if it parses.
-async fn py_syntax_error(path: &Path) -> Option<String> {
-    let out = tokio::process::Command::new("python3")
-        .arg("-c")
-        .arg("import ast,sys; ast.parse(open(sys.argv[1]).read())")
-        .arg(path)
-        .output()
-        .await
-        .ok()?;
-    if out.status.success() {
-        None
-    } else {
-        Some(
-            String::from_utf8_lossy(&out.stderr)
-                .lines()
-                .last()
-                .unwrap_or("syntax error")
-                .trim()
-                .to_string(),
-        )
-    }
-}
-
-/// Deterministic Rust compile gate for the DONE check: `cargo check --all-targets` on the crate; returns
-/// (owned_file, error) if an OWNED .rs file fails to compile, else None. `--all-targets` is required so
-/// owned `tests/*.rs` are compiled too. Scoped to OWNED files so a not-yet-written sibling module that
-/// breaks the crate never rejects THIS worker. Timeout / missing toolchain -> None (degrade gracefully).
-async fn rust_compile_error(cwd: &Path, owned: &[String]) -> Option<(String, String)> {
-    if !owned.iter().any(|f| f.ends_with(".rs")) || !cwd.join("Cargo.toml").is_file() {
-        return None;
-    }
-    let out = tokio::time::timeout(
-        std::time::Duration::from_secs(120),
-        tokio::process::Command::new("cargo")
-            .args([
-                "check",
-                "--all-targets",
-                "--quiet",
-                "--message-format=short",
-            ])
-            .current_dir(cwd)
-            .output(),
-    )
-    .await
-    .ok()?
-    .ok()?;
-    if out.status.success() {
-        return None;
-    }
-    let stderr = String::from_utf8_lossy(&out.stderr);
-    for line in stderr.lines() {
-        if let Some((loc, msg)) = line.split_once(": error") {
-            let path_tok = loc.split(':').next().unwrap_or("");
-            if owned
-                .iter()
-                .any(|o| o.ends_with(".rs") && path_tok.ends_with(o.as_str()))
-            {
-                return Some((path_tok.to_string(), format!("error{}", msg.trim())));
-            }
-        }
-    }
-    None
-}
-
 // ---------------------------------------------------------------------------------------------
 // GOOSE_SWARM_SMOKE — deterministic end-to-end smoke gate (Track A #1, off by default).
 //
@@ -27281,13 +27240,15 @@ impl GooseAgentDispatcher {
         }
         if let Some(path) = write_task_ledger(
             root,
-            &req.task_id,
-            status,
-            salvaged,
-            &req.owned_files,
-            req.attempt,
-            self.fix_shard_mirror_dir(&req.task_id, root),
-            extra,
+            TaskLedgerWrite {
+                task_id: &req.task_id,
+                status,
+                salvaged,
+                owned_files: &req.owned_files,
+                attempt: req.attempt,
+                calls_mirror_dir: self.fix_shard_mirror_dir(&req.task_id, root),
+                extra,
+            },
         ) {
             self.events.write_value(serde_json::json!({
                 "event": "ledger_written",
@@ -28517,7 +28478,16 @@ impl GooseAgentDispatcher {
         // the instructions without the measured facts having been in context. The injection is
         // the mechanism; nothing refuses. `ledger_delivered` proves delivery from run.jsonl the
         // way pitfalls_delivered does — the on-disk ledger only shows delivery was POSSIBLE.
-        let effective_description: &str = sink_brief.as_deref().unwrap_or(&req.description);
+        // THE SPLIT (S4): a MERGER's task is the code-built dossier's numbered list with the
+        // module brief behind it — built here, at dispatch, when every shard is Done.
+        let merger_brief: Option<String> = match &req.merger_of {
+            Some(m) => Some(self.merger_dispatch_brief(&req, m, &root, lang).await),
+            None => None,
+        };
+        let effective_description: &str = sink_brief
+            .as_deref()
+            .or(merger_brief.as_deref())
+            .unwrap_or(&req.description);
         if let Some(b) = &sink_brief {
             self.events.write_value(serde_json::json!({
                 "event": "ledger_delivered",
@@ -28954,6 +28924,15 @@ impl GooseAgentDispatcher {
                 // first, the final message second, persist the fields in the task's ledger row
                 // beside its handoffs, and name the absence (`merge_note_missing`).
                 let shard_note = shard.map(|sh| self.record_shard_note(sh, &req, &root, &out.text));
+                // THE SPLIT (S4): a merger's gaps become follow-up shard specs for the scheduler's
+                // merge-gap door; with none, CODE checks the merge and reports.
+                let follow_ups = match &req.merger_of {
+                    Some(m) => {
+                        self.record_merge_result(&req, m, &root, lang, &out.text)
+                            .await
+                    }
+                    None => Vec::new(),
+                };
                 let output = if out.text.trim().is_empty() {
                     match render_completed_output_from_ledger(
                         &root,
@@ -28997,6 +28976,7 @@ impl GooseAgentDispatcher {
                     session_id: Some(out.session_id),
                     tool_calls: out.tool_calls,
                     salvaged: false,
+                    follow_ups,
                 })
             }
             Err(e) => {
@@ -29063,6 +29043,7 @@ impl GooseAgentDispatcher {
                             session_id: None,
                             tool_calls: Vec::new(),
                             salvaged: true,
+                            follow_ups: Vec::new(),
                         });
                     }
                 }
